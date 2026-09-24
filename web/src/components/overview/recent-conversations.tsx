@@ -1,4 +1,3 @@
-import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { ChevronRight, MessageSquare, MessagesSquare } from 'lucide-react';
 import { Card } from '@/components/ui/card';
@@ -6,24 +5,15 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
 import { IconTile } from '@/components/shared/icon-tile';
 import { SectionHeader } from '@/components/layout/section-header';
-import { runtimeApi } from '@/api/runtime-client';
-import { useAgent } from '@/lib/agent-context';
 import { formatRelativeTime } from '@/lib/format';
 import { threadDisplayName } from '@/lib/thread-name';
+import { useRecentThreads } from '@/hooks/use-recent-threads';
 
 const SHOWN = 5;
 
 /** The newest conversations, one click from the Overview. */
 export function RecentConversations() {
-  const agent = useAgent();
-  const { data: threads, isLoading } = useQuery({
-    queryKey: ['threads', agent.agentId, 'recents'],
-    queryFn: () =>
-      runtimeApi.listThreads(agent.agentId, agent.userId, {
-        threadSource: 'DATABASE',
-        limit: 100,
-      }),
-  });
+  const { data: threads, isLoading } = useRecentThreads();
 
   return (
     <section className="space-y-3">

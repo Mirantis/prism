@@ -1,4 +1,3 @@
-import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { SquarePen } from 'lucide-react';
 import {
@@ -8,31 +7,21 @@ import {
   SidebarMenu,
   SidebarMenuItem,
 } from '@/components/ui/sidebar';
-import { useAgent } from '@/lib/agent-context';
-import { runtimeApi } from '@/api/runtime-client';
 import { threadDisplayName } from '@/lib/thread-name';
 import { groupThreadsByDate } from '@/lib/thread-groups';
 import { useCreateThread } from '@/hooks/use-create-thread';
+import { useRecentThreads } from '@/hooks/use-recent-threads';
 
 /**
  * "Recents" — lists the agent's conversation threads (newest first) in the
- * sidebar, under a heading for the day each one started. Database threads
- * only; Slack threads are filtered out server-side. Each row links to
+ * sidebar, under a heading for the day each one started. Each row links to
  * /chat/<threadId>. Rendered by AppSidebar only while the Chat page is open.
  * The pen action next to the label starts a fresh conversation.
  */
 export function RecentsNav() {
-  const agent = useAgent();
   const { threadId: routeThreadId } = useParams({ strict: false });
   const createThread = useCreateThread();
-  const { data: threads, isLoading } = useQuery({
-    queryKey: ['threads', agent.agentId, 'recents'],
-    queryFn: () =>
-      runtimeApi.listThreads(agent.agentId, agent.userId, {
-        threadSource: 'DATABASE',
-        limit: 100,
-      }),
-  });
+  const { data: threads, isLoading } = useRecentThreads();
 
   // Highlight the current conversation: the thread in the URL, or — at bare
   // /chat — the latest (first row, since the server returns createdAt desc).

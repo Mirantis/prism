@@ -16,12 +16,17 @@ The left sidebar groups the pages: **Overview** and **Chat**; **Channels**,
 its top starts a conversation from any page. Press **Ctrl+B** (**⌘B** on a Mac), or
 the button at the top left, to collapse the sidebar to icons.
 
+Press **Ctrl+K** (**⌘K** on a Mac), or **Search** in the sidebar, to open the command
+palette. Type part of a page's or a conversation's name, then press **Enter** to go
+there.
+
 ## Overview
 
 The landing page. It shows the agent's status (Working / Idle / Error), its
 model, and four cards: heartbeat state, linked Slack channels, scheduled tasks,
 and tokens used in the last 24 hours. Each card opens the page that manages it.
-Below them are your most recent conversations. (To rename the agent, use the
+Below them are your most recent conversations, and a setup checklist that ticks
+off each step you have done and marks the next one. (To rename the agent, use the
 Name field on the [Profile](#profile) page.)
 
 On a native install, a strip under the header announces a newer release with an
@@ -37,6 +42,9 @@ The main conversation surface.
   Responses **stream** in as the agent works — you see intermediate text from
   multi-step responses in real time rather than one block at the end. An empty
   conversation offers a few first messages; press one to send it.
+- **Reading back.** A line with the day separates messages sent on different
+  days. While you read further up, new messages do not move the view; press
+  **Jump to latest** to return to the end.
 - **Slash commands.** Type `/` to open a command popup, the same as the
   **[Terminal UI](terminal-ui.md#slash-commands)**: filter by typing, arrow keys
   to move the selection, **Tab** or **Enter** to complete it, then **Enter** to

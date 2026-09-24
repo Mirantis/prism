@@ -4,7 +4,7 @@ import { Page } from '@/components/layout/page';
 import { AgentHero } from '@/components/overview/agent-hero';
 import { OverviewStats } from '@/components/overview/overview-stats';
 import { RecentConversations } from '@/components/overview/recent-conversations';
-import { QuickActions } from '@/components/overview/quick-actions';
+import { SetupChecklist } from '@/components/overview/setup-checklist';
 import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
 
@@ -25,7 +25,7 @@ function OverviewPage() {
       <OverviewStats />
       <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] [&>*]:min-w-0">
         <RecentConversations />
-        <QuickActions />
+        <SetupChecklist />
       </div>
     </Page>
   );

@@ -11,6 +11,7 @@ vi.mock('@tanstack/react-router', () => ({
 }));
 vi.mock('./recents-nav', () => ({ RecentsNav: () => null }));
 vi.mock('./new-chat-button', () => ({ NewChatButton: () => null }));
+vi.mock('./search-button', () => ({ SearchButton: () => null }));
 vi.mock('@/components/ui/sidebar', () => {
   const passthrough =
     (tag: string) =>

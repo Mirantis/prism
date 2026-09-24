@@ -1,16 +1,6 @@
 import { useEffect } from 'react';
 import { Link, useRouterState } from '@tanstack/react-router';
 import {
-  LayoutDashboard,
-  MessageSquare,
-  MessagesSquare,
-  Clock,
-  Webhook,
-  MonitorPlay,
-  Bot,
-  Activity,
-} from 'lucide-react';
-import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
@@ -23,42 +13,10 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 import { useAgent } from '@/lib/agent-context';
+import { NAV_GROUPS, visibleNavItems } from '@/lib/nav';
 import { NewChatButton } from './new-chat-button';
+import { SearchButton } from './search-button';
 import { RecentsNav } from './recents-nav';
-
-interface NavItem {
-  to: '/' | '/chat' | '/channels' | '/cron' | '/webhooks' | '/profile' | '/computer' | '/activity';
-  label: string;
-  icon: typeof Bot;
-  needsComputer?: boolean;
-}
-
-const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
-  {
-    label: 'Workspace',
-    items: [
-      { to: '/', label: 'Overview', icon: LayoutDashboard },
-      { to: '/chat', label: 'Chat', icon: MessageSquare },
-    ],
-  },
-  {
-    label: 'Automation',
-    items: [
-      { to: '/channels', label: 'Channels', icon: MessagesSquare },
-      { to: '/cron', label: 'Scheduled Tasks', icon: Clock },
-      { to: '/webhooks', label: 'Webhooks', icon: Webhook },
-    ],
-  },
-  {
-    label: 'Agent',
-    items: [
-      { to: '/profile', label: 'Profile', icon: Bot },
-      // Left out where the runtime has no desktop to give the agent; see `hasComputer`.
-      { to: '/computer', label: 'Computer', icon: MonitorPlay, needsComputer: true },
-      { to: '/activity', label: 'Activity', icon: Activity },
-    ],
-  },
-];
 
 export function AppSidebar() {
   const agent = useAgent();
@@ -70,7 +28,7 @@ export function AppSidebar() {
 
   return (
     <Sidebar variant="inset" collapsible="icon">
-      <SidebarHeader className="gap-3">
+      <SidebarHeader className="gap-2">
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" render={<Link to="/" />}>
@@ -85,6 +43,7 @@ export function AppSidebar() {
           </SidebarMenuItem>
         </SidebarMenu>
         <NewChatButton />
+        <SearchButton />
       </SidebarHeader>
 
       <SidebarContent>
@@ -92,9 +51,7 @@ export function AppSidebar() {
           <SidebarGroup key={group.label} className="py-1">
             <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
             <SidebarMenu>
-              {group.items
-                .filter((item) => !item.needsComputer || agent.hasComputer)
-                .map(({ to, label, icon: Icon }) => {
+              {visibleNavItems(group.items, agent.hasComputer).map(({ to, label, icon: Icon }) => {
                   const isActive = to === '/' ? pathname === '/' : pathname.startsWith(to);
                   return (
                     <SidebarMenuItem key={to}>

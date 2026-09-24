@@ -3,6 +3,7 @@ import { Activity, Clock, Coins, MessagesSquare } from 'lucide-react';
 import { StatCard } from '@/components/shared/stat-card';
 import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
+import { useSlackStatus } from '@/hooks/use-slack-status';
 import { formatInterval, formatRelativeTime, formatTokens } from '@/lib/format';
 import type { CronTask } from '@/types';
 
@@ -43,24 +44,7 @@ function HeartbeatStat() {
 }
 
 function ChannelsStat() {
-  const agent = useAgent();
-  const { data: workspacesResp, isLoading } = useQuery({
-    queryKey: ['slack-workspaces'],
-    queryFn: () => runtimeApi.slackWorkspaces(),
-  });
-  const workspace = workspacesResp?.workspaces[0];
-
-  const { data: linkStatus } = useQuery({
-    queryKey: ['slack-link-status', agent.agentId],
-    queryFn: () => runtimeApi.slackLinkStatus(),
-    enabled: Boolean(workspace),
-  });
-  const { data: channelsResp } = useQuery({
-    queryKey: ['slack-channel-mappings', agent.agentId],
-    queryFn: () => runtimeApi.slackChannelMappings(),
-    enabled: Boolean(workspace),
-  });
-
+  const { workspace, isLoading, channelCount, hasDm } = useSlackStatus();
   return (
     <StatCard
       label="Channels"
@@ -68,12 +52,8 @@ function ChannelsStat() {
       tone={workspace ? 'primary' : 'neutral'}
       to="/channels"
       isLoading={isLoading}
-      value={channelsResp?.channels.length ?? 0}
-      detail={
-        !workspace
-          ? 'Slack not configured'
-          : `${workspace.teamName}${linkStatus?.hasDmMapping ? ' · DM linked' : ''}`
-      }
+      value={channelCount}
+      detail={!workspace ? 'Slack not configured' : `${workspace.teamName}${hasDm ? ' · DM linked' : ''}`}
     />
   );
 }
