@@ -51,7 +51,7 @@ The main conversation surface.
   in the conversation, and `/goal`/`/skills run` stream the agent's reply in.
   A one-line note renders as a centered aside; a listing (`/skills`, `/plugins`)
   renders as a normal left-aligned block so the list is readable.
-- **Voice messages.** Press the microphone next to the paperclip and speak; the
+- **Voice messages.** Press the microphone beside the send button and speak; the
   browser asks for the microphone the first time. Press send, and your words
   arrive in the thread as your message. ✕ discards the recording — see
   **[Dictation](dictation.md)**.

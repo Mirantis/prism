@@ -123,6 +123,18 @@ describe('ChatInput', () => {
       expect(d.start).toHaveBeenCalledTimes(1);
     });
 
+    it('sits beside send, after STOP, so it does not move when a turn starts', () => {
+      render(<ChatInput {...baseProps} isPending dictation={dictation()} />);
+      const order = Array.from(document.querySelectorAll('button')).map(
+        (b) => b.getAttribute('data-testid') ?? b.getAttribute('type'),
+      );
+      const stop = order.indexOf('chat-stop-button');
+      const mic = order.indexOf('dictation-button');
+      const send = order.indexOf('submit');
+      expect(stop).toBeLessThan(mic);
+      expect(mic).toBe(send - 1);
+    });
+
     it('cannot record while disconnected', () => {
       render(<ChatInput {...baseProps} connectionStatus="disconnected" dictation={dictation()} />);
       expect(screen.getByTestId('dictation-button')).toBeDisabled();

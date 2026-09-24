@@ -297,32 +297,16 @@ export default function ChatInput({
                   <X className="size-3.5" />
                 </InputGroupButton>
               ) : (
-                <>
-                  <InputGroupButton
-                    type="button"
-                    size="icon-xs"
-                    variant="ghost"
-                    onClick={() => fileInputRef.current?.click()}
-                    title="Attach files"
-                    aria-label="Attach files"
-                  >
-                    <Paperclip className="size-3.5" />
-                  </InputGroupButton>
-                  {dictation && (
-                    <InputGroupButton
-                      type="button"
-                      size="icon-xs"
-                      variant="ghost"
-                      disabled={connectionStatus !== 'connected'}
-                      onClick={dictation.start}
-                      title={connectionStatus !== 'connected' ? 'Not connected' : 'Voice message'}
-                      aria-label="Voice message"
-                      data-testid="dictation-button"
-                    >
-                      <Mic className="size-3.5" />
-                    </InputGroupButton>
-                  )}
-                </>
+                <InputGroupButton
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Attach files"
+                  aria-label="Attach files"
+                >
+                  <Paperclip className="size-3.5" />
+                </InputGroupButton>
               )}
             </InputGroupAddon>
             {dictation && isDictating ? (
@@ -361,6 +345,22 @@ export default function ChatInput({
                   className="rounded-full"
                 >
                   <Square className="size-3 fill-current" />
+                </InputGroupButton>
+              )}
+              {/* Beside send, where a voice message is sent from too. Stop comes before
+                  it, so the microphone does not move when a turn starts. */}
+              {dictation && !isDictating && (
+                <InputGroupButton
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  disabled={connectionStatus !== 'connected'}
+                  onClick={dictation.start}
+                  title={connectionStatus !== 'connected' ? 'Not connected' : 'Voice message'}
+                  aria-label="Voice message"
+                  data-testid="dictation-button"
+                >
+                  <Mic className="size-3.5" />
                 </InputGroupButton>
               )}
               {dictation && isDictating ? (
