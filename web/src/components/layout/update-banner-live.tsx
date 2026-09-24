@@ -109,7 +109,7 @@ export function UpdateBannerLive({ status }: { status: UpdateStatus }) {
     return (
       <div
         data-testid="update-banner"
-        className="mx-4 mb-2 flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-sm"
+        className="mx-4 mb-2 flex items-center gap-2 rounded-xl bg-card px-3 py-2 text-sm ring-1 ring-foreground/10 md:mx-6"
       >
         <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
         <span>Backend updating{availableVersion ? ` to ${availableVersion}` : ''}… reconnecting when it's back.</span>
@@ -121,7 +121,7 @@ export function UpdateBannerLive({ status }: { status: UpdateStatus }) {
     return (
       <div
         data-testid="update-banner"
-        className="mx-4 mb-2 flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-sm text-destructive"
+        className="mx-4 mb-2 flex items-center gap-2 rounded-xl bg-card px-3 py-2 text-sm text-destructive ring-1 ring-destructive/30 md:mx-6"
       >
         <span className="flex-1">{error}</span>
         <Button
@@ -145,7 +145,7 @@ export function UpdateBannerLive({ status }: { status: UpdateStatus }) {
   return (
     <div
       data-testid="update-banner"
-      className="mx-4 mb-2 flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-sm"
+      className="mx-4 mb-2 flex items-center gap-2 rounded-xl bg-card px-3 py-2 text-sm ring-1 ring-foreground/10 md:mx-6"
     >
       <ArrowUpCircle className="size-4" />
       <span className="flex-1">

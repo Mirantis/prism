@@ -8,35 +8,21 @@ import {
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
 import { useAgent } from '@/lib/agent-context';
+import { navItemFor } from '@/lib/nav';
+import { threadDisplayName } from '@/lib/thread-name';
+import { useCurrentConversation } from '@/hooks/use-current-conversation';
 
-const ROUTE_TITLES: Record<string, string> = {
-  '/': 'Overview',
-  '/chat': 'Chat',
-  '/channels': 'Channels',
-  '/cron': 'Scheduled Tasks',
-  '/webhooks': 'Webhooks',
-  '/computer': 'Computer',
-  '/profile': 'Profile',
-  '/activity': 'Activity',
-};
-
-function titleFor(pathname: string): string {
-  if (pathname in ROUTE_TITLES) return ROUTE_TITLES[pathname];
-  const match = Object.entries(ROUTE_TITLES).find(
-    ([path]) => path !== '/' && pathname.startsWith(path),
-  );
-  return match ? match[1] : '';
-}
-
+/** Where you are: the agent, the page, and on the Chat page the conversation on screen. */
 export function AppBreadcrumb() {
   const agent = useAgent();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const title = titleFor(pathname);
+  const conversation = useCurrentConversation();
+  const page = navItemFor(pathname);
   const isRoot = pathname === '/';
 
   return (
-    <Breadcrumb>
-      <BreadcrumbList>
+    <Breadcrumb className="min-w-0">
+      <BreadcrumbList className="flex-nowrap">
         <BreadcrumbItem>
           {isRoot ? (
             <BreadcrumbPage>{agent.name}</BreadcrumbPage>
@@ -44,11 +30,25 @@ export function AppBreadcrumb() {
             <BreadcrumbLink render={<Link to="/" />}>{agent.name}</BreadcrumbLink>
           )}
         </BreadcrumbItem>
-        {!isRoot && title && (
+        {!isRoot && page && (
           <>
             <BreadcrumbSeparator />
             <BreadcrumbItem>
-              <BreadcrumbPage>{title}</BreadcrumbPage>
+              {conversation ? (
+                <BreadcrumbLink render={<Link to={page.to} />}>{page.label}</BreadcrumbLink>
+              ) : (
+                <BreadcrumbPage>{page.label}</BreadcrumbPage>
+              )}
+            </BreadcrumbItem>
+          </>
+        )}
+        {conversation && (
+          <>
+            <BreadcrumbSeparator className="hidden sm:block" />
+            <BreadcrumbItem className="hidden min-w-0 sm:inline-flex">
+              <BreadcrumbPage data-testid="breadcrumb-conversation" className="max-w-[40ch] truncate">
+                {threadDisplayName(conversation)}
+              </BreadcrumbPage>
             </BreadcrumbItem>
           </>
         )}

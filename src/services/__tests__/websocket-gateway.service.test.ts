@@ -480,7 +480,7 @@ describe('Requirement: WebSocket Gateway', () => {
       const ws = createMockWebSocket();
       ws.userId = userId;
       service.messageQueues.set(userId, [{ message: { type: 'chat' }, resolve: () => {} }]);
-      service.activeRequests.set(userId, new AbortController());
+      service.activeRequests.set(userId, { controller: new AbortController() });
 
       service.handleMessage(ws, userId, { type: 'cancel' });
 
@@ -809,24 +809,31 @@ describe('Requirement: WebSocket Gateway', () => {
   });
 
   describe('Scenario: Processing indicator', () => {
-    it('should send processing indicator', async () => {
+    it('broadcasts { processing: true } to every one of the user\'s connections', async () => {
       const userId = 'user-123';
       const ws = createMockWebSocket();
       ws.userId = userId;
       ws.readyState = 1;
+      // A second tab, which did not send the message but shows the agent working.
+      const otherTab = createMockWebSocket();
+      otherTab.userId = userId;
+      otherTab.readyState = 1;
 
-      service.connections.set(userId, [ws]);
+      service.connections.set(userId, [ws, otherTab]);
 
       await service.processMessage(ws, userId, {
         type: 'chat',
         content: 'Test',
         agentId: 'agent-123',
+        threadId: 'thread-1',
       });
 
-      expect(ws.send).toHaveBeenCalledWith(JSON.stringify({
-        type: 'status',
-        payload: { processing: true },
-      }));
+      // Each frame names the thread, so the other tab can tell whose turn it is.
+      const started = JSON.stringify({ type: 'status', payload: { processing: true, threadId: 'thread-1' } });
+      const ended = JSON.stringify({ type: 'status', payload: { processing: false, threadId: 'thread-1' } });
+      expect(ws.send).toHaveBeenCalledWith(started);
+      expect(otherTab.send).toHaveBeenCalledWith(started);
+      expect(otherTab.send).toHaveBeenCalledWith(ended);
     });
   });
 

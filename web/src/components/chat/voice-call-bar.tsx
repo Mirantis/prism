@@ -32,13 +32,13 @@ export default function VoiceCallBar({ call, agentName }: { call: VoiceCall; age
   return (
     <div className="mx-auto w-full max-w-3xl px-4 pt-3" data-testid="voice-call-bar">
       <div
-        className="flex items-center gap-3 rounded-2xl border border-green-500/25 bg-green-500/10 py-2 pr-2 pl-2.5"
+        className="flex items-center gap-3 rounded-2xl border border-success/25 bg-success/10 py-2 pr-2 pl-2.5"
         // Present only on a live call, which is what the page's own tests wait for.
         data-testid={isLive ? 'voice-call-indicator' : undefined}
       >
         <span
-          className={`flex size-9 shrink-0 items-center justify-center rounded-full bg-background/60 text-green-500 transition-shadow ${
-            call.isSpeaking ? 'ring-2 ring-green-500/60' : 'ring-0'
+          className={`flex size-9 shrink-0 items-center justify-center rounded-full bg-background/60 text-success transition-shadow ${
+            call.isSpeaking ? 'ring-2 ring-success/60' : 'ring-0'
           }`}
           aria-hidden="true"
         >
@@ -57,7 +57,7 @@ export default function VoiceCallBar({ call, agentName }: { call: VoiceCall; age
             ) : call.isMuted ? (
               <span className="text-destructive">You're muted</span>
             ) : call.isSpeaking ? (
-              <span className="flex items-center gap-1 text-green-500" data-testid="voice-call-speaking">
+              <span className="flex items-center gap-1 text-success" data-testid="voice-call-speaking">
                 <AudioLines className="size-3.5 animate-pulse" aria-hidden="true" />
                 Speaking
               </span>

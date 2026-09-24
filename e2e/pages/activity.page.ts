@@ -34,13 +34,13 @@ export class ActivityPage extends BasePage {
 
   /**
    * Scroll to the bottom repeatedly so the list's sentinel comes into view and
-   * each further page loads. The app shell lets the document scroll, so this
-   * moves the window rather than a pane.
+   * each further page loads. The content pane (`#main-content`) is what scrolls,
+   * inside a shell that fills the viewport.
    */
   async scrollToLoadMore(rounds = 6): Promise<void> {
     for (let i = 0; i < rounds; i++) {
-      await this.page.evaluate(() => {
-        window.scrollTo(0, document.scrollingElement?.scrollHeight ?? 0);
+      await this.page.locator('#main-content').evaluate((pane) => {
+        pane.scrollTo(0, pane.scrollHeight);
       });
       await this.page.waitForTimeout(700);
     }

@@ -186,6 +186,20 @@ describe('TuiAdapter inbound envelopes', () => {
     expect(statuses.map((s) => s.status)).toEqual(['thinking', 'idle']);
   });
 
+  it('follows status frames for its own conversation only', async () => {
+    await tuiAdapterService.submitUserMessage({ userId: 'u1', agentId: 'a1', text: 'hi', threadId: 'mine' });
+    statuses = [];
+
+    // A web tab's turn on another conversation: the gateway sends this session its
+    // frames too, and they are not this session's spinner.
+    emit('status', { processing: true, threadId: 'other' });
+    emit('status', { processing: false, threadId: 'other' });
+    emit('status', { processing: true, threadId: 'mine' });
+    emit('status', { processing: false });
+
+    expect(statuses.map((s) => s.status)).toEqual(['thinking', 'idle']);
+  });
+
   it('ignores a connect handshake that carries no processing flag', () => {
     // `{ connected: true }` arrives once, at connection. Treating it as idle would
     // clear the spinner mid-turn if it were ever re-sent.

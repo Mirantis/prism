@@ -33,3 +33,10 @@ export function formatRelativeTime(input: string | number | Date | null | undefi
   const yr = Math.round(mon / 12);
   return past ? `${yr}y ago` : `in ${yr}y`;
 }
+
+/** 1234567 → "1.23M": a token count short enough for a card. */
+export function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}

@@ -68,6 +68,7 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     sendDictationStart,
     sendDictationStop,
   } = useWebSocket({
+    threadId: activeThreadId,
     onMessage: (msg) => {
       // Deliveries are broadcast to all of the user's connections tagged with
       // their own thread id — a heartbeat, a cron task, a Slack turn, or a turn
@@ -434,6 +435,8 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
         agentName={agent.name}
         isTyping={isTyping}
         isLoading={isLoadingThread}
+        threadId={activeThreadId}
+        onSuggestion={status === 'connected' && activeThreadId ? sendChat : undefined}
         onOpenComputerHelp={openComputerPanel}
       />
       {computerHelp.length > 0 && (

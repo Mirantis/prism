@@ -83,6 +83,12 @@ export interface VoiceStartOptions {
 }
 
 interface UseWebSocketOptions {
+  /**
+   * The conversation this hook's `isTyping` describes. A status frame for another
+   * conversation moves `isAgentBusy` alone, so a tab keeps its own composer idle
+   * while the agent answers somewhere else.
+   */
+  threadId?: string;
   onMessage?: (msg: ConversationMessage) => void;
   /** A thread's title was (re)set server-side — update cached thread lists. */
   onThreadUpdate?: (update: { threadId: string; title: string }) => void;
@@ -126,6 +132,7 @@ interface UseWebSocketOptions {
 
 export function useWebSocket(opts: UseWebSocketOptions = {}) {
   const {
+    threadId,
     onMessage,
     onThreadUpdate,
     onContextUsage,
@@ -158,7 +165,9 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
   const onVoiceEventRef = useRef(onVoiceEvent);
   const onVoiceAudioRef = useRef(onVoiceAudio);
   const onDictationEventRef = useRef(onDictationEvent);
+  const threadIdRef = useRef(threadId);
   onMessageRef.current = onMessage;
+  threadIdRef.current = threadId;
   onThreadUpdateRef.current = onThreadUpdate;
   onContextUsageRef.current = onContextUsage;
   onCompactionRef.current = onCompaction;
@@ -169,7 +178,10 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
   onDictationEventRef.current = onDictationEvent;
 
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
+  /** A turn is running on this hook's conversation. */
   const [isTyping, setIsTyping] = useState(false);
+  /** A turn is running on any of the user's conversations. */
+  const [isAgentBusy, setIsAgentBusy] = useState(false);
 
   const handleMessage = useCallback(
     (event: MessageEvent) => {
@@ -200,15 +212,21 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
             break;
           }
           case 'status': {
-            // The runtime sends { processing: true } when a turn starts and
-            // broadcasts { processing: false } when it ends (normal completion
-            // or cancel), so the spinner/STOP button track the whole turn —
-            // including every intermediate step in verbose mode — and reliably
-            // revert even when a cancel produced no new message to deliver.
-            // The connect handshake sends { connected: true } with no
-            // `processing` key, hence the boolean guard.
-            const p = data.payload as { processing?: boolean } | undefined;
-            if (typeof p?.processing === 'boolean') setIsTyping(p.processing);
+            // The runtime broadcasts { processing: true, threadId } to every one
+            // of the user's connections when a turn starts and
+            // { processing: false, threadId } when it ends (normal completion or
+            // cancel), so the presence mark tracks the whole turn — including
+            // every intermediate step in verbose mode — and reliably reverts
+            // even when a cancel produced no new message. The spinner and the
+            // STOP button follow only a turn on this conversation, since STOP
+            // cancels the user's one running turn wherever it is. The connect
+            // handshake sends { connected: true } with no `processing` key,
+            // hence the boolean guard.
+            const p = data.payload as { processing?: boolean; threadId?: string } | undefined;
+            if (typeof p?.processing !== 'boolean') break;
+            setIsAgentBusy(p.processing);
+            const mine = !p.threadId || p.threadId === threadIdRef.current;
+            if (mine) setIsTyping(p.processing);
             break;
           }
           case 'thread': {
@@ -426,6 +444,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     }
     wsRef.current.send(JSON.stringify({ type: 'chat', payload: message }));
     setIsTyping(true);
+    setIsAgentBusy(true);
   }, []);
 
   const sendFollowup = useCallback(
@@ -483,6 +502,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
       wsRef.current.send(JSON.stringify({ type: 'cancel' }));
     }
     setIsTyping(false);
+    setIsAgentBusy(false);
   }, []);
 
   useEffect(() => {
@@ -505,6 +525,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     status,
     isConnected: status === 'connected',
     isTyping,
+    isAgentBusy,
     sendFollowup,
     cancel,
     sendVoiceStart,

@@ -239,6 +239,8 @@ class TuiAdapter {
   readonly events = new EventEmitter();
 
   private client: WsClient | null = null;
+  /** The conversation this session talks on: the one it opened, or the one it last sent to. */
+  private sessionThreadId: string | undefined;
   private readonly httpUrl = loadConfig().httpUrl.replace(/\/$/, '');
   private readonly wsUrl = wsUrlFromHttpUrl(this.httpUrl);
 
@@ -316,6 +318,7 @@ class TuiAdapter {
       });
       if (!res.ok) return undefined;
       const body = (await res.json()) as { threadId: string };
+      this.sessionThreadId = body.threadId;
       return body.threadId;
     } catch {
       // Runtime down / unreachable — render anyway; first message will still
@@ -361,6 +364,7 @@ class TuiAdapter {
     attachmentIds?: string[];
   }): Promise<void> {
     this.events.emit('status', 'thinking');
+    if (_args.threadId) this.sessionThreadId = _args.threadId;
     if (!this.client) {
       // markConnected hasn't fired yet (mount race). Buffer by re-emitting
       // an error so the UI doesn't get stuck on the spinner — submitting
@@ -407,16 +411,21 @@ class TuiAdapter {
         break;
       }
       case 'status': {
-        const payload = env.payload as { connected?: boolean; processing?: boolean } | undefined;
+        const payload = env.payload as
+          | { connected?: boolean; processing?: boolean; threadId?: string }
+          | undefined;
         // `true` when a turn starts; `false` from the gateway's `finally` on every
         // exit — normal end, error and cancel alike. The connect handshake sends
         // `{ connected: true }` with no `processing` key, and the socket's `open`
         // handler already emits idle for that; hence the boolean guard rather
         // than a truthiness test, which would clear the spinner mid-turn if the
-        // handshake were ever re-sent.
-        if (typeof payload?.processing === 'boolean') {
-          this.events.emit('status', payload.processing ? 'thinking' : 'idle');
-        }
+        // handshake were ever re-sent. The gateway sends every connection of the
+        // user each turn's frames, named by thread; a turn on another
+        // conversation (a web tab's) is not this session's spinner.
+        if (typeof payload?.processing !== 'boolean') break;
+        const other = payload.threadId && this.sessionThreadId && payload.threadId !== this.sessionThreadId;
+        if (other) break;
+        this.events.emit('status', payload.processing ? 'thinking' : 'idle');
         break;
       }
       case 'error': {

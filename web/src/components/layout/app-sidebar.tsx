@@ -1,14 +1,5 @@
+import { useEffect } from 'react';
 import { Link, useRouterState } from '@tanstack/react-router';
-import {
-  LayoutDashboard,
-  MessageSquare,
-  MessagesSquare,
-  Clock,
-  Webhook,
-  MonitorPlay,
-  Bot,
-  Activity,
-} from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -18,68 +9,79 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarRail,
+  useSidebar,
 } from '@/components/ui/sidebar';
 import { useAgent } from '@/lib/agent-context';
+import { NAV_GROUPS, visibleNavItems } from '@/lib/nav';
+import { AgentPresence } from './agent-presence';
+import { NewChatButton } from './new-chat-button';
+import { SearchButton } from './search-button';
 import { RecentsNav } from './recents-nav';
-
-const NAV_ITEMS = [
-  { to: '/' as const, label: 'Overview', icon: LayoutDashboard },
-  { to: '/chat' as const, label: 'Chat', icon: MessageSquare },
-  { to: '/channels' as const, label: 'Channels', icon: MessagesSquare },
-  { to: '/cron' as const, label: 'Scheduled Tasks', icon: Clock },
-  { to: '/webhooks' as const, label: 'Webhooks', icon: Webhook },
-  { to: '/profile' as const, label: 'Profile', icon: Bot },
-  // Left out where the runtime has no desktop to give the agent; see `hasComputer`.
-  { to: '/computer' as const, label: 'Computer', icon: MonitorPlay, needsComputer: true },
-  { to: '/activity' as const, label: 'Activity', icon: Activity },
-];
 
 export function AppSidebar() {
   const agent = useAgent();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const { setOpenMobile } = useSidebar();
+
+  // On a phone the sidebar is a sheet over the page, so picking a page closes it.
+  useEffect(() => setOpenMobile(false), [pathname, setOpenMobile]);
 
   return (
-    <Sidebar variant="inset">
-      <SidebarHeader>
+    <Sidebar variant="inset" collapsible="icon">
+      <SidebarHeader className="gap-2">
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" render={<Link to="/" />}>
-              <div className="flex aspect-square size-8 items-center justify-center">
-                <img src="/prism-logo.svg" alt="Prism Agent" width={28} height={28} />
+            <SidebarMenuButton size="lg" render={<Link to="/" />} tooltip={agent.name}>
+              <div className="relative shrink-0">
+                <div className="brand-tile flex aspect-square size-8 items-center justify-center rounded-lg">
+                  <img src="/prism-logo.svg" alt="" width={20} height={20} />
+                </div>
+                {/* Inside the tile's box: the button clips its overflow when the sidebar is icons only. */}
+                <AgentPresence className="right-0 bottom-0" />
               </div>
               <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-semibold">Prism Agent</span>
-                <span className="truncate text-xs text-muted-foreground">Self-contained runtime</span>
+                <span className="truncate font-semibold text-strong">{agent.name}</span>
+                <span className="truncate text-xs text-muted-foreground">Prism Agent</span>
               </div>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
+        <NewChatButton />
+        <SearchButton />
       </SidebarHeader>
 
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>{agent.name}</SidebarGroupLabel>
-          <SidebarMenu>
-            {NAV_ITEMS.filter((item) => !item.needsComputer || agent.hasComputer).map(
-              ({ to, label, icon: Icon }) => {
+        {NAV_GROUPS.map((group) => (
+          <SidebarGroup key={group.label} className="py-1">
+            <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+            <SidebarMenu>
+              {visibleNavItems(group.items, agent.hasComputer).map(({ to, label, icon: Icon }) => {
                 const isActive = to === '/' ? pathname === '/' : pathname.startsWith(to);
                 return (
                   <SidebarMenuItem key={to}>
-                    <SidebarMenuButton isActive={isActive} render={<Link to={to} />}>
+                    <SidebarMenuButton
+                      isActive={isActive}
+                      tooltip={label}
+                      render={<Link to={to} aria-current={isActive ? 'page' : undefined} />}
+                      // The page on screen: a tinted row, its icon in the accent, and a short bar
+                      // at its left edge.
+                      className="relative before:absolute before:top-1/2 before:-left-2 before:h-4 before:w-0.5 before:-translate-y-1/2 before:rounded-full before:bg-primary before:opacity-0 before:transition-opacity data-active:bg-primary/10 data-active:text-strong data-active:before:opacity-100 data-active:[&>svg]:text-primary group-data-[collapsible=icon]:before:hidden"
+                    >
                       <Icon className="size-4" />
                       <span>{label}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 );
-              },
-            )}
-          </SidebarMenu>
-        </SidebarGroup>
+              })}
+            </SidebarMenu>
+          </SidebarGroup>
+        ))}
 
-        {/* Conversation threads — only on the Chat page, ChatGPT-style. */}
+        {/* Conversation threads — only on the Chat page. */}
         {pathname.startsWith('/chat') && <RecentsNav />}
       </SidebarContent>
-
+      <SidebarRail />
     </Sidebar>
   );
 }

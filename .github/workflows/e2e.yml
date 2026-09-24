@@ -42,13 +42,11 @@ concurrency:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    # The two suites sat at ~12 min before the bedrock-mantle specs, i.e. 3 min
-    # of headroom against the old 15. The new specs measured ~30s together on a
-    # fast run, but their waits are bounded far higher than that — real LLM
-    # turns at 30-60s each put a slow-but-passing run several minutes above the
-    # old baseline. Sized so the timeout catches hangs rather than occasionally
-    # killing a slow green run; re-measure once this has a few runs behind it.
-    timeout-minutes: 30
+    # A green run measured 27.5 min on 2026-09-23 (20 min of browser scenarios, 6 min
+    # of TUI scenarios, 2 min of setup), 2.5 min short of the old 30. Sized so the
+    # timeout catches hangs rather than killing a slow green run; re-measure once this
+    # has a few runs behind it.
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

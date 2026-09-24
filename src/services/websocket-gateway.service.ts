@@ -187,7 +187,8 @@ class WebSocketGatewayService {
   // The AbortController for the user's in-flight chat turn. A `cancel` message
   // aborts it, which stops the LLM generation mid-turn (see invokeStream).
   // Single-flight per user, so one controller per userId is sufficient.
-  private activeRequests: Map<string, AbortController> = new Map();
+  /** The turn in flight per user: its abort handle and the thread it runs on. */
+  private activeRequests: Map<string, { controller: AbortController; threadId?: string }> = new Map();
   // The socket whose request holds the voice session, from the moment the gateway
   // decides to open one until it is over — so closing it ends the call. Taken
   // before the service is asked, because the service reports `live` from inside
@@ -501,11 +502,11 @@ class WebSocketGatewayService {
    * broadcast remains as an idempotent safety net.
    */
   private handleCancelMessage(userId: string): void {
-    const controller = this.activeRequests.get(userId);
-    if (controller) {
+    const active = this.activeRequests.get(userId);
+    if (active) {
       logger.info('Cancel requested by %s', userId);
-      controller.abort();
-      this.broadcast(userId, { type: 'status', payload: { processing: false } });
+      active.controller.abort();
+      this.broadcast(userId, { type: 'status', payload: { processing: false, threadId: active.threadId } });
     }
     this.messageQueues.delete(userId);
   }
@@ -911,16 +912,13 @@ class WebSocketGatewayService {
     // A `cancel` message aborts this controller, which stops the LLM
     // generation mid-turn (signal threaded into generateText).
     const controller = new AbortController();
-    this.activeRequests.set(userId, controller);
+    this.activeRequests.set(userId, { controller, threadId: message.threadId });
 
     try {
-      // Send processing indicator
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'status',
-          payload: { processing: true },
-        }));
-      }
+      // Tell every one of the user's connections the turn has started, so a
+      // second tab shows the agent working, not only the one that asked. The
+      // thread lets a tab on another conversation keep its own composer idle.
+      this.broadcast(userId, { type: 'status', payload: { processing: true, threadId: message.threadId } });
 
       logger.info('Calling conversation engine for %s', userId);
 
@@ -962,7 +960,7 @@ class WebSocketGatewayService {
       // Tell every one of the user's connections the turn is done so the
       // STOP button / spinner resets even when a cancel produced no new
       // message to deliver.
-      this.broadcast(userId, { type: 'status', payload: { processing: false } });
+      this.broadcast(userId, { type: 'status', payload: { processing: false, threadId: message.threadId } });
 
       // Process queued messages
       await this.processQueue(userId);

@@ -240,6 +240,23 @@ describe('useWebSocket', () => {
     expect(result.current.isTyping).toBe(true);
   });
 
+  it('keeps isTyping to its own conversation and reports any turn as the agent being busy', async () => {
+    const { result, ws } = await renderConnected({ onMessage: vi.fn(), threadId: 't1' });
+
+    // A turn in another tab: the agent is busy, but this composer stays idle, since
+    // its STOP button would cancel that other turn.
+    act(() => ws.deliver({ type: 'status', payload: { processing: true, threadId: 't2' } }));
+    expect(result.current.isTyping).toBe(false);
+    expect(result.current.isAgentBusy).toBe(true);
+
+    act(() => ws.deliver({ type: 'status', payload: { processing: false, threadId: 't2' } }));
+    expect(result.current.isAgentBusy).toBe(false);
+
+    act(() => ws.deliver({ type: 'status', payload: { processing: true, threadId: 't1' } }));
+    expect(result.current.isTyping).toBe(true);
+    expect(result.current.isAgentBusy).toBe(true);
+  });
+
   it('ignores the connect handshake status, which carries no processing flag', async () => {
     const { result, ws } = await renderConnected({ onMessage: vi.fn() });
 

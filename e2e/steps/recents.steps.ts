@@ -120,3 +120,12 @@ Then('the Recents header is hidden', async ({ page }) => {
   const home = new HomePage(page);
   await expect(home.recentsSection).toBeHidden();
 });
+
+Then('{string} is listed under {string} in Recents', async ({ page }, name: string, group: string) => {
+  const home = new HomePage(page);
+  await expect(home.recentThreadsInGroup(group).filter({ hasText: name })).toBeVisible();
+});
+
+When('I click the sidebar New chat button', async ({ page }) => {
+  await new HomePage(page).sidebarNewChatButton.click();
+});

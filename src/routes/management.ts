@@ -766,7 +766,15 @@ router.get('/cron-tasks', async (_req: Request, res: Response) => {
     const tasks = await prisma.cronTask.findMany({
       orderBy: { createdAt: 'desc' },
     });
-    res.json(tasks);
+    // A recurring task stores no next run; its running job knows it. A one-shot's schedule is
+    // the wording it was asked in, which node-cron does not read.
+    res.json(
+      tasks.map((task) => ({
+        ...task,
+        recurring: cron.validate(task.schedule),
+        nextRunAt: task.nextRunAt ?? cronSchedulerService.nextRunFor(task.id),
+      })),
+    );
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[Management] Failed to list cron tasks for agent: ${msg}`);

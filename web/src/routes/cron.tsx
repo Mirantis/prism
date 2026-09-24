@@ -1,19 +1,11 @@
 import { useState } from 'react';
 import { createFileRoute } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import {
   Field,
   FieldDescription,
@@ -21,7 +13,13 @@ import {
   FieldGroup,
   FieldLabel,
 } from '@/components/ui/field';
-import { Clock, Plus, Trash2 } from 'lucide-react';
+import { Clock, Plus, TriangleAlert } from 'lucide-react';
+import { Page } from '@/components/layout/page';
+import { PageHeader } from '@/components/layout/page-header';
+import { EmptyState } from '@/components/shared/empty-state';
+import { ScheduledTaskItem } from '@/components/schedules/scheduled-task-item';
+import { CRON_PRESETS, describeSchedule, normalizeSchedule } from '@/lib/cron-presets';
+import { cn } from '@/lib/utils';
 import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
 import { useFormErrors } from '@/hooks/use-form-errors';
@@ -40,10 +38,17 @@ function CronPage() {
   const [form, setForm] = useState({ name: '', schedule: '0 9 * * *', instruction: '' });
   const { fieldErrors, clearFieldError, handleError, reset: resetErrors } = useFormErrors();
 
-  const { data: tasks, isLoading } = useQuery({
+  const { data: tasks, isLoading, isError, refetch } = useQuery({
     queryKey: ['cron-tasks', agent.agentId],
     queryFn: () => runtimeApi.listCronTasks(),
   });
+
+  // Every schedule is read in the agent's time zone, so the form says which one that is.
+  const { data: details } = useQuery({
+    queryKey: ['agent-details', agent.agentId],
+    queryFn: () => runtimeApi.details(),
+  });
+  const zoneWords = details ? `the agent's time zone, ${details.timezone}` : "the agent's time zone";
 
   const scheduleMut = useMutation({
     mutationFn: (input: { name: string; schedule: string; instruction: string }) =>
@@ -87,92 +92,81 @@ function CronPage() {
 
   if (isLoading) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-8 w-64" />
-        <Skeleton className="h-4 w-96" />
-        <Skeleton className="h-64 mt-6" />
-      </div>
+      <Page>
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-64" />
+          <Skeleton className="h-4 w-96" />
+        </div>
+        <Skeleton className="h-64" />
+      </Page>
     );
   }
 
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight">Scheduled Tasks</h2>
-          <p className="text-sm text-muted-foreground">Recurring agent runs scheduled via cron expressions.</p>
-        </div>
-        <Button onClick={() => setIsCreating(true)}>
-          <Plus className="mr-1 h-4 w-4" />
-          New task
-        </Button>
-      </div>
+  const activeCount = tasks?.filter((t) => t.isActive).length ?? 0;
+  const describedForm = describeSchedule(form.schedule);
 
-      {tasks && tasks.length > 0 ? (
+  return (
+    <Page>
+      <PageHeader
+        title="Scheduled Tasks"
+        description="Recurring agent runs on a cron schedule. Each run can report back to you."
+        actions={
+          <Button onClick={() => setIsCreating(true)}>
+            <Plus />
+            New task
+          </Button>
+        }
+      />
+
+      {isError ? (
         <Card>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Task</TableHead>
-                  <TableHead>Schedule</TableHead>
-                  <TableHead className="hidden md:table-cell">Last run</TableHead>
-                  <TableHead className="w-[50px]" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {tasks.map((t) => (
-                  <TableRow key={t.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <div className="flex size-8 items-center justify-center rounded-md bg-muted">
-                          <Clock className="size-4 text-muted-foreground" />
-                        </div>
-                        <span className="font-medium">{t.name}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
-                        {t.schedule}
-                      </code>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
-                      {t.lastRunAt ? new Date(t.lastRunAt).toLocaleString() : '—'}
-                    </TableCell>
-                    <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={(e: React.MouseEvent) => {
-                          e.stopPropagation();
-                          setDeleteTarget({ id: t.id, name: t.name });
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
+          <EmptyState
+            icon={TriangleAlert}
+            title="Scheduled tasks could not be loaded"
+            action={
+              <Button variant="outline" size="sm" onClick={() => refetch()}>
+                Try again
+              </Button>
+            }
+          />
+        </Card>
+      ) : tasks && tasks.length > 0 ? (
+        <Card className="gap-0 py-0" aria-label="Scheduled tasks">
+          <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-2.5 text-xs text-muted-foreground sm:px-5">
+            <span>
+              {tasks.length} {tasks.length === 1 ? 'task' : 'tasks'} · {activeCount} active
+            </span>
+          </div>
+          <ul className="divide-y divide-border">
+            {tasks.map((task) => (
+              <ScheduledTaskItem
+                key={task.id}
+                task={task}
+                onDelete={() => setDeleteTarget({ id: task.id, name: task.name })}
+              />
+            ))}
+          </ul>
         </Card>
       ) : (
         <Card>
-          <CardContent>
-            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-              <Clock className="h-10 w-10 mb-2 opacity-50" />
-              <p className="text-sm">No scheduled tasks</p>
-              <p className="text-xs">Create a cron task to run the agent on a schedule.</p>
-            </div>
-          </CardContent>
+          <EmptyState
+            icon={Clock}
+            title="No scheduled tasks"
+            description="Create a task to run the agent on a schedule, or ask it in chat: “every morning at 9, check my inbox”."
+            action={
+              <Button variant="outline" onClick={() => setIsCreating(true)}>
+                <Plus />
+                New task
+              </Button>
+            }
+          />
         </Card>
       )}
 
       <CreateModal
         isOpen={isCreating}
         onClose={resetModal}
-        title="New cron task"
+        title="New scheduled task"
         onSubmit={handleCreate}
         isSubmitting={scheduleMut.isPending}
         submitLabel="Schedule"
@@ -192,6 +186,27 @@ function CronPage() {
           </Field>
           <Field data-invalid={Boolean(fieldErrors.schedule)}>
             <FieldLabel htmlFor="cron-schedule">Schedule</FieldLabel>
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Common schedules">
+              {CRON_PRESETS.map((p) => {
+                const selected = normalizeSchedule(form.schedule) === p.schedule;
+                return (
+                  <button
+                    key={p.schedule}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => setField('schedule', p.schedule)}
+                    className={cn(
+                      'rounded-full px-2.5 py-1 text-xs ring-1 transition-colors ring-inset outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                      selected
+                        ? 'bg-primary/15 text-strong ring-primary/40'
+                        : 'text-muted-foreground ring-border hover:bg-muted/50 hover:text-strong',
+                    )}
+                  >
+                    {p.label}
+                  </button>
+                );
+              })}
+            </div>
             <Input
               id="cron-schedule"
               aria-invalid={Boolean(fieldErrors.schedule) || undefined}
@@ -203,8 +218,10 @@ function CronPage() {
             {fieldErrors.schedule ? (
               <FieldError>{fieldErrors.schedule}</FieldError>
             ) : (
-              <FieldDescription>
-                Example: <code>0 9 * * *</code> = every day at 09:00.
+              <FieldDescription data-testid="schedule-help">
+                {describedForm
+                  ? `${describedForm} in ${zoneWords}. Edit the expression for another time.`
+                  : `A cron expression: minute, hour, day of month, month, day of week, read in ${zoneWords}.`}
               </FieldDescription>
             )}
           </Field>
@@ -215,7 +232,7 @@ function CronPage() {
               aria-invalid={Boolean(fieldErrors.instruction) || undefined}
               value={form.instruction}
               onChange={(e) => setField('instruction', e.target.value)}
-              placeholder="What should the agent do on each tick?"
+              placeholder="What should the agent do each time?"
               rows={3}
             />
             {fieldErrors.instruction && <FieldError>{fieldErrors.instruction}</FieldError>}
@@ -229,10 +246,10 @@ function CronPage() {
           onClose={() => setDeleteTarget(null)}
           onConfirm={() => deleteMut.mutate(deleteTarget.id)}
           isDeleting={deleteMut.isPending}
-          entityType="cron task"
+          entityType="scheduled task"
           entityName={deleteTarget.name}
         />
       )}
-    </div>
+    </Page>
   );
 }

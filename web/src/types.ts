@@ -162,6 +162,8 @@ export interface AgentDetails {
   cronModel: string | null;
   verbose: boolean;
   lockedIn: boolean;
+  /** The IANA zone the agent's schedules and daily reset are read in. */
+  timezone: string;
   status: 'RUNNING' | 'IDLE' | 'ERROR';
   lastHeartbeat: string | null;
   createdAt: string;
@@ -271,6 +273,8 @@ export interface CronTask {
   agentId: string;
   name: string;
   schedule: string;
+  /** A cron schedule, as opposed to one run at a set time. */
+  recurring: boolean;
   instruction: string | null;
   isActive: boolean;
   lastRunAt: string | null;
