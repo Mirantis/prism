@@ -19,8 +19,8 @@ The UI is organized around a left sidebar with seven sections: **Overview**,
 
 The landing page. It shows the agent's status (RUNNING / IDLE / ERROR), its
 heartbeat state, a count of linked Slack channels, the number of scheduled
-tasks, and when the agent was created. Select **Heartbeat**, **Channels**, or **Scheduled Tasks** to open its settings.
-Use **Start a conversation** to open Chat, or **View activity** to review usage and tool calls. (To rename the agent, use the
+tasks, and recent conversations. Select **Heartbeat**, **Channels**, or **Scheduled Tasks** to open its settings.
+Select a recent conversation to resume it. Use **Open chat** to open Chat, or **View activity** to review usage and tool calls. (To rename the agent, use the
 Name field on the [Profile](#profile) page.)
 
 On a native install, a strip under the header announces a newer release with an
@@ -88,8 +88,9 @@ The main conversation surface.
   code blocks with highlighting, links). Files the agent shares back appear as
   downloadable chips.
 - **Threads.** Each conversation is a thread. Recent threads are listed in the
-  sidebar under **Chat** (newest first); click one to reopen it. Start a fresh
-  conversation with the pen button next to the **Recents** heading — clicking
+  sidebar under **Chat** (newest first); click one to reopen it. Use **Search
+  conversations** to filter the latest 100 threads by title. Start a fresh
+  conversation with **New conversation** above **Recents** — clicking
   it again while the new thread is still empty reuses that thread instead of
   piling up empty ones. The thread ID is in the URL (`/chat/<threadId>`), so
   conversations are deep-linkable. A new thread is also created automatically

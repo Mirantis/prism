@@ -1,14 +1,14 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, Bot, Clock, MessageSquare, MessagesSquare } from 'lucide-react';
+import { ArrowRight, MessageSquare } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { HeartbeatCard } from '@/components/overview/heartbeat-card';
 import { ChannelsCard } from '@/components/overview/channels-card';
 import { ScheduledTasksCard } from '@/components/overview/scheduled-tasks-card';
-import { CreatedCard } from '@/components/overview/created-card';
-import { ActionTile } from '@/components/overview/action-tile';
+import { RecentConversations } from '@/components/overview/recent-conversations';
+import { WorkspaceShortcuts } from '@/components/overview/workspace-shortcuts';
 import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
 
@@ -22,12 +22,12 @@ function OverviewPage() {
   });
 
   return (
-    <div className="page-content space-y-8 lg:space-y-10">
-      <section className="overview-hero relative overflow-hidden rounded-2xl border border-border p-6 sm:p-9 lg:p-10">
+    <div className="page-content space-y-6 lg:space-y-7">
+      <section className="overview-hero relative overflow-hidden rounded-2xl border border-border p-6 sm:p-7 lg:p-8">
         <div className="relative z-10 max-w-2xl">
-          <p className="eyebrow mb-5">Your workspace</p>
-          <div className="mb-4 flex flex-wrap items-center gap-3">
-            <h1 className="break-words text-4xl font-semibold tracking-tight sm:text-5xl">
+          <p className="eyebrow mb-3">Your workspace</p>
+          <div className="mb-3 flex flex-wrap items-center gap-3">
+            <h1 className="break-words text-3xl font-semibold tracking-tight sm:text-4xl">
               {agent.name}
             </h1>
             {details && (
@@ -43,9 +43,9 @@ function OverviewPage() {
             )}
           </div>
           <p className="max-w-md text-base leading-relaxed text-muted-foreground">
-            A space to think, plan, and get things done with your agent.
+            Your conversations, routines, and agent. All in one place.
           </p>
-          <div className="mt-7 flex flex-wrap items-center gap-3">
+          <div className="mt-5 flex flex-wrap items-center gap-3">
             <Button
               nativeButton={false}
               size="lg"
@@ -53,7 +53,7 @@ function OverviewPage() {
               render={<Link to="/chat" />}
             >
               <MessageSquare className="size-4" />
-              Start a conversation
+              Open chat
               <ArrowRight className="ml-2 size-4" />
             </Button>
             <Button
@@ -86,57 +86,24 @@ function OverviewPage() {
           </Link>
         </div>
         {isLoading ? (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            {Array.from({ length: 4 }, (_, i) => (
+          <div className="grid gap-4 sm:grid-cols-3">
+            {Array.from({ length: 3 }, (_, i) => (
               <Skeleton key={i} className="h-36 rounded-xl" />
             ))}
           </div>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-3">
             <HeartbeatCard />
             <ChannelsCard />
             <ScheduledTasksCard />
-            <CreatedCard details={details} />
           </div>
         )}
       </section>
 
-      <section aria-labelledby="workspace-actions">
-        <div className="mb-5 space-y-1">
-          <h2 id="workspace-actions" className="text-lg font-semibold tracking-tight">
-            Make it yours
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            Give your agent direction. Build a routine that works for you.
-          </p>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <ActionTile
-            icon={MessageSquare}
-            title="Start a conversation"
-            description="Work through an idea or hand over a task."
-            to="/chat"
-          />
-          <ActionTile
-            icon={MessagesSquare}
-            title="Connect to Slack"
-            description="Bring your agent into your team's conversations."
-            to="/channels"
-          />
-          <ActionTile
-            icon={Clock}
-            title="Set a schedule"
-            description="Make regular checks and reports a routine."
-            to="/cron"
-          />
-          <ActionTile
-            icon={Bot}
-            title="Shape your agent"
-            description="Give it instructions, context, and a personality."
-            to="/profile"
-          />
-        </div>
-      </section>
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+        <RecentConversations />
+        <WorkspaceShortcuts />
+      </div>
     </div>
   );
 }

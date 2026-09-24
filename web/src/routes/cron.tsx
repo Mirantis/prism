@@ -8,26 +8,15 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import {
-  Field,
-  FieldDescription,
-  FieldError,
-  FieldGroup,
-  FieldLabel,
-} from '@/components/ui/field';
-import { Clock, Plus, Trash2 } from 'lucide-react';
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Clock, Plus } from 'lucide-react';
 import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
 import { useFormErrors } from '@/hooks/use-form-errors';
 import { CreateModal } from '@/components/shared/create-modal';
+import { SchedulePresets } from '@/components/schedules/schedule-presets';
+import { ScheduledTaskItem } from '@/components/schedules/scheduled-task-item';
+import { scheduleDescription } from '@/lib/schedule';
 import { DeleteConfirm } from '@/components/shared/delete-confirm';
 
 export const Route = createFileRoute('/cron')({
@@ -42,7 +31,12 @@ function CronPage() {
   const [form, setForm] = useState({ name: '', schedule: '0 9 * * *', instruction: '' });
   const { fieldErrors, clearFieldError, handleError, reset: resetErrors } = useFormErrors();
 
-  const { data: tasks, isLoading } = useQuery({
+  const {
+    data: tasks,
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery({
     queryKey: ['cron-tasks', agent.agentId],
     queryFn: () => runtimeApi.listCronTasks(),
   });
@@ -110,56 +104,34 @@ function CronPage() {
         }
       />
 
-      {tasks && tasks.length > 0 ? (
+      {isError ? (
         <Card>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Task</TableHead>
-                  <TableHead>Schedule</TableHead>
-                  <TableHead className="hidden md:table-cell">Last run</TableHead>
-                  <TableHead className="w-[50px]" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {tasks.map((t) => (
-                  <TableRow key={t.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <div className="flex size-8 items-center justify-center rounded-md bg-muted">
-                          <Clock className="size-4 text-muted-foreground" />
-                        </div>
-                        <span className="font-medium">{t.name}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
-                        {t.schedule}
-                      </code>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
-                      {t.lastRunAt ? new Date(t.lastRunAt).toLocaleString() : '—'}
-                    </TableCell>
-                    <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label={`Delete ${t.name}`}
-                        onClick={(e: React.MouseEvent) => {
-                          e.stopPropagation();
-                          setDeleteTarget({ id: t.id, name: t.name });
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+          <CardContent className="space-y-3">
+            <p>Scheduled tasks could not be loaded.</p>
+            <Button variant="outline" onClick={() => refetch()}>
+              Try again
+            </Button>
           </CardContent>
         </Card>
+      ) : tasks && tasks.length > 0 ? (
+        <section
+          className="overflow-hidden rounded-2xl border border-border bg-card"
+          aria-label="Scheduled tasks"
+        >
+          <div className="border-b border-border px-5 py-4 text-sm text-muted-foreground sm:px-6">
+            {tasks.length} {tasks.length === 1 ? 'task' : 'tasks'} ·{' '}
+            {tasks.filter((task) => task.isActive).length} active
+          </div>
+          <ul className="divide-y divide-border">
+            {tasks.map((task) => (
+              <ScheduledTaskItem
+                key={task.id}
+                task={task}
+                onDelete={() => setDeleteTarget({ id: task.id, name: task.name })}
+              />
+            ))}
+          </ul>
+        </section>
       ) : (
         <Card>
           <CardContent>
@@ -181,7 +153,7 @@ function CronPage() {
       <CreateModal
         isOpen={isCreating}
         onClose={resetModal}
-        title="New cron task"
+        title="New scheduled task"
         onSubmit={handleCreate}
         isSubmitting={scheduleMut.isPending}
         submitLabel="Schedule"
@@ -201,6 +173,10 @@ function CronPage() {
           </Field>
           <Field data-invalid={Boolean(fieldErrors.schedule)}>
             <FieldLabel htmlFor="cron-schedule">Schedule</FieldLabel>
+            <SchedulePresets
+              value={form.schedule}
+              onChange={(value) => setField('schedule', value)}
+            />
             <Input
               id="cron-schedule"
               aria-invalid={Boolean(fieldErrors.schedule) || undefined}
@@ -213,7 +189,8 @@ function CronPage() {
               <FieldError>{fieldErrors.schedule}</FieldError>
             ) : (
               <FieldDescription>
-                Example: <code>0 9 * * *</code> = every day at 09:00.
+                {scheduleDescription(form.schedule) ?? 'Custom cron schedule'}. Edit the expression
+                to choose another time.
               </FieldDescription>
             )}
           </Field>
@@ -224,7 +201,7 @@ function CronPage() {
               aria-invalid={Boolean(fieldErrors.instruction) || undefined}
               value={form.instruction}
               onChange={(e) => setField('instruction', e.target.value)}
-              placeholder="What should the agent do on each tick?"
+              placeholder="What should your agent do each time?"
               rows={3}
             />
             {fieldErrors.instruction && <FieldError>{fieldErrors.instruction}</FieldError>}

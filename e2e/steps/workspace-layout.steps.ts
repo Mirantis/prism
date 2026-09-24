@@ -65,7 +65,7 @@ When('I choose Create your first task', async ({ page }) => {
 });
 
 Then('the task creation form is visible and fits the screen', async ({ page }) => {
-  const dialog = page.getByRole('dialog', { name: 'New cron task' });
+  const dialog = page.getByRole('dialog', { name: 'New scheduled task' });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByLabel('Name', { exact: true })).toBeVisible();
   await expect(dialog.getByLabel('Schedule', { exact: true })).toBeVisible();

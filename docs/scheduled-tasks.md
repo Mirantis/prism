@@ -64,6 +64,10 @@ Scheduled runs use the agent's main model by default, but you can give them
 their own model from the **[Web UI → Profile](web-ui.md#profile)** or the
 **[Terminal UI](terminal-ui.md#slash-commands)** (`/cron-model <id>`).
 
+In the web UI, choose **Daily**, **Weekdays**, or **Weekly** for a 09:00 schedule,
+then edit the cron expression to change the time. Task cards show the instruction,
+active status, and last run.
+
 ## Waiting: continue in the same conversation
 
 Sometimes the agent needs to **wait** for something mid-conversation — "check the
