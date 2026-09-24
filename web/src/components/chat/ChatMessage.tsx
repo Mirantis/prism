@@ -1,5 +1,5 @@
 import { ChatComputerHelp } from '@/components/computer/chat-computer-help';
-import type { ComputerHelp } from '@/types';
+import { computerHelpBlocks } from '@/types';
 import { memo } from 'react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Bot } from 'lucide-react';
@@ -77,7 +77,7 @@ const ChatMessage = memo(function ChatMessage({
     );
   }
 
-  const help = message.blocks?.filter((block): block is ComputerHelp => block !== null && typeof block === 'object' && 'type' in block && block.type === 'computer_help') ?? [];
+  const help = computerHelpBlocks(message);
   return (
     <div className="group flex gap-3">
       <Avatar size="sm" className="mt-0.5 shrink-0">

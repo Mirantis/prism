@@ -26,7 +26,9 @@ recording runs, so it will not interrupt, and a recording stops itself after fiv
 
 ## When Prism needs help
 
-Prism slides the live desktop into a resizable panel over the right side of the whole chat when it needs help. Close it with the X and reopen it from the help request in the chat, or use fullscreen when you need more room. Click the desktop, finish the step, and press Esc or **I’m done** to resume the request. The chat keeps a compact completed or dismissed status where the request appeared after the panel closes.
+When Prism needs help, the live desktop opens in a resizable panel on the right side of chat. Close it with the X and reopen it from the request in chat, or use fullscreen for more room. Click the desktop, finish the step, and press Esc or **I’m done** to resume the request. The chat shows a completed or dismissed status where the request appeared.
+
+From Slack, **Open Computer** opens the Computer page with the request beside the screen.
 
 A blocked website can wait while Prism works elsewhere. When you hand back control, the interrupted turn finishes first; the request you unblocked follows it. **Dismiss** closes a help request; Prism treats it as dismissed in later conversation turns. **Stop** cancels the invocation using the computer.
 

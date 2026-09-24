@@ -44,9 +44,9 @@ describe('computer help history marker', () => {
     const onOpen = vi.fn();
     render(<ChatComputerHelp help={help} onOpen={onOpen} />);
 
-    const marker = screen.getByLabelText(
-      helpStatus === 'waiting' ? 'Open computer help' : 'Computer help status',
-    );
+    const marker = helpStatus === 'waiting'
+      ? screen.getByRole('button', { name: `${label} ${help.reason}` })
+      : screen.getByRole('status', { name: 'Computer help status' });
     expect(marker.textContent).toContain(label);
     expect(marker.textContent).toContain(help.reason);
     if (helpStatus === 'waiting') {

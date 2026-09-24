@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Monitor, ArrowUpRight } from 'lucide-react';
+import { Monitor } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
 import { computerRequest } from '@/api/computer';
 import { useComputerStatus } from '@/hooks/use-computer-status';
 import type { ComputerHelp } from '@/types';
@@ -10,14 +9,12 @@ import type { ComputerHelp } from '@/types';
 export function ComputerHelpCard({
   help,
   clientId,
-  inComputer,
-  showConversationLink = inComputer,
+  showConversationLink = true,
   showHeader = true,
   disabled = false,
 }: {
   help: ComputerHelp;
   clientId?: string | null;
-  inComputer?: boolean;
   showConversationLink?: boolean;
   showHeader?: boolean;
   disabled?: boolean;
@@ -41,23 +38,14 @@ export function ComputerHelpCard({
   };
   return (
     <section
-      className={cn(
-        'rounded-xl border p-4',
-        inComputer
-          ? 'space-y-4 border-border bg-card shadow-sm'
-          : 'space-y-3 border-amber-500/25 bg-amber-500/5',
-      )}
+      className="space-y-4 rounded-xl border border-border bg-card p-4 shadow-sm"
       aria-label="Computer help"
     >
       {showHeader && (
         <div className="flex items-center gap-2 text-sm font-medium">
-          {inComputer ? (
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-500">
-              <Monitor className="size-4" />
-            </span>
-          ) : (
-            <Monitor className="size-4 text-amber-500" />
-          )}
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-500">
+            <Monitor className="size-4" />
+          </span>
           {current.status === 'waiting'
             ? 'Needs your help'
             : current.status === 'continued'
@@ -65,29 +53,16 @@ export function ComputerHelpCard({
               : 'Dismissed'}
         </div>
       )}
-      <p
-        className={cn(
-          'break-words text-sm',
-          inComputer ? 'leading-relaxed text-foreground/85' : 'text-muted-foreground',
-        )}
-      >
+      <p className="break-words text-sm leading-relaxed text-foreground/85">
         {help.reason}
       </p>
-      {inComputer && (
-        <p className="text-xs leading-relaxed text-muted-foreground">
-          Click the screen to complete this step. Press Esc when you’re done, or choose “I’m done”.
-        </p>
-      )}
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        Click the screen to complete this step. Press Esc when you’re done, or choose “I’m done”.
+      </p>
       {current.status === 'waiting' && (
         <div className="flex flex-wrap items-center gap-2">
-          {!inComputer && (
-            <a className="text-sm underline underline-offset-4" href={`/computer?help=${help.id}`}>
-              Open Computer <ArrowUpRight className="inline size-3" />
-            </a>
-          )}
           <Button
-            size={inComputer ? 'default' : 'sm'}
-            className={inComputer ? 'flex-1' : undefined}
+            className="flex-1"
             disabled={busy || disabled}
             onClick={() => void resolve('continue')}
           >

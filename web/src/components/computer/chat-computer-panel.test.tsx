@@ -206,6 +206,68 @@ describe('chat computer panel', () => {
     });
   });
 
+  it('keeps the next waiting request open when the displayed request finishes', () => {
+    const older = { ...help, id: '00000000-0000-4000-8000-000000000003' };
+    const newer = { ...help, id: '00000000-0000-4000-8000-000000000004' };
+    state.status = { ...status('waiting'), help: [older, newer] };
+    const queryClient = new QueryClient();
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <ChatComputerPanel requests={[older, newer]} />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByLabelText('Computer help').textContent).toContain(newer.id);
+    state.status = {
+      ...state.status,
+      help: [older, { ...newer, status: 'continued' }],
+    };
+    view.rerender(
+      <QueryClientProvider client={queryClient}>
+        <ChatComputerPanel requests={[older, newer]} />
+      </QueryClientProvider>,
+    );
+
+    act(() => vi.advanceTimersByTime(1200));
+    expect(screen.getByLabelText('Computer help').textContent).toContain(older.id);
+    expect(screen.getByLabelText('Computer help panel').getAttribute('data-state')).toBe('open');
+  });
+
+  it('keeps control and release on the request that took control', async () => {
+    const older = { ...help, id: '00000000-0000-4000-8000-000000000003' };
+    const newer = { ...help, id: '00000000-0000-4000-8000-000000000004' };
+    state.status = { ...status('waiting'), help: [older, newer] };
+    const queryClient = new QueryClient();
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <ChatComputerPanel requests={[older, newer]} />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Take control' }));
+    await act(async () => {});
+    state.status = {
+      ...state.status,
+      controller: '00000000-0000-4000-8000-000000000001',
+    };
+    view.rerender(
+      <QueryClientProvider client={queryClient}>
+        <ChatComputerPanel
+          requests={[older, newer]}
+          reopenRequest={{ id: older.id, token: 1 }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByLabelText('Computer help').textContent).toContain(newer.id);
+    fireEvent.click(screen.getByRole('button', { name: 'Release control' }));
+    await act(async () => {});
+    expect(computerRequest).toHaveBeenCalledWith(`/help/${newer.id}`, {
+      action: 'continue',
+      clientId: '00000000-0000-4000-8000-000000000001',
+    });
+  });
+
   it('opens when Strict Mode cancels the first animation frame', () => {
     const frames = new Map<number, FrameRequestCallback>();
     let frameId = 0;

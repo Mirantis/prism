@@ -24,8 +24,7 @@ NAME="${PRISM_CONTAINER:-prism-dev}"
 VOLUME="${PRISM_VOLUME:-prism-dev-data}"
 
 if ! docker image inspect "$IMAGE" > /dev/null 2>&1; then
-  echo "No image $IMAGE. Build one with 'npm run docker:build'." >&2
-  exit 1
+  docker pull "$IMAGE"
 fi
 
 if [ ! -f .env ]; then

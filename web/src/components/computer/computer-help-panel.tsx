@@ -26,7 +26,6 @@ export function ComputerHelpPanel({
         key={selected.id}
         help={selected}
         clientId={clientId}
-        inComputer
         disabled={disabled}
       />
       {others.length > 0 && (

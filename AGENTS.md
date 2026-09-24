@@ -617,7 +617,7 @@ own toolchain from a clean start; use `docker:dev` below to iterate on code insi
 
 ### The container image with live code (`npm run docker:dev`)
 
-`scripts/docker-dev.sh` runs the published image with this checkout's `.env`,
+`scripts/docker-dev.sh` runs the local image with this checkout's `.env`,
 `prisma/`, `dist/` and `web/dist` mounted in, compiles `src/` on the host with
 `tsc --watch`, and restarts the server in the container on every emit. Ctrl+C stops
 it and removes the container. `PRISM_IMAGE`, `PRISM_PORT`, `PRISM_CONTAINER` and

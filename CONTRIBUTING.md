@@ -40,6 +40,12 @@ SigV4) for chat, and `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` for Slack flows. See
 Browser → `http://localhost:5173`. UI edits hot-reload in under a second; runtime
 TypeScript edits restart the server in about a second.
 
+To use the container desktop while editing, build the local image once with
+`npm run docker:build`, then run `npm run docker:dev`. The script watches runtime
+and Web UI changes. Reload the Web UI after a frontend change. Rebuild the image
+when dependencies, the database schema, or container tools change. Set
+`PRISM_IMAGE` to use another image; the script pulls it when needed.
+
 ## The Verification Gate
 
 Run these from the repo root before opening a pull request:
