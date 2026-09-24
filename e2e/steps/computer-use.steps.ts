@@ -125,6 +125,11 @@ Then('I can resize the computer panel', async ({ page }) => {
   await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
   await page.mouse.down();
   await page.mouse.move(handle.x - 80, handle.y + handle.height / 2);
+  await expect.poll(async () => {
+    const panelBox = await panel.boundingBox();
+    const sendBox = await page.getByRole('button', { name: /^Send/ }).boundingBox();
+    return Boolean(panelBox && sendBox && sendBox.x + sendBox.width <= panelBox.x);
+  }).toBe(true);
   await page.mouse.up();
   await expect.poll(async () => {
     const after = await panel.boundingBox();
@@ -145,6 +150,30 @@ Then('I can enlarge the chat computer to fullscreen', async ({ page }) => {
     .toBe(true);
   await page.getByRole('button', { name: 'Exit fullscreen' }).click();
   await expect.poll(() => page.evaluate(() => document.fullscreenElement === null)).toBe(true);
+});
+
+Then('I can close and reopen the panel after control loses focus', async ({ page }) => {
+  const panel = page.getByLabel('Computer help panel');
+  await page.getByLabel("The agent's screen").click();
+  await expect.poll(async () => {
+    const status = await (await page.request.get('/agents/computer')).json();
+    return status.controller;
+  }).toBeTruthy();
+
+  // A focus loss releases pointer lock without invoking ScreenView's hand-back.
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('blur'));
+    document.exitPointerLock();
+  });
+  await page.getByRole('button', { name: 'Close computer panel' }).click();
+  await expect(panel).toHaveCount(0, { timeout: 15_000 });
+  await expect.poll(async () => {
+    const status = await (await page.request.get('/agents/computer')).json();
+    return status.paused;
+  }).toBe(false);
+
+  await page.getByRole('button', { name: /Computer help requested/ }).click();
+  await expect(panel).toHaveAttribute('data-state', 'open');
 });
 
 When('I sign in through the live computer', async ({ page, $testInfo }) => {

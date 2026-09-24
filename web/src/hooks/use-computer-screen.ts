@@ -149,6 +149,7 @@ export function useComputerScreen(options: UseComputerScreenOptions): ComputerSc
     ws.onclose = () => {
       if (disposed) return;
       setClientId(null);
+      setState(null);
       setHasScreen(false);
       setMessage('Reconnecting to the computer…');
       reconnect = setTimeout(() => setConnection((value) => value + 1), 2000);
@@ -213,6 +214,8 @@ export function useComputerScreen(options: UseComputerScreenOptions): ComputerSc
       wsRef.current = null;
       canvasRef.current = null;
       canvas.close();
+      setClientId(null);
+      setState(null);
       setHasScreen(false);
       setLastFrame(null);
       ws.close();

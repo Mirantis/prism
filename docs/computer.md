@@ -26,7 +26,7 @@ recording runs, so it will not interrupt, and a recording stops itself after fiv
 
 ## When Prism needs help
 
-When Prism needs help, the live desktop opens in a resizable panel on the right side of chat. Close it with the X and reopen it from the request in chat, or use fullscreen for more room. Click the desktop, finish the step, and press Esc or **I’m done** to resume the request. The chat shows a completed or dismissed status where the request appeared.
+When Prism needs help, the live desktop opens in a resizable panel on the right side of chat. Close it with the X to hand back control, then reopen it from the request in chat; use fullscreen for more room. Click the desktop, finish the step, and press Esc or **I’m done** to resume the request. The chat shows a completed or dismissed status where the request appeared.
 
 From Slack, **Open Computer** opens the Computer page with the request beside the screen.
 
