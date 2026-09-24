@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fakeExecutionEnvironment } from '../../test-utils/fake-execution-environment';
 import {
   __resetExecutionEnvironmentDetectionForTests,
@@ -73,5 +73,15 @@ describe('filesFor', () => {
     __setExecutionEnvironmentForTests(served);
     expect(filesFor('/Users/me/dev/repo/.claude/skills')).toBe(getHostEnvironment().files);
     expect(filesFor('/Users/me/dev/repo/.claude/skills')).not.toBe(served.files);
+  });
+
+  it('reports only a cwd, since one thread reads many files', async () => {
+    const { logger } = await import('../../logger');
+    const info = vi.spyOn(logger, 'info');
+    __setExecutionEnvironmentForTests(fakeExecutionEnvironment({ servesPath: () => false }));
+    filesFor('/Users/me/dev/repo/a.ts');
+    filesFor('/Users/me/dev/repo/b.ts');
+    expect(info).not.toHaveBeenCalled();
+    info.mockRestore();
   });
 });

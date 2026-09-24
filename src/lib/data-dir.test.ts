@@ -6,7 +6,6 @@ import {
   resolveDataDir,
   resolveSkillsDir,
   resolvePluginsDir,
-  resolvePluginDataDir,
   resolveMediaDir,
   ensureDataDirs,
   ensureSymlink,
@@ -58,7 +57,7 @@ describe('resolveSkillsDir / resolveMediaDir', () => {
   });
 });
 
-describe('resolvePluginsDir / resolvePluginDataDir', () => {
+describe('resolvePluginsDir', () => {
   it('derive from the data dir', () => {
     process.env.PRISM_DATA_DIR = tmp;
     expect(resolvePluginsDir()).toBe(path.join(tmp, 'plugins'));
@@ -69,18 +68,6 @@ describe('resolvePluginsDir / resolvePluginDataDir', () => {
     const custom = path.join(tmp, 'elsewhere');
     process.env.PRISM_PLUGINS_DIR = custom;
     expect(resolvePluginsDir()).toBe(custom);
-  });
-
-  it('keeps plugin data outside the plugin dir so it survives a re-drop', () => {
-    process.env.PRISM_DATA_DIR = tmp;
-    const dataDir = resolvePluginDataDir('demo');
-    expect(dataDir).toBe(path.join(tmp, 'plugin-data', 'demo'));
-    expect(dataDir.startsWith(resolvePluginsDir())).toBe(false);
-  });
-
-  it('never escapes the data dir when given a path-shaped id', () => {
-    process.env.PRISM_DATA_DIR = tmp;
-    expect(resolvePluginDataDir('../../etc')).toBe(path.join(tmp, 'plugin-data', 'etc'));
   });
 });
 

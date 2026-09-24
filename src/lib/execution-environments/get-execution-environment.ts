@@ -51,15 +51,21 @@ export function getExecutionEnvironmentFor(cwd?: string): ExecutionEnvironment {
   return localFallback();
 }
 
+function servingEnvironment(path: string): ExecutionEnvironment {
+  const environment = getExecutionEnvironment();
+  return environment.servesPath(path) ? environment : localFallback();
+}
+
 /**
  * The filesystem that holds this path.
  *
  * A path the deployment's environment serves is read through it; any other path
  * is on this machine. Every caller that has a path in hand asks here, so a thread
  * rooted in a host repository reads and writes the same files its shell sees.
+ * Only a cwd is reported, since one thread touches many files.
  */
 export function filesFor(filePath: string): ExecutionFiles {
-  return getExecutionEnvironmentFor(filePath).files;
+  return servingEnvironment(filePath).files;
 }
 
 /**
