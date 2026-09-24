@@ -64,7 +64,7 @@ async function globalSetup() {
     );
   }
   // Wait for otelcol to accept OTLP requests. Sized for a cold start: three
-  // containers, two of them pulled from Docker Hub, and otelcol only begins
+  // containers from two registries, and otelcol only begins
   // listening after minio-init has completed. 30s was enough for a warm image
   // cache and nothing else, and expiring here fails the whole suite before the
   // first scenario runs.
