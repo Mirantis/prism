@@ -239,6 +239,27 @@ describe('App', () => {
     }
   });
 
+  it('ends a turn it saw start before the session had a thread', async () => {
+    adapterStub.startNewSession.mockResolvedValueOnce('thread-mine');
+    const flush = async (times = 3) => {
+      for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
+    };
+    const { lastFrame, unmount } = render(<App {...baseProps} />);
+    try {
+      // The connect-time replay of a running Slack turn lands before the thread is pinned.
+      adapterStub.events.emit('status', 'thinking', undefined, 'thread-slack');
+      await flush();
+      await flush();
+      expect(lastFrame() ?? '').toContain('thinking');
+
+      adapterStub.events.emit('status', 'idle', undefined, 'thread-slack');
+      await flush();
+      expect(lastFrame() ?? '').not.toContain('thinking');
+    } finally {
+      unmount();
+    }
+  });
+
   it('keeps the composer live while thinking, so typing still lands in it', async () => {
     const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
     try {
