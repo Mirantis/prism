@@ -633,3 +633,26 @@ model UpdateAttempt {
   @@index([startedAt])
   @@map("update_attempts")
 }
+
+/// Deployment state, keyed by name: what this install was doing last time,
+/// rather than anything about the agent. One key today,
+/// `lastExecutionEnvironment`, holding `local` or `docker`.
+///
+/// It exists to make the storage migration run once per change of environment.
+/// That migration copies only what the destination lacks, so repeating it would
+/// overwrite nothing — except that a file deleted on one side is still on the
+/// other, and a repeat copies it back. Recording where the last run happened is
+/// what keeps a deletion deleted.
+///
+/// A table rather than a column on `AgentWorkspace`, because `index.ts` reads
+/// it about ninety lines before `resolveOrBootstrapSingleAgent` creates the row
+/// a column would sit on.
+model RuntimeState {
+  /// What the value is about, e.g. `lastExecutionEnvironment`.
+  key       String   @id
+  /// The value itself, e.g. `docker`.
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("runtime_state")
+}

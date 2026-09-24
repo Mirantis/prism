@@ -167,8 +167,6 @@ jobs:
           context: .
           file: Dockerfile.exec
           platforms: ${{ matrix.platform }}
-          # No OTel build-args: this image holds no runtime, so it reports
-          # nothing and has nothing to report it to.
           outputs: type=image,name=ghcr.io/lensapp/prism-agent-exec,push-by-digest=true,name-canonical=true,push=true
           secret-files: |
             github_token=${{ runner.temp }}/.gh-token-secret

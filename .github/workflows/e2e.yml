@@ -11,6 +11,7 @@ on:
       - 'cli/**'
       - 'package.json'
       - 'package-lock.json'
+      - 'Dockerfile.exec'
       - '.github/workflows/e2e.yml'
   pull_request:
     paths:
@@ -21,6 +22,7 @@ on:
       - 'cli/**'
       - 'package.json'
       - 'package-lock.json'
+      - 'Dockerfile.exec'
       - '.github/workflows/e2e.yml'
 
 permissions:
@@ -124,6 +126,82 @@ jobs:
           path: |
             e2e/test-results/
             e2e/tui-test-results/
+          retention-days: 7
+
+  # The one scenario that wants the agent's commands in a container. Its own
+  # job because the runtime settles on one environment at boot: running it
+  # beside the others would mean two different tests under one name.
+  e2e-docker:
+    runs-on: ubuntu-latest
+    # One scenario and one LLM turn, behind an image build that is usually a
+    # cache hit. Sized for a cold cache, where the build is most of it.
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '26'
+          cache: 'npm'
+
+      - name: Install npm 11.12.1
+        run: npm install -g npm@11.12.1
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate --schema prisma/sqlite/schema.prisma
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: e2e
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+
+      - name: Prepare build secrets
+        run: |
+          # Same reason as the published build: mise/aqua resolve tool releases
+          # through the GitHub API, which is rate-limited per runner IP.
+          printf '%s' "${{ secrets.GITHUB_TOKEN }}" > "$RUNNER_TEMP/.gh-token-secret"
+
+      # Built here and loaded into the runner's engine rather than pulled: the
+      # runtime under test is built from source, so it carries no version and
+      # asks for `:latest`, which only a production release publishes. Reuses
+      # the layer cache the publishing build fills.
+      - name: Build the exec image
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
+        with:
+          context: .
+          file: Dockerfile.exec
+          load: true
+          tags: ghcr.io/lensapp/prism-agent-exec:latest
+          secret-files: |
+            github_token=${{ runner.temp }}/.gh-token-secret
+          cache-from: |
+            type=gha,scope=pr-exec-linux/amd64
+            type=gha,scope=release-exec-linux/amd64
+
+      - if: always()
+        run: rm -f "$RUNNER_TEMP/.gh-token-secret"
+
+      - name: Run the container-mode E2E scenario
+        run: npm run test:e2e:docker --workspace=prism-agent-e2e
+        env:
+          CI: true
+          EXECUTION_ENVIRONMENT: docker
+          AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-results-docker
+          path: |
+            e2e/test-results/
+            e2e/playwright-report/
           retention-days: 7
 
   # Every Slack-touching e2e test, serialized repo-wide: two of these running at

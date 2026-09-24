@@ -49,6 +49,7 @@ import { startFileJanitor } from './lib/file-janitor';
 import { getSlackHeartbeatThrottleQueue } from './queues/slack-heartbeat-throttle-queue';
 import { prisma } from './lib/prisma';
 import { resolveOrBootstrapSingleAgent } from './lib/single-agent-bootstrap';
+import { migrateStorageIfEnvironmentChanged } from './lib/execution-environments/storage-migration';
 import {
   ensureExecutionEnvironmentDetected,
   getExecutionEnvironment,
@@ -124,6 +125,11 @@ const initialize = async () => {
     // Where the agent's commands run. Derived, not configured — and it reports
     // itself, including when it wanted a container and could not have one.
     await ensureExecutionEnvironmentDetected();
+
+    // Before anything reads the agent's directories: the two environments keep
+    // them in different places, so a deployment that has moved between them
+    // finds empty storage until its files are brought across.
+    await migrateStorageIfEnvironmentChanged();
 
     // Which agents have credentials is a question for the execution
     // environment, so it is asked here rather than derived at import — and
