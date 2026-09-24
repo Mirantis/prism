@@ -43,6 +43,7 @@ const {
     goals: false,
     shellProcs: 0,
     agentTasks: 0,
+    voiceChat: false,
     isSea: true,
   },
 }));
@@ -74,6 +75,13 @@ vi.mock('../../meeting/meeting-bot.service', () => ({
   meetingBotService: {
     get isActive() {
       return idleState.meeting;
+    },
+  },
+}));
+vi.mock('../../voice/voice-chat.service', () => ({
+  voiceChatService: {
+    get isLive() {
+      return idleState.voiceChat;
     },
   },
 }));
@@ -120,6 +128,7 @@ beforeEach(() => {
     goals: false,
     shellProcs: 0,
     agentTasks: 0,
+    voiceChat: false,
     isSea: true,
   });
   config.appVersion = CURRENT;
@@ -300,6 +309,24 @@ describe('check loop', () => {
     expect(mockStage).not.toHaveBeenCalled();
 
     (idleState as Record<string, unknown>)[key] = 0;
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(mockStage).toHaveBeenCalledWith(NEWER);
+    service.stop();
+  });
+
+  it('defers while a voice chat is live', async () => {
+    vi.useFakeTimers();
+    mockFetchLatest.mockResolvedValue(NEWER);
+    // A voice chat runs no model invocation of its own, so isBusy() reads idle
+    // while the call is open.
+    idleState.voiceChat = true;
+
+    const service = await loadService();
+    await service.start();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mockStage).not.toHaveBeenCalled();
+
+    idleState.voiceChat = false;
     await vi.advanceTimersByTimeAsync(60 * 60_000);
     expect(mockStage).toHaveBeenCalledWith(NEWER);
     service.stop();
