@@ -34,6 +34,7 @@ export interface MockState {
   recordingSegments: number;
   recordingImages: number;
   recordingAudioMs: number;
+  dictationsTranscribed: number;
 }
 
 /** What the page showed and complained about, for the same failure message. */
@@ -48,6 +49,7 @@ let baseline: MockState = {
   recordingSegments: 0,
   recordingImages: 0,
   recordingAudioMs: 0,
+  dictationsTranscribed: 0,
 };
 
 export async function readState(): Promise<MockState> {
@@ -77,7 +79,8 @@ export function describeExchange(state: MockState): string {
     `audio frames sent=${state.deltasSent - baseline.deltasSent}, ` +
     `recording windows=${state.recordingSegments - baseline.recordingSegments} ` +
     `(${state.recordingImages - baseline.recordingImages} pictures, ` +
-    `${Math.round(state.recordingAudioMs - baseline.recordingAudioMs)}ms of narration) ` +
+    `${Math.round(state.recordingAudioMs - baseline.recordingAudioMs)}ms of narration), ` +
+    `dictations transcribed=${state.dictationsTranscribed - baseline.dictationsTranscribed} ` +
     `(counted since this scenario started)`
   );
 }

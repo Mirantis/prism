@@ -6,7 +6,8 @@ answers, and its tools run while you speak. Where
 chat is a direct conversation between the agent and one client.
 
 **Nothing about the call is written down.** There is no transcript, and no
-message appears in the thread. What you hear is all the call produces.
+message appears in the thread. What you hear is all the call produces. To speak a
+message into the thread instead, use [dictation](dictation.md).
 
 ## What you need
 

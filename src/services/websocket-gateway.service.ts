@@ -34,6 +34,8 @@ import {
   type VoiceListeningMode,
 } from './voice/voice-chat.service';
 import { VOICE_AUDIO_FORMAT } from './voice/socket-audio';
+import { DictationSession } from './voice/dictation-session';
+import { isRealtimeConfigured } from './meeting/openai-endpoint';
 import { MEETING_SAMPLE_RATE } from './meeting/resampler';
 
 // ============================================================================
@@ -47,7 +49,16 @@ interface AuthenticatedWebSocket extends WebSocket {
 }
 
 interface WebSocketMessage {
-  type: 'chat' | 'ping' | 'pong' | 'subscribe' | 'cancel' | 'voice_start' | 'voice_stop';
+  type:
+    | 'chat'
+    | 'ping'
+    | 'pong'
+    | 'subscribe'
+    | 'cancel'
+    | 'voice_start'
+    | 'voice_stop'
+    | 'dictation_start'
+    | 'dictation_stop';
   mode?: 'followup' | 'collect';
   content?: string;
   threadId?: string;
@@ -55,7 +66,8 @@ interface WebSocketMessage {
   agentId?: string;
   // Ids of files already uploaded via POST /agents/attachments.
   attachmentIds?: string[];
-  // The voice frames carry their fields here. See docs/voice-chat.md.
+  // The voice and dictation frames have their fields here. See docs/voice-chat.md and
+  // docs/dictation.md.
   payload?: unknown;
 }
 
@@ -85,7 +97,11 @@ interface WebSocketResponse {
     | 'voice_state'
     | 'voice_error'
     | 'voice_hello'
-    | 'voice_clear';
+    | 'voice_clear'
+    | 'dictation_hello'
+    | 'dictation_delta'
+    | 'dictation_result'
+    | 'dictation_error';
   threadId?: string;
   messageId?: string;
   content?: string;
@@ -193,6 +209,9 @@ class WebSocketGatewayService {
   // read, and the flag makes the last frame sent the newest state.
   private computerPublishing = false;
   private computerChangedAgain = false;
+  // The dictation each socket is recording, from `dictation_start` until it ends. One per
+  // socket and any number per runtime, since a dictation never takes the agent's voice.
+  private dictations: Map<AuthenticatedWebSocket, DictationSession> = new Map();
 
   constructor() {
     // Push thread-title changes (placeholder + LLM upgrade) to the user's web
@@ -396,6 +415,7 @@ class WebSocketGatewayService {
           logger.error({ err }, 'Failed to end the voice chat of a disconnected client');
         });
       }
+      this.dictations.get(ws)?.cancel('disconnected');
       logger.info('WebSocket disconnected for user %s - code: %d', userId, code);
     });
 
@@ -455,6 +475,14 @@ class WebSocketGatewayService {
         await this.handleVoiceStop(ws);
         break;
 
+      case 'dictation_start':
+        await this.handleDictationStart(ws, userId);
+        break;
+
+      case 'dictation_stop':
+        this.handleDictationStop(ws, message);
+        break;
+
       default:
         logger.warn('Unknown WebSocket message type: %s', message.type);
         ws.send(JSON.stringify({ type: 'error', payload: { error: 'Unknown message type' } }));
@@ -512,6 +540,15 @@ class WebSocketGatewayService {
       this.sendTo(ws, {
         type: 'voice_error',
         payload: { error: 'mode must be "open" or "addressed"' },
+      });
+      return;
+    }
+
+    // The socket's binary frames are one microphone, so they can feed one session.
+    if (this.dictations.has(ws)) {
+      this.sendTo(ws, {
+        type: 'voice_error',
+        payload: { error: 'A dictation is running on this connection. Finish it first.' },
       });
       return;
     }
@@ -599,6 +636,11 @@ class WebSocketGatewayService {
    * both are dropped in silence.
    */
   private handleBinary(ws: AuthenticatedWebSocket, data: Buffer): void {
+    const dictation = this.dictations.get(ws);
+    if (dictation) {
+      dictation.pushAudio(data);
+      return;
+    }
     if (this.voiceSocket !== ws) return;
     voiceChatService.pushAudio(data);
   }
@@ -650,6 +692,56 @@ class WebSocketGatewayService {
       },
       error: (error) => this.sendTo(ws, { type: 'voice_error', payload: { error } }),
     };
+  }
+
+  /**
+   * Start a dictation for the client on this socket.
+   *
+   * Registered before the upstream answers, so the audio the client streams from the moment
+   * the user presses is kept rather than dropped, and a stop that arrives while the session
+   * connects is honoured once it is ready.
+   */
+  private async handleDictationStart(ws: AuthenticatedWebSocket, userId: string): Promise<void> {
+    const refusal = this.dictations.has(ws)
+      ? 'A dictation is already running on this connection.'
+      : this.voiceSocket === ws || this.voiceStarting?.ws === ws
+        ? 'A voice chat is running on this connection. End it first.'
+        : !isRealtimeConfigured()
+          ? 'Dictation needs a managed voice provider for this agent.'
+          : null;
+    if (refusal) {
+      this.sendTo(ws, { type: 'dictation_error', payload: { error: refusal } });
+      return;
+    }
+
+    const session: DictationSession = new DictationSession({
+      userId,
+      signal: {
+        ready: () => this.sendTo(ws, {
+          type: 'dictation_hello',
+          payload: { format: VOICE_AUDIO_FORMAT },
+        }),
+        delta: (text) => this.sendTo(ws, { type: 'dictation_delta', payload: { text } }),
+        result: (text) => this.sendTo(ws, { type: 'dictation_result', payload: { text } }),
+        error: (error) => this.sendTo(ws, { type: 'dictation_error', payload: { error } }),
+      },
+      onEnd: () => {
+        if (this.dictations.get(ws) === session) this.dictations.delete(ws);
+      },
+    });
+    this.dictations.set(ws, session);
+    await session.start();
+  }
+
+  /** Transcribe or drop this socket's dictation. A stop with nothing recording does nothing. */
+  private handleDictationStop(ws: AuthenticatedWebSocket, message: WebSocketMessage): void {
+    const session = this.dictations.get(ws);
+    if (!session) return;
+    if (payloadOf(message)['commit'] === false) {
+      session.cancel();
+      return;
+    }
+    session.commit();
   }
 
   /** Send to one socket, which the client may have closed under us. */

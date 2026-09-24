@@ -485,10 +485,10 @@ const openaiRealtimeReasoningEffort: RealtimeReasoningEffort | null =
     : REALTIME_REASONING_EFFORTS.includes(rawRealtimeReasoningEffort as RealtimeReasoningEffort)
       ? (rawRealtimeReasoningEffort as RealtimeReasoningEffort)
       : 'high';
-// Transcriber that exists only so a call can be read back in the log. Nothing
-// decides anything from these words — the addressed gate judges the audio — so it
-// is requested only when `MEETING_TRANSCRIPT_LOGGING` is `full`, and it bills per
-// audio minute. `gpt-live-transcribe` is the one model that both streams and takes
+// Transcriber for dictation, and for reading a meeting back in the log. In a meeting
+// nothing decides anything from these words — the addressed gate judges the audio — so
+// it is requested there only when `MEETING_TRANSCRIPT_LOGGING` is `full`, and it bills
+// per audio minute. `gpt-live-transcribe` is the one model that both streams and takes
 // `keywords`, which seeds the agent's own name and the room's roster into the
 // decoder — names are the words a speech model drops most. A model without keywords
 // still works, but it garbles the names in the log.

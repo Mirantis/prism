@@ -20,6 +20,8 @@ const {
   mockComputerAccess,
   mockComputerStatus,
   mockHelpList,
+  mockDictations,
+  mockRealtime,
 } = vi.hoisted(() => {
   const listeners: Array<(payload: unknown) => void> = [];
   const computerListeners: Array<() => void> = [];
@@ -36,6 +38,16 @@ const {
     },
     mockComputerStatus: vi.fn(),
     mockHelpList: vi.fn(),
+    // Every dictation the gateway built, with the options it was built with, so a test
+    // can drive its signal and see what reached it.
+    mockDictations: [] as Array<{
+      options: { userId: string; signal: Record<string, (text?: string) => void>; onEnd?: () => void };
+      start: ReturnType<typeof vi.fn>;
+      pushAudio: ReturnType<typeof vi.fn>;
+      commit: ReturnType<typeof vi.fn>;
+      cancel: ReturnType<typeof vi.fn>;
+    }>,
+    mockRealtime: { configured: true },
     mockChat: vi.fn(),
     // The voice session owner. The gateway carries its control frames and its
     // audio, so what a test asserts here is what goes to which socket.
@@ -83,6 +95,22 @@ vi.mock('../../config', () => ({
 
 vi.mock('../voice/voice-chat.service', () => ({
   voiceChatService: mockVoice,
+}));
+
+vi.mock('../voice/dictation-session', () => ({
+  DictationSession: class {
+    start = vi.fn(() => Promise.resolve(true));
+    pushAudio = vi.fn();
+    commit = vi.fn();
+    cancel = vi.fn();
+    constructor(readonly options: never) {
+      mockDictations.push(this as never);
+    }
+  },
+}));
+
+vi.mock('../meeting/openai-endpoint', () => ({
+  isRealtimeConfigured: () => mockRealtime.configured,
 }));
 
 // Stubbed rather than driven for real: `computer.service` imports the browser
@@ -163,6 +191,9 @@ describe('Requirement: WebSocket Gateway', () => {
     service.activeRequests = new Map();
     service.voiceSocket = null;
     service.voiceStarting = null;
+    service.dictations = new Map();
+    mockDictations.length = 0;
+    mockRealtime.configured = true;
     service.computerPublishing = false;
     service.computerChangedAgain = false;
 
@@ -1315,6 +1346,140 @@ describe('Requirement: WebSocket Gateway', () => {
 
       expect(mockVoice.stop).not.toHaveBeenCalled();
       expect(service.voiceSocket).toBe(owner);
+    });
+  });
+
+  describe('Scenario: Dictation over the socket', () => {
+    type MockSocket = ReturnType<typeof createMockWebSocket>;
+
+    async function frame(ws: MockSocket, message: unknown): Promise<void> {
+      await service.handleMessage(ws, 'user-123', message);
+    }
+
+    function sent(ws: MockSocket): unknown[] {
+      return ws.send.mock.calls
+        .filter((call) => typeof call[0] === 'string')
+        .map((call) => JSON.parse(call[0] as string));
+    }
+
+    it('starts a dictation and answers the format once the transcriber is ready', async () => {
+      const ws = createMockWebSocket();
+      await frame(ws, { type: 'dictation_start', payload: {} });
+
+      expect(mockDictations).toHaveLength(1);
+      expect(mockDictations[0]!.start).toHaveBeenCalledTimes(1);
+      mockDictations[0]!.options.signal.ready!();
+
+      expect(sent(ws).at(-1)).toEqual({
+        type: 'dictation_hello',
+        payload: { format: { encoding: 'pcm16', sampleRate: 24_000, channels: 1 } },
+      });
+    });
+
+    it('routes the socket audio to its dictation, never to a voice chat', async () => {
+      const ws = createMockWebSocket();
+      await frame(ws, { type: 'dictation_start', payload: {} });
+
+      service.handleBinary(ws, Buffer.alloc(960));
+
+      expect(mockDictations[0]!.pushAudio).toHaveBeenCalledTimes(1);
+      expect(mockVoice.pushAudio).not.toHaveBeenCalled();
+    });
+
+    it('commits on stop, and cancels on a stop that says not to', async () => {
+      const ws = createMockWebSocket();
+      await frame(ws, { type: 'dictation_start', payload: {} });
+      await frame(ws, { type: 'dictation_stop', payload: { commit: true } });
+      expect(mockDictations[0]!.commit).toHaveBeenCalledTimes(1);
+
+      const other = createMockWebSocket();
+      await frame(other, { type: 'dictation_start', payload: {} });
+      await frame(other, { type: 'dictation_stop', payload: { commit: false } });
+      expect(mockDictations[1]!.cancel).toHaveBeenCalledTimes(1);
+      expect(mockDictations[1]!.commit).not.toHaveBeenCalled();
+    });
+
+    it('carries the transcript and errors to the socket that asked', async () => {
+      const ws = createMockWebSocket();
+      await frame(ws, { type: 'dictation_start', payload: {} });
+      const signal = mockDictations[0]!.options.signal;
+
+      signal.delta!('Hel');
+      signal.result!('Hello.');
+      signal.error!('Transcription failed.');
+
+      expect(sent(ws).slice(-3)).toEqual([
+        { type: 'dictation_delta', payload: { text: 'Hel' } },
+        { type: 'dictation_result', payload: { text: 'Hello.' } },
+        { type: 'dictation_error', payload: { error: 'Transcription failed.' } },
+      ]);
+    });
+
+    it('frees the socket for another dictation once one ends', async () => {
+      const ws = createMockWebSocket();
+      await frame(ws, { type: 'dictation_start', payload: {} });
+      await frame(ws, { type: 'dictation_start', payload: {} });
+      expect(sent(ws).at(-1)).toEqual({
+        type: 'dictation_error',
+        payload: { error: 'A dictation is already running on this connection.' },
+      });
+
+      mockDictations[0]!.options.onEnd!();
+      await frame(ws, { type: 'dictation_start', payload: {} });
+      expect(mockDictations).toHaveLength(2);
+    });
+
+    it('cancels the dictation of a socket that goes away', async () => {
+      const ws = createMockWebSocket();
+      service.handleConnection(ws, { url: '/api/ws', headers: { host: 'localhost:3003' } });
+      await frame(ws, { type: 'dictation_start', payload: {} });
+
+      ws.emit('close', 1001);
+
+      expect(mockDictations[0]!.cancel).toHaveBeenCalledWith('disconnected');
+    });
+
+    it('refuses a dictation on a socket with a voice chat, and the reverse', async () => {
+      const calling = createMockWebSocket();
+      await frame(calling, { type: 'voice_start', payload: {} });
+      await frame(calling, { type: 'dictation_start', payload: {} });
+      expect(mockDictations).toHaveLength(0);
+      expect(sent(calling).at(-1)).toEqual({
+        type: 'dictation_error',
+        payload: { error: 'A voice chat is running on this connection. End it first.' },
+      });
+
+      const dictating = createMockWebSocket();
+      await frame(dictating, { type: 'dictation_start', payload: {} });
+      await frame(dictating, { type: 'voice_start', payload: {} });
+      expect(mockVoice.start).toHaveBeenCalledTimes(1);
+      expect(sent(dictating).at(-1)).toEqual({
+        type: 'voice_error',
+        payload: { error: 'A dictation is running on this connection. Finish it first.' },
+      });
+    });
+
+    it('starts a dictation while another socket holds the voice chat', async () => {
+      const calling = createMockWebSocket();
+      await frame(calling, { type: 'voice_start', payload: {} });
+
+      const dictating = createMockWebSocket();
+      await frame(dictating, { type: 'dictation_start', payload: {} });
+
+      expect(mockDictations).toHaveLength(1);
+    });
+
+    it('refuses a dictation when the agent has no voice provider', async () => {
+      mockRealtime.configured = false;
+      const ws = createMockWebSocket();
+
+      await frame(ws, { type: 'dictation_start', payload: {} });
+
+      expect(mockDictations).toHaveLength(0);
+      expect(sent(ws).at(-1)).toEqual({
+        type: 'dictation_error',
+        payload: { error: 'Dictation needs a managed voice provider for this agent.' },
+      });
     });
   });
 });
