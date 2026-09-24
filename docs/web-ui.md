@@ -81,6 +81,9 @@ The main conversation surface.
   longer be downloaded — share it again if needed.
 - **Stopping.** While the agent is responding, a stop button appears next to
   send. It cancels the in-flight turn.
+- **Several tabs or browsers.** Every open chat page shows new messages and the
+  working indicator for the thread on screen. Stop shows only on the page that
+  sent the message.
 - **Steering a response in progress.** You can keep typing while the agent
   works, and **Enter sends** — send stays live for the whole turn, alongside
   stop. A message sent mid-response is handed to the turn already running: the
