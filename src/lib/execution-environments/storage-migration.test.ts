@@ -16,6 +16,7 @@ let released = 0;
 const hostDirs = new Map<string, string[]>();
 const containerDirs = new Map<string, string[]>();
 let copyFails: string | null = null;
+const removed: string[] = [];
 
 vi.mock('../telemetry', () => ({ trackEvent: vi.fn() }));
 
@@ -64,12 +65,22 @@ vi.mock('./local/local-environment', () => ({
     paths: () => ({
       skillsDir: '/host/skills',
       pluginsDir: '/host/plugins',
+      pluginDataDir: '/host/plugin-data',
       toolOutputDir: '/host/tool-outputs',
-      claudeHome: '/host/.claude',
-      codexHome: '/host/.codex',
+      // What an operator's CLAUDE_CONFIG_DIR / CODEX_HOME names: their own.
+      claudeHome: '/host/operator/.claude',
+      codexHome: '/host/operator/.codex',
     }),
     files: filesOver(hostDirs),
   }),
+}));
+
+// The runtime's own homes under the data dir.
+vi.mock('../coding-agents/claude-code/home', () => ({
+  resolveClaudeConfigDir: () => '/host/data/.claude',
+}));
+vi.mock('../coding-agents/codex/credentials', () => ({
+  resolveCodexHome: () => '/host/data/.codex',
 }));
 
 let currentEnvironment = 'local';
@@ -91,6 +102,10 @@ function filesOver(dirs: Map<string, string[]>) {
       if (!dirs.has(path)) dirs.set(path, []);
       return Promise.resolve();
     },
+    remove: (path: string) => {
+      removed.push(path);
+      return Promise.resolve();
+    },
   };
 }
 
@@ -104,16 +119,15 @@ beforeEach(() => {
   hostDirs.clear();
   containerDirs.clear();
   copyFails = null;
+  removed.length = 0;
   currentEnvironment = 'local';
 });
 
 describe('when nothing has changed', () => {
-  it('does nothing on a first boot, and records where it ran', async () => {
+  it('records where a first local boot ran, and moves nothing', async () => {
     hostDirs.set('/host/skills', ['a-skill']);
 
     expect(await migrateStorageIfEnvironmentChanged()).toBeNull();
-    // Nothing to move: whatever the agent has is already where this
-    // environment looks for it.
     expect(copies).toEqual([]);
     expect(state.get('lastExecutionEnvironment')).toBe('local');
   });
@@ -125,6 +139,24 @@ describe('when nothing has changed', () => {
     expect(await migrateStorageIfEnvironmentChanged()).toBeNull();
     expect(copies).toEqual([]);
     expect(created).toEqual([]);
+  });
+});
+
+describe('an install from before the record existed', () => {
+  it('moves its host files into the container on its first Docker boot', async () => {
+    // No record at all: every install ran locally before this one was written.
+    currentEnvironment = 'docker';
+    hostDirs.set('/host/skills', ['old-skill']);
+    hostDirs.set('/host/workspace', ['old-work.md']);
+
+    const report = await migrateStorageIfEnvironmentChanged();
+
+    expect(report).toMatchObject({ from: 'local', to: 'docker', copied: 2, failures: 0 });
+    expect(copies.map((c) => c.to)).toEqual([
+      '/prism/workspace/old-work.md',
+      '/prism/skills/old-skill',
+    ]);
+    expect(state.get('lastExecutionEnvironment')).toBe('docker');
   });
 });
 
@@ -158,6 +190,22 @@ describe('from this machine into a container', () => {
 
     expect(report).toMatchObject({ copied: 1, skipped: 1 });
     expect(copies.map((c) => c.from)).toEqual(['/host/skills/only-here']);
+  });
+
+  it("moves a plugin's data with it, since its server now runs in there", async () => {
+    hostDirs.set('/host/plugin-data', ['weather']);
+
+    await migrateStorageIfEnvironmentChanged();
+    expect(copies.map((c) => c.to)).toEqual(['/prism/plugin-data/weather']);
+  });
+
+  it("moves the runtime's own coding-agent homes, never the operator's", async () => {
+    // The operator's real ~/.claude holds their sessions and credentials.
+    hostDirs.set('/host/operator/.claude', ['sessions', '.credentials.json']);
+    hostDirs.set('/host/data/.claude', ['runtime-session']);
+
+    await migrateStorageIfEnvironmentChanged();
+    expect(copies.map((c) => c.from)).toEqual(['/host/data/.claude/runtime-session']);
   });
 
   it('leaves the saved tool outputs behind, since they expire on their own', async () => {
@@ -226,15 +274,22 @@ describe('when a copy fails', () => {
     expect(copies.map((c) => c.from)).toEqual(['/host/skills/good']);
   });
 
-  it('still records the environment, so a boot loop cannot form', async () => {
+  it('removes the partial copy, so it cannot hide the intact source', async () => {
     hostDirs.set('/host/skills', ['bad']);
     copyFails = 'bad';
 
     await migrateStorageIfEnvironmentChanged();
-    // Nothing was overwritten, so a later boot re-reading the same directories
-    // would copy the same entry again — but the deployment has moved, and
-    // saying otherwise would repeat the whole attempt on every restart.
-    expect(state.get('lastExecutionEnvironment')).toBe('docker');
+    // A copy that stopped part-way would otherwise sit at the target, and the
+    // next attempt skips a name the target already has.
+    expect(removed).toEqual(['/prism/skills/bad']);
+  });
+
+  it('keeps the old environment recorded, so the next boot tries again', async () => {
+    hostDirs.set('/host/skills', ['bad']);
+    copyFails = 'bad';
+
+    await migrateStorageIfEnvironmentChanged();
+    expect(state.get('lastExecutionEnvironment')).toBe('local');
   });
 
   it('releases the container even when the whole copy throws', async () => {

@@ -233,6 +233,9 @@ export default defineConfig({
         // and on the host locally, which is two different tests under one name.
         // The scenario that does want a container sets this itself.
         EXECUTION_ENVIRONMENT: process.env.EXECUTION_ENVIRONMENT ?? 'local',
+        // The exec image tag the runtime asks for. The container-mode job sets
+        // it to the image it built; every other run leaves it unset.
+        ...(process.env.SERVICE_VERSION ? { SERVICE_VERSION: process.env.SERVICE_VERSION } : {}),
         // Heartbeat-driven broadcasts publish under config.ownerUserId, and
         // the slack adapter delivers via SlackMapping rows scoped by
         // lensUserId. db-helper.seed() uses TEST_USER.id, so the SPA's

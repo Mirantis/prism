@@ -167,17 +167,18 @@ jobs:
           # through the GitHub API, which is rate-limited per runner IP.
           printf '%s' "${{ secrets.GITHUB_TOKEN }}" > "$RUNNER_TEMP/.gh-token-secret"
 
-      # Built here and loaded into the runner's engine rather than pulled: the
-      # runtime under test is built from source, so it carries no version and
-      # asks for `:latest`, which only a production release publishes. Reuses
-      # the layer cache the publishing build fills.
+      # Built here and loaded into the runner's engine under a tag used by
+      # nothing else, and the runtime under test is given that tag as its
+      # version. A version tag is not refreshed on boot, so the scenario runs
+      # against this PR's image and not whatever `latest` holds. Reuses the
+      # layer cache the publishing build fills.
       - name: Build the exec image
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
         with:
           context: .
           file: Dockerfile.exec
           load: true
-          tags: ghcr.io/lensapp/prism-agent-exec:latest
+          tags: ghcr.io/lensapp/prism-agent-exec:e2e-${{ github.sha }}
           secret-files: |
             github_token=${{ runner.temp }}/.gh-token-secret
           cache-from: |
@@ -192,6 +193,7 @@ jobs:
         env:
           CI: true
           EXECUTION_ENVIRONMENT: docker
+          SERVICE_VERSION: e2e-${{ github.sha }}
           AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
 
       - name: Upload test results

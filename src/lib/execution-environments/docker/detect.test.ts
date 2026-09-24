@@ -11,6 +11,9 @@ import { detectEnvironment, type DetectionDeps } from './detect';
 function deps(over: Partial<DetectionDeps> = {}): DetectionDeps {
   return {
     engineAnswers: () => Promise.resolve(false),
+    clientInstalled: () => Promise.resolve(false),
+    lastEnvironment: () => Promise.resolve(null),
+    wait: () => Promise.resolve(),
     inContainer: () => false,
     configured: () => undefined,
     ...over,
@@ -77,5 +80,73 @@ describe('detectEnvironment', () => {
       deps({ inContainer: () => true, configured: () => 'docker' }),
     );
     expect(detection).toMatchObject({ name: 'docker', demanded: true });
+  });
+
+  describe('when the last run used a container', () => {
+    it('waits for an engine that is installed but still starting', async () => {
+      let asked = 0;
+      const detection = await detectEnvironment(
+        deps({
+          lastEnvironment: () => Promise.resolve('docker'),
+          clientInstalled: () => Promise.resolve(true),
+          // Down on the first probe and the first wait, up on the second.
+          engineAnswers: () => Promise.resolve(++asked >= 3),
+        }),
+      );
+      expect(detection).toEqual({
+        name: 'docker',
+        reason: 'a container engine answered after a wait',
+        demanded: false,
+      });
+    });
+
+    it('runs locally once the wait ends with no answer', async () => {
+      const waits: number[] = [];
+      const detection = await detectEnvironment(
+        deps({
+          lastEnvironment: () => Promise.resolve('docker'),
+          clientInstalled: () => Promise.resolve(true),
+          wait: (ms) => {
+            waits.push(ms);
+            return Promise.resolve();
+          },
+        }),
+      );
+      expect(detection).toMatchObject({ name: 'local', reason: 'the container engine did not answer' });
+      // Bounded: the whole wait is a fixed number of polls.
+      expect(waits.length).toBeGreaterThan(1);
+      expect(waits.length).toBeLessThan(60);
+    });
+
+    it('does not wait when the client is not installed at all', async () => {
+      let waited = false;
+      const detection = await detectEnvironment(
+        deps({
+          lastEnvironment: () => Promise.resolve('docker'),
+          wait: () => {
+            waited = true;
+            return Promise.resolve();
+          },
+        }),
+      );
+      // An uninstalled engine is not coming back, so boot is not held up.
+      expect(detection).toMatchObject({ name: 'local', reason: 'no container engine' });
+      expect(waited).toBe(false);
+    });
+
+    it('does not wait when the last run was local', async () => {
+      let waited = false;
+      await detectEnvironment(
+        deps({
+          lastEnvironment: () => Promise.resolve('local'),
+          clientInstalled: () => Promise.resolve(true),
+          wait: () => {
+            waited = true;
+            return Promise.resolve();
+          },
+        }),
+      );
+      expect(waited).toBe(false);
+    });
   });
 });

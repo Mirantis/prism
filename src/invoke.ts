@@ -197,7 +197,9 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     // The gate sits outside the capture too, which needs no argument: a rejected
     // call produces no result, so there is nothing to cut or save.
     const observedTools = withToolLifecycleEvents(tools, request.onToolEvent);
-    const limitedTools = withToolOutputCapture(observedTools);
+    const limitedTools = withToolOutputCapture(observedTools, {
+      workspaceRoot: request.workspaceRoot,
+    });
     const gatedTools = withToolRiskGate(limitedTools, {
       mode: config.toolRiskGateMode,
       invocationMode: request.mode,

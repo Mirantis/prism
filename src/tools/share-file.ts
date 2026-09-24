@@ -34,11 +34,14 @@ import { Tool, tool } from 'ai';
 import { z } from 'zod';
 import { resolvePath, isInsideWorkspace } from './shell/workspace';
 import { resolveWorkspace } from '../lib/execution-environments/workspace';
-import { getExecutionEnvironment } from '../lib/execution-environments/get-execution-environment';
+import {
+  filesFor,
+  getExecutionEnvironment,
+} from '../lib/execution-environments/get-execution-environment';
 
-/** The filesystem a command sees, so what was written is what is shared. */
-function files() {
-  return getExecutionEnvironment().files;
+/** The filesystem holding a path, so a shared file is the one the thread's shell wrote. */
+function files(forPath: string) {
+  return filesFor(forPath);
 }
 import type { PendingFileWrites } from '../lib/pending-file-writes';
 import { logger } from '../logger';
@@ -133,7 +136,7 @@ export async function runShareFile(
 
   let stat: FileStat;
   try {
-    stat = await files().stat(fullPath);
+    stat = await files(fullPath).stat(fullPath);
   } catch {
     return { success: false, error: `File not found: ${input.path}` };
   }
@@ -158,12 +161,12 @@ export async function runShareFile(
   let data: Buffer;
   try {
     let before = stat;
-    data = await files().readBytes(fullPath);
-    let after = await files().stat(fullPath);
+    data = await files(fullPath).readBytes(fullPath);
+    let after = await files(fullPath).stat(fullPath);
     if (moved(before, after, data)) {
       before = after;
-      data = await files().readBytes(fullPath);
-      after = await files().stat(fullPath);
+      data = await files(fullPath).readBytes(fullPath);
+      after = await files(fullPath).stat(fullPath);
       // Compare against the stat taken just before the retry, and on mtime as
       // well as size — a same-size edit is still a different revision, and size
       // alone would let one through.

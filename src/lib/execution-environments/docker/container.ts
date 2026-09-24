@@ -27,8 +27,6 @@ export interface ContainerSpec {
   refreshImage: boolean;
   /** Names the volumes after the deployment, so two runtimes never share one. */
   deployment: string;
-  /** Passed by name, so the values ride the engine client's env, not an argv. */
-  env: NodeJS.ProcessEnv;
 }
 
 /**
@@ -44,7 +42,6 @@ export async function startContainer(spec: ContainerSpec): Promise<void> {
   // using are untouched and the new container picks the same ones back up.
   await removeContainer(spec.name);
 
-  const names = Object.keys(spec.env).filter((name) => spec.env[name] !== undefined);
   const mounts = volumeMounts(spec.deployment);
 
   const argv = [
@@ -60,9 +57,11 @@ export async function startContainer(spec: ContainerSpec): Promise<void> {
     `${os.userInfo().uid}:${os.userInfo().gid}`,
     '--workdir',
     CONTAINER_PATHS.workspaceRoot,
+    // Only what the container itself needs. A command's own env, credentials
+    // included, is passed on each `docker exec`, so `docker inspect` shows none
+    // of it in the container's config.
     '--env',
     `HOME=${CONTAINER_PATHS.homeDir}`,
-    ...names.flatMap((name) => ['--env', name]),
     ...mounts.flatMap((mount) => ['--volume', `${mount.name}:${mount.path}`]),
     spec.image,
     // Held open by the image's own command; nothing runs here until a
@@ -71,7 +70,7 @@ export async function startContainer(spec: ContainerSpec): Promise<void> {
     'infinity',
   ];
 
-  const run = await engineCall(argv, { timeoutMs: CONTROL_TIMEOUT_MS, env: spec.env });
+  const run = await engineCall(argv, { timeoutMs: CONTROL_TIMEOUT_MS });
   if (run.error || run.exitCode !== 0) {
     trackEvent('exec container started', config.ownerUserId, {
       ...eventProps(spec.image),

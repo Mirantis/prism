@@ -9,9 +9,23 @@ import * as fs from 'fs';
 import { hasBinaries } from '../../has-binary';
 import type { ExecutionEnvironmentName } from '../execution-environment';
 import { engineCall } from './engine';
+import { logger } from '../../../logger';
+import {
+  LAST_EXECUTION_ENVIRONMENT,
+  runtimeStateService,
+} from '../../../services/runtime-state.service';
 
 /** A slow engine is a broken one for this purpose; the agent still has to boot. */
 const PROBE_TIMEOUT_MS = 10_000;
+
+/**
+ * How long to keep asking an engine that is installed but not yet answering,
+ * when the last run used a container. Docker Desktop started at login takes
+ * about this long to come up, and giving up sooner would run one whole session
+ * on this machine with its storage in the other place.
+ */
+const ENGINE_WAIT_MS = 90_000;
+const ENGINE_POLL_MS = 5_000;
 
 /** What marks the runtime's own process as already living in a container. */
 const CONTAINER_MARKERS = ['/.dockerenv', '/run/.containerenv'];
@@ -19,6 +33,11 @@ const CONTAINER_MARKERS = ['/.dockerenv', '/run/.containerenv'];
 export interface DetectionDeps {
   /** Overridden in tests so no case depends on an engine being installed. */
   engineAnswers: () => Promise<boolean>;
+  /** The `docker` client is installed, whether or not its engine is up yet. */
+  clientInstalled: () => Promise<boolean>;
+  /** The environment the previous run recorded, or null before any record. */
+  lastEnvironment: () => Promise<string | null>;
+  wait: (ms: number) => Promise<void>;
   inContainer: () => boolean;
   configured: () => string | undefined;
 }
@@ -33,6 +52,9 @@ export interface Detection {
 
 export const defaultDetectionDeps: DetectionDeps = {
   engineAnswers,
+  clientInstalled: () => hasBinaries('docker'),
+  lastEnvironment: () => runtimeStateService.get(LAST_EXECUTION_ENVIRONMENT).catch(() => null),
+  wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   inContainer: () => CONTAINER_MARKERS.some((marker) => fs.existsSync(marker)),
   configured: () => process.env.EXECUTION_ENVIRONMENT?.trim().toLowerCase() || undefined,
 };
@@ -61,7 +83,25 @@ export async function detectEnvironment(
   if (await deps.engineAnswers()) {
     return { name: 'docker', reason: 'a container engine answered', demanded: false };
   }
+  if ((await deps.lastEnvironment()) === 'docker' && (await deps.clientInstalled())) {
+    return waitForEngine(deps);
+  }
   return { name: 'local', reason: 'no container engine', demanded: false };
+}
+
+/** Keep asking an engine the last run used, until it answers or the wait ends. */
+async function waitForEngine(deps: DetectionDeps): Promise<Detection> {
+  logger.info(
+    { waitMs: ENGINE_WAIT_MS },
+    '[Startup] the last run used a container and the engine is not answering yet; waiting for it',
+  );
+  for (let waited = 0; waited < ENGINE_WAIT_MS; waited += ENGINE_POLL_MS) {
+    await deps.wait(ENGINE_POLL_MS);
+    if (await deps.engineAnswers()) {
+      return { name: 'docker', reason: 'a container engine answered after a wait', demanded: false };
+    }
+  }
+  return { name: 'local', reason: 'the container engine did not answer', demanded: false };
 }
 
 /** Whether a `docker` client is installed *and* its engine is actually up. */

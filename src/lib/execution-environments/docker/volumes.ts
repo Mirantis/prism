@@ -24,6 +24,7 @@ export const CONTAINER_PATHS = {
   workspaceRoot: `${PRISM_ROOT}/workspace`,
   skillsDir: `${PRISM_ROOT}/skills`,
   pluginsDir: `${PRISM_ROOT}/plugins`,
+  pluginDataDir: `${PRISM_ROOT}/plugin-data`,
   toolOutputDir: `${PRISM_ROOT}/tool-outputs`,
   claudeHome: `${PRISM_ROOT}/claude`,
   codexHome: `${PRISM_ROOT}/codex`,

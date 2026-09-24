@@ -18,7 +18,10 @@
  * The skills and plugins directories are reachable as well, since that is where a skill
  * or a plugin is installed and the prompt tells the agent to put one there.
  */
-import { getExecutionEnvironment } from '../../lib/execution-environments/get-execution-environment';
+import {
+  filesFor,
+  getExecutionEnvironment,
+} from '../../lib/execution-environments/get-execution-environment';
 import * as path from 'path';
 import { z } from 'zod';
 import { resolvePath, isInsideWorkspace } from './workspace';
@@ -79,9 +82,9 @@ function installDirs(): string[] {
   return [skillsDir, pluginsDir];
 }
 
-/** The filesystem a command sees, so a write here and a `shell_exec` agree. */
-function files() {
-  return getExecutionEnvironment().files;
+/** The filesystem holding a path, so a write here and the thread's `shell_exec` agree. */
+function files(forPath: string) {
+  return filesFor(forPath);
 }
 
 function rejectOutsideWorkspace(fullPath: string, workspace: string): string | null {
@@ -99,7 +102,7 @@ export async function runReadFile(
   const rejected = rejectOutsideWorkspace(fullPath, workspace);
   if (rejected) return { error: rejected };
   try {
-    const raw = await files().readText(fullPath);
+    const raw = await files(fullPath).readText(fullPath);
     return { content: formatFileContent(raw, input.offset, input.limit) };
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
@@ -114,8 +117,8 @@ export async function runWriteFile(
   const rejected = rejectOutsideWorkspace(fullPath, workspace);
   if (rejected) return { error: rejected };
   try {
-    await files().mkdir(path.dirname(fullPath));
-    await files().writeText(fullPath, input.content);
+    await files(fullPath).mkdir(path.dirname(fullPath));
+    await files(fullPath).writeText(fullPath, input.content);
     return { ok: true };
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
@@ -131,14 +134,14 @@ export async function runEditFile(
   if (rejected) return { error: rejected };
   let original: string;
   try {
-    original = await files().readText(fullPath);
+    original = await files(fullPath).readText(fullPath);
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
   }
   const edit = applyEdit(original, input.old_string, input.new_string, input.replace_all ?? false);
   if (!edit.ok) return { error: edit.message };
   try {
-    await files().writeText(fullPath, edit.content);
+    await files(fullPath).writeText(fullPath, edit.content);
     return { ok: true };
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };

@@ -25,15 +25,21 @@
  * when its mtime changes, so a skill the user drops in appears without a restart.
  */
 
-import { getExecutionEnvironment } from '../lib/execution-environments/get-execution-environment';
+import {
+  filesFor,
+  getExecutionEnvironment,
+} from '../lib/execution-environments/get-execution-environment';
 import type { DirEntry } from '../lib/execution-environments/execution-environment';
 import path from 'path';
 import { logger } from '../logger';
 import { pluginCatalogService } from './plugin-catalog.service';
 
-/** The filesystem a command sees: the skill tool hands out paths for the shell. */
-function files() {
-  return getExecutionEnvironment().files;
+/**
+ * The filesystem holding a path. A thread rooted in a host repository has its
+ * workspace skills on the host even when the deployment runs in a container.
+ */
+function files(dir: string) {
+  return filesFor(dir);
 }
 
 /** Where a skill was discovered. */
@@ -141,7 +147,7 @@ class SkillCatalogService {
   ): Promise<{ entry: SkillEntry; body: string } | null> {
     const entry = await this.find(name, workspaceRoot);
     if (!entry) return null;
-    const raw = await files().readText(entry.skillMdPath);
+    const raw = await files(entry.skillMdPath).readText(entry.skillMdPath);
     return { entry, body: stripFrontmatter(raw) };
   }
 
@@ -149,7 +155,7 @@ class SkillCatalogService {
   private async scanCached(root: SkillRoot): Promise<SkillEntry[]> {
     let mtimeMs: number;
     try {
-      mtimeMs = (await files().stat(root.dir)).mtimeMs;
+      mtimeMs = (await files(root.dir).stat(root.dir)).mtimeMs;
     } catch {
       // Directory doesn't exist (e.g. a repo with no .agents/skills) — empty.
       this.cache.set(root.dir, { mtimeMs: -1, entries: [] });
@@ -166,7 +172,7 @@ class SkillCatalogService {
     const { dir, source } = root;
     let dirents: DirEntry[];
     try {
-      dirents = await files().readDir(dir);
+      dirents = await files(dir).readDir(dir);
     } catch {
       return [];
     }
@@ -187,13 +193,13 @@ class SkillCatalogService {
         // rejected — that would let a bundle read an arbitrary file outside the
         // skills dir. A symlinked *bundle directory* is still fine (lstat
         // traverses the intermediate dir symlink and sees a real SKILL.md).
-        const st = await files().lstat(skillMdPath);
+        const st = await files(skillMdPath).lstat(skillMdPath);
         if (st.isSymbolicLink) {
           logger.warn('[Skills] skipping "%s": SKILL.md is a symlink', dirName);
           continue;
         }
         if (!st.isFile) continue;
-        head = await files().readText(skillMdPath, {
+        head = await files(skillMdPath).readText(skillMdPath, {
           maxBytes: Math.min(FRONTMATTER_READ_LIMIT, st.size),
         });
       } catch {

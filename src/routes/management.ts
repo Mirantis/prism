@@ -118,7 +118,11 @@ import { skillCatalogService } from '../services/skill-catalog.service';
 import { pluginCatalogService } from '../services/plugin-catalog.service';
 import { pluginMcpService } from '../services/plugin-mcp.service';
 import { parseMcpJson } from '../services/plugin-mcp-config';
-import { resolvePluginDataDir } from '../lib/data-dir';
+import path from 'path';
+import {
+  filesFor,
+  getExecutionEnvironment,
+} from '../lib/execution-environments/get-execution-environment';
 import { compactionService } from '../services/compaction.service';
 import { slackAdapterService } from '../services/slack-adapter.service';
 import { attachmentService, detectMediaType, classifyMediaType } from '../services/attachment.service';
@@ -2510,16 +2514,19 @@ router.get('/plugins', async (_req: Request, res: Response) => {
     await pluginMcpService.getTools();
     const statuses = pluginMcpService.getServerStatuses();
 
-    const plugins = (await pluginCatalogService.getPlugins()).map((p) => {
+    const pluginDataRoot = getExecutionEnvironment().paths().pluginDataDir;
+    const plugins = await Promise.all((await pluginCatalogService.getPlugins()).map(async (p) => {
       const diagnostics = [...p.diagnostics];
       let mcpServers: string[] = [];
 
       if (p.mcpConfigPath) {
         try {
-          const parsed = parseMcpJson(fs.readFileSync(p.mcpConfigPath, 'utf8'), {
+          // Read on the side the plugin's files are, which a container path is not.
+          const raw = await filesFor(p.mcpConfigPath).readText(p.mcpConfigPath);
+          const parsed = parseMcpJson(raw, {
             pluginId: p.id,
             pluginRoot: p.dir,
-            pluginData: resolvePluginDataDir(p.id),
+            pluginData: path.posix.join(pluginDataRoot, path.basename(p.id)),
           });
           if (!parsed) diagnostics.push('mcp.json is invalid — no MCP servers loaded');
           else {
@@ -2546,7 +2553,7 @@ router.get('/plugins', async (_req: Request, res: Response) => {
         mcpServers,
         diagnostics,
       };
-    });
+    }));
     res.json(plugins);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';

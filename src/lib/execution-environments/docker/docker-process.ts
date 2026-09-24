@@ -22,6 +22,7 @@ import { randomUUID } from 'crypto';
 import { logger } from '../../../logger';
 import type { ExecProcess, RunOptions } from '../execution-environment';
 import { runLocalProgram } from '../local/local-process';
+import { reportIfContainerLost } from './container-lost';
 import { DOCKER } from './engine';
 
 /** How long the signalling `docker exec` gets before it is abandoned. */
@@ -114,13 +115,14 @@ function exec(payload: string[], options: RunOptions, ctx: DockerExecContext): E
   // directory — `-w` above is what puts the command in the caller's cwd, which
   // is a path inside the container and exists nowhere out here.
   //
-  // The engine's client always reads our stdin, so it is piped whatever the
-  // caller asked for; `-i` above is what decides whether the container sees it.
+  // `stdin` follows the caller: `pipe` connects our stdin to the client, and
+  // `-i` above passes it on into the container.
   const client = runLocalProgram(DOCKER, argv, {
     cwd: process.cwd(),
     env: { ...process.env, ...options.env },
     stdin: options.stdin,
   });
+  watchForLostContainer(client, ctx.container);
 
   return {
     get stdin() {
@@ -142,6 +144,31 @@ function exec(payload: string[], options: RunOptions, ctx: DockerExecContext): E
     closed: client.closed,
     kill: (signal) => killPayload(ctx.container, pidFile, signal, client),
   };
+}
+
+/** Enough of stderr to hold the engine's own error, which comes first. */
+const ENGINE_ERROR_BYTES = 1024;
+
+/**
+ * Warn when the engine answers that the container is gone.
+ *
+ * A second listener on stderr beside the caller's: every caller attaches its
+ * own in the same tick this returns, before any output can arrive, so both see
+ * every chunk. Only the head is kept, since the engine writes its error before
+ * the command could have written anything.
+ */
+function watchForLostContainer(client: ExecProcess, container: string): void {
+  const head: Buffer[] = [];
+  let kept = 0;
+  client.stderr?.on('data', (chunk: Buffer) => {
+    if (kept >= ENGINE_ERROR_BYTES) return;
+    head.push(chunk);
+    kept += chunk.length;
+  });
+  void client.ended.then((end) => {
+    if (end.exitCode === 0) return;
+    reportIfContainerLost(container, Buffer.concat(head).toString('utf8'));
+  });
 }
 
 /**

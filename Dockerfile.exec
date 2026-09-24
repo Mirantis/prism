@@ -98,8 +98,8 @@ RUN chmod -R a+rX /opt/mise \
 # Keep this list in step with CONTAINER_PATHS in
 # src/lib/execution-environments/docker/volumes.ts: a path missing here becomes
 # a root-owned volume the agent cannot write.
-RUN mkdir -p /prism/workspace /prism/skills /prism/plugins /prism/tool-outputs \
-             /prism/claude /prism/codex /prism/home \
+RUN mkdir -p /prism/workspace /prism/skills /prism/plugins /prism/plugin-data \
+             /prism/tool-outputs /prism/claude /prism/codex /prism/home \
  && chmod 1777 /prism /prism/*
 
 # A uid with no /etc/passwd entry gets no home from the OS, and some tools read

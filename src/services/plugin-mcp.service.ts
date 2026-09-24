@@ -24,13 +24,15 @@
  * the next turn without a restart, matching how skills behave.
  */
 
-import fs from 'fs';
+import path from 'path';
 import type { Tool } from 'ai';
 import { experimental_createMCPClient } from '@ai-sdk/mcp';
 import { ExecStdioTransport } from '../lib/execution-environments/exec-stdio-transport';
-import { getExecutionEnvironment } from '../lib/execution-environments/get-execution-environment';
+import {
+  filesFor,
+  getExecutionEnvironment,
+} from '../lib/execution-environments/get-execution-environment';
 import { logger } from '../logger';
-import { resolvePluginDataDir } from '../lib/data-dir';
 import { sanitizeToolNameSegment, toModelToolName } from '../lib/tool-names';
 import { pluginCatalogService } from './plugin-catalog.service';
 import { parseMcpJson, type ResolvedServer } from './plugin-mcp-config';
@@ -220,23 +222,20 @@ class PluginMcpService {
       if (!plugin.mcpConfigPath) continue;
       seenPlugins.add(plugin.id);
 
-      // Guarded because `throwIfNoEntry: false` suppresses only a missing
-      // entry: a symlink loop (ELOOP) or a permission error still throws. The
-      // catalog is mtime-cached on the plugins dir, so mcp.json can turn
-      // unreadable *after* the scan that recorded its path — and one plugin's
-      // bad file must not abort the refresh for every other plugin's servers.
-      let stat: fs.Stats | undefined;
-      try {
-        stat = fs.statSync(plugin.mcpConfigPath, { throwIfNoEntry: false });
-      } catch {
-        stat = undefined;
-      }
+      // Read through the environment the plugin's files are in. The catalog is
+      // mtime-cached on the plugins dir, so mcp.json can turn unreadable *after*
+      // the scan that recorded its path, and one plugin's bad file must not
+      // abort the refresh for every other plugin's servers.
+      const stat = await filesFor(plugin.mcpConfigPath)
+        .stat(plugin.mcpConfigPath)
+        .catch(() => null);
       if (!stat) continue;
       const fingerprint = `${stat.mtimeMs}:${stat.size}`;
 
       let cached = this.configs.get(plugin.id);
       if (!cached || cached.fingerprint !== fingerprint) {
-        cached = { fingerprint, servers: this.parseConfig(plugin.id, plugin.dir, plugin.mcpConfigPath) };
+        const servers = await this.parseConfig(plugin.id, plugin.dir, plugin.mcpConfigPath);
+        cached = { fingerprint, servers };
         this.configs.set(plugin.id, cached);
       }
 
@@ -251,10 +250,14 @@ class PluginMcpService {
     return desired;
   }
 
-  private parseConfig(pluginId: string, pluginRoot: string, configPath: string): ResolvedServer[] {
+  private async parseConfig(
+    pluginId: string,
+    pluginRoot: string,
+    configPath: string,
+  ): Promise<ResolvedServer[]> {
     let raw: string;
     try {
-      raw = fs.readFileSync(configPath, 'utf8');
+      raw = await filesFor(configPath).readText(configPath);
     } catch (error) {
       logger.warn({ err: error }, '[PluginMCP] "%s": mcp.json could not be read', pluginId);
       return [];
@@ -263,7 +266,7 @@ class PluginMcpService {
     const result = parseMcpJson(raw, {
       pluginId,
       pluginRoot,
-      pluginData: resolvePluginDataDir(pluginId),
+      pluginData: pluginDataDirFor(pluginId),
     });
     if (!result) {
       // An unusable file disables MCP for this plugin only; its skills are
@@ -281,8 +284,9 @@ class PluginMcpService {
     let clientPromise: Promise<MCPClient> | undefined;
     try {
       if (server.kind === 'stdio') {
-        // The spec requires PLUGIN_DATA to exist and be writable before launch.
-        fs.mkdirSync(resolvePluginDataDir(pluginId), { recursive: true });
+        // The spec requires PLUGIN_DATA to exist and be writable before launch,
+        // on the side the server runs on.
+        await getExecutionEnvironment().files.mkdir(pluginDataDirFor(pluginId));
       }
 
       clientPromise = experimental_createMCPClient({
@@ -407,6 +411,15 @@ function buildTransport(server: ResolvedServer) {
     env: server.env,
     cwd: server.cwd,
   });
+}
+
+/**
+ * `PLUGIN_DATA` for one plugin, in the environment its MCP server runs in. The
+ * id is a directory name read from disk, so `basename` only guards a caller that
+ * passed a path.
+ */
+function pluginDataDirFor(pluginId: string): string {
+  return path.posix.join(getExecutionEnvironment().paths().pluginDataDir, path.basename(pluginId));
 }
 
 /** `<pluginId>/<serverName>` — server names cannot contain a slash. */

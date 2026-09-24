@@ -19,7 +19,10 @@ import {
 } from './tool-output-store';
 import { resolveToolOutputDir } from './data-dir';
 import { localFiles } from './execution-environments/local/local-files';
-import { __setExecutionEnvironmentForTests } from './execution-environments/get-execution-environment';
+import {
+  __resetExecutionEnvironmentDetectionForTests,
+  __setExecutionEnvironmentForTests,
+} from './execution-environments/get-execution-environment';
 import { fakeExecutionEnvironment } from '../test-utils/fake-execution-environment';
 
 let dataDir: string;
@@ -147,5 +150,50 @@ describe('reapExpiredToolOutputs', () => {
   it('tolerates a directory that was never created', async () => {
     await fs.rm(resolveToolOutputDir(), { recursive: true, force: true });
     expect(await reapExpiredToolOutputs(HOUR)).toBe(0);
+  });
+});
+
+describe('a thread rooted outside the deployment environment', () => {
+  let containerRoot: string;
+
+  beforeEach(async () => {
+    // Stands in for a container: it serves only its own tree, and a path
+    // anywhere else belongs to this machine.
+    containerRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'prism-spill-container-'));
+    __setExecutionEnvironmentForTests(
+      fakeExecutionEnvironment({
+        workspaceRoot: containerRoot,
+        servesPath: (p) => p.startsWith(containerRoot),
+        files: localFiles,
+      }),
+    );
+  });
+
+  afterEach(async () => {
+    __resetExecutionEnvironmentDetectionForTests();
+    await fs.rm(containerRoot, { recursive: true, force: true });
+  });
+
+  it("saves the copy where that thread's own shell reads it", async () => {
+    const inside = await writeToolOutput('from the default thread');
+    const outside = await writeToolOutput('from a host repository', '/Users/me/dev/repo');
+
+    expect(inside.path.startsWith(containerRoot)).toBe(true);
+    // A thread rooted in a host repository runs its commands on the host, so
+    // the notice has to name a host path.
+    expect(outside.path.startsWith(resolveToolOutputDir())).toBe(true);
+  });
+
+  it('reads, removes and reaps a copy on either side', async () => {
+    const inside = await writeToolOutput('inside');
+    const outside = await writeToolOutput('outside', '/Users/me/dev/repo');
+
+    expect(await readToolOutput(outside.id)).toBe('outside');
+    expect(await removeToolOutputs([inside.id, outside.id])).toBe(2);
+
+    const stale = await writeToolOutput('stale', '/Users/me/dev/repo');
+    const past = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    await fs.utimes(stale.path, past, past);
+    expect(await reapExpiredToolOutputs(7 * 24 * 60 * 60 * 1000)).toBe(1);
   });
 });

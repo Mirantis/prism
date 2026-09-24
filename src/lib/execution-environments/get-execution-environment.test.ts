@@ -3,8 +3,10 @@ import { fakeExecutionEnvironment } from '../../test-utils/fake-execution-enviro
 import {
   __resetExecutionEnvironmentDetectionForTests,
   __setExecutionEnvironmentForTests,
+  filesFor,
   getExecutionEnvironment,
   getExecutionEnvironmentFor,
+  getHostEnvironment,
 } from './get-execution-environment';
 
 afterEach(() => __resetExecutionEnvironmentDetectionForTests());
@@ -54,5 +56,22 @@ describe('getExecutionEnvironmentFor', () => {
   it('hands every unreachable path the same local environment', () => {
     __setExecutionEnvironmentForTests(fakeExecutionEnvironment({ servesPath: () => false }));
     expect(getExecutionEnvironmentFor('/a')).toBe(getExecutionEnvironmentFor('/b'));
+  });
+});
+
+describe('filesFor', () => {
+  it('reads a path the environment serves through that environment', () => {
+    const served = fakeExecutionEnvironment({ servesPath: (p) => p.startsWith('/prism') });
+    __setExecutionEnvironmentForTests(served);
+    expect(filesFor('/prism/skills')).toBe(served.files);
+  });
+
+  it('reads any other path on this machine', () => {
+    // A thread the terminal UI started in a repository: its files, like its
+    // commands, are on the host, even while the deployment runs in a container.
+    const served = fakeExecutionEnvironment({ servesPath: (p) => p.startsWith('/prism') });
+    __setExecutionEnvironmentForTests(served);
+    expect(filesFor('/Users/me/dev/repo/.claude/skills')).toBe(getHostEnvironment().files);
+    expect(filesFor('/Users/me/dev/repo/.claude/skills')).not.toBe(served.files);
   });
 });
