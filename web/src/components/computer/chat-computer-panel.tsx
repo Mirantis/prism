@@ -17,10 +17,12 @@ export function ChatComputerPanel({
   requests,
   reopenRequest,
   onLayoutChange,
+  onResizingChange,
 }: {
   requests: ComputerHelp[];
   reopenRequest?: { id: string; token: number };
   onLayoutChange?: (width: string | null) => void;
+  onResizingChange?: (resizing: boolean) => void;
 }) {
   const queryClient = useQueryClient();
   const { data } = useComputerStatus();
@@ -48,8 +50,8 @@ export function ChatComputerPanel({
   );
   const ignoreAudio = useCallback(() => {}, []);
   const screen = useComputerScreen({ enabled: displayed !== null, onAudio: ignoreAudio });
-  const state = screen.state ?? data;
-  const ownControl = Boolean(screen.clientId) && state?.controller === screen.clientId;
+  const state = displayed ? screen.state ?? data : data;
+  const ownControl = Boolean(displayed && screen.clientId) && state?.controller === screen.clientId;
   const anotherController = Boolean(state?.controller) && !ownControl;
   const waitingId = waiting?.id;
   const displayedCurrent =
@@ -96,6 +98,7 @@ export function ChatComputerPanel({
   const hidePanel = useCallback((id: string) => {
     setOpen(false);
     onLayoutChange?.(null);
+    onResizingChange?.(false);
     if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
     closeTimerRef.current = window.setTimeout(
       () => {
@@ -104,7 +107,7 @@ export function ChatComputerPanel({
       },
       PANEL_TRANSITION_MS,
     );
-  }, [onLayoutChange]);
+  }, [onLayoutChange, onResizingChange]);
 
   useEffect(() => {
     if (ownControl || busy) return;
@@ -143,8 +146,9 @@ export function ChatComputerPanel({
     () => () => {
       if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
       onLayoutChange?.(null);
+      onResizingChange?.(false);
     },
-    [onLayoutChange],
+    [onLayoutChange, onResizingChange],
   );
 
   const request = useCallback(
@@ -193,6 +197,25 @@ export function ChatComputerPanel({
     }
   }, [displayedCurrent?.id, queryClient, screen.clientId]);
 
+  const closePanel = async () => {
+    if (!displayedCurrent || busyRef.current) return;
+    if (ownControl && screen.clientId) {
+      setBusy(true);
+      setError(null);
+      try {
+        await computerRequest('/continue', { clientId: screen.clientId });
+        controlHelpIdRef.current = null;
+        await queryClient.invalidateQueries({ queryKey: ['computer'] });
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+        return;
+      } finally {
+        setBusy(false);
+      }
+    }
+    hidePanel(displayedCurrent.id);
+  };
+
   const changeWidth = (next: number) => {
     setWidth(next);
     if (open) onLayoutChange?.(`${next}px`);
@@ -207,6 +230,12 @@ export function ChatComputerPanel({
       startWidth: panel.getBoundingClientRect().width,
       maxWidth: window.innerWidth,
     };
+    onResizingChange?.(true);
+  };
+
+  const stopResize = () => {
+    resizeRef.current = null;
+    onResizingChange?.(false);
   };
 
   const continueResize = (event: PointerEvent<HTMLButtonElement>) => {
@@ -250,12 +279,8 @@ export function ChatComputerPanel({
         title="Drag to resize"
         onPointerDown={startResize}
         onPointerMove={continueResize}
-        onPointerUp={() => {
-          resizeRef.current = null;
-        }}
-        onPointerCancel={() => {
-          resizeRef.current = null;
-        }}
+        onPointerUp={stopResize}
+        onPointerCancel={stopResize}
         onKeyDown={(event) => {
           if (event.key === 'ArrowLeft') resizeWithKeyboard(1);
           if (event.key === 'ArrowRight') resizeWithKeyboard(-1);
@@ -277,9 +302,8 @@ export function ChatComputerPanel({
           type="button"
           aria-label="Close computer panel"
           title="Close"
-          onClick={() => {
-            hidePanel(displayedCurrent.id);
-          }}
+          onClick={() => void closePanel()}
+          disabled={busy}
           className="ml-auto flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <X className="size-4" />

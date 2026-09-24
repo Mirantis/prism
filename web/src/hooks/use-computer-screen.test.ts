@@ -56,12 +56,29 @@ describe('computer viewing', () => {
   it('clears control and reconnects after losing the connection', () => {
     const { result, unmount } = renderHook(() => useComputerScreen({ enabled: true, onAudio: vi.fn() }));
     const first = socket;
+    act(() => first.onmessage?.({ data: JSON.stringify({
+      type: 'computer_state', clientId: 'viewer', paused: true, controller: 'viewer', owner: null, waiting: [],
+    }) } as MessageEvent));
     act(() => first.onclose?.());
     expect(result.current.clientId).toBeNull();
+    expect(result.current.state).toBeNull();
     expect(result.current.hasScreen).toBe(false);
     act(() => vi.advanceTimersByTime(2000));
     expect(socket).not.toBe(first);
     unmount();
     expect(socket.close).toHaveBeenCalled();
+  });
+
+  it('clears control when viewing stops', () => {
+    const { result, rerender } = renderHook(
+      ({ enabled }) => useComputerScreen({ enabled, onAudio: vi.fn() }),
+      { initialProps: { enabled: true } },
+    );
+    act(() => socket.onmessage?.({ data: JSON.stringify({
+      type: 'computer_state', clientId: 'viewer', paused: true, controller: 'viewer', owner: null, waiting: [],
+    }) } as MessageEvent));
+    rerender({ enabled: false });
+    expect(result.current.clientId).toBeNull();
+    expect(result.current.state).toBeNull();
   });
 });

@@ -43,6 +43,7 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     token: number;
   }>();
   const [computerPanelWidth, setComputerPanelWidth] = useState<string | null>(null);
+  const [computerPanelResizing, setComputerPanelResizing] = useState(false);
   // Terminal compaction frame pending a SYSTEM note. Staged as state (not
   // appended directly in the WS callback) so the note goes through
   // appendSystemMessage, which is declared further down.
@@ -440,6 +441,7 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
           requests={computerHelp}
           reopenRequest={computerPanelRequest}
           onLayoutChange={setComputerPanelWidth}
+          onResizingChange={setComputerPanelResizing}
         />
       )}
       <div className="mx-auto w-full max-w-3xl px-4 empty:hidden">
@@ -447,7 +449,9 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
       </div>
       <div
         style={{ marginRight: computerPanelWidth ?? undefined }}
-        className="transition-[margin-right] duration-[1200ms] ease-in-out motion-reduce:transition-none"
+        className={computerPanelResizing
+          ? 'transition-none'
+          : 'transition-[margin-right] duration-[1200ms] ease-in-out motion-reduce:transition-none'}
       >
         <ChatInput
           value={message}

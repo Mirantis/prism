@@ -43,6 +43,7 @@ Feature: The agent's computer in the browser
     And I can close and reopen the computer panel
     And I can resize the computer panel
     And I can enlarge the chat computer to fullscreen
+    And I can close and reopen the panel after control loses focus
     When I sign in through the live computer
     Then Prism continues the original conversation and reports the inbox
 

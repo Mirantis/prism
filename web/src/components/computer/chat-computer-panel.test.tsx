@@ -177,6 +177,85 @@ describe('chat computer panel', () => {
     );
   });
 
+  it('hands control back before closing and reopens despite a stale screen frame', async () => {
+    const queryClient = new QueryClient();
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <ChatComputerPanel requests={[help]} />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Take control' }));
+    await act(async () => {});
+    state.status = {
+      ...status('waiting'),
+      paused: true,
+      controller: '00000000-0000-4000-8000-000000000001',
+    };
+    view.rerender(
+      <QueryClientProvider client={queryClient}>
+        <ChatComputerPanel requests={[help]} />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close computer panel' }));
+    await act(async () => {});
+    expect(computerRequest).toHaveBeenCalledWith('/continue', {
+      clientId: '00000000-0000-4000-8000-000000000001',
+    });
+    expect(screen.getByLabelText('Computer help panel').getAttribute('data-state')).toBe('closed');
+    act(() => vi.advanceTimersByTime(1200));
+    expect(screen.queryByLabelText('Computer help panel')).toBeNull();
+
+    view.rerender(
+      <QueryClientProvider client={queryClient}>
+        <ChatComputerPanel requests={[help]} reopenRequest={{ id: help.id, token: 1 }} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByLabelText('Computer help panel').getAttribute('data-state')).toBe('open');
+  });
+
+  it('keeps the panel open when hand-back fails', async () => {
+    const queryClient = new QueryClient();
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <ChatComputerPanel requests={[help]} />
+      </QueryClientProvider>,
+    );
+    state.status = {
+      ...status('waiting'),
+      paused: true,
+      controller: '00000000-0000-4000-8000-000000000001',
+    };
+    view.rerender(
+      <QueryClientProvider client={queryClient}>
+        <ChatComputerPanel requests={[help]} />
+      </QueryClientProvider>,
+    );
+    computerRequest.mockRejectedValueOnce(new Error('Could not return control'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close computer panel' }));
+    await act(async () => {});
+    expect(screen.getByLabelText('Computer help panel').getAttribute('data-state')).toBe('open');
+    expect(screen.getByRole('alert').textContent).toContain('Could not return control');
+  });
+
+  it('reports pointer resizing so the composer can follow without a transition', () => {
+    const onResizingChange = vi.fn();
+    const queryClient = new QueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ChatComputerPanel requests={[help]} onResizingChange={onResizingChange} />
+      </QueryClientProvider>,
+    );
+    const handle = screen.getByRole('button', { name: 'Resize computer panel' });
+    Object.defineProperty(handle, 'setPointerCapture', { value: vi.fn() });
+    fireEvent.pointerDown(handle, { pointerId: 1, clientX: 500 });
+    expect(onResizingChange).toHaveBeenCalledWith(true);
+    fireEvent.pointerUp(handle, { pointerId: 1 });
+    expect(onResizingChange).toHaveBeenLastCalledWith(false);
+  });
+
   it('reopens an older waiting request from its history marker', () => {
     const older = { ...help, id: '00000000-0000-4000-8000-000000000003' };
     const newer = { ...help, id: '00000000-0000-4000-8000-000000000004' };
