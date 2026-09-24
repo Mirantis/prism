@@ -23,7 +23,9 @@ When('I ask Prism to read my inbox and the public notes using its computer', asy
   await page.goto('/chat');
   const home = new HomePage(page);
   await home.typeMessage(
-    `Use your computer to read my inbox at ${site!.url}/inbox and the public notes at ${site!.url}/notes. Report what you find on both pages.`,
+    `Use your computer to read my inbox at ${site!.url}/inbox and the public notes at ${site!.url}/notes. ` +
+      'If the inbox needs sign-in, call computer_help so I can sign in on the desktop. ' +
+      'Do not ask for credentials in chat. Report what you find on both pages.',
   );
   await home.sendMessage();
   await home.waitForAgentResponse(180_000);
