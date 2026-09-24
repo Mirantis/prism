@@ -11,6 +11,7 @@
 
 import { Server as HttpServer } from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
+import { randomUUID } from 'node:crypto';
 import { IncomingMessage } from 'http';
 import { logger } from '../logger';
 import { config } from '../config';
@@ -24,6 +25,7 @@ import {
   conversationEngineService,
   type TurnActivityEvent,
 } from './conversation-engine.service';
+import { turnActivityService, type TurnActivityChange } from './turn-activity.service';
 import { threadTitleService, type ThreadTitleChange } from './thread-title.service';
 import { contextUsageService, type ContextUsageEvent } from './context-usage.service';
 import { compactionService, type CompactionEvent } from './compaction.service';
@@ -49,6 +51,7 @@ interface AuthenticatedWebSocket extends WebSocket {
   userId?: string;
   userToken?: string;
   isAlive?: boolean;
+  connectionId?: string;
 }
 
 interface WebSocketMessage {
@@ -69,6 +72,8 @@ interface WebSocketMessage {
   agentId?: string;
   // Ids of files already uploaded via POST /agents/attachments.
   attachmentIds?: string[];
+  // The connection that sent the message. Set by the gateway, never read from the wire.
+  originConnectionId?: string;
   // The voice and dictation frames have their fields here. See docs/voice-chat.md and
   // docs/dictation.md.
   payload?: unknown;
@@ -225,6 +230,13 @@ class WebSocketGatewayService {
       this.broadcast(userId, { type: 'thread', payload: { threadId, title } });
     });
 
+    // Push which threads have a turn in progress. The client shows the spinner for the
+    // thread on its screen. `working` rather than `processing`, so a terminal client
+    // that reads `processing` as its own request's state ignores these frames.
+    turnActivityService.events.on('change', (payload: TurnActivityChange) => {
+      this.broadcastAll({ type: 'status', payload });
+    });
+
     // Push context-window occupancy so clients can show how full the window is.
     contextUsageService.events.on('usage', ({ userId, ...payload }: ContextUsageEvent) => {
       this.broadcast(userId, { type: 'context', payload });
@@ -370,6 +382,7 @@ class WebSocketGatewayService {
    */
   private handleConnection(ws: AuthenticatedWebSocket, req: IncomingMessage): void {
     ws.isAlive = true;
+    ws.connectionId = randomUUID();
 
     // The runtime is scoped to one agent and trusts the inbound network
     // (Lens Agents routing terminates auth in front of the container). Pin the
@@ -383,6 +396,11 @@ class WebSocketGatewayService {
     this.connections.set(userId, userConnections);
 
     logger.info('WebSocket connected for user %s (%d connections)', userId, userConnections.length);
+
+    // A client that connects during a turn shows it from the start.
+    for (const payload of turnActivityService.activeTurns()) {
+      ws.send(JSON.stringify({ type: 'status', payload }));
+    }
 
     // Handle messages
     ws.on('message', async (data: Buffer, isBinary: boolean) => {
@@ -823,6 +841,7 @@ class WebSocketGatewayService {
     message.threadId = threadId;
     message.agentId = agentId;
     message.attachmentIds = attachmentIds;
+    message.originConnectionId = ws.connectionId;
 
     switch (mode) {
       case 'collect':
@@ -898,6 +917,7 @@ class WebSocketGatewayService {
       message: message.content || '',
       threadId: message.threadId,
       attachmentIds: message.attachmentIds,
+      originConnectionId: message.originConnectionId,
       metadata: { channel: 'websocket' },
       steerOnly: true,
     });
@@ -951,6 +971,7 @@ class WebSocketGatewayService {
         message: message.content || '',
         threadId: message.threadId,
         attachmentIds: message.attachmentIds,
+        originConnectionId: message.originConnectionId,
         metadata: { channel: 'websocket' },
         abortSignal: controller.signal,
       });
@@ -1015,6 +1036,22 @@ class WebSocketGatewayService {
         ws.send(JSON.stringify(message));
       }
     });
+  }
+
+  /**
+   * Broadcast to every open connection, whatever its user, except `exceptConnectionId`.
+   * For frames about a conversation: every connection may open every conversation of
+   * the agent.
+   */
+  broadcastAll(message: WebSocketResponse, exceptConnectionId?: string): void {
+    const frame = JSON.stringify(message);
+    for (const connections of this.connections.values()) {
+      for (const ws of connections) {
+        if (ws.readyState !== WebSocket.OPEN) continue;
+        if (exceptConnectionId && ws.connectionId === exceptConnectionId) continue;
+        ws.send(frame);
+      }
+    }
   }
 
   /**
@@ -1084,6 +1121,14 @@ class WebSocketGatewayService {
    */
   isConnected(userId: string): boolean {
     return this.getConnectionCount(userId) > 0;
+  }
+
+  /** Whether any user has an open connection. */
+  hasConnections(): boolean {
+    for (const connections of this.connections.values()) {
+      if (connections.length > 0) return true;
+    }
+    return false;
   }
 
   /**

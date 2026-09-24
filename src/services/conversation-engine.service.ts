@@ -72,6 +72,8 @@ export interface ChatInput {
   threadId?: string;
   /** Ids of already-stored attachments to link to this user message. */
   attachmentIds?: string[];
+  /** The connection this message came from, which the echo of the message skips. */
+  originConnectionId?: string;
   /** Per-turn runtime notices injected into the system prompt (see InvokeRequest). */
   runtimeNotices?: string[];
   /** Aborting this signal stops the in-flight LLM generation mid-turn. */
@@ -311,13 +313,27 @@ Respond with exactly one word: WORTHY or SKIP`;
       };
     }
 
+    // Build channel context for delivery — scopes response to the originating channel.
+    // For Slack, channelId/threadTs may be undefined (DM case — routing falls back
+    // to SlackMapping.dmChannelId lookup in the adapter).
+    const channelContext = metadata?.channel === 'slack'
+      ? {
+          channel: 'slack' as const,
+          channelId: metadata.channelId,
+          threadTs: metadata.slackThreadTs,
+          threadId,
+        }
+      : metadata?.channel === 'websocket'
+        ? { channel: 'websocket' as const, threadId }
+        : undefined;
+
     // Store the message now rather than after taking the mutex, so its row keeps
     // its arrival order relative to messages handed to other turns. On the owning
     // path the await lands inside `claim.run()`, where a failed write releases the
     // thread instead of leaving it taken forever — hence the no-op catch: the
     // mutex wait in between can be long, and an unobserved rejection would be an
     // unhandled rejection.
-    const stored = this.storeUserMessage(input, threadId);
+    const stored = this.storeUserMessage(input, threadId, channelContext);
     stored.catch(() => {});
 
     if (!claim) {
@@ -360,20 +376,6 @@ Respond with exactly one word: WORTHY or SKIP`;
     const channelOrigin: ChannelOrigin = slackChannelId
       ? { isChannelMessage: true, channelName: metadata?.channelName ?? slackChannelId }
       : { isChannelMessage: false };
-
-    // Build channel context for delivery — scopes response to the originating channel.
-    // For Slack, channelId/threadTs may be undefined (DM case — routing falls back
-    // to SlackMapping.dmChannelId lookup in the adapter).
-    const channelContext = metadata?.channel === 'slack'
-      ? {
-          channel: 'slack' as const,
-          channelId: metadata.channelId,
-          threadTs: metadata.slackThreadTs,
-          threadId,
-        }
-      : metadata?.channel === 'websocket'
-        ? { channel: 'websocket' as const, threadId }
-        : undefined;
 
     const responseTexts: string[] = [];
     const allBlocks: UIBlock[] = [];
@@ -491,6 +493,7 @@ Respond with exactly one word: WORTHY or SKIP`;
   private async storeUserMessage(
     input: ChatInput,
     threadId: string,
+    channelContext: PublishOptions['channelContext'],
   ): Promise<{ titleSet: string | null }> {
     const { agentId, userId, message, metadata } = input;
 
@@ -521,6 +524,24 @@ Respond with exactly one word: WORTHY or SKIP`;
     // message that carries them so the context builder can expose them.
     if (input.attachmentIds?.length) {
       await attachmentService.linkToMessage(input.attachmentIds, userMessage.id, threadId);
+    }
+
+    // Show the message to the channel's other clients now, not with the reply:
+    // a turn can end with no reply at all.
+    // The message is stored by then, so a failed echo is logged and the turn goes on.
+    if (channelContext) {
+      try {
+        const attachments = input.attachmentIds?.length
+          ? (await attachmentService.getMetaByMessageIds([userMessage.id])).get(userMessage.id)
+          : undefined;
+        await messageDeliveryService.echoUserMessage(
+          userId,
+          attachments?.length ? { ...userMessage, attachments } : userMessage,
+          { ...channelContext, originConnectionId: input.originConnectionId },
+        );
+      } catch (err) {
+        logger.warn({ err, threadId }, '[ConversationEngine] user message echo failed');
+      }
     }
 
     return { titleSet };

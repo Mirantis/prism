@@ -318,6 +318,40 @@ describe('MessageDeliveryService', () => {
     });
   });
 
+  describe('echoUserMessage', () => {
+    const userMessage = { ...sampleMessage, role: 'USER' as const, content: 'Hello from the user' };
+
+    it('delivers the message to the originating channel when that channel echoes', async () => {
+      const websocket = Object.assign(createMockAdapter('websocket'), { echoesUserMessages: true });
+      const slack = createMockAdapter('slack');
+      service.register(websocket);
+      service.register(slack);
+      const context = { channel: 'websocket' as const, threadId: 'thread-456', originConnectionId: 'conn-a' };
+
+      await service.echoUserMessage('user-1', userMessage, context);
+
+      expect(websocket.deliver).toHaveBeenCalledWith('user-1', userMessage, context);
+      expect(slack.deliver).not.toHaveBeenCalled();
+      expect(mockAddMessage).not.toHaveBeenCalled();
+    });
+
+    it('never sends a Slack message back to Slack', async () => {
+      const websocket = Object.assign(createMockAdapter('websocket'), { echoesUserMessages: true });
+      const slack = createMockAdapter('slack');
+      service.register(websocket);
+      service.register(slack);
+
+      await service.echoUserMessage('user-1', userMessage, {
+        channel: 'slack',
+        channelId: 'C123',
+        threadId: 'thread-456',
+      });
+
+      expect(slack.deliver).not.toHaveBeenCalled();
+      expect(websocket.deliver).not.toHaveBeenCalled();
+    });
+  });
+
   describe('publishToLatestThread', () => {
     it('should get or create active thread and publish', async () => {
       const adapter = createMockAdapter('test');

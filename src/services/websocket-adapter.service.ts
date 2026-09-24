@@ -15,15 +15,16 @@ import { logger } from '../logger';
 
 class WebSocketAdapterService implements ChannelAdapter {
   readonly name = 'websocket';
+  readonly echoesUserMessages = true;
 
-  async deliver(userId: string, message: DeliverableMessage, _channelContext?: ChannelContext): Promise<void> {
+  async deliver(userId: string, message: DeliverableMessage, channelContext?: ChannelContext): Promise<void> {
     try {
       // Handle createdAt as both Date and string since it crosses HTTP boundary
       const createdAt = message.createdAt instanceof Date
         ? message.createdAt.toISOString()
         : String(message.createdAt);
 
-      webSocketGatewayService.broadcast(userId, {
+      webSocketGatewayService.broadcastAll({
         type: 'chat',
         payload: {
           id: message.id,
@@ -39,15 +40,15 @@ class WebSocketAdapterService implements ChannelAdapter {
           // fetches bytes from GET /agents/attachments/:id.
           attachments: message.attachments ?? null,
         },
-      });
+      }, channelContext?.originConnectionId);
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error('WebSocket deliver failed for user %s: %s', userId, msg);
     }
   }
 
-  async isUserConnected(userId: string): Promise<boolean> {
-    return webSocketGatewayService.isConnected(userId);
+  async isUserConnected(_userId: string): Promise<boolean> {
+    return webSocketGatewayService.hasConnections();
   }
 
   async initialize(): Promise<void> {

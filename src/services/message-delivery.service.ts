@@ -61,6 +61,7 @@ export interface PublishOptions {
     /** Internal database thread ID */
     threadId: string;
     includeFeedback?: boolean;
+    originConnectionId?: string;
   };
 }
 
@@ -153,6 +154,21 @@ export class MessageDeliveryService {
 
     // Use the standard publish method
     return this.publish(userId, thread.id, content, triggeredBy, options);
+  }
+
+  /**
+   * Deliver a stored user message to the other clients of the channel it came from.
+   * Only that channel receives it, and only when the channel declares
+   * `echoesUserMessages`.
+   */
+  async echoUserMessage(
+    userId: string,
+    message: DeliverableMessage,
+    channelContext: NonNullable<PublishOptions['channelContext']>,
+  ): Promise<void> {
+    const adapter = this.adapters.find((a) => a.name === channelContext.channel);
+    if (!adapter?.echoesUserMessages) return;
+    await adapter.deliver(userId, message, channelContext);
   }
 
   /**

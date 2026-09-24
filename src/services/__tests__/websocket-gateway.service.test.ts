@@ -140,6 +140,7 @@ vi.mock('../computer/computer-help.service', () => ({
 
 // Import after mocking
 import { webSocketGatewayService } from '../websocket-gateway.service';
+import { turnActivityService } from '../turn-activity.service';
 
 // Access internal state for testing
 const service = webSocketGatewayService as any;
@@ -324,6 +325,21 @@ describe('Requirement: WebSocket Gateway', () => {
           metadata: { channel: 'websocket' },
         })
       );
+    });
+
+    it('names the connection a message came from, whatever the client sends', async () => {
+      const ws = Object.assign(createMockWebSocket(), { connectionId: 'conn-a' });
+      service.connections.set('user-123', [ws]);
+
+      await service.handleChatMessage(ws, 'user-123', {
+        type: 'chat',
+        content: 'Hello',
+        threadId: 'thread-123',
+        agentId: 'agent-123',
+        originConnectionId: 'conn-forged',
+      });
+
+      expect(mockChat).toHaveBeenCalledWith(expect.objectContaining({ originConnectionId: 'conn-a' }));
     });
 
     it('should reject empty messages', async () => {
@@ -685,6 +701,75 @@ describe('Requirement: WebSocket Gateway', () => {
     it('should do nothing if user has no connections', () => {
       service.broadcast('user-nonexistent', { type: 'status' });
       // Should not throw
+    });
+  });
+
+  describe('Scenario: Broadcast to every connection', () => {
+    it('sends one frame to every open connection, whatever its user', () => {
+      const alice = createMockWebSocket();
+      const bob = createMockWebSocket();
+      const closed = createMockWebSocket();
+      closed.readyState = 3;
+      service.connections.set('user-alice', [alice, closed]);
+      service.connections.set('user-bob', [bob]);
+
+      const message = { type: 'chat', payload: { id: 'msg-1', threadId: 'thread-1' } };
+      service.broadcastAll(message);
+
+      expect(alice.send).toHaveBeenCalledWith(JSON.stringify(message));
+      expect(bob.send).toHaveBeenCalledWith(JSON.stringify(message));
+      expect(closed.send).not.toHaveBeenCalled();
+    });
+
+    it('skips the connection it is told to skip', () => {
+      const sender = Object.assign(createMockWebSocket(), { connectionId: 'conn-a' });
+      const other = Object.assign(createMockWebSocket(), { connectionId: 'conn-b' });
+      service.connections.set('user-alice', [sender, other]);
+
+      service.broadcastAll({ type: 'chat', payload: { id: 'msg-1' } }, 'conn-a');
+
+      expect(sender.send).not.toHaveBeenCalled();
+      expect(other.send).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports whether any connection is open', () => {
+      expect(service.hasConnections()).toBe(false);
+      service.connections.set('user-bob', [createMockWebSocket()]);
+      expect(service.hasConnections()).toBe(true);
+    });
+  });
+
+  describe('Scenario: Thread activity broadcast', () => {
+    it('sends each turn start and end, with its thread and turn id, to every connection', () => {
+      const alice = createMockWebSocket();
+      const bob = createMockWebSocket();
+      service.connections.set('user-alice', [alice]);
+      service.connections.set('user-bob', [bob]);
+
+      const end = turnActivityService.begin('thread-1');
+      end();
+
+      for (const ws of [alice, bob]) {
+        const frames = ws.send.mock.calls.map(([raw]: [string]) => JSON.parse(raw));
+        expect(frames).toEqual([
+          { type: 'status', payload: { threadId: 'thread-1', turnId: expect.any(String), working: true } },
+          { type: 'status', payload: { threadId: 'thread-1', turnId: frames[0].payload.turnId, working: false } },
+        ]);
+      }
+    });
+
+    it('sends the turns in progress to a socket that has just connected', () => {
+      const end = turnActivityService.begin('thread-1');
+      const ws = createMockWebSocket();
+
+      service.handleConnection(ws, { url: '/api/ws', headers: { host: 'localhost:3003' } });
+      end();
+
+      const frames = ws.send.mock.calls.map(([raw]: [string]) => JSON.parse(raw));
+      expect(frames).toContainEqual({
+        type: 'status',
+        payload: { threadId: 'thread-1', turnId: expect.any(String), working: true },
+      });
     });
   });
 
