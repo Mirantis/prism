@@ -1,23 +1,25 @@
-Feature: Dictation over the chat connection
-  As a user of a voice client I want to speak a message instead of typing it, so
-  the words I said arrive in the chat without the agent talking back
+Feature: Voice messages in the browser
+  As a user I want to speak a message instead of typing it, so the words I said
+  arrive in the chat without the agent talking back
 
   Background:
     Given I am logged in
     And I have a personal agent
 
-  Scenario: A dictation sends the microphone to the transcriber and answers its transcript
+  Scenario: A voice message from the composer arrives in the thread as my words
     Given I open a fresh chat
     And the voice model has heard nothing yet
-    When I dictate a second of speech on the chat connection and release
-    Then the runtime answers the transcript of that second
+    When I record a voice message from the composer
+    And I send the voice message
+    Then my transcribed words appear in the thread as my message
     And the voice model transcribed one dictation and was asked for no answer
     And the voice model has no session open
 
-  Scenario: A cancelled dictation sends nothing back
+  Scenario: A discarded voice message sends nothing
     Given I open a fresh chat
     And the voice model has heard nothing yet
-    When I dictate a second of speech on the chat connection and cancel it
-    Then the runtime answers no transcript
+    When I record a voice message from the composer
+    And I discard the voice message
+    Then the composer offers the text field again
     And the voice model opened a session and transcribed nothing
     And the voice model has no session open

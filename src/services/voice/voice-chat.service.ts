@@ -6,8 +6,8 @@
  * long as this service is not `idle`, so the places that word is written are the places
  * the lock is released.
  *
- * Two surfaces reach it and the session is the same either way. The chat composer sends
- * its audio on the socket it already has. The Computer page has a socket of its own,
+ * Two surfaces reach it and the session is the same either way. A client on the chat
+ * socket sends its audio on the socket it already has. The Computer page has a socket of its own,
  * because it also carries a computer's screen, and asks for that computer here.
  *
  * The session is the whole of what a call is here — nothing is persisted. No transcript,
@@ -177,7 +177,7 @@ export interface StartVoiceChatInput {
   /** Defaults to `open` — a client that says nothing is holding a phone to its ear. */
   mode?: VoiceListeningMode;
   signal: VoiceChatSignal;
-  /** Which client asked. Defaults to the chat composer, the one that came first. */
+  /** Which client asked. Defaults to the chat socket, the one that came first. */
   surface?: VoiceChatSurface;
   /**
    * Open a computer for the agent to work on, and give it the tools that act on it.

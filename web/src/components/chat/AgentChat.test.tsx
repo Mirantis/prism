@@ -3,8 +3,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, act, waitFor, cleanup, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ComputerStatus, ConversationMessage } from '@/types';
-import type { VoiceCall } from '@/hooks/use-voice-call';
-import type { VoiceEvent } from '@/hooks/use-websocket';
+import type { Dictation } from '@/hooks/use-dictation';
+import type { DictationEvent } from '@/hooks/use-websocket';
 
 // Capture the onMessage the component hands to useWebSocket so the test can
 // drive inbound deliveries. The mock re-captures on every render, so the
@@ -16,50 +16,52 @@ import type { VoiceEvent } from '@/hooks/use-websocket';
 const { wsHolder } = vi.hoisted(() => ({
   wsHolder: {
     onMessage: undefined as ((m: ConversationMessage) => void) | undefined,
-    // The voice frames arrive on the same socket, and the component routes them to the
-    // call through a ref. Captured here so a test can deliver one.
-    onVoiceEvent: undefined as ((e: unknown) => void) | undefined,
-    onVoiceAudio: undefined as ((f: ArrayBuffer) => void) | undefined,
+    // The dictation frames arrive on the same socket, and the component routes them to
+    // the dictation through a ref. Captured here so a test can deliver one.
+    onDictationEvent: undefined as ((e: unknown) => void) | undefined,
     // The state of the desktop arrives on the same socket. Captured so a test can
     // deliver one without a runtime.
     onComputerStatus: undefined as ((s: ComputerStatus) => void) | undefined,
     isTyping: false,
     sendFollowup: vi.fn(),
-    sendVoiceStart: vi.fn(() => true),
-    sendVoiceStop: vi.fn(),
     sendVoiceAudio: vi.fn(),
+    sendDictationStart: vi.fn(() => true),
+    sendDictationStop: vi.fn(),
   },
 }));
 
 vi.mock('@/hooks/use-websocket', () => ({
   useWebSocket: (opts: {
     onMessage?: (m: ConversationMessage) => void;
-    onVoiceEvent?: (e: unknown) => void;
-    onVoiceAudio?: (f: ArrayBuffer) => void;
+    onDictationEvent?: (e: unknown) => void;
     onComputerStatus?: (s: ComputerStatus) => void;
   }) => {
     wsHolder.onMessage = opts.onMessage;
-    wsHolder.onVoiceEvent = opts.onVoiceEvent;
-    wsHolder.onVoiceAudio = opts.onVoiceAudio;
+    wsHolder.onDictationEvent = opts.onDictationEvent;
     wsHolder.onComputerStatus = opts.onComputerStatus;
     return {
       status: 'connected',
       isTyping: wsHolder.isTyping,
       sendFollowup: wsHolder.sendFollowup,
       cancel: vi.fn(),
-      sendVoiceStart: wsHolder.sendVoiceStart,
-      sendVoiceStop: wsHolder.sendVoiceStop,
       sendVoiceAudio: wsHolder.sendVoiceAudio,
+      sendDictationStart: wsHolder.sendDictationStart,
+      sendDictationStop: wsHolder.sendDictationStop,
     };
   },
 }));
 
-const { voiceAudio } = vi.hoisted(() => ({
+// The microphone. The hook's `onFrame` is kept so a test can speak into it.
+const { voiceAudio, microphone } = vi.hoisted(() => ({
   voiceAudio: { enqueue: vi.fn(), clear: vi.fn(), stop: vi.fn(async () => {}) },
+  microphone: { onFrame: undefined as ((f: ArrayBuffer) => void) | undefined },
 }));
 vi.mock('@/lib/voice-audio', () => ({
   VOICE_SAMPLE_RATE: 24_000,
-  startVoiceAudio: async () => voiceAudio,
+  startVoiceAudio: async (opts: { onFrame: (f: ArrayBuffer) => void }) => {
+    microphone.onFrame = opts.onFrame;
+    return voiceAudio;
+  },
 }));
 
 // A computer-enabled agent, which is what puts the waiting banner's query on the page.
@@ -119,21 +121,24 @@ vi.mock('./ChatInput', () => ({
     value,
     onChange,
     onSend,
-    voice,
+    dictation,
   }: {
     value: string;
     onChange: (v: string) => void;
     onSend: (e: { preventDefault: () => void }) => void;
-    voice?: VoiceCall;
+    dictation?: Dictation;
   }) => (
     <div data-testid="input">
       <input data-testid="composer" value={value} onChange={(e) => onChange(e.target.value)} />
       <button data-testid="send" onClick={() => onSend({ preventDefault: () => {} })}>
         send
       </button>
-      <span data-testid="voice-status">{voice?.status}</span>
-      <button data-testid="voice-start" onClick={() => voice?.start()}>
-        voice
+      <span data-testid="dictation-status">{dictation?.status}</span>
+      <button data-testid="dictation-start" onClick={() => dictation?.start()}>
+        dictate
+      </button>
+      <button data-testid="dictation-send" onClick={() => dictation?.send()}>
+        send
       </button>
     </div>
   ),
@@ -293,15 +298,15 @@ describe('AgentChat computer state', () => {
   });
 });
 
-describe('AgentChat voice call', () => {
+describe('AgentChat dictation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     wsHolder.isTyping = false;
-    wsHolder.sendVoiceStart.mockReturnValue(true);
+    wsHolder.sendDictationStart.mockReturnValue(true);
     mockGetThread.mockResolvedValue({ id: 't1', messages: [] });
   });
 
-  it('carries the frames between the socket and the call, in both directions', async () => {
+  it('sends the transcript as the user message on the thread being viewed', async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
     render(
@@ -311,18 +316,26 @@ describe('AgentChat voice call', () => {
     );
     await waitFor(() => expect(mockGetThread).toHaveBeenCalledWith('a1', 'u1', 't1'));
 
-    fireEvent.click(screen.getByTestId('voice-start'));
-    // The call is asked for on the thread being viewed, so the agent's tools have one.
-    await waitFor(() =>
-      expect(wsHolder.sendVoiceStart).toHaveBeenCalledWith({ threadId: 't1' }),
-    );
+    fireEvent.click(screen.getByTestId('dictation-start'));
+    await waitFor(() => expect(screen.getByTestId('dictation-status').textContent).toBe('recording'));
+    expect(wsHolder.sendDictationStart).toHaveBeenCalledTimes(1);
 
-    act(() => wsHolder.onVoiceEvent!({ type: 'state', state: 'live' } satisfies VoiceEvent));
-    expect(screen.getByTestId('voice-status').textContent).toBe('live');
-
+    // The microphone rides the socket as binary frames.
     const frame = new Int16Array([7, 8]).buffer;
-    act(() => wsHolder.onVoiceAudio!(frame));
-    expect(voiceAudio.enqueue).toHaveBeenCalledWith(frame);
+    act(() => microphone.onFrame!(frame));
+    expect(wsHolder.sendVoiceAudio).toHaveBeenCalledWith(frame);
+
+    fireEvent.click(screen.getByTestId('dictation-send'));
+    expect(wsHolder.sendDictationStop).toHaveBeenCalledWith(true);
+    expect(screen.getByTestId('dictation-status').textContent).toBe('transcribing');
+
+    act(() =>
+      wsHolder.onDictationEvent!({ type: 'result', text: ' Check the staging pods. ' } satisfies DictationEvent),
+    );
+    expect(wsHolder.sendFollowup).toHaveBeenCalledWith('Check the staging pods.', 'a1', 't1', []);
+    // Echoed on the thread at once, as a typed message is.
+    expect(screen.getByTestId('list').textContent).toMatch(/temp-\d+:t1/);
+    expect(screen.getByTestId('dictation-status').textContent).toBe('idle');
 
     cleanup();
   });

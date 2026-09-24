@@ -7,7 +7,7 @@ import { ApiError } from '@/api/errors';
 import { useAgent } from '@/lib/agent-context';
 import { useWebSocket } from '@/hooks/use-websocket';
 import { useComputerStatusFeed } from '@/hooks/use-computer-status';
-import { useVoiceCall, type VoiceCall } from '@/hooks/use-voice-call';
+import { useDictation, type Dictation } from '@/hooks/use-dictation';
 import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   type Attachment,
@@ -37,10 +37,10 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
   // appendSystemMessage, which is declared further down.
   const [compactionNotice, setCompactionNotice] = useState<CompactionEvent | null>(null);
 
-  // The socket hands out the senders and the call hands back the handlers, so one of the
-  // two is read late. The socket's callbacks are bound once, so the call goes through a
-  // ref and the socket is not re-bound as the call's state changes.
-  const voiceRef = useRef<VoiceCall | null>(null);
+  // The socket hands out the senders and the dictation hands back the handler, so one of
+  // the two is read late. The socket's callbacks are bound once, so the dictation goes
+  // through a ref and the socket is not re-bound as its state changes.
+  const dictationRef = useRef<Dictation | null>(null);
 
   const writeComputerStatus = useComputerStatusFeed();
 
@@ -49,9 +49,9 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     isTyping,
     sendFollowup,
     cancel,
-    sendVoiceStart,
-    sendVoiceStop,
     sendVoiceAudio,
+    sendDictationStart,
+    sendDictationStop,
   } = useWebSocket({
     onMessage: (msg) => {
       // Deliveries are broadcast to all of the user's connections tagged with
@@ -91,18 +91,8 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     // cards read, so they follow a wait or a resolution as it happens and the page
     // makes no repeating request. Install-level: the banner filters by thread itself.
     onComputerStatus: writeComputerStatus,
-    onVoiceEvent: (event) => voiceRef.current?.handleEvent(event),
-    onVoiceAudio: (frame) => voiceRef.current?.handleAudio(frame),
+    onDictationEvent: (event) => dictationRef.current?.handleEvent(event),
   });
-
-  const voice = useVoiceCall({
-    sendVoiceStart,
-    sendVoiceStop,
-    sendVoiceAudio,
-    threadId: activeThreadId,
-    isConnected: status === 'connected',
-  });
-  voiceRef.current = voice;
 
   // Cancel the in-flight turn and drop an ephemeral marker so the user gets
   // explicit confirmation. The marker is client-only (never stored), so it
@@ -334,10 +324,18 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
       }
     }
 
+    setMessage('');
+    sendChat(userMessage);
+  };
+
+  /**
+   * Send text as the user's message, with whatever is attached and ready. A dictated
+   * message goes out here too, so it is echoed and steers a running turn the same way.
+   */
+  const sendChat = (userMessage: string) => {
     const ready = attachments.filter((a) => a.status === 'ready' && a.id);
     if (!userMessage && ready.length === 0) return;
 
-    setMessage('');
     setAttachments([]);
 
     const tempAttachments: Attachment[] = ready.map((a) => ({
@@ -374,6 +372,15 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     );
   };
 
+  const dictation = useDictation({
+    sendDictationStart,
+    sendDictationStop,
+    sendAudio: sendVoiceAudio,
+    isConnected: status === 'connected',
+    onTranscript: sendChat,
+  });
+  dictationRef.current = dictation;
+
   return (
     <div className="flex h-full flex-col">
       <ChatMessageList
@@ -395,7 +402,7 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
         onRemoveAttachment={handleRemoveAttachment}
         contextUsage={contextUsage}
         isCompacting={isCompacting}
-        voice={voice}
+        dictation={dictation}
       />
     </div>
   );

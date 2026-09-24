@@ -27,12 +27,11 @@ Feature: The agent's computer in the browser
     Then the voice model is given my screen and my voice from the recording
     When I leave the Computer page
     Then the voice model has no session open
-    # A call from the composer is the observable proof that the computer released the one
-    # voice: the runtime refuses a second call while it holds a session, whoever asked.
-    When I start a voice chat from the composer
-    Then the composer says a voice chat is live
-    When I end the voice chat
-    Then the voice model has no session open
+    # A second call is the observable proof that leaving released the one voice: the
+    # runtime refuses a call while it holds a session, whoever asked.
+    When I open the Computer page
+    And I start voice on Computer
+    Then the page says the computer is live
 
   Scenario: A blocked sign-in allows independent work and resumes after user help
     Given the runtime can give the agent a computer

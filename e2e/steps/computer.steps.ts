@@ -131,8 +131,8 @@ async function stubDisplayCapture(page: Page): Promise<void> {
 
 When('I open the Computer page', async ({ page }) => {
   // The call opens a real browser for the agent, with a profile of its own. A cold one
-  // costs most of the default budget on its own, and this scenario then runs a second
-  // call from the composer after it.
+  // costs most of the default budget on its own, and this scenario then opens the page a
+  // second time after it.
   test.setTimeout(300_000);
   await stubDisplayCapture(page);
   // The microphone grant is Playwright's, per origin, so no prompt appears.

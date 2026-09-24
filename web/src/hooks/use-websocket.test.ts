@@ -391,4 +391,66 @@ describe('useWebSocket', () => {
       expect(ws.sent).toEqual([]);
     });
   });
+
+  describe('dictation frames', () => {
+    it('hands each frame over in the shape the runtime sent it', async () => {
+      const onDictationEvent = vi.fn();
+      const { ws } = await renderConnected({ onDictationEvent });
+
+      // The frames a runtime sent for one dictation, recorded from /api/ws.
+      act(() => {
+        ws.deliver({ type: 'dictation_hello', payload: { format: { encoding: 'pcm16', sampleRate: 24000, channels: 1 } } });
+        ws.deliver({ type: 'dictation_delta', payload: { text: 'Mock dictation ' } });
+        ws.deliver({ type: 'dictation_result', payload: { text: 'Mock dictation of 1000 ms.' } });
+        ws.deliver({ type: 'dictation_error', payload: { error: 'A dictation is already running on this connection.' } });
+      });
+
+      expect(onDictationEvent.mock.calls.map(([e]) => e)).toEqual([
+        { type: 'hello', format: { encoding: 'pcm16', sampleRate: 24000, channels: 1 } },
+        { type: 'delta', text: 'Mock dictation ' },
+        { type: 'result', text: 'Mock dictation of 1000 ms.' },
+        { type: 'error', error: 'A dictation is already running on this connection.' },
+      ]);
+    });
+
+    it('drops a result with no text and words an error that has none', async () => {
+      const onDictationEvent = vi.fn();
+      const { ws } = await renderConnected({ onDictationEvent });
+
+      act(() => ws.deliver({ type: 'dictation_result', payload: {} }));
+      act(() => ws.deliver({ type: 'dictation_error', payload: {} }));
+
+      expect(onDictationEvent.mock.calls.map(([e]) => e)).toEqual([
+        { type: 'error', error: 'The dictation could not be transcribed.' },
+      ]);
+    });
+
+    it('sends start and both kinds of stop', async () => {
+      const { result, ws } = await renderConnected({ onDictationEvent: vi.fn() });
+
+      act(() => {
+        expect(result.current.sendDictationStart()).toBe(true);
+        result.current.sendDictationStop(true);
+        result.current.sendDictationStop(false);
+      });
+
+      expect(ws.sent).toEqual([
+        JSON.stringify({ type: 'dictation_start', payload: {} }),
+        JSON.stringify({ type: 'dictation_stop', payload: { commit: true } }),
+        JSON.stringify({ type: 'dictation_stop', payload: { commit: false } }),
+      ]);
+    });
+
+    it('refuses to start while the socket is down', async () => {
+      const { result, ws } = await renderConnected({ onDictationEvent: vi.fn() });
+
+      act(() => ws.onclose?.({ code: 1006 }));
+
+      act(() => {
+        expect(result.current.sendDictationStart()).toBe(false);
+        result.current.sendDictationStop(false);
+      });
+      expect(ws.sent).toEqual([]);
+    });
+  });
 });

@@ -51,11 +51,10 @@ The main conversation surface.
   in the conversation, and `/goal`/`/skills run` stream the agent's reply in.
   A one-line note renders as a centered aside; a listing (`/skills`, `/plugins`)
   renders as a normal left-aligned block so the list is readable.
-- **Voice chat.** Press the microphone next to the paperclip to talk to the agent
-  out loud; the browser asks for the microphone the first time. The same button
-  ends the call and releases the microphone, and nothing said in a call is
-  written down — see **[Voice chat](voice-chat.md)**. While the call runs, a mute
-  button appears beside it and shows whether the microphone is open or muted.
+- **Voice messages.** Press the microphone next to the paperclip and speak; the
+  browser asks for the microphone the first time. Press send, and your words
+  arrive in the thread as your message. ✕ discards the recording — see
+  **[Dictation](dictation.md)**.
 - **Attachments.** Attach files with the paperclip button or by drag-and-drop.
   Pending attachments show as chips (with a progress spinner, name, and size)
   and can be removed before sending (up to 100 per message). Attached files are
