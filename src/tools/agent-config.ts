@@ -12,6 +12,8 @@ import { Tool, tool } from 'ai';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
 import { heartbeatService } from '../services/heartbeat.service';
+import { cronSchedulerService } from '../services/cron-scheduler.service';
+import { isTimezone } from '../lib/timezone';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
 import { applyEdits } from '../lib/apply-edit';
 import { refuseLockedWrite } from '../lib/locked-in';
@@ -205,7 +207,9 @@ export function getAgentConfigTools(): Record<string, Tool> {
             updateData.heartbeatIntervalMs = coerced;
             break;
           case 'timezone':
-            if (typeof value !== 'string') throw new Error('Timezone must be a string');
+            if (typeof value !== 'string' || !isTimezone(value)) {
+              throw new Error('Timezone must be an IANA zone name such as Europe/Helsinki');
+            }
             updateData.timezone = value;
             break;
         }
@@ -219,6 +223,11 @@ export function getAgentConfigTools(): Record<string, Tool> {
           } catch (err) {
             logger.error({ err }, '[Tool] Failed to restart heartbeat after interval change');
           }
+        }
+
+        if (setting === 'timezone') {
+          // Recurring tasks read their schedules in the new zone from now on.
+          cronSchedulerService.useTimezone(updatedAgent.timezone);
         }
 
         trackEvent('agent config updated', null, {

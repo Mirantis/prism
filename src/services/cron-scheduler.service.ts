@@ -17,6 +17,7 @@ import { messageDeliveryService } from './message-delivery.service';
 import { conversationService } from './conversation.service';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
+import { isTimezone } from '../lib/timezone';
 import { runClassificationGate } from '../lib/classification-gate';
 import { CRON_TASK_GATE_PROMPT, buildCronGateUserMessage } from '../prompts/cron-prompt';
 import { trackEvent } from '../lib/telemetry';
@@ -51,7 +52,8 @@ export interface BackendCronTask {
 
 interface ScheduledJob {
   task: BackendCronTask;
-  job: { stop: () => void };
+  /** A node-cron task for a recurring schedule, or the timer of a one-shot. */
+  job: { stop: () => void; getNextRun?: () => Date | null };
   isOneShot: boolean;
 }
 
@@ -61,6 +63,8 @@ interface ScheduledJob {
 
 class CronSchedulerService {
   private scheduledJobs: Map<string, ScheduledJob> = new Map();
+  /** The zone every recurring schedule is read in: the agent's setting, set at boot and on change. */
+  private timezone = 'UTC';
 
   /**
    * Per-task delivery baseline for the suppression gate (heartbeat parity:
@@ -100,6 +104,37 @@ class CronSchedulerService {
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     }));
+  }
+
+  /**
+   * Read every recurring schedule in this zone from now on. A running job is replaced, so its
+   * next tick moves with the zone; the task's instruction is unchanged, so its delivery
+   * baseline stays. A name Intl rejects is logged and UTC is used instead, since node-cron
+   * throws on it.
+   */
+  useTimezone(timezone: string): void {
+    const accepted = isTimezone(timezone);
+    if (!accepted) {
+      logger.error(`[CronScheduler] Unknown time zone "${timezone}"; recurring tasks run in UTC`);
+    }
+    this.timezone = accepted ? timezone : 'UTC';
+    for (const scheduled of [...this.scheduledJobs.values()]) {
+      if (scheduled.isOneShot) continue;
+      scheduled.job.stop();
+      this.registerRecurring(scheduled.task);
+    }
+  }
+
+  /** Start the node-cron job for a recurring task in the current zone and hold it. */
+  private registerRecurring(task: BackendCronTask): void {
+    const job = cron.schedule(
+      task.schedule,
+      async () => {
+        await this.executeTask(task);
+      },
+      { timezone: this.timezone },
+    );
+    this.scheduledJobs.set(task.id, { task, job, isOneShot: false });
   }
 
   /**
@@ -178,16 +213,7 @@ class CronSchedulerService {
         return;
       }
 
-      const job = cron.schedule(task.schedule, async () => {
-        await this.executeTask(task);
-      });
-
-      this.scheduledJobs.set(task.id, {
-        task,
-        job,
-        isOneShot: false,
-      });
-
+      this.registerRecurring(task);
       logger.info(`[CronScheduler] Scheduled recurring "${task.name}": ${task.schedule}`);
     }
   }
@@ -205,6 +231,19 @@ class CronSchedulerService {
       ...(config.agentId ? { 'agent.id': config.agentId } : {}),
       'cron.task.id': taskId,
     });
+  }
+
+  /**
+   * When a task next runs: the stored time of a one-shot, else what its running cron job
+   * reports. Null for a task this process has not scheduled, such as a paused one.
+   */
+  nextRunFor(taskId: string): Date | null {
+    const scheduled = this.scheduledJobs.get(taskId);
+    if (!scheduled) return null;
+    if (scheduled.isOneShot) {
+      return scheduled.task.nextRunAt ? new Date(scheduled.task.nextRunAt) : null;
+    }
+    return scheduled.job.getNextRun?.() ?? null;
   }
 
   /** Stop and drop the in-memory job, with no telemetry side effects. */

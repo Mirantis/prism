@@ -1,6 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { LlmUsageCards } from '@/components/activity/llm-usage-cards';
 import { ToolCallList } from '@/components/activity/tool-call-list';
+import { Page } from '@/components/layout/page';
+import { PageHeader } from '@/components/layout/page-header';
+import { SectionHeader } from '@/components/layout/section-header';
 
 export const Route = createFileRoute('/activity')({
   component: ActivityPage,
@@ -8,29 +11,21 @@ export const Route = createFileRoute('/activity')({
 
 function ActivityPage() {
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold tracking-tight">Activity</h2>
-        <p className="text-sm text-muted-foreground">What the agent has spent, and what it has done.</p>
-      </div>
+    <Page>
+      <PageHeader title="Activity" description="What the agent has spent, and what it has done." />
 
       <section className="space-y-3">
-        <div>
-          <h3 className="text-lg font-semibold tracking-tight">LLM usage</h3>
-          <p className="text-sm text-muted-foreground">Tokens used in the last 24 hours.</p>
-        </div>
+        <SectionHeader title="LLM usage" description="Tokens used in the last 24 hours." />
         <LlmUsageCards />
       </section>
 
       <section className="space-y-3">
-        <div>
-          <h3 className="text-lg font-semibold tracking-tight">Tool calls</h3>
-          <p className="text-sm text-muted-foreground">
-            Newest turn first, across every conversation. Expand a call to see its parameters.
-          </p>
-        </div>
+        <SectionHeader
+          title="Tool calls"
+          description="Newest turn first, across every conversation. Expand a call to see its parameters."
+        />
         <ToolCallList />
       </section>
-    </div>
+    </Page>
   );
 }

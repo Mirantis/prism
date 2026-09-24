@@ -98,7 +98,8 @@ agent.
 
 Beyond the documents, a few dials shape behavior and are stored on the agent:
 
-- **Timezone** (default `UTC`) — used for scheduling and daily resets.
+- **Timezone** (default `UTC`) — an IANA zone name such as `Europe/Helsinki`,
+  used for scheduling and daily resets.
 - **Heartbeat interval** (default 8 hours) — see **[Heartbeat](heartbeat.md)**.
 - **Model** — the LLM it runs on (defaults to the runtime's configured model).
 - **Locked-in mode** (default off) — freezes the documents above, plus long-term

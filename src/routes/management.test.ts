@@ -20,6 +20,7 @@ const {
   mockGetStatus,
   mockScheduleTask,
   mockUnscheduleTask,
+  mockNextRunFor,
   mockGetAgent,
   mockGetThread,
   mockListThreads,
@@ -44,6 +45,7 @@ const {
   mockGetStatus: vi.fn(),
   mockScheduleTask: vi.fn(),
   mockUnscheduleTask: vi.fn(),
+  mockNextRunFor: vi.fn(),
   mockGetAgent: vi.fn(),
   mockGetThread: vi.fn(),
   mockListThreads: vi.fn(),
@@ -115,6 +117,7 @@ vi.mock('../services/cron-scheduler.service', () => ({
   cronSchedulerService: {
     scheduleTask: mockScheduleTask,
     unscheduleTask: mockUnscheduleTask,
+    nextRunFor: mockNextRunFor,
   },
 }));
 
@@ -651,6 +654,68 @@ describe('Management Routes', () => {
         .send({ name: 'NewName' });
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('DB error');
+    });
+  });
+
+  // ==========================================================================
+  // GET /cron-tasks
+  // ==========================================================================
+
+  describe('GET /cron-tasks', () => {
+    it('fills a recurring task’s next run from the scheduler and keeps a one-shot’s stored one', async () => {
+      const recurring = {
+        id: 'ct-rec',
+        agentId: 'agent-1',
+        userId: 'user-1',
+        name: 'Morning brief',
+        schedule: '0 9 * * 1-5',
+        instruction: 'Brief me.',
+        isActive: true,
+        nextRunAt: null,
+        lastRunAt: null,
+        createdAt: new Date('2025-01-01T00:00:00Z'),
+        updatedAt: new Date('2025-01-01T00:00:00Z'),
+      };
+      const once = { ...recurring, id: 'ct-once', schedule: 'in 10 minutes', nextRunAt: new Date('2025-01-15T12:10:00Z') };
+      mockPrisma.cronTask.findMany.mockResolvedValue([recurring, once]);
+      mockNextRunFor.mockImplementation((id: string) =>
+        id === 'ct-rec' ? new Date('2025-01-16T09:00:00Z') : null,
+      );
+
+      const res = await authedRequest(app).get('/agents/cron-tasks');
+
+      expect(res.status).toBe(200);
+      expect(res.body[0].recurring).toBe(true);
+      expect(res.body[0].nextRunAt).toBe('2025-01-16T09:00:00.000Z');
+      expect(res.body[1].recurring).toBe(false);
+      expect(res.body[1].nextRunAt).toBe('2025-01-15T12:10:00.000Z');
+      expect(mockNextRunFor).toHaveBeenCalledWith('ct-rec');
+      expect(mockNextRunFor).not.toHaveBeenCalledWith('ct-once');
+    });
+
+    it('reports no next run for a recurring task the scheduler does not hold', async () => {
+      mockPrisma.cronTask.findMany.mockResolvedValue([
+        {
+          id: 'ct-paused',
+          agentId: 'agent-1',
+          userId: 'user-1',
+          name: 'Paused',
+          schedule: '0 * * * *',
+          instruction: 'Warm the cache.',
+          isActive: false,
+          nextRunAt: null,
+          lastRunAt: null,
+          createdAt: new Date('2025-01-01T00:00:00Z'),
+          updatedAt: new Date('2025-01-01T00:00:00Z'),
+        },
+      ]);
+      mockNextRunFor.mockReturnValue(null);
+
+      const res = await authedRequest(app).get('/agents/cron-tasks');
+
+      expect(res.status).toBe(200);
+      expect(res.body[0].recurring).toBe(true);
+      expect(res.body[0].nextRunAt).toBeNull();
     });
   });
 

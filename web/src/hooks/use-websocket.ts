@@ -564,11 +564,14 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
     running.has(ANY_THREAD) ||
     (activeThreadId ? running.has(activeThreadId) : running.size > 0) ||
     (sent !== null && (sent === ANY_THREAD || sent === activeThreadId));
+  /** A turn on any of the user's threads, which is what the presence mark shows. */
+  const isAgentBusy = running.size > 0 || sent !== null;
 
   return {
     status,
     isConnected: status === 'connected',
     isTyping,
+    isAgentBusy,
     sendFollowup,
     cancel,
     sendVoiceStart,

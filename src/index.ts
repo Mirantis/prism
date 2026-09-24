@@ -231,6 +231,8 @@ const initialize = async () => {
     heartbeatService.startHeartbeat(agent, 'keep-schedule');
     logger.info('Heartbeat started');
 
+    // Recurring schedules are read in the agent's time zone.
+    cronSchedulerService.useTimezone(agent.timezone);
     const cronTasks = await cronSchedulerService.listActiveCronTasks(agent.id);
     for (const task of cronTasks) {
       // Boot re-registration of existing tasks — not a new schedule, so

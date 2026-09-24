@@ -5,7 +5,7 @@
  * in the URL. Selectors mirror web/src/components/chat/*.
  */
 
-import { Page, Locator, Download } from '@playwright/test';
+import { Page, Locator, Download, expect } from '@playwright/test';
 import { BasePage } from './base.page';
 
 /**
@@ -35,6 +35,8 @@ export class HomePage extends BasePage {
   readonly recentThreads: Locator;
   /** "New conversation" pen icon button next to the Recents label. */
   readonly newThreadButton: Locator;
+  /** "New chat" at the top of the sidebar, shown on every page. */
+  readonly sidebarNewChatButton: Locator;
   /**
    * The "agent is working" indicator in the message list. Driven by the same
    * `isTyping` state as the STOP button (AgentChat passes it as both `isTyping`
@@ -59,6 +61,7 @@ export class HomePage extends BasePage {
     this.recentsSection = page.getByTestId('recents');
     this.recentThreads = page.getByTestId('recent-thread');
     this.newThreadButton = page.getByTestId('new-thread');
+    this.sidebarNewChatButton = page.getByTestId('sidebar-new-chat');
     this.commandPopup = page.getByTestId('command-popup');
     this.commandPopupItems = page.getByTestId('command-popup-item');
   }
@@ -77,6 +80,30 @@ export class HomePage extends BasePage {
   /** Current value of the composer textarea. */
   inputValue() {
     return this.chatInput.inputValue();
+  }
+
+  /** The Recents rows listed under one day heading ("Today", "Yesterday", …). */
+  recentThreadsInGroup(label: string) {
+    return this.recentsSection
+      .locator(`[data-testid="recents-group"][data-group="${label}"]`)
+      .getByTestId('recent-thread');
+  }
+
+  /** A first-message suggestion on an empty conversation, by its title. */
+  suggestion(title: string) {
+    return this.page.getByTestId('chat-suggestion').filter({ hasText: title });
+  }
+
+  /**
+   * Send a suggestion and confirm the send went out, on the same terms as
+   * `sendMessage()`: the bubble baseline first, then the typing indicator.
+   */
+  async sendSuggestion(title: string, turnStartTimeout = 30_000) {
+    const button = this.suggestion(title);
+    await expect(button).toBeEnabled();
+    sendBaseline.set(this.page, await this.getAgentMessages().count());
+    await button.click();
+    await this.typingIndicator.waitFor({ state: 'visible', timeout: turnStartTimeout });
   }
 
   /** Visible Recents row labels, in document (top-to-bottom) order. */

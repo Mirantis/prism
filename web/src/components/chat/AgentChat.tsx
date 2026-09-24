@@ -438,6 +438,8 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
         agentName={agent.name}
         isTyping={isTyping}
         isLoading={isLoadingThread}
+        threadId={activeThreadId}
+        onSuggestion={status === 'connected' && activeThreadId ? sendChat : undefined}
         onOpenComputerHelp={openComputerPanel}
       />
       {desktopHelp.length > 0 && (
