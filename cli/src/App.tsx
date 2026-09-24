@@ -120,7 +120,11 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
     const onMessage = (msg: TuiMessage) => {
       setEntries((prev) => [...prev, { kind: 'message', message: msg }]);
     };
-    const onStatus = (s: TuiStatus, detail?: string) => {
+    // A frame naming another thread is a turn in another conversation — Slack's, or the
+    // Web UI's. A frame with no thread (a cancel, a connection change) is this session's.
+    const onStatus = (s: TuiStatus, detail?: string, threadId?: string) => {
+      const thread = activeThreadIdRef.current;
+      if (threadId && thread && threadId !== thread) return;
       setStatus(s);
       setStatusDetail(detail);
     };

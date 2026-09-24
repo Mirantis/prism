@@ -175,7 +175,8 @@ export class ComputerAccess extends EventEmitter {
    *
    * The desktop is taken first, so the agent's own actions stop and the one in flight is
    * drained before a field is touched, and given back afterwards, which is what clears
-   * whatever the page was left holding.
+   * any password the page was left holding. The username can stay on the page, as the
+   * site itself shows it again after a rejected sign-in.
    */
   async runSecure<T>(helpId: string, action: () => Promise<T>): Promise<T> {
     const clientId = `sign-in:${helpId}`;

@@ -214,6 +214,31 @@ describe('App', () => {
     unmount();
   });
 
+  it("ignores a turn on another thread, and keeps its own turn's status", async () => {
+    adapterStub.startNewSession.mockResolvedValueOnce('thread-mine');
+    const flush = async (times = 3) => {
+      for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
+    };
+    const { lastFrame, unmount } = render(<App {...baseProps} />);
+    try {
+      await flush();
+      await flush();
+
+      // A Slack turn for the same user starts: nothing runs in this session.
+      adapterStub.events.emit('status', 'thinking', undefined, 'thread-slack');
+      await flush();
+      expect(lastFrame() ?? '').not.toContain('thinking');
+
+      // This session's turn starts, and the Slack turn ending must not clear it.
+      adapterStub.events.emit('status', 'thinking', undefined, 'thread-mine');
+      adapterStub.events.emit('status', 'idle', undefined, 'thread-slack');
+      await flush();
+      expect(lastFrame() ?? '').toContain('thinking');
+    } finally {
+      unmount();
+    }
+  });
+
   it('keeps the composer live while thinking, so typing still lands in it', async () => {
     const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
     try {

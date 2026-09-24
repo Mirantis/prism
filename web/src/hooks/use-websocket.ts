@@ -136,8 +136,8 @@ const ANY_THREAD = '';
 /**
  * The set a frame leaves behind.
  *
- * A frame that names no thread is either the answer to a cancel or a runtime older than
- * the per-thread report, so its end clears every turn rather than one.
+ * A frame that names no thread is the cancel of a turn sent without one, or a runtime
+ * older than the per-thread report, so its end clears every turn rather than one.
  */
 function nextRunning(
   current: ReadonlySet<string>,

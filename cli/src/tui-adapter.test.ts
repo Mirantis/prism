@@ -129,7 +129,7 @@ describe('TuiAdapter.loadHistory', () => {
 });
 
 describe('TuiAdapter inbound envelopes', () => {
-  let statuses: Array<{ status: TuiStatus; detail?: string }>;
+  let statuses: Array<{ status: TuiStatus; detail?: string; threadId?: string }>;
   let threads: string[];
 
   const emit = (type: string, payload?: unknown) =>
@@ -139,7 +139,9 @@ describe('TuiAdapter inbound envelopes', () => {
     tuiAdapterService.markConnected('u1');
     statuses = [];
     threads = [];
-    tuiAdapterService.events.on('status', (status, detail) => statuses.push({ status, detail }));
+    tuiAdapterService.events.on('status', (status, detail, threadId) =>
+      statuses.push({ status, detail, threadId }),
+    );
     tuiAdapterService.events.on('thread', (threadId) => threads.push(threadId));
   });
 
@@ -184,6 +186,13 @@ describe('TuiAdapter inbound envelopes', () => {
     emit('status', { processing: false });
 
     expect(statuses.map((s) => s.status)).toEqual(['thinking', 'idle']);
+  });
+
+  it('passes on the thread a status frame names', () => {
+    emit('status', { processing: true, threadId: 'thread-1' });
+    emit('status', { processing: false });
+
+    expect(statuses.map((s) => s.threadId)).toEqual(['thread-1', undefined]);
   });
 
   it('ignores a connect handshake that carries no processing flag', () => {
