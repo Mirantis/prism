@@ -7,6 +7,10 @@
  * once enough of it has arrived, and a requested response answers with a steady
  * tone. Nothing here is a model — the words are never read.
  *
+ * A session configured with no turn detection is a dictation. It announces no turns, and
+ * a commit answers with a transcript that states how much speech the buffer held, so a
+ * scenario can tell the runtime's audio reached it from the text alone.
+ *
  * `GET /state` reports what it has seen, so a failing scenario can name the step
  * that did not complete: a `sessions` of zero means the runtime has no socket open,
  * an `inboundMs` of zero means the browser's microphone did not reach it, and a
@@ -45,6 +49,8 @@ const state = {
   recordingSegments: 0,
   recordingImages: 0,
   recordingAudioMs: 0,
+  /** Dictation buffers committed and answered with a transcript. */
+  dictationsTranscribed: 0,
 };
 
 const server = http.createServer((req, res) => {
@@ -78,14 +84,35 @@ wss.on('connection', (ws: WebSocket) => {
   let heardMs = 0;
   let announcedMs = 0;
   let responses = 0;
+  // Set by a `session.update` with turn detection off, which is how a dictation asks.
+  let dictation = false;
 
   send(ws, { type: 'session.created', session: { id: 'sess_mock' } });
 
   ws.on('message', (data) => {
-    let event: { type?: string; audio?: string; event_id?: string; item?: unknown };
+    let event: {
+      type?: string;
+      audio?: string;
+      event_id?: string;
+      item?: unknown;
+      session?: { audio?: { input?: { turn_detection?: unknown } } };
+    };
     try {
       event = JSON.parse(data.toString());
     } catch {
+      return;
+    }
+
+    // The real API confirms every update, and a dictation waits for the confirmation.
+    if (event.type === 'session.update') {
+      dictation = event.session?.audio?.input?.turn_detection === null;
+      send(ws, { type: 'session.updated', session: { id: 'sess_mock' } });
+      return;
+    }
+
+    if (event.type === 'input_audio_buffer.commit' && dictation) {
+      transcribe(ws, `item_mock_${++turns}`, heardMs);
+      heardMs = 0;
       return;
     }
 
@@ -98,6 +125,7 @@ wss.on('connection', (ws: WebSocket) => {
       const arrivedMs = speechMs(Buffer.from(event.audio, 'base64'));
       heardMs += arrivedMs;
       state.inboundMs += arrivedMs;
+      if (dictation) return;
       // One turn per `UTTERANCE_MS` of speech. The runtime answers a turn
       // boundary, so this is what makes the agent talk back.
       if (heardMs - announcedMs >= UTTERANCE_MS) {
@@ -164,6 +192,16 @@ function announceTurn(ws: WebSocket, itemId: string, heardMs: number): void {
     },
   });
   log(`turn ${itemId} committed after ${Math.round(heardMs)}ms of speech on this session`);
+}
+
+/** Answer a committed dictation with a transcript of how much speech it held. */
+function transcribe(ws: WebSocket, itemId: string, heardMs: number): void {
+  const transcript = `Mock dictation of ${Math.round(heardMs / 100) * 100} ms.`;
+  send(ws, { type: 'input_audio_buffer.committed', item_id: itemId });
+  send(ws, { type: 'conversation.item.input_audio_transcription.delta', item_id: itemId, delta: 'Mock dictation ' });
+  send(ws, { type: 'conversation.item.input_audio_transcription.completed', item_id: itemId, transcript });
+  state.dictationsTranscribed += 1;
+  log(`dictation ${itemId} transcribed after ${Math.round(heardMs)}ms of speech`);
 }
 
 /** Answer a `response.create` with a tone, streamed as the real API streams audio. */

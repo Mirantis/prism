@@ -65,6 +65,8 @@ What the agent can do.
   takes part by voice, listening, speaking and using its tools live.
 - **[Voice chat](voice-chat.md)** — a direct voice conversation with the agent, with
   no meeting in it, over the connection chat already uses.
+- **[Dictation](dictation.md)** — speak a message instead of typing it; the words
+  arrive in the chat as your message.
 - **[The agent's computer](computer.md)** — a page where the agent has a browser and
   a desktop, you watch it work, and you can take the keyboard or share your screen.
 - **[Skills](skills.md)** — installable `SKILL.md` capability bundles (the
