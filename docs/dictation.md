@@ -15,7 +15,7 @@ or a Meet call is live on another connection.
 
 ## Using it
 
-Press the microphone next to the paperclip in the [Web UI](web-ui.md#chat)'s chat
+Press the microphone beside the send button in the [Web UI](web-ui.md#chat)'s chat
 composer, and speak. The browser asks for the microphone the first time. Press
 send when you are done, or ✕ to discard the recording.
 
