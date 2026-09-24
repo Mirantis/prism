@@ -47,9 +47,14 @@ export function isMovingImage(image: string): boolean {
   return image.endsWith(`:${EXEC_IMAGE_FALLBACK_TAG}`);
 }
 
+/** The container this deployment's commands run in. */
+export function execContainerName(deployment: string): string {
+  return `prism-agent-exec-${deployment}`;
+}
+
 export function createDockerEnvironment(): ExecutionEnvironment {
   const deployment = deploymentId();
-  const container = `prism-agent-exec-${deployment}`;
+  const container = execContainerName(deployment);
   const image = execImage();
   const ctx: DockerExecContext = { container };
   const files = createDockerFiles(container);

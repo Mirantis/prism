@@ -86,6 +86,16 @@ to clear.
   payload starts, while the pid it wrote is still the group's. The image runs
   tini as PID 1, because everything the agent leaves behind is re-parented there
   and `sleep` reaps nothing.
+- **Changing environment moves the agent's files.** The two environments keep
+  the agent's storage in different places, so a boot that finds
+  `lastExecutionEnvironment` (the `runtime_state` table, read before the agent
+  row is resolved) different from the current one copies the workspace, skills,
+  plugins and both coding-agent homes across, in either direction
+  (`storage-migration.ts`). Only an entry the destination does not already have
+  is copied, so a round trip merges rather than clobbers. The saved tool outputs
+  and the container's `$HOME` are left out, both being caches with their own
+  expiry. `docker cp` needs a container, so a copy out of the volumes with
+  nothing running opens a temporary one and removes it.
 - **An environment owns the agent's directories, not just its workspace.**
   `environment.paths()` answers for skills, plugins, saved tool outputs and each
   coding agent's home; `lib/data-dir.ts` keeps what is the runtime's alone. A
@@ -916,6 +926,7 @@ src/
 │   │   ├── exec-stdio-transport.ts # MCP stdio over `runProgram`, so a plugin's server runs where its files are
 │   │   ├── get-execution-environment.ts # Selector: derives the environment (no setting), one instance per process
 │   │   ├── capture.ts         # The one bounded, timed, cancellable run — `shell_exec` and every probe format their own result out of it
+│   │   ├── storage-migration.ts # Moves the agent's files when the deployment changes environment, either way
 │   │   ├── workspace.ts       # `resolveWorkspace`: the single owner of the per-thread-vs-default fallback
 │   │   ├── local/             # Commands as children of this process, on the filesystem it sees
 │   │   └── docker/            # Commands in a container, and its storage in named volumes
@@ -924,6 +935,7 @@ src/
 │   │       ├── container.ts   # The container's lifetime, which is the runtime's
 │   │       ├── volumes.ts     # The named volumes, their container paths, and `servesPath`
 │   │       ├── docker-files.ts # `ExecutionFiles` over `docker exec`, one call per operation
+│   │       ├── docker-copy.ts # `docker cp` in and out, opening a container for the volumes when none runs
 │   │       ├── docker-env.ts  # What a command inherits; a longer deny-list than local's
 │   │       └── docker-process.ts # `docker exec` under `setsid --wait`, and the pid-file kill
 │   ├── embedding-providers/    # Memory-embedding vendors, a feature of their own decoupled from the chat provider (`EMBEDDING_PROVIDER`)

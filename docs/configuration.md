@@ -125,7 +125,7 @@ See **[Slack](slack.md)** for how the tokens are used.
 | `TEAM_NAME` | Team name on first boot | `Local` |
 | `OWNER_USER_ID` | Owner user ID on first boot | local sentinel UUID |
 | `SHELL_WORKSPACE_ROOT` | Working directory for the agent's [shell tools](tools.md#shell) | install `workspace` dir (Docker: `/home/node`) |
-| `EXECUTION_ENVIRONMENT` | Where the agent's commands run, and where its workspace and skills are kept: `docker` (a container, with storage Docker keeps) or `local` (this machine). See [where commands run](tools.md#where-commands-run). | `docker` when a container engine answers, else `local` |
+| `EXECUTION_ENVIRONMENT` | **Detected automatically — set this only to override it.** Where the agent's commands run, and where its workspace and skills are kept: `docker` (a container, with storage Docker keeps) or `local` (this machine). See [where commands run](tools.md#where-commands-run). | `docker` when a container engine answers, else `local` |
 | `PRISM_DATA_DIR` | Persistent data dir for [skills](skills.md), [plugins](plugins.md), attachment media (`<data dir>/media`) and the coding agent's config. The Docker image sets this to the `/data` volume. | `/data` (Docker), else `~/.prism` |
 | `PRISM_SKILLS_DIR` | Override the [skills](skills.md) directory specifically. | `<data dir>/skills` |
 | `PRISM_PLUGINS_DIR` | Override the [plugins](plugins.md) directory specifically. | `<data dir>/plugins` |
