@@ -25,7 +25,9 @@ export default function ChatMessageList({ messages, agentName, isTyping, isLoadi
       {isEmpty ? (
         <ChatWelcome />
       ) : (
-        <div className="space-y-6 px-4 py-6">
+        // One readable column, however wide the window: a reply that runs the full width of
+        // a large screen is a line the eye cannot follow back.
+        <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-6">
           {messages.map((msg) => (
             <ChatMessage key={msg.id} message={msg} agentName={agentName} />
           ))}

@@ -4,7 +4,9 @@ import { render, screen, act, waitFor, cleanup, fireEvent } from '@testing-libra
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ComputerStatus, ConversationMessage } from '@/types';
 import type { Dictation } from '@/hooks/use-dictation';
-import type { DictationEvent } from '@/hooks/use-websocket';
+import type { DictationEvent, VoiceEvent } from '@/hooks/use-websocket';
+import { HeaderActionsProvider } from '@/lib/header-actions-context';
+import { HeaderActionsSlot } from '@/components/layout/header-actions-slot';
 
 // Capture the onMessage the component hands to useWebSocket so the test can
 // drive inbound deliveries. The mock re-captures on every render, so the
@@ -19,11 +21,15 @@ const { wsHolder } = vi.hoisted(() => ({
     // The dictation frames arrive on the same socket, and the component routes them to
     // the dictation through a ref. Captured here so a test can deliver one.
     onDictationEvent: undefined as ((e: unknown) => void) | undefined,
+    onVoiceEvent: undefined as ((e: unknown) => void) | undefined,
+    onVoiceAudio: undefined as ((f: ArrayBuffer) => void) | undefined,
     // The state of the desktop arrives on the same socket. Captured so a test can
     // deliver one without a runtime.
     onComputerStatus: undefined as ((s: ComputerStatus) => void) | undefined,
     isTyping: false,
     sendFollowup: vi.fn(),
+    sendVoiceStart: vi.fn(() => true),
+    sendVoiceStop: vi.fn(),
     sendVoiceAudio: vi.fn(),
     sendDictationStart: vi.fn(() => true),
     sendDictationStop: vi.fn(),
@@ -34,16 +40,22 @@ vi.mock('@/hooks/use-websocket', () => ({
   useWebSocket: (opts: {
     onMessage?: (m: ConversationMessage) => void;
     onDictationEvent?: (e: unknown) => void;
+    onVoiceEvent?: (e: unknown) => void;
+    onVoiceAudio?: (f: ArrayBuffer) => void;
     onComputerStatus?: (s: ComputerStatus) => void;
   }) => {
     wsHolder.onMessage = opts.onMessage;
     wsHolder.onDictationEvent = opts.onDictationEvent;
+    wsHolder.onVoiceEvent = opts.onVoiceEvent;
+    wsHolder.onVoiceAudio = opts.onVoiceAudio;
     wsHolder.onComputerStatus = opts.onComputerStatus;
     return {
       status: 'connected',
       isTyping: wsHolder.isTyping,
       sendFollowup: wsHolder.sendFollowup,
       cancel: vi.fn(),
+      sendVoiceStart: wsHolder.sendVoiceStart,
+      sendVoiceStop: wsHolder.sendVoiceStop,
       sendVoiceAudio: wsHolder.sendVoiceAudio,
       sendDictationStart: wsHolder.sendDictationStart,
       sendDictationStop: wsHolder.sendDictationStop,
@@ -122,11 +134,13 @@ vi.mock('./ChatInput', () => ({
     onChange,
     onSend,
     dictation,
+    dictationBlockedReason,
   }: {
     value: string;
     onChange: (v: string) => void;
     onSend: (e: { preventDefault: () => void }) => void;
     dictation?: Dictation;
+    dictationBlockedReason?: string | null;
   }) => (
     <div data-testid="input">
       <input data-testid="composer" value={value} onChange={(e) => onChange(e.target.value)} />
@@ -134,6 +148,7 @@ vi.mock('./ChatInput', () => ({
         send
       </button>
       <span data-testid="dictation-status">{dictation?.status}</span>
+      <span data-testid="dictation-blocked">{dictationBlockedReason ?? ''}</span>
       <button data-testid="dictation-start" onClick={() => dictation?.start()}>
         dictate
       </button>
@@ -336,6 +351,67 @@ describe('AgentChat dictation', () => {
     // Echoed on the thread at once, as a typed message is.
     expect(screen.getByTestId('list').textContent).toMatch(/temp-\d+:t1/);
     expect(screen.getByTestId('dictation-status').textContent).toBe('idle');
+
+    cleanup();
+  });
+});
+
+describe('AgentChat voice call', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    wsHolder.isTyping = false;
+    wsHolder.sendVoiceStart.mockReturnValue(true);
+    mockGetThread.mockResolvedValue({ id: 't1', messages: [] });
+  });
+
+  function renderWithHeader() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <HeaderActionsProvider>
+          <HeaderActionsSlot />
+          <AgentChat threadId="t1" />
+        </HeaderActionsProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  it('places the call from the header on the thread being viewed, and plays its audio', async () => {
+    renderWithHeader();
+    await waitFor(() => expect(mockGetThread).toHaveBeenCalledWith('a1', 'u1', 't1'));
+
+    fireEvent.click(screen.getByTestId('voice-call-button'));
+    await waitFor(() => expect(wsHolder.sendVoiceStart).toHaveBeenCalledWith({ threadId: 't1' }));
+
+    act(() => wsHolder.onVoiceEvent!({ type: 'state', state: 'live' } satisfies VoiceEvent));
+    expect(screen.getByTestId('voice-call-indicator')).toBeTruthy();
+
+    const frame = new Int16Array([7, 8]).buffer;
+    act(() => wsHolder.onVoiceAudio!(frame));
+    expect(voiceAudio.enqueue).toHaveBeenCalledWith(frame);
+
+    // The microphone belongs to the call now, so the composer says why it cannot record.
+    expect(screen.getByTestId('dictation-blocked').textContent).toBe(
+      'End the call to record a voice message',
+    );
+
+    fireEvent.click(screen.getByTestId('voice-call-end'));
+    expect(wsHolder.sendVoiceStop).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('dictation-blocked').textContent).toBe('');
+
+    cleanup();
+  });
+
+  it('holds the call back while a voice message is recording', async () => {
+    renderWithHeader();
+    await waitFor(() => expect(mockGetThread).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByTestId('dictation-start'));
+    await waitFor(() => expect(screen.getByTestId('dictation-status').textContent).toBe('recording'));
+
+    const call = screen.getByTestId('voice-call-button');
+    expect(call.hasAttribute('disabled')).toBe(true);
+    expect(call.parentElement?.getAttribute('title')).toBe('Finish the voice message first');
 
     cleanup();
   });

@@ -1,6 +1,6 @@
 /**
- * Steps about the stand-in voice model itself, shared by every voice feature: the
- * Computer page's call and the composer's voice message.
+ * Steps about the stand-in voice model itself, shared by every voice feature: the chat
+ * header's call, the Computer page's call and the composer's voice message.
  */
 
 import { createBdd } from 'playwright-bdd';

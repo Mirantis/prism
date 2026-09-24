@@ -46,6 +46,8 @@ interface ChatInputProps {
   isCompacting?: boolean;
   /** Speaking a message instead of typing it, or nothing when the surface does not offer it. */
   dictation?: Dictation;
+  /** Why a voice message cannot be recorded right now, such as a call holding the microphone. */
+  dictationBlockedReason?: string | null;
 }
 
 const statusColors: Record<ConnectionStatus, string> = {
@@ -68,6 +70,7 @@ export default function ChatInput({
   contextUsage,
   isCompacting = false,
   dictation,
+  dictationBlockedReason = null,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cancelDictationRef = useRef<HTMLButtonElement>(null);
@@ -223,22 +226,29 @@ export default function ChatInput({
     e.target.value = '';
   };
 
+  const dictationTitle =
+    connectionStatus !== 'connected' ? 'Not connected' : (dictationBlockedReason ?? 'Voice message');
+
+  // A small round control, the size every button in the composer's toolbar shares.
+  const toolButton = 'size-8 rounded-full';
+
   return (
-    <div className="border-t bg-background">
-      {/*
-        Meta strip. Previously shown only while disconnected; it now also carries
-        the context-window reading, so it renders when either signal is present.
-        Connection notice on the left, context on the right; when only one is
-        present it still lands on its own side.
-      */}
-      {(connectionStatus !== 'connected' || contextUsage || isCompacting || dictationError) && (
-        <div className="flex items-center justify-between gap-2 bg-muted/50 px-4 py-1.5 text-xs text-muted-foreground">
-          <span className="flex items-center gap-2">
+    <div className="bg-background">
+      <div
+        className="mx-auto w-full max-w-3xl px-4 pt-2 pb-4"
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+      >
+        {/* What the composer has to say about itself, above it and only when it has
+            something: the connection, a compaction, a voice message that failed. */}
+        {(connectionStatus !== 'connected' || isCompacting || dictationError) && (
+          <div className="flex items-center gap-3 px-2 pb-1.5 text-xs text-muted-foreground">
             {connectionStatus !== 'connected' && (
-              <>
+              <span className="flex items-center gap-1.5">
                 <span className={`inline-block size-1.5 rounded-full ${statusColors[connectionStatus]}`} />
                 {connectionStatus === 'connecting' ? 'Connecting…' : 'Disconnected'}
-              </>
+              </span>
             )}
             {isCompacting && (
               <span data-testid="compacting-indicator" className="flex items-center gap-1.5">
@@ -251,16 +261,8 @@ export default function ChatInput({
                 {dictationError}
               </span>
             )}
-          </span>
-          {contextUsage && <ContextMeter usage={contextUsage} />}
-        </div>
-      )}
-      <div
-        className="px-4 py-3"
-        onDrop={handleDrop}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-      >
+          </div>
+        )}
         <form onSubmit={onSend}>
           {attachments.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-2">
@@ -277,38 +279,13 @@ export default function ChatInput({
               onSelect={completeCommand}
             />
           )}
-          <InputGroup className={`h-auto ${isDragging ? 'ring-2 ring-primary ring-offset-1' : ''}`}>
-            <InputGroupAddon align="inline-start">
-              <span
-                className={`inline-block size-2 rounded-full ${statusColors[connectionStatus]}`}
-                title={connectionStatus}
-              />
-              {dictation && isDictating ? (
-                <InputGroupButton
-                  ref={cancelDictationRef}
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  onClick={dictation.cancel}
-                  title="Discard voice message"
-                  aria-label="Discard voice message"
-                  data-testid="dictation-cancel"
-                >
-                  <X className="size-3.5" />
-                </InputGroupButton>
-              ) : (
-                <InputGroupButton
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  onClick={() => fileInputRef.current?.click()}
-                  title="Attach files"
-                  aria-label="Attach files"
-                >
-                  <Paperclip className="size-3.5" />
-                </InputGroupButton>
-              )}
-            </InputGroupAddon>
+          {/* One card: what is being written on top, and a toolbar under it — attach on
+              the left, everything that acts on the message on the right. */}
+          <InputGroup
+            className={`h-auto rounded-2xl bg-card shadow-sm dark:bg-card ${
+              isDragging ? 'ring-2 ring-primary ring-offset-1' : ''
+            }`}
+          >
             {dictation && isDictating ? (
               <DictationBar dictation={dictation} />
             ) : (
@@ -320,78 +297,116 @@ export default function ChatInput({
                 onPaste={handlePaste}
                 placeholder={isDragging ? 'Drop files to attach…' : 'Message your agent...'}
                 rows={1}
-                className="max-h-40 min-h-[36px]"
+                className="max-h-48 min-h-[52px] px-4 pt-3.5 text-[15px] leading-6"
               />
             )}
-            {/*
-              STOP joins send while pending rather than replacing it, so the
-              user can redirect the running turn instead of only killing it.
-              Send keeps the rightmost slot in both states — its hit target
-              must not move out from under the cursor mid-turn.
-            */}
-            <InputGroupAddon align="inline-end">
-              {isPending && (
-                <InputGroupButton
-                  type="button"
-                  size="icon-xs"
-                  // Disabled while disconnected: the cancel can't reach the
-                  // runtime, so don't imply the turn was stopped.
-                  variant={connectionStatus === 'connected' ? 'default' : 'ghost'}
-                  disabled={connectionStatus !== 'connected'}
-                  onClick={onCancel}
-                  title="Stop response"
-                  aria-label="Stop response"
-                  data-testid="chat-stop-button"
-                  className="rounded-full"
-                >
-                  <Square className="size-3 fill-current" />
-                </InputGroupButton>
-              )}
-              {/* Beside send, where a voice message is sent from too. Stop comes before
-                  it, so the microphone does not move when a turn starts. */}
-              {dictation && !isDictating && (
-                <InputGroupButton
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  disabled={connectionStatus !== 'connected'}
-                  onClick={dictation.start}
-                  title={connectionStatus !== 'connected' ? 'Not connected' : 'Voice message'}
-                  aria-label="Voice message"
-                  data-testid="dictation-button"
-                >
-                  <Mic className="size-3.5" />
-                </InputGroupButton>
-              )}
+            <InputGroupAddon align="block-end" className="gap-1 px-2 pb-2">
               {dictation && isDictating ? (
-                // The send slot stays where it is, so a recording is sent from the same
-                // place a typed message is.
                 <InputGroupButton
+                  ref={cancelDictationRef}
                   type="button"
-                  size="icon-xs"
-                  variant={dictation.status === 'recording' ? 'default' : 'ghost'}
-                  disabled={dictation.status !== 'recording'}
-                  onClick={dictation.send}
-                  title="Send voice message"
-                  aria-label="Send voice message"
-                  data-testid="dictation-send"
-                  className="rounded-full"
+                  size="icon-sm"
+                  variant="ghost"
+                  className={toolButton}
+                  onClick={dictation.cancel}
+                  title="Discard voice message"
+                  aria-label="Discard voice message"
+                  data-testid="dictation-cancel"
                 >
-                  <ArrowUp className="size-3.5" />
+                  <X className="size-4" />
                 </InputGroupButton>
               ) : (
                 <InputGroupButton
-                  type="submit"
-                  size="icon-xs"
-                  variant={isDisabled ? 'ghost' : 'default'}
-                  disabled={isDisabled}
-                  title={sendLabel}
-                  aria-label={sendLabel}
-                  className="rounded-full"
+                  type="button"
+                  size="icon-sm"
+                  variant="ghost"
+                  className={toolButton}
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Attach files"
+                  aria-label="Attach files"
                 >
-                  <ArrowUp className="size-3.5" />
+                  <Paperclip className="size-4" />
                 </InputGroupButton>
               )}
+              <span className="ml-auto flex items-center gap-1">
+                {contextUsage && !isDictating && (
+                  <span className="mr-2 text-xs">
+                    <ContextMeter usage={contextUsage} />
+                  </span>
+                )}
+                {/*
+                  STOP joins send while pending rather than replacing it, so the user can
+                  redirect the running turn instead of only killing it. Send keeps the
+                  rightmost slot in every state — its hit target must not move out from
+                  under the cursor mid-turn — and the microphone sits beside it, after
+                  STOP, so it keeps its place when a turn starts.
+                */}
+                {isPending && (
+                  <InputGroupButton
+                    type="button"
+                    size="icon-sm"
+                    // Disabled while disconnected: the cancel can't reach the
+                    // runtime, so don't imply the turn was stopped.
+                    variant={connectionStatus === 'connected' ? 'default' : 'ghost'}
+                    disabled={connectionStatus !== 'connected'}
+                    onClick={onCancel}
+                    title="Stop response"
+                    aria-label="Stop response"
+                    data-testid="chat-stop-button"
+                    className={toolButton}
+                  >
+                    <Square className="size-3 fill-current" />
+                  </InputGroupButton>
+                )}
+                {dictation && !isDictating && (
+                  // The reason sits on a wrapper: a disabled button takes no pointer
+                  // events, so a title of its own would never show.
+                  <span className="inline-flex" title={dictationTitle} data-testid="dictation-button-hint">
+                    <InputGroupButton
+                      type="button"
+                      size="icon-sm"
+                      variant="ghost"
+                      className={toolButton}
+                      disabled={connectionStatus !== 'connected' || dictationBlockedReason !== null}
+                      onClick={dictation.start}
+                      aria-label="Voice message"
+                      aria-description={dictationTitle === 'Voice message' ? undefined : dictationTitle}
+                      data-testid="dictation-button"
+                    >
+                      <Mic className="size-4" />
+                    </InputGroupButton>
+                  </span>
+                )}
+                {dictation && isDictating ? (
+                  // The send slot stays where it is, so a recording is sent from the same
+                  // place a typed message is.
+                  <InputGroupButton
+                    type="button"
+                    size="icon-sm"
+                    variant={dictation.status === 'recording' ? 'default' : 'ghost'}
+                    disabled={dictation.status !== 'recording'}
+                    onClick={dictation.send}
+                    title="Send voice message"
+                    aria-label="Send voice message"
+                    data-testid="dictation-send"
+                    className={toolButton}
+                  >
+                    <ArrowUp className="size-4" />
+                  </InputGroupButton>
+                ) : (
+                  <InputGroupButton
+                    type="submit"
+                    size="icon-sm"
+                    variant={isDisabled ? 'secondary' : 'default'}
+                    disabled={isDisabled}
+                    title={sendLabel}
+                    aria-label={sendLabel}
+                    className={toolButton}
+                  >
+                    <ArrowUp className="size-4" />
+                  </InputGroupButton>
+                )}
+              </span>
             </InputGroupAddon>
           </InputGroup>
           </div>

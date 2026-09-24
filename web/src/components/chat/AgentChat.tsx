@@ -8,6 +8,8 @@ import { useAgent } from '@/lib/agent-context';
 import { useWebSocket } from '@/hooks/use-websocket';
 import { useComputerStatusFeed } from '@/hooks/use-computer-status';
 import { useDictation, type Dictation } from '@/hooks/use-dictation';
+import { useVoiceCall, type VoiceCall } from '@/hooks/use-voice-call';
+import { HeaderActions } from '@/components/layout/header-actions';
 import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   type Attachment,
@@ -17,6 +19,8 @@ import {
 } from '@/types';
 import ChatMessageList from './ChatMessageList';
 import ChatInput from './ChatInput';
+import VoiceCallBar from './voice-call-bar';
+import VoiceCallControl from './voice-call-control';
 import type { PendingAttachment } from './ChatAttachmentChip';
 import { findExact, parseCommandLine, type SlashCommand } from './commands';
 
@@ -37,9 +41,10 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
   // appendSystemMessage, which is declared further down.
   const [compactionNotice, setCompactionNotice] = useState<CompactionEvent | null>(null);
 
-  // The socket hands out the senders and the dictation hands back the handler, so one of
-  // the two is read late. The socket's callbacks are bound once, so the dictation goes
-  // through a ref and the socket is not re-bound as its state changes.
+  // The socket hands out the senders and the call and the dictation hand back the
+  // handlers, so one of the two is read late. The socket's callbacks are bound once, so
+  // both go through refs and the socket is not re-bound as their state changes.
+  const voiceRef = useRef<VoiceCall | null>(null);
   const dictationRef = useRef<Dictation | null>(null);
 
   const writeComputerStatus = useComputerStatusFeed();
@@ -49,6 +54,8 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     isTyping,
     sendFollowup,
     cancel,
+    sendVoiceStart,
+    sendVoiceStop,
     sendVoiceAudio,
     sendDictationStart,
     sendDictationStop,
@@ -91,8 +98,19 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     // cards read, so they follow a wait or a resolution as it happens and the page
     // makes no repeating request. Install-level: the banner filters by thread itself.
     onComputerStatus: writeComputerStatus,
+    onVoiceEvent: (event) => voiceRef.current?.handleEvent(event),
+    onVoiceAudio: (frame) => voiceRef.current?.handleAudio(frame),
     onDictationEvent: (event) => dictationRef.current?.handleEvent(event),
   });
+
+  const voice = useVoiceCall({
+    sendVoiceStart,
+    sendVoiceStop,
+    sendVoiceAudio,
+    threadId: activeThreadId,
+    isConnected: status === 'connected',
+  });
+  voiceRef.current = voice;
 
   // Cancel the in-flight turn and drop an ephemeral marker so the user gets
   // explicit confirmation. The marker is client-only (never stored), so it
@@ -381,15 +399,32 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
   });
   dictationRef.current = dictation;
 
+  // One microphone per socket: the runtime refuses a call while this page dictates, and
+  // a dictation while it calls. The controls say so before the user finds out that way.
+  // A call also waits for the thread, so the agent's tools in it have one.
+  const callBlockedReason =
+    status !== 'connected' || !activeThreadId
+      ? 'Not connected'
+      : dictation.status !== 'idle'
+        ? 'Finish the voice message first'
+        : null;
+  const dictationBlockedReason = voice.status !== 'idle' ? 'End the call to record a voice message' : null;
+
   return (
     <div className="flex h-full flex-col">
+      <HeaderActions>
+        <VoiceCallControl call={voice} blockedReason={callBlockedReason} />
+      </HeaderActions>
+      <VoiceCallBar call={voice} agentName={agent.name} />
       <ChatMessageList
         messages={localMessages}
         agentName={agent.name}
         isTyping={isTyping}
         isLoading={isLoadingThread}
       />
-      <ComputerWaiting threadId={activeThreadId} />
+      <div className="mx-auto w-full max-w-3xl px-4 empty:hidden">
+        <ComputerWaiting threadId={activeThreadId} />
+      </div>
       <ChatInput
         value={message}
         onChange={setMessage}
@@ -403,6 +438,7 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
         contextUsage={contextUsage}
         isCompacting={isCompacting}
         dictation={dictation}
+        dictationBlockedReason={dictationBlockedReason}
       />
     </div>
   );

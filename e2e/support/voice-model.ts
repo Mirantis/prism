@@ -1,9 +1,10 @@
 /**
  * What the mock voice model has seen, and the waits the voice steps are built from.
  *
- * Both voice surfaces — the composer's voice message and the Computer page's call — are
- * driven through the real SPA against `support/mock-realtime-server.ts`, and both read the same
- * counters to tell what crossed the wire from what is merely on screen. The counters run
+ * Every voice surface — the chat header's call, the composer's voice message and the
+ * Computer page's call — is driven through the real SPA against
+ * `support/mock-realtime-server.ts`, and all of them read the same counters to tell what
+ * crossed the wire from what is merely on screen. The counters run
  * for the life of the mock process, so a scenario takes a baseline and asserts on growth
  * from it. Tests run one at a time (`workers: 1`), which is why one module variable holds
  * that baseline.

@@ -1,6 +1,6 @@
 import { Loader2 } from 'lucide-react';
 import type { Dictation } from '@/hooks/use-dictation';
-import DictationTimer from './dictation-timer';
+import ElapsedTime from './elapsed-time';
 import DictationWaveform from './dictation-waveform';
 
 /** What a screen reader hears for each state. The timer is kept out of it on purpose. */
@@ -20,7 +20,7 @@ export default function DictationBar({ dictation }: { dictation: Dictation }) {
 
   return (
     <div
-      className="flex min-h-[36px] flex-1 items-center gap-3 px-3 py-2"
+      className="flex min-h-[52px] w-full items-center gap-3 px-4 pt-3.5 pb-1"
       data-testid="dictation-bar"
       data-status={status}
     >
@@ -31,8 +31,12 @@ export default function DictationBar({ dictation }: { dictation: Dictation }) {
       </span>
       {status === 'recording' ? (
         <>
+          <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground" aria-hidden="true">
+            <span className="inline-block size-2 animate-pulse rounded-full bg-destructive" />
+            Recording
+          </span>
           <DictationWaveform levels={dictation.levels} />
-          {dictation.startedAt !== null && <DictationTimer startedAt={dictation.startedAt} />}
+          {dictation.startedAt !== null && <ElapsedTime startedAt={dictation.startedAt} />}
         </>
       ) : (
         <span className="flex items-center gap-2 text-sm text-muted-foreground" aria-hidden="true">
