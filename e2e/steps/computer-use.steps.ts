@@ -10,9 +10,19 @@ import { DEFAULT_AGENT_ID } from '../fixtures/test-data';
 const { Given, When, Then, After } = createBdd();
 let site: Awaited<ReturnType<typeof startComputerSite>> | undefined;
 
-After(async () => {
+After(async ({ context }) => {
   await site?.close();
   site = undefined;
+  // Control survives closing a viewer, and every later turn waits on it, so a scenario that
+  // fails while holding control would stall the rest of the suite.
+  const status = await (await context.request.get('/agents/computer')).json();
+  if (!status.paused) return;
+  for (const open of context.pages()) await open.close();
+  const viewer = await context.newPage();
+  await viewer.goto('/computer');
+  await viewer.getByRole('button', { name: 'Return control', exact: true }).click();
+  await expect(viewer.getByRole('status')).not.toContainText('Paused');
+  await viewer.close();
 });
 
 Given('a website with a sign-in page and public notes', async () => {
