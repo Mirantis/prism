@@ -512,10 +512,13 @@ class UpdateService {
   private async resolvePendingAttempts(): Promise<void> {
     const pending = await prisma.updateAttempt.findMany({ where: { outcome: 'PENDING' } });
     for (const row of pending) {
-      const success = config.appVersion === row.versionTo;
+      // A container restart runs whatever `latest` is at pull time, which can
+      // be newer than the release the attempt recorded.
+      const success =
+        RELEASE_VERSION_RE.test(config.appVersion) && compareReleaseVersions(config.appVersion, row.versionTo) >= 0;
       await this.finishAttempt(row, success ? 'SUCCESS' : 'FAILURE', success ? null : 'restart_version_mismatch', null);
       if (success) {
-        logger.info(`[Update] updated ${row.versionFrom} -> ${row.versionTo}`);
+        logger.info(`[Update] updated ${row.versionFrom} -> ${config.appVersion}`);
       } else {
         logger.warn(
           `[Update] update to ${row.versionTo} did not take — running ${config.appVersion || '<unversioned>'}`,

@@ -671,6 +671,7 @@ describe('restart on release', () => {
 
   it.each([
     ['SUCCESS on the target version', NEWER, { outcome: 'SUCCESS', errorCode: null }],
+    ['SUCCESS on a release newer than the target', 'v2026.8.25000000', { outcome: 'SUCCESS', errorCode: null }],
     ['FAILURE on the old version', CURRENT, { outcome: 'FAILURE', errorCode: 'restart_version_mismatch' }],
   ])('resolves the pending attempt at boot: %s', async (_name, bootVersion, expected) => {
     config.appVersion = bootVersion;
