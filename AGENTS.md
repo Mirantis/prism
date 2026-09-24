@@ -78,8 +78,13 @@ to clear.
   mount point, which is what makes a fresh volume writable by a container
   running as the runtime's uid, and that list has to stay in step with
   `CONTAINER_PATHS`. The volumes outlive the container: `shutdown` removes the
-  container alone. The database, the media store, the plugin scratch and the
-  browser profiles stay on the host and out of the container entirely. A command
+  container alone. The database, the media store and the browser profiles stay
+  on the host and out of the container entirely. The container's config holds no
+  credential: a command's env is passed on each `docker exec`, and
+  `docker-env.ts` keeps the runtime's own secret families (Slack, the meeting
+  account, Langfuse, OTel, `NEXUS_*`) and every host path out of it. The
+  container is created once, so one that disappears mid-run is reported once
+  (`container-lost.ts`) and comes back on the next restart. A command
   is one `docker exec` under `setsid --wait`, recording its process group into a
   pid file **inside** the container that the kill reads on the same side — `exec`
   replaces a command line, so a name given to the wrapper is gone the moment the
@@ -90,17 +95,26 @@ to clear.
   the agent's storage in different places, so a boot that finds
   `lastExecutionEnvironment` (the `runtime_state` table, read before the agent
   row is resolved) different from the current one copies the workspace, skills,
-  plugins and both coding-agent homes across, in either direction
-  (`storage-migration.ts`). Only an entry the destination does not already have
-  is copied, so a round trip merges rather than clobbers. The saved tool outputs
-  and the container's `$HOME` are left out, both being caches with their own
-  expiry. `docker cp` needs a container, so a copy out of the volumes with
-  nothing running opens a temporary one and removes it.
+  plugins, plugin data and the runtime's own coding-agent homes across, in either
+  direction (`storage-migration.ts`). No record reads as `local`, which is where
+  every install ran before the record existed. Only an entry the destination does
+  not already have is copied, so a round trip merges rather than clobbers. A
+  failed entry is removed from the target and the record is left unchanged, so
+  the next boot copies it again. An operator's `CLAUDE_CONFIG_DIR` or
+  `CODEX_HOME` never moves. The saved tool outputs and the container's `$HOME`
+  are left out, both being caches with their own expiry. `docker cp` needs a
+  container, so a copy out of the volumes with nothing running opens a temporary
+  one and removes it. When the last run used a container and the engine is
+  installed but not answering yet, detection waits for it rather than running a
+  session on the host with the storage elsewhere.
 - **An environment owns the agent's directories, not just its workspace.**
-  `environment.paths()` answers for skills, plugins, saved tool outputs and each
-  coding agent's home; `lib/data-dir.ts` keeps what is the runtime's alone. A
-  plugin's MCP server therefore starts in the environment too
-  (`exec-stdio-transport.ts`), since its files are the environment's.
+  `environment.paths()` answers for skills, plugins, plugin data, saved tool
+  outputs and each coding agent's home; `lib/data-dir.ts` keeps what is the
+  runtime's alone. A plugin's MCP server therefore starts in the environment too
+  (`exec-stdio-transport.ts`), and its `mcp.json` is read there. A call that has
+  a path reads and writes through `filesFor(path)`, never the deployment's
+  environment directly, so a thread rooted in a host repository sees the same
+  files as its shell; a saved tool output goes beside that shell too.
 - **Prove an option is needed before you add it.** A flag, a setting or an env
   var has to show that no existing product behavior, no provider selection and
   no better default can cover the case. Each one is a fork in the code and a
@@ -641,6 +655,10 @@ isolation: a custom `generator client { output = … }` stops Prisma wiring
 `@prisma/client`, so every import would have to change. Just don't run
 Prisma commands in two worktrees while a runtime is up.
 
+With a container engine running — Docker Desktop, Podman — `dev:single` runs the
+agent's commands in a container and pulls the exec image the first time. Set
+`EXECUTION_ENVIRONMENT=local` in `.env` to keep them on the host.
+
 Browser → `http://localhost:5173`. UI edits hot-reload in <1s, runtime
 TypeScript edits restart the server in ~1s. The Vite proxy forwards `/agents`
 and `/api/ws` to `:3003` so the SPA code doesn't know it's not hitting the
@@ -933,6 +951,7 @@ src/
 │   │       ├── detect.ts      # Which environment serves this deployment, in four steps
 │   │       ├── engine.ts      # The `docker` CLI, always run on the host
 │   │       ├── container.ts   # The container's lifetime, which is the runtime's
+│   │       ├── container-lost.ts # One warning when the engine says the container is gone
 │   │       ├── volumes.ts     # The named volumes, their container paths, and `servesPath`
 │   │       ├── docker-files.ts # `ExecutionFiles` over `docker exec`, one call per operation
 │   │       ├── docker-copy.ts # `docker cp` in and out, opening a container for the volumes when none runs

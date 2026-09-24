@@ -75,6 +75,7 @@ describe('the environment it builds', () => {
     expect(environment.paths()).toEqual({
       skillsDir: CONTAINER_PATHS.skillsDir,
       pluginsDir: CONTAINER_PATHS.pluginsDir,
+      pluginDataDir: CONTAINER_PATHS.pluginDataDir,
       toolOutputDir: CONTAINER_PATHS.toolOutputDir,
       claudeHome: CONTAINER_PATHS.claudeHome,
       codexHome: CONTAINER_PATHS.codexHome,

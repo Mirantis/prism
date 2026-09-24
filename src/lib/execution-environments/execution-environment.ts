@@ -30,8 +30,8 @@ export interface ExecutionEnvironment {
   /**
    * Where the agent's own directories are, in this environment's namespace.
    *
-   * The runtime keeps its data directory to itself — the database, the media
-   * store, a plugin's scratch — while everything the agent works with is the
+   * The runtime keeps its data directory to itself — the database and the media
+   * store — while everything the agent works with is the
    * environment's to place, because an environment whose storage is not this
    * machine's filesystem has its own names for all of it.
    */
@@ -69,6 +69,8 @@ export interface ExecutionEnvironment {
 export interface AgentPaths {
   skillsDir: string;
   pluginsDir: string;
+  /** A plugin's MCP server keeps its own data under `<pluginDataDir>/<plugin id>`. */
+  pluginDataDir: string;
   toolOutputDir: string;
   /** `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, which the coding agents are told. */
   claudeHome: string;

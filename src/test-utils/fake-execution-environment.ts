@@ -31,6 +31,7 @@ function fakePaths(root: string, over: Partial<AgentPaths> = {}): AgentPaths {
   return {
     skillsDir: `${root}/skills`,
     pluginsDir: `${root}/plugins`,
+    pluginDataDir: `${root}/plugin-data`,
     toolOutputDir: `${root}/tool-outputs`,
     claudeHome: `${root}/.claude`,
     codexHome: `${root}/.codex`,
@@ -56,7 +57,9 @@ export function fakeExecutionEnvironment(parts: FakeEnvironmentParts = {}): Exec
     runShell: parts.runShell ?? (unsupported('runShell') as ExecutionEnvironment['runShell']),
     runProgram: parts.runProgram ?? (unsupported('runProgram') as ExecutionEnvironment['runProgram']),
     files: new Proxy({} as ExecutionFiles, {
-      get(_target, prop: string) {
+      get(_target, prop: string | symbol) {
+        // A matcher that inspects the object asks for symbols; they are no member.
+        if (typeof prop === 'symbol') return undefined;
         const supplied = parts.files?.[prop as keyof ExecutionFiles];
         return supplied ?? unsupported(`files.${prop}`);
       },

@@ -24,12 +24,42 @@
 
 import path from 'path';
 import { randomUUID } from 'crypto';
-import { getExecutionEnvironment } from './execution-environments/get-execution-environment';
+import {
+  getExecutionEnvironment,
+  getExecutionEnvironmentFor,
+  getHostEnvironment,
+} from './execution-environments/get-execution-environment';
+import type { ExecutionFiles } from './execution-environments/execution-environment';
+import { resolveWorkspace } from './execution-environments/workspace';
 import { logger } from '../logger';
 
-/** The filesystem a command sees: the agent reads a saved copy with the shell. */
-function files() {
-  return getExecutionEnvironment().files;
+/** One place saved copies are kept, and the filesystem that reaches it. */
+interface Store {
+  dir: string;
+  files: ExecutionFiles;
+}
+
+/**
+ * Where a thread's saved copies go: beside the shell that reads them back. A
+ * thread rooted in a host repository runs its commands on the host even while
+ * the deployment runs in a container, so its copies go to the host too.
+ */
+function storeFor(workspaceRoot?: string | null): Store {
+  const environment = getExecutionEnvironmentFor(resolveWorkspace(workspaceRoot));
+  return { dir: environment.paths().toolOutputDir, files: environment.files };
+}
+
+/**
+ * Every place a saved copy can be, for the reads and sweeps that do not know
+ * which thread wrote it. One entry when the deployment runs on this machine.
+ */
+function allStores(): Store[] {
+  const stores: Store[] = [];
+  for (const environment of [getExecutionEnvironment(), getHostEnvironment()]) {
+    const dir = environment.paths().toolOutputDir;
+    if (!stores.some((store) => store.dir === dir)) stores.push({ dir, files: environment.files });
+  }
+  return stores;
 }
 
 /**
@@ -56,15 +86,6 @@ export interface SpillResult {
  * only the exact uuid shape passes, which leaves no room for a separator or a
  * traversal to be argued about.
  */
-/**
- * The directory the saved copies go in, which belongs to the execution
- * environment: the agent reads one back with the shell, so it has to be a path
- * that environment's commands can open. Joined as POSIX for the same reason.
- */
-function toolOutputDir(): string {
-  return getExecutionEnvironment().paths().toolOutputDir;
-}
-
 export function isToolOutputId(id: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id);
 }
@@ -73,11 +94,14 @@ export function isToolOutputId(id: string): boolean {
  * Save a tool result whole and return its id. Atomic: writes a `.tmp` sibling,
  * then renames, so a reader never sees a half-written copy.
  */
-export async function writeToolOutput(text: string): Promise<SpillResult> {
-  const dir = toolOutputDir();
+export async function writeToolOutput(
+  text: string,
+  workspaceRoot?: string | null,
+): Promise<SpillResult> {
+  const { dir, files } = storeFor(workspaceRoot);
   // Defensive: ensureDataDirs() creates this at boot, but its temp-dir fallback
   // can repin PRISM_DATA_DIR afterwards.
-  await files().mkdir(dir);
+  await files.mkdir(dir);
 
   const buf = Buffer.from(text, 'utf8');
   const capped = buf.length > MAX_SPILL_BYTES;
@@ -87,10 +111,11 @@ export async function writeToolOutput(text: string): Promise<SpillResult> {
   const data = capped ? buf.subarray(0, charBoundaryAtOrBefore(buf, MAX_SPILL_BYTES)) : buf;
 
   const id = randomUUID();
-  const finalPath = path.join(dir, id);
+  // POSIX, because a container path is POSIX whatever this host is.
+  const finalPath = path.posix.join(dir, id);
   const tmpPath = `${finalPath}.tmp`;
-  await files().writeBytes(tmpPath, data);
-  await files().rename(tmpPath, finalPath);
+  await files.writeBytes(tmpPath, data);
+  await files.rename(tmpPath, finalPath);
 
   return { id, path: finalPath, bytes: data.length, capped };
 }
@@ -110,13 +135,14 @@ function charBoundaryAtOrBefore(buf: Buffer, limit: number): number {
 }
 
 /**
- * Where a saved output lives, for the notice that points the agent at it.
+ * Where a saved output of this thread lives, for the notice that points the
+ * agent at it.
  *
  * Absolute, because the agent reads it with `shell_exec`, whose commands are not
  * resolved against the shell workspace.
  */
-export function toolOutputPath(id: string): string {
-  return path.posix.join(toolOutputDir(), id);
+export function toolOutputPath(id: string, workspaceRoot?: string | null): string {
+  return path.posix.join(storeFor(workspaceRoot).dir, id);
 }
 
 /**
@@ -126,13 +152,16 @@ export function toolOutputPath(id: string): string {
  */
 export async function readToolOutput(id: string): Promise<string | null> {
   if (!isToolOutputId(id)) return null;
-  const full = path.posix.join(toolOutputDir(), id);
-  try {
-    await files().lstat(full);
-  } catch {
-    return null;
+  for (const { dir, files } of allStores()) {
+    const full = path.posix.join(dir, id);
+    try {
+      await files.lstat(full);
+    } catch {
+      continue;
+    }
+    return files.readText(full);
   }
-  return files().readText(full);
+  return null;
 }
 
 /**
@@ -141,23 +170,24 @@ export async function readToolOutput(id: string): Promise<string | null> {
  * referenced by nothing. The TTL sweep is the backstop for whatever this misses.
  */
 export async function removeToolOutputs(ids: readonly string[]): Promise<number> {
-  const dir = toolOutputDir();
   let removed = 0;
-  for (const id of ids) {
-    if (!isToolOutputId(id)) continue;
-    const full = path.posix.join(dir, id);
-    try {
-      // Already gone is the expected case, so the count reports what was really
-      // there rather than how many ids the caller named.
-      await files().lstat(full);
-    } catch {
-      continue;
-    }
-    try {
-      await files().remove(full);
-      removed++;
-    } catch (err) {
-      logger.warn({ err }, `[ToolOutputStore] could not delete saved output ${id}`);
+  for (const { dir, files } of allStores()) {
+    for (const id of ids) {
+      if (!isToolOutputId(id)) continue;
+      const full = path.posix.join(dir, id);
+      try {
+        // Already gone is the expected case, so the count reports what was really
+        // there rather than how many ids the caller named.
+        await files.lstat(full);
+      } catch {
+        continue;
+      }
+      try {
+        await files.remove(full);
+        removed++;
+      } catch (err) {
+        logger.warn({ err }, `[ToolOutputStore] could not delete saved output ${id}`);
+      }
     }
   }
   return removed;
@@ -169,26 +199,27 @@ export async function removeToolOutputs(ids: readonly string[]): Promise<number>
  * Also sweeps `.tmp` files a crash left between write and rename.
  */
 export async function reapExpiredToolOutputs(ttlMs: number): Promise<number> {
-  const dir = toolOutputDir();
-  let entries: string[];
-  try {
-    entries = (await files().readDir(dir)).map((entry) => entry.name);
-  } catch {
-    return 0; // never created, or the data dir moved — nothing to sweep
-  }
-
   const cutoff = Date.now() - ttlMs;
   let removed = 0;
-  for (const entry of entries) {
-    const full = path.join(dir, entry);
+  for (const { dir, files } of allStores()) {
+    let entries: string[];
     try {
-      const st = await files().lstat(full);
-      if (!st.isFile || st.mtimeMs >= cutoff) continue;
-      await files().remove(full);
-      removed++;
+      entries = (await files.readDir(dir)).map((entry) => entry.name);
     } catch {
-      // A file that vanished under us, or one we can't stat — either way, skip it
-      // rather than abandon the rest of the sweep.
+      continue; // never created, or the data dir moved — nothing to sweep
+    }
+
+    for (const entry of entries) {
+      const full = path.posix.join(dir, entry);
+      try {
+        const st = await files.lstat(full);
+        if (!st.isFile || st.mtimeMs >= cutoff) continue;
+        await files.remove(full);
+        removed++;
+      } catch {
+        // A file that vanished under us, or one we can't stat — either way, skip it
+        // rather than abandon the rest of the sweep.
+      }
     }
   }
   return removed;

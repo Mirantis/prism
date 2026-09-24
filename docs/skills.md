@@ -17,7 +17,7 @@ run skills explicitly with the [`/skills` command](#the-skills-command).
 Skills are discovered from three places, and the sets are merged:
 
 - **Global skills** — the agent's skills directory, which lives in its data dir:
-  `~/.prism/skills` for a native install, `/data/skills` in Docker. (Override the
+  `~/.prism/skills` for a native install, `/data/skills` in the Docker image. (Override the
   data dir with `PRISM_DATA_DIR`, or the skills dir specifically with
   `PRISM_SKILLS_DIR` — see **[Configuration](configuration.md)**.) These are
   available in every conversation.
@@ -49,6 +49,10 @@ picks them up automatically (no restart needed). Two ways:
   where `<source>` is a GitHub repo (e.g. `owner/repo`), a skill URL, or a local
   path. Then move the resulting `<name>/` folder into the agent's skills
   directory. Use `--copy` so the bundle is a real copy that survives restarts.
+
+When the agent's commands run in a container, its skills directory is
+`/prism/skills` inside that container. Install a bundle there with `docker cp`, as
+[where commands run](tools.md#where-commands-run) shows.
 
 You can also ask the agent to do it. It is told where the skills directory is,
 and writes the bundle there itself.

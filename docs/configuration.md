@@ -124,11 +124,11 @@ See **[Slack](slack.md)** for how the tokens are used.
 | `AGENT_NAME` | Display name on first boot | `Prism` |
 | `TEAM_NAME` | Team name on first boot | `Local` |
 | `OWNER_USER_ID` | Owner user ID on first boot | local sentinel UUID |
-| `SHELL_WORKSPACE_ROOT` | Working directory for the agent's [shell tools](tools.md#shell) | install `workspace` dir (Docker: `/home/node`) |
+| `SHELL_WORKSPACE_ROOT` | Working directory for the agent's [shell tools](tools.md#shell) when its commands run on this machine. In a container the workspace is `/prism/workspace`. | install `workspace` dir (Docker image: `/home/node`) |
 | `EXECUTION_ENVIRONMENT` | **Detected automatically — set this only to override it.** Where the agent's commands run, and where its workspace and skills are kept: `docker` (a container, with storage Docker keeps) or `local` (this machine). See [where commands run](tools.md#where-commands-run). | `docker` when a container engine answers, else `local` |
-| `PRISM_DATA_DIR` | Persistent data dir for [skills](skills.md), [plugins](plugins.md), attachment media (`<data dir>/media`) and the coding agent's config. The Docker image sets this to the `/data` volume. | `/data` (Docker), else `~/.prism` |
-| `PRISM_SKILLS_DIR` | Override the [skills](skills.md) directory specifically. | `<data dir>/skills` |
-| `PRISM_PLUGINS_DIR` | Override the [plugins](plugins.md) directory specifically. | `<data dir>/plugins` |
+| `PRISM_DATA_DIR` | Persistent data dir for [skills](skills.md), [plugins](plugins.md), attachment media (`<data dir>/media`) and the coding agent's config. The Docker image sets this to the `/data` volume. When the agent's commands run in a container, its skills, plugins and coding-agent config are in that container under `/prism`. | `/data` (Docker image), else `~/.prism` |
+| `PRISM_SKILLS_DIR` | Override the [skills](skills.md) directory specifically, when the agent's commands run on this machine. | `<data dir>/skills` |
+| `PRISM_PLUGINS_DIR` | Override the [plugins](plugins.md) directory specifically, when the agent's commands run on this machine. | `<data dir>/plugins` |
 | `ATTACHMENT_TTL_HOURS` | How long shared-file content is kept before the hourly sweep deletes it. The conversation keeps a *content expired* stub. See [Tools](tools.md#attachments). | `168` (7 days) |
 | `TOOL_RISK_GATE_MODE` | Fast-model pre-execution evaluation for sensitive [tool calls](tools.md#risk-gate): `off`, `observe`, or `enforce`. | `off` |
 | `TOOL_OUTPUT_TTL_HOURS` | How long the saved copy of an oversized tool result is kept before the hourly sweep deletes it, so the agent can search the part it wasn't shown. Copies are also deleted once the conversation they belong to has been compacted away. See [Tools](tools.md#large-tool-outputs). | `168` (7 days) |

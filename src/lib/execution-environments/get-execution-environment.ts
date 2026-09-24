@@ -15,7 +15,11 @@ import { logger } from '../../logger';
 import { createLocalEnvironment } from './local/local-environment';
 import { createDockerEnvironment } from './docker/docker-environment';
 import { detectEnvironment, type DetectionDeps } from './docker/detect';
-import type { ExecutionEnvironment, ExecutionEnvironmentName } from './execution-environment';
+import type {
+  ExecutionEnvironment,
+  ExecutionEnvironmentName,
+  ExecutionFiles,
+} from './execution-environment';
 
 const FACTORIES: Record<ExecutionEnvironmentName, () => ExecutionEnvironment> = {
   local: createLocalEnvironment,
@@ -45,6 +49,17 @@ export function getExecutionEnvironmentFor(cwd?: string): ExecutionEnvironment {
   if (!cwd || environment.servesPath(cwd)) return environment;
   reportFallback(cwd, environment.id);
   return localFallback();
+}
+
+/**
+ * The filesystem that holds this path.
+ *
+ * A path the deployment's environment serves is read through it; any other path
+ * is on this machine. Every caller that has a path in hand asks here, so a thread
+ * rooted in a host repository reads and writes the same files its shell sees.
+ */
+export function filesFor(filePath: string): ExecutionFiles {
+  return getExecutionEnvironmentFor(filePath).files;
 }
 
 /**
@@ -99,6 +114,15 @@ function localFallback(): ExecutionEnvironment {
   return fallback;
 }
 
+/**
+ * The environment serving every path the deployment's environment does not:
+ * this machine. The same directories as `getExecutionEnvironment()` when that
+ * one is local too.
+ */
+export function getHostEnvironment(): ExecutionEnvironment {
+  return localFallback();
+}
+
 /** Said once per path: a turn makes many calls, and this is a property of the thread. */
 const reported = new Set<string>();
 function reportFallback(cwd: string, environment: ExecutionEnvironmentName): void {
@@ -106,7 +130,7 @@ function reportFallback(cwd: string, environment: ExecutionEnvironmentName): voi
   reported.add(cwd);
   logger.info(
     { cwd, environment },
-    '[ExecutionEnvironment] this path is outside the container; its commands run on the host',
+    '[ExecutionEnvironment] this path is outside the container; it is served from the host',
   );
 }
 

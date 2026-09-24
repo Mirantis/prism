@@ -40,13 +40,22 @@ import {
 import { createDockerFiles } from './docker/docker-files';
 import { copyFromContainer, copyIntoContainer, openVolumes } from './docker/docker-copy';
 import { getExecutionEnvironment } from './get-execution-environment';
+import { resolveClaudeConfigDir } from '../coding-agents/claude-code/home';
+import { resolveCodexHome } from '../coding-agents/codex/credentials';
 
 /**
  * What moves. The saved tool outputs and the container's `$HOME` are left out:
  * both are caches with their own expiry, and copying them would move stale
  * bytes the agent never asked for.
  */
-const MIGRATED = ['workspace', 'skills', 'plugins', 'claude home', 'codex home'] as const;
+const MIGRATED = [
+  'workspace',
+  'skills',
+  'plugins',
+  'plugin data',
+  'claude home',
+  'codex home',
+] as const;
 
 type Migrated = (typeof MIGRATED)[number];
 
@@ -62,22 +71,23 @@ export interface MigrationReport {
  * Record the environment this run uses, and move the agent's files first when
  * the last run used the other one.
  *
- * Never throws: a failed copy leaves both sides as they were, and an agent that
- * boots without its skills is better than one that does not boot. The stored
- * environment is only advanced once a migration has finished, so the next boot
- * tries again.
+ * Never throws: a failed entry is removed from the target, so both sides are as
+ * they were for it, and an agent that boots without its skills is better than
+ * one that does not boot. The stored environment advances only once every entry
+ * has landed, so the next boot tries the rest again.
  */
 export async function migrateStorageIfEnvironmentChanged(): Promise<MigrationReport | null> {
   const current = getExecutionEnvironment().id;
-  const previous = (await runtimeStateService
+  const stored = (await runtimeStateService
     .get(LAST_EXECUTION_ENVIRONMENT)
     .catch(() => null)) as ExecutionEnvironmentName | null;
+  // No record is an install from before the record existed, and every such
+  // install ran locally. A fresh install reads the same way and moves nothing,
+  // because its host directories are empty.
+  const previous = stored ?? 'local';
 
-  if (previous === current) return null;
-  if (previous === null) {
-    // A first boot, or an install that predates this record. There is nothing
-    // to move: whatever the agent has is already where this environment looks.
-    await remember(current);
+  if (previous === current) {
+    if (stored === null) await remember(current);
     return null;
   }
 
@@ -99,7 +109,10 @@ export async function migrateStorageIfEnvironmentChanged(): Promise<MigrationRep
     return null;
   }
 
-  await remember(current);
+  // An entry that failed was removed from the target, so the next boot finds
+  // it missing there and copies it again. Recording the new environment now
+  // would stop that retry for good.
+  if (report.failures === 0) await remember(current);
   logger.info(report, "[Startup] moved the agent's files");
   trackEvent('exec storage migrated', config.ownerUserId, {
     'migration.from': report.from,
@@ -160,6 +173,7 @@ interface Side {
   list: () => Promise<Array<{ name: string }>>;
   /** The destination may not exist yet: `docker cp` will not create a parent. */
   ensure: () => Promise<void>;
+  remove: (entryPath: string) => Promise<void>;
 }
 
 async function move(opts: {
@@ -185,14 +199,21 @@ async function move(opts: {
     }
     const from = `${source.path}/${entry.name}`;
     const to = `${target.path}/${entry.name}`;
+    // Logged before the copy: a large workspace entry can hold up boot for as
+    // long as the copy timeout, and this line names what it is waiting on.
+    logger.info({ what, entry: entry.name }, '[Startup] moving');
     try {
       if (intoContainer) await copyIntoContainer(container, from, to);
       else await copyFromContainer(container, from, to);
       report.copied++;
-      logger.info({ what, entry: entry.name }, '[Startup] moved');
     } catch (err) {
       report.failures++;
       logger.warn({ err, what, entry: entry.name }, '[Startup] could not move this one');
+      // The target lacked this entry before the copy started, so whatever is
+      // there now is the partial copy and nothing else.
+      await target.remove(to).catch((removeErr: unknown) => {
+        logger.warn({ err: removeErr, what, entry: entry.name }, '[Startup] could not remove a partial copy');
+      });
     }
   }
 }
@@ -207,12 +228,21 @@ function sideOf(
     path,
     list: () => files.readDir(path),
     ensure: () => files.mkdir(path),
+    remove: (entryPath) => files.remove(entryPath),
   };
 }
 
-/** The directory each kind lives in, for one environment. */
+/**
+ * The directory each kind lives in, for one environment.
+ *
+ * On this machine a coding agent's home is always the runtime's own one under
+ * the data dir. An operator's `CLAUDE_CONFIG_DIR` or `CODEX_HOME` usually names
+ * their real `~/.claude` or `~/.codex`, and copying that into the agent's volume
+ * would hand the agent's shell the operator's sessions and credentials.
+ */
 function directoryOf(environment: ExecutionEnvironment, what: Migrated): string {
   const paths = environment.paths();
+  const onHost = environment.id === 'local';
   switch (what) {
     case 'workspace':
       return environment.workspaceRoot();
@@ -220,9 +250,11 @@ function directoryOf(environment: ExecutionEnvironment, what: Migrated): string 
       return paths.skillsDir;
     case 'plugins':
       return paths.pluginsDir;
+    case 'plugin data':
+      return paths.pluginDataDir;
     case 'claude home':
-      return paths.claudeHome;
+      return onHost ? resolveClaudeConfigDir({}) : paths.claudeHome;
     case 'codex home':
-      return paths.codexHome;
+      return onHost ? resolveCodexHome({}) : paths.codexHome;
   }
 }

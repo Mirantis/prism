@@ -17,9 +17,12 @@ tools appear; delete the folder and they disappear.
 ## Where plugins live
 
 Plugins are discovered from the agent's plugins directory, which lives in its
-data dir: `~/.prism/plugins` for a native install, `/data/plugins` in Docker.
+data dir: `~/.prism/plugins` for a native install, `/data/plugins` in the Docker image.
 Override the data dir with `PRISM_DATA_DIR`, or the plugins dir specifically with
-`PRISM_PLUGINS_DIR` — see **[Configuration](configuration.md)**.
+`PRISM_PLUGINS_DIR` — see **[Configuration](configuration.md)**. When the agent's
+commands run in a container, its plugins directory is `/prism/plugins` inside that
+container; copy a plugin folder there with `docker cp`, and its MCP servers run in
+the container too.
 
 Each immediate subdirectory holding a `plugin.json` is one plugin, and the folder
 name is the plugin's id:

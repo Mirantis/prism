@@ -331,6 +331,8 @@ export interface ToolOutputCaptureOptions {
    * the tools block built the same way, and never executes anything.
    */
   spill?: boolean;
+  /** The thread's workspace, so the saved copy is where that thread's shell reads. */
+  workspaceRoot?: string | null;
 }
 
 /**
@@ -361,7 +363,7 @@ export async function renderAndSpill(
   let spill: SpillResult | undefined;
   if (options.spill !== false) {
     try {
-      spill = await writeToolOutput(text);
+      spill = await writeToolOutput(text, options.workspaceRoot);
     } catch (err) {
       logger.warn(
         { err },

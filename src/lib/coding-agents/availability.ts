@@ -13,6 +13,7 @@
  * before the first tools block is built, which the prompt cache needs.
  */
 
+import { getExecutionEnvironment } from '../execution-environments/get-execution-environment';
 import { config, CODING_AGENTS, type CodingAgentName } from '../../config';
 import { logger } from '../../logger';
 import { createClaudeCodeAgent } from './claude-code/claude-code-agent';
@@ -47,7 +48,11 @@ export function ensureCodingAgentsDetected(): Promise<void> {
 async function detect(): Promise<void> {
   const available: CodingAgentName[] = [];
   for (const name of CODING_AGENTS) {
-    if (await FACTORIES[name]().isAvailable(process.env)) available.push(name);
+    // The env the task runs with, since the probe runs in the same environment
+    // and a host `PATH` or `HOME` would decide the answer there.
+    if (await FACTORIES[name]().isAvailable(getExecutionEnvironment().baseEnv())) {
+      available.push(name);
+    }
   }
   config.availableCodingAgents = available;
   // An explicit CODING_AGENT is the operator's choice and stands even when its

@@ -15,6 +15,7 @@
 import { logger } from '../../../logger';
 import type { DirEntry, ExecutionFiles, FileStat } from '../execution-environment';
 import { runLocalProgram } from '../local/local-process';
+import { reportIfContainerLost } from './container-lost';
 import { DOCKER } from './engine';
 
 /** Long enough for a large file over the engine's pipe, short enough to give up. */
@@ -60,7 +61,7 @@ export function createDockerFiles(container: string): ExecutionFiles {
       // a symlink reads as a symlink, and `\0` keeps a name with a newline in
       // it whole.
       const out = await run(
-        'find "$1" -mindepth 1 -maxdepth 1 -printf \'%y %f\\0\'',
+        'find -H "$1" -mindepth 1 -maxdepth 1 -printf \'%y %f\\0\'',
         [path],
       );
       return parseDirEntries(out);
@@ -143,7 +144,9 @@ async function execInContainer(
 
   if (end.error) throw end.error;
   if (end.exitCode !== 0) {
-    throw fileError(Buffer.concat(err).toString('utf8').trim(), end.exitCode, args[0]);
+    const said = Buffer.concat(err).toString('utf8').trim();
+    reportIfContainerLost(container, said);
+    throw fileError(said, end.exitCode, args[0]);
   }
   return Buffer.concat(out);
 }

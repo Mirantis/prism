@@ -32,10 +32,10 @@ export const EXEC_IMAGE_FALLBACK_TAG = 'latest';
  * runtime decides the argv, the paths and the wrapper the image has to
  * satisfy, so a runtime running against some later image is running against
  * something it was never proven with. Every published build tags the image with
- * the version it bakes into the runtime beside it. A build carrying no version
- * — a checkout, the binary — has nothing to pair with and takes `latest`.
+ * the version it bakes into the runtime beside it: a SEA binary's release tag,
+ * or an image's `SERVICE_VERSION`. A checkout carries neither and takes `latest`.
  */
-export function execImage(version: string = config.serviceVersion): string {
+export function execImage(version: string = config.appVersion): string {
   return `${EXEC_IMAGE_REPO}:${version || EXEC_IMAGE_FALLBACK_TAG}`;
 }
 
@@ -67,6 +67,7 @@ export function createDockerEnvironment(): ExecutionEnvironment {
     paths: (): AgentPaths => ({
       skillsDir: CONTAINER_PATHS.skillsDir,
       pluginsDir: CONTAINER_PATHS.pluginsDir,
+      pluginDataDir: CONTAINER_PATHS.pluginDataDir,
       toolOutputDir: CONTAINER_PATHS.toolOutputDir,
       claudeHome: CONTAINER_PATHS.claudeHome,
       codexHome: CONTAINER_PATHS.codexHome,
@@ -82,7 +83,6 @@ export function createDockerEnvironment(): ExecutionEnvironment {
         image,
         refreshImage: isMovingImage(image),
         deployment,
-        env: dockerBaseEnv(),
       }),
     shutdown: () => stopContainer(container, image),
 
