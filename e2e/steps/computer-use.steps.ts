@@ -253,7 +253,7 @@ When('I ask for the public notes in a chat while I have control', async ({ conte
 });
 
 Then('the chat shows that it is waiting for the computer', async () => {
-  await expect(queuedChat.getByRole('status')).toContainText('Waiting for the computer', {
+  await expect(queuedChat.getByTestId('computer-waiting')).toContainText('Waiting for the computer', {
     timeout: 60_000,
   });
 });
@@ -261,7 +261,7 @@ Then('the chat shows that it is waiting for the computer', async () => {
 When('I close the controlling viewer and continue from the other viewer', async ({ page }) => {
   await page.close();
   await expect(observer.getByRole('status')).toContainText('Paused');
-  await expect(queuedChat.getByRole('status')).toContainText('Waiting for the computer');
+  await expect(queuedChat.getByTestId('computer-waiting')).toContainText('Waiting for the computer');
   await observer.getByRole('button', { name: 'Return control', exact: true }).click();
 });
 
@@ -269,7 +269,7 @@ Then('the queued chat reports the public notes', async () => {
   await expect(queuedChat.getByTestId('chat-messages')).toContainText('NOTES-42', {
     timeout: 90_000,
   });
-  await expect(queuedChat.getByRole('status')).toHaveCount(0);
+  await expect(queuedChat.getByTestId('computer-waiting')).toHaveCount(0);
   await observer.close();
   await queuedChat.close();
 });
@@ -328,5 +328,5 @@ Then('an invalid help continuation keeps my control and the chat waiting', async
   const after = await (await page.request.get('/agents/computer')).json();
   expect(after.paused).toBe(true);
   expect(after.controller).toBe(before.controller);
-  await expect(queuedChat.getByRole('status')).toContainText('Waiting for the computer');
+  await expect(queuedChat.getByTestId('computer-waiting')).toContainText('Waiting for the computer');
 });
