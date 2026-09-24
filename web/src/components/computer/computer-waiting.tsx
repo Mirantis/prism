@@ -10,7 +10,11 @@ export function ComputerWaiting({ threadId }: { threadId?: string }) {
   const [error, setError] = useState<string | null>(null);
   if (!threadId || !data?.waiting.some((item) => item.threadId === threadId)) return null;
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-lg border p-3 text-sm" role="status">
+    <div
+      className="flex flex-wrap items-center gap-3 rounded-lg border p-3 text-sm"
+      role="status"
+      data-testid="computer-waiting"
+    >
       <span>Waiting for the computer</span>
       {data.owner?.threadId && (
         <a className="underline" href={`/chat/${data.owner.threadId}`}>
