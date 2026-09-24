@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { createFileRoute } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -30,7 +30,13 @@ import {
   FieldGroup,
   FieldLabel,
 } from '@/components/ui/field';
-import { Check, Copy, Plus, Trash2, Webhook as WebhookIcon } from 'lucide-react';
+import { Plus, Trash2, Webhook as WebhookIcon } from 'lucide-react';
+import { Page } from '@/components/layout/page';
+import { PageHeader } from '@/components/layout/page-header';
+import { SectionHeader } from '@/components/layout/section-header';
+import { CopyButton } from '@/components/shared/copy-button';
+import { EmptyState } from '@/components/shared/empty-state';
+import { IconTile } from '@/components/shared/icon-tile';
 import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
 import { useFormErrors } from '@/hooks/use-form-errors';
@@ -62,7 +68,6 @@ function WebhooksPage() {
   const queryClient = useQueryClient();
   const [isCreating, setIsCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const { fieldErrors, clearFieldError, handleError, reset: resetErrors } = useFormErrors();
 
@@ -136,88 +141,70 @@ function WebhooksPage() {
 
   const endpointUrl = (name: string) => `${window.location.origin}/agents/webhooks/${name}`;
 
-  const copyUrl = async (id: string, name: string) => {
-    try {
-      await navigator.clipboard.writeText(endpointUrl(name));
-    } catch {
-      // Clipboard is unavailable (insecure context / permission denied) —
-      // skip the confirmation tick; the path stays selectable in the row.
-      return;
-    }
-    setCopiedId(id);
-    setTimeout(() => setCopiedId((current) => (current === id ? null : current)), 1500);
-  };
-
   if (receiverLoading || subsLoading) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-8 w-64" />
-        <Skeleton className="h-4 w-96" />
-        <Skeleton className="h-64 mt-6" />
-      </div>
+      <Page>
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-64" />
+          <Skeleton className="h-4 w-96" />
+        </div>
+        <Skeleton className="h-64" />
+      </Page>
     );
   }
 
   const enabled = receiver?.enabled === true;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight">Webhooks</h2>
-          <p className="text-sm text-muted-foreground">
-            Let external systems (Alertmanager, PagerDuty, GitHub, …) trigger the agent via HTTP.
-          </p>
-        </div>
-        {enabled && (
-          <Button onClick={() => setIsCreating(true)}>
-            <Plus className="mr-1 h-4 w-4" />
-            New subscription
-          </Button>
-        )}
-      </div>
+    <Page>
+      <PageHeader
+        title="Webhooks"
+        description="Let external systems (Alertmanager, PagerDuty, GitHub, …) trigger the agent over HTTP."
+        actions={
+          enabled && (
+            <Button onClick={() => setIsCreating(true)}>
+              <Plus />
+              New subscription
+            </Button>
+          )
+        }
+      />
 
       {!enabled && (
-        <Card className="border-amber-500/50">
-          <CardContent>
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-start gap-3">
-                <WebhookIcon className="mt-1 h-5 w-5 shrink-0 text-amber-500" />
-                <div>
-                  <p className="font-medium">Webhook receiver disabled</p>
-                  <p className="text-sm text-muted-foreground">
-                    Enable the receiver to accept incoming HTTP events. Subscriptions deliver agent
-                    responses to your connected channels (web chat and Slack).
-                  </p>
-                </div>
-              </div>
-              <Button
-                onClick={() => receiverMut.mutate(true)}
-                disabled={receiverMut.isPending}
-                data-testid="enable-webhooks"
-              >
-                <WebhookIcon className="mr-1 h-4 w-4" />
-                {receiverMut.isPending ? 'Enabling...' : 'Enable Webhooks'}
-              </Button>
+        <div className="flex flex-col gap-4 rounded-xl bg-warning/8 p-4 ring-1 ring-warning/30 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <IconTile icon={WebhookIcon} tone="warning" size="md" />
+            <div className="space-y-0.5">
+              <p className="font-medium text-strong">Webhook receiver disabled</p>
+              <p className="text-sm text-foreground/75">
+                Enable the receiver to accept incoming HTTP events. Subscriptions deliver agent
+                responses to your connected channels (web chat and Slack).
+              </p>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+          <Button
+            onClick={() => receiverMut.mutate(true)}
+            disabled={receiverMut.isPending}
+            data-testid="enable-webhooks"
+          >
+            <WebhookIcon />
+            {receiverMut.isPending ? 'Enabling...' : 'Enable Webhooks'}
+          </Button>
+        </div>
       )}
 
-      <div>
-        <h3 className="font-semibold">Subscriptions ({subscriptions?.length ?? 0})</h3>
-        <p className="text-sm text-muted-foreground">
-          Subscription changes apply immediately. Disabled subscriptions reject incoming events.
-        </p>
-      </div>
+      <section className="space-y-3">
+        <SectionHeader
+          title={`Subscriptions (${subscriptions?.length ?? 0})`}
+          description="Changes apply immediately. A disabled subscription rejects incoming events."
+        />
 
-      {subscriptions && subscriptions.length > 0 ? (
-        <Card>
-          <CardContent className="p-0">
+        {subscriptions && subscriptions.length > 0 ? (
+          <Card className="py-0">
             <Table>
               <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="pl-4">Name</TableHead>
                   <TableHead className="hidden md:table-cell">Events</TableHead>
                   <TableHead>Delivery</TableHead>
                   <TableHead>Endpoint</TableHead>
@@ -228,43 +215,28 @@ function WebhooksPage() {
               <TableBody>
                 {subscriptions.map((s) => (
                   <TableRow key={s.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <div className="flex size-8 items-center justify-center rounded-md bg-muted">
-                          <WebhookIcon className="size-4 text-muted-foreground" />
-                        </div>
-                        <div>
-                          <span className="font-medium">{s.name}</span>
+                    <TableCell className="pl-4">
+                      <div className="flex items-center gap-3">
+                        <IconTile icon={WebhookIcon} tone={s.isActive ? 'success' : 'neutral'} />
+                        <div className="min-w-0">
+                          <span className="font-medium text-strong">{s.name}</span>
                           {s.description && (
-                            <p className="text-xs text-muted-foreground">{s.description}</p>
+                            <p className="max-w-xs truncate text-xs text-muted-foreground">{s.description}</p>
                           )}
                         </div>
                       </div>
                     </TableCell>
-                    <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
-                      {s.events ? (
-                        <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{s.events}</code>
-                      ) : (
-                        'all'
-                      )}
+                    <TableCell className="hidden text-sm text-muted-foreground md:table-cell">
+                      {s.events ? <code className="font-mono text-xs">{s.events}</code> : 'all'}
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
+                    <TableCell className="text-sm">
                       {DELIVER_LABELS[s.deliverTo]}
-                      {s.deliverOnly && <span className="block text-xs">direct — no agent</span>}
+                      {s.deliverOnly && <span className="block text-xs text-muted-foreground">direct — no agent</span>}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
-                        <code className="max-w-[220px] truncate rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
-                          /agents/webhooks/{s.name}
-                        </code>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          title="Copy endpoint URL"
-                          onClick={() => copyUrl(s.id, s.name)}
-                        >
-                          {copiedId === s.id ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                        </Button>
+                        <code className="max-w-[220px] truncate font-mono text-xs">/agents/webhooks/{s.name}</code>
+                        <CopyButton text={endpointUrl(s.name)} label="Copy endpoint URL" />
                       </div>
                     </TableCell>
                     <TableCell>
@@ -280,6 +252,8 @@ function WebhooksPage() {
                       <Button
                         variant="ghost"
                         size="icon-sm"
+                        aria-label={`Delete ${s.name}`}
+                        className="text-muted-foreground hover:text-destructive"
                         onClick={(e: React.MouseEvent) => {
                           e.stopPropagation();
                           setDeleteTarget({ id: s.id, name: s.name });
@@ -292,19 +266,17 @@ function WebhooksPage() {
                 ))}
               </TableBody>
             </Table>
-          </CardContent>
-        </Card>
-      ) : (
-        <Card>
-          <CardContent>
-            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-              <WebhookIcon className="h-10 w-10 mb-2 opacity-50" />
-              <p className="text-sm">No webhook subscriptions yet.</p>
-              <p className="text-xs">Create a subscription to give an external system its own endpoint.</p>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+          </Card>
+        ) : (
+          <Card>
+            <EmptyState
+              icon={WebhookIcon}
+              title="No webhook subscriptions yet"
+              description="Create a subscription to give an external system its own endpoint."
+            />
+          </Card>
+        )}
+      </section>
 
       <CreateModal
         isOpen={isCreating}
@@ -425,6 +397,6 @@ function WebhooksPage() {
           entityName={deleteTarget.name}
         />
       )}
-    </div>
+    </Page>
   );
 }

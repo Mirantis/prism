@@ -4,9 +4,7 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* LDS token bridge — shadcn reads these, LDS provides the values.
- * Mirrors the Lens Agents platform UI's globals.css so primitives look
- * identical across it and the Prism Agent Web UI. */
+/* LDS token bridge — shadcn reads these, LDS provides every color. */
 :root {
   --background: #1b1a1c;
   --foreground: var(--lds-color-text-primary);
@@ -19,14 +17,19 @@
   --secondary: var(--lds-color-bg-tertiary);
   --secondary-foreground: var(--lds-color-text-accent);
   --muted: var(--lds-color-surface-muted);
-  --muted-foreground: var(--lds-color-text-muted);
+  /* Lifted toward the body text color so secondary text meets the 4.5:1 contrast
+     minimum on the charcoal background, while staying a clear step below it. */
+  --muted-foreground: color-mix(in srgb, var(--lds-color-text-primary) 60%, var(--lds-color-text-muted));
   --accent: var(--lds-color-surface-hover);
   --accent-foreground: var(--lds-color-text-accent);
   --destructive: var(--lds-color-critical);
   --border: var(--lds-color-border);
   --input: var(--lds-color-border);
   --ring: var(--lds-color-border-focus);
-  --radius: 0.25rem;
+  --radius: 0.625rem;
+  --strong: var(--lds-color-text-accent);
+  --success: var(--lds-color-success);
+  --warning: var(--lds-color-warning);
   --chart-1: var(--lds-color-workspace-blue);
   --chart-2: var(--lds-color-workspace-green);
   --chart-3: var(--lds-color-workspace-orange);
@@ -44,6 +47,7 @@
 
 @theme inline {
   --font-sans: var(--lds-font-family);
+  --font-mono: var(--lds-font-family-mono);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -74,6 +78,9 @@
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
   --color-foreground: var(--foreground);
+  --color-strong: var(--strong);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
   --color-background: var(--background);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
@@ -82,53 +89,131 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+  --animate-rise-in: rise-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-typing-dot: typing-dot 1.2s ease-in-out infinite;
+  --animate-glow-breathe: glow-breathe 4s ease-in-out infinite;
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
-    scrollbar-width: auto;
-    scrollbar-color: #3a4149 rgba(255, 255, 255, 0.03);
-  }
-  body {
-    @apply bg-background text-foreground;
+    scrollbar-width: thin;
+    scrollbar-color: var(--lds-color-scrollbar-thumb) transparent;
   }
   html {
     @apply font-sans;
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background: var(--lds-color-selection);
+  }
+  h1, h2, h3, h4, [data-slot="card-title"], [data-slot="dialog-title"], [data-slot="alert-dialog-title"] {
+    @apply text-strong;
   }
   code:not(pre code) {
-    @apply rounded bg-muted px-1 py-0.5 text-xs font-mono text-foreground;
+    @apply rounded-md bg-muted/60 px-1.5 py-0.5 font-mono text-[0.85em] text-strong;
   }
 }
 
-/* Custom scrollbars (Webkit) — quality-of-life polish; the platform UI
- * doesn't ship one yet, but it's harmless and we already wrote it. */
+@layer components {
+  /* The content canvas: a faint primary glow at the top edge gives the page depth. */
+  .app-canvas {
+    background-image: radial-gradient(
+      ellipse 70% 40% at 50% -8%,
+      color-mix(in srgb, var(--primary) 9%, transparent),
+      transparent 70%
+    );
+  }
+
+  /* The agent's mark: the logo on a tile lit from the top-left. */
+  .brand-tile {
+    background:
+      radial-gradient(circle at 30% 20%, color-mix(in srgb, var(--primary) 30%, transparent), transparent 70%),
+      var(--lds-color-bg-tertiary);
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--strong) 8%, transparent),
+      0 8px 24px -12px color-mix(in srgb, var(--primary) 60%, transparent);
+  }
+
+  /* Reached with the first Tab press; off screen until then. */
+  .skip-link {
+    position: fixed;
+    top: 0.75rem;
+    left: 0.75rem;
+    z-index: 100;
+    padding: 0.625rem 1rem;
+    border-radius: var(--radius-lg);
+    background: var(--primary);
+    color: var(--primary-foreground);
+    font-size: 0.875rem;
+    font-weight: 500;
+    transform: translateY(-200%);
+    transition: transform 150ms ease-out;
+  }
+  .skip-link:focus-visible {
+    transform: translateY(0);
+    outline: 2px solid var(--primary-foreground);
+    outline-offset: 2px;
+  }
+
+  /* Children rise into place one after another. */
+  .stagger > * {
+    animation: var(--animate-rise-in);
+  }
+  .stagger > :nth-child(2) { animation-delay: 60ms; }
+  .stagger > :nth-child(3) { animation-delay: 120ms; }
+  .stagger > :nth-child(4) { animation-delay: 180ms; }
+  .stagger > :nth-child(5) { animation-delay: 240ms; }
+  .stagger > :nth-child(n + 6) { animation-delay: 300ms; }
+}
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes typing-dot {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+
+@keyframes glow-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 transparent, 0 12px 40px -12px color-mix(in srgb, var(--primary) 55%, transparent); }
+  50% { box-shadow: 0 0 0 0 transparent, 0 16px 56px -12px color-mix(in srgb, var(--primary) 85%, transparent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 ::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 6px;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #3a4149 0%, #2d333b 100%);
-  border-radius: 6px;
+  background: var(--lds-color-scrollbar-thumb);
+  border-radius: 999px;
   border: 3px solid transparent;
   background-clip: padding-box;
   min-height: 40px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #4a525a 0%, #3d444d 100%);
-  border: 3px solid transparent;
-  background-clip: padding-box;
-}
-
-::-webkit-scrollbar-thumb:active {
-  background: linear-gradient(180deg, var(--lds-color-primary, #3d90ce) 0%, #2d7ab8 100%);
+  background: var(--lds-color-scrollbar-thumb-hover);
   border: 3px solid transparent;
   background-clip: padding-box;
 }

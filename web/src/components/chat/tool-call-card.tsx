@@ -134,7 +134,7 @@ export default function ToolCallCard({ tc, meta, testId }: ToolCallCardProps) {
         />
         <span
           aria-hidden="true"
-          className={`size-2 shrink-0 rounded-full ${tc.success ? 'bg-green-500' : 'bg-destructive'}`}
+          className={`size-2 shrink-0 rounded-full ${tc.success ? 'bg-success' : 'bg-destructive'}`}
         />
         {/* The dot is the only visual cue, so the status also goes out as text. */}
         <span className="sr-only">{tc.success ? 'Succeeded' : 'Failed'}:</span>

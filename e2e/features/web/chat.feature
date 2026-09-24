@@ -13,6 +13,44 @@ Feature: Agent Chat
     Then I should see my message "hello" in the conversation
     And I should see an agent response in the conversation
 
+  Scenario: A suggestion on an empty conversation is sent as the first message
+    When I navigate to the agent chat page
+    And I send the "What can you do?" suggestion
+    Then I should see my message "What can you do? Give me a short tour of your abilities." in the conversation
+    And I should see an agent response in the conversation
+
+  Scenario: Copy an agent reply
+    Given I have a conversation with the following messages:
+      | role  | content                             |
+      | USER  | What is Kubernetes?                 |
+      | AGENT | Kubernetes orchestrates containers. |
+    When I navigate to the agent chat page
+    And I copy the agent reply
+    Then the clipboard holds "Kubernetes orchestrates containers."
+
+  Scenario: Copy a code block from a reply
+    Given the agent replied with a "bash" code block holding "kubectl get pods -A"
+    When I navigate to the agent chat page
+    Then the code block is labelled "bash"
+    When I copy the code block
+    Then the clipboard holds "kubectl get pods -A"
+
+  Scenario: Reading further up keeps your place, and a button jumps to the latest message
+    Given a long conversation that ends with "This is the final message."
+    When I navigate to the agent chat page
+    Then the message "This is the final message." is in view
+    When I scroll to the top of the conversation
+    Then the jump to latest button is shown
+    When I jump to the latest message
+    Then the message "This is the final message." is in view
+    And the jump to latest button is hidden
+
+  Scenario: Messages from different days are separated by the day they were sent
+    Given a conversation with "an older question" from 3 days ago and "a newer question" from today
+    When I navigate to the agent chat page
+    Then I should see the message "an older question" in the conversation
+    And the conversation has 2 day dividers, the last one "Today"
+
   Scenario: Chat shows message history
     Given I have a conversation with the following messages:
       | role  | content             |

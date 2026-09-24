@@ -51,8 +51,8 @@ interface ChatInputProps {
 }
 
 const statusColors: Record<ConnectionStatus, string> = {
-  connected: 'bg-green-500',
-  connecting: 'bg-yellow-500 animate-pulse',
+  connected: 'bg-success',
+  connecting: 'bg-warning animate-pulse',
   disconnected: 'bg-muted-foreground',
   error: 'bg-destructive',
 };
@@ -233,9 +233,9 @@ export default function ChatInput({
   const toolButton = 'size-8 rounded-full';
 
   return (
-    <div className="bg-background">
+    <div>
       <div
-        className="mx-auto w-full max-w-3xl px-4 pt-2 pb-4"
+        className="mx-auto w-full max-w-3xl px-4 pt-2 pb-3"
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -252,7 +252,7 @@ export default function ChatInput({
             )}
             {isCompacting && (
               <span data-testid="compacting-indicator" className="flex items-center gap-1.5">
-                <span className="inline-block size-1.5 animate-pulse rounded-full bg-yellow-500" />
+                <span className="inline-block size-1.5 animate-pulse rounded-full bg-warning" />
                 Compacting conversation…
               </span>
             )}
@@ -282,7 +282,7 @@ export default function ChatInput({
           {/* One card: what is being written on top, and a toolbar under it — attach on
               the left, everything that acts on the message on the right. */}
           <InputGroup
-            className={`h-auto rounded-2xl bg-card shadow-sm dark:bg-card ${
+            className={`h-auto rounded-2xl border-foreground/10 bg-card shadow-xl shadow-black/25 transition-shadow dark:bg-card has-[[data-slot=input-group-control]:focus-visible]:border-primary/50 has-[[data-slot=input-group-control]:focus-visible]:ring-primary/15 ${
               isDragging ? 'ring-2 ring-primary ring-offset-1' : ''
             }`}
           >
@@ -410,6 +410,10 @@ export default function ChatInput({
             </InputGroupAddon>
           </InputGroup>
           </div>
+          <p className="hidden px-2 pt-2 text-center text-[11px] text-muted-foreground sm:block">
+            <kbd className="font-sans">Enter</kbd> to send · <kbd className="font-sans">Shift</kbd> +{' '}
+            <kbd className="font-sans">Enter</kbd> for a new line · <kbd className="font-sans">/</kbd> for commands
+          </p>
           <input
             ref={fileInputRef}
             type="file"

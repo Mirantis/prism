@@ -76,3 +76,18 @@ Feature: Recents conversation list
     And the Recents list has 2 conversations
     And I click the new conversation button
     Then the agent has 2 stored conversation threads
+
+  Scenario: Recents groups conversations under the day they started
+    Given an older conversation thread rooted at "/work/project-one"
+    And a conversation thread rooted at "/work/project-two"
+    When I navigate to the agent chat page
+    Then "project-two" is listed under "Today" in Recents
+    And "project-one" is listed under "Yesterday" in Recents
+
+  Scenario: The sidebar New chat button starts a conversation from any page
+    Given an older conversation thread rooted at "/work/project-one" containing "hello from project one"
+    When I navigate to the profile page
+    And I click the sidebar New chat button
+    Then the URL is a chat thread URL
+    And I should not see the message "hello from project one" in the conversation
+    And the agent has 2 stored conversation threads

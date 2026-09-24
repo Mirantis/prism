@@ -161,6 +161,7 @@ describe('CronSchedulerService', () => {
 
   afterEach(() => {
     cronSchedulerService.stopAll();
+    cronSchedulerService.useTimezone('UTC');
     vi.useRealTimers();
   });
 
@@ -169,6 +170,27 @@ describe('CronSchedulerService', () => {
   // ==========================================================================
 
   describe('scheduleTask (recurring cron)', () => {
+    it('reports the next run of a recurring task from its running job', () => {
+      const next = new Date('2025-01-16T09:00:00Z');
+      mockCronValidate.mockReturnValue(true);
+      mockCronSchedule.mockReturnValue({ stop: vi.fn(), getNextRun: () => next });
+
+      cronSchedulerService.scheduleTask(createCronTask({ id: 'task-next' }));
+
+      expect(cronSchedulerService.nextRunFor('task-next')).toEqual(next);
+      expect(cronSchedulerService.nextRunFor('task-unknown')).toBeNull();
+    });
+
+    it('reports the stored time of a one-shot task', () => {
+      mockCronValidate.mockReturnValue(false);
+
+      cronSchedulerService.scheduleTask(
+        createCronTask({ id: 'task-once', schedule: 'in 10 minutes', nextRunAt: '2025-01-15T12:10:00.000Z' }),
+      );
+
+      expect(cronSchedulerService.nextRunFor('task-once')).toEqual(new Date('2025-01-15T12:10:00.000Z'));
+    });
+
     it('schedules a valid cron expression using node-cron', () => {
       const mockJob = { stop: vi.fn() };
       mockCronValidate.mockReturnValue(true);
@@ -178,7 +200,42 @@ describe('CronSchedulerService', () => {
       cronSchedulerService.scheduleTask(task);
 
       expect(mockCronValidate).toHaveBeenCalledWith('0 9 * * *');
-      expect(mockCronSchedule).toHaveBeenCalledWith('0 9 * * *', expect.any(Function));
+      expect(mockCronSchedule).toHaveBeenCalledWith('0 9 * * *', expect.any(Function), { timezone: 'UTC' });
+    });
+
+    it('reads recurring schedules in the agent’s time zone and replaces running jobs on a change', () => {
+      const next = new Date('2025-01-16T07:00:00Z');
+      const first = { stop: vi.fn() };
+      const second = { stop: vi.fn(), getNextRun: () => next };
+      mockCronValidate.mockReturnValue(true);
+      mockCronSchedule.mockReturnValueOnce(first).mockReturnValueOnce(second);
+      // The baseline the DELIVER/SUPPRESS gate compares against; the instruction is unchanged,
+      // so a zone change must not make the next unchanged result read as new.
+      const baselines = (cronSchedulerService as unknown as { lastDelivered: Map<string, unknown> }).lastDelivered;
+
+      cronSchedulerService.scheduleTask(createCronTask({ id: 'task-tz', schedule: '0 9 * * *' }));
+      baselines.set('task-tz', { text: 'Pods are fine.', at: Date.now() });
+      cronSchedulerService.useTimezone('Europe/Helsinki');
+
+      expect(first.stop).toHaveBeenCalled();
+      expect(mockCronSchedule).toHaveBeenLastCalledWith('0 9 * * *', expect.any(Function), {
+        timezone: 'Europe/Helsinki',
+      });
+      expect(cronSchedulerService.nextRunFor('task-tz')).toEqual(next);
+      expect(baselines.has('task-tz')).toBe(true);
+      // The replacement is not a new schedule.
+      const scheduledEvents = mockTrackEvent.mock.calls.filter(([name]) => name === 'cron task scheduled');
+      expect(scheduledEvents).toHaveLength(1);
+    });
+
+    it('uses UTC for a time zone name no date can be computed in', () => {
+      mockCronValidate.mockReturnValue(true);
+      mockCronSchedule.mockReturnValue({ stop: vi.fn() });
+
+      cronSchedulerService.useTimezone('Nope/Zone');
+      cronSchedulerService.scheduleTask(createCronTask({ schedule: '0 9 * * *' }));
+
+      expect(mockCronSchedule).toHaveBeenCalledWith('0 9 * * *', expect.any(Function), { timezone: 'UTC' });
     });
 
     it('does not schedule inactive tasks', () => {
