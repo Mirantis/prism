@@ -67,6 +67,9 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   // `activeThreadId` directly without freezing the first render's value.
   const activeThreadIdRef = useRef(activeThreadId);
   activeThreadIdRef.current = activeThreadId;
+  // The thread whose frame set `thinking`, so its end is taken even when it arrived
+  // before this session pinned a thread of its own.
+  const thinkingThreadRef = useRef<string | undefined>(undefined);
   const [shuttingDown, setShuttingDown] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [commandIndex, setCommandIndex] = useState(0);
@@ -122,9 +125,13 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
     };
     // A frame naming another thread is a turn in another conversation — Slack's, or the
     // Web UI's. A frame with no thread (a cancel, a connection change) is this session's.
+    // The one exception is the end of the turn that set `thinking`: a frame that arrived
+    // before the thread was pinned is ended by that same thread's frame.
     const onStatus = (s: TuiStatus, detail?: string, threadId?: string) => {
       const thread = activeThreadIdRef.current;
-      if (threadId && thread && threadId !== thread) return;
+      const endsThinking = threadId !== undefined && threadId === thinkingThreadRef.current;
+      if (threadId && thread && threadId !== thread && !endsThinking) return;
+      thinkingThreadRef.current = s === 'thinking' ? threadId : undefined;
       setStatus(s);
       setStatusDetail(detail);
     };

@@ -256,6 +256,24 @@ describe('useWebSocket', () => {
     expect(result.current.isTyping).toBe(false);
   });
 
+  it('stops showing the agent working when the message fails before its turn starts', async () => {
+    const { result, ws } = await renderConnected({ onMessage: vi.fn(), activeThreadId: 't1' });
+
+    act(() => result.current.sendFollowup('hello', 'a1', 't1', []));
+    expect(result.current.isTyping).toBe(true);
+
+    act(() => ws.deliver({ type: 'error', payload: { error: 'thread lookup failed' } }));
+    expect(result.current.isTyping).toBe(false);
+  });
+
+  it('keeps a turn the runtime reported running through an error envelope', async () => {
+    const { result, ws } = await renderConnected({ onMessage: vi.fn(), activeThreadId: 't1' });
+
+    act(() => ws.deliver({ type: 'status', payload: { processing: true, threadId: 't1' } }));
+    act(() => ws.deliver({ type: 'error', payload: { error: 'unrelated' } }));
+    expect(result.current.isTyping).toBe(true);
+  });
+
   it('sends a mid-turn followup with its thread id instead of suppressing it', async () => {
     const { result, ws } = await renderConnected({ onMessage: vi.fn() });
 

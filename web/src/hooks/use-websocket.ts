@@ -401,6 +401,9 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
             break;
           case 'error':
             console.error('[ws] server error:', data.payload);
+            // A request that failed before its turn started gets no status frame, so the
+            // optimistic report ends here. A turn the runtime reported stays in `running`.
+            setSent(null);
             break;
           default:
             break;
