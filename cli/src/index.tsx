@@ -35,6 +35,9 @@ if (args[0] === 'update') {
 function main(): void {
   const cfg = loadConfig();
   const resume = args.includes('--resume');
+  // Ink enters raw mode only when its input hooks mount, after the first frame. Raw mode
+  // from the start keeps a Ctrl+C typed during boot a key press rather than a SIGINT.
+  if (process.stdin.isTTY) process.stdin.setRawMode(true);
 
   function start(resumeData?: { sessions: ThreadSummary[]; cwd: string }): void {
     render(
