@@ -887,17 +887,21 @@ export const config = {
   // The runtime's own version, as the updater compares it: the release tag
   // baked into a SEA binary at build time (PRISM_VERSION, an esbuild define —
   // see scripts/build-sea.mjs), else the image's SERVICE_VERSION, else ''.
-  // Only a SEA binary with a release-shaped version ever updates itself, so
-  // the container/dev values are informational.
+  // Only a release-shaped version is ever compared: a SEA binary installs the
+  // newer release, and a container with RESTART_ON_RELEASE stops for it.
   appVersion: sea.isSea()
     ? process.env.PRISM_VERSION || ''
     : process.env.SERVICE_VERSION || '',
 
-  // DISABLE_UPDATER=1 (or =true) turns off update checks, autoupdate, and the
-  // manual update command. The updater is already off wherever the install
-  // isn't a released SEA binary (containers, dev runs), so this is the kill
-  // switch for standalone installs.
+  // DISABLE_UPDATER=1 (or =true) turns off update checks, autoupdate, the
+  // manual update command, and RESTART_ON_RELEASE. The updater is already off
+  // in a dev run and in a container without RESTART_ON_RELEASE.
   disableUpdater: ['1', 'true'].includes((process.env.DISABLE_UPDATER || '').trim().toLowerCase()),
+
+  // RESTART_ON_RELEASE=1 (or =true), in a container: when a newer release is
+  // out and the agent is idle, the process stops, and the platform starts the
+  // new image. A SEA binary ignores it.
+  restartOnRelease: ['1', 'true'].includes((process.env.RESTART_ON_RELEASE || '').trim().toLowerCase()),
 
   // Goals — autonomous multi-turn objectives. `goalMaxTurns` overrides the
   // GOAL_MAX_TURNS hard cap. `goalDefaultTokenBudget` is the per-goal token
