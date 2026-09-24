@@ -49,10 +49,10 @@ async function globalSetup() {
   // 2. Start OTEL Collector + MinIO (fake S3) for telemetry e2e tests
   console.log('[e2e] Starting OTEL Collector + MinIO...');
   try {
-    execSync('docker compose -f docker-compose.otelcol.yml up -d', {
+    execSync('docker compose -f docker-compose.otelcol.yml up -d --build', {
       cwd: __dirname,
       stdio: 'pipe',
-      timeout: 120_000,
+      timeout: 900_000,
     });
   } catch (error) {
     // `stdio: 'pipe'` means the compose output is on the error object, not the
@@ -63,11 +63,7 @@ async function globalSetup() {
         (error instanceof Error ? error.message : String(error)),
     );
   }
-  // Wait for otelcol to accept OTLP requests. Sized for a cold start: three
-  // containers, two of them pulled from Docker Hub, and otelcol only begins
-  // listening after minio-init has completed. 30s was enough for a warm image
-  // cache and nothing else, and expiring here fails the whole suite before the
-  // first scenario runs.
+  // The collector starts after MinIO creates the telemetry bucket.
   const otelReady = async () => {
     const start = Date.now();
     while (Date.now() - start < 90_000) {

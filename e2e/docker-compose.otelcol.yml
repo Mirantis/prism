@@ -1,14 +1,13 @@
 # Telemetry test stack: MinIO (fake S3) + OTEL Collector.
 # Started/stopped by global-setup.ts / global-teardown.ts.
-#
-# Both MinIO images come from quay.io, which is MinIO's own registry. Docker Hub
-# refuses an anonymous pull of `minio/minio` and `minio/mc` with "pull access
-# denied ... repository does not exist or may require 'docker login'" (measured
-# on a runner, 2026-09-13), which aborted global setup before any test ran.
+# Build the pinned MinIO releases from their published source.
 
 services:
   minio:
-    image: quay.io/minio/minio:latest
+    image: prism-e2e-minio
+    build:
+      context: .
+      dockerfile: Dockerfile.minio
     command: server /data --console-address ":9001"
     ports:
       - "9000:9000"
@@ -17,19 +16,13 @@ services:
       MINIO_ROOT_PASSWORD: minioadmin
 
   minio-init:
-    image: quay.io/minio/mc:latest
+    image: prism-e2e-minio
+    build:
+      context: .
+      dockerfile: Dockerfile.minio
     depends_on:
       - minio
-    # `sleep 2` was the whole synchronisation: MinIO usually answers by then, and
-    # when it doesn't (cold image cache, loaded runner) `mc alias set` fails, this
-    # container exits non-zero, `service_completed_successfully` never holds, and
-    # `docker compose up` reports a dependency failure that names mc rather than
-    # the slow start behind it. otelcol then never listens and global-setup dies
-    # on its readiness probe. Retry for up to 60s instead — no healthcheck on the
-    # minio service itself, because a probe that is wrong offline would deadlock
-    # `up` harder than the race it replaces.
-    # Exec form + a literal block: the previous folded-string form would have
-    # needed the retry loop's quotes escaped through compose's own lexer.
+    # Wait for the server before creating the telemetry bucket.
     entrypoint:
       - /bin/sh
       - -c
