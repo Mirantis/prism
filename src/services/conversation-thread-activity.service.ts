@@ -32,7 +32,11 @@ class ConversationThreadActivityService {
   ): Promise<() => void> {
     const threadId = await this.threadFor(request);
     if (!threadId) return () => {};
+    return this.beginThread(threadId);
+  }
 
+  /** Mark a known thread as working. The returned function ends that, once. */
+  beginThread(threadId: string): () => void {
     this.add(threadId, 1);
     let ended = false;
     return () => {

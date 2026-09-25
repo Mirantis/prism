@@ -21,10 +21,7 @@ import { serveUpgrades } from './websocket-upgrades';
 /** Where the Web UI's chat and its voice connect. The screen has its own path; see
  * `services/computer/computer-endpoint.ts`. */
 const CHAT_PATH = '/api/ws';
-import {
-  conversationEngineService,
-  type TurnActivityEvent,
-} from './conversation-engine.service';
+import { conversationEngineService } from './conversation-engine.service';
 import {
   conversationThreadActivityService,
   type ThreadActivityChange,
@@ -233,9 +230,9 @@ class WebSocketGatewayService {
       this.sendToUser(userId, { type: 'thread', payload: { threadId, title } });
     });
 
-    // Push which threads are working. The client shows the spinner for the thread on
-    // its screen. `working` rather than `processing`, so a terminal client that reads
-    // `processing` as its own request's state ignores these frames.
+    // Push which threads are working. A client shows the spinner for the thread on its
+    // screen. `processing` stays the state of one request, which shows STOP on the
+    // client that sent it.
     conversationThreadActivityService.events.on('change', (payload: ThreadActivityChange) => {
       this.broadcast({ type: 'status', payload });
     });
@@ -267,16 +264,6 @@ class WebSocketGatewayService {
       void this.publishComputer();
     });
 
-    // Push whether a turn is running, so a client shows the agent working for as long as
-    // it does. The engine brackets every exchange, which is what puts the indicator on a
-    // turn the runtime starts itself — the continuation after a computer help request,
-    // for one — rather than only on the messages this gateway is handed.
-    conversationEngineService.events.on(
-      'activity',
-      ({ userId, threadId, active }: TurnActivityEvent) => {
-        this.sendToUser(userId, { type: 'status', payload: { processing: active, threadId } });
-      },
-    );
   }
 
   /**
@@ -400,11 +387,6 @@ class WebSocketGatewayService {
 
     logger.info('WebSocket connected for user %s (%d connections)', userId, userConnections.length);
 
-    // A client that connects while a thread is working shows that from the start.
-    for (const threadId of conversationThreadActivityService.workingThreadIds()) {
-      ws.send(JSON.stringify({ type: 'status', payload: { threadId, working: true } }));
-    }
-
     // Handle messages
     ws.on('message', async (data: Buffer, isBinary: boolean) => {
       try {
@@ -461,11 +443,9 @@ class WebSocketGatewayService {
       payload: { connected: true },
     }));
 
-    // A turn that started before this connection has already been announced, so say what
-    // is running now: a page opened or reloaded mid-turn otherwise shows the agent idle
-    // until the turn it cannot see ends.
-    for (const threadId of conversationEngineService.runningThreads()) {
-      ws.send(JSON.stringify({ type: 'status', payload: { processing: true, threadId } }));
+    // A client that connects while a thread is working shows that from the start.
+    for (const threadId of conversationThreadActivityService.workingThreadIds()) {
+      ws.send(JSON.stringify({ type: 'status', payload: { threadId, working: true } }));
     }
 
     // And the state of the desktop, so a client that opens or reconnects during a wait
@@ -964,6 +944,15 @@ class WebSocketGatewayService {
     this.activeRequests.set(userId, { controller, threadId: message.threadId });
 
     try {
+      // The STOP control on the client that sent the message. The thread lets a
+      // client drop the frame of a request on another thread.
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'status',
+          payload: { processing: true, ...(message.threadId ? { threadId: message.threadId } : {}) },
+        }));
+      }
+
       logger.info('Calling conversation engine for %s', userId);
 
       // Process through local conversation engine (direct call, no HTTP).

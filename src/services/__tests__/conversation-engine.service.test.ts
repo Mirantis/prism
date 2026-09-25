@@ -132,6 +132,10 @@ vi.mock('../agent-workspace.service', () => ({
 // turn ordering is part of what the steering scenarios assert.
 import { conversationEngineService } from '../conversation-engine.service';
 import { threadTurnService } from '../thread-turn.service';
+import {
+  conversationThreadActivityService,
+  type ThreadActivityChange,
+} from '../conversation-thread-activity.service';
 
 describe('Requirement: Conversation Engine', () => {
   beforeEach(() => {
@@ -1274,16 +1278,19 @@ describe('Requirement: Conversation Engine', () => {
   });
 
   /**
-   * The bracket a client shows the agent working from. It belongs to the engine rather
-   * than to the transport that happened to ask, so a turn the runtime starts itself — the
-   * continuation after a computer help request — reports like any other.
+   * The engine marks the thread working for the whole exchange, so a turn the runtime
+   * starts itself, such as the continuation after a computer help request, reports like
+   * any other, and a turn that waits for the thread is part of the same work.
    */
-  describe('Scenario: Turn activity', () => {
-    function record(): { seen: { active: boolean; threadId: string }[]; off: () => void } {
-      const seen: { active: boolean; threadId: string }[] = [];
-      const listener = (event: { active: boolean; threadId: string }) => void seen.push(event);
-      conversationEngineService.events.on('activity', listener);
-      return { seen, off: () => void conversationEngineService.events.off('activity', listener) };
+  describe('Scenario: Thread activity', () => {
+    function record(): { seen: ThreadActivityChange[]; off: () => void } {
+      const seen: ThreadActivityChange[] = [];
+      const listener = (event: ThreadActivityChange) => void seen.push(event);
+      conversationThreadActivityService.events.on('change', listener);
+      return {
+        seen,
+        off: () => void conversationThreadActivityService.events.off('change', listener),
+      };
     }
 
     it('brackets an exchange, whoever asked for it', async () => {
@@ -1297,8 +1304,8 @@ describe('Requirement: Conversation Engine', () => {
       off();
 
       expect(seen).toEqual([
-        { userId: 'user-123', threadId: 'thread-123', active: true },
-        { userId: 'user-123', threadId: 'thread-123', active: false },
+        { threadId: 'thread-123', working: true },
+        { threadId: 'thread-123', working: false },
       ]);
     });
 
@@ -1326,15 +1333,15 @@ describe('Requirement: Conversation Engine', () => {
         threadId: 'thread-a',
       });
       await Promise.resolve();
-      expect(seen.filter((event) => !event.active)).toEqual([]);
+      expect(seen.filter((event) => !event.working)).toEqual([]);
 
       release();
       await first;
       await second;
       off();
 
-      expect(seen.filter((event) => event.active)).toHaveLength(1);
-      expect(seen.filter((event) => !event.active)).toHaveLength(1);
+      expect(seen.filter((event) => event.working)).toHaveLength(1);
+      expect(seen.filter((event) => !event.working)).toHaveLength(1);
     });
 
     it('ends the report when the turn throws', async () => {
@@ -1352,7 +1359,7 @@ describe('Requirement: Conversation Engine', () => {
       ).rejects.toThrow('the provider refused');
       off();
 
-      expect(seen.map((event) => event.active)).toEqual([true, false]);
+      expect(seen.map((event) => event.working)).toEqual([true, false]);
     });
   });
 });

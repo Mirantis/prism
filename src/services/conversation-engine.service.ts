@@ -6,12 +6,12 @@
  * responses via the local MessageDeliveryService.
  */
 
-import { EventEmitter } from 'node:events';
 import { callModel } from '../lib/model-call';
 import { messageDeliveryService, PublishOptions } from './message-delivery.service';
 import { conversationService } from './conversation.service';
 import { threadTurnService, type PendingMessage } from './thread-turn.service';
 import { threadTitleService } from './thread-title.service';
+import { conversationThreadActivityService } from './conversation-thread-activity.service';
 import { attachmentService } from './attachment.service';
 import { invokeStream } from '../invoke';
 import { ToolCallRecord, InvokeStep, UIBlock, ChannelOrigin } from '../types';
@@ -45,20 +45,6 @@ interface StreamedTurn {
   toolCalls: ToolCallRecord[];
   blocks: UIBlock[];
   agentMessage: Awaited<ReturnType<typeof messageDeliveryService.publish>> | undefined;
-}
-
-/**
- * A turn is running for this user, or the last one has ended — emitted as `'activity'`.
- *
- * Nothing here knows about WebSockets: transports subscribe and show whatever they show
- * while the agent works, matching `thread-title.service.ts`. It covers every exchange the
- * engine runs, including the ones the runtime starts itself, such as the continuation
- * after a computer help request.
- */
-export interface TurnActivityEvent {
-  userId: string;
-  threadId: string;
-  active: boolean;
 }
 
 // ============================================================================
@@ -126,33 +112,6 @@ export interface ChatResponse {
 // ============================================================================
 
 class ConversationEngineService {
-  readonly events = new EventEmitter();
-  /**
-   * Exchanges running per thread. An exchange waiting for the thread is one of them, so a
-   * turn queued behind another holds the report open rather than ending it early.
-   */
-  private readonly running = new Map<string, number>();
-
-  /**
-   * The threads a turn is running on.
-   *
-   * A client that connects part-way through one has missed the announcement, and asking
-   * is the only way it can show the agent working rather than waiting for the next turn.
-   */
-  runningThreads(): string[] {
-    return [...this.running.keys()];
-  }
-
-  /** Announce the first exchange on a thread, and the end of the last. */
-  private turnActivity(userId: string, threadId: string, active: boolean): void {
-    const count = (this.running.get(threadId) ?? 0) + (active ? 1 : -1);
-    if (count > 0) this.running.set(threadId, count);
-    else this.running.delete(threadId);
-    if (active ? count === 1 : count === 0) {
-      this.events.emit('activity', { userId, threadId, active });
-    }
-  }
-
   /**
    * Single place deciding whether to ask the user for 👍/👎 feedback on the
    * current turn. Gates run cheap→expensive; all must pass:
@@ -388,7 +347,11 @@ Respond with exactly one word: WORTHY or SKIP`;
     // follow-ups — so a background goal turn can't interleave between them.
     // A `create_goal` call made during this turn kicks its loop fire-and-forget;
     // that loop's first turn queues behind this and runs once we release.
-    this.turnActivity(userId, threadId, true);
+    //
+    // The thread is working from here, and a turn that waits for the mutex is part of
+    // that work. invokeStream marks the thread too, which covers turns that do not
+    // come through the engine.
+    const endActivity = conversationThreadActivityService.beginThread(threadId);
     try {
       await claim.run(async () => {
         titleSet = (await stored).titleSet;
@@ -456,7 +419,7 @@ Respond with exactly one word: WORTHY or SKIP`;
         }
       });
     } finally {
-      this.turnActivity(userId, threadId, false);
+      endActivity();
     }
 
     const response = responseTexts.join('\n\n');

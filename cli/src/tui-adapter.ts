@@ -118,9 +118,9 @@ export function signInRequestIn(blocks: unknown): SignInRequest | null {
 export interface TuiAdapterEvents {
   message: (msg: TuiMessage) => void;
   /**
-   * `threadId` is set when the runtime names the thread whose turn started or ended. A
-   * delivery reaches every one of the user's clients, so a frame for another thread is
-   * not this session's.
+   * `threadId` is set when the runtime names the thread of the request or of the work. A
+   * status frame reaches every client, so a frame for another thread is not this
+   * session's.
    */
   status: (status: TuiStatus, detail?: string, threadId?: string) => void;
   /**
@@ -459,8 +459,9 @@ class TuiAdapter {
       }
       case 'status': {
         const payload = env.payload as
-          | { connected?: boolean; processing?: boolean; threadId?: unknown }
+          | { connected?: boolean; processing?: boolean; threadId?: unknown; working?: unknown }
           | undefined;
+        const threadId = typeof payload?.threadId === 'string' ? payload.threadId : undefined;
         // `true` when a turn starts; `false` from the gateway's `finally` on every
         // exit — normal end, error and cancel alike. The connect handshake sends
         // `{ connected: true }` with no `processing` key, and the socket's `open`
@@ -468,8 +469,12 @@ class TuiAdapter {
         // than a truthiness test, which would clear the spinner mid-turn if the
         // handshake were ever re-sent.
         if (typeof payload?.processing === 'boolean') {
-          const threadId = typeof payload.threadId === 'string' ? payload.threadId : undefined;
           this.events.emit('status', payload.processing ? 'thinking' : 'idle', undefined, threadId);
+        }
+        // A thread is working or not: `{ threadId, working }`, whatever started the work.
+        // The App keeps the frames for the thread on screen.
+        if (threadId && typeof payload?.working === 'boolean') {
+          this.events.emit('status', payload.working ? 'thinking' : 'idle', undefined, threadId);
         }
         break;
       }

@@ -195,6 +195,18 @@ describe('TuiAdapter inbound envelopes', () => {
     expect(statuses.map((s) => s.threadId)).toEqual(['thread-1', undefined]);
   });
 
+  it('reports a working thread, whatever started the work', () => {
+    // A turn the runtime starts itself, such as the continuation after a computer help
+    // request, sends no `processing` frame. The thread report is what shows it.
+    emit('status', { threadId: 'thread-1', working: true });
+    emit('status', { threadId: 'thread-1', working: false });
+
+    expect(statuses).toEqual([
+      { status: 'thinking', detail: undefined, threadId: 'thread-1' },
+      { status: 'idle', detail: undefined, threadId: 'thread-1' },
+    ]);
+  });
+
   it('ignores a connect handshake that carries no processing flag', () => {
     // `{ connected: true }` arrives once, at connection. Treating it as idle would
     // clear the spinner mid-turn if it were ever re-sent.
