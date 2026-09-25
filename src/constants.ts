@@ -103,7 +103,7 @@ export const UPDATE_FIRST_CHECK_DELAY_MS = 60 * 1000;
 export const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 /**
- * RESTART_ON_RELEASE: the upper bound of the random delay between finding a
+ * EXIT_ON_UPDATE: the upper bound of the random delay between finding a
  * newer release and stopping, so a fleet does not stop together. Below the
  * check interval, so a delay ends before the next check starts.
  */

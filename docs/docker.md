@@ -31,10 +31,11 @@ registry token is read-only.
 To update, pull a newer tag and recreate the container; the agent's state
 survives on the `/data` volume. A platform that starts the container again after
 it stops, and pulls `latest` each time, can do this for you. Set
-`RESTART_ON_RELEASE=1` on a `latest` or `v…` image, and the agent stops itself
-when a newer release is out and it is idle. If the agent comes back on the same
-release, it does not stop again for that release. Do not set it under a plain
-`docker run`, which does not pull a new image.
+`EXIT_ON_UPDATE=1` on a `latest` or `v…` production release image, and the agent
+stops itself when a newer production release is out and it is idle. Canary and
+dev builds never exit. If the agent comes back on the same release, it does not
+stop again for that release. Do not set it under a plain `docker run`, which
+does not pull a new image.
 
 ## Run the agent and boot into the terminal UI
 
