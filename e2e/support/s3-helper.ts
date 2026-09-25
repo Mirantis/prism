@@ -1,5 +1,5 @@
 /**
- * S3/MinIO Helper — reads telemetry events from the fake S3 bucket.
+ * S3/MinIO Helper — creates the telemetry bucket and reads events from it.
  *
  * Used by e2e tests to verify OTEL telemetry events land in S3.
  */

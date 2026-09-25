@@ -64,16 +64,13 @@ async function globalSetup() {
         (error instanceof Error ? error.message : String(error)),
     );
   }
-  // The collector writes into this bucket, and the MinIO image has no shell to create
-  // it from inside the stack.
   try {
     await ensureTelemetryBucket();
   } catch (error) {
     throw new Error(`${error instanceof Error ? error.message : String(error)}\n${describeCompose()}`);
   }
-  // Wait for otelcol to accept OTLP requests. Sized for a cold start: two containers
-  // pulled from two registries. 30s was enough for a warm image cache and nothing else,
-  // and expiring here fails the whole suite before the first scenario runs.
+  // Wait for otelcol to accept OTLP requests. 90 s covers a loaded runner; expiring here
+  // fails the whole suite before the first scenario runs.
   const otelReady = async () => {
     const start = Date.now();
     while (Date.now() - start < 90_000) {
