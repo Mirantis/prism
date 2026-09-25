@@ -183,4 +183,32 @@ describe('the gate a secure takeover holds', () => {
     expect(stepResult).toEqual({ toolChoice: 'auto' });
     expect(result).toEqual({ text: 'done' });
   });
+
+  it('holds a step whose own hook was still running when the takeover opened', async () => {
+    // The caller's hook awaits work of its own, and the takeover lands inside it. The
+    // step must not go out on the far side of a hook that started before the window.
+    const callerPrepare = vi.fn(async () => {
+      inferenceGate.hold();
+      return { toolChoice: 'auto' };
+    });
+    let stepDone = false;
+
+    mockGenerateText.mockImplementation(async (params: never) => {
+      const { prepareStep } = params as { prepareStep: (o: unknown) => Promise<unknown> };
+      const step = prepareStep({ stepNumber: 1 }).then(() => (stepDone = true));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const heldPastTheHook = !stepDone;
+
+      inferenceGate.free();
+      await step;
+      return { text: heldPastTheHook ? 'held' : 'let through' };
+    });
+
+    const result = await callModel(
+      { purpose: 'chat' },
+      { model, prompt: 'hi', prepareStep: callerPrepare } as never,
+    );
+
+    expect(result).toEqual({ text: 'held' });
+  });
 });

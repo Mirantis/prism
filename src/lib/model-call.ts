@@ -54,7 +54,11 @@ export async function callModel(meta: ModelCallMeta, params: TextParams): Promis
     ...params,
     prepareStep: async (options) => {
       await inferenceGate.wait(params.abortSignal);
-      return callerPrepareStep?.(options);
+      const prepared = await callerPrepareStep?.(options);
+      // The caller's own hook awaits work of its own — the steering drain reads the
+      // database — so a window that opened while it ran is still ahead of this step.
+      await inferenceGate.wait(params.abortSignal);
+      return prepared;
     },
     onStepFinish: async (step) => {
       llmCallService.record({ ...meta, model, usage: step.usage });
