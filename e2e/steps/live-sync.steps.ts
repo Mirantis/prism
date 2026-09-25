@@ -30,7 +30,7 @@ function userMessages(page: Page, text: string) {
 }
 
 /**
- * The indicator can be on screen for less time than a poll takes, for example on a turn that
+ * The indicator can be on screen for less time than a poll takes, for example on a request that
  * fails at once. The script sets a flag when the indicator first appears, from the first paint on.
  */
 function watchTypingIndicator() {

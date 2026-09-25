@@ -4,8 +4,8 @@ Feature: CLI chat with other clients open
 
   Scenario: Shows my own message once
     Given a second client is connected
-    When I send the prompt "Reply with exactly one word: ECHOONCE7. No other text."
-    Then the agent reply contains "ECHOONCE7"
+    When I send the prompt "Reply with exactly one word: SHOWNONCE7. No other text."
+    Then the agent reply contains "SHOWNONCE7"
     And the second client received my message
     And the screen shows my message once
 

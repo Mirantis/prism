@@ -85,10 +85,10 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
         .toBe(true);
     });
     And('the screen shows my message once', async () => {
-      // Give a stray echo time to arrive and repaint the frame.
+      // Give a duplicate copy of the message time to arrive and repaint the frame.
       await sleep(2_000);
       const frame = lastFrame(session.rawOutput());
-      expect(frame).toContain('ECHOONCE7');
+      expect(frame).toContain('SHOWNONCE7');
       expect(occurrences(frame, '▌ You')).toBe(1);
     });
   });

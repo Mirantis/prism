@@ -39,7 +39,7 @@ export class HomePage extends BasePage {
   readonly sidebarNewChatButton: Locator;
   /**
    * The "agent is working" indicator in the message list. It shows while the
-   * runtime reports a turn on the thread on screen, on every open client. STOP
+   * runtime reports the thread on screen as working, on every open client. STOP
    * shows only on the client that sent the message.
    */
   readonly typingIndicator: Locator;
@@ -237,8 +237,8 @@ export class HomePage extends BasePage {
 
   /**
    * Wait for streaming to finish. The typing indicator goes when the runtime
-   * reports the turn over, which is a few milliseconds before the last reply
-   * is stored and delivered. STOP goes after that delivery, so the wait
+   * reports the thread as no longer working, a few milliseconds before the last
+   * reply is stored and delivered. STOP goes after that delivery, so the wait
    * includes it.
    *
    * This is the second half of the condition; `sendMessage()` waits for STOP
