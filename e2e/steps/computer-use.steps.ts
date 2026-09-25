@@ -13,16 +13,27 @@ let site: Awaited<ReturnType<typeof startComputerSite>> | undefined;
 After(async ({ context }) => {
   await site?.close();
   site = undefined;
-  // Control survives closing a viewer, and every later turn waits on it, so a scenario that
-  // fails while holding control would stall the rest of the suite.
-  const status = await (await context.request.get('/agents/computer')).json();
-  if (!status.paused) return;
-  for (const open of context.pages()) await open.close();
-  const viewer = await context.newPage();
-  await viewer.goto('/computer');
-  await viewer.getByRole('button', { name: 'Return control', exact: true }).click();
-  await expect(viewer.getByRole('status')).not.toContainText('Paused');
-  await viewer.close();
+  // Control survives closing a viewer, and every later turn waits on the computer, so a
+  // scenario that fails while holding control or leaving work queued would stall the next one.
+  const status = async () => (await context.request.get('/agents/computer')).json();
+  if ((await status()).paused) {
+    for (const open of context.pages()) await open.close();
+    const viewer = await context.newPage();
+    await viewer.goto('/computer');
+    await viewer.getByRole('button', { name: 'Return control', exact: true }).click();
+    await expect.poll(async () => (await status()).paused).toBe(false);
+    await viewer.close();
+  }
+  await expect
+    .poll(
+      async () => {
+        const now = await status();
+        if (now.owner) await context.request.post('/agents/computer/stop');
+        return Boolean(now.owner) || now.waiting.length > 0;
+      },
+      { timeout: 60_000 },
+    )
+    .toBe(false);
 });
 
 Given('a website with a sign-in page and public notes', async () => {
