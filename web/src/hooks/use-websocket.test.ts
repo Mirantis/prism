@@ -252,6 +252,17 @@ describe('useWebSocket', () => {
       expect(result.current.workingThreadIds.size).toBe(0);
     });
 
+    it('drops STOP when the socket closes, as the end of the request can be lost', async () => {
+      const { result, ws } = await renderConnected({ onMessage: vi.fn(), activeThreadId: 't1' });
+
+      act(() => result.current.sendFollowup('hello', 'a1', 't1', []));
+      act(() => ws.deliver({ type: 'status', payload: { processing: true, threadId: 't1' } }));
+      act(() => ws.onclose?.({ code: 1000 }));
+
+      expect(result.current.isTyping).toBe(false);
+      expect(result.current.isThreadWorking).toBe(false);
+    });
+
     /**
      * The user reads one thread at a time, so the spinner shows the state of the thread on
      * screen, not one flag for the whole user.

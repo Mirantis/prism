@@ -1044,6 +1044,7 @@ describe('Requirement: WebSocket Gateway', () => {
 
       // Add a message to queue
       service.messageQueues.set(userId, [{
+        ws,
         message: { type: 'chat', content: 'Queued', agentId: 'agent-123' },
         resolve: vi.fn(),
       }]);
@@ -1057,6 +1058,29 @@ describe('Requirement: WebSocket Gateway', () => {
 
       // Chat should be called twice (first + queued)
       expect(mockChat).toHaveBeenCalledTimes(2);
+    });
+
+    it('shows STOP for a queued message on the client that sent it', async () => {
+      const userId = 'user-123';
+      const first = createMockWebSocket();
+      const sender = createMockWebSocket();
+      first.readyState = 1;
+      sender.readyState = 1;
+      service.connections.set(userId, [first, sender]);
+      mockChat.mockResolvedValue(undefined);
+
+      service.messageQueues.set(userId, [{
+        ws: sender,
+        message: { type: 'chat', content: 'Queued', agentId: 'agent-123', threadId: 'thread-2' },
+        resolve: vi.fn(),
+      }]);
+      await service.processMessage(first, userId, {
+        type: 'chat', content: 'First', agentId: 'agent-123', threadId: 'thread-1',
+      });
+
+      const started = JSON.stringify({ type: 'status', payload: { processing: true, threadId: 'thread-2' } });
+      expect(sender.send).toHaveBeenCalledWith(started);
+      expect(first.send).not.toHaveBeenCalledWith(started);
     });
   });
 

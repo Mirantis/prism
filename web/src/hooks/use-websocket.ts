@@ -430,8 +430,11 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
         if (!isMountedRef.current) return;
         setStatus('disconnected');
         // A thread can stop working while the socket is down. The runtime sends the
-        // working threads when the socket opens again.
+        // working threads when the socket opens again. The end of this client's request
+        // can also be lost, so STOP goes too.
         setWorkingThreadIds(new Set());
+        setProcessing(false);
+        setSent(null);
         if (event.code !== 1000 && reconnectAttempts.current < maxReconnectAttempts) {
           reconnectAttempts.current++;
           reconnectTimeoutRef.current = setTimeout(() => {

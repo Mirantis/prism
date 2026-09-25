@@ -190,7 +190,8 @@ const MAX_BUFFERED_AUDIO_BYTES = VOICE_AUDIO_FORMAT.sampleRate * 2 * 2;
 class WebSocketGatewayService {
   private wss: WebSocketServer | null = null;
   private connections: Map<string, AuthenticatedWebSocket[]> = new Map();
-  private messageQueues: Map<string, Array<{ message: WebSocketMessage; resolve: (response: WebSocketResponse) => void }>> = new Map();
+  // Each queued message keeps the socket that sent it, which gets its STOP frame.
+  private messageQueues: Map<string, Array<{ ws: AuthenticatedWebSocket; message: WebSocketMessage; resolve: (response: WebSocketResponse) => void }>> = new Map();
   private processingUsers: Set<string> = new Set();
   // The user's in-flight chat turn: the AbortController a `cancel` message aborts,
   // which stops the LLM generation mid-turn (see invokeStream), and the thread it
@@ -873,6 +874,7 @@ class WebSocketGatewayService {
     // Otherwise queue it
     const queue = this.messageQueues.get(userId) || [];
     queue.push({
+      ws,
       message,
       resolve: (response) => ws.send(JSON.stringify(response)),
     });
@@ -1013,8 +1015,7 @@ class WebSocketGatewayService {
     const next = queue.shift();
     if (!next) return;
 
-    const connections = this.connections.get(userId);
-    const ws = connections?.[0];
+    const ws = next.ws.readyState === WebSocket.OPEN ? next.ws : this.connections.get(userId)?.[0];
     if (ws) {
       await this.processMessage(ws, userId, next.message);
     }
