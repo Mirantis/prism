@@ -1,538 +1,241 @@
 /**
- * The seam between a dead Realtime session and the service that owns the call.
+ * The conversation core, against a local GPT-Live server.
  *
- * Run against a real local WebSocket server rather than a mocked session, because
- * the distinction being tested — a close the server initiated versus one we asked
- * for — only exists at the socket level.
+ * Run against a real socket rather than a mocked session, because the distinctions
+ * tested here — a close the server started versus one we asked for, what reaches the
+ * wire and in which order — only exist at the socket level.
  */
 
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
-import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
 import { VoiceConversation } from '../voice-conversation';
 import { MEETING_SAMPLE_RATE, REALTIME_SAMPLE_RATE } from '../resampler';
+import type { SpeakerReading } from '../meeting-provider.interface';
+import {
+  functionCallEvent,
+  responseCompletedEvent,
+  startLiveServer,
+  type LiveServer,
+} from '../../../test-utils/live-server';
 
 vi.mock('../../../logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-/** Every `info` line emitted so far, joined — the latency figures live here. */
-function infoLines(): string {
-  return vi
-    .mocked(logger.info)
-    .mock.calls.map((c) => String(c[0]))
-    .join('\n');
+interface Harness {
+  conversation: VoiceConversation;
+  server: LiveServer;
+  lost: string[];
+  written: Buffer[];
+  execute: ReturnType<typeof vi.fn>;
+  finished: ReturnType<typeof vi.fn>;
 }
 
-/**
- * Requests the conversation made for itself — the ones that put the agent's voice
- * in the room. A gate probe is also a `response.create`, but carries a `response`
- * body; the conversation's asks for nothing special.
- */
-function spokenRequests(sent: Record<string, unknown>[]): Record<string, unknown>[] {
-  return sent.filter((e) => e.type === 'response.create' && !e.response);
-}
-
-/** The gate probe on the wire, if one has been sent. */
-function probeSent(sent: Record<string, unknown>[]): Record<string, any> | undefined {
-  return sent.find((e) => e.type === 'response.create' && e.response) as
-    | Record<string, any>
-    | undefined;
-}
+let active: Harness | null = null;
 
 beforeEach(() => {
   vi.mocked(logger.info).mockClear();
   vi.mocked(config).meetingTranscriptLogging = 'off';
 });
 
-interface Harness {
-  conversation: VoiceConversation;
-  /** Close the socket from the server's side, as OpenAI would on a drop. */
-  dropFromServer: () => void;
-  lost: string[];
-  dispose: () => Promise<void>;
-}
-
-async function harness(): Promise<Harness> {
-  const server = new WebSocketServer({ port: 0 });
-  await new Promise<void>((resolve) => server.once('listening', resolve));
-  const port = (server.address() as { port: number }).port;
-
-  let socket: ServerSocket | null = null;
-  const connected = new Promise<void>((resolve) => {
-    server.once('connection', (ws) => {
-      socket = ws;
-      resolve();
-    });
-  });
-
-  const lost: string[] = [];
-  const conversation = new VoiceConversation({
-    instructions: 'You are Prism.',
-    tools: { declarations: [], count: 0, execute: vi.fn() },
-    sink: { write: vi.fn() },
-    agentName: 'Prism',
-    sampleRate: MEETING_SAMPLE_RATE,
-    endpointOverride: { url: `ws://127.0.0.1:${port}`, headers: {} },
-    onSessionLost: (reason) => lost.push(reason),
-  });
-  await conversation.start();
-  await connected;
-
-  return {
-    conversation,
-    lost,
-    dropFromServer: () => socket?.close(1011, 'server gone'),
-    dispose: async () => {
-      conversation.stop();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-    },
-  };
-}
-
-/**
- * A live socket that can push the events OpenAI would send and record what the
- * client sends back — `response.create` being the one that puts the agent's voice
- * in the room.
- */
-async function speakingHarness(sampleRate: number = MEETING_SAMPLE_RATE): Promise<{
-  h: Harness;
-  send: (event: Record<string, unknown>) => void;
-  sent: Record<string, unknown>[];
-}> {
-  const server = new WebSocketServer({ port: 0 });
-  await new Promise<void>((resolve) => server.once('listening', resolve));
-  const port = (server.address() as { port: number }).port;
-
-  const sent: Record<string, unknown>[] = [];
-  let socket: ServerSocket | null = null;
-  const connected = new Promise<void>((resolve) => {
-    server.once('connection', (ws) => {
-      socket = ws;
-      ws.on('message', (raw) => {
-        try {
-          sent.push(JSON.parse(String(raw)) as Record<string, unknown>);
-        } catch {
-          // Audio frames and anything else unparseable are not what is measured.
-        }
-      });
-      resolve();
-    });
-  });
-
-  const conversation = new VoiceConversation({
-    instructions: 'You are Emma.',
-    tools: { declarations: [], count: 0, execute: vi.fn() },
-    sink: { write: vi.fn() },
-    agentName: 'Emma',
-    // Named, so every utterance goes to the gate rather than being answered outright.
-    responseMode: 'addressed',
-    sampleRate,
-    endpointOverride: { url: `ws://127.0.0.1:${port}`, headers: {} },
-  });
-  await conversation.start();
-  await connected;
-
-  return {
-    h: {
-      conversation,
-      lost: [],
-      dropFromServer: () => socket?.close(1011, 'server gone'),
-      dispose: async () => {
-        conversation.stop();
-        await new Promise<void>((resolve) => server.close(() => resolve()));
-      },
-    },
-    send: (event) => socket?.send(JSON.stringify(event)),
-    sent,
-  };
-}
-
-/** Give the close frame a turn to land. */
-const settle = () => new Promise((r) => setTimeout(r, 20));
-
-let active: Harness | null = null;
 afterEach(async () => {
-  await active?.dispose();
+  await active?.conversation.stop();
+  await active?.server.dispose();
   active = null;
 });
 
-describe('losing the Realtime session', () => {
-  it('reports a close the server initiated', async () => {
-    active = await harness();
+async function harness(sampleRate = MEETING_SAMPLE_RATE): Promise<Harness> {
+  const server = await startLiveServer();
+  const lost: string[] = [];
+  const written: Buffer[] = [];
+  const execute = vi.fn(async () => '{"ok":true}');
+  const finished = vi.fn();
+  const conversation = new VoiceConversation({
+    instructions: 'You are Prism, the voice.',
+    backendInstructions: 'You are Prism, the backend.',
+    tools: { declarations: [], count: 0, execute },
+    sink: { write: (chunk: Buffer) => void written.push(chunk) },
+    agentName: 'Prism',
+    sampleRate,
+    endpointOverride: { url: server.url, headers: {} },
+    onSessionLost: (reason) => lost.push(reason),
+    onResponseFinished: finished,
+  });
+  await conversation.start();
+  active = { conversation, server, lost, written, execute, finished };
+  return active;
+}
 
-    active.dropFromServer();
+const settle = () => new Promise((resolve) => setTimeout(resolve, 30));
+
+function reading(name: string, id = `devices/${name}`): SpeakerReading {
+  return { id, isSelf: false, who: { kind: 'person', name } };
+}
+
+/** Every context append on the wire, as `type: content`. */
+function appends(server: LiveServer, type: string): string[] {
+  return server.sent.filter((f) => f.type === type).map((f) => String(f.content));
+}
+
+describe('losing the voice session', () => {
+  it('reports a close the server started', async () => {
+    const h = await harness();
+
+    h.server.closeWith('expired');
     await settle();
 
-    // The owner needs to hear about this: the browser is still sitting in the
-    // meeting, but nothing can be said or heard any more.
-    expect(active.lost).toHaveLength(1);
-    expect(active.lost[0]).toContain('server gone');
+    expect(h.lost).toEqual(['expired']);
   });
 
   it('says nothing about a close it asked for itself', async () => {
-    active = await harness();
+    const h = await harness();
 
-    active.conversation.stop();
-    await settle();
+    await h.conversation.stop();
 
-    expect(active.lost).toEqual([]);
+    expect(h.lost).toEqual([]);
   });
 
-  it('reports a close only once', async () => {
-    active = await harness();
+  it('keeps the API close reason and the billed voice time for telemetry', async () => {
+    const h = await harness();
 
-    active.dropFromServer();
-    await settle();
-    // A teardown following the loss must not look like a second loss.
-    active.conversation.stop();
-    await settle();
+    await h.conversation.stop();
 
-    expect(active.lost).toHaveLength(1);
+    expect(h.conversation.statistics).toMatchObject({ closeReason: 'close_requested', voiceSeconds: 42 });
   });
 });
 
-describe('telling the session who is in the room', () => {
-  it('hints the transcriber when the log will carry the words', async () => {
-    vi.mocked(config).meetingTranscriptLogging = 'full';
-    const { h, sent } = await speakingHarness();
-    active = h;
+describe('running the tools the backend calls', () => {
+  it('runs a call and hands its result back', async () => {
+    const h = await harness();
 
-    h.conversation.setParticipantNames(['Emma', 'Mario Sarcher', 'Lee']);
-    await settle();
+    h.server.emit(functionCallEvent('call_1', 'memory_search', '{"query":"deploys"}'));
+    h.server.emit(responseCompletedEvent());
+    await h.server.waitFor((f) => f.type === 'response.create');
 
-    // The *last* one: the session is configured at connect with the agent's own
-    // name already, so the first `session.update` is that one, not the roster.
-    const updates = sent.filter((e) => e.type === 'session.update');
-    const update = updates[updates.length - 1];
-    const keywords = (
-      update?.session as { audio?: { input?: { transcription?: { keywords?: string[] } } } }
-    )?.audio?.input?.transcription?.keywords;
-    // The agent's own name leads: it is the hardest word in the transcript and the
-    // one a reader needs to be right.
-    expect(keywords?.[0]).toBe('Emma');
-    expect(keywords).toContain('Mario Sarcher');
-
-    // Re-sending an unchanged roster would mutate a live session every poll.
-    const before = sent.length;
-    h.conversation.setParticipantNames(['Emma', 'Mario Sarcher', 'Lee']);
-    await settle();
-    expect(sent.length).toBe(before);
-  });
-
-  it('sends no transcriber config at all when nothing will read it', async () => {
-    // `off` by default, so this is the ordinary case: the roster poll must not
-    // quietly switch transcription back on and start billing per minute.
-    const { h, sent } = await speakingHarness();
-    active = h;
-
-    h.conversation.setParticipantNames(['Emma', 'Mario Sarcher']);
-    await settle();
-
-    const updates = sent.filter((e) => e.type === 'session.update');
-    expect(JSON.stringify(updates)).not.toContain('transcription');
-  });
-
-  it('tells the model who is in the room either way', async () => {
-    const { h, sent } = await speakingHarness();
-    active = h;
-
-    h.conversation.setParticipantNames(['Emma', 'Mario Sarcher', 'Lee']);
-    await settle();
-
-    // Independent of the transcript setting: the model cannot read the
-    // transcriber's config, and "who is in this call?" is a question the room asks.
-    const context = sent.filter((e) => e.type === 'conversation.item.create');
-    expect(JSON.stringify(context)).toContain('Mario Sarcher');
-    // ...and it is not told it is talking to itself.
-    expect(JSON.stringify(context)).not.toContain('are now: Emma');
-  });
-});
-
-describe('a roster read from a moving UI', () => {
-  it('ignores a reordering of the same people', async () => {
-    const { h, sent } = await speakingHarness();
-    active = h;
-
-    h.conversation.setParticipantNames(['Emma', 'Mario Sarcher', 'Lee']);
-    await settle();
-    const before = sent.length;
-
-    // Meet reorders tiles by who is speaking, so the same room arrives in a
-    // different order every poll. Treated as a change, each one mutated the live
-    // transcriber config and pushed another roster item into the model's context.
-    h.conversation.setParticipantNames(['Lee', 'Emma', 'Mario Sarcher']);
-    await settle();
-
-    expect(sent.length).toBe(before);
-  });
-
-  it('does not tell the model it is alone when the scrape found only itself', async () => {
-    const { h, sent } = await speakingHarness();
-    active = h;
-
-    // A grid that has not painted yet, or has virtualized everyone off-screen.
-    // That is a failed read, not an empty room — and saying so mid-meeting is a
-    // false statement the model may act on.
-    h.conversation.setParticipantNames(['Emma']);
-    await settle();
-
-    expect(JSON.stringify(sent)).not.toContain('alone');
-    expect(sent.filter((e) => e.type === 'conversation.item.create')).toHaveLength(0);
-  });
-});
-
-/**
- * The whole decision, end to end over a real socket: the turn detector closes an
- * utterance, the gate is asked about that utterance, and the answer follows or
- * does not.
- */
-describe('deciding whether to answer', () => {
-  /** Answer the probe the client has sent, the way the server would. */
-  async function answerGate(
-    send: (event: Record<string, unknown>) => void,
-    sent: Record<string, unknown>[],
-    verdict: 'YES' | 'NO',
-    responseId = 'r-gate',
-  ): Promise<void> {
-    const probe = probeSent(sent);
-    if (!probe) throw new Error('the gate was never asked');
-    send({
-      type: 'response.created',
-      response: { id: responseId, metadata: probe.response.metadata },
+    expect(h.execute).toHaveBeenCalledWith('memory_search', '{"query":"deploys"}');
+    expect(h.server.sent.find((f) => f.type === 'response.item.create')?.item).toEqual({
+      type: 'function_call_output',
+      call_id: 'call_1',
+      output: '{"ok":true}',
     });
-    send({
-      type: 'response.done',
-      response: { id: responseId, status: 'completed', output: [{ content: [{ text: verdict }] }] },
-    });
-    await settle();
-  }
-
-  it('asks about the utterance that just closed, and answers when told to', async () => {
-    const { h, send, sent } = await speakingHarness();
-    active = h;
-
-    send({ type: 'input_audio_buffer.committed', item_id: 'item-1' });
-    await settle();
-
-    // Judged from the audio, with a bounded slice of the call as context and the
-    // utterance in question last. No transcript is involved.
-    const probe = probeSent(sent)!;
-    expect(probe.response.conversation).toBe('none');
-    const referenced = (probe.response.input as Array<{ type: string; id: string }>).map((r) => r.id);
-    expect(referenced.at(-1)).toBe('item-1');
-    expect(referenced.length).toBeLessThanOrEqual(12);
-    expect(spokenRequests(sent)).toHaveLength(0);
-
-    await answerGate(send, sent, 'YES');
-
-    expect(spokenRequests(sent)).toHaveLength(1);
+    expect(h.conversation.statistics).toMatchObject({ toolCalls: 1, backendInputTokens: 800, backendOutputTokens: 14 });
   });
 
-  it('stays quiet when the utterance was not for the agent', async () => {
-    const { h, send, sent } = await speakingHarness();
-    active = h;
+  it('says the backend finished only once it answers without calling a tool', async () => {
+    const h = await harness();
 
-    send({ type: 'input_audio_buffer.committed', item_id: 'item-2' });
+    h.server.emit(functionCallEvent('call_1', 'memory_search'));
+    h.server.emit(responseCompletedEvent());
+    await h.server.waitFor((f) => f.type === 'response.create');
+    expect(h.finished).not.toHaveBeenCalled();
+
+    // The follow-up that uses the tool's result.
+    h.server.emit(responseCompletedEvent());
     await settle();
-    await answerGate(send, sent, 'NO');
+    expect(h.finished).toHaveBeenCalledTimes(1);
+  });
+});
 
-    expect(spokenRequests(sent)).toHaveLength(0);
-    expect(h.conversation.statistics).toMatchObject({ gateCalls: 1, gateFailed: 0 });
+describe('telling the voice what happened', () => {
+  it('sends notices as instructions and prompts as speech', async () => {
+    const h = await harness();
+
+    h.conversation.notify('Your microphone is off.');
+    h.conversation.prompt('Greet the room.');
+    await h.server.waitFor((f) => f.type === 'session.commentary.append');
+
+    expect(appends(h.server, 'session.instructions.append')).toEqual(['Your microphone is off.']);
+    expect(appends(h.server, 'session.commentary.append')).toEqual(['Greet the room.']);
   });
 
-  it('answers an utterance once even if the turn closes twice', async () => {
-    const { h, send, sent } = await speakingHarness();
-    active = h;
+  it('shows a picture to the backend without asking it to answer', async () => {
+    const h = await harness();
 
-    send({ type: 'input_audio_buffer.committed', item_id: 'item-3' });
-    await settle();
-    await answerGate(send, sent, 'YES');
-    const probesAfterFirst = sent.filter((e) => e.type === 'response.create' && e.response).length;
-
-    // A duplicated commit for the same utterance. A second request is queued by the
-    // session rather than dropped, so the room would hear the reply twice.
-    send({ type: 'input_audio_buffer.committed', item_id: 'item-3' });
+    expect(h.conversation.showImage('data:image/png;base64,AAAA', 'Your screen.')).toBe(true);
+    await h.server.waitFor((f) => f.type === 'response.item.create');
     await settle();
 
-    expect(spokenRequests(sent)).toHaveLength(1);
-    // And the duplicate is refused *before* it costs anything: asking again would
-    // spend a probe on a question already answered.
-    expect(sent.filter((e) => e.type === 'response.create' && e.response)).toHaveLength(
-      probesAfterFirst,
+    expect(h.server.sent.find((f) => f.type === 'response.item.create')?.item.content).toEqual([
+      { type: 'input_text', text: 'Your screen.' },
+      { type: 'input_image', image_url: 'data:image/png;base64,AAAA' },
+    ]);
+    expect(h.server.sent.some((f) => f.type === 'response.create')).toBe(false);
+  });
+
+  it('shows a recording window by window and asks for an answer', async () => {
+    const h = await harness();
+
+    h.conversation.showRecording(
+      [
+        { label: '0:00', images: ['data:image/jpeg;base64,AA'] },
+        { label: '0:30', images: ['data:image/jpeg;base64,BB'] },
+      ],
+      'Your user recorded their screen.',
     );
-  });
+    await h.server.waitFor((f) => f.type === 'response.create');
 
-  it('drops a verdict once a later utterance has closed', async () => {
-    const { h, send, sent } = await speakingHarness();
-    active = h;
-
-    send({ type: 'input_audio_buffer.committed', item_id: 'item-first' });
-    await settle();
-    // Somebody else speaks before the verdict lands. The response would carry the
-    // conversation as it now stands, so answering would answer *their* utterance —
-    // which nothing judged.
-    send({ type: 'input_audio_buffer.committed', item_id: 'item-second' });
-    await settle();
-
-    await answerGate(send, sent, 'YES');
-
-    expect(spokenRequests(sent)).toHaveLength(0);
-    expect(h.conversation.statistics).toMatchObject({ gateSuperseded: 1 });
-  });
-
-  it('does not let a duplicated commit rewind the supersession guard', async () => {
-    const { h, send, sent } = await speakingHarness();
-    active = h;
-
-    send({ type: 'input_audio_buffer.committed', item_id: 'item-a' });
-    await settle();
-    send({ type: 'input_audio_buffer.committed', item_id: 'item-b' });
-    await settle();
-    // A duplicate for the *earlier* utterance. The policy ignores it, but if it
-    // still moved the marker, item-a's late yes would pass the guard and the bare
-    // response would answer item-b.
-    send({ type: 'input_audio_buffer.committed', item_id: 'item-a' });
-    await settle();
-
-    await answerGate(send, sent, 'YES');
-
-    expect(spokenRequests(sent)).toHaveLength(0);
-    expect(h.conversation.statistics).toMatchObject({ gateSuperseded: 1 });
-  });
-
-  it('counts a verdict that never came, so a deaf agent is visible', async () => {
-    const { h, send, sent } = await speakingHarness();
-    active = h;
-
-    send({ type: 'input_audio_buffer.committed', item_id: 'item-4' });
-    await settle();
-    // The socket dies under the probe — the common way a call ends.
-    h.dropFromServer();
-    await settle();
-
-    expect(spokenRequests(sent)).toHaveLength(0);
-    // Silence from a broken gate and silence from a room nobody addressed are
-    // indistinguishable without this.
-    expect(h.conversation.statistics).toMatchObject({ gateCalls: 1, gateFailed: 1 });
-  });
-
-  it('records the reasoning effort beside the latency it bought', async () => {
-    const { h, send, sent } = await speakingHarness();
-    active = h;
-
-    send({ type: 'input_audio_buffer.committed', item_id: 'item-6' });
-    await settle();
-    await answerGate(send, sent, 'YES');
-
-    // The first audio is when the room stops waiting, so this is the figure the
-    // effort level moves. Without the level on the same line, a call at `high` and
-    // a call at `medium` produce indistinguishable logs and the trade cannot be
-    // judged after the fact.
-    send({
-      type: 'response.output_audio.delta',
-      item_id: 'item-6',
-      delta: Buffer.alloc(960).toString('base64'),
-    });
-    await settle();
-
-    expect(infoLines()).toMatch(/voice started \d+ms after asking .*effort high/);
+    expect(h.server.sent.find((f) => f.type === 'response.item.create')?.item.content).toEqual([
+      { type: 'input_text', text: 'Your user recorded their screen.' },
+      { type: 'input_text', text: 'At 0:00:' },
+      { type: 'input_image', image_url: 'data:image/jpeg;base64,AA' },
+      { type: 'input_text', text: 'At 0:30:' },
+      { type: 'input_image', image_url: 'data:image/jpeg;base64,BB' },
+    ]);
   });
 });
-
-describe('what a call leaves in the log', () => {
-  it('keeps the room out of it by default', async () => {
-    const { h, send } = await speakingHarness();
-    active = h;
-
-    send({
-      type: 'conversation.item.input_audio_transcription.completed',
-      item_id: 'item-7',
-      transcript: 'Emma, can you take a look at the staging cluster?',
-    });
-    await settle();
-
-    // A call is unauthenticated third-party speech and the log outlives it.
-    expect(infoLines()).not.toContain('staging cluster');
-    expect(infoLines()).not.toContain('Meeting:Heard');
-  });
-
-  it('writes what was said when asked, paired to the utterance by id', async () => {
-    vi.mocked(config).meetingTranscriptLogging = 'full';
-    const { h, send } = await speakingHarness();
-    active = h;
-
-    send({
-      type: 'conversation.item.input_audio_transcription.completed',
-      item_id: 'item-8',
-      transcript: 'Emma, can you take a look at the staging cluster?',
-    });
-    await settle();
-
-    // Transcription lags the decision, so the words arrive on their own line and
-    // `item=` is what pairs them with the verdict.
-    expect(infoLines()).toMatch(/\[Meeting:Heard\] item=item-8 transcript=".*staging cluster/);
-  });
-});
-
-/**
- * A speaker reading as the participants panel produces one.
- *
- * The id is present on every one of them because it, not the display name, is what a
- * caller comparing two readings has to use — the name is only ever for people to read.
- */
-function reading(name: string, id = `spaces/x/devices/${name.length}`) {
-  return { id, isSelf: false, who: { kind: 'person' as const, name } };
-}
 
 describe('knowing who has the floor', () => {
-  it('reports the human the platform named', async () => {
-    const { h } = await speakingHarness();
-    active = h;
+  it('tells the voice when a new person has the floor, and only then', async () => {
+    const h = await harness();
 
+    h.conversation.setCurrentSpeaker(reading('Emma Lee'));
+    h.conversation.setCurrentSpeaker(reading('Emma Lee'));
+    h.conversation.setCurrentSpeaker({ id: 'devices/self', isSelf: true, who: { kind: 'person', name: 'Prism' } });
     h.conversation.setCurrentSpeaker(reading('Mario Sarcher'));
+    await h.server.waitFor((f) => f.type === 'session.thinking.append' && String(f.content).startsWith('Mario'));
 
-    expect(h.conversation.currentSpeaker?.who).toEqual({ kind: 'person', name: 'Mario Sarcher' });
+    expect(appends(h.server, 'session.thinking.append')).toEqual([
+      'Emma Lee is speaking now.',
+      'Mario Sarcher is speaking now.',
+    ]);
   });
 
-  it('reports nobody while the agent itself is the one being captioned', async () => {
-    const { h } = await speakingHarness();
-    active = h;
+  it('names the people sharing a microphone rather than the platform label', async () => {
+    const h = await harness();
+
+    h.conversation.setCurrentSpeaker({ id: 'devices/room', isSelf: false, who: { kind: 'group', members: ['Emma', 'Lee'] } });
+    await h.server.waitFor((f) => f.type === 'session.thinking.append');
+
+    expect(appends(h.server, 'session.thinking.append')).toEqual([
+      'Several people on one microphone are speaking now: Emma, Lee.',
+    ]);
+  });
+
+  it('reports nobody while the agent itself is speaking', async () => {
+    const h = await harness();
 
     h.conversation.setCurrentSpeaker(reading('Mario Sarcher'));
-    h.conversation.setCurrentSpeaker({
-      id: 'devices/9',
-      isSelf: true,
-      who: { kind: 'person', name: 'Iris' },
-    });
+    h.conversation.setCurrentSpeaker({ id: 'devices/self', isSelf: true, who: { kind: 'person', name: 'Prism' } });
 
-    // Not the stale human. Whoever reads this wants "which human has the floor", and
-    // answering with the last person who spoke before the agent started talking is how a
-    // follow-up gets attributed to the wrong speaker.
     expect(h.conversation.currentSpeaker).toBeNull();
   });
 
   it('keeps the last speaker when a read comes back empty', async () => {
-    const { h } = await speakingHarness();
-    active = h;
+    const h = await harness();
 
     h.conversation.setCurrentSpeaker(reading('Emma Lee'));
-    // Captions off, pane cleared, or the read failed — all arrive as null, and none of
-    // them is evidence that the person who was talking has stopped.
     h.conversation.setCurrentSpeaker(null);
 
     expect(h.conversation.currentSpeaker?.who).toEqual({ kind: 'person', name: 'Emma Lee' });
   });
 
   it('forgets a speaker that has gone stale', async () => {
-    const { h } = await speakingHarness();
-    active = h;
+    const h = await harness();
     h.conversation.setCurrentSpeaker(reading('Emma Lee'));
 
     // Only the clock is faked: the harness runs a real socket, and faking timers would
-    // stall it. Past the freshness bound the pane has plainly cleared, and holding the
-    // name would keep naming somebody who stopped talking a minute ago.
+    // stall it.
     vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 6_001 });
     try {
       expect(h.conversation.currentSpeaker).toBeNull();
@@ -541,102 +244,128 @@ describe('knowing who has the floor', () => {
     }
   });
 
-  it('counts how often a closed utterance had a speaker attached', async () => {
-    const { h, send } = await speakingHarness();
-    active = h;
+  it('pins who asked when the voice hands the request over', async () => {
+    const h = await harness();
 
     h.conversation.setCurrentSpeaker(reading('Emma Lee'));
-    // Counted when the turn detector closes an utterance, not when a transcript arrives:
-    // transcription is only requested when the log is going to carry the words, so a
-    // counter on the transcript would read zero on every default-configured call.
-    send({ type: 'input_audio_buffer.committed', item_id: 'item-40' });
+    h.server.emit({ type: 'session.delegation.created', delegation: { id: 'item_1', type: 'delegation', target: 'responses' } });
     await settle();
-    await settle();
+    h.conversation.setCurrentSpeaker(reading('Mario Sarcher'));
 
-    // The rate this feeds is the only signal that a scrape of somebody else's UI has
-    // stopped working: the call carries on either way, just anonymously.
-    expect(h.conversation.statistics).toMatchObject({
-      attributedUtterances: 1,
-      unattributedUtterances: 0,
-    });
-  });
-
-  it('counts an unattributed utterance when the platform said nothing', async () => {
-    const { h, send } = await speakingHarness();
-    active = h;
-
-    send({ type: 'input_audio_buffer.committed', item_id: 'item-41' });
-    await settle();
-    await settle();
-
-    expect(h.conversation.statistics).toMatchObject({
-      attributedUtterances: 0,
-      unattributedUtterances: 1,
-    });
+    expect(h.conversation.answeringSpeaker?.who).toEqual({ kind: 'person', name: 'Emma Lee' });
+    expect(h.conversation.statistics.delegations).toBe(1);
   });
 });
 
-describe('taking captured audio in', () => {
-  /** Every `input_audio_buffer.append` on the wire, oldest first. */
-  const appends = (sent: Record<string, unknown>[]): string[] =>
-    sent.filter((e) => e.type === 'input_audio_buffer.append').map((e) => String(e.audio));
+describe('a roster read from a moving UI', () => {
+  it('tells the voice who is in the call, without the agent, once per change', async () => {
+    const h = await harness();
+
+    h.conversation.setParticipantNames(['Mario Sarcher', 'Prism', 'Emma Lee']);
+    h.conversation.setParticipantNames(['Emma Lee', 'Mario Sarcher', 'Prism']);
+    await h.server.waitFor((f) => f.type === 'session.thinking.append');
+    await settle();
+
+    expect(appends(h.server, 'session.thinking.append')).toEqual([
+      'The people in the call with you are now: Emma Lee, Mario Sarcher.',
+    ]);
+    expect(h.conversation.roster).toEqual(['Emma Lee', 'Mario Sarcher']);
+  });
+
+  it('does not tell the voice it is alone when the scrape found only itself', async () => {
+    const h = await harness();
+
+    h.conversation.setParticipantNames(['Prism']);
+    await settle();
+
+    expect(appends(h.server, 'session.thinking.append')).toEqual([]);
+  });
+});
+
+describe('what a call leaves in the log', () => {
+  it('keeps the words out of it by default', async () => {
+    const h = await harness();
+
+    h.server.emit({ type: 'session.input_transcript.delta', delta: 'Hi Prism', start_ms: 0, end_ms: 200 });
+    await settle();
+    await h.conversation.stop();
+
+    expect(vi.mocked(logger.info).mock.calls.map((c) => String(c[0])).join('\n')).not.toContain('Hi Prism');
+  });
+
+  it('writes each side as a line when asked', async () => {
+    vi.mocked(config).meetingTranscriptLogging = 'full';
+    const h = await harness();
+
+    h.server.emit({ type: 'session.input_transcript.delta', delta: 'Hi', start_ms: 0, end_ms: 200 });
+    h.server.emit({ type: 'session.input_transcript.delta', delta: ' Prism', start_ms: 200, end_ms: 400 });
+    h.server.emit({ type: 'session.output_transcript.delta', delta: 'Hello!', start_ms: 400, end_ms: 600 });
+    await settle();
+    await h.conversation.stop();
+
+    const lines = vi.mocked(logger.info).mock.calls.map((c) => String(c[0]));
+    expect(lines).toContain('[Voice:Heard] transcript="Hi Prism"');
+    expect(lines).toContain('[Voice:Said] transcript="Hello!"');
+  });
+});
+
+describe('audio in and out', () => {
+  const inputs = (server: LiveServer): Buffer[] =>
+    server.sent.filter((f) => f.type === 'session.input_audio.append').map((f) => Buffer.from(String(f.audio), 'base64'));
 
   it('halves the rate of what the caller pushes', async () => {
-    const { h, sent } = await speakingHarness();
-    active = h;
+    const h = await harness();
 
     // 10 ms of 48 kHz pcm16 mono: 480 samples, two bytes each.
     h.conversation.pushAudio(Buffer.alloc(960));
-    await settle();
+    await h.server.waitFor((f) => f.type === 'session.input_audio.append');
 
-    // The same 10 ms at the 24 kHz the Realtime API takes: 240 samples.
-    const audio = appends(sent);
-    expect(audio).toHaveLength(1);
-    expect(Buffer.from(audio[0]!, 'base64')).toHaveLength(480);
+    expect(inputs(h.server)[0]).toHaveLength(480);
   });
 
   it('sends what the caller pushes untouched when the transport speaks 24 kHz', async () => {
-    // A transport already on the model's rate skips both resamplers, so the bytes
-    // the client captured are the bytes the model receives. That is what makes the
-    // socket path free of conversion at either end.
-    const { h, sent } = await speakingHarness(REALTIME_SAMPLE_RATE);
-    active = h;
+    const h = await harness(REALTIME_SAMPLE_RATE);
 
-    h.conversation.pushAudio(Buffer.alloc(480));
-    await settle();
+    h.conversation.pushAudio(Buffer.from([1, 0, 2, 0]));
+    await h.server.waitFor((f) => f.type === 'session.input_audio.append');
 
-    const audio = appends(sent);
-    expect(audio).toHaveLength(1);
-    expect(Buffer.from(audio[0]!, 'base64')).toHaveLength(480);
+    expect(inputs(h.server)[0]).toEqual(Buffer.from([1, 0, 2, 0]));
+  });
+
+  it('plays the voice and drops the digital silence between its words', async () => {
+    const h = await harness(REALTIME_SAMPLE_RATE);
+
+    // 100 ms of silence, as the stream carries it, then 100 ms of speech.
+    h.server.emit({ type: 'session.output_audio.delta', delta: Buffer.alloc(4800).toString('base64') });
+    const speech = Buffer.alloc(4800, 1);
+    h.server.emit({ type: 'session.output_audio.delta', delta: speech.toString('base64') });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    expect(Buffer.concat(h.written)).toEqual(speech);
   });
 
   it('refuses a rate it has no converter for', () => {
-    // 2:1 decimation is the whole of the resampler, so a third rate would change
-    // pitch rather than fail. Better to refuse at construction.
     expect(
       () =>
         new VoiceConversation({
           instructions: 'x',
+          backendInstructions: 'y',
           tools: { declarations: [], count: 0, execute: vi.fn() },
           sink: { write: vi.fn() },
           agentName: 'Prism',
           sampleRate: 16_000,
-          // Pointed at nothing: the rate is refused before anything connects, and
-          // a session left resolving the real endpoint outlives the test.
           endpointOverride: { url: 'ws://127.0.0.1:1', headers: {} },
         }),
     ).toThrow(/16000/);
   });
 
   it('sends nothing after the conversation stops', async () => {
-    const { h, sent } = await speakingHarness();
-    active = h;
+    const h = await harness();
 
-    h.conversation.stop();
-    await settle();
+    await h.conversation.stop();
     h.conversation.pushAudio(Buffer.alloc(960));
     await settle();
 
-    expect(appends(sent)).toHaveLength(0);
+    expect(inputs(h.server)).toHaveLength(0);
   });
 });

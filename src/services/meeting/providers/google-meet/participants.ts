@@ -455,10 +455,8 @@ export function sharedMicrophoneNames(reading: RoomReading | null): string[] {
  * Two exclusions, and both of them leaked before they were here.
  *
  * A **shared row's label is not a person.** "Merged audio" passes every plausibility test a
- * name has to pass, and it reaches three places that each do the wrong thing with it: the
- * transcriber takes it as a decoding hint and biases recognition toward the phrase, the model
- * is told it is somebody in the call and may greet it, and the addressed gate is handed it as
- * somebody an utterance could have been aimed at. `isGroup` exists so nothing says "Merged
+ * name has to pass, and the voice would be told it is somebody in the call and may greet it.
+ * `isGroup` exists so nothing says "Merged
  * audio" as though it were somebody, and honouring it only on the speaker path left the
  * roster path saying it anyway — in exactly the merged-audio call this read exists to cover.
  *

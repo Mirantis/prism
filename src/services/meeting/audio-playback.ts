@@ -23,16 +23,10 @@
  * the first attempt — while nothing is ever committed more than `TARGET_LEAD_MS`
  * ahead, which bounds how long the bot can keep talking after being cut off.
  *
- * Having a real clock also makes the played-ms *measured* rather than estimated,
- * which is what `conversation.item.truncate` needs to be honest.
  */
 
 import { logger } from '../../logger';
-import {
-  pcm16BytesDurationMs,
-  pcm16BytesForMs,
-  pcm16DurationMs,
-} from './resampler';
+import { pcm16BytesDurationMs, pcm16BytesForMs, pcm16DurationMs } from './resampler';
 
 /**
  * How far ahead of real time audio may be handed to the device.
@@ -82,29 +76,9 @@ export interface PlaybackSink {
   clear?(): void;
 }
 
-interface QueuedChunk {
-  itemId: string;
-  chunk: Buffer;
-}
-
-/**
- * What became of one response item's audio when playback was cut short.
- *
- * Both numbers are needed: `playedMs` is what the room heard, `sentMs` is what
- * reached the device at all, and the truncation point OpenAI recommends is derived
- * from the pair rather than from either alone.
- */
-export interface PlaybackSnapshot {
-  itemId: string;
-  playedMs: number;
-  sentMs: number;
-}
-
 export class AudioPlayback {
-  /** FIFO across items — see `enqueue` for why items are not discarded. */
-  private queue: QueuedChunk[] = [];
+  private queue: Buffer[] = [];
   private queuedBytes = 0;
-  private paused = false;
   private disposed = false;
   private timer: NodeJS.Timeout | null = null;
 
@@ -113,131 +87,45 @@ export class AudioPlayback {
   private firstEnqueueAt: number | null = null;
   /** Total audio handed to the sink since the clock started. */
   private writtenMs = 0;
-  /** Per-item totals, so truncation can be reported against the right item. */
-  private writtenMsByItem = new Map<string, number>();
-  /** Item of the most recently written chunk — the one currently audible. */
-  private writingItem: string | null = null;
 
   /**
    * `sampleRate` is required rather than defaulted.
    *
-   * Every millisecond this class computes — the pre-roll, the lead it chases, the
-   * `playedMs` it reports for truncation — comes from it. A default would be
+   * Every millisecond this class computes — the pre-roll and the lead it chases —
+   * comes from it. A default would be
    * invisible in review and audible in production: 24 kHz audio paced as 48 kHz
-   * writes at half the rate the device drains, and reports twice the audio as
-   * heard.
+   * writes at half the rate the device drains.
    */
   constructor(
     private readonly sink: PlaybackSink,
     private readonly sampleRate: number,
   ) {}
 
-  /**
-   * Enqueue model speech for a response item.
-   *
-   * Items are appended, never allowed to displace one another. An earlier version
-   * cleared the queue whenever a new item id appeared, which produced a subtle and
-   * very audible bug: the model says "let me check that", calls a tool, and the
-   * follow-up response arrives as a *new* item — dropping the unplayed part of the
-   * filler and cutting the bot off mid-word. It sounded like the bot interrupting
-   * itself, because it was. Stale audio after a real interruption is handled where
-   * it belongs, by `RealtimeSession` refusing to forward deltas for an abandoned
-   * item.
-   */
-  enqueue(pcm48k: Buffer, itemId: string): void {
-    if (this.disposed || pcm48k.length === 0) return;
-    this.queue.push({ itemId, chunk: pcm48k });
-    this.queuedBytes += pcm48k.length;
+  /** Queue model speech. */
+  enqueue(pcm: Buffer): void {
+    if (this.disposed || pcm.length === 0) return;
+    this.queue.push(pcm);
+    this.queuedBytes += pcm.length;
     if (this.firstEnqueueAt === null) this.firstEnqueueAt = Date.now();
     this.ensureTimer();
   }
 
-  /** Stop handing over audio, keeping the queue for a possible resume. */
-  pause(): void {
-    this.paused = true;
-  }
-
-  /** Resume after a pause that turned out not to be a real interruption. */
-  resume(): void {
-    if (!this.paused) return;
-    this.paused = false;
-    this.ensureTimer();
-  }
-
   /**
-   * Drop everything unplayed and report what was heard, per response item.
-   *
-   * A list rather than a single item, because `gpt-realtime-2.x` speaks a native
-   * preamble ("let me check that") as its own `commentary` item and then the answer
-   * as a `final_answer` item — one turn, two or more audio items. Truncating only
-   * the newest leaves the preamble's unheard tail in the model's context, so every
-   * item that received audio is reported: earlier ones were heard in full, the
-   * audible one partially, and anything still queued was never heard at all.
+   * Drop everything unplayed, here and in the sink.
    *
    * The tail already inside the device (at most `TARGET_LEAD_MS`) still plays; it
    * cannot be recalled, which is exactly why that number is kept small.
    */
-  flush(): PlaybackSnapshot[] {
-    const outstanding = this.outstandingMs;
-    const items: PlaybackSnapshot[] = [];
-    for (const [itemId, sentMs] of this.writtenMsByItem) {
-      // Only the item still being written can have audio outstanding; everything
-      // before it has already gone out and been heard.
-      const playedMs = itemId === this.writingItem ? Math.max(0, sentMs - outstanding) : sentMs;
-      items.push({ itemId, playedMs, sentMs });
-    }
-    // Items whose audio arrived but never reached the device were heard for 0ms;
-    // they still need truncating or their transcript stays in context.
-    for (const queued of this.queue) {
-      if (!this.writtenMsByItem.has(queued.itemId) && !items.some((i) => i.itemId === queued.itemId)) {
-        items.push({ itemId: queued.itemId, playedMs: 0, sentMs: 0 });
-      }
-    }
-
+  flush(): void {
     this.queue = [];
     this.queuedBytes = 0;
-    this.paused = false;
     this.firstEnqueueAt = null;
-    this.writtenMsByItem.clear();
-    this.writingItem = null;
     this.stopTimer();
-    // Told after the snapshots are taken, not before: the numbers above describe
-    // what the far end heard, and a sink that drops its own queue changes what it
-    // is about to play rather than what it already did.
     this.clearSink();
-    return items;
-  }
-
-  /**
-   * Whether the bot still has speech to deliver.
-   *
-   * Counts audio already handed to the device as well as what is queued: during
-   * that window the room can still hear it, so an interruption is meaningful.
-   */
-  get isSpeaking(): boolean {
-    return this.queuedBytes > 0 || this.outstandingMs > TICK_MS;
-  }
-
-  /** Audio handed over but not yet heard. */
-  private get outstandingMs(): number {
-    if (this.startedAt === null) return 0;
-    return Math.max(0, this.writtenMs - (Date.now() - this.startedAt));
-  }
-
-  /**
-   * Milliseconds of the audible item the room has actually heard.
-   *
-   * Measured from the clock rather than inferred from a fixed buffer depth, so it
-   * is what `conversation.item.truncate` should be told.
-   */
-  get currentPlayedMs(): number {
-    if (!this.writingItem) return 0;
-    const written = this.writtenMsByItem.get(this.writingItem) ?? 0;
-    return Math.max(0, written - this.outstandingMs);
   }
 
   private ensureTimer(): void {
-    if (this.timer || this.paused || this.disposed) return;
+    if (this.timer || this.disposed) return;
     this.timer = setInterval(() => this.tick(), TICK_MS);
     this.timer.unref?.();
     this.tick();
@@ -251,10 +139,9 @@ export class AudioPlayback {
   }
 
   private tick(): void {
-    if (this.paused || this.disposed) return;
+    if (this.disposed) return;
     if (this.queue.length === 0) {
-      // Nothing left to hand over. Keep the clock so `outstandingMs` stays honest
-      // while the device drains, but stop spinning the timer.
+      // Nothing left to hand over: stop spinning the timer.
       this.stopTimer();
       return;
     }
@@ -296,12 +183,12 @@ export class AudioPlayback {
     const wantBytes = Math.max(pcm16BytesForMs(remainingMs, this.sampleRate), 2);
 
     let piece: Buffer;
-    if (head.chunk.length <= wantBytes) {
-      piece = head.chunk;
+    if (head.length <= wantBytes) {
+      piece = head;
       this.queue.shift();
     } else {
-      piece = head.chunk.subarray(0, wantBytes);
-      head.chunk = head.chunk.subarray(wantBytes);
+      piece = head.subarray(0, wantBytes);
+      this.queue[0] = head.subarray(wantBytes);
     }
     this.queuedBytes -= piece.length;
 
@@ -315,10 +202,7 @@ export class AudioPlayback {
       return false;
     }
 
-    const ms = pcm16DurationMs(piece, this.sampleRate);
-    this.writtenMs += ms;
-    this.writingItem = head.itemId;
-    this.writtenMsByItem.set(head.itemId, (this.writtenMsByItem.get(head.itemId) ?? 0) + ms);
+    this.writtenMs += pcm16DurationMs(piece, this.sampleRate);
     return true;
   }
 

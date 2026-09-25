@@ -1,11 +1,12 @@
 /**
- * The session instructions for a live voice session: the agent's own system prompt,
- * plus how to behave in a call.
+ * The instructions for a live voice session, one set per model.
  *
- * Same pipeline `invoke()` uses, so Soul, User, Agent Guide, Memory and Skills all carry
- * over — that is what makes the voice the agent rather than a generic assistant wearing
- * its name. Conversation history is left out: a call is its own context, and a whole
- * thread would bloat a session that pays per audio token.
+ * The backend gets the agent's own system prompt, from the same pipeline `invoke()` uses,
+ * plus how to work behind a voice — so Soul, User, Agent Guide, Memory and Skills all
+ * carry over, which is what makes the call the agent rather than a generic assistant
+ * wearing its name. The voice gets the agent's name and Soul, so it sounds like the agent,
+ * plus how to talk and when to hand over. Conversation history is left out: a call is its
+ * own context.
  *
  * Every session owner builds its instructions here, so a meeting and a voice chat differ
  * in what they pass and nowhere else.
@@ -13,9 +14,11 @@
 
 import { contextService } from '../context.service';
 import { buildSystemPromptParts } from '../../prompts/context-builder';
-import { getMeetingInstructions } from '../../prompts/meeting-prompt';
-import { getVoiceChatInstructions } from '../../prompts/voice-chat-prompt';
-import type { ResponseMode } from '../meeting/response-policy';
+import { getMeetingBackendInstructions, getMeetingVoiceInstructions } from '../../prompts/meeting-prompt';
+import {
+  getVoiceChatBackendInstructions,
+  getVoiceChatVoiceInstructions,
+} from '../../prompts/voice-chat-prompt';
 
 /**
  * Which call the prompt describes.
@@ -37,16 +40,14 @@ export interface VoiceInstructionsInput {
   userId: string;
   agentId: string;
   call: VoiceCall;
-  responseMode: ResponseMode;
 }
 
 export interface VoiceInstructions {
+  /** The voice model's. */
   instructions: string;
-  /**
-   * The name the prompt introduces the agent by, handed back so the caller can give the
-   * same one to the gate that decides whether the agent was called — the room hears this
-   * one, so it is the one people will actually say.
-   */
+  /** The backend's: the agent's system prompt and how to work behind the voice. */
+  backendInstructions: string;
+  /** The name the prompt introduces the agent by — the one people in the call will say. */
   agentName: string;
   /** From the same context, so the tool set matches the prompt built beside it. */
   lockedIn: boolean;
@@ -58,23 +59,27 @@ export async function buildVoiceInstructions(input: VoiceInstructionsInput): Pro
     includeConversation: false,
   });
   const parts = await buildSystemPromptParts(context, 'meeting');
-  const call =
-    input.call.kind === 'meeting'
-      ? getMeetingInstructions({
+  const call = input.call;
+  const voice =
+    call.kind === 'meeting'
+      ? getMeetingVoiceInstructions({ agentName: context.agentName, platform: call.platform })
+      : getVoiceChatVoiceInstructions({
           agentName: context.agentName,
-          platform: input.call.platform,
-          responseMode: input.responseMode,
-        })
-      : getVoiceChatInstructions({
-          agentName: context.agentName,
-          // A voice chat is never `auto`: that mode resolves from a participant count,
-          // and one mixed microphone yields none.
-          responseMode: input.responseMode === 'addressed' ? 'addressed' : 'open',
-          computer: input.call.computer,
-          userScreen: input.call.userScreen,
+          computer: call.computer,
+          userScreen: call.userScreen,
         });
+  const backend =
+    call.kind === 'meeting'
+      ? getMeetingBackendInstructions({ agentName: context.agentName, platform: call.platform })
+      : getVoiceChatBackendInstructions({
+          agentName: context.agentName,
+          computer: call.computer,
+          userScreen: call.userScreen,
+        });
+  const separator = '\n\n---\n\n';
   return {
-    instructions: [parts.map((p) => p.text).join('\n\n---\n\n'), call].join('\n\n---\n\n'),
+    instructions: [`# Identity\n\nYou are **${context.agentName}**.`, `# Soul\n\n${context.soulMd}`, voice].join(separator),
+    backendInstructions: [...parts.map((p) => p.text), backend].join(separator),
     agentName: context.agentName,
     lockedIn: context.lockedIn,
   };

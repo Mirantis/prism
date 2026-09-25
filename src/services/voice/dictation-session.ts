@@ -1,10 +1,10 @@
 /**
  * One dictation: the client's microphone in, the words it heard out, and nothing spoken back.
  *
- * A dictation is a Realtime session on the same managed endpoint and model voice chat uses,
- * and Lens Agents meters it there. Turn detection is off and no response is ever asked for,
- * so the only usage it produces is the transcription: the buffer holds everything the client
- * sent until the client commits it, and the one transcript of that one item is the result.
+ * A dictation is a Realtime transcription session under the same endpoint root voice chat
+ * uses, and Lens Agents meters it there. Turn detection is off, so the buffer holds
+ * everything the client sent until the client commits it, and the one transcript of that
+ * one item is the result.
  *
  * It takes no part in `voiceSessionLock`. The agent speaks nothing in a dictation, so a
  * dictation on one socket runs while a voice chat or a meeting holds the agent's voice.
@@ -20,7 +20,7 @@ import { config } from '../../config';
 import { trackEvent } from '../../lib/telemetry';
 import {
   buildRealtimeSocketOptions,
-  resolveRealtimeEndpoint,
+  resolveTranscriptionEndpoint,
   type RealtimeEndpoint,
 } from '../meeting/openai-endpoint';
 import { REALTIME_SAMPLE_RATE } from '../meeting/resampler';
@@ -105,7 +105,7 @@ export class DictationSession {
 
     let endpoint: RealtimeEndpoint;
     try {
-      endpoint = this.options.endpointOverride ?? resolveRealtimeEndpoint();
+      endpoint = this.options.endpointOverride ?? resolveTranscriptionEndpoint();
     } catch (err) {
       this.fail(err instanceof Error ? err.message : String(err));
       return false;
@@ -178,16 +178,14 @@ export class DictationSession {
     this.ws?.send(JSON.stringify({
       type: 'session.update',
       session: {
-        type: 'realtime',
-        // Text, never audio: nothing in a dictation is spoken, and no response is
-        // requested, so this only keeps the session from preparing a voice.
-        output_modalities: ['text'],
+        // A transcription session: it transcribes what it is given and never answers.
+        type: 'transcription',
         audio: {
           input: {
             format: { type: 'audio/pcm', rate: REALTIME_SAMPLE_RATE },
             // Off, so the buffer holds the whole recording until the client commits it.
             // A detector would split a dictation at every pause into items the client
-            // never asked for, and answer each with a response.
+            // never asked for.
             turn_detection: null,
             // No language: a dictation is one speaker for seconds, and the transcriber
             // detects the language the user speaks in.

@@ -26,7 +26,6 @@ import { logger } from '../../logger';
 import { config } from '../../config';
 import { trackEvent } from '../../lib/telemetry';
 import { VoiceConversation } from '../meeting/voice-conversation';
-import { meanGateLatencyMs } from '../meeting/gate-stats';
 import { prepareMeetingTools } from '../meeting/tool-bridge';
 import { prepareRealtimeTools } from './realtime-tools';
 import {
@@ -82,24 +81,23 @@ function endReason(reason: unknown): RecordingEndReason {
 
 /** What the model is told when a recording starts, so it waits rather than talking over it. */
 const RECORDING_STARTED_NOTE =
-  'Your user is recording their screen and talking through what they are doing. You will ' +
-  'be given the whole recording when they stop, so say nothing until then — you cannot ' +
-  'hear them while it runs.';
+  'Your user is recording their screen and talking you through what they are doing. Listen ' +
+  'and say nothing until they stop: you will then be given the pictures of their screen, ' +
+  'and they are waiting to hear about it.';
 
 /** And when the page carrying one goes away, so it stops waiting for it. */
 const RECORDING_LOST_NOTE =
   'Your user was recording their screen, and the page showing it went away before they ' +
-  'finished. The recording is gone and you will not be given it. You can hear them again ' +
-  'now, so carry on with them.';
+  'finished. The recording is gone and you will not be given it, so carry on with them.';
 
 /** What the model is told a recording is, before the segments of it arrive. */
 function recordingNote(result: RecordingResult): string {
   const pictures = result.frames === 1 ? '1 picture' : `${result.frames} pictures`;
   return (
     `Your user recorded their own screen for ${formatOffset(result.ms)} and has just handed ` +
-    'it to you. What follows is that recording in order: the pictures are their screen as ' +
-    `it changed (${pictures}), and the voice is theirs, recorded while they worked rather ` +
-    'than said to you now. Watch it through, then answer them about it in a sentence or two.' +
+    `it to you. What follows is their screen as it changed (${pictures}), in order; what ` +
+    'they said while they worked is in the conversation just before this. Take it in, then ' +
+    'answer them about it in a sentence or two.' +
     (result.reason === 'limit'
       ? ' The recording stopped at its length limit, so it may end in the middle of something.'
       : '')
@@ -155,27 +153,11 @@ export interface ComputerClient {
   audio(pcm: Buffer): void;
 }
 
-/**
- * This mode determines if the agent will always respond or only if addressed.
- *
- * `open` is a conversation: one person is talking to the agent, so everything the
- * microphone hears is meant for it and every utterance is answered at its turn
- * boundary. `addressed` is a room: a phone on a table with several people around it,
- * where most of what is said is said to somebody else, so each utterance is put to
- * the addressed gate and only the ones aimed at the agent are answered.
- *
- * `auto` is not offered: it resolves from a participant count, and one mixed microphone
- * yields none. The client states which of the two it wants.
- */
-export type VoiceListeningMode = 'open' | 'addressed';
-
 export interface StartVoiceChatInput {
   userId: string;
   agentId: string;
   /** The thread the call was started from, for the tools that take one. */
   threadId?: string;
-  /** Defaults to `open` — a client that says nothing is holding a phone to its ear. */
-  mode?: VoiceListeningMode;
   signal: VoiceChatSignal;
   /** Which client asked. Defaults to the chat socket, the one that came first. */
   surface?: VoiceChatSurface;
@@ -229,9 +211,7 @@ class VoiceChatService {
   private signal: VoiceChatSignal | null = null;
   private userId: string | null = null;
   private startedAt: number | null = null;
-  /** Held for the ending event: the gate numbers below mean nothing without it. */
-  private mode: VoiceListeningMode = 'open';
-  /** Held for the same reason, and read by a second client deciding whether to take over. */
+  /** Held for the ending event, and read by a second client deciding whether to take over. */
   private startedFrom: VoiceChatSurface = 'chat';
   /** The rate this session speaks, which the client opens its own audio at. */
   private rate: number = VOICE_AUDIO_FORMAT.sampleRate;
@@ -269,34 +249,27 @@ class VoiceChatService {
 
     this.state = 'starting';
     const epoch = ++this.epoch;
-    // Resolved once and passed to both halves: the prompt tells the model it is being
-    // filtered and the policy does the filtering. A call where those two disagree either
-    // explains gaps in a conversation that has none, or waits to be named in a room that
-    // will not name it.
-    const mode: VoiceListeningMode = input.mode ?? 'open';
     const surface: VoiceChatSurface = input.surface ?? 'chat';
     const sampleRate = input.sampleRate ?? VOICE_AUDIO_FORMAT.sampleRate;
     this.rate = sampleRate;
 
     // Built into locals and published onto `this` only once the epoch check below says
     // the session is still wanted: a `stop()` during startup has nothing else to release,
-    // and a conversation left running would hold a metered Realtime socket open.
+    // and a conversation left running would hold a metered voice socket open.
     let transport: SocketAudio | null = null;
     let conversation: VoiceConversation | null = null;
     let computer: AgentComputer | null = null;
     let computerUse: ComputerUse | undefined;
     // Where a failure happened, for the event below. An operator reads this to tell an
-    // image that cannot carry a computer from a Realtime session that would not open.
+    // image that cannot carry a computer from a voice session that would not open.
     let stage: 'computer' | 'session' = 'session';
     // Each step is guarded: this runs on the way out of a failure, and a throw here would
     // skip the lines below that free the runtime's voice, leaving it held with no session
     // on it for the life of the process.
     const releaseLocals = async (): Promise<void> => {
-      try {
-        conversation?.stop();
-      } catch (err) {
+      await conversation?.stop().catch((err: unknown) => {
         logger.warn({ err }, '[VoiceChat] The conversation would not stop');
-      }
+      });
       await transport?.close().catch((err: unknown) => {
         logger.warn({ err }, '[VoiceChat] The transport would not close');
       });
@@ -313,7 +286,7 @@ class VoiceChatService {
     try {
       // The computer first, where one was asked for. It is the slow part and the one that
       // can fail on the host it runs on, so a client that cannot have it hears why before
-      // a Realtime session is opened and billed.
+      // a voice session is opened and billed.
       if (input.computer) {
         stage = 'computer';
         computer = await computerService.open();
@@ -325,10 +298,9 @@ class VoiceChatService {
         stage = 'session';
       }
 
-      const { instructions, agentName, lockedIn } = await buildVoiceInstructions({
+      const { instructions, backendInstructions, agentName, lockedIn } = await buildVoiceInstructions({
         userId: input.userId,
         agentId: input.agentId,
-        responseMode: mode,
         call: {
           kind: 'voice-chat',
           computer: computer
@@ -368,10 +340,10 @@ class VoiceChatService {
 
       conversation = new VoiceConversation({
         instructions,
+        backendInstructions,
         tools,
         sink: transport.sink,
         sampleRate,
-        responseMode: mode,
         agentName,
         voice: config.openaiRealtimeVoice,
         onSessionLost: (reason) => void this.end(epoch, 'error', reason),
@@ -398,13 +370,10 @@ class VoiceChatService {
       this.computerUse = computerUse ?? null;
       // Only a client that shows the computer has a screen to record, and it is the same
       // client that sends the pictures.
-      this.recording = computer
-        ? new ScreenRecording({ clientSampleRate: sampleRate, userId: input.userId })
-        : null;
+      this.recording = computer ? new ScreenRecording({ userId: input.userId }) : null;
       this.signal = input.signal;
       this.userId = input.userId;
       this.startedAt = Date.now();
-      this.mode = mode;
       this.startedFrom = surface;
       this.state = 'live';
       computerUse?.signal.addEventListener('abort', () => {
@@ -415,13 +384,10 @@ class VoiceChatService {
       // there is no media path still to come up and nothing to wait for.
       input.signal.state('live', { desktop: computer?.hasDesktop ?? false });
 
-      if (input.greeting) {
-        conversation.notify(input.greeting);
-        conversation.speakNow();
-      }
+      if (input.greeting) conversation.prompt(input.greeting);
 
       logger.info(
-        { tools: tools.count, mode, surface, computer: computer !== null },
+        { tools: tools.count, surface, computer: computer !== null },
         '[VoiceChat] Session is live',
       );
       trackEvent('voice chat started', input.userId, {
@@ -429,7 +395,6 @@ class VoiceChatService {
         inference_source: config.realtimeSource,
         tools: String(tools.count),
         locked_in: String(lockedIn),
-        response_mode: mode,
         surface,
         computer: String(computer !== null),
       });
@@ -475,13 +440,7 @@ class VoiceChatService {
    * answering it would tell the client something it already knows.
    */
   pushAudio(pcm: Buffer): void {
-    // Judged before the frame is routed, since a recording takes it before the transport
-    // sees it and would resample whatever arrived.
     if (!isAudioFrameUsable(pcm, maxFrameBytes(this.rate))) return;
-    // A recording of the user's screen takes the microphone while it runs, so the model
-    // hears the narration once — at the end, with the pictures — rather than answering
-    // over the demonstration and then being handed the same words again.
-    if (this.recording?.pushAudio(pcm)) return;
     this.transport?.push(pcm);
   }
 
@@ -555,15 +514,6 @@ class VoiceChatService {
   }
 
   /**
-   * Show a client the agent's screen, and let it hear the desktop. Answers a detach.
-   *
-   * Called once the client's call is live, from whichever transport carries the screen.
-   * Nothing captures the screen until somebody is watching it, and detaching stops the
-   * capture again, so a session nobody is looking at costs no encoder.
-   *
-   * Answers null when this session has no computer to show.
-   */
-  /**
    * End the session, from the client asking or from its socket closing.
    *
    * The status is the caller's to state, since only the caller knows which of the two it
@@ -577,13 +527,13 @@ class VoiceChatService {
     await this.end(this.epoch, status, reason);
   }
 
-  /** Called from the process shutdown path so a container exit ends the call. */
+  /** The user finished helping on the computer: have the agent look and carry on. */
   continueComputer(reason: string): void {
     if (!this.computerUse || !this.conversation) return;
-    this.conversation.notify(`Your user finished helping. The help request was: ${JSON.stringify(reason)}\n\nInspect the current screen and continue their request.`);
-    this.conversation.speakNow();
+    this.conversation.prompt(`Your user finished helping. The help request was: ${JSON.stringify(reason)}\n\nInspect the current screen and continue their request.`);
   }
 
+  /** Called from the process shutdown path so a container exit ends the call. */
   async shutdown(): Promise<void> {
     if (this.state === 'idle') return;
     logger.info('[VoiceChat] Shutting down — ending the live session');
@@ -591,7 +541,7 @@ class VoiceChatService {
   }
 
   /**
-   * The one ending, used by the client's stop, a client that went away, a Realtime session
+   * The one ending, used by the client's stop, a client that went away, a voice session
    * that died and process shutdown alike.
    */
   private async end(epoch: number, status: VoiceChatEndStatus, reason: string): Promise<void> {
@@ -602,13 +552,13 @@ class VoiceChatService {
     // while the transport closes, from becoming a second ending.
     this.state = 'ending';
     this.epoch += 1;
-    const { conversation, transport, computer, computerUse, signal, userId, startedAt, mode, startedFrom } = this;
+    const { conversation, transport, computer, computerUse, signal, userId, startedAt, startedFrom } = this;
     this.clearPublished();
 
     logger.info({ status, reason }, '[VoiceChat] Session ended');
 
     try {
-      conversation?.stop();
+      await conversation?.stop();
       await transport?.close().catch((err: unknown) => {
         logger.warn({ err }, '[VoiceChat] The transport would not close');
       });
@@ -637,24 +587,13 @@ class VoiceChatService {
           status,
           surface: startedFrom,
           computer: String(computer !== null),
-          response_mode: mode,
           duration_ms: String(Date.now() - startedAt),
-          responses: String(stats?.responses ?? 0),
+          delegations: String(stats?.delegations ?? 0),
           tool_calls: String(stats?.toolCalls ?? 0),
-          interruptions: String(stats?.interruptions ?? 0),
-          utterances: String(stats?.utterances ?? 0),
-          // Answers the agent gave that produced no audio — silence the user cannot
-          // account for, and the one number that says the call was not what it looked like.
-          responses_failed: String(stats?.responsesFailed ?? 0),
-          // Zero throughout an `open` call, which is the point of reporting `mode` beside
-          // them. In `addressed` they are how a quiet call is read: `suppressed` is the
-          // gate doing its job, while `gate_failed` is the agent having been deaf, and the
-          // two produce identical silence in the room.
-          suppressed: String(stats?.suppressed ?? 0),
-          gate_calls: String(stats?.gateCalls ?? 0),
-          gate_failed: String(stats?.gateFailed ?? 0),
-          // The mean, which is what `meeting ended` emits under this key.
-          gate_latency_ms: String(meanGateLatencyMs(stats)),
+          backend_input_tokens: String(stats?.backendInputTokens ?? 0),
+          backend_output_tokens: String(stats?.backendOutputTokens ?? 0),
+          ...(stats?.voiceSeconds != null ? { voice_seconds: String(stats.voiceSeconds) } : {}),
+          ...(stats?.closeReason ? { close_reason: stats.closeReason } : {}),
         });
       }
     } finally {

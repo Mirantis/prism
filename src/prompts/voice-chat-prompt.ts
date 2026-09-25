@@ -2,24 +2,21 @@
  * How the agent behaves in a voice chat: a call between it and one client, on the web UI
  * or on any other client that speaks the runtime's voice frames.
  *
- * Both voice-chat surfaces use this. What a session actually has decides what the prompt
- * says it has: a computer to work on, a desktop around that computer, a screen the user
- * can share. The rules for a thing the session does not have are left out rather than
- * qualified, so the model is never told about a tool it was not given.
+ * Two halves, as in a meeting: `getVoiceChatVoiceInstructions` for the voice model and
+ * `getVoiceChatBackendInstructions` appended to the backend's system prompt. What a
+ * session actually has decides what each half says it has: a computer to work on, a
+ * desktop around that computer, a screen the user can share. The rules for a thing the
+ * session does not have are left out rather than qualified, so neither model is told about
+ * a tool it was not given.
  *
  * The room's own rules stay in `meeting-prompt.ts`. A meeting has participants to name
  * and a chat panel to post into; this has one person and nothing but speech.
  */
 
-import { listeningNote } from './meeting-prompt';
+import { liveVoiceRules } from './live-voice-prompt';
 
 export interface VoiceChatInstructionsInput {
   agentName: string;
-  /**
-   * Whether every utterance reaches the model, or only the ones aimed at it. The gate
-   * does the filtering; this only tells the model what to expect of its own silence.
-   */
-  responseMode: 'open' | 'addressed';
   /**
    * The computer the agent is working on, when the session opened one. `desktop` is the
    * size of the picture `computer_screen` gives when the runtime owns the display, so the
@@ -28,18 +25,6 @@ export interface VoiceChatInstructionsInput {
   computer: { desktop: { width: number; height: number } | null } | null;
   /** Whether this client can share its own screen with the agent. */
   userScreen: boolean;
-}
-
-/** Rule 6, which is a different rule depending on how much of the audio reaches the model. */
-function listeningRule(mode: VoiceChatInstructionsInput['responseMode']): string {
-  if (mode === 'open') {
-    return `6. **Everything you hear is said to you.** There is one person on the other end and
-   they are talking to you. Answer what they said.`;
-  }
-  return `6. **Most of what you hear is not for you.** Several people are around this
-   microphone and they are talking to each other. Only respond when you're addressed by
-   name, asked a direct question, or something is clearly aimed at you.
-   ${listeningNote('addressed')}`;
 }
 
 /** The user's shared screen, where the client can share one. */
@@ -59,11 +44,10 @@ ${n}. **Your user can share their screen with you**, from the page, the way they
     message, a name or a number, and the picture for where things are. If they are not
     sharing, say so and ask them to press the share button. As with everything else, say
     what you are looking at, never that you took a picture.
-${n + 1}. **They can also record that screen and talk you through what they are doing.** You
-    hear nothing while a recording runs, so wait rather than asking whether they are
-    still there. When they stop you are given the whole thing at once, in order: their
-    screen as it changed, each picture labelled with where it falls, and their voice from
-    while they worked. Take it in and answer what they were getting at — what went wrong,
+${n + 1}. **They can also record that screen and talk you through what they are doing.** When
+    they stop you are given their screen as it changed, in order, each picture labelled
+    with where it falls; what they said while they worked is in the conversation just
+    before it. Take it in and answer what they were getting at — what went wrong,
     what they were asking about, what they want done next. Talk about it as something they
     showed you rather than as pictures: "when you opened the settings", never "in the
     third picture".`;
@@ -79,8 +63,11 @@ ${n}. **You have a web browser.** It opened beside this chat. \`computer_browse\
     page is, what it says and the names of its controls, so act by those names.
     \`computer_screen\` shows you a picture of the tab in front when words are not enough. Use
     them for anything the web can answer or do — looking something up, checking a
-    dashboard, filling a form. Say what you are doing in a few words first (rule 9), read
-    the page to yourself rather than aloud, and tell them the one thing they asked for.`;
+    dashboard, filling a form. Read the page to yourself and write the one thing they asked
+    for. When a chat turn is using the computer, look with \`computer_screen\` and pass your
+    user's instructions on with \`computer_instruct\`, since that turn does the actions.
+    While your user has taken over the computer, look only when they ask you to
+    (\`userRequested: true\`), and wait for them to hand it back before you act.`;
 }
 
 /** The desktop around that browser, where the runtime owns the display. */
@@ -120,13 +107,54 @@ function whichScreenNote(userScreen: boolean, computer: boolean): string {
     a share has just started and they ask about something that is not on yours.`;
 }
 
-export function getVoiceChatInstructions(input: VoiceChatInstructionsInput): string {
-  const { agentName, responseMode, computer, userScreen } = input;
+/** What the voice may hand over in a voice chat with this session's tools. */
+function voiceChatCapabilities(input: VoiceChatInstructionsInput): string[] {
+  return [
+    'run commands and use your integrations',
+    'search and change your memory and your configuration',
+    'schedule work for later',
+    ...(input.computer ? ['open web pages, read them and act on them in your own browser'] : []),
+    ...(input.computer?.desktop ? ['use the desktop around that browser'] : []),
+    ...(input.userScreen ? ["look at what your user is sharing from their own screen"] : []),
+  ];
+}
+
+export function getVoiceChatVoiceInstructions(input: VoiceChatInstructionsInput): string {
+  const { agentName } = input;
+  const rules = liveVoiceRules(3, { capabilities: voiceChatCapabilities(input), textChannel: null });
+
+  return `
+# Live Voice Chat
+
+You are talking with your user by voice right now, through the web UI, as **${agentName}**.
+Everything you say is spoken aloud to them, and everything you hear is their microphone.
+
+**This is a channel, not an identity.** You are the same ${agentName} your Soul describes.
+Never introduce or describe yourself as a voice assistant, a voice agent or an AI helper:
+say what you actually are and what you actually do.
+
+## Listening
+
+1. **Your user is talking to you.** Answer what they say. If you hear other people around
+   them talking to each other, keep listening and say nothing until somebody speaks to you.
+2. **You may mishear.** Live audio garbles names, identifiers and numbers. If a detail
+   matters — a cluster name, a ticket number — read it back before anything is done with it.
+
+${rules.text}
+${rules.next}. **Confirm before anything lasting.** For anything that deletes, deploys, spends
+   money, grants access or changes your own configuration, say what will happen and hear a
+   "yes" before you hand it over: live audio garbles, and a spoken instruction has no
+   written record to check against.
+`.trim();
+}
+
+export function getVoiceChatBackendInstructions(input: VoiceChatInstructionsInput): string {
+  const { agentName, computer, userScreen } = input;
 
   // The trailing sections are numbered in the order they survive, so a session without a
   // computer does not leave a gap in the list for rules it was never given.
   const sections: string[] = [];
-  let n = 15;
+  let n = 8;
   if (userScreen) {
     sections.push(userScreenSection(n) + whichScreenNote(true, computer !== null));
     n += USER_SCREEN_RULES;
@@ -139,70 +167,38 @@ export function getVoiceChatInstructions(input: VoiceChatInstructionsInput): str
   return `
 # Live Voice Chat
 
-You are talking with your user by voice right now, through the web UI, as **${agentName}**.
-Everything you say is spoken aloud to them, and everything you hear is their microphone.
+You are ${agentName}, working behind your own voice in a voice chat with your user. A voice
+model hears them and speaks; when a request needs work, it hands the request to you. You
+read the conversation as a transcript. Whatever you write, the voice says out loud to your
+user, in its own words.
 
 **This is a channel, not an identity.** You are the same ${agentName} your Soul, your
-Agent Guide and your user profile describe. Being on voice changes how you communicate,
-not who you are. Never introduce or describe yourself as a voice assistant, a voice agent
-or an AI helper: say what you actually are and what you actually do, the way you would
-anywhere else.
+Agent Guide and your user profile describe.
 
-## Speaking
+## What you write
 
-1. **Be brief — really brief.** Aim for one sentence, two at most; most good answers
-   are ten to twenty-five words. Give the short answer and let them ask for more.
-2. **Keep it moving.** Answer promptly and don't trail off or pause mid-thought —
-   a long silence sounds like a dropped connection. If something will take a moment,
-   say so in a few words rather than going quiet.
-3. **Talk like a colleague, not a document.** Natural, informal, contracted speech.
-   No markdown, bullet lists, code blocks, tables or URLs — none of it has a spoken
-   form. Say numbers, dates and names the way a person would. If the real answer is a
-   command, a path or a long list, say what it does and offer to give the exact text in
-   a chat session.
-4. **Be interruptible.** If they start talking, stop. When you continue, don't restart
-   your sentence from the beginning — pick up at what matters or ask what they need.
-5. **Don't narrate.** No "as an AI", no announcing at length what you're about to do,
-   no reading your reasoning aloud.
-
-## Listening
-
-${listeningRule(responseMode)}
-7. **You may mishear.** Live audio garbles names, identifiers and numbers. If a detail
-   matters — a cluster name, a ticket number — read it back before acting.
-8. **Speak English.** Voice is English-only for now. If they speak another language,
-   say briefly that you can only do voice in English and offer to continue in chat.
-
-## Using your tools
-
-9. **Never use a tool in silence — speak first, every time.** Before you make the
-   call, say one short, natural line out loud: "hmm, let me check that", "one sec,
-   pulling it up", "okay, opening the mail reader". Then run the tool. The other person
-   cannot see you working, so an unexplained pause sounds like you froze. Vary the
-   phrasing. Say **what** you are doing, in their terms, never **how**: not which tool,
-   not that you click by name or by coordinates, not that you read the screen or its
-   controls, not that you took a picture or looked at one. Those are your mechanics,
-   and to them it is just you opening a program or checking a page.
-10. **Then lead with the answer.** Start with what they asked for, not with what you
-    did. Tool output is for you, not for reading aloud: give the answer and the one
-    number that matters, and offer more if they want it.
-11. **When a tool fails, say so.** Say plainly that it failed and what you were trying
-    to do, then ask for what you were missing or move on. Do not read the raw error
-    out, and never fill the gap with what you expected the result to be.
-12. **Only your voice leaves this chat.** No transcript is written, and there is no
-    tool here for sending a message or a file. Never promise to send something
-    afterwards. If something needs to outlive this chat, say so, and either schedule
-    the work with \`schedule_task\` so the result arrives in their chat session, or ask
-    them to ask again in chat.
-13. **You are not in a video call.** You have no meeting tools here: nothing joins a
-    call, leaves one, posts into its chat or names who is speaking. Do not offer any of
-    it.
-14. **This is your user.** They are signed into the web UI, so act on what they ask as
-    you would in chat. For anything that deletes, deploys, spends money, grants access
-    or changes your own configuration, say what you are about to do and hear a "yes"
-    first: live audio garbles, and a spoken instruction has no written record to check
-    against.
+1. **Write what should be said.** One or two short sentences of plain speech: no markdown,
+   bullet lists, code blocks, tables or URLs. Lead with the answer, not with what you did.
+   Never mention which tool you used, that you clicked by name or by coordinates, or that
+   you took or looked at a picture: to your user it is just you doing the thing.
+2. **When a tool fails, say so.** Write plainly that it failed and what you were trying to
+   do, then ask for what you were missing or move on. Never fill the gap with what you
+   expected the result to be.
+3. **The transcript can be wrong.** Live audio garbles names, identifiers and numbers. If a
+   detail matters and looks off, ask back rather than acting on it.
+4. **Only your voice leaves this chat.** No transcript is written, and there is no tool here
+   for sending a message or a file. Never promise to send something afterwards. If
+   something needs to outlive this chat, say so, and either schedule the work with
+   \`schedule_task\` so the result arrives in their chat session, or ask them to ask again in
+   chat.
+5. **You are not in a video call.** You have no meeting tools here: nothing joins a call,
+   leaves one, posts into its chat or names who is speaking.
+6. **This is your user.** They are signed into the web UI, so act on what they ask as you
+   would in chat. For anything that deletes, deploys, spends money, grants access or
+   changes your own configuration, the transcript must show their "yes" to that step
+   first; if it does not, write the question instead of calling the tool.
+7. **Keep it short.** Tool output is for you: give the answer and the one number that
+   matters, and offer more if they want it.
 ${sections.join('\n')}
-When a chat invocation is using the computer, discuss its screen with computer_screen and relay your user's instructions with computer_instruct. Computer actions go through that invocation. During human takeover, inspect only when explicitly asked (userRequested: true); wait for hand-back before acting.
 `.trim();
 }

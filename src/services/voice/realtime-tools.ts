@@ -1,5 +1,5 @@
 /**
- * Offer a set of the agent's tools to a Realtime session, and run them when it calls.
+ * Offer a set of the agent's tools to a voice session's backend, and run them when it calls.
  *
  * Every voice session needs this, and one session can own more than one set: the agent's
  * own tools, and the tools of the computer it is working on. So this file holds the
@@ -16,28 +16,25 @@
 import { asSchema, type Tool } from 'ai';
 import { logger } from '../../logger';
 import { renderAndSpill } from '../../lib/tool-output-limiter';
-import type { RealtimeFunctionTool } from '../meeting/realtime-session';
+import type { LiveFunctionTool } from './live-session';
 
 /**
- * Cap on a tool result handed back to the Realtime model.
+ * Cap on a tool result handed back to the voice session's backend.
  *
- * Smaller than the chat-path budget (`lib/tool-output-limiter.ts`) on purpose, and
- * for a reason particular to this transport: a tool result stays in the Realtime
- * session's context for the rest of the call, and that context is far smaller than
- * the chat model's window. This model also *speaks* its answer, so a 100 kB
- * `kubectl get` dump only produces a monologue nobody wants.
+ * Smaller than the chat-path budget (`lib/tool-output-limiter.ts`) on purpose: a tool
+ * result stays in the backend's context for the rest of the call and is billed on every
+ * later response, and what the backend writes is spoken, so a 100 kB `kubectl get` dump
+ * only produces a monologue nobody wants.
  *
- * It used to be 4,000, which cut a single Jira issue's description in half and beheaded
- * a PR listing — so the agent stated the count it could see as the total. 12,000
- * (~3k tokens) holds a long issue or a few dozen listed items while staying a modest
- * share of the session. The *shape* of the cut is chat's, not this file's: shared
+ * 12,000 (~3k tokens) holds a long issue or a few dozen listed items while staying a
+ * modest share of the session. The *shape* of the cut is chat's, not this file's: shared
  * head+tail, and a notice that says outright the result is incomplete.
  */
 export const MAX_TOOL_RESULT_CHARS = 12_000;
 
-/** A tool set a Realtime session can be given, and the way to run what it calls. */
+/** A tool set a voice session can be given, and the way to run what it calls. */
 export interface PreparedTools {
-  declarations: RealtimeFunctionTool[];
+  declarations: LiveFunctionTool[];
   count: number;
   execute: (name: string, argumentsJson: string) => Promise<string>;
 }
@@ -50,7 +47,7 @@ export interface RealtimeToolsOptions {
 }
 
 /**
- * Adapt a set of the agent's tools for the Realtime API.
+ * Adapt a set of the agent's tools for a voice session's backend.
  *
  * A tool with no local implementation is left out rather than declared: offering one
  * produces a call this file cannot answer.
@@ -68,7 +65,7 @@ export function prepareRealtimeTools(
     usable[name] = tool;
   }
 
-  const declarations: RealtimeFunctionTool[] = Object.entries(usable).map(([name, tool]) => ({
+  const declarations: LiveFunctionTool[] = Object.entries(usable).map(([name, tool]) => ({
     name,
     description: describeTool(tool) ?? name,
     // asSchema normalizes both shapes the codebase produces: zod schemas from the

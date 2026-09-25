@@ -25,16 +25,21 @@ export const MICROPHONE_MS = 500;
 export const EXCHANGE_TIMEOUT_MS = 30_000;
 
 export interface MockState {
-  /** How many voice sessions the model has open right now. */
+  /** How many calls the model has open right now. */
   sessions: number;
   managedHandshakes: number;
   inboundMs: number;
-  responsesRequested: number;
+  /** Requests the voice handed to the backend, and tool results the runtime returned. */
+  delegations: number;
+  toolOutputs: number;
+  /** Answers the voice spoke, and the audio frames they took. */
+  answers: number;
   deltasSent: number;
-  /** Windows of a handed-over screen recording, and what each held. */
+  /** What the last call started with. */
+  lastStart: { model: string; backendModel: string; tools: number } | null;
+  /** Windows of a handed-over screen recording, and the pictures in them. */
   recordingSegments: number;
   recordingImages: number;
-  recordingAudioMs: number;
   dictationsTranscribed: number;
 }
 
@@ -45,11 +50,13 @@ let baseline: MockState = {
   sessions: 0,
   managedHandshakes: 0,
   inboundMs: 0,
-  responsesRequested: 0,
+  delegations: 0,
+  toolOutputs: 0,
+  answers: 0,
   deltasSent: 0,
+  lastStart: null,
   recordingSegments: 0,
   recordingImages: 0,
-  recordingAudioMs: 0,
   dictationsTranscribed: 0,
 };
 
@@ -76,11 +83,12 @@ export function describeExchange(state: MockState): string {
   return (
     `voice model: sessions open=${state.sessions}, ` +
     `microphone=${Math.round(state.inboundMs - baseline.inboundMs)}ms, ` +
-    `answers requested=${state.responsesRequested - baseline.responsesRequested}, ` +
+    `hand-overs=${state.delegations - baseline.delegations}, ` +
+    `tool results=${state.toolOutputs - baseline.toolOutputs}, ` +
+    `answers=${state.answers - baseline.answers}, ` +
     `audio frames sent=${state.deltasSent - baseline.deltasSent}, ` +
     `recording windows=${state.recordingSegments - baseline.recordingSegments} ` +
-    `(${state.recordingImages - baseline.recordingImages} pictures, ` +
-    `${Math.round(state.recordingAudioMs - baseline.recordingAudioMs)}ms of narration), ` +
+    `(${state.recordingImages - baseline.recordingImages} pictures), ` +
     `dictations transcribed=${state.dictationsTranscribed - baseline.dictationsTranscribed} ` +
     `(counted since this scenario started)`
   );

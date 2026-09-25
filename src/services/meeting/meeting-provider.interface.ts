@@ -2,7 +2,7 @@
  * The extension seam for meeting platforms.
  *
  * Almost nothing about a voice meeting is Google-specific: the virtual audio
- * devices, the Realtime session, barge-in and the tool bridge are all the same
+ * devices, the voice session and the tool bridge are all the same
  * whether the call is on Meet, Teams or Zoom. What differs is a browser flow —
  * which buttons to press to get in, how to tell you were admitted, how to know
  * the room emptied, and how to leave.

@@ -11,10 +11,10 @@ message into the thread instead, use [dictation](dictation.md).
 
 ## What you need
 
-A Realtime credential, from managed OpenAI/Azure or `OPENAI_REALTIME_API_KEY` /
+An OpenAI voice credential, from managed OpenAI/Azure or `OPENAI_REALTIME_API_KEY` /
 `OPENAI_API_KEY` in a standalone direct setup (no managed inference variables
 or custom `OPENAI_BASE_URL`), shared with voice meetings — see
-[Configuration](configuration.md#voice-chat).
+[Configuration](configuration.md#voice-chat). A managed endpoint has to serve GPT-Live.
 
 If outbound traffic is filtered, allow the resolved voice endpoint: Lens for
 managed voice, or `api.openai.com` for direct voice.
@@ -44,22 +44,18 @@ Press **Talk** on the Web UI's **Computer** page to discuss the live desktop.
 Voice can pass your instructions to an active chat task. See
 **[The agent's computer](computer.md)**.
 
+When you record your screen there, the agent hears you talk it through and waits. When
+you stop, it looks at the pictures of your screen and answers.
+
 ## Who the agent answers
 
-A voice chat is either a conversation or a room, and the client says which when
-the call starts. Changing it means ending the call and starting another.
+The agent's voice is OpenAI's GPT-Live model. It takes its own turns, and it stops when
+you talk over it. Work that needs thought or a tool goes to a second model behind it,
+and the voice keeps talking while that model works.
 
-**A conversation** is the default: one person is talking to the agent, so
-everything the microphone hears is meant for it, and the agent answers each
-utterance as soon as you stop speaking. This is a phone held to your ear.
-
-**A room** is several people talking, most of it to each other. The agent listens
-to all of it and answers only the utterances aimed at it, so somebody has to call
-it by name. A name that is mentioned rather than used — "I asked Prism about that
-yesterday" — does not summon it, and a follow-up inside an exchange it is already
-part of reaches it without the name being repeated. Expect two things: the agent
-stays quiet for long stretches, which is it working, and each answer starts about
-a second later than in a conversation.
+It answers you. If other people near your microphone talk to each other, it keeps
+listening and says nothing until somebody speaks to it, by name or with a direct
+question.
 
 ## What it can do, and its authority
 
@@ -83,19 +79,21 @@ settings. So a sentence agreed in a call can change the agent for every future
 turn on every channel, not just for the length of the call.
 
 Instructions are a strong default, not enforcement. Treat access to a voice chat
-as handing over the agent's own authority, its own configuration included. Waiting
-to be addressed narrows what the agent *responds* to, not what it can be asked to
-do. For a real restriction, start the agent with a narrower tool surface.
+as handing over the agent's own authority, its own configuration included. For a real
+restriction, start the agent with a narrower tool surface.
 
 ## When it doesn't work
 
 - **The call is refused.** The text says why: a Meet call holds the agent's
   voice, another client already has the session, or the runtime is still loading
   its agent and the call can be retried.
-- **The call ends on its own.** The agent's model session closed. Start another.
+- **The call does not start on a managed install.** The runtime log shows
+  `Live handshake failed`. With a `404` status, the Lens gateway does not serve
+  GPT-Live; set `OPENAI_REALTIME_API_KEY` to use OpenAI directly.
+- **The call ends on its own.** The agent's voice session closed. Start another.
 - **The agent talks over you, or answers nothing.** Both are the client's audio
   handling: it has to send your microphone continuously, silence included, since
-  the silence is how the end of an utterance is found, and it has to drop
+  the silence is how the voice hears that you stopped, and it has to drop
   unplayed audio when the runtime tells it to.
 - **Speech sounds broken on a mobile link.** The audio rides the chat connection,
   which has no jitter buffer and no packet-loss concealment, so a poor link sounds

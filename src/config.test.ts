@@ -1046,18 +1046,21 @@ describe('config', () => {
       expect(cfg.openaiRealtimeApiKey).toBe('__nexus_cred:1234-uuid__');
     });
 
-    it('pins the realtime model to a snapshot rather than the moving alias', async () => {
-      // The `gpt-realtime` alias follows OpenAI's current snapshot, so turn-taking
-              // and prosody could change under a live deployment with no code change.
+    it('speaks through GPT-Live, with GPT-6 Sol doing the work behind it', async () => {
       delete process.env.OPENAI_REALTIME_MODEL;
+      delete process.env.OPENAI_VOICE_BACKEND_MODEL;
       const cfg = await loadConfig();
-      expect(cfg.openaiRealtimeModel).toBe('gpt-realtime-2.1');
+      expect(cfg.openaiRealtimeModel).toBe('gpt-live-1');
+      expect(cfg.openaiVoiceBackendModel).toBe('gpt-6-sol');
     });
 
-    it('reads a realtime model override', async () => {
-      process.env.OPENAI_REALTIME_MODEL = 'gpt-realtime-mini';
+    it('reads a voice model and a backend model override', async () => {
+      // Under Azure both are deployment names, which the operator chooses.
+      process.env.OPENAI_REALTIME_MODEL = 'voice-deployment';
+      process.env.OPENAI_VOICE_BACKEND_MODEL = 'backend-deployment';
       const cfg = await loadConfig();
-      expect(cfg.openaiRealtimeModel).toBe('gpt-realtime-mini');
+      expect(cfg.openaiRealtimeModel).toBe('voice-deployment');
+      expect(cfg.openaiVoiceBackendModel).toBe('backend-deployment');
     });
 
     it('names a voice rather than accepting the API default', async () => {
@@ -1073,16 +1076,14 @@ describe('config', () => {
       expect(cfg.openaiRealtimeVoice).toBe('cedar');
     });
 
-    it('asks for high reasoning effort rather than taking the API default', async () => {
-      // The API defaults to `low`, which suits a voice agent that reads out an
-      // order status. This one runs shell commands and kubectl from a call.
+    it('asks the backend for medium reasoning effort by default', async () => {
       delete process.env.OPENAI_REALTIME_REASONING_EFFORT;
       const cfg = await loadConfig();
-      expect(cfg.openaiRealtimeReasoningEffort).toBe('high');
+      expect(cfg.openaiRealtimeReasoningEffort).toBe('medium');
     });
 
     it('reads a reasoning effort override', async () => {
-      for (const level of ['minimal', 'low', 'medium', 'high', 'xhigh']) {
+      for (const level of ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']) {
         process.env.OPENAI_REALTIME_REASONING_EFFORT = level;
         vi.resetModules();
         const cfg = await loadConfig();
@@ -1100,23 +1101,23 @@ describe('config', () => {
     });
 
     it('tolerates case and stray whitespace around a level', async () => {
-      // The fallback raises the effort, so a mangled `medium` would cost the
-      // operator latency they were explicitly trying to buy back.
-      for (const messy of [' medium', 'Medium', 'MEDIUM ']) {
+      // The fallback raises the effort, so a mangled `low` would cost the operator
+      // latency they were explicitly trying to buy back.
+      for (const messy of [' low', 'Low', 'LOW ']) {
         process.env.OPENAI_REALTIME_REASONING_EFFORT = messy;
         vi.resetModules();
         const cfg = await loadConfig();
-        expect(cfg.openaiRealtimeReasoningEffort).toBe('medium');
+        expect(cfg.openaiRealtimeReasoningEffort).toBe('low');
       }
     });
 
     it('falls back to the default on an unrecognized level', async () => {
       // A typo should cost accuracy in a call, not the boot.
-      for (const bad of ['very-high', 'none', 'off', '3']) {
+      for (const bad of ['very-high', 'off', '3']) {
         process.env.OPENAI_REALTIME_REASONING_EFFORT = bad;
         vi.resetModules();
         const cfg = await loadConfig();
-        expect(cfg.openaiRealtimeReasoningEffort).toBe('high');
+        expect(cfg.openaiRealtimeReasoningEffort).toBe('medium');
       }
     });
 

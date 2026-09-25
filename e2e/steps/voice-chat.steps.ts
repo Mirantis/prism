@@ -4,14 +4,15 @@
  * The whole exchange is driven through the real SPA in a real browser: the
  * chat header's call button opens the call, Chromium's synthetic capture
  * device is the voice, and `support/mock-realtime-server.ts` stands in for
- * OpenAI's Realtime API. No OpenAI account and no host audio are involved.
+ * OpenAI's voice API. No OpenAI account and no host audio are involved.
  *
  * Two sides are asserted, because either can fail on its own. What the user sees
  * comes from the DOM — the call bar, the speaking cue, the call button coming
  * back. What crossed the wire comes from the mock's
  * `/state`: `inboundMs` grows only if the browser's microphone reached the model,
- * and `deltasSent` grows only if the runtime asked for an answer. A mute is that
- * same `inboundMs` standing still while the session stays open.
+ * `toolOutputs` only if the runtime ran the tool the backend called, and `deltasSent`
+ * only once the voice answered. A mute is that same `inboundMs` standing still while
+ * the session stays open.
  *
  * The waits come from `support/voice-model.ts`, which owns the mock's counters and
  * reports them when a wait gives up, so a failure names the step of the exchange that did
@@ -97,11 +98,25 @@ Then('the voice model hears at least half a second of my microphone', async ({ p
   );
 });
 
-Then(`the agent's voice is playing in the browser`, async ({ page }) => {
-  // The model answers a turn boundary of its own accord, so the request and the
-  // frames are the runtime's half of the round trip.
+Then('the call runs on GPT-Live with the agent behind it', async () => {
+  const state = await readState();
+  expect(state.lastStart, describeExchange(state)).toMatchObject({ model: 'gpt-live-1', backendModel: 'gpt-6-sol' });
+  expect(state.lastStart?.tools ?? 0, describeExchange(state)).toBeGreaterThan(0);
+});
+
+Then(`the runtime runs the tool the agent's backend asked for`, async ({ page }) => {
   await waitForModel(
-    'the voice model being asked for an answer and streaming it back',
+    "the runtime returning the result of the backend's tool call",
+    (state) => state.toolOutputs - getBaseline().toolOutputs > 0,
+    describeScreen(page),
+  );
+});
+
+Then(`the agent's voice is playing in the browser`, async ({ page }) => {
+  // The voice answers once the tool result is back, so the frames are the runtime's
+  // half of the round trip.
+  await waitForModel(
+    'the voice answering and streaming it back',
     (state) => state.deltasSent - getBaseline().deltasSent > 0,
     describeScreen(page),
   );

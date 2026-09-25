@@ -443,10 +443,13 @@ const embeddingModelIds: Record<EmbeddingProviderName, string> = {
 };
 const embeddingModelId = embeddingModelIds[embeddingProvider];
 
-// Pinned to a snapshot rather than the `gpt-realtime` alias. The alias silently
-// follows OpenAI's current snapshot, and a voice model changing under a live
-// deployment shifts turn-taking and prosody with no code change to point at.
-const openaiRealtimeModel = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime-2.1';
+// The voice of a call: a full-duplex model that listens, speaks and takes turns, and hands
+// the reasoning and the tools to `openaiVoiceBackendModel`. Under Azure both are
+// deployment names.
+const openaiRealtimeModel = process.env.OPENAI_REALTIME_MODEL || 'gpt-live-1';
+// The model that does the work behind the voice: it reads the agent's system prompt,
+// calls its tools and writes what the voice says.
+const openaiVoiceBackendModel = process.env.OPENAI_VOICE_BACKEND_MODEL || 'gpt-6-sol';
 // One resolver owns managed discovery and explicit/direct voice configuration.
 const realtimeConfiguration = resolveRealtimeConfiguration(process.env);
 const openaiRealtimeUrl = realtimeConfiguration.url;
@@ -454,27 +457,17 @@ const openaiRealtimeApiKey = realtimeConfiguration.apiKey;
 // `marin` is markedly better for conversation than the API's `alloy` default.
 // Overridable because a future model may retire a voice name.
 const openaiRealtimeVoice = process.env.OPENAI_REALTIME_VOICE || 'marin';
-// How hard the in-meeting model thinks before it answers or picks a tool.
+// How hard the backend thinks before it answers or picks a tool. The voice keeps talking
+// while it works, so a higher level costs a longer filler rather than silence.
 //
-// The API's own default is `low`, which is the right call for the voice agents
-// that surface was built for — book a table, read out an order status. This one
-// holds the agent's real toolset: shell, kubectl, GitHub, cron, its own
-// configuration. Choosing the wrong tool there is not a clumsy sentence, it is a
-// command run against a cluster, so the default here is `high` instead.
-//
-// It is not free. Effort buys reasoning with latency and output tokens, and in a
-// call the latency is silence in a room full of people waiting — which is why the
-// level is an env var and the `[Meeting:Latency]` line records the one in force.
-// Drop it if the room notices the pause more than it notices the mistakes.
-//
-// Empty means send nothing and let the API pick, the same opt-out the embedding
-// model vars use. An unrecognized level falls back to the default rather than
-// failing the boot: a typo here should cost accuracy, not the meeting.
-const REALTIME_REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const;
+// Empty means send nothing and let the API pick, the same opt-out the embedding model
+// vars use. An unrecognized level falls back to the default rather than failing the
+// boot: a typo here should cost accuracy, not the call.
+const REALTIME_REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type RealtimeReasoningEffort = (typeof REALTIME_REASONING_EFFORTS)[number];
-// Trimmed and lowercased before the match: an unrecognized value falls back to
-// `high`, so `Medium` or a stray trailing space from a compose file would quietly
-// raise the effort of an operator who was asking to lower it.
+// Trimmed and lowercased before the match: an unrecognized value falls back to the
+// default, so `Low` or a stray trailing space from a compose file would otherwise quietly
+// ignore an operator who was asking for a different level.
 const rawRealtimeReasoningEffort = process.env.OPENAI_REALTIME_REASONING_EFFORT?.trim()
   .toLowerCase();
 const openaiRealtimeReasoningEffort: RealtimeReasoningEffort | null =
@@ -482,52 +475,20 @@ const openaiRealtimeReasoningEffort: RealtimeReasoningEffort | null =
     ? null
     : REALTIME_REASONING_EFFORTS.includes(rawRealtimeReasoningEffort as RealtimeReasoningEffort)
       ? (rawRealtimeReasoningEffort as RealtimeReasoningEffort)
-      : 'high';
-// Transcriber for dictation, and for reading a meeting back in the log. In a meeting
-// nothing decides anything from these words — the addressed gate judges the audio — so
-// it is requested there only when `MEETING_TRANSCRIPT_LOGGING` is `full`, and it bills
-// per audio minute. `gpt-live-transcribe` is the one model that both streams and takes
-// `keywords`, which seeds the agent's own name and the room's roster into the
-// decoder — names are the words a speech model drops most. A model without keywords
-// still works, but it garbles the names in the log.
+      : 'medium';
+// Transcriber for dictation. `gpt-live-transcribe` streams its words as it goes, which
+// is what lets the composer fill in while the user is still talking.
 const openaiTranscriptionModel =
   process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-live-transcribe';
-
-// Server-side noise reduction over meeting audio, before turn detection and
-// transcription see it: `off` (send no setting), `near_field`, or `far_field`.
-//
-// **Off by default, which is not the obvious choice.** `far_field` reads like the
-// right fit — a meeting is several people at conversational distance from a laptop
-// mic — but that describes the *humans'* microphones, not this input. What arrives
-// here is Meet's mixed output, already noise-suppressed, echo-cancelled and
-// gain-levelled per participant: a broadcast mix rather than a raw room. Reducing it
-// again is a second pass over audio that has been cleaned once.
-//
-// The second pass was not harmless. Under `far_field` a live agent went minutes
-// without reacting to a person in the room while answering the other agent's
-// synthesized voice instantly — the signature of an adaptive noise floor lifted by
-// loud speech, where the loud voice clears the threshold and a quieter human is
-// suppressed as noise. Run side by side on the same room, the agent with reduction
-// off registered seven utterances to the other's two and never idled more than ten
-// seconds; the `far_field` one sat idle for 28s through speech.
-//
-// A meeting agent that mishears is recoverable — someone repeats themselves. One that
-// cannot hear is not, so the trade favours the noisier input. `near_field` is the
-// middle setting and is **untested**; reach for it before going back to `far_field`
-// if a room turns out to be too noisy for the turn detector.
-const noiseReduction = (() => {
-  const raw = (process.env.OPENAI_NOISE_REDUCTION || 'off').trim().toLowerCase();
-  return raw === 'near_field' || raw === 'far_field' ? raw : 'off';
-})();
 
 // Whether what is said in a meeting reaches the runtime's own logs: `off` or `full`.
 //
 // **Off by default**, and this one is not a trade-off between two goods. A meeting is
 // unauthenticated — anybody in the room speaks to the agent, and nobody in the room
 // agreed to anything about this deployment's logs. An utterance is third-party speech
-// rather than the operator's own data, the gate sees every sentence and not just the
-// ones aimed at the agent, and a log line outlives the call by whatever the log
-// retention is. Writing the room's conversation there by default is the sort of
+// rather than the operator's own data, the voice model transcribes every sentence and
+// not just the ones aimed at the agent, and a log line outlives the call by whatever the
+// log retention is. Writing the room's conversation there by default is the sort of
 // decision that has to be made deliberately, which is what this variable is for.
 //
 // `full` writes the sentence itself. Reach for it in a room that knows, on a
@@ -968,6 +929,7 @@ export const config = {
   // admit named guests, defaulting to the agent's name.
   openaiApiKey,
   openaiRealtimeModel,
+  openaiVoiceBackendModel,
   // Explicit voice override, else capability-based managed discovery or direct voice.
   openaiRealtimeUrl,
   openaiRealtimeApiKey,
@@ -975,11 +937,10 @@ export const config = {
   realtimeProvider: realtimeConfiguration.provider,
   realtimeUnavailableReason: realtimeConfiguration.unavailableReason,
   openaiRealtimeVoice,
-  // OPENAI_REALTIME_REASONING_EFFORT, default 'high' (the API's own default is
-  // 'low'); '' sends no setting at all and leaves the choice to the API.
+  // OPENAI_REALTIME_REASONING_EFFORT, the backend's level, default 'medium'; '' sends no
+  // setting at all and leaves the choice to the API.
   openaiRealtimeReasoningEffort,
   openaiTranscriptionModel,
-  noiseReduction,
   // MEETING_TRANSCRIPT_LOGGING, default 'off': whether a meeting's speech may appear
   // in the runtime's logs ('off' | 'full').
   meetingTranscriptLogging,

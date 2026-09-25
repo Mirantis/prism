@@ -1066,59 +1066,6 @@ describe('Requirement: WebSocket Gateway', () => {
       });
     });
 
-    it('passes the listening mode the client asked for', async () => {
-      const ws = createMockWebSocket();
-
-      await frame(ws, { type: 'voice_start', payload: { mode: 'addressed' } });
-
-      expect(mockVoice.start).toHaveBeenCalledWith(
-        expect.objectContaining({ mode: 'addressed' })
-      );
-    });
-
-    it('leaves the mode unstated when the client omits it', async () => {
-      const ws = createMockWebSocket();
-
-      await frame(ws, { type: 'voice_start', payload: {} });
-
-      expect(mockVoice.start).toHaveBeenCalledWith(expect.objectContaining({ mode: undefined }));
-    });
-
-    /**
-     * Refused rather than defaulted, unlike every other field in this payload. `open`
-     * answers every utterance in the room and an answer can be a tool call, so a client
-     * that means `addressed` and misspells it would otherwise get an agent talking over
-     * a meeting with nothing in the frames to say why.
-     */
-    it('refuses a mode it does not serve, and starts nothing', async () => {
-      const ws = createMockWebSocket();
-
-      await frame(ws, { type: 'voice_start', payload: { mode: 'adressed' } });
-
-      expect(mockVoice.start).not.toHaveBeenCalled();
-      expect(lastSent(ws)).toEqual({
-        type: 'voice_error',
-        payload: { error: 'mode must be "open" or "addressed"' },
-      });
-    });
-
-    /**
-     * `null` is a field the client sent, not a field it left out, and the two mean
-     * different things here: a client that serialized its state and got `null` asked for
-     * something, and `open` answers a whole room.
-     */
-    it('refuses a null mode rather than taking the default', async () => {
-      const ws = createMockWebSocket();
-
-      await frame(ws, { type: 'voice_start', payload: { mode: null } });
-
-      expect(mockVoice.start).not.toHaveBeenCalled();
-      expect(lastSent(ws)).toEqual({
-        type: 'voice_error',
-        payload: { error: 'mode must be "open" or "addressed"' },
-      });
-    });
-
     it('carries the session state, its errors and the clear back', async () => {
       const ws = createMockWebSocket();
       await frame(ws, { type: 'voice_start', payload: {} });

@@ -137,21 +137,21 @@ describe('getMeetingTools', () => {
     expect(mockJoin).not.toHaveBeenCalled();
   });
 
-  it('forwards the response mode', async () => {
+  it('joins the call it was given, for the calling turn', async () => {
     mockJoin.mockResolvedValue({ state: 'waiting_admission', message: 'ok' });
     const tools = getMeetingTools(input);
 
     await tools.join_meeting.execute!(
-      {
-        url: 'https://meet.google.com/abc-defg-hij',
-        responseMode: 'addressed',
-      },
+      { url: 'https://meet.google.com/abc-defg-hij' },
       { toolCallId: 'c', messages: [], abortSignal: new AbortController().signal },
     );
 
-    expect(mockJoin).toHaveBeenCalledWith(
-      expect.objectContaining({ responseMode: 'addressed' }),
-    );
+    expect(mockJoin).toHaveBeenCalledWith({
+      url: 'https://meet.google.com/abc-defg-hij',
+      userId: 'u1',
+      agentId: 'a1',
+      threadId: 't1',
+    });
   });
 
   it('reports a failed join as unsuccessful', async () => {
@@ -208,8 +208,6 @@ describe('getMeetingTools', () => {
     mockStatus.mockReturnValue({
       state: 'in_call',
       provider: 'google-meet',
-      responseMode: 'auto',
-      effectiveResponseMode: 'open',
       joinedAt: null,
     });
     const tools = getMeetingTools(input);
@@ -219,9 +217,6 @@ describe('getMeetingTools', () => {
     expect(await tools.meeting_status.execute!({}, ctx)).toMatchObject({
       inMeeting: true,
       state: 'in_call',
-      // What `auto` resolved to is what tells the agent whether it will be
-      // prompted to speak; the requested mode alone does not.
-      effectiveResponseMode: 'open',
     });
   });
 
@@ -335,8 +330,6 @@ describe('getMeetingTools', () => {
     mockStatus.mockReturnValue({
       state: 'idle',
       provider: null,
-      responseMode: 'auto',
-      effectiveResponseMode: null,
       joinedAt: null,
     });
     const tools = getMeetingTools(input);

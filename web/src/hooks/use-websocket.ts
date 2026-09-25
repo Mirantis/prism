@@ -493,9 +493,6 @@ export function useWebSocket(opts: UseWebSocketOptions = {}) {
 
   // The voice senders. None of them touches the running set: a call is not a turn, and
   // the composer's spinner and STOP button belong to the text conversation.
-  //
-  // `mode` is left unset on purpose, which the runtime reads as `open` — every
-  // utterance answered. A browser tab is somebody talking to the agent.
   const sendVoiceStart = useCallback((options: VoiceStartOptions = {}) => {
     if (wsRef.current?.readyState !== WebSocket.OPEN) return false;
     wsRef.current.send(JSON.stringify({ type: 'voice_start', payload: options }));

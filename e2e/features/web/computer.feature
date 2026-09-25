@@ -19,12 +19,10 @@ Feature: The agent's computer in the browser
     When I unmute the microphone on the Computer page
     Then the voice model hears my microphone from the Computer page
     And the agent's voice is playing on the Computer page
-    # The microphone is open by now, so the silence below is the recording taking it
-    # rather than a mute: the agent must not answer over a demonstration.
     When I record my screen for a few seconds
-    Then the voice model hears nothing while the recording runs
+    Then the voice model hears my narration while the recording runs
     When I stop the recording
-    Then the voice model is given my screen and my voice from the recording
+    Then the agent's backend is given my screen from the recording
     When I leave the Computer page
     Then the voice model has no session open
     # A second call is the observable proof that leaving released the one voice: the

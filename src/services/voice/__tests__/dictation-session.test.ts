@@ -111,7 +111,8 @@ describe('DictationSession', () => {
 
     const update = active.upstream.sent[0];
     expect(update.type).toBe('session.update');
-    expect(update.session.output_modalities).toEqual(['text']);
+    expect(update.session.type).toBe('transcription');
+    expect(update.session.output_modalities).toBeUndefined();
     expect(update.session.audio.input).toEqual({
       format: { type: 'audio/pcm', rate: 24_000 },
       turn_detection: null,
