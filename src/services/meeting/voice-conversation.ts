@@ -21,6 +21,7 @@ import { Downsampler, Upsampler, MEETING_SAMPLE_RATE, REALTIME_SAMPLE_RATE } fro
 import { LiveSession, type LiveContentPart, type LiveSessionOptions } from '../voice/live-session';
 import { AudioPlayback, type PlaybackSink } from './audio-playback';
 import { formatTranscript } from './transcript-log';
+import { inferenceGate } from '../../lib/inference-gate';
 import type { SpeakerDetails, SpeakerReading } from './meeting-provider.interface';
 import type { PreparedTools } from '../voice/realtime-tools';
 
@@ -193,6 +194,11 @@ export class VoiceConversation {
   }
 
   private async runTool(callId: string, name: string, argumentsJson: string): Promise<void> {
+    // A secure takeover of the computer stops the runtime: nothing the backend asks for
+    // runs until the user hands the computer back, and then it runs as asked.
+    if (inferenceGate.held) logger.info(`[Voice] Holding ${name} — the computer is held for a secure sign-in`);
+    await inferenceGate.wait();
+    if (this.stopped) return;
     const output = await this.options.tools.execute(name, argumentsJson);
     if (this.stopped) return;
     this.session.sendFunctionOutput(callId, output);

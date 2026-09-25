@@ -503,8 +503,8 @@ class VoiceChatService {
     if (!conversation) return;
     if (!result) {
       conversation.notify(
-        'Your user stopped their recording, and there was nothing in it — no pictures of ' +
-          'their screen and nothing said. Tell them so and ask them to try again.',
+        'Your user stopped their recording, and no picture of their screen came through. ' +
+          'Tell them so and ask them to try again.',
       );
       return;
     }

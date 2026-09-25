@@ -354,7 +354,7 @@ outlives the call, and that is the same thing to tell them about as the agent's 
 | `OPENAI_API_KEY` | Legacy direct-voice fallback; shared with OpenAI chat. Managed voice resolves its own credential. | — |
 | `OPENAI_REALTIME_API_KEY` | Credential for an explicit voice endpoint or direct fallback. | selected managed key, else eligible direct key |
 | `OPENAI_REALTIME_MODEL` | The voice model. Under Azure, its deployment name. | `gpt-live-1` |
-| `OPENAI_VOICE_BACKEND_MODEL` | The model that does the work behind the voice. Under Azure, its deployment name. | `gpt-6-sol` |
+| `OPENAI_VOICE_BACKEND_MODEL` | Model the voice hands more complex tasks to. An OpenAI model; under Azure, a deployment name. | `gpt-6-sol` |
 | `OPENAI_REALTIME_VOICE` | Voice name. | `marin` |
 | `OPENAI_REALTIME_REASONING_EFFORT` | How hard the model behind the voice thinks: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. See [Reasoning effort](#reasoning-effort). Empty takes the API default. | `medium` |
 | `MEETING_TRANSCRIPT_LOGGING` | Whether what was said may appear in the runtime's log: `off` or `full`. See [What ends up in the log](#what-ends-up-in-the-log). | `off` |

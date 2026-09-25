@@ -581,6 +581,21 @@ describe('a recording of the user\'s screen', () => {
     expect(note).toContain('recorded their own screen');
   });
 
+  /** The narration reached the voice live, so a recording with no pictures lost only those. */
+  it('reports only the missing pictures when a narrated recording kept none', async () => {
+    await startWithComputer();
+    const conversation = conversations[conversations.length - 1]!;
+
+    voiceChatService.handleRecordingFrame('client-1', { type: 'recording_started' }, ack);
+    voiceChatService.pushAudio(frame());
+    voiceChatService.handleRecordingFrame('client-1', { type: 'recording_stopped', ms: 4_000, reason: 'user' }, ack);
+
+    expect(conversation.showRecording).not.toHaveBeenCalled();
+    const note = String(conversation.notify.mock.calls.at(-1)?.[0]);
+    expect(note).toContain('no picture of their screen came through');
+    expect(note).not.toMatch(/nothing said/);
+  });
+
   /**
    * The pictures and the end were going to arrive on that socket. Left running, the voice
    * would stay quiet for the rest of the call, waiting for a hand-over nobody can send.

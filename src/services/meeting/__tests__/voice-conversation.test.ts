@@ -12,6 +12,7 @@ import { logger } from '../../../logger';
 import { VoiceConversation } from '../voice-conversation';
 import { MEETING_SAMPLE_RATE, REALTIME_SAMPLE_RATE } from '../resampler';
 import type { SpeakerReading } from '../meeting-provider.interface';
+import { inferenceGate } from '../../../lib/inference-gate';
 import {
   functionCallEvent,
   responseCompletedEvent,
@@ -120,6 +121,21 @@ describe('running the tools the backend calls', () => {
       output: '{"ok":true}',
     });
     expect(h.conversation.statistics).toMatchObject({ toolCalls: 1, backendInputTokens: 800, backendOutputTokens: 14 });
+  });
+
+  it('holds a call while the computer is held for a secure sign-in, and runs it after', async () => {
+    const h = await harness();
+    inferenceGate.hold();
+    try {
+      h.server.emit(functionCallEvent('call_1', 'shell_exec', '{"command":"ls"}'));
+      h.server.emit(responseCompletedEvent());
+      await settle();
+      expect(h.execute).not.toHaveBeenCalled();
+    } finally {
+      inferenceGate.free();
+    }
+    await h.server.waitFor((f) => f.type === 'response.create');
+    expect(h.execute).toHaveBeenCalledWith('shell_exec', '{"command":"ls"}');
   });
 
   it('says the backend finished only once it answers without calling a tool', async () => {

@@ -558,7 +558,7 @@ once rather than per meeting.
 |----------|---------|---------|
 | `OPENAI_API_KEY` | Legacy direct-voice credential fallback. The same key drives chat when `LLM_PROVIDER=openai`, and memory embeddings by default when `LLM_PROVIDER=anthropic` — see [Provider selection](#provider-selection). | — (disabled) |
 | `OPENAI_REALTIME_MODEL` | The agent's voice, in a meeting and in a [voice chat](voice-chat.md). | `gpt-live-1` |
-| `OPENAI_VOICE_BACKEND_MODEL` | The model that works behind the voice: it holds the agent's instructions and runs its tools, and the voice speaks what it writes. | `gpt-6-sol` |
+| `OPENAI_VOICE_BACKEND_MODEL` | Model the voice hands more complex tasks to. An OpenAI model, since OpenAI runs it for the voice; under Azure, a deployment name. | `gpt-6-sol` |
 | `OPENAI_REALTIME_URL` | Explicit voice endpoint, as its `…/v1/realtime` WebSocket URL; calls open `…/v1/live/sessions` beside it. Opts out of managed endpoint and credential discovery. | managed voice, else direct OpenAI |
 | `OPENAI_REALTIME_API_KEY` | Credential for an explicit voice endpoint or direct fallback; does not replace a discovered managed credential. | selected managed key, else eligible direct key |
 | `OPENAI_REALTIME_VOICE` | Voice name. | `marin` |
