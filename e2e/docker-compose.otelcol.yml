@@ -1,14 +1,13 @@
 # Telemetry test stack: MinIO (fake S3) + OTEL Collector.
 # Started/stopped by global-setup.ts / global-teardown.ts.
 #
-# Both MinIO images come from quay.io, which is MinIO's own registry. Docker Hub
-# refuses an anonymous pull of `minio/minio` and `minio/mc` with "pull access
-# denied ... repository does not exist or may require 'docker login'" (measured
-# on a runner, 2026-09-13), which aborted global setup before any test ran.
+# MinIO comes from Chainguard's registry, which serves it to an anonymous pull; MinIO's
+# own quay.io repositories and Docker Hub refuse one. The image is distroless, with no
+# shell to run `mc` in, so global-setup.ts creates the bucket over the S3 API.
 
 services:
   minio:
-    image: quay.io/minio/minio:latest
+    image: cgr.dev/chainguard/minio:latest
     command: server /data --console-address ":9001"
     ports:
       - "9000:9000"
@@ -16,36 +15,10 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
 
-  minio-init:
-    image: quay.io/minio/mc:latest
-    depends_on:
-      - minio
-    # `sleep 2` was the whole synchronisation: MinIO usually answers by then, and
-    # when it doesn't (cold image cache, loaded runner) `mc alias set` fails, this
-    # container exits non-zero, `service_completed_successfully` never holds, and
-    # `docker compose up` reports a dependency failure that names mc rather than
-    # the slow start behind it. otelcol then never listens and global-setup dies
-    # on its readiness probe. Retry for up to 60s instead — no healthcheck on the
-    # minio service itself, because a probe that is wrong offline would deadlock
-    # `up` harder than the race it replaces.
-    # Exec form + a literal block: the previous folded-string form would have
-    # needed the retry loop's quotes escaped through compose's own lexer.
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        for i in $$(seq 1 60); do
-          mc alias set local http://minio:9000 minioadmin minioadmin && break
-          echo "minio not ready yet (attempt $$i of 60); retrying"
-          sleep 1
-        done
-        mc mb local/telemetry-test --ignore-existing
-
   otelcol:
     image: otel/opentelemetry-collector-contrib:0.149.0
     depends_on:
-      minio-init:
-        condition: service_completed_successfully
+      - minio
     ports:
       - "4318:4318"
     volumes:

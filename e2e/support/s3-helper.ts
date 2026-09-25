@@ -6,6 +6,7 @@
 
 import {
   S3Client,
+  CreateBucketCommand,
   ListObjectsV2Command,
   GetObjectCommand,
   DeleteObjectsCommand,
@@ -20,6 +21,32 @@ const s3 = new S3Client({
   credentials: { accessKeyId: 'minioadmin', secretAccessKey: 'minioadmin' },
   forcePathStyle: true,
 });
+
+/**
+ * Create the telemetry bucket, retrying while MinIO starts.
+ *
+ * Retried for up to `timeoutMs`, since MinIO takes a moment to answer on a cold image cache
+ * or a loaded runner. A bucket that already exists counts as created.
+ */
+export async function ensureTelemetryBucket(timeoutMs = 60_000): Promise<void> {
+  const start = Date.now();
+  let lastError: unknown;
+  while (Date.now() - start < timeoutMs) {
+    try {
+      await s3.send(new CreateBucketCommand({ Bucket: BUCKET }));
+      return;
+    } catch (error) {
+      const name = (error as { name?: string }).name;
+      if (name === 'BucketAlreadyOwnedByYou' || name === 'BucketAlreadyExists') return;
+      lastError = error;
+    }
+    await new Promise((r) => setTimeout(r, 1_000));
+  }
+  throw new Error(
+    `MinIO did not create the "${BUCKET}" bucket within ${timeoutMs}ms: ` +
+      (lastError instanceof Error ? lastError.message : String(lastError)),
+  );
+}
 
 export interface TelemetryEvent {
   eventName?: string;

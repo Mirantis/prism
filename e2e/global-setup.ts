@@ -16,6 +16,7 @@ import { config } from 'dotenv';
 import path from 'path';
 import { execSync } from 'child_process';
 import { resetAll, seed, disconnect } from './support/db-helper';
+import { ensureTelemetryBucket } from './support/s3-helper';
 
 /**
  * Container state + recent logs for the telemetry stack, for embedding in a
@@ -63,11 +64,16 @@ async function globalSetup() {
         (error instanceof Error ? error.message : String(error)),
     );
   }
-  // Wait for otelcol to accept OTLP requests. Sized for a cold start: three
-  // containers, two of them pulled from Docker Hub, and otelcol only begins
-  // listening after minio-init has completed. 30s was enough for a warm image
-  // cache and nothing else, and expiring here fails the whole suite before the
-  // first scenario runs.
+  // The collector writes into this bucket, and the MinIO image has no shell to create
+  // it from inside the stack.
+  try {
+    await ensureTelemetryBucket();
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\n${describeCompose()}`);
+  }
+  // Wait for otelcol to accept OTLP requests. Sized for a cold start: two containers
+  // pulled from two registries. 30s was enough for a warm image cache and nothing else,
+  // and expiring here fails the whole suite before the first scenario runs.
   const otelReady = async () => {
     const start = Date.now();
     while (Date.now() - start < 90_000) {
