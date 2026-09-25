@@ -242,7 +242,7 @@ describe('AgentChat working indicator', () => {
     );
   }
 
-  it('shows the spinner, and no STOP, for a turn another client started on the thread on screen', async () => {
+  it('shows the spinner, and no STOP, while the thread on screen works for another client', async () => {
     wsHolder.workingThreadIds = new Set(['t1']);
     renderChat();
 
@@ -252,7 +252,7 @@ describe('AgentChat working indicator', () => {
     cleanup();
   });
 
-  it('shows no spinner for a turn on another thread', async () => {
+  it('shows no spinner while another thread works', async () => {
     wsHolder.workingThreadIds = new Set(['t2']);
     renderChat();
 
@@ -262,7 +262,7 @@ describe('AgentChat working indicator', () => {
     cleanup();
   });
 
-  it('keeps STOP on the client that started the turn', async () => {
+  it('keeps STOP on the client that sent the message', async () => {
     wsHolder.isTyping = true;
     wsHolder.workingThreadIds = new Set(['t1']);
     renderChat();
