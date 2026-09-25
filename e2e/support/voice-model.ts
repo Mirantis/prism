@@ -23,23 +23,25 @@ const STATE_URL = `http://127.0.0.1:${MOCK_REALTIME_PORT}/state`;
 export const MICROPHONE_MS = 500;
 /** Long enough for a slow runner to open a socket and pass audio through it. */
 export const EXCHANGE_TIMEOUT_MS = 30_000;
+/** Long enough for the agent's own run, on the real chat model, to answer a request. */
+export const RUN_TIMEOUT_MS = 120_000;
 
 export interface MockState {
   /** How many calls the model has open right now. */
   sessions: number;
   managedHandshakes: number;
   inboundMs: number;
-  /** Requests the voice handed to the backend, and tool results the runtime returned. */
+  /** Requests the voice handed to the runtime, and the ones the runtime answered. */
   delegations: number;
-  toolOutputs: number;
+  results: number;
+  /** Answers for work the runtime asked for itself, and progress notes while it worked. */
+  unpromptedAnswers: number;
+  progressNotes: number;
   /** Answers the voice spoke, and the audio frames they took. */
   answers: number;
   deltasSent: number;
   /** What the last call started with. */
-  lastStart: { model: string; backendModel: string; tools: number } | null;
-  /** Windows of a handed-over screen recording, and the pictures in them. */
-  recordingSegments: number;
-  recordingImages: number;
+  lastStart: { model: string; delegation: string } | null;
   dictationsTranscribed: number;
 }
 
@@ -51,12 +53,12 @@ let baseline: MockState = {
   managedHandshakes: 0,
   inboundMs: 0,
   delegations: 0,
-  toolOutputs: 0,
+  results: 0,
+  unpromptedAnswers: 0,
+  progressNotes: 0,
   answers: 0,
   deltasSent: 0,
   lastStart: null,
-  recordingSegments: 0,
-  recordingImages: 0,
   dictationsTranscribed: 0,
 };
 
@@ -84,11 +86,10 @@ export function describeExchange(state: MockState): string {
     `voice model: sessions open=${state.sessions}, ` +
     `microphone=${Math.round(state.inboundMs - baseline.inboundMs)}ms, ` +
     `hand-overs=${state.delegations - baseline.delegations}, ` +
-    `tool results=${state.toolOutputs - baseline.toolOutputs}, ` +
+    `answered=${state.results - baseline.results}, ` +
     `answers=${state.answers - baseline.answers}, ` +
     `audio frames sent=${state.deltasSent - baseline.deltasSent}, ` +
-    `recording windows=${state.recordingSegments - baseline.recordingSegments} ` +
-    `(${state.recordingImages - baseline.recordingImages} pictures), ` +
+    `own answers=${state.unpromptedAnswers - baseline.unpromptedAnswers}, ` +
     `dictations transcribed=${state.dictationsTranscribed - baseline.dictationsTranscribed} ` +
     `(counted since this scenario started)`
   );
@@ -102,8 +103,9 @@ export async function waitForModel(
   what: string,
   ok: (state: MockState) => boolean,
   describeScreen: DescribeScreen,
+  timeoutMs = EXCHANGE_TIMEOUT_MS,
 ): Promise<void> {
-  const deadline = Date.now() + EXCHANGE_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
   let state = await readState();
   while (!ok(state) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 250));
@@ -111,7 +113,7 @@ export async function waitForModel(
   }
   if (ok(state)) return;
   throw new Error(
-    `${what} did not happen within ${EXCHANGE_TIMEOUT_MS}ms. ` +
+    `${what} did not happen within ${timeoutMs}ms. ` +
       `${describeExchange(state)}. ${await describeScreen()}`,
   );
 }

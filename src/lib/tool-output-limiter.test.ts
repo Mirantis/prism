@@ -247,7 +247,7 @@ describe('withToolOutputCapture', () => {
       type: 'content' as const,
       value: [
         { type: 'text', text: 'POD'.repeat(500) },
-        { type: 'image-data', data: 'abc123', mediaType: 'image/png' },
+        { type: 'file', mediaType: 'image/png', data: { type: 'data', data: 'abc123' } },
       ],
     });
     const wrapped = withToolOutputCapture(toolWith(() => raw, { toModelOutput: own }), {
@@ -260,7 +260,7 @@ describe('withToolOutputCapture', () => {
     };
 
     expect(view.value).toHaveLength(2);
-    expect(view.value[1]).toEqual({ type: 'image-data', data: 'abc123', mediaType: 'image/png' });
+    expect(view.value[1]).toEqual({ type: 'file', mediaType: 'image/png', data: { type: 'data', data: 'abc123' } });
   });
 
   it('leaves an image-only result alone, because its text is what is measured', async () => {

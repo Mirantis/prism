@@ -226,54 +226,28 @@ it.
 > holds its shell and MCP tools while it reads a file, so share files from
 > sources you trust.
 
-## Voice meetings
+## Voice calls
 
-The agent can join a Google Meet call and take part by voice — see
-[Voice meetings](voice-meetings.md). It asks to join, a host admits it, and from
-then on it listens and speaks in the room.
+The agent can take part by voice in a call on its computer — see
+[Voice calls](voice-calls.md). It joins the call with its computer tools, in the
+browser or in an installed call app, then calls `join_call`, which connects its voice.
+`join_call` reports whether the call app is using the agent's microphone,
+**PrismMicrophone**. `leave_call` disconnects the voice; the agent presses the app's
+leave button first. In the call, the agent uses the app's own controls for mute, the
+camera, the chat, screen sharing and leaving.
 
-How much it speaks up follows the room: on a one-to-one call it answers everything,
-and once anyone else is present it waits to be called by name — every time, including
-follow-ups. That switches as people come and go, so there is nothing to set — see
-[Voice meetings](voice-meetings.md#in-the-call) to override it for a given call.
+Inside the call it keeps **every tool above except `share_file`**, which stores a file
+for the chat to deliver. Work the call has no time for becomes a one-off scheduled
+task, and the result arrives in your chat.
 
-Inside the call it keeps **every tool above except `share_file`**, plus one only the
-model in the call has: reading the call's chat. `share_file` is out because it only
-stores a file for the chat machinery to deliver, and a meeting doesn't run that
-machinery — in a call it could only store a file that reached nobody.
+The guardrail is its prompt rather than the tool list: announce and get an explicit
+"yes" before anything destructive, including changes to its own configuration. Anyone
+in the call can speak with the agent's authority, so treat a call as granting it —
+see [Voice calls](voice-calls.md#tools-and-what-it-will-not-do-on-a-spoken-request).
 
-The agent can post a short plain-text message, up to 500 characters, into the chat panel
-of the call it is in. It can post from inside the call, from a chat session, or from a
-scheduled run reporting back on work the call kicked off; with no call live it posts
-nothing and says so.
-
-A line it posts from a chat session or a scheduled run is stored with the thread like any
-other tool argument. Posted from inside the call, nothing is stored.
-
-It reads that panel only when somebody in the call asks it to look, and nothing tells it a
-message arrived — so say in the room that you have pasted something. It comes back with
-the newest 20 messages, each with the name the call shows for whoever sent it, and says
-when it did not get the whole chat or had to cut a long message short. The read is the one
-tool a chat session and a scheduled run do not get: a stored tool result is replayed into
-every later turn, and the chat is other people's words. Nothing it reads is kept with the
-thread.
-
-Work the call has no time for is the one thing that goes on afterwards — the agent
-schedules it as a one-off task and the result lands in your chat, not in the room.
-
-Nothing else is withheld, so the guardrail is its prompt rather than the tool list:
-announce and get an explicit "yes" in the room before anything destructive — including
-renaming itself or rewriting its Soul, user profile or memory, which it will do on a
-spoken request the room agrees to. Since a meeting has no authentication, treat the
-link as granting the agent's authority over itself as well as over your systems, and
-share it accordingly.
-
-The meeting tools themselves only exist when the runtime can actually host a call: the
-container image's browser/audio toolchain plus `OPENAI_API_KEY` (which a
-direct-mode `LLM_PROVIDER=openai` deployment already carries — one routed
-through the Lens Agents gateway can run keyless, and then has no meeting tools).
-Joining and leaving are chat-only — a heartbeat or scheduled run can't dial
-into a meeting, or hang up on one, by itself.
+The call tools appear when the [agent's computer](computer.md) is available and a
+voice credential is configured. Chat, scheduled tasks, goals and heartbeats can use
+them; webhooks and subagents cannot.
 
 ## External tools (MCP)
 
@@ -285,10 +259,8 @@ built-in ones and it can use them the same way.
 ## Large tool outputs
 
 Every tool result the agent reads is capped, built-in and MCP alike, so one
-oversized payload can't crowd out the rest of the conversation. In chat — web,
-terminal, Slack — the cap is **30,000 characters**. In a [voice
-meeting](voice-meetings.md) it is **12,000**, because a call keeps every result in
-a much smaller live session and the agent has to *say* its answer.
+oversized payload can't crowd out the rest of the conversation. The cap is
+**30,000 characters**.
 
 Past the cap, the agent sees the start and the end of the output with the middle
 replaced by a notice that the result is incomplete. The notice tells it not to

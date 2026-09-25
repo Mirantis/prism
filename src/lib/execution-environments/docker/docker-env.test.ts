@@ -13,8 +13,8 @@ describe('dockerBaseEnv', () => {
       NEXUS_API_URL: 'https://nexus.example.test',
       OPENAI_REALTIME_API_KEY: 'test-realtime-key',
     });
-    // With any of these the agent's shell could post as the Slack bot or sign
-    // in to the meeting account.
+    // With any of these the agent's shell could post as the Slack bot or open the
+    // runtime's voice sessions.
     expect(env).toEqual({});
   });
 

@@ -25,6 +25,7 @@ export type LlmCallPurpose =
   | 'goal'
   | 'webhook'
   | 'subagent'
+  | 'voice'
   // Side calls, each one `generateText`/`generateObject` outside the invoke loop.
   | 'early-stopping'
   | 'compaction'
@@ -46,6 +47,7 @@ export const LLM_CALL_PURPOSES: readonly LlmCallPurpose[] = [
   'goal',
   'webhook',
   'subagent',
+  'voice',
   'early-stopping',
   'compaction',
   'thread-title',

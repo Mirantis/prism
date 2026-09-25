@@ -3,6 +3,9 @@ import prisma from '../../../lib/prisma';
 import { computerService } from '../computer.service';
 import { computerHelpService } from '../computer-help.service';
 import { getComputerTools } from '../../../tools/computer';
+import { voiceSessionLock } from '../../voice/voice-session-lock';
+import { voiceChatService } from '../../voice/voice-chat.service';
+import { callService } from '../../call/call.service';
 
 vi.mock('../../../lib/prisma', () => ({
   default: {
@@ -37,6 +40,9 @@ vi.mock('../../message-delivery.service', () => ({
 }));
 vi.mock('../../voice/voice-chat.service', () => ({
   voiceChatService: { continueComputer: vi.fn() },
+}));
+vi.mock('../../call/call.service', () => ({
+  callService: { continueComputer: vi.fn() },
 }));
 vi.mock('../../../lib/telemetry', () => ({ trackEvent: vi.fn() }));
 
@@ -182,5 +188,27 @@ describe('a help request a username and a password answer', () => {
 
     expect(computerService.signInForm).not.toHaveBeenCalled();
     expect(request.credentials).toBeUndefined();
+  });
+});
+
+describe.each([
+  ['call', () => callService.continueComputer, () => voiceChatService.continueComputer],
+  ['voice-chat', () => voiceChatService.continueComputer, () => callService.continueComputer],
+] as const)('a help request from a %s', (kind, owner, other) => {
+  it('hands the continuation to the voice session that raised it', async () => {
+    voiceSessionLock.tryAcquire(kind);
+    try {
+      const use = computerService.access.create({ userId: 'user', agentId: 'agent', mode: 'voice' });
+      const raised = await computerHelpService.request(use, 'Sign in to the call app');
+      vi.mocked(owner()).mockClear();
+      vi.mocked(other()).mockClear();
+
+      await computerHelpService.continueRequest('agent', 'user', raised.id, 'continue', 'viewer');
+
+      expect(owner()).toHaveBeenCalledWith('Sign in to the call app');
+      expect(other()).not.toHaveBeenCalled();
+    } finally {
+      voiceSessionLock.release(kind);
+    }
   });
 });

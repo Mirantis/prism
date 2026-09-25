@@ -1,5 +1,5 @@
 /**
- * The browser half of a meeting: a real browser on a virtual display.
+ * The agent's browser: a real browser on a virtual display.
  *
  * Three choices here are load-bearing, and all three were established by watching
  * Google's RPCs reject us:
@@ -23,9 +23,8 @@
  * The media flags matter too — see `buildBrowserArgs` below, where the reason each
  * one is present or absent is written down.
  *
- * Authentication is deliberately *not* here: signing in is platform-specific and
- * belongs to the provider (`providers/google-meet/sign-in.ts`). What this file owns
- * is the profile that a session is stored in — which is why the quit request in
+ * Authentication is deliberately *not* here: a person signs in on the Computer page.
+ * What this file owns is the profile that a session is stored in — which is why the quit request in
  * `stop()` matters more than it looks: a browser that quits when asked flushes its
  * cookie store, and one that is signalled instead does not, so every join
  * re-authenticates.
@@ -39,9 +38,8 @@ import path from 'path';
 // `playwright-core` stays out of the static import graph. It cannot be bundled into
 // the SEA binaries — esbuild can't resolve its optional `chromium-bidi` imports —
 // and it doesn't need to be, because a binary ships no browser or audio server and
-// therefore never registers the meeting tools at all. See `scripts/build-sea.mjs`.
+// therefore never has a computer or the call tools at all. See `scripts/build-sea.mjs`.
 import type { Browser, BrowserContext, Page } from 'playwright-core';
-import { resolveDataDir } from '../../lib/data-dir';
 import { logger } from '../../logger';
 import { withTimeout } from '../../utils/with-timeout';
 import { TabSet } from './browser-tabs';
@@ -60,18 +58,6 @@ const BROWSER_CANDIDATES = [
   '/usr/bin/chromium',
   '/usr/bin/chromium-browser',
 ].filter((p): p is string => Boolean(p));
-
-/**
- * The browser profile, kept in the data dir so a signed-in session survives
- * restarts.
- *
- * This is the whole reason sign-in is affordable: Google challenges a *new* device,
- * not a returning one, so persisting the profile turns login into a rare event
- * instead of a per-meeting gamble.
- */
-function profileDir(): string {
-  return path.join(resolveDataDir(), 'meeting-browser-profile');
-}
 
 /** How long the browser gets to quit when asked, before the signal ladder starts. */
 const CLEAN_QUIT_MS = 5_000;
@@ -160,12 +146,8 @@ async function clearStaleProfileLocks(userDataDir: string): Promise<void> {
 export interface BrowserStackOptions {
   /** DISPLAY, PULSE_SINK, PULSE_SOURCE and friends from the audio stack. */
   env: Record<string, string>;
-  /**
-   * Where the profile lives. Defaults to the meeting bot's signed-in profile; a
-   * browser that may run beside a live call uses its own, since Chromium refuses a
-   * second instance on one profile.
-   */
-  profileDir?: string;
+  /** Where the profile lives, kept in the data dir so a signed-in session survives restarts. */
+  profileDir: string;
 }
 
 /**
@@ -294,6 +276,11 @@ async function freePort(): Promise<number> {
   });
 }
 
+/** Whether a window title is the browser's window showing a tab with this title. */
+export function isWindowOf(windowTitle: string, tabTitle: string): boolean {
+  return windowTitle.startsWith(`${tabTitle} - `) && !windowTitle.slice(tabTitle.length + 3).includes(' - ');
+}
+
 export class BrowserStack {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
@@ -315,13 +302,13 @@ export class BrowserStack {
   async start(options: BrowserStackOptions): Promise<Page> {
     // Before the spawn below, not just before the CDP attach that needs it: the
     // child is handed `{ ...process.env }`, so doing this later would give the
-    // browser of the *first* meeting a different environment from every one after
-    // it. Harmless in itself — Chromium bypasses loopback on its own — but an env
-    // that changes shape once a meeting has run is a trap for the next reader.
+    // *first* browser a different environment from every one after it. Harmless in
+    // itself — Chromium bypasses loopback on its own — but an env that changes shape
+    // once a browser has run is a trap for the next reader.
     bypassProxyForLoopback();
     const executablePath = await resolveBrowser();
     const port = await freePort();
-    const userDataDir = options.profileDir ?? profileDir();
+    const userDataDir = options.profileDir;
     await fs.mkdir(userDataDir, { recursive: true });
     await clearStaleProfileLocks(userDataDir);
     // Fatal on purpose: a browser that would offer to save a password is the one
@@ -403,14 +390,24 @@ export class BrowserStack {
     return this.tabs.list();
   }
 
-  /** Match the browser's visible tab after the user has used its tab strip. */
-  async observeFront(): Promise<void> {
-    for (const page of this.tabs.list()) {
-      if (await page.evaluate("document.visibilityState === 'visible'").catch(() => false)) {
-        this.tabs.observe(page);
-        return;
-      }
-    }
+  /**
+   * Match the tab the desktop shows after somebody used the tab strip.
+   *
+   * A browser window is titled after its front tab, "<tab title> - Chromium", and that is
+   * the one reading of which tab is in front: on this display every tab reports
+   * `document.visibilityState` as `visible`. Two tabs with the same title leave the active
+   * one in place.
+   */
+  async observeFront(windowTitles: string[]): Promise<void> {
+    const tabs = this.tabs.list();
+    const titles = await Promise.all(tabs.map((page) => page.title().catch(() => null)));
+    const shown = tabs.filter((_, i) => {
+      const title = titles[i];
+      return title && windowTitles.some((window) => isWindowOf(window, title));
+    });
+    const current = this.tabs.current();
+    if (shown.length === 0 || (current && shown.includes(current))) return;
+    this.tabs.observe(shown[0]);
   }
 
   /**

@@ -5,12 +5,12 @@
  * The runtime discovers its managed Azure endpoint from environment variables, and opens
  * two sockets under it:
  *
- * - `…/live/sessions`, a GPT-Live call. The session starts, the audio the runtime
- *   appends is counted, and once enough of it has arrived the voice hands the request to
- *   the backend, which calls `meeting_status`. When the runtime returns that tool's
- *   result the voice answers with a steady tone. A picture the runtime shows the backend
- *   is counted, which is how a screen recording arrives. Nothing here is a model — the
- *   words are never read.
+ * - `…/live/sessions`, a GPT-Live call with client delegation. The session starts, the
+ *   audio the runtime appends is counted, and once enough of it has arrived the voice
+ *   "hears" a request, sends its transcript and hands it to the client. When the runtime
+ *   answers that delegation the voice answers with a steady tone. An answer with no
+ *   delegation is counted apart, which is how the runtime's own work, such as looking at
+ *   a screen recording, comes back. Nothing here is a model — the answers are never read.
  * - `…/realtime?intent=transcription`, a dictation. A commit answers with a transcript
  *   that states how much speech the buffer held, so a scenario can tell the runtime's
  *   audio reached it from the text alone.
@@ -19,8 +19,8 @@
  *
  * `GET /state` reports what it has seen, so a failing scenario can name the step that did
  * not complete: a `sessions` of zero means the runtime has no call open, an `inboundMs` of
- * zero means the browser's microphone did not reach it, a `toolOutputs` of zero means the
- * runtime never ran the backend's tool, and a `deltasSent` of zero means the voice never
+ * zero means the browser's microphone did not reach it, a `results` of zero means the
+ * runtime never answered a delegation, and a `deltasSent` of zero means the voice never
  * answered. `sessions` is a count rather than a flag, so a second call opening while one is
  * still up is visible instead of hidden behind the first one's close.
  *
@@ -43,26 +43,30 @@ const TONE_HZ = 440;
 const TONE_MS = 2_000;
 /** One delta carries this much of it, as the live endpoint streams it. */
 const DELTA_MS = 100;
-/** The tool the backend calls, one that every call's tool set has and that acts on nothing. */
-const BACKEND_TOOL = 'meeting_status';
+/**
+ * What the voice hears asked each time. A real agent run answers it, so it is a question
+ * one or two quick steps answer, and one that changes nothing.
+ */
+const REQUEST_TEXT = 'Prism, which tasks do I have scheduled?';
 
 const state = {
   /** How many calls are open right now. */
   sessions: 0,
   managedHandshakes: 0,
   inboundMs: 0,
-  /** Requests the voice handed to the backend. */
+  /** Requests the voice handed to the client. */
   delegations: 0,
-  /** Tool results the runtime returned to the backend. */
-  toolOutputs: 0,
+  /** Delegations the runtime answered. */
+  results: 0,
+  /** Answers the runtime sent with no delegation, for work it asked for itself. */
+  unpromptedAnswers: 0,
+  /** Progress notes the runtime sent while it worked. */
+  progressNotes: 0,
   /** Answers the voice spoke. */
   answers: 0,
   deltasSent: 0,
-  /** What the last call started with: the two models and how many tools it offered. */
-  lastStart: null as null | { model: string; backendModel: string; tools: number },
-  /** Windows of a handed-over recording, and the pictures in them. */
-  recordingSegments: 0,
-  recordingImages: 0,
+  /** What the last call started with: the voice model and its delegation type. */
+  lastStart: null as null | { model: string; delegation: string },
   /** Dictation buffers committed and answered with a transcript. */
   dictationsTranscribed: 0,
 };
@@ -106,12 +110,13 @@ server.on('upgrade', (req, socket, head) => {
 interface ClientFrame {
   type?: string;
   audio?: string;
+  event_id?: string;
+  delegation_id?: string | null;
+  content?: string;
   session?: {
     model?: string;
-    delegation?: { responses?: { model?: string; tools?: unknown[] } };
-    audio?: { input?: { turn_detection?: unknown } };
+    delegation?: { type?: string };
   };
-  item?: { type?: string; content?: { type?: string; text?: string }[] };
 }
 
 live.on('connection', (ws: WebSocket) => {
@@ -120,7 +125,8 @@ live.on('connection', (ws: WebSocket) => {
   // Counted for this socket only: a second call must not inherit the first one's audio.
   let heardMs = 0;
   let requestedAtMs = 0;
-  let awaitingTool = false;
+  /** The delegation waiting for the runtime's answer, one at a time. */
+  let pending: string | null = null;
 
   ws.on('message', (data) => {
     const frame = parse(data);
@@ -128,11 +134,9 @@ live.on('connection', (ws: WebSocket) => {
 
     switch (frame.type) {
       case 'session.start': {
-        const responses = frame.session?.delegation?.responses;
         state.lastStart = {
           model: frame.session?.model ?? '',
-          backendModel: responses?.model ?? '',
-          tools: responses?.tools?.length ?? 0,
+          delegation: frame.session?.delegation?.type ?? '',
         };
         send(ws, { type: 'session.started', session: { id: 'live_mock', ...frame.session, status: 'active' } });
         return;
@@ -143,27 +147,28 @@ live.on('connection', (ws: WebSocket) => {
         heardMs += arrivedMs;
         state.inboundMs += arrivedMs;
         // One request per `UTTERANCE_MS` of speech, and one at a time.
-        if (!awaitingTool && heardMs - requestedAtMs >= UTTERANCE_MS) {
+        if (!pending && heardMs - requestedAtMs >= UTTERANCE_MS) {
           requestedAtMs = heardMs;
-          awaitingTool = true;
-          delegate(ws);
+          pending = delegate(ws, heardMs);
         }
         return;
       }
-      case 'response.item.create': {
-        if (frame.item?.type === 'function_call_output') {
-          state.toolOutputs += 1;
+      case 'session.thinking.append':
+        state.progressNotes += 1;
+        send(ws, { type: 'session.thinking.appended', client_event_id: frame.event_id });
+        return;
+      case 'session.commentary.append': {
+        send(ws, { type: 'session.commentary.appended', client_event_id: frame.event_id });
+        if (!frame.delegation_id) {
+          state.unpromptedAnswers += 1;
+          log('the runtime answered work of its own');
           return;
         }
-        countRecording(frame.item);
-        return;
-      }
-      case 'response.create': {
-        send(ws, backendEvent({ type: 'response.completed', response: { id: 'resp_mock_answer', status: 'completed', output: [], usage: { input_tokens: 900, output_tokens: 12 } } }));
-        if (awaitingTool) {
-          awaitingTool = false;
-          answerWithTone(ws);
-        }
+        if (frame.delegation_id !== pending) return;
+        state.results += 1;
+        pending = null;
+        log(`the runtime answered ${frame.delegation_id}`);
+        answerWithTone(ws);
         return;
       }
       case 'session.close':
@@ -206,33 +211,15 @@ realtime.on('connection', (ws: WebSocket) => {
   });
 });
 
-/** The voice hands a request over, and the backend calls a tool for it. */
-function delegate(ws: WebSocket): void {
+/** The voice hears the request, says it into the transcript, and hands it to the client. */
+function delegate(ws: WebSocket, heardMs: number): string {
   state.delegations += 1;
-  send(ws, { type: 'session.delegation.created', delegation: { id: `item_mock_${state.delegations}`, type: 'delegation', target: 'responses' } });
-  send(ws, backendEvent({ type: 'response.created', response: { id: 'resp_mock_tool', status: 'in_progress' } }));
-  send(ws, backendEvent({
-    type: 'response.output_item.done',
-    item: { id: 'fc_mock', type: 'function_call', status: 'completed', arguments: '{}', call_id: `call_mock_${state.delegations}`, name: BACKEND_TOOL },
-  }));
-  send(ws, backendEvent({ type: 'response.completed', response: { id: 'resp_mock_tool', status: 'completed', output: [], usage: { input_tokens: 800, output_tokens: 14 } } }));
-  log(`delegation ${state.delegations}: the backend called ${BACKEND_TOOL}`);
-}
-
-/**
- * Count a recording the runtime showed the backend.
- *
- * A recording is one message whose windows each start with an `At m:ss:` label, followed
- * by the pictures taken in it.
- */
-function countRecording(item: ClientFrame['item']): void {
-  const content = item?.content;
-  if (item?.type !== 'message' || !Array.isArray(content)) return;
-  const labels = content.filter((part) => part.type === 'input_text' && /^At \d+:\d\d:$/.test(part.text ?? ''));
-  if (labels.length === 0) return;
-  state.recordingSegments += labels.length;
-  state.recordingImages += content.filter((part) => part.type === 'input_image').length;
-  log(`recording: ${labels.length} window(s), ${content.length} parts`);
+  const id = `item_delegation_${state.delegations}`;
+  const at = Math.round(heardMs);
+  send(ws, { type: 'session.input_transcript.delta', delta: REQUEST_TEXT, start_ms: Math.max(0, at - 1_000), end_ms: at });
+  send(ws, { type: 'session.delegation.created', offset_ms: at, delegation: { id, type: 'delegation', target: 'client' } });
+  log(`delegation ${state.delegations}: handed "${REQUEST_TEXT}" to the client`);
+  return id;
 }
 
 /** How much of a pcm16 buffer is loud enough to count as somebody speaking. */
@@ -265,10 +252,6 @@ function answerWithTone(ws: WebSocket): void {
     state.deltasSent += 1;
   }
   log(`answered with ${TONE_MS}ms of tone`);
-}
-
-function backendEvent(event: Record<string, unknown>): Record<string, unknown> {
-  return { type: 'response.event', delegation_id: `item_mock_${state.delegations}`, event };
 }
 
 /** `sampleCount` samples of a continuous sine, starting at sample `from`. */

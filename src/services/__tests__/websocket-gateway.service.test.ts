@@ -1058,7 +1058,7 @@ describe('Requirement: WebSocket Gateway', () => {
       await frame(ws, { type: 'voice_start', payload: { threadId: 'thread-1' } });
 
       expect(mockVoice.start).toHaveBeenCalledWith(
-        expect.objectContaining({ userId: 'user-123', agentId: 'agent-123', threadId: 'thread-1' })
+        expect.objectContaining({ userId: 'user-123', agentId: 'agent-123' })
       );
       expect(lastSent(ws)).toEqual({
         type: 'voice_hello',

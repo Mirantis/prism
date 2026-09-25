@@ -76,13 +76,13 @@ ENV CHECKPOINT_DISABLE=1
 # from the shell-sandbox parity set. Python + pandoc, which mise CAN
 # provide, are added to the `mise use -g` line below instead.
 #
-# xvfb + pulseaudio are the voice-meeting toolchain (see src/services/meeting/):
-# a browser joins the call, Xvfb gives it a display because Meet's WebRTC path is
-# unreliable headless, and PulseAudio's null-sinks are the virtual speaker and
-# microphone the runtime exchanges audio through. This is the one place we
-# knowingly spend image size on a feature rather than a CLI (~400MB) — unlike
-# LibreOffice, left out for exactly that reason, there is no way to be in a
-# meeting without a browser and an audio server.
+# xvfb + pulseaudio are the agent computer's display and sound (see
+# src/services/meeting/audio-stack.ts): Xvfb gives the desktop a display because
+# WebRTC is unreliable headless, and PulseAudio's null-sinks are the virtual speaker
+# and microphone every program on the desktop uses, which is how a call's audio
+# reaches the runtime. This is the one place we knowingly spend image size on a
+# feature rather than a CLI (~400MB) — unlike LibreOffice, left out for exactly that
+# reason, there is no way to be in a call without a browser and an audio server.
 #
 # Plank is the dock along the bottom of that desktop, and `gsettings` from
 # libglib2.0-bin is how the session tells it how to look and not to hide itself.
@@ -92,10 +92,9 @@ ENV CHECKPOINT_DISABLE=1
 #
 # Debian's `chromium` rather than Google Chrome. Chrome does now have arm64 Linux
 # builds, and the runtime prefers `/usr/bin/google-chrome` when an image happens to
-# provide it — but Meet's refusals turned out to be about being an *anonymous*
-# automated guest, not about the browser build, so there is nothing to buy with a
-# second browser and a third-party apt repo. Sign-in is the fix (see
-# services/meeting/browser-stack.ts).
+# provide it — but a call app refuses an *anonymous* automated guest whatever the
+# browser build, so there is nothing to buy with a second browser and a third-party
+# apt repo. A person signs in on the Computer page instead.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         openssl wget \
         git ca-certificates curl libatomic1 gcc libc-dev make zstd \
@@ -373,10 +372,10 @@ USER node
 # Run under tini so PID 1 reaps orphans.
 #
 # Needed because Chromium's crash handler deliberately re-parents itself to PID 1,
-# and Node only reaps children it spawned itself — so every voice meeting left four
-# unreapable zombies behind, accumulating for the life of the container (measured:
-# 4 after one call, 8 after two). The same applies to anything the agent
-# double-forks from its shell tools, so this fixes a latent leak beyond meetings.
+# and Node only reaps children it spawned itself — so every browser the runtime starts
+# leaves four unreapable zombies behind without it, accumulating for the life of the
+# container (measured: 4 after one call, 8 after two). The same applies to anything
+# the agent double-forks from its shell tools.
 #
 # tini forwards signals to start.sh, so the graceful-shutdown path (SIGTERM ->
 # node -> service teardown) is unchanged.

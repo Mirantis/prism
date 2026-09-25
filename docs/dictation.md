@@ -8,10 +8,10 @@ speak back, and the recording is not kept.
 
 The same OpenAI voice credential [voice chat](voice-chat.md#what-you-need) uses. The
 transcriber is `OPENAI_TRANSCRIPTION_MODEL`; see
-[Configuration](configuration.md#voice-meetings).
+[Configuration](configuration.md#voice-calls).
 
 A dictation does not use the agent's voice. You can dictate while a voice chat
-or a Meet call is live on another connection.
+or a voice call is live.
 
 ## Using it
 

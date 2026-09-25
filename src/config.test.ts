@@ -1046,21 +1046,17 @@ describe('config', () => {
       expect(cfg.openaiRealtimeApiKey).toBe('__nexus_cred:1234-uuid__');
     });
 
-    it('speaks through GPT-Live, with GPT-6 Sol doing the work behind it', async () => {
+    it('speaks through GPT-Live', async () => {
       delete process.env.OPENAI_REALTIME_MODEL;
-      delete process.env.OPENAI_VOICE_BACKEND_MODEL;
       const cfg = await loadConfig();
       expect(cfg.openaiRealtimeModel).toBe('gpt-live-1');
-      expect(cfg.openaiVoiceBackendModel).toBe('gpt-6-sol');
     });
 
-    it('reads a voice model and a backend model override', async () => {
-      // Under Azure both are deployment names, which the operator chooses.
+    it('reads a voice model override', async () => {
+      // Under Azure it is a deployment name, which the operator chooses.
       process.env.OPENAI_REALTIME_MODEL = 'voice-deployment';
-      process.env.OPENAI_VOICE_BACKEND_MODEL = 'backend-deployment';
       const cfg = await loadConfig();
       expect(cfg.openaiRealtimeModel).toBe('voice-deployment');
-      expect(cfg.openaiVoiceBackendModel).toBe('backend-deployment');
     });
 
     it('names a voice rather than accepting the API default', async () => {
@@ -1076,51 +1072,6 @@ describe('config', () => {
       expect(cfg.openaiRealtimeVoice).toBe('cedar');
     });
 
-    it('asks the backend for medium reasoning effort by default', async () => {
-      delete process.env.OPENAI_REALTIME_REASONING_EFFORT;
-      const cfg = await loadConfig();
-      expect(cfg.openaiRealtimeReasoningEffort).toBe('medium');
-    });
-
-    it('reads a reasoning effort override', async () => {
-      for (const level of ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']) {
-        process.env.OPENAI_REALTIME_REASONING_EFFORT = level;
-        vi.resetModules();
-        const cfg = await loadConfig();
-        expect(cfg.openaiRealtimeReasoningEffort).toBe(level);
-      }
-    });
-
-    it('hands the level back to the API when set empty', async () => {
-      for (const empty of ['', '   ']) {
-        process.env.OPENAI_REALTIME_REASONING_EFFORT = empty;
-        vi.resetModules();
-        const cfg = await loadConfig();
-        expect(cfg.openaiRealtimeReasoningEffort).toBeNull();
-      }
-    });
-
-    it('tolerates case and stray whitespace around a level', async () => {
-      // The fallback raises the effort, so a mangled `low` would cost the operator
-      // latency they were explicitly trying to buy back.
-      for (const messy of [' low', 'Low', 'LOW ']) {
-        process.env.OPENAI_REALTIME_REASONING_EFFORT = messy;
-        vi.resetModules();
-        const cfg = await loadConfig();
-        expect(cfg.openaiRealtimeReasoningEffort).toBe('low');
-      }
-    });
-
-    it('falls back to the default on an unrecognized level', async () => {
-      // A typo should cost accuracy in a call, not the boot.
-      for (const bad of ['very-high', 'off', '3']) {
-        process.env.OPENAI_REALTIME_REASONING_EFFORT = bad;
-        vi.resetModules();
-        const cfg = await loadConfig();
-        expect(cfg.openaiRealtimeReasoningEffort).toBe('medium');
-      }
-    });
-
     it('defaults the call duration cap to 60 minutes', async () => {
       delete process.env.MEETING_TIMEOUT_MINUTES;
       const cfg = await loadConfig();
@@ -1134,33 +1085,12 @@ describe('config', () => {
     });
 
     it('falls back to the default cap on junk or non-positive values', async () => {
-      // A meeting with no cap could hold a browser and a metered socket forever.
+      // A call with no cap could hold a metered voice session forever.
       for (const bad of ['soon', '0', '-10']) {
         process.env.MEETING_TIMEOUT_MINUTES = bad;
         vi.resetModules();
         const cfg = await loadConfig();
         expect(cfg.meetingTimeoutMinutes).toBe(60);
-      }
-    });
-
-    it('defaults the admission wait to five minutes, in milliseconds', async () => {
-      delete process.env.MEETING_ADMISSION_TIMEOUT_SECONDS;
-      const cfg = await loadConfig();
-      expect(cfg.meetingAdmissionTimeoutMs).toBe(300_000);
-    });
-
-    it('converts an admission wait override from seconds', async () => {
-      process.env.MEETING_ADMISSION_TIMEOUT_SECONDS = '30';
-      const cfg = await loadConfig();
-      expect(cfg.meetingAdmissionTimeoutMs).toBe(30_000);
-    });
-
-    it('falls back to the default admission wait on junk', async () => {
-      for (const bad of ['later', '0']) {
-        process.env.MEETING_ADMISSION_TIMEOUT_SECONDS = bad;
-        vi.resetModules();
-        const cfg = await loadConfig();
-        expect(cfg.meetingAdmissionTimeoutMs).toBe(300_000);
       }
     });
 
@@ -1201,8 +1131,7 @@ describe('config', () => {
     });
 
     it('treats an empty value as off rather than as a default to defer', async () => {
-      // Deliberately unlike OPENAI_REALTIME_REASONING_EFFORT, where empty means "let
-      // the API choose". There is no API to defer to here, so empty means no logging.
+      // There is nobody to defer to here, so empty means no logging.
       for (const empty of ['', '   ']) {
         process.env.MEETING_TRANSCRIPT_LOGGING = empty;
         vi.resetModules();
@@ -1222,10 +1151,7 @@ describe('config', () => {
     });
 
     it('has no display-name setting', async () => {
-      // Removed rather than defaulted: participants see the Google account's own
-      // name, and the only path the setting applied to is the guest join Meet
-      // auto-denies. It survives as a per-join argument for a platform that
-      // admits named guests.
+      // A call shows the name of the account the call app is signed in to.
       const cfg = await loadConfig();
       expect(cfg).not.toHaveProperty('meetingDisplayName');
     });

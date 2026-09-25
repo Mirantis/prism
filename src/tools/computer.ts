@@ -11,11 +11,16 @@ import { renderToolResult } from '../lib/tool-output-limiter';
 
 const pictures = new WeakMap<object, string[]>();
 
-/** Schemas stay fixed; the calling invocation supplies its ownership and image sink. */
-export function getComputerTools(
-  use?: ComputerUse,
-  voiceChannel?: () => ModelChannel | null,
-): Record<string, Tool> {
+/**
+ * Schemas stay fixed; the calling invocation supplies its ownership.
+ *
+ * A voice run (`use.mode === 'voice'`) also gets the user's shared screen and
+ * `computer_instruct`, which passes on what its voice heard to the chat turn using the
+ * computer. A call's run gets them too: anyone in a call can already drive every tool
+ * through the voice, so relaying to a chat turn widens nothing.
+ */
+export function getComputerTools(use?: ComputerUse): Record<string, Tool> {
+  const voice = use?.mode === 'voice';
   const desktop = new Proxy(
     pictureFor(DEFAULT_SCREEN),
     {
@@ -25,14 +30,11 @@ export function getComputerTools(
           if (!use) throw new Error('Computer tools require an active invocation.');
           const imageUrls: string[] = [];
           const channel: ModelChannel = {
-            showImage(url, note) {
-              if (voiceChannel) return voiceChannel()?.showImage(url, note) ?? false;
+            showImage(url) {
               imageUrls.push(url);
               return true;
             },
-            notify(text) {
-              voiceChannel?.()?.notify(text);
-            },
+            notify() {},
           };
           const output = await computerService.act(
             use,
@@ -51,7 +53,7 @@ export function getComputerTools(
       },
     },
   ) as unknown as AgentComputer;
-  const base = createComputerTools(desktop, desktop, voiceChannel ? desktop : null);
+  const base = createComputerTools(desktop, desktop, voice ? desktop : null);
   const result: Record<string, Tool> = {};
   for (const [name, original] of Object.entries(base)) {
     result[name] = {
@@ -79,9 +81,9 @@ export function getComputerTools(
           value: [
             { type: 'text', text },
             ...images.map((url) => ({
-              type: 'image-data' as const,
-              data: url.split(',')[1],
+              type: 'file' as const,
               mediaType: 'image/jpeg',
+              data: { type: 'data' as const, data: url.split(',')[1] },
             })),
           ],
         };
@@ -100,8 +102,7 @@ export function getComputerTools(
         use,
         (computer) => computer.lookAtScreen(),
         {
-          showImage(url, note) {
-            if (voiceChannel) return voiceChannel()?.showImage(url, note) ?? false;
+          showImage(url) {
             images.push(url);
             return true;
           },
@@ -170,7 +171,7 @@ export function getComputerTools(
       };
     },
   });
-  if (voiceChannel)
+  if (voice)
     result.computer_instruct = tool({
       description:
         'Relay your user’s spoken instructions to the chat invocation currently using the computer. Use this instead of competing with it for input. The instructions appear in that conversation.',

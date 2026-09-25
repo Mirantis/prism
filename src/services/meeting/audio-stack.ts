@@ -1,24 +1,24 @@
 /**
- * The virtual audio devices that let a browser talk to a program.
+ * The virtual display and audio devices of the agent's computer.
  *
- * Chrome will only send audio it captured from a microphone and will only play
- * audio to a speaker, so the bot needs both — as software. PulseAudio null-sinks
- * provide them:
+ * A call app will only send audio it captured from a microphone and will only play
+ * audio to a speaker, so the agent needs both — as software. PulseAudio null-sinks
+ * provide them, and they are the desktop's defaults, so every program on it uses them:
  *
- *   meet_out          a sink Chrome plays the meeting into. Its `.monitor` source
- *                     is what `parec` records, giving us everything the room says.
+ *   meet_out          a sink the desktop plays into, a call included. Its `.monitor`
+ *                     source is what `parec` records, giving us everything the room says.
  *   bot_speak         a sink we play the model's speech into...
  *   bot_mic           ...remapped from `bot_speak.monitor` into a *source*, which
- *                     is what Chrome sees as a microphone. (A monitor source can
+ *                     is what a call app sees as a microphone. (A monitor source can
  *                     technically be captured directly, but Chrome filters monitor
  *                     devices out of its microphone list, so the remap is required
  *                     rather than cosmetic.)
  *
- * Xvfb is here for a related reason: Meet's WebRTC path is markedly less reliable
- * under `--headless` than in a real rendered browser, so Chrome runs normally on a
- * virtual display instead.
+ * Xvfb is here for a related reason: WebRTC is markedly less reliable under
+ * `--headless` than in a real rendered browser, so Chrome runs normally on a virtual
+ * display instead.
  *
- * Everything is per-meeting and private: its own PulseAudio daemon with its own
+ * Everything is private to one stack: its own PulseAudio daemon with its own
  * runtime dir, so nothing is shared with a host daemon (there isn't one in the
  * container) and teardown is unambiguous — kill the daemon, the devices are gone.
  */
@@ -69,6 +69,33 @@ export function sourceIsRunning(pactlShortSources: string, sourceName: string): 
 }
 
 /**
+ * The program recording this source, per `pactl list short sources` and
+ * `pactl list source-outputs`, or null when nothing records it.
+ *
+ * A source output names its source by index, which the short list maps to a name. The
+ * program is the output's `application.name`, falling back to its binary.
+ */
+export function sourceClientName(
+  pactlShortSources: string,
+  pactlSourceOutputs: string,
+  sourceName: string,
+): string | null {
+  const index = pactlShortSources
+    .split('\n')
+    .map((line) => line.trim().split(/\s+/))
+    .find((fields) => fields[1] === sourceName)?.[0];
+  if (index === undefined) return null;
+
+  for (const block of pactlSourceOutputs.split(/^Source Output #/m).slice(1)) {
+    if (block.match(/^\s*Source:\s*(\S+)\s*$/m)?.[1] !== index) continue;
+    const property = (key: string) => block.match(new RegExp(`^\\s*${key} = "(.*)"\\s*$`, 'm'))?.[1];
+    const name = property('application\\.name') ?? property('application\\.process\\.binary');
+    if (name) return name;
+  }
+  return null;
+}
+
+/**
  * The virtual display's geometry, which anything that grabs the screen needs too.
  *
  * Full HD, the same size the agent's computer reserves, so one desktop size serves both
@@ -91,8 +118,11 @@ export interface AudioStackOptions {
 export interface AudioStackHandles {
   /** Env vars Chrome needs to use the virtual devices and display. */
   browserEnv: Record<string, string>;
-  /** Meeting audio, 48 kHz pcm16 mono — feed to the conversation. */
-  onCapture: (handler: (pcm48k: Buffer) => void) => void;
+  /**
+   * Everything the desktop plays, 48 kHz pcm16 mono, silence included. Each handler gets
+   * every chunk; the returned function removes it.
+   */
+  onCapture: (handler: (pcm48k: Buffer) => void) => () => void;
   /**
    * Called once if capture or playback dies while the stack is meant to be running.
    *
@@ -100,18 +130,18 @@ export interface AudioStackHandles {
    * says will ever reach a model again, and a dead `pacat` means nothing the model
    * says will ever be heard, so the owner ends the call rather than leave a
    * participant that has silently stopped taking part. Fires immediately if the
-   * loss happened before a handler was registered.
+   * loss happened before a handler was registered; the returned function removes it.
    */
-  onLost: (handler: (reason: string) => void) => void;
+  onLost: (handler: (reason: string) => void) => () => void;
   /** Sink for the model's speech, 48 kHz pcm16 mono, with backpressure. */
   playbackSink: PlaybackSink;
 }
 
 /**
- * Owns the display and audio processes for one meeting.
+ * Owns the display and audio processes for the agent's computer.
  *
  * `start()` is all-or-nothing: a partial failure tears down whatever came up, so a
- * failed join can't leak a daemon or an X server.
+ * failed start can't leak a daemon or an X server.
  */
 export class AudioStack {
   private pulse: ChildProcess | null = null;
@@ -120,8 +150,8 @@ export class AudioStack {
   private pacat: ChildProcess | null = null;
   private runtimeDir: string | null = null;
   private display: string | null = null;
-  private captureHandler: ((pcm: Buffer) => void) | null = null;
-  private lostHandler: ((reason: string) => void) | null = null;
+  private readonly captureHandlers = new Set<(pcm: Buffer) => void>();
+  private readonly lostHandlers = new Set<(reason: string) => void>();
   /** Kept so a loss that beats the handler's registration still gets reported. */
   private lostReason: string | null = null;
   private stopped = false;
@@ -154,11 +184,13 @@ export class AudioStack {
         PULSE_SOURCE: BOT_MIC_SOURCE,
       },
       onCapture: (handler) => {
-        this.captureHandler = handler;
+        this.captureHandlers.add(handler);
+        return () => this.captureHandlers.delete(handler);
       },
       onLost: (handler) => {
-        this.lostHandler = handler;
+        this.lostHandlers.add(handler);
         if (this.lostReason) handler(this.lostReason);
+        return () => this.lostHandlers.delete(handler);
       },
       // No backpressure handling needed: `AudioPlayback` paces writes to stay a
       // fixed, small distance ahead of real time, so the pipe never fills. (An
@@ -242,7 +274,7 @@ export class AudioStack {
       stderr += chunk.toString();
     });
     proc.on('error', (err) => {
-      logger.error({ err }, '[Meeting] PulseAudio failed to spawn');
+      logger.error({ err }, '[Audio] PulseAudio failed to spawn');
     });
 
     // Wait for the daemon to answer, rather than sleeping a fixed interval:
@@ -272,7 +304,7 @@ export class AudioStack {
       'load-module',
       'module-null-sink',
       `sink_name=${MEET_OUT_SINK}`,
-      'sink_properties=device.description=MeetOutput',
+      'sink_properties=device.description=PrismSpeaker',
       `rate=${MEETING_SAMPLE_RATE}`,
       'channels=1',
     ]);
@@ -291,7 +323,8 @@ export class AudioStack {
       'module-remap-source',
       `source_name=${BOT_MIC_SOURCE}`,
       `master=${BOT_SPEAK_SINK}.monitor`,
-      'source_properties=device.description=BotMicrophone',
+      // A person picks it by this name in a call app's device list.
+      'source_properties=device.description=PrismMicrophone',
       'channels=1',
     ]);
     // Chrome reads these as its defaults when PULSE_SINK/PULSE_SOURCE aren't
@@ -316,7 +349,9 @@ export class AudioStack {
     );
     this.parec = proc;
 
-    proc.stdout?.on('data', (chunk: Buffer) => this.captureHandler?.(chunk));
+    proc.stdout?.on('data', (chunk: Buffer) => {
+      for (const handler of this.captureHandlers) handler(chunk);
+    });
     proc.on('error', (err) => this.noteLoss(`the capture process failed to run: ${err.message}`));
     proc.on('exit', (code) => this.noteLoss(`the capture process exited (code ${code})`));
   }
@@ -341,7 +376,7 @@ export class AudioStack {
 
     // The sink write path already drops frames when stdin closes; this keeps an
     // EPIPE from becoming an unhandled error event and taking the runtime down.
-    proc.stdin?.on('error', (err) => logger.warn(`[Meeting] pacat stdin: ${err.message}`));
+    proc.stdin?.on('error', (err) => logger.warn(`[Audio] pacat stdin: ${err.message}`));
     proc.on('error', (err) => this.noteLoss(`the playback process failed to run: ${err.message}`));
     proc.on('exit', (code) => this.noteLoss(`the playback process exited (code ${code})`));
   }
@@ -379,7 +414,7 @@ export class AudioStack {
 
       if (Date.now() >= deadline) {
         logger.warn(
-          `[Meeting] ${BOT_MIC_SOURCE} is still not being captured after ${timeoutMs}ms` +
+          `[Audio] ${BOT_MIC_SOURCE} is still not being captured after ${timeoutMs}ms` +
             (read.failure ? ` (last read failed: ${read.failure})` : ''),
         );
         return false;
@@ -399,6 +434,21 @@ export class AudioStack {
   async isMicCaptured(): Promise<boolean> {
     if (this.stopped) return false;
     return (await this.readMicCapture()).capturing;
+  }
+
+  /** The program recording `bot_mic`, which is the call app, or null when none is. */
+  async micClient(): Promise<string | null> {
+    if (this.stopped) return null;
+    try {
+      const [sources, outputs] = await Promise.all([
+        this.pactl(['list', 'short', 'sources']),
+        this.pactl(['list', 'source-outputs']),
+      ]);
+      return sourceClientName(sources, outputs, BOT_MIC_SOURCE);
+    } catch (err) {
+      logger.warn(`[Call] Could not read which program records the microphone: ${String(err)}`);
+      return null;
+    }
   }
 
   /** Is anything reading `bot_mic` right now, and if the question failed, why. */
@@ -423,8 +473,8 @@ export class AudioStack {
   private noteLoss(reason: string): void {
     if (this.stopped || this.lostReason) return;
     this.lostReason = reason;
-    logger.error(`[Meeting] Audio stack lost: ${reason}`);
-    this.lostHandler?.(reason);
+    logger.error(`[Audio] Audio stack lost: ${reason}`);
+    for (const handler of this.lostHandlers) handler(reason);
   }
 
   /** Env pointing PulseAudio clients at our private daemon. */
@@ -450,16 +500,16 @@ export class AudioStack {
    */
   async stop(): Promise<void> {
     this.stopped = true;
-    this.captureHandler = null;
+    this.captureHandlers.clear();
     // The owner is already ending the call — the deaths below are its own doing.
-    this.lostHandler = null;
+    this.lostHandlers.clear();
 
     for (const proc of [this.parec, this.pacat, this.pulse, this.xvfb]) {
       if (!proc || proc.exitCode !== null) continue;
       try {
         proc.kill('SIGTERM');
       } catch (err) {
-        logger.debug(`[Meeting] Failed to signal a stack process: ${String(err)}`);
+        logger.debug(`[Audio] Failed to signal a stack process: ${String(err)}`);
       }
     }
 
@@ -481,7 +531,7 @@ export class AudioStack {
       try {
         await fs.rm(this.runtimeDir, { recursive: true, force: true });
       } catch (err) {
-        logger.debug(`[Meeting] Could not remove runtime dir: ${String(err)}`);
+        logger.debug(`[Audio] Could not remove runtime dir: ${String(err)}`);
       }
       this.runtimeDir = null;
     }

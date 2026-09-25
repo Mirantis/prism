@@ -104,8 +104,17 @@ describe('resolveLiveEndpoint', () => {
     expect(endpoint.url).not.toContain('nexus_cred');
   });
 
+  it('sends the key the way both OpenAI and an Azure resource read it', () => {
+    // Measured on an Azure resource: a bearer alone is answered with a redirect that
+    // puts the key in the URL, while `api-key` starts the session.
+    mockConfig.openaiRealtimeUrl = 'wss://example-resource.openai.azure.com/openai/v1/realtime';
+    mockConfig.openaiRealtimeApiKey = 'azure-key';
+
+    expect(resolveLiveEndpoint().headers).toEqual({ Authorization: 'Bearer azure-key', 'api-key': 'azure-key' });
+  });
+
   it('sends no header but the credential', () => {
-    expect(Object.keys(resolveLiveEndpoint().headers)).toEqual(['Authorization']);
+    expect(Object.keys(resolveLiveEndpoint().headers)).toEqual(['Authorization', 'api-key']);
   });
 
   it('throws a clear error when no key is configured', () => {

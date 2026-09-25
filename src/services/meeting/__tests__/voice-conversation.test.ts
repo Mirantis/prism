@@ -11,17 +11,14 @@ import { config } from '../../../config';
 import { logger } from '../../../logger';
 import { VoiceConversation } from '../voice-conversation';
 import { MEETING_SAMPLE_RATE, REALTIME_SAMPLE_RATE } from '../resampler';
-import type { SpeakerReading } from '../meeting-provider.interface';
-import { inferenceGate } from '../../../lib/inference-gate';
-import {
-  functionCallEvent,
-  responseCompletedEvent,
-  startLiveServer,
-  type LiveServer,
-} from '../../../test-utils/live-server';
+import { startLiveServer, type LiveServer } from '../../../test-utils/live-server';
+import type { InvokeRequest, InvokeStep } from '../../../types';
 
 vi.mock('../../../logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock('../../computer/computer-help.service', () => ({
+  computerHelpService: { list: vi.fn(async () => []) },
 }));
 
 interface Harness {
@@ -29,8 +26,8 @@ interface Harness {
   server: LiveServer;
   lost: string[];
   written: Buffer[];
-  execute: ReturnType<typeof vi.fn>;
-  finished: ReturnType<typeof vi.fn>;
+  /** Each backend run the conversation started, in order. */
+  runs: InvokeRequest[];
 }
 
 let active: Harness | null = null;
@@ -50,29 +47,27 @@ async function harness(sampleRate = MEETING_SAMPLE_RATE): Promise<Harness> {
   const server = await startLiveServer();
   const lost: string[] = [];
   const written: Buffer[] = [];
-  const execute = vi.fn(async () => '{"ok":true}');
-  const finished = vi.fn();
+  const runs: InvokeRequest[] = [];
+  const run = (request: InvokeRequest): AsyncIterable<InvokeStep> => {
+    runs.push(request);
+    return (async function* () {
+      yield { text: 'You have two tasks scheduled.', toolCalls: [] };
+    })();
+  };
   const conversation = new VoiceConversation({
     instructions: 'You are Prism, the voice.',
-    backendInstructions: 'You are Prism, the backend.',
-    tools: { declarations: [], count: 0, execute },
+    backend: { userId: 'u1', agentId: 'a1', sessionInstructions: 'call rules', computer: true, run },
     sink: { write: (chunk: Buffer) => void written.push(chunk) },
-    agentName: 'Prism',
     sampleRate,
     endpointOverride: { url: server.url, headers: {} },
     onSessionLost: (reason) => lost.push(reason),
-    onResponseFinished: finished,
   });
   await conversation.start();
-  active = { conversation, server, lost, written, execute, finished };
+  active = { conversation, server, lost, written, runs };
   return active;
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 30));
-
-function reading(name: string, id = `devices/${name}`): SpeakerReading {
-  return { id, isSelf: false, who: { kind: 'person', name } };
-}
 
 /** Every context append on the wire, as `type: content`. */
 function appends(server: LiveServer, type: string): string[] {
@@ -106,50 +101,22 @@ describe('losing the voice session', () => {
   });
 });
 
-describe('running the tools the backend calls', () => {
-  it('runs a call and hands its result back', async () => {
+describe('handing work to the backend', () => {
+  it('runs a delegation with what was said, and gives the voice the answer to say', async () => {
     const h = await harness();
 
-    h.server.emit(functionCallEvent('call_1', 'memory_search', '{"query":"deploys"}'));
-    h.server.emit(responseCompletedEvent());
-    await h.server.waitFor((f) => f.type === 'response.create');
-
-    expect(h.execute).toHaveBeenCalledWith('memory_search', '{"query":"deploys"}');
-    expect(h.server.sent.find((f) => f.type === 'response.item.create')?.item).toEqual({
-      type: 'function_call_output',
-      call_id: 'call_1',
-      output: '{"ok":true}',
+    h.server.emit({ type: 'session.input_transcript.delta', delta: 'Prism, what is scheduled?', start_ms: 600, end_ms: 1200 });
+    h.server.emit({
+      type: 'session.delegation.created',
+      offset_ms: 1300,
+      delegation: { id: 'item_delegation_1', type: 'delegation', target: 'client' },
     });
-    expect(h.conversation.statistics).toMatchObject({ toolCalls: 1, backendInputTokens: 800, backendOutputTokens: 14 });
-  });
+    const answer = await h.server.waitFor((f) => f.type === 'session.commentary.append');
 
-  it('holds a call while the computer is held for a secure sign-in, and runs it after', async () => {
-    const h = await harness();
-    inferenceGate.hold();
-    try {
-      h.server.emit(functionCallEvent('call_1', 'shell_exec', '{"command":"ls"}'));
-      h.server.emit(responseCompletedEvent());
-      await settle();
-      expect(h.execute).not.toHaveBeenCalled();
-    } finally {
-      inferenceGate.free();
-    }
-    await h.server.waitFor((f) => f.type === 'response.create');
-    expect(h.execute).toHaveBeenCalledWith('shell_exec', '{"command":"ls"}');
-  });
-
-  it('says the backend finished only once it answers without calling a tool', async () => {
-    const h = await harness();
-
-    h.server.emit(functionCallEvent('call_1', 'memory_search'));
-    h.server.emit(responseCompletedEvent());
-    await h.server.waitFor((f) => f.type === 'response.create');
-    expect(h.finished).not.toHaveBeenCalled();
-
-    // The follow-up that uses the tool's result.
-    h.server.emit(responseCompletedEvent());
-    await settle();
-    expect(h.finished).toHaveBeenCalledTimes(1);
+    expect(h.runs[0]).toMatchObject({ mode: 'voice', sessionInstructions: 'call rules' });
+    expect(h.runs[0]!.prompt).toContain('Them: Prism, what is scheduled?');
+    expect(answer).toMatchObject({ delegation_id: 'item_delegation_1', content: 'You have two tasks scheduled.' });
+    expect(h.conversation.statistics.delegations).toBe(1);
   });
 });
 
@@ -165,21 +132,7 @@ describe('telling the voice what happened', () => {
     expect(appends(h.server, 'session.commentary.append')).toEqual(['Greet the room.']);
   });
 
-  it('shows a picture to the backend without asking it to answer', async () => {
-    const h = await harness();
-
-    expect(h.conversation.showImage('data:image/png;base64,AAAA', 'Your screen.')).toBe(true);
-    await h.server.waitFor((f) => f.type === 'response.item.create');
-    await settle();
-
-    expect(h.server.sent.find((f) => f.type === 'response.item.create')?.item.content).toEqual([
-      { type: 'input_text', text: 'Your screen.' },
-      { type: 'input_image', image_url: 'data:image/png;base64,AAAA' },
-    ]);
-    expect(h.server.sent.some((f) => f.type === 'response.create')).toBe(false);
-  });
-
-  it('shows a recording window by window and asks for an answer', async () => {
+  it('has the backend look at a recording, and the voice say what it found', async () => {
     const h = await harness();
 
     h.conversation.showRecording(
@@ -189,112 +142,14 @@ describe('telling the voice what happened', () => {
       ],
       'Your user recorded their screen.',
     );
-    await h.server.waitFor((f) => f.type === 'response.create');
+    const answer = await h.server.waitFor((f) => f.type === 'session.commentary.append');
 
-    expect(h.server.sent.find((f) => f.type === 'response.item.create')?.item.content).toEqual([
-      { type: 'input_text', text: 'Your user recorded their screen.' },
-      { type: 'input_text', text: 'At 0:00:' },
-      { type: 'input_image', image_url: 'data:image/jpeg;base64,AA' },
-      { type: 'input_text', text: 'At 0:30:' },
-      { type: 'input_image', image_url: 'data:image/jpeg;base64,BB' },
+    expect(h.runs[0]!.promptImages).toEqual([
+      { mediaType: 'image/jpeg', data: 'AA' },
+      { mediaType: 'image/jpeg', data: 'BB' },
     ]);
-  });
-});
-
-describe('knowing who has the floor', () => {
-  it('tells the voice when a new person has the floor, and only then', async () => {
-    const h = await harness();
-
-    h.conversation.setCurrentSpeaker(reading('Emma Lee'));
-    h.conversation.setCurrentSpeaker(reading('Emma Lee'));
-    h.conversation.setCurrentSpeaker({ id: 'devices/self', isSelf: true, who: { kind: 'person', name: 'Prism' } });
-    h.conversation.setCurrentSpeaker(reading('Mario Sarcher'));
-    await h.server.waitFor((f) => f.type === 'session.thinking.append' && String(f.content).startsWith('Mario'));
-
-    expect(appends(h.server, 'session.thinking.append')).toEqual([
-      'Emma Lee is speaking now.',
-      'Mario Sarcher is speaking now.',
-    ]);
-  });
-
-  it('names the people sharing a microphone rather than the platform label', async () => {
-    const h = await harness();
-
-    h.conversation.setCurrentSpeaker({ id: 'devices/room', isSelf: false, who: { kind: 'group', members: ['Emma', 'Lee'] } });
-    await h.server.waitFor((f) => f.type === 'session.thinking.append');
-
-    expect(appends(h.server, 'session.thinking.append')).toEqual([
-      'Several people on one microphone are speaking now: Emma, Lee.',
-    ]);
-  });
-
-  it('reports nobody while the agent itself is speaking', async () => {
-    const h = await harness();
-
-    h.conversation.setCurrentSpeaker(reading('Mario Sarcher'));
-    h.conversation.setCurrentSpeaker({ id: 'devices/self', isSelf: true, who: { kind: 'person', name: 'Prism' } });
-
-    expect(h.conversation.currentSpeaker).toBeNull();
-  });
-
-  it('keeps the last speaker when a read comes back empty', async () => {
-    const h = await harness();
-
-    h.conversation.setCurrentSpeaker(reading('Emma Lee'));
-    h.conversation.setCurrentSpeaker(null);
-
-    expect(h.conversation.currentSpeaker?.who).toEqual({ kind: 'person', name: 'Emma Lee' });
-  });
-
-  it('forgets a speaker that has gone stale', async () => {
-    const h = await harness();
-    h.conversation.setCurrentSpeaker(reading('Emma Lee'));
-
-    // Only the clock is faked: the harness runs a real socket, and faking timers would
-    // stall it.
-    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 6_001 });
-    try {
-      expect(h.conversation.currentSpeaker).toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('pins who asked when the voice hands the request over', async () => {
-    const h = await harness();
-
-    h.conversation.setCurrentSpeaker(reading('Emma Lee'));
-    h.server.emit({ type: 'session.delegation.created', delegation: { id: 'item_1', type: 'delegation', target: 'responses' } });
-    await settle();
-    h.conversation.setCurrentSpeaker(reading('Mario Sarcher'));
-
-    expect(h.conversation.answeringSpeaker?.who).toEqual({ kind: 'person', name: 'Emma Lee' });
-    expect(h.conversation.statistics.delegations).toBe(1);
-  });
-});
-
-describe('a roster read from a moving UI', () => {
-  it('tells the voice who is in the call, without the agent, once per change', async () => {
-    const h = await harness();
-
-    h.conversation.setParticipantNames(['Mario Sarcher', 'Prism', 'Emma Lee']);
-    h.conversation.setParticipantNames(['Emma Lee', 'Mario Sarcher', 'Prism']);
-    await h.server.waitFor((f) => f.type === 'session.thinking.append');
-    await settle();
-
-    expect(appends(h.server, 'session.thinking.append')).toEqual([
-      'The people in the call with you are now: Emma Lee, Mario Sarcher.',
-    ]);
-    expect(h.conversation.roster).toEqual(['Emma Lee', 'Mario Sarcher']);
-  });
-
-  it('does not tell the voice it is alone when the scrape found only itself', async () => {
-    const h = await harness();
-
-    h.conversation.setParticipantNames(['Prism']);
-    await settle();
-
-    expect(appends(h.server, 'session.thinking.append')).toEqual([]);
+    expect(h.runs[0]!.prompt).toContain('Your user recorded their screen. The pictures start at, in order: 0:00 (1), 0:30 (1).');
+    expect(answer.delegation_id).toBeNull();
   });
 });
 
@@ -339,6 +194,17 @@ describe('audio in and out', () => {
     expect(inputs(h.server)[0]).toHaveLength(480);
   });
 
+  it('holds back a chunk too short to yield a sample, rather than sending it empty', async () => {
+    const h = await harness();
+
+    // Four samples: shorter than the filter window, so the downsampler has nothing yet.
+    h.conversation.pushAudio(Buffer.alloc(8));
+    h.conversation.pushAudio(Buffer.alloc(960));
+    await h.server.waitFor((f) => f.type === 'session.input_audio.append');
+
+    expect(inputs(h.server).every((pcm) => pcm.length > 0)).toBe(true);
+  });
+
   it('sends what the caller pushes untouched when the transport speaks 24 kHz', async () => {
     const h = await harness(REALTIME_SAMPLE_RATE);
 
@@ -365,10 +231,8 @@ describe('audio in and out', () => {
       () =>
         new VoiceConversation({
           instructions: 'x',
-          backendInstructions: 'y',
-          tools: { declarations: [], count: 0, execute: vi.fn() },
+          backend: { userId: 'u1', agentId: 'a1', sessionInstructions: 'y', computer: false },
           sink: { write: vi.fn() },
-          agentName: 'Prism',
           sampleRate: 16_000,
           endpointOverride: { url: 'ws://127.0.0.1:1', headers: {} },
         }),

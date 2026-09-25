@@ -23,7 +23,7 @@ export const THUMB_HEIGHT = 18;
 export const CHANGE_THRESHOLD = 0.012;
 
 /** How many pictures reach the model. The runtime refuses more. */
-export const MAX_FRAMES = 24;
+export const MAX_FRAMES = 20;
 
 /** A picture the page kept, with the offset into the recording it was taken at. */
 export interface KeptFrame {

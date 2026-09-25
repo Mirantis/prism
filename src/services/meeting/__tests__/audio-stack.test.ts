@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { AudioStack, sourceIsRunning } from '../audio-stack';
+import { AudioStack, sourceClientName, sourceIsRunning } from '../audio-stack';
 
 /** Tab-separated, as `pactl` writes it — the mic open, the meeting monitor idle. */
 const CAPTURING = [
@@ -60,6 +60,66 @@ describe('sourceIsRunning', () => {
     // must not read as fine — that is the reading a broken setup gives.
     expect(sourceIsRunning(CAPTURING, 'bot_microphone')).toBe(false);
     expect(sourceIsRunning('', 'bot_mic')).toBe(false);
+  });
+});
+
+/**
+ * `pactl list source-outputs` from `pactl` 16.1, the image's version: the remap reading
+ * `bot_speak.monitor`, our own capture of the speaker, and a call app on the microphone.
+ * Trimmed to the fields the parser reads plus a few around them.
+ */
+const SOURCE_OUTPUTS = `Source Output #0
+	Driver: module-remap-source.c
+	Owner Module: 3
+	Client: n/a
+	Source: 1
+	Sample Specification: s16le 1ch 48000Hz
+	Properties:
+		media.name = "Remapped Stream"
+		media.role = "filter"
+
+Source Output #1
+	Driver: protocol-native.c
+	Owner Module: 0
+	Client: 4
+	Source: 0
+	Sample Specification: s16le 2ch 44100Hz
+	Properties:
+		application.name = "parec"
+		media.name = "parec"
+		application.process.binary = "pacat"
+
+Source Output #2
+	Driver: protocol-native.c
+	Owner Module: 0
+	Client: 3
+	Source: 2
+	Sample Specification: s16le 2ch 44100Hz
+	Properties:
+		application.name = "Slack"
+		media.name = "RecordStream"
+		application.process.binary = "slack"
+`;
+
+describe('sourceClientName', () => {
+  it('names the program recording the microphone', () => {
+    expect(sourceClientName(CAPTURING, SOURCE_OUTPUTS, 'bot_mic')).toBe('Slack');
+  });
+
+  it('does not credit the microphone with a program recording another source', () => {
+    // Our own capture of the speaker is a source output too, on index 0.
+    const others = SOURCE_OUTPUTS.split('Source Output #2')[0];
+    expect(sourceClientName(CAPTURING, others, 'bot_mic')).toBeNull();
+    expect(sourceClientName(CAPTURING, SOURCE_OUTPUTS, 'meet_out.monitor')).toBe('parec');
+  });
+
+  it('falls back to the binary when a program states no name', () => {
+    const unnamed = SOURCE_OUTPUTS.replace('\t\tapplication.name = "Slack"\n', '');
+    expect(sourceClientName(CAPTURING, unnamed, 'bot_mic')).toBe('slack');
+  });
+
+  it('answers null when the microphone is not in the source list', () => {
+    expect(sourceClientName('', SOURCE_OUTPUTS, 'bot_mic')).toBeNull();
   });
 });
 

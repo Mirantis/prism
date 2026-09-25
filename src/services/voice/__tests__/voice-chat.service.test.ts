@@ -21,21 +21,8 @@ vi.mock('../../../config', () => ({
 vi.mock('../voice-instructions', () => ({
   buildVoiceInstructions: vi.fn(async () => ({
     instructions: 'be yourself',
-    backendInstructions: 'do the work',
-    agentName: 'Prism',
-    lockedIn: false,
+    sessionInstructions: 'do the work',
   })),
-}));
-
-vi.mock('../../meeting/tool-bridge', () => ({
-  prepareMeetingTools: vi.fn(async () => ({ declarations: [], execute: vi.fn(), count: 3 })),
-}));
-vi.mock('../realtime-tools', () => ({
-  prepareRealtimeTools: vi.fn(() => ({ declarations: [], execute: vi.fn(), count: 0 })),
-}));
-vi.mock('../voice-chat-tools', () => ({
-  prepareVoiceChatTools: vi.fn((base: unknown) => base),
-  VOICE_CHAT_TRUNCATION_GUIDANCE: 'guidance',
 }));
 
 const trackEvent = vi.fn();
@@ -55,7 +42,7 @@ class FakeConversation {
   readonly sink: PlaybackSink;
   readonly sampleRate?: number;
   readonly instructions?: string;
-  readonly backendInstructions?: string;
+  readonly backend?: { sessionInstructions: string };
   readonly onSessionLost?: (reason: string) => void;
   readonly statistics = {
     delegations: 2,
@@ -70,13 +57,13 @@ class FakeConversation {
     sink: PlaybackSink;
     sampleRate?: number;
     instructions?: string;
-    backendInstructions?: string;
+    backend?: { sessionInstructions: string };
     onSessionLost?: (reason: string) => void;
   }) {
     this.sink = options.sink;
     this.sampleRate = options.sampleRate;
     this.instructions = options.instructions;
-    this.backendInstructions = options.backendInstructions;
+    this.backend = options.backend;
     this.onSessionLost = options.onSessionLost;
     conversations.push(this);
   }
@@ -120,7 +107,6 @@ class FakeComputer {
 }
 
 vi.mock('../../computer/agent-computer', () => ({ AgentComputer: FakeComputer }));
-vi.mock('../../../tools/computer', () => ({ getComputerTools: vi.fn(() => ({})) }));
 vi.mock('../../computer/supported', () => ({ hasComputer: () => true }));
 
 const { voiceChatService } = await import('../voice-chat.service');
@@ -146,7 +132,6 @@ async function startSession(): Promise<{ signal: Signal; conversation: FakeConve
   await voiceChatService.start({
     userId: 'user-1',
     agentId: 'agent-1',
-    threadId: 'thread-1',
     signal,
   });
   return { signal, conversation: conversations[conversations.length - 1]! };
@@ -180,7 +165,7 @@ afterEach(async () => {
   // The lock is one per runtime while these sessions are one per test.
   await voiceChatService.stop();
   voiceSessionLock.release('voice-chat');
-  voiceSessionLock.release('meeting');
+  voiceSessionLock.release('call');
   await computerService.close();
 });
 
@@ -203,7 +188,7 @@ describe('starting a session', () => {
   it('gives the voice and the backend their own instructions', async () => {
     const { conversation } = await startSession();
     expect(conversation.instructions).toBe('be yourself');
-    expect(conversation.backendInstructions).toBe('do the work');
+    expect(conversation.backend?.sessionInstructions).toBe('do the work');
   });
 
   it('tells the core the transport already speaks the model rate', async () => {
@@ -211,12 +196,12 @@ describe('starting a session', () => {
     expect(conversation.sampleRate).toBe(REALTIME_SAMPLE_RATE);
   });
 
-  it('refuses a session while a meeting holds the agent voice', async () => {
-    voiceSessionLock.tryAcquire('meeting');
+  it('refuses a session while a call holds the agent voice', async () => {
+    voiceSessionLock.tryAcquire('call');
 
     const { signal } = await startSession();
 
-    expect(signal.error).toHaveBeenCalledWith(expect.stringContaining('meeting call'));
+    expect(signal.error).toHaveBeenCalledWith(expect.stringContaining('in a call'));
     expect(signal.state).not.toHaveBeenCalled();
     expect(conversations).toHaveLength(0);
   });
@@ -323,8 +308,6 @@ describe('ending a session', () => {
     expect(trackEvent).toHaveBeenCalledWith('voice chat started', 'user-1', {
       inference_provider: 'azure',
       inference_source: 'managed',
-      tools: '3',
-      locked_in: 'false',
       surface: 'chat',
       computer: 'false',
     });

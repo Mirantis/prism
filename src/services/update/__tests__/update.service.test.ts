@@ -38,7 +38,7 @@ const {
   idleState: {
     busy: false,
     exchange: false,
-    meeting: false,
+    call: false,
     cron: false,
     goals: false,
     shellProcs: 0,
@@ -71,10 +71,10 @@ vi.mock('../../../tools/shell/process-manager', () => ({
 vi.mock('../../../tools/shell/agent-task-manager', () => ({
   getAgentTaskManager: () => ({ runningCount: () => idleState.agentTasks }),
 }));
-vi.mock('../../meeting/meeting-bot.service', () => ({
-  meetingBotService: {
+vi.mock('../../call/call.service', () => ({
+  callService: {
     get isActive() {
-      return idleState.meeting;
+      return idleState.call;
     },
   },
 }));
@@ -123,7 +123,7 @@ beforeEach(() => {
   Object.assign(idleState, {
     busy: false,
     exchange: false,
-    meeting: false,
+    call: false,
     cron: false,
     goals: false,
     shellProcs: 0,

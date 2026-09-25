@@ -10,8 +10,8 @@
  * comes from the DOM — the call bar, the speaking cue, the call button coming
  * back. What crossed the wire comes from the mock's
  * `/state`: `inboundMs` grows only if the browser's microphone reached the model,
- * `toolOutputs` only if the runtime ran the tool the backend called, and `deltasSent`
- * only once the voice answered. A mute is that same `inboundMs` standing still while
+ * `results` only if the runtime's own run answered what the voice handed over, and
+ * `deltasSent` only once the voice answered. A mute is that same `inboundMs` standing still while
  * the session stays open.
  *
  * The waits come from `support/voice-model.ts`, which owns the mock's counters and
@@ -23,6 +23,7 @@ import { createBdd } from 'playwright-bdd';
 import { expect, type Page } from '@playwright/test';
 import {
   MICROPHONE_MS,
+  RUN_TIMEOUT_MS,
   describeBrowser,
   describeExchange,
   getBaseline,
@@ -100,25 +101,26 @@ Then('the voice model hears at least half a second of my microphone', async ({ p
 
 Then('the call runs on GPT-Live with the agent behind it', async () => {
   const state = await readState();
-  expect(state.lastStart, describeExchange(state)).toMatchObject({ model: 'gpt-live-1', backendModel: 'gpt-6-sol' });
-  expect(state.lastStart?.tools ?? 0, describeExchange(state)).toBeGreaterThan(0);
+  expect(state.lastStart, describeExchange(state)).toEqual({ model: 'gpt-live-1', delegation: 'client' });
 });
 
-Then(`the runtime runs the tool the agent's backend asked for`, async ({ page }) => {
+Then(`the agent answers what the voice handed over`, async ({ page }) => {
   await waitForModel(
-    "the runtime returning the result of the backend's tool call",
-    (state) => state.toolOutputs - getBaseline().toolOutputs > 0,
+    "the runtime's own run answering the voice's request",
+    (state) => state.results - getBaseline().results > 0,
     describeScreen(page),
+    RUN_TIMEOUT_MS,
   );
 });
 
 Then(`the agent's voice is playing in the browser`, async ({ page }) => {
-  // The voice answers once the tool result is back, so the frames are the runtime's
-  // half of the round trip.
+  // The voice answers once the runtime's run has, so the frames are the runtime's half
+  // of the round trip.
   await waitForModel(
     'the voice answering and streaming it back',
     (state) => state.deltasSent - getBaseline().deltasSent > 0,
     describeScreen(page),
+    RUN_TIMEOUT_MS,
   );
   // And this is the browser's half: the cue is driven by audio the playback
   // worklet actually played, so it is the page's own evidence that the answer

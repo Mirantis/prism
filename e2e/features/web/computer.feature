@@ -22,7 +22,7 @@ Feature: The agent's computer in the browser
     When I record my screen for a few seconds
     Then the voice model hears my narration while the recording runs
     When I stop the recording
-    Then the agent's backend is given my screen from the recording
+    Then the agent answers about my screen recording
     When I leave the Computer page
     Then the voice model has no session open
     # A second call is the observable proof that leaving released the one voice: the

@@ -130,7 +130,7 @@ and, when a newer release exists, downloads it, verifies it, installs it, and
 restarts the background service. The web UI and the terminal UI show an
 "update available" notice, and both show "Backend updating…" during the restart.
 An automatic update waits until the agent is idle — it never interrupts a
-running turn, a scheduled task, a goal, a live meeting, or a voice chat. An
+running turn, a scheduled task, a goal, a live call, or a voice chat. An
 update you ask for applies immediately.
 
 To update on demand, run:

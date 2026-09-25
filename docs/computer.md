@@ -2,6 +2,8 @@
 
 Prism has its own desktop and browser. Ask it to use websites or desktop apps in chat, goals, or scheduled tasks. Open **Computer** in the [Web UI](web-ui.md) at any time to watch it work.
 
+Prism can also take part by voice in a call on this computer, in the browser or in an installed call app. See [Voice calls](voice-calls.md).
+
 ## What you need
 
 Run the published container image, which includes the desktop packages. Signed-in browser sessions are saved in the persistent data volume.
@@ -16,7 +18,7 @@ While you have control, ask Prism to inspect the screen if you need guidance. De
 
 ## Showing Prism your own screen
 
-During a voice call, **Share screen** shows Prism your own screen, window or tab, the way
+During a voice chat, **Share screen** shows Prism your own screen, window or tab, the way
 you would in a video call. Ask it to look and it reads what is there.
 
 **Record** captures that screen while you talk through what you are doing, for something
@@ -35,13 +37,15 @@ From Slack, **Open Computer** opens the Computer page with the request beside th
 
 While you are completing a help request, Prism's inference is paused, so it cannot see what you type. After the help request ends, any password fields are cleared. Type the password on the desktop, never in a chat message, and submit the sign-in before you press Esc or **I’m done**. The browser never offers to save a password.
 
+A help request sent during a call or a voice chat lasts until the call ends, and Prism continues in the call when you press **I’m done**.
+
 A blocked website can wait while Prism works elsewhere. When you hand back control, the interrupted turn finishes first; the request you unblocked follows it. **Dismiss** closes a help request; Prism treats it as dismissed in later conversation turns. **Stop** cancels the invocation using the computer.
 
 ## Several requests
 
 Computer requests take turns. A conversation waiting for the desktop shows **Waiting for the computer** and offers **Stop**. Other requests can continue using connectors or shell tools. Prism handles desktop steps in the main conversation and can delegate other work to subagents.
 
-Voice can discuss the screen and pass instructions to an active chat task. A voice call creates no chat history of its own.
+In a voice chat or a call, Prism uses the computer itself. While a chat task is using the computer, voice discusses the screen and passes your instructions to that task. A voice chat creates no chat history of its own.
 
 ## Links from Slack
 

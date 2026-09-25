@@ -53,7 +53,7 @@ const version = RELEASE_VERSION_RE.test(process.env.VERSION ?? '')
  *   `chromium-bidi/...` imports don't resolve, so bundling it fails outright. It is
  *   only ever loaded by a lazy `import()` in `services/meeting/browser-stack.ts`,
  *   which a binary never reaches: a SEA ships no Chromium, Xvfb or PulseAudio, so
- *   `isBrowserAvailable()` leaves the meeting tools unregistered at startup. An
+ *   the startup probe finds no computer and registers none of its tools. An
  *   external that can't resolve at runtime is therefore unreachable, not broken.
  * - `fsevents` is a macOS-only native addon pulled in transitively by file watchers;
  *   esbuild has no loader for its `.node` file.

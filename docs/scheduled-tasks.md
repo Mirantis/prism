@@ -51,7 +51,7 @@ Schedules run in the agent's configured **timezone** (see
 | Conversation | "Schedule a daily 9am summary of failing pods." The agent creates the task. |
 | Web UI | **Scheduled Tasks** page — create (name + cron + instruction), list, delete. |
 | Terminal UI | `/schedules` panel — list, **n** to create, **d** to delete. |
-| Voice meeting | "Look into that and get back to me." The agent schedules a one-off task and says when it runs — see [Voice meetings](voice-meetings.md). |
+| Voice call | "Look into that and get back to me." The agent schedules a one-off task and says when it runs — see [Voice calls](voice-calls.md). |
 
 Each task has a **name**, a **schedule**, and an **instruction** — the prompt the
 agent runs on each tick. When a task fires, the agent executes that instruction

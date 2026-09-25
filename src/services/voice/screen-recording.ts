@@ -18,14 +18,21 @@
 
 import { logger } from '../../logger';
 import { trackEvent } from '../../lib/telemetry';
-import type { RecordingSegment } from '../meeting/voice-conversation';
-
-export type { RecordingSegment };
+/** One window of a recording of the user's own screen: where it starts, and the pictures in it. */
+export interface RecordingSegment {
+  /** Where the window starts, the way the model is told it: `0:30`. */
+  label: string;
+  /** Pictures in the order they were taken, as data URIs. */
+  images: string[];
+}
 
 /** The longest recording the runtime keeps. The page stops itself at the same figure. */
 export const MAX_RECORDING_MS = 5 * 60_000;
-/** How many pictures reach the model. The page selects which ones; this is the ceiling. */
-export const MAX_RECORDING_FRAMES = 24;
+/**
+ * How many pictures reach the model. The page selects which ones; this is the ceiling.
+ * They go in one request, and Bedrock takes at most 20 images in one.
+ */
+export const MAX_RECORDING_FRAMES = 20;
 /** A picture larger than this is refused; a 1280-wide JPEG is an order of magnitude smaller. */
 const MAX_FRAME_CHARS = 1024 * 1024;
 /** How much of the recording one label covers. */

@@ -83,8 +83,6 @@ vi.mock('../config', () => ({
     // and undefined here would silently drop the fields rather than fail. The real
     // defaults live in config.ts and are asserted in config.test.ts.
     openaiRealtimeModel: 'gpt-live-1',
-    openaiVoiceBackendModel: 'gpt-6-sol',
-    openaiRealtimeReasoningEffort: 'medium',
     // Read at log time rather than at startup, so leaving it out would silently take
     // whichever branch `undefined` happens to fall into.
     meetingTranscriptLogging: 'off',

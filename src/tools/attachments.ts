@@ -441,9 +441,9 @@ export function getAttachmentTools(
           value: [
             { type: 'text' as const, text: `[Viewing ${result.filename}]` },
             {
-              type: 'image-data' as const,
-              data: bytes.toString('base64'),
+              type: 'file' as const,
               mediaType: result.mediaType,
+              data: { type: 'data' as const, data: bytes.toString('base64') },
             },
           ],
         };

@@ -2,7 +2,7 @@
 
 You can talk to the agent out loud: your client sends your microphone, the agent
 answers, and its tools run while you speak. Where
-[voice meetings](voice-meetings.md) put the agent in a Google Meet call, a voice
+[voice calls](voice-calls.md) put the agent in a call on its computer, a voice
 chat is a direct conversation between the agent and one client.
 
 **Nothing about the call is written down.** There is no transcript, and no
@@ -13,7 +13,7 @@ message into the thread instead, use [dictation](dictation.md).
 
 An OpenAI voice credential, from managed OpenAI/Azure or `OPENAI_REALTIME_API_KEY` /
 `OPENAI_API_KEY` in a standalone direct setup (no managed inference variables
-or custom `OPENAI_BASE_URL`), shared with voice meetings — see
+or custom `OPENAI_BASE_URL`), shared with voice calls — see
 [Configuration](configuration.md#voice-chat). A managed endpoint has to serve GPT-Live.
 
 If outbound traffic is filtered, allow the resolved voice endpoint: Lens for
@@ -21,11 +21,11 @@ managed voice, or `api.openai.com` for direct voice.
 
 Nothing else. The audio travels on the connection your client already uses for
 chat, so a voice chat works wherever chat works: a container, a hosted sandbox
-behind a reverse proxy, the installed binary. A voice meeting needs Chromium and
-PulseAudio; this needs neither.
+behind a reverse proxy, the installed binary. A voice call needs the agent's
+computer; this does not.
 
 The agent has one voice, so **one call at a time**. A voice chat is refused while
-a Meet call is live, and a Meet call is refused while a voice chat is live.
+a voice call is live, and a voice call is refused while a voice chat is live.
 
 ## Starting a call
 
@@ -41,7 +41,8 @@ the runtime's voice frames on the chat connection —
 ## The agent's computer
 
 Press **Talk** on the Web UI's **Computer** page to discuss the live desktop.
-Voice can pass your instructions to an active chat task. See
+The agent uses the computer itself, or passes your instructions to a chat task that
+is using it. See
 **[The agent's computer](computer.md)**.
 
 When you record your screen there, the agent hears you talk it through and waits. When
@@ -50,8 +51,9 @@ you stop, it looks at the pictures of your screen and answers.
 ## Who the agent answers
 
 The agent's voice is OpenAI's GPT-Live model. It takes its own turns, and it stops when
-you talk over it. Work that needs thought or a tool goes to a second model behind it,
-and the voice keeps talking while that model works.
+you talk over it. The voice hands work that needs thought or a tool to the agent, which
+runs on its own chat model with all its tools. The voice keeps talking while the agent
+works, and requests run one at a time, in order.
 
 It answers you. If other people near your microphone talk to each other, it keeps
 listening and says nothing until somebody speaks to it, by name or with a direct
@@ -84,7 +86,7 @@ restriction, start the agent with a narrower tool surface.
 
 ## When it doesn't work
 
-- **The call is refused.** The text says why: a Meet call holds the agent's
+- **The call is refused.** The text says why: a voice call holds the agent's
   voice, another client already has the session, or the runtime is still loading
   its agent and the call can be retried.
 - **The call does not start on a managed install.** The runtime log shows

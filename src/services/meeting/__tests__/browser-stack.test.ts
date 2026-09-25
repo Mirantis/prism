@@ -21,6 +21,7 @@ const {
   buildBrowserArgs,
   disablePasswordStorage,
   BrowserStack,
+  isWindowOf,
 } = await import('../browser-stack');
 
 /**
@@ -273,7 +274,7 @@ describe('loopback proxy bypass', () => {
     const { BrowserStack } = await import('../browser-stack');
 
     try {
-      await expect(new BrowserStack().start({ env: {} })).rejects.toThrow(/container image/i);
+      await expect(new BrowserStack().start({ env: {}, profileDir: '/tmp/prism-test-profile' })).rejects.toThrow(/container image/i);
       expect(process.env.NO_PROXY?.split(',')).toContain('127.0.0.1');
       expect(process.env.no_proxy?.split(',')).toContain('127.0.0.1');
     } finally {
@@ -457,5 +458,26 @@ describe('the profile’s password manager', () => {
       credentials_enable_autosignin: false,
       profile: { password_manager_enabled: false },
     });
+  });
+});
+
+describe('isWindowOf', () => {
+  // Window titles as `wmctrl -l` printed them on the agent's desktop.
+  it("matches the browser window to the tab it shows", () => {
+    expect(isWindowOf('Meet - pzy-owyp-rzm - Chromium', 'Meet - pzy-owyp-rzm')).toBe(true);
+    expect(
+      isWindowOf(
+        "What's new in Lens K8S IDE 2026.9.1: Cost Monitor & Optimization — Lens Blog — Lens - Chromium",
+        "What's new in Lens K8S IDE 2026.9.1: Cost Monitor & Optimization — Lens Blog — Lens",
+      ),
+    ).toBe(true);
+  });
+
+  it('does not match a tab whose title is only the start of the front tab title', () => {
+    expect(isWindowOf('Meet - pzy-owyp-rzm - Chromium', 'Meet')).toBe(false);
+  });
+
+  it('does not match another window', () => {
+    expect(isWindowOf('meet.google.com is sharing your screen.', 'Meet - pzy-owyp-rzm')).toBe(false);
   });
 });

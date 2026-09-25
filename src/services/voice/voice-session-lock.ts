@@ -1,13 +1,13 @@
 /**
  * The one live voice session in the runtime.
  *
- * The agent has one voice, so a Google Meet call and a browser voice chat exclude each
+ * The agent has one voice, so a call on its computer and a browser voice chat exclude each
  * other. Both owners take this lock rather than keeping a guard each, which is what makes
  * the refusal correct in both directions.
  */
 
 /** Which owner holds a voice session. */
-export type VoiceSessionKind = 'meeting' | 'voice-chat';
+export type VoiceSessionKind = 'call' | 'voice-chat';
 
 class VoiceSessionLock {
   private held: VoiceSessionKind | null = null;

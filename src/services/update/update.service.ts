@@ -40,7 +40,7 @@ import { agentStatusService } from '../agent-status.service';
 import { compactionService } from '../compaction.service';
 import { cronSchedulerService } from '../cron-scheduler.service';
 import { goalService } from '../goal.service';
-import { meetingBotService } from '../meeting/meeting-bot.service';
+import { callService } from '../call/call.service';
 import { threadTurnService } from '../thread-turn.service';
 import { compareReleaseVersions, fetchLatestReleaseVersion } from './ghcr';
 import {
@@ -315,7 +315,7 @@ class UpdateService {
    *
    * Raises SIGTERM rather than exiting outright, so the restart runs the same
    * graceful shutdown a `docker stop` gets: plugin MCP child processes closed
-   * instead of orphaned, a live meeting left rather than frozen in the room,
+   * instead of orphaned, a live call's voice ended rather than cut off,
    * Slack disconnected, and telemetry flushed.
    */
   scheduleRestartExit(delayMs = 500): void {
@@ -334,7 +334,7 @@ class UpdateService {
   /**
    * The hourly tick: check, announce once per version, and auto-apply (or,
    * in `restart` mode, arm the delayed stop) when nothing is mid-flight. A
-   * busy agent (LLM turn, running cron task, live goal loop, live meeting)
+   * busy agent (LLM turn, running cron task, live goal loop, live call)
    * defers to the next tick rather than being restarted under a turn.
    */
   private async checkTick(): Promise<void> {
@@ -480,7 +480,7 @@ class UpdateService {
     if (
       agentStatusService.isBusy() ||
       threadTurnService.hasLiveExchange() ||
-      meetingBotService.isActive ||
+      callService.isActive ||
       cronSchedulerService.hasRunningTask() ||
       goalService.hasLiveLoops() ||
       compactionService.hasInFlight()

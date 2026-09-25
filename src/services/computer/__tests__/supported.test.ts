@@ -10,7 +10,7 @@ vi.mock('../../meeting/browser-stack', () => ({
 
 it('offers the desktop only to modes that can own it', async () => {
   await initComputerAvailability();
-  for (const mode of ['chat', 'goal', 'cron', 'heartbeat', 'webhook'])
+  for (const mode of ['chat', 'goal', 'cron', 'heartbeat', 'webhook', 'voice'])
     expect(hasComputerForMode(mode)).toBe(true);
-  for (const mode of ['meeting', 'subagent']) expect(hasComputerForMode(mode)).toBe(false);
+  expect(hasComputerForMode('subagent')).toBe(false);
 });

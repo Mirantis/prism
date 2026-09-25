@@ -183,6 +183,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       computerUse,
       // While locked in, the workspace-markdown writers are withheld.
       lockedIn: context.lockedIn,
+      computer: request.computer,
     });
 
     // 5. Wrap tools with lifecycle events, output capture, the optional
@@ -217,10 +218,14 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       request.mode,
       request.slackMessages,
       request.workspaceRoot,
+      request.computer !== false,
     );
 
     // Append channel/task instructions to the stable (cacheable) part
     const stablePart = systemParts.find((p) => p.cacheable);
+    if (request.sessionInstructions && stablePart) {
+      stablePart.text += '\n\n' + request.sessionInstructions;
+    }
     if (request.isChannelMessage && request.mode !== 'subagent' && stablePart) {
       stablePart.text += '\n\n' + getChannelBehaviorInstructions(request.channelName);
     }
@@ -240,7 +245,19 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     // A coalesced steering follow-up sets `appendPrompt` because its prompt sits
     // earlier in history than the previous turn's replies (see InvokeRequest).
     if (request.mode !== 'chat' || request.appendPrompt || messages.length === 0) {
-      messages.push({ role: 'user' as const, content: request.prompt });
+      messages.push({
+        role: 'user' as const,
+        content: request.promptImages?.length
+          ? [
+              { type: 'text' as const, text: request.prompt },
+              ...request.promptImages.map((image) => ({
+                type: 'file' as const,
+                mediaType: image.mediaType,
+                data: image.data,
+              })),
+            ]
+          : request.prompt,
+      });
     }
 
     // `guard` is shared by every `warnOnTrailingAssistant` call in this invocation, and
@@ -307,12 +324,18 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     );
 
     // LLM-call tracing; one metadata set reused across this turn's calls.
+    // A voice run's prompt is what people in a call said, who agreed to nothing about
+    // this deployment's traces, so its content stays out of them.
     const turnTelemetry = (functionId: string) =>
-      langfuseTelemetry(functionId, {
-        userId: request.userId,
-        sessionId: request.threadId ?? '',
-        agentName: context.agentName,
-      });
+      langfuseTelemetry(
+        functionId,
+        {
+          userId: request.userId,
+          sessionId: request.threadId ?? '',
+          agentName: context.agentName,
+        },
+        request.mode === 'voice' ? { recordContent: false } : undefined,
+      );
 
     // 8. Call generateText and yield steps as they complete
     let wasCanceled = false;

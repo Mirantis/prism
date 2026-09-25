@@ -5,14 +5,8 @@
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import net from 'net';
-import { config } from '../../../config';
 import { LiveSession, type LiveSessionOptions } from '../live-session';
-import {
-  functionCallEvent,
-  responseCompletedEvent,
-  startLiveServer,
-  type LiveServer,
-} from '../../../test-utils/live-server';
+import { startLiveServer, type LiveServer } from '../../../test-utils/live-server';
 
 vi.mock('../../../logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -26,15 +20,12 @@ afterEach(async () => {
   session = null;
   await server?.dispose();
   server = null;
-  vi.mocked(config).openaiRealtimeReasoningEffort = 'medium';
 });
 
 async function open(overrides: Partial<LiveSessionOptions> = {}): Promise<{ server: LiveServer; session: LiveSession }> {
   server = await startLiveServer();
   session = new LiveSession({
     instructions: 'You are Prism, the voice.',
-    backendInstructions: 'You are Prism, the backend.',
-    tools: [{ name: 'get_time', description: 'Current time.', parameters: { type: 'object', properties: {} } }],
     voice: 'marin',
     endpointOverride: { url: server.url, headers: {} },
     ...overrides,
@@ -46,7 +37,7 @@ async function open(overrides: Partial<LiveSessionOptions> = {}): Promise<{ serv
 const tick = () => new Promise((resolve) => setTimeout(resolve, 20));
 
 describe('LiveSession', () => {
-  it('starts the session with the voice, the backend and the tools', async () => {
+  it('starts the session with the voice, delegating to the client', async () => {
     const { server } = await open();
     const start = await server.started;
 
@@ -54,27 +45,7 @@ describe('LiveSession', () => {
       model: 'gpt-live-1',
       instructions: 'You are Prism, the voice.',
       audio: { output: { voice: 'marin' } },
-      delegation: {
-        type: 'responses',
-        responses: {
-          model: 'gpt-6-sol',
-          instructions: 'You are Prism, the backend.',
-          reasoning: { effort: 'medium' },
-          tools: [{ type: 'function', name: 'get_time', description: 'Current time.', parameters: { type: 'object', properties: {} } }],
-          tool_choice: 'auto',
-        },
-      },
-    });
-  });
-
-  it('leaves the reasoning level to the API when config sends none', async () => {
-    vi.mocked(config).openaiRealtimeReasoningEffort = null;
-    const { server } = await open({ tools: [] });
-    const start = await server.started;
-
-    expect(start.session.delegation.responses).toEqual({
-      model: 'gpt-6-sol',
-      instructions: 'You are Prism, the backend.',
+      delegation: { type: 'client' },
     });
   });
 
@@ -82,8 +53,6 @@ describe('LiveSession', () => {
     server = await startLiveServer({ refuseWith: { code: 'model_not_found', message: 'The model does not exist' } });
     session = new LiveSession({
       instructions: 'x',
-      backendInstructions: 'y',
-      tools: [],
       endpointOverride: { url: server.url, headers: {} },
     });
 
@@ -98,8 +67,6 @@ describe('LiveSession', () => {
     const port = (stalled.address() as net.AddressInfo).port;
     const live = new LiveSession({
       instructions: 'x',
-      backendInstructions: 'y',
-      tools: [],
       endpointOverride: { url: `ws://127.0.0.1:${port}/v1/live/sessions`, headers: {} },
       startTimeoutMs: 100,
     });
@@ -130,63 +97,6 @@ describe('LiveSession', () => {
     expect(heard).toEqual([Buffer.from([3, 0, 4, 0])]);
   });
 
-  it('answers every call of a response together, after the response completes', async () => {
-    const { server, session } = await open();
-    const calls: string[] = [];
-    session.on('functionCall', (call) => calls.push(call.name));
-
-    server.emit(functionCallEvent('call_1', 'get_time'));
-    server.emit(functionCallEvent('call_2', 'get_time'));
-    await tick();
-    session.sendFunctionOutput('call_1', '{"time":"3:45 PM"}');
-    server.emit(responseCompletedEvent());
-    await tick();
-
-    // The second call has no output yet, so nothing goes back.
-    expect(server.sent.filter((f) => f.type === 'response.item.create')).toHaveLength(0);
-
-    session.sendFunctionOutput('call_2', '{"time":"3:46 PM"}');
-    await server.waitFor((f) => f.type === 'response.create');
-
-    const replies = server.sent.filter((f) => f.type === 'response.item.create' || f.type === 'response.create');
-    expect(calls).toEqual(['get_time', 'get_time']);
-    expect(replies).toEqual([
-      { type: 'response.item.create', item: { type: 'function_call_output', call_id: 'call_1', output: '{"time":"3:45 PM"}' } },
-      { type: 'response.item.create', item: { type: 'function_call_output', call_id: 'call_2', output: '{"time":"3:46 PM"}' } },
-      { type: 'response.create' },
-    ]);
-  });
-
-  it('holds a picture shown during a tool call until the call is answered', async () => {
-    const { server, session } = await open();
-
-    server.emit(functionCallEvent('call_1', 'see_screen'));
-    await tick();
-    session.showBackend([{ type: 'input_image', image_url: 'data:image/png;base64,AAAA' }], false);
-    session.sendFunctionOutput('call_1', 'This is what my screen is showing.');
-    server.emit(responseCompletedEvent());
-    await server.waitFor((f) => f.type === 'response.create');
-
-    expect(server.sent.filter((f) => f.type.startsWith('response.')).map((f) => f.item?.type ?? f.type)).toEqual([
-      'function_call_output',
-      'message',
-      'response.create',
-    ]);
-  });
-
-  it('asks the backend to answer a picture shown outside a tool call when told to', async () => {
-    const { server, session } = await open();
-
-    session.showBackend([{ type: 'input_text', text: 'The user shared their screen.' }], true);
-    await server.waitFor((f) => f.type === 'response.create');
-
-    expect(server.sent.find((f) => f.type === 'response.item.create')?.item).toEqual({
-      type: 'message',
-      role: 'user',
-      content: [{ type: 'input_text', text: 'The user shared their screen.' }],
-    });
-  });
-
   it('sends context as session-wide appends', async () => {
     const { server, session } = await open();
 
@@ -203,19 +113,42 @@ describe('LiveSession', () => {
     ]);
   });
 
-  it('reports the backend usage and the delegations', async () => {
+  it('sends a delegation result and its progress with the delegation id', async () => {
     const { server, session } = await open();
-    const usage: { inputTokens: number; outputTokens: number }[] = [];
-    let delegations = 0;
-    session.on('backendUsage', (u) => usage.push(u));
-    session.on('delegation', () => (delegations += 1));
 
-    server.emit({ type: 'session.delegation.created', delegation: { id: 'item_1', type: 'delegation', target: 'responses' } });
-    server.emit(responseCompletedEvent(813, 14));
+    session.appendThinking('Still working: 3 steps so far.', 'item_1');
+    session.appendCommentary('You have two tasks scheduled.', 'item_1');
+    await server.waitFor((f) => f.type === 'session.commentary.append');
+
+    const appends = server.sent.filter((f) => f.type === 'session.thinking.append' || f.type === 'session.commentary.append');
+    expect(appends.map(({ type, delegation_id }) => ({ type, delegation_id }))).toEqual([
+      { type: 'session.thinking.append', delegation_id: 'item_1' },
+      { type: 'session.commentary.append', delegation_id: 'item_1' },
+    ]);
+  });
+
+  it('reports a delegation with where it falls, and the transcript with its timing', async () => {
+    // Frames as the API sends them for client delegation.
+    const { server, session } = await open();
+    const delegations: [string, number | null][] = [];
+    const heard: [string, string, number | null][] = [];
+    session.on('delegation', (id, offsetMs) => delegations.push([id, offsetMs]));
+    session.on('transcript', (side, delta, startMs) => heard.push([side, delta, startMs]));
+
+    server.emit({ type: 'session.input_transcript.delta', delta: 'What is on my', start_ms: 600, end_ms: 800 });
+    server.emit({ type: 'session.output_transcript.delta', delta: 'One sec.', start_ms: 1200, end_ms: 1400 });
+    server.emit({
+      type: 'session.delegation.created',
+      offset_ms: 1000,
+      delegation: { id: 'item_delegation_123', type: 'delegation', target: 'client' },
+    });
     await tick();
 
-    expect(delegations).toBe(1);
-    expect(usage).toEqual([{ inputTokens: 813, outputTokens: 14 }]);
+    expect(heard).toEqual([
+      ['input', 'What is on my', 600],
+      ['output', 'One sec.', 1200],
+    ]);
+    expect(delegations).toEqual([['item_delegation_123', 1000]]);
   });
 
   it('reports the API close reason and the voice time when the server ends the session', async () => {

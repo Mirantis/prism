@@ -61,9 +61,9 @@ direct to `api.openai.com` (or an OpenAI-compatible endpoint via
 `OPENAI_BASE_URL` — it must serve `/responses`, not just `/chat/completions`).
 Chat, the classification gate, and memory embeddings
 (`text-embedding-3-small`, truncated to 1024 dims) all ride the one surface,
-authenticated with the same `OPENAI_API_KEY` that enables
-[voice meetings](voice-meetings.md) — setting it for chat also switches the
-meeting tools on where the browser/audio toolchain is present.
+authenticated with the same `OPENAI_API_KEY` that can serve
+[voice calls](voice-calls.md) and [voice chat](voice-chat.md) in a standalone
+direct setup.
 
 `anthropic` runs the agent on **Claude at the first-party Anthropic API**
 (`api.anthropic.com`), authenticated with `ANTHROPIC_API_KEY`. Model IDs are
@@ -101,7 +101,7 @@ grouped per platform.
 | `AZURE_API_KEY` | **(Azure)** Foundry resource key, sent as the `x-api-key` header. Required for direct mode only — when routing through the Lens Agents gateway it holds the key for both chat and embeddings. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
 | `AZURE_RESOURCE_NAME` | **(Azure, direct)** Foundry resource name — derives the chat endpoint `https://{resource}.services.ai.azure.com/anthropic/v1` and the embeddings endpoint `https://{resource}.openai.azure.com`. |
 | `AZURE_FOUNDRY_BASE_URL` | **(Azure)** Override the derived Foundry Anthropic chat endpoint (must end at `/anthropic/v1`). |
-| `OPENAI_API_KEY` | **(OpenAI)** API key, sent as a bearer header. Required for direct mode only — through the Lens Agents gateway it holds the key. Shared with [voice meetings](voice-meetings.md): setting it also enables the meeting tools when the browser/audio toolchain is present. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
+| `OPENAI_API_KEY` | **(OpenAI)** API key, sent as a bearer header. Required for direct mode only — through the Lens Agents gateway it holds the key. Shared with [voice calls](voice-calls.md) and [voice chat](voice-chat.md) in a standalone direct setup. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
 | `OPENAI_BASE_URL` | **(OpenAI)** Override the chat/embeddings endpoint (must serve the Responses API). Does not move the voice WebSockets. |
 | `OPENROUTER_API_KEY` | **(OpenRouter)** API key, sent as a bearer header. Required for direct mode only — through the Lens Agents gateway it holds the key. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
 | `OPENROUTER_BASE_URL` | **(OpenRouter)** Override the chat/embeddings endpoint (must serve the Responses API). Defaults to `https://openrouter.ai/api/v1`. |
@@ -499,11 +499,11 @@ for that.
 | `NEXUS_MCP_URL` | Endpoint of an external [MCP server](tools.md#external-tools-mcp). When set, its tools are exposed to the agent. | — (no external tools) |
 | `NEXUS_API_URL` | Base URL of a Lens Agents instance, used for the LLM proxy and WebSocket authorization. When set, LLM calls route through that gateway (for any platform). It is **not** a fallback for `NEXUS_MCP_URL`. | — |
 
-## Voice meetings
+## Voice calls
 
-[Voice meetings](voice-meetings.md) let the agent join a Google Meet call and take
-part by voice. The tools appear when a voice credential is configured and the
-host has the browser/audio toolchain shipped in the container image.
+[Voice calls](voice-calls.md) let the agent take part by voice in a call on
+[its computer](computer.md). The call tools appear when a voice credential is
+configured and the agent's computer is available.
 
 Voice endpoint and credential resolution is independent of `LLM_PROVIDER`:
 
@@ -549,38 +549,29 @@ endpoint and its metering/budget controls. Remote sockets require WSS; plaintext
 WS is accepted only on loopback. Selection happens at startup; restart existing
 sandboxes after updating Prism or their discovery environment. A connection
 failure is reported without trying another provider. Under Azure,
-`OPENAI_REALTIME_MODEL` and `OPENAI_VOICE_BACKEND_MODEL` must name deployments in the
-configured resource.
-The browser profile persists under the data directory, so meeting sign-in happens
-once rather than per meeting.
+`OPENAI_REALTIME_MODEL` must name a deployment in the configured resource.
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `OPENAI_API_KEY` | Legacy direct-voice credential fallback. The same key drives chat when `LLM_PROVIDER=openai`, and memory embeddings by default when `LLM_PROVIDER=anthropic` — see [Provider selection](#provider-selection). | — (disabled) |
-| `OPENAI_REALTIME_MODEL` | The agent's voice, in a meeting and in a [voice chat](voice-chat.md). | `gpt-live-1` |
-| `OPENAI_VOICE_BACKEND_MODEL` | Model the voice hands more complex tasks to. An OpenAI model, since OpenAI runs it for the voice; under Azure, a deployment name. | `gpt-6-sol` |
-| `OPENAI_REALTIME_URL` | Explicit voice endpoint, as its `…/v1/realtime` WebSocket URL; calls open `…/v1/live/sessions` beside it. Opts out of managed endpoint and credential discovery. | managed voice, else direct OpenAI |
+| `OPENAI_REALTIME_MODEL` | The agent's voice, in a call and in a [voice chat](voice-chat.md). The work the voice hands to the agent runs on the agent's chat model. | `gpt-live-1` |
+| `OPENAI_REALTIME_URL` | Explicit voice endpoint, as its `…/v1/realtime` WebSocket URL; calls open `…/v1/live/sessions` beside it. For an Azure resource, `wss://<resource>.services.ai.azure.com/openai/v1/realtime` with its key in `OPENAI_REALTIME_API_KEY`. Opts out of managed endpoint and credential discovery. | managed voice, else direct OpenAI |
 | `OPENAI_REALTIME_API_KEY` | Credential for an explicit voice endpoint or direct fallback; does not replace a discovered managed credential. | selected managed key, else eligible direct key |
 | `OPENAI_REALTIME_VOICE` | Voice name. | `marin` |
-| `OPENAI_REALTIME_REASONING_EFFORT` | How hard the model behind the voice thinks before it answers or picks a tool: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. The voice keeps talking while it works, so a higher level costs a longer wait for the answer. Set empty to send no setting and take the API's default. | `medium` |
-| `GOOGLE_BOT_EMAIL` | Google account the agent signs into for meetings. **Effectively required**: Google auto-denies automated anonymous guests, so without this the agent reaches the lobby and is refused. Use a dedicated account. | — |
-| `GOOGLE_BOT_PASSWORD` | Password for that account. **Must be the real password in plain text — a credential sentinel does not work here.** A sentinel is rewritten on the wire by the proxy, which only works for a secret sent as an HTTP header; this one is typed into Google's sign-in form by the browser, over TLS to Google, so the runtime has to hold the actual value. A deliberate trade-off: Google Meet has no bot or service-account API, so being in a call means driving a real browser signed into a real account. Treat it accordingly — a dedicated account with nothing else attached to it. Accounts with a phone/hardware challenge or enforced SSO cannot be signed in unattended. | — |
 | `OPENAI_TRANSCRIPTION_MODEL` | Transcriber for [dictation](dictation.md). | `gpt-live-transcribe` |
-| `MEETING_TRANSCRIPT_LOGGING` | Whether what is said in a call may appear in the runtime's log: `off` or `full`. `off` writes no words and no attendee names. `full` writes what the call said and what the agent said, one line per turn. Off by default because a meeting is not an authenticated surface: the room did not agree to be written into a log that outlives the call. A setting of its own rather than a log level, so that turning up logging to chase an unrelated problem never starts recording the room by accident. Anything unrecognised (including empty) is treated as `off`. See [Voice meetings](voice-meetings.md#what-ends-up-in-the-log). | `off` |
-| `MEETING_TIMEOUT_MINUTES` | Hard cap on one call, so a meeting nobody ended can't hold a browser and a metered socket open. Junk or non-positive falls back to the default. | `60` |
-| `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait in the waiting room for a host to admit the agent, counted from when the join request goes in (reaching the lobby is budgeted separately). | `300` |
+| `MEETING_TRANSCRIPT_LOGGING` | Whether what is said in a call may appear in the runtime's log: `off` or `full`. `off` writes no words. `full` writes what the call said and what the agent said, one line per turn. A setting of its own rather than a log level, so that turning up logging to chase an unrelated problem never starts recording a call. Anything unrecognised (including empty) is treated as `off`. See [Voice calls](voice-calls.md#what-ends-up-in-the-log). | `off` |
+| `MEETING_TIMEOUT_MINUTES` | Hard cap on one call, so a call nobody ended cannot keep a metered voice session open. Junk or non-positive falls back to the default. | `60` |
 
 ## Voice chat
 
 [Voice chat](voice-chat.md) is a direct voice conversation between the agent and
-one client. It needs the same resolved voice credential as voice meetings and uses the
-same voice, models and reasoning settings from the table above. The agent has one
-voice, so a voice chat and a Meet call exclude each other.
+one client. It needs the same resolved voice credential as voice calls and uses the
+same voice settings from the table above. The agent has one
+voice, so a voice chat and a call exclude each other.
 
 **There is nothing else to configure.** The audio travels on the connection the
-client already uses for chat, so a voice chat works wherever chat works and needs
-no relay and no browser. A voice meeting cannot run in the installed binary; this
-can.
+client already uses for chat, so a voice chat works wherever chat works, the
+installed binary included. It needs no relay and no desktop.
 
 The web UI starts a call from the phone at the top right of its chat page, or
 from **Talk** on its Computer page. Its chat composer's microphone records a
@@ -593,9 +584,9 @@ see [Voice chat](voice-chat.md#starting-a-call).
 All optional; each is off until its variable is set. Langfuse traces every LLM
 call (model, tokens, tool calls, latency), with prompts and completions included
 — except the call that decides what to do with a threaded Slack message, which is
-not traced at all, since its prompt is the channel's recent messages. A call does
-not reach it either: a meeting or voice chat runs on OpenAI's voice service rather
-than through the agent's model calls.
+not traced at all, since its prompt is the channel's recent messages. The agent's work
+in a voice call or voice chat is traced without its prompts and completions. The voice
+itself runs on OpenAI's voice service and is not traced.
 OpenTelemetry exports product telemetry to a collector; that surface carries no
 prompts at all. Structured logs (Pino) are always on, and no error written to them
 carries a request or response body.

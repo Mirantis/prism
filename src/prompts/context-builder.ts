@@ -89,12 +89,13 @@ export interface SystemPromptPart {
  */
 export async function buildSystemPromptParts(
   context: AgentContext,
-  mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal' | 'webhook' | 'meeting' = 'chat',
+  mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal' | 'webhook' | 'voice' = 'chat',
   slackMessages?: SlackTriggerMessage[],
   workspaceRoot?: string,
+  computer = true,
 ): Promise<SystemPromptPart[]> {
   const stableSections: string[] = [];
-  if (hasComputerForMode(mode)) stableSections.push(COMPUTER_INSTRUCTIONS);
+  if (computer && hasComputerForMode(mode)) stableSections.push(COMPUTER_INSTRUCTIONS);
   const dynamicSections: string[] = [];
 
   // Bootstrap phase — dynamic (only during onboarding, chat mode only).
@@ -192,11 +193,10 @@ export async function buildSystemPromptParts(
     // Goal turns do real work like a chat turn, plus the autonomous-goal framing.
     stableSections.push(getChatInstructions());
     stableSections.push(getGoalInstructions());
-  } else if (mode === 'meeting') {
-    // No chat-mode section: a live voice meeting is not a conversation with the
-    // user, and its delivery rules are the opposite of chat's (no markdown, no
-    // paragraphs). `prompts/meeting-prompt.ts` is authoritative there and the
-    // meeting service appends it.
+  } else if (mode === 'voice') {
+    // No chat-mode section: a live voice session is not a conversation in chat, and
+    // its delivery rules are the opposite of chat's (no markdown, no paragraphs).
+    // `services/voice/voice-instructions.ts` appends the session's own rules.
   } else {
     stableSections.push(getChatInstructions());
   }

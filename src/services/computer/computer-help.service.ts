@@ -187,8 +187,15 @@ class ComputerHelpService {
       await computerService.handBack(clientId);
     }
     if (!help.threadId) {
-      const { voiceChatService } = await import('../voice/voice-chat.service');
-      voiceChatService.continueComputer(help.reason);
+      // A request with no thread came from the voice session that holds the one voice.
+      const { voiceSessionLock } = await import('../voice/voice-session-lock');
+      if (voiceSessionLock.holder === 'call') {
+        const { callService } = await import('../call/call.service');
+        callService.continueComputer(help.reason);
+      } else {
+        const { voiceChatService } = await import('../voice/voice-chat.service');
+        voiceChatService.continueComputer(help.reason);
+      }
       return;
     }
     if (await this.resumeGoal(agentId, userId, help)) return;
@@ -234,8 +241,12 @@ class ComputerHelpService {
     computerService.access.emit('change');
   }
 
-  endVoice(use: ComputerUse): void {
-    for (const key of this.voice.keys()) if (key.startsWith(`${use.id}/`)) this.voice.delete(key);
+  /**
+   * Forget the help requests of the voice session that ended. Its runs each had their own
+   * use, and there is one voice session at a time, so every voice request goes.
+   */
+  endVoiceSession(): void {
+    this.voice.clear();
     computerService.access.emit('change');
   }
 }
