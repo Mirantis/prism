@@ -4,16 +4,16 @@
  * Both check the GHCR tag list for a newer release (hourly, first check one
  * minute after boot) and act only while the agent is idle. `install` (a SEA
  * binary) announces the release and applies it: stage + verify the release
- * archive, record a PENDING attempt, swap the install and restart. `restart`
- * (a container with RESTART_ON_RELEASE) waits a random delay, records a
- * PENDING attempt and stops, so the platform starts the new image. The next
+ * archive, record a PENDING attempt, swap the install and restart. `exit`
+ * (a container with EXIT_ON_UPDATE) waits a random delay, records a
+ * PENDING attempt and stops, and the platform starts the new image. The next
  * boot resolves the pending attempt by comparing its own version to the
  * target — the record survives the process the update kills.
  *
  * The updater runs only where the baked version is release-shaped (a dev
  * build has nothing to compare), DISABLE_UPDATER is not set, and the process
- * is a SEA binary or a container with RESTART_ON_RELEASE. Clients see only
- * the `install` mode: in `restart` mode the status reports the updater off
+ * is a SEA binary or a container with EXIT_ON_UPDATE. Clients see only
+ * the `install` mode: in `exit` mode the status reports the updater off
  * and nothing is broadcast. Check failures are logged at debug and never
  * surface in any UI.
  *
@@ -55,7 +55,7 @@ import {
 export type UpdateDisabledReason = 'disabled_by_env' | 'not_sea_install' | 'dev_build';
 
 /** How this process takes a newer release: swap the SEA install, or stop for the platform. */
-export type UpdateMode = 'install' | 'restart';
+export type UpdateMode = 'install' | 'exit';
 
 /** A second apply was requested while one is running — the route maps it to 409. */
 export class UpdateInProgressError extends Error {
@@ -101,16 +101,16 @@ class UpdateService {
   private announced = new Set<string>();
   private firstCheckTimer: NodeJS.Timeout | null = null;
   private checkInterval: NodeJS.Timeout | null = null;
-  /** `restart` mode: the random delay between finding a release and stopping. */
-  private restartTimer: NodeJS.Timeout | null = null;
+  /** `exit` mode: the random delay between finding a release and stopping. */
+  private exitTimer: NodeJS.Timeout | null = null;
   /** Set by `stop()`: a shutdown has started, so a restart past its delay ends. */
   private stopped = false;
 
   get gate(): { mode: UpdateMode | null; reason: UpdateDisabledReason | null } {
     if (config.disableUpdater) return { mode: null, reason: 'disabled_by_env' };
-    if (!sea.isSea() && !config.restartOnRelease) return { mode: null, reason: 'not_sea_install' };
+    if (!sea.isSea() && !config.exitOnUpdate) return { mode: null, reason: 'not_sea_install' };
     if (!RELEASE_VERSION_RE.test(config.appVersion)) return { mode: null, reason: 'dev_build' };
-    return { mode: sea.isSea() ? 'install' : 'restart', reason: null };
+    return { mode: sea.isSea() ? 'install' : 'exit', reason: null };
   }
 
   /**
@@ -123,12 +123,12 @@ class UpdateService {
     // an install, and resolving there would mark that install's in-flight
     // attempt `restart_version_mismatch` while it is still mid-restart —
     // sweeping there would delete its staged release. A release container that
-    // opted into RESTART_ON_RELEASE owns its /data, so it resolves too, and
+    // opted into EXIT_ON_UPDATE owns its /data, so it resolves too, and
     // never sweeps. Deliberately gated on the install shape rather than the
     // full gate: the process that comes back after an update is the one that
     // must resolve the sentinel, even if the user set DISABLE_UPDATER in between.
-    const restartInstall = config.restartOnRelease && RELEASE_VERSION_RE.test(config.appVersion);
-    if (sea.isSea() || restartInstall) await this.resolvePendingAttempts();
+    const exitInstall = config.exitOnUpdate && RELEASE_VERSION_RE.test(config.appVersion);
+    if (sea.isSea() || exitInstall) await this.resolvePendingAttempts();
     if (sea.isSea()) sweepUpdateDirs();
 
     const { mode, reason } = this.gate;
@@ -142,7 +142,7 @@ class UpdateService {
     logger.info(
       mode === 'install'
         ? `[Update] updater on — running ${config.appVersion}, checking hourly`
-        : `[Update] RESTART_ON_RELEASE set — running ${config.appVersion}, checking hourly`,
+        : `[Update] EXIT_ON_UPDATE set — running ${config.appVersion}, checking hourly`,
     );
   }
 
@@ -150,14 +150,14 @@ class UpdateService {
     this.stopped = true;
     if (this.firstCheckTimer) clearTimeout(this.firstCheckTimer);
     if (this.checkInterval) clearInterval(this.checkInterval);
-    if (this.restartTimer) clearTimeout(this.restartTimer);
+    if (this.exitTimer) clearTimeout(this.exitTimer);
     this.firstCheckTimer = null;
     this.checkInterval = null;
-    this.restartTimer = null;
+    this.exitTimer = null;
   }
 
   /**
-   * A container reports the same off state with or without RESTART_ON_RELEASE:
+   * A container reports the same off state with or without EXIT_ON_UPDATE:
    * the platform, not a client, applies the release, so no client offers an
    * update and the manual route refuses one.
    */
@@ -364,8 +364,8 @@ class UpdateService {
       logger.info(`[Update] ${latest} not applied — agent busy, retrying next tick`);
       return;
     }
-    if (mode === 'restart') {
-      await this.armRestart(latest);
+    if (mode === 'exit') {
+      await this.armExit(latest);
       return;
     }
     try {
@@ -388,7 +388,7 @@ class UpdateService {
    * (`restart_version_mismatch`): that platform restarts the same image, and
    * a stop on every boot would loop without end. The next release tries again.
    */
-  private async armRestart(version: string): Promise<void> {
+  private async armExit(version: string): Promise<void> {
     const failed = await prisma.updateAttempt.findFirst({
       where: { versionTo: version, outcome: 'FAILURE', errorCode: 'restart_version_mismatch' },
     });
@@ -399,7 +399,7 @@ class UpdateService {
 
     const delayMs = Math.floor(Math.random() * UPDATE_RESTART_JITTER_MAX_MS);
     logger.info(`[Update] stopping for ${version} in ${Math.round(delayMs / 1000)} s if the agent is idle then`);
-    this.restartTimer = setTimeout(() => void this.restartForRelease(version), delayMs);
+    this.exitTimer = setTimeout(() => void this.exitForRelease(version), delayMs);
   }
 
   /**
@@ -407,8 +407,8 @@ class UpdateService {
    * the delay, then record the attempt and stop. A busy agent waits for the
    * next tick, which draws a new delay.
    */
-  private async restartForRelease(version: string): Promise<void> {
-    this.restartTimer = null;
+  private async exitForRelease(version: string): Promise<void> {
+    this.exitTimer = null;
     const idle = await this.isIdle();
     if (this.stopped) return;
     if (!idle) {

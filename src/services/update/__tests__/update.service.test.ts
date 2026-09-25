@@ -133,7 +133,7 @@ beforeEach(() => {
   });
   config.appVersion = CURRENT;
   config.disableUpdater = false;
-  config.restartOnRelease = false;
+  config.exitOnUpdate = false;
   mockPrisma.updateAttempt.findMany.mockResolvedValue([]);
   mockPrisma.updateAttempt.findFirst.mockResolvedValue(null);
   mockPrisma.updateAttempt.create.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
@@ -147,7 +147,7 @@ beforeEach(() => {
 afterEach(() => {
   config.appVersion = '';
   config.disableUpdater = false;
-  config.restartOnRelease = false;
+  config.exitOnUpdate = false;
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
@@ -468,12 +468,12 @@ describe('applyUpdate', () => {
   });
 });
 
-describe('restart on release', () => {
+describe('exit on update', () => {
   const HOUR = 60 * 60_000;
 
   beforeEach(() => {
     idleState.isSea = false;
-    config.restartOnRelease = true;
+    config.exitOnUpdate = true;
     mockFetchLatest.mockResolvedValue(NEWER);
   });
 
@@ -494,7 +494,7 @@ describe('restart on release', () => {
   });
 
   it.each([
-    ['the setting is off', () => (config.restartOnRelease = false)],
+    ['the setting is off', () => (config.exitOnUpdate = false)],
     ['the image is a canary build', () => (config.appVersion = 'canary-abc123')],
     ['the image is a pull-request build', () => (config.appVersion = 'pr-42-some-branch')],
     ['DISABLE_UPDATER is set', () => (config.disableUpdater = true)],
