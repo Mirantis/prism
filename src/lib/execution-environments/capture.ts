@@ -8,6 +8,7 @@
  */
 
 import type { ExecEnd, ExecProcess, ExecutionEnvironment } from './execution-environment';
+import { agentProcesses } from '../agent-processes';
 
 export interface CaptureOptions {
   cwd: string;
@@ -77,12 +78,30 @@ async function collect(proc: ExecProcess, options: CaptureOptions): Promise<Capt
     }, KILL_GRACE_MS).unref();
   };
 
+  // The budget counts the time the command runs, so the clock stops while a
+  // secure takeover holds the command stopped and restarts with what was left.
   let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    terminate();
-  }, options.timeoutMs);
-  timer.unref();
+  let remainingMs = options.timeoutMs;
+  let armedAt = 0;
+  let timer: NodeJS.Timeout | undefined;
+  const arm = () => {
+    if (timer) return;
+    armedAt = Date.now();
+    timer = setTimeout(() => {
+      timedOut = true;
+      terminate();
+    }, remainingMs);
+    timer.unref();
+  };
+  const pauseClock = () => {
+    if (!timer) return;
+    clearTimeout(timer);
+    timer = undefined;
+    remainingMs = Math.max(0, remainingMs - (Date.now() - armedAt));
+  };
+  if (!agentProcesses.isSuspended) arm();
+  agentProcesses.on('suspend', pauseClock);
+  agentProcesses.on('resume', arm);
 
   let aborted = false;
   const onAbort = () => {
@@ -102,6 +121,8 @@ async function collect(proc: ExecProcess, options: CaptureOptions): Promise<Capt
     end = await proc.closed;
   } finally {
     clearTimeout(timer);
+    agentProcesses.off('suspend', pauseClock);
+    agentProcesses.off('resume', arm);
     signal?.removeEventListener('abort', onAbort);
   }
 

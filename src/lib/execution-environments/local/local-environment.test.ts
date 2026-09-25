@@ -22,12 +22,11 @@ beforeEach(() => {
 
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-function run(command: string, processGroup = false) {
+function run(command: string) {
   return environment.runShell(command, {
     cwd: dir,
     env: environment.baseEnv(),
     stdin: 'ignore',
-    processGroup,
   });
 }
 
@@ -83,7 +82,7 @@ describe('local processes', () => {
   it('kills the whole group, so a grandchild cannot outlive the kill', async () => {
     // Without the group kill this never closes: the shell is already gone and
     // its child holds the pipes for the next 30 seconds.
-    const proc = run('sleep 30 & exit 0', true);
+    const proc = run('sleep 30 & exit 0');
     await proc.ended;
     expect(proc.kill('SIGKILL')).toBe(true);
     await expect(proc.closed).resolves.toMatchObject({ exitCode: 0 });

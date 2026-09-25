@@ -119,7 +119,7 @@ describe('killing it', () => {
     // Read on the container's side, because the file is the container's.
     expect(script).toContain('cat "$1"');
     // A negative pid: the group, so a grandchild of the command dies with it —
-    // the same guarantee `processGroup: true` gives locally.
+    // the same guarantee a local command's own process group gives.
     expect(script).toContain('kill -"$2" -"$p"');
   });
 
