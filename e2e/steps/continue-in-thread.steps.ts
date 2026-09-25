@@ -39,8 +39,8 @@ async function pollUntil<T>(
 
 Then('a thread-bound scheduled task is created for the agent', async () => {
   const agentId = getCurrentAgentId();
-  // The one-off task exists for the duration of its delay (~1 min) before it
-  // fires and auto-deletes, so this poll catches it well within that window.
+  // The one-off task exists until its run ends: a 20s delay, then the run, then
+  // the auto-delete. This poll samples every 1.5s, well within that window.
   const tasks = await pollUntil(
     () => dbHelper.getPrisma().cronTask.findMany({ where: { agentId, threadId: { not: null } } }),
     (t) => t.length > 0,

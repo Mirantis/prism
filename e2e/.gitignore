@@ -5,3 +5,4 @@ test-results/
 tui-test-results/
 playwright-report/
 .features-gen/
+blob-report/

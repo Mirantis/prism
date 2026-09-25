@@ -38,11 +38,13 @@ const DONE_SENTINEL = 'TURNDONE9F';
 
 // Coerces a two-text-step turn: a narration text step, a tool call, then a
 // final text step. That guarantees at least one *intermediate* AGENT row whose
-// delivery we can probe.
+// delivery we can probe. The final text is pinned: concise delivery tells the
+// model to relay in its final message what the user asked to be told, and a
+// relayed narration leaves no phrase that only the intermediate row contains.
 const MULTI_STEP_PROMPT =
   'First, tell me in one short sentence that you are about to run a command. ' +
   'Then use your shell to run `echo prism-echo-marker`. ' +
-  `Then send a separate, final message telling me what it printed, ending with the token ${DONE_SENTINEL}.`;
+  `Then send a separate, final message that is exactly: It printed prism-echo-marker. ${DONE_SENTINEL}`;
 
 let env: RuntimeTestEnv;
 let session: TuiSession | undefined;
