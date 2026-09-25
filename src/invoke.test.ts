@@ -648,6 +648,31 @@ describe('invoke', () => {
     expect(dynamicPart!.providerOptions).toBeUndefined();
   });
 
+  it("puts a voice session's rules in the cached system part and its pictures in the prompt", async () => {
+    await invoke(
+      createTestInvokeRequest({
+        mode: 'voice',
+        prompt: 'The conversation so far.',
+        sessionInstructions: 'call rules',
+        promptImages: [{ data: 'AAAA', mediaType: 'image/jpeg' }],
+      }),
+    );
+
+    const callArgs = mockGenerateText.mock.calls[0][0];
+    const system = callArgs.system as Array<{ content: string; providerOptions?: unknown }>;
+    const stable = system.find((part) => part.content.startsWith('stable system prompt'));
+    expect(stable!.content).toBe('stable system prompt\n\ncall rules');
+    expect(stable!.providerOptions).toBeDefined();
+    const last = callArgs.messages.at(-1);
+    expect(last).toEqual({
+      role: 'user',
+      content: [
+        { type: 'text', text: 'The conversation so far.' },
+        { type: 'file', mediaType: 'image/jpeg', data: 'AAAA' },
+      ],
+    });
+  });
+
   describe('tool filtering by mode', () => {
     beforeEach(() => {
       mockGetMemoryTools.mockReturnValue({

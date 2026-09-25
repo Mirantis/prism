@@ -3,8 +3,8 @@
 Prism Agent is security-sensitive software. It runs an autonomous LLM agent that executes shell
 commands and edits files on the host it runs on, and reaches external systems through MCP — kubectl,
 GitHub and AWS through the Lens Agents MCP server, plus whatever an installed Agent Plugin adds. It
-holds credentials for Slack, for its model provider, and — when voice meetings are enabled — for OpenAI
-and a Google account. It owns its own conversation, memory and attachment store. Credential
+holds credentials for Slack, for its model provider, and — when voice is enabled — for OpenAI or
+Azure voice. It owns its own conversation, memory and attachment store. Credential
 handling, the tool surface, the network surface, and what untrusted input can drive the agent to do
 are all security boundaries.
 

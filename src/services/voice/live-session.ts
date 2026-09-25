@@ -1,21 +1,18 @@
 /**
  * The GPT-Live session: the agent's voice and ears in a call.
  *
- * Two models share it. The voice model hears the call and speaks, and decides by itself
- * when to take a turn, when to yield and when to backchannel. When a request needs work it
- * delegates to a backend Responses model, which holds the agent's system prompt and tools.
- * This class runs the tools that backend calls, in this process, and hands the results
- * back.
+ * The voice model hears the call and speaks, and decides by itself when to take a turn,
+ * when to yield and when to backchannel. When a request needs work it creates a client
+ * delegation, and the runtime does that work in an agent run of its own (see
+ * `voice-backend.ts`), then hands the voice the result to say.
  *
  * Wire notes, as measured against the live endpoint:
  * - The first frame is `session.start`, and everything in it is fixed for the session.
- *   Only `delegation.responses` can change later.
  * - Audio is base64 pcm16 mono at 24 kHz both ways. Output is a continuous real-time
  *   stream of 100 ms frames, silence included, with no timing fields.
- * - The backend is one conversation. A reply names no delegation, so a response's function
- *   calls are answered together, after that response completes, and `response.create`
- *   continues it.
- * - A tool result may carry pictures: `function_call_output.output` takes content parts.
+ * - A delegation names no task. What was asked is in the transcript, which carries
+ *   `start_ms`/`end_ms` on the session timeline.
+ * - Context appends take at most 500 tokens each.
  */
 
 import { EventEmitter } from 'events';
@@ -34,27 +31,9 @@ const DEFAULT_START_TIMEOUT_MS = 15_000;
 /** How long `close()` waits for `session.closed` before dropping the socket. */
 const CLOSE_TIMEOUT_MS = 2_000;
 
-/** A function tool offered to the backend, already in JSON Schema form. */
-export interface LiveFunctionTool {
-  name: string;
-  description: string;
-  parameters: Record<string, unknown>;
-}
-
-/** One part of what the backend is shown: words or a picture. */
-export type LiveContentPart =
-  | { type: 'input_text'; text: string }
-  | { type: 'input_image'; image_url: string };
-
-/** What a tool hands back: text, or text and pictures. */
-export type LiveToolOutput = string | LiveContentPart[];
-
 export interface LiveSessionOptions {
   /** The voice model's instructions: who it is, how to talk, and what to delegate. */
   instructions: string;
-  /** The backend's: the agent's system prompt and how to work for a voice. */
-  backendInstructions: string;
-  tools: LiveFunctionTool[];
   voice?: string;
   /** Injected in tests so they can point at a local mock server. */
   endpointOverride?: RealtimeEndpoint;
@@ -62,26 +41,16 @@ export interface LiveSessionOptions {
   startTimeoutMs?: number;
 }
 
-/** Emitted when the backend calls one of the agent's tools. */
-export interface LiveFunctionCall {
-  callId: string;
-  name: string;
-  /** Raw JSON text as the backend wrote it; may be malformed. */
-  argumentsJson: string;
-}
-
 export interface LiveSessionEvents {
   /** Voice audio, pcm16 mono at 24 kHz. */
   audio: (pcm: Buffer) => void;
-  /** The voice handed a request to the backend. */
-  delegation: () => void;
-  functionCall: (call: LiveFunctionCall) => void;
-  /** A fragment of what the call said (`input`) or what the voice said (`output`). */
-  transcript: (side: 'input' | 'output', delta: string) => void;
-  /** Tokens one backend response used. */
-  backendUsage: (usage: { inputTokens: number; outputTokens: number }) => void;
-  /** The backend finished a response that called no tools, so the request is answered. */
-  backendAnswered: () => void;
+  /** The voice handed a request over, `offsetMs` into the session. */
+  delegation: (id: string, offsetMs: number | null) => void;
+  /**
+   * A fragment of what the call said (`input`) or what the voice said (`output`), with
+   * where it falls on the session timeline when the API says.
+   */
+  transcript: (side: 'input' | 'output', delta: string, startMs: number | null) => void;
   /** A protocol-level error from the API; the socket usually stays open. */
   apiError: (message: string) => void;
   /** The session is over. `reason` is the API's close reason, or the socket's. */
@@ -91,13 +60,6 @@ export interface LiveSessionEvents {
 interface ServerEvent {
   type?: string;
   [key: string]: unknown;
-}
-
-/** A response's function calls, and the outputs that have come back for them. */
-interface PendingBatch {
-  outputs: Map<string, LiveToolOutput | null>;
-  /** The backend finished the response, so no more calls will join this batch. */
-  completed: boolean;
 }
 
 export class LiveSession extends EventEmitter {
@@ -116,15 +78,6 @@ export class LiveSession extends EventEmitter {
   private closed = false;
   private voiceSeconds: number | null = null;
   private closeReason: string | null = null;
-  /** The calls of the backend response in progress, answered together once it completes. */
-  private batch: PendingBatch | null = null;
-  /**
-   * What the backend should see next, held while a batch is open.
-   *
-   * A message between a function call and its output breaks the backend's conversation,
-   * so a picture shown during a tool call waits for the outputs and goes in after them.
-   */
-  private readonly heldItems: LiveContentPart[][] = [];
   private eventCounter = 0;
 
   constructor(private readonly options: LiveSessionOptions) {
@@ -179,6 +132,8 @@ export class LiveSession extends EventEmitter {
         if (event?.type === 'session.started') {
           cleanup();
           started = true;
+          // What the API accepted, which is not always what was asked for.
+          logger.info({ model: (event.session as { model?: string } | undefined)?.model }, '[Voice] Session started');
           resolve();
           return;
         }
@@ -202,32 +157,13 @@ export class LiveSession extends EventEmitter {
   }
 
   private start(): void {
-    const effort = config.openaiRealtimeReasoningEffort;
     this.send({
       type: 'session.start',
       session: {
         model: config.openaiRealtimeModel,
         instructions: this.options.instructions,
         ...(this.options.voice ? { audio: { output: { voice: this.options.voice } } } : {}),
-        delegation: {
-          type: 'responses',
-          responses: {
-            model: config.openaiVoiceBackendModel,
-            instructions: this.options.backendInstructions,
-            ...(effort ? { reasoning: { effort } } : {}),
-            ...(this.options.tools.length > 0
-              ? {
-                  tools: this.options.tools.map((t) => ({
-                    type: 'function',
-                    name: t.name,
-                    description: t.description,
-                    parameters: t.parameters,
-                  })),
-                  tool_choice: 'auto',
-                }
-              : {}),
-          },
-        },
+        delegation: { type: 'client' },
       },
     });
   }
@@ -248,15 +184,16 @@ export class LiveSession extends EventEmitter {
       case 'session.input_transcript.delta':
       case 'session.output_transcript.delta': {
         if (typeof event.delta !== 'string' || event.delta === '') return;
-        this.emitEvent('transcript', event.type.includes('input') ? 'input' : 'output', event.delta);
+        const startMs = typeof event.start_ms === 'number' ? event.start_ms : null;
+        this.emitEvent('transcript', event.type.includes('input') ? 'input' : 'output', event.delta, startMs);
         return;
       }
-      case 'session.delegation.created':
-        this.emitEvent('delegation');
+      case 'session.delegation.created': {
+        const delegation = event.delegation as { id?: string } | undefined;
+        if (!delegation?.id) return;
+        this.emitEvent('delegation', delegation.id, typeof event.offset_ms === 'number' ? event.offset_ms : null);
         return;
-      case 'response.event':
-        this.handleBackendEvent(event.event as ServerEvent | undefined);
-        return;
+      }
       case 'session.usage.updated':
       case 'session.closed': {
         const seconds = (event.usage as { seconds?: unknown } | undefined)?.seconds;
@@ -277,87 +214,6 @@ export class LiveSession extends EventEmitter {
     }
   }
 
-  /** One event of the backend's own Responses stream. */
-  private handleBackendEvent(event: ServerEvent | undefined): void {
-    if (!event) return;
-    if (event.type === 'response.output_item.done') {
-      const item = event.item as { type?: string; call_id?: string; name?: string; arguments?: string } | undefined;
-      if (item?.type !== 'function_call' || !item.call_id || !item.name) return;
-      this.batch ??= { outputs: new Map(), completed: false };
-      this.batch.outputs.set(item.call_id, null);
-      this.emitEvent('functionCall', {
-        callId: item.call_id,
-        name: item.name,
-        argumentsJson: item.arguments ?? '',
-      });
-      return;
-    }
-    if (event.type === 'response.completed' || event.type === 'response.failed' || event.type === 'response.incomplete') {
-      const response = event.response as {
-        status?: string;
-        usage?: { input_tokens?: number; output_tokens?: number };
-        error?: { message?: string } | null;
-      } | undefined;
-      if (response?.usage) {
-        this.emitEvent('backendUsage', {
-          inputTokens: response.usage.input_tokens ?? 0,
-          outputTokens: response.usage.output_tokens ?? 0,
-        });
-      }
-      if (event.type !== 'response.completed') {
-        logger.warn(`[Voice] A backend response ended ${response?.status ?? event.type}: ${response?.error?.message ?? 'no detail'}`);
-      }
-      if (!this.batch) {
-        this.emitEvent('backendAnswered');
-        return;
-      }
-      this.batch.completed = true;
-      this.flushBatch();
-    }
-  }
-
-  /** Return a tool result to the backend. It continues once every call of its response has one. */
-  sendFunctionOutput(callId: string, output: LiveToolOutput): void {
-    if (!this.batch?.outputs.has(callId)) return;
-    this.batch.outputs.set(callId, output);
-    this.flushBatch();
-  }
-
-  private flushBatch(): void {
-    const batch = this.batch;
-    if (!batch?.completed) return;
-    if ([...batch.outputs.values()].some((o) => o === null)) return;
-    this.batch = null;
-    for (const [callId, output] of batch.outputs) {
-      this.send({
-        type: 'response.item.create',
-        item: { type: 'function_call_output', call_id: callId, output },
-      });
-    }
-    for (const content of this.heldItems.splice(0)) this.sendUserItem(content);
-    this.send({ type: 'response.create' });
-  }
-
-  /**
-   * Show the backend something: a picture of a screen, with a note about it.
-   *
-   * `respond` asks the backend to answer it now, which the voice then speaks. Without it
-   * the item waits in the backend's context for the next request.
-   */
-  showBackend(content: LiveContentPart[], respond: boolean): void {
-    if (this.batch) {
-      // The batch's own `response.create` follows the item, so it is answered either way.
-      this.heldItems.push(content);
-      return;
-    }
-    this.sendUserItem(content);
-    if (respond) this.send({ type: 'response.create' });
-  }
-
-  private sendUserItem(content: LiveContentPart[]): void {
-    this.send({ type: 'response.item.create', item: { type: 'message', role: 'user', content } });
-  }
-
   sendAudio(pcm24k: Buffer): void {
     this.send({ type: 'session.input_audio.append', audio: pcm24k.toString('base64') });
   }
@@ -367,18 +223,21 @@ export class LiveSession extends EventEmitter {
     this.sendAppend('session.instructions.append', text);
   }
 
-  /** Context the voice knows from now on without saying it. */
-  appendThinking(text: string): void {
-    this.sendAppend('session.thinking.append', text);
+  /**
+   * Context the voice knows from now on without saying it: progress on a delegation, or,
+   * with no id, something about the session.
+   */
+  appendThinking(text: string, delegationId: string | null = null): void {
+    this.sendAppend('session.thinking.append', text, delegationId);
   }
 
-  /** Something for the voice to say now, in its own words. */
-  appendCommentary(text: string): void {
-    this.sendAppend('session.commentary.append', text);
+  /** Something for the voice to say now, in its own words: a delegation's result, or a greeting. */
+  appendCommentary(text: string, delegationId: string | null = null): void {
+    this.sendAppend('session.commentary.append', text, delegationId);
   }
 
-  private sendAppend(type: string, content: string): void {
-    this.send({ type, event_id: `ctx_${++this.eventCounter}`, delegation_id: null, content });
+  private sendAppend(type: string, content: string, delegationId: string | null = null): void {
+    this.send({ type, event_id: `ctx_${++this.eventCounter}`, delegation_id: delegationId, content });
   }
 
   private send(payload: Record<string, unknown>): void {

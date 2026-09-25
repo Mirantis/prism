@@ -47,7 +47,7 @@ const RUNTIME_SERVER_VARS = [
   'PRISM_HOST',
   'DATABASE_URL',
   'EXECUTION_ENVIRONMENT',
-  // The host's display and bus, which the meeting and computer stacks own.
+  // The host's display and bus, which the computer's stack owns.
   'DISPLAY',
   'XAUTHORITY',
   'DBUS_SESSION_BUS_ADDRESS',
@@ -56,10 +56,10 @@ const RUNTIME_SERVER_VARS = [
 
 /**
  * The runtime's own credentials, by family. The agent's shell has no use for
- * them, and with one it could post as the Slack bot, sign in to the meeting
- * account, open the runtime's voice sessions, or write to the runtime's traces
- * and telemetry. A prefix, so a new variable in one of these families stays out
- * without a change here.
+ * them, and with one it could post as the Slack bot, open the runtime's voice
+ * sessions, or write to the runtime's traces and telemetry. `GOOGLE_BOT_` holds a
+ * Google account password an install may still set. A prefix, so a new variable in
+ * one of these families stays out without a change here.
  */
 const RUNTIME_SECRET_PREFIXES = [
   'SLACK_',

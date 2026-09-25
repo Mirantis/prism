@@ -89,7 +89,7 @@ const CONTROL_NAME_LIMIT = 60;
  *
  * Structural rather than the real `Document`: this runtime compiles against Node's
  * libs, and pulling in `dom` for one type would put the whole browser surface in scope
- * for every server module. Same reason as `providers/google-meet/index.ts`.
+ * for every server module.
  */
 interface ControlElement {
   getAttribute(name: string): string | null;
@@ -309,8 +309,8 @@ export async function runBrowserCommand(page: Page, command: BrowserCommand): Pr
       case 'new_tab':
       case 'switch_tab':
       case 'close_tab':
-        // The set of tabs belongs to the browser, not to one page. `browse` in
-        // `meeting-bot.service.ts` answers these.
+        // The set of tabs belongs to the browser, not to one page. `AgentComputer.browse`
+        // answers these.
         return { success: false, message: `${command.action} is not a page command.` };
     }
   } catch (err) {

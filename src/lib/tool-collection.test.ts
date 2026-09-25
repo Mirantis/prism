@@ -37,7 +37,7 @@ beforeAll(async () => {
   await initComputerAvailability();
 });
 
-import { collectTools } from './tool-collection';
+import { collectTools, filterToolsByMode } from './tool-collection';
 import { attachmentService } from '../services/attachment.service';
 
 /** Identifiable by description, so the winner of a name clash is unambiguous. */
@@ -167,14 +167,41 @@ describe('computer tool modes', () => {
     mockGetPluginTools.mockResolvedValue({});
   });
 
-  it.each(['meeting', 'subagent'])('omits desktop tools from %s', async (mode) => {
-    const { tools } = await collectTools({ userId: 'user', agentId: 'agent', mode, lockedIn: false, taskInvoker: vi.fn() });
+  it('omits desktop tools from a subagent', async () => {
+    const { tools } = await collectTools({ userId: 'user', agentId: 'agent', mode: 'subagent', lockedIn: false, taskInvoker: vi.fn() });
     expect(Object.keys(tools).filter((name) => name.startsWith('computer_'))).toEqual([]);
   });
 
-  it.each(['chat', 'goal', 'cron', 'heartbeat', 'webhook'])('keeps stable desktop declarations in %s without an execution context', async (mode) => {
+  it.each(['chat', 'goal', 'cron', 'heartbeat', 'webhook', 'voice'])('keeps stable desktop declarations in %s without an execution context', async (mode) => {
     const { tools } = await collectTools({ userId: 'user', agentId: 'agent', mode, lockedIn: false, taskInvoker: vi.fn() });
     expect(tools.computer_browse).toBeDefined();
     expect(tools.computer_help).toBeDefined();
   });
+});
+
+describe('call tool modes', () => {
+  const all = Object.fromEntries(
+    ['join_call', 'leave_call', 'share_file', 'memory_search'].map((name) => [name, foreignTool(name)]),
+  );
+  const names = (mode: string) => Object.keys(filterToolsByMode(all, mode)).sort();
+
+  it('gives chat both call tools', () => {
+    expect(names('chat')).toEqual(['join_call', 'leave_call', 'memory_search', 'share_file']);
+  });
+
+  it('lets the call itself leave but not join again, and withholds share_file', () => {
+    expect(names('voice')).toEqual(['leave_call', 'memory_search']);
+  });
+
+  it.each(['heartbeat', 'cron', 'goal'])('keeps both call tools in %s, which the user set up', (mode) => {
+    expect(names(mode)).toEqual(expect.arrayContaining(['join_call', 'leave_call']));
+  });
+
+  it.each(['webhook', 'subagent', 'something-new'])(
+    'withholds both call tools from %s',
+    (mode) => {
+      expect(names(mode)).not.toContain('join_call');
+      expect(names(mode)).not.toContain('leave_call');
+    },
+  );
 });

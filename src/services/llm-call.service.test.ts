@@ -62,9 +62,9 @@ describe('LLM_CALL_PURPOSES', () => {
     walk(join(__dirname, '..'));
     const src = sources.join('\n');
 
-    // The invoke loop passes `request.mode` through, so the six invoke modes are
-    // recorded by that one site rather than by a literal.
-    const invokeModes = new Set(['chat', 'heartbeat', 'cron', 'goal', 'webhook', 'subagent']);
+    // The invoke loop passes `request.mode` through, so the invoke modes are recorded
+    // by that one site rather than by a literal.
+    const invokeModes = new Set(['chat', 'heartbeat', 'cron', 'goal', 'webhook', 'subagent', 'voice']);
     expect(src).toContain('purpose: request.mode');
 
     const unwired = LLM_CALL_PURPOSES.filter(

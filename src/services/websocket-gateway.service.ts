@@ -580,7 +580,6 @@ class WebSocketGatewayService {
       started = await voiceChatService.start({
         userId,
         agentId,
-        threadId: stringField(payload, 'threadId'),
         // A session with a computer opens a browser and a desktop for the agent, which
         // the client then watches on a transport of its own; see `computer-endpoint.ts`.
         computer: payload['computer'] === true,

@@ -153,12 +153,12 @@ describe('useVoiceCall', () => {
       expect(audio.stop).toHaveBeenCalledTimes(1);
     });
 
-    it('a meeting call already running', async () => {
+    it('a call already running', async () => {
       const { result } = render();
       act(() => result.current.start());
       await waitFor(() => expect(sendVoiceStart).toHaveBeenCalled());
 
-      const refusal = `I'm in a meeting call right now. That has to end before I can talk here.`;
+      const refusal = `I'm in a call right now. That has to end before I can talk here.`;
       act(() => result.current.handleEvent({ type: 'error', error: refusal }));
 
       expect(result.current.error).toBe(refusal);

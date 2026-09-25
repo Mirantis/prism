@@ -60,10 +60,10 @@ What the agent can do.
 - **[Webhooks](webhooks.md)** — named HTTP endpoints external systems
   (Alertmanager, PagerDuty, GitHub, …) POST events to, triggering an agent run
   or a direct notification.
-- **[Voice meetings](voice-meetings.md)** — the agent joins a Google Meet call and
-  takes part by voice, listening, speaking and using its tools live.
+- **[Voice calls](voice-calls.md)** — the agent takes part by voice in a call on its
+  computer, in any call app, listening, speaking and using its tools live.
 - **[Voice chat](voice-chat.md)** — a direct voice conversation with the agent, with
-  no meeting in it, over the connection chat already uses.
+  no call app in it, over the connection chat already uses.
 - **[Dictation](dictation.md)** — speak a message instead of typing it; the words
   arrive in the chat as your message.
 - **[The agent's computer](computer.md)** — a page where the agent has a browser and

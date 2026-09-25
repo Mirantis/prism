@@ -93,7 +93,10 @@ function endpointFor(target: URL): RealtimeEndpoint {
       config.realtimeUnavailableReason || 'No Realtime credential configured — set OPENAI_REALTIME_API_KEY or enable a managed Realtime provider.',
     );
   }
-  const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}` };
+  // OpenAI reads the key from `Authorization`, and an Azure resource from `api-key`: sent
+  // a bearer alone, Azure redirects to a URL with the key in its query and never starts
+  // the session. Each ignores the other's header, so both go.
+  const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}`, 'api-key': apiKey };
 
   // Mirrors lib/proxy-dispatcher.ts: outbound calls normally traverse the
   // transparent MITM directly, and only an EXPLICIT HTTPS_PROXY needs tunnelling.

@@ -23,6 +23,7 @@ import { expect, test, type Page } from '@playwright/test';
 import {
   EXCHANGE_TIMEOUT_MS,
   MICROPHONE_MS,
+  RUN_TIMEOUT_MS,
   describeBrowser,
   describeExchange,
   getBaseline,
@@ -32,6 +33,9 @@ import {
 } from '../support/voice-model';
 
 const { Given, When, Then } = createBdd();
+
+/** Answers for work of the runtime's own before the recording stopped. */
+let answersBeforeRecording = 0;
 
 /** The page starts muted, so this is the window the model must hear nothing in. */
 const MUTED_WINDOW_MS = 2_000;
@@ -225,6 +229,7 @@ Then("the agent's voice is playing on the Computer page", async ({ page }) => {
     'the voice answering and streaming it back',
     (state) => state.deltasSent - getBaseline().deltasSent > 0,
     describeScreen(page),
+    RUN_TIMEOUT_MS,
   );
   // The page's own evidence: the cue follows audio the playback worklet actually played.
   await waitForScreen('the speaking cue', speakingCue(page), describeScreen(page));
@@ -263,16 +268,17 @@ Then('the voice model hears my narration while the recording runs', async ({ pag
 });
 
 When('I stop the recording', async ({ page }) => {
+  answersBeforeRecording = (await readState()).unpromptedAnswers;
   await recordButton(page).click();
   await expect(recordButton(page)).toHaveAttribute('aria-label', 'Record your screen');
 });
 
-Then("the agent's backend is given my screen from the recording", async ({ page }) => {
+Then('the agent answers about my screen recording', async ({ page }) => {
+  // The pictures go to the agent's own run, which answers with no delegation.
   await waitForModel(
-    'the recording reaching the backend as labelled pictures',
-    (state) =>
-      state.recordingSegments - getBaseline().recordingSegments > 0 &&
-      state.recordingImages - getBaseline().recordingImages > 0,
+    "the agent's run answering the recording",
+    (state) => state.unpromptedAnswers > answersBeforeRecording,
     describeScreen(page),
+    RUN_TIMEOUT_MS,
   );
 });

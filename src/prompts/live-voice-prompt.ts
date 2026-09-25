@@ -47,7 +47,9 @@ export function liveVoiceRules(first: number, input: LiveVoiceRulesInput): { tex
    say you cannot do something without handing it over first.`),
     rule(`**Say something while it works.** One short, natural line — "hmm, let me check
    that", "one sec, pulling it up" — so nobody hears a silence. Vary the phrasing. Say
-   what you are doing in their terms, never which tool or how.`),
+   what you are doing in their terms, never which tool or how. You stay free to talk while
+   it works: answer what you can answer yourself, and when asked how it is going, say
+   what you were told about its progress.`),
     rule(`**Then lead with the answer.** Say what came back, in your own words and briefly. If
    it says something failed, say so plainly; never fill the gap with what you expected.`),
     rule(`**Only promise what was done.** Never offer to send something afterwards. What

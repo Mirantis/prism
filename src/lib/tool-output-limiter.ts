@@ -2,17 +2,8 @@
  * Tool Output Limiter
  *
  * The single owner of "render a tool result for a model, and cut it if it is too
- * big". Both paths that hand a tool result to a model use it:
- *
- * - the invoke loop (chat, heartbeat, cron, goals, subagents) via
- *   `withToolOutputCapture`, which wraps each tool's `execute`;
- * - a live voice meeting via `renderToolResult` in
- *   `services/meeting/tool-bridge.ts`, which has no AI SDK loop to hook into.
- *
- * They differ only in budget — a meeting's is deliberately smaller, see the
- * bridge — never in shape, because a truncation that behaves differently per
- * channel is a bug report waiting to happen: a payload that reads whole in Slack
- * and arrives beheaded in a call looks like the *data* is missing.
+ * big". The invoke loop uses it for every mode, voice included, through
+ * `withToolOutputCapture`, which wraps each tool's `execute`.
  *
  * Strategy:
  * - Keep the first 80% of the budget (structural headers, column names, initial
@@ -141,8 +132,7 @@ function tryJsonParse(text: string): unknown {
  * Matches a notice this module wrote earlier, capturing how much *that* pass dropped.
  *
  * Cutting an already-cut result is real: a subagent's report is capped inside the
- * subagent's own turn and capped again by the parent, and a meeting's smaller budget
- * re-cuts a result a chat turn already cut. Without this the second notice would
+ * subagent's own turn and capped again by the parent. Without this the second notice would
  * report only its own slice, so a payload that lost 470,000 chars upstream would
  * claim to have lost 18,000.
  */

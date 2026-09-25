@@ -301,16 +301,16 @@ describe('system prompt text', () => {
   // A reply is what the user acts on in every one of these modes: a heartbeat or
   // cron result lands as a bare message, a webhook reply reports a remediation, a
   // goal turn's prose is read by a checker deciding completion, a subagent's
-  // report is acted on by its parent, and a meeting says it out loud.
+  // report is acted on by its parent, and a voice run's answer is spoken.
   it('carries the claims-and-evidence rule in every mode', async () => {
-    for (const mode of ['chat', 'heartbeat', 'cron', 'webhook', 'goal', 'subagent', 'meeting'] as const) {
+    for (const mode of ['chat', 'heartbeat', 'cron', 'webhook', 'goal', 'subagent', 'voice'] as const) {
       const prompt = await promptText(createTestAgentContext(), mode);
       expect(prompt, `mode ${mode}`).toContain('# Claims and Evidence');
     }
   });
 
-  it('states the claims-and-evidence rule in a meeting too', async () => {
-    const prompt = await promptText(createTestAgentContext(), 'meeting');
+  it('states the claims-and-evidence rule in a voice run too', async () => {
+    const prompt = await promptText(createTestAgentContext(), 'voice');
     expect(prompt).toContain('# Claims and Evidence');
     // Meeting mode pushes no chat section, so the separators around this one are
     // the case most likely to leave a dangling gap.
@@ -1350,8 +1350,8 @@ describe('buildSteeringMessage', () => {
   });
 });
 
-it.each(['meeting', 'subagent'] as const)('omits desktop instructions from %s', async (mode) => {
-  const prompt = await promptText(createTestAgentContext(), mode);
+it('omits desktop instructions from a subagent', async () => {
+  const prompt = await promptText(createTestAgentContext(), 'subagent');
   expect(prompt).not.toContain('# Your computer');
   expect(prompt).not.toContain('computer_continue');
 });

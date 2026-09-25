@@ -444,12 +444,8 @@ const embeddingModelIds: Record<EmbeddingProviderName, string> = {
 const embeddingModelId = embeddingModelIds[embeddingProvider];
 
 // The voice of a call: a full-duplex model that listens, speaks and takes turns, and hands
-// the reasoning and the tools to `openaiVoiceBackendModel`. Under Azure both are
-// deployment names.
+// work to the agent's own runs on the chat model. Under Azure, the deployment name.
 const openaiRealtimeModel = process.env.OPENAI_REALTIME_MODEL || 'gpt-live-1';
-// The model that does the work behind the voice: it reads the agent's system prompt,
-// calls its tools and writes what the voice says.
-const openaiVoiceBackendModel = process.env.OPENAI_VOICE_BACKEND_MODEL || 'gpt-6-sol';
 // One resolver owns managed discovery and explicit/direct voice configuration.
 const realtimeConfiguration = resolveRealtimeConfiguration(process.env);
 const openaiRealtimeUrl = realtimeConfiguration.url;
@@ -457,25 +453,6 @@ const openaiRealtimeApiKey = realtimeConfiguration.apiKey;
 // `marin` is markedly better for conversation than the API's `alloy` default.
 // Overridable because a future model may retire a voice name.
 const openaiRealtimeVoice = process.env.OPENAI_REALTIME_VOICE || 'marin';
-// How hard the backend thinks before it answers or picks a tool. The voice keeps talking
-// while it works, so a higher level costs a longer filler rather than silence.
-//
-// Empty means send nothing and let the API pick, the same opt-out the embedding model
-// vars use. An unrecognized level falls back to the default rather than failing the
-// boot: a typo here should cost accuracy, not the call.
-const REALTIME_REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
-export type RealtimeReasoningEffort = (typeof REALTIME_REASONING_EFFORTS)[number];
-// Trimmed and lowercased before the match: an unrecognized value falls back to the
-// default, so `Low` or a stray trailing space from a compose file would otherwise quietly
-// ignore an operator who was asking for a different level.
-const rawRealtimeReasoningEffort = process.env.OPENAI_REALTIME_REASONING_EFFORT?.trim()
-  .toLowerCase();
-const openaiRealtimeReasoningEffort: RealtimeReasoningEffort | null =
-  rawRealtimeReasoningEffort === ''
-    ? null
-    : REALTIME_REASONING_EFFORTS.includes(rawRealtimeReasoningEffort as RealtimeReasoningEffort)
-      ? (rawRealtimeReasoningEffort as RealtimeReasoningEffort)
-      : 'medium';
 // Transcriber for dictation. `gpt-live-transcribe` streams its words as it goes, which
 // is what lets the composer fill in while the user is still talking.
 const openaiTranscriptionModel =
@@ -502,40 +479,18 @@ const openaiTranscriptionModel =
 // want while diagnosing "it stopped answering to its name".
 //
 // An unrecognized value is `off` rather than a boot failure: a typo here should cost
-// a diagnostic, not the container. `''` is `off` too — unlike
-// OPENAI_REALTIME_REASONING_EFFORT, where empty means "let the API choose", there is
-// nobody else to defer to.
+// a diagnostic, not the container. `''` is `off` too.
 const meetingTranscriptLogging = ((): 'off' | 'full' => {
   const raw = (process.env.MEETING_TRANSCRIPT_LOGGING || 'off').trim().toLowerCase();
   return raw === 'full' ? 'full' : 'off';
 })();
 
-// Google account the meeting bot signs in as.
-//
-// Not optional in practice for Google Meet: Google auto-denies automated
-// *anonymous* guests (the join RPC returns 403 and the host is never even
-// prompted), so a bot that isn't signed in reaches the lobby and stops there. A
-// signed-in account is an ordinary participant. The browser profile is persisted
-// under the data dir, so the sign-in happens once rather than per meeting —
-// which also keeps Google from treating every call as a new-device event.
-//
-// Accounts protected by a phone/hardware challenge or enforced SSO cannot be
-// signed in unattended; those deployments need a profile seeded out of band.
-const googleBotEmail = process.env.GOOGLE_BOT_EMAIL;
-const googleBotPassword = process.env.GOOGLE_BOT_PASSWORD;
-
-// Hard cap on one call, so a meeting nobody ended can't hold a browser, an audio
-// daemon and a metered WebSocket open indefinitely. Junk or non-positive falls
+// Hard cap on one call, so a call nobody ended can't hold a metered voice session open
+// indefinitely. Junk or non-positive falls
 // back to the default rather than disabling the cap.
 const rawMeetingTimeout = parseInt(process.env.MEETING_TIMEOUT_MINUTES ?? '', 10);
 const meetingTimeoutMinutes =
   Number.isFinite(rawMeetingTimeout) && rawMeetingTimeout > 0 ? rawMeetingTimeout : 60;
-
-// How long to wait in the waiting room for a host to click "Admit". Generous by
-// default: a guest often waits out the host's own join.
-const rawAdmissionTimeout = parseInt(process.env.MEETING_ADMISSION_TIMEOUT_SECONDS ?? '', 10);
-const meetingAdmissionTimeoutMs =
-  (Number.isFinite(rawAdmissionTimeout) && rawAdmissionTimeout > 0 ? rawAdmissionTimeout : 300) * 1000;
 
 // Parsed defensively: `parseInt` yields NaN for junk, and a zero/negative window
 // would make the context indicator divide by nothing, so both collapse to null
@@ -922,14 +877,12 @@ export const config = {
   // COMPACTION_TAIL_MESSAGES, default COMPACTION_TAIL_MESSAGES (6); 0 is legal.
   compactionTailMessages,
 
-  // Live voice meetings (see the derivations above). The meeting tools are only
-  // registered when `openaiRealtimeApiKey` is set AND the container has the browser and
-  // audio toolchain. The name shown to participants is the Google account's own, so
-  // there is no display-name setting: it is a per-join argument for platforms that
-  // admit named guests, defaulting to the agent's name.
+  // Voice (see the derivations above). The call tools are registered only when
+  // `openaiRealtimeApiKey` is set AND the agent's computer is available. A call shows
+  // the name of the account the call app is signed in to, so there is no display-name
+  // setting.
   openaiApiKey,
   openaiRealtimeModel,
-  openaiVoiceBackendModel,
   // Explicit voice override, else capability-based managed discovery or direct voice.
   openaiRealtimeUrl,
   openaiRealtimeApiKey,
@@ -937,15 +890,9 @@ export const config = {
   realtimeProvider: realtimeConfiguration.provider,
   realtimeUnavailableReason: realtimeConfiguration.unavailableReason,
   openaiRealtimeVoice,
-  // OPENAI_REALTIME_REASONING_EFFORT, the backend's level, default 'medium'; '' sends no
-  // setting at all and leaves the choice to the API.
-  openaiRealtimeReasoningEffort,
   openaiTranscriptionModel,
-  // MEETING_TRANSCRIPT_LOGGING, default 'off': whether a meeting's speech may appear
+  // MEETING_TRANSCRIPT_LOGGING, default 'off': whether a call's speech may appear
   // in the runtime's logs ('off' | 'full').
   meetingTranscriptLogging,
-  googleBotEmail,
-  googleBotPassword,
   meetingTimeoutMinutes,
-  meetingAdmissionTimeoutMs,
 };

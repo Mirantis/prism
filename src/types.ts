@@ -64,8 +64,24 @@ export interface SlackTriggerMessage {
 interface InvokeRequestBase {
   userId: string;
   agentId: string;
-  mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal' | 'webhook';
+  mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal' | 'webhook' | 'voice';
   prompt: string;
+  /**
+   * Pictures sent with `prompt` in the same user message, such as the frames of a screen
+   * recording a voice session hands its backend.
+   */
+  promptImages?: Array<{ data: string; mediaType: string }>;
+  /**
+   * Rules for the session this run works behind, appended to the stable system prompt. A
+   * voice session passes its backend rules here; they are fixed for the session, so each
+   * of its runs shares the cached prefix.
+   */
+  sessionInstructions?: string;
+  /**
+   * Whether this run may use the agent's computer, where the host has one. A voice chat
+   * without a computer says `false`, so its runs are not handed a desktop nobody watches.
+   */
+  computer?: boolean;
   threadId?: string;
   /** Override the agent's persisted verbose flag for this invocation. */
   verbose?: boolean;

@@ -15,7 +15,7 @@ Feature: Voice chat in the browser
     And the call runs on GPT-Live with the agent behind it
     And the composer cannot record a voice message during the call
     And the voice model hears at least half a second of my microphone
-    And the runtime runs the tool the agent's backend asked for
+    And the agent answers what the voice handed over
     And the agent's voice is playing in the browser
     When I mute the microphone
     Then the voice model hears no more of my microphone

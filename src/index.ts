@@ -29,10 +29,9 @@ import { initLangfuse, shutdownLangfuse } from './lib/langfuse';
 import { initTelemetry, shutdownTelemetry } from './lib/telemetry';
 import { trackAgentStarted } from './lib/startup-telemetry';
 import { heartbeatService } from './services/heartbeat.service';
-import { meetingBotService } from './services/meeting/meeting-bot.service';
+import { callService } from './services/call/call.service';
 import { voiceChatService } from './services/voice/voice-chat.service';
 import { computerEndpoint } from './services/computer/computer-endpoint';
-import { initMeetingToolAvailability } from './lib/tool-collection';
 import { initComputerAvailability } from './services/computer/supported';
 import { cronSchedulerService } from './services/cron-scheduler.service';
 import { goalService } from './services/goal.service';
@@ -263,22 +262,14 @@ const initialize = async () => {
     // and expired saved tool outputs now, then hourly (see lib/file-janitor.ts).
     fileJanitorTimer = await startFileJanitor();
 
-    // Probe for the voice-meeting toolchain once, here rather than per turn: the
-    // tools block must stay byte-identical across requests for the provider's
-    // prompt cache to hit.
     if (config.realtimeUnavailableReason) {
       logger.info({ reason: config.realtimeUnavailableReason }, 'Voice is not configured');
     }
-    const meetingsAvailable = await initMeetingToolAvailability();
-    logger.info(
-      meetingsAvailable
-        ? 'Voice meetings available (browser + audio toolchain and Realtime credential present)'
-        : 'Voice meetings unavailable — meeting tools not registered',
-    );
 
-    // The same question for the agent's own computer, which needs a desktop on top of
-    // that toolchain. The Web UI reads the answer and leaves its Computer page out
-    // where it is no.
+    // Probe for the agent's own computer once, here rather than per turn: the tools
+    // block must stay byte-identical across requests for the prompt cache to hit, and
+    // the call tools need this computer. The Web UI reads the answer and leaves its
+    // Computer page out where it is no.
     const computerAvailable = await initComputerAvailability();
     logger.info(
       computerAvailable
@@ -344,12 +335,11 @@ const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResp
 
   webSocketGatewayService.closeAll();
   computerEndpoint.close();
-  await computerService.close();
-  // Leave any live call before the process goes: otherwise the browser and audio
-  // daemon die with us and the bot lingers in the meeting as a frozen participant.
-  await meetingBotService.shutdown().catch((err) => {
-    logger.warn(`[Meeting] Shutdown teardown failed: ${String(err)}`);
+  // End a live call's voice while the computer it speaks through is still up.
+  await callService.shutdown().catch((err) => {
+    logger.warn(`[Call] Shutdown teardown failed: ${String(err)}`);
   });
+  await computerService.close();
   // Same for a browser voice chat: the peer dies with the process, so end the
   // session while there is still a socket to say so on.
   await voiceChatService.shutdown().catch((err) => {

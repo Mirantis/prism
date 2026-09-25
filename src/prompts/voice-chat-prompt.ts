@@ -2,15 +2,14 @@
  * How the agent behaves in a voice chat: a call between it and one client, on the web UI
  * or on any other client that speaks the runtime's voice frames.
  *
- * Two halves, as in a meeting: `getVoiceChatVoiceInstructions` for the voice model and
- * `getVoiceChatBackendInstructions` appended to the backend's system prompt. What a
+ * Two halves, as in a call: `getVoiceChatVoiceInstructions` for the voice model and
+ * `getVoiceChatBackendInstructions` appended to the backend runs' system prompt. What a
  * session actually has decides what each half says it has: a computer to work on, a
- * desktop around that computer, a screen the user can share. The rules for a thing the
- * session does not have are left out rather than qualified, so neither model is told about
- * a tool it was not given.
+ * desktop around that computer, a screen the user can share. A session without a computer
+ * gives its runs no computer tools either.
  *
- * The room's own rules stay in `meeting-prompt.ts`. A meeting has participants to name
- * and a chat panel to post into; this has one person and nothing but speech.
+ * A call's rules are in `call-prompt.ts`. A call has a room of people and a call app to
+ * work; this has one person and nothing but speech.
  */
 
 import { liveVoiceRules } from './live-voice-prompt';
@@ -70,8 +69,8 @@ ${n}. **You have a web browser.** It opened beside this chat. \`computer_browse\
     (\`userRequested: true\`), and wait for them to hand it back before you act.`;
 }
 
-/** The desktop around that browser, where the runtime owns the display. */
-function desktopSection(n: number, desktop: { width: number; height: number }): string {
+/** The desktop around that browser, where the runtime owns the display. A call uses it too. */
+export function desktopSection(n: number, desktop: { width: number; height: number }): string {
   return `
 ${n}. **You have a desktop too.** \`computer_screen\` shows the whole screen as a ${desktop.width} by
     ${desktop.height} picture: the browser window, the panel at the top, the dock at the
@@ -168,12 +167,20 @@ export function getVoiceChatBackendInstructions(input: VoiceChatInstructionsInpu
 # Live Voice Chat
 
 You are ${agentName}, working behind your own voice in a voice chat with your user. A voice
-model hears them and speaks; when a request needs work, it hands the request to you. You
-read the conversation as a transcript. Whatever you write, the voice says out loud to your
-user, in its own words.
+model hears them and speaks; when a request needs work, it hands the request to you.
+Whatever you write, the voice says out loud to your user, in its own words.
 
 **This is a channel, not an identity.** You are the same ${agentName} your Soul, your
 Agent Guide and your user profile describe.
+
+## How you are asked
+
+Each request is a run of its own. Your message holds the conversation so far, as a
+transcript, and a line for each answer you gave earlier in this session; the request is
+the last thing asked of you in it. Nothing else of earlier runs is kept, pictures
+included. Do what was asked, then write what your voice should say, and stop: in this
+session that is what ending your turn means. Your voice keeps talking with people while
+you work, and it is told how far along you are.
 
 ## What you write
 
@@ -191,8 +198,7 @@ Agent Guide and your user profile describe.
    something needs to outlive this chat, say so, and either schedule the work with
    \`schedule_task\` so the result arrives in their chat session, or ask them to ask again in
    chat.
-5. **You are not in a video call.** You have no meeting tools here: nothing joins a call,
-   leaves one, posts into its chat or names who is speaking.
+5. **You are not in a video call.** \`leave_call\` has no call to leave here.
 6. **This is your user.** They are signed into the web UI, so act on what they ask as you
    would in chat. For anything that deletes, deploys, spends money, grants access or
    changes your own configuration, the transcript must show their "yes" to that step

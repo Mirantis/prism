@@ -579,7 +579,7 @@ describe('view_attachment toModelOutput', () => {
     note: 'Image "photo.jpg" is attached to this tool result.',
   };
 
-  it('loads the bytes at conversion time and returns an image-data part', async () => {
+  it('loads the bytes at conversion time and returns an image file part', async () => {
     getByIdSpy.mockResolvedValue(makeRow({ mediaType: 'image/jpeg', data: Buffer.from('hello') }));
 
     const modelOutput = await viewTool().toModelOutput({ output: imageOutput });
@@ -587,7 +587,7 @@ describe('view_attachment toModelOutput', () => {
       type: 'content',
       value: [
         { type: 'text', text: '[Viewing photo.jpg]' },
-        { type: 'image-data', data: Buffer.from('hello').toString('base64'), mediaType: 'image/jpeg' },
+        { type: 'file', mediaType: 'image/jpeg', data: { type: 'data', data: Buffer.from('hello').toString('base64') } },
       ],
     });
   });

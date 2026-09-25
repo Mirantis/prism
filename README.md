@@ -244,31 +244,28 @@ rendered template directly with zero LLM cost. Works out of the box with
 Alertmanager, PagerDuty, GitHub, or any sender that can POST JSON — see
 [docs/webhooks.md](docs/webhooks.md).
 
-### Voice meetings
+### Voice calls
 
-The agent can join a **Google Meet** call and take part by voice — ask it in chat and
-it requests to join signed into its own Google account, a host admits it like any
-other participant, and from then on it listens and speaks in the room. It keeps its
-tools during the call, so it can look something up and say the answer without leaving.
-Interrupt it and it yields the floor; a short "mm-hm" won't cut it off. Needs the
-container image (which ships Chromium, Xvfb and PulseAudio) plus managed OpenAI
-or a direct voice credential. Realtime audio uses the Lens endpoint when managed
-OpenAI is configured, independently of the chat provider. Speaking is how it answers, and it can
-put one short line — a link, an id, a command to paste — into the call's own chat panel.
-Work it can't finish in the call it schedules as a one-off task, and that result lands in
-your chat afterwards. Nothing else leaves a call, and nothing about the meeting is
-recorded. It has its full toolset otherwise (everything but `share_file`), including the
-tools that change its own configuration.
-A meeting isn't an authenticated channel and the guardrail is prompt-level — it
-announces and confirms before anything destructive — so a meeting link effectively
-grants the agent's authority, over itself included. See
-[docs/voice-meetings.md](docs/voice-meetings.md).
+The agent can take part by voice in a call on **its computer**, in any call app there:
+a web meeting in its browser (Google Meet, a Slack huddle, Zoom on the web) or an
+installed client. Ask it in chat and it opens the link, joins, and connects its voice;
+from then on it listens and speaks in the call and keeps its tools, so it can look
+something up and say the answer. It uses the app's own controls for mute, chat, screen
+sharing and leaving. Sign in to the call app once yourself on the Computer page. Needs
+the container image (the computer's desktop) plus managed OpenAI or a direct voice
+credential. Work it can't finish in the call it schedules as a one-off task, and that
+result lands in your chat afterwards; nothing about the call is recorded. It has its
+full toolset otherwise (everything but `share_file`), including the tools that change
+its own configuration. A call isn't an authenticated channel and the guardrail is
+prompt-level — it announces and confirms before anything destructive — so a call
+effectively grants the agent's authority, over itself included. See
+[docs/voice-calls.md](docs/voice-calls.md).
 
 ### Voice chat
 
-A client can also talk to the agent **directly**, with no meeting in between: the
+A client can also talk to the agent **directly**, with no call app in between: the
 audio rides the same chat connection, and the agent keeps its tools and its
-authority while you speak. It needs the same Realtime credential as a meeting and
+authority while you speak. It needs the same Realtime credential as a call and
 nothing else, so it works wherever chat works — a hosted sandbox and the
 installed binary included. See [docs/voice-chat.md](docs/voice-chat.md).
 
@@ -375,11 +372,10 @@ restarts.
 | `CONTEXT_WINDOW_TOKENS` | Context window to assume for the context-usage indicator; only needed for a model the catalog doesn't know | derived from the model ID |
 | `MODELS_DEV_URL` | Opt in to refreshing the model-window catalog from a registry at startup (e.g. `https://models.dev/api.json`); unset means no outbound call, bundled catalog only | — (disabled) |
 | `SLACK_EXPECTED_APP_ID` | Optional safety check on the Slack app identity | — |
-| `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md) and [voice chat](docs/voice-chat.md) (legacy direct-OpenAI voice credential; managed voice resolves its own endpoint and key); also the chat credential when `LLM_PROVIDER=openai`, and the default embedding credential when `LLM_PROVIDER=anthropic` | — (disabled) |
+| `OPENAI_API_KEY` | Enables [voice calls](docs/voice-calls.md) and [voice chat](docs/voice-chat.md) (legacy direct-OpenAI voice credential; managed voice resolves its own endpoint and key); also the chat credential when `LLM_PROVIDER=openai`, and the default embedding credential when `LLM_PROVIDER=anthropic` | — (disabled) |
 | `ANTHROPIC_API_KEY` | Chat credential when `LLM_PROVIDER=anthropic` (the first-party Anthropic API; always direct — no gateway mount) | — |
-| `OPENAI_REALTIME_MODEL` | The agent's voice, in a meeting and in a voice chat | `gpt-live-1` |
-| `OPENAI_VOICE_BACKEND_MODEL` | Model the voice hands more complex tasks to. An OpenAI model | `gpt-6-sol` |
-| `MEETING_TIMEOUT_MINUTES` | Hard cap on one meeting call | `60` |
+| `OPENAI_REALTIME_MODEL` | The agent's voice, in a call and in a voice chat; the work it hands to the agent runs on the agent's chat model | `gpt-live-1` |
+| `MEETING_TIMEOUT_MINUTES` | Hard cap on one voice call | `60` |
 | `LANGFUSE_SECRET_KEY` | Enables Langfuse tracing when set | — |
 | `LANGFUSE_PUBLIC_KEY` | Langfuse public key | — |
 | `LANGFUSE_BASE_URL` | Langfuse server | `http://localhost:3100` |

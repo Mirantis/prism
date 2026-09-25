@@ -27,13 +27,7 @@ import { ensureCodingAgentsDetected } from './coding-agents/availability';
 import { getShareFileTools, SHARE_FILE_TOOL_NAME } from '../tools/share-file';
 import { getAttachmentTools } from '../tools/attachments';
 import { getSkillTools } from '../tools/skills/index';
-import {
-  getMeetingTools,
-  MEETING_MEMBERSHIP_TOOL_NAMES,
-  MEETING_READ_TOOL_NAME,
-  MEETING_SCREEN_TOOL_NAMES,
-  isMeetingSupported,
-} from '../tools/meeting';
+import { CALL_TOOL_NAMES, getCallTools, isCallSupported, JOIN_CALL_TOOL_NAME } from '../tools/call';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
 import { pluginMcpService } from '../services/plugin-mcp.service';
 import type { PendingFileWrites } from './pending-file-writes';
@@ -59,8 +53,7 @@ export interface CollectToolsInput {
   /**
    * The current step's announced file writes, so `share_file` can wait for a write
    * to the file it is about to read instead of racing it. Optional: a caller that
-   * passes none keeps today's unsequenced behaviour, which is what the meeting
-   * tool bridge (no invoke loop, no steps) and unit tests want.
+   * passes none keeps today's unsequenced behaviour, which is what unit tests want.
    */
   pendingFileWrites?: PendingFileWrites;
   /**
@@ -74,34 +67,8 @@ export interface CollectToolsInput {
    * writers in its schema and lean on the runtime refusal alone.
    */
   lockedIn: boolean;
-}
-
-/**
- * Whether this host can host a voice meeting, resolved once at startup.
- *
- * Probed once rather than per turn because the answer involves filesystem checks
- * and, more importantly, because the tools block must be byte-identical across
- * requests for the provider's prompt cache to hit. Defaults to false so a runtime
- * that never calls `initMeetingToolAvailability()` (tests, an embedder) simply
- * doesn't offer the tools.
- */
-let meetingToolsAvailable = false;
-
-/**
- * Probe for the meeting toolchain and remember the answer.
- *
- * Called from the startup sequence. Never throws: a failed probe means "no voice
- * meetings here", which is the correct outcome for every host without the
- * container's browser and audio packages.
- */
-export async function initMeetingToolAvailability(): Promise<boolean> {
-  try {
-    meetingToolsAvailable = await isMeetingSupported();
-  } catch (err) {
-    logger.warn(`[Tools] Meeting toolchain probe failed: ${String(err)}`);
-    meetingToolsAvailable = false;
-  }
-  return meetingToolsAvailable;
+  /** False for a run that must not use the computer; see `InvokeRequest.computer`. */
+  computer?: boolean;
 }
 
 export interface CollectedTools {
@@ -123,7 +90,7 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
   await ensureCodingAgentsDetected();
   const builtInTools: Record<string, Tool> = {
     ...getMemoryTools(input.userId, input.agentId),
-    ...(hasComputerForMode(input.mode) ? getComputerTools(input.computerUse) : {}),
+    ...(hasComputerForMode(input.mode) && input.computer !== false ? getComputerTools(input.computerUse) : {}),
     ...getCronTools(input.userId, input.agentId, input.threadId, originChannel, input.originChannelId),
     ...getGoalTools(input.userId, input.agentId, input.threadId, originChannel, input.originChannelId),
     ...getAgentConfigTools(),
@@ -142,17 +109,10 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
     // body on demand. workspaceRoot merges the repo's skills with the global
     // ones. Empty (and omitted) when no skills are available.
     ...(await getSkillTools(input.workspaceRoot)),
-    // Live voice meetings. Empty unless the host has the browser/audio
-    // toolchain and an OpenAI key — see `meetingToolsAvailable`.
-    ...(meetingToolsAvailable
-      ? getMeetingTools({
-          userId: input.userId,
-          agentId: input.agentId,
-          threadId: input.threadId,
-          // `see_screen` delivers its picture into the meeting's Realtime session, so it
-          // has to know whether the model asking for it is the one in the call.
-          inMeetingSession: input.mode === 'meeting',
-        })
+    // A voice in a call on the computer. Empty unless the host has the computer's
+    // desktop and a voice credential, both fixed at startup.
+    ...(isCallSupported()
+      ? getCallTools({ userId: input.userId, agentId: input.agentId, threadId: input.threadId })
       : {}),
   };
 
@@ -213,8 +173,7 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
 
   // Last word on what a tool may be called, and deliberately the last step
   // here: this is the only assembly point every request goes through — chat,
-  // compaction, and the voice-meeting bridge, which re-declares these same keys
-  // to the Realtime API under the same limit.
+  // compaction, and a voice session's runs.
   //
   // Every built-in name is reserved, `Task` included, and the set is taken
   // before the filters rather than after: a mode that withheld `share_file`
@@ -297,24 +256,22 @@ function omitLockedTools(tools: Record<string, Tool>): Record<string, Tool> {
  * tool — including MCP ones — so a remote tool cannot answer to a name the
  * mode has just taken away.
  *
- * Joining a voice meeting and leaving one are chat-only acts: every other mode drops
- * those two tools, because an autonomous run (a heartbeat, a cron tick, a subagent)
- * dialling into a live call with people in it — or hanging up on one — is never what the
- * operator asked for. Asking about a call and posting one line into it are available in
- * every mode, so a scheduled run started during a call can report back into the room.
- * Reading the call's chat goes the other way: only the model in the call gets it.
+ * The call tools follow who decided the run happens. A chat turn, a heartbeat, a
+ * scheduled task and a goal all carry the user's own intent, so they keep them. A
+ * webhook run is triggered from outside, and its payload could name any call, so it
+ * drops them, as does a subagent, whose parent can join itself.
  *
- * - chat: All tools except `read_meeting_chat`
+ * - chat: All tools
  * - heartbeat: minus cron-management AND goal tools (no schedule/goal reshaping)
  * - cron: minus list/delete-task AND goal tools, but KEEPS schedule_task so a
  *   thread-bound "continue in this conversation" run can re-`wait` (poll in-thread)
- * - webhook: same as cron — an event-triggered run keeps schedule_task for
- *   "check again later" follow-ups
- * - subagent: minus share_file (no user channel) AND goal tools (no user thread)
+ * - webhook: same as cron, minus the call tools — an event-triggered run keeps
+ *   schedule_task for "check again later" follow-ups
+ * - subagent: minus share_file (no user channel), goal tools (no user thread) and the
+ *   call tools
  * - goal: minus create_goal (no nested goals) and cron-management; get_goal stays
- * - meeting: chat's set minus share_file, plus read_meeting_chat (see the function body)
- * - any other mode: everything except the two tools that join or leave a call, and the
- *   chat read
+ * - voice: chat's set minus share_file and join_call (see the function body)
+ * - any other mode: everything except the call tools
  */
 export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Record<string, Tool> {
   // Goal-management tools are chat-only entry points; a goal turn keeps only
@@ -330,49 +287,29 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
     return result;
   };
 
-  // Chat gets everything but the chat read. A chat turn persists its tool results as
-  // conversation history and replays them into every later turn, so reading a call's chat
-  // there would file words typed by unauthenticated third parties into the database for
-  // good. The model in the call holds the reading for the length of the call instead.
-  if (mode === 'chat') {
-    return omit(new Set([MEETING_READ_TOOL_NAME]));
-  }
+  if (mode === 'chat') return tools;
 
-  // A live voice meeting gets chat's surface except `share_file`, and the chat read on top.
+  // A live call gets chat's surface except `share_file` and `join_call`, since it is the
+  // call already.
   //
   // `share_file` is dropped for the same reason `subagent` drops it: the tool only
   // stores the file and hands back an id, and it is the *invoke loop* that carries
   // that id onto the step and the conversation engine that links it to a delivered
-  // message. A meeting runs neither, so a shared file would be stored and then
-  // reach nobody — while the tool's own description promises the user a download.
+  // message. A call runs neither, so a shared file would be stored and then reach
+  // nobody — while the tool's own description promises the user a download.
   //
-  // Nothing else is withheld. Meeting mode used to also drop the tools whose
-  // effects outlive the call (cron, self-configuration, memory writes), because
-  // meeting audio is unauthenticated: anyone with the link can speak, and their
-  // words drive a model holding real tools. That boundary was removed deliberately
-  // — an agent that can only read is not much use in a working meeting, and the
-  // filter also refused the agent's own user asking in a call. The one guard left is
-  // `prompts/meeting-prompt.ts`'s confirmation rule, which covers self-configuration
-  // by name; it is guidance, not enforcement, so a sentence agreed in a call can
-  // change the agent for every future turn on every channel. Treat a meeting link as
-  // conferring the agent's authority over itself and keep it private.
-  // `docs/voice-meetings.md` says so plainly.
-  if (mode === 'meeting') {
-    return omit(new Set([SHARE_FILE_TOOL_NAME]));
+  // Nothing else is withheld, though call audio is unauthenticated: anyone in the call
+  // can speak, and their words drive a model holding real tools. The one guard is
+  // `prompts/call-prompt.ts`'s confirmation rule, which covers self-configuration by
+  // name; it is guidance, not enforcement, so a sentence agreed in a call can change the
+  // agent for every future turn on every channel. `docs/voice-calls.md` says so plainly.
+  if (mode === 'voice') {
+    return omit(new Set([SHARE_FILE_TOOL_NAME, JOIN_CALL_TOOL_NAME]));
   }
 
-  // Only a person in a conversation asks the agent into a call or out of one, so every
-  // mode below drops those two tools. Folded in here rather than repeated per mode so a
-  // new mode can't accidentally inherit the ability to join a meeting.
-  const membershipToolNames = new Set<string>([
-    ...MEETING_MEMBERSHIP_TOOL_NAMES,
-    // The screen tools go with them: an autonomous run must not move what a room is
-    // watching, or open a browser in front of one.
-    ...MEETING_SCREEN_TOOL_NAMES,
-    // And the chat read, for the reason the chat branch above drops it: every mode below
-    // stores its tool results.
-    MEETING_READ_TOOL_NAME,
-  ]);
+  // Speaking in a call hands the agent's tools to everyone in it, so a run whose trigger
+  // is outside input must not start one. The modes below that drop these are that kind.
+  const callToolNames = new Set<string>(CALL_TOOL_NAMES);
 
   // Subagents return their result as text to the parent invocation (via the
   // Task tool) — they have no direct channel to the user, so a file they
@@ -385,7 +322,7 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
         'hydrate_attachment',
         'view_attachment',
         ...goalToolNames,
-        ...membershipToolNames,
+        ...callToolNames,
       ]),
     );
   }
@@ -393,7 +330,7 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
   // Heartbeat is an autonomous run: full tool access, minus the cron-management
   // and goal tools so it can't reshape the schedule or spawn goals.
   if (mode === 'heartbeat') {
-    return omit(new Set([...cronToolNames, ...goalToolNames, ...membershipToolNames]));
+    return omit(new Set([...cronToolNames, ...goalToolNames]));
   }
 
   // Cron keeps `schedule_task` so a thread-bound "continue in this conversation"
@@ -405,7 +342,7 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
         'list_scheduled_tasks',
         'delete_scheduled_task',
         ...goalToolNames,
-        ...membershipToolNames,
+        ...(mode === 'webhook' ? callToolNames : []),
       ]),
     );
   }
@@ -413,14 +350,11 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
   // A goal turn does real work but must not create/nest a goal or reshape the
   // schedule.
   if (mode === 'goal') {
-    return omit(new Set(['create_goal', ...cronToolNames, ...membershipToolNames]));
+    return omit(new Set(['create_goal', ...cronToolNames]));
   }
 
-  // A mode nothing above enumerates keeps every other tool, and none of the ones that
-  // change which call the agent is in, move what a room is watching, or read the call's
-  // chat. The permissive fallback is deliberate for the rest — a caller passing a mode this
-  // function has not heard of should not silently lose the shell — but `join_meeting` dials
-  // into a live call with people in it, `leave_meeting` hangs up on one, and the chat read
-  // would be stored, which is why every enumerated mode above drops them.
-  return omit(membershipToolNames);
+  // A mode nothing above enumerates keeps every tool but the call tools. The permissive
+  // fallback is deliberate for the rest — a caller passing a mode this function has not
+  // heard of should not silently lose the shell.
+  return omit(callToolNames);
 }

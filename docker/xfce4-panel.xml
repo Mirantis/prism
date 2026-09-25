@@ -4,6 +4,9 @@
   XFCE's own default puts a second panel along the bottom edge. Plank is the dock on this
   desktop, and the two sit in the same place, so this leaves the top panel only: the
   applications menu, the window list, the clock and the session actions.
+
+  XFCE's volume plugin is left out. It moves every playback stream to the default speaker,
+  which takes the agent's voice off the microphone a call app records.
 -->
 <channel name="xfce4-panel" version="1.0">
   <property name="configver" type="int" value="2"/>
@@ -23,7 +26,6 @@
         <value type="int" value="4"/>
         <value type="int" value="5"/>
         <value type="int" value="6"/>
-        <value type="int" value="8"/>
         <value type="int" value="11"/>
         <value type="int" value="12"/>
         <value type="int" value="13"/>
@@ -46,10 +48,6 @@
     </property>
     <property name="plugin-6" type="string" value="systray">
       <property name="square-icons" type="bool" value="true"/>
-    </property>
-    <property name="plugin-8" type="string" value="pulseaudio">
-      <property name="enable-keyboard-shortcuts" type="bool" value="true"/>
-      <property name="show-notifications" type="bool" value="true"/>
     </property>
     <property name="plugin-11" type="string" value="separator">
       <property name="style" type="uint" value="0"/>

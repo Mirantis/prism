@@ -82,28 +82,3 @@ export async function startLiveServer(options: LiveServerOptions = {}): Promise<
     },
   };
 }
-
-/** The backend calling a function tool, as the API wraps it. */
-export function functionCallEvent(callId: string, name: string, args = '{}'): Record<string, unknown> {
-  return {
-    type: 'response.event',
-    delegation_id: 'item_delegation',
-    event: {
-      type: 'response.output_item.done',
-      item: { id: `fc_${callId}`, type: 'function_call', status: 'completed', arguments: args, call_id: callId, name },
-      output_index: 0,
-    },
-  };
-}
-
-/** The backend finishing a response, with its token usage. */
-export function responseCompletedEvent(inputTokens = 800, outputTokens = 14): Record<string, unknown> {
-  return {
-    type: 'response.event',
-    delegation_id: 'item_delegation',
-    event: {
-      type: 'response.completed',
-      response: { id: 'resp_test', status: 'completed', output: [], usage: { input_tokens: inputTokens, output_tokens: outputTokens } },
-    },
-  };
-}

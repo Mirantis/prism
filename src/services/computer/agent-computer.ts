@@ -63,8 +63,18 @@ export interface ModelChannel {
   notify(text: string): void;
 }
 
+/** The desktop's audio as a call uses it; see `AgentComputer.callAudio`. */
+export interface CallAudio extends Pick<AudioStackHandles, 'onCapture' | 'onLost' | 'playbackSink'> {
+  /** Whether a program is recording the desktop's microphone right now. */
+  isMicCaptured(): Promise<boolean>;
+  /** Wait up to `timeoutMs` for a program to start recording it. */
+  waitForMicCapture(timeoutMs: number): Promise<boolean>;
+  /** The name of the program recording it, or null. */
+  micClient(): Promise<string | null>;
+}
+
 /** Whether a capture chunk is nothing but silence, which is most of them. */
-function isSilent(pcm: Buffer): boolean {
+export function isSilent(pcm: Buffer): boolean {
   for (let i = 0; i < pcm.length; i++) if (pcm[i] !== 0) return false;
   return true;
 }
@@ -82,7 +92,7 @@ const START_PAGE =
       'background:#18181b;color:#a1a1aa;font:24px system-ui,sans-serif">Ready</body>',
   );
 
-/** The label a screenshot carries into the session; see `meeting-bot.service.ts`. */
+/** The label a screenshot carries into the session, so the model does not read it as the user's words. */
 const SCREEN_LOOK_NOTE =
   'This is a picture of your own screen as it looks right now, in answer to your ' +
   'computer_screen call. Your user did not say this.';
@@ -184,7 +194,7 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
       display = new AudioStack();
       const handles = await display.start({ screen: sizeText(this.size) });
       const env = handles.browserEnv;
-      // A meeting ends on this; here the desktop's sound just stops reaching the page.
+      // A call ends on this through its own subscription; here the sound stops reaching the page.
       handles.onLost((reason) => logger.warn(`[VoiceChat] Desktop audio capture lost: ${reason}`));
       // The desktop before the browser, so the window manager is there to place the
       // browser's window when it opens, and the session bus exists for it to join.
@@ -247,13 +257,32 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
     return true;
   }
 
+  /**
+   * The desktop's audio devices, for a call: what every program plays, the microphone
+   * every program records, and which program records it. Null for a computer that never
+   * opened.
+   */
+  get callAudio(): CallAudio | null {
+    const handles = this.audioHandles;
+    const display = this.display;
+    if (!handles || !display) return null;
+    return {
+      onCapture: handles.onCapture,
+      onLost: handles.onLost,
+      playbackSink: handles.playbackSink,
+      isMicCaptured: () => display.isMicCaptured(),
+      waitForMicCapture: (timeoutMs) => display.waitForMicCapture(timeoutMs),
+      micClient: () => display.micClient(),
+    };
+  }
+
   async browse(command: BrowserCommand): Promise<BrowserResult> {
     const browser = this.browser;
     if (!browser) return { success: false, message: 'There is no browser on this computer.' };
 
     return this.onFrontQueue(async () => {
       try {
-        await browser.observeFront();
+        await browser.observeFront(await this.windowTitles());
         const result = await this.runBrowseCommand(browser, command);
         return { ...result, tabs: await summarizeTabs(browser.listTabs(), browser.front()) };
       } catch (err) {
@@ -269,7 +298,7 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
    * the words on the page are worth more to a voice model than pixels.
    */
   async lookAtScreen(): Promise<{ success: boolean; message: string } & Partial<BrowserReading>> {
-    await this.browser?.observeFront();
+    await this.browser?.observeFront(await this.windowTitles());
     const page = this.browser?.front();
     const control = this.desktopControl;
 
@@ -306,6 +335,12 @@ export class AgentComputer implements ComputerBrowser, ComputerDesktop, Computer
       logger.error({ err }, '[VoiceChat] Screen capture failed');
       return { success: false, message: 'I could not get a picture of the browser.' };
     }
+  }
+
+  /** The desktop's window titles, which name each browser window's front tab. */
+  private async windowTitles(): Promise<string[]> {
+    if (!this.desktopControl) return [];
+    return (await listWindows(this.desktopEnv).catch(() => [])).map((window) => window.title);
   }
 
   /** The model's picture size; its coordinates refer to this, not to the screen. */

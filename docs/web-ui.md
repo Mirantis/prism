@@ -231,8 +231,8 @@ What the agent has spent, and what it has done.
   the exact count beneath it.
 
   Counts every text-generation call, including the ones that produce no
-  message. Voice meetings and memory embeddings each run on their own surface,
-  billed separately from these figures.
+  message, and the agent's work in voice calls and voice chats. The voice itself and
+  memory embeddings are billed separately from these figures.
 
   **Cache hit rate** reads `—` when the provider reports no cache breakdown, and
   `0%` when it reports one and nothing was served from cache. See

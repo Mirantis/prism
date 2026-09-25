@@ -1,7 +1,7 @@
 /**
  * Owns the agent's side of a browser voice chat, start to finish.
  *
- * One session per runtime, and never at the same time as a meeting: both owners take
+ * One session per runtime, and never at the same time as a call: both owners take
  * `voiceSessionLock`, because the agent has one voice. The lock is held for exactly as
  * long as this service is not `idle`, so the places that word is written are the places
  * the lock is released.
@@ -26,17 +26,9 @@ import { logger } from '../../logger';
 import { config } from '../../config';
 import { trackEvent } from '../../lib/telemetry';
 import { VoiceConversation } from '../meeting/voice-conversation';
-import { prepareMeetingTools } from '../meeting/tool-bridge';
-import { prepareRealtimeTools } from './realtime-tools';
-import {
-  prepareVoiceChatTools,
-  VOICE_CHAT_TRUNCATION_GUIDANCE,
-} from './voice-chat-tools';
 import { AgentComputer } from '../computer/agent-computer';
-import { getComputerTools } from '../../tools/computer';
 import { computerService } from '../computer/computer.service';
 import { computerHelpService } from '../computer/computer-help.service';
-import type { ComputerUse } from '../computer/computer-access';
 import type { ScreenFrame } from '../computer/picture-stream';
 import { buildVoiceInstructions } from './voice-instructions';
 import { voiceSessionLock } from './voice-session-lock';
@@ -156,8 +148,6 @@ export interface ComputerClient {
 export interface StartVoiceChatInput {
   userId: string;
   agentId: string;
-  /** The thread the call was started from, for the tools that take one. */
-  threadId?: string;
   signal: VoiceChatSignal;
   /** Which client asked. Defaults to the chat socket, the one that came first. */
   surface?: VoiceChatSurface;
@@ -203,7 +193,6 @@ class VoiceChatService {
   private transport: SocketAudio | null = null;
   private conversation: VoiceConversation | null = null;
   private computer: AgentComputer | null = null;
-  private computerUse: ComputerUse | null = null;
   /** The user's recording of their own screen. Built for a session that has a page. */
   private recording: ScreenRecording | null = null;
   /** Which client's socket the running recording came in on, so its loss is noticed. */
@@ -240,8 +229,8 @@ class VoiceChatService {
   async start(input: StartVoiceChatInput): Promise<boolean> {
     if (!voiceSessionLock.tryAcquire('voice-chat')) {
       input.signal.error(
-        voiceSessionLock.holder === 'meeting'
-          ? `I'm in a meeting call right now. That has to end before I can talk here.`
+        voiceSessionLock.holder === 'call'
+          ? `I'm in a call right now. That has to end before I can talk here.`
           : `There is already a voice chat running. End that one first.`,
       );
       return false;
@@ -259,7 +248,6 @@ class VoiceChatService {
     let transport: SocketAudio | null = null;
     let conversation: VoiceConversation | null = null;
     let computer: AgentComputer | null = null;
-    let computerUse: ComputerUse | undefined;
     // Where a failure happened, for the event below. An operator reads this to tell an
     // image that cannot carry a computer from a voice session that would not open.
     let stage: 'computer' | 'session' = 'session';
@@ -273,10 +261,9 @@ class VoiceChatService {
       await transport?.close().catch((err: unknown) => {
         logger.warn({ err }, '[VoiceChat] The transport would not close');
       });
-      if (computerUse) {
-        computerHelpService.endVoice(computerUse);
-        computerService.access.finish(computerUse);
-      }
+      // A start cancelled by `stop()` was ended already, and a newer session may hold the
+      // voice by now, so its help requests are not this start's to clear.
+      if (this.epoch === epoch) computerHelpService.endVoiceSession();
 
       // A recording still running has no model left to be handed to, and reporting it as
       // cancelled is what keeps one that never arrived out of the delivered count.
@@ -290,7 +277,6 @@ class VoiceChatService {
       if (input.computer) {
         stage = 'computer';
         computer = await computerService.open();
-        computerUse = computerService.access.create({ userId: input.userId, agentId: input.agentId, mode: 'voice' });
         if (this.epoch !== epoch) {
           await releaseLocals();
           return false;
@@ -298,7 +284,7 @@ class VoiceChatService {
         stage = 'session';
       }
 
-      const { instructions, backendInstructions, agentName, lockedIn } = await buildVoiceInstructions({
+      const { instructions, sessionInstructions } = await buildVoiceInstructions({
         userId: input.userId,
         agentId: input.agentId,
         call: {
@@ -311,23 +297,6 @@ class VoiceChatService {
           userScreen: computer !== null,
         },
       });
-      // Bind computer tools to this voice session’s ownership and image delivery.
-      const agentTools = await prepareMeetingTools({
-        userId: input.userId,
-        agentId: input.agentId,
-        threadId: input.threadId,
-        lockedIn,
-      });
-      const tools = prepareVoiceChatTools(
-        agentTools,
-        computer
-          ? prepareRealtimeTools(
-              getComputerTools(computerUse, () => conversation),
-              { label: 'Computer', truncationGuidance: VOICE_CHAT_TRUNCATION_GUIDANCE },
-            )
-          : null,
-      );
-
       transport = new SocketAudio(
         input.signal,
         {
@@ -340,17 +309,12 @@ class VoiceChatService {
 
       conversation = new VoiceConversation({
         instructions,
-        backendInstructions,
-        tools,
+        backend: { userId: input.userId, agentId: input.agentId, sessionInstructions, computer: computer !== null },
         sink: transport.sink,
         sampleRate,
-        agentName,
         voice: config.openaiRealtimeVoice,
         onSessionLost: (reason) => void this.end(epoch, 'error', reason),
-        onResponseFinished: () => { if (computerUse) computerService.access.yield(computerUse); },
       });
-      // Attached before the session opens, so the first tool call has somewhere to put its
-      // picture. Nothing reaches it until the model asks for something.
 
       await conversation.start();
 
@@ -367,7 +331,6 @@ class VoiceChatService {
       this.transport = transport;
       this.conversation = conversation;
       this.computer = computer;
-      this.computerUse = computerUse ?? null;
       // Only a client that shows the computer has a screen to record, and it is the same
       // client that sends the pictures.
       this.recording = computer ? new ScreenRecording({ userId: input.userId }) : null;
@@ -376,9 +339,6 @@ class VoiceChatService {
       this.startedAt = Date.now();
       this.startedFrom = surface;
       this.state = 'live';
-      computerUse?.signal.addEventListener('abort', () => {
-        if (this.epoch === epoch) void this.end(epoch, 'completed', 'Computer task stopped');
-      }, { once: true });
 
       // Live immediately: the socket that asked is the socket the audio travels on, so
       // there is no media path still to come up and nothing to wait for.
@@ -386,15 +346,10 @@ class VoiceChatService {
 
       if (input.greeting) conversation.prompt(input.greeting);
 
-      logger.info(
-        { tools: tools.count, surface, computer: computer !== null },
-        '[VoiceChat] Session is live',
-      );
+      logger.info({ surface, computer: computer !== null }, '[VoiceChat] Session is live');
       trackEvent('voice chat started', input.userId, {
         inference_provider: config.realtimeProvider ?? 'unknown',
         inference_source: config.realtimeSource,
-        tools: String(tools.count),
-        locked_in: String(lockedIn),
         surface,
         computer: String(computer !== null),
       });
@@ -529,8 +484,8 @@ class VoiceChatService {
 
   /** The user finished helping on the computer: have the agent look and carry on. */
   continueComputer(reason: string): void {
-    if (!this.computerUse || !this.conversation) return;
-    this.conversation.prompt(`Your user finished helping. The help request was: ${JSON.stringify(reason)}\n\nInspect the current screen and continue their request.`);
+    if (!this.computer || !this.conversation) return;
+    this.conversation.ask(`Your user finished helping. The help request was: ${JSON.stringify(reason)}. Inspect the current screen and continue their request.`);
   }
 
   /** Called from the process shutdown path so a container exit ends the call. */
@@ -552,7 +507,7 @@ class VoiceChatService {
     // while the transport closes, from becoming a second ending.
     this.state = 'ending';
     this.epoch += 1;
-    const { conversation, transport, computer, computerUse, signal, userId, startedAt, startedFrom } = this;
+    const { conversation, transport, computer, signal, userId, startedAt, startedFrom } = this;
     this.clearPublished();
 
     logger.info({ status, reason }, '[VoiceChat] Session ended');
@@ -565,10 +520,7 @@ class VoiceChatService {
       // The browser, the desktop and the virtual display go with the call. They are
       // processes, so a session that left them behind would cost the host a whole
       // desktop for every call it ever carried.
-      if (computerUse) {
-        computerHelpService.endVoice(computerUse);
-        computerService.access.finish(computerUse);
-      }
+      computerHelpService.endVoiceSession();
 
       // A recording still running has no model left to be handed to, and reporting it as
       // cancelled is what keeps one that never arrived out of the delivered count.
@@ -610,7 +562,6 @@ class VoiceChatService {
     this.conversation = null;
     this.transport = null;
     this.computer = null;
-    this.computerUse = null;
     this.recording = null;
     this.recordingClient = null;
     this.signal = null;

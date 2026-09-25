@@ -89,7 +89,10 @@ export function createComputerTools(
         'Use your web browser: open a page, click things, type, scroll, and work in ' +
         'several tabs. Every command answers with where the page is, what it says, the ' +
         'names of the links, buttons and fields on it, and the list of open tabs. Click ' +
-        'and type by those names, and switch tabs by those numbers. One command per call.',
+        'and type by those names, and switch tabs by those numbers. One command per call. ' +
+        'Keep your tabs as a person would: start unrelated work in a new tab, never ' +
+        'navigate away from a page that is still in use (a call, a form half filled in, a ' +
+        'page your user is reading), and close the tabs you are done with.',
       inputSchema: z.object({
         action: z
           .enum([
@@ -104,7 +107,7 @@ export function createComputerTools(
             'close_tab',
           ])
           .describe(
-            '"navigate" opens a URL in the tab you are in, "click" presses something, ' +
+            '"navigate" replaces the page in the tab you are in, "click" presses something, ' +
               '"type" enters text, "press" sends one key (Enter, Escape, PageDown), ' +
               '"scroll" moves the page, "read" just reports where you are. "new_tab" opens ' +
               'another tab (pass a url to land on a page), "switch_tab" moves to a tab by ' +
