@@ -96,14 +96,14 @@ export class HomePage extends BasePage {
 
   /**
    * Send a suggestion and confirm the send went out, on the same terms as
-   * `sendMessage()`: the bubble baseline first, then the typing indicator.
+   * `sendMessage()`: the bubble baseline first, then STOP.
    */
   async sendSuggestion(title: string, turnStartTimeout = 30_000) {
     const button = this.suggestion(title);
     await expect(button).toBeEnabled();
     sendBaseline.set(this.page, await this.getAgentMessages().count());
     await button.click();
-    await this.typingIndicator.waitFor({ state: 'visible', timeout: turnStartTimeout });
+    await this.stopButton.waitFor({ state: 'visible', timeout: turnStartTimeout });
   }
 
   /** Visible Recents row labels, in document (top-to-bottom) order. */

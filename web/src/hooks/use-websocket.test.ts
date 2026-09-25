@@ -360,20 +360,20 @@ describe('useWebSocket', () => {
     expect(result.current.isTyping).toBe(true);
   });
 
-  it('reports a turn on any thread as the agent being busy, for the presence mark', async () => {
+  it('reports work on any thread as the agent being busy, for the presence mark', async () => {
     const { result, ws } = await renderConnected({ onMessage: vi.fn(), activeThreadId: 't1' });
 
-    // A turn in another tab: the agent is busy, but this composer stays idle, since
-    // its STOP button would cancel that other turn.
-    act(() => ws.deliver({ type: 'status', payload: { processing: true, threadId: 't2' } }));
+    // Work on another thread: the agent is busy, but this view shows no spinner and no STOP.
+    act(() => ws.deliver({ type: 'status', payload: { threadId: 't2', working: true } }));
+    expect(result.current.isThreadWorking).toBe(false);
     expect(result.current.isTyping).toBe(false);
     expect(result.current.isAgentBusy).toBe(true);
 
-    act(() => ws.deliver({ type: 'status', payload: { processing: false, threadId: 't2' } }));
+    act(() => ws.deliver({ type: 'status', payload: { threadId: 't2', working: false } }));
     expect(result.current.isAgentBusy).toBe(false);
 
-    act(() => ws.deliver({ type: 'status', payload: { processing: true, threadId: 't1' } }));
-    expect(result.current.isTyping).toBe(true);
+    act(() => ws.deliver({ type: 'status', payload: { threadId: 't1', working: true } }));
+    expect(result.current.isThreadWorking).toBe(true);
     expect(result.current.isAgentBusy).toBe(true);
   });
 
