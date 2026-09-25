@@ -52,9 +52,11 @@ to clear.
   filesystem it sees is an `ExecutionEnvironment` (`lib/execution-environments/`,
   chosen by `get-execution-environment.ts`, which derives it rather than reading
   a setting). Every process the agent starts goes through `runShell` or
-  `runProgram`, and a read or write goes through `env.files` when the agent's own
-  commands have to see the same bytes: the workspace, the attachment scratch dir,
-  skills, plugins and the saved copies of oversized tool results. The database
+  `runProgram`, which hand it to `agentProcesses`, so a secure takeover stops
+  it in either environment. A read or write goes through `env.files` when the
+  agent's own commands have to see the same bytes: the workspace, the attachment
+  scratch dir, skills, plugins and the saved copies of oversized tool results.
+  The database
   and the runtime's own processes — the updater, the meeting and computer stacks
   — stay outside. `capture.ts` is the one bounded, timed, cancellable run,
   shared by `shell_exec` and every probe. A new environment is one folder plus

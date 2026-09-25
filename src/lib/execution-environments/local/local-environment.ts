@@ -3,6 +3,7 @@
  * on the filesystem this process sees.
  */
 import type { ExecutionEnvironment } from '../execution-environment';
+import { agentProcesses } from '../../agent-processes';
 import { localBaseEnv } from './local-env';
 import { localFiles } from './local-files';
 import { localAgentPaths } from './local-paths';
@@ -24,8 +25,13 @@ export function createLocalEnvironment(): ExecutionEnvironment {
     // fallback for a path no other environment serves.
     servesPath: () => true,
     baseEnv: () => localBaseEnv(),
-    runShell: runLocalShell,
-    runProgram: runLocalProgram,
+    runShell: (command, options) =>
+      agentProcesses.track(() => runLocalShell(command, options, true), options.stdin === 'pipe'),
+    runProgram: (command, args, options) =>
+      agentProcesses.track(
+        () => runLocalProgram(command, args, options, true),
+        options.stdin === 'pipe',
+      ),
     files: localFiles,
   };
 }

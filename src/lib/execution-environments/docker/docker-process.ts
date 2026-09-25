@@ -12,7 +12,7 @@
  * container before it starts the command, and the kill reads that file on the
  * same side. `setsid` is what makes one signal reach every grandchild: the
  * wrapper becomes a session leader, so `$$` is the process-group id — the
- * guarantee `processGroup: true` gives locally.
+ * guarantee a local command's own process group gives.
  *
  * The id has to be written down rather than looked up, because `exec`
  * replaces the command line: a name given to the wrapper is gone the moment

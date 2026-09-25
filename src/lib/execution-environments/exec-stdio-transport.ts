@@ -41,7 +41,6 @@ export class ExecStdioTransport implements MCPTransport {
       cwd: this.server.cwd ?? this.environment.workspaceRoot(),
       env: { ...this.environment.baseEnv(), ...this.server.env },
       stdin: 'pipe',
-      processGroup: true,
     });
     this.process = proc;
 

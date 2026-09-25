@@ -10,6 +10,7 @@
  * agent keeps is lost on a restart.
  */
 import { createHash } from 'crypto';
+import { agentProcesses } from '../../agent-processes';
 import { config } from '../../../config';
 import { resolveDataDir } from '../../data-dir';
 import type { AgentPaths, ExecutionEnvironment } from '../execution-environment';
@@ -89,8 +90,13 @@ export function createDockerEnvironment(): ExecutionEnvironment {
     servesPath,
 
     baseEnv: () => dockerBaseEnv(),
-    runShell: (command, options) => runDockerShell(command, options, ctx),
-    runProgram: (command, args, options) => runDockerProgram(command, args, options, ctx),
+    runShell: (command, options) =>
+      agentProcesses.track(() => runDockerShell(command, options, ctx), options.stdin === 'pipe'),
+    runProgram: (command, args, options) =>
+      agentProcesses.track(
+        () => runDockerProgram(command, args, options, ctx),
+        options.stdin === 'pipe',
+      ),
 
     files,
   };

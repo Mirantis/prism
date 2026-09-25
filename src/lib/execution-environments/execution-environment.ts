@@ -82,11 +82,6 @@ export interface RunOptions {
   env: NodeJS.ProcessEnv;
   /** `pipe` when the caller writes to the process. */
   stdin: 'ignore' | 'pipe';
-  /**
-   * Signal the whole process group rather than the leader alone, so a shell
-   * wrapper's forked children die with it.
-   */
-  processGroup?: boolean;
 }
 
 export interface ExecProcess {

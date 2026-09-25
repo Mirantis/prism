@@ -55,14 +55,12 @@ class ProcessManager {
 
     const processId = randomUUID();
     const environment = getExecutionEnvironmentFor(params.workdir);
-    // `processGroup` makes the process the leader of its own group, so a kill
-    // reaches the whole group — necessary because the shell wrapper would
-    // otherwise leave any forked children behind when we kill it.
+    // The process leads its own group, so a kill reaches the whole group and
+    // not only the shell wrapper.
     const proc = environment.runShell(params.command, {
       cwd: params.workdir,
       env: { ...environment.baseEnv(), ...params.env },
       stdin: 'pipe',
-      processGroup: true,
     });
 
     const state: ProcessState = {
@@ -186,9 +184,8 @@ class ProcessManager {
   }
 
   /**
-   * Send a signal to the process group (children of the spawned
-   * shell wrapper get the signal too, courtesy of `processGroup` in
-   * spawn()). Defaults to SIGTERM.
+   * Send a signal to the process group, so the shell wrapper's children
+   * get it too. Defaults to SIGTERM.
    */
   kill(processId: string, signal: NodeJS.Signals = 'SIGTERM'): boolean {
     const state = this.processes.get(processId);

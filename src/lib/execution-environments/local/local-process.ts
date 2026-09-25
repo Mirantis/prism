@@ -11,30 +11,40 @@ import type { ExecEnd, ExecProcess, RunOptions } from '../execution-environment'
 
 const SHELL = '/bin/bash';
 
-export function runLocalShell(command: string, options: RunOptions): ExecProcess {
-  return wrap(spawnLocal(SHELL, ['-c', command], options), options.processGroup ?? false);
+/**
+ * `processGroup` makes the child lead its own group, so `kill` signals the whole
+ * group rather than leaving a shell wrapper's forked children behind. Every
+ * command the agent starts runs that way; the runtime's own calls, such as the
+ * container engine's client, stay in the runtime's group.
+ */
+export function runLocalShell(
+  command: string,
+  options: RunOptions,
+  processGroup = false,
+): ExecProcess {
+  return wrap(spawnLocal(SHELL, ['-c', command], options, processGroup), processGroup);
 }
 
 export function runLocalProgram(
   command: string,
   args: readonly string[],
   options: RunOptions,
+  processGroup = false,
 ): ExecProcess {
-  return wrap(spawnLocal(command, args, options), options.processGroup ?? false);
+  return wrap(spawnLocal(command, args, options, processGroup), processGroup);
 }
 
 function spawnLocal(
   command: string,
   args: readonly string[],
   options: RunOptions,
+  processGroup: boolean,
 ): ChildProcess {
   return spawn(command, [...args], {
     cwd: options.cwd,
     env: options.env,
     stdio: [options.stdin, 'pipe', 'pipe'],
-    // The child leads its own process group, so `kill` can signal the whole
-    // group rather than leaving a shell wrapper's forked children behind.
-    detached: options.processGroup ?? false,
+    detached: processGroup,
   });
 }
 
