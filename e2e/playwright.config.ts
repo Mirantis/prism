@@ -125,13 +125,14 @@ function isRuntimeAlive(port: number): boolean {
 //     run through the API. It lands under the outputDir Playwright already
 //     uploads as the `test-results` artifact.
 // `github` is CI-only: locally it just prints ::error workflow commands next
-// to the list reporter's own output.
+// to the list reporter's own output. So is `blob`: CI runs the suite in shards,
+// and the E2E workflow merges their blobs into one HTML report.
 const reporters: ReporterDescription[] = [
   ['html', { open: 'never' }],
   ['list'],
   ['json', { outputFile: 'test-results/results.json' }],
 ];
-if (process.env.CI) reporters.push(['github']);
+if (process.env.CI) reporters.push(['github'], ['blob']);
 
 const testDir = defineBddConfig({
   features: 'features/**/*.feature',

@@ -8,7 +8,7 @@ Feature: Waiting — continue a scheduled task in the same thread
 
   Scenario: A one-off task scheduled with continueInThread resumes in the same thread
     When I navigate to the agent chat page
-    And I type "Use your schedule_task tool to WAIT and then continue in THIS same conversation. Schedule a one-off task: name 'recheck', schedule 'in 1 minute', continueInThread set to true, instruction 'Reply with exactly WAIT_RESUMED_OK and nothing else.'. Then briefly tell me you've scheduled it." in the chat input
+    And I type "Use your schedule_task tool to WAIT and then continue in THIS same conversation. Schedule a one-off task: name 'recheck', schedule 'in 20 seconds', continueInThread set to true, instruction 'Reply with exactly WAIT_RESUMED_OK and nothing else.'. Then briefly tell me you've scheduled it." in the chat input
     And I send the message
     Then a thread-bound scheduled task is created for the agent
     And the agent posts a follow-up in that same thread when the task fires

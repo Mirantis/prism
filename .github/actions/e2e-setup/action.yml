@@ -1,0 +1,80 @@
+name: E2E setup
+description: >-
+  Node, the workspace's node_modules and the Prisma client for the e2e jobs, plus what
+  the web suite needs when `web` is set.
+
+inputs:
+  web:
+    description: Install Playwright's Chromium and the desktop the agent's computer runs on.
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - id: node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      with:
+        node-version: '26'
+
+    # Keyed on the exact Node version because the native modules (better-sqlite3,
+    # node-pty) are built for it. Saved straight after `npm ci`, so the cache holds a
+    # clean install and nothing a test run writes.
+    - id: node-modules
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: |
+          node_modules
+          */node_modules
+        key: e2e-node-modules-${{ runner.os }}-${{ runner.arch }}-${{ steps.node.outputs.node-version }}-${{ hashFiles('package-lock.json') }}
+
+    - if: steps.node-modules.outputs.cache-hit != 'true'
+      shell: bash
+      run: npm install -g npm@11.12.1 && npm ci
+
+    - if: steps.node-modules.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: |
+          node_modules
+          */node_modules
+        key: ${{ steps.node-modules.outputs.cache-primary-key }}
+
+    - shell: bash
+      run: npx prisma generate --schema prisma/sqlite/schema.prisma
+
+    - if: inputs.web == 'true'
+      id: playwright
+      shell: bash
+      run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+
+    - if: inputs.web == 'true'
+      id: browsers
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ~/.cache/ms-playwright
+        key: e2e-playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
+
+    # `--with-deps` runs the apt install every time, so it runs on a cache hit too.
+    # The suite uses the full Chromium (`channel: 'chromium'`), never the headless shell.
+    - if: inputs.web == 'true'
+      shell: bash
+      working-directory: e2e
+      run: npx playwright install --with-deps --no-shell chromium
+
+    - if: inputs.web == 'true' && steps.browsers.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ steps.browsers.outputs.cache-primary-key }}
+
+    # The agent's computer is a desktop the runtime builds for itself, so the runner needs
+    # what the container image installs for it. Without these the Computer page is not
+    # offered at all and its scenarios cannot run. The Playwright step above has just run
+    # `apt-get update`.
+    - if: inputs.web == 'true'
+      shell: bash
+      run: |
+        sudo apt-get install -y --no-install-recommends \
+          xvfb pulseaudio pulseaudio-utils \
+          xfce4 xfce4-terminal dbus-x11 \
+          ffmpeg xdotool wmctrl x11-xserver-utils tesseract-ocr

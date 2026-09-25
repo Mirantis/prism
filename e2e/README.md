@@ -69,6 +69,16 @@ After a test run, open the HTML report:
 npm run test:report
 ```
 
+### Shards
+
+CI splits the web suite into four shards by recorded duration. To run CI's second shard:
+
+```bash
+npm run test:e2e:web --workspace=prism-agent-e2e -- --shard=2/4
+```
+
+The durations are in `support/web-shard-timings.json`. To refresh them, download the `playwright-report` artifact of a green E2E run and run `npx tsx support/update-web-shard-timings.ts results.json` from `e2e/`.
+
 ## TUI (CLI) tests
 
 The `prism-cli` end-to-end tests live in `tui/` and are **separate** from the
