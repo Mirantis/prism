@@ -72,7 +72,7 @@ Then('the coding task completed through delegation', async ({ page }) => {
 });
 
 Given('both coding agents have test credentials', async () => {
-  const hasBoth = hasClaudeCodeCredentials(process.env) &&
+  const hasBoth = (await hasClaudeCodeCredentials(process.env)) &&
     codexAuthMethod(process.env);
   test.skip(!hasBoth, 'Agent selection needs credentials for both Claude Code and Codex.');
 });
