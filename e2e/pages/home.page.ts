@@ -237,9 +237,9 @@ export class HomePage extends BasePage {
 
   /**
    * Wait for streaming to finish. The typing indicator goes when the runtime
-   * reports the thread as no longer working, a few milliseconds before the last
-   * reply is stored and delivered. STOP goes after that delivery, so the wait
-   * includes it.
+   * reports the thread as no longer working, after the last reply is delivered.
+   * STOP goes when the request ends, shortly after that, so the wait includes
+   * it.
    *
    * This is the second half of the condition; `sendMessage()` waits for STOP
    * to appear, without which a `hidden` wait is satisfied by a DOM that never

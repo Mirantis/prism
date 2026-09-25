@@ -14,9 +14,10 @@ const LABELS: Record<string, string> = {
 
 /**
  * A presence dot on the corner of the agent's mark: what it is doing right now, on every page.
- * A chat turn is reported the moment the socket says one is running; the poll covers work the
- * socket does not announce, such as a heartbeat, and the poll is refreshed when a turn ends
- * so the dot does not keep an old reading for the rest of the interval.
+ * Work on a thread is reported the moment the socket says the thread is working. The poll covers
+ * work the socket does not announce, such as a run while the user has no web thread, and the poll
+ * is refreshed when the work ends so the dot does not keep an old reading for the rest of the
+ * interval.
  */
 export function AgentPresence({ className }: { className?: string }) {
   const agent = useAgent();
