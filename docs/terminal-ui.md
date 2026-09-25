@@ -14,6 +14,20 @@ By default it connects to a runtime at `http://localhost:3003`. Point it
 elsewhere with `PRISM_HTTP_URL` or the `~/.prism/settings.json` file — see the
 **[CLI reference](cli-reference.md)** for all flags and settings.
 
+## Graphical terminal
+
+In terminals with Kitty graphics support, `prism` fills the terminal with the
+[Web UI](web-ui.md). Install Google Chrome or Chromium on the machine running
+`prism`, then use the mouse, scroll wheel, keyboard, and paste as in the browser;
+**Ctrl+C** exits. `prism --resume` opens the overview with recent conversations.
+The mouse pointer changes over buttons and text fields, and returns to the shell's
+pointer when you exit.
+Open the Web UI in a regular browser for file selection and features that ask
+for browser permissions.
+
+For source checkouts, run `npm run build:web` so the runtime serves the web UI.
+Other terminals and tmux/screen sessions use the text UI described below.
+
 ## Starting and resuming conversations
 
 - **Fresh start.** Running `prism` with no flags creates a new conversation

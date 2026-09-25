@@ -71,6 +71,9 @@ npm run test:report
 
 ## TUI (CLI) tests
 
+The graphical terminal scenarios also need a local Google Chrome or Chromium
+installation. They build the Web UI before starting the runtime.
+
 The `prism-cli` end-to-end tests live in `tui/` and are **separate** from the
 Playwright web suite. They drive the CLI under a real `node-pty` PTY against a
 live agent-runtime, and are written in Gherkin via

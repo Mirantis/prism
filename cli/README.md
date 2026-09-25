@@ -1,6 +1,7 @@
 # prism-cli
 
-Standalone Ink-based terminal UI for Prism Agent. Talks to an `agent-runtime`
+Terminal UI for Prism Agent. Kitty-compatible terminals display the Web UI using
+local Chrome or Chromium; other terminals use Ink. Talks to an `agent-runtime`
 over WebSocket and REST. There is no auth — the CLI is intended for
 local-dev only.
 

@@ -33,6 +33,7 @@ import { documentRevisionsRouter } from './routes/document-revisions';
 import { updateRouter } from './routes/update';
 import { originGuard } from './lib/origin-guard';
 import { activityRouter } from './routes/activity';
+import { terminalViewRouter } from './routes/terminal-view';
 
 export function createApp() {
   const app = express();
@@ -68,6 +69,7 @@ export function createApp() {
 
   // GET /agents/activity/*
   app.use('/agents', activityRouter);
+  app.use('/agents', terminalViewRouter);
 
   // Thread and message routes: /threads, /latest-thread and /messages.
   // Mounted at the root and registered before the SPA fallback so these
@@ -85,7 +87,7 @@ export function createApp() {
   if (fs.existsSync(webDist)) {
     app.use(express.static(webDist, { index: 'index.html' }));
     app.get(/^\/(?!agents|api|health|threads|messages|latest-thread).*/, (_req, res) => {
-      res.sendFile(path.join(webDist, 'index.html'));
+      res.sendFile('index.html', { root: webDist });
     });
   }
 

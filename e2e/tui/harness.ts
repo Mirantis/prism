@@ -199,6 +199,8 @@ export interface StartPrismOptions {
    * workspace skills. Defaults to the prism-cli package dir.
    */
   cwd?: string;
+  /** Terminal protocol peer for graphical sessions. */
+  onData?: (data: string, write: (reply: string) => void) => void;
 }
 
 export interface TuiSession {
@@ -208,6 +210,7 @@ export interface TuiSession {
   rawOutput(): string;
   /** Write raw bytes to the child's stdin. */
   send(input: string): void;
+  resize(columns: number, rows: number): void;
   /** Wait until the stripped output matches the given string or regex. */
   waitForFrame(matcher: string | RegExp, timeoutMs?: number): Promise<void>;
   /**
@@ -258,6 +261,7 @@ export function startPrism(opts: StartPrismOptions): TuiSession {
 
   child.onData((data) => {
     buffer += data;
+    opts.onData?.(data, (reply) => child.write(reply));
   });
 
   const exitPromise = new Promise<number>((resolve) => {
@@ -272,6 +276,7 @@ export function startPrism(opts: StartPrismOptions): TuiSession {
     output: () => stripAnsi(buffer),
     rawOutput: () => buffer,
     send: (input) => child.write(input),
+    resize: (columns, rows) => child.resize(columns, rows),
 
     async waitForFrame(matcher, timeoutMs = 30_000) {
       const matches = (s: string) =>

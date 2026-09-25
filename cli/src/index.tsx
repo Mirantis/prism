@@ -29,12 +29,19 @@ if (args[0] === 'update') {
   // and waits for the restarted runtime to report the new version.
   void import('./update-cli.js').then(({ runUpdateCommand }) => runUpdateCommand());
 } else {
-  main();
+  void main().catch((error: unknown) => {
+    process.stderr.write(`prism: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  });
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const cfg = loadConfig();
   const resume = args.includes('--resume');
+  if (process.stdin.isTTY && process.stdout.isTTY) {
+    const { runWebTerminal } = await import('./web-terminal/run.js');
+    if (await runWebTerminal(cfg.httpUrl, resume)) return;
+  }
 
   function start(resumeData?: { sessions: ThreadSummary[]; cwd: string }): void {
     render(

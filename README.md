@@ -38,6 +38,9 @@ feature: [identity](docs/agent-identity.md), [memory](docs/memory.md),
 
 ## Terminal UI
 
+`prism` fills Kitty-compatible terminals with the Web UI using local Chrome or
+Chromium. Other terminals use the text UI; see the [terminal guide](docs/terminal-ui.md).
+
 ![Prism Agent Terminal UI](docs/images/terminal-ui.png)
 
 ## Quick Start

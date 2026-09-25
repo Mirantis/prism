@@ -19,7 +19,7 @@ prism [command] [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--resume` | Show a picker of previous conversations to resume, instead of starting fresh. |
+| `--resume` | Open recent conversations, or a conversation picker in the text UI, instead of starting fresh. |
 | `--version`, `-v` | Print the version and exit. |
 | `--help`, `-h` | Print help and exit. |
 
@@ -35,6 +35,10 @@ There's no authentication for the bundled single-agent runtime — the TUI talks
 to it directly on localhost.
 
 ## Slash commands
+
+Kitty-compatible terminals display the [Web UI](web-ui.md) with Chrome or
+Chromium installed locally; **Ctrl+C** exits. The commands and shortcuts below
+describe the text UI used in other terminals and tmux/screen sessions.
 
 Type `/` in the chat input to open the command popup; filter by typing, **Tab**
 or **Enter** to complete the selection, then **Enter** to run.
