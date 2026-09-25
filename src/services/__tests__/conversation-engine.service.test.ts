@@ -25,7 +25,7 @@ const {
   mockOnFirstUserMessage,
   mockGetAgent,
   mockGetMetaByIds,
-  mockEchoUserMessage,
+  mockBroadcastUserMessage,
   mockGetMetaByMessageIds,
 } = vi.hoisted(() => ({
   mockGetOrCreateLatestThread: vi.fn(),
@@ -41,7 +41,7 @@ const {
   mockOnFirstUserMessage: vi.fn(),
   mockGetAgent: vi.fn(),
   mockGetMetaByIds: vi.fn(),
-  mockEchoUserMessage: vi.fn(),
+  mockBroadcastUserMessage: vi.fn(),
   mockGetMetaByMessageIds: vi.fn(),
 }));
 
@@ -74,7 +74,7 @@ vi.mock('../conversation.service', () => ({
 vi.mock('../message-delivery.service', () => ({
   messageDeliveryService: {
     publish: mockPublish,
-    echoUserMessage: mockEchoUserMessage,
+    broadcastUserMessage: mockBroadcastUserMessage,
   },
 }));
 
@@ -161,7 +161,7 @@ describe('Requirement: Conversation Engine', () => {
     mockCountAgentMessages.mockResolvedValue(0);
     mockGetMetaByIds.mockResolvedValue([]);
     mockGetMetaByMessageIds.mockResolvedValue(new Map());
-    mockEchoUserMessage.mockResolvedValue(undefined);
+    mockBroadcastUserMessage.mockResolvedValue(undefined);
     // Default: telemetry off so unrelated scenarios don't exercise the classifier.
     mockIsTelemetryEnabled.mockReturnValue(false);
     mockGenerateText.mockResolvedValue({ text: 'WORTHY' });
@@ -587,8 +587,8 @@ describe('Requirement: Conversation Engine', () => {
     });
   });
 
-  describe('Scenario: User message echo', () => {
-    it('echoes the stored user message to its channel, naming the connection it came from', async () => {
+  describe('Scenario: User message broadcast', () => {
+    it('broadcasts the stored user message to its channel, naming the connection it came from', async () => {
       await conversationEngineService.chat({
         userId: 'user-123',
         agentId: 'agent-123',
@@ -597,57 +597,25 @@ describe('Requirement: Conversation Engine', () => {
         metadata: { channel: 'websocket' },
       });
 
-      expect(mockEchoUserMessage).toHaveBeenCalledWith(
+      expect(mockBroadcastUserMessage).toHaveBeenCalledWith(
         'user-123',
         expect.objectContaining({ id: 'msg-123', role: 'USER', content: 'hello from web' }),
         { channel: 'websocket', threadId: 'thread-123', originConnectionId: 'conn-a' },
       );
-      // The echo goes out before the reply, so a turn with no reply still shows the message.
-      expect(mockEchoUserMessage.mock.invocationCallOrder[0]).toBeLessThan(
+      // The broadcast goes out before the agent's first message.
+      expect(mockBroadcastUserMessage.mock.invocationCallOrder[0]).toBeLessThan(
         mockPublish.mock.invocationCallOrder[0],
       );
     });
 
-    it('echoes the message with its attachments', async () => {
-      const meta = [{ id: 'att-1', filename: 'a.png', mediaType: 'image/png', sizeBytes: 3, category: 'image' }];
-      mockGetMetaByMessageIds.mockResolvedValue(new Map([['msg-123', meta]]));
-
-      await conversationEngineService.chat({
-        userId: 'user-123',
-        agentId: 'agent-123',
-        message: '',
-        attachmentIds: ['att-1'],
-        metadata: { channel: 'websocket' },
-      });
-
-      expect(mockEchoUserMessage).toHaveBeenCalledWith(
-        'user-123',
-        expect.objectContaining({ attachments: meta }),
-        expect.objectContaining({ channel: 'websocket' }),
-      );
-    });
-
-    it('still answers when the echo fails', async () => {
-      mockEchoUserMessage.mockRejectedValue(new Error('socket gone'));
-
-      const response = await conversationEngineService.chat({
-        userId: 'user-123',
-        agentId: 'agent-123',
-        message: 'hello',
-        metadata: { channel: 'websocket' },
-      });
-
-      expect(response.content).toBe('I am a helpful AI assistant.');
-    });
-
-    it('echoes nothing for a message with no channel', async () => {
+    it('broadcasts nothing for a message with no channel', async () => {
       await conversationEngineService.chat({
         userId: 'user-123',
         agentId: 'agent-123',
         message: 'hello from the REST endpoint',
       });
 
-      expect(mockEchoUserMessage).not.toHaveBeenCalled();
+      expect(mockBroadcastUserMessage).not.toHaveBeenCalled();
     });
   });
 
@@ -1097,25 +1065,6 @@ describe('Requirement: Conversation Engine', () => {
       // Nothing left for the running turn to inject.
       expect(threadTurnService.pendingCount(steerThread)).toBe(0);
       await expect(held.requests[0].steering?.()).resolves.toEqual([]);
-
-      held.release();
-      await first;
-    });
-
-    it('keeps a handed-over message when only its echo fails', async () => {
-      const held = heldTurn();
-      mockInvokeStream.mockImplementation(held.generator);
-
-      const first = conversationEngineService.chat(steerInput('review the PR'));
-      await held.running;
-
-      mockEchoUserMessage.mockRejectedValueOnce(new Error('socket gone'));
-      const second = await conversationEngineService.chat(steerInput('no need to run tests'));
-
-      expect(second.steered).toBe(true);
-      await expect(held.requests[0].steering?.()).resolves.toEqual([
-        { text: 'no need to run tests', attachments: undefined },
-      ]);
 
       held.release();
       await first;

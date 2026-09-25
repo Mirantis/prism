@@ -122,10 +122,10 @@ vi.mock('./tools/skills/index', () => ({
   getSkillTools: mockGetSkillTools,
 }));
 
-const { mockFindLatestThread } = vi.hoisted(() => ({ mockFindLatestThread: vi.fn() }));
+const { mockFindLatestWebThread } = vi.hoisted(() => ({ mockFindLatestWebThread: vi.fn() }));
 
 vi.mock('./services/conversation.service', () => ({
-  conversationService: { addMessage: mockAddMessage, findLatestThread: mockFindLatestThread },
+  conversationService: { addMessage: mockAddMessage, findLatestWebThread: mockFindLatestWebThread },
 }));
 
 vi.mock('./prompts/context-builder', () => ({
@@ -229,7 +229,10 @@ import { withToolOutputCapture } from './lib/tool-output-limiter';
 import { withToolsCacheControl } from './lib/tool-collection';
 import { config } from './config';
 import { Tool } from 'ai';
-import { turnActivityService, type TurnActivityChange } from './services/turn-activity.service';
+import {
+  conversationThreadActivityService,
+  type ThreadActivityChange,
+} from './services/conversation-thread-activity.service';
 
 type StepMessage = { role: string; content?: unknown; providerOptions?: unknown };
 type PrepareStep = (options: {
@@ -1305,63 +1308,44 @@ describe('invoke', () => {
   });
 
   describe('thread activity', () => {
-    let changes: TurnActivityChange[];
-    const record = (change: TurnActivityChange) => changes.push(change);
+    let changes: ThreadActivityChange[];
+    const record = (change: ThreadActivityChange) => changes.push(change);
 
     beforeEach(() => {
       changes = [];
-      mockFindLatestThread.mockReset();
-      turnActivityService.events.on('change', record);
+      mockFindLatestWebThread.mockReset();
+      conversationThreadActivityService.events.on('change', record);
     });
 
     afterEach(() => {
-      turnActivityService.events.off('change', record);
+      conversationThreadActivityService.events.off('change', record);
     });
 
-    it('marks the turn\'s thread working for the length of the turn, under one turn id', async () => {
+    it('marks the thread working for the length of the invocation', async () => {
+      let during: ThreadActivityChange[] = [];
       mockGenerateText.mockImplementation(async () => {
-        expect(changes).toEqual([{ threadId: 'thread-1', turnId: expect.any(String), working: true }]);
+        during = [...changes];
         return { text: 'done', steps: [{ text: 'done', toolCalls: [], toolResults: [] }] };
       });
 
       await invoke(createTestInvokeRequest({ threadId: 'thread-1' }));
 
-      expect(changes).toHaveLength(2);
-      expect(changes[1]).toEqual({ threadId: 'thread-1', turnId: changes[0].turnId, working: false });
-    });
-
-    it('gives each turn its own id', async () => {
-      await invoke(createTestInvokeRequest({ threadId: 'thread-1' }));
-      await invoke(createTestInvokeRequest({ threadId: 'thread-1' }));
-
-      expect(changes[0].turnId).not.toBe(changes[2].turnId);
-    });
-
-    it('shows a heartbeat turn on the user\'s latest thread', async () => {
-      mockFindLatestThread.mockResolvedValue({ id: 'thread-latest' });
-
-      await invoke(createTestInvokeRequest({ mode: 'heartbeat', threadId: undefined }));
-
-      expect(mockFindLatestThread).toHaveBeenCalledWith('agent-test-123', 'user-test-456');
-      expect(changes.map((c) => [c.threadId, c.working])).toEqual([
-        ['thread-latest', true],
-        ['thread-latest', false],
+      expect(during).toEqual([{ threadId: 'thread-1', working: true }]);
+      expect(changes).toEqual([
+        { threadId: 'thread-1', working: true },
+        { threadId: 'thread-1', working: false },
       ]);
     });
 
-    it('shows a thread-less turn on no thread when the user has none', async () => {
-      mockFindLatestThread.mockResolvedValue(null);
+    it('marks the latest web thread for a heartbeat', async () => {
+      mockFindLatestWebThread.mockResolvedValue({ id: 'thread-latest' });
 
-      await invoke(createTestInvokeRequest({ mode: 'cron', threadId: undefined }));
+      await invoke(createTestInvokeRequest({ mode: 'heartbeat', threadId: undefined }));
 
-      expect(changes).toEqual([]);
-    });
-
-    it('shows nothing for a subagent turn, which runs inside its parent\'s', async () => {
-      await invoke(createTestInvokeRequest({ mode: 'subagent', threadId: 'thread-1' }));
-
-      expect(changes).toEqual([]);
-      expect(mockFindLatestThread).not.toHaveBeenCalled();
+      expect(changes).toEqual([
+        { threadId: 'thread-latest', working: true },
+        { threadId: 'thread-latest', working: false },
+      ]);
     });
 
     it('ends the activity when the model call fails', async () => {
@@ -1372,7 +1356,7 @@ describe('invoke', () => {
       expect(changes.map((c) => c.working)).toEqual([true, false]);
     });
 
-    it('ends the activity when the turn is cancelled', async () => {
+    it('ends the activity when the invocation is cancelled', async () => {
       const controller = new AbortController();
       mockGenerateText.mockImplementation(async () => {
         controller.abort();

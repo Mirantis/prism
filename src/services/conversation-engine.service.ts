@@ -72,7 +72,7 @@ export interface ChatInput {
   threadId?: string;
   /** Ids of already-stored attachments to link to this user message. */
   attachmentIds?: string[];
-  /** The connection this message came from, which the echo of the message skips. */
+  /** The connection this message came from, which the broadcast of the message skips. */
   originConnectionId?: string;
   /** Per-turn runtime notices injected into the system prompt (see InvokeRequest). */
   runtimeNotices?: string[];
@@ -342,7 +342,7 @@ Respond with exactly one word: WORTHY or SKIP`;
         ({ titleSet } = await stored);
       } catch (error) {
         // The message is already in the owning turn's inbox — it had to go there
-        // in the same act as the decision. Now the write has failed, so take it
+        // in the same act as the decision. Now storing it has failed, so take it
         // back: left there, the turn would answer text that never became
         // history, and the next turn would read a reply to nothing.
         if (!threadTurnService.withdraw(threadId, pending)) {
@@ -488,7 +488,8 @@ Respond with exactly one word: WORTHY or SKIP`;
   /**
    * Store the incoming user message and do the per-message side work that
    * belongs to it regardless of whether it gets a turn of its own: naming a new
-   * thread and linking any uploaded files.
+   * thread, linking any uploaded files, and broadcasting it to the channel's other
+   * clients.
    */
   private async storeUserMessage(
     input: ChatInput,
@@ -526,22 +527,11 @@ Respond with exactly one word: WORTHY or SKIP`;
       await attachmentService.linkToMessage(input.attachmentIds, userMessage.id, threadId);
     }
 
-    // Show the message to the channel's other clients now, not with the reply:
-    // a turn can end with no reply at all.
-    // The message is stored by then, so a failed echo is logged and the turn goes on.
     if (channelContext) {
-      try {
-        const attachments = input.attachmentIds?.length
-          ? (await attachmentService.getMetaByMessageIds([userMessage.id])).get(userMessage.id)
-          : undefined;
-        await messageDeliveryService.echoUserMessage(
-          userId,
-          attachments?.length ? { ...userMessage, attachments } : userMessage,
-          { ...channelContext, originConnectionId: input.originConnectionId },
-        );
-      } catch (err) {
-        logger.warn({ err, threadId }, '[ConversationEngine] user message echo failed');
-      }
+      await messageDeliveryService.broadcastUserMessage(userId, userMessage, {
+        ...channelContext,
+        originConnectionId: input.originConnectionId,
+      });
     }
 
     return { titleSet };

@@ -32,7 +32,7 @@ export interface ChannelContext {
    * 👍/👎 buttons alongside this message. Caller gates (terminal/length/cadence).
    */
   includeFeedback?: boolean;
-  /** The connection a user message came from. Its echo goes to every connection but that one. */
+  /** The connection a user message came from. Its broadcast skips that connection. */
   originConnectionId?: string;
 }
 
@@ -51,10 +51,10 @@ export interface ChannelAdapter {
   readonly name: string;
 
   /**
-   * True when the channel shows a user's message to the channel's other clients.
+   * True when the channel broadcasts a user's message to the channel's other clients.
    * Slack leaves it unset: Slack shows the message itself.
    */
-  readonly echoesUserMessages?: boolean;
+  readonly broadcastsUserMessages?: boolean;
 
   /**
    * Deliver a message to a user via this channel

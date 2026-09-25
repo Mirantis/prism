@@ -56,7 +56,7 @@ import { STEP_LIMIT, MAX_OUTPUT_TOKENS, COMPACTION_FALLBACK_WINDOW_TOKENS } from
 import { EARLY_STOPPING_PROMPT } from './prompts/early-stopping-prompt';
 import { buildErrorStep, buildRefusalStep, isContextOverflowError } from './lib/llm-errors';
 import { agentStatusService } from './services/agent-status.service';
-import { turnActivityService } from './services/turn-activity.service';
+import { conversationThreadActivityService } from './services/conversation-thread-activity.service';
 import { trackEvent, langfuseTelemetry } from './lib/telemetry';
 import { AsyncChannel } from './utils/async-channel';
 
@@ -122,8 +122,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
   let endActivity: (() => void) | undefined;
   try {
     await agentStatusService.setProcessing(request.agentId);
-    const activityThreadId = await turnActivityService.threadFor(request);
-    if (activityThreadId) endActivity = turnActivityService.begin(activityThreadId);
+    endActivity = await conversationThreadActivityService.begin(request);
 
     // 1. For heartbeat mode, inject last alert
     if (request.mode === 'heartbeat') {

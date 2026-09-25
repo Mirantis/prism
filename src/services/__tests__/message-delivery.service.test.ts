@@ -318,30 +318,47 @@ describe('MessageDeliveryService', () => {
     });
   });
 
-  describe('echoUserMessage', () => {
+  describe('broadcastUserMessage', () => {
     const userMessage = { ...sampleMessage, role: 'USER' as const, content: 'Hello from the user' };
 
-    it('delivers the message to the originating channel when that channel echoes', async () => {
-      const websocket = Object.assign(createMockAdapter('websocket'), { echoesUserMessages: true });
+    it('delivers the message to the originating channel when that channel broadcasts', async () => {
+      const websocket = Object.assign(createMockAdapter('websocket'), { broadcastsUserMessages: true });
       const slack = createMockAdapter('slack');
       service.register(websocket);
       service.register(slack);
       const context = { channel: 'websocket' as const, threadId: 'thread-456', originConnectionId: 'conn-a' };
 
-      await service.echoUserMessage('user-1', userMessage, context);
+      await service.broadcastUserMessage('user-1', userMessage, context);
 
       expect(websocket.deliver).toHaveBeenCalledWith('user-1', userMessage, context);
       expect(slack.deliver).not.toHaveBeenCalled();
       expect(mockAddMessage).not.toHaveBeenCalled();
     });
 
+    it('delivers the message with its attachments', async () => {
+      const websocket = Object.assign(createMockAdapter('websocket'), { broadcastsUserMessages: true });
+      service.register(websocket);
+      const attachments = [
+        { id: 'att-1', filename: 'a.png', mediaType: 'image/png', sizeBytes: 3, category: 'image' },
+      ];
+      mockGetMetaByMessageIds.mockResolvedValue(new Map([[userMessage.id, attachments]]));
+
+      await service.broadcastUserMessage('user-1', userMessage, { channel: 'websocket', threadId: 'thread-456' });
+
+      expect(websocket.deliver).toHaveBeenCalledWith(
+        'user-1',
+        expect.objectContaining({ id: userMessage.id, attachments }),
+        expect.objectContaining({ channel: 'websocket' }),
+      );
+    });
+
     it('never sends a Slack message back to Slack', async () => {
-      const websocket = Object.assign(createMockAdapter('websocket'), { echoesUserMessages: true });
+      const websocket = Object.assign(createMockAdapter('websocket'), { broadcastsUserMessages: true });
       const slack = createMockAdapter('slack');
       service.register(websocket);
       service.register(slack);
 
-      await service.echoUserMessage('user-1', userMessage, {
+      await service.broadcastUserMessage('user-1', userMessage, {
         channel: 'slack',
         channelId: 'C123',
         threadId: 'thread-456',
@@ -349,6 +366,7 @@ describe('MessageDeliveryService', () => {
 
       expect(slack.deliver).not.toHaveBeenCalled();
       expect(websocket.deliver).not.toHaveBeenCalled();
+      expect(mockGetMetaByMessageIds).not.toHaveBeenCalled();
     });
   });
 

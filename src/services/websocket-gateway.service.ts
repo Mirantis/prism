@@ -25,7 +25,10 @@ import {
   conversationEngineService,
   type TurnActivityEvent,
 } from './conversation-engine.service';
-import { turnActivityService, type TurnActivityChange } from './turn-activity.service';
+import {
+  conversationThreadActivityService,
+  type ThreadActivityChange,
+} from './conversation-thread-activity.service';
 import { threadTitleService, type ThreadTitleChange } from './thread-title.service';
 import { contextUsageService, type ContextUsageEvent } from './context-usage.service';
 import { compactionService, type CompactionEvent } from './compaction.service';
@@ -227,33 +230,33 @@ class WebSocketGatewayService {
     // clients. Generation is owned by threadTitleService (channel-agnostic);
     // the gateway is just the WebSocket transport for the notification.
     threadTitleService.events.on('change', ({ userId, threadId, title }: ThreadTitleChange) => {
-      this.broadcast(userId, { type: 'thread', payload: { threadId, title } });
+      this.sendToUser(userId, { type: 'thread', payload: { threadId, title } });
     });
 
-    // Push which threads have a turn in progress. The client shows the spinner for the
-    // thread on its screen. `working` rather than `processing`, so a terminal client
-    // that reads `processing` as its own request's state ignores these frames.
-    turnActivityService.events.on('change', (payload: TurnActivityChange) => {
-      this.broadcastAll({ type: 'status', payload });
+    // Push which threads are working. The client shows the spinner for the thread on
+    // its screen. `working` rather than `processing`, so a terminal client that reads
+    // `processing` as its own request's state ignores these frames.
+    conversationThreadActivityService.events.on('change', (payload: ThreadActivityChange) => {
+      this.broadcast({ type: 'status', payload });
     });
 
     // Push context-window occupancy so clients can show how full the window is.
     contextUsageService.events.on('usage', ({ userId, ...payload }: ContextUsageEvent) => {
-      this.broadcast(userId, { type: 'context', payload });
+      this.sendToUser(userId, { type: 'context', payload });
     });
 
     // Push compaction progress (started/completed/failed) so clients can show
     // a "compacting…" indicator and a completion note. Compaction itself is
     // owned by compactionService (channel-agnostic).
     compactionService.events.on('compaction', ({ userId, ...payload }: CompactionEvent) => {
-      this.broadcast(userId, { type: 'compaction', payload });
+      this.sendToUser(userId, { type: 'compaction', payload });
     });
 
     // Push update progress (available/updating/failed). Updates are owned by
     // updateService (channel-agnostic) and are install-level, so they go to
     // the one owner user every connection is pinned to.
     updateService.events.on('update', (payload: UpdateEvent) => {
-      this.broadcast(config.ownerUserId, { type: 'update', payload });
+      this.sendToUser(config.ownerUserId, { type: 'update', payload });
     });
 
     // Push the state of the desktop: which threads wait for it, who holds it, and
@@ -271,7 +274,7 @@ class WebSocketGatewayService {
     conversationEngineService.events.on(
       'activity',
       ({ userId, threadId, active }: TurnActivityEvent) => {
-        this.broadcast(userId, { type: 'status', payload: { processing: active, threadId } });
+        this.sendToUser(userId, { type: 'status', payload: { processing: active, threadId } });
       },
     );
   }
@@ -297,7 +300,7 @@ class WebSocketGatewayService {
         // together are read together.
         await Promise.resolve();
         this.computerChangedAgain = false;
-        await this.sendComputerState((message) => this.broadcast(config.ownerUserId, message));
+        await this.sendComputerState((message) => this.sendToUser(config.ownerUserId, message));
         again = this.computerChangedAgain;
       }
     } finally {
@@ -397,9 +400,9 @@ class WebSocketGatewayService {
 
     logger.info('WebSocket connected for user %s (%d connections)', userId, userConnections.length);
 
-    // A client that connects during a turn shows it from the start.
-    for (const payload of turnActivityService.activeTurns()) {
-      ws.send(JSON.stringify({ type: 'status', payload }));
+    // A client that connects while a thread is working shows that from the start.
+    for (const threadId of conversationThreadActivityService.workingThreadIds()) {
+      ws.send(JSON.stringify({ type: 'status', payload: { threadId, working: true } }));
     }
 
     // Handle messages
@@ -547,7 +550,7 @@ class WebSocketGatewayService {
       logger.info('Cancel requested by %s', userId);
       active.controller.abort();
       const { threadId } = active;
-      this.broadcast(userId, {
+      this.sendToUser(userId, {
         type: 'status',
         payload: { processing: false, ...(threadId ? { threadId } : {}) },
       });
@@ -999,8 +1002,12 @@ class WebSocketGatewayService {
       this.processingUsers.delete(userId);
       this.activeRequests.delete(userId);
 
-      // The turn's own end is announced by the engine, which brackets every
-      // exchange; a cancel is answered at once in `handleCancelMessage`.
+      // Tell every one of the user's connections the request is done so the
+      // STOP button resets even when a cancel produced no new message to deliver.
+      this.sendToUser(userId, {
+        type: 'status',
+        payload: { processing: false, ...(message.threadId ? { threadId: message.threadId } : {}) },
+      });
 
       // Process queued messages
       await this.processQueue(userId);
@@ -1025,9 +1032,9 @@ class WebSocketGatewayService {
   }
 
   /**
-   * Broadcast to all connections for a user
+   * Send to all connections for a user
    */
-  broadcast(userId: string, message: WebSocketResponse): void {
+  sendToUser(userId: string, message: WebSocketResponse): void {
     const connections = this.connections.get(userId);
     if (!connections) return;
 
@@ -1039,11 +1046,11 @@ class WebSocketGatewayService {
   }
 
   /**
-   * Broadcast to every open connection, whatever its user, except `exceptConnectionId`.
+   * Broadcast to every open connection except `exceptConnectionId`.
    * For frames about a conversation: every connection may open every conversation of
    * the agent.
    */
-  broadcastAll(message: WebSocketResponse, exceptConnectionId?: string): void {
+  broadcast(message: WebSocketResponse, exceptConnectionId?: string): void {
     const frame = JSON.stringify(message);
     for (const connections of this.connections.values()) {
       for (const ws of connections) {

@@ -140,7 +140,7 @@ vi.mock('../computer/computer-help.service', () => ({
 
 // Import after mocking
 import { webSocketGatewayService } from '../websocket-gateway.service';
-import { turnActivityService } from '../turn-activity.service';
+import { conversationThreadActivityService } from '../conversation-thread-activity.service';
 
 // Access internal state for testing
 const service = webSocketGatewayService as any;
@@ -681,8 +681,8 @@ describe('Requirement: WebSocket Gateway', () => {
     });
   });
 
-  describe('Scenario: Broadcast', () => {
-    it('should broadcast to all user connections', () => {
+  describe('Scenario: Send to a user', () => {
+    it('should send to all user connections', () => {
       const userId = 'user-123';
       const ws1 = createMockWebSocket();
       const ws2 = createMockWebSocket();
@@ -692,20 +692,20 @@ describe('Requirement: WebSocket Gateway', () => {
       service.connections.set(userId, [ws1, ws2]);
 
       const message = { type: 'status', content: 'Update' };
-      service.broadcast(userId, message);
+      service.sendToUser(userId, message);
 
       expect(ws1.send).toHaveBeenCalledWith(JSON.stringify(message));
       expect(ws2.send).toHaveBeenCalledWith(JSON.stringify(message));
     });
 
     it('should do nothing if user has no connections', () => {
-      service.broadcast('user-nonexistent', { type: 'status' });
+      service.sendToUser('user-nonexistent', { type: 'status' });
       // Should not throw
     });
   });
 
-  describe('Scenario: Broadcast to every connection', () => {
-    it('sends one frame to every open connection, whatever its user', () => {
+  describe('Scenario: Broadcast', () => {
+    it('sends one frame to every open connection', () => {
       const alice = createMockWebSocket();
       const bob = createMockWebSocket();
       const closed = createMockWebSocket();
@@ -714,7 +714,7 @@ describe('Requirement: WebSocket Gateway', () => {
       service.connections.set('user-bob', [bob]);
 
       const message = { type: 'chat', payload: { id: 'msg-1', threadId: 'thread-1' } };
-      service.broadcastAll(message);
+      service.broadcast(message);
 
       expect(alice.send).toHaveBeenCalledWith(JSON.stringify(message));
       expect(bob.send).toHaveBeenCalledWith(JSON.stringify(message));
@@ -726,7 +726,7 @@ describe('Requirement: WebSocket Gateway', () => {
       const other = Object.assign(createMockWebSocket(), { connectionId: 'conn-b' });
       service.connections.set('user-alice', [sender, other]);
 
-      service.broadcastAll({ type: 'chat', payload: { id: 'msg-1' } }, 'conn-a');
+      service.broadcast({ type: 'chat', payload: { id: 'msg-1' } }, 'conn-a');
 
       expect(sender.send).not.toHaveBeenCalled();
       expect(other.send).toHaveBeenCalledTimes(1);
@@ -740,36 +740,35 @@ describe('Requirement: WebSocket Gateway', () => {
   });
 
   describe('Scenario: Thread activity broadcast', () => {
-    it('sends each turn start and end, with its thread and turn id, to every connection', () => {
+    const request = { mode: 'chat' as const, threadId: 'thread-1', agentId: 'agent-1', userId: 'user-1' };
+
+    it('sends each change of a working thread to every connection', async () => {
       const alice = createMockWebSocket();
       const bob = createMockWebSocket();
       service.connections.set('user-alice', [alice]);
       service.connections.set('user-bob', [bob]);
 
-      const end = turnActivityService.begin('thread-1');
+      const end = await conversationThreadActivityService.begin(request);
       end();
 
       for (const ws of [alice, bob]) {
         const frames = ws.send.mock.calls.map(([raw]: [string]) => JSON.parse(raw));
         expect(frames).toEqual([
-          { type: 'status', payload: { threadId: 'thread-1', turnId: expect.any(String), working: true } },
-          { type: 'status', payload: { threadId: 'thread-1', turnId: frames[0].payload.turnId, working: false } },
+          { type: 'status', payload: { threadId: 'thread-1', working: true } },
+          { type: 'status', payload: { threadId: 'thread-1', working: false } },
         ]);
       }
     });
 
-    it('sends the turns in progress to a socket that has just connected', () => {
-      const end = turnActivityService.begin('thread-1');
+    it('sends the working threads to a socket that has just connected', async () => {
+      const end = await conversationThreadActivityService.begin(request);
       const ws = createMockWebSocket();
 
       service.handleConnection(ws, { url: '/api/ws', headers: { host: 'localhost:3003' } });
       end();
 
       const frames = ws.send.mock.calls.map(([raw]: [string]) => JSON.parse(raw));
-      expect(frames).toContainEqual({
-        type: 'status',
-        payload: { threadId: 'thread-1', turnId: expect.any(String), working: true },
-      });
+      expect(frames).toContainEqual({ type: 'status', payload: { threadId: 'thread-1', working: true } });
     });
   });
 

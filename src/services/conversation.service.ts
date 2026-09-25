@@ -95,7 +95,7 @@ class ConversationService {
   }
 
   /** The user's latest web thread, or null when there is none. Creates nothing. */
-  async findLatestThread(agentId: string, userId: string): Promise<ConversationThread | null> {
+  async findLatestWebThread(agentId: string, userId: string): Promise<ConversationThread | null> {
     return prisma.conversationThread.findFirst({
       where: {
         agentId,
@@ -115,7 +115,7 @@ class ConversationService {
    * when the user has none yet.
    */
   async getOrCreateLatestThread(agentId: string, userId: string): Promise<ConversationThread> {
-    let thread = await this.findLatestThread(agentId, userId);
+    let thread = await this.findLatestWebThread(agentId, userId);
 
     if (!thread) {
       thread = await prisma.conversationThread.create({

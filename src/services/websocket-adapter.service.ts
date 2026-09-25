@@ -15,7 +15,7 @@ import { logger } from '../logger';
 
 class WebSocketAdapterService implements ChannelAdapter {
   readonly name = 'websocket';
-  readonly echoesUserMessages = true;
+  readonly broadcastsUserMessages = true;
 
   async deliver(userId: string, message: DeliverableMessage, channelContext?: ChannelContext): Promise<void> {
     try {
@@ -24,7 +24,7 @@ class WebSocketAdapterService implements ChannelAdapter {
         ? message.createdAt.toISOString()
         : String(message.createdAt);
 
-      webSocketGatewayService.broadcastAll({
+      webSocketGatewayService.broadcast({
         type: 'chat',
         payload: {
           id: message.id,

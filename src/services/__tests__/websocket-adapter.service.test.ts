@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockBroadcastAll, mockHasConnections } = vi.hoisted(() => ({
-  mockBroadcastAll: vi.fn(),
+const { mockBroadcast, mockHasConnections } = vi.hoisted(() => ({
+  mockBroadcast: vi.fn(),
   mockHasConnections: vi.fn(),
 }));
 
 vi.mock('../websocket-gateway.service', () => ({
-  webSocketGatewayService: { broadcastAll: mockBroadcastAll, hasConnections: mockHasConnections },
+  webSocketGatewayService: { broadcast: mockBroadcast, hasConnections: mockHasConnections },
 }));
 
 import { webSocketAdapterService } from '../websocket-adapter.service';
@@ -33,7 +33,7 @@ describe('webSocketAdapterService', () => {
   it('delivers to every connection, not only the sender\'s user', async () => {
     await webSocketAdapterService.deliver('user-alice', message, { channel: 'websocket', threadId: 'thread-1' });
 
-    expect(mockBroadcastAll).toHaveBeenCalledWith(
+    expect(mockBroadcast).toHaveBeenCalledWith(
       {
         type: 'chat',
         payload: expect.objectContaining({
@@ -54,11 +54,11 @@ describe('webSocketAdapterService', () => {
       originConnectionId: 'conn-a',
     });
 
-    expect(mockBroadcastAll).toHaveBeenCalledWith(expect.objectContaining({ type: 'chat' }), 'conn-a');
+    expect(mockBroadcast).toHaveBeenCalledWith(expect.objectContaining({ type: 'chat' }), 'conn-a');
   });
 
-  it('echoes user messages', () => {
-    expect(webSocketAdapterService.echoesUserMessages).toBe(true);
+  it('broadcasts user messages', () => {
+    expect(webSocketAdapterService.broadcastsUserMessages).toBe(true);
   });
 
   it('counts a user as reachable while any connection is open', async () => {

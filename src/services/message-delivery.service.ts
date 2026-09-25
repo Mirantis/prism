@@ -157,18 +157,19 @@ export class MessageDeliveryService {
   }
 
   /**
-   * Deliver a stored user message to the other clients of the channel it came from.
-   * Only that channel receives it, and only when the channel declares
-   * `echoesUserMessages`.
+   * Broadcast a stored user message, with its attachments, to the other clients of
+   * the channel it came from. Only that channel receives it, and only when the
+   * channel declares `broadcastsUserMessages`.
    */
-  async echoUserMessage(
+  async broadcastUserMessage(
     userId: string,
     message: DeliverableMessage,
     channelContext: NonNullable<PublishOptions['channelContext']>,
   ): Promise<void> {
     const adapter = this.adapters.find((a) => a.name === channelContext.channel);
-    if (!adapter?.echoesUserMessages) return;
-    await adapter.deliver(userId, message, channelContext);
+    if (!adapter?.broadcastsUserMessages) return;
+    const attachments = (await attachmentService.getMetaByMessageIds([message.id])).get(message.id);
+    await adapter.deliver(userId, attachments?.length ? { ...message, attachments } : message, channelContext);
   }
 
   /**
