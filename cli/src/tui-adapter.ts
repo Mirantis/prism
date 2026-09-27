@@ -1,20 +1,32 @@
 /**
  * TUI Adapter (prism-cli).
  *
- * Bridges the Ink UI to an agent-runtime over WebSocket. The CLI does
- * not know the agentId or userId — the runtime owns both server-side
- * and substitutes them when our envelopes omit them.
+ * Bridges the Ink UI to an agent-runtime over the chat socket. The session
+ * shows one conversation, and the adapter drops the events of every other one:
+ * every client of the agent receives every event. The CLI does not know the
+ * agentId or userId; the runtime owns both.
  *
  * The agent-runtime base URL comes from `httpUrl` in ~/.prism/settings.json
  * (override via `PRISM_HTTP_URL`). The WebSocket URL is derived from it.
  */
 
 import { EventEmitter } from 'events';
-import { WsClient, WsEnvelope } from './ws-client.js';
+import { SendFailure, WsClient } from './ws-client.js';
 import { loadConfig, wsUrlFromHttpUrl } from './config.js';
 import { AttachmentMeta } from './attachments.js';
+import type {
+  OutgoingMessage,
+  StreamEvent,
+  TurnEventPayload,
+  TurnState,
+  WelcomePayload,
+} from './chat-protocol.js';
 
-export type TuiStatus = 'idle' | 'thinking' | 'error';
+export type { SendFailure } from './ws-client.js';
+export type { TurnEventPayload } from './chat-protocol.js';
+
+/** The connection, for the status bar: connected, or why not. */
+export type TuiStatus = 'idle' | 'error';
 
 export interface TuiMessage {
   id: string;
@@ -27,6 +39,8 @@ export interface TuiMessage {
   createdAt: string;
   /** Shared-file metadata (no bytes) — set on user messages with uploads. */
   attachments?: AttachmentMeta[] | null;
+  /** Who wrote a USER message, when the runtime knows. Display only. */
+  senderName?: string | null;
 }
 
 /**
@@ -116,24 +130,24 @@ export function signInRequestIn(blocks: unknown): SignInRequest | null {
 }
 
 export interface TuiAdapterEvents {
+  status: (status: TuiStatus, detail?: string) => void;
+  /** The runtime answered `hello`. `name` is who the sign-in says this connection is, or null. */
+  welcome: (you: { name: string | null }) => void;
+  /** The conversation's stored history, in place of the stored messages on screen. */
+  history: (messages: TuiMessage[]) => void;
+  /** One message of this conversation, new or changed. Upsert it by id. */
   message: (msg: TuiMessage) => void;
-  /**
-   * `threadId` is set when the runtime names the thread whose turn started or ended. A
-   * delivery reaches every one of the user's clients, so a frame for another thread is
-   * not this session's.
-   */
-  status: (status: TuiStatus, detail?: string, threadId?: string) => void;
-  /**
-   * The runtime named the thread this session is on. A backstop for a failed
-   * `startNewSession()`: without a threadId a mid-turn message cannot be steered
-   * into the running turn.
-   */
-  thread: (threadId: string) => void;
+  /** What this conversation is doing. Its work ends only at `idle`. */
+  turn: (turn: TurnEventPayload) => void;
+  /** The runtime refused a message. It is not sent again. */
+  sendFailed: (failure: SendFailure) => void;
   contextUsage: (usage: ContextUsage) => void;
   compaction: (event: CompactionEvent) => void;
   update: (event: UpdateEvent) => void;
   /** The agent is blocked on a sign-in this session can answer. */
   signIn: (request: SignInRequest) => void;
+  /** The runtime speaks a newer protocol. The client does not reconnect. */
+  unsupported: (notice: string) => void;
 }
 
 /** A resumable conversation thread, as listed by the `--resume` picker. */
@@ -160,6 +174,7 @@ interface RawMessage {
   blocks?: unknown;
   createdAt?: unknown;
   attachments?: unknown;
+  senderName?: unknown;
 }
 
 /** Keep only well-formed attachment metadata entries; null when none survive. */
@@ -214,6 +229,7 @@ function coerceMessage(raw: unknown): TuiMessage | null {
     blocks: m.blocks ?? null,
     createdAt: typeof m.createdAt === 'string' ? m.createdAt : new Date().toISOString(),
     attachments: coerceAttachments(m.attachments),
+    senderName: typeof m.senderName === 'string' ? m.senderName : null,
   };
 }
 
@@ -284,77 +300,66 @@ function coerceUpdateEvent(raw: unknown): UpdateEvent | null {
   };
 }
 
+/** Shown when the runtime closes the socket as too old. Nothing reconnects after it. */
+export const UPDATE_REQUIRED_NOTICE =
+  'This prism-cli is older than the Prism runtime and cannot connect to it. Update prism-cli, then start it again.';
+
+// Reported in `hello`; the packaged binary sets it at build time.
+const CLIENT_VERSION = process.env.PRISM_VERSION ?? '0.0.0-dev';
+
+const HISTORY_LIMIT = 50;
+
 class TuiAdapter {
   readonly events = new EventEmitter();
 
   private client: WsClient | null = null;
   private readonly httpUrl = loadConfig().httpUrl.replace(/\/$/, '');
   private readonly wsUrl = wsUrlFromHttpUrl(this.httpUrl);
+  /** The one conversation this session shows. Events of every other one are dropped. */
+  private threadId: string | null = null;
+  /** Messages submitted before the conversation existed, sent once it does. */
+  private unthreaded: Array<Omit<OutgoingMessage, 'threadId'>> = [];
+  /** Events that arrived while history was loading, applied after it. Null while no load runs. */
+  private held: StreamEvent[] | null = null;
+  private syncGeneration = 0;
+  /** Every conversation that is working, from the last `welcome` and the events since. */
+  private readonly working = new Map<string, Exclude<TurnState, 'idle'>>();
 
   markConnected(_userId: string): void {
     if (this.client) return;
-    this.client = new WsClient({ url: this.wsUrl });
-
-    this.client.events.on('open', () => {
-      this.events.emit('status', 'idle');
-    });
-    this.client.events.on('close', () => {
+    const client = new WsClient({ url: this.wsUrl, clientVersion: CLIENT_VERSION });
+    this.client = client;
+    client.events.on('welcome', (welcome: WelcomePayload) => this.onWelcome(welcome));
+    client.events.on('event', (event: StreamEvent) => this.onEvent(event));
+    client.events.on('sendFailed', (failure: SendFailure) => this.events.emit('sendFailed', failure));
+    client.events.on('disconnected', () => {
       this.events.emit('status', 'error', 'disconnected, retrying…');
     });
-    this.client.events.on('error', (err: Error) => {
+    client.events.on('error', (err: Error) => {
       this.events.emit('status', 'error', err.message);
     });
-    this.client.events.on('envelope', (env: WsEnvelope) => this.onEnvelope(env));
+    client.events.on('unsupported', () => {
+      this.events.emit('status', 'error', 'update prism-cli');
+      this.events.emit('unsupported', UPDATE_REQUIRED_NOTICE);
+    });
   }
 
   markDisconnected(): void {
-    if (!this.client) return;
-    this.client.close();
+    this.client?.close();
     this.client = null;
+    this.threadId = null;
+    this.unthreaded = [];
+    this.held = null;
+    this.syncGeneration += 1;
+    this.working.clear();
   }
 
   /**
-   * Replay a thread's recent messages on mount. Calls the runtime's
-   * `/messages` REST endpoint; with `threadId` set (the --resume flow) it
-   * replays that specific thread, otherwise the latest. If it returns non-2xx
-   * (e.g. runtime down), we render with an empty history rather than blocking.
-   */
-  async loadHistory(args: {
-    userId: string;
-    agentId: string;
-    threadId?: string;
-    limit?: number;
-  }): Promise<TuiMessage[]> {
-    const limit = args.limit ?? 50;
-    try {
-      const params = new URLSearchParams({ limit: String(limit) });
-      if (args.threadId) params.set('threadId', args.threadId);
-      // Time-boxed: the --resume picker awaits this before handing over to
-      // the chat UI, so a runtime that accepts the connection but never
-      // answers must degrade to an empty history, not strand the picker.
-      const res = await fetch(`${this.httpUrl}/messages?${params.toString()}`, {
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!res.ok) return [];
-      const body = (await res.json()) as unknown;
-      if (!Array.isArray(body)) return [];
-      return body
-        .map(coerceMessage)
-        .filter((m): m is TuiMessage => m !== null);
-    } catch {
-      return [];
-    }
-  }
-
-  /**
-   * Start a fresh conversation thread for this CLI session. Calls the
-   * runtime's `POST /threads`, which creates a new thread — and since the
-   * runtime always uses the latest thread, opening the CLI begins a clean
-   * conversation instead of resuming the last one. The CLI's launch directory
-   * (`process.cwd()`) is sent as the thread's workspaceRoot so the agent's
-   * shell tools operate from where the user opened the CLI. Errors are
-   * swallowed (we fall back to whatever thread the runtime resolves) rather
-   * than blocking the UI.
+   * Start a fresh conversation thread for this CLI session with `POST /threads`,
+   * and make it the one this session shows. The launch directory
+   * (`process.cwd()`) becomes the thread's workspaceRoot, so the agent's shell
+   * tools work from where the user opened the CLI. Undefined when the runtime
+   * could not create one; the caller tries again.
    */
   async startNewSession(): Promise<string | undefined> {
     try {
@@ -365,12 +370,21 @@ class TuiAdapter {
       });
       if (!res.ok) return undefined;
       const body = (await res.json()) as { threadId: string };
+      this.threadId = body.threadId;
+      for (const message of this.unthreaded.splice(0)) {
+        this.client?.send({ ...message, threadId: body.threadId });
+      }
       return body.threadId;
     } catch {
-      // Runtime down / unreachable — render anyway; first message will still
-      // route through the runtime's thread resolution.
       return undefined;
     }
+  }
+
+  /** Show an existing conversation: its history now (as `history`), and its events from here on. */
+  resumeThread(threadId: string): Promise<void> {
+    this.threadId = threadId;
+    this.emitTurnState(threadId);
+    return this.resync();
   }
 
   /**
@@ -380,8 +394,7 @@ class TuiAdapter {
    */
   async listSessions(): Promise<ThreadSummary[]> {
     try {
-      // Time-boxed for the same reason as loadHistory: `--resume` blocks on
-      // this before rendering anything at all.
+      // Time-boxed: `--resume` blocks on this before rendering anything at all.
       const res = await fetch(`${this.httpUrl}/threads`, {
         signal: AbortSignal.timeout(15_000),
       });
@@ -397,113 +410,124 @@ class TuiAdapter {
   }
 
   /**
-   * Send a user message. The runtime fills in `agentId`; pass `threadId` to
-   * pin the turn to a specific thread (the --resume flow) — otherwise the
-   * runtime resolves the latest thread.
+   * Send a message to this session's conversation under the id the caller drew
+   * it with. The runtime's copy arrives as a `message` with the same id, or
+   * `sendFailed` says why it was refused. A message submitted before the
+   * conversation exists waits for it.
    */
-  async submitUserMessage(_args: {
-    userId: string;
-    agentId: string;
-    text: string;
-    threadId?: string;
-    /** Ids of files staged via /attach, linked to this message server-side. */
-    attachmentIds?: string[];
-  }): Promise<void> {
-    this.events.emit('status', 'thinking');
-    if (!this.client) {
-      // markConnected hasn't fired yet (mount race). Buffer by re-emitting
-      // an error so the UI doesn't get stuck on the spinner — submitting
-      // before mount is exceedingly rare.
-      this.events.emit('status', 'error', 'not connected');
+  submitUserMessage(args: { id: string; text: string; attachmentIds: string[] }): void {
+    const message = { id: args.id, content: args.text, attachmentIds: args.attachmentIds };
+    if (!this.threadId) {
+      this.unthreaded.push(message);
       return;
     }
-    this.client.send({
-      type: 'chat',
-      payload: {
-        mode: 'followup',
-        content: _args.text,
-        ...(_args.threadId ? { threadId: _args.threadId } : {}),
-        ...(_args.attachmentIds && _args.attachmentIds.length > 0
-          ? { attachmentIds: _args.attachmentIds }
-          : {}),
-      },
-    });
+    this.client?.send({ ...message, threadId: this.threadId });
+  }
+
+  /** Stop this conversation's work, whoever started it. False when it could not be asked. */
+  cancel(): boolean {
+    if (!this.threadId || !this.client) return false;
+    return this.client.cancel(this.threadId);
+  }
+
+  private onWelcome(welcome: WelcomePayload): void {
+    this.events.emit('status', 'idle');
+    this.events.emit('welcome', welcome.you);
+    this.working.clear();
+    for (const turn of welcome.snapshot.turns) this.working.set(turn.threadId, turn.state);
+    const threadId = this.threadId;
+    if (!threadId) return;
+    this.emitTurnState(threadId);
+    if (!welcome.resumed) void this.resync();
+  }
+
+  private emitTurnState(threadId: string): void {
+    const turn: TurnEventPayload = { threadId, state: this.working.get(threadId) ?? 'idle' };
+    this.events.emit('turn', turn);
+  }
+
+  private onEvent(event: StreamEvent): void {
+    if (this.held) {
+      this.held.push(event);
+      return;
+    }
+    this.apply(event);
+  }
+
+  private apply(event: StreamEvent): void {
+    switch (event.type) {
+      case 'message': {
+        const msg = coerceMessage(event.payload);
+        if (!msg || msg.threadId !== this.threadId) return;
+        this.events.emit('message', msg);
+        const signIn = signInRequestIn(msg.blocks);
+        if (signIn) this.events.emit('signIn', { ...signIn, threadId: msg.threadId });
+        return;
+      }
+      case 'turn': {
+        const turn = event.payload as TurnEventPayload;
+        if (turn.state === 'idle') this.working.delete(turn.threadId);
+        else this.working.set(turn.threadId, turn.state);
+        if (turn.threadId === this.threadId) this.events.emit('turn', turn);
+        return;
+      }
+      case 'context': {
+        const usage = coerceContextUsage(event.payload);
+        if (usage && usage.threadId === this.threadId) this.events.emit('contextUsage', usage);
+        return;
+      }
+      case 'compaction': {
+        const compaction = coerceCompactionEvent(event.payload);
+        if (!compaction || compaction.threadId !== this.threadId) return;
+        this.events.emit('compaction', compaction);
+        // Older messages were folded into the summary, so the stored history changed.
+        if (compaction.status === 'completed') void this.resync();
+        return;
+      }
+      case 'update': {
+        const update = coerceUpdateEvent(event.payload);
+        if (update) this.events.emit('update', update);
+        return;
+      }
+      // `thread` and `computer` events have no place in the terminal UI.
+    }
   }
 
   /**
-   * Cancel the in-flight turn: tell the runtime to abort the LLM generation
-   * and optimistically flip back to idle so the spinner clears immediately
-   * (the runtime also broadcasts a terminal `processing: false` status).
+   * Replace the conversation on screen with its stored history. Events that
+   * arrive meanwhile are held and applied after it, so none is lost between the
+   * read and the live stream. Only the newest load applies.
    */
-  cancel(): void {
-    this.client?.send({ type: 'cancel' });
-    this.events.emit('status', 'idle');
+  private async resync(): Promise<void> {
+    const threadId = this.threadId;
+    if (!threadId) return;
+    this.syncGeneration += 1;
+    const generation = this.syncGeneration;
+    this.held ??= [];
+    const messages = await this.loadHistory(threadId);
+    if (generation !== this.syncGeneration) return;
+    const held = this.held;
+    this.held = null;
+    if (messages) this.events.emit('history', messages);
+    else this.events.emit('status', 'error', 'could not reload the conversation');
+    for (const event of held) this.apply(event);
   }
 
-  private onEnvelope(env: WsEnvelope): void {
-    switch (env.type) {
-      case 'chat': {
-        const msg = coerceMessage(env.payload);
-        if (msg) {
-          this.events.emit('message', msg);
-          const signIn = signInRequestIn(msg.blocks);
-          if (signIn) this.events.emit('signIn', { ...signIn, threadId: msg.threadId });
-          // Deliberately does NOT flip to idle. A turn publishes each of its
-          // text steps as it arrives, and after a mid-turn message the exchange
-          // runs another turn — so a reply landing is not evidence the work is
-          // over. Treating it as such cleared the spinner (and the "esc to stop"
-          // affordance) while the agent was still going. `status.processing`
-          // brackets the turn and is the only source of truth.
-        }
-        break;
-      }
-      case 'status': {
-        const payload = env.payload as
-          | { connected?: boolean; processing?: boolean; threadId?: unknown }
-          | undefined;
-        // `true` when a turn starts; `false` from the gateway's `finally` on every
-        // exit — normal end, error and cancel alike. The connect handshake sends
-        // `{ connected: true }` with no `processing` key, and the socket's `open`
-        // handler already emits idle for that; hence the boolean guard rather
-        // than a truthiness test, which would clear the spinner mid-turn if the
-        // handshake were ever re-sent.
-        if (typeof payload?.processing === 'boolean') {
-          const threadId = typeof payload.threadId === 'string' ? payload.threadId : undefined;
-          this.events.emit('status', payload.processing ? 'thinking' : 'idle', undefined, threadId);
-        }
-        break;
-      }
-      case 'error': {
-        const payload = env.payload as { error?: string } | undefined;
-        this.events.emit('status', 'error', payload?.error ?? 'unknown error');
-        break;
-      }
-      case 'thread': {
-        // Only a backstop for a failed `startNewSession()`: a chat message sent
-        // without a threadId cannot be steered into a running turn — the gateway
-        // queues it instead — so learn the id from the runtime when we lack one.
-        const payload = env.payload as { threadId?: unknown } | undefined;
-        if (typeof payload?.threadId === 'string' && payload.threadId) {
-          this.events.emit('thread', payload.threadId);
-        }
-        break;
-      }
-      case 'context': {
-        const usage = coerceContextUsage(env.payload);
-        if (usage) this.events.emit('contextUsage', usage);
-        break;
-      }
-      case 'compaction': {
-        const event = coerceCompactionEvent(env.payload);
-        if (event) this.events.emit('compaction', event);
-        break;
-      }
-      case 'update': {
-        const event = coerceUpdateEvent(env.payload);
-        if (event) this.events.emit('update', event);
-        break;
-      }
-      // typing / heartbeat / pong intentionally ignored
+  /** The thread's newest messages, oldest first, from `GET /messages`. Null when the runtime did not answer. */
+  private async loadHistory(threadId: string): Promise<TuiMessage[] | null> {
+    try {
+      const params = new URLSearchParams({ limit: String(HISTORY_LIMIT), threadId });
+      // Time-boxed: a runtime that accepts the connection but never answers
+      // must not hold the conversation's events forever.
+      const res = await fetch(`${this.httpUrl}/messages?${params.toString()}`, {
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) return null;
+      const body = (await res.json()) as unknown;
+      if (!Array.isArray(body)) return null;
+      return body.map(coerceMessage).filter((m): m is TuiMessage => m !== null);
+    } catch {
+      return null;
     }
   }
 }

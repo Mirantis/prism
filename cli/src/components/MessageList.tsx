@@ -3,8 +3,7 @@ import { Box, Text } from 'ink';
 import { renderMarkdown } from '../markdown.js';
 import { TuiMessage } from '../tui-adapter.js';
 import { formatFileSize } from '../attachments.js';
-
-export type ChatEntry = { kind: 'message'; message: TuiMessage };
+import { ChatEntry } from '../transcript.js';
 
 /** Mirrors `ToolOutputTruncation` in the runtime's src/types.ts. */
 interface ToolOutputTruncation {
@@ -46,6 +45,8 @@ function truncate(s: string, max: number): string {
 
 interface Props {
   agentName: string;
+  /** The name the runtime gave this connection. A USER message by anyone else is labelled with its sender. */
+  selfName: string | null;
   entries: ChatEntry[];
   expandedMessageId: string | null;
 }
@@ -59,17 +60,29 @@ function toolCallSummary(toolCalls: unknown): string | null {
   return `· used ${names.join(', ')}`;
 }
 
-interface MessageRowProps {
-  agentName: string;
-  message: TuiMessage;
-  expanded: boolean;
+/** "You", unless someone else wrote it: another person in the same conversation. */
+function userLabel(senderName: string | null | undefined, selfName: string | null): string {
+  if (!senderName || senderName === selfName) return 'You';
+  return senderName;
 }
 
-const MessageRow: React.FC<MessageRowProps> = ({ agentName, message, expanded }) => {
+interface MessageRowProps {
+  agentName: string;
+  selfName: string | null;
+  message: TuiMessage;
+  expanded: boolean;
+  failed?: string;
+}
+
+const MessageRow: React.FC<MessageRowProps> = ({ agentName, selfName, message, expanded, failed }) => {
   const isUser = message.role === 'USER';
   const isAgent = message.role === 'AGENT';
   const prefixColor = isUser ? 'cyan' : isAgent ? 'magenta' : 'yellow';
-  const prefixLabel = isUser ? 'You' : isAgent ? agentName : message.role;
+  const prefixLabel = isUser
+    ? userLabel(message.senderName, selfName)
+    : isAgent
+      ? agentName
+      : message.role;
   const summary = isAgent ? toolCallSummary(message.toolCalls) : null;
   const body = isAgent ? renderMarkdown(message.content) : message.content;
   const calls = isAgent && isToolCallArray(message.toolCalls) ? message.toolCalls : [];
@@ -84,6 +97,7 @@ const MessageRow: React.FC<MessageRowProps> = ({ agentName, message, expanded })
       </Box>
       <Box paddingLeft={2} flexDirection="column">
         <Text>{body}</Text>
+        {failed && <Text color="red">{`✗ not sent: ${failed}`}</Text>}
         {Array.isArray(message.attachments) && message.attachments.length > 0 && (
           <Text dimColor>
             {message.attachments
@@ -126,7 +140,7 @@ const MessageRow: React.FC<MessageRowProps> = ({ agentName, message, expanded })
   );
 };
 
-export const MessageList: React.FC<Props> = ({ agentName, entries, expandedMessageId }) => {
+export const MessageList: React.FC<Props> = ({ agentName, selfName, entries, expandedMessageId }) => {
   // Only render the most recent N entries — the parent <Box> is bound by the
   // terminal height anyway, but limiting keeps re-render cost low for long
   // sessions.
@@ -138,8 +152,10 @@ export const MessageList: React.FC<Props> = ({ agentName, entries, expandedMessa
         <MessageRow
           key={entry.message.id}
           agentName={agentName}
+          selfName={selfName}
           message={entry.message}
           expanded={entry.message.id === expandedMessageId}
+          failed={entry.failed}
         />
       ))}
     </Box>

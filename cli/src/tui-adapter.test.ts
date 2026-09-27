@@ -14,61 +14,103 @@ vi.mock('./config.js', () => ({
   wsUrlFromHttpUrl: (u: string) => u.replace(/\/$/, '').replace(/^http/, 'ws') + '/api/ws',
 }));
 
-// The envelope tests drive the adapter's inbound routing without a socket: this
-// fake stands in for WsClient and hands us its event bus.
-const { lastClient } = vi.hoisted(() => {
-  const ref: { current: { events: { on: (e: string, fn: (...a: unknown[]) => void) => void; emit: (e: string, ...a: unknown[]) => void }; sent: unknown[] } | null } = {
-    current: null,
-  };
-  return { lastClient: ref };
-});
+// These tests drive the adapter's routing without a socket: this fake stands in
+// for WsClient, hands us its event bus and records what the adapter asks of it.
+type FakeClient = {
+  events: import('events').EventEmitter;
+  sent: unknown[];
+  cancelled: string[];
+};
+const { lastClient } = vi.hoisted(() => ({ lastClient: { current: null as FakeClient | null } }));
 
-vi.mock('./ws-client.js', () => {
-  class TinyEmitter {
-    private handlers = new Map<string, Array<(...a: unknown[]) => void>>();
-    on(event: string, fn: (...a: unknown[]) => void) {
-      const list = this.handlers.get(event) ?? [];
-      list.push(fn);
-      this.handlers.set(event, list);
-    }
-    emit(event: string, ...args: unknown[]) {
-      for (const fn of this.handlers.get(event) ?? []) fn(...args);
-    }
-  }
+vi.mock('./ws-client.js', async () => {
+  const { EventEmitter } = await import('events');
   class FakeWsClient {
-    events = new TinyEmitter();
+    events = new EventEmitter();
     sent: unknown[] = [];
+    cancelled: string[] = [];
     constructor(_opts: unknown) {
-      lastClient.current = this as never;
+      lastClient.current = this;
     }
     send(message: unknown) {
       this.sent.push(message);
+    }
+    cancel(threadId: string) {
+      this.cancelled.push(threadId);
+      return true;
     }
     close() {}
   }
   return { WsClient: FakeWsClient };
 });
 
-import { signInRequestIn, tuiAdapterService, TuiStatus } from './tui-adapter.js';
+import { signInRequestIn, tuiAdapterService, TuiMessage } from './tui-adapter.js';
+
+const MINE = 'thread-mine';
+const OTHER = 'thread-other';
+
+function storedMessage(overrides: Partial<TuiMessage> = {}) {
+  return {
+    id: 'msg-1',
+    threadId: MINE,
+    role: 'AGENT',
+    content: 'working on it',
+    triggeredBy: 'USER_INPUT',
+    toolCalls: null,
+    blocks: null,
+    isCompacted: false,
+    createdAt: '2026-09-27T08:38:53.843Z',
+    attachments: null,
+    senderName: null,
+    ...overrides,
+  };
+}
+
+function welcome(overrides: { resumed?: boolean; turns?: unknown[]; name?: string | null } = {}) {
+  return {
+    protocol: 2,
+    streamId: 'stream-1',
+    seq: 1,
+    resumed: overrides.resumed ?? false,
+    you: { name: overrides.name ?? null },
+    snapshot: { turns: overrides.turns ?? [] },
+  };
+}
+
+let seq = 1;
+function emitEvent(type: string, payload: unknown) {
+  seq += 1;
+  lastClient.current!.events.emit('event', { type, seq, payload });
+}
+
+/** A fetch that answers `GET /messages` with these rows, and `POST /threads` with MINE. */
+function stubRuntime(history: unknown[] = []) {
+  const fetchMock = vi.fn(async (url: string, init?: { method?: string }) => {
+    if (init?.method === 'POST') return { ok: true, status: 200, json: async () => ({ threadId: MINE }) };
+    return { ok: true, status: 200, json: async () => history };
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+
+const flush = async () => {
+  for (let i = 0; i < 3; i++) await new Promise((r) => setImmediate(r));
+};
+
+beforeEach(() => {
+  seq = 1;
+  tuiAdapterService.markConnected('u1');
+});
+
+afterEach(() => {
+  tuiAdapterService.events.removeAllListeners();
+  tuiAdapterService.markDisconnected();
+  vi.unstubAllGlobals();
+});
 
 describe('TuiAdapter.startNewSession', () => {
-  let fetchMock: ReturnType<typeof vi.fn>;
-
-  beforeEach(() => {
-    fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
   it('POSTs to /threads with the launch cwd and returns the new thread id', async () => {
-    fetchMock.mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ threadId: 'thread-new' }),
-    } as unknown as Response);
+    const fetchMock = stubRuntime();
 
     const threadId = await tuiAdapterService.startNewSession();
 
@@ -77,177 +119,274 @@ describe('TuiAdapter.startNewSession', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workspaceRoot: process.cwd() }),
     });
-    expect(threadId).toBe('thread-new');
+    expect(threadId).toBe(MINE);
   });
 
   it('returns undefined on a non-OK response', async () => {
-    fetchMock.mockResolvedValue({ ok: false, status: 500 } as Response);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
 
     await expect(tuiAdapterService.startNewSession()).resolves.toBeUndefined();
   });
 
   it('resolves to undefined without throwing when the runtime is unreachable', async () => {
-    fetchMock.mockRejectedValue(new Error('ECONNREFUSED'));
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')));
 
     await expect(tuiAdapterService.startNewSession()).resolves.toBeUndefined();
   });
 });
 
-describe('TuiAdapter.loadHistory', () => {
-  let fetchMock: ReturnType<typeof vi.fn>;
+describe('TuiAdapter sending', () => {
+  it('names the session thread on every message', async () => {
+    stubRuntime();
+    await tuiAdapterService.startNewSession();
 
-  beforeEach(() => {
-    fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
+    tuiAdapterService.submitUserMessage({ id: 'uuid-1', text: 'hi', attachmentIds: ['att-1'] });
+
+    expect(lastClient.current!.sent).toEqual([
+      { id: 'uuid-1', threadId: MINE, content: 'hi', attachmentIds: ['att-1'] },
+    ]);
   });
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
+  it('holds a message submitted before the thread exists, and sends it once it does', async () => {
+    tuiAdapterService.submitUserMessage({ id: 'uuid-1', text: 'too early', attachmentIds: [] });
+    expect(lastClient.current!.sent).toEqual([]);
+
+    stubRuntime();
+    await tuiAdapterService.startNewSession();
+
+    expect(lastClient.current!.sent).toEqual([
+      { id: 'uuid-1', threadId: MINE, content: 'too early', attachmentIds: [] },
+    ]);
   });
 
-  it('GETs /messages with just a limit when no threadId is given', async () => {
-    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => [] } as unknown as Response);
+  it("cancels the session thread's work, and cannot before there is one", async () => {
+    expect(tuiAdapterService.cancel()).toBe(false);
 
-    await tuiAdapterService.loadHistory({ userId: 'u1', agentId: 'a1' });
+    stubRuntime();
+    await tuiAdapterService.startNewSession();
+
+    expect(tuiAdapterService.cancel()).toBe(true);
+    expect(lastClient.current!.cancelled).toEqual([MINE]);
+  });
+
+  it('passes on a refused message', () => {
+    const failures: unknown[] = [];
+    tuiAdapterService.events.on('sendFailed', (f) => failures.push(f));
+    const failure = { messageId: 'uuid-1', code: 'unknown_thread', message: 'There is no such conversation.' };
+
+    lastClient.current!.events.emit('sendFailed', failure);
+
+    expect(failures).toEqual([failure]);
+  });
+});
+
+describe('TuiAdapter history', () => {
+  it('loads the resumed thread with GET /messages', async () => {
+    const fetchMock = stubRuntime([storedMessage({ content: 'earlier reply' })]);
+    const histories: TuiMessage[][] = [];
+    tuiAdapterService.events.on('history', (h) => histories.push(h));
+
+    await tuiAdapterService.resumeThread(MINE);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://example.test:3003/messages?limit=50',
+      `http://example.test:3003/messages?limit=50&threadId=${MINE}`,
       { signal: expect.any(AbortSignal) },
     );
+    expect(histories.map((h) => h.map((m) => m.content))).toEqual([['earlier reply']]);
   });
 
-  it('pins the request to a specific thread when threadId is given', async () => {
-    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => [] } as unknown as Response);
+  it('reloads after a welcome that could not resume, and applies what arrived meanwhile after it', async () => {
+    stubRuntime();
+    await tuiAdapterService.startNewSession();
+    const order: string[] = [];
+    tuiAdapterService.events.on('history', () => order.push('history'));
+    tuiAdapterService.events.on('message', (m) => order.push(`message ${m.id}`));
 
-    await tuiAdapterService.loadHistory({ userId: 'u1', agentId: 'a1', threadId: 'thread-x' });
+    lastClient.current!.events.emit('welcome', welcome({ resumed: false }));
+    emitEvent('message', storedMessage({ id: 'msg-live' }));
+    expect(order).toEqual([]);
+    await flush();
+
+    expect(order).toEqual(['history', 'message msg-live']);
+  });
+
+  it('keeps the screen when history cannot be reloaded, and says so', async () => {
+    stubRuntime();
+    await tuiAdapterService.startNewSession();
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')));
+    const histories: unknown[] = [];
+    const statuses: unknown[] = [];
+    tuiAdapterService.events.on('history', (h) => histories.push(h));
+    tuiAdapterService.events.on('status', (s, d) => statuses.push([s, d]));
+
+    lastClient.current!.events.emit('welcome', welcome({ resumed: false }));
+    await flush();
+
+    expect(histories).toEqual([]);
+    expect(statuses).toContainEqual(['error', 'could not reload the conversation']);
+  });
+
+  it('does not reload after a welcome that resumed', async () => {
+    const fetchMock = stubRuntime();
+    await tuiAdapterService.startNewSession();
+    fetchMock.mockClear();
+
+    lastClient.current!.events.emit('welcome', welcome({ resumed: true }));
+    await flush();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('reloads when a compaction of this thread completes', async () => {
+    const fetchMock = stubRuntime();
+    await tuiAdapterService.startNewSession();
+    fetchMock.mockClear();
+
+    emitEvent('compaction', { threadId: MINE, status: 'completed', trigger: 'auto', messagesCompacted: 4 });
+    await flush();
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://example.test:3003/messages?limit=50&threadId=thread-x',
+      `http://example.test:3003/messages?limit=50&threadId=${MINE}`,
       { signal: expect.any(AbortSignal) },
     );
   });
 });
 
-describe('TuiAdapter inbound envelopes', () => {
-  let statuses: Array<{ status: TuiStatus; detail?: string; threadId?: string }>;
-  let threads: string[];
+describe('TuiAdapter inbound events', () => {
+  beforeEach(async () => {
+    stubRuntime();
+    await tuiAdapterService.startNewSession();
+  });
 
-  const emit = (type: string, payload?: unknown) =>
-    lastClient.current!.events.emit('envelope', { type, payload });
+  it('reports the connection and the name the runtime gave it', () => {
+    const statuses: unknown[] = [];
+    const names: unknown[] = [];
+    tuiAdapterService.events.on('status', (s) => statuses.push(s));
+    tuiAdapterService.events.on('welcome', (you) => names.push(you.name));
 
-  beforeEach(() => {
-    tuiAdapterService.markConnected('u1');
-    statuses = [];
-    threads = [];
-    tuiAdapterService.events.on('status', (status, detail, threadId) =>
-      statuses.push({ status, detail, threadId }),
+    lastClient.current!.events.emit('welcome', welcome({ resumed: true, name: 'Grace Example' }));
+
+    expect(statuses).toEqual(['idle']);
+    expect(names).toEqual(['Grace Example']);
+  });
+
+  it("takes this thread's state from the welcome snapshot", () => {
+    const turns: unknown[] = [];
+    tuiAdapterService.events.on('turn', (t) => turns.push(t));
+
+    lastClient.current!.events.emit(
+      'welcome',
+      welcome({ resumed: true, turns: [{ threadId: OTHER, state: 'running' }, { threadId: MINE, state: 'queued' }] }),
     );
-    tuiAdapterService.events.on('thread', (threadId) => threads.push(threadId));
+    lastClient.current!.events.emit('welcome', welcome({ resumed: true, turns: [{ threadId: OTHER, state: 'running' }] }));
+
+    expect(turns).toEqual([
+      { threadId: MINE, state: 'queued' },
+      { threadId: MINE, state: 'idle' },
+    ]);
   });
 
-  afterEach(() => {
-    tuiAdapterService.events.removeAllListeners();
-    tuiAdapterService.markDisconnected();
+  it('knows the state of a thread resumed after the welcome', async () => {
+    const turns: unknown[] = [];
+    tuiAdapterService.events.on('turn', (t) => turns.push(t));
+    lastClient.current!.events.emit('welcome', welcome({ resumed: true, turns: [{ threadId: OTHER, state: 'queued' }] }));
+    emitEvent('turn', { threadId: OTHER, state: 'running' });
+    turns.length = 0;
+
+    await tuiAdapterService.resumeThread(OTHER);
+
+    expect(turns).toEqual([{ threadId: OTHER, state: 'running' }]);
   });
 
-  const agentMessage = {
-    id: 'msg-1',
-    threadId: 'thread-1',
-    role: 'AGENT',
-    content: 'working on it',
-    triggeredBy: 'USER_INPUT',
-    toolCalls: null,
-    blocks: null,
-    createdAt: new Date().toISOString(),
-  };
+  it('passes on messages of every role, with who sent them', () => {
+    const seen: TuiMessage[] = [];
+    tuiAdapterService.events.on('message', (m) => seen.push(m));
 
-  it('does not go idle when an agent reply lands mid-turn', () => {
-    // A turn publishes each text step as it arrives, and a steered exchange runs
-    // another turn after that — so a reply is not evidence the work is over.
-    // Clearing here used to drop the spinner and the "esc to stop" hint while the
-    // agent was still going.
-    emit('status', { processing: true });
-    emit('chat', agentMessage);
+    emitEvent('message', storedMessage({ id: 'u1', role: 'USER', content: 'hi', senderName: 'Ada Example' }));
+    emitEvent('message', storedMessage({ id: 'a1' }));
 
-    expect(statuses.map((s) => s.status)).toEqual(['thinking']);
+    expect(seen.map((m) => [m.role, m.senderName])).toEqual([
+      ['USER', 'Ada Example'],
+      ['AGENT', null],
+    ]);
   });
 
-  it('still delivers the message itself', () => {
+  it('ends a turn only at idle: a reply mid-turn is not the end', () => {
+    const turns: unknown[] = [];
+    tuiAdapterService.events.on('turn', (t) => turns.push(t));
+
+    emitEvent('turn', { threadId: MINE, state: 'running' });
+    emitEvent('message', storedMessage());
+    emitEvent('turn', { threadId: MINE, state: 'idle', outcome: 'completed' });
+
+    expect(turns).toEqual([
+      { threadId: MINE, state: 'running' },
+      { threadId: MINE, state: 'idle', outcome: 'completed' },
+    ]);
+  });
+
+  it('ignores every event of another conversation', () => {
     const seen: string[] = [];
-    tuiAdapterService.events.on('message', (m) => seen.push(m.content));
+    for (const name of ['message', 'turn', 'contextUsage', 'compaction', 'signIn'] as const) {
+      tuiAdapterService.events.on(name, () => seen.push(name));
+    }
 
-    emit('chat', agentMessage);
+    emitEvent('message', storedMessage({ threadId: OTHER }));
+    emitEvent('turn', { threadId: OTHER, state: 'running' });
+    emitEvent('context', { threadId: OTHER, modelId: 'm', usedTokens: 1, windowTokens: 10, usedPercent: 10 });
+    emitEvent('compaction', { threadId: OTHER, status: 'started', trigger: 'auto' });
+    emitEvent('message', storedMessage({
+      threadId: OTHER,
+      blocks: [{ type: 'computer_help', id: 'h', reason: 'r', credentials: true, status: 'waiting' }],
+    }));
 
-    expect(seen).toEqual(['working on it']);
+    expect(seen).toEqual([]);
   });
 
-  it('goes idle only when the runtime says the turn is done', () => {
-    emit('status', { processing: true });
-    emit('status', { processing: false });
+  it("passes on this thread's context usage", () => {
+    const seen: unknown[] = [];
+    tuiAdapterService.events.on('contextUsage', (u) => seen.push(u));
+    const usage = { threadId: MINE, modelId: 'us.anthropic.claude-opus-4-7', usedTokens: 12922, windowTokens: 1000000, usedPercent: 1 };
 
-    expect(statuses.map((s) => s.status)).toEqual(['thinking', 'idle']);
+    emitEvent('context', usage);
+
+    expect(seen).toEqual([usage]);
   });
 
-  it('passes on the thread a status frame names', () => {
-    emit('status', { processing: true, threadId: 'thread-1' });
-    emit('status', { processing: false });
+  it('says the CLI needs an update when the runtime refuses its protocol', () => {
+    const notices: string[] = [];
+    const statuses: unknown[] = [];
+    tuiAdapterService.events.on('unsupported', (n) => notices.push(n));
+    tuiAdapterService.events.on('status', (s, d) => statuses.push([s, d]));
 
-    expect(statuses.map((s) => s.threadId)).toEqual(['thread-1', undefined]);
+    lastClient.current!.events.emit('unsupported', 'protocol unsupported');
+
+    expect(notices).toEqual([expect.stringContaining('Update prism-cli')]);
+    expect(statuses).toEqual([['error', 'update prism-cli']]);
   });
 
-  it('ignores a connect handshake that carries no processing flag', () => {
-    // `{ connected: true }` arrives once, at connection. Treating it as idle would
-    // clear the spinner mid-turn if it were ever re-sent.
-    emit('status', { processing: true });
-    emit('status', { connected: true });
-
-    expect(statuses.map((s) => s.status)).toEqual(['thinking']);
-  });
-
-  it('surfaces an error envelope as the error status', () => {
-    emit('error', { error: 'boom' });
-
-    expect(statuses).toEqual([{ status: 'error', detail: 'boom' }]);
-  });
-
-  it('adopts the thread id the runtime names', () => {
-    // Backstop: a message sent without a threadId cannot be steered into the
-    // running turn, so learn the id when startNewSession() did not give us one.
-    emit('thread', { threadId: 'thread-42', title: 'Migration plan' });
-
-    expect(threads).toEqual(['thread-42']);
-  });
-
-  it('ignores a thread envelope with no usable id', () => {
-    emit('thread', { title: 'no id here' });
-    emit('thread', { threadId: '' });
-
-    expect(threads).toEqual([]);
-  });
-
-  describe('compaction envelopes', () => {
+  describe('compaction events', () => {
     it('emits a validated compaction event', () => {
       const seen: unknown[] = [];
       tuiAdapterService.events.on('compaction', (e) => seen.push(e));
 
-      emit('compaction', {
-        threadId: 'thread-1',
-        status: 'completed',
+      emitEvent('compaction', {
+        threadId: MINE,
+        status: 'started',
         trigger: 'manual',
         tokensBefore: 190_000,
-        tokensAfter: 1_200,
-        messagesCompacted: 12,
       });
 
       expect(seen).toEqual([
         {
-          threadId: 'thread-1',
-          status: 'completed',
+          threadId: MINE,
+          status: 'started',
           trigger: 'manual',
           tokensBefore: 190_000,
-          tokensAfter: 1_200,
-          messagesCompacted: 12,
+          tokensAfter: null,
+          messagesCompacted: undefined,
           error: undefined,
+          detail: undefined,
         },
       ]);
     });
@@ -256,8 +395,8 @@ describe('TuiAdapter inbound envelopes', () => {
       const seen: unknown[] = [];
       tuiAdapterService.events.on('compaction', (e) => seen.push(e));
 
-      emit('compaction', {
-        threadId: 'thread-1',
+      emitEvent('compaction', {
+        threadId: MINE,
         status: 'skipped',
         trigger: 'manual',
         detail: 'Nothing to compact yet.',
@@ -272,9 +411,9 @@ describe('TuiAdapter inbound envelopes', () => {
       const seen: unknown[] = [];
       tuiAdapterService.events.on('compaction', (e) => seen.push(e));
 
-      emit('compaction', { threadId: 'thread-1' }); // no status/trigger
-      emit('compaction', { threadId: 'thread-1', status: 'running', trigger: 'manual' });
-      emit('compaction', { status: 'started', trigger: 'auto' }); // no threadId
+      emitEvent('compaction', { threadId: MINE }); // no status/trigger
+      emitEvent('compaction', { threadId: MINE, status: 'running', trigger: 'manual' });
+      emitEvent('compaction', { status: 'started', trigger: 'auto' }); // no threadId
 
       expect(seen).toEqual([]);
     });
@@ -358,6 +497,7 @@ describe('TuiAdapter.listSessions context usage', () => {
   });
 });
 
+
 describe('the sign-in in a message', () => {
   const help = {
     type: 'computer_help',
@@ -376,25 +516,15 @@ describe('the sign-in in a message', () => {
     });
   });
 
-  it('carries the thread it belongs to, so another conversation does not open the panel', () => {
+  it("opens for this session's conversation", async () => {
+    stubRuntime();
+    await tuiAdapterService.startNewSession();
     const seen: { id: string; threadId?: string }[] = [];
     tuiAdapterService.events.on('signIn', (request) => void seen.push(request));
 
-    lastClient.current?.events.emit('envelope', {
-      type: 'chat',
-      payload: {
-        id: 'm1',
-        threadId: 'thread-b',
-        role: 'AGENT',
-        content: 'Sign in to the mail',
-        createdAt: new Date().toISOString(),
-        blocks: [help],
-      },
-    });
+    emitEvent('message', storedMessage({ content: 'Sign in to the mail', blocks: [help] }));
 
-    expect(seen).toEqual([
-      expect.objectContaining({ id: 'help-1', threadId: 'thread-b' }),
-    ]);
+    expect(seen).toEqual([expect.objectContaining({ id: 'help-1', threadId: MINE })]);
   });
 
   it('passes over a request of any other kind, and one already answered', () => {

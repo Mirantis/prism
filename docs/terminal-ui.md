@@ -41,6 +41,13 @@ too late for the running turn is answered together in one follow-up rather than
 one reply per message. Escape still means "stop the turn" — it never clears what
 you have typed, and a cancelled turn leaves your draft intact.
 
+**Other clients on the same conversation.** A message someone else sends to this
+conversation, from the web or a phone, shows under their name. While the agent
+works on another conversation, the spinner says it is waiting for that one to
+finish. A message the agent could not accept is marked "not sent". If the agent
+has been updated past this version of `prism`, it says so and stops; update
+`prism` to keep chatting.
+
 Use **Up / Down** arrows from an empty input to walk back through your message
 history.
 
