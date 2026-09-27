@@ -33,7 +33,7 @@ vi.mock('../../conversation.service', () => ({
   },
 }));
 vi.mock('../../message-delivery.service', () => ({
-  messageDeliveryService: { publish: vi.fn() },
+  messageDeliveryService: { publish: vi.fn(), mirror: vi.fn() },
 }));
 vi.mock('../../voice/voice-chat.service', () => ({
   voiceChatService: { continueComputer: vi.fn() },

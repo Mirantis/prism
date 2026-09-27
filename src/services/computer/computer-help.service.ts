@@ -149,7 +149,6 @@ class ComputerHelpService {
     }
     const row = await prisma.conversationMessage.findFirst({
       where: { thread: { agentId, userId }, blocks: { path: '$[0].id', equals: id } },
-      select: { id: true, blocks: true },
     });
     if (!row) throw new Error('Help request not found.');
     const help = (row.blocks as unknown as ComputerHelp[])[0];
@@ -161,6 +160,12 @@ class ComputerHelpService {
     });
     if (!result.count) return null;
     this.resolved(agentId, userId, updated);
+    // The card is part of the transcript, so every open client shows it answered.
+    const { messageDeliveryService } = await import('../message-delivery.service');
+    await messageDeliveryService.mirror(userId, {
+      ...row,
+      blocks: [updated] as unknown as Prisma.JsonValue,
+    });
     return updated;
   }
 

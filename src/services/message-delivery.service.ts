@@ -156,6 +156,28 @@ export class MessageDeliveryService {
   }
 
   /**
+   * Show a stored message — one a person sent, or one changed in place — on every
+   * channel that mirrors the whole transcript. A channel that only posts the
+   * agent's replies, such as Slack, is left alone: it shows a person's message
+   * itself, and posting an edit there would post it twice.
+   */
+  async mirror(userId: string, message: ConversationMessage): Promise<void> {
+    const mirrors = this.adapters.filter((adapter) => adapter.mirrorsTranscript);
+    if (mirrors.length === 0) return;
+    const attachments = (await attachmentService.getMetaByMessageIds([message.id])).get(message.id);
+    const deliverable: DeliverableMessage = attachments?.length ? { ...message, attachments } : message;
+    await Promise.all(
+      mirrors.map(async (adapter) => {
+        try {
+          await adapter.deliver(userId, deliverable);
+        } catch (error: unknown) {
+          logger.error('Failed to mirror via %s: %s', adapter.name, error instanceof Error ? error.message : String(error));
+        }
+      }),
+    );
+  }
+
+  /**
    * Internal: Deliver to all connected channels
    */
   private async deliverToAll(

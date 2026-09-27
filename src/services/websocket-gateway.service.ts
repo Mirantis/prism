@@ -1,12 +1,20 @@
 /**
  * WebSocket Gateway Service
  *
- * Provides real-time bidirectional communication for the personal agent.
- * Supports two message modes:
- * - followup: Queued messages, processed in order — or handed to the turn
- *   already running on the thread, so a message sent mid-response steers it
- *   (see `threadTurnService`) instead of waiting out the turn
- * - collect: Batched messages before processing
+ * The chat socket, `/api/ws`: protocol version 2, which
+ * `docs/websocket-protocol.md` describes for client authors and
+ * `protocol/chat-protocol.ts` pins down.
+ *
+ * A client says `hello` and is answered `welcome`. From then on it reads one
+ * numbered stream of events — every message in every conversation, the person's
+ * own included, and what each conversation is doing — and a client that was away
+ * names where it stopped and is sent the rest. What it sends is a request with an
+ * id, answered `ack` or `nack` under that id. A message is confirmed once it is
+ * stored, so a client resends anything unconfirmed without fear of a duplicate.
+ *
+ * The gateway owns connections and nothing else. The stream is
+ * `eventStreamService`'s, and what happens to a message is
+ * `inboundMessageService`'s.
  */
 
 import { Server as HttpServer } from 'http';
@@ -15,15 +23,24 @@ import { IncomingMessage } from 'http';
 import { logger } from '../logger';
 import { config } from '../config';
 import { isAllowedOrigin } from '../lib/origin-guard';
+import { TokenBucket } from '../lib/token-bucket';
+import { trackEvent } from '../lib/telemetry';
 import { serveUpgrades } from './websocket-upgrades';
-
-/** Where the Web UI's chat and its voice connect. The screen has its own path; see
- * `services/computer/computer-endpoint.ts`. */
-const CHAT_PATH = '/api/ws';
 import {
-  conversationEngineService,
-  type TurnActivityEvent,
-} from './conversation-engine.service';
+  CLOSE_CODES,
+  HELLO_TIMEOUT_MS,
+  MAX_FRAME_BYTES,
+  PROTOCOL_VERSION,
+  clientFrame,
+  helloFrame,
+  type ClientFrame,
+  type DirectFrame,
+  type HelloFrame,
+  type NackCode,
+} from '../protocol/chat-protocol';
+import { eventStreamService, type StreamEntry } from './event-stream.service';
+import { inboundMessageService, InboundMessageError } from './inbound-message.service';
+import { conversationService, type ThreadCreated } from './conversation.service';
 import { threadTitleService, type ThreadTitleChange } from './thread-title.service';
 import { contextUsageService, type ContextUsageEvent } from './context-usage.service';
 import { compactionService, type CompactionEvent } from './compaction.service';
@@ -41,87 +58,60 @@ import { DictationSession } from './voice/dictation-session';
 import { isRealtimeConfigured } from './meeting/openai-endpoint';
 import { MEETING_SAMPLE_RATE } from './meeting/resampler';
 
-// ============================================================================
-// Types
-// ============================================================================
+/** Where the Web UI's chat and its voice connect. The screen has its own path; see
+ * `services/computer/computer-endpoint.ts`. */
+const CHAT_PATH = '/api/ws';
 
-interface AuthenticatedWebSocket extends WebSocket {
-  userId?: string;
-  userToken?: string;
+/**
+ * How many sockets the agent keeps at once. A newer one replaces the oldest
+ * rather than being refused: the oldest is usually a phone's socket that died
+ * behind a locked screen and has not been noticed yet, and refusing the phone's
+ * fresh one would lock its owner out until the heartbeat caught up.
+ */
+export const MAX_CONNECTIONS = 16;
+
+/**
+ * How much may sit unsent on one socket before the gateway stops trying. A
+ * client that far behind is closed and resumes from the replay window, which
+ * costs the server nothing, instead of growing a queue in its memory.
+ */
+export const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
+
+/** The longest sender name kept from the ingress header. */
+const MAX_SENDER_NAME = 128;
+
+/** The header the Lens Agents ingress names the signed-in caller in. It strips any copy a client sent. */
+const FORWARDED_USER_HEADER = 'x-forwarded-user';
+
+interface ChatSocket extends WebSocket {
   isAlive?: boolean;
-}
-
-interface WebSocketMessage {
-  type:
-    | 'chat'
-    | 'ping'
-    | 'pong'
-    | 'subscribe'
-    | 'cancel'
-    | 'voice_start'
-    | 'voice_stop'
-    | 'dictation_start'
-    | 'dictation_stop';
-  mode?: 'followup' | 'collect';
-  content?: string;
-  threadId?: string;
-  // Optional: the runtime substitutes `config.agentId` when omitted.
-  agentId?: string;
-  // Ids of files already uploaded via POST /agents/attachments.
-  attachmentIds?: string[];
-  // The voice and dictation frames have their fields here. See docs/voice-chat.md and
-  // docs/dictation.md.
-  payload?: unknown;
+  /** Set once the socket said `hello` and was answered. Nothing else is read before. */
+  ready?: boolean;
+  /** Set while a `hello` is being answered, so a second one cannot start another. */
+  greeting?: boolean;
+  /** Who the ingress says is on this connection, for display. */
+  senderName?: string | null;
+  helloTimer?: NodeJS.Timeout;
+  unsubscribe?: () => void;
+  /** A send is the expensive request; everything else is cheap. */
+  sends?: TokenBucket;
+  requests?: TokenBucket;
 }
 
 /**
- * A chat message whose thread is already known — the only shape that can be
- * offered to a live turn.
+ * The name to show on this connection's messages, from the ingress's header.
  *
- * Steering asks about one specific thread, so the id has to come from the
- * client. Letting the engine resolve a missing one would mean
- * `getOrCreateLatestThread()`, which creates a thread row (and emits
- * `thread created`) for a message that steer-only mode then neither stores nor
- * answers — and in the first-message race can mint a duplicate empty thread.
+ * **Display only.** The ingress writes the header for a private port after it
+ * signed the caller in, and strips any copy a client sent. A runtime reached
+ * some other way — local development, or bound wider on purpose — would read
+ * whatever a client wrote, so nothing is ever decided on it.
  */
-type ThreadedMessage = WebSocketMessage & { threadId: string };
-
-interface WebSocketResponse {
-  type:
-    | 'chat'
-    | 'pong'
-    | 'error'
-    | 'status'
-    | 'thread'
-    | 'context'
-    | 'compaction'
-    | 'update'
-    | 'computer'
-    | 'voice_state'
-    | 'voice_error'
-    | 'voice_hello'
-    | 'voice_clear'
-    | 'dictation_hello'
-    | 'dictation_delta'
-    | 'dictation_result'
-    | 'dictation_error';
-  threadId?: string;
-  messageId?: string;
-  content?: string;
-  toolCalls?: unknown[];
-  blocks?: unknown[];
-  payload?: unknown;
-}
-
-/** Narrow to a message the gateway may offer to a live turn. */
-function hasThread(message: WebSocketMessage): message is ThreadedMessage {
-  return typeof message.threadId === 'string' && message.threadId.length > 0;
-}
-
-/** A frame's payload, as fields the caller can read one at a time. */
-function payloadOf(message: WebSocketMessage): Record<string, unknown> {
-  const payload = message.payload;
-  return typeof payload === 'object' && payload !== null ? (payload as Record<string, unknown>) : {};
+function senderNameOf(req: IncomingMessage): string | null {
+  const raw = req.headers[FORWARDED_USER_HEADER];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (!value) return null;
+  const name = value.replace(/[<>:\x00-\x1f\x7f]/g, '').trim().slice(0, MAX_SENDER_NAME);
+  return name || null;
 }
 
 /** A payload field, when the client sent it as a string with something in it. */
@@ -178,20 +168,21 @@ function listeningMode(payload: Record<string, unknown>): VoiceListeningMode | u
  */
 const MAX_BUFFERED_AUDIO_BYTES = VOICE_AUDIO_FORMAT.sampleRate * 2 * 2;
 
+/** The request id of a frame that failed to parse, when it had a readable one. */
+function requestIdOf(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const id = (value as Record<string, unknown>)['id'];
+  return typeof id === 'string' && id.length > 0 && id.length <= 64 ? id : null;
+}
+
 // ============================================================================
 // WebSocket Gateway Service
 // ============================================================================
 
 class WebSocketGatewayService {
   private wss: WebSocketServer | null = null;
-  private connections: Map<string, AuthenticatedWebSocket[]> = new Map();
-  private messageQueues: Map<string, Array<{ message: WebSocketMessage; resolve: (response: WebSocketResponse) => void }>> = new Map();
-  private processingUsers: Set<string> = new Set();
-  // The user's in-flight chat turn: the AbortController a `cancel` message aborts,
-  // which stops the LLM generation mid-turn (see invokeStream), and the thread it
-  // runs on. Single-flight per user, so one entry per userId is sufficient.
-  private activeRequests: Map<string, { controller: AbortController; threadId?: string }> =
-    new Map();
+  /** Every socket, oldest first, whether or not it has said `hello` yet. */
+  private connections: ChatSocket[] = [];
   // The socket whose request holds the voice session, from the moment the gateway
   // decides to open one until it is over — so closing it ends the call. Taken
   // before the service is asked, because the service reports `live` from inside
@@ -199,73 +190,70 @@ class WebSocketGatewayService {
   // other request is refused while it is taken, which is also what keeps it
   // truthful: a request that was refused never becomes this socket, and so cannot
   // end somebody else's call by going away.
-  private voiceSocket: AuthenticatedWebSocket | null = null;
+  private voiceSocket: ChatSocket | null = null;
   // Whether the client of the request being answered gave up while it waited, and
   // which way. A stop or a disconnect that lands before the answer has no session
   // to end yet, so it is honoured once the start returns. One record, because
   // `voiceSocket` above refuses a second request while this one is outstanding.
   private voiceStarting: {
-    ws: AuthenticatedWebSocket;
+    ws: ChatSocket;
     cancelled: VoiceChatEndStatus | null;
   } | null = null;
-  // Whether a computer-state frame is being built, and whether the desktop changed
+  // Whether a computer-state event is being built, and whether the desktop changed
   // again while it was. One build at a time keeps a burst of changes to one database
-  // read, and the flag makes the last frame sent the newest state.
+  // read, and the flag makes the last event published the newest state.
   private computerPublishing = false;
   private computerChangedAgain = false;
   // The dictation each socket is recording, from `dictation_start` until it ends. One per
   // socket and any number per runtime, since a dictation never takes the agent's voice.
-  private dictations: Map<AuthenticatedWebSocket, DictationSession> = new Map();
+  private dictations: Map<ChatSocket, DictationSession> = new Map();
 
   constructor() {
-    // Push thread-title changes (placeholder + LLM upgrade) to the user's web
-    // clients. Generation is owned by threadTitleService (channel-agnostic);
-    // the gateway is just the WebSocket transport for the notification.
+    // Everything below is owned by a channel-agnostic service; the gateway only
+    // puts it on the stream. Each is the owner's news: a Slack turn run as
+    // another Lens user reports under that user, and those reached no socket
+    // before this stream existed either.
+    const owned = (userId: string | null | undefined) => userId === config.ownerUserId;
+
     threadTitleService.events.on('change', ({ userId, threadId, title }: ThreadTitleChange) => {
-      this.broadcast(userId, { type: 'thread', payload: { threadId, title } });
+      if (!owned(userId)) return;
+      eventStreamService.publish({ type: 'thread', payload: { threadId, title } });
     });
 
-    // Push context-window occupancy so clients can show how full the window is.
+    // A conversation started on one device appears in every other device's list.
+    conversationService.events.on('thread', ({ userId, threadId, title, createdAt }: ThreadCreated) => {
+      if (!owned(userId)) return;
+      eventStreamService.publish({
+        type: 'thread',
+        payload: { threadId, title, createdAt: createdAt.toISOString() },
+      });
+    });
+
     contextUsageService.events.on('usage', ({ userId, ...payload }: ContextUsageEvent) => {
-      this.broadcast(userId, { type: 'context', payload });
+      if (!owned(userId)) return;
+      eventStreamService.publish({ type: 'context', payload });
     });
 
-    // Push compaction progress (started/completed/failed) so clients can show
-    // a "compacting…" indicator and a completion note. Compaction itself is
-    // owned by compactionService (channel-agnostic).
     compactionService.events.on('compaction', ({ userId, ...payload }: CompactionEvent) => {
-      this.broadcast(userId, { type: 'compaction', payload });
+      if (!owned(userId)) return;
+      eventStreamService.publish({ type: 'compaction', payload });
     });
 
-    // Push update progress (available/updating/failed). Updates are owned by
-    // updateService (channel-agnostic) and are install-level, so they go to
-    // the one owner user every connection is pinned to.
+    // Install-level, so it is always the owner's.
     updateService.events.on('update', (payload: UpdateEvent) => {
-      this.broadcast(config.ownerUserId, { type: 'update', payload });
+      eventStreamService.publish({ type: 'update', payload: { ...payload } });
     });
 
-    // Push the state of the desktop: which threads wait for it, who holds it, and
-    // the open help requests. The emitter is the access gate itself, so every caller
-    // that queues for the desktop reaches the web client, whichever turn asked.
-    // Install-level, like the update frame above.
+    // The state of the desktop: which threads wait for it, who holds it, and the
+    // open help requests. The emitter is the access gate itself, so every caller
+    // that queues for the desktop reaches the clients, whichever turn asked.
     computerService.access.on('change', () => {
       void this.publishComputer();
     });
-
-    // Push whether a turn is running, so a client shows the agent working for as long as
-    // it does. The engine brackets every exchange, which is what puts the indicator on a
-    // turn the runtime starts itself — the continuation after a computer help request,
-    // for one — rather than only on the messages this gateway is handed.
-    conversationEngineService.events.on(
-      'activity',
-      ({ userId, threadId, active }: TurnActivityEvent) => {
-        this.broadcast(userId, { type: 'status', payload: { processing: active, threadId } });
-      },
-    );
   }
 
   /**
-   * Broadcast the state of the desktop, coalescing a burst of changes into one frame.
+   * Publish the state of the desktop, coalescing a burst of changes into one event.
    *
    * The payload needs a database read, and one call on the access gate emits twice —
    * a turn taking a free desktop is queued and then holds it — so the first build
@@ -285,7 +273,8 @@ class WebSocketGatewayService {
         // together are read together.
         await Promise.resolve();
         this.computerChangedAgain = false;
-        await this.sendComputerState((message) => this.broadcast(config.ownerUserId, message));
+        const payload = await this.computerState();
+        if (payload) eventStreamService.publish({ type: 'computer', payload });
         again = this.computerChangedAgain;
       }
     } finally {
@@ -295,21 +284,21 @@ class WebSocketGatewayService {
   }
 
   /**
-   * Build the current state of the desktop — the body of `GET /computer` — and hand
-   * it to `send`. Nothing is sent while no agent is loaded. A failed build is logged
-   * and dropped: the next change, or the next client to connect, corrects the client.
+   * The current state of the desktop — the body of `GET /computer` — or null while
+   * no agent is loaded. A failed build is logged and answered with null: the next
+   * change corrects every client.
    */
-  private async sendComputerState(send: (message: WebSocketResponse) => void): Promise<void> {
+  private async computerState(): Promise<Record<string, unknown> | null> {
     const agentId = config.agentId;
-    if (!agentId) return;
+    if (!agentId) return null;
     try {
-      const payload = {
+      return {
         ...computerService.status(),
         help: await computerHelpService.list(agentId, config.ownerUserId),
       };
-      send({ type: 'computer', payload });
     } catch (error) {
-      logger.warn({ err: error }, '[Computer] Could not publish the computer state');
+      logger.warn({ err: error }, '[Computer] Could not read the computer state');
+      return null;
     }
   }
 
@@ -317,7 +306,7 @@ class WebSocketGatewayService {
    * Initialize WebSocket server
    */
   initialize(server: HttpServer): void {
-    this.wss = new WebSocketServer({ noServer: true });
+    this.wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
 
     // The handshake is checked here, ahead of `handleUpgrade` — the shape ws
     // supports, rather than `verifyClient`.
@@ -343,13 +332,13 @@ class WebSocketGatewayService {
       });
     });
 
-    this.wss.on('connection', (ws: AuthenticatedWebSocket, req: IncomingMessage) => {
+    this.wss.on('connection', (ws: ChatSocket, req: IncomingMessage) => {
       this.handleConnection(ws, req);
     });
 
-    // Heartbeat to detect dead connections
+    // Protocol-level heartbeat, which terminates a socket that stopped answering.
     const interval = setInterval(() => {
-      this.wss?.clients.forEach((ws: AuthenticatedWebSocket) => {
+      this.wss?.clients.forEach((ws: ChatSocket) => {
         if (ws.isAlive === false) {
           return ws.terminate();
         }
@@ -366,55 +355,41 @@ class WebSocketGatewayService {
   }
 
   /**
-   * Handle new connection
+   * A new socket. It may say nothing but `hello` until it is answered, and has
+   * `HELLO_TIMEOUT_MS` to say it.
    */
-  private handleConnection(ws: AuthenticatedWebSocket, req: IncomingMessage): void {
+  private handleConnection(ws: ChatSocket, req: IncomingMessage): void {
     ws.isAlive = true;
+    ws.senderName = senderNameOf(req);
+    ws.sends = new TokenBucket(10, 20);
+    ws.requests = new TokenBucket(50, 100);
 
-    // The runtime is scoped to one agent and trusts the inbound network
-    // (Lens Agents routing terminates auth in front of the container). Pin the
-    // connection to the configured owner without inspecting a token.
-    const userId: string = config.ownerUserId;
-    ws.userId = userId;
+    while (this.connections.length >= MAX_CONNECTIONS) {
+      const oldest = this.connections.shift();
+      oldest?.close(CLOSE_CODES.replaced, 'replaced by a newer connection');
+    }
+    this.connections.push(ws);
 
-    // Store connection
-    const userConnections = this.connections.get(userId) || [];
-    userConnections.push(ws);
-    this.connections.set(userId, userConnections);
+    ws.helloTimer = setTimeout(() => {
+      if (!ws.ready) ws.close(CLOSE_CODES.helloTimeout, 'no hello');
+    }, HELLO_TIMEOUT_MS);
 
-    logger.info('WebSocket connected for user %s (%d connections)', userId, userConnections.length);
+    logger.info('WebSocket connected (%d connections)', this.connections.length);
 
-    // Handle messages
-    ws.on('message', async (data: Buffer, isBinary: boolean) => {
-      try {
-        // Audio first, and never parsed. A binary frame is one frame of the
-        // client's microphone; running it through `JSON.parse` would fail on
-        // every one of them fifty times a second and answer each with an error.
-        if (isBinary) {
-          this.handleBinary(ws, data);
-          return;
-        }
-        const message: WebSocketMessage = JSON.parse(data.toString());
-        await this.handleMessage(ws, userId, message);
-      } catch (error: unknown) {
-        logger.error('WebSocket message error: %s', error instanceof Error ? error.message : String(error));
-        ws.send(JSON.stringify({ type: 'error', payload: { error: error instanceof Error ? error.message : String(error) } }));
-      }
+    ws.on('message', (data: Buffer, isBinary: boolean) => {
+      void this.handleFrame(ws, data, isBinary);
     });
 
-    // Handle pong
     ws.on('pong', () => {
       ws.isAlive = true;
     });
 
-    // Handle errors
     ws.on('error', (error) => {
-      logger.error('WebSocket error for user %s: %s', userId, error instanceof Error ? error.message : String(error));
+      logger.error('WebSocket error: %s', error instanceof Error ? error.message : String(error));
     });
 
-    // Handle close
-    ws.on('close', (code, _reason) => {
-      this.removeConnection(userId, ws);
+    ws.on('close', (code) => {
+      this.removeConnection(ws);
       // The client that was talking is gone, so the call is over: this socket is the
       // only way it could stop the session or hear that it ended.
       if (this.voiceStarting?.ws === ws) {
@@ -431,110 +406,208 @@ class WebSocketGatewayService {
         });
       }
       this.dictations.get(ws)?.cancel('disconnected');
-      logger.info('WebSocket disconnected for user %s - code: %d', userId, code);
+      logger.info('WebSocket disconnected - code: %d', code);
     });
+  }
 
-    // Send initial connection status
-    ws.send(JSON.stringify({
-      type: 'status',
-      payload: { connected: true },
-    }));
+  private async handleFrame(ws: ChatSocket, data: Buffer, isBinary: boolean): Promise<void> {
+    try {
+      // Audio first, and never parsed. A binary frame is one frame of the
+      // client's microphone; running it through `JSON.parse` would fail on
+      // every one of them fifty times a second and answer each with an error.
+      if (isBinary) {
+        if (ws.ready) this.handleBinary(ws, data);
+        return;
+      }
 
-    // A turn that started before this connection has already been announced, so say what
-    // is running now: a page opened or reloaded mid-turn otherwise shows the agent idle
-    // until the turn it cannot see ends.
-    for (const threadId of conversationEngineService.runningThreads()) {
-      ws.send(JSON.stringify({ type: 'status', payload: { processing: true, threadId } }));
-    }
+      let raw: unknown;
+      try {
+        raw = JSON.parse(data.toString());
+      } catch {
+        this.nack(ws, null, 'invalid', 'A frame must be JSON.');
+        return;
+      }
 
-    // And the state of the desktop, so a client that opens or reconnects during a wait
-    // shows it without asking. The frames sent while the socket was down reached
-    // nobody, so this is the reading a reconnecting client starts from. A publish
-    // already in flight covers this socket, which is registered above, and its state
-    // is read later than one read here, so the send is left to it.
-    if (!this.computerPublishing) {
-      void this.sendComputerState((message) => {
-        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
-      });
+      if (!ws.ready) {
+        // The answer to `hello` reads the database, and a client may send again
+        // before it arrives. That frame is refused, not taken as a second `hello`:
+        // two would subscribe the socket twice.
+        if (ws.greeting) {
+          this.nack(ws, requestIdOf(raw), 'invalid', 'Wait for welcome before sending anything else.');
+          return;
+        }
+        await this.handleHello(ws, raw);
+        return;
+      }
+
+      const parsed = clientFrame.safeParse(raw);
+      if (!parsed.success) {
+        this.nack(ws, requestIdOf(raw), 'invalid', parsed.error.issues[0]?.message ?? 'Unreadable request.');
+        return;
+      }
+      const frame = parsed.data;
+
+      const wait = (frame.type === 'send' ? ws.sends : ws.requests)?.take() ?? 0;
+      if (wait > 0) {
+        this.sendTo(ws, {
+          type: 'nack',
+          re: frame.id,
+          payload: { code: 'rate_limited', message: 'Too many requests.', retryAfterMs: wait },
+        });
+        return;
+      }
+
+      await this.dispatch(ws, frame);
+    } catch (error: unknown) {
+      logger.error('WebSocket frame error: %s', error instanceof Error ? error.message : String(error));
     }
   }
 
   /**
-   * Handle incoming message
+   * Answer `hello`: the version check, the resume and the `welcome`.
+   *
+   * The snapshot is read first, because the desktop's state needs the database.
+   * Everything after it — the `welcome`, the replay and joining the live stream —
+   * runs without an await, so no event can fall between the replay and the first
+   * live one. An event published while the snapshot was read is in the replay, or
+   * newer than a `welcome` that did not resume; either way the client applies it
+   * after the snapshot, and every event is an upsert or a full state.
    */
-  private async handleMessage(
-    ws: AuthenticatedWebSocket,
-    userId: string,
-    message: WebSocketMessage
-  ): Promise<void> {
-    logger.info('WebSocket message received from %s', userId);
+  private async handleHello(ws: ChatSocket, raw: unknown): Promise<void> {
+    const parsed = helloFrame.safeParse(raw);
+    if (!parsed.success || parsed.data.payload.protocol !== PROTOCOL_VERSION) {
+      this.nack(
+        ws,
+        requestIdOf(raw),
+        'protocol_unsupported',
+        `This runtime speaks chat protocol ${PROTOCOL_VERSION}. Update the app to connect.`,
+      );
+      ws.close(CLOSE_CODES.protocolUnsupported, 'protocol unsupported');
+      return;
+    }
+    const hello: HelloFrame = parsed.data;
+    clearTimeout(ws.helloTimer);
+    ws.greeting = true;
 
-    switch (message.type) {
+    const computer = await this.computerState();
+    if (ws.readyState !== WebSocket.OPEN) return;
+
+    const resume = hello.payload.resume;
+    const replay = resume ? eventStreamService.replayAfter(resume.streamId, resume.seq) : null;
+
+    this.sendTo(ws, {
+      type: 'welcome',
+      payload: {
+        protocol: PROTOCOL_VERSION,
+        streamId: eventStreamService.streamId,
+        seq: eventStreamService.seq,
+        resumed: replay !== null,
+        you: { name: ws.senderName ?? null },
+        snapshot: { turns: inboundMessageService.turns(), computer },
+      },
+    });
+    for (const entry of replay ?? []) this.sendEntry(ws, entry);
+    ws.unsubscribe = eventStreamService.subscribe((entry) => this.sendEntry(ws, entry));
+    ws.ready = true;
+    ws.greeting = false;
+
+    if (resume) {
+      trackEvent('chat socket resumed', config.ownerUserId, {
+        ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+        'socket.outcome': replay !== null ? 'resumed' : 'resync',
+        'socket.replayed': String(replay?.length ?? 0),
+        'socket.client': hello.payload.client.name,
+      });
+    }
+  }
+
+  private async dispatch(ws: ChatSocket, frame: ClientFrame): Promise<void> {
+    switch (frame.type) {
       case 'ping':
-      case 'pong':
-        ws.send(JSON.stringify({ type: 'pong' }));
-        break;
+        this.sendTo(ws, { type: 'pong', re: frame.id });
+        return;
 
-      case 'chat':
-        await this.handleChatMessage(ws, userId, message);
-        break;
+      case 'send':
+        await this.handleSend(ws, frame.id, frame.payload.message);
+        return;
 
       case 'cancel':
-        this.handleCancelMessage(userId);
-        break;
-
-      case 'subscribe':
-        // User is subscribing to notifications (already connected)
-        break;
+        try {
+          await inboundMessageService.cancel(frame.payload.threadId);
+          this.sendTo(ws, { type: 'ack', re: frame.id, payload: {} });
+        } catch (error) {
+          if (!(error instanceof InboundMessageError)) throw error;
+          this.nack(ws, frame.id, error.code, error.message);
+        }
+        return;
 
       // Voice control. The audio itself rides this socket too, as binary frames
       // handled before the JSON path — see `handleBinary`.
       case 'voice_start':
-        await this.handleVoiceStart(ws, userId, message);
-        break;
+        await this.handleVoiceStart(ws, config.ownerUserId, frame.payload);
+        return;
 
       case 'voice_stop':
         await this.handleVoiceStop(ws);
-        break;
+        return;
 
       case 'dictation_start':
-        await this.handleDictationStart(ws, userId);
-        break;
+        await this.handleDictationStart(ws, config.ownerUserId);
+        return;
 
       case 'dictation_stop':
-        this.handleDictationStop(ws, message);
-        break;
-
-      default:
-        logger.warn('Unknown WebSocket message type: %s', message.type);
-        ws.send(JSON.stringify({ type: 'error', payload: { error: 'Unknown message type' } }));
+        this.handleDictationStop(ws, frame.payload.commit);
+        return;
     }
   }
 
-  /**
-   * Cancel the user's in-flight chat turn. Aborts the active controller —
-   * which stops the LLM generation mid-turn — and clears any queued followups
-   * so a cancel doesn't immediately auto-start the next message.
-   *
-   * Broadcasts the terminal `{ processing: false }` status immediately so
-   * every one of the user's connections/tabs resets promptly — if the abort
-   * is slow to land (e.g. a tool is mid-flight), waiting for processMessage's
-   * `finally` would leave the other UIs stuck in "pending". The `finally`
-   * broadcast remains as an idempotent safety net. The frame names the cancelled
-   * turn's thread, so a turn on another thread keeps showing as running.
-   */
-  private handleCancelMessage(userId: string): void {
-    const active = this.activeRequests.get(userId);
-    if (active) {
-      logger.info('Cancel requested by %s', userId);
-      active.controller.abort();
-      const { threadId } = active;
-      this.broadcast(userId, {
-        type: 'status',
-        payload: { processing: false, ...(threadId ? { threadId } : {}) },
+  /** Store the message and confirm it, or say why not. */
+  private async handleSend(
+    ws: ChatSocket,
+    re: string,
+    message: { id: string; threadId: string; content: string; attachmentIds: string[] },
+  ): Promise<void> {
+    try {
+      const accepted = await inboundMessageService.accept({
+        ...message,
+        senderName: ws.senderName ?? null,
       });
+      this.sendTo(ws, {
+        type: 'ack',
+        re,
+        payload: {
+          messageId: accepted.message.id,
+          seq: accepted.seq,
+          queued: accepted.queued,
+          duplicate: accepted.duplicate,
+        },
+      });
+    } catch (error) {
+      if (error instanceof InboundMessageError) {
+        this.nack(ws, re, error.code, error.message);
+        return;
+      }
+      logger.error('Could not accept message %s: %s', message.id, error instanceof Error ? error.message : String(error));
+      this.nack(ws, re, 'failed', 'The message could not be saved. Try again.');
     }
-    this.messageQueues.delete(userId);
+  }
+
+  private nack(ws: ChatSocket, re: string | null, code: NackCode, message: string): void {
+    this.sendTo(ws, { type: 'nack', re, payload: { code, message } });
+  }
+
+  /**
+   * One stream event, to one socket. A socket that far behind is closed rather
+   * than queued to: it resumes from the replay window on reconnect.
+   */
+  private sendEntry(ws: ChatSocket, entry: StreamEntry): void {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    if (ws.bufferedAmount > MAX_BUFFERED_BYTES) {
+      logger.warn('Closing a chat socket %d bytes behind', ws.bufferedAmount);
+      ws.close(CLOSE_CODES.slowConsumer, 'too far behind');
+      return;
+    }
+    ws.send(entry.frame);
   }
 
   /**
@@ -547,11 +620,10 @@ class WebSocketGatewayService {
    * take the running call's audio path with it.
    */
   private async handleVoiceStart(
-    ws: AuthenticatedWebSocket,
+    ws: ChatSocket,
     userId: string,
-    message: WebSocketMessage
+    payload: Record<string, unknown>,
   ): Promise<void> {
-    const payload = payloadOf(message);
 
     const agentId = config.agentId;
     if (!agentId) {
@@ -600,7 +672,7 @@ class WebSocketGatewayService {
     // And it is what refuses a second request above, so only one start is ever
     // outstanding and one cancel record is enough for it.
     this.voiceSocket = ws;
-    const starting: { ws: AuthenticatedWebSocket; cancelled: VoiceChatEndStatus | null } = {
+    const starting: { ws: ChatSocket; cancelled: VoiceChatEndStatus | null } = {
       ws,
       cancelled: null,
     };
@@ -662,7 +734,7 @@ class WebSocketGatewayService {
    * call's, and a frame arriving after a call ended is ordinary rather than an error, so
    * both are dropped in silence.
    */
-  private handleBinary(ws: AuthenticatedWebSocket, data: Buffer): void {
+  private handleBinary(ws: ChatSocket, data: Buffer): void {
     const dictation = this.dictations.get(ws);
     if (dictation) {
       dictation.pushAudio(data);
@@ -673,7 +745,7 @@ class WebSocketGatewayService {
   }
 
   /** End the session this socket opened. A stop from any other socket does nothing. */
-  private async handleVoiceStop(ws: AuthenticatedWebSocket): Promise<void> {
+  private async handleVoiceStop(ws: ChatSocket): Promise<void> {
     if (this.voiceStarting?.ws === ws) {
       // Still opening, so there is nothing to end yet. `handleVoiceStart` ends it once
       // the start returns, and reads this as the client having asked.
@@ -685,7 +757,7 @@ class WebSocketGatewayService {
   }
 
   /** How the voice service answers the client that asked for the session. */
-  private voiceSignal(ws: AuthenticatedWebSocket): VoiceChatSignal {
+  private voiceSignal(ws: ChatSocket): VoiceChatSignal {
     // Whether the speech is being dropped right now, so a stalled client costs one log
     // line rather than fifty a second. Per signal, which is per session.
     let dropping = false;
@@ -728,7 +800,7 @@ class WebSocketGatewayService {
    * the user presses is kept rather than dropped, and a stop that arrives while the session
    * connects is honoured once it is ready.
    */
-  private async handleDictationStart(ws: AuthenticatedWebSocket, userId: string): Promise<void> {
+  private async handleDictationStart(ws: ChatSocket, userId: string): Promise<void> {
     const refusal = this.dictations.has(ws)
       ? 'A dictation is already running on this connection.'
       : this.voiceSocket === ws || this.voiceStarting?.ws === ws
@@ -761,10 +833,10 @@ class WebSocketGatewayService {
   }
 
   /** Transcribe or drop this socket's dictation. A stop with nothing recording does nothing. */
-  private handleDictationStop(ws: AuthenticatedWebSocket, message: WebSocketMessage): void {
+  private handleDictationStop(ws: ChatSocket, commit: boolean | undefined): void {
     const session = this.dictations.get(ws);
     if (!session) return;
-    if (payloadOf(message)['commit'] === false) {
+    if (commit === false) {
       session.cancel();
       return;
     }
@@ -772,318 +844,17 @@ class WebSocketGatewayService {
   }
 
   /** Send to one socket, which the client may have closed under us. */
-  private sendTo(ws: AuthenticatedWebSocket, response: WebSocketResponse): void {
+  private sendTo(ws: ChatSocket, response: DirectFrame): void {
     if (ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify(response));
   }
-
-  /**
-   * Handle chat message based on mode
-   */
-  private async handleChatMessage(
-    ws: AuthenticatedWebSocket,
-    userId: string,
-    message: WebSocketMessage
-  ): Promise<void> {
-    // Handle both flat format and nested payload format (frontend uses payload)
-    const payload = (message as any).payload || message;
-    const mode = payload.mode || message.mode || 'followup';
-    const content = payload.content || message.content || '';
-    const threadId = payload.threadId || message.threadId;
-    // This container serves exactly one agent, so the agent is ours, not the
-    // client's — which is also why the client may omit `agentId` from the wire
-    // (the prism-cli does).
-    const agentId = config.agentId;
-    const attachmentIds: string[] = Array.isArray(payload.attachmentIds)
-      ? payload.attachmentIds
-      : Array.isArray(message.attachmentIds)
-        ? message.attachmentIds
-        : [];
-    if (!agentId) {
-      ws.send(JSON.stringify({
-        type: 'error',
-        payload: { error: 'Agent runtime is still initializing; retry shortly' },
-      }));
-      return;
-    }
-
-    logger.info('Chat message from %s: mode=%s', userId, mode);
-
-    // Allow a file-only message (attachments but no text); reject only when
-    // there's neither text nor any attachment.
-    if (!content.trim() && attachmentIds.length === 0) {
-      logger.warn('Empty message from %s', userId);
-      ws.send(JSON.stringify({ type: 'error', payload: { error: 'Empty message' } }));
-      return;
-    }
-
-    // Update message with extracted values for downstream processing
-    message.mode = mode;
-    message.content = content;
-    message.threadId = threadId;
-    message.agentId = agentId;
-    message.attachmentIds = attachmentIds;
-
-    switch (mode) {
-      case 'collect':
-        // Collect mode: Batch messages (for now, treat as followup)
-        // TODO: Implement batching
-        await this.queueMessage(ws, userId, message);
-        break;
-
-      // 'followup' and anything else: queueMessage hands the message to the turn
-      // already running on its thread when there is one (mid-turn steering) and
-      // otherwise starts or queues a turn.
-      default:
-        await this.queueMessage(ws, userId, message);
-    }
-  }
-
-  /**
-   * Queue message for processing
-   */
-  private async queueMessage(
-    ws: AuthenticatedWebSocket,
-    userId: string,
-    message: WebSocketMessage
-  ): Promise<void> {
-    // If not processing, process immediately
-    if (!this.processingUsers.has(userId)) {
-      await this.processMessage(ws, userId, message);
-      return;
-    }
-
-    // A turn is in flight. Offer the message to it first: if it's running on
-    // this message's thread, the engine folds it into that turn so the user's
-    // correction lands while the work is still happening, instead of sitting in
-    // this queue for the rest of the turn and then being answered against a
-    // history that has moved on. A message that doesn't name its thread has
-    // nothing to be offered to and falls straight through to the queue.
-    //
-    // The agent is this container's, never the client's — the client may omit
-    // `agentId` (the prism-cli does). Reading it off the message instead left
-    // those clients silently queue-only, with no steering at all.
-    const agentId = config.agentId;
-    if (agentId && hasThread(message)) {
-      if (await this.offerToLiveTurn(userId, agentId, message)) return;
-    }
-
-    // Otherwise queue it
-    const queue = this.messageQueues.get(userId) || [];
-    queue.push({
-      message,
-      resolve: (response) => ws.send(JSON.stringify(response)),
-    });
-    this.messageQueues.set(userId, queue);
-  }
-
-  /**
-   * Hand a message to the turn already running on its thread. Returns true when
-   * that turn took it — the gateway is then done with the message, the turn
-   * stores and answers it — and false when there was no live turn on the thread,
-   * in which case steer-only mode stored nothing and the caller queues as usual.
-   *
-   * Takes a `ThreadedMessage` so the steer-only contract ("nothing is stored")
-   * holds by construction: the engine only resolves — and creates — a thread
-   * when the caller doesn't name one.
-   */
-  private async offerToLiveTurn(
-    userId: string,
-    agentId: string,
-    message: ThreadedMessage
-  ): Promise<boolean> {
-    const attempt = await conversationEngineService.chat({
-      userId,
-      agentId,
-      message: message.content || '',
-      threadId: message.threadId,
-      attachmentIds: message.attachmentIds,
-      metadata: { channel: 'websocket' },
-      steerOnly: true,
-    });
-    return attempt.steered === true;
-  }
-
-  /**
-   * Process a message through the backend's conversation engine
-   */
-  private async processMessage(
-    ws: AuthenticatedWebSocket,
-    userId: string,
-    message: WebSocketMessage
-  ): Promise<void> {
-    const agentId = message.agentId;
-    if (!agentId) {
-      ws.send(JSON.stringify({ type: 'error', payload: { error: 'Agent ID is required in the message' } }));
-      return;
-    }
-
-    // Authorization: Lens Agents inbound routing terminates auth in front of the
-    // runtime. Once a request reaches the container we trust the connection.
-    // Still pin to *this* container's agent so a stray client can't address
-    // another runtime.
-    if (agentId !== config.agentId) {
-      ws.send(
-        JSON.stringify({
-          type: 'error',
-          payload: { error: 'Forbidden: this runtime serves a different agent' },
-        })
-      );
-      return;
-    }
-
-    logger.info('Processing message for %s', userId);
-    this.processingUsers.add(userId);
-
-    // A `cancel` message aborts this controller, which stops the LLM
-    // generation mid-turn (signal threaded into generateText).
-    const controller = new AbortController();
-    this.activeRequests.set(userId, { controller, threadId: message.threadId });
-
-    try {
-      logger.info('Calling conversation engine for %s', userId);
-
-      // Process through local conversation engine (direct call, no HTTP).
-      // Response delivery + thread-title updates happen inside the engine.
-      await conversationEngineService.chat({
-        userId,
-        agentId,
-        message: message.content || '',
-        threadId: message.threadId,
-        attachmentIds: message.attachmentIds,
-        metadata: { channel: 'websocket' },
-        abortSignal: controller.signal,
-      });
-
-      logger.info('Conversation engine completed for %s', userId);
-
-      // Thread-title updates (placeholder + LLM upgrade) are emitted by
-      // threadTitleService from the conversation engine and broadcast via the
-      // 'change' subscription wired in the constructor — nothing to do here.
-
-      // Note: Response delivery is handled by messageDeliveryService.publish()
-      // which is called by conversationEngineService.chat() - no manual sending needed
-    } catch (error: unknown) {
-      // A cancel aborts the turn; invokeStream swallows the AbortError, so this
-      // catch shouldn't see it — but guard anyway so a cancel never surfaces a
-      // scary error bubble in the UI.
-      if (!controller.signal.aborted) {
-        logger.error('Error processing message: %s', error instanceof Error ? error.message : String(error));
-        ws.send(JSON.stringify({
-          type: 'error',
-          payload: { error: error instanceof Error ? error.message : String(error) },
-        }));
-      }
-    } finally {
-      this.processingUsers.delete(userId);
-      this.activeRequests.delete(userId);
-
-      // The turn's own end is announced by the engine, which brackets every
-      // exchange; a cancel is answered at once in `handleCancelMessage`.
-
-      // Process queued messages
-      await this.processQueue(userId);
-    }
-  }
-
-  /**
-   * Process queued messages
-   */
-  private async processQueue(userId: string): Promise<void> {
-    const queue = this.messageQueues.get(userId);
-    if (!queue || queue.length === 0) return;
-
-    const next = queue.shift();
-    if (!next) return;
-
-    const connections = this.connections.get(userId);
-    const ws = connections?.[0];
-    if (ws) {
-      await this.processMessage(ws, userId, next.message);
-    }
-  }
-
-  /**
-   * Broadcast to all connections for a user
-   */
-  broadcast(userId: string, message: WebSocketResponse): void {
-    const connections = this.connections.get(userId);
-    if (!connections) return;
-
-    connections.forEach((ws) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(message));
-      }
-    });
-  }
-
-  /**
-   * Extract user ID from request by decoding the JWT token.
-   * Backend already verified the signature — we only decode here.
-   */
-  private extractUserAuth(req: IncomingMessage): { userId: string; token: string } | null {
-    const url = new URL(req.url || '', `http://${req.headers.host}`);
-    let token = url.searchParams.get('token');
-
-    if (!token) {
-      const authHeader = req.headers.authorization;
-      if (authHeader?.startsWith('Bearer ')) {
-        token = authHeader.substring(7);
-      }
-    }
-
-    // Lens Agents inbound routing terminates auth in front of the runtime, so we
-    // trust the connection here. The Web UI talks straight to the runtime
-    // over WS without a JWT — fall back to the bootstrap-default owner user
-    // (matches the agent's `userId`).
-    if (!token) {
-      return { userId: config.ownerUserId, token: '' };
-    }
-
-    try {
-      // Decode only — backend already verified the signature
-      const parts = token.split('.');
-      if (parts.length !== 3) return null;
-      const decoded = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
-      if (!decoded?.sub) return null;
-      return { userId: decoded.sub, token };
-    } catch {
-      logger.error('Failed to decode JWT token');
-      return null;
-    }
-  }
-
-  /**
-   * Remove connection from tracking
-   */
-  private removeConnection(userId: string, ws: AuthenticatedWebSocket): void {
-    const connections = this.connections.get(userId);
-    if (!connections) return;
-
-    const index = connections.indexOf(ws);
-    if (index > -1) {
-      connections.splice(index, 1);
-    }
-
-    if (connections.length === 0) {
-      this.connections.delete(userId);
-    } else {
-      this.connections.set(userId, connections);
-    }
-  }
-
-  /**
-   * Get connection count for a user
-   */
-  getConnectionCount(userId: string): number {
-    return this.connections.get(userId)?.length || 0;
-  }
-
-  /**
-   * Check if user is connected
-   */
-  isConnected(userId: string): boolean {
-    return this.getConnectionCount(userId) > 0;
+  /** Forget a socket, and stop sending it the stream. */
+  private removeConnection(ws: ChatSocket): void {
+    clearTimeout(ws.helloTimer);
+    ws.unsubscribe?.();
+    ws.unsubscribe = undefined;
+    const index = this.connections.indexOf(ws);
+    if (index > -1) this.connections.splice(index, 1);
   }
 
   /**
@@ -1093,7 +864,8 @@ class WebSocketGatewayService {
     this.wss?.clients.forEach((ws) => {
       ws.close(1001, 'Server shutting down');
     });
-    this.connections.clear();
+    for (const ws of this.connections) ws.unsubscribe?.();
+    this.connections = [];
   }
 }
 

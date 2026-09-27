@@ -25,6 +25,8 @@ const {
   mockOnFirstUserMessage,
   mockGetAgent,
   mockGetMetaByIds,
+  mockMirror,
+  mockGetMetaByMessageIds,
 } = vi.hoisted(() => ({
   mockGetOrCreateLatestThread: vi.fn(),
   mockGetThreadWorkspaceRoot: vi.fn(),
@@ -39,6 +41,8 @@ const {
   mockOnFirstUserMessage: vi.fn(),
   mockGetAgent: vi.fn(),
   mockGetMetaByIds: vi.fn(),
+  mockMirror: vi.fn(),
+  mockGetMetaByMessageIds: vi.fn(),
 }));
 
 /**
@@ -70,6 +74,7 @@ vi.mock('../conversation.service', () => ({
 vi.mock('../message-delivery.service', () => ({
   messageDeliveryService: {
     publish: mockPublish,
+    mirror: mockMirror,
   },
 }));
 
@@ -83,6 +88,7 @@ vi.mock('../attachment.service', () => ({
   attachmentService: {
     linkToMessage: mockLinkToMessage,
     getMetaByIds: mockGetMetaByIds,
+    getMetaByMessageIds: mockGetMetaByMessageIds,
   },
 }));
 
@@ -126,6 +132,10 @@ vi.mock('../agent-workspace.service', () => ({
 // turn ordering is part of what the steering scenarios assert.
 import { conversationEngineService } from '../conversation-engine.service';
 import { threadTurnService } from '../thread-turn.service';
+import {
+  conversationThreadActivityService,
+  type ThreadActivityChange,
+} from '../conversation-thread-activity.service';
 
 describe('Requirement: Conversation Engine', () => {
   beforeEach(() => {
@@ -154,6 +164,8 @@ describe('Requirement: Conversation Engine', () => {
     ]));
     mockCountAgentMessages.mockResolvedValue(0);
     mockGetMetaByIds.mockResolvedValue([]);
+    mockGetMetaByMessageIds.mockResolvedValue(new Map());
+    mockMirror.mockResolvedValue(undefined);
     // Default: telemetry off so unrelated scenarios don't exercise the classifier.
     mockIsTelemetryEnabled.mockReturnValue(false);
     mockGenerateText.mockResolvedValue({ text: 'WORTHY' });
@@ -198,17 +210,50 @@ describe('Requirement: Conversation Engine', () => {
 
     it('forwards the abortSignal into invokeStream so a cancel stops generation', async () => {
       const controller = new AbortController();
+      let forwarded: AbortSignal | undefined;
+      let finish!: () => void;
+      mockInvokeStream.mockImplementationOnce(async function* (request: { abortSignal: AbortSignal }) {
+        forwarded = request.abortSignal;
+        await new Promise<void>((resolve) => { finish = resolve; });
+      });
 
-      await conversationEngineService.chat({
+      const turn = conversationEngineService.chat({
         userId: 'user-123',
         agentId: 'agent-123',
         message: 'What pods are running?',
         abortSignal: controller.signal,
       });
+      await vi.waitFor(() => expect(forwarded).toBeDefined());
 
-      expect(mockInvokeStream).toHaveBeenCalledWith(
-        expect.objectContaining({ abortSignal: controller.signal }),
-      );
+      expect(forwarded?.aborted).toBe(false);
+      controller.abort();
+      expect(forwarded?.aborted).toBe(true);
+      finish();
+      await turn;
+    });
+
+    it('stops a running exchange when its thread is cancelled, whoever started it', async () => {
+      let forwarded: AbortSignal | undefined;
+      let finish!: () => void;
+      mockInvokeStream.mockImplementationOnce(async function* (request: { abortSignal: AbortSignal }) {
+        forwarded = request.abortSignal;
+        await new Promise<void>((resolve) => { finish = resolve; });
+      });
+
+      const turn = conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        threadId: 'thread-123',
+        message: 'a long job',
+      });
+      await vi.waitFor(() => expect(forwarded).toBeDefined());
+
+      expect(conversationEngineService.cancel('thread-123')).toBe(true);
+      expect(forwarded?.aborted).toBe(true);
+      finish();
+      await turn;
+
+      expect(conversationEngineService.cancel('thread-123')).toBe(false);
     });
 
     it('emits a "chat message handled" telemetry event tagged with agent and thread ids', async () => {
@@ -576,6 +621,36 @@ describe('Requirement: Conversation Engine', () => {
           channelContext: undefined,
         }),
       );
+    });
+  });
+
+  describe('Scenario: User message mirror', () => {
+    it('shows the stored user message on every client of the chat socket', async () => {
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'hello from web',
+        metadata: { channel: 'websocket' },
+      });
+
+      expect(mockMirror).toHaveBeenCalledWith(
+        'user-123',
+        expect.objectContaining({ id: 'msg-123', role: 'USER', content: 'hello from web' }),
+      );
+      // The broadcast goes out before the agent's first message.
+      expect(mockMirror.mock.invocationCallOrder[0]).toBeLessThan(
+        mockPublish.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('mirrors nothing for a message with no channel', async () => {
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'hello from the REST endpoint',
+      });
+
+      expect(mockMirror).not.toHaveBeenCalled();
     });
   });
 
@@ -1234,16 +1309,19 @@ describe('Requirement: Conversation Engine', () => {
   });
 
   /**
-   * The bracket a client shows the agent working from. It belongs to the engine rather
-   * than to the transport that happened to ask, so a turn the runtime starts itself — the
-   * continuation after a computer help request — reports like any other.
+   * The engine marks the thread working for the whole exchange, so a turn the runtime
+   * starts itself, such as the continuation after a computer help request, reports like
+   * any other, and a turn that waits for the thread is part of the same work.
    */
-  describe('Scenario: Turn activity', () => {
-    function record(): { seen: { active: boolean; threadId: string }[]; off: () => void } {
-      const seen: { active: boolean; threadId: string }[] = [];
-      const listener = (event: { active: boolean; threadId: string }) => void seen.push(event);
-      conversationEngineService.events.on('activity', listener);
-      return { seen, off: () => void conversationEngineService.events.off('activity', listener) };
+  describe('Scenario: Thread activity', () => {
+    function record(): { seen: ThreadActivityChange[]; off: () => void } {
+      const seen: ThreadActivityChange[] = [];
+      const listener = (event: ThreadActivityChange) => void seen.push(event);
+      conversationThreadActivityService.events.on('change', listener);
+      return {
+        seen,
+        off: () => void conversationThreadActivityService.events.off('change', listener),
+      };
     }
 
     it('brackets an exchange, whoever asked for it', async () => {
@@ -1257,8 +1335,8 @@ describe('Requirement: Conversation Engine', () => {
       off();
 
       expect(seen).toEqual([
-        { userId: 'user-123', threadId: 'thread-123', active: true },
-        { userId: 'user-123', threadId: 'thread-123', active: false },
+        { threadId: 'thread-123', working: true, userId: 'user-123' },
+        { threadId: 'thread-123', working: false, userId: 'user-123' },
       ]);
     });
 
@@ -1286,15 +1364,15 @@ describe('Requirement: Conversation Engine', () => {
         threadId: 'thread-a',
       });
       await Promise.resolve();
-      expect(seen.filter((event) => !event.active)).toEqual([]);
+      expect(seen.filter((event) => !event.working)).toEqual([]);
 
       release();
       await first;
       await second;
       off();
 
-      expect(seen.filter((event) => event.active)).toHaveLength(1);
-      expect(seen.filter((event) => !event.active)).toHaveLength(1);
+      expect(seen.filter((event) => event.working)).toHaveLength(1);
+      expect(seen.filter((event) => !event.working)).toHaveLength(1);
     });
 
     it('ends the report when the turn throws', async () => {
@@ -1312,7 +1390,7 @@ describe('Requirement: Conversation Engine', () => {
       ).rejects.toThrow('the provider refused');
       off();
 
-      expect(seen.map((event) => event.active)).toEqual([true, false]);
+      expect(seen.map((event) => event.working)).toEqual([true, false]);
     });
   });
 });

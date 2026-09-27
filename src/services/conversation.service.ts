@@ -13,6 +13,7 @@ import {
   ThreadSource,
   Prisma,
 } from '@prisma/client';
+import { EventEmitter } from 'node:events';
 import prisma from '../lib/prisma';
 import { config } from '../config';
 import { trackEvent } from '../lib/telemetry';
@@ -31,6 +32,12 @@ import { buildContextSnapshot, type ContextUsageSnapshot } from '../lib/context-
 // ============================================================================
 
 export interface MessageInput {
+  /**
+   * The row's id, when the sender chose it. A chat client names its message so a
+   * resend after a dropped connection finds the row it already wrote instead of
+   * writing a second one. Omitted, the database mints one.
+   */
+  id?: string;
   content: string;
   role: MessageRole;
   triggeredBy: MessageTrigger;
@@ -55,6 +62,14 @@ export interface MessageInput {
   internalStep?: boolean;
 }
 
+/** A web thread came into being — emitted as `'thread'` on `conversationService.events`. */
+export interface ThreadCreated {
+  userId: string;
+  threadId: string;
+  title: string | null;
+  createdAt: Date;
+}
+
 export interface MessageWithAttachments extends ConversationMessage {
   attachments?: AttachmentMeta[];
 }
@@ -75,6 +90,8 @@ export interface ThreadWithMessages extends ConversationThread {
 // ============================================================================
 
 class ConversationService {
+  /** Emits `'thread'` ({@link ThreadCreated}) when a web thread is created. */
+  readonly events = new EventEmitter();
   private databaseProvider = new DatabaseThreadProvider();
   private slackProvider = new SlackThreadProvider();
 
@@ -103,14 +120,7 @@ class ConversationService {
    * when the user has none yet.
    */
   async getOrCreateLatestThread(agentId: string, userId: string): Promise<ConversationThread> {
-    let thread = await prisma.conversationThread.findFirst({
-      where: {
-        agentId,
-        userId,
-        externalThreadId: null,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    let thread = await this.findLatestWebThread(agentId, userId);
 
     if (!thread) {
       thread = await prisma.conversationThread.create({
@@ -122,9 +132,36 @@ class ConversationService {
         'thread.id': thread.id,
         'thread.source': 'database',
       });
+      this.announceThread(thread);
     }
 
     return thread;
+  }
+
+  /** The user's latest web thread, or null when there is none. Creates nothing. */
+  async findLatestWebThread(agentId: string, userId: string): Promise<ConversationThread | null> {
+    return prisma.conversationThread.findFirst({
+      where: {
+        agentId,
+        userId,
+        externalThreadId: null,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * Say that a web thread exists, so every open client can list it — a
+   * conversation started on one device shows up on the others without a reload.
+   * Channel-agnostic, like `threadTitleService`: transports subscribe.
+   */
+  private announceThread(thread: ConversationThread): void {
+    this.events.emit('thread', {
+      userId: thread.userId,
+      threadId: thread.id,
+      title: thread.title,
+      createdAt: thread.createdAt,
+    } satisfies ThreadCreated);
   }
 
   /**
@@ -156,6 +193,7 @@ class ConversationService {
       'thread.id': thread.id,
       'thread.source': 'database',
     });
+    this.announceThread(thread);
 
     return thread;
   }
@@ -409,6 +447,7 @@ class ConversationService {
   ): Promise<{ message: ConversationMessage; titleSet: string | null }> {
     const message = await prisma.conversationMessage.create({
       data: {
+        ...(input.id ? { id: input.id } : {}),
         threadId,
         role: input.role,
         content: input.content,

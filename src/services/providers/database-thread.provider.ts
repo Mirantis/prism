@@ -5,9 +5,27 @@
  * This is the default provider for web chat threads (ThreadSource.DATABASE).
  */
 
-import { ConversationMessage } from '@prisma/client';
+import { ConversationMessage, Prisma } from '@prisma/client';
 import prisma from '../../lib/prisma';
 import { ThreadMessageProvider, MessageReadOptions } from '../thread-provider.interface';
+
+/**
+ * The order rows are read in. A client's view breaks a tie on the timestamp by
+ * id — the same rule every chat client applies to messages as they arrive live —
+ * so two devices can never show the same moment in different orders. The model's
+ * view keeps the order rows were written in, which a tie-break would change for
+ * rows written in the same millisecond, and with it the prompt.
+ */
+function clientOrder(
+  opts: MessageReadOptions | undefined,
+  direction: 'asc' | 'desc',
+):
+  | Prisma.ConversationMessageOrderByWithRelationInput
+  | Prisma.ConversationMessageOrderByWithRelationInput[] {
+  return opts?.view === 'client'
+    ? [{ createdAt: direction }, { id: direction }]
+    : { createdAt: direction };
+}
 
 export class DatabaseThreadProvider implements ThreadMessageProvider {
   async getMessages(threadId: string, opts?: MessageReadOptions): Promise<ConversationMessage[]> {
@@ -19,7 +37,7 @@ export class DatabaseThreadProvider implements ThreadMessageProvider {
         threadId,
         ...(opts?.view === 'client' ? { internalStep: false } : { isCompacted: false }),
       },
-      orderBy: { createdAt: 'asc' },
+      orderBy: clientOrder(opts, 'asc'),
     });
   }
 
@@ -32,7 +50,7 @@ export class DatabaseThreadProvider implements ThreadMessageProvider {
         threadId,
         ...(opts?.view === 'client' ? { internalStep: false } : { isCompacted: false }),
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: clientOrder(opts, 'desc'),
       take: limit,
     });
     return messages.reverse(); // Return in chronological order
