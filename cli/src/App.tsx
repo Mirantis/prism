@@ -1,17 +1,22 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { randomUUID } from 'node:crypto';
 import { Box, Text, useApp, useInput, useStdin } from 'ink';
 import {
   tuiAdapterService,
   ContextUsage,
+  SendFailure,
   SignInRequest,
   ThreadSummary,
   TuiMessage,
   TuiStatus,
+  TurnEventPayload,
 } from './tui-adapter.js';
+import { MAX_MESSAGE_CHARS, TurnState } from './chat-protocol.js';
+import { appendLocal, ChatEntry, markFailed, upsertMessage, withHistory } from './transcript.js';
 import { useCompaction } from './hooks/use-compaction.js';
 import { useUpdateNotice } from './hooks/use-update-notice.js';
 import { Header } from './components/Header.js';
-import { MessageList, ChatEntry } from './components/MessageList.js';
+import { MessageList } from './components/MessageList.js';
 import { Input } from './components/Input.js';
 import { SpinnerRow } from './components/SpinnerRow.js';
 import { StatusBar } from './components/StatusBar.js';
@@ -49,27 +54,33 @@ export interface AppProps {
 /** Input prefix that switches the popup from commands to path suggestions. */
 const ATTACH_PREFIX = `${ATTACH_COMMAND} `;
 
+/** How long to wait before asking the runtime again for this session's conversation. */
+const THREAD_RETRY_MS = 2_000;
+
+function spinnerLabel(turn: TurnState): string {
+  if (turn === 'running') return 'thinking… (esc to stop · enter sends)';
+  if (turn === 'queued') return 'waiting for another conversation to finish… (esc to cancel)';
+  return 'compacting conversation…';
+}
+
 export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hideStatusBar, resume }) => {
   const { exit } = useApp();
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   // In resume mode, the thread picker owns the screen until the user selects a
   // thread (→ 'chat') or cancels (→ exit). Without `resume` we go straight to chat.
   const [resumePhase, setResumePhase] = useState<'select' | 'chat'>(resume ? 'select' : 'chat');
-  // The thread the user picked in the --resume picker. Pinned onto every send
-  // (and the history replay) so the turn routes to it. Undefined for a fresh
-  // session, where the runtime resolves the latest thread instead.
+  // The conversation this session shows: the one created at launch, or the one
+  // picked in the --resume picker. Undefined until it exists.
   const [activeThreadId, setActiveThreadId] = useState<string | undefined>(undefined);
+  // The connection, for the status bar.
   const [status, setStatus] = useState<TuiStatus>('idle');
   const [statusDetail, setStatusDetail] = useState<string | undefined>(undefined);
+  // What this conversation is doing, as every client of the agent sees it.
+  const [turnState, setTurnState] = useState<TurnState>('idle');
+  // The name the runtime gave this connection. A USER message by anyone else shows their name.
+  const [selfName, setSelfName] = useState<string | null>(null);
   // Context-window occupancy for the active thread, pushed by the runtime.
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
-  // The adapter subscription below is bound once ([] deps), so it can't read
-  // `activeThreadId` directly without freezing the first render's value.
-  const activeThreadIdRef = useRef(activeThreadId);
-  activeThreadIdRef.current = activeThreadId;
-  // The thread whose frame set `thinking`, so its end is taken even when it arrived
-  // before this session pinned a thread of its own.
-  const thinkingThreadRef = useRef<string | undefined>(undefined);
   const [shuttingDown, setShuttingDown] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [commandIndex, setCommandIndex] = useState(0);
@@ -103,76 +114,91 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
     return () => tuiAdapterService.markDisconnected();
   }, [userId]);
 
-  // Start a fresh conversation thread on every CLI open. The runtime creates a
-  // new thread (which becomes the latest), so the TUI opens to a clean slate
-  // instead of resuming the last conversation. Fires once per launch (not on
-  // WebSocket reconnect, which is handled separately).
-  // Skipped in resume mode — there we pin the picked thread and replay its
-  // history on selection instead of creating a new one.
+  const appendSystemMessage = useCallback((text: string) => {
+    setEntries((prev) =>
+      appendLocal(prev, {
+        id: `system-${randomUUID()}`,
+        threadId: '',
+        role: 'SYSTEM',
+        content: text,
+        triggeredBy: 'USER_INPUT',
+        toolCalls: null,
+        blocks: null,
+        createdAt: new Date().toISOString(),
+      }),
+    );
+  }, []);
+
+  // Start a fresh conversation thread on every CLI open, so the TUI opens to a
+  // clean slate. Its id is known before anything is sent, so slash commands
+  // that need a thread (e.g. /goal) work at once and every message names it.
+  // A runtime that is not up yet is asked again until it answers.
+  // Skipped in resume mode, where the picked thread is shown instead.
   useEffect(() => {
     if (resume) return;
-    // Pin the freshly-created session thread id so slash commands that need a
-    // thread (e.g. /goal) work immediately, before any message is sent.
-    void tuiAdapterService.startNewSession().then((threadId) => {
-      if (threadId) setActiveThreadId(threadId);
-    });
+    let stopped = false;
+    let retry: NodeJS.Timeout | undefined;
+    const start = async () => {
+      const threadId = await tuiAdapterService.startNewSession();
+      if (stopped) return;
+      if (threadId) {
+        setActiveThreadId(threadId);
+        return;
+      }
+      retry = setTimeout(() => void start(), THREAD_RETRY_MS);
+    };
+    void start();
+    return () => {
+      stopped = true;
+      clearTimeout(retry);
+    };
   }, [userId, agent.id, resume]);
 
-  // Subscribe to adapter event bus.
+  // Subscribe to the adapter's event bus. Every event here belongs to this
+  // session's conversation: the adapter drops the others.
   useEffect(() => {
-    const onMessage = (msg: TuiMessage) => {
-      setEntries((prev) => [...prev, { kind: 'message', message: msg }]);
-    };
-    // A frame naming another thread is a turn in another conversation — Slack's, or the
-    // Web UI's. A frame with no thread (a cancel, a connection change) is this session's.
-    // The one exception is the end of the turn that set `thinking`: a frame that arrived
-    // before the thread was pinned is ended by that same thread's frame.
-    const onStatus = (s: TuiStatus, detail?: string, threadId?: string) => {
-      const thread = activeThreadIdRef.current;
-      const endsThinking = threadId !== undefined && threadId === thinkingThreadRef.current;
-      if (threadId && thread && threadId !== thread && !endsThinking) return;
-      thinkingThreadRef.current = s === 'thinking' ? threadId : undefined;
+    const onStatus = (s: TuiStatus, detail?: string) => {
       setStatus(s);
       setStatusDetail(detail);
     };
-    // Only fills a gap: a thread we already pinned (--resume, or the session
-    // created at launch) wins, since an autonomous delivery can name another one.
-    const onThread = (threadId: string) => {
-      setActiveThreadId((cur) => cur ?? threadId);
+    const onWelcome = (you: { name: string | null }) => setSelfName(you.name);
+    const onHistory = (messages: TuiMessage[]) => setEntries((prev) => withHistory(prev, messages));
+    const onMessage = (msg: TuiMessage) => setEntries((prev) => upsertMessage(prev, msg));
+    const onTurn = (turn: TurnEventPayload) => {
+      setTurnState(turn.state);
+      if (turn.outcome === 'cancelled') appendSystemMessage('⏹ Response stopped');
+      if (turn.outcome === 'failed') appendSystemMessage(`⚠ ${turn.error ?? 'The response failed.'}`);
     };
-    const onContextUsage = (usage: ContextUsage) => {
-      // On a fresh (non-resume) launch activeThreadId is undefined until the
-      // runtime resolves the latest thread (or a `thread` frame names it), so
-      // strict equality would drop the first frames. Accept anything until we
-      // know which thread we're on.
-      setContextUsage((prev) =>
-        activeThreadIdRef.current === undefined || usage.threadId === activeThreadIdRef.current
-          ? usage
-          : prev,
-      );
+    const onSendFailed = (failure: SendFailure) => {
+      setEntries((prev) => markFailed(prev, failure.messageId, failure.message));
     };
-    // The newest request of this conversation wins: the agent asks for one sign-in at a
-    // time, and a second means the first is no longer what it is waiting for. A delivery
-    // reaches every one of the user's clients, so a request from another conversation —
-    // the Web UI's, or Slack's — is not this session's to answer.
-    const onSignIn = (request: SignInRequest) => {
-      const thread = activeThreadIdRef.current;
-      if (request.threadId && thread && request.threadId !== thread) return;
-      setSignInRequest(request);
-    };
-    tuiAdapterService.events.on('message', onMessage);
-    tuiAdapterService.events.on('status', onStatus);
-    tuiAdapterService.events.on('thread', onThread);
-    tuiAdapterService.events.on('contextUsage', onContextUsage);
-    tuiAdapterService.events.on('signIn', onSignIn);
+    const onContextUsage = (usage: ContextUsage) => setContextUsage(usage);
+    // The newest request wins: the agent asks for one sign-in at a time, and a
+    // second means the first is no longer what it is waiting for.
+    const onSignIn = (request: SignInRequest) => setSignInRequest(request);
+    const onUnsupported = (notice: string) => appendSystemMessage(notice);
+    const bus = tuiAdapterService.events;
+    bus.on('status', onStatus);
+    bus.on('welcome', onWelcome);
+    bus.on('history', onHistory);
+    bus.on('message', onMessage);
+    bus.on('turn', onTurn);
+    bus.on('sendFailed', onSendFailed);
+    bus.on('contextUsage', onContextUsage);
+    bus.on('signIn', onSignIn);
+    bus.on('unsupported', onUnsupported);
     return () => {
-      tuiAdapterService.events.off('message', onMessage);
-      tuiAdapterService.events.off('status', onStatus);
-      tuiAdapterService.events.off('thread', onThread);
-      tuiAdapterService.events.off('contextUsage', onContextUsage);
-      tuiAdapterService.events.off('signIn', onSignIn);
+      bus.off('status', onStatus);
+      bus.off('welcome', onWelcome);
+      bus.off('history', onHistory);
+      bus.off('message', onMessage);
+      bus.off('turn', onTurn);
+      bus.off('sendFailed', onSendFailed);
+      bus.off('contextUsage', onContextUsage);
+      bus.off('signIn', onSignIn);
+      bus.off('unsupported', onUnsupported);
     };
-  }, []);
+  }, [appendSystemMessage]);
 
   // Slash-command popup: visible while the input starts with '/' and no space
   // has been typed yet. After Tab or Enter accepts a row (which appends a
@@ -225,29 +251,10 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
     setInputResetKey((k) => k + 1);
   }, [filteredCommands, safeIndex]);
 
-  const appendSystemMessage = useCallback((text: string) => {
-    setEntries((prev) => [
-      ...prev,
-      {
-        kind: 'message',
-        message: {
-          id: `system-${Date.now()}`,
-          threadId: '',
-          role: 'SYSTEM',
-          content: text,
-          triggeredBy: 'USER_INPUT',
-          toolCalls: null,
-          blocks: null,
-          createdAt: new Date().toISOString(),
-        },
-      },
-    ]);
-  }, []);
-
   // A compaction is running for the active thread (auto post-turn or /compact).
   // Shown as the spinner-row label — compaction runs outside a chat turn, so
   // the ordinary thinking spinner is idle while it works.
-  const compacting = useCompaction(activeThreadId, appendSystemMessage);
+  const compacting = useCompaction(appendSystemMessage);
 
   // A newer release the runtime announced (status-bar hint), plus SYSTEM lines
   // when the backend restarts to apply one or a manual update fails.
@@ -261,10 +268,9 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
     setShuttingDown(true);
   }, []);
 
-  // Resume picker → chat: pin the chosen thread, replay its history into the
-  // chat surface, then hand over to the normal chat UI. The thread id is sent
-  // explicitly on every subsequent send (and the history fetch), so the turn
-  // routes to this thread without mutating any server-side "latest" pointer.
+  // Resume picker → chat: show the chosen thread. The adapter loads its history
+  // (the `history` event) and names the thread on every send, so the turn
+  // routes to it without mutating any server-side "latest" pointer.
   const handleResumeSelect = useCallback(
     async (threadId: string) => {
       setActiveThreadId(threadId);
@@ -273,11 +279,10 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       // than passed through ResumeList, whose onSelect deliberately only carries
       // the id.
       setContextUsage(resume?.sessions.find((s) => s.id === threadId)?.contextUsage ?? null);
-      const messages = await tuiAdapterService.loadHistory({ userId, agentId: agent.id, threadId });
-      setEntries(messages.map((message) => ({ kind: 'message' as const, message })));
+      await tuiAdapterService.resumeThread(threadId);
       setResumePhase('chat');
     },
-    [userId, agent.id, resume],
+    [resume],
   );
 
   // Escape in the picker exits the CLI (clean shutdown → exit code 0).
@@ -389,12 +394,16 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   // early for these keys so they don't conflict with the textbox. Disabled
   // while a panel is open so the panel's own useInput owns the keyboard.
   useInput((input, key) => {
-    // Escape while the agent is working cancels the in-flight turn: tells the
-    // runtime to abort the LLM generation and drops a client-only marker so
-    // the user gets explicit confirmation (the in-flight text is discarded).
-    if (key.escape && status === 'thinking') {
-      tuiAdapterService.cancel();
-      appendSystemMessage('⏹ Response stopped');
+    // Escape while the conversation is working stops it. A running turn ends
+    // in a `turn` event whose outcome draws the marker, whoever stopped it. A
+    // queued message is only dropped, which ends with no outcome, so its marker
+    // is drawn here.
+    if (key.escape && turnState !== 'idle') {
+      if (!tuiAdapterService.cancel()) {
+        appendSystemMessage('Not connected, so the response could not be stopped.');
+        return;
+      }
+      if (turnState === 'queued') appendSystemMessage('⏹ Response stopped');
       return;
     }
     // Ctrl+O — toggle expansion of the latest agent message that has tool
@@ -516,49 +525,49 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
         }
       }
 
+      // The draft stays in the composer, so nothing typed is lost.
+      if (trimmed.length > MAX_MESSAGE_CHARS) {
+        appendSystemMessage(
+          `That message has ${trimmed.length} characters. The limit is ${MAX_MESSAGE_CHARS}.`,
+        );
+        return;
+      }
+
       setInputValue('');
-      // Consume staging synchronously before the awaited send so a rapid
-      // second Enter can't double-send the same attachments. If the WS isn't
-      // connected the send is dropped (same as text today) and the staged
-      // files are lost client-side — the server janitor reaps the uploads.
+      // Consume staging synchronously so a rapid second Enter can't send the
+      // same attachments twice.
       const toSend = staged;
       setStaged([]);
-      // Optimistically render the user line — the adapter only sees AGENT
-      // messages back through deliver(), and we want immediate feedback.
-      setEntries((prev) => [
-        ...prev,
-        {
-          kind: 'message',
-          message: {
-            id: `local-${Date.now()}`,
-            threadId: '',
-            role: 'USER',
-            content: trimmed,
-            triggeredBy: 'USER_INPUT',
-            toolCalls: null,
-            blocks: null,
-            createdAt: new Date().toISOString(),
-            attachments: toSend.length > 0 ? toSend : null,
-          },
-        },
-      ]);
-      await tuiAdapterService.submitUserMessage({
-        userId,
-        agentId: agent.id,
+      // Drawn at once under the id it is sent with. The runtime's copy arrives
+      // with the same id and takes this row's place.
+      const id = randomUUID();
+      setEntries((prev) =>
+        appendLocal(prev, {
+          id,
+          threadId: activeThreadId ?? '',
+          role: 'USER',
+          content: trimmed,
+          triggeredBy: 'USER_INPUT',
+          toolCalls: null,
+          blocks: null,
+          createdAt: new Date().toISOString(),
+          attachments: toSend.length > 0 ? toSend : null,
+        }),
+      );
+      tuiAdapterService.submitUserMessage({
+        id,
         text: trimmed,
-        threadId: activeThreadId,
         attachmentIds: toSend.map((a) => a.id),
       });
     },
     [
-      agent.id,
-      userId,
       runCommand,
       staged,
       activeThreadId,
       slashMode,
       filteredCommands,
       acceptHighlightedCommand,
+      appendSystemMessage,
     ],
   );
 
@@ -609,6 +618,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
         <>
           <MessageList
             agentName={agent.name}
+            selfName={selfName}
             entries={entries}
             expandedMessageId={expandedMessageId}
           />
@@ -622,14 +632,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
               </Text>
             </Box>
           )}
-          <SpinnerRow
-            active={status === 'thinking' || compacting}
-            label={
-              status === 'thinking'
-                ? 'thinking… (esc to stop · enter sends)'
-                : 'compacting conversation…'
-            }
-          />
+          <SpinnerRow active={turnState !== 'idle' || compacting} label={spinnerLabel(turnState)} />
           <Input
             key={inputResetKey}
             value={inputValue}

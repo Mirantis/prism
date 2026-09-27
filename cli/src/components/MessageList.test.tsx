@@ -1,7 +1,8 @@
 import React from 'react';
 import { describe, it, expect } from 'vitest';
 import { render } from 'ink-testing-library';
-import { MessageList, type ChatEntry } from './MessageList.js';
+import { MessageList } from './MessageList.js';
+import type { ChatEntry } from '../transcript.js';
 import type { TuiMessage } from '../tui-adapter.js';
 
 function makeMsg(overrides: Partial<TuiMessage> & { id: string; role: TuiMessage['role']; content: string }): TuiMessage {
@@ -22,7 +23,7 @@ function entry(m: TuiMessage): ChatEntry {
 describe('MessageList', () => {
   it('renders nothing visible for an empty entry list', () => {
     const { lastFrame } = render(
-      <MessageList agentName="Prism" entries={[]} expandedMessageId={null} />,
+      <MessageList agentName="Prism" selfName={null} entries={[]} expandedMessageId={null} />,
     );
     expect(lastFrame() ?? '').toBe('');
   });
@@ -30,11 +31,36 @@ describe('MessageList', () => {
   it('labels user messages with "You" and shows the content', () => {
     const entries = [entry(makeMsg({ id: 'u1', role: 'USER', content: 'hi there' }))];
     const { lastFrame } = render(
-      <MessageList agentName="Prism" entries={entries} expandedMessageId={null} />,
+      <MessageList agentName="Prism" selfName={null} entries={entries} expandedMessageId={null} />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('You');
     expect(frame).toContain('hi there');
+  });
+
+  it("labels a message by someone else in the conversation with that person's name", () => {
+    // The names of the recorded session in src/protocol/fixtures/v2-session.json.
+    const entries = [
+      entry(makeMsg({ id: 'u1', role: 'USER', content: 'from the web', senderName: 'Ada Example' })),
+      entry(makeMsg({ id: 'u2', role: 'USER', content: 'from here', senderName: 'Grace Example' })),
+    ];
+    const { lastFrame } = render(
+      <MessageList agentName="Prism" selfName="Grace Example" entries={entries} expandedMessageId={null} />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('▌ Ada Example');
+    expect(frame).toContain('▌ You');
+    expect(frame).not.toContain('▌ Grace Example');
+  });
+
+  it('says why a message was not sent', () => {
+    const entries: ChatEntry[] = [
+      { ...entry(makeMsg({ id: 'u1', role: 'USER', content: 'hello' })), local: true, failed: 'There is no such conversation.' },
+    ];
+    const { lastFrame } = render(
+      <MessageList agentName="Prism" selfName={null} entries={entries} expandedMessageId={null} />,
+    );
+    expect(lastFrame() ?? '').toContain('✗ not sent: There is no such conversation.');
   });
 
   it('renders a 📎 suffix line for messages with attachments', () => {
@@ -51,7 +77,7 @@ describe('MessageList', () => {
       ),
     ];
     const { lastFrame } = render(
-      <MessageList agentName="Prism" entries={entries} expandedMessageId={null} />,
+      <MessageList agentName="Prism" selfName={null} entries={entries} expandedMessageId={null} />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('see attached');
@@ -61,7 +87,7 @@ describe('MessageList', () => {
   it('renders no attachment line when attachments is null', () => {
     const entries = [entry(makeMsg({ id: 'u3', role: 'USER', content: 'plain', attachments: null }))];
     const { lastFrame } = render(
-      <MessageList agentName="Prism" entries={entries} expandedMessageId={null} />,
+      <MessageList agentName="Prism" selfName={null} entries={entries} expandedMessageId={null} />,
     );
     expect(lastFrame() ?? '').not.toContain('📎');
   });
@@ -69,7 +95,7 @@ describe('MessageList', () => {
   it('labels agent messages with the agent name and renders markdown content', () => {
     const entries = [entry(makeMsg({ id: 'a1', role: 'AGENT', content: 'reply text' }))];
     const { lastFrame } = render(
-      <MessageList agentName="Bobby" entries={entries} expandedMessageId={null} />,
+      <MessageList agentName="Bobby" selfName={null} entries={entries} expandedMessageId={null} />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('Bobby');
@@ -96,7 +122,7 @@ describe('MessageList', () => {
       ),
     ];
     const { lastFrame } = render(
-      <MessageList agentName="Prism" entries={entries} expandedMessageId={null} />,
+      <MessageList agentName="Prism" selfName={null} entries={entries} expandedMessageId={null} />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('used shell_exec');
@@ -124,7 +150,7 @@ describe('MessageList', () => {
       ),
     ];
     const { lastFrame } = render(
-      <MessageList agentName="Prism" entries={entries} expandedMessageId="a4" />,
+      <MessageList agentName="Prism" selfName={null} entries={entries} expandedMessageId="a4" />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('cut');
@@ -152,7 +178,7 @@ describe('MessageList', () => {
       ),
     ];
     const { lastFrame } = render(
-      <MessageList agentName="Prism" entries={entries} expandedMessageId="a5" />,
+      <MessageList agentName="Prism" selfName={null} entries={entries} expandedMessageId="a5" />,
     );
     expect(lastFrame() ?? '').not.toContain('cut');
   });
@@ -177,7 +203,7 @@ describe('MessageList', () => {
       ),
     ];
     const { lastFrame } = render(
-      <MessageList agentName="Prism" entries={entries} expandedMessageId="a3" />,
+      <MessageList agentName="Prism" selfName={null} entries={entries} expandedMessageId="a3" />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('TOOL_IN');

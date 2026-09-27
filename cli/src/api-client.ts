@@ -6,9 +6,9 @@
  * `loadConfig().httpUrl` (override via `PRISM_HTTP_URL`); the trailing slash
  * is stripped so path concatenation stays clean.
  *
- * Unlike the WebSocket adapter's `loadHistory()` (which swallows errors and
- * renders an empty history), these are mutation/query calls whose failures
- * must surface — non-2xx responses throw `ApiError`.
+ * Unlike the WebSocket adapter's history reload (which keeps the screen as
+ * it is on an error), these are mutation/query calls whose failures must
+ * surface — non-2xx responses throw `ApiError`.
  */
 
 import fs from 'fs';

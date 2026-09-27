@@ -14,11 +14,11 @@ const { adapterStub, apiStub } = vi.hoisted(() => {
       events: new EventEmitter(),
       markConnected: vi.fn(),
       markDisconnected: vi.fn(),
-      loadHistory: vi.fn().mockResolvedValue([]),
-      startNewSession: vi.fn().mockResolvedValue(undefined),
+      resumeThread: vi.fn().mockResolvedValue(undefined),
+      startNewSession: vi.fn().mockResolvedValue('thread-mine'),
       listSessions: vi.fn().mockResolvedValue([]),
-      submitUserMessage: vi.fn().mockResolvedValue(undefined),
-      cancel: vi.fn(),
+      submitUserMessage: vi.fn(),
+      cancel: vi.fn().mockReturnValue(true),
     },
     // Panels reach for the apiClient singleton on mount (SchedulesPanel calls
     // listCronTasks, ConfigPanel calls getDetails), so stub it to keep the
@@ -76,9 +76,10 @@ describe('App', () => {
     adapterStub.events.removeAllListeners();
     adapterStub.markConnected.mockClear();
     adapterStub.markDisconnected.mockClear();
-    adapterStub.loadHistory.mockClear();
-    adapterStub.loadHistory.mockResolvedValue([]);
-    adapterStub.startNewSession.mockClear();
+    adapterStub.resumeThread.mockReset();
+    adapterStub.resumeThread.mockResolvedValue(undefined);
+    adapterStub.startNewSession.mockReset();
+    adapterStub.startNewSession.mockResolvedValue('thread-mine');
     adapterStub.listSessions.mockClear();
     adapterStub.submitUserMessage.mockClear();
     apiStub.listCronTasks.mockClear();
@@ -87,7 +88,29 @@ describe('App', () => {
     apiStub.getThreadGoal.mockClear();
     apiStub.uploadAttachment.mockClear();
     apiStub.deleteAttachment.mockClear();
-    adapterStub.cancel.mockClear();
+    adapterStub.cancel.mockReset();
+    adapterStub.cancel.mockReturnValue(true);
+  });
+
+  /** Let Ink settle: an adapter event and the frame it causes are more than one macrotask apart. */
+  const settle = async (times = 3) => {
+    for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
+  };
+
+  const turn = (state: 'queued' | 'running' | 'idle', extra: Record<string, unknown> = {}) =>
+    adapterStub.events.emit('turn', { threadId: 'thread-mine', state, ...extra });
+
+  const stored = (overrides: Record<string, unknown>) => ({
+    id: 'm1',
+    threadId: 'thread-mine',
+    role: 'AGENT',
+    content: 'stored',
+    triggeredBy: 'USER_INPUT',
+    toolCalls: null,
+    blocks: null,
+    createdAt: new Date().toISOString(),
+    senderName: null,
+    ...overrides,
   });
 
   it('renders the header, input box, and status bar on mount', () => {
@@ -149,39 +172,6 @@ describe('App', () => {
       unmount();
     });
 
-    it('accepts the first frames before the session thread id is known', async () => {
-      // startNewSession resolves asynchronously, so activeThreadId is undefined
-      // for the first moments of a launch. Strict equality there would drop the
-      // opening turn's readings entirely.
-      adapterStub.startNewSession.mockResolvedValueOnce(undefined);
-      const { lastFrame, unmount } = render(<App {...baseProps} />);
-
-      adapterStub.events.emit('contextUsage', usage({ threadId: 'whatever', usedPercent: 12 }));
-      await flush();
-
-      expect(lastFrame() ?? '').toContain('| context 12%');
-      unmount();
-    });
-
-    it('ignores a frame for a different thread once the thread is known', async () => {
-      adapterStub.startNewSession.mockResolvedValueOnce('thread-mine');
-      const { lastFrame, unmount } = render(<App {...baseProps} />);
-      await flush();
-      await flush();
-
-      adapterStub.events.emit('contextUsage', usage({ threadId: 'thread-mine', usedPercent: 40 }));
-      await flush();
-      expect(lastFrame() ?? '').toContain('| context 40%');
-
-      // An off-screen heartbeat/cron/goal turn broadcasts for its own thread and
-      // must not overwrite the reading for the one on screen.
-      adapterStub.events.emit('contextUsage', usage({ threadId: 'thread-other', usedPercent: 99 }));
-      await flush();
-      expect(lastFrame() ?? '').toContain('| context 40%');
-      expect(lastFrame() ?? '').not.toContain('99%');
-      unmount();
-    });
-
     it('prefers the model the runtime reports over the local settings copy', async () => {
       const { lastFrame, unmount } = render(<App {...baseProps} />);
       await flush();
@@ -199,71 +189,157 @@ describe('App', () => {
   it('starts a fresh conversation thread on mount', () => {
     const { unmount } = render(<App {...baseProps} />);
     expect(adapterStub.startNewSession).toHaveBeenCalledTimes(1);
-    // Clean slate: no history replay on open.
-    expect(adapterStub.loadHistory).not.toHaveBeenCalled();
+    // Clean slate: no other thread is resumed.
+    expect(adapterStub.resumeThread).not.toHaveBeenCalled();
     unmount();
   });
 
-  it('shows the in-flight row while status is "thinking"', async () => {
+  it('asks for the conversation again while the runtime cannot make one', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    adapterStub.startNewSession.mockResolvedValueOnce(undefined);
+    const { unmount } = render(<App {...baseProps} />);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(adapterStub.startNewSession).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(adapterStub.startNewSession).toHaveBeenCalledTimes(2);
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows the in-flight row while the turn is running', async () => {
     const { lastFrame, unmount } = render(<App {...baseProps} />);
-    // Flip status; App listens on the adapter event bus.
-    adapterStub.events.emit('status', 'thinking');
-    // Let React flush.
-    await new Promise((r) => setImmediate(r));
+    turn('running');
+    await settle();
     expect(lastFrame() ?? '').toContain('thinking');
     unmount();
   });
 
-  it("ignores a turn on another thread, and keeps its own turn's status", async () => {
-    adapterStub.startNewSession.mockResolvedValueOnce('thread-mine');
-    const flush = async (times = 3) => {
-      for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
-    };
+  it('shows that a queued message is waiting', async () => {
+    const { lastFrame, unmount } = render(<App {...baseProps} />);
+    turn('queued');
+    await settle();
+    expect(lastFrame() ?? '').toContain('waiting for another conversation');
+    unmount();
+  });
+
+  it('keeps the spinner through a reply, and clears it only when the turn goes idle', async () => {
     const { lastFrame, unmount } = render(<App {...baseProps} />);
     try {
-      await flush();
-      await flush();
-
-      // A Slack turn for the same user starts: nothing runs in this session.
-      adapterStub.events.emit('status', 'thinking', undefined, 'thread-slack');
-      await flush();
-      expect(lastFrame() ?? '').not.toContain('thinking');
-
-      // This session's turn starts, and the Slack turn ending must not clear it.
-      adapterStub.events.emit('status', 'thinking', undefined, 'thread-mine');
-      adapterStub.events.emit('status', 'idle', undefined, 'thread-slack');
-      await flush();
+      turn('running');
+      adapterStub.events.emit('message', stored({ content: 'first step done' }));
+      await settle();
+      expect(lastFrame() ?? '').toContain('first step done');
       expect(lastFrame() ?? '').toContain('thinking');
+
+      turn('idle', { outcome: 'completed' });
+      await settle();
+      expect(lastFrame() ?? '').not.toContain('thinking');
     } finally {
       unmount();
     }
   });
 
-  it('ends a turn it saw start before the session had a thread', async () => {
-    adapterStub.startNewSession.mockResolvedValueOnce('thread-mine');
-    const flush = async (times = 3) => {
-      for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
-    };
+  it('shows why a turn failed', async () => {
     const { lastFrame, unmount } = render(<App {...baseProps} />);
-    try {
-      // The connect-time replay of a running Slack turn lands before the thread is pinned.
-      adapterStub.events.emit('status', 'thinking', undefined, 'thread-slack');
-      await flush();
-      await flush();
-      expect(lastFrame() ?? '').toContain('thinking');
+    turn('running');
+    turn('idle', { outcome: 'failed', error: 'The model is not available.' });
+    await settle();
+    expect(lastFrame() ?? '').toContain('The model is not available.');
+    unmount();
+  });
 
-      adapterStub.events.emit('status', 'idle', undefined, 'thread-slack');
-      await flush();
-      expect(lastFrame() ?? '').not.toContain('thinking');
+  it('draws a sent message at once, and takes the stored copy in its place', async () => {
+    const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
+    try {
+      await settle();
+      stdin.write('hello-once');
+      await settle();
+      stdin.write('\r');
+      await settle();
+
+      const [{ id }] = adapterStub.submitUserMessage.mock.calls[0] as [{ id: string }];
+      expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      adapterStub.events.emit('message', stored({ id, role: 'USER', content: 'hello-once' }));
+      await settle();
+
+      expect((lastFrame() ?? '').split('hello-once')).toHaveLength(2);
     } finally {
       unmount();
     }
+  });
+
+  it('says a message was not sent when the runtime refuses it', async () => {
+    const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
+    try {
+      stdin.write('refused-one');
+      await settle();
+      stdin.write('\r');
+      await settle();
+
+      const [{ id }] = adapterStub.submitUserMessage.mock.calls[0] as [{ id: string }];
+      adapterStub.events.emit('sendFailed', { messageId: id, code: 'failed', message: 'It could not be stored.' });
+      await settle();
+
+      expect(lastFrame() ?? '').toContain('not sent: It could not be stored.');
+    } finally {
+      unmount();
+    }
+  });
+
+  it('labels a message by someone else in the conversation with their name', async () => {
+    const { lastFrame, unmount } = render(<App {...baseProps} />);
+    try {
+      adapterStub.events.emit('welcome', { name: 'Grace Example' });
+      adapterStub.events.emit('message', stored({ id: 'u1', role: 'USER', content: 'from the web', senderName: 'Ada Example' }));
+      adapterStub.events.emit('message', stored({ id: 'u2', role: 'USER', content: 'from here', senderName: 'Grace Example' }));
+      await settle();
+
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('▌ Ada Example');
+      expect(frame).toContain('▌ You');
+    } finally {
+      unmount();
+    }
+  });
+
+  it('replaces the stored messages with a reloaded history, keeping its own notices', async () => {
+    const { lastFrame, unmount } = render(<App {...baseProps} />);
+    try {
+      adapterStub.events.emit('message', stored({ id: 'old', content: 'compacted-away' }));
+      turn('idle', { outcome: 'failed', error: 'a-local-notice' });
+      await settle();
+      expect(lastFrame() ?? '').toContain('a-local-notice');
+
+      adapterStub.events.emit('history', [stored({ id: 'new', content: 'summary-tail' })]);
+      await settle();
+
+      const frame = lastFrame() ?? '';
+      expect(frame).not.toContain('compacted-away');
+      expect(frame).toContain('summary-tail');
+      expect(frame).toContain('a-local-notice');
+    } finally {
+      unmount();
+    }
+  });
+
+  it('tells the person to update when the runtime refuses this protocol', async () => {
+    const { lastFrame, unmount } = render(<App {...baseProps} />);
+    adapterStub.events.emit('unsupported', 'Update prism-cli, then start it again.');
+    adapterStub.events.emit('status', 'error', 'update prism-cli');
+    await settle();
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Update prism-cli, then start it again.');
+    expect(frame).toContain('error: update prism-cli');
+    unmount();
   });
 
   it('keeps the composer live while thinking, so typing still lands in it', async () => {
     const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
     try {
-      adapterStub.events.emit('status', 'thinking');
+      turn('running');
       await new Promise((r) => setImmediate(r));
 
       stdin.write('wait, not that');
@@ -281,7 +357,7 @@ describe('App', () => {
     // runtime, which folds it into the turn already running on the thread.
     const { stdin, unmount } = render(<App {...baseProps} />);
     try {
-      adapterStub.events.emit('status', 'thinking');
+      turn('running');
       await new Promise((r) => setImmediate(r));
 
       stdin.write('actually, skip the tests');
@@ -329,12 +405,30 @@ describe('App', () => {
     await new Promise((r) => setImmediate(r));
   };
 
-  it('cancels the in-flight turn and shows a marker when Escape is pressed while thinking', async () => {
+  it('cancels the running turn on Escape, and marks it stopped when the turn ends so', async () => {
     const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
     try {
-      adapterStub.events.emit('status', 'thinking');
-      await new Promise((r) => setImmediate(r));
+      turn('running');
+      await settle();
       expect(lastFrame() ?? '').toContain('thinking');
+
+      await pressEscape(stdin);
+      expect(adapterStub.cancel).toHaveBeenCalled();
+
+      turn('idle', { outcome: 'cancelled' });
+      await settle();
+      expect(lastFrame() ?? '').toContain('Response stopped');
+      expect(lastFrame() ?? '').not.toContain('thinking');
+    } finally {
+      unmount();
+    }
+  });
+
+  it('marks a queued message stopped at once on Escape', async () => {
+    const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
+    try {
+      turn('queued');
+      await settle();
 
       await pressEscape(stdin);
 
@@ -343,6 +437,15 @@ describe('App', () => {
     } finally {
       unmount();
     }
+  });
+
+  it('marks a turn stopped from another device', async () => {
+    const { lastFrame, unmount } = render(<App {...baseProps} />);
+    turn('running');
+    turn('idle', { outcome: 'cancelled' });
+    await settle();
+    expect(lastFrame() ?? '').toContain('Response stopped');
+    unmount();
   });
 
   it('ignores Escape when the agent is idle (nothing to cancel)', async () => {
@@ -593,8 +696,7 @@ describe('App', () => {
     await flushAll();
 
     expect(adapterStub.submitUserMessage).toHaveBeenCalledWith({
-      userId: 'local',
-      agentId: 'remote',
+      id: expect.any(String),
       text: 'summarize this',
       attachmentIds: ['att-1'],
     });
@@ -613,8 +715,7 @@ describe('App', () => {
     await flushAll();
 
     expect(adapterStub.submitUserMessage).toHaveBeenCalledWith({
-      userId: 'local',
-      agentId: 'remote',
+      id: expect.any(String),
       text: '',
       attachmentIds: ['att-1'],
     });
@@ -669,19 +770,21 @@ describe('App', () => {
     unmount();
   });
 
-  it('resumes the highlighted thread on Enter, replays its history, and pins sends to it', async () => {
-    adapterStub.loadHistory.mockResolvedValueOnce([
-      {
-        id: 'm1',
-        threadId: 'thread-alpha',
-        role: 'AGENT',
-        content: 'earlier reply',
-        triggeredBy: 'USER_INPUT',
-        toolCalls: null,
-        blocks: null,
-        createdAt: new Date().toISOString(),
-      },
-    ]);
+  it('resumes the highlighted thread on Enter and replays its history', async () => {
+    adapterStub.resumeThread.mockImplementationOnce(async () => {
+      adapterStub.events.emit('history', [
+        {
+          id: 'm1',
+          threadId: 'thread-alpha',
+          role: 'AGENT',
+          content: 'earlier reply',
+          triggeredBy: 'USER_INPUT',
+          toolCalls: null,
+          blocks: null,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+    });
     const { lastFrame, stdin, unmount } = render(<App {...resumeProps} />);
     /**
      * Let Ink settle. Two sequential state updates (the resolved session thread,
@@ -695,29 +798,22 @@ describe('App', () => {
     await flush();
     await flush();
 
-    // History replay is pinned to the picked thread — no resume endpoint, no
-    // server-side "latest" mutation.
-    expect(adapterStub.loadHistory).toHaveBeenCalledWith({
-      userId: 'local',
-      agentId: 'remote',
-      threadId: 'thread-alpha',
-    });
+    // The adapter shows the picked thread: its history, and every send names it.
+    expect(adapterStub.resumeThread).toHaveBeenCalledWith('thread-alpha');
     const frame = lastFrame() ?? '';
     expect(frame).toContain('chat with Prism'); // chat surface now showing
     expect(frame).toContain('earlier reply'); // replayed history
 
-    // A subsequent send carries the resumed thread id explicitly.
     stdin.write('continue please');
     await flush();
     stdin.write('\r');
     await flush();
     expect(adapterStub.submitUserMessage).toHaveBeenCalledWith({
-      userId: 'local',
-      agentId: 'remote',
+      id: expect.any(String),
       text: 'continue please',
-      threadId: 'thread-alpha',
       attachmentIds: [],
     });
+    expect(adapterStub.startNewSession).not.toHaveBeenCalled();
     unmount();
   });
 
@@ -726,7 +822,7 @@ describe('App', () => {
     // here we verify the picker is dismissed and no history was loaded.
     const { lastFrame, stdin, unmount } = render(<App {...resumeProps} />);
     await pressEscape(stdin);
-    expect(adapterStub.loadHistory).not.toHaveBeenCalled();
+    expect(adapterStub.resumeThread).not.toHaveBeenCalled();
     expect(lastFrame() ?? '').not.toContain('Resume session');
     unmount();
   });
