@@ -54,8 +54,12 @@ export interface ChatListener {
 
 export interface ChatConnectionState {
   status: ConnectionStatus;
-  /** The name the Lens Agents sign-in gave this connection, or null. */
-  you: string | null;
+  /**
+   * The name the Lens Agents sign-in gave this connection, null when it gave
+   * none, and undefined until the first `welcome` says which. Until then nobody
+   * knows whose messages are whose.
+   */
+  you: string | null | undefined;
   /** The threads that are working or waiting. A thread that is not listed is idle. */
   turns: Readonly<Record<string, 'queued' | 'running'>>;
   /** Our messages whose stored copy has not arrived, sending or failed, oldest first. */
@@ -114,7 +118,7 @@ export class ChatConnection {
   private held: InboundFrame[] = [];
   private readonly listeners = new Set<ChatListener>();
   private readonly subscribers = new Set<() => void>();
-  private state: ChatConnectionState = { status: 'disconnected', you: null, turns: {}, pending: [] };
+  private state: ChatConnectionState = { status: 'disconnected', you: undefined, turns: {}, pending: [] };
 
   constructor(url: () => string) {
     this.url = url;
@@ -176,7 +180,7 @@ export class ChatConnection {
       isCompacted: false,
       createdAt: new Date().toISOString(),
       attachments,
-      senderName: this.state.you,
+      senderName: this.state.you ?? null,
       delivery: 'sending',
     };
     const entry: OutboxEntry = { row, attachmentIds: attachments.map((a) => a.id) };

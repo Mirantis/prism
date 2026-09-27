@@ -196,12 +196,13 @@ export class HomePage extends BasePage {
   }
 
   /**
-   * Get agent response messages.
-   * Agent messages render as div.group.flex.gap-3 (left-aligned with avatar).
-   * User messages also have .group.flex.gap-3 but include .justify-end.
+   * Get agent response messages. Each row names its role: `agent`, `user` for
+   * this browser's own messages, `participant` for someone else's. Both of the
+   * last two are USER messages, and a participant's sits on the left like the
+   * agent's, so side alone no longer says who spoke.
    */
   getAgentMessages() {
-    return this.page.locator('.group.flex.gap-3:not(.justify-end)');
+    return this.page.locator('[data-message-role="agent"]');
   }
 
   /**
@@ -222,7 +223,7 @@ export class HomePage extends BasePage {
    * wait can return immediately. Assert a reply before reloading, never after.
    */
   async waitForAgentResponse(timeout = 60_000) {
-    const selector = '.group.flex.gap-3:not(.justify-end)';
+    const selector = '[data-message-role="agent"]';
     const baseline = sendBaseline.get(this.page) ?? 0;
     await this.page.waitForFunction(
       ({ sel, prevCount }) => {

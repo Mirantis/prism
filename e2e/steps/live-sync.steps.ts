@@ -1,10 +1,13 @@
 /**
  * One conversation on every open client: a second browser context on the same agent.
  *
- * A context's name travels as `x-forwarded-user`, the header the Lens Agents
- * ingress writes for a signed-in caller; the dev server's socket proxy passes it on.
+ * Another person is a socket of its own that names them in `x-forwarded-user`,
+ * the header the Lens Agents ingress writes for a signed-in caller. A browser
+ * cannot set a header on a WebSocket handshake, so they are not a browser here.
  */
 
+import { randomUUID } from 'node:crypto';
+import WebSocket from 'ws';
 import { createBdd } from 'playwright-bdd';
 import { expect, type BrowserContext, type Page } from '@playwright/test';
 import { HomePage } from '../pages/home.page';
@@ -18,17 +21,18 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // Scenarios run one at a time (workers: 1), so module state belongs to the current scenario.
 const threadIds = new Map<string, string>();
 let second: { context: BrowserContext; page: Page } | undefined;
+const others: WebSocket[] = [];
 
 function secondPage(): Page {
   if (!second) throw new Error('No second browser is open');
   return second.page;
 }
 
-/** User bubbles are right-aligned (`justify-end`), agent bubbles are not. */
+/** A person's messages, this browser's own or someone else's. */
 function userMessages(page: Page, text: string) {
   return page
     .getByTestId('chat-messages')
-    .locator('.group.flex.gap-3.justify-end')
+    .locator('[data-message-role="user"], [data-message-role="participant"]')
     .filter({ hasText: text });
 }
 
@@ -66,6 +70,7 @@ async function openThread(page: Page, title: string) {
 After(async () => {
   await second?.context.close();
   second = undefined;
+  for (const socket of others.splice(0)) socket.close();
   threadIds.clear();
 });
 
@@ -78,37 +83,64 @@ Given('an older web conversation titled {string}', async ({}, title: string) => 
   threadIds.set(title, await dbHelper.createThread(getCurrentAgentId(), { title, createdAt }));
 });
 
-async function openSecondBrowser(
-  browser: import('@playwright/test').Browser,
-  baseURL: string | undefined,
-  title: string,
-  name?: string,
-) {
-  const context = await browser.newContext({
-    baseURL,
-    ...(name ? { extraHTTPHeaders: { 'x-forwarded-user': name } } : {}),
-  });
-  const page = await context.newPage();
-  await page.addInitScript(watchTypingIndicator);
-  second = { context, page };
-  await openThread(page, title);
-}
-
-Given('I am signed in as {string}', async ({ page }, name: string) => {
-  await page.context().setExtraHTTPHeaders({ 'x-forwarded-user': name });
-});
-
 Given(
   'a second browser has the {string} conversation open',
   async ({ browser, baseURL }, title: string) => {
-    await openSecondBrowser(browser, baseURL, title);
+    const context = await browser.newContext({ baseURL });
+    const page = await context.newPage();
+    await page.addInitScript(watchTypingIndicator);
+    second = { context, page };
+    await openThread(page, title);
   },
 );
 
-Given(
-  'a second browser, signed in as {string}, has the {string} conversation open',
-  async ({ browser, baseURL }, name: string, title: string) => {
-    await openSecondBrowser(browser, baseURL, title, name);
+When(
+  '{string} sends {string} to the {string} conversation',
+  async ({}, name: string, text: string, title: string) => {
+    const threadId = threadIds.get(title);
+    if (!threadId) throw new Error(`No conversation titled "${title}"`);
+    const socket = new WebSocket('ws://localhost:3003/api/ws', { headers: { 'x-forwarded-user': name } });
+    others.push(socket);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+    // Fails at once if the runtime closes the socket, rather than at the step timeout.
+    const answer = (match: (frame: { type: string; re?: string }) => boolean) =>
+      new Promise<{ type: string }>((resolve, reject) => {
+        const onMessage = (data: WebSocket.RawData) => {
+          const frame = JSON.parse(data.toString()) as { type: string; re?: string };
+          if (!match(frame)) return;
+          socket.off('message', onMessage);
+          resolve(frame);
+        };
+        socket.on('message', onMessage);
+        socket.once('close', (code) => reject(new Error(`the runtime closed the socket (${code})`)));
+      });
+    const welcomed = answer((f) => f.type === 'welcome');
+    socket.send(JSON.stringify({ type: 'hello', id: 'hello', payload: { protocol: 2, client: { name: 'e2e' } } }));
+    await welcomed;
+    const confirmed = answer((f) => f.re === 'participant-send');
+    socket.send(
+      JSON.stringify({
+        type: 'send',
+        id: 'participant-send',
+        payload: { message: { id: randomUUID(), threadId, content: text, attachmentIds: [] } },
+      }),
+    );
+    expect((await confirmed).type).toBe('ack');
+  },
+);
+
+Then(
+  'I see the message {string} from {string} among the other participants',
+  async ({ page }, text: string, name: string) => {
+    const message = page
+      .getByTestId('chat-messages')
+      .locator('[data-message-role="participant"]')
+      .filter({ hasText: text });
+    await expect(message).toHaveCount(1, { timeout: 30_000 });
+    await expect(message.getByTestId('message-sender')).toHaveText(name);
   },
 );
 
@@ -117,13 +149,11 @@ When('I open the {string} conversation', async ({ page }, title: string) => {
 });
 
 Then(
-  'the second browser shows the message {string} from {string} while the agent works',
-  async ({}, text: string, name: string) => {
+  'the second browser shows the message {string} while the agent works',
+  async ({}, text: string) => {
     const page = secondPage();
     const home = new HomePage(page);
-    const message = userMessages(page, text);
-    await expect(message).toHaveCount(1, { timeout: 30_000 });
-    await expect(message.getByTestId('message-sender')).toHaveText(name);
+    await expect(userMessages(page, text)).toHaveCount(1, { timeout: 30_000 });
     // The agent sleeps in its shell, so the reply is some seconds away. Any
     // client can stop the agent, so STOP shows here too.
     await expect(home.typingIndicator).toBeVisible();

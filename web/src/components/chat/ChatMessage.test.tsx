@@ -21,10 +21,10 @@ function userMessage(overrides: Partial<TranscriptMessage> = {}): TranscriptMess
   };
 }
 
-function renderMessage(message: TranscriptMessage, viewerName: string | null) {
+function renderMessage(message: TranscriptMessage, viewerName: string | null | undefined) {
   const onRetry = vi.fn();
   const onEdit = vi.fn();
-  render(
+  const { container } = render(
     <ChatMessage
       message={message}
       agentName="Prism"
@@ -34,20 +34,29 @@ function renderMessage(message: TranscriptMessage, viewerName: string | null) {
       onEdit={onEdit}
     />,
   );
-  return { onRetry, onEdit };
+  return { onRetry, onEdit, container };
 }
 
 describe('ChatMessage', () => {
   afterEach(cleanup);
 
-  it("names the sender of somebody else's message", () => {
-    renderMessage(userMessage(), 'Grace Example');
+  it("puts somebody else's message on the participants' side, under their name", () => {
+    const { container } = renderMessage(userMessage(), 'Grace Example');
     expect(screen.getByTestId('message-sender').textContent).toBe('Ada Example');
+    expect(container.querySelector('[data-message-role="participant"]')).not.toBeNull();
+    expect(container.querySelector('.justify-end')).toBeNull();
   });
 
-  it('shows your own message without a name', () => {
-    renderMessage(userMessage(), 'Ada Example');
+  it('draws every message as your own until the runtime says who you are', () => {
+    const { container } = renderMessage(userMessage(), undefined);
     expect(screen.queryByTestId('message-sender')).toBeNull();
+    expect(container.querySelector('[data-message-role="user"]')).not.toBeNull();
+  });
+
+  it('shows your own message on its own side, without a name', () => {
+    const { container } = renderMessage(userMessage(), 'Ada Example');
+    expect(screen.queryByTestId('message-sender')).toBeNull();
+    expect(container.querySelector('[data-message-role="user"]')?.className).toContain('justify-end');
   });
 
   it('offers Retry and Edit on a message that was not stored', () => {
