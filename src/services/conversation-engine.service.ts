@@ -6,12 +6,12 @@
  * responses via the local MessageDeliveryService.
  */
 
-import { EventEmitter } from 'node:events';
 import { callModel } from '../lib/model-call';
 import { messageDeliveryService, PublishOptions } from './message-delivery.service';
 import { conversationService } from './conversation.service';
 import { threadTurnService, type PendingMessage } from './thread-turn.service';
 import { threadTitleService } from './thread-title.service';
+import { conversationThreadActivityService } from './conversation-thread-activity.service';
 import { attachmentService } from './attachment.service';
 import { invokeStream } from '../invoke';
 import { ToolCallRecord, InvokeStep, UIBlock, ChannelOrigin } from '../types';
@@ -19,6 +19,7 @@ import type { SteeringMessage } from '../prompts/context-builder';
 import type { ToolLifecycleListener } from '../lib/tool-lifecycle';
 import { logger } from '../logger';
 import prisma from '../lib/prisma';
+import type { ConversationMessage } from '@prisma/client';
 import { getGateRequest } from '../lib/classification';
 
 import { isTelemetryEnabled, trackEvent, langfuseTelemetry } from '../lib/telemetry';
@@ -47,20 +48,6 @@ interface StreamedTurn {
   agentMessage: Awaited<ReturnType<typeof messageDeliveryService.publish>> | undefined;
 }
 
-/**
- * A turn is running for this user, or the last one has ended — emitted as `'activity'`.
- *
- * Nothing here knows about WebSockets: transports subscribe and show whatever they show
- * while the agent works, matching `thread-title.service.ts`. It covers every exchange the
- * engine runs, including the ones the runtime starts itself, such as the continuation
- * after a computer help request.
- */
-export interface TurnActivityEvent {
-  userId: string;
-  threadId: string;
-  active: boolean;
-}
-
 // ============================================================================
 // Types
 // ============================================================================
@@ -84,6 +71,13 @@ export interface ChatInput {
    * own queue (the WS gateway) and want to fall back to it.
    */
   steerOnly?: boolean;
+  /**
+   * The message is already stored, by `acceptUserMessage`, and this call only
+   * runs or steers the turn for it. A transport that must confirm a message the
+   * moment it is safe — before any turn, and whatever happens to the turn — stores
+   * first and hands the row over here.
+   */
+  stored?: { titleSet: string | null };
   metadata?: {
     channel?: 'websocket' | 'slack';
     channelId?: string;
@@ -124,31 +118,37 @@ export interface ChatResponse {
 // ============================================================================
 
 class ConversationEngineService {
-  readonly events = new EventEmitter();
   /**
-   * Exchanges running per thread. An exchange waiting for the thread is one of them, so a
-   * turn queued behind another holds the report open rather than ending it early.
+   * How to stop each exchange running on a thread, whoever started it. A person
+   * can stop the agent from any client, and a turn the runtime began itself — the
+   * continuation after a computer help request — is theirs to stop too.
    */
-  private readonly running = new Map<string, number>();
+  private readonly cancellers = new Map<string, Set<AbortController>>();
 
   /**
-   * The threads a turn is running on.
+   * Stop every exchange on a thread. Answers whether there was one to stop.
    *
-   * A client that connects part-way through one has missed the announcement, and asking
-   * is the only way it can show the agent working rather than waiting for the next turn.
+   * A turn cancelled this way does not start another for messages still waiting
+   * on it; those stay in history, as after any cancel.
    */
-  runningThreads(): string[] {
-    return [...this.running.keys()];
+  cancel(threadId: string): boolean {
+    const running = this.cancellers.get(threadId);
+    if (!running?.size) return false;
+    for (const controller of running) controller.abort();
+    return true;
   }
 
-  /** Announce the first exchange on a thread, and the end of the last. */
-  private turnActivity(userId: string, threadId: string, active: boolean): void {
-    const count = (this.running.get(threadId) ?? 0) + (active ? 1 : -1);
-    if (count > 0) this.running.set(threadId, count);
-    else this.running.delete(threadId);
-    if (active ? count === 1 : count === 0) {
-      this.events.emit('activity', { userId, threadId, active });
+  private registerCanceller(threadId: string, controller: AbortController): () => void {
+    let set = this.cancellers.get(threadId);
+    if (!set) {
+      set = new Set();
+      this.cancellers.set(threadId, set);
     }
+    set.add(controller);
+    return () => {
+      set.delete(controller);
+      if (set.size === 0 && this.cancellers.get(threadId) === set) this.cancellers.delete(threadId);
+    };
   }
 
   /**
@@ -306,7 +306,7 @@ Respond with exactly one word: WORTHY or SKIP`;
         content: '',
         toolCalls: [],
         durationMs: Date.now() - startTime,
-        titleSet: null,
+        titleSet: input.stored?.titleSet ?? null,
         steered: false,
       };
     }
@@ -316,8 +316,10 @@ Respond with exactly one word: WORTHY or SKIP`;
     // path the await lands inside `claim.run()`, where a failed write releases the
     // thread instead of leaving it taken forever — hence the no-op catch: the
     // mutex wait in between can be long, and an unobserved rejection would be an
-    // unhandled rejection.
-    const stored = this.storeUserMessage(input, threadId);
+    // unhandled rejection. A message the caller already stored is not written again.
+    const stored: Promise<{ titleSet: string | null }> = input.stored
+      ? Promise.resolve(input.stored)
+      : this.acceptUserMessage(input, threadId);
     stored.catch(() => {});
 
     if (!claim) {
@@ -386,7 +388,17 @@ Respond with exactly one word: WORTHY or SKIP`;
     // follow-ups — so a background goal turn can't interleave between them.
     // A `create_goal` call made during this turn kicks its loop fire-and-forget;
     // that loop's first turn queues behind this and runs once we release.
-    this.turnActivity(userId, threadId, true);
+    //
+    // The thread is working from here, and a turn that waits for the mutex is part of
+    // that work. invokeStream marks the thread too, which covers turns that do not
+    // come through the engine.
+    const endActivity = conversationThreadActivityService.beginThread(threadId, userId);
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    if (input.abortSignal?.aborted) controller.abort();
+    else input.abortSignal?.addEventListener('abort', abort, { once: true });
+    const unregister = this.registerCanceller(threadId, controller);
+    const abortSignal = controller.signal;
     try {
       await claim.run(async () => {
         titleSet = (await stored).titleSet;
@@ -418,7 +430,7 @@ Respond with exactly one word: WORTHY or SKIP`;
             channelContext,
             metadata,
             runtimeNotices,
-            abortSignal: input.abortSignal,
+            abortSignal,
             onToolEvent: input.onToolEvent,
             // Drained at every step boundary, so a message handed to us — even one
             // that arrived while we were still storing or waiting for the mutex —
@@ -434,7 +446,7 @@ Respond with exactly one word: WORTHY or SKIP`;
           // A canceled turn must not auto-start another one — the user asked to
           // stop. Anything still pending is cleared when the claim releases, and
           // stays in history for the next turn (see thread-turn.service.ts).
-          if (input.abortSignal?.aborted) break;
+          if (abortSignal.aborted) break;
 
           // Messages that landed after the last step boundary never reached the
           // model. Answer them in ONE coalesced follow-up rather than a turn each,
@@ -454,7 +466,9 @@ Respond with exactly one word: WORTHY or SKIP`;
         }
       });
     } finally {
-      this.turnActivity(userId, threadId, false);
+      unregister();
+      input.abortSignal?.removeEventListener('abort', abort);
+      endActivity();
     }
 
     const response = responseTexts.join('\n\n');
@@ -484,20 +498,28 @@ Respond with exactly one word: WORTHY or SKIP`;
   }
 
   /**
-   * Store the incoming user message and do the per-message side work that
-   * belongs to it regardless of whether it gets a turn of its own: naming a new
-   * thread and linking any uploaded files.
+   * Store an incoming user message and do the per-message side work that belongs
+   * to it whether or not it gets a turn of its own: naming a new thread, linking
+   * any uploaded files, and showing it on every client of a channel that mirrors
+   * the transcript.
+   *
+   * The one place a user message is written. The chat socket calls it directly,
+   * before any turn, so it can confirm the message the moment it is stored; every
+   * other caller reaches it through `chat()`. `id`, when given, becomes the row's
+   * id — see `MessageInput.id`.
    */
-  private async storeUserMessage(
-    input: ChatInput,
+  async acceptUserMessage(
+    input: Pick<ChatInput, 'agentId' | 'userId' | 'message' | 'attachmentIds' | 'metadata'>,
     threadId: string,
-  ): Promise<{ titleSet: string | null }> {
+    id?: string,
+  ): Promise<{ message: ConversationMessage; titleSet: string | null }> {
     const { agentId, userId, message, metadata } = input;
 
     // The message text arrives already prefixed with the sender's mention
     // marker when the caller (e.g. the Slack adapter) wants the agent to see it
     // in conversation history — see `slackAdapterService.buildSenderTaggedContent`.
     const { message: userMessage, titleSet } = await conversationService.addMessage(threadId, {
+      ...(id ? { id } : {}),
       content: message,
       role: 'USER',
       triggeredBy: 'USER_INPUT',
@@ -523,7 +545,15 @@ Respond with exactly one word: WORTHY or SKIP`;
       await attachmentService.linkToMessage(input.attachmentIds, userMessage.id, threadId);
     }
 
-    return { titleSet };
+    // Every client of the chat socket shows the whole conversation, so the
+    // person's own words reach the other devices — and the sender, which reads
+    // the copy as the confirmation that it was stored. Slack shows a message
+    // itself.
+    if (metadata?.channel === 'websocket') {
+      await messageDeliveryService.mirror(userId, userMessage);
+    }
+
+    return { message: userMessage, titleSet };
   }
 
   /**

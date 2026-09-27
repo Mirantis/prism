@@ -1,53 +1,59 @@
 /**
  * WebSocket Adapter Service (Agent-Runtime)
  *
- * Implements ChannelAdapter for WebSocket message delivery.
- * Calls the local WebSocket gateway directly (no HTTP round-trip).
+ * Implements ChannelAdapter for the chat socket. A message becomes a `message`
+ * event on the numbered stream, which every connected client reads and a client
+ * that was away is sent again when it resumes.
  */
 
 import { ChannelAdapter, ChannelContext, DeliverableMessage } from './channel-adapter.interface';
-import { webSocketGatewayService } from './websocket-gateway.service';
+import { eventStreamService } from './event-stream.service';
+import type { MessageEventPayload } from '../protocol/chat-protocol';
 import { logger } from '../logger';
 
-// ============================================================================
-// WebSocket Adapter
-// ============================================================================
+/** The wire form of a stored message, for any role. */
+export function messageEventPayload(message: DeliverableMessage): MessageEventPayload {
+  // Handle createdAt as both Date and string since it crosses HTTP boundary
+  const createdAt = message.createdAt instanceof Date
+    ? message.createdAt.toISOString()
+    : String(message.createdAt);
+  return {
+    id: message.id,
+    threadId: message.threadId,
+    role: message.role,
+    content: message.content,
+    triggeredBy: message.triggeredBy,
+    toolCalls: (message.toolCalls as unknown[] | null) ?? null,
+    blocks: (message.blocks as unknown[] | null) ?? null,
+    isCompacted: message.isCompacted,
+    createdAt,
+    // Shared-file metadata (no bytes); clients render download chips and
+    // fetch bytes from GET /agents/attachments/:id.
+    attachments: (message.attachments as MessageEventPayload['attachments']) ?? null,
+    senderName: message.senderName ?? null,
+  };
+}
 
 class WebSocketAdapterService implements ChannelAdapter {
   readonly name = 'websocket';
+  readonly mirrorsTranscript = true;
 
   async deliver(userId: string, message: DeliverableMessage, _channelContext?: ChannelContext): Promise<void> {
     try {
-      // Handle createdAt as both Date and string since it crosses HTTP boundary
-      const createdAt = message.createdAt instanceof Date
-        ? message.createdAt.toISOString()
-        : String(message.createdAt);
-
-      webSocketGatewayService.broadcast(userId, {
-        type: 'chat',
-        payload: {
-          id: message.id,
-          threadId: message.threadId,
-          role: message.role,
-          content: message.content,
-          triggeredBy: message.triggeredBy,
-          toolCalls: message.toolCalls,
-          blocks: message.blocks,
-          isCompacted: message.isCompacted,
-          createdAt,
-          // Shared-file metadata (no bytes); the SPA renders download chips and
-          // fetches bytes from GET /agents/attachments/:id.
-          attachments: message.attachments ?? null,
-        },
-      });
+      eventStreamService.publish({ type: 'message', payload: messageEventPayload(message) });
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error('WebSocket deliver failed for user %s: %s', userId, msg);
     }
   }
 
-  async isUserConnected(userId: string): Promise<boolean> {
-    return webSocketGatewayService.isConnected(userId);
+  /**
+   * Always connected. The stream keeps what it is given for a client that is
+   * away right now, which is exactly the case this used to answer "no" for — and
+   * a reply that was never published could never be sent again.
+   */
+  async isUserConnected(_userId: string): Promise<boolean> {
+    return true;
   }
 
   async initialize(): Promise<void> {

@@ -38,7 +38,7 @@ describe('DatabaseThreadProvider views', () => {
 
     expect(mockFindMany).toHaveBeenCalledWith({
       where: { threadId: 't1', internalStep: false },
-      orderBy: { createdAt: 'asc' },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
   });
 
@@ -53,7 +53,7 @@ describe('DatabaseThreadProvider views', () => {
     await provider.getRecentMessages('t1', 5, { view: 'client' });
     expect(mockFindMany).toHaveBeenLastCalledWith({
       where: { threadId: 't1', internalStep: false },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: 5,
     });
   });

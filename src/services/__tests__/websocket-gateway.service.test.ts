@@ -1,46 +1,27 @@
 /**
- * WebSocket Gateway Service Tests (Agent-Runtime)
+ * WebSocket Gateway Service Tests: voice and dictation on the chat socket.
  *
- * Tests for WebSocketGatewayService covering:
- * - Connection management
- * - Message handling (chat, ping)
- * - Message modes (followup, collect)
- * - Notification delivery
- * - Authentication (JWT decode, no verification — backend already verified)
+ * Calls and dictations keep their frames under protocol v2; only the envelope
+ * gained an id. The protocol itself — hello, resume, requests and their answers —
+ * is covered against real sockets in `websocket-gateway.protocol.test.ts`.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Use vi.hoisted to create mocks that are available before vi.mock hoisting
 const {
-  mockChat,
   mockConfig,
-  mockRunningThreads,
-  mockTitleEvents,
-  mockTurnEvents,
   mockVoice,
   mockComputerAccess,
-  mockComputerStatus,
-  mockHelpList,
   mockDictations,
   mockRealtime,
 } = vi.hoisted(() => {
-  const listeners: Array<(payload: unknown) => void> = [];
-  const turnListeners: Array<(payload: unknown) => void> = [];
   const computerListeners: Array<() => void> = [];
   return {
-    // The desktop's access gate. The gateway subscribes to its 'change' event in the
-    // constructor; a test drives a transition with `.emit('change')`.
     mockComputerAccess: {
       on: (_event: string, cb: () => void) => {
         computerListeners.push(cb);
       },
-      emit: (_event: string) => {
-        computerListeners.forEach((cb) => cb());
-      },
     },
-    mockComputerStatus: vi.fn(),
-    mockHelpList: vi.fn(),
     // Every dictation the gateway built, with the options it was built with, so a test
     // can drive its signal and see what reached it.
     mockDictations: [] as Array<{
@@ -51,8 +32,6 @@ const {
       cancel: ReturnType<typeof vi.fn>;
     }>,
     mockRealtime: { configured: true },
-    mockChat: vi.fn(),
-    mockRunningThreads: vi.fn(() => [] as string[]),
     // The voice session owner. The gateway carries its control frames and its
     // audio, so what a test asserts here is what goes to which socket.
     mockVoice: {
@@ -69,38 +48,20 @@ const {
       availableCodingAgents: ['claude-code'],
       ownerUserId: '00000000-0000-0000-0000-000000000001',
     },
-    // The engine's turn bracket, which the gateway turns into `status` frames.
-    mockTurnEvents: {
-      on: (_event: string, cb: (payload: unknown) => void) => {
-        turnListeners.push(cb);
-      },
-      emit: (_event: string, payload: unknown) => {
-        turnListeners.forEach((cb) => cb(payload));
-      },
-    },
-    // Minimal EventEmitter stub. The gateway subscribes via `.on('change', cb)`
-    // in its constructor; tests drive broadcasts via `.emit('change', payload)`.
-    mockTitleEvents: {
-      on: (_event: string, cb: (payload: unknown) => void) => {
-        listeners.push(cb);
-      },
-      emit: (_event: string, payload: unknown) => {
-        listeners.forEach((cb) => cb(payload));
-      },
-    },
   };
 });
 
-vi.mock('../conversation-engine.service', () => ({
-  conversationEngineService: {
-    chat: mockChat,
-    events: mockTurnEvents,
-    runningThreads: mockRunningThreads,
-  },
+vi.mock('../inbound-message.service', () => ({
+  inboundMessageService: { accept: vi.fn(), cancel: vi.fn(), turns: () => [] },
+  InboundMessageError: class extends Error {},
+}));
+
+vi.mock('../conversation.service', () => ({
+  conversationService: { events: { on: vi.fn() } },
 }));
 
 vi.mock('../thread-title.service', () => ({
-  threadTitleService: { events: mockTitleEvents, onFirstUserMessage: vi.fn() },
+  threadTitleService: { events: { on: vi.fn() }, onFirstUserMessage: vi.fn() },
 }));
 
 vi.mock('../../config', () => ({
@@ -131,11 +92,11 @@ vi.mock('../meeting/openai-endpoint', () => ({
 // Stubbed rather than driven for real: `computer.service` imports the browser
 // automation the desktop runs on, which a unit test must not load.
 vi.mock('../computer/computer.service', () => ({
-  computerService: { access: mockComputerAccess, status: mockComputerStatus },
+  computerService: { access: mockComputerAccess, status: vi.fn() },
 }));
 
 vi.mock('../computer/computer-help.service', () => ({
-  computerHelpService: { list: mockHelpList },
+  computerHelpService: { list: vi.fn() },
 }));
 
 // Import after mocking
@@ -161,871 +122,25 @@ function createMockWebSocket() {
     // the agent's speech, so a test that stalls a client sets it.
     bufferedAmount: 0,
     isAlive: true,
-    userId: 'test-user-id',
   };
-}
-
-/** A desktop nobody is using: the shape `computerService.status()` returns. */
-const IDLE_COMPUTER = {
-  available: true,
-  running: false,
-  starting: false,
-  paused: false,
-  controller: null,
-  owner: null,
-  waiting: [],
-};
-
-/**
- * Let the computer frame finish being built. The payload needs a database read, so
- * `publishComputer` sends on a later microtask than the change that asked for it.
- */
-function settleComputer(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
-}
-
-/** Build a minimal JWT with the given payload (no signature verification needed). */
-function buildTestJwt(payload: Record<string, unknown>): string {
-  const header = Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'test-key' })).toString('base64url');
-  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  return `${header}.${body}.fake-signature`;
 }
 
 describe('Requirement: WebSocket Gateway', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-
-    // Most tests use 'agent-123' as the message's agentId; pin AGENT_ID to
-    // the same value so the access-control check passes.
     mockConfig.agentId = 'agent-123';
 
-    // Reset service state
-    service.connections = new Map();
-    service.messageQueues = new Map();
-    service.processingUsers = new Set();
-    service.activeRequests = new Map();
+    service.connections = [];
     service.voiceSocket = null;
     service.voiceStarting = null;
     service.dictations = new Map();
     mockDictations.length = 0;
     mockRealtime.configured = true;
-    service.computerPublishing = false;
-    service.computerChangedAgain = false;
 
-    // Default mock responses. `steered: false` is the engine's answer when no
-    // turn is live on the thread, which is what the gateway checks before
-    // falling back to its own queue.
-    mockChat.mockResolvedValue({ steered: false });
     // The session opens, which is the case every voice test but the refusal wants.
     mockVoice.start.mockResolvedValue(true);
     mockVoice.stop.mockResolvedValue(undefined);
     mockVoice.pushAudio.mockReturnValue(undefined);
-    // An idle desktop with nothing queued and no help asked for.
-    mockComputerStatus.mockReturnValue(IDLE_COMPUTER);
-    mockHelpList.mockResolvedValue([]);
-  });
-
-  describe('Scenario: Connection tracking', () => {
-    it('should track connection for user', () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-
-      service.connections.set(userId, [ws]);
-
-      expect(service.isConnected(userId)).toBe(true);
-      expect(service.getConnectionCount(userId)).toBe(1);
-    });
-
-    it('should support multiple connections per user', () => {
-      const userId = 'user-123';
-      const ws1 = createMockWebSocket();
-      const ws2 = createMockWebSocket();
-
-      service.connections.set(userId, [ws1, ws2]);
-
-      expect(service.getConnectionCount(userId)).toBe(2);
-    });
-
-    it('should return false for non-connected user', () => {
-      expect(service.isConnected('user-nonexistent')).toBe(false);
-      expect(service.getConnectionCount('user-nonexistent')).toBe(0);
-    });
-  });
-
-  describe('Scenario: JWT decode (no verification)', () => {
-    it('should extract userId from a valid JWT token via query param', () => {
-      const token = buildTestJwt({ sub: 'user-abc' });
-      const req = { url: `/api/ws?token=${token}`, headers: { host: 'localhost:3003' } };
-      const result = service.extractUserAuth(req);
-      expect(result).toEqual({ userId: 'user-abc', token });
-    });
-
-    it('should extract userId from Authorization header', () => {
-      const token = buildTestJwt({ sub: 'user-xyz' });
-      const req = { url: '/api/ws', headers: { host: 'localhost:3003', authorization: `Bearer ${token}` } };
-      const result = service.extractUserAuth(req);
-      expect(result).toEqual({ userId: 'user-xyz', token });
-    });
-
-    it('falls back to the owner user when no token is provided', () => {
-      const req = { url: '/api/ws', headers: { host: 'localhost:3003' } };
-      expect(service.extractUserAuth(req)).toEqual({
-        userId: mockConfig.ownerUserId,
-        token: '',
-      });
-    });
-
-    it('should return null for a malformed token', () => {
-      const req = { url: '/api/ws?token=not-a-jwt', headers: { host: 'localhost:3003' } };
-      expect(service.extractUserAuth(req)).toBeNull();
-    });
-
-    it('should return null when sub is missing from payload', () => {
-      const token = buildTestJwt({ email: 'no-sub@example.com' });
-      const req = { url: `/api/ws?token=${token}`, headers: { host: 'localhost:3003' } };
-      expect(service.extractUserAuth(req)).toBeNull();
-    });
-  });
-
-  describe('Scenario: Message handling', () => {
-    it('should respond to ping with pong', async () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-
-      await service.handleMessage(ws, userId, { type: 'ping' });
-
-      expect(ws.send).toHaveBeenCalledWith(JSON.stringify({ type: 'pong' }));
-    });
-
-    it('should process chat message', async () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-      ws.readyState = 1;
-
-      service.connections.set(userId, [ws]);
-
-      await service.handleChatMessage(ws, userId, {
-        type: 'chat',
-        mode: 'followup',
-        content: 'Hello',
-        threadId: 'thread-123',
-        agentId: 'agent-123',
-      });
-
-      expect(mockChat).toHaveBeenCalledWith(
-        expect.objectContaining({
-          userId,
-          message: 'Hello',
-          threadId: 'thread-123',
-          agentId: 'agent-123',
-          metadata: { channel: 'websocket' },
-        })
-      );
-    });
-
-    it('should reject empty messages', async () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-
-      await service.handleChatMessage(ws, userId, {
-        type: 'chat',
-        content: '   ',
-        agentId: 'agent-123',
-      });
-
-      expect(ws.send).toHaveBeenCalledWith(JSON.stringify({
-        type: 'error',
-        payload: { error: 'Empty message' },
-      }));
-      expect(mockChat).not.toHaveBeenCalled();
-    });
-
-    it('accepts a file-only message (empty text but attachments present) and forwards ids', async () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-      ws.readyState = 1;
-      service.connections.set(userId, [ws]);
-
-      await service.handleChatMessage(ws, userId, {
-        type: 'chat',
-        content: '',
-        attachmentIds: ['att-1'],
-        agentId: 'agent-123',
-      });
-
-      expect(mockChat).toHaveBeenCalledWith(
-        expect.objectContaining({ message: '', attachmentIds: ['att-1'], agentId: 'agent-123' }),
-      );
-    });
-
-    it('forwards attachmentIds alongside text content', async () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-      ws.readyState = 1;
-      service.connections.set(userId, [ws]);
-
-      await service.handleChatMessage(ws, userId, {
-        type: 'chat',
-        content: 'see attached',
-        attachmentIds: ['att-1', 'att-2'],
-        agentId: 'agent-123',
-      });
-
-      expect(mockChat).toHaveBeenCalledWith(
-        expect.objectContaining({ message: 'see attached', attachmentIds: ['att-1', 'att-2'] }),
-      );
-    });
-
-    it('still rejects when there is neither text nor attachments', async () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-
-      await service.handleChatMessage(ws, userId, {
-        type: 'chat',
-        content: '',
-        attachmentIds: [],
-        agentId: 'agent-123',
-      });
-
-      expect(ws.send).toHaveBeenCalledWith(JSON.stringify({
-        type: 'error',
-        payload: { error: 'Empty message' },
-      }));
-      expect(mockChat).not.toHaveBeenCalled();
-    });
-
-    it('should handle unknown message type', async () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-
-      await service.handleMessage(ws, userId, { type: 'unknown' as any });
-
-      expect(ws.send).toHaveBeenCalledWith(JSON.stringify({
-        type: 'error',
-        payload: { error: 'Unknown message type' },
-      }));
-    });
-  });
-
-  describe('Scenario: Cancellation', () => {
-    /** Start a chat turn that blocks on a controllable chat promise. */
-    function startBlockingTurn(userId: string, threadId?: string) {
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-      ws.readyState = 1;
-      service.connections.set(userId, [ws]);
-
-      let capturedSignal: AbortSignal | undefined;
-      let settle!: (action: 'resolve' | 'reject', value?: unknown) => void;
-      mockChat.mockImplementation((input: { abortSignal?: AbortSignal }) => {
-        capturedSignal = input.abortSignal;
-        return new Promise<void>((resolve, reject) => {
-          settle = (action, value) =>
-            action === 'resolve' ? resolve(undefined) : reject(value);
-        });
-      });
-
-      // Kick off processing; it stays pending on the blocking chat promise.
-      const processing = service.handleChatMessage(ws, userId, {
-        type: 'chat', mode: 'followup', content: 'Hello', agentId: 'agent-123', threadId,
-      });
-
-      return { ws, processing, getSignal: () => capturedSignal, settle: (...a: ['resolve' | 'reject', unknown?]) => settle(...a) };
-    }
-
-    it('aborts the in-flight request when a cancel message arrives', async () => {
-      const userId = 'user-123';
-      const turn = startBlockingTurn(userId);
-      await Promise.resolve();
-
-      expect(turn.getSignal()?.aborted).toBe(false);
-
-      await service.handleMessage(turn.ws, userId, { type: 'cancel' });
-
-      expect(turn.getSignal()?.aborted).toBe(true);
-      // The terminal status is broadcast immediately on cancel (not only in
-      // processMessage's finally) so other tabs reset promptly — assert it
-      // before the blocking chat settles.
-      expect(turn.ws.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: 'status', payload: { processing: false } }),
-      );
-
-      turn.settle('resolve');
-      await turn.processing;
-    });
-
-    it('answers a cancel at once, without waiting for the turn to unwind', async () => {
-      const userId = 'user-123';
-      const turn = startBlockingTurn(userId);
-      await Promise.resolve();
-
-      await service.handleMessage(turn.ws, userId, { type: 'cancel' });
-
-      expect(turn.ws.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: 'status', payload: { processing: false } }),
-      );
-      turn.settle('resolve');
-      await turn.processing;
-    });
-
-    it('names the cancelled thread, so a turn on another thread keeps running', async () => {
-      const userId = 'user-123';
-      const turn = startBlockingTurn(userId, 'thread-a');
-      await Promise.resolve();
-
-      await service.handleMessage(turn.ws, userId, { type: 'cancel' });
-
-      expect(turn.ws.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: 'status', payload: { processing: false, threadId: 'thread-a' } }),
-      );
-      turn.settle('resolve');
-      await turn.processing;
-    });
-
-    it('does not surface an error envelope when the turn was cancelled', async () => {
-      const userId = 'user-123';
-      const turn = startBlockingTurn(userId);
-      await Promise.resolve();
-
-      await service.handleMessage(turn.ws, userId, { type: 'cancel' });
-      // The aborted generation rejects (as the SDK would); the gateway must
-      // swallow it rather than show an error bubble.
-      turn.settle('reject', Object.assign(new Error('aborted'), { name: 'AbortError' }));
-      await turn.processing;
-
-      const sentTypes = turn.ws.send.mock.calls.map((c: [string]) => JSON.parse(c[0]).type);
-      expect(sentTypes).not.toContain('error');
-    });
-
-    it('clears any queued followups on cancel so none auto-start', () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-      service.messageQueues.set(userId, [{ message: { type: 'chat' }, resolve: () => {} }]);
-      service.activeRequests.set(userId, { controller: new AbortController() });
-
-      service.handleMessage(ws, userId, { type: 'cancel' });
-
-      expect(service.messageQueues.has(userId)).toBe(false);
-    });
-
-    it('cancel is a no-op when nothing is in flight', () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-      expect(() => service.handleMessage(ws, userId, { type: 'cancel' })).not.toThrow();
-    });
-  });
-
-  describe('Scenario: Message modes', () => {
-    it('should queue messages if user is processing', async () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-      ws.readyState = 1;
-
-      service.connections.set(userId, [ws]);
-      service.processingUsers.add(userId);
-
-      await service.handleChatMessage(ws, userId, {
-        type: 'chat',
-        mode: 'followup',
-        content: 'Queued message',
-        threadId: 'thread-1',
-        agentId: 'agent-123',
-      });
-
-      // The live turn is on another thread (the engine reported not-steered), so
-      // the message falls back to this queue.
-      const queue = service.messageQueues.get(userId);
-      expect(queue).toHaveLength(1);
-      expect(queue[0].message.content).toBe('Queued message');
-    });
-
-    it('queues without offering when the message does not name a thread', async () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-      ws.readyState = 1;
-
-      service.connections.set(userId, [ws]);
-      service.processingUsers.add(userId);
-
-      await service.handleChatMessage(ws, userId, {
-        type: 'chat',
-        mode: 'followup',
-        content: 'Queued message',
-        agentId: 'agent-123',
-      });
-
-      // Nothing to steer without a thread id, and probing anyway would have the
-      // engine resolve one — creating a thread for a message steer-only mode
-      // neither stores nor answers.
-      expect(mockChat).not.toHaveBeenCalled();
-      expect(service.messageQueues.get(userId)).toHaveLength(1);
-    });
-
-    it('hands a message to the live turn instead of queueing it', async () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-      ws.readyState = 1;
-
-      service.connections.set(userId, [ws]);
-      service.processingUsers.add(userId);
-      // The engine folded the message into the turn already running on its
-      // thread, so the user's correction lands mid-work rather than waiting out
-      // the turn in this queue.
-      mockChat.mockResolvedValue({ steered: true });
-
-      await service.handleChatMessage(ws, userId, {
-        type: 'chat',
-        mode: 'followup',
-        content: 'no need to run tests',
-        threadId: 'thread-1',
-        agentId: 'agent-123',
-      });
-
-      expect(mockChat).toHaveBeenCalledWith(
-        expect.objectContaining({ steerOnly: true, threadId: 'thread-1' }),
-      );
-      expect(service.messageQueues.get(userId)).toBeUndefined();
-    });
-
-    it('steers a message that omits agentId, same as one that sends it', async () => {
-      // The prism-cli omits `agentId` on the wire. Reading it off the message
-      // made those clients queue-only, with no steering at all.
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-      ws.readyState = 1;
-
-      service.connections.set(userId, [ws]);
-      service.processingUsers.add(userId);
-      mockChat.mockResolvedValue({ steered: true });
-
-      await service.handleChatMessage(ws, userId, {
-        type: 'chat',
-        mode: 'followup',
-        content: 'no need to run tests',
-        threadId: 'thread-1',
-      });
-
-      expect(mockChat).toHaveBeenCalledWith(
-        expect.objectContaining({
-          steerOnly: true,
-          threadId: 'thread-1',
-          agentId: mockConfig.agentId,
-        }),
-      );
-      expect(service.messageQueues.get(userId)).toBeUndefined();
-    });
-
-    it('should process collect mode messages', async () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-      ws.readyState = 1;
-
-      service.connections.set(userId, [ws]);
-
-      await service.handleChatMessage(ws, userId, {
-        type: 'chat',
-        mode: 'collect',
-        content: 'Collect me',
-        agentId: 'agent-123',
-      });
-
-      expect(mockChat).toHaveBeenCalled();
-    });
-
-    it('should default to followup mode if not specified', async () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-      ws.readyState = 1;
-
-      service.connections.set(userId, [ws]);
-
-      await service.handleChatMessage(ws, userId, {
-        type: 'chat',
-        content: 'No mode specified',
-        agentId: 'agent-123',
-      });
-
-      expect(mockChat).toHaveBeenCalled();
-    });
-  });
-
-  describe('Scenario: Broadcast', () => {
-    it('should broadcast to all user connections', () => {
-      const userId = 'user-123';
-      const ws1 = createMockWebSocket();
-      const ws2 = createMockWebSocket();
-      ws1.readyState = 1;
-      ws2.readyState = 1;
-
-      service.connections.set(userId, [ws1, ws2]);
-
-      const message = { type: 'status', content: 'Update' };
-      service.broadcast(userId, message);
-
-      expect(ws1.send).toHaveBeenCalledWith(JSON.stringify(message));
-      expect(ws2.send).toHaveBeenCalledWith(JSON.stringify(message));
-    });
-
-    it('should do nothing if user has no connections', () => {
-      service.broadcast('user-nonexistent', { type: 'status' });
-      // Should not throw
-    });
-  });
-
-  describe('Scenario: Thread title broadcast', () => {
-    // Title generation is owned by threadTitleService (channel-agnostic) and
-    // triggered from the conversation engine. The gateway only translates its
-    // 'change' events — wired in the constructor — into 'thread' broadcasts.
-    it('broadcasts a thread title change emitted by threadTitleService', () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-      ws.readyState = 1;
-      service.connections.set(userId, [ws]);
-
-      mockTitleEvents.emit('change', {
-        userId,
-        threadId: 'thread-123',
-        title: 'Database Schema Migration',
-      });
-
-      expect(ws.send).toHaveBeenCalledWith(
-        JSON.stringify({
-          type: 'thread',
-          payload: { threadId: 'thread-123', title: 'Database Schema Migration' },
-        }),
-      );
-    });
-
-    it('does not throw when the titled thread has no connected client', () => {
-      expect(() =>
-        mockTitleEvents.emit('change', {
-          userId: 'user-without-connection',
-          threadId: 'thread-123',
-          title: 'Database Schema Migration',
-        }),
-      ).not.toThrow();
-    });
-  });
-
-  describe('Scenario: Computer state broadcast', () => {
-    // The desktop's access gate owns the transitions (a wait starting or ending,
-    // control moving, a help request raised or resolved) and emits one 'change' for
-    // each. The gateway translates that into a 'computer' frame for every open
-    // client, whichever caller queued for the desktop.
-    const owner = '00000000-0000-0000-0000-000000000001';
-
-    function connect() {
-      const ws = createMockWebSocket();
-      ws.userId = owner;
-      ws.readyState = 1;
-      service.connections.set(owner, [ws]);
-      return ws;
-    }
-
-    it('broadcasts the desktop state when the access gate reports a change', async () => {
-      const ws = connect();
-      const waiting = { ...IDLE_COMPUTER, waiting: [{ id: 'use-1', threadId: 't1', mode: 'chat' }] };
-      mockComputerStatus.mockReturnValue(waiting);
-      mockHelpList.mockResolvedValue([{ type: 'computer_help', id: 'h1', status: 'waiting' }]);
-
-      mockComputerAccess.emit('change');
-      await settleComputer();
-
-      expect(ws.send).toHaveBeenCalledWith(
-        JSON.stringify({
-          type: 'computer',
-          payload: {
-            ...waiting,
-            help: [{ type: 'computer_help', id: 'h1', status: 'waiting' }],
-          },
-        }),
-      );
-    });
-
-    it('sends one frame, holding the newest state, for a burst of changes', async () => {
-      const ws = connect();
-      const latest = { ...IDLE_COMPUTER, running: true, owner: { id: 'use-1', threadId: 't1', mode: 'chat' } };
-
-      // A turn taking a free desktop emits twice in one tick: once queued, once
-      // holding it. One frame reports it as held, where a frame per change would
-      // raise the waiting banner for a wait that was already over.
-      mockComputerAccess.emit('change');
-      mockComputerStatus.mockReturnValue(latest);
-      mockComputerAccess.emit('change');
-      await settleComputer();
-
-      expect(ws.send).toHaveBeenCalledTimes(1);
-      expect(ws.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: 'computer', payload: { ...latest, help: [] } }),
-      );
-      // And one database read, not one per change.
-      expect(mockHelpList).toHaveBeenCalledTimes(1);
-    });
-
-    it('sends a second frame for a change that lands while one is being built', async () => {
-      const ws = connect();
-      let finishRead: (help: unknown[]) => void = () => {};
-      mockHelpList.mockReturnValueOnce(new Promise<unknown[]>((resolve) => (finishRead = resolve)));
-
-      mockComputerAccess.emit('change');
-      await settleComputer();
-      expect(ws.send).not.toHaveBeenCalled();
-
-      // The wait ends while the first frame is still waiting on its help read.
-      const latest = { ...IDLE_COMPUTER, running: true };
-      mockComputerStatus.mockReturnValue(latest);
-      mockComputerAccess.emit('change');
-      finishRead([]);
-      await settleComputer();
-
-      expect(ws.send).toHaveBeenCalledTimes(2);
-      expect(ws.send).toHaveBeenLastCalledWith(
-        JSON.stringify({ type: 'computer', payload: { ...latest, help: [] } }),
-      );
-    });
-
-    it('sends nothing while no agent is loaded', async () => {
-      const ws = connect();
-      mockConfig.agentId = undefined;
-
-      mockComputerAccess.emit('change');
-      await settleComputer();
-
-      expect(ws.send).not.toHaveBeenCalled();
-      expect(mockHelpList).not.toHaveBeenCalled();
-    });
-
-    it('does not throw when nobody is connected', async () => {
-      expect(() => mockComputerAccess.emit('change')).not.toThrow();
-      await settleComputer();
-      expect(mockHelpList).toHaveBeenCalledTimes(1);
-    });
-
-    it('sends the desktop state to a socket that has just connected', async () => {
-      const ws = createMockWebSocket();
-      const waiting = { ...IDLE_COMPUTER, waiting: [{ id: 'use-1', threadId: 't1', mode: 'cron' }] };
-      mockComputerStatus.mockReturnValue(waiting);
-
-      service.handleConnection(ws, { url: '/api/ws', headers: { host: 'localhost:3003' } });
-      await settleComputer();
-
-      // The handshake first, then the state — so a client that reconnects mid-wait
-      // shows the banner without asking for it.
-      expect(ws.send.mock.calls.map(([frame]: [string]) => JSON.parse(frame).type)).toEqual([
-        'status',
-        'computer',
-      ]);
-      expect(ws.send).toHaveBeenLastCalledWith(
-        JSON.stringify({ type: 'computer', payload: { ...waiting, help: [] } }),
-      );
-    });
-  });
-
-  /**
-   * The engine brackets every exchange and this gateway is the transport for it, so a
-   * turn the runtime starts on its own — the continuation after a computer help request
-   * — reports as one the user sent.
-   */
-  describe('Scenario: Processing indicator', () => {
-    it('reports a turn the engine started, to every connection of that user', () => {
-      const userId = 'user-123';
-      const first = createMockWebSocket();
-      const second = createMockWebSocket();
-      first.readyState = 1;
-      second.readyState = 1;
-      service.connections.set(userId, [first, second]);
-
-      mockTurnEvents.emit('activity', { userId, threadId: 'thread-1', active: true });
-
-      const frame = JSON.stringify({
-        type: 'status',
-        payload: { processing: true, threadId: 'thread-1' },
-      });
-      expect(first.send).toHaveBeenCalledWith(frame);
-      expect(second.send).toHaveBeenCalledWith(frame);
-    });
-
-    it('tells a connection that arrives mid-turn what is already running', () => {
-      mockRunningThreads.mockReturnValue(['thread-1']);
-      const ws = createMockWebSocket();
-      ws.readyState = 1;
-
-      service.handleConnection(ws, { url: '/api/ws', headers: {} });
-
-      expect(ws.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: 'status', payload: { processing: true, threadId: 'thread-1' } }),
-      );
-    });
-
-    it('says nothing extra to one that arrives between turns', () => {
-      mockRunningThreads.mockReturnValue([]);
-      const ws = createMockWebSocket();
-      ws.readyState = 1;
-
-      service.handleConnection(ws, { url: '/api/ws', headers: {} });
-
-      const frames = ws.send.mock.calls.map((call: [string]) => JSON.parse(call[0]));
-      expect(frames).toEqual([{ type: 'status', payload: { connected: true } }]);
-    });
-
-    it('reports the end of one the same way', () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.readyState = 1;
-      service.connections.set(userId, [ws]);
-
-      mockTurnEvents.emit('activity', { userId, threadId: 'thread-1', active: false });
-
-      expect(ws.send).toHaveBeenCalledWith(
-        JSON.stringify({
-          type: 'status',
-          payload: { processing: false, threadId: 'thread-1' },
-        }),
-      );
-    });
-  });
-
-  describe('Scenario: Access control', () => {
-    beforeEach(() => {
-      mockConfig.agentId = 'agent-bobby';
-    });
-
-    it('accepts a message when agentId matches (auth is handled by Lens Agents inbound routing)', async () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-      ws.readyState = 1;
-      service.connections.set(userId, [ws]);
-
-      await service.processMessage(ws, userId, {
-        type: 'chat',
-        content: 'hi Bobby',
-        agentId: 'agent-bobby',
-      });
-
-      expect(mockChat).toHaveBeenCalled();
-    });
-
-    it('rejects when agentId does not match AGENT_ID', async () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-      ws.readyState = 1;
-      service.connections.set(userId, [ws]);
-
-      await service.processMessage(ws, userId, {
-        type: 'chat',
-        content: 'hi Alice',
-        agentId: 'agent-alice',
-      });
-
-      expect(mockChat).not.toHaveBeenCalled();
-      expect(ws.send).toHaveBeenCalledWith(
-        JSON.stringify({
-          type: 'error',
-          payload: { error: 'Forbidden: this runtime serves a different agent' },
-        })
-      );
-    });
-  });
-
-  describe('Scenario: Queue processing', () => {
-    it('should process queued messages after current completes', async () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-      ws.userId = userId;
-      ws.readyState = 1;
-
-      service.connections.set(userId, [ws]);
-
-      // Add a message to queue
-      service.messageQueues.set(userId, [{
-        message: { type: 'chat', content: 'Queued', agentId: 'agent-123' },
-        resolve: vi.fn(),
-      }]);
-
-      // Process first message (will then process queue)
-      await service.processMessage(ws, userId, {
-        type: 'chat',
-        content: 'First',
-        agentId: 'agent-123',
-      });
-
-      // Chat should be called twice (first + queued)
-      expect(mockChat).toHaveBeenCalledTimes(2);
-    });
-  });
-
-  describe('Scenario: Close all connections', () => {
-    it('should close all connections on shutdown', () => {
-      const ws1 = createMockWebSocket();
-      const ws2 = createMockWebSocket();
-
-      service.connections.set('user-1', [ws1]);
-      service.connections.set('user-2', [ws2]);
-
-      // Mock wss clients
-      service.wss = {
-        clients: new Set([ws1, ws2]),
-      };
-
-      service.closeAll();
-
-      expect(ws1.close).toHaveBeenCalledWith(1001, 'Server shutting down');
-      expect(ws2.close).toHaveBeenCalledWith(1001, 'Server shutting down');
-      expect(service.connections.size).toBe(0);
-    });
-  });
-
-  describe('Scenario: Connection removal', () => {
-    it('should remove specific connection', () => {
-      const userId = 'user-123';
-      const ws1 = createMockWebSocket();
-      const ws2 = createMockWebSocket();
-
-      service.connections.set(userId, [ws1, ws2]);
-
-      service.removeConnection(userId, ws1);
-
-      const connections = service.connections.get(userId);
-      expect(connections).toHaveLength(1);
-      expect(connections[0]).toBe(ws2);
-    });
-
-    it('should remove user from map when last connection removed', () => {
-      const userId = 'user-123';
-      const ws = createMockWebSocket();
-
-      service.connections.set(userId, [ws]);
-
-      service.removeConnection(userId, ws);
-
-      expect(service.connections.has(userId)).toBe(false);
-    });
-
-    it('should handle removing from non-existent user', () => {
-      const ws = createMockWebSocket();
-
-      // Should not throw
-      service.removeConnection('user-nonexistent', ws);
-    });
   });
 
   describe('Scenario: Voice over the socket', () => {
@@ -1033,7 +148,7 @@ describe('Requirement: WebSocket Gateway', () => {
 
     /** Deliver a control frame the way a client's message does. */
     async function frame(ws: MockSocket, message: unknown): Promise<void> {
-      await service.handleMessage(ws, 'user-123', message);
+      await service.dispatch(ws, { id: 'req-1', payload: {}, ...(message as object) });
     }
 
     /** Deliver one binary audio frame, as `ws` reports it. */
@@ -1058,7 +173,7 @@ describe('Requirement: WebSocket Gateway', () => {
       await frame(ws, { type: 'voice_start', payload: { threadId: 'thread-1' } });
 
       expect(mockVoice.start).toHaveBeenCalledWith(
-        expect.objectContaining({ userId: 'user-123', agentId: 'agent-123', threadId: 'thread-1' })
+        expect.objectContaining({ userId: mockConfig.ownerUserId, agentId: 'agent-123', threadId: 'thread-1' })
       );
       expect(lastSent(ws)).toEqual({
         type: 'voice_hello',
@@ -1425,7 +540,7 @@ describe('Requirement: WebSocket Gateway', () => {
     type MockSocket = ReturnType<typeof createMockWebSocket>;
 
     async function frame(ws: MockSocket, message: unknown): Promise<void> {
-      await service.handleMessage(ws, 'user-123', message);
+      await service.dispatch(ws, { id: 'req-1', payload: {}, ...(message as object) });
     }
 
     function sent(ws: MockSocket): unknown[] {

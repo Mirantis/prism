@@ -50,8 +50,11 @@ router.get('/messages', async (req: Request, res: Response) => {
       threadId = thread.id;
     }
     const messages = await conversationService.getRecentMessages(threadId, limit);
+    // Oldest first, a tie broken by id: the order every chat client keeps.
     const sorted = [...messages].sort(
-      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+      (a, b) =>
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime() ||
+        (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
     );
     // Attach shared-file metadata (no bytes) so a client can render attachment
     // chips on history — same enrichment as conversationService.getThread.

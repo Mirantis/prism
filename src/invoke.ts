@@ -56,6 +56,7 @@ import { STEP_LIMIT, MAX_OUTPUT_TOKENS, COMPACTION_FALLBACK_WINDOW_TOKENS } from
 import { EARLY_STOPPING_PROMPT } from './prompts/early-stopping-prompt';
 import { buildErrorStep, buildRefusalStep, isContextOverflowError } from './lib/llm-errors';
 import { agentStatusService } from './services/agent-status.service';
+import { conversationThreadActivityService } from './services/conversation-thread-activity.service';
 import { trackEvent, langfuseTelemetry } from './lib/telemetry';
 import { AsyncChannel } from './utils/async-channel';
 
@@ -118,8 +119,10 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     return;
   }
 
+  let endActivity: (() => void) | undefined;
   try {
     await agentStatusService.setProcessing(request.agentId);
+    endActivity = await conversationThreadActivityService.begin(request);
 
     // 1. For heartbeat mode, inject last alert
     if (request.mode === 'heartbeat') {
@@ -650,6 +653,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     });
 
   } finally {
+    endActivity?.();
     computerService.access.finish(computerUse);
     // Persist the turn's final context measurement — one write per turn rather
     // than per step. Runs for canceled turns too: the prompt was still built and
