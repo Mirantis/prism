@@ -1,0 +1,799 @@
+{
+  "recordedAt": "2026-09-27T08:38:51.053Z",
+  "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+  "messages": [
+    "58aa0353-ebdb-421b-ad49-75f443341eb7",
+    "377536ac-a7f0-4588-82af-7c9eedf8c9b2"
+  ],
+  "log": [
+    {
+      "client": "web",
+      "direction": "sent",
+      "frame": {
+        "type": "hello",
+        "id": "hello-web",
+        "payload": {
+          "protocol": 2,
+          "client": {
+            "name": "web",
+            "version": "fixture"
+          }
+        }
+      }
+    },
+    {
+      "client": "phone",
+      "direction": "sent",
+      "frame": {
+        "type": "hello",
+        "id": "hello-phone",
+        "payload": {
+          "protocol": 2,
+          "client": {
+            "name": "second-client",
+            "version": "fixture"
+          }
+        }
+      }
+    },
+    {
+      "client": "web",
+      "direction": "received",
+      "frame": {
+        "type": "welcome",
+        "payload": {
+          "protocol": 2,
+          "streamId": "07267e2b-eb98-445a-b535-76e5a987d1cb",
+          "seq": 1,
+          "resumed": false,
+          "you": {
+            "name": "Ada Example"
+          },
+          "snapshot": {
+            "turns": [],
+            "computer": {
+              "available": false,
+              "running": false,
+              "starting": false,
+              "paused": false,
+              "secure": false,
+              "controller": null,
+              "owner": null,
+              "waiting": [],
+              "help": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "client": "phone",
+      "direction": "received",
+      "frame": {
+        "type": "welcome",
+        "payload": {
+          "protocol": 2,
+          "streamId": "07267e2b-eb98-445a-b535-76e5a987d1cb",
+          "seq": 1,
+          "resumed": false,
+          "you": {
+            "name": "Grace Example"
+          },
+          "snapshot": {
+            "turns": [],
+            "computer": {
+              "available": false,
+              "running": false,
+              "starting": false,
+              "paused": false,
+              "secure": false,
+              "controller": null,
+              "owner": null,
+              "waiting": [],
+              "help": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "client": "web",
+      "direction": "sent",
+      "frame": {
+        "type": "send",
+        "id": "send-1",
+        "payload": {
+          "message": {
+            "id": "58aa0353-ebdb-421b-ad49-75f443341eb7",
+            "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+            "content": "Reply with exactly: pong",
+            "attachmentIds": []
+          }
+        }
+      }
+    },
+    {
+      "client": "web",
+      "direction": "received",
+      "frame": {
+        "type": "thread",
+        "payload": {
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "title": "Reply with exactly:"
+        },
+        "seq": 2
+      }
+    },
+    {
+      "client": "phone",
+      "direction": "received",
+      "frame": {
+        "type": "thread",
+        "payload": {
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "title": "Reply with exactly:"
+        },
+        "seq": 2
+      }
+    },
+    {
+      "client": "web",
+      "direction": "received",
+      "frame": {
+        "type": "message",
+        "payload": {
+          "id": "58aa0353-ebdb-421b-ad49-75f443341eb7",
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "role": "USER",
+          "content": "Reply with exactly: pong",
+          "triggeredBy": "USER_INPUT",
+          "toolCalls": null,
+          "blocks": null,
+          "isCompacted": false,
+          "createdAt": "2026-09-27T08:38:51.086Z",
+          "attachments": null,
+          "senderName": "Ada Example"
+        },
+        "seq": 3
+      }
+    },
+    {
+      "client": "phone",
+      "direction": "received",
+      "frame": {
+        "type": "message",
+        "payload": {
+          "id": "58aa0353-ebdb-421b-ad49-75f443341eb7",
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "role": "USER",
+          "content": "Reply with exactly: pong",
+          "triggeredBy": "USER_INPUT",
+          "toolCalls": null,
+          "blocks": null,
+          "isCompacted": false,
+          "createdAt": "2026-09-27T08:38:51.086Z",
+          "attachments": null,
+          "senderName": "Ada Example"
+        },
+        "seq": 3
+      }
+    },
+    {
+      "client": "web",
+      "direction": "received",
+      "frame": {
+        "type": "turn",
+        "payload": {
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "state": "running"
+        },
+        "seq": 4
+      }
+    },
+    {
+      "client": "phone",
+      "direction": "received",
+      "frame": {
+        "type": "turn",
+        "payload": {
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "state": "running"
+        },
+        "seq": 4
+      }
+    },
+    {
+      "client": "web",
+      "direction": "received",
+      "frame": {
+        "type": "ack",
+        "re": "send-1",
+        "payload": {
+          "messageId": "58aa0353-ebdb-421b-ad49-75f443341eb7",
+          "seq": 4,
+          "queued": false,
+          "duplicate": false
+        }
+      }
+    },
+    {
+      "client": "web",
+      "direction": "received",
+      "frame": {
+        "type": "thread",
+        "payload": {
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "title": "pong"
+        },
+        "seq": 5
+      }
+    },
+    {
+      "client": "phone",
+      "direction": "received",
+      "frame": {
+        "type": "thread",
+        "payload": {
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "title": "pong"
+        },
+        "seq": 5
+      }
+    },
+    {
+      "client": "web",
+      "direction": "received",
+      "frame": {
+        "type": "context",
+        "payload": {
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "modelId": "us.anthropic.claude-opus-4-7",
+          "usedTokens": 12922,
+          "windowTokens": 1000000,
+          "usedPercent": 1
+        },
+        "seq": 6
+      }
+    },
+    {
+      "client": "phone",
+      "direction": "received",
+      "frame": {
+        "type": "context",
+        "payload": {
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "modelId": "us.anthropic.claude-opus-4-7",
+          "usedTokens": 12922,
+          "windowTokens": 1000000,
+          "usedPercent": 1
+        },
+        "seq": 6
+      }
+    },
+    {
+      "client": "web",
+      "direction": "received",
+      "frame": {
+        "type": "computer",
+        "payload": {
+          "available": false,
+          "running": false,
+          "starting": false,
+          "paused": false,
+          "secure": false,
+          "controller": null,
+          "owner": null,
+          "waiting": [],
+          "help": []
+        },
+        "seq": 7
+      }
+    },
+    {
+      "client": "phone",
+      "direction": "received",
+      "frame": {
+        "type": "computer",
+        "payload": {
+          "available": false,
+          "running": false,
+          "starting": false,
+          "paused": false,
+          "secure": false,
+          "controller": null,
+          "owner": null,
+          "waiting": [],
+          "help": []
+        },
+        "seq": 7
+      }
+    },
+    {
+      "client": "web",
+      "direction": "received",
+      "frame": {
+        "type": "message",
+        "payload": {
+          "id": "27abd15e-7485-40b6-8304-7343615dd307",
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "role": "AGENT",
+          "content": "pong",
+          "triggeredBy": "USER_INPUT",
+          "toolCalls": null,
+          "blocks": null,
+          "isCompacted": false,
+          "createdAt": "2026-09-27T08:38:53.843Z",
+          "attachments": null,
+          "senderName": null
+        },
+        "seq": 8
+      }
+    },
+    {
+      "client": "phone",
+      "direction": "received",
+      "frame": {
+        "type": "message",
+        "payload": {
+          "id": "27abd15e-7485-40b6-8304-7343615dd307",
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "role": "AGENT",
+          "content": "pong",
+          "triggeredBy": "USER_INPUT",
+          "toolCalls": null,
+          "blocks": null,
+          "isCompacted": false,
+          "createdAt": "2026-09-27T08:38:53.843Z",
+          "attachments": null,
+          "senderName": null
+        },
+        "seq": 8
+      }
+    },
+    {
+      "client": "web",
+      "direction": "received",
+      "frame": {
+        "type": "turn",
+        "payload": {
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "state": "idle",
+          "outcome": "completed"
+        },
+        "seq": 9
+      }
+    },
+    {
+      "client": "phone",
+      "direction": "received",
+      "frame": {
+        "type": "turn",
+        "payload": {
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "state": "idle",
+          "outcome": "completed"
+        },
+        "seq": 9
+      }
+    },
+    {
+      "client": "web",
+      "direction": "sent",
+      "frame": {
+        "type": "send",
+        "id": "send-1-again",
+        "payload": {
+          "message": {
+            "id": "58aa0353-ebdb-421b-ad49-75f443341eb7",
+            "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+            "content": "Reply with exactly: pong",
+            "attachmentIds": []
+          }
+        }
+      }
+    },
+    {
+      "client": "web",
+      "direction": "received",
+      "frame": {
+        "type": "ack",
+        "re": "send-1-again",
+        "payload": {
+          "messageId": "58aa0353-ebdb-421b-ad49-75f443341eb7",
+          "seq": 9,
+          "queued": false,
+          "duplicate": true
+        }
+      }
+    },
+    {
+      "client": "phone",
+      "direction": "closed",
+      "code": 1005
+    },
+    {
+      "client": "web",
+      "direction": "sent",
+      "frame": {
+        "type": "send",
+        "id": "send-2",
+        "payload": {
+          "message": {
+            "id": "377536ac-a7f0-4588-82af-7c9eedf8c9b2",
+            "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+            "content": "Reply with exactly: ping",
+            "attachmentIds": []
+          }
+        }
+      }
+    },
+    {
+      "client": "web",
+      "direction": "received",
+      "frame": {
+        "type": "message",
+        "payload": {
+          "id": "377536ac-a7f0-4588-82af-7c9eedf8c9b2",
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "role": "USER",
+          "content": "Reply with exactly: ping",
+          "triggeredBy": "USER_INPUT",
+          "toolCalls": null,
+          "blocks": null,
+          "isCompacted": false,
+          "createdAt": "2026-09-27T08:38:53.849Z",
+          "attachments": null,
+          "senderName": "Ada Example"
+        },
+        "seq": 10
+      }
+    },
+    {
+      "client": "web",
+      "direction": "received",
+      "frame": {
+        "type": "turn",
+        "payload": {
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "state": "running"
+        },
+        "seq": 11
+      }
+    },
+    {
+      "client": "web",
+      "direction": "received",
+      "frame": {
+        "type": "ack",
+        "re": "send-2",
+        "payload": {
+          "messageId": "377536ac-a7f0-4588-82af-7c9eedf8c9b2",
+          "seq": 11,
+          "queued": false,
+          "duplicate": false
+        }
+      }
+    },
+    {
+      "client": "web",
+      "direction": "received",
+      "frame": {
+        "type": "context",
+        "payload": {
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "modelId": "us.anthropic.claude-opus-4-7",
+          "usedTokens": 12944,
+          "windowTokens": 1000000,
+          "usedPercent": 1
+        },
+        "seq": 12
+      }
+    },
+    {
+      "client": "web",
+      "direction": "received",
+      "frame": {
+        "type": "computer",
+        "payload": {
+          "available": false,
+          "running": false,
+          "starting": false,
+          "paused": false,
+          "secure": false,
+          "controller": null,
+          "owner": null,
+          "waiting": [],
+          "help": []
+        },
+        "seq": 13
+      }
+    },
+    {
+      "client": "web",
+      "direction": "received",
+      "frame": {
+        "type": "message",
+        "payload": {
+          "id": "2305c4b5-6f0a-4a96-944a-73c0216ff58a",
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "role": "AGENT",
+          "content": "ping",
+          "triggeredBy": "USER_INPUT",
+          "toolCalls": null,
+          "blocks": null,
+          "isCompacted": false,
+          "createdAt": "2026-09-27T08:38:55.548Z",
+          "attachments": null,
+          "senderName": null
+        },
+        "seq": 14
+      }
+    },
+    {
+      "client": "web",
+      "direction": "received",
+      "frame": {
+        "type": "turn",
+        "payload": {
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "state": "idle",
+          "outcome": "completed"
+        },
+        "seq": 15
+      }
+    },
+    {
+      "client": "phone",
+      "direction": "sent",
+      "frame": {
+        "type": "hello",
+        "id": "hello-phone-2",
+        "payload": {
+          "protocol": 2,
+          "client": {
+            "name": "second-client",
+            "version": "fixture"
+          },
+          "resume": {
+            "streamId": "07267e2b-eb98-445a-b535-76e5a987d1cb",
+            "seq": 9
+          }
+        }
+      }
+    },
+    {
+      "client": "phone",
+      "direction": "received",
+      "frame": {
+        "type": "welcome",
+        "payload": {
+          "protocol": 2,
+          "streamId": "07267e2b-eb98-445a-b535-76e5a987d1cb",
+          "seq": 15,
+          "resumed": true,
+          "you": {
+            "name": "Grace Example"
+          },
+          "snapshot": {
+            "turns": [],
+            "computer": {
+              "available": false,
+              "running": false,
+              "starting": false,
+              "paused": false,
+              "secure": false,
+              "controller": null,
+              "owner": null,
+              "waiting": [],
+              "help": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "client": "phone",
+      "direction": "received",
+      "frame": {
+        "type": "message",
+        "payload": {
+          "id": "377536ac-a7f0-4588-82af-7c9eedf8c9b2",
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "role": "USER",
+          "content": "Reply with exactly: ping",
+          "triggeredBy": "USER_INPUT",
+          "toolCalls": null,
+          "blocks": null,
+          "isCompacted": false,
+          "createdAt": "2026-09-27T08:38:53.849Z",
+          "attachments": null,
+          "senderName": "Ada Example"
+        },
+        "seq": 10
+      }
+    },
+    {
+      "client": "phone",
+      "direction": "received",
+      "frame": {
+        "type": "turn",
+        "payload": {
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "state": "running"
+        },
+        "seq": 11
+      }
+    },
+    {
+      "client": "phone",
+      "direction": "received",
+      "frame": {
+        "type": "context",
+        "payload": {
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "modelId": "us.anthropic.claude-opus-4-7",
+          "usedTokens": 12944,
+          "windowTokens": 1000000,
+          "usedPercent": 1
+        },
+        "seq": 12
+      }
+    },
+    {
+      "client": "phone",
+      "direction": "received",
+      "frame": {
+        "type": "computer",
+        "payload": {
+          "available": false,
+          "running": false,
+          "starting": false,
+          "paused": false,
+          "secure": false,
+          "controller": null,
+          "owner": null,
+          "waiting": [],
+          "help": []
+        },
+        "seq": 13
+      }
+    },
+    {
+      "client": "phone",
+      "direction": "received",
+      "frame": {
+        "type": "message",
+        "payload": {
+          "id": "2305c4b5-6f0a-4a96-944a-73c0216ff58a",
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "role": "AGENT",
+          "content": "ping",
+          "triggeredBy": "USER_INPUT",
+          "toolCalls": null,
+          "blocks": null,
+          "isCompacted": false,
+          "createdAt": "2026-09-27T08:38:55.548Z",
+          "attachments": null,
+          "senderName": null
+        },
+        "seq": 14
+      }
+    },
+    {
+      "client": "phone",
+      "direction": "received",
+      "frame": {
+        "type": "turn",
+        "payload": {
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "state": "idle",
+          "outcome": "completed"
+        },
+        "seq": 15
+      }
+    },
+    {
+      "client": "web",
+      "direction": "sent",
+      "frame": {
+        "type": "send",
+        "id": "send-bad",
+        "payload": {
+          "message": {
+            "id": "not-a-uuid",
+            "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+            "content": "x",
+            "attachmentIds": []
+          }
+        }
+      }
+    },
+    {
+      "client": "web",
+      "direction": "received",
+      "frame": {
+        "type": "nack",
+        "re": "send-bad",
+        "payload": {
+          "code": "invalid",
+          "message": "must be a uuid v4"
+        }
+      }
+    },
+    {
+      "client": "web",
+      "direction": "sent",
+      "frame": {
+        "type": "ping",
+        "id": "ping-1"
+      }
+    },
+    {
+      "client": "web",
+      "direction": "received",
+      "frame": {
+        "type": "pong",
+        "re": "ping-1"
+      }
+    },
+    {
+      "client": "web",
+      "direction": "sent",
+      "frame": {
+        "type": "cancel",
+        "id": "cancel-1",
+        "payload": {
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269"
+        }
+      }
+    },
+    {
+      "client": "web",
+      "direction": "received",
+      "frame": {
+        "type": "ack",
+        "re": "cancel-1",
+        "payload": {}
+      }
+    },
+    {
+      "client": "old-client",
+      "direction": "sent",
+      "frame": {
+        "type": "chat",
+        "payload": {
+          "mode": "followup",
+          "content": "hi",
+          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269"
+        }
+      }
+    },
+    {
+      "client": "old-client",
+      "direction": "received",
+      "frame": {
+        "type": "nack",
+        "re": null,
+        "payload": {
+          "code": "protocol_unsupported",
+          "message": "This runtime speaks chat protocol 2. Update the app to connect."
+        }
+      }
+    },
+    {
+      "client": "old-client",
+      "direction": "closed",
+      "code": 4426
+    },
+    {
+      "client": "web",
+      "direction": "closed",
+      "code": 1005
+    },
+    {
+      "client": "phone",
+      "direction": "closed",
+      "code": 1005
+    }
+  ]
+}

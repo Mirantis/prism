@@ -34,6 +34,8 @@ How you talk to the agent.
 
 - **[Web UI](web-ui.md)** — the browser UI served by the runtime: chat, threads,
   agent profile, scheduled tasks, heartbeat controls, and Slack linking.
+- **[Chat socket protocol](websocket-protocol.md)** — for writing a client of your
+  own: how to connect, send messages and catch up after a dropped connection.
 - **[Terminal UI](terminal-ui.md)** — the `prism` TUI for chatting and managing
   the agent from the shell, including slash commands, the `--resume` picker, and
   the schedules/config panels.
