@@ -1,7 +1,19 @@
 import AgentAvatar from './agent-avatar';
 
-/** The agent at work: three moving dots beside its mark. */
-export default function ChatTypingIndicator() {
+/**
+ * The agent at work: three moving dots beside its mark. While the thread waits for
+ * the agent to finish another conversation, it says so instead.
+ */
+export default function ChatTypingIndicator({ queued = false }: { queued?: boolean }) {
+  if (queued) {
+    return (
+      <div className="flex items-center gap-3 animate-in fade-in-0 duration-300" data-testid="chat-queued-indicator">
+        <AgentAvatar />
+        <span className="text-sm text-muted-foreground">Waiting for another conversation to finish</span>
+      </div>
+    );
+  }
+
   return (
     <div className="flex items-center gap-3 animate-in fade-in-0 duration-300" data-testid="chat-typing-indicator">
       <AgentAvatar />

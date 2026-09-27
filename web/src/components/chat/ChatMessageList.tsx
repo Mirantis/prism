@@ -5,32 +5,42 @@ import ChatTypingIndicator from './ChatTypingIndicator';
 import ChatWelcome from './ChatWelcome';
 import DayDivider from './day-divider';
 import { isSameDay } from '@/lib/day-label';
-import type { ConversationMessage } from '@/types';
+import type { TurnState } from '@/lib/chat-socket/protocol';
+import type { TranscriptMessage } from '@/lib/chat-socket/transcript';
 
 /** How close to the end, in pixels, still counts as reading the latest message. */
 const AT_BOTTOM_PX = 120;
 
 interface ChatMessageListProps {
-  messages: ConversationMessage[];
+  messages: TranscriptMessage[];
   agentName: string;
-  isTyping: boolean;
+  /** The name this connection signed in as. Other people's messages show their name. */
+  viewerName: string | null;
+  /** What the thread on screen is doing. */
+  turnState: TurnState;
   isLoading: boolean;
   /** The conversation on screen; a change opens the new one at its end. */
   threadId?: string;
   /** Send one of the empty conversation's suggestions; absent while nothing can be sent. */
   onSuggestion?: (prompt: string) => void;
   onOpenComputerHelp: (id: string) => void;
+  onRetry: (id: string) => void;
+  onEdit: (id: string) => void;
 }
 
 export default function ChatMessageList({
   messages,
   agentName,
-  isTyping,
+  viewerName,
+  turnState,
   isLoading,
   threadId,
   onSuggestion,
   onOpenComputerHelp,
+  onRetry,
+  onEdit,
 }: ChatMessageListProps) {
+  const isWorking = turnState !== 'idle';
   const scrollRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   // Read in the effect below, so a new message follows the reader's position at that moment.
@@ -51,7 +61,7 @@ export default function ChatMessageList({
   const sentByMe = last?.role === 'USER';
   useEffect(() => {
     if (atBottomRef.current || sentByMe) endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length, isTyping, sentByMe]);
+  }, [messages.length, turnState, sentByMe]);
 
   // A conversation opens at its end, whatever the last one was scrolled to. Keyed on the
   // conversation itself: two cached threads can hold the same number of messages, and a
@@ -77,10 +87,17 @@ export default function ChatMessageList({
                 {(i === 0 || !isSameDay(messages[i - 1].createdAt, msg.createdAt)) && (
                   <DayDivider date={msg.createdAt} />
                 )}
-                <ChatMessage message={msg} agentName={agentName} onOpenComputerHelp={onOpenComputerHelp} />
+                <ChatMessage
+                  message={msg}
+                  agentName={agentName}
+                  viewerName={viewerName}
+                  onOpenComputerHelp={onOpenComputerHelp}
+                  onRetry={onRetry}
+                  onEdit={onEdit}
+                />
               </Fragment>
             ))}
-            {isTyping && <ChatTypingIndicator />}
+            {isWorking && <ChatTypingIndicator queued={turnState === 'queued'} />}
             <div ref={endRef} />
           </div>
         )}
@@ -100,7 +117,7 @@ export default function ChatMessageList({
           className="absolute bottom-3 left-1/2 flex h-8 -translate-x-1/2 items-center gap-1.5 rounded-full bg-card px-3 text-xs font-medium text-strong shadow-lg shadow-black/30 ring-1 ring-foreground/15 transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
           <ArrowDown className="size-3.5" />
-          {isTyping ? 'New reply below' : 'Jump to latest'}
+          {turnState === 'running' ? 'New reply below' : 'Jump to latest'}
         </button>
       )}
     </div>

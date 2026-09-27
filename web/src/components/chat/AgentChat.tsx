@@ -1,13 +1,14 @@
 import { ComputerWaiting } from '@/components/computer/computer-waiting';
 import { ChatComputerPanel } from '@/components/computer/chat-computer-panel';
-import { useState, useEffect, useCallback, useRef, type FormEvent } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState, useEffect, useCallback, useMemo, useRef, type FormEvent } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { runtimeApi } from '@/api/runtime-client';
 import { ApiError } from '@/api/errors';
 import { useAgent } from '@/lib/agent-context';
-import { useWebSocket } from '@/hooks/use-websocket';
-import { useComputerStatusFeed } from '@/hooks/use-computer-status';
+import { buildTranscript, compareMessages, type TranscriptNote } from '@/lib/chat-socket/transcript';
+import { useChatSocket } from '@/hooks/use-chat-socket';
+import { useThread } from '@/hooks/use-thread';
 import { useDictation, type Dictation } from '@/hooks/use-dictation';
 import { useVoiceCall, type VoiceCall } from '@/hooks/use-voice-call';
 import { HeaderActions } from '@/components/layout/header-actions';
@@ -16,7 +17,6 @@ import {
   type Attachment,
   type CompactionEvent,
   type ContextUsage,
-  type ConversationMessage,
   computerHelpBlocks,
 } from '@/types';
 import ChatMessageList from './ChatMessageList';
@@ -27,14 +27,16 @@ import type { PendingAttachment } from './ChatAttachmentChip';
 import { findExact, parseCommandLine, type SlashCommand } from './commands';
 
 let attachmentSeq = 0;
+let noteSeq = 0;
 
 export default function AgentChat({ threadId }: { threadId?: string }) {
   const agent = useAgent();
-  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [message, setMessage] = useState('');
   const [activeThreadId, setActiveThreadId] = useState<string | undefined>(undefined);
-  const [localMessages, setLocalMessages] = useState<ConversationMessage[]>([]);
+  // Client-only SYSTEM lines: a slash-command result, the stop marker, a failed turn.
+  // Never stored, so they stay out of the history fed back to the model.
+  const [notes, setNotes] = useState<TranscriptNote[]>([]);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
   const [isCompacting, setIsCompacting] = useState(false);
@@ -44,112 +46,51 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
   }>();
   const [computerPanelWidth, setComputerPanelWidth] = useState<string | null>(null);
   const [computerPanelResizing, setComputerPanelResizing] = useState(false);
-  // Terminal compaction frame pending a SYSTEM note. Staged as state (not
-  // appended directly in the WS callback) so the note goes through
-  // appendSystemMessage, which is declared further down.
+  // Terminal compaction event pending a SYSTEM note. Staged as state (not appended
+  // directly in the socket handler) so the note goes through appendSystemMessage,
+  // which is declared further down.
   const [compactionNotice, setCompactionNotice] = useState<CompactionEvent | null>(null);
+  // A failed turn on the thread on screen, pending its note, for the same reason.
+  const [turnError, setTurnError] = useState<string | null>(null);
 
   // The socket hands out the senders and the call and the dictation hand back the
-  // handlers, so one of the two is read late. The socket's callbacks are bound once, so
-  // both go through refs and the socket is not re-bound as their state changes.
+  // handlers, so one of the two is read late, through refs.
   const voiceRef = useRef<VoiceCall | null>(null);
   const dictationRef = useRef<Dictation | null>(null);
 
-  const writeComputerStatus = useComputerStatusFeed();
-
-  const {
-    status,
-    isTyping,
-    sendFollowup,
-    cancel,
-    sendVoiceStart,
-    sendVoiceStop,
-    sendVoiceAudio,
-    sendDictationStart,
-    sendDictationStop,
-  } = useWebSocket({
-    onMessage: (msg) => {
-      // Deliveries are broadcast to all of the user's connections tagged with
-      // their own thread id — a heartbeat, a cron task, a Slack turn, or a turn
-      // in another tab can all arrive for a *different* thread than the one on
-      // screen. Only render messages that belong to the thread being viewed.
-      if (msg.threadId === activeThreadId) {
-        setLocalMessages((prev) => [...prev, msg]);
-      }
-      // Invalidate the message's own thread cache (never a possibly-stale
-      // active id) so it's fresh whether it's open now or navigated to later.
-      if (msg.threadId) {
-        queryClient.invalidateQueries({ queryKey: ['thread', agent.agentId, msg.threadId] });
-      }
-    },
-    // A thread was just titled (the first message of a conversation) — refetch
-    // the Recents list so a brand-new thread appears (and existing rows pick up
-    // their title) immediately, not only after a page reload. A plain in-place
-    // patch can't add a thread that wasn't already in the cached list.
-    // Context-window occupancy for a thread. Filtered the same way as messages:
-    // an off-screen goal/cron turn broadcasts for its own thread and must not
-    // overwrite the reading for the thread being viewed.
-    onContextUsage: (usage) => {
+  const { status, you, turns, pending, connection } = useChatSocket({
+    // Context-window occupancy is thread-scoped: an off-screen goal or cron turn reports
+    // for its own thread and must not overwrite the reading for the thread on screen.
+    context: (usage) => {
       if (usage.threadId === activeThreadId) setContextUsage(usage);
     },
-    // Compaction progress for the on-screen thread: an indicator while it runs,
-    // a SYSTEM note when it ends (auto compactions of other threads stay quiet).
-    onCompaction: (event) => {
+    // Compaction progress for the on-screen thread: an indicator while it runs, a SYSTEM
+    // note when it ends. Auto compactions of other threads stay quiet.
+    compaction: (event) => {
       if (event.threadId !== activeThreadId) return;
       setIsCompacting(event.status === 'started');
       if (event.status !== 'started') setCompactionNotice(event);
     },
-    onThreadUpdate: () => {
-      queryClient.invalidateQueries({ queryKey: ['threads', agent.agentId, 'recents'] });
+    turn: (event) => {
+      if (event.threadId !== activeThreadId || event.outcome !== 'failed') return;
+      setTurnError(event.error ?? 'The agent could not finish its reply.');
     },
-    // The state of the desktop. Written to the cache the waiting banner and the help
-    // cards read, so they follow a wait or a resolution as it happens and the page
-    // makes no repeating request. Install-level: the banner filters by thread itself.
-    onComputerStatus: writeComputerStatus,
-    onVoiceEvent: (event) => voiceRef.current?.handleEvent(event),
-    onVoiceAudio: (frame) => voiceRef.current?.handleAudio(frame),
-    onDictationEvent: (event) => dictationRef.current?.handleEvent(event),
-    activeThreadId,
+    voice: (event) => voiceRef.current?.handleEvent(event),
+    voiceAudio: (frame) => voiceRef.current?.handleAudio(frame),
+    dictation: (event) => dictationRef.current?.handleEvent(event),
   });
 
+  const turnState = (activeThreadId && turns[activeThreadId]) || 'idle';
+  const isWorking = turnState !== 'idle';
+
   const voice = useVoiceCall({
-    sendVoiceStart,
-    sendVoiceStop,
-    sendVoiceAudio,
+    sendVoiceStart: connection.voiceStart,
+    sendVoiceStop: connection.voiceStop,
+    sendVoiceAudio: connection.sendAudio,
     threadId: activeThreadId,
     isConnected: status === 'connected',
   });
   voiceRef.current = voice;
-
-  const computerHelp = localMessages.flatMap(computerHelpBlocks);
-  // A sign-in is answered in the message itself, so it never slides the live desktop over
-  // the chat.
-  const desktopHelp = computerHelp.filter((help) => !help.credentials);
-  const openComputerPanel = useCallback((id: string) => {
-    setComputerPanelRequest((current) => ({ id, token: (current?.token ?? 0) + 1 }));
-  }, []);
-
-  // Cancel the in-flight turn and drop an ephemeral marker so the user gets
-  // explicit confirmation. The marker is client-only (never stored), so it
-  // doesn't pollute the conversation history fed back to the model.
-  const handleCancel = useCallback(() => {
-    if (!isTyping) return;
-    cancel();
-    setLocalMessages((prev) => [
-      ...prev,
-      {
-        id: `stopped-${Date.now()}`,
-        threadId: activeThreadId ?? '',
-        role: 'SYSTEM',
-        content: 'Response stopped',
-        triggeredBy: 'USER_INPUT',
-        toolCalls: null,
-        blocks: null,
-        isCompacted: false,
-        createdAt: new Date().toISOString(),
-      },
-    ]);
-  }, [cancel, isTyping, activeThreadId]);
 
   // Only resolve/create the latest thread when no specific thread is in the URL
   // — deep-linking to /chat/<id> must not create a fresh thread.
@@ -169,22 +110,21 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     }
   }, [threadId, latestThread]);
 
-  // Clear the previous thread's messages when switching so they don't flash
-  // before the new thread's history loads.
+  // The thread's stored reading is where the meter starts, once per thread. The thread's
+  // data changes with every message, and the socket's reading is the newer one by then.
+  const seededUsageFor = useRef<string | undefined>(undefined);
+
+  // The previous thread's notes and readings belong to a different conversation.
   useEffect(() => {
-    setLocalMessages([]);
-    // Drop the previous thread's reading too — it belongs to a different
-    // conversation, and the new thread's is seeded from its own query below.
+    setNotes([]);
     setContextUsage(null);
     setIsCompacting(false);
     setCompactionNotice(null);
+    setTurnError(null);
+    seededUsageFor.current = undefined;
   }, [activeThreadId]);
 
-  const { data: thread, isLoading: isLoadingThread, error: threadError } = useQuery({
-    queryKey: ['thread', agent.agentId, activeThreadId],
-    queryFn: () => runtimeApi.getThread(agent.agentId, agent.userId, activeThreadId!),
-    enabled: Boolean(activeThreadId),
-  });
+  const { data: thread, isLoading: isLoadingThread, error: threadError } = useThread(activeThreadId);
 
   // A deep-linked thread that doesn't exist (deleted / not owned) → fall back to
   // the latest conversation. Guarded on threadId so a latest-thread error can't loop.
@@ -195,15 +135,67 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
   }, [threadId, threadError, navigate]);
 
   useEffect(() => {
-    if (thread?.messages) {
-      setLocalMessages(thread.messages);
-    }
-    // Restore the stored snapshot so a reload shows the last known percentage
-    // rather than waiting for the next turn to measure again.
-    if (thread) {
-      setContextUsage(thread.contextUsage ?? null);
-    }
+    if (!thread || seededUsageFor.current === thread.id) return;
+    seededUsageFor.current = thread.id;
+    setContextUsage(thread.contextUsage ?? null);
   }, [thread]);
+
+  // Read by `appendNote` when it writes a note, without rebuilding it on every message.
+  const storedRef = useRef(thread?.messages);
+  storedRef.current = thread?.messages;
+
+  const threadPending = useMemo(
+    () => pending.filter((m) => m.threadId === activeThreadId),
+    [pending, activeThreadId],
+  );
+  const transcript = useMemo(
+    () => buildTranscript(thread?.messages ?? [], notes, threadPending),
+    [thread?.messages, notes, threadPending],
+  );
+
+  const computerHelp = transcript.flatMap(computerHelpBlocks);
+  // A sign-in is answered in the message itself, so it never slides the live desktop over
+  // the chat.
+  const desktopHelp = computerHelp.filter((help) => !help.credentials);
+  const openComputerPanel = useCallback((id: string) => {
+    setComputerPanelRequest((current) => ({ id, token: (current?.token ?? 0) + 1 }));
+  }, []);
+
+  const appendNote = useCallback(
+    (kind: 'cmd' | 'stopped' | 'error', content: string) => {
+      noteSeq++;
+      const last = [...(storedRef.current ?? [])].sort(compareMessages).at(-1);
+      setNotes((prev) => [
+        ...prev,
+        {
+          after: last?.id ?? null,
+          id: `${kind}-${noteSeq}`,
+          threadId: activeThreadId ?? '',
+          role: 'SYSTEM',
+          content,
+          triggeredBy: 'USER_INPUT',
+          toolCalls: null,
+          blocks: null,
+          isCompacted: false,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+    },
+    [activeThreadId],
+  );
+  const appendSystemMessage = useCallback((content: string) => appendNote('cmd', content), [appendNote]);
+
+  // Any client may stop a thread's work, a queued thread's included. The marker confirms it.
+  const handleCancel = useCallback(() => {
+    if (!activeThreadId || !isWorking) return;
+    if (connection.cancel(activeThreadId)) appendNote('stopped', 'Response stopped');
+  }, [activeThreadId, isWorking, connection, appendNote]);
+
+  useEffect(() => {
+    if (!turnError) return;
+    setTurnError(null);
+    appendNote('error', turnError);
+  }, [turnError, appendNote]);
 
   const handleFilesSelected = useCallback(
     (files: File[]) => {
@@ -283,27 +275,25 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     });
   }, []);
 
-  // A client-only SYSTEM line (e.g. a slash-command result). Never stored, so it
-  // doesn't pollute the history fed back to the model — same pattern as the
-  // cancel marker above.
-  const appendSystemMessage = useCallback(
-    (content: string) => {
-      setLocalMessages((prev) => [
+  // A failed message goes back into the composer, attachments included, and out of the thread.
+  // Read through a ref so the handler stays the same as messages come and go, and the
+  // memoized rows do not render again for it.
+  const pendingRef = useRef(threadPending);
+  pendingRef.current = threadPending;
+  const handleEditFailed = useCallback(
+    (id: string) => {
+      const failed = pendingRef.current.find((m) => m.id === id);
+      if (!failed) return;
+      setMessage(failed.content);
+      setAttachments((prev) => [
         ...prev,
-        {
-          id: `cmd-${Date.now()}`,
-          threadId: activeThreadId ?? '',
-          role: 'SYSTEM',
-          content,
-          triggeredBy: 'USER_INPUT',
-          toolCalls: null,
-          blocks: null,
-          isCompacted: false,
-          createdAt: new Date().toISOString(),
-        },
+        ...(failed.attachments ?? []).map(
+          (a): PendingAttachment => ({ ...a, localId: `att-${Date.now()}-${attachmentSeq++}`, status: 'ready' }),
+        ),
       ]);
+      connection.discard(id);
     },
-    [activeThreadId],
+    [connection],
   );
 
   // Surface the pending compaction result as a SYSTEM note. Auto-compaction
@@ -365,52 +355,31 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
 
   /**
    * Send text as the user's message, with whatever is attached and ready. A dictated
-   * message goes out here too, so it is echoed and steers a running turn the same way.
+   * message goes out here too, so it is drawn and steers a running turn the same way.
+   *
+   * No guard on a running turn: a message sent then goes to the turn that owns the
+   * thread, which reads it at its next step.
    */
   const sendChat = (userMessage: string) => {
+    if (!activeThreadId) return;
     const ready = attachments.filter((a) => a.status === 'ready' && a.id);
     if (!userMessage && ready.length === 0) return;
 
     setAttachments([]);
-
-    const tempAttachments: Attachment[] = ready.map((a) => ({
+    const sent: Attachment[] = ready.map((a) => ({
       id: a.id!,
       filename: a.filename,
       mediaType: a.mediaType,
       sizeBytes: a.sizeBytes,
       category: a.category,
     }));
-
-    const tempMessage: ConversationMessage = {
-      id: `temp-${Date.now()}`,
-      threadId: activeThreadId ?? '',
-      role: 'USER',
-      content: userMessage,
-      triggeredBy: 'USER_INPUT',
-      toolCalls: null,
-      blocks: null,
-      isCompacted: false,
-      createdAt: new Date().toISOString(),
-      attachments: tempAttachments,
-    };
-    setLocalMessages((prev) => [...prev, tempMessage]);
-
-    // No `isTyping` guard: sending during a turn is steering, not a second
-    // turn. The runtime hands the message to the turn that owns `activeThreadId`
-    // — which is why the thread id has to travel with it, since the gateway only
-    // offers a message to a live turn when it carries one.
-    sendFollowup(
-      userMessage,
-      agent.agentId,
-      activeThreadId,
-      ready.map((a) => a.id!),
-    );
+    connection.send(activeThreadId, userMessage, sent);
   };
 
   const dictation = useDictation({
-    sendDictationStart,
-    sendDictationStop,
-    sendAudio: sendVoiceAudio,
+    sendDictationStart: connection.dictationStart,
+    sendDictationStop: connection.dictationStop,
+    sendAudio: connection.sendAudio,
     isConnected: status === 'connected',
     onTranscript: sendChat,
   });
@@ -434,13 +403,16 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
       </HeaderActions>
       <VoiceCallBar call={voice} agentName={agent.name} />
       <ChatMessageList
-        messages={localMessages}
+        messages={transcript}
         agentName={agent.name}
-        isTyping={isTyping}
+        viewerName={you}
+        turnState={turnState}
         isLoading={isLoadingThread}
         threadId={activeThreadId}
         onSuggestion={status === 'connected' && activeThreadId ? sendChat : undefined}
         onOpenComputerHelp={openComputerPanel}
+        onRetry={connection.retry}
+        onEdit={handleEditFailed}
       />
       {desktopHelp.length > 0 && (
         <ChatComputerPanel
@@ -463,9 +435,10 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
           value={message}
           onChange={setMessage}
           onSend={handleSend}
-          isPending={isTyping}
+          isPending={isWorking}
           onCancel={handleCancel}
-          connectionStatus={activeThreadId ? status : 'connecting'}
+          // Nothing is sent before a thread exists: a message needs one to belong to.
+          connectionStatus={activeThreadId || status === 'update-required' ? status : 'connecting'}
           attachments={attachments}
           onFilesSelected={handleFilesSelected}
           onRemoveAttachment={handleRemoveAttachment}

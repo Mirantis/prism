@@ -81,6 +81,16 @@ The main conversation surface.
   longer be downloaded — share it again if needed.
 - **Stopping.** While the agent is responding, a stop button appears next to
   send. It cancels the in-flight turn.
+- **Several tabs, browsers or devices.** Every open chat shows the same
+  conversation as it happens: your messages, other people's messages with their
+  names, and whether the agent is working. Any of them can stop the agent. A chat
+  that lost its connection catches up when it reconnects.
+- **Waiting.** The agent works on one conversation at a time. A message sent to
+  another conversation meanwhile shows as waiting, and is answered next.
+- **A message that could not be sent** is marked in the conversation, with
+  **Retry** and **Edit**.
+- **After an update**, a banner asks you to reload the page before you keep
+  chatting.
 - **Steering a response in progress.** You can keep typing while the agent
   works, and **Enter sends** — send stays live for the whole turn, alongside
   stop. A message sent mid-response is handed to the turn already running: the

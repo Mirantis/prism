@@ -48,6 +48,8 @@ export interface ConversationMessage {
   isCompacted: boolean;
   createdAt: string;
   attachments?: Attachment[] | null;
+  /** Who wrote a USER message, when their connection named them. Display only. */
+  senderName?: string | null;
 }
 
 export type ThreadSource = 'DATABASE' | 'SLACK';

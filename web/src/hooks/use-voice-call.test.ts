@@ -10,7 +10,7 @@ vi.mock('@/lib/voice-audio', () => ({
 }));
 
 import { useVoiceCall, type UseVoiceCallOptions } from './use-voice-call';
-import type { VoiceStartOptions } from './use-websocket';
+import type { VoiceStartOptions } from '@/lib/chat-socket/protocol';
 
 /** The audio side of a call, as `startVoiceAudio` hands it over. */
 function fakeAudio() {
