@@ -7,18 +7,24 @@ Feature: One conversation on every open client
     Given I am logged in
     And I have a personal agent
 
-  Scenario: A second browser shows the message, who wrote it, and the working agent
+  Scenario: A second browser shows the message and the working agent
     Given a web conversation titled "Live sync"
-    And I am signed in as "Ada Example"
-    And a second browser, signed in as "Grace Example", has the "Live sync" conversation open
+    And a second browser has the "Live sync" conversation open
     When I open the "Live sync" conversation
     And I type "Use your shell to run `sleep 8`, then reply with exactly LIVE_SYNC_OK." in the chat input
     And I send the message
-    Then the second browser shows the message "Use your shell to run" from "Ada Example" while the agent works
+    Then the second browser shows the message "Use your shell to run" while the agent works
     And the second browser shows a reply containing "LIVE_SYNC_OK"
     And the second browser shows no working indicator
     And the second browser shows the message "Use your shell to run" once
     And I see my message "Use your shell to run" once
+
+  Scenario: Another person's message shows on the left, under their name
+    Given a web conversation titled "Live sync"
+    When I open the "Live sync" conversation
+    And "Grace Example" sends "Reply with exactly GROUP_OK." to the "Live sync" conversation
+    Then I see the message "Reply with exactly GROUP_OK." from "Grace Example" among the other participants
+    And the agent reply contains "GROUP_OK"
 
   Scenario: The second browser stops a turn the first one started
     Given a web conversation titled "Live sync"

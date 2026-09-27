@@ -15,7 +15,7 @@ interface ChatMessageListProps {
   messages: TranscriptMessage[];
   agentName: string;
   /** The name this connection signed in as. Other people's messages show their name. */
-  viewerName: string | null;
+  viewerName: string | null | undefined;
   /** What the thread on screen is doing. */
   turnState: TurnState;
   isLoading: boolean;

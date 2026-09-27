@@ -3,6 +3,7 @@ import { computerHelpBlocks } from '@/types';
 import { memo } from 'react';
 import { CopyButton } from '@/components/shared/copy-button';
 import AgentAvatar from './agent-avatar';
+import ParticipantAvatar from './participant-avatar';
 import ChatMarkdown from './ChatMarkdown';
 import ChatToolCalls from './ChatToolCalls';
 import { MessageAttachmentChip } from './ChatAttachmentChip';
@@ -23,8 +24,13 @@ function AttachmentChips({ message }: { message: ConversationMessage }) {
 interface ChatMessageProps {
   message: TranscriptMessage;
   agentName: string;
-  /** The name this connection signed in as. A USER message by anyone else shows its sender. */
-  viewerName: string | null;
+  /**
+   * The name this connection signed in as. A USER message by anyone else shows its
+   * sender. Undefined until the runtime has said, and then every message is drawn as
+   * our own: the runtime stamps our messages with our name, and read as somebody
+   * else's they would jump sides when the socket opened.
+   */
+  viewerName: string | null | undefined;
   onOpenComputerHelp: (id: string) => void;
   /** Send a failed message again. */
   onRetry: (id: string) => void;
@@ -73,17 +79,41 @@ const ChatMessage = memo(function ChatMessage({
     );
   }
 
-  if (message.role === 'USER') {
-    const hasText = message.content.trim().length > 0;
-    const sender = message.senderName && message.senderName !== viewerName ? message.senderName : null;
+  const hasText = message.content.trim().length > 0;
+  const sender =
+    message.role === 'USER' && viewerName !== undefined && message.senderName && message.senderName !== viewerName
+      ? message.senderName
+      : null;
+
+  // Somebody else sharing the agent: on the left with everyone who is not this
+  // person, laid out like the agent's replies, in a bubble that never passes for
+  // our own.
+  if (sender) {
     return (
-      <div className={`group flex justify-end gap-3 ${ENTER}`} data-delivery={message.delivery}>
-        <div className="flex max-w-[85%] flex-col items-end gap-1">
-          {sender && (
-            <span className="px-1 text-xs font-medium text-muted-foreground" data-testid="message-sender">
+      <div className={`group flex gap-3 ${ENTER}`} data-message-role="participant">
+        <ParticipantAvatar name={sender} className="mt-0.5" />
+        <div className="flex max-w-[85%] min-w-0 flex-col items-start gap-2">
+          <div className="flex h-7 items-center gap-2">
+            <span className="text-sm font-medium text-strong" data-testid="message-sender">
               {sender}
             </span>
+            <span className="text-[11px] text-muted-foreground">{time}</span>
+          </div>
+          <AttachmentChips message={message} />
+          {hasText && (
+            <div className="max-w-full overflow-hidden rounded-2xl rounded-tl-md bg-muted px-4 py-2.5 text-[15px] break-words text-foreground [&_:not(pre)>code]:bg-background/70">
+              <ChatMarkdown content={message.content} />
+            </div>
           )}
+        </div>
+      </div>
+    );
+  }
+
+  if (message.role === 'USER') {
+    return (
+      <div className={`group flex justify-end gap-3 ${ENTER}`} data-message-role="user" data-delivery={message.delivery}>
+        <div className="flex max-w-[85%] flex-col items-end gap-1">
           <AttachmentChips message={message} />
           {hasText && (
             <div className="rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-[15px] text-primary-foreground shadow-md shadow-primary/15 [&_a]:text-primary-foreground [&_a]:decoration-primary-foreground/50">
@@ -120,16 +150,20 @@ const ChatMessage = memo(function ChatMessage({
 
   const help = computerHelpBlocks(message);
   return (
-    <div className={`group flex gap-3 ${ENTER}`}>
+    <div className={`group flex gap-3 ${ENTER}`} data-message-role="agent">
       <AgentAvatar className="mt-0.5" />
       <div className="min-w-0 flex-1 space-y-2">
         <div className="flex h-7 items-center gap-2">
           <span className="text-sm font-medium text-strong">{agentName}</span>
           <span className="text-[11px] text-muted-foreground">{time}</span>
         </div>
-        {help.length === 0 && <div className="overflow-hidden text-[15px] leading-relaxed break-words text-foreground">
-          <ChatMarkdown content={message.content} />
-        </div>}
+        {/* A bubble like every other participant's, the full width of the column so
+            tables and code keep their room. */}
+        {help.length === 0 && message.content.trim() && (
+          <div className="overflow-hidden rounded-2xl rounded-tl-md bg-muted px-4 py-3 text-[15px] leading-relaxed break-words text-foreground [&_:not(pre)>code]:bg-background/70">
+            <ChatMarkdown content={message.content} />
+          </div>
+        )}
         {help.map((item) => (
           <ChatComputerHelp key={item.id} help={item} onOpen={onOpenComputerHelp} />
         ))}
