@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import { createBdd } from 'playwright-bdd';
 import { expect, test, type Page } from '@playwright/test';
@@ -617,17 +618,47 @@ Then('Computer says Prism is stopped, and a question in another chat goes unansw
   // A question needing no computer at all, asked on a socket of its own rather than in a
   // second tab: opening one takes this page's pointer lock, and the keyboard a takeover
   // gives you goes with it.
+  const { threadId } = (await (
+    await fetch('http://localhost:3003/threads', { method: 'POST' })
+  ).json()) as { threadId: string };
   quietSocket = new WebSocket('ws://localhost:3003/api/ws');
+  const socket = quietSocket;
   await new Promise<void>((resolve, reject) => {
-    quietSocket!.once('open', resolve);
-    quietSocket!.once('error', reject);
+    socket.once('open', resolve);
+    socket.once('error', reject);
   });
-  quietSocket.send(
+  const welcomed = new Promise<{ type: string }>((resolve) => {
+    socket.on('message', (data) => {
+      const frame = JSON.parse(data.toString()) as { type: string };
+      if (frame.type === 'welcome') resolve(frame);
+    });
+  });
+  socket.send(
+    JSON.stringify({ type: 'hello', id: 'quiet-hello', payload: { protocol: 2, client: { name: 'e2e' } } }),
+  );
+  await welcomed;
+  const confirmed = new Promise<{ type: string }>((resolve) => {
+    socket.on('message', (data) => {
+      const frame = JSON.parse(data.toString()) as { type: string; re?: string };
+      if (frame.re === 'quiet-question') resolve(frame);
+    });
+  });
+  socket.send(
     JSON.stringify({
-      type: 'chat',
-      payload: { content: 'Reply with the single word ACKNOWLEDGED. Use no tools.' },
+      type: 'send',
+      id: 'quiet-question',
+      payload: {
+        message: {
+          id: randomUUID(),
+          threadId,
+          content: 'Reply with the single word ACKNOWLEDGED. Use no tools.',
+          attachmentIds: [],
+        },
+      },
     }),
   );
+  // Stored and confirmed at once; it is the answer that waits.
+  expect((await confirmed).type).toBe('ack');
   await new Promise((resolve) => setTimeout(resolve, 20_000));
   expect(await countAnswers()).toBe(answersBeforeTakeover);
 });
