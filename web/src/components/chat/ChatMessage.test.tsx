@@ -1,0 +1,65 @@
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import type { TranscriptMessage } from '@/lib/chat-socket/transcript';
+import ChatMessage from './ChatMessage';
+
+function userMessage(overrides: Partial<TranscriptMessage> = {}): TranscriptMessage {
+  return {
+    id: '58aa0353-ebdb-421b-ad49-75f443341eb7',
+    threadId: '9db4a6ef-9160-4784-bcda-c2e649edf269',
+    role: 'USER',
+    content: 'Reply with exactly: pong',
+    triggeredBy: 'USER_INPUT',
+    toolCalls: null,
+    blocks: null,
+    isCompacted: false,
+    createdAt: '2026-09-27T08:38:51.086Z',
+    attachments: null,
+    senderName: 'Ada Example',
+    ...overrides,
+  };
+}
+
+function renderMessage(message: TranscriptMessage, viewerName: string | null) {
+  const onRetry = vi.fn();
+  const onEdit = vi.fn();
+  render(
+    <ChatMessage
+      message={message}
+      agentName="Prism"
+      viewerName={viewerName}
+      onOpenComputerHelp={vi.fn()}
+      onRetry={onRetry}
+      onEdit={onEdit}
+    />,
+  );
+  return { onRetry, onEdit };
+}
+
+describe('ChatMessage', () => {
+  afterEach(cleanup);
+
+  it("names the sender of somebody else's message", () => {
+    renderMessage(userMessage(), 'Grace Example');
+    expect(screen.getByTestId('message-sender').textContent).toBe('Ada Example');
+  });
+
+  it('shows your own message without a name', () => {
+    renderMessage(userMessage(), 'Ada Example');
+    expect(screen.queryByTestId('message-sender')).toBeNull();
+  });
+
+  it('offers Retry and Edit on a message that was not stored', () => {
+    const { onRetry, onEdit } = renderMessage(
+      userMessage({ delivery: 'failed', deliveryError: 'This conversation no longer exists.' }),
+      'Ada Example',
+    );
+
+    expect(screen.getByTestId('message-failed').textContent).toContain('This conversation no longer exists.');
+    fireEvent.click(screen.getByTestId('message-retry'));
+    fireEvent.click(screen.getByTestId('message-edit'));
+    expect(onRetry).toHaveBeenCalledWith('58aa0353-ebdb-421b-ad49-75f443341eb7');
+    expect(onEdit).toHaveBeenCalledWith('58aa0353-ebdb-421b-ad49-75f443341eb7');
+  });
+});

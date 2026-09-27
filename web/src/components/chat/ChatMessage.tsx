@@ -6,6 +6,7 @@ import AgentAvatar from './agent-avatar';
 import ChatMarkdown from './ChatMarkdown';
 import ChatToolCalls from './ChatToolCalls';
 import { MessageAttachmentChip } from './ChatAttachmentChip';
+import type { TranscriptMessage } from '@/lib/chat-socket/transcript';
 import type { ConversationMessage } from '@/types';
 
 function AttachmentChips({ message }: { message: ConversationMessage }) {
@@ -20,9 +21,15 @@ function AttachmentChips({ message }: { message: ConversationMessage }) {
 }
 
 interface ChatMessageProps {
-  message: ConversationMessage;
+  message: TranscriptMessage;
   agentName: string;
+  /** The name this connection signed in as. A USER message by anyone else shows its sender. */
+  viewerName: string | null;
   onOpenComputerHelp: (id: string) => void;
+  /** Send a failed message again. */
+  onRetry: (id: string) => void;
+  /** Take a failed message back into the composer. */
+  onEdit: (id: string) => void;
 }
 
 /** A message rises into place as it arrives. */
@@ -31,7 +38,10 @@ const ENTER = 'animate-in fade-in-0 slide-in-from-bottom-1 duration-300 ease-out
 const ChatMessage = memo(function ChatMessage({
   message,
   agentName,
+  viewerName,
   onOpenComputerHelp,
+  onRetry,
+  onEdit,
 }: ChatMessageProps) {
   const isError = message.role === 'SYSTEM' && message.id.startsWith('error-');
   const time = new Date(message.createdAt).toLocaleTimeString([], {
@@ -65,16 +75,44 @@ const ChatMessage = memo(function ChatMessage({
 
   if (message.role === 'USER') {
     const hasText = message.content.trim().length > 0;
+    const sender = message.senderName && message.senderName !== viewerName ? message.senderName : null;
     return (
-      <div className={`group flex justify-end gap-3 ${ENTER}`}>
+      <div className={`group flex justify-end gap-3 ${ENTER}`} data-delivery={message.delivery}>
         <div className="flex max-w-[85%] flex-col items-end gap-1">
+          {sender && (
+            <span className="px-1 text-xs font-medium text-muted-foreground" data-testid="message-sender">
+              {sender}
+            </span>
+          )}
           <AttachmentChips message={message} />
           {hasText && (
             <div className="rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-[15px] text-primary-foreground shadow-md shadow-primary/15 [&_a]:text-primary-foreground [&_a]:decoration-primary-foreground/50">
               <ChatMarkdown content={message.content} />
             </div>
           )}
-          <span className="px-1 text-[11px] text-muted-foreground">{time}</span>
+          {message.delivery === 'failed' ? (
+            <span className="flex items-center gap-2 px-1 text-[11px] text-destructive" data-testid="message-failed">
+              {message.deliveryError ?? 'The message could not be sent.'}
+              <button
+                type="button"
+                onClick={() => onRetry(message.id)}
+                className="font-medium hover:underline"
+                data-testid="message-retry"
+              >
+                Retry
+              </button>
+              <button
+                type="button"
+                onClick={() => onEdit(message.id)}
+                className="font-medium hover:underline"
+                data-testid="message-edit"
+              >
+                Edit
+              </button>
+            </span>
+          ) : (
+            <span className="px-1 text-[11px] text-muted-foreground">{time}</span>
+          )}
         </div>
       </div>
     );

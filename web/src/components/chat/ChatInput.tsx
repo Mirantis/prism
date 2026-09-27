@@ -16,7 +16,7 @@ import {
   InputGroupTextarea,
 } from '@/components/ui/input-group';
 import { ArrowUp, Mic, Paperclip, Square, X } from 'lucide-react';
-import type { ConnectionStatus } from '@/hooks/use-websocket';
+import type { ConnectionStatus } from '@/lib/chat-socket/protocol';
 import type { Dictation } from '@/hooks/use-dictation';
 import type { ContextUsage } from '@/types';
 import { PendingAttachmentChip, type PendingAttachment } from './ChatAttachmentChip';
@@ -54,7 +54,13 @@ const statusColors: Record<ConnectionStatus, string> = {
   connected: 'bg-success',
   connecting: 'bg-warning animate-pulse',
   disconnected: 'bg-muted-foreground',
-  error: 'bg-destructive',
+  'update-required': 'bg-destructive',
+};
+
+const statusLabels: Record<Exclude<ConnectionStatus, 'connected'>, string> = {
+  connecting: 'Connecting…',
+  disconnected: 'Disconnected',
+  'update-required': 'Reload the page to update',
 };
 
 export default function ChatInput({
@@ -93,11 +99,7 @@ export default function ChatInput({
   // web while Slack and the terminal UI had it.
   //
   // Gated on the connection for the same reason STOP is: the send can't reach
-  // the runtime, so don't imply the message went out. `sendMessage()` would
-  // early-return on a closed socket while `handleSend` had already cleared the
-  // composer and echoed the message locally — the text would be gone and the
-  // echo would be a lie. That hole predates steering, but keeping send live for
-  // the whole turn is what makes a mid-turn disconnect reachable.
+  // the runtime now, so don't imply the message went out.
   const isDisabled =
     (!value.trim() && !hasReady) || isUploading || connectionStatus !== 'connected';
 
@@ -247,7 +249,7 @@ export default function ChatInput({
             {connectionStatus !== 'connected' && (
               <span className="flex items-center gap-1.5">
                 <span className={`inline-block size-1.5 rounded-full ${statusColors[connectionStatus]}`} />
-                {connectionStatus === 'connecting' ? 'Connecting…' : 'Disconnected'}
+                {statusLabels[connectionStatus]}
               </span>
             )}
             {isCompacting && (

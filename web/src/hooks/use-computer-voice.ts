@@ -1,23 +1,18 @@
 import { useRef } from 'react';
-import { useWebSocket } from './use-websocket';
-import { useComputerStatusFeed } from './use-computer-status';
+import { useChatSocket } from './use-chat-socket';
 import { useVoiceCall, type VoiceCall } from './use-voice-call';
 
 export function useComputerVoice() {
   const ref = useRef<VoiceCall | null>(null);
-  const writeComputerStatus = useComputerStatusFeed();
-  const ws = useWebSocket({
-    onVoiceEvent: (event) => ref.current?.handleEvent(event),
-    onVoiceAudio: (frame) => ref.current?.handleAudio(frame),
-    // The frame updates the desktop state the computer page reads, help requests
-    // included.
-    onComputerStatus: writeComputerStatus,
+  const { status, connection } = useChatSocket({
+    voice: (event) => ref.current?.handleEvent(event),
+    voiceAudio: (frame) => ref.current?.handleAudio(frame),
   });
   const call = useVoiceCall({
-    sendVoiceStart: ws.sendVoiceStart,
-    sendVoiceStop: ws.sendVoiceStop,
-    sendVoiceAudio: ws.sendVoiceAudio,
-    isConnected: ws.isConnected,
+    sendVoiceStart: connection.voiceStart,
+    sendVoiceStop: connection.voiceStop,
+    sendVoiceAudio: connection.sendAudio,
+    isConnected: status === 'connected',
     request: { computer: true },
     sampleRate: 48_000,
     startMuted: true,

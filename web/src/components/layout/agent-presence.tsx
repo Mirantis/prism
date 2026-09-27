@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { runtimeApi } from '@/api/runtime-client';
-import { useWebSocket } from '@/hooks/use-websocket';
+import { useChatSocket } from '@/hooks/use-chat-socket';
 import { useAgent } from '@/lib/agent-context';
 import { agentStatusTone, TONE_DOT } from '@/lib/tones';
 import { cn } from '@/lib/utils';
@@ -21,7 +21,9 @@ const LABELS: Record<string, string> = {
 export function AgentPresence({ className }: { className?: string }) {
   const agent = useAgent();
   const queryClient = useQueryClient();
-  const { isAgentBusy } = useWebSocket();
+  const { turns } = useChatSocket();
+  // A queued thread waits behind a running one, so any listed thread means work.
+  const isAgentBusy = Object.keys(turns).length > 0;
   const { data: details } = useQuery({
     queryKey: ['agent-details', agent.agentId],
     queryFn: () => runtimeApi.details(),

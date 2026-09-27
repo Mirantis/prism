@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowUpCircle, Loader2, X } from 'lucide-react';
 import { runtimeApi } from '@/api/runtime-client';
-import { useWebSocket } from '@/hooks/use-websocket';
+import { useChatSocket } from '@/hooks/use-chat-socket';
 import { Button } from '@/components/ui/button';
 import type { UpdateEvent, UpdateStatus } from '@/types';
 
@@ -10,8 +10,8 @@ import type { UpdateEvent, UpdateStatus } from '@/types';
  * updater is enabled for this install: renders "update available" with an
  * Update now button, "Backend updating…" while the runtime restarts (then
  * reloads once the runtime reports the target version), and a dismissible
- * error when an update fails. Mounts its own WebSocket so update frames
- * reach every page, not only the chat route.
+ * error when an update fails. Listens on the tab's chat socket, so update
+ * events reach every page, not only the chat route.
  */
 export function UpdateBannerLive({ status }: { status: UpdateStatus }) {
   const [phase, setPhase] = useState<'idle' | 'updating' | 'failed'>('idle');
@@ -73,8 +73,8 @@ export function UpdateBannerLive({ status }: { status: UpdateStatus }) {
     }, 1_000);
   };
 
-  useWebSocket({
-    onUpdate: (event: UpdateEvent) => {
+  useChatSocket({
+    update: (event: UpdateEvent) => {
       setVersion(event.version);
       if (event.status === 'updating') {
         setPhase('updating');
