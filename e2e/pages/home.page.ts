@@ -38,11 +38,15 @@ export class HomePage extends BasePage {
   /** "New chat" at the top of the sidebar, shown on every page. */
   readonly sidebarNewChatButton: Locator;
   /**
-   * The "agent is working" indicator in the message list. Driven by the same
-   * `isTyping` state as the STOP button (AgentChat passes it as both `isTyping`
-   * and `isPending`), so it is the one signal for "a turn is in flight".
+   * The "agent is working" indicator in the message list, shown while the
+   * conversation's turn is running — whoever started it. The runtime says so
+   * with a `turn` event, the same signal that shows STOP.
    */
   readonly typingIndicator: Locator;
+  /** Shown instead while the message waits behind a turn in another conversation. */
+  readonly queuedIndicator: Locator;
+  /** Either of the two: the conversation has work under way. */
+  readonly workingIndicator: Locator;
   /** Slash-command suggestion popup shown above the composer when "/" is typed. */
   readonly commandPopup: Locator;
   /** Individual rows in the command popup. */
@@ -56,6 +60,8 @@ export class HomePage extends BasePage {
     // stays live so a message can be steered into the running turn.
     this.stopButton = page.getByTestId('chat-stop-button');
     this.typingIndicator = page.getByTestId('chat-typing-indicator');
+    this.queuedIndicator = page.getByTestId('chat-queued-indicator');
+    this.workingIndicator = this.typingIndicator.or(this.queuedIndicator);
     // Hidden file input behind the paperclip button in ChatInput.
     this.fileInput = page.locator('input[type="file"]');
     this.recentsSection = page.getByTestId('recents');
@@ -103,7 +109,7 @@ export class HomePage extends BasePage {
     await expect(button).toBeEnabled();
     sendBaseline.set(this.page, await this.getAgentMessages().count());
     await button.click();
-    await this.typingIndicator.waitFor({ state: 'visible', timeout: turnStartTimeout });
+    await this.workingIndicator.first().waitFor({ state: 'visible', timeout: turnStartTimeout });
   }
 
   /** Visible Recents row labels, in document (top-to-bottom) order. */
@@ -122,37 +128,29 @@ export class HomePage extends BasePage {
   }
 
   /**
-   * Send the staged message and confirm the send actually went out.
+   * Send the staged message and confirm the runtime took it up.
    *
-   * The indicator is set optimistically inside the send — `use-websocket.ts`
-   * flips `isTyping` right after `ws.send()`, before any runtime frame — so it
-   * is in the DOM by the time the click resolves. What this wait therefore
-   * proves is that the socket *accepted* the message, and its one real failure
-   * mode is the one that matters here: when the socket is not OPEN,
-   * `sendMessage()` logs to the console and returns without flipping `isTyping`,
-   * so nothing is sent and nothing says so.
+   * The working indicator appears when the runtime reports the conversation's
+   * turn running, or the message queued behind another conversation — so this
+   * wait proves the message was stored and scheduled, not only that the page
+   * drew it. A send that never arrives surfaces here, rather than further down as
+   * an empty conversation or a missing thread row. It also makes
+   * `waitForStreamComplete()`'s `detached` wait sound: that wait is only
+   * meaningful once the indicator is known to have appeared.
    *
-   * Without it, that lost send surfaces further down as an empty conversation or
-   * a missing thread row — an assertion failure pointing at the feature rather
-   * than at the dropped message. It also makes `waitForStreamComplete()`'s
-   * `detached` wait sound: that wait is only meaningful once the indicator is
-   * known to have appeared.
+   * The budget covers the round trip to the runtime and the start of the turn.
    *
-   * Cheap by construction (the state is already set locally when the click
-   * returns), so the budget only has to cover a slow render.
-   *
-   * Note it proves *a* turn is in flight, not specifically this one: send twice
-   * without waiting and the gateway queues the second behind the first, whose
-   * indicator is already up.
+   * It proves *a* turn is in flight on this conversation, not specifically one
+   * for this message: a message sent mid-turn joins the running one.
    *
    * Exception: a slash command. `AgentChat.handleSend` matches the staged text
-   * against its command registry and, on a hit, returns before the WebSocket
-   * send — the command runs over REST instead. Nothing ever sets `isTyping`, so
-   * anchoring on it would hang until the timeout on every `/compact`,
-   * `/goal …` and `/skills …`. Those steps assert on what the command itself
-   * renders. Text that only *looks* like a command (no registry hit) is sent
-   * over the socket like any message; skipping the check for it loses the
-   * guarantee and nothing else, and no scenario sends one.
+   * against its command registry and, on a hit, returns before the socket send —
+   * the command runs over REST instead. No turn starts, so anchoring on the
+   * indicator would hang until the timeout on every `/compact`, `/goal …` and
+   * `/skills …`. Those steps assert on what the command itself renders. Text that
+   * only *looks* like a command (no registry hit) is sent over the socket like any
+   * message; skipping the check for it loses the guarantee and nothing else, and
+   * no scenario sends one.
    */
   async sendMessage(turnStartTimeout = 30_000) {
     const staged = (await this.chatInput.inputValue()).trim();
@@ -167,7 +165,7 @@ export class HomePage extends BasePage {
     sendBaseline.set(this.page, await this.getAgentMessages().count());
     await this.sendButton.click();
     if (staged.startsWith('/')) return;
-    await this.typingIndicator.waitFor({ state: 'visible', timeout: turnStartTimeout });
+    await this.workingIndicator.first().waitFor({ state: 'visible', timeout: turnStartTimeout });
   }
 
   /**
@@ -236,8 +234,8 @@ export class HomePage extends BasePage {
   }
 
   /**
-   * Wait for streaming to finish — the typing indicator disappears when
-   * isTyping flips to false at end-of-stream.
+   * Wait for the turn to finish — the working indicator goes when the runtime
+   * reports the conversation idle.
    *
    * This is the second half of the condition; `sendMessage()` waits for the
    * indicator to appear, without which a `detached` wait is satisfied by a DOM
@@ -248,6 +246,7 @@ export class HomePage extends BasePage {
    * known to have started, so the absence means over rather than never began.
    */
   async waitForStreamComplete(timeout = 60_000) {
+    await this.queuedIndicator.waitFor({ state: 'detached', timeout });
     await this.typingIndicator.waitFor({ state: 'detached', timeout });
   }
 

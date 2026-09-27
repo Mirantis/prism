@@ -115,8 +115,8 @@ When('I send the message while the agent is responding', async ({ page }) => {
 Then('the chat composer should be ready for input again', async ({ page }) => {
   const homePage = new HomePage(page);
   // Send is always present now, so its visibility proves nothing. What marks
-  // the end of the turn is the typing indicator clearing (runtime broadcast
-  // processing:false) and STOP going away with it.
+  // the end of the turn is the typing indicator clearing (the runtime's `turn`
+  // event going idle) and STOP going away with it.
   await homePage.waitForStreamComplete();
   await expect(homePage.stopButton).toBeHidden();
 });
