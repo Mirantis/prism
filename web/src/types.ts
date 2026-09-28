@@ -48,7 +48,11 @@ export interface ConversationMessage {
   isCompacted: boolean;
   createdAt: string;
   attachments?: Attachment[] | null;
-  /** Who wrote a USER message, when their connection named them. Display only. */
+  /**
+   * Who wrote a USER message, when their connection was named: `senderId` tells
+   * one person from another, `senderName` is shown. Neither decides anything.
+   */
+  senderId?: string | null;
   senderName?: string | null;
 }
 

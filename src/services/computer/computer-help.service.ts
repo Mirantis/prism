@@ -162,7 +162,7 @@ class ComputerHelpService {
     this.resolved(agentId, userId, updated);
     // The card is part of the transcript, so every open client shows it answered.
     const { messageDeliveryService } = await import('../message-delivery.service');
-    await messageDeliveryService.mirror(userId, {
+    await messageDeliveryService.showInConversation(userId, {
       ...row,
       blocks: [updated] as unknown as Prisma.JsonValue,
     });

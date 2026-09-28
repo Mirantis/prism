@@ -70,6 +70,15 @@ export interface ThreadCreated {
   createdAt: Date;
 }
 
+/**
+ * A client's copy of a stored message names its sender as the chat socket's
+ * `message` event does, so history and live messages have one shape: a client
+ * that tells its own messages from others' by `senderId` must find it on both.
+ */
+function withSenderId<T extends ConversationMessage>(message: T): T & { senderId: string | null } {
+  return { ...message, senderId: message.senderExternalId ?? null };
+}
+
 export interface MessageWithAttachments extends ConversationMessage {
   attachments?: AttachmentMeta[];
 }
@@ -387,7 +396,7 @@ class ConversationService {
     // completes, or when the stored model is unrecognized.
     const contextUsage = buildContextSnapshot(threadId, thread.contextModel, thread.contextTokens);
 
-    return { ...thread, messages: withAttachments, contextUsage };
+    return { ...thread, messages: withAttachments.map(withSenderId), contextUsage };
   }
 
   /**
@@ -520,7 +529,7 @@ class ConversationService {
     limit: number = 20
   ): Promise<ConversationMessage[]> {
     const provider = await this.resolveProvider(threadId);
-    return provider.getRecentMessages(threadId, limit, { view: 'client' });
+    return (await provider.getRecentMessages(threadId, limit, { view: 'client' })).map(withSenderId);
   }
 
   /**

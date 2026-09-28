@@ -24,27 +24,35 @@ describe('The recorded v2 session', () => {
     }
   });
 
-  it('numbers every client’s events without a gap, across the reconnect', () => {
+  it('numbers every client’s events without a gap, and resumes from the cursor it names', () => {
     for (const client of ['web', 'phone']) {
-      const received = log.filter((e) => e.client === client && e.direction === 'received').map((e) => e.frame);
-      const welcomes = received.filter((f) => f.type === 'welcome');
-      const seqs = received.filter((f) => typeof f.seq === 'number').map((f) => f.seq);
-      let expected = welcomes[0].payload.seq + 1;
-      for (const seq of seqs) {
-        expect(seq).toBe(expected);
-        expected = seq + 1;
+      const entries = log.filter((e) => e.client === client && e.direction !== 'closed');
+      let expected = 0;
+      let resumeFrom: number | undefined;
+      for (const { direction, frame } of entries) {
+        if (direction === 'sent' && frame.type === 'hello') resumeFrom = frame.payload.resume?.seq;
+        if (direction !== 'received') continue;
+        // Replay starts after the cursor the client sent, not after the last event
+        // it happened to receive.
+        if (frame.type === 'welcome') expected = (frame.payload.resumed ? resumeFrom! : frame.payload.seq) + 1;
+        if (typeof frame.seq !== 'number') continue;
+        expect(frame.seq).toBe(expected);
+        expected = frame.seq + 1;
       }
     }
   });
 
-  it('shows a person’s own message to every client, before its reply', () => {
+  it('shows a person’s own message to every client, before its reply, under their id', () => {
     for (const client of ['web', 'phone']) {
-      const messages = log
-        .filter((e) => e.client === client && e.frame?.type === 'message')
-        .map((e) => e.frame.payload);
+      // Upserted by id, as a client does: a resend shows the stored message again.
+      const byId = new Map<string, any>();
+      for (const e of log) {
+        if (e.client === client && e.frame?.type === 'message') byId.set(e.frame.payload.id, e.frame.payload);
+      }
+      const messages = [...byId.values()];
       expect(messages.map((m) => m.role)).toEqual(['USER', 'AGENT', 'USER', 'AGENT']);
-      expect(messages[0].senderName).toBe('Ada Example');
-      expect(messages[0].id).toBe(session.messages[0]);
+      expect(messages[0]).toMatchObject({ id: session.messages[0], senderId: 'ada@example.com' });
+      expect(messages[1].senderId).toBeNull();
     }
   });
 

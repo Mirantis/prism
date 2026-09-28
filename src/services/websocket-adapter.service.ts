@@ -30,13 +30,14 @@ export function messageEventPayload(message: DeliverableMessage): MessageEventPa
     // Shared-file metadata (no bytes); clients render download chips and
     // fetch bytes from GET /agents/attachments/:id.
     attachments: (message.attachments as MessageEventPayload['attachments']) ?? null,
+    senderId: message.senderExternalId ?? null,
     senderName: message.senderName ?? null,
   };
 }
 
 class WebSocketAdapterService implements ChannelAdapter {
   readonly name = 'websocket';
-  readonly mirrorsTranscript = true;
+  readonly showsWholeConversation = true;
 
   async deliver(userId: string, message: DeliverableMessage, _channelContext?: ChannelContext): Promise<void> {
     try {

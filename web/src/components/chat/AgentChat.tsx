@@ -405,7 +405,7 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
       <ChatMessageList
         messages={transcript}
         agentName={agent.name}
-        viewerName={you}
+        viewer={you}
         turnState={turnState}
         isLoading={isLoadingThread}
         threadId={activeThreadId}

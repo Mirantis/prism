@@ -8,6 +8,7 @@ import ChatMarkdown from './ChatMarkdown';
 import ChatToolCalls from './ChatToolCalls';
 import { MessageAttachmentChip } from './ChatAttachmentChip';
 import type { TranscriptMessage } from '@/lib/chat-socket/transcript';
+import type { Viewer } from '@/lib/chat-socket/protocol';
 import type { ConversationMessage } from '@/types';
 
 function AttachmentChips({ message }: { message: ConversationMessage }) {
@@ -25,12 +26,12 @@ interface ChatMessageProps {
   message: TranscriptMessage;
   agentName: string;
   /**
-   * The name this connection signed in as. A USER message by anyone else shows its
-   * sender. Undefined until the runtime has said, and then every message is drawn as
-   * our own: the runtime stamps our messages with our name, and read as somebody
-   * else's they would jump sides when the socket opened.
+   * Who this connection signed in as. A USER message with another sender id is
+   * somebody else's. Undefined until the runtime has said, and then every message is
+   * drawn as our own: the runtime stamps our messages with our id, and read as
+   * somebody else's they would jump sides when the socket opened.
    */
-  viewerName: string | null | undefined;
+  viewer: Viewer | undefined;
   onOpenComputerHelp: (id: string) => void;
   /** Send a failed message again. */
   onRetry: (id: string) => void;
@@ -44,7 +45,7 @@ const ENTER = 'animate-in fade-in-0 slide-in-from-bottom-1 duration-300 ease-out
 const ChatMessage = memo(function ChatMessage({
   message,
   agentName,
-  viewerName,
+  viewer,
   onOpenComputerHelp,
   onRetry,
   onEdit,
@@ -81,8 +82,8 @@ const ChatMessage = memo(function ChatMessage({
 
   const hasText = message.content.trim().length > 0;
   const sender =
-    message.role === 'USER' && viewerName !== undefined && message.senderName && message.senderName !== viewerName
-      ? message.senderName
+    message.role === 'USER' && viewer !== undefined && message.senderId && message.senderId !== viewer.id
+      ? (message.senderName ?? message.senderId)
       : null;
 
   // Somebody else sharing the agent: on the left with everyone who is not this

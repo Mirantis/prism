@@ -292,13 +292,13 @@ describe('App', () => {
   it('labels a message by someone else in the conversation with their name', async () => {
     const { lastFrame, unmount } = render(<App {...baseProps} />);
     try {
-      adapterStub.events.emit('welcome', { name: 'Grace Example' });
-      adapterStub.events.emit('message', stored({ id: 'u1', role: 'USER', content: 'from the web', senderName: 'Ada Example' }));
-      adapterStub.events.emit('message', stored({ id: 'u2', role: 'USER', content: 'from here', senderName: 'Grace Example' }));
+      adapterStub.events.emit('welcome', { id: 'grace@example.com', name: 'grace@example.com' });
+      adapterStub.events.emit('message', stored({ id: 'u1', role: 'USER', content: 'from the web', senderId: 'ada@example.com', senderName: 'ada@example.com' }));
+      adapterStub.events.emit('message', stored({ id: 'u2', role: 'USER', content: 'from here', senderId: 'grace@example.com', senderName: 'grace@example.com' }));
       await settle();
 
       const frame = lastFrame() ?? '';
-      expect(frame).toContain('▌ Ada Example');
+      expect(frame).toContain('▌ ada@example.com');
       expect(frame).toContain('▌ You');
     } finally {
       unmount();

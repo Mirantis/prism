@@ -77,8 +77,8 @@ export const MAX_CONNECTIONS = 16;
  */
 export const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 
-/** The longest sender name kept from the ingress header. */
-const MAX_SENDER_NAME = 128;
+/** The longest sender id kept from the ingress header. */
+const MAX_SENDER_ID = 128;
 
 /** The header the Lens Agents ingress names the signed-in caller in. It strips any copy a client sent. */
 const FORWARDED_USER_HEADER = 'x-forwarded-user';
@@ -89,8 +89,8 @@ interface ChatSocket extends WebSocket {
   ready?: boolean;
   /** Set while a `hello` is being answered, so a second one cannot start another. */
   greeting?: boolean;
-  /** Who the ingress says is on this connection, for display. */
-  senderName?: string | null;
+  /** Who the ingress says is on this connection. Display and attribution only. */
+  sender?: { id: string; name: string } | null;
   helloTimer?: NodeJS.Timeout;
   unsubscribe?: () => void;
   /** A send is the expensive request; everything else is cheap. */
@@ -99,19 +99,21 @@ interface ChatSocket extends WebSocket {
 }
 
 /**
- * The name to show on this connection's messages, from the ingress's header.
+ * Who is on this connection, from the ingress's header: the signed-in person's
+ * email, or their user id when they have none. It is their id, and the only name
+ * the ingress gives, so it is both.
  *
- * **Display only.** The ingress writes the header for a private port after it
- * signed the caller in, and strips any copy a client sent. A runtime reached
- * some other way — local development, or bound wider on purpose — would read
- * whatever a client wrote, so nothing is ever decided on it.
+ * **Attribution and display only.** The ingress writes the header for a private
+ * port after it signed the caller in, and strips any copy a client sent. A
+ * runtime reached some other way — local development, or bound wider on purpose
+ * — would read whatever a client wrote, so nothing is ever decided on it.
  */
-function senderNameOf(req: IncomingMessage): string | null {
+function senderOf(req: IncomingMessage): { id: string; name: string } | null {
   const raw = req.headers[FORWARDED_USER_HEADER];
   const value = Array.isArray(raw) ? raw[0] : raw;
   if (!value) return null;
-  const name = value.replace(/[<>:\x00-\x1f\x7f]/g, '').trim().slice(0, MAX_SENDER_NAME);
-  return name || null;
+  const id = value.replace(/[<>:\x00-\x1f\x7f]/g, '').trim().slice(0, MAX_SENDER_ID);
+  return id ? { id, name: id } : null;
 }
 
 /** A payload field, when the client sent it as a string with something in it. */
@@ -360,7 +362,7 @@ class WebSocketGatewayService {
    */
   private handleConnection(ws: ChatSocket, req: IncomingMessage): void {
     ws.isAlive = true;
-    ws.senderName = senderNameOf(req);
+    ws.sender = senderOf(req);
     ws.sends = new TokenBucket(10, 20);
     ws.requests = new TokenBucket(50, 100);
 
@@ -502,7 +504,7 @@ class WebSocketGatewayService {
         streamId: eventStreamService.streamId,
         seq: eventStreamService.seq,
         resumed: replay !== null,
-        you: { name: ws.senderName ?? null },
+        you: { id: ws.sender?.id ?? null, name: ws.sender?.name ?? null },
         snapshot: { turns: inboundMessageService.turns(), computer },
       },
     });
@@ -570,7 +572,7 @@ class WebSocketGatewayService {
     try {
       const accepted = await inboundMessageService.accept({
         ...message,
-        senderName: ws.senderName ?? null,
+        sender: ws.sender ?? null,
       });
       this.sendTo(ws, {
         type: 'ack',

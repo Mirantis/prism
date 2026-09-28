@@ -1,9 +1,9 @@
 {
-  "recordedAt": "2026-09-27T08:38:51.053Z",
-  "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+  "recordedAt": "2026-09-28T06:58:10.867Z",
+  "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
   "messages": [
-    "58aa0353-ebdb-421b-ad49-75f443341eb7",
-    "377536ac-a7f0-4588-82af-7c9eedf8c9b2"
+    "a636fe73-e7b4-4981-ae24-e45381e8ed59",
+    "08339a3c-fe3f-4034-96a5-94a6cebfc376"
   ],
   "log": [
     {
@@ -43,11 +43,12 @@
         "type": "welcome",
         "payload": {
           "protocol": 2,
-          "streamId": "07267e2b-eb98-445a-b535-76e5a987d1cb",
+          "streamId": "12477a13-6ada-438e-8729-781fcbc0fbc6",
           "seq": 1,
           "resumed": false,
           "you": {
-            "name": "Ada Example"
+            "id": "ada@example.com",
+            "name": "ada@example.com"
           },
           "snapshot": {
             "turns": [],
@@ -73,11 +74,12 @@
         "type": "welcome",
         "payload": {
           "protocol": 2,
-          "streamId": "07267e2b-eb98-445a-b535-76e5a987d1cb",
+          "streamId": "12477a13-6ada-438e-8729-781fcbc0fbc6",
           "seq": 1,
           "resumed": false,
           "you": {
-            "name": "Grace Example"
+            "id": "grace@example.com",
+            "name": "grace@example.com"
           },
           "snapshot": {
             "turns": [],
@@ -104,8 +106,8 @@
         "id": "send-1",
         "payload": {
           "message": {
-            "id": "58aa0353-ebdb-421b-ad49-75f443341eb7",
-            "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+            "id": "a636fe73-e7b4-4981-ae24-e45381e8ed59",
+            "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
             "content": "Reply with exactly: pong",
             "attachmentIds": []
           }
@@ -118,7 +120,7 @@
       "frame": {
         "type": "thread",
         "payload": {
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
           "title": "Reply with exactly:"
         },
         "seq": 2
@@ -130,7 +132,7 @@
       "frame": {
         "type": "thread",
         "payload": {
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
           "title": "Reply with exactly:"
         },
         "seq": 2
@@ -142,17 +144,18 @@
       "frame": {
         "type": "message",
         "payload": {
-          "id": "58aa0353-ebdb-421b-ad49-75f443341eb7",
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "id": "a636fe73-e7b4-4981-ae24-e45381e8ed59",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
           "role": "USER",
           "content": "Reply with exactly: pong",
           "triggeredBy": "USER_INPUT",
           "toolCalls": null,
           "blocks": null,
           "isCompacted": false,
-          "createdAt": "2026-09-27T08:38:51.086Z",
+          "createdAt": "2026-09-28T06:58:10.902Z",
           "attachments": null,
-          "senderName": "Ada Example"
+          "senderId": "ada@example.com",
+          "senderName": "ada@example.com"
         },
         "seq": 3
       }
@@ -163,17 +166,18 @@
       "frame": {
         "type": "message",
         "payload": {
-          "id": "58aa0353-ebdb-421b-ad49-75f443341eb7",
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "id": "a636fe73-e7b4-4981-ae24-e45381e8ed59",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
           "role": "USER",
           "content": "Reply with exactly: pong",
           "triggeredBy": "USER_INPUT",
           "toolCalls": null,
           "blocks": null,
           "isCompacted": false,
-          "createdAt": "2026-09-27T08:38:51.086Z",
+          "createdAt": "2026-09-28T06:58:10.902Z",
           "attachments": null,
-          "senderName": "Ada Example"
+          "senderId": "ada@example.com",
+          "senderName": "ada@example.com"
         },
         "seq": 3
       }
@@ -184,7 +188,7 @@
       "frame": {
         "type": "turn",
         "payload": {
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
           "state": "running"
         },
         "seq": 4
@@ -196,7 +200,7 @@
       "frame": {
         "type": "turn",
         "payload": {
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
           "state": "running"
         },
         "seq": 4
@@ -209,7 +213,7 @@
         "type": "ack",
         "re": "send-1",
         "payload": {
-          "messageId": "58aa0353-ebdb-421b-ad49-75f443341eb7",
+          "messageId": "a636fe73-e7b4-4981-ae24-e45381e8ed59",
           "seq": 4,
           "queued": false,
           "duplicate": false
@@ -222,7 +226,7 @@
       "frame": {
         "type": "thread",
         "payload": {
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
           "title": "pong"
         },
         "seq": 5
@@ -234,7 +238,7 @@
       "frame": {
         "type": "thread",
         "payload": {
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
           "title": "pong"
         },
         "seq": 5
@@ -246,9 +250,9 @@
       "frame": {
         "type": "context",
         "payload": {
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
           "modelId": "us.anthropic.claude-opus-4-7",
-          "usedTokens": 12922,
+          "usedTokens": 12921,
           "windowTokens": 1000000,
           "usedPercent": 1
         },
@@ -261,9 +265,9 @@
       "frame": {
         "type": "context",
         "payload": {
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
           "modelId": "us.anthropic.claude-opus-4-7",
-          "usedTokens": 12922,
+          "usedTokens": 12921,
           "windowTokens": 1000000,
           "usedPercent": 1
         },
@@ -314,16 +318,17 @@
       "frame": {
         "type": "message",
         "payload": {
-          "id": "27abd15e-7485-40b6-8304-7343615dd307",
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "id": "e1baf436-1006-4cc1-9e06-3fa05e28ce6b",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
           "role": "AGENT",
           "content": "pong",
           "triggeredBy": "USER_INPUT",
           "toolCalls": null,
           "blocks": null,
           "isCompacted": false,
-          "createdAt": "2026-09-27T08:38:53.843Z",
+          "createdAt": "2026-09-28T06:58:13.843Z",
           "attachments": null,
+          "senderId": null,
           "senderName": null
         },
         "seq": 8
@@ -335,16 +340,17 @@
       "frame": {
         "type": "message",
         "payload": {
-          "id": "27abd15e-7485-40b6-8304-7343615dd307",
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "id": "e1baf436-1006-4cc1-9e06-3fa05e28ce6b",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
           "role": "AGENT",
           "content": "pong",
           "triggeredBy": "USER_INPUT",
           "toolCalls": null,
           "blocks": null,
           "isCompacted": false,
-          "createdAt": "2026-09-27T08:38:53.843Z",
+          "createdAt": "2026-09-28T06:58:13.843Z",
           "attachments": null,
+          "senderId": null,
           "senderName": null
         },
         "seq": 8
@@ -356,7 +362,7 @@
       "frame": {
         "type": "turn",
         "payload": {
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
           "state": "idle",
           "outcome": "completed"
         },
@@ -369,7 +375,7 @@
       "frame": {
         "type": "turn",
         "payload": {
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
           "state": "idle",
           "outcome": "completed"
         },
@@ -384,8 +390,8 @@
         "id": "send-1-again",
         "payload": {
           "message": {
-            "id": "58aa0353-ebdb-421b-ad49-75f443341eb7",
-            "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+            "id": "a636fe73-e7b4-4981-ae24-e45381e8ed59",
+            "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
             "content": "Reply with exactly: pong",
             "attachmentIds": []
           }
@@ -396,14 +402,58 @@
       "client": "web",
       "direction": "received",
       "frame": {
+        "type": "message",
+        "payload": {
+          "id": "a636fe73-e7b4-4981-ae24-e45381e8ed59",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
+          "role": "USER",
+          "content": "Reply with exactly: pong",
+          "triggeredBy": "USER_INPUT",
+          "toolCalls": null,
+          "blocks": null,
+          "isCompacted": false,
+          "createdAt": "2026-09-28T06:58:10.902Z",
+          "attachments": null,
+          "senderId": "ada@example.com",
+          "senderName": "ada@example.com"
+        },
+        "seq": 10
+      }
+    },
+    {
+      "client": "web",
+      "direction": "received",
+      "frame": {
         "type": "ack",
         "re": "send-1-again",
         "payload": {
-          "messageId": "58aa0353-ebdb-421b-ad49-75f443341eb7",
-          "seq": 9,
+          "messageId": "a636fe73-e7b4-4981-ae24-e45381e8ed59",
+          "seq": 10,
           "queued": false,
           "duplicate": true
         }
+      }
+    },
+    {
+      "client": "phone",
+      "direction": "received",
+      "frame": {
+        "type": "message",
+        "payload": {
+          "id": "a636fe73-e7b4-4981-ae24-e45381e8ed59",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
+          "role": "USER",
+          "content": "Reply with exactly: pong",
+          "triggeredBy": "USER_INPUT",
+          "toolCalls": null,
+          "blocks": null,
+          "isCompacted": false,
+          "createdAt": "2026-09-28T06:58:10.902Z",
+          "attachments": null,
+          "senderId": "ada@example.com",
+          "senderName": "ada@example.com"
+        },
+        "seq": 10
       }
     },
     {
@@ -419,8 +469,8 @@
         "id": "send-2",
         "payload": {
           "message": {
-            "id": "377536ac-a7f0-4588-82af-7c9eedf8c9b2",
-            "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+            "id": "08339a3c-fe3f-4034-96a5-94a6cebfc376",
+            "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
             "content": "Reply with exactly: ping",
             "attachmentIds": []
           }
@@ -433,19 +483,20 @@
       "frame": {
         "type": "message",
         "payload": {
-          "id": "377536ac-a7f0-4588-82af-7c9eedf8c9b2",
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "id": "08339a3c-fe3f-4034-96a5-94a6cebfc376",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
           "role": "USER",
           "content": "Reply with exactly: ping",
           "triggeredBy": "USER_INPUT",
           "toolCalls": null,
           "blocks": null,
           "isCompacted": false,
-          "createdAt": "2026-09-27T08:38:53.849Z",
+          "createdAt": "2026-09-28T06:58:14.872Z",
           "attachments": null,
-          "senderName": "Ada Example"
+          "senderId": "ada@example.com",
+          "senderName": "ada@example.com"
         },
-        "seq": 10
+        "seq": 11
       }
     },
     {
@@ -454,10 +505,10 @@
       "frame": {
         "type": "turn",
         "payload": {
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
           "state": "running"
         },
-        "seq": 11
+        "seq": 12
       }
     },
     {
@@ -467,8 +518,8 @@
         "type": "ack",
         "re": "send-2",
         "payload": {
-          "messageId": "377536ac-a7f0-4588-82af-7c9eedf8c9b2",
-          "seq": 11,
+          "messageId": "08339a3c-fe3f-4034-96a5-94a6cebfc376",
+          "seq": 12,
           "queued": false,
           "duplicate": false
         }
@@ -480,13 +531,13 @@
       "frame": {
         "type": "context",
         "payload": {
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
           "modelId": "us.anthropic.claude-opus-4-7",
-          "usedTokens": 12944,
+          "usedTokens": 12943,
           "windowTokens": 1000000,
           "usedPercent": 1
         },
-        "seq": 12
+        "seq": 13
       }
     },
     {
@@ -505,7 +556,7 @@
           "waiting": [],
           "help": []
         },
-        "seq": 13
+        "seq": 14
       }
     },
     {
@@ -514,19 +565,20 @@
       "frame": {
         "type": "message",
         "payload": {
-          "id": "2305c4b5-6f0a-4a96-944a-73c0216ff58a",
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "id": "19679d68-737a-4a4b-a3c9-a3a6355bb318",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
           "role": "AGENT",
           "content": "ping",
           "triggeredBy": "USER_INPUT",
           "toolCalls": null,
           "blocks": null,
           "isCompacted": false,
-          "createdAt": "2026-09-27T08:38:55.548Z",
+          "createdAt": "2026-09-28T06:58:16.547Z",
           "attachments": null,
+          "senderId": null,
           "senderName": null
         },
-        "seq": 14
+        "seq": 15
       }
     },
     {
@@ -535,11 +587,11 @@
       "frame": {
         "type": "turn",
         "payload": {
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
           "state": "idle",
           "outcome": "completed"
         },
-        "seq": 15
+        "seq": 16
       }
     },
     {
@@ -555,8 +607,8 @@
             "version": "fixture"
           },
           "resume": {
-            "streamId": "07267e2b-eb98-445a-b535-76e5a987d1cb",
-            "seq": 9
+            "streamId": "12477a13-6ada-438e-8729-781fcbc0fbc6",
+            "seq": 10
           }
         }
       }
@@ -568,11 +620,12 @@
         "type": "welcome",
         "payload": {
           "protocol": 2,
-          "streamId": "07267e2b-eb98-445a-b535-76e5a987d1cb",
-          "seq": 15,
+          "streamId": "12477a13-6ada-438e-8729-781fcbc0fbc6",
+          "seq": 16,
           "resumed": true,
           "you": {
-            "name": "Grace Example"
+            "id": "grace@example.com",
+            "name": "grace@example.com"
           },
           "snapshot": {
             "turns": [],
@@ -597,29 +650,18 @@
       "frame": {
         "type": "message",
         "payload": {
-          "id": "377536ac-a7f0-4588-82af-7c9eedf8c9b2",
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "id": "08339a3c-fe3f-4034-96a5-94a6cebfc376",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
           "role": "USER",
           "content": "Reply with exactly: ping",
           "triggeredBy": "USER_INPUT",
           "toolCalls": null,
           "blocks": null,
           "isCompacted": false,
-          "createdAt": "2026-09-27T08:38:53.849Z",
+          "createdAt": "2026-09-28T06:58:14.872Z",
           "attachments": null,
-          "senderName": "Ada Example"
-        },
-        "seq": 10
-      }
-    },
-    {
-      "client": "phone",
-      "direction": "received",
-      "frame": {
-        "type": "turn",
-        "payload": {
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
-          "state": "running"
+          "senderId": "ada@example.com",
+          "senderName": "ada@example.com"
         },
         "seq": 11
       }
@@ -628,15 +670,27 @@
       "client": "phone",
       "direction": "received",
       "frame": {
+        "type": "turn",
+        "payload": {
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
+          "state": "running"
+        },
+        "seq": 12
+      }
+    },
+    {
+      "client": "phone",
+      "direction": "received",
+      "frame": {
         "type": "context",
         "payload": {
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
           "modelId": "us.anthropic.claude-opus-4-7",
-          "usedTokens": 12944,
+          "usedTokens": 12943,
           "windowTokens": 1000000,
           "usedPercent": 1
         },
-        "seq": 12
+        "seq": 13
       }
     },
     {
@@ -655,7 +709,7 @@
           "waiting": [],
           "help": []
         },
-        "seq": 13
+        "seq": 14
       }
     },
     {
@@ -664,19 +718,20 @@
       "frame": {
         "type": "message",
         "payload": {
-          "id": "2305c4b5-6f0a-4a96-944a-73c0216ff58a",
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "id": "19679d68-737a-4a4b-a3c9-a3a6355bb318",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
           "role": "AGENT",
           "content": "ping",
           "triggeredBy": "USER_INPUT",
           "toolCalls": null,
           "blocks": null,
           "isCompacted": false,
-          "createdAt": "2026-09-27T08:38:55.548Z",
+          "createdAt": "2026-09-28T06:58:16.547Z",
           "attachments": null,
+          "senderId": null,
           "senderName": null
         },
-        "seq": 14
+        "seq": 15
       }
     },
     {
@@ -685,11 +740,11 @@
       "frame": {
         "type": "turn",
         "payload": {
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
           "state": "idle",
           "outcome": "completed"
         },
-        "seq": 15
+        "seq": 16
       }
     },
     {
@@ -701,7 +756,7 @@
         "payload": {
           "message": {
             "id": "not-a-uuid",
-            "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269",
+            "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf",
             "content": "x",
             "attachmentIds": []
           }
@@ -743,7 +798,7 @@
         "type": "cancel",
         "id": "cancel-1",
         "payload": {
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269"
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf"
         }
       }
     },
@@ -764,7 +819,7 @@
         "payload": {
           "mode": "followup",
           "content": "hi",
-          "threadId": "9db4a6ef-9160-4784-bcda-c2e649edf269"
+          "threadId": "d046783b-f46e-43b5-b4bb-247e6b1915bf"
         }
       }
     },

@@ -15,7 +15,7 @@ vi.mock('../conversation-engine.service', () => ({ conversationEngineService: mo
 vi.mock('../../config', () => ({ config: mockConfig }));
 vi.mock('../../lib/telemetry', () => ({ trackEvent: vi.fn() }));
 vi.mock('../conversation.service', () => ({ conversationService: {} }));
-vi.mock('../message-delivery.service', () => ({ messageDeliveryService: { mirror: vi.fn() } }));
+vi.mock('../message-delivery.service', () => ({ messageDeliveryService: { showInConversation: vi.fn() } }));
 
 import { inboundMessageService } from '../inbound-message.service';
 import { eventStreamService } from '../event-stream.service';
@@ -29,7 +29,7 @@ const inbound = (id: string, threadId = THREAD_A, content = 'hello') => ({
   threadId,
   content,
   attachmentIds: [],
-  senderName: 'Ada',
+  sender: { id: 'ada@example.com', name: 'ada@example.com' },
 });
 
 const row = (id: string, threadId = THREAD_A, content = 'hello') => ({
@@ -84,7 +84,11 @@ describe('InboundMessageService', () => {
 
       expect(acceptance).toMatchObject({ queued: false, duplicate: false });
       expect(mockEngine.acceptUserMessage).toHaveBeenCalledWith(
-        expect.objectContaining({ message: 'hello', metadata: { channel: 'websocket', senderName: 'Ada' } }),
+        expect.objectContaining({ message: 'hello', metadata: {
+          channel: 'websocket',
+          senderExternalId: 'ada@example.com',
+          senderName: 'ada@example.com',
+        } }),
         THREAD_A,
         'm-1',
       );
@@ -163,9 +167,35 @@ describe('InboundMessageService', () => {
       turn.finish();
     });
 
-    it('refuses an id that names a different message', async () => {
-      mockPrisma.conversationMessage.findUnique.mockResolvedValue(row('m-1', THREAD_A, 'something else'));
+    it('refuses an id that belongs to another conversation', async () => {
+      mockPrisma.conversationMessage.findUnique.mockResolvedValue(row('m-1', THREAD_B));
       await expect(inboundMessageService.accept(inbound('m-1'))).rejects.toMatchObject({ code: 'id_conflict' });
+    });
+
+    it("refuses an id that belongs to the agent's reply", async () => {
+      mockPrisma.conversationMessage.findUnique.mockResolvedValue({ ...row('m-1'), role: 'AGENT' });
+      await expect(inboundMessageService.accept(inbound('m-1'))).rejects.toMatchObject({ code: 'id_conflict' });
+    });
+
+    it('stores a copy sent while the first failed to store', async () => {
+      mockEngine.acceptUserMessage.mockRejectedValueOnce(new Error('disk full'));
+      const [first, second] = await Promise.allSettled([
+        inboundMessageService.accept(inbound('m-1')),
+        inboundMessageService.accept(inbound('m-1')),
+      ]);
+      expect(first.status).toBe('rejected');
+      expect(second).toMatchObject({ status: 'fulfilled', value: { duplicate: false } });
+      expect(mockEngine.acceptUserMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it('checks a copy sent while the first is still being stored against the stored row', async () => {
+      const [first, second] = await Promise.allSettled([
+        inboundMessageService.accept(inbound('m-1', THREAD_A)),
+        inboundMessageService.accept(inbound('m-1', THREAD_B)),
+      ]);
+      expect(first.status).toBe('fulfilled');
+      expect(second).toMatchObject({ status: 'rejected', reason: { code: 'id_conflict' } });
+      expect(mockEngine.acceptUserMessage).toHaveBeenCalledTimes(1);
     });
 
     it('treats an insert that lost a race for the id as the resend it is', async () => {
@@ -243,7 +273,8 @@ describe('InboundMessageService', () => {
           threadId: THREAD_A,
           state: 'idle',
           outcome: 'failed',
-          error: 'The model is unavailable.',
+          // The exception stays in the log; clients get a sentence.
+          error: 'The agent could not answer. Try again.',
         }),
       );
       stop();

@@ -181,7 +181,12 @@ export interface MessageEventPayload {
   /** ISO 8601 with milliseconds. Clients order a thread by `(createdAt, id)`. */
   createdAt: string;
   attachments: AttachmentPayload[] | null;
-  /** Who wrote a USER message, when the connection named them. Display only. */
+  /**
+   * Who wrote a USER message, when the Lens Agents sign-in named the connection.
+   * `senderId` tells one person from another; compare it with `welcome.you.id`.
+   * `senderName` is for display. Neither is ever used to decide what is allowed.
+   */
+  senderId: string | null;
   senderName: string | null;
 }
 
@@ -214,7 +219,8 @@ export interface WelcomePayload {
   seq: number;
   /** True when every event after the client's cursor follows this frame. */
   resumed: boolean;
-  you: { name: string | null };
+  /** Who this connection is, or nulls when the sign-in did not say. */
+  you: { id: string | null; name: string | null };
   snapshot: {
     turns: Array<{ threadId: string; state: Exclude<TurnState, 'idle'> }>;
     computer: Record<string, unknown> | null;

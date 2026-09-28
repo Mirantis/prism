@@ -44,7 +44,7 @@ binary frames. A frame is at most 1 MB.
 3. The server answers `welcome`:
 
    ```json
-   {"type":"welcome","payload":{"protocol":2,"streamId":"…","seq":57,"resumed":true,"you":{"name":"Ada"},"snapshot":{"turns":[{"threadId":"…","state":"running"}],"computer":{}}}}
+   {"type":"welcome","payload":{"protocol":2,"streamId":"…","seq":57,"resumed":true,"you":{"id":"ada@example.com","name":"ada@example.com"},"snapshot":{"turns":[{"threadId":"…","state":"running"}],"computer":{}}}}
    ```
 
    - `streamId` and `seq` together are your cursor. Keep the `seq` of the last
@@ -56,13 +56,15 @@ binary frames. A frame is at most 1 MB.
      is running, and apply them afterwards.
    - `snapshot.turns` lists every conversation that is working (`running`) or
      waiting (`queued`). A conversation that is not listed is idle.
-   - `you.name` is the name the Lens Agents sign-in gave this connection, or
-     `null`. Compare it with a message's `senderName` to tell your own messages
-     from someone else's.
+   - `you` is who the Lens Agents sign-in says this connection is, or nulls when
+     it did not say. Compare `you.id` with a message's `senderId` to tell your
+     own messages from someone else's. Until the first `welcome`, draw every
+     message as your own.
 
 A client that sends anything else first, or names another protocol version, is
 answered `nack` with the code `protocol_unsupported` and closed with code 4426.
-Show the person that they need to update the app.
+Show the person that they need to update the app. A client that sends nothing
+is closed with 4408 after 5 seconds, since a slow connection looks the same.
 
 ## Events
 
@@ -76,7 +78,8 @@ see a gap, reconnect and resume from the last `seq` you applied.
     before it was confirmed.
   - Order a conversation by `createdAt`, then by `id`. `GET /messages` returns
     history in the same order.
-  - `senderName` is who wrote a `USER` message, or `null`. It is display only.
+  - `senderId` and `senderName` say who wrote a `USER` message, or are `null`.
+    Show `senderName`. Neither decides what anyone may do.
 - **`turn`** `{ threadId, state, outcome?, error? }`: what a conversation is doing.
   - `state` is `queued`, `running` or `idle`.
   - `outcome` appears when a running conversation becomes idle: `completed`,
@@ -120,7 +123,7 @@ Every request is answered `ack` or `nack`, with `re` set to its `id`.
 |---|---|
 | `invalid` | The frame did not match the schema. `message` says what is wrong. |
 | `unknown_thread` | There is no such conversation. |
-| `id_conflict` | That message id belongs to a different message. |
+| `id_conflict` | That message id belongs to an agent's message or another conversation. |
 | `rate_limited` | Too many requests. Wait `retryAfterMs`. |
 | `unavailable` | The agent is still starting. |
 | `failed` | The message could not be stored. |

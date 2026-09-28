@@ -11,7 +11,7 @@ import {
   TuiStatus,
   TurnEventPayload,
 } from './tui-adapter.js';
-import { MAX_MESSAGE_CHARS, TurnState } from './chat-protocol.js';
+import { MAX_MESSAGE_CHARS, TurnState, type Viewer } from './chat-protocol.js';
 import { appendLocal, ChatEntry, markFailed, upsertMessage, withHistory } from './transcript.js';
 import { useCompaction } from './hooks/use-compaction.js';
 import { useUpdateNotice } from './hooks/use-update-notice.js';
@@ -78,7 +78,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   // What this conversation is doing, as every client of the agent sees it.
   const [turnState, setTurnState] = useState<TurnState>('idle');
   // The name the runtime gave this connection. A USER message by anyone else shows their name.
-  const [selfName, setSelfName] = useState<string | null>(null);
+  const [self, setSelf] = useState<Viewer | undefined>(undefined);
   // Context-window occupancy for the active thread, pushed by the runtime.
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
   const [shuttingDown, setShuttingDown] = useState(false);
@@ -161,7 +161,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       setStatus(s);
       setStatusDetail(detail);
     };
-    const onWelcome = (you: { name: string | null }) => setSelfName(you.name);
+    const onWelcome = (you: Viewer) => setSelf(you);
     const onHistory = (messages: TuiMessage[]) => setEntries((prev) => withHistory(prev, messages));
     const onMessage = (msg: TuiMessage) => setEntries((prev) => upsertMessage(prev, msg));
     const onTurn = (turn: TurnEventPayload) => {
@@ -618,7 +618,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
         <>
           <MessageList
             agentName={agent.name}
-            selfName={selfName}
+            self={self}
             entries={entries}
             expandedMessageId={expandedMessageId}
           />

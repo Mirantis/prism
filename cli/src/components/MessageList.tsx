@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { renderMarkdown } from '../markdown.js';
 import { TuiMessage } from '../tui-adapter.js';
+import type { Viewer } from '../chat-protocol.js';
 import { formatFileSize } from '../attachments.js';
 import { ChatEntry } from '../transcript.js';
 
@@ -45,8 +46,8 @@ function truncate(s: string, max: number): string {
 
 interface Props {
   agentName: string;
-  /** The name the runtime gave this connection. A USER message by anyone else is labelled with its sender. */
-  selfName: string | null;
+  /** Who this terminal is, undefined until the runtime has said. Anyone else's message shows their name. */
+  self: Viewer | undefined;
   entries: ChatEntry[];
   expandedMessageId: string | null;
 }
@@ -60,26 +61,30 @@ function toolCallSummary(toolCalls: unknown): string | null {
   return `· used ${names.join(', ')}`;
 }
 
-/** "You", unless someone else wrote it: another person in the same conversation. */
-function userLabel(senderName: string | null | undefined, selfName: string | null): string {
-  if (!senderName || senderName === selfName) return 'You';
-  return senderName;
+/**
+ * "You", unless someone else wrote it: another person in the same conversation.
+ * Until the runtime has said who this terminal is, every message is "You" — the
+ * runtime stamps ours with our id, and they would otherwise read as someone else's.
+ */
+function userLabel(message: TuiMessage, self: Viewer | undefined): string {
+  if (!self || !message.senderId || message.senderId === self.id) return 'You';
+  return message.senderName ?? message.senderId;
 }
 
 interface MessageRowProps {
   agentName: string;
-  selfName: string | null;
+  self: Viewer | undefined;
   message: TuiMessage;
   expanded: boolean;
   failed?: string;
 }
 
-const MessageRow: React.FC<MessageRowProps> = ({ agentName, selfName, message, expanded, failed }) => {
+const MessageRow: React.FC<MessageRowProps> = ({ agentName, self, message, expanded, failed }) => {
   const isUser = message.role === 'USER';
   const isAgent = message.role === 'AGENT';
   const prefixColor = isUser ? 'cyan' : isAgent ? 'magenta' : 'yellow';
   const prefixLabel = isUser
-    ? userLabel(message.senderName, selfName)
+    ? userLabel(message, self)
     : isAgent
       ? agentName
       : message.role;
@@ -140,7 +145,7 @@ const MessageRow: React.FC<MessageRowProps> = ({ agentName, selfName, message, e
   );
 };
 
-export const MessageList: React.FC<Props> = ({ agentName, selfName, entries, expandedMessageId }) => {
+export const MessageList: React.FC<Props> = ({ agentName, self, entries, expandedMessageId }) => {
   // Only render the most recent N entries — the parent <Box> is bound by the
   // terminal height anyway, but limiting keeps re-render cost low for long
   // sessions.
@@ -152,7 +157,7 @@ export const MessageList: React.FC<Props> = ({ agentName, selfName, entries, exp
         <MessageRow
           key={entry.message.id}
           agentName={agentName}
-          selfName={selfName}
+          self={self}
           message={entry.message}
           expanded={entry.message.id === expandedMessageId}
           failed={entry.failed}

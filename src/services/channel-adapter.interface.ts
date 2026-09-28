@@ -49,12 +49,13 @@ export interface ChannelAdapter {
   readonly name: string;
 
   /**
-   * True when the channel shows the whole transcript — the person's own messages
-   * and edits made in place — rather than only the agent's replies. Such a
-   * channel is handed those through `messageDeliveryService.mirror` and must
-   * treat a message it has seen before as a replacement.
+   * True when the channel shows the whole conversation — the person's own
+   * messages and messages changed after they were published — rather than only
+   * the agent's replies. Such a channel is handed those through
+   * `messageDeliveryService.showInConversation`, and replaces a message it has
+   * seen before.
    */
-  readonly mirrorsTranscript?: boolean;
+  readonly showsWholeConversation?: boolean;
 
   /**
    * Deliver a message to a user via this channel

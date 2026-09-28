@@ -536,6 +536,22 @@ describe('ConversationService', () => {
       );
     });
 
+    it('names each sender as the chat socket does, so history and live messages match', async () => {
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({ threadSource: 'DATABASE' });
+      // Newest first, as the query reads them.
+      mockPrisma.conversationMessage.findMany.mockResolvedValue([
+        { id: 'm-2', role: 'AGENT', senderExternalId: null, senderName: null },
+        { id: 'm-1', role: 'USER', senderExternalId: 'grace@example.com', senderName: 'grace@example.com' },
+      ]);
+
+      const messages = await conversationService.getRecentMessages('thread-db', 10);
+
+      expect(messages.map((m) => [m.id, (m as { senderId: string | null }).senderId])).toEqual([
+        ['m-1', 'grace@example.com'],
+        ['m-2', null],
+      ]);
+    });
+
     it('should default to DatabaseThreadProvider when thread is not found', async () => {
       const threadId = 'thread-missing';
       mockPrisma.conversationThread.findUnique.mockResolvedValue(null);
