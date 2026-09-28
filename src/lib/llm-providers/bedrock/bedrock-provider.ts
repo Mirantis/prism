@@ -12,6 +12,9 @@
  * model surfaces a Bedrock deserialization error ("Invalid 'tools': missing
  * field type") because Kimi expects OpenAI-shaped tool definitions.
  *
+ * On the Converse branch, `converseToolImages` moves each tool-result image into
+ * the user turn beside it, since most Converse models read no image in a result.
+ *
  * Routing: `createBedrockProvider(baseURL?)` runs direct to AWS (unset) or
  * through the Lens Agents LLM gateway (a `baseURL` — the gateway re-signs,
  * tracks usage, and audits, so no local credentials are used). Direct mode has
@@ -30,6 +33,7 @@
 
 import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { createBedrockAnthropic } from '@ai-sdk/amazon-bedrock/anthropic';
+import { wrapLanguageModel } from 'ai';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
 import { createSharedBedrockOptions, isAnthropicModelId } from '../bedrock-shared';
@@ -41,6 +45,7 @@ import {
   type CachePointFragment,
   type LlmProvider,
 } from '../llm-provider';
+import { converseToolImages } from './converse-tool-images';
 
 /**
  * Create an Amazon Bedrock provider that dispatches on model family.
@@ -61,7 +66,9 @@ export function createBedrockProvider(baseURL?: string): LlmProvider {
   const generic = createAmazonBedrock(sharedOptions);
 
   const dispatcher = (modelId: string) =>
-    isAnthropicModelId(modelId) ? anthropic(modelId) : generic(modelId);
+    isAnthropicModelId(modelId)
+      ? anthropic(modelId)
+      : wrapLanguageModel({ model: generic(modelId), middleware: converseToolImages });
   return Object.assign(dispatcher, {
     cachePoint: promptCacheFragment,
     // Haiku 5.5, the classification default, rejects an explicit temperature
