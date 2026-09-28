@@ -34,7 +34,6 @@ import {
   voiceChatService,
   type VoiceChatEndStatus,
   type VoiceChatSignal,
-  type VoiceListeningMode,
 } from './voice/voice-chat.service';
 import { VOICE_AUDIO_FORMAT } from './voice/socket-audio';
 import { DictationSession } from './voice/dictation-session';
@@ -146,26 +145,6 @@ function screenOf(payload: Record<string, unknown>): { width: number; height: nu
     return undefined;
   }
   return { width, height };
-}
-
-/**
- * Which listening mode the client asked for: the mode, `undefined` when it said nothing,
- * or `null` when it asked for something this does not serve.
- *
- * `null` is refused rather than defaulted, which is the opposite of how the rest of this
- * payload is read. The modes do not differ only in how much the agent says: in `open` it
- * answers every utterance, and an answer can be a tool call the runtime executes for
- * real. So a client that means `addressed` and misspells it would get an agent that talks
- * over a room and acts on what it hears there, with nothing in the frames to say why. A
- * client that sent the field asked for something specific, and it is cheaper to be told
- * than to find out from the room.
- */
-function listeningMode(payload: Record<string, unknown>): VoiceListeningMode | undefined | null {
-  const value = payload['mode'];
-  // Said nothing, which takes the default. `null` is something the client sent, so it
-  // goes to the refusal below with every other value this does not serve.
-  if (value === undefined) return undefined;
-  return value === 'open' || value === 'addressed' ? value : null;
 }
 
 /**
@@ -562,15 +541,6 @@ class WebSocketGatewayService {
       return;
     }
 
-    const mode = listeningMode(payload);
-    if (mode === null) {
-      this.sendTo(ws, {
-        type: 'voice_error',
-        payload: { error: 'mode must be "open" or "addressed"' },
-      });
-      return;
-    }
-
     // The socket's binary frames are one microphone, so they can feed one session.
     if (this.dictations.has(ws)) {
       this.sendTo(ws, {
@@ -611,7 +581,6 @@ class WebSocketGatewayService {
         userId,
         agentId,
         threadId: stringField(payload, 'threadId'),
-        mode,
         // A session with a computer opens a browser and a desktop for the agent, which
         // the client then watches on a transport of its own; see `computer-endpoint.ts`.
         computer: payload['computer'] === true,

@@ -1,22 +1,28 @@
 /**
- * A local stand-in for OpenAI's Realtime API, so a voice call can be tested with
+ * A local stand-in for OpenAI's voice API, so a call and a dictation can be tested with
  * no OpenAI account and no metered socket.
  *
- * The runtime discovers its managed Azure endpoint from environment variables. It speaks only the part of the protocol the runtime uses: the session is
- * created, the audio the runtime appends is counted, a turn boundary is announced
- * once enough of it has arrived, and a requested response answers with a steady
- * tone. Nothing here is a model — the words are never read.
+ * The runtime discovers its managed Azure endpoint from environment variables, and opens
+ * two sockets under it:
  *
- * A session configured with no turn detection is a dictation. It announces no turns, and
- * a commit answers with a transcript that states how much speech the buffer held, so a
- * scenario can tell the runtime's audio reached it from the text alone.
+ * - `…/live/sessions`, a GPT-Live call. The session starts, the audio the runtime
+ *   appends is counted, and once enough of it has arrived the voice hands the request to
+ *   the backend, which calls `meeting_status`. When the runtime returns that tool's
+ *   result the voice answers with a steady tone. A picture the runtime shows the backend
+ *   is counted, which is how a screen recording arrives. Nothing here is a model — the
+ *   words are never read.
+ * - `…/realtime?intent=transcription`, a dictation. A commit answers with a transcript
+ *   that states how much speech the buffer held, so a scenario can tell the runtime's
+ *   audio reached it from the text alone.
  *
- * `GET /state` reports what it has seen, so a failing scenario can name the step
- * that did not complete: a `sessions` of zero means the runtime has no socket open,
- * an `inboundMs` of zero means the browser's microphone did not reach it, and a
- * `deltasSent` of zero means the runtime never asked for an answer. `sessions` is a
- * count rather than a flag, so a second session opening while one is still up is
- * visible instead of hidden behind the first one's close.
+ * The frames follow ones recorded from the live endpoint.
+ *
+ * `GET /state` reports what it has seen, so a failing scenario can name the step that did
+ * not complete: a `sessions` of zero means the runtime has no call open, an `inboundMs` of
+ * zero means the browser's microphone did not reach it, a `toolOutputs` of zero means the
+ * runtime never ran the backend's tool, and a `deltasSent` of zero means the voice never
+ * answered. `sessions` is a count rather than a flag, so a second call opening while one is
+ * still up is visible instead of hidden behind the first one's close.
  *
  * Run by Playwright as a `webServer`; `GET /health` is what it waits for.
  */
@@ -26,29 +32,37 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { MOCK_REALTIME_PORT } from './mock-realtime-port';
 import { MANAGED_VOICE_KEY, MANAGED_VOICE_PATH } from './managed-voice';
 
-/** pcm16 mono at the rate the Realtime API speaks, in both directions. */
+/** pcm16 mono at the rate both APIs speak, in both directions. */
 const SAMPLE_RATE = 24_000;
-/** How much non-silent audio closes an utterance. */
+/** How much non-silent audio makes a request. */
 const UTTERANCE_MS = 700;
 /** A sample this small is background noise, not speech. */
 const SILENCE_FLOOR = 500;
 /** The answer: a plain 440 Hz tone, long enough for the browser to measure it. */
 const TONE_HZ = 440;
 const TONE_MS = 2_000;
-/** One delta carries this much of it, as the real API streams rather than dumps. */
-const DELTA_MS = 200;
+/** One delta carries this much of it, as the live endpoint streams it. */
+const DELTA_MS = 100;
+/** The tool the backend calls, one that every call's tool set has and that acts on nothing. */
+const BACKEND_TOOL = 'meeting_status';
 
 const state = {
-  /** How many sockets are open right now. */
+  /** How many calls are open right now. */
   sessions: 0,
   managedHandshakes: 0,
   inboundMs: 0,
-  responsesRequested: 0,
+  /** Requests the voice handed to the backend. */
+  delegations: 0,
+  /** Tool results the runtime returned to the backend. */
+  toolOutputs: 0,
+  /** Answers the voice spoke. */
+  answers: 0,
   deltasSent: 0,
-  /** Windows of a handed-over recording, and what each held. */
+  /** What the last call started with: the two models and how many tools it offered. */
+  lastStart: null as null | { model: string; backendModel: string; tools: number },
+  /** Windows of a handed-over recording, and the pictures in them. */
   recordingSegments: 0,
   recordingImages: 0,
-  recordingAudioMs: 0,
   /** Dictation buffers committed and answered with a transcript. */
   dictationsTranscribed: 0,
 };
@@ -68,104 +82,157 @@ const server = http.createServer((req, res) => {
   res.end();
 });
 
-const wss = new WebSocketServer({
-  server,
-  path: `${MANAGED_VOICE_PATH}/realtime`,
-  verifyClient: ({ req }: { req: http.IncomingMessage }) => req.headers.authorization === `Bearer ${MANAGED_VOICE_KEY}`,
+const live = new WebSocketServer({ noServer: true });
+const realtime = new WebSocketServer({ noServer: true });
+
+server.on('upgrade', (req, socket, head) => {
+  const { pathname } = new URL(req.url ?? '/', 'http://mock');
+  if (req.headers.authorization !== `Bearer ${MANAGED_VOICE_KEY}`) {
+    socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n');
+    return;
+  }
+  const target =
+    pathname === `${MANAGED_VOICE_PATH}/live/sessions` ? live
+      : pathname === `${MANAGED_VOICE_PATH}/realtime` ? realtime
+        : null;
+  if (!target) {
+    socket.end('HTTP/1.1 404 Not Found\r\n\r\n');
+    return;
+  }
+  state.managedHandshakes += 1;
+  target.handleUpgrade(req, socket, head, (ws) => target.emit('connection', ws));
 });
 
-wss.on('connection', (ws: WebSocket) => {
-  state.sessions += 1;
-  state.managedHandshakes += 1;
-  log(`session opened (${state.sessions} open)`);
-  let turns = 0;
-  // Both counted for this socket only. The turn boundary is a property of one
-  // conversation, so a second session must not inherit the first one's audio.
-  let heardMs = 0;
-  let announcedMs = 0;
-  let responses = 0;
-  // Set by a `session.update` with turn detection off, which is how a dictation asks.
-  let dictation = false;
+interface ClientFrame {
+  type?: string;
+  audio?: string;
+  session?: {
+    model?: string;
+    delegation?: { responses?: { model?: string; tools?: unknown[] } };
+    audio?: { input?: { turn_detection?: unknown } };
+  };
+  item?: { type?: string; content?: { type?: string; text?: string }[] };
+}
 
-  send(ws, { type: 'session.created', session: { id: 'sess_mock' } });
+live.on('connection', (ws: WebSocket) => {
+  state.sessions += 1;
+  log(`call opened (${state.sessions} open)`);
+  // Counted for this socket only: a second call must not inherit the first one's audio.
+  let heardMs = 0;
+  let requestedAtMs = 0;
+  let awaitingTool = false;
 
   ws.on('message', (data) => {
-    let event: {
-      type?: string;
-      audio?: string;
-      event_id?: string;
-      item?: unknown;
-      session?: { audio?: { input?: { turn_detection?: unknown } } };
-    };
-    try {
-      event = JSON.parse(data.toString());
-    } catch {
-      return;
-    }
+    const frame = parse(data);
+    if (!frame) return;
 
-    // The real API confirms every update, and a dictation waits for the confirmation.
-    if (event.type === 'session.update') {
-      dictation = event.session?.audio?.input?.turn_detection === null;
-      send(ws, { type: 'session.updated', session: { id: 'sess_mock' } });
-      return;
-    }
-
-    if (event.type === 'input_audio_buffer.commit' && dictation) {
-      transcribe(ws, `item_mock_${++turns}`, heardMs);
-      heardMs = 0;
-      return;
-    }
-
-    if (event.type === 'conversation.item.create') {
-      countRecordingSegment(event.item);
-      return;
-    }
-
-    if (event.type === 'input_audio_buffer.append' && typeof event.audio === 'string') {
-      const arrivedMs = speechMs(Buffer.from(event.audio, 'base64'));
-      heardMs += arrivedMs;
-      state.inboundMs += arrivedMs;
-      if (dictation) return;
-      // One turn per `UTTERANCE_MS` of speech. The runtime answers a turn
-      // boundary, so this is what makes the agent talk back.
-      if (heardMs - announcedMs >= UTTERANCE_MS) {
-        announcedMs = heardMs;
-        announceTurn(ws, `item_mock_${++turns}`, heardMs);
+    switch (frame.type) {
+      case 'session.start': {
+        const responses = frame.session?.delegation?.responses;
+        state.lastStart = {
+          model: frame.session?.model ?? '',
+          backendModel: responses?.model ?? '',
+          tools: responses?.tools?.length ?? 0,
+        };
+        send(ws, { type: 'session.started', session: { id: 'live_mock', ...frame.session, status: 'active' } });
+        return;
       }
-      return;
-    }
-
-    if (event.type === 'response.create') {
-      state.responsesRequested += 1;
-      answerWithTone(ws, `resp_mock_${++responses}`);
-      return;
+      case 'session.input_audio.append': {
+        if (typeof frame.audio !== 'string') return;
+        const arrivedMs = speechMs(Buffer.from(frame.audio, 'base64'));
+        heardMs += arrivedMs;
+        state.inboundMs += arrivedMs;
+        // One request per `UTTERANCE_MS` of speech, and one at a time.
+        if (!awaitingTool && heardMs - requestedAtMs >= UTTERANCE_MS) {
+          requestedAtMs = heardMs;
+          awaitingTool = true;
+          delegate(ws);
+        }
+        return;
+      }
+      case 'response.item.create': {
+        if (frame.item?.type === 'function_call_output') {
+          state.toolOutputs += 1;
+          return;
+        }
+        countRecording(frame.item);
+        return;
+      }
+      case 'response.create': {
+        send(ws, backendEvent({ type: 'response.completed', response: { id: 'resp_mock_answer', status: 'completed', output: [], usage: { input_tokens: 900, output_tokens: 12 } } }));
+        if (awaitingTool) {
+          awaitingTool = false;
+          answerWithTone(ws);
+        }
+        return;
+      }
+      case 'session.close':
+        send(ws, { type: 'session.closed', reason: 'close_requested', usage: { seconds: 1 } });
+        ws.close(1000);
+        return;
+      default:
+        return;
     }
   });
 
   ws.on('close', () => {
     state.sessions = Math.max(0, state.sessions - 1);
-    log(`session closed (${state.sessions} open)`);
+    log(`call closed (${state.sessions} open)`);
   });
 });
 
-/**
- * Count one window of a recording the runtime handed over.
- *
- * A window carries its label beside its audio, which is what tells it from a turn
- * somebody spoke — the real API's own items for those hold audio and nothing else.
- */
-function countRecordingSegment(item: unknown): void {
-  const content = (item as { content?: { type?: string; audio?: string }[] } | undefined)?.content;
-  if (!Array.isArray(content)) return;
-  const audio = content.filter((part) => part.type === 'input_audio');
-  if (audio.length === 0 || audio.length === content.length) return;
+realtime.on('connection', (ws: WebSocket) => {
+  let heardMs = 0;
+  let turns = 0;
+  send(ws, { type: 'session.created', session: { id: 'sess_mock' } });
 
-  state.recordingSegments += 1;
+  ws.on('message', (data) => {
+    const frame = parse(data);
+    if (!frame) return;
+    if (frame.type === 'session.update') {
+      send(ws, { type: 'session.updated', session: { id: 'sess_mock' } });
+      return;
+    }
+    if (frame.type === 'input_audio_buffer.append' && typeof frame.audio === 'string') {
+      const arrivedMs = speechMs(Buffer.from(frame.audio, 'base64'));
+      heardMs += arrivedMs;
+      state.inboundMs += arrivedMs;
+      return;
+    }
+    if (frame.type === 'input_audio_buffer.commit') {
+      transcribe(ws, `item_mock_${++turns}`, heardMs);
+      heardMs = 0;
+    }
+  });
+});
+
+/** The voice hands a request over, and the backend calls a tool for it. */
+function delegate(ws: WebSocket): void {
+  state.delegations += 1;
+  send(ws, { type: 'session.delegation.created', delegation: { id: `item_mock_${state.delegations}`, type: 'delegation', target: 'responses' } });
+  send(ws, backendEvent({ type: 'response.created', response: { id: 'resp_mock_tool', status: 'in_progress' } }));
+  send(ws, backendEvent({
+    type: 'response.output_item.done',
+    item: { id: 'fc_mock', type: 'function_call', status: 'completed', arguments: '{}', call_id: `call_mock_${state.delegations}`, name: BACKEND_TOOL },
+  }));
+  send(ws, backendEvent({ type: 'response.completed', response: { id: 'resp_mock_tool', status: 'completed', output: [], usage: { input_tokens: 800, output_tokens: 14 } } }));
+  log(`delegation ${state.delegations}: the backend called ${BACKEND_TOOL}`);
+}
+
+/**
+ * Count a recording the runtime showed the backend.
+ *
+ * A recording is one message whose windows each start with an `At m:ss:` label, followed
+ * by the pictures taken in it.
+ */
+function countRecording(item: ClientFrame['item']): void {
+  const content = item?.content;
+  if (item?.type !== 'message' || !Array.isArray(content)) return;
+  const labels = content.filter((part) => part.type === 'input_text' && /^At \d+:\d\d:$/.test(part.text ?? ''));
+  if (labels.length === 0) return;
+  state.recordingSegments += labels.length;
   state.recordingImages += content.filter((part) => part.type === 'input_image').length;
-  for (const part of audio) {
-    state.recordingAudioMs += (Buffer.from(part.audio ?? '', 'base64').length / 2 / SAMPLE_RATE) * 1000;
-  }
-  log(`recording window ${state.recordingSegments}: ${content.length} parts`);
+  log(`recording: ${labels.length} window(s), ${content.length} parts`);
 }
 
 /** How much of a pcm16 buffer is loud enough to count as somebody speaking. */
@@ -175,23 +242,6 @@ function speechMs(pcm: Buffer): number {
     if (Math.abs(pcm.readInt16LE(offset)) > SILENCE_FLOOR) loud += 1;
   }
   return (loud / SAMPLE_RATE) * 1000;
-}
-
-/** The four frames the runtime reads as "somebody finished a sentence". */
-function announceTurn(ws: WebSocket, itemId: string, heardMs: number): void {
-  send(ws, { type: 'input_audio_buffer.speech_started', item_id: itemId });
-  send(ws, { type: 'input_audio_buffer.speech_stopped', item_id: itemId });
-  send(ws, { type: 'input_audio_buffer.committed', item_id: itemId });
-  send(ws, {
-    type: 'conversation.item.added',
-    item: {
-      id: itemId,
-      type: 'message',
-      role: 'user',
-      content: [{ type: 'input_audio' }],
-    },
-  });
-  log(`turn ${itemId} committed after ${Math.round(heardMs)}ms of speech on this session`);
 }
 
 /** Answer a committed dictation with a transcript of how much speech it held. */
@@ -204,26 +254,21 @@ function transcribe(ws: WebSocket, itemId: string, heardMs: number): void {
   log(`dictation ${itemId} transcribed after ${Math.round(heardMs)}ms of speech`);
 }
 
-/** Answer a `response.create` with a tone, streamed as the real API streams audio. */
-function answerWithTone(ws: WebSocket, responseId: string): void {
-  send(ws, { type: 'response.created', response: { id: responseId } });
-
-  const itemId = `${responseId}_item`;
+/** The voice speaks: a tone, streamed in real-time-sized frames, with its transcript. */
+function answerWithTone(ws: WebSocket): void {
+  state.answers += 1;
   const chunkSamples = (SAMPLE_RATE * DELTA_MS) / 1000;
   const totalChunks = TONE_MS / DELTA_MS;
+  send(ws, { type: 'session.output_transcript.delta', delta: 'Mock answer.', start_ms: 0, end_ms: 200 });
   for (let chunk = 0; chunk < totalChunks; chunk += 1) {
-    send(ws, {
-      type: 'response.output_audio.delta',
-      response_id: responseId,
-      item_id: itemId,
-      delta: tone(chunk * chunkSamples, chunkSamples).toString('base64'),
-    });
+    send(ws, { type: 'session.output_audio.delta', delta: tone(chunk * chunkSamples, chunkSamples).toString('base64') });
     state.deltasSent += 1;
   }
+  log(`answered with ${TONE_MS}ms of tone`);
+}
 
-  send(ws, { type: 'response.output_audio.done', response_id: responseId, item_id: itemId });
-  send(ws, { type: 'response.done', response: { id: responseId, status: 'completed' } });
-  log(`answered ${responseId} with ${TONE_MS}ms of tone`);
+function backendEvent(event: Record<string, unknown>): Record<string, unknown> {
+  return { type: 'response.event', delegation_id: `item_mock_${state.delegations}`, event };
 }
 
 /** `sampleCount` samples of a continuous sine, starting at sample `from`. */
@@ -236,14 +281,22 @@ function tone(from: number, sampleCount: number): Buffer {
   return pcm;
 }
 
+function parse(data: WebSocket.RawData): ClientFrame | null {
+  try {
+    return JSON.parse(data.toString()) as ClientFrame;
+  } catch {
+    return null;
+  }
+}
+
 function send(ws: WebSocket, event: Record<string, unknown>): void {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(event));
 }
 
 function log(message: string): void {
-  console.log(`[MockRealtime] ${message}`);
+  console.log(`[MockVoice] ${message}`);
 }
 
 server.listen(MOCK_REALTIME_PORT, '127.0.0.1', () =>
-  log(`listening on ws://127.0.0.1:${MOCK_REALTIME_PORT}${MANAGED_VOICE_PATH}/realtime`),
+  log(`listening on ws://127.0.0.1:${MOCK_REALTIME_PORT}${MANAGED_VOICE_PATH}/{live/sessions,realtime}`),
 );

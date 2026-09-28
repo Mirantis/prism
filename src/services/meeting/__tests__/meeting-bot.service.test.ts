@@ -99,26 +99,18 @@ vi.mock('../browser-control', () => ({
 const conversationStop = vi.fn();
 const conversationStart = vi.fn();
 const conversationNotify = vi.fn();
-const conversationSpeak = vi.fn();
-const conversationSetParticipantCount = vi.fn();
+/** Has the voice speak now: the greeting goes through it. */
+const conversationPrompt = vi.fn();
 const conversationSetCurrentSpeaker = vi.fn();
-/**
- * Told whether the room can hear the agent.
- *
- * Only the response policy acts on it (an inaudible agent must not answer every
- * sentence in `open` mode), so what matters here is that the service reports the
- * state honestly and updates it when a retry succeeds.
- */
-const conversationSetAudible = vi.fn();
 /** Whether a screenshot reached the session; false once it has closed. */
 const conversationShowImage = vi.fn();
 /**
  * The options the service last built a conversation with.
  *
  * Captured for two reasons: a test can fire `onSessionLost` the way the real
- * Realtime socket's close handler would — that callback is the whole seam between
- * a dead session and the service's decision to leave — and the name and mode the
- * service resolved are only observable here.
+ * Live socket's close handler would — that callback is the whole seam between
+ * a dead session and the service's decision to leave — and the name and the
+ * instructions the service resolved are only observable here.
  */
 let conversationOptions: Record<string, unknown> & {
   onSessionLost?: (reason: string) => void;
@@ -130,31 +122,19 @@ class FakeVoiceConversation {
   start = conversationStart;
   stop = conversationStop;
   notify = conversationNotify;
-  speakNow = conversationSpeak;
-  setParticipantCount = conversationSetParticipantCount;
+  prompt = conversationPrompt;
   setCurrentSpeaker = conversationSetCurrentSpeaker;
-  setAudible = conversationSetAudible;
+  setParticipantNames = vi.fn();
   showImage = conversationShowImage;
   pushAudio = vi.fn();
-  get responseMode() {
-    return 'addressed';
-  }
   get statistics(): VoiceConversationStats {
     return {
-      responses: 2,
+      delegations: 4,
       toolCalls: 1,
-      interruptions: 3,
-      utterances: 9,
-      suppressed: 6,
-      addressedMatches: 2,
-      modeSwitches: 1,
-      gateCalls: 4,
-      gateFailed: 1,
-      gateLatencyMs: 3200,
-      gateSuperseded: 1,
-      responsesFailed: 2,
-      attributedUtterances: 3,
-      unattributedUtterances: 1,
+      backendInputTokens: 1200,
+      backendOutputTokens: 80,
+      voiceSeconds: 95,
+      closeReason: 'close_requested',
     };
   }
 }
@@ -324,7 +304,7 @@ const {
   MEETING_CHAT_MAX_CHARS,
   MEETING_CHAT_READ_LIMIT,
 } = await import('../meeting-bot.service');
-// The cap a Realtime tool result is rendered under, and so the bound on a chat reading.
+// The cap a voice tool result is rendered under, and so the bound on a chat reading.
 const { MAX_TOOL_RESULT_CHARS } = await import('../../voice/realtime-tools');
 // The real lock, not a mock: what these tests measure is the service taking and
 // handing back the one voice the runtime has.
@@ -428,7 +408,7 @@ describe('a platform that will not take an unauthenticated bot', () => {
   it('says so instead of building a call to be refused', async () => {
     // Meet denies an automated anonymous guest before a host is prompted, so this
     // join cannot succeed — and finding that out in the lobby costs a virtual
-    // display, an audio daemon, a browser and a metered Realtime socket first. The
+    // display, an audio daemon, a browser and a metered voice socket first. The
     // provider answers, so this file no longer knows what a Google account is.
     providerConfigurationError.mockReturnValueOnce('Set GOOGLE_BOT_EMAIL and GOOGLE_BOT_PASSWORD.');
 
@@ -768,7 +748,7 @@ describe('joining', () => {
     const joining = service.join(input);
     await settle();
 
-    // The Realtime socket dies in the waiting room, which closes the page under the
+    // The voice socket dies in the waiting room, which closes the page under the
     // provider and starts the teardown.
     conversationOptions.onSessionLost?.('code 1011');
     failJoin(new Error('Target page, context or browser has been closed'));
@@ -807,8 +787,7 @@ describe('joining', () => {
     await service.join(input);
     await settle();
 
-    expect(conversationNotify).toHaveBeenCalledWith(expect.stringMatching(/just been admitted/i));
-    expect(conversationSpeak).toHaveBeenCalled();
+    expect(conversationPrompt).toHaveBeenCalledWith(expect.stringMatching(/just been admitted/i));
   });
 
   it('refuses a second call rather than dropping the first', async () => {
@@ -981,7 +960,7 @@ describe('a call the room cannot hear the agent in', () => {
   });
 
   it('does not greet a room that cannot hear it, and tells the model why', async () => {
-    // Greeting here spends Realtime tokens on audio nobody receives and leaves the model
+    // Greeting here spends voice time on audio nobody receives and leaves the model
     // believing it introduced itself — so the model is told the standing condition
     // instead, which also stops it answering the next question into the void.
     audioWaitForMicCapture.mockResolvedValue(false);
@@ -989,8 +968,8 @@ describe('a call the room cannot hear the agent in', () => {
     await service.join(input);
     await settle();
 
-    expect(conversationSpeak).not.toHaveBeenCalled();
-    expect(conversationNotify).not.toHaveBeenCalledWith(expect.stringMatching(/just been admitted/i));
+    expect(conversationPrompt).not.toHaveBeenCalled();
+    expect(conversationPrompt).not.toHaveBeenCalledWith(expect.stringMatching(/just been admitted/i));
     expect(conversationNotify).toHaveBeenCalledWith(expect.stringMatching(/may not hear you/i));
     // Pointed at the one control it should touch, and stopped at the audio stack below it:
     // the meeting toolset includes the shell, PulseAudio is running in this container, and a
@@ -1015,7 +994,7 @@ describe('a call the room cannot hear the agent in', () => {
       await service.join(input);
       await vi.advanceTimersByTimeAsync(10);
 
-      expect(conversationSpeak).not.toHaveBeenCalled();
+      expect(conversationPrompt).not.toHaveBeenCalled();
 
       // The poll reads the toggle before it clicks, so the mute has to still be there for
       // the click to happen. It lands, and the reading after it is a live toggle.
@@ -1025,9 +1004,7 @@ describe('a call the room cannot hear the agent in', () => {
 
       expect(providerSetMicrophone).toHaveBeenCalledWith(expect.anything(), true);
 
-      expect(conversationNotify).toHaveBeenCalledWith(expect.stringMatching(/just been admitted/i));
-      expect(conversationSpeak).toHaveBeenCalled();
-      expect(conversationSetAudible).toHaveBeenCalledWith(true);
+      expect(conversationPrompt).toHaveBeenCalledWith(expect.stringMatching(/just been admitted/i));
       // The recovery is on the record too, and named through the provider like the
       // failure that preceded it.
       expectLogged(
@@ -1045,7 +1022,7 @@ describe('a call the room cannot hear the agent in', () => {
     // the capture device. Here the toggle was live all along and the device never opened
     // — the `parec`/`/dev/shm` failure. A retry that only re-reads the toggle finds it
     // live, and would declare victory on evidence it already had: silencing the warning,
-    // disarming the retry, restoring `open` mode and greeting a room that still hears
+    // disarming the retry and greeting a room that still hears
     // nothing. The one recovery that must be verified is the one that was broken.
     providerJoin.mockResolvedValue({ status: 'admitted', mutedOnEntry: false, micConfirmed: true });
     audioWaitForMicCapture.mockResolvedValue(false);
@@ -1057,8 +1034,7 @@ describe('a call the room cannot hear the agent in', () => {
       await vi.advanceTimersByTimeAsync(10);
       await vi.advanceTimersByTimeAsync(30_000);
 
-      expect(conversationSpeak).not.toHaveBeenCalled();
-      expect(conversationSetAudible).not.toHaveBeenCalledWith(true);
+      expect(conversationPrompt).not.toHaveBeenCalled();
       // Nothing claimed a recovery, in the log or anywhere else.
       expect(loggedLines(loggerInfo).some((l) => /Microphone is live/.test(l))).toBe(false);
       // And it kept reading the half that was broken, rather than settling into a call it
@@ -1084,8 +1060,7 @@ describe('a call the room cannot hear the agent in', () => {
       audioIsMicCaptured.mockResolvedValue(true);
       await vi.advanceTimersByTimeAsync(10_000);
 
-      expect(conversationSetAudible).toHaveBeenCalledWith(true);
-      expect(conversationSpeak).toHaveBeenCalled();
+      expect(conversationPrompt).toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
@@ -1619,7 +1594,7 @@ describe('the microphone the agent can set', () => {
 
   it('drops a recovery the agent has already overruled', async () => {
     // The retry's click can finish after the agent has asked to be muted. Its tail declares
-    // the call audible, restores `open` mode and greets the room out loud, so it has to read
+    // the call audible and greets the room out loud, so it has to read
     // the newer request rather than the one that started it.
     vi.useFakeTimers();
     try {
@@ -1644,8 +1619,7 @@ describe('the microphone the agent can set', () => {
       await tool;
 
       expect(service.status().isMicLive).toBe(false);
-      expect(conversationSetAudible).not.toHaveBeenCalledWith(true);
-      expect(conversationNotify).not.toHaveBeenCalledWith(
+      expect(conversationPrompt).not.toHaveBeenCalledWith(
         expect.stringMatching(/greet the participants/i),
       );
       expectNothingPublished();
@@ -1736,8 +1710,7 @@ describe('the microphone the agent can set', () => {
       await tool;
 
       expect(service.status().isMicLive).toBe(false);
-      expect(conversationSetAudible).not.toHaveBeenCalledWith(true);
-      expect(conversationNotify).not.toHaveBeenCalledWith(
+      expect(conversationPrompt).not.toHaveBeenCalledWith(
         expect.stringMatching(/greet the participants/i),
       );
     } finally {
@@ -1868,7 +1841,7 @@ describe('release of resources', () => {
     expect(service.status().state).toBe('idle');
   });
 
-  it('releases everything when the Realtime session cannot connect', async () => {
+  it('releases everything when the voice session cannot connect', async () => {
     conversationStart.mockRejectedValue(new Error('401 unauthorized'));
 
     const result = await service.join(input);
@@ -1973,7 +1946,7 @@ describe('release of resources', () => {
   });
 });
 
-describe('a lost Realtime session', () => {
+describe('a lost voice session', () => {
   /** Fire the callback the real socket's close handler calls. */
   const dropSession = async (reason = 'code 1011') => {
     conversationOptions.onSessionLost?.(reason);
@@ -1989,7 +1962,7 @@ describe('a lost Realtime session', () => {
 
     // Everything a participant needs is gone, so staying would leave a mute tile
     // in someone's meeting until the empty-room poll or the duration cap noticed.
-    expectLogged(loggerWarn, /Lost the Realtime session mid-call.*connection reset/s);
+    expectLogged(loggerWarn, /Lost the voice session mid-call.*connection reset/s);
     expectNothingPublished();
     expect(providerLeave).toHaveBeenCalled();
     expect(browserStop).toHaveBeenCalled();
@@ -2021,7 +1994,7 @@ describe('a lost Realtime session', () => {
     // the epoch has moved on and the ended call must not be reported twice.
     await dropSession();
 
-    expect(loggedLines(loggerWarn).some((l) => /Lost the Realtime session/.test(l))).toBe(false);
+    expect(loggedLines(loggerWarn).some((l) => /Lost the voice session/.test(l))).toBe(false);
     expect(trackEvent.mock.calls.filter((c) => c[0] === 'meeting ended')).toHaveLength(0);
   });
 
@@ -2039,7 +2012,7 @@ describe('a lost Realtime session', () => {
     await settle();
 
     expect(service.status().state).toBe('in_call');
-    expect(loggedLines(loggerWarn).some((l) => /Lost the Realtime session/.test(l))).toBe(false);
+    expect(loggedLines(loggerWarn).some((l) => /Lost the voice session/.test(l))).toBe(false);
   });
 
 });
@@ -2051,7 +2024,7 @@ describe('a lost audio pipeline', () => {
     expect(service.status().state).toBe('in_call');
 
     // What `parec` exiting looks like from the outside: the browser is still in the
-    // call and the Realtime socket is still open, so nothing else notices that the
+    // call and the voice socket is still open, so nothing else notices that the
     // room's audio has stopped reaching a model.
     audioLostHandler?.('the capture process exited (code 1)');
     await settle();
@@ -2183,7 +2156,7 @@ describe('a late admission cannot resurrect a torn-down call', () => {
     await settle();
 
     expect(service.status().state).toBe('idle');
-    expect(conversationSpeak).not.toHaveBeenCalled();
+    expect(conversationPrompt).not.toHaveBeenCalled();
   });
 
   it('ignores a join that throws after teardown', async () => {
@@ -2214,7 +2187,7 @@ describe('reading who has the floor', () => {
     // the provider's join so the interface's contract is true for the next platform.
     expect(providerEnableAttribution).toHaveBeenCalledWith(expect.objectContaining({ mockPage: true }));
     expect(providerEnableAttribution.mock.invocationCallOrder[0]).toBeLessThan(
-      conversationSpeak.mock.invocationCallOrder[0],
+      conversationPrompt.mock.invocationCallOrder[0],
     );
   });
 
@@ -2391,7 +2364,6 @@ describe('telemetry', () => {
       inference_provider: 'azure',
       inference_source: 'managed',
       provider: 'google-meet',
-      response_mode: 'auto',
       muted_on_entry: 'false',
       mic_confirmed: 'true',
     });
@@ -2404,16 +2376,8 @@ describe('telemetry', () => {
       expect.objectContaining({
         provider: 'google-meet',
         status: 'completed',
-        response_mode: 'auto',
-        responses: '2',
+        delegations: '4',
         tool_calls: '1',
-        interruptions: '3',
-        // How the room was handled — the counters that say whether the gate
-        // suppressed anything and how much of that was a name being said.
-        utterances: '9',
-        suppressed: '6',
-        addressed_matches: '2',
-        mode_switches: '1',
       }),
     );
   });
@@ -2487,56 +2451,32 @@ describe('telemetry', () => {
     expect(ended?.[2]).not.toHaveProperty('fail_step');
   });
 
-  it('reports how the addressed gate fared, including how often it failed', async () => {
+  it('reports what the backend did and the voice time the API billed', async () => {
     await service.join(input);
     await settle();
     await service.leave();
 
-    // `gate_failed` is the one that matters: the gate fails closed, so a failing
-    // gate and a room nobody addressed both produce silence, and nothing else
-    // tells them apart. The mean is emitted rather than derived so a dashboard
-    // needs no arithmetic — 3200ms over four calls here.
     const ended = trackEvent.mock.calls.find((c) => c[0] === 'meeting ended');
     expect(ended?.[2]).toMatchObject({
-      gate_calls: '4',
-      gate_failed: '1',
-      gate_latency_ms: '800',
-      gate_superseded: '1',
-      // Distinct from `gate_failed`: there the verdict never arrived, here it did
-      // and the response the agent asked for produced no audio.
-      responses_failed: '2',
+      delegations: '4',
+      tool_calls: '1',
+      backend_input_tokens: '1200',
+      backend_output_tokens: '80',
+      voice_seconds: '95',
+      close_reason: 'close_requested',
     });
   });
 
-  it('reports how often the platform said who was speaking', async () => {
-    await service.join(input);
-    await settle();
-    await service.leave();
-
-    // Scraped from a UI nobody promised to keep stable, and it fails silently — the call
-    // carries on, just anonymously. This rate dropping between releases is the signal.
-    const ended = trackEvent.mock.calls.find((c) => c[0] === 'meeting ended');
-    expect(ended?.[2]).toMatchObject({ attribution_rate: '75' });
-  });
-
-  it('reports a zero share for a call nobody spoke to the agent in', async () => {
-    // A common outcome. Absent properties would look the same as a build that never
-    // emitted them, and a mean over no calls must not be NaN.
+  it('leaves out the voice time and the close reason when the API never reported them', async () => {
+    // A session that died before its first usage report has neither. An empty value would
+    // read as zero seconds billed, which is a claim nobody measured.
     vi.spyOn(FakeVoiceConversation.prototype, 'statistics', 'get').mockReturnValue({
-      responses: 0,
+      delegations: 0,
       toolCalls: 0,
-      interruptions: 0,
-      utterances: 0,
-      suppressed: 0,
-      addressedMatches: 0,
-      modeSwitches: 0,
-      gateCalls: 0,
-      gateFailed: 0,
-      gateLatencyMs: 0,
-      gateSuperseded: 0,
-      responsesFailed: 0,
-      attributedUtterances: 0,
-      unattributedUtterances: 0,
+      backendInputTokens: 0,
+      backendOutputTokens: 0,
+      voiceSeconds: null,
+      closeReason: null,
     });
 
     await service.join(input);
@@ -2544,14 +2484,34 @@ describe('telemetry', () => {
     await service.leave();
 
     const ended = trackEvent.mock.calls.find((c) => c[0] === 'meeting ended');
-    expect(ended?.[2]).toMatchObject({
-      gate_calls: '0',
-      gate_failed: '0',
-      gate_latency_ms: '0',
-      gate_superseded: '0',
-      responses_failed: '0',
-      attribution_rate: '0',
-    });
+    expect(ended?.[2]).toMatchObject({ delegations: '0', tool_calls: '0' });
+    expect(ended?.[2]).not.toHaveProperty('voice_seconds');
+    expect(ended?.[2]).not.toHaveProperty('close_reason');
+  });
+
+  it('reports whether the platform ever said who was speaking', async () => {
+    // Scraped from a UI nobody promised to keep stable, and it fails silently — the call
+    // carries on, just anonymously. This flag turning false between releases is the signal.
+    await service.join(input);
+    await settle();
+    await service.leave();
+
+    let ended = trackEvent.mock.calls.find((c) => c[0] === 'meeting ended');
+    expect(ended?.[2]).toMatchObject({ attribution: 'unavailable' });
+
+    trackEvent.mockClear();
+    providerCurrentSpeaker.mockResolvedValue({ name: 'Emma Lee', isSelf: false });
+    vi.useFakeTimers();
+    try {
+      await service.join(input);
+      await vi.advanceTimersByTimeAsync(1_010);
+      await service.leave();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    ended = trackEvent.mock.calls.find((c) => c[0] === 'meeting ended');
+    expect(ended?.[2]).toMatchObject({ attribution: 'available' });
   });
 });
 
@@ -2573,54 +2533,20 @@ describe('status()', () => {
     expect(service.status()).toMatchObject({ state: 'idle', provider: null, joinedAt: null });
   });
 
-  it('reports the provider, mode and stats during a call', async () => {
-    await service.join({ ...input, responseMode: 'addressed' });
+  it('reports the provider and stats during a call', async () => {
+    await service.join(input);
     await settle();
 
     expect(service.status()).toMatchObject({
       state: 'in_call',
       provider: 'google-meet',
-      responseMode: 'addressed',
-      // What `auto` actually resolved to is the answer to "will it speak up?",
-      // so status reports it alongside what was asked for.
-      effectiveResponseMode: 'addressed',
-      stats: { responses: 2, toolCalls: 1, interruptions: 3 },
+      stats: { delegations: 4, toolCalls: 1 },
     });
     expect(service.status().joinedAt).toBeTruthy();
   });
 });
 
 describe('reading the room', () => {
-  it('reads the participant count on admission rather than a poll later', async () => {
-    providerParticipantCount.mockResolvedValue(2);
-
-    await service.join(input);
-    await settle();
-
-    // Until a count lands the policy assumes a crowd, so a one-to-one caller
-    // would have to say the agent's name to be answered at all.
-    expect(conversationSetParticipantCount).toHaveBeenCalledWith(2);
-  });
-
-  it('waits for the room to render instead of believing the first "1"', async () => {
-    // Observed live: Meet admits the agent a moment before it renders anyone
-    // else's tile, so an immediate read is a reliable 1.
-    providerParticipantCount
-      .mockResolvedValueOnce(1)
-      .mockResolvedValueOnce(1)
-      .mockResolvedValue(3);
-
-    await service.join(input);
-    // The seed retries over a few seconds while the room renders.
-    await vi.waitFor(() => expect(conversationSetParticipantCount).toHaveBeenCalledWith(3), {
-      timeout: 6_000,
-    });
-
-    // And never the transient 1 — which is also what an empty room looks like,
-    // so seeding it would put a false "I'm alone" into a call just joined.
-    expect(conversationSetParticipantCount).not.toHaveBeenCalledWith(1);
-  });
-
   it('does not count the admission read towards leaving an empty room', async () => {
     // A room a host has just admitted the agent to is not empty by definition.
     providerParticipantCount.mockResolvedValue(1);
@@ -2631,29 +2557,27 @@ describe('reading the room', () => {
     expect(service.status().state).toBe('in_call');
   });
 
-  it('keeps the call when the count cannot be read, and seeds nothing', async () => {
+  it('keeps the call when the count cannot be read', async () => {
     providerParticipantCount.mockRejectedValue(new Error('selector gone'));
 
     await service.join(input);
     await settle();
 
-    // Never guessed at. The policy's own default — wait to be addressed — is
-    // where an unknown room belongs, and guessing "open" instead would put the
-    // agent back to answering everything said by everyone.
-    expect(conversationSetParticipantCount).not.toHaveBeenCalled();
     expect(service.status().state).toBe('in_call');
   });
 
-  it('listens for the name the room actually hears, not the env default', async () => {
-    // The prompt introduces the agent by its workspace name. If detection listened
-    // for `config.agentName` instead, a renamed agent would ignore the very name it
-    // had just given the room.
+  it('uses the name the room actually hears, not the env default', async () => {
+    // The prompt introduces the agent by its workspace name, and the roster the voice is
+    // told leaves that name out. `config.agentName` would miss a renamed agent.
     getAgentContext.mockResolvedValue({ agentName: 'Atlas', soulMd: '', userMd: '' });
 
     await service.join(input);
     await settle();
 
-    expect(conversationOptions).toMatchObject({ agentName: 'Atlas', responseMode: 'auto' });
+    expect(conversationOptions).toMatchObject({ agentName: 'Atlas' });
+    // Both models are told who they are: the voice and the backend behind it.
+    expect(conversationOptions.instructions).toContain('**Atlas**');
+    expect(conversationOptions.backendInstructions).toContain('You are Atlas');
   });
 
 });
@@ -2710,7 +2634,7 @@ describe('posting into the call chat', () => {
   });
 
   it('refuses once the call has ended', async () => {
-    // The window that matters: a Realtime session can still be draining a tool call
+    // The window that matters: a voice session can still be draining a tool call
     // after the room is gone, and the page it would type into has been closed.
     await enterCall();
     await service.leave();

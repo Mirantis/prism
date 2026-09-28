@@ -1,7 +1,8 @@
 /**
- * Realtime transport for voice chat and meetings. Config resolves the endpoint
- * and credential together: explicit voice settings, managed protocol discovery,
- * or direct OpenAI. The sandbox proxy substitutes managed credential placeholders
+ * Voice sockets for calls and dictation. Config resolves the endpoint and credential
+ * together: explicit voice settings, managed protocol discovery, or direct OpenAI. A
+ * call opens a GPT-Live session and a dictation a Realtime transcription session, both
+ * under the same `/v1` root. The sandbox proxy substitutes managed credential placeholders
  * on the Lens route; they must never be redirected to api.openai.com.
  * Remote sockets require WSS. Plain WS is accepted only on loopback.
  */
@@ -57,42 +58,49 @@ export interface RealtimeEndpoint {
 }
 
 /**
- * Resolve the Realtime endpoint, or throw when no key is configured.
- *
- * Throwing rather than returning null: callers only reach this after the meeting
- * tools have already gated on `isRealtimeConfigured()`, so a missing key here is
- * a programming error, not an operator misconfiguration to degrade around.
+ * Where a call's voice session opens: `…/v1/live/sessions`, beside the configured
+ * `…/v1/realtime` socket. The model travels in `session.start`, not in the URL.
  */
-export function resolveRealtimeEndpoint(model?: string): RealtimeEndpoint {
+export function resolveLiveEndpoint(): RealtimeEndpoint {
+  const target = new URL(resolveRealtimeBase());
+  target.pathname = target.pathname.replace(/\/realtime\/?$/, '') + '/live/sessions';
+  return endpointFor(target);
+}
+
+/**
+ * Where a dictation opens: the Realtime socket as a transcription session, which needs
+ * a transcription model and no conversation model.
+ */
+export function resolveTranscriptionEndpoint(): RealtimeEndpoint {
+  const target = new URL(resolveRealtimeBase());
+  // Appended rather than written through `searchParams`, which would rewrite the query
+  // the override already carries.
+  target.search = target.search ? `${target.search}&intent=transcription` : '?intent=transcription';
+  return endpointFor(target);
+}
+
+/**
+ * The credential and proxy for a voice socket, or a throw when no key is configured.
+ *
+ * Throwing rather than returning null: callers only reach this after the voice tools
+ * have already gated on `isRealtimeConfigured()`, so a missing key here is a
+ * programming error, not an operator misconfiguration to degrade around.
+ */
+function endpointFor(target: URL): RealtimeEndpoint {
   const apiKey = config.openaiRealtimeApiKey;
   if (!apiKey) {
     throw new Error(
       config.realtimeUnavailableReason || 'No Realtime credential configured — set OPENAI_REALTIME_API_KEY or enable a managed Realtime provider.',
     );
   }
-
-  const modelId = model || config.openaiRealtimeModel;
-  // The same transport serves managed, direct, and explicitly configured voice.
-  const target = new URL(resolveRealtimeBase());
-  // Appended rather than written through `searchParams`, which would keep the model
-  // name but rewrite a space as `+`, and it holds a query the override already carries.
-  target.search = target.search
-    ? `${target.search}&model=${encodeURIComponent(modelId)}`
-    : `?model=${encodeURIComponent(modelId)}`;
-  const url = target.toString();
-
-  // Realtime went GA in August 2025; the `OpenAI-Beta: realtime=v1` header the
-  // preview models required is no longer sent.
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${apiKey}`,
-  };
+  const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}` };
 
   // Mirrors lib/proxy-dispatcher.ts: outbound calls normally traverse the
   // transparent MITM directly, and only an EXPLICIT HTTPS_PROXY needs tunnelling.
   // That module only covers `fetch`, so the WebSocket resolves its own agent.
   const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy || undefined;
 
-  return { url, headers, ...(proxyUrl ? { proxyUrl } : {}) };
+  return { url: target.toString(), headers, ...(proxyUrl ? { proxyUrl } : {}) };
 }
 
 /** Whether a Realtime session can be opened at all (used to gate the tools). */
@@ -103,7 +111,7 @@ export function isRealtimeConfigured(): boolean {
 /**
  * Build the `ws` client options, adding a proxy agent when HTTPS_PROXY is set.
  *
- * Returns options rather than a socket so `realtime-session.ts` stays testable
+ * Returns options rather than a socket so `live-session.ts` stays testable
  * against a local mock server. Degrades to a direct connection — never throws —
  * when the proxy agent can't be loaded, matching `getProxyDispatcher()`.
  */

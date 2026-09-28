@@ -89,10 +89,10 @@ export interface MeetingToolsInput {
   /** The calling turn's thread. */
   threadId?: string;
   /**
-   * Whether these tools are being built for the meeting's own model.
+   * Whether these tools are being built for the meeting's own session.
    *
    * Only `see_screen` reads it, and only because the picture it takes can be delivered
-   * to the model in the call and to nobody else. A chat turn that calls it during a
+   * to the call's backend and to nobody else. A chat turn that calls it during a
    * live call gets the page in words instead.
    */
   inMeetingSession?: boolean;
@@ -130,17 +130,8 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
         url: z
           .string()
           .describe('The meeting link — a Google Meet URL, e.g. https://meet.google.com/abc-defg-hij'),
-        responseMode: z
-          .enum(['auto', 'open', 'addressed'])
-          .optional()
-          .describe(
-            'How much you speak up. "auto" (the default, and almost always right) reads the ' +
-            'room: with one other person you answer everything, with more you wait to be ' +
-            'addressed by name. "open" always answers every utterance — only for a call you ' +
-            'know stays one-to-one. "addressed" always waits to be named.',
-          ),
       }),
-      execute: async ({ url, responseMode }) => {
+      execute: async ({ url }) => {
         const provider = meetingBotService.findProvider(url);
         if (!provider) {
           return {
@@ -156,7 +147,6 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
           userId: input.userId,
           agentId: input.agentId,
           threadId: input.threadId,
-          responseMode,
         });
 
         return {
@@ -343,9 +333,8 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
     meeting_status: tool({
       description:
         'Check whether you are in a call and how it is going, whichever platform it is on: ' +
-        'state, which platform, how long, how many times you have spoken or used a tool, ' +
-        'whether you are currently answering everything or only when addressed, and whether ' +
-        'the room can hear you. `isMicLive` is true when it can, false when it cannot, and ' +
+        'state, which platform, how long, how many requests you have handled and tools you ' +
+        'have used, and whether the room can hear you. `isMicLive` is true when it can, false when it cannot, and ' +
         'null when the runtime could not read your microphone at all — worth checking ' +
         'before you take silence from the room to mean nobody is there.',
       inputSchema: z.object({}),

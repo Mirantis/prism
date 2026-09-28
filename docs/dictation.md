@@ -6,7 +6,7 @@ speak back, and the recording is not kept.
 
 ## What you need
 
-The same Realtime credential [voice chat](voice-chat.md#what-you-need) uses. The
+The same OpenAI voice credential [voice chat](voice-chat.md#what-you-need) uses. The
 transcriber is `OPENAI_TRANSCRIPTION_MODEL`; see
 [Configuration](configuration.md#voice-meetings).
 

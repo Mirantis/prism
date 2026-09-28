@@ -377,7 +377,8 @@ restarts.
 | `SLACK_EXPECTED_APP_ID` | Optional safety check on the Slack app identity | — |
 | `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md) and [voice chat](docs/voice-chat.md) (legacy direct-OpenAI voice credential; managed voice resolves its own endpoint and key); also the chat credential when `LLM_PROVIDER=openai`, and the default embedding credential when `LLM_PROVIDER=anthropic` | — (disabled) |
 | `ANTHROPIC_API_KEY` | Chat credential when `LLM_PROVIDER=anthropic` (the first-party Anthropic API; always direct — no gateway mount) | — |
-| `OPENAI_REALTIME_MODEL` | Realtime model for the agent's voice, in a meeting and in a voice chat (pinned snapshot) | `gpt-realtime-2.1` |
+| `OPENAI_REALTIME_MODEL` | The agent's voice, in a meeting and in a voice chat | `gpt-live-1` |
+| `OPENAI_VOICE_BACKEND_MODEL` | Model the voice hands more complex tasks to. An OpenAI model | `gpt-6-sol` |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one meeting call | `60` |
 | `LANGFUSE_SECRET_KEY` | Enables Langfuse tracing when set | — |
 | `LANGFUSE_PUBLIC_KEY` | Langfuse public key | — |

@@ -1689,18 +1689,14 @@ export class GoogleMeetProvider implements MeetingProvider {
    * person's name, so nothing has to be recovered from it — which the previous version did,
    * because it read the video tiles. A tile renders its name twice with a control label glued
    * on ("Mario SarcherMario Sarcherdevices"), and un-gluing that was guesswork that had
-   * already eaten a real name once, turning "Miska" into "M" and handing the transcriber a
-   * single letter to bias towards.
+   * already eaten a real name once, turning "Miska" into "M" and handing the voice a
+   * single letter.
    *
-   * Why names are worth reading at all is observed rather than theoretical: one call rendered
-   * "Miska" as "Mees", "Max" as "Mark", and a third participant's name in Japanese
-   * characters. Names are the words a meeting transcript is worst at and the ones this
-   * feature most depends on — the gate's clearest refusals are of the form "the speaker
-   * addresses Isaac", which only holds when Isaac survives transcription.
+   * The names are what the voice is told about who is in the call, so it can answer people
+   * by name — the audio carries none.
    *
-   * Empty on any failure, including a panel that is not open. A missing hint costs accuracy
-   * and nothing else: the transcriber keeps the agent's own name, and the addressed gate
-   * judges the audio with no roster to check it against.
+   * Empty on any failure, including a panel that is not open. A missing roster costs names
+   * and nothing else.
    */
   async participantNames(page: Page): Promise<string[]> {
     return namesFrom(await readRoom(page)).filter(plausibleName);

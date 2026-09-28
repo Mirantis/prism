@@ -1,10 +1,10 @@
 /**
- * A recording of the user's screen, from the frames the page sends to the items the model
- * is given.
+ * A recording of the user's screen, from the frames the page sends to the pictures the
+ * model is given.
  *
  * What is worth pinning is every cap — a page frame is untrusted input, and each of these
  * bounds something the runtime holds in memory for the length of a call — and the
- * grouping, which is the whole difference between a recording and a pile of pictures.
+ * labels, which tell the model when each picture was taken.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -15,7 +15,6 @@ vi.mock('../../../logger', () => ({
 vi.mock('../../../lib/telemetry', () => ({ trackEvent: vi.fn() }));
 
 import { trackEvent } from '../../../lib/telemetry';
-import { MEETING_SAMPLE_RATE, REALTIME_SAMPLE_RATE } from '../../meeting/resampler';
 import {
   formatOffset,
   MAX_RECORDING_FRAMES,
@@ -26,13 +25,8 @@ import {
 /** A picture the page kept, as it arrives: base64 with no data-URI prefix. */
 const PICTURE = Buffer.from('a picture').toString('base64');
 
-/** `ms` of pcm16 mono at the client's rate. */
-function audio(ms: number, rate = MEETING_SAMPLE_RATE): Buffer {
-  return Buffer.alloc(Math.round((ms / 1000) * rate) * 2);
-}
-
-function recording(clientSampleRate = MEETING_SAMPLE_RATE): ScreenRecording {
-  return new ScreenRecording({ clientSampleRate, userId: 'user-1' });
+function recording(): ScreenRecording {
+  return new ScreenRecording({ userId: 'user-1' });
 }
 
 describe('formatOffset', () => {
@@ -54,62 +48,34 @@ describe('ScreenRecording', () => {
     vi.clearAllMocks();
   });
 
-  it('takes the microphone only while one runs', () => {
-    const rec = recording();
-    expect(rec.pushAudio(audio(20))).toBe(false);
-
-    rec.start();
-    expect(rec.pushAudio(audio(20))).toBe(true);
-
-    rec.stop('user', 1_000);
-    expect(rec.pushAudio(audio(20))).toBe(false);
-  });
-
   it('ignores a second start while one runs', () => {
     const rec = recording();
     expect(rec.start()).toBe(true);
     expect(rec.start()).toBe(false);
   });
 
-  it('holds the audio at the model\'s rate rather than the client\'s', () => {
-    const rec = recording(MEETING_SAMPLE_RATE);
-    rec.start();
-    rec.pushAudio(audio(1_000));
-    rec.addFrame(PICTURE, 0);
-
-    const result = rec.stop('user', 1_000);
-
-    // A second of 48 kHz in, a second of 24 kHz out: half the bytes for the same sound.
-    expect(result?.audioMs).toBeGreaterThan(900);
-    expect(result?.audioMs).toBeLessThanOrEqual(1_000);
-    expect(result?.segments[0].audio.length).toBeLessThanOrEqual(REALTIME_SAMPLE_RATE * 2);
-  });
-
-  it('passes the audio through when the client already speaks the model\'s rate', () => {
-    const rec = recording(REALTIME_SAMPLE_RATE);
-    rec.start();
-    rec.pushAudio(audio(500, REALTIME_SAMPLE_RATE));
-
-    const result = rec.stop('user', 500);
-
-    expect(result?.segments[0].audio.length).toBe(audio(500, REALTIME_SAMPLE_RATE).length);
-  });
-
-  it('groups the pictures and the narration into the windows they happened in', () => {
+  it('groups the pictures into the windows they were taken in', () => {
     const rec = recording();
     rec.start();
-    rec.pushAudio(audio(100));
-    vi.setSystemTime(Date.now() + 40_000);
-    rec.pushAudio(audio(100));
     rec.addFrame(PICTURE, 1_000);
+    rec.addFrame(PICTURE, 2_000);
     rec.addFrame(PICTURE, 45_000);
 
     const result = rec.stop('user', 50_000);
 
-    expect(result?.segments.map((s) => s.label)).toEqual(['0:00', '0:30']);
-    expect(result?.segments[0].images).toHaveLength(1);
-    expect(result?.segments[1].images).toHaveLength(1);
-    expect(result?.segments.every((s) => s.audio.length > 0)).toBe(true);
+    expect(result?.segments).toEqual([
+      { label: '0:00', images: [`data:image/jpeg;base64,${PICTURE}`, `data:image/jpeg;base64,${PICTURE}`] },
+      { label: '0:30', images: [`data:image/jpeg;base64,${PICTURE}`] },
+    ]);
+  });
+
+  it('keeps the windows in the order they happened, whatever order the page sent them in', () => {
+    const rec = recording();
+    rec.start();
+    rec.addFrame(PICTURE, 65_000);
+    rec.addFrame(PICTURE, 5_000);
+
+    expect(rec.stop('user', 70_000)?.segments.map((s) => s.label)).toEqual(['0:00', '1:00']);
   });
 
   it('leaves out a window with nothing in it', () => {
@@ -120,12 +86,12 @@ describe('ScreenRecording', () => {
 
     const result = rec.stop('user', 80_000);
 
-    // Nothing was said and nothing changed in the middle half-minute, so no item is made
-    // for it; the labels are what tell the model there is a gap.
+    // Nothing changed in the middle half-minute, so no window is made for it; the labels
+    // are what tell the model there is a gap.
     expect(result?.segments.map((s) => s.label)).toEqual(['0:00', '1:00']);
   });
 
-  it('answers nothing for a recording with neither a picture nor a word in it', () => {
+  it('answers nothing for a recording with no picture in it', () => {
     const rec = recording();
     rec.start();
 
@@ -147,25 +113,16 @@ describe('ScreenRecording', () => {
     expect(result?.frames).toBe(MAX_RECORDING_FRAMES);
   });
 
-  /**
-   * The offset decides how many windows `buildSegments` walks, so a frame claiming a time
-   * far outside the recording held the runtime in that loop for the rest of the process.
-   *
-   * On its own, deliberately: a non-finite offset in the same recording makes the window
-   * count `NaN`, the walk ends before it starts, and the hang this pins would be hidden.
-   */
-  it('refuses a huge offset, so stopping cannot walk to it', () => {
+  it('refuses a huge offset, which would become a label no recording can have', () => {
     const rec = recording();
     rec.start();
     rec.addFrame(PICTURE, 0);
     rec.addFrame(PICTURE, 1e308);
 
-    const started = Date.now();
     const result = rec.stop('user', 1_000);
 
     expect(result?.frames).toBe(1);
     expect(result?.segments).toHaveLength(1);
-    expect(Date.now() - started).toBeLessThan(1_000);
   });
 
   it('refuses an offset that is not a time at all', () => {
@@ -198,14 +155,13 @@ describe('ScreenRecording', () => {
     expect(rec.stop('user', 1_000)?.frames).toBe(1);
   });
 
-  it('keeps no more audio than a recording is allowed to run', () => {
-    const rec = recording(REALTIME_SAMPLE_RATE);
+  it('reports no longer a run than a recording is allowed', () => {
+    const rec = recording();
     rec.start();
-    for (let i = 0; i < 7; i++) rec.pushAudio(audio(60_000, REALTIME_SAMPLE_RATE));
+    rec.addFrame(PICTURE, 0);
 
     const result = rec.stop('limit', MAX_RECORDING_MS + 60_000);
 
-    expect(result?.audioMs).toBeLessThanOrEqual(MAX_RECORDING_MS);
     // The page's own figure is taken, but never past the limit it was told to stop at.
     expect(result?.ms).toBe(MAX_RECORDING_MS);
   });
@@ -225,7 +181,6 @@ describe('ScreenRecording', () => {
     const rec = recording();
     rec.start();
     rec.addFrame(PICTURE, 0);
-    rec.pushAudio(audio(200));
     rec.cancel();
 
     expect(vi.mocked(trackEvent)).toHaveBeenCalledWith(

@@ -74,7 +74,7 @@ Then('the voice model transcribed one dictation and was asked for no answer', as
   const state = await readState();
   const baseline = getBaseline();
   expect(state.dictationsTranscribed - baseline.dictationsTranscribed, describeExchange(state)).toBe(1);
-  expect(state.responsesRequested - baseline.responsesRequested, describeExchange(state)).toBe(0);
+  expect(state.answers - baseline.answers, describeExchange(state)).toBe(0);
 });
 
 Then('the voice model opened a session and transcribed nothing', async () => {

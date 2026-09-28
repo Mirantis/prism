@@ -222,7 +222,7 @@ Then("the voice model hears my microphone from the Computer page", async ({ page
 
 Then("the agent's voice is playing on the Computer page", async ({ page }) => {
   await waitForModel(
-    'the voice model being asked for an answer and streaming it back',
+    'the voice answering and streaming it back',
     (state) => state.deltasSent - getBaseline().deltasSent > 0,
     describeScreen(page),
   );
@@ -246,22 +246,20 @@ When('I record my screen for a few seconds', async ({ page }) => {
   } catch {
     throw new Error(`the recording did not start. ${await describeScreen(page)()}`);
   }
-  // Long enough for the microphone to carry something worth handing over, and for the
-  // sampler to have looked at the screen more than once.
+  // Long enough for the narration to reach the voice, and for the sampler to have looked
+  // at the screen more than once.
   await new Promise((resolve) => setTimeout(resolve, RECORDING_MS));
 });
 
-Then('the voice model hears nothing while the recording runs', async ({ page }) => {
-  // The narration goes into the recording instead of the session. Silence here is the
-  // whole point: the agent does not answer over a demonstration.
+Then('the voice model hears my narration while the recording runs', async ({ page }) => {
+  // The narration travels live, as the rest of the call does; the pictures follow when
+  // the recording stops.
   const settled = await readState();
-  await new Promise((resolve) => setTimeout(resolve, MUTED_WINDOW_MS));
-  const after = await readState();
-  expect(
-    Math.round(after.inboundMs - settled.inboundMs),
-    `the recording's narration still reached the voice model live. ` +
-      `${describeExchange(after)}. ${await describeScreen(page)()}`,
-  ).toBe(0);
+  await waitForModel(
+    'the narration reaching the voice model during the recording',
+    (state) => state.inboundMs > settled.inboundMs,
+    describeScreen(page),
+  );
 });
 
 When('I stop the recording', async ({ page }) => {
@@ -269,13 +267,12 @@ When('I stop the recording', async ({ page }) => {
   await expect(recordButton(page)).toHaveAttribute('aria-label', 'Record your screen');
 });
 
-Then('the voice model is given my screen and my voice from the recording', async ({ page }) => {
+Then("the agent's backend is given my screen from the recording", async ({ page }) => {
   await waitForModel(
-    'the recording reaching the voice model as pictures and narration',
+    'the recording reaching the backend as labelled pictures',
     (state) =>
       state.recordingSegments - getBaseline().recordingSegments > 0 &&
-      state.recordingImages - getBaseline().recordingImages > 0 &&
-      state.recordingAudioMs - getBaseline().recordingAudioMs > 0,
+      state.recordingImages - getBaseline().recordingImages > 0,
     describeScreen(page),
   );
 });

@@ -36,8 +36,6 @@ import {
 } from './browser-control';
 import { VoiceConversation, type VoiceConversationStats } from './voice-conversation';
 import { MEETING_SAMPLE_RATE } from './resampler';
-import { meanGateLatencyMs } from './gate-stats';
-import type { EffectiveMode, ResponseMode } from './response-policy';
 import { prepareMeetingTools } from './tool-bridge';
 import { googleMeetProvider } from './providers/google-meet';
 import { withTimeout } from '../../utils/with-timeout';
@@ -98,15 +96,6 @@ const SPEAKER_POLL_MS = 1_000;
  */
 const UNREADABLE_COUNTS_BEFORE_WARNING = 3;
 
-/**
- * How hard to try for a participant count at the moment of admission.
- *
- * Meet admits the agent before it renders the other tiles, so the first read is
- * a reliable 1 — see `seedParticipantCount`. Together these span a few seconds,
- * which is well inside the poll interval the reading would otherwise wait for.
- */
-const SEED_READ_ATTEMPTS = 5;
-const SEED_READ_INTERVAL_MS = 700;
 
 /**
  * How long to wait for the browser to open the virtual microphone after the unmute.
@@ -181,7 +170,7 @@ export const MEETING_CHAT_READ_LIMIT = 20;
  * end is missing and ask for it.
  *
  * The whole reading is bounded by `MAX_TOOL_RESULT_CHARS`, the cap on one tool result handed
- * to a Realtime model: enough to be read out or acted on, and past it the adapter cuts the
+ * to a voice session's backend: enough to be read out or acted on, and past it the adapter cuts the
  * result anyway.
  */
 const CHAT_READ_MAX_CHARS_PER_MESSAGE = 4_000;
@@ -204,13 +193,6 @@ export type MeetingState =
 export interface MeetingStatus {
   state: MeetingState;
   provider: string | null;
-  /** What was asked for. */
-  responseMode: ResponseMode;
-  /**
-   * What that resolved to right now — `auto` follows the room, so this is the
-   * answer to "is it going to speak up?" and the requested mode is not.
-   */
-  effectiveResponseMode: EffectiveMode | null;
   joinedAt: string | null;
   /**
    * Whether the room can hear the agent right now.
@@ -346,20 +328,6 @@ export interface JoinMeetingInput {
   agentId: string;
   /** The thread the call was asked for from, passed on to the meeting tool set. */
   threadId?: string;
-  /** How much the agent speaks up; `auto` follows the participant count. */
-  responseMode?: ResponseMode;
-}
-
-/**
- * Share of the room's utterances that came with a speaker, as a whole percentage.
- *
- * Zero rather than absent when nothing was judged, for the reason `meanGateLatencyMs`
- * gives: a missing property cannot be told apart from a build that never emitted one.
- */
-function attributionRate(stats: VoiceConversationStats | undefined): number {
-  const total = (stats?.attributedUtterances ?? 0) + (stats?.unattributedUtterances ?? 0);
-  if (total === 0) return 0;
-  return Math.round(((stats?.attributedUtterances ?? 0) / total) * 100);
 }
 
 /** The fence the chat text sits inside, so the model can see where other people's words end. */
@@ -480,7 +448,6 @@ export class MeetingBotService {
   private joinedAt: number | null = null;
   private startedAt: number | null = null;
   private current: JoinMeetingInput | null = null;
-  private responseMode: ResponseMode = 'auto';
   private unreadableCounts = 0;
   /**
    * Whether the room has ever been proved able to hear the agent on this call.
@@ -554,7 +521,7 @@ export class MeetingBotService {
   /**
    * Tail of the queue for everything that moves the front tab.
    *
-   * The Realtime model issues tool calls in parallel, and a `browse` that lands inside a
+   * The voice session's backend issues tool calls in parallel, and a `browse` that lands inside a
    * share start leaves the front tab decided by whichever `bringToFront` resolves last —
    * which the room watches happen. Each acquisition chains onto the previous tail, so
    * these run in arrival order. The tail only ever resolves: a command that throws must
@@ -637,8 +604,6 @@ export class MeetingBotService {
     return {
       state: this.state,
       provider: this.provider?.name ?? null,
-      responseMode: this.responseMode,
-      effectiveResponseMode: this.conversation?.responseMode ?? null,
       joinedAt: this.joinedAt ? new Date(this.joinedAt).toISOString() : null,
       isMicLive: this.isMicLive,
       sharingScreen: this.sharingScreen,
@@ -757,7 +722,7 @@ export class MeetingBotService {
     // Asked before a call's worth of infrastructure is built: a platform that will
     // not take an unauthenticated bot says so here rather than in the lobby, where
     // finding out costs a virtual display, an audio daemon, a browser and a metered
-    // Realtime socket first. The provider answers because only it knows what it
+    // voice socket first. The provider answers because only it knows what it
     // needs — this file should not be reading one platform's credentials.
     const misconfigured = provider.configurationError();
     if (misconfigured) return { state: 'idle', message: misconfigured };
@@ -774,7 +739,6 @@ export class MeetingBotService {
 
     this.provider = provider;
     this.current = input;
-    this.responseMode = input.responseMode ?? 'auto';
     this.state = 'launching';
     this.startedAt = Date.now();
     const epoch = this.epoch;
@@ -796,7 +760,7 @@ export class MeetingBotService {
 
     /** Release a stack that was built for a call nobody is waiting for any more. */
     const releaseLocals = async (): Promise<void> => {
-      conversation?.stop();
+      await conversation?.stop();
       await browser?.stop();
       await audio?.stop();
     };
@@ -804,7 +768,7 @@ export class MeetingBotService {
     try {
       // Instructions and tools first: they need the database and the model
       // catalog, and failing here should cost nothing but a message.
-      const { instructions, agentName, lockedIn } = await this.buildInstructions(input);
+      const { instructions, backendInstructions, agentName, lockedIn } = await this.buildInstructions(input);
       const tools = await prepareMeetingTools({
         userId: input.userId,
         agentId: input.agentId,
@@ -816,21 +780,20 @@ export class MeetingBotService {
       const handles = await audio.start();
       // Deaf or mute is not a state to sit in: a dead capture or playback process
       // leaves the bot in the room unable to hear or speak, which nobody can see
-      // from the inside. Same ending as a lost Realtime session.
+      // from the inside. Same ending as a lost voice session.
       handles.onLost((reason) => this.onAudioLost(epoch, reason));
 
       conversation = new VoiceConversation({
         instructions,
+        backendInstructions,
         tools,
         sink: handles.playbackSink,
         // The virtual audio devices run at the meeting rate, so both resamplers are in
         // the path. Stated rather than defaulted — see the option's own comment.
         sampleRate: MEETING_SAMPLE_RATE,
-        responseMode: this.responseMode,
-        // The name the prompt introduces it by, not `config.agentName`. These
-        // differ the moment someone renames the agent in its workspace — and an
-        // agent that says one name and answers to another would be addressed by
-        // the name it just gave the room, and stay silent.
+        // The name the prompt introduces it by, not `config.agentName`. These differ
+        // the moment someone renames the agent in its workspace, and the roster the
+        // voice is told has to leave out the name the room knows it by.
         agentName,
         voice: config.openaiRealtimeVoice,
         onSessionLost: (reason) => this.onSessionLost(epoch, reason),
@@ -1060,7 +1023,6 @@ export class MeetingBotService {
       // must not do is carry on as though it had been heard.
       const audible = outcome.micConfirmed && capturing;
       this.micConfirmed = audible;
-      this.conversation?.setAudible(audible);
 
       // The first `isMicLive` reading, taken from the join rather than waited for. Both
       // halves, exactly as `audible` above: a live toggle over a capture device Chromium
@@ -1098,7 +1060,6 @@ export class MeetingBotService {
         inference_provider: config.realtimeProvider ?? 'unknown',
         inference_source: config.realtimeSource,
         provider: provider.name,
-        response_mode: this.responseMode,
         // How often the platform auto-mutes a new joiner. Worth a property because it
         // is the number whose absence let a permanently silent agent go unnoticed: if
         // it reads near-zero in production, this step is doing nothing and can go, and
@@ -1115,7 +1076,7 @@ export class MeetingBotService {
         this.greetTheRoom(provider.displayName);
       } else {
         // No greeting, and the model is told why. Speaking here is worse than useless:
-        // it spends Realtime tokens on audio nobody receives and leaves the model
+        // it spends voice time on audio nobody receives and leaves the model
         // believing it introduced itself. Said as a standing condition rather than a
         // one-off so it doesn't answer the next question into the void either.
         //
@@ -1144,13 +1105,7 @@ export class MeetingBotService {
         );
       }
 
-      // Failing to read the room is not a reason to abandon a call already
-      // joined, so this cannot be allowed to reach the catch below.
-      await this.seedParticipantCount(epoch).catch((err) => {
-        logger.warn({ err }, '[Meeting] Could not read the room on admission');
-      });
-
-      // The await above can outlive the call: a `leave()` or a shutdown in that
+      // The awaits above can outlive the call: a `leave()` or a shutdown in that
       // gap runs the whole teardown, timers included. Arming new ones now would
       // leave an interval nobody clears and — worse — a duration cap that fires an
       // hour later and hangs up on whatever call is running by then.
@@ -1185,44 +1140,6 @@ export class MeetingBotService {
   }
 
   /**
-   * Read the room once on admission, patiently, for the response mode alone.
-   *
-   * Not simply an early `checkParticipants()`, for two reasons found on a live
-   * call. Meet renders the other tiles a moment *after* it admits us, so an
-   * immediate read comes back as 1 — and 1 is also what an empty room looks like,
-   * so feeding it to the leave counter would put a false "I'm alone" reading into
-   * a call a host had just that second let us into. And the mode is the only
-   * thing that needs an answer this early; the leave check can wait for the timer,
-   * which is what it is for.
-   *
-   * Gives up quietly rather than seeding a 1. The policy's cautious default —
-   * wait to be addressed — is the right place to stay when the room is unknown,
-   * and the poll will correct it within one interval.
-   */
-  private async seedParticipantCount(epoch: number): Promise<void> {
-    for (let attempt = 0; attempt < SEED_READ_ATTEMPTS; attempt += 1) {
-      if (this.epoch !== epoch || this.state !== 'in_call' || !this.page || !this.provider) return;
-
-      let count: number | null = null;
-      try {
-        count = await this.provider.participantCount(this.page);
-      } catch {
-        // Keep trying: the page is still settling.
-      }
-
-      // Anything above the agent itself means the room has rendered.
-      if (count !== null && count > 1) {
-        this.conversation?.setParticipantCount(count);
-        return;
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, SEED_READ_INTERVAL_MS));
-    }
-
-    logger.info('[Meeting] Room not readable yet on admission — waiting for the poll');
-  }
-
-  /**
    * Read the room: how loudly the agent should participate, and whether to leave.
    *
    * One reading serves both. The count is the only thing the agent knows about
@@ -1239,11 +1156,10 @@ export class MeetingBotService {
    * room isn't joined by a silent participant".
    */
   private greetTheRoom(displayName: string): void {
-    this.conversation?.notify(
+    this.conversation?.prompt(
       `You have just been admitted to the ${displayName} call. ` +
         `Greet the participants in one short sentence and say what you can help with.`,
     );
-    this.conversation?.speakNow();
   }
 
   /**
@@ -1371,7 +1287,6 @@ export class MeetingBotService {
     );
     this.micConfirmed = true;
     this.isMicLive = true;
-    this.conversation?.setAudible(true);
     this.greetTheRoom(provider.displayName);
   }
 
@@ -1473,8 +1388,6 @@ export class MeetingBotService {
       count = null;
     }
 
-    this.conversation?.setParticipantCount(count);
-
     // Same poll, because the roster changes for the same reason the count does. Read
     // separately rather than returned alongside it: a provider need not offer names
     // at all, and failing to read them must not disturb the count that decides
@@ -1488,16 +1401,16 @@ export class MeetingBotService {
       }
     }
 
-    // null means "couldn't read it" — never a reason to leave a live call, nor to
-    // change how the agent behaves. But it is worth saying out loud: the count is
-    // scraped from Meet's UI, so a persistent null is a broken selector rather
-    // than a quiet meeting, and it silently pins the agent to one mode.
+    // null means "couldn't read it" — never a reason to leave a live call. But it is
+    // worth a warning: the count is scraped from Meet's UI, so a persistent null is a
+    // broken selector rather than a quiet meeting, and the agent then stays in an empty
+    // call until the duration cap.
     if (count === null) {
       this.unreadableCounts += 1;
       if (this.unreadableCounts === UNREADABLE_COUNTS_BEFORE_WARNING) {
         logger.warn(
           `[Meeting] Can't read the participant count (${this.unreadableCounts} tries) — ` +
-            `staying in "${this.conversation?.responseMode ?? 'addressed'}" mode and not checking for an empty room`,
+            `not checking for an empty room`,
         );
       }
       return;
@@ -1763,14 +1676,14 @@ export class MeetingBotService {
    * A picture, not a description. A page reading cannot say that a chart is empty or
    * that a dialog covers the button.
    *
-   * A tool result is a string, so the picture cannot travel in it. The picture goes in
-   * as its own conversation item, and the tool answers with the reading.
+   * A tool result is a string, so the picture cannot travel in it. The picture goes to
+   * the call's backend as its own item, right after this result, and the tool answers
+   * with the reading.
    *
-   * That item reaches the meeting's own model and nothing else, so `toSession` says who
-   * is asking. A chat turn during a live call can call this tool too, and it gets the
-   * page in words: sending the picture into the meeting session would show it to the
-   * model that did not ask, while telling the one that did that it is looking at
-   * something it cannot see.
+   * That item reaches the call's backend and nothing else, so `toSession` says who is
+   * asking. A chat turn during a live call can call this tool too, and it gets the page
+   * in words: sending the picture into the call would show it to the model that did not
+   * ask, while telling the one that did that it is looking at something it cannot see.
    */
   async lookAtScreen(
     options: { toSession?: boolean } = {},
@@ -2202,14 +2115,14 @@ export class MeetingBotService {
     if (reason) logger.info(`[Meeting] ${reason}`);
     // Claim the ending before teardown reaches its own await. Closing the session is
     // part of teardown, and the close fires `onSessionLost`, so without this the log
-    // would carry both "everyone else left" and "lost the Realtime session" for one
+    // would carry both "everyone else left" and "lost the voice session" for one
     // ending. Teardown bumps the epoch again; doing it twice costs nothing.
     this.epoch += 1;
     await this.teardown(status);
   }
 
   /**
-   * The Realtime session died under us — end the call.
+   * The voice session died under us — end the call.
    *
    * Nothing about the bot is a participant any more: no audio reaches the room and
    * nothing the room says reaches a model. Staying would leave a mute, deaf tile in
@@ -2225,7 +2138,7 @@ export class MeetingBotService {
     const platform = this.provider?.displayName ?? 'meeting';
     this.endOnLoss(
       epoch,
-      `Lost the Realtime session mid-call, so left the ${platform} call: ${reason}`,
+      `Lost the voice session mid-call, so left the ${platform} call: ${reason}`,
     );
   }
 
@@ -2233,7 +2146,7 @@ export class MeetingBotService {
    * The virtual audio devices died under us — end the call, for the same reason.
    *
    * `parec` dying makes the bot deaf and `pacat` dying makes it mute, and neither
-   * announces itself: the browser is still in the call, the Realtime socket is still
+   * announces itself: the browser is still in the call, the voice socket is still
    * open, and the room simply has a participant that stopped responding. Left alone
    * it sits there until the empty-room poll or the duration cap notices, which can
    * be the better part of an hour.
@@ -2298,7 +2211,7 @@ export class MeetingBotService {
       }
     }
 
-    this.conversation?.stop();
+    await this.conversation?.stop();
     await this.browser?.stop();
     await this.audio?.stop();
 
@@ -2309,7 +2222,6 @@ export class MeetingBotService {
         inference_source: config.realtimeSource,
         provider: this.provider.name,
         status,
-        response_mode: this.responseMode,
         // Which step a failed join got to. A bounded enum, never the prose reason —
         // that would put page text into telemetry.
         ...(this.failStep ? { fail_step: this.failStep } : {}),
@@ -2319,38 +2231,17 @@ export class MeetingBotService {
         // action, because a click is a step and not a lifecycle.
         screen_shared: String(this.sharedScreen),
         browser_commands: String(this.browserCommands),
-        responses: String(stats?.responses ?? 0),
+        delegations: String(stats?.delegations ?? 0),
         tool_calls: String(stats?.toolCalls ?? 0),
-        interruptions: String(stats?.interruptions ?? 0),
-        // How the room was handled. `suppressed` against `utterances` is what says
-        // whether the gate earned its keep, and `addressed_matches` how often
-        // someone actually called the agent by name. Counts only — no transcript
-        // ever leaves the process.
-        utterances: String(stats?.utterances ?? 0),
-        suppressed: String(stats?.suppressed ?? 0),
-        addressed_matches: String(stats?.addressedMatches ?? 0),
-        mode_switches: String(stats?.modeSwitches ?? 0),
-        // How the gate itself fared. `gate_failed` is the one number that says the
-        // agent was *deaf* rather than merely quiet: the gate fails closed, so a
-        // failing gate and a room nobody addressed produce identical silence, and
-        // nothing else distinguishes them. The mean is emitted rather than derived
-        // so a dashboard needs no arithmetic to show it.
-        gate_calls: String(stats?.gateCalls ?? 0),
-        gate_failed: String(stats?.gateFailed ?? 0),
-        gate_latency_ms: String(meanGateLatencyMs(stats)),
-        // Verdicts thrown away because a later utterance had closed first. The
-        // agent never answers a turn nothing judged; this is what that costs, and a
-        // high count means a busy room is paying it often.
-        gate_superseded: String(stats?.gateSuperseded ?? 0),
-        // Answers the agent gave that the room never heard. Distinct from
-        // `gate_failed`: there the decision never arrived, here it did and the
-        // response produced nothing.
-        responses_failed: String(stats?.responsesFailed ?? 0),
-        // How often the platform told us who was speaking. Read off a UI nobody
+        backend_input_tokens: String(stats?.backendInputTokens ?? 0),
+        backend_output_tokens: String(stats?.backendOutputTokens ?? 0),
+        ...(stats?.voiceSeconds != null ? { voice_seconds: String(stats.voiceSeconds) } : {}),
+        ...(stats?.closeReason ? { close_reason: stats.closeReason } : {}),
+        // Whether the platform ever told us who was speaking. Read off a UI nobody
         // promised to keep stable, and it fails silently — the call carries on, just
-        // anonymously — so this rate falling between releases is the only signal that
-        // Google has moved something.
-        attribution_rate: String(attributionRate(stats)),
+        // anonymously — so this flag turning false between releases is the only signal
+        // that Google has moved something.
+        attribution: this.speakerSeen ? 'available' : 'unavailable',
       });
     }
 
@@ -2364,7 +2255,6 @@ export class MeetingBotService {
     this.startedAt = null;
     this.emptyReadings = 0;
     this.unreadableCounts = 0;
-    this.responseMode = 'auto';
     // Reset to the pessimistic value, not the optimistic one: the next call has to earn
     // "the room can hear me" the same way this one did, and inheriting a `true` would
     // skip the retry for a meeting that needed it.
@@ -2408,7 +2298,6 @@ export class MeetingBotService {
       userId: input.userId,
       agentId: input.agentId,
       call: { kind: 'meeting', platform: this.provider?.displayName ?? 'video call' },
-      responseMode: this.responseMode,
     });
   }
 

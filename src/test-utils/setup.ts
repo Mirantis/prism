@@ -76,14 +76,15 @@ vi.mock('../config', () => ({
     // kept. Undefined here would render "about NaN days" and still pass a loose
     // assertion.
     toolOutputTtlMs: 7 * 24 * 60 * 60 * 1000,
-    // Voice meetings. The transcriber is named here because the Realtime session
-    // sends it in `session.update`, so an undefined value would be asserted on.
-    openaiTranscriptionModel: 'gpt-realtime-whisper',
-    noiseReduction: 'off',
-    // Same reason: the session sends a reasoning level, and undefined here would
-    // silently drop the field rather than fail. The real default lives in
-    // config.ts and is asserted in config.test.ts, which loads the module itself.
-    openaiRealtimeReasoningEffort: 'high',
+    // Voice. The dictation session sends the transcriber in `session.update`, so an
+    // undefined value would be asserted on.
+    openaiTranscriptionModel: 'gpt-live-transcribe',
+    // Same reason: the voice session sends its models and the backend's reasoning level,
+    // and undefined here would silently drop the fields rather than fail. The real
+    // defaults live in config.ts and are asserted in config.test.ts.
+    openaiRealtimeModel: 'gpt-live-1',
+    openaiVoiceBackendModel: 'gpt-6-sol',
+    openaiRealtimeReasoningEffort: 'medium',
     // Read at log time rather than at startup, so leaving it out would silently take
     // whichever branch `undefined` happens to fall into.
     meetingTranscriptLogging: 'off',
