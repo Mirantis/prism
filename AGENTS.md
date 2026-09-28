@@ -1388,7 +1388,7 @@ The agent-runtime owns the chat socket, `/api/ws`, which the web UI, the TUI and
 
 ### WebSocket Architecture
 
-- **Auth**: terminated at the Lens Agents ingress; every socket is the owner. The ingress's `x-forwarded-user` names the person for display only, never for a decision.
+- **Auth**: terminated at the Lens Agents ingress; every socket is the owner. The ingress's `x-forwarded-user-id` and percent-encoded `x-forwarded-user-display-name` name the person, and `x-forwarded-user` is used for whichever of the two is missing. They are for attribution and display only, never for a decision.
 - **One stream, numbered**: every message (the person's own included), turn state, thread and desktop change is an event with a `seq`, sent to every socket. A reconnecting client names its cursor and is replayed the gap from memory, or told `resumed: false` and reloads history over REST. A message published with nobody connected is therefore never lost.
 - **Store first**: a send is stored under the client's uuid before anything else and only then confirmed, so a client resends anything unconfirmed and the same id is never stored twice.
 - **One turn at a time for the agent**: a message for another conversation waits, shown to every client as `queued`. The wait is also what keeps the agent quiet while a person holds the computer.

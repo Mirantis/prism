@@ -22,8 +22,8 @@ Feature: One conversation on every open client
   Scenario: Another person's message shows on the left, under their name
     Given a web conversation titled "Live sync"
     When I open the "Live sync" conversation
-    And "Grace Example" sends "Reply with exactly GROUP_OK." to the "Live sync" conversation
-    Then I see the message "Reply with exactly GROUP_OK." from "Grace Example" among the other participants
+    And "Grace Åström", signed in as "grace@example.com", sends "Reply with exactly GROUP_OK." to the "Live sync" conversation
+    Then I see the message "Reply with exactly GROUP_OK." from "Grace Åström" among the other participants
     And the agent reply contains "GROUP_OK"
 
   Scenario: The second browser stops a turn the first one started

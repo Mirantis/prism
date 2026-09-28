@@ -163,6 +163,57 @@ describe('Chat protocol v2', () => {
       });
     });
 
+    it('takes the id and the decoded display name from their own headers', async () => {
+      const client = await connect({
+        'x-forwarded-user': 'ada@example.com',
+        'x-forwarded-user-id': 'user-ada-1',
+        'x-forwarded-user-display-name': 'Ada%20Lovelace%20%C3%85str%C3%B6m',
+      });
+      client.hello();
+      expect((await client.welcome()).payload.you).toEqual({ id: 'user-ada-1', name: 'Ada Lovelace Åström' });
+    });
+
+    it('names the connection by x-forwarded-user when the display name does not decode', async () => {
+      const client = await connect({
+        'x-forwarded-user': 'ada@example.com',
+        'x-forwarded-user-id': 'user-ada-1',
+        'x-forwarded-user-display-name': '%E0%A4%A',
+      });
+      client.hello();
+      expect((await client.welcome()).payload.you).toEqual({ id: 'user-ada-1', name: 'ada@example.com' });
+    });
+
+    it('names the connection by x-forwarded-user when the display name is empty once cleaned', async () => {
+      const client = await connect({
+        'x-forwarded-user': 'ada@example.com',
+        'x-forwarded-user-display-name': '%3C%3E%20',
+      });
+      client.hello();
+      expect((await client.welcome()).payload.you).toEqual({ id: 'ada@example.com', name: 'ada@example.com' });
+    });
+
+    it('names the connection by x-forwarded-user when the ingress gives an id and no display name', async () => {
+      const client = await connect({ 'x-forwarded-user': 'ada@example.com', 'x-forwarded-user-id': 'user-ada-1' });
+      client.hello();
+      expect((await client.welcome()).payload.you).toEqual({ id: 'user-ada-1', name: 'ada@example.com' });
+    });
+
+    it('names the connection by its id when the ingress gives nothing else', async () => {
+      const client = await connect({ 'x-forwarded-user-id': 'user-ada-1' });
+      client.hello();
+      expect((await client.welcome()).payload.you).toEqual({ id: 'user-ada-1', name: 'user-ada-1' });
+    });
+
+    it('cleans the display name and cuts it at 128 code points, never inside a surrogate pair', async () => {
+      const client = await connect({
+        'x-forwarded-user': 'ada@example.com',
+        'x-forwarded-user-display-name': encodeURIComponent(`Ada\u0007 ${'😀'.repeat(200)}`),
+      });
+      client.hello();
+      const { name } = (await client.welcome()).payload.you as { name: string };
+      expect(name).toBe(`Ada ${'😀'.repeat(124)}`);
+    });
+
     it('has no name for a connection the ingress did not name', async () => {
       const client = await connect();
       client.hello();
@@ -283,7 +334,11 @@ describe('Chat protocol v2', () => {
 
     it('confirms a stored message under the request id', async () => {
       mockInbox.accept.mockResolvedValue({ message: { id: MESSAGE }, seq: 7, queued: true, duplicate: false });
-      const client = await ready({ 'x-forwarded-user': 'ada@example.com' });
+      const client = await ready({
+        'x-forwarded-user': 'ada@example.com',
+        'x-forwarded-user-id': 'user-ada-1',
+        'x-forwarded-user-display-name': 'Ada%20Lovelace',
+      });
       client.send(send());
 
       expect(await client.next((f) => f.re === 'req-1')).toEqual({
@@ -296,7 +351,7 @@ describe('Chat protocol v2', () => {
         threadId: THREAD,
         content: 'hello',
         attachmentIds: [],
-        sender: { id: 'ada@example.com', name: 'ada@example.com' },
+        sender: { id: 'user-ada-1', name: 'Ada Lovelace' },
       });
     });
 
