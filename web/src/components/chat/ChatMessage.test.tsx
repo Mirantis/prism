@@ -2,7 +2,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { TranscriptMessage } from '@/lib/chat-socket/transcript';
+import type { Viewer } from '@/lib/chat-socket/protocol';
 import ChatMessage from './ChatMessage';
+
+const ADA: Viewer = { id: 'ada@example.com', name: 'ada@example.com' };
+const GRACE: Viewer = { id: 'grace@example.com', name: 'grace@example.com' };
 
 function userMessage(overrides: Partial<TranscriptMessage> = {}): TranscriptMessage {
   return {
@@ -16,19 +20,20 @@ function userMessage(overrides: Partial<TranscriptMessage> = {}): TranscriptMess
     isCompacted: false,
     createdAt: '2026-09-27T08:38:51.086Z',
     attachments: null,
-    senderName: 'Ada Example',
+    senderId: 'ada@example.com',
+    senderName: 'ada@example.com',
     ...overrides,
   };
 }
 
-function renderMessage(message: TranscriptMessage, viewerName: string | null | undefined) {
+function renderMessage(message: TranscriptMessage, viewer: Viewer | undefined) {
   const onRetry = vi.fn();
   const onEdit = vi.fn();
   const { container } = render(
     <ChatMessage
       message={message}
       agentName="Prism"
-      viewerName={viewerName}
+      viewer={viewer}
       onOpenComputerHelp={vi.fn()}
       onRetry={onRetry}
       onEdit={onEdit}
@@ -41,8 +46,8 @@ describe('ChatMessage', () => {
   afterEach(cleanup);
 
   it("puts somebody else's message on the participants' side, under their name", () => {
-    const { container } = renderMessage(userMessage(), 'Grace Example');
-    expect(screen.getByTestId('message-sender').textContent).toBe('Ada Example');
+    const { container } = renderMessage(userMessage(), GRACE);
+    expect(screen.getByTestId('message-sender').textContent).toBe('ada@example.com');
     expect(container.querySelector('[data-message-role="participant"]')).not.toBeNull();
     expect(container.querySelector('.justify-end')).toBeNull();
   });
@@ -54,7 +59,7 @@ describe('ChatMessage', () => {
   });
 
   it('shows your own message on its own side, without a name', () => {
-    const { container } = renderMessage(userMessage(), 'Ada Example');
+    const { container } = renderMessage(userMessage(), ADA);
     expect(screen.queryByTestId('message-sender')).toBeNull();
     expect(container.querySelector('[data-message-role="user"]')?.className).toContain('justify-end');
   });
@@ -62,7 +67,7 @@ describe('ChatMessage', () => {
   it('offers Retry and Edit on a message that was not stored', () => {
     const { onRetry, onEdit } = renderMessage(
       userMessage({ delivery: 'failed', deliveryError: 'This conversation no longer exists.' }),
-      'Ada Example',
+      ADA,
     );
 
     expect(screen.getByTestId('message-failed').textContent).toContain('This conversation no longer exists.');

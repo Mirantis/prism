@@ -19,6 +19,7 @@ import type {
   StreamEvent,
   TurnEventPayload,
   TurnState,
+  Viewer,
   WelcomePayload,
 } from './chat-protocol.js';
 
@@ -39,7 +40,11 @@ export interface TuiMessage {
   createdAt: string;
   /** Shared-file metadata (no bytes) — set on user messages with uploads. */
   attachments?: AttachmentMeta[] | null;
-  /** Who wrote a USER message, when the runtime knows. Display only. */
+  /**
+   * Who wrote a USER message, when the runtime knows: `senderId` tells one person
+   * from another, `senderName` is shown.
+   */
+  senderId?: string | null;
   senderName?: string | null;
 }
 
@@ -131,8 +136,8 @@ export function signInRequestIn(blocks: unknown): SignInRequest | null {
 
 export interface TuiAdapterEvents {
   status: (status: TuiStatus, detail?: string) => void;
-  /** The runtime answered `hello`. `name` is who the sign-in says this connection is, or null. */
-  welcome: (you: { name: string | null }) => void;
+  /** The runtime answered `hello`, and said who the sign-in says this connection is. */
+  welcome: (you: Viewer) => void;
   /** The conversation's stored history, in place of the stored messages on screen. */
   history: (messages: TuiMessage[]) => void;
   /** One message of this conversation, new or changed. Upsert it by id. */
@@ -174,6 +179,7 @@ interface RawMessage {
   blocks?: unknown;
   createdAt?: unknown;
   attachments?: unknown;
+  senderId?: unknown;
   senderName?: unknown;
 }
 
@@ -229,6 +235,7 @@ function coerceMessage(raw: unknown): TuiMessage | null {
     blocks: m.blocks ?? null,
     createdAt: typeof m.createdAt === 'string' ? m.createdAt : new Date().toISOString(),
     attachments: coerceAttachments(m.attachments),
+    senderId: typeof m.senderId === 'string' ? m.senderId : null,
     senderName: typeof m.senderName === 'string' ? m.senderName : null,
   };
 }

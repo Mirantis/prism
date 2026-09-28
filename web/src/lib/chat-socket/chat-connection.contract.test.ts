@@ -91,17 +91,17 @@ describe('the recorded v2 session', () => {
     for (const frame of received(phoneLog.slice(drop + 1))) second.deliver(frame);
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(transcript.map((m) => [m.role, m.content, m.senderName])).toEqual([
-      ['USER', 'Reply with exactly: pong', 'Ada Example'],
+    expect(transcript.map((m) => [m.role, m.content, m.senderId])).toEqual([
+      ['USER', 'Reply with exactly: pong', 'ada@example.com'],
       ['AGENT', 'pong', null],
-      ['USER', 'Reply with exactly: ping', 'Ada Example'],
+      ['USER', 'Reply with exactly: ping', 'ada@example.com'],
       ['AGENT', 'ping', null],
     ]);
     expect(titles).toEqual(['Reply with exactly:', 'pong']);
     const state = connection.getState();
     expect(state.turns).toEqual({});
     // Ada wrote both messages from the web, so the phone shows them as hers.
-    expect(state.you).toBe('Grace Example');
+    expect(state.you).toEqual({ id: 'grace@example.com', name: 'grace@example.com' });
     // The replay was applied in order, with no gap and so no third socket.
     expect(FakeWebSocket.instances).toHaveLength(2);
 

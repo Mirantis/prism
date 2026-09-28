@@ -54,7 +54,7 @@ export interface WelcomePayload {
   streamId: string;
   seq: number;
   resumed: boolean;
-  you: { name: string | null };
+  you: Viewer;
   snapshot: {
     turns: Array<{ threadId: string; state: Exclude<TurnState, 'idle'> }>;
     computer: Record<string, unknown> | null;
@@ -113,4 +113,13 @@ export interface VoiceStartOptions {
   screen?: { width: number; height: number };
   /** What the agent opens with, for a client that started the call by opening a page. */
   greeting?: string;
+}
+
+/**
+ * Who a connection is, as the Lens Agents sign-in named it. `id` tells one person
+ * from another; `name` is for display. Both are null when the sign-in said nothing.
+ */
+export interface Viewer {
+  id: string | null;
+  name: string | null;
 }

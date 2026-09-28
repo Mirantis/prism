@@ -76,7 +76,7 @@ export function welcomeFrame(overrides: Record<string, unknown> = {}) {
       streamId: STREAM_ID,
       seq: 0,
       resumed: false,
-      you: { name: 'Ada Example' },
+      you: { id: 'ada@example.com', name: 'ada@example.com' },
       snapshot: { turns: [], computer: null },
       ...overrides,
     },

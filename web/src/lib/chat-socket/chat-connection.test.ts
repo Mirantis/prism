@@ -80,7 +80,7 @@ describe('ChatConnection', () => {
     const id = connection.send(THREAD, 'hello', []);
     expect(id).toMatch(UUID_V4);
     expect(connection.getState().pending).toEqual([
-      expect.objectContaining({ id, threadId: THREAD, role: 'USER', content: 'hello', delivery: 'sending', senderName: 'Ada Example' }),
+      expect.objectContaining({ id, threadId: THREAD, role: 'USER', content: 'hello', delivery: 'sending', senderId: 'ada@example.com', senderName: 'ada@example.com' }),
     ]);
 
     const frame = ws.frames.at(-1)!;

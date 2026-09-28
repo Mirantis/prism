@@ -147,7 +147,7 @@ describe('Chat protocol v2', () => {
   describe('Scenario: the handshake', () => {
     it('answers hello with the stream position, the snapshot and who is connected', async () => {
       mockInbox.turns.mockReturnValue([{ threadId: THREAD, state: 'running' }]);
-      const client = await connect({ 'x-forwarded-user': 'Ada <ada@example.com>' });
+      const client = await connect({ 'x-forwarded-user': '<ada@example.com>' });
       client.hello();
 
       const welcome = await client.welcome();
@@ -156,8 +156,9 @@ describe('Chat protocol v2', () => {
         streamId: eventStreamService.streamId,
         seq: eventStreamService.seq,
         resumed: false,
-        // Brackets and colons are stripped: the name is shown, never parsed.
-        you: { name: 'Ada ada@example.com' },
+        // The ingress gives an email, which is the id and the name. Brackets and
+        // colons are stripped: it is shown, never parsed.
+        you: { id: 'ada@example.com', name: 'ada@example.com' },
         snapshot: { turns: [{ threadId: THREAD, state: 'running' }] },
       });
     });
@@ -165,7 +166,7 @@ describe('Chat protocol v2', () => {
     it('has no name for a connection the ingress did not name', async () => {
       const client = await connect();
       client.hello();
-      expect((await client.welcome()).payload.you).toEqual({ name: null });
+      expect((await client.welcome()).payload.you).toEqual({ id: null, name: null });
     });
 
     it('tells a client from before this protocol to update, and closes', async () => {
@@ -282,7 +283,7 @@ describe('Chat protocol v2', () => {
 
     it('confirms a stored message under the request id', async () => {
       mockInbox.accept.mockResolvedValue({ message: { id: MESSAGE }, seq: 7, queued: true, duplicate: false });
-      const client = await ready({ 'x-forwarded-user': 'Ada' });
+      const client = await ready({ 'x-forwarded-user': 'ada@example.com' });
       client.send(send());
 
       expect(await client.next((f) => f.re === 'req-1')).toEqual({
@@ -295,7 +296,7 @@ describe('Chat protocol v2', () => {
         threadId: THREAD,
         content: 'hello',
         attachmentIds: [],
-        senderName: 'Ada',
+        sender: { id: 'ada@example.com', name: 'ada@example.com' },
       });
     });
 

@@ -1,3 +1,4 @@
+import type { Viewer } from '@/lib/chat-socket/protocol';
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { ArrowDown } from 'lucide-react';
 import ChatMessage from './ChatMessage';
@@ -14,8 +15,8 @@ const AT_BOTTOM_PX = 120;
 interface ChatMessageListProps {
   messages: TranscriptMessage[];
   agentName: string;
-  /** The name this connection signed in as. Other people's messages show their name. */
-  viewerName: string | null | undefined;
+  /** Who this connection signed in as, undefined until the runtime has said. Other people's messages show their name. */
+  viewer: Viewer | undefined;
   /** What the thread on screen is doing. */
   turnState: TurnState;
   isLoading: boolean;
@@ -31,7 +32,7 @@ interface ChatMessageListProps {
 export default function ChatMessageList({
   messages,
   agentName,
-  viewerName,
+  viewer,
   turnState,
   isLoading,
   threadId,
@@ -90,7 +91,7 @@ export default function ChatMessageList({
                 <ChatMessage
                   message={msg}
                   agentName={agentName}
-                  viewerName={viewerName}
+                  viewer={viewer}
                   onOpenComputerHelp={onOpenComputerHelp}
                   onRetry={onRetry}
                   onEdit={onEdit}

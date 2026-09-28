@@ -42,7 +42,7 @@ export interface WelcomePayload {
   seq: number;
   /** True when every event after the client's cursor follows this frame. */
   resumed: boolean;
-  you: { name: string | null };
+  you: Viewer;
   snapshot: {
     turns: Array<{ threadId: string; state: Exclude<TurnState, 'idle'> }>;
   };
@@ -83,4 +83,13 @@ export interface OutgoingMessage {
   threadId: string;
   content: string;
   attachmentIds: string[];
+}
+
+/**
+ * Who a connection is, as the Lens Agents sign-in named it. `id` tells one person
+ * from another; `name` is for display. Both are null when the sign-in said nothing.
+ */
+export interface Viewer {
+  id: string | null;
+  name: string | null;
 }

@@ -500,8 +500,8 @@ Respond with exactly one word: WORTHY or SKIP`;
   /**
    * Store an incoming user message and do the per-message side work that belongs
    * to it whether or not it gets a turn of its own: naming a new thread, linking
-   * any uploaded files, and showing it on every client of a channel that mirrors
-   * the transcript.
+   * any uploaded files, and showing it on every client of a channel that shows
+   * the whole conversation.
    *
    * The one place a user message is written. The chat socket calls it directly,
    * before any turn, so it can confirm the message the moment it is stored; every
@@ -550,7 +550,7 @@ Respond with exactly one word: WORTHY or SKIP`;
     // the copy as the confirmation that it was stored. Slack shows a message
     // itself.
     if (metadata?.channel === 'websocket') {
-      await messageDeliveryService.mirror(userId, userMessage);
+      await messageDeliveryService.showInConversation(userId, userMessage);
     }
 
     return { message: userMessage, titleSet };

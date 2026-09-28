@@ -15,6 +15,7 @@ import {
   PROTOCOL_VERSION,
   STABLE_CONNECTION_MS,
   type ConnectionStatus,
+  type Viewer,
   type DictationEvent,
   type NackPayload,
   type ThreadEvent,
@@ -55,11 +56,10 @@ export interface ChatListener {
 export interface ChatConnectionState {
   status: ConnectionStatus;
   /**
-   * The name the Lens Agents sign-in gave this connection, null when it gave
-   * none, and undefined until the first `welcome` says which. Until then nobody
-   * knows whose messages are whose.
+   * Who the Lens Agents sign-in says this connection is, undefined until the
+   * first `welcome` says. Until then nobody knows whose messages are whose.
    */
-  you: string | null | undefined;
+  you: Viewer | undefined;
   /** The threads that are working or waiting. A thread that is not listed is idle. */
   turns: Readonly<Record<string, 'queued' | 'running'>>;
   /** Our messages whose stored copy has not arrived, sending or failed, oldest first. */
@@ -180,7 +180,8 @@ export class ChatConnection {
       isCompacted: false,
       createdAt: new Date().toISOString(),
       attachments,
-      senderName: this.state.you ?? null,
+      senderId: this.state.you?.id ?? null,
+      senderName: this.state.you?.name ?? null,
       delivery: 'sending',
     };
     const entry: OutboxEntry = { row, attachmentIds: attachments.map((a) => a.id) };
@@ -299,7 +300,7 @@ export class ChatConnection {
     // On a resume the cursor stays where it is: the events after it follow this frame.
     if (!welcome.resumed) this.cursor = { streamId: welcome.streamId, seq: welcome.seq };
     const turns = Object.fromEntries(welcome.snapshot.turns.map((t) => [t.threadId, t.state]));
-    this.publish({ status: 'connected', you: welcome.you.name, turns });
+    this.publish({ status: 'connected', you: welcome.you, turns });
     if (welcome.snapshot.computer) this.emit('computer', welcome.snapshot.computer as unknown as ComputerStatus);
     if (!welcome.resumed) {
       // Events held from the socket that died are older than the snapshot and the

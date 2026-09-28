@@ -66,13 +66,13 @@ function storedMessage(overrides: Partial<TuiMessage> = {}) {
   };
 }
 
-function welcome(overrides: { resumed?: boolean; turns?: unknown[]; name?: string | null } = {}) {
+function welcome(overrides: { resumed?: boolean; turns?: unknown[]; id?: string | null } = {}) {
   return {
     protocol: 2,
     streamId: 'stream-1',
     seq: 1,
     resumed: overrides.resumed ?? false,
-    you: { name: overrides.name ?? null },
+    you: { id: overrides.id ?? null, name: overrides.id ?? null },
     snapshot: { turns: overrides.turns ?? [] },
   };
 }
@@ -258,16 +258,16 @@ describe('TuiAdapter inbound events', () => {
     await tuiAdapterService.startNewSession();
   });
 
-  it('reports the connection and the name the runtime gave it', () => {
+  it('reports the connection and who the runtime says it is', () => {
     const statuses: unknown[] = [];
     const names: unknown[] = [];
     tuiAdapterService.events.on('status', (s) => statuses.push(s));
-    tuiAdapterService.events.on('welcome', (you) => names.push(you.name));
+    tuiAdapterService.events.on('welcome', (you) => names.push(you.id));
 
-    lastClient.current!.events.emit('welcome', welcome({ resumed: true, name: 'Grace Example' }));
+    lastClient.current!.events.emit('welcome', welcome({ resumed: true, id: 'grace@example.com' }));
 
     expect(statuses).toEqual(['idle']);
-    expect(names).toEqual(['Grace Example']);
+    expect(names).toEqual(['grace@example.com']);
   });
 
   it("takes this thread's state from the welcome snapshot", () => {
@@ -302,12 +302,12 @@ describe('TuiAdapter inbound events', () => {
     const seen: TuiMessage[] = [];
     tuiAdapterService.events.on('message', (m) => seen.push(m));
 
-    emitEvent('message', storedMessage({ id: 'u1', role: 'USER', content: 'hi', senderName: 'Ada Example' }));
+    emitEvent('message', storedMessage({ id: 'u1', role: 'USER', content: 'hi', senderId: 'ada@example.com', senderName: 'ada@example.com' }));
     emitEvent('message', storedMessage({ id: 'a1' }));
 
-    expect(seen.map((m) => [m.role, m.senderName])).toEqual([
-      ['USER', 'Ada Example'],
-      ['AGENT', null],
+    expect(seen.map((m) => [m.role, m.senderId, m.senderName])).toEqual([
+      ['USER', 'ada@example.com', 'ada@example.com'],
+      ['AGENT', null, null],
     ]);
   });
 

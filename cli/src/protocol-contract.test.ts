@@ -96,11 +96,11 @@ describe('the recorded v2 session', () => {
   it("replays the phone's frames, across its reconnect, into the transcript in order", async () => {
     let entries: ChatEntry[] = [];
     const turns: TurnEventPayload[] = [];
-    const names: Array<string | null> = [];
+    const ids: Array<string | null> = [];
     tuiAdapterService.events.on('history', (h: TuiMessage[]) => (entries = withHistory(entries, h)));
     tuiAdapterService.events.on('message', (m: TuiMessage) => (entries = upsertMessage(entries, m)));
     tuiAdapterService.events.on('turn', (t: TurnEventPayload) => turns.push(t));
-    tuiAdapterService.events.on('welcome', (you: { name: string | null }) => names.push(you.name));
+    tuiAdapterService.events.on('welcome', (you: { id: string | null }) => ids.push(you.id));
 
     for (const entry of recording.log.filter((e) => e.client === 'phone')) {
       const socket = FakeWebSocket.latest();
@@ -130,8 +130,8 @@ describe('the recorded v2 session', () => {
       'ping',
     ]);
     // Another person wrote the USER messages, on the web.
-    expect(entries[0]?.message.senderName).toBe('Ada Example');
-    expect(names).toEqual(['Grace Example', 'Grace Example']);
+    expect(entries[0]?.message.senderId).toBe('ada@example.com');
+    expect(ids).toEqual(['grace@example.com', 'grace@example.com']);
     expect(turns.at(-1)).toEqual({ threadId: recording.threadId, state: 'idle', outcome: 'completed' });
   });
 

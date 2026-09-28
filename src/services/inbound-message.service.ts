@@ -39,8 +39,12 @@ export interface InboundMessage {
   threadId: string;
   content: string;
   attachmentIds: string[];
-  /** Who sent it, as the connection named them. Display only. */
-  senderName: string | null;
+  /**
+   * Who sent it, as the Lens Agents sign-in named the connection: a stable id,
+   * which tells one person's messages from another's, and a name to show. The
+   * sign-in gives an email, or a user id, which serves as both today.
+   */
+  sender: { id: string; name: string } | null;
 }
 
 export interface Acceptance {
@@ -56,6 +60,17 @@ export class InboundMessageError extends Error {
   constructor(readonly code: NackCode, message: string) {
     super(message);
   }
+}
+
+/** What every client is told when a turn fails. The details go to the log. */
+const TURN_FAILED = 'The agent could not answer. Try again.';
+
+/** How a message's sender is stored: the id as the external id, the name for display. */
+function senderMetadata(message: InboundMessage) {
+  return {
+    channel: 'websocket' as const,
+    ...(message.sender ? { senderExternalId: message.sender.id, senderName: message.sender.name } : {}),
+  };
 }
 
 interface Waiting {
@@ -90,8 +105,15 @@ class InboundMessageService {
    * which is when the client may stop offering to send it again.
    */
   accept(message: InboundMessage): Promise<Acceptance> {
+    // A second copy while the first is being stored waits for it, then gets the
+    // answer any resend gets: the same check against the stored row.
     const inFlight = this.accepting.get(message.id);
-    if (inFlight) return inFlight.then((acceptance) => ({ ...acceptance, duplicate: true }));
+    if (inFlight) {
+      return inFlight.then(
+        (first) => this.acceptDuplicate(first.message, message),
+        () => this.accept(message),
+      );
+    }
 
     const acceptance = this.acceptOnce(message).finally(() => this.accepting.delete(message.id));
     this.accepting.set(message.id, acceptance);
@@ -144,7 +166,7 @@ class InboundMessageService {
           userId: config.ownerUserId,
           message: inbound.content,
           attachmentIds: inbound.attachmentIds,
-          metadata: { channel: 'websocket', senderName: inbound.senderName ?? undefined },
+          metadata: senderMetadata(inbound),
         },
         inbound.threadId,
         inbound.id,
@@ -159,7 +181,7 @@ class InboundMessageService {
       throw error;
     }
 
-    trackEvent('chat message accepted', config.ownerUserId, {
+    trackEvent('chat message received', config.ownerUserId, {
       'agent.id': agentId,
       'thread.id': inbound.threadId,
       'chat.duplicate': 'false',
@@ -171,24 +193,21 @@ class InboundMessageService {
   }
 
   /**
-   * The id is already a row. The same message sent again is confirmed again; a
-   * different one is refused rather than dropped, so a client bug that reuses an
-   * id cannot lose what the person typed.
+   * The id is already a row. A person's message in the same conversation is the
+   * same message sent again, and is confirmed again. Anything else is refused:
+   * the id is the client's choice, and must not attach to an agent's reply or to
+   * another conversation. The client then offers to send it again.
    *
    * A confirmed message whose turn never ran — the process stopped between the
    * store and the turn — is scheduled now. One with an answer after it, or with
    * work under way on its thread, is left alone: answering it twice is worse.
    */
   private async acceptDuplicate(existing: ConversationMessage, inbound: InboundMessage): Promise<Acceptance> {
-    const same =
-      existing.threadId === inbound.threadId &&
-      existing.role === 'USER' &&
-      existing.content === inbound.content;
-    if (!same) {
+    if (existing.threadId !== inbound.threadId || existing.role !== 'USER') {
       throw new InboundMessageError('id_conflict', 'That message id is already taken by another message.');
     }
 
-    trackEvent('chat message accepted', config.ownerUserId, {
+    trackEvent('chat message received', config.ownerUserId, {
       ...(config.agentId ? { 'agent.id': config.agentId } : {}),
       'thread.id': inbound.threadId,
       'chat.duplicate': 'true',
@@ -202,7 +221,7 @@ class InboundMessageService {
     }
     // Shown again: if the first attempt failed after storing the row, no client
     // has seen it yet. Clients replace a message they already have.
-    await messageDeliveryService.mirror(config.ownerUserId, existing);
+    await messageDeliveryService.showInConversation(config.ownerUserId, existing);
     return { message: existing, seq: eventStreamService.seq, queued, duplicate: true };
   }
 
@@ -303,10 +322,11 @@ class InboundMessageService {
       await conversationEngineService.chat(this.chatInput(waiting));
       if (!this.outcomes.has(threadId)) this.outcomes.set(threadId, { outcome: 'completed' });
     } catch (error) {
-      const text = error instanceof Error ? error.message : String(error);
-      logger.error('Turn on thread %s failed: %s', threadId, text);
+      // Through the serializer, which redacts; every client gets a sentence
+      // instead, since an exception can carry request content or internals.
+      logger.error({ err: error, threadId }, 'Turn failed');
       if (this.outcomes.get(threadId)?.outcome !== 'cancelled') {
-        this.outcomes.set(threadId, { outcome: 'failed', error: text });
+        this.outcomes.set(threadId, { outcome: 'failed', error: TURN_FAILED });
       }
     } finally {
       this.runningThreadId = null;
@@ -328,7 +348,7 @@ class InboundMessageService {
       threadId: message.threadId,
       attachmentIds: message.attachmentIds,
       stored: { titleSet: waiting.titleSet },
-      metadata: { channel: 'websocket' as const, senderName: message.senderName ?? undefined },
+      metadata: senderMetadata(message),
     };
   }
 

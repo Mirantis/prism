@@ -156,22 +156,30 @@ export class MessageDeliveryService {
   }
 
   /**
-   * Show a stored message — one a person sent, or one changed in place — on every
-   * channel that mirrors the whole transcript. A channel that only posts the
-   * agent's replies, such as Slack, is left alone: it shows a person's message
-   * itself, and posting an edit there would post it twice.
+   * Send a stored message that `publish` does not, to every channel that shows
+   * the whole conversation. There are two such messages:
+   *
+   * - A person's own message. Only those channels show it, so a message sent
+   *   from one device appears on the others.
+   * - A message changed after it was published. The one today is a computer
+   *   help card: answering it changes its status, and every open client has to
+   *   stop offering to answer it.
+   *
+   * A channel that posts only the agent's replies, such as Slack, is skipped: it
+   * shows a person's message itself, and posting a change there would post the
+   * message twice.
    */
-  async mirror(userId: string, message: ConversationMessage): Promise<void> {
-    const mirrors = this.adapters.filter((adapter) => adapter.mirrorsTranscript);
-    if (mirrors.length === 0) return;
+  async showInConversation(userId: string, message: ConversationMessage): Promise<void> {
+    const channels = this.adapters.filter((adapter) => adapter.showsWholeConversation);
+    if (channels.length === 0) return;
     const attachments = (await attachmentService.getMetaByMessageIds([message.id])).get(message.id);
     const deliverable: DeliverableMessage = attachments?.length ? { ...message, attachments } : message;
     await Promise.all(
-      mirrors.map(async (adapter) => {
+      channels.map(async (adapter) => {
         try {
           await adapter.deliver(userId, deliverable);
         } catch (error: unknown) {
-          logger.error('Failed to mirror via %s: %s', adapter.name, error instanceof Error ? error.message : String(error));
+          logger.error('Failed to show a message via %s: %s', adapter.name, error instanceof Error ? error.message : String(error));
         }
       }),
     );

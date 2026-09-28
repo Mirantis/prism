@@ -25,7 +25,7 @@ const {
   mockOnFirstUserMessage,
   mockGetAgent,
   mockGetMetaByIds,
-  mockMirror,
+  mockShowInConversation,
   mockGetMetaByMessageIds,
 } = vi.hoisted(() => ({
   mockGetOrCreateLatestThread: vi.fn(),
@@ -41,7 +41,7 @@ const {
   mockOnFirstUserMessage: vi.fn(),
   mockGetAgent: vi.fn(),
   mockGetMetaByIds: vi.fn(),
-  mockMirror: vi.fn(),
+  mockShowInConversation: vi.fn(),
   mockGetMetaByMessageIds: vi.fn(),
 }));
 
@@ -74,7 +74,7 @@ vi.mock('../conversation.service', () => ({
 vi.mock('../message-delivery.service', () => ({
   messageDeliveryService: {
     publish: mockPublish,
-    mirror: mockMirror,
+    showInConversation: mockShowInConversation,
   },
 }));
 
@@ -165,7 +165,7 @@ describe('Requirement: Conversation Engine', () => {
     mockCountAgentMessages.mockResolvedValue(0);
     mockGetMetaByIds.mockResolvedValue([]);
     mockGetMetaByMessageIds.mockResolvedValue(new Map());
-    mockMirror.mockResolvedValue(undefined);
+    mockShowInConversation.mockResolvedValue(undefined);
     // Default: telemetry off so unrelated scenarios don't exercise the classifier.
     mockIsTelemetryEnabled.mockReturnValue(false);
     mockGenerateText.mockResolvedValue({ text: 'WORTHY' });
@@ -624,7 +624,7 @@ describe('Requirement: Conversation Engine', () => {
     });
   });
 
-  describe('Scenario: User message mirror', () => {
+  describe('Scenario: A person\'s own message on every client', () => {
     it('shows the stored user message on every client of the chat socket', async () => {
       await conversationEngineService.chat({
         userId: 'user-123',
@@ -633,12 +633,12 @@ describe('Requirement: Conversation Engine', () => {
         metadata: { channel: 'websocket' },
       });
 
-      expect(mockMirror).toHaveBeenCalledWith(
+      expect(mockShowInConversation).toHaveBeenCalledWith(
         'user-123',
         expect.objectContaining({ id: 'msg-123', role: 'USER', content: 'hello from web' }),
       );
       // The broadcast goes out before the agent's first message.
-      expect(mockMirror.mock.invocationCallOrder[0]).toBeLessThan(
+      expect(mockShowInConversation.mock.invocationCallOrder[0]).toBeLessThan(
         mockPublish.mock.invocationCallOrder[0],
       );
     });
@@ -650,7 +650,7 @@ describe('Requirement: Conversation Engine', () => {
         message: 'hello from the REST endpoint',
       });
 
-      expect(mockMirror).not.toHaveBeenCalled();
+      expect(mockShowInConversation).not.toHaveBeenCalled();
     });
   });
 
