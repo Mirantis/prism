@@ -1,9 +1,11 @@
 /**
  * One conversation on every open client: a second browser context on the same agent.
  *
- * Another person is a socket of its own that names them in `x-forwarded-user`,
- * the header the Lens Agents ingress writes for a signed-in caller. A browser
- * cannot set a header on a WebSocket handshake, so they are not a browser here.
+ * Another person is a socket of its own that names them in the headers the Lens
+ * Agents ingress writes for a signed-in caller: `x-forwarded-user` (their email),
+ * `x-forwarded-user-id` and the percent-encoded `x-forwarded-user-display-name`.
+ * A browser cannot set a header on a WebSocket handshake, so they are not a
+ * browser here.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -95,11 +97,17 @@ Given(
 );
 
 When(
-  '{string} sends {string} to the {string} conversation',
-  async ({}, name: string, text: string, title: string) => {
+  '{string}, signed in as {string}, sends {string} to the {string} conversation',
+  async ({}, name: string, email: string, text: string, title: string) => {
     const threadId = threadIds.get(title);
     if (!threadId) throw new Error(`No conversation titled "${title}"`);
-    const socket = new WebSocket('ws://localhost:3003/api/ws', { headers: { 'x-forwarded-user': name } });
+    const socket = new WebSocket('ws://localhost:3003/api/ws', {
+      headers: {
+        'x-forwarded-user': email,
+        'x-forwarded-user-id': randomUUID(),
+        'x-forwarded-user-display-name': encodeURIComponent(name),
+      },
+    });
     others.push(socket);
     await new Promise<void>((resolve, reject) => {
       socket.once('open', resolve);

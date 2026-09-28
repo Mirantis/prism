@@ -29,7 +29,7 @@ const inbound = (id: string, threadId = THREAD_A, content = 'hello') => ({
   threadId,
   content,
   attachmentIds: [],
-  sender: { id: 'ada@example.com', name: 'ada@example.com' },
+  sender: { id: 'user-ada-1', name: 'Ada Lovelace' },
 });
 
 const row = (id: string, threadId = THREAD_A, content = 'hello') => ({
@@ -86,8 +86,8 @@ describe('InboundMessageService', () => {
       expect(mockEngine.acceptUserMessage).toHaveBeenCalledWith(
         expect.objectContaining({ message: 'hello', metadata: {
           channel: 'websocket',
-          senderExternalId: 'ada@example.com',
-          senderName: 'ada@example.com',
+          senderExternalId: 'user-ada-1',
+          senderName: 'Ada Lovelace',
         } }),
         THREAD_A,
         'm-1',
