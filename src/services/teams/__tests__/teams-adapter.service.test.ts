@@ -135,6 +135,9 @@ vi.mock('../../../config', () => ({
     teamsAppId: 'app-1',
     teamsAppPassword: 'secret',
     teamsAppTenantId: 'tenant-1',
+    host: '127.0.0.1',
+    // 0 = an ephemeral port per test, so a running runtime's bot port never collides.
+    teamsPort: 0,
     port: 3003,
     publicUrl: null as string | null,
   },
@@ -156,8 +159,12 @@ function lastApp() {
 
 async function initializeConfigured(): Promise<void> {
   mockGetTeamsConfig.mockResolvedValue(CONNECTION);
-  teamsAdapterService.attachExpressApp({} as never);
   await teamsAdapterService.initialize();
+}
+
+/** The http.Server the adapter handed to the SDK's ExpressAdapter. */
+function botServer(): import('node:http').Server {
+  return (lastApp().options.httpServerAdapter as { appOrServer: import('node:http').Server }).appOrServer;
 }
 
 /** Fire the captured message handler and let the fire-and-forget work settle. */
@@ -213,8 +220,6 @@ describe('TeamsAdapterService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAppState.instances.length = 0;
-    // Reset past the re-init guard — production supports one initialize() per
-    // process, but each test needs a fresh adapter.
     teamsAdapterService.__resetForTests();
     mockTrackEvent.mockClear();
     mockTeamsMappingService.countAllMappings.mockResolvedValue(1);
@@ -223,6 +228,10 @@ describe('TeamsAdapterService', () => {
     mockConversationService.getOrCreateThreadByExternalId.mockResolvedValue({ id: 'thread-1' });
     mockChat.mockResolvedValue({ threadId: 'thread-1' });
     mockReadInboundFiles.mockResolvedValue({ attachmentIds: [], failures: [], names: [] });
+  });
+
+  afterEach(async () => {
+    await teamsAdapterService.shutdown();
   });
 
   describe('initialize', () => {
@@ -235,16 +244,30 @@ describe('TeamsAdapterService', () => {
       expect(await teamsAdapterService.isUserConnected('lens-1')).toBe(false);
     });
 
-    it('idles when no Express app was attached', async () => {
-      mockGetTeamsConfig.mockResolvedValue(CONNECTION);
+    it('serves the bot endpoint on its own listener at the runtime bind address', async () => {
+      await initializeConfigured();
 
-      // No attachExpressApp() before initialize — new module state per run is
-      // simulated by shutdown() in beforeEach, but the express app survives, so
-      // this test only verifies the configured path doesn't throw without one.
-      await teamsAdapterService.initialize();
+      const server = botServer();
+      expect(server.listening).toBe(true);
+      expect(server.address()).toMatchObject({ address: '127.0.0.1' });
+    });
 
-      // Either idled (no attach yet in a fresh process) or initialized (attach
-      // survived from an earlier test) — in both cases it must not throw.
+    it('idles when the bot port is taken', async () => {
+      const http = await import('node:http');
+      const squatter = http.createServer();
+      await new Promise<void>((resolve) => squatter.listen(0, '127.0.0.1', () => resolve()));
+      config.teamsPort = (squatter.address() as { port: number }).port;
+
+      try {
+        await initializeConfigured();
+        expect(await teamsAdapterService.isUserConnected('lens-1')).toBe(false);
+        // The bind failed after the SDK app initialized, so the app is stopped
+        // rather than left leaking its token-manager timers.
+        expect(lastApp().stop).toHaveBeenCalledTimes(1);
+      } finally {
+        config.teamsPort = 0;
+        await new Promise<void>((resolve) => squatter.close(() => resolve()));
+      }
     });
 
     it('registers the SDK app on our route with explicit credentials', async () => {
@@ -269,7 +292,6 @@ describe('TeamsAdapterService', () => {
 
     it('fails soft when the SDK rejects during initialize', async () => {
       mockGetTeamsConfig.mockResolvedValue(CONNECTION);
-      teamsAdapterService.attachExpressApp({} as never);
       mockAppState.failNextInitialize = true;
 
       await expect(teamsAdapterService.initialize()).resolves.toBeUndefined();
@@ -288,7 +310,6 @@ describe('TeamsAdapterService', () => {
       // reaches the handler, so an activity after a failed init must not run a
       // full turn whose reply could never send.
       mockGetTeamsConfig.mockResolvedValue(CONNECTION);
-      teamsAdapterService.attachExpressApp({} as never);
       mockAppState.failNextInitialize = true;
       await teamsAdapterService.initialize();
 
@@ -958,15 +979,17 @@ describe('TeamsAdapterService', () => {
   });
 
   describe('shutdown', () => {
-    it('refuses to re-initialize after shutdown (the Express route cannot be unregistered)', async () => {
+    it('closes the bot listener, and a later initialize opens a fresh one', async () => {
       await initializeConfigured();
+      const first = botServer();
+
       await teamsAdapterService.shutdown();
+      expect(first.listening).toBe(false);
 
       await teamsAdapterService.initialize();
-
-      // No second App / second route — re-init is unsupported by design.
-      expect(mockAppState.instances.length).toBe(1);
-      expect(await teamsAdapterService.isUserConnected('lens-1')).toBe(false);
+      expect(mockAppState.instances.length).toBe(2);
+      expect(botServer()).not.toBe(first);
+      expect(botServer().listening).toBe(true);
     });
 
     it('stops the SDK app and is idempotent', async () => {

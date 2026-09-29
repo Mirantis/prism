@@ -411,10 +411,10 @@ Prism Agent exposes the following surfaces:
   up, DMs and channel mentions reach the agent directly without a public
   webhook. Six-character verification codes link Slack identities to the
   agent's user.
-- **Microsoft Teams** — Azure Bot Service delivers messages to the runtime's
-  `POST /agents/teams/messages` endpoint. Public HTTPS is required: front the
-  container with a proxy or tunnel that exposes **only** that path (the other
-  routes are unauthenticated — see [Microsoft Teams](docs/teams.md)). Personal
+- **Microsoft Teams** — Azure Bot Service delivers messages to
+  `POST /agents/teams/messages` on the runtime's bot port (`3979`), which
+  serves nothing else. Publish that port over public HTTPS and keep the main
+  port private (see [Microsoft Teams](docs/teams.md)). Personal
   chats and channel @mentions, threaded replies, the same six-character
   verification-code linking as Slack.
 - **Management API** — REST endpoints for agent lifecycle, scheduling,

@@ -853,12 +853,15 @@ export const config = {
   slackExpectedAppId: process.env.SLACK_EXPECTED_APP_ID,
 
   // Microsoft Teams — a Single Tenant Entra app registration behind an Azure
-  // Bot resource. TEAMS_APP_PASSWORD must be the real client secret: the OAuth
-  // client-credentials grant sends it in the POST body, and credential
-  // sentinels are rewritten on headers only (same class as GOOGLE_BOT_PASSWORD).
+  // Bot resource. TEAMS_APP_PASSWORD is the client secret, or on Lens Agents the
+  // sentinel of an OAuth client-credentials credential: the sandbox proxy answers
+  // the SDK's token request itself, since the grant sends the secret in the body.
   teamsAppId: process.env.TEAMS_APP_ID,
   teamsAppPassword: process.env.TEAMS_APP_PASSWORD,
   teamsAppTenantId: process.env.TEAMS_APP_TENANT_ID,
+  // The bot endpoint's own port. It serves POST /agents/teams/messages and
+  // nothing else, so it is the one port a deployment publishes to Microsoft.
+  teamsPort: parseInt(process.env.TEAMS_PORT || '3979', 10),
 
   // External MCP server URL — injected directly as NEXUS_MCP_URL by the Lens
   // Agents sandbox (project-scoped /projects/:id/mcp; the MITM proxy injects the

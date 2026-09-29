@@ -90,13 +90,6 @@ messageDeliveryService.register(webSocketAdapterService);
 messageDeliveryService.register(slackAdapterService);
 messageDeliveryService.register(teamsAdapterService);
 
-// The Teams SDK registers its JWT-validated POST /agents/teams/messages route
-// on our own Express app during initializeAll() — which runs before listen(),
-// so the route is live before the first request. The SPA catch-all is GET-only
-// and its regex already excludes /agents/*; never define a management route at
-// that exact path.
-teamsAdapterService.attachExpressApp(app);
-
 // Initialize WebSocket gateway before listening
 webSocketGatewayService.initialize(httpServer);
 computerEndpoint.initialize(httpServer);

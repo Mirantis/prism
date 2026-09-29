@@ -311,7 +311,8 @@ RUN --mount=type=secret,id=otel_api_key \
       install -m 0444 /run/secrets/otel_api_key /app/.otel-api-key; \
     fi
 
-EXPOSE 3003 3004
+# 3979 is the Microsoft Teams bot endpoint, the one port to publish publicly.
+EXPOSE 3003 3004 3979
 
 # Per-agent SQLite DB and the installed skills bundles live here. Owned by node
 # so the runtime user can write; the skills/ subdir is pre-created so first-boot
