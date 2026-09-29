@@ -262,9 +262,8 @@ export default defineConfig({
         CLAUDE_CODE_USE_BEDROCK: '1',
         // Teams adapter credentials for the @teams suite (empty = adapter
         // idle, suite self-skips). The Azure Bot's messaging endpoint must
-        // separately point at this runtime for live runs, through a
-        // path-restricted proxy + tunnel exposing only the bot endpoint
-        // (see e2e/README.md).
+        // separately point at this runtime's bot port for live runs, through
+        // a tunnel (see e2e/README.md).
         TEAMS_APP_ID: process.env.TEAMS_E2E_APP_ID || '',
         TEAMS_APP_PASSWORD: process.env.TEAMS_E2E_APP_PASSWORD || '',
         TEAMS_APP_TENANT_ID: process.env.TEAMS_E2E_TENANT_ID || '',

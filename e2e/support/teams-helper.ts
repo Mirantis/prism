@@ -16,10 +16,9 @@
  * - TEAMS_E2E_BOT_NAME     the bot's display name (mention text)
  *
  * The Azure Bot's messaging endpoint must point at the runtime under test —
- * Bot Framework cannot reach localhost. Expose ONLY POST
- * /agents/teams/messages through a path-restricting proxy and tunnel the
- * proxy's port (see e2e/README.md); the runtime's other routes are
- * unauthenticated, so a whole-port tunnel must never be used.
+ * Bot Framework cannot reach localhost. Tunnel the runtime's bot port
+ * (TEAMS_PORT), which serves only the messaging endpoint; never tunnel the
+ * runtime port, whose other routes are unauthenticated (see e2e/README.md).
  */
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';

@@ -5,10 +5,10 @@
  * slack-adapter.service.ts, built on the Teams SDK (`@microsoft/teams.apps`).
  *
  * Architecture notes:
- * - Inbound: Azure Bot Service POSTs activities to `/agents/teams/messages`.
- *   The SDK registers that route on the runtime's own Express app (via
- *   `ExpressAdapter`) and validates the Bot Framework JWT before our handler
- *   runs. The handler acknowledges fast — it sends one typing activity and
+ * - Inbound: Azure Bot Service POSTs activities to `/agents/teams/messages`
+ *   on a listener of its own (`TEAMS_PORT`) that serves nothing else, so that
+ *   port alone is what a deployment publishes. The SDK registers the route and
+ *   validates the Bot Framework JWT before our handler runs. The handler acknowledges fast — it sends one typing activity and
  *   fires the real work without awaiting it — because Bot Framework expects a
  *   response within seconds while a Prism turn runs for minutes.
  * - Outbound: every reply is a proactive send addressed by a stored
@@ -19,7 +19,7 @@
  *   logged and leaves the adapter idle, mirroring the Slack adapter.
  */
 
-import type { Application as ExpressApplication } from 'express';
+import http from 'node:http';
 import { App, ExpressAdapter } from '@microsoft/teams.apps';
 import {
   IMessageActivity,
@@ -98,46 +98,41 @@ function retryAfterMs(error: unknown): number | undefined {
   return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : undefined;
 }
 
+function listen(server: http.Server, port: number, host: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, host, () => {
+      server.off('error', reject);
+      // A net.Server emits 'error' on a failed accept (e.g. EMFILE under
+      // file-descriptor pressure). With no listener the event throws and stops
+      // the process, and this port faces the internet, so keep a permanent one
+      // once binding has succeeded.
+      server.on('error', (err) => logger.error({ err }, '[TeamsAdapter] bot server error'));
+      resolve();
+    });
+  });
+}
+
 class TeamsAdapterService implements ChannelAdapter {
   readonly name = 'teams';
 
   private app?: App;
-  private expressApp?: ExpressApplication;
+  private server?: http.Server;
   private connection: TeamsConnectionRecord | null = null;
   /** The bot's own account id, captured from the first inbound activity. */
   private botAccountId?: string;
   private stopped = false;
-  /**
-   * Express routes cannot be unregistered, so once the SDK has mounted
-   * POST /agents/teams/messages a second initialize() would stack a second
-   * route whose traffic still hits the first (stopped) App. Re-init after
-   * shutdown is therefore unsupported — restart the process instead.
-   */
-  private routeRegistered = false;
 
   /**
-   * Hand the runtime's Express app over before `initialize()` runs — the SDK
-   * registers its JWT-validated POST route on it instead of opening a second
-   * HTTP server. (`ChannelAdapter.initialize()` takes no arguments, hence the
-   * separate setter.)
-   */
-  attachExpressApp(app: ExpressApplication): void {
-    this.expressApp = app;
-  }
-
-  /**
-   * Test-only: reset the singleton past the re-init guard. Not for
-   * production use — the guard exists because the Express route can't be
-   * unregistered.
+   * Test-only: reset the singleton between tests.
    * @internal
    */
   __resetForTests(): void {
     this.app = undefined;
-    this.expressApp = undefined;
+    this.server = undefined;
     this.connection = null;
     this.botAccountId = undefined;
     this.stopped = false;
-    this.routeRegistered = false;
   }
 
   // ============================================================================
@@ -146,30 +141,28 @@ class TeamsAdapterService implements ChannelAdapter {
 
   async initialize(): Promise<void> {
     if (this.app) return; // already initialized
-    if (this.routeRegistered) {
-      logger.warn(
-        '[TeamsAdapter] re-initialize after shutdown is unsupported (the Express route cannot be unregistered) — restart the process'
-      );
-      return;
-    }
     this.stopped = false;
+    // Hoisted so a failure after the SDK app is built — a bind conflict on the
+    // bot port, say — can still stop it. Leaving an initialized app unstopped
+    // leaks its token-manager timers, and a retry would build a second one.
+    let app: App | undefined;
+    let server: http.Server | undefined;
     try {
       const connection = await getTeamsConfig();
       if (!connection) {
         logger.info('[TeamsAdapter] Teams not configured; adapter idle');
         return;
       }
-      if (!this.expressApp) {
-        logger.error('[TeamsAdapter] No Express app attached; adapter idle');
-        return;
-      }
       this.connection = connection;
 
-      const app = new App({
+      // The adapter serves every request on this server, and registers only the
+      // messaging route on it; `app.stop()` closes it.
+      server = http.createServer();
+      app = new App({
         clientId: config.teamsAppId,
         clientSecret: config.teamsAppPassword,
         tenantId: config.teamsAppTenantId,
-        httpServerAdapter: new ExpressAdapter(this.expressApp),
+        httpServerAdapter: new ExpressAdapter(server),
         messagingEndpoint: TEAMS_MESSAGING_PATH,
         // Pinned so a stray DANGEROUSLY_ALLOW_UNAUTHENTICATED_REQUESTS env var
         // can never disable JWT validation on the public endpoint.
@@ -213,16 +206,19 @@ class TeamsAdapterService implements ChannelAdapter {
         });
       });
 
-      // Registers the POST route on the attached Express app. NEVER app.start()
-      // — that would open a second HTTP listener. Marked before the call:
-      // initialize() may mount the route and then fail (e.g. token fetch), and
-      // a retry would stack a second route.
-      this.routeRegistered = true;
+      // Registers the route. The server listens here rather than in
+      // `app.start()`, which binds every interface: this port keeps the
+      // runtime's own bind address (`PRISM_HOST`).
       await app.initialize();
+      await listen(server, config.teamsPort, config.host);
       this.app = app;
+      this.server = server;
 
       logger.info(
-        { tenantId: connection.tenantId, endpoint: TEAMS_MESSAGING_PATH },
+        {
+          tenantId: connection.tenantId,
+          endpoint: `http://${config.host}:${config.teamsPort}${TEAMS_MESSAGING_PATH}`,
+        },
         '[TeamsAdapter] initialized'
       );
       trackEvent('teams adapter initialized', null, {
@@ -231,7 +227,18 @@ class TeamsAdapterService implements ChannelAdapter {
       });
     } catch (error: unknown) {
       logger.error({ err: error }, '[TeamsAdapter] failed to initialize');
+      // Release the SDK app and the server the bind may have left half-open,
+      // so a failed initialize leaks nothing and a retry starts clean.
+      try {
+        await app?.stop();
+      } catch (stopError: unknown) {
+        logger.debug('[TeamsAdapter] stop after failed initialize failed: %s', String(stopError));
+      }
+      if (server?.listening) {
+        await new Promise<void>((resolve) => server?.close(() => resolve()));
+      }
       this.app = undefined;
+      this.server = undefined;
       this.connection = null;
     }
   }
@@ -241,10 +248,13 @@ class TeamsAdapterService implements ChannelAdapter {
     const wasActive = this.app != null;
     try {
       await this.app?.stop();
+      const server = this.server;
+      if (server?.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
     } catch (error: unknown) {
       logger.debug('[TeamsAdapter] stop failed: %s', String(error));
     }
     this.app = undefined;
+    this.server = undefined;
     this.connection = null;
     this.botAccountId = undefined;
     if (wasActive) {

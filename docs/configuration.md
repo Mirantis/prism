@@ -111,14 +111,13 @@ grouped per platform.
 | `SLACK_APP_TOKEN` | Slack app-level token (`xapp-…`) for Socket Mode. |
 | `SLACK_EXPECTED_APP_ID` | Optional safety check — the bot token's app ID must match this if set. |
 | `TEAMS_APP_ID` | Microsoft Teams: the Entra app registration's client ID. All three Teams variables must be set to enable the adapter. |
-| `TEAMS_APP_PASSWORD` | Microsoft Teams: the app registration's client secret. Must be the real secret value. |
+| `TEAMS_APP_PASSWORD` | Microsoft Teams: the app registration's client secret. On Lens Agents, the placeholder of an OAuth client credentials credential ([Teams](teams.md)). |
 | `TEAMS_APP_TENANT_ID` | Microsoft Teams: the Entra tenant of the app registration. |
+| `TEAMS_PORT` | Microsoft Teams: the bot endpoint's own port, the one to publish over public HTTPS. Default `3979`. |
 
 See **[Slack](slack.md)** and **[Microsoft Teams](teams.md)** for how the
-credentials are used. Note that Teams, unlike Slack, needs the runtime's
-`POST /agents/teams/messages` endpoint reachable over public HTTPS — expose
-only that path (see [Microsoft Teams](teams.md#the-public-messaging-endpoint)),
-never the whole runtime port.
+credentials are used. Teams, unlike Slack, needs the bot port reachable over
+public HTTPS (see [Microsoft Teams](teams.md#the-public-messaging-endpoint)).
 
 ## Core
 

@@ -179,14 +179,12 @@ the suite skips automatically.
    with the `ChannelMessage.Read.Group` permission sideloaded into the test
    tenant).
 2. Point the Azure Bot's **messaging endpoint** at the e2e runtime — Bot
-   Framework cannot reach localhost. Expose **only** `POST
-   /agents/teams/messages`: put a path-restricting proxy in front of the
-   runtime and tunnel the proxy's port, never the runtime port itself — the
-   e2e runtime's management routes are unauthenticated, so a whole-port tunnel
-   would put agent-deleting operations on the internet. See
-   **[docs/teams.md](../docs/teams.md#the-public-messaging-endpoint)** for a
-   Caddy + devtunnel example, then set the endpoint to
-   `https://<tunnel>/agents/teams/messages`.
+   Framework cannot reach localhost. Tunnel the runtime's **bot port**
+   (`TEAMS_PORT`, default `3979`), which serves only the messaging endpoint,
+   and never the runtime port itself: the e2e runtime's management routes are
+   unauthenticated. See
+   **[docs/teams.md](../docs/teams.md#the-public-messaging-endpoint)**, then set
+   the endpoint to `https://<tunnel>/agents/teams/messages`.
 3. Provision the targets the suite posts into: a **team + channel** with the
    bot app added, and a **personal chat** between the human test user and the
    bot (send it any message once to create the chat, then read the chat id via

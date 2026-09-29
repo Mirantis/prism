@@ -13,6 +13,7 @@ cd "$(dirname "$0")/.."
 IMAGE="${PRISM_IMAGE:-prism-agent:local}"
 PORT="${PRISM_PORT:-3003}"
 WEBHOOK_PORT="${PRISM_WEBHOOK_PORT:-3004}"
+TEAMS_PORT="${PRISM_TEAMS_PORT:-3979}"
 VOLUME="${PRISM_VOLUME:-prism-data}"
 
 if ! docker image inspect "$IMAGE" > /dev/null 2>&1; then
@@ -26,7 +27,7 @@ ARGS=(--rm)
 # A terminal gets a TTY, so Ctrl+C reaches the runtime and its logs are coloured. Asking
 # for one where there is none — a pipeline, a CI step — is refused by docker outright.
 if [ -t 0 ]; then ARGS+=(-it); fi
-ARGS+=(-p "$PORT:3003" -p "$WEBHOOK_PORT:3004")
+ARGS+=(-p "$PORT:3003" -p "$WEBHOOK_PORT:3004" -p "$TEAMS_PORT:3979")
 if [ -f .env ]; then
   ARGS+=(-v "$PWD/.env:/app/.env:ro")
 else

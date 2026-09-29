@@ -15,7 +15,7 @@ Teams is optional. The runtime starts fine without it; add it when you want it.
 | Variable | Value |
 |----------|-------|
 | `TEAMS_APP_ID` | The Entra app registration's Application (client) ID. |
-| `TEAMS_APP_PASSWORD` | The app registration's client secret. Must be the **real secret value**. |
+| `TEAMS_APP_PASSWORD` | The app registration's client secret. On Lens Agents, the placeholder of the credential that holds it (see below). |
 | `TEAMS_APP_TENANT_ID` | The Entra tenant the app is registered in. |
 
 All three required variables must be set for the adapter to start; otherwise it
@@ -23,54 +23,50 @@ stays idle. See **[Configuration](configuration.md)**.
 
 ### The public messaging endpoint
 
-The runtime serves the bot endpoint at:
+The runtime serves the bot endpoint on a port of its own, `3979` by default
+(`TEAMS_PORT`):
 
 ```
 POST /agents/teams/messages
 ```
 
-Microsoft must be able to reach it over public HTTPS with a valid certificate —
-`localhost` will not work.
+That port serves nothing else, and the runtime rejects every request on it that
+does not carry a valid Bot Framework token. Publish **that port** to the
+internet over HTTPS with a valid certificate, and keep the runtime's own port
+(`3003`) private: its web UI and management API have no authentication of their
+own.
 
-**Expose only this one path — never the whole port.** The runtime's other
-routes (the `/agents/*` management API, the web UI, the WebSocket) carry no
-authentication of their own; in production a platform in front of the container
-terminates auth for them. Whatever makes the messaging endpoint public (a
-reverse proxy, ingress, or tunnel) must forward **exclusively**
-`POST /agents/teams/messages` to the runtime's port (`3003`) and answer
-everything else itself. Publishing the bare port would put unauthenticated
-management operations on the internet.
-
-Every inbound request on this path is authenticated in the runtime: the Teams
-SDK validates the Bot Framework JWT (issued by Microsoft Entra) before the
-agent sees the activity — which is what makes exposing this single path safe
-without extra auth at the proxy.
-
-For local development, put a path-restricting proxy in front and tunnel the
-**proxy's** port, not the runtime's. For example with
-[Caddy](https://caddyserver.com/) and a
+For local development, tunnel the bot port, for example with a
 [dev tunnel](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/):
 
 ```bash
-# Caddyfile — forward only the bot endpoint; answer everything else with 404.
-cat > Caddyfile <<'EOF'
-:3979 {
-    @teams {
-        method POST
-        path /agents/teams/messages
-    }
-    handle @teams {
-        reverse_proxy 127.0.0.1:3003
-    }
-    handle {
-        respond 404
-    }
-}
-EOF
-caddy run --config Caddyfile &
-
 devtunnel host -p 3979 --allow-anonymous
 ```
+
+With Docker, publish the bot port as well: `-p 3979:3979`.
+
+**On Lens Agents**, expose two ports in the agent's revision: `web` on `3003`
+with `private` access, and `teams` on `3979` with `public` access. The messaging
+endpoint is then `https://teams--<sandbox-slug>.<ingress-host>/agents/teams/messages`.
+The sandbox's network policy must allow `login.microsoftonline.com`,
+`login.botframework.com` and `smba.trafficmanager.net`, plus
+`*.sharepoint.com` for files.
+
+Keep the client secret in Lens Agents, not in the sandbox. Create an **OAuth
+client credentials** credential with:
+
+| Field | Value |
+|-------|-------|
+| Token URL | `https://login.microsoftonline.com/<tenant-id>/oauth2/v2.0/token` |
+| Client ID | The Application (client) ID |
+| Client Secret | The client secret |
+| Scope | `https://api.botframework.com/.default` |
+| Injection | `smba.trafficmanager.net`, header `Authorization`, format `Bearer {value}` |
+
+Grant it to the sandbox as `TEAMS_APP_PASSWORD`. The sandbox then holds only
+the credential's placeholder, and Lens Agents supplies the bot's token. A file
+or image shared in a channel reaches the agent as a notice with its name, since
+this credential grants the bot's scope only.
 
 ### Azure setup checklist
 
