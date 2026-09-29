@@ -56,7 +56,10 @@ import { STEP_LIMIT, MAX_OUTPUT_TOKENS, COMPACTION_FALLBACK_WINDOW_TOKENS } from
 import { EARLY_STOPPING_PROMPT } from './prompts/early-stopping-prompt';
 import { buildErrorStep, buildRefusalStep, isContextOverflowError } from './lib/llm-errors';
 import { agentStatusService } from './services/agent-status.service';
-import { conversationThreadActivityService } from './services/conversation-thread-activity.service';
+import {
+  conversationThreadActivityService,
+  type ThreadActivity,
+} from './services/conversation-thread-activity.service';
 import { trackEvent, langfuseTelemetry } from './lib/telemetry';
 import { AsyncChannel } from './utils/async-channel';
 
@@ -119,10 +122,11 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     return;
   }
 
-  let endActivity: (() => void) | undefined;
+  let activity: ThreadActivity | undefined;
   try {
     await agentStatusService.setProcessing(request.agentId);
-    endActivity = await conversationThreadActivityService.begin(request);
+    activity = await conversationThreadActivityService.begin(request);
+    computerUse.idle = activity.idle;
 
     // 1. For heartbeat mode, inject last alert
     if (request.mode === 'heartbeat') {
@@ -133,8 +137,8 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     // Per-turn runtime notices → surfaced as an authoritative system-prompt
     // section (e.g. a Slack attachment that failed to download).
     context.runtimeNotices = request.runtimeNotices;
-    if (hasComputerForMode(request.mode) && request.threadId) {
-      const help = await computerHelpService.list(request.agentId, request.userId, request.threadId);
+    if (hasComputerForMode(request.mode)) {
+      const help = await computerHelpService.forTurn(request.agentId, request.userId, request.threadId);
       context.runtimeNotices = [
         ...(request.runtimeNotices ?? []),
         ...computerHelpNotices(help),
@@ -655,7 +659,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     });
 
   } finally {
-    endActivity?.();
+    activity?.end();
     computerService.access.finish(computerUse);
     // Persist the turn's final context measurement — one write per turn rather
     // than per step. Runs for canceled turns too: the prompt was still built and

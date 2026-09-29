@@ -306,6 +306,25 @@ describe('GoalService', () => {
       expect(JSON.stringify(finishedCall)).not.toContain('do the thing'); // no objective (PII)
     });
 
+    it('runs each turn in the channel the goal was started in', async () => {
+      mockGenerateText.mockResolvedValue({ text: 'COMPLETE' });
+
+      await goalService.startGoal({
+        userId: 'user-1',
+        agentId: 'agent-1',
+        threadId: 'thread-1',
+        objective: 'do the thing',
+        originChannel: 'slack',
+        originChannelId: 'C0123',
+      });
+      await waitForTerminal();
+
+      // A computer help request from the turn asks where the goal delivers.
+      expect(mockInvoke).toHaveBeenCalledWith(
+        expect.objectContaining({ mode: 'goal', originChannel: 'slack', originChannelId: 'C0123' }),
+      );
+    });
+
     it('stops at the turn cap without invoking when maxTurns is reached', async () => {
       mockConfig.goalMaxTurns = 0;
 

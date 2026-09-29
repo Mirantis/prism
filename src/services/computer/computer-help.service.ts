@@ -24,7 +24,47 @@ export interface ComputerHelp {
   threadId?: string;
   originChannel?: 'slack' | 'websocket' | 'teams';
   originChannelId?: string;
+  /** Asked by a background run with no conversation, so every channel got it and any turn answers it. */
+  broadcast?: true;
   status: 'waiting' | 'continued' | 'dismissed';
+}
+
+/** How long a background run waits for the user's answer before it goes on without one. */
+export const HELP_ANSWER_WAIT_MS = 30 * 60_000;
+
+/** What a run that waited for its help request learns. */
+export type HelpAnswer = 'continued' | 'dismissed' | 'unanswered';
+
+/**
+ * `repeated` when a waiting broadcast request stands for this one and nothing was posted.
+ * `answer` settles when the user answers, for a run that waits for that.
+ */
+export interface ComputerHelpRequest {
+  help: ComputerHelp;
+  repeated: boolean;
+  answer?: Promise<HelpAnswer>;
+}
+
+/** A resolved request, and how many waiting runs it answered. */
+export interface ResolvedHelp {
+  help: ComputerHelp;
+  answeredRuns: number;
+}
+
+/**
+ * A heartbeat, a scheduled task and a webhook store none of their own steps, so a run
+ * keeps them by waiting in memory for the answer. A restart ends the wait.
+ */
+export function waitsForAnswer(mode: string): boolean {
+  return mode === 'heartbeat' || mode === 'cron' || mode === 'webhook';
+}
+
+function messageTrigger(mode: string): MessageTrigger {
+  if (mode === 'goal') return 'GOAL';
+  if (mode === 'cron') return 'CRON_TASK';
+  if (mode === 'heartbeat') return 'HEARTBEAT';
+  if (mode === 'webhook') return 'WEBHOOK';
+  return 'USER_INPUT';
 }
 
 export function computerLink(helpId?: string): string {
@@ -35,6 +75,12 @@ export function computerLink(helpId?: string): string {
 /** Help cards are conversation content; voice-only cards last for their call. */
 class ComputerHelpService {
   private voice = new Map<string, ComputerHelp>();
+  /** The runs waiting for an answer, each with the request it waits on. */
+  private waits = new Set<{
+    use: ComputerUse;
+    helpId: string;
+    answer: (status: 'continued' | 'dismissed') => void;
+  }>();
 
   /**
    * @param credentials a sign-in the user answers with what the page asks for. Recorded
@@ -47,7 +93,27 @@ class ComputerHelpService {
     reason: string,
     tab?: number,
     credentials = false,
-  ): Promise<ComputerHelp> {
+  ): Promise<ComputerHelpRequest> {
+    const trigger = messageTrigger(use.mode);
+    // A background run with no conversation of its own asks wherever its output goes,
+    // which is every channel. A chat turn stays in its own channel, as every reply does.
+    const broadcast = trigger !== 'USER_INPUT' && !use.threadId;
+    // A heartbeat asks again on every run, and each ask posts to every channel. So while
+    // one broadcast request waits, it stands for them all, including an unrelated block
+    // another background run meets at the same time. That run waits for the same answer
+    // and is told what the waiting request asks, so it can name or ask for its own block.
+    const [waiting] = broadcast ? await this.waitingBroadcasts(use.agentId, use.userId) : [];
+    if (waiting) {
+      const answer = this.expectAnswer(use, waiting);
+      computerService.access.yield(use);
+      trackEvent('computer help repeated', use.userId, {
+        'agent.id': use.agentId,
+        'computer.help_id': waiting.id,
+        mode: use.mode,
+      });
+      computerService.access.emit('change');
+      return { help: waiting, repeated: true, answer };
+    }
     const form = credentials ? await computerService.signInForm(tab) : undefined;
     if (credentials && !form) {
       logger.info(
@@ -69,7 +135,9 @@ class ComputerHelpService {
       threadId: use.threadId,
       originChannel: use.originChannel,
       originChannelId: use.originChannelId,
+      ...(broadcast ? { broadcast: true as const } : {}),
     };
+    const answer = this.expectAnswer(use, help);
     if (use.mode === 'voice') {
       this.voice.set(`${use.id}/${help.id}`, help);
     } else {
@@ -78,23 +146,16 @@ class ComputerHelpService {
       help.threadId ??= (
         await conversationService.getOrCreateLatestThread(use.agentId, use.userId)
       ).id;
-      const channelContext = await conversationService.getChannelContext(
-        help.threadId,
-        use.originChannel,
-        use.originChannelId,
-      );
-      const trigger: MessageTrigger =
-        use.mode === 'goal'
-          ? 'GOAL'
-          : use.mode === 'cron'
-            ? 'CRON_TASK'
-            : use.mode === 'heartbeat'
-              ? 'HEARTBEAT'
-              : use.mode === 'webhook'
-                ? 'WEBHOOK'
-                : 'USER_INPUT';
+      // No context is a broadcast: the web UI, the Slack DM and the agent's main channel.
+      const channelContext = broadcast
+        ? undefined
+        : await conversationService.getChannelContext(
+            help.threadId,
+            use.originChannel,
+            use.originChannelId,
+          );
       const link =
-        config.publicUrl || channelContext.channel === 'websocket'
+        config.publicUrl || channelContext?.channel === 'websocket'
           ? `[Open Computer](${computerLink(help.id)})`
           : 'Open Computer in the Prism Web UI.';
       await messageDeliveryService.publish(
@@ -112,10 +173,68 @@ class ComputerHelpService {
     trackEvent('computer help requested', use.userId, {
       'agent.id': use.agentId,
       'computer.help_id': help.id,
+      'computer.delivery': broadcast ? 'all' : 'origin',
       credentials: help.credentials ? 'true' : 'false',
     });
     computerService.access.emit('change');
-    return help;
+    return { help, repeated: false, answer };
+  }
+
+  /**
+   * The answer a background run waits for, for at most {@link HELP_ANSWER_WAIT_MS}. Taken
+   * before the request is posted, or as it is found, so no answer can arrive before the
+   * wait exists. The end of the invocation cancels a wait its tool never reached.
+   */
+  private expectAnswer(use: ComputerUse, help: ComputerHelp): Promise<HelpAnswer> | undefined {
+    if (!waitsForAnswer(use.mode)) return undefined;
+    const started = Date.now();
+    const answer = new Promise<HelpAnswer>((resolve, reject) => {
+      const wait = {
+        use,
+        helpId: help.id,
+        answer: (status: 'continued' | 'dismissed') => {
+          settle(status);
+          resolve(status);
+        },
+      };
+      const settle = (outcome: HelpAnswer | 'canceled') => {
+        clearTimeout(timer);
+        use.signal.removeEventListener('abort', abort);
+        this.waits.delete(wait);
+        trackEvent('computer help wait ended', use.userId, {
+          'agent.id': use.agentId,
+          'computer.help_id': help.id,
+          mode: use.mode,
+          outcome,
+          elapsed_ms: String(Date.now() - started),
+        });
+        computerService.access.emit('change');
+      };
+      const timer = setTimeout(() => {
+        settle('unanswered');
+        resolve('unanswered');
+      }, HELP_ANSWER_WAIT_MS);
+      const abort = () => {
+        settle('canceled');
+        reject(use.signal.reason);
+      };
+      this.waits.add(wait);
+      use.signal.addEventListener('abort', abort, { once: true });
+      if (use.signal.aborted) abort();
+    });
+    // The tool awaits it; this keeps the rejection quiet when the tool never got that far.
+    answer.catch(() => {});
+    return answer;
+  }
+
+  /** The runs waiting for an answer, as the Computer status lists them. */
+  awaiting(): Array<{ id: string; helpId: string; mode: string; threadId?: string }> {
+    return [...this.waits].map(({ use, helpId }) => ({
+      id: use.id,
+      helpId,
+      mode: use.mode,
+      threadId: use.threadId,
+    }));
   }
 
   async list(agentId: string, userId: string, threadId?: string): Promise<ComputerHelp[]> {
@@ -134,18 +253,44 @@ class ComputerHelpService {
     ];
   }
 
+  /** A turn's help: its own conversation's, and every broadcast request still waiting. */
+  async forTurn(agentId: string, userId: string, threadId?: string): Promise<ComputerHelp[]> {
+    const own = threadId ? await this.list(agentId, userId, threadId) : [];
+    const ids = new Set(own.map((help) => help.id));
+    const broadcast = (await this.waitingBroadcasts(agentId, userId)).filter(
+      (help) => !ids.has(help.id),
+    );
+    return [...own, ...broadcast];
+  }
+
+  private async waitingBroadcasts(agentId: string, userId: string): Promise<ComputerHelp[]> {
+    const messages = await prisma.conversationMessage.findMany({
+      where: {
+        thread: { agentId, userId },
+        AND: [
+          { blocks: { path: '$[0].type', equals: 'computer_help' } },
+          { blocks: { path: '$[0].broadcast', equals: true } },
+          { blocks: { path: '$[0].status', equals: 'waiting' } },
+        ],
+      },
+      select: { blocks: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    return messages.flatMap((row) => row.blocks as unknown as ComputerHelp[]);
+  }
+
   async resolve(
     agentId: string,
     userId: string,
     id: string,
     status: 'continued' | 'dismissed',
-  ): Promise<ComputerHelp | null> {
+  ): Promise<ResolvedHelp | null> {
     const voice = [...this.voice.values()].find((help) => help.id === id);
     if (voice) {
       if (voice.status !== 'waiting') return null;
       voice.status = status;
       this.resolved(agentId, userId, voice);
-      return voice;
+      return { help: voice, answeredRuns: 0 };
     }
     const row = await prisma.conversationMessage.findFirst({
       where: { thread: { agentId, userId }, blocks: { path: '$[0].id', equals: id } },
@@ -160,13 +305,21 @@ class ComputerHelpService {
     });
     if (!result.count) return null;
     this.resolved(agentId, userId, updated);
+    const answeredRuns = this.answer(id, status);
     // The card is part of the transcript, so every open client shows it answered.
     const { messageDeliveryService } = await import('../message-delivery.service');
     await messageDeliveryService.showInConversation(userId, {
       ...row,
       blocks: [updated] as unknown as Prisma.JsonValue,
     });
-    return updated;
+    return { help: updated, answeredRuns };
+  }
+
+  /** Hands the user's answer to every run waiting on request `id`. */
+  private answer(id: string, status: 'continued' | 'dismissed'): number {
+    const waiting = [...this.waits].filter((wait) => wait.helpId === id);
+    for (const wait of waiting) wait.answer(status);
+    return waiting.length;
   }
 
   async continueRequest(
@@ -180,17 +333,20 @@ class ComputerHelpService {
       if (!clientId) throw new Error('Hand control back in Computer first.');
       computerService.assertCanHandBack(clientId);
     }
-    const help = await this.resolve(
+    const resolved = await this.resolve(
       agentId,
       userId,
       id,
       action === 'continue' ? 'continued' : 'dismissed',
     );
-    if (!help || action === 'dismiss') return;
+    if (!resolved || action === 'dismiss') return;
     if (computerService.access.paused) {
       if (!clientId) throw new Error('Hand control back in Computer first.');
       await computerService.handBack(clientId);
     }
+    // A run that waited for this answer continues the work itself.
+    if (resolved.answeredRuns) return;
+    const { help } = resolved;
     if (!help.threadId) {
       const { voiceChatService } = await import('../voice/voice-chat.service');
       voiceChatService.continueComputer(help.reason);

@@ -20,7 +20,7 @@ export function computerHelpNotices(help: ComputerHelp[]): string[] {
     ...help.map((item) => {
       const instruction =
         item.status === 'waiting'
-          ? 'If the user says they finished helping, resolve it with computer_continue and inspect the screen.'
+          ? `${item.broadcast ? 'A background run asked for it in every channel, so the user can answer it here. ' : ''}If the user says they finished helping, resolve it with computer_continue and inspect the screen.`
           : item.status === 'continued'
             ? 'The user has already continued this request.'
             : 'The user has dismissed this request.';

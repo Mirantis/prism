@@ -22,6 +22,8 @@ export interface ComputerUse extends ComputerCaller {
   startedAt?: number;
   failed: boolean;
   closed: boolean;
+  /** Runs `wait` with the invocation's conversation shown idle. The invocation sets it. */
+  idle?: <T>(wait: () => Promise<T>) => Promise<T>;
 }
 
 /** Invocation ownership and human takeover share one gate for the desktop. */

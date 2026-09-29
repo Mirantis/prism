@@ -18,12 +18,20 @@ export interface ThreadActivityChange {
   userId: string;
 }
 
+/** An invocation's mark on its thread. */
+export interface ThreadActivity {
+  /** Ends the mark, once. */
+  end(): void;
+  /** Runs `wait` with the mark lifted, since an invocation waiting for the user is not working. */
+  idle<T>(wait: () => Promise<T>): Promise<T>;
+}
+
 class ConversationThreadActivityService {
   readonly events = new EventEmitter();
   private readonly running = new Map<string, number>();
 
   /**
-   * Mark the request's thread as working. The returned function ends that, once.
+   * Mark the request's thread as working.
    *
    * A request without a thread works on the user's latest web thread, where its
    * result is published. A subagent runs inside a parent invocation, which already
@@ -31,10 +39,25 @@ class ConversationThreadActivityService {
    */
   async begin(
     request: Pick<InvokeRequest, 'mode' | 'threadId' | 'agentId' | 'userId'>,
-  ): Promise<() => void> {
+  ): Promise<ThreadActivity> {
     const threadId = await this.threadFor(request);
-    if (!threadId) return () => {};
-    return this.beginThread(threadId, request.userId);
+    if (!threadId) return { end() {}, idle: (wait) => wait() };
+    let end = this.beginThread(threadId, request.userId);
+    let ended = false;
+    return {
+      end() {
+        ended = true;
+        end();
+      },
+      idle: async (wait) => {
+        end();
+        try {
+          return await wait();
+        } finally {
+          if (!ended) end = this.beginThread(threadId, request.userId);
+        }
+      },
+    };
   }
 
   /** Mark a known thread as working. The returned function ends that, once. */

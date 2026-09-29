@@ -19,6 +19,7 @@ computerRouter.get('/computer', async (_req, res) => {
     res.json({
       ...computerService.status(),
       help: await computerHelpService.list(config.agentId!, config.ownerUserId),
+      awaitingHelp: computerHelpService.awaiting(),
     });
   } catch (error) {
     logger.warn({ err: error }, '[Computer] Status failed');

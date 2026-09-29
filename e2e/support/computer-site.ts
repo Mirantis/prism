@@ -36,6 +36,18 @@ function filesPage(user: string | null, signedIn: boolean): string {
 }
 
 /**
+ * A sign-in approved on another device. The page reloads itself until the test approves
+ * it, the way a real approval page polls, so the next look at the screen shows the result.
+ */
+function approvalPage(approved: boolean): string {
+  if (approved) return '<h1>Your report</h1><p>REPORT-READY: The quarter closed 4% over plan.</p>';
+  return (
+    '<h1>Approve this sign-in</h1><p>Open the app on your phone and approve the sign-in. ' +
+    'This page updates by itself.</p><script>setTimeout(() => location.reload(), 2000);</script>'
+  );
+}
+
+/**
  * The password the site accepts, which only the test knows.
  *
  * The agent has the computer tools and a form in front of it, so it does try the sign-in
@@ -60,8 +72,10 @@ export async function startComputerSite(): Promise<{
   signInPageLoads: () => number;
   mailCredentials: () => { username: string; password: string } | null;
   filesCredentials: () => { username: string; password: string } | null;
+  approve: () => void;
 }> {
   let signedIn = false;
+  let approved = false;
   let passwordLength = 0;
   let signInPageLoads = 0;
   let mailCredentials: { username: string; password: string } | null = null;
@@ -143,6 +157,7 @@ export async function startComputerSite(): Promise<{
       req.url !== '/notes' &&
       req.url !== '/files' &&
       req.url !== '/mail' &&
+      req.url !== '/approval' &&
       !req.headers.cookie?.includes('computer-test-login=yes')
     ) {
       signInPageLoads += 1;
@@ -154,6 +169,8 @@ export async function startComputerSite(): Promise<{
           ? filesPage(filesUser, req.headers.cookie?.includes('computer-test-files=yes') ?? false)
         : req.url === '/mail'
           ? mailPage(req.headers.cookie?.includes('computer-test-mail=yes') ?? false)
+        : req.url === '/approval'
+          ? approvalPage(approved)
           : req.headers.cookie?.includes('computer-test-login=yes')
           ? '<h1>Your inbox</h1><p>INBOX-CLEAR: Your parcel arrives on Friday.</p>'
           : '<h1>Sign in to your inbox</h1><p>Please ask your user to sign in.</p>' +
@@ -184,6 +201,9 @@ export async function startComputerSite(): Promise<{
     signInPageLoads: () => signInPageLoads,
     mailCredentials: () => mailCredentials,
     filesCredentials: () => filesCredentials,
+    approve: () => {
+      approved = true;
+    },
     url: `http://${randomUUID()}.localhost:${address.port}`,
     close: () =>
       new Promise((resolve, reject) => {

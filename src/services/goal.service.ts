@@ -38,6 +38,13 @@ import { ToolCallRecord } from '../types';
 /** Statuses a goal can be in while still "live" (loop should run / can resume). */
 const LIVE_STATUSES = ['active', 'paused'] as const;
 
+/** The channel the goal was started in, where its turns deliver and ask for help. */
+function goalChannel(goal: Goal): 'slack' | 'websocket' | 'teams' {
+  return goal.originChannel === 'slack' || goal.originChannel === 'teams'
+    ? goal.originChannel
+    : 'websocket';
+}
+
 interface GoalRuntime {
   isRunning: boolean;
   aborted: boolean;
@@ -402,6 +409,8 @@ class GoalService {
         agentId: goal.agentId,
         mode: 'goal',
         threadId: goal.threadId,
+        originChannel: goalChannel(goal),
+        originChannelId: goal.originChannelId ?? undefined,
         prompt: buildGoalContinuationPrompt({
           objective: goal.objective,
           turnCount: goal.turnCount,
@@ -486,10 +495,7 @@ class GoalService {
       ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
       ...(attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : {}),
       channelContext: {
-        channel:
-          goal.originChannel === 'slack' || goal.originChannel === 'teams'
-            ? goal.originChannel
-            : 'websocket',
+        channel: goalChannel(goal),
         channelId: goal.originChannelId ?? undefined,
         threadId: goal.threadId,
       },

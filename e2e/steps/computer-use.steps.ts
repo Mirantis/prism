@@ -10,13 +10,22 @@ import { DEFAULT_AGENT_ID } from '../fixtures/test-data';
 
 const { Given, When, Then, After } = createBdd();
 let site: Awaited<ReturnType<typeof startComputerSite>> | undefined;
+/** A goal the scenario started, which keeps its loop until it is stopped. */
+let goalId: string | undefined;
 
 After(async ({ context }) => {
   await site?.close();
   site = undefined;
+  if (goalId) await context.request.delete(`/agents/goals/${goalId}`);
+  goalId = undefined;
   // Control survives closing a viewer, and every later turn waits on the computer, so a
   // scenario that fails while holding control or leaving work queued would stall the next one.
   const status = async () => (await context.request.get('/agents/computer')).json();
+  // A background run waits for the answer to its help request, so close every open request.
+  for (const help of (await status()).help as Array<{ id: string; status: string }>) {
+    if (help.status !== 'waiting') continue;
+    await context.request.post(`/agents/computer/help/${help.id}`, { data: { action: 'dismiss' } });
+  }
   if ((await status()).paused) {
     for (const open of context.pages()) await open.close();
     const viewer = await context.newPage();
@@ -30,7 +39,7 @@ After(async ({ context }) => {
       async () => {
         const now = await status();
         if (now.owner) await context.request.post('/agents/computer/stop');
-        return Boolean(now.owner) || now.waiting.length > 0;
+        return Boolean(now.owner) || now.waiting.length > 0 || now.awaitingHelp.length > 0;
       },
       { timeout: 60_000 },
     )
@@ -510,6 +519,52 @@ When('I ask for computer sign-in help from Slack', async () => {
     text: `<@${slack.botUserId}> Use your computer to read my inbox at ${site!.url}/inbox. If sign-in is required, use computer_help so I can sign in myself.`,
   });
   slack.messageTs = result.ts!;
+});
+
+const inboxHelpInstruction = () =>
+  `Use your computer to read my inbox at ${site!.url}/inbox. ` +
+  'If sign-in is required, call computer_help so I can sign in myself.';
+
+const approvalInstruction = () =>
+  `Use your computer to open ${site!.url}/approval and report the line that starts with REPORT-READY. ` +
+  'If the page asks for the sign-in to be approved, call computer_help so I can approve it on my phone.';
+
+When('a scheduled task that is not tied to a conversation needs a sign-in approved', async ({ page }) => {
+  test.setTimeout(900_000);
+  const response = await page.request.post('/agents/cron-tasks', {
+    data: { name: 'Report check', schedule: 'in 5 seconds', instruction: approvalInstruction() },
+  });
+  expect(response.ok(), await response.text()).toBe(true);
+});
+
+When('another scheduled task that is not tied to a conversation needs the same approval', async ({ page }) => {
+  const response = await page.request.post('/agents/cron-tasks', {
+    data: { name: 'Report check again', schedule: 'in 5 seconds', instruction: approvalInstruction() },
+  });
+  expect(response.ok(), await response.text()).toBe(true);
+});
+
+When('I approve the sign-in on my phone', async () => {
+  site!.approve();
+});
+
+When('a goal in that Slack thread needs sign-in help', async ({ page }) => {
+  test.setTimeout(480_000);
+  const slack = getSlackState();
+  const thread = await dbHelper.getPrisma().conversationThread.findFirst({
+    where: { agentId: DEFAULT_AGENT_ID, externalThreadId: slack.messageTs },
+  });
+  expect(thread, `No conversation for the Slack thread ${slack.messageTs}`).toBeTruthy();
+  const response = await page.request.post('/agents/goals', {
+    data: {
+      threadId: thread!.id,
+      objective: inboxHelpInstruction(),
+      originChannel: 'slack',
+      originChannelId: slack.channelId,
+    },
+  });
+  expect(response.ok(), await response.text()).toBe(true);
+  goalId = ((await response.json()) as { id: string }).id;
 });
 
 Then('an invalid help continuation keeps my control and the chat waiting', async ({ page }) => {
