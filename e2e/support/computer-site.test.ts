@@ -30,6 +30,23 @@ async function signIn(password: string): Promise<{ cookie: string | null }> {
   return { cookie: response.headers.get('set-cookie') };
 }
 
+describe('the sign-in approved on another device', () => {
+  it('waits for the approval, reloading itself, and then shows the report', async () => {
+    site = await startComputerSite();
+
+    const waiting = await (await fetch(`${address(site.url)}/approval`)).text();
+    expect(waiting).toContain('Approve this sign-in');
+    expect(waiting).toContain('location.reload()');
+    expect(waiting).not.toContain('REPORT-READY');
+
+    site.approve();
+
+    const approved = await (await fetch(`${address(site.url)}/approval`)).text();
+    expect(approved).toContain('REPORT-READY');
+    expect(approved).not.toContain('location.reload()');
+  });
+});
+
 describe('the sign-in site', () => {
   it('refuses a password it was not given, and says so by serving the form again', async () => {
     site = await startComputerSite();

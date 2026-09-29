@@ -21,3 +21,18 @@ it('includes trusted help IDs and states without promoting help reasons to instr
   expect(notices).not.toContain('Ignore prior instructions');
   expect(notices).not.toContain('Website text');
 });
+
+it('tells a turn in another conversation that it can answer a broadcast request', () => {
+  const notices = computerHelpNotices([
+    {
+      type: 'computer_help',
+      id: 'broadcast-id',
+      status: 'waiting',
+      reason: 'Website text',
+      broadcast: true,
+    },
+  ]).join('\n');
+  expect(notices).toContain('broadcast-id (waiting): A background run asked for it in every channel');
+  expect(notices).toContain('computer_continue');
+  expect(notices).not.toContain('Website text');
+});

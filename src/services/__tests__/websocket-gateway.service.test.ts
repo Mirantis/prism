@@ -97,6 +97,7 @@ vi.mock('../computer/computer.service', () => ({
 
 vi.mock('../computer/computer-help.service', () => ({
   computerHelpService: { list: vi.fn() },
+  HELP_ANSWER_WAIT_MS: 30 * 60_000,
 }));
 
 // Import after mocking
