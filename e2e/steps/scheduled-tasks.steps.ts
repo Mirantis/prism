@@ -30,6 +30,25 @@ Then("the new task form reads schedules in the agent's time zone {string}", asyn
   await expect(tasks.dialog).toBeHidden();
 });
 
+When(
+  'I start the task {string} with the {string} schedule',
+  async ({ page }, name: string, preset: string) => {
+    await new ScheduledTasksPage(page).startTaskFromPreset(name, preset);
+  },
+);
+
+When('I give the new task the instruction {string}', async ({ page }, instruction: string) => {
+  await new ScheduledTasksPage(page).fillInstruction(instruction);
+});
+
+Then('the Schedule button is disabled', async ({ page }) => {
+  await expect(new ScheduledTasksPage(page).scheduleButton).toBeDisabled();
+});
+
+Then('the Schedule button is enabled', async ({ page }) => {
+  await expect(new ScheduledTasksPage(page).scheduleButton).toBeEnabled();
+});
+
 When('I delete the task {string}', async ({ page }, name: string) => {
   await new ScheduledTasksPage(page).deleteTask(name);
 });

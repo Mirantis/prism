@@ -795,7 +795,12 @@ router.get('/cron-tasks', async (_req: Request, res: Response) => {
  */
 router.post('/cron-tasks', async (req: Request, res: Response) => {
   try {
-    const { name, schedule, instruction } = req.body;
+    // Trimmed before the check: a task without an instruction runs on its name, so a name of
+    // only whitespace would be an empty prompt.
+    const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
+    const name = text(req.body.name);
+    const schedule = text(req.body.schedule);
+    const instruction = text(req.body.instruction);
     if (!name || !schedule) {
       res.status(400).json({ error: 'Missing required fields: name, schedule' });
       return;
@@ -815,7 +820,7 @@ router.post('/cron-tasks', async (req: Request, res: Response) => {
         userId: agent.userId,
         name,
         schedule: cronExpression,
-        instruction: instruction ?? '',
+        instruction,
         nextRunAt,
       },
     });

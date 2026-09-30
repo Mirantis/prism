@@ -278,6 +278,8 @@ class CronSchedulerService {
 
     const startTime = Date.now();
     const boundThreadId = task.threadId;
+    // A task saved without an instruction runs on its name, the only text its author gave.
+    const instruction = task.instruction.trim() || task.name;
 
     logger.info(`[CronScheduler] Executing "${task.name}" for user ${task.userId}`);
 
@@ -314,7 +316,7 @@ class CronSchedulerService {
         userId: task.userId,
         agentId: task.agentId,
         mode: 'cron',
-        prompt: task.instruction,
+        prompt: instruction,
         ...(boundThreadId
           ? {
               threadId: boundThreadId,
@@ -373,7 +375,7 @@ class CronSchedulerService {
         shouldDeliver = await runClassificationGate({
           system: CRON_TASK_GATE_PROMPT,
           user: buildCronGateUserMessage({
-            instruction: task.instruction,
+            instruction,
             resultText: body,
             lastDeliveredText: prior?.text ?? null,
             lastDeliveredAt: prior?.at ?? null,

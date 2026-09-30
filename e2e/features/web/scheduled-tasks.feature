@@ -15,3 +15,10 @@ Feature: Scheduled tasks page
     And the task "Weekday standup" shows its next run
     When I delete the task "Weekday standup"
     Then no scheduled task is listed
+
+  Scenario: A task needs an instruction before it can be scheduled
+    When I navigate to the scheduled tasks page
+    And I start the task "Morning summary" with the "Weekdays at 09:00" schedule
+    Then the Schedule button is disabled
+    When I give the new task the instruction "Summarize my inbox"
+    Then the Schedule button is enabled

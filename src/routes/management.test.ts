@@ -792,6 +792,29 @@ describe('Management Routes', () => {
       expect(mockPrisma.cronTask.create).not.toHaveBeenCalled();
     });
 
+    it('returns 400 when the name is only whitespace', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/cron-tasks')
+        .send({ name: '   ', schedule: '0 9 * * *' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('Missing required fields');
+      expect(mockPrisma.cronTask.create).not.toHaveBeenCalled();
+    });
+
+    it('stores the fields trimmed, and an omitted instruction as empty', async () => {
+      mockGetAgent.mockResolvedValue({ id: 'agent-1', userId: 'user-1', name: 'Agent' });
+      mockPrisma.cronTask.create.mockResolvedValue(persistedTask);
+
+      await authedRequest(app)
+        .post('/agents/cron-tasks')
+        .send({ name: '  Daily Report  ', schedule: ' 0 9 * * * ' });
+
+      expect(mockPrisma.cronTask.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ name: 'Daily Report', schedule: '0 9 * * *', instruction: '' }),
+      });
+    });
+
     it('returns 400 when schedule is missing', async () => {
       const res = await authedRequest(app)
         .post('/agents/cron-tasks')

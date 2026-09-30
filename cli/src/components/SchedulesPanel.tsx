@@ -98,14 +98,14 @@ export const SchedulesPanel: React.FC<Props> = ({ api, onClose }) => {
     const name = formName.trim();
     const schedule = formSchedule.trim();
     const instruction = formInstruction.trim();
-    if (!name || !schedule || submitting) return;
+    if (!name || !schedule || !instruction || submitting) return;
     setSubmitting(true);
     setErrorMsg(null);
     try {
       await api.createCronTask({
         name,
         schedule,
-        instruction: instruction || undefined,
+        instruction,
       });
       resetForm();
       setMode('list');
@@ -291,7 +291,7 @@ export const SchedulesPanel: React.FC<Props> = ({ api, onClose }) => {
           />
         </Box>
         <Box marginTop={1} flexDirection="column">
-          <Text dimColor>Instruction is optional.</Text>
+          <Text dimColor>All three fields are required.</Text>
           <Text dimColor>
             Schedule accepts cron or natural language ('every day at 9am', 'in 2 minutes').
           </Text>
