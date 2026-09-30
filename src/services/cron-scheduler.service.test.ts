@@ -620,6 +620,16 @@ describe('CronSchedulerService', () => {
       );
     });
 
+    it('runs a task saved without an instruction on its name', async () => {
+      // The row a user saves from the page with the whole task typed into Name.
+      const name = 'Fetch the top 5 news items and summarize them';
+      const run = scheduleAndCapture({ name, instruction: '' });
+      await run();
+
+      expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ prompt: name }));
+      expect(JSON.stringify(mockGenerateText.mock.calls)).toContain(name);
+    });
+
     it('delivers when the gate says DELIVER', async () => {
       mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 

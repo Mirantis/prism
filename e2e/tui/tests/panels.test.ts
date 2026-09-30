@@ -1,11 +1,8 @@
 /**
  * Interactive panels driven through the real PTY: /schedules and /config.
  *
- * Per the suite's documented PTY constraint (slash-commands.feature), Tab and
- * arrow-key navigation aren't keyboard-driven here — so the create form and
- * /config scrolling are exercised only at the single-key level (open, d-y
- * delete). Create + state are seeded and verified via the runtime's REST API;
- * that logic is also unit-tested in cli/. Panel-close via Esc is isolated to
+ * The create form moves between its fields with the Down arrow. State is seeded
+ * and verified through the runtime's REST API. Panel-close via Esc is isolated to
  * one scenario so its escape-sequence handling can't mask the core
  * open/list/delete assertions.
  */
@@ -102,6 +99,51 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     });
     // Assertions ("New schedule", "Name", … and "no cron tasks remain") are
     // covered by the shared steps.
+  });
+
+  Scenario('/schedules creates a task only once it has an instruction', ({ When, And, Then }) => {
+    When('I open the create form', async () => {
+      session.send('n');
+      await session.waitForFrame('New schedule', 10_000);
+    });
+    And(
+      'I fill in the name {string} and the schedule {string}',
+      async (_ctx, name: string, schedule: string) => {
+        session.send(name);
+        await session.waitForFrame(new RegExp(`Name\\s+${name}`), 5_000);
+        session.send(KEYS.DOWN);
+        await sleep(300);
+        session.send(schedule);
+        // The label beside the text says which field took it.
+        await session.waitForFrame(new RegExp(`Schedule\\s+${schedule.replaceAll('*', '\\*')}`), 5_000);
+      },
+    );
+    And('I press Enter', async () => {
+      session.send(KEYS.ENTER);
+      // A create would be one REST call; give it the time one takes.
+      await sleep(1_500);
+    });
+    When('I fill in the instruction {string} and press Enter', async (_ctx, instruction: string) => {
+      session.send(KEYS.DOWN);
+      await sleep(300);
+      session.send(instruction);
+      await session.waitForFrame(new RegExp(`Instruction\\s+${instruction}`), 5_000);
+      session.send(KEYS.ENTER);
+    });
+    Then(
+      'the task {string} is created with the instruction {string}',
+      async (_ctx, name: string, instruction: string) => {
+        await expect
+          .poll(
+            async () =>
+              (await runtimeRequest<Array<{ name: string; instruction: string }>>(env.port, 'GET', '/agents/cron-tasks')).map(
+                (task) => ({ name: task.name, instruction: task.instruction }),
+              ),
+            { timeout: 10_000 },
+          )
+          .toEqual([{ name, instruction }]);
+      },
+    );
   });
 
   Scenario('/config shows identity, the focused file list, and the config docs', ({ And }) => {

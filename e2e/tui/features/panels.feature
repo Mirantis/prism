@@ -25,6 +25,16 @@ Feature: CLI interactive panels
     And I see "Instruction"
     And no cron tasks remain
 
+  Scenario: /schedules creates a task only once it has an instruction
+    When I open the schedules panel
+    Then I see "No scheduled tasks"
+    When I open the create form
+    And I fill in the name "E2E Morning summary" and the schedule "0 5 * * *"
+    And I press Enter
+    Then no cron tasks remain
+    When I fill in the instruction "noop" and press Enter
+    Then the task "E2E Morning summary" is created with the instruction "noop"
+
   Scenario: /config shows identity, the focused file list, and the config docs
     When I open the config panel
     Then I see "Model"

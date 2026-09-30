@@ -33,13 +33,26 @@ export class ScheduledTasksPage extends BasePage {
     return this.page.getByTestId('scheduled-task').filter({ hasText: name });
   }
 
-  /** Open the dialog, name the task, pick a preset schedule, and submit. */
-  async createTaskFromPreset(name: string, preset: string, instruction: string) {
+  get scheduleButton(): Locator {
+    return this.dialog.getByRole('button', { name: 'Schedule', exact: true });
+  }
+
+  /** Open the dialog, name the task and pick a preset schedule, without submitting. */
+  async startTaskFromPreset(name: string, preset: string) {
     await this.newTaskButton.click();
     await this.page.locator('#cron-name').fill(name);
     await this.dialog.getByRole('button', { name: preset, exact: true }).click();
+  }
+
+  async fillInstruction(instruction: string) {
     await this.page.locator('#cron-instruction').fill(instruction);
-    await this.dialog.getByRole('button', { name: 'Schedule', exact: true }).click();
+  }
+
+  /** Open the dialog, name the task, pick a preset schedule, and submit. */
+  async createTaskFromPreset(name: string, preset: string, instruction: string) {
+    await this.startTaskFromPreset(name, preset);
+    await this.fillInstruction(instruction);
+    await this.scheduleButton.click();
     await this.taskRow(name).waitFor({ timeout: 10_000 });
   }
 

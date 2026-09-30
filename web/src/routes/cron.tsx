@@ -170,7 +170,7 @@ function CronPage() {
         onSubmit={handleCreate}
         isSubmitting={scheduleMut.isPending}
         submitLabel="Schedule"
-        submitDisabled={!form.name.trim() || !form.schedule.trim()}
+        submitDisabled={!form.name.trim() || !form.schedule.trim() || !form.instruction.trim()}
       >
         <FieldGroup>
           <Field data-invalid={Boolean(fieldErrors.name)}>
