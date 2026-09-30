@@ -76,7 +76,8 @@ export default function ChatMessageList({
 
   return (
     <div className="relative min-h-0 flex-1">
-      <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto" data-testid="chat-messages">
+      {/* Positioned, so absolute children such as screen-reader text stay inside the scroller. */}
+      <div ref={scrollRef} onScroll={onScroll} className="relative h-full overflow-y-auto" data-testid="chat-messages">
         {isEmpty ? (
           <ChatWelcome agentName={agentName} onSuggestion={onSuggestion} />
         ) : (
