@@ -74,6 +74,49 @@ Then('the page fits the screen width', async ({ page }) => {
   expect(widths.document).toBeLessThanOrEqual(widths.window);
 });
 
+/** The long conversation the scroll scenario opens, and where its composer sat on arrival. */
+let longThread: { id: string; last: string } | null = null;
+let composerBottom: number | null = null;
+
+Given('a conversation with {int} earlier messages', async ({}, count: number) => {
+  // Two paragraphs each, so the transcript is taller than the chat pane at desktop size.
+  const start = Date.now() - count * 60_000;
+  const messages = Array.from({ length: count }, (_, i) => ({
+    role: i % 2 === 0 ? ('USER' as const) : ('AGENT' as const),
+    content: `Message ${i + 1}.\n\nA second paragraph, so the message takes more than one line.`,
+    createdAt: new Date(start + i * 60_000),
+  }));
+  const id = await dbHelper.createThread(getCurrentAgentId(), { title: 'A long conversation', messages });
+  longThread = { id, last: `Message ${count}.` };
+});
+
+When('I open that conversation at desktop size', async ({ page }) => {
+  await page.setViewportSize(DESKTOP);
+  await page.goto(`/chat/${longThread!.id}`);
+  await expect(page.getByTestId('chat-messages')).toContainText(longThread!.last);
+  composerBottom = await new HomePage(page).chatInput.evaluate((el) => el.getBoundingClientRect().bottom);
+});
+
+Then('only the message list scrolls', async ({ page }) => {
+  // The running turn's indicator holds screen-reader text, which must stay inside the list.
+  await expect(page.getByTestId('chat-typing-indicator')).toBeVisible();
+  const list = page.getByTestId('chat-messages');
+  // The send scrolls the list to its end. Measure the page once that scroll has settled.
+  await expect
+    .poll(() => list.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop))
+    .toBeLessThanOrEqual(1);
+  const main = await page.locator('#main-content').evaluate((el) => ({
+    overflow: el.scrollHeight - el.clientHeight,
+    scrollTop: el.scrollTop,
+  }));
+  expect(main).toEqual({ overflow: 0, scrollTop: 0 });
+});
+
+Then('the chat composer has not moved', async ({ page }) => {
+  const bottom = await new HomePage(page).chatInput.evaluate((el) => el.getBoundingClientRect().bottom);
+  expect(bottom).toBe(composerBottom);
+});
+
 Given('{int} conversation threads titled after {string}', async ({}, count: number, stem: string) => {
   // Spaced a minute apart so the newest-first order is fixed.
   const start = Date.now() - count * 60_000;
