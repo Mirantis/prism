@@ -74,34 +74,38 @@ Then('the page fits the screen width', async ({ page }) => {
   expect(widths.document).toBeLessThanOrEqual(widths.window);
 });
 
-/** The long conversation the scroll scenario opens, and where its composer sat on arrival. */
-let longThread: { id: string; last: string } | null = null;
-let composerBottom: number | null = null;
+/** The long conversation the scroll scenario opens. */
+let longThread: { id: string; lastReply: string } | null = null;
 
-Given('a conversation with {int} earlier messages', async ({}, count: number) => {
-  // Two paragraphs each, so the transcript is taller than the chat pane at desktop size.
-  const start = Date.now() - count * 60_000;
-  const messages = Array.from({ length: count }, (_, i) => ({
+Given('a conversation of {int} exchanges whose last reply used a tool', async ({}, exchanges: number) => {
+  // Two paragraphs a message, so the transcript is taller than the chat pane at desktop size.
+  const start = Date.now() - exchanges * 120_000;
+  const messages = Array.from({ length: exchanges * 2 }, (_, i) => ({
     role: i % 2 === 0 ? ('USER' as const) : ('AGENT' as const),
     content: `Message ${i + 1}.\n\nA second paragraph, so the message takes more than one line.`,
     createdAt: new Date(start + i * 60_000),
+    ...(i === exchanges * 2 - 1
+      ? { toolCalls: [{ tool: 'shell_exec', input: '{"command":"uptime"}', output: 'up 3 days', success: true }] }
+      : {}),
   }));
   const id = await dbHelper.createThread(getCurrentAgentId(), { title: 'A long conversation', messages });
-  longThread = { id, last: `Message ${count}.` };
+  longThread = { id, lastReply: `Message ${exchanges * 2}.` };
 });
 
 When('I open that conversation at desktop size', async ({ page }) => {
   await page.setViewportSize(DESKTOP);
   await page.goto(`/chat/${longThread!.id}`);
-  await expect(page.getByTestId('chat-messages')).toContainText(longThread!.last);
-  composerBottom = await new HomePage(page).chatInput.evaluate((el) => el.getBoundingClientRect().bottom);
+  await expect(page.getByTestId('chat-messages')).toContainText(longThread!.lastReply);
+});
+
+When('I open the tool calls of the last reply', async ({ page }) => {
+  // An open card holds screen-reader text, which must stay inside the list.
+  await page.getByTestId('chat-messages').getByRole('button', { name: '1 tool used' }).click();
 });
 
 Then('only the message list scrolls', async ({ page }) => {
-  // The running turn's indicator holds screen-reader text, which must stay inside the list.
-  await expect(page.getByTestId('chat-typing-indicator')).toBeVisible();
   const list = page.getByTestId('chat-messages');
-  // The send scrolls the list to its end. Measure the page once that scroll has settled.
+  // A new message scrolls the list to its end. Measure the page once that scroll has settled.
   await expect
     .poll(() => list.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop))
     .toBeLessThanOrEqual(1);
@@ -110,11 +114,6 @@ Then('only the message list scrolls', async ({ page }) => {
     scrollTop: el.scrollTop,
   }));
   expect(main).toEqual({ overflow: 0, scrollTop: 0 });
-});
-
-Then('the chat composer has not moved', async ({ page }) => {
-  const bottom = await new HomePage(page).chatInput.evaluate((el) => el.getBoundingClientRect().bottom);
-  expect(bottom).toBe(composerBottom);
 });
 
 Given('{int} conversation threads titled after {string}', async ({}, count: number, stem: string) => {

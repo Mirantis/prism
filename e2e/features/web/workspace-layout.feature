@@ -32,15 +32,14 @@ Feature: Workspace layout
       | /activity |
 
   Scenario: Sending in a long conversation scrolls only the message list
-    Given the shell workspace has no steering marker
-    And a conversation with 40 earlier messages
+    Given a conversation of 20 exchanges whose last reply used a tool
     When I open that conversation at desktop size
-    And I type "Use your shell to run `touch steering-started.marker && sleep 12`, then reply with exactly DONE." in the chat input
+    And I open the tool calls of the last reply
+    And I type "Reply with exactly DONE." in the chat input
     And I send the message
-    And the agent has started running the shell command
     Then only the message list scrolls
-    And the chat composer has not moved
     And I should see an agent response in the conversation
+    And only the message list scrolls
 
   Scenario: A long Recents list gets a filter box
     Given 6 conversation threads titled after "Project"

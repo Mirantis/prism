@@ -260,7 +260,7 @@ export async function createThread(
     externalThreadId?: string;
     externalChannelId?: string;
     createdAt?: Date;
-    messages?: Array<{ role: 'USER' | 'AGENT'; content: string; createdAt?: Date }>;
+    messages?: Array<{ role: 'USER' | 'AGENT'; content: string; createdAt?: Date; toolCalls?: unknown[] }>;
   },
 ): Promise<string> {
   const db = getPrisma();
@@ -284,6 +284,7 @@ export async function createThread(
         content: msg.content,
         triggeredBy: 'USER_INPUT',
         ...(msg.createdAt ? { createdAt: msg.createdAt } : {}),
+        ...(msg.toolCalls ? { toolCalls: msg.toolCalls as Prisma.InputJsonValue } : {}),
       },
     });
   }
