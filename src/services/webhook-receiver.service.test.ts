@@ -115,16 +115,21 @@ describe('webhook receiver listener', () => {
     expect(receiver.enabled).toBe(true);
   });
 
-  it('disables the saved receiver when its port cannot open at startup', async () => {
+  it('preserves the enabled setting after a startup bind failure and retries on restart', async () => {
     enabled = true;
     const reservation = await reservePort();
     try {
       await receiver.initialize();
-      expect(enabled).toBe(false);
+      expect(enabled).toBe(true);
+      expect(updateAgent).not.toHaveBeenCalled();
       expect(receiver.enabled).toBe(false);
     } finally {
       await close(reservation);
     }
+    await receiver.shutdown();
+    receiver = new WebhookReceiverService();
+    await receiver.initialize();
+    expect(receiver.enabled).toBe(true);
   });
 
   it('closes the port if saving the enabled setting fails', async () => {

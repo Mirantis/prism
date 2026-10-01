@@ -3,7 +3,7 @@
  *
  * Single owner of "did this inbound webhook really come from its sender?".
  *
- *   'none'  — no verification (default; the subscription list marks it Unverified)
+ *   'none'  — explicit opt-out (the subscription list marks it Unverified)
  *   'token' — `authHeader` must carry `secret` verbatim, after an optional
  *             literal `authPrefix` ('Bearer', …)
  *   'hmac'  — `authHeader` must carry HMAC(secret, raw body) in `authAlgorithm`

@@ -55,13 +55,27 @@ describe('webhook deliveries', () => {
     expect((await request(app).get('/health')).status).toBe(404);
   });
 
-  it('are refused from a browser page on another site', async () => {
+  it('accepts a delivery forwarded by a tunnel with its public Host', async () => {
+    mockHandleInbound.mockResolvedValue({ status: 'delivered', event: 'push' });
     const res = await request(createWebhookApp())
       .post('/agents/webhooks/alerts')
-      .set('origin', 'https://attacker.example')
+      .set('host', 'hooks.example.com')
       .send({});
+    expect(res.status).toBe(200);
+  });
 
-    expect(res.status).toBe(403);
+  it('rejects simple cross-site form posts and provides no CORS preflight permission', async () => {
+    const app = createWebhookApp();
+    const preflight = await request(app).options('/agents/webhooks/alerts')
+      .set('origin', 'https://sender.example')
+      .set('access-control-request-method', 'POST')
+      .set('access-control-request-headers', 'content-type');
+    expect(preflight.headers['access-control-allow-origin']).toBeUndefined();
+    for (const type of ['text/plain', 'application/x-www-form-urlencoded', 'multipart/form-data']) {
+      const res = await request(app).post('/agents/webhooks/alerts')
+        .set('origin', 'https://sender.example').set('content-type', type).send('{}');
+      expect(res.status).toBe(400);
+    }
     expect(mockHandleInbound).not.toHaveBeenCalled();
   });
 });

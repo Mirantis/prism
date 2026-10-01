@@ -2,7 +2,6 @@ import express from 'express';
 import { createServer, type Server } from 'node:http';
 import { config } from '../config';
 import { logger } from '../logger';
-import { originGuard } from '../lib/origin-guard';
 import { captureRawBody } from '../lib/raw-body';
 import { prisma } from '../lib/prisma';
 import { trackEvent } from '../lib/telemetry';
@@ -12,7 +11,6 @@ import { agentWorkspaceService } from './agent-workspace.service';
 /** The webhook listener serves deliveries on their own port. */
 export function createWebhookApp() {
   const app = express();
-  app.use(originGuard);
   app.use(express.json({ limit: '5mb', verify: captureRawBody }));
   app.use('/agents', webhookRouter);
   return app;
@@ -34,15 +32,11 @@ export class WebhookReceiverService {
     try {
       await this.start();
     } catch (error) {
-      await prisma.agentWorkspace.update({
-        where: { id: agent.id },
-        data: { webhooksEnabled: false },
-      });
       trackEvent('webhook receiver toggle failed', agent.userId, {
         'agent.id': agent.id,
         'webhook.operation': 'startup',
       });
-      logger.error({ err: error }, '[Webhook] Receiver remains disabled');
+      logger.error({ err: error }, '[Webhook] Receiver could not start; restart to retry');
     }
   }
 

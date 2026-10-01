@@ -21,6 +21,17 @@ Feature: Inbound webhooks
     Then the stored webhook receiver state is enabled
     And the webhook port is listening
 
+  Scenario: New subscriptions require a shared token by default
+    When I navigate to the webhooks page
+    And I enable the webhook receiver
+    And I open a new webhook subscription named "default-token"
+    Then the webhook form requires shared-token credentials
+    When I create the webhook with header "Authorization" and secret "demo-token" using Enter
+    And I POST the payload '{"status":"ok"}' to webhook "default-token"
+    Then the webhook response status is 401
+    When I POST the payload '{"status":"ok"}' to webhook "default-token" with header "Authorization" set to "demo-token"
+    Then the webhook response status is 200
+
   Scenario: A deliver-only subscription renders the payload into the conversation without the agent
     When I navigate to the webhooks page
     And I enable the webhook receiver
@@ -45,7 +56,7 @@ Feature: Inbound webhooks
     And I create a deliver-only webhook subscription named "paused-hook" with prompt "irrelevant"
     And I disable the subscription "paused-hook"
     When I POST the payload '{"a":1}' to webhook "paused-hook"
-    Then the webhook response status is 403
+    Then the webhook response status is 401
 
   Scenario: Disabling the receiver closes its port and preserves subscriptions
     When I navigate to the webhooks page
@@ -63,7 +74,7 @@ Feature: Inbound webhooks
     When I navigate to the webhooks page
     And I enable the webhook receiver
     When I POST the payload '{"a":1}' to webhook "does-not-exist"
-    Then the webhook response status is 404
+    Then the webhook response status is 401
 
   Scenario: A signed subscription accepts a correctly signed delivery
     When I navigate to the webhooks page
@@ -102,7 +113,8 @@ Feature: Inbound webhooks
     Then the subscription "mobile-hook" shows authentication and controls without horizontal scrolling
     When I open authentication for webhook "mobile-hook" on a short screen
     Then the webhook authentication form and its actions fit the viewport
-    When I save webhook authentication with an empty secret using Enter
+    When I clear and restore the webhook authentication header
+    And I save webhook authentication with an empty secret using Enter
     And I POST the payload '{"status":"kept"}' to webhook "mobile-hook" signed with secret "s3cret"
     Then the webhook response status is 200
     When I open authentication for webhook "mobile-hook" on a short screen

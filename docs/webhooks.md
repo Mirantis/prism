@@ -19,7 +19,7 @@ Webhooks are off by default. Turn on **Webhook receiver** on the
 closes the port immediately and keeps your subscriptions. The setting survives restarts.
 
 If enabling reports that the port is in use, choose a free `WEBHOOK_PORT`, restart,
-and enable the receiver again.
+and enable the receiver again. An enabled receiver retries at the next restart.
 
 ## Creating a subscription
 
@@ -34,17 +34,23 @@ Click **New subscription** on the Webhooks page. **Delivery** and
 | Delivery | **Deliver to** | Where results go: **All channels** (default — web chat + Slack, like heartbeat alerts), **Chat** (web chat only), or **Slack** (Slack only — see [Delivery targets & storage](#delivery-targets--storage)). |
 | Delivery | **Deliver only** | Skip the agent: the rendered prompt template is posted directly as the message. Zero LLM cost — useful for plain notifications. |
 | Delivery | **Prompt** / **Message template** | Instructions for the agent, or the message sent in **Deliver only** mode. Supports payload substitution — see below. |
-| Authentication | **Scheme** | How the sender proves itself: **None**, **Shared token in a header**, or **HMAC signature of the body**. |
+| Authentication | **Scheme** | How the sender proves itself: **Shared token in a header** (default), **HMAC signature of the body**, or **None**. |
 | Authentication | **Header** / **Prefix** / **Secret** (+ **Algorithm** / **Encoding**) | Where the credential arrives and what it's compared against; shown once Scheme isn't None. See [Authentication](#authentication). |
 
 Each row in the subscriptions list shows the endpoint path with a button that
-copies its full URL, an **Active** switch (disabled subscriptions answer `403`
+copies its full URL, an **Active** switch (disabled subscriptions answer `401`
 without running anything), and a delete action. Changes apply immediately.
 
 ## The endpoint
 
 Senders POST to the webhook port, **3004**, apart from the Web UI and its API
-on 3003. `WEBHOOK_PORT` moves it; in Docker, publish it with `-p 3004:3004`.
+on 3003. `WEBHOOK_PORT` moves it; use a different port from `PORT`. In Docker,
+publish it with `-p 3004:3004`.
+
+Expose the webhook port through your ingress or tunnel. When a public address is
+configured, **Copy endpoint URL** copies it. Otherwise, a remotely opened Webhooks
+page shows the endpoint path and asks you to expose the port. Use your tunnel
+address with that path.
 
 ```
 POST http://<prism-host>:3004/agents/webhooks/<name>
@@ -59,9 +65,7 @@ see [Event filtering](#event-filtering)):
 | `202 Accepted` | Agent run dispatched: `{"status":"accepted","event":"<type>","runId":"..."}`. The response is delivered to your channels when the run finishes. |
 | `200 OK` | Deliver-only message posted: `{"status":"delivered","event":"<type>"}` — or the event was filtered out by the Events list: `{"status":"ignored","event":"<type>"}`. |
 | `400` | Body was not a JSON object. |
-| `401` | Sender verification failed — see [Authentication](#authentication). |
-| `403` | This subscription is disabled. |
-| `404` | No subscription with that name. |
+| `401` | Check the subscription name, its Active switch, and the sender credentials. See [Authentication](#authentication). |
 | `429` | This subscription's run queue is full — retry later. |
 
 Agent runs are asynchronous by design — webhook senders like Alertmanager time
@@ -93,8 +97,8 @@ sender is then a matter of configuration.
 
 | Scheme | What must match |
 |--------|-----------------|
-| **None** (default) | Nothing is checked. The subscription list shows it as `Unverified`. |
-| **Shared token in a header** | The chosen header carries the secret verbatim (after an optional prefix). |
+| **None** | Accepts unsigned requests. Select this explicitly to allow any sender. The list shows `Unverified`. |
+| **Shared token in a header** (default) | The chosen header carries the secret verbatim (after an optional prefix). |
 | **HMAC signature of the body** | The chosen header carries `HMAC(secret, raw request body)` in the chosen digest + encoding (after an optional prefix). |
 
 The parameters:
@@ -106,16 +110,12 @@ The parameters:
 | **Secret** | The shared secret / HMAC key. Write-only: the API returns whether a secret is set, never the value. |
 | **Algorithm** / **Encoding** | HMAC only: `sha256` (default), `sha1` or `sha512`, encoded as `hex` (default, case-insensitive) or `base64`. |
 
-Behavior worth knowing:
-
 - **Multiple signatures are supported**: an HMAC header may carry several
   comma-separated candidates and the request passes if any matches — that's how
   senders that emit both an old and a new signature during a secret rotation
   keep working. Token mode compares the whole value, so a token may contain a
   comma.
-- **It fails closed.** A subscription that requires verification but has no
-  secret or header configured rejects everything, and every failure answers the
-  same `401 {"error":"Webhook sender verification failed"}`.
+- Set both **Header** and **Secret** when creating a verified subscription.
 - **Rotating a secret** doesn't need a new endpoint: use the key icon on the
   subscription row, enter the new secret, and save. Leaving the field empty
   keeps the current one.
@@ -243,7 +243,7 @@ Scheme = HMAC, Header = `X-Hub-Signature-256`, Prefix = `sha256=`. Use
 the Events field (e.g. `pull_request,issues`) to pick the event types you care
 about.
 
-**Anything else** — any system that can POST JSON works. Unauthenticated:
+**Anything else** — any system that can POST JSON works. With Scheme = **None**:
 
 ```bash
 curl -X POST http://<prism-host>:3004/agents/webhooks/my-hook \

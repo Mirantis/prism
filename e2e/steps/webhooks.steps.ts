@@ -316,6 +316,9 @@ Then('the webhook authentication form and its actions fit the viewport', async (
   await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toBeInViewport();
   await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeInViewport();
   await expect(page.locator('#webhook-secret')).toHaveValue('');
+});
+
+When('I clear and restore the webhook authentication header', async ({ page }) => {
   await page.locator('#webhook-auth-header').fill('');
   await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
   await page.locator('#webhook-auth-header').fill('X-Hub-Signature-256');
@@ -327,6 +330,26 @@ When('I save webhook authentication with an empty secret using Enter', async ({ 
 });
 
 When('I replace the webhook secret with {string} using Enter', async ({ page }, secret: string) => {
+  await page.locator('#webhook-secret').fill(secret);
+  await page.locator('#webhook-secret').press('Enter');
+  await expect(page.getByRole('dialog')).toBeHidden();
+});
+
+When('I open a new webhook subscription named {string}', async ({ page }, name: string) => {
+  await new WebhooksPage(page).newSubscriptionButton.click();
+  await page.locator('#webhook-name').fill(name);
+  await page.locator('[data-slot="dialog-content"] [data-slot="checkbox"]').click();
+});
+
+Then('the webhook form requires shared-token credentials', async ({ page }) => {
+  await expect(page.locator('#webhook-auth-type')).toHaveText('Shared token in a header');
+  await expect(page.locator('#webhook-auth-header')).toBeVisible();
+  await expect(page.locator('#webhook-secret')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Create', exact: true })).toBeDisabled();
+});
+
+When('I create the webhook with header {string} and secret {string} using Enter', async ({ page }, header: string, secret: string) => {
+  await page.locator('#webhook-auth-header').fill(header);
   await page.locator('#webhook-secret').fill(secret);
   await page.locator('#webhook-secret').press('Enter');
   await expect(page.getByRole('dialog')).toBeHidden();

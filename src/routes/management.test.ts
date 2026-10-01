@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import { Prisma } from '@prisma/client';
+import { logger } from '../logger';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -954,7 +955,7 @@ describe('Management Routes', () => {
       expect(res.body).toEqual({ enabled: false, port: 3004, publicUrl: null });
     });
 
-    it('waits for the receiver service to apply the toggle', async () => {
+    it('returns the actual listener state after applying the toggle', async () => {
       mockGetAgent.mockResolvedValue({ id: 'agent-1', userId: 'user-1', webhooksEnabled: false });
       mockPrisma.agentWorkspace.update.mockResolvedValue({});
 
@@ -963,7 +964,7 @@ describe('Management Routes', () => {
         .send({ enabled: true });
 
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ enabled: true });
+      expect(res.body).toEqual({ enabled: false });
       expect(mockSetReceiverEnabled).toHaveBeenCalledWith(true);
     });
 
@@ -997,7 +998,7 @@ describe('Management Routes', () => {
 
       const res = await authedRequest(app)
         .post('/agents/webhook-subscriptions')
-        .send({ name: '  GitHub Push ', description: 'PR reviews' });
+        .send({ name: '  GitHub Push ', description: 'PR events', authType: 'none' });
 
       expect(res.status).toBe(201);
       expect(res.body).toEqual({ ...created, hasSecret: false });
@@ -1005,13 +1006,28 @@ describe('Management Routes', () => {
         data: expect.objectContaining({
           agentId: 'agent-1',
           name: 'github-push',
-          description: 'PR reviews',
+          description: 'PR events',
           deliverTo: 'all',
           deliverOnly: false,
-          // Unverified unless the operator opts in.
+          // None is an explicit choice.
           authType: 'none',
           secret: null,
         }),
+      });
+    });
+
+    it('requires credentials by default and stores token authentication when supplied', async () => {
+      const missing = await authedRequest(app).post('/agents/webhook-subscriptions')
+        .send({ name: 'default-auth' });
+      expect(missing.status).toBe(400);
+      expect(missing.body.fieldErrors.secret).toBeTruthy();
+      expect(mockPrisma.webhookSubscription.create).not.toHaveBeenCalled();
+      mockPrisma.webhookSubscription.create.mockResolvedValue({ id: 'wh-1', secret: 'demo-token' });
+      const created = await authedRequest(app).post('/agents/webhook-subscriptions')
+        .send({ name: 'default-auth', authHeader: 'Authorization', secret: 'demo-token' });
+      expect(created.status).toBe(201);
+      expect(mockPrisma.webhookSubscription.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ authType: 'token', authHeader: 'Authorization', secret: 'demo-token' }),
       });
     });
 
@@ -1138,11 +1154,34 @@ describe('Management Routes', () => {
 
       const res = await authedRequest(app)
         .post('/agents/webhook-subscriptions')
-        .send({ name: 'alerts' });
+        .send({ name: 'alerts', authType: 'none' });
 
       expect(res.status).toBe(409);
       expect(res.body.fieldErrors.name).toContain('already taken');
     });
+  });
+
+  it.each(['create', 'update'] as const)('keeps Prisma validation details private on %s', async (operation) => {
+    vi.spyOn(logger, 'error');
+    mockGetAgent.mockResolvedValue({ id: 'agent-1', userId: 'user-1' });
+    mockPrisma.webhookSubscription.findUnique.mockResolvedValue({
+      authType: 'token', authHeader: 'Authorization', authPrefix: null,
+      authAlgorithm: 'sha256', authEncoding: 'hex', secret: 'demo-old-token',
+    });
+    mockPrisma.webhookSubscription[operation].mockRejectedValue(
+      new Prisma.PrismaClientValidationError('Invalid invocation: data: { secret: "demo-private-token" }', {
+        clientVersion: 'test',
+      }),
+    );
+    const response = operation === 'create'
+      ? await authedRequest(app).post('/agents/webhook-subscriptions').send({
+        name: 'alerts', authHeader: 'Authorization', secret: 'demo-private-token',
+      })
+      : await authedRequest(app).patch('/agents/webhook-subscriptions/wh-1').send({ secret: 'demo-private-token' });
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({ error: `Failed to ${operation} webhook subscription` });
+    expect(logger.error).toHaveBeenCalledWith({ errorName: 'PrismaClientValidationError' }, expect.any(String));
+    expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain('demo-private-token');
   });
 
   describe('PATCH /webhook-subscriptions/:id', () => {

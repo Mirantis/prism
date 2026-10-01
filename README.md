@@ -247,8 +247,8 @@ rendered template directly with zero LLM cost. Each subscription can require
 its sender to prove itself — a shared token in a header or an HMAC signature of
 the body, configured generically (you name the header, prefix and digest), so
 GitHub, GitLab, PagerDuty, Alertmanager and anything else are just recipes.
-Unverified requests get `401` before any payload is looked at. Works out of the
-box with Alertmanager, PagerDuty, GitHub, or any sender that can POST JSON —
+New subscriptions default to shared-token authentication. Set the header and
+secret to match your sender, or choose an HMAC signature —
 see [docs/webhooks.md](docs/webhooks.md).
 
 ### Voice meetings

@@ -75,19 +75,14 @@ describe('POST /agents/webhooks/:name', () => {
     expect(res.body.error).toMatch(/receiver is disabled/i);
   });
 
-  it('404s unknown subscriptions', async () => {
-    mockHandleInbound.mockResolvedValue({ status: 'not_found' });
-    const res = await request(createTestApp()).post('/agents/webhooks/nope').send({});
-    expect(res.status).toBe(404);
-    expect(res.body.error).toContain('nope');
-  });
-
-  it('403s disabled subscriptions', async () => {
-    mockHandleInbound.mockResolvedValue({ status: 'subscription_disabled' });
-    const res = await request(createTestApp()).post('/agents/webhooks/alerts').send({});
-    expect(res.status).toBe(403);
-    expect(res.body.error).toMatch(/disabled/i);
-  });
+  it.each(['not_found', 'subscription_disabled', 'unauthorized'])(
+    'returns the same response for %s', async (status) => {
+      mockHandleInbound.mockResolvedValue({ status });
+      const res = await request(createTestApp()).post('/agents/webhooks/alerts').send({});
+      expect(res.status).toBe(401);
+      expect(res.body).toEqual({ error: 'Webhook sender verification failed' });
+    },
+  );
 
   it('429s when the subscription run queue is full', async () => {
     mockHandleInbound.mockResolvedValue({ status: 'busy' });
@@ -186,7 +181,8 @@ describe('POST /agents/webhooks/:name', () => {
   it('500s when the service throws', async () => {
     mockHandleInbound.mockRejectedValue(new Error('db exploded'));
     const res = await request(createTestApp()).post('/agents/webhooks/alerts').send({});
-    expect(res.status).toBe(500);
+    expect(mockHandleInbound).toHaveBeenCalledTimes(1);
+    expect(res.status, JSON.stringify(res.body)).toBe(500);
     expect(res.body.error).toBe('db exploded');
   });
 });
