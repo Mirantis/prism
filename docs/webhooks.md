@@ -31,7 +31,7 @@ Click **New subscription** on the Webhooks page. **Delivery** and
 | — | **Events** | Comma-separated event-type allowlist; empty = accept all. See [Event filtering](#event-filtering). |
 | Delivery | **Deliver to** | Where results go: **All channels** (default — web chat + Slack, like heartbeat alerts), **Chat** (web chat only), or **Slack** (Slack only — see [Delivery targets & storage](#delivery-targets--storage)). |
 | Delivery | **Deliver only** | Skip the agent: the rendered prompt template is posted directly as the message. Zero LLM cost — useful for plain notifications. |
-| Delivery | **Prompt** | Instructions for the agent when this webhook fires (optional). Supports payload substitution — see below. |
+| Delivery | **Prompt** / **Message template** | Instructions for the agent, or the message sent in **Deliver only** mode. Supports payload substitution — see below. |
 | Authentication | **Scheme** | How the sender proves itself: **None**, **Shared token in a header**, or **HMAC signature of the body**. |
 | Authentication | **Header** / **Prefix** / **Secret** (+ **Algorithm** / **Encoding**) | Where the credential arrives and what it's compared against; shown once Scheme isn't None. See [Authentication](#authentication). |
 

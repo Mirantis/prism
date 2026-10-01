@@ -253,3 +253,56 @@ Then(
     expect(messages.some((m) => m.content.includes(text))).toBe(false);
   },
 );
+
+When('I use a narrow webhook viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+});
+
+Then(
+  'the subscription {string} shows authentication and controls without horizontal scrolling',
+  async ({ page }, name: string) => {
+    const card = page.getByLabel(`Subscription ${name}`, { exact: true });
+    await expect(card.getByText('HMAC signature', { exact: true })).toBeVisible();
+    for (const control of [
+      card.getByRole('button', { name: 'Copy endpoint URL' }),
+      card.getByRole('button', { name: `Authentication for ${name}` }),
+      card.getByRole('button', { name: `Delete ${name}` }),
+      card.getByRole('switch', { name: `Toggle ${name}` }),
+    ]) {
+      await expect(control).toBeInViewport();
+    }
+    expect(await card.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  },
+);
+
+When('I open authentication for webhook {string} on a short screen', async ({ page }, name: string) => {
+  await page.setViewportSize({ width: 568, height: 320 });
+  await page.getByRole('button', { name: `Authentication for ${name}`, exact: true }).click();
+});
+
+Then('the webhook authentication form and its actions fit the viewport', async ({ page }) => {
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  await expect.poll(async () => {
+    const box = await dialog.boundingBox();
+    return box && box.y >= 0 && box.y + box.height <= page.viewportSize()!.height;
+  }).toBe(true);
+  await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toBeInViewport();
+  await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeInViewport();
+  await expect(page.locator('#webhook-secret')).toHaveValue('');
+  await page.locator('#webhook-auth-header').fill('');
+  await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+  await page.locator('#webhook-auth-header').fill('X-Hub-Signature-256');
+});
+
+When('I save webhook authentication with an empty secret using Enter', async ({ page }) => {
+  await page.locator('#webhook-auth-header').press('Enter');
+  await expect(page.getByRole('dialog')).toBeHidden();
+});
+
+When('I replace the webhook secret with {string} using Enter', async ({ page }, secret: string) => {
+  await page.locator('#webhook-secret').fill(secret);
+  await page.locator('#webhook-secret').press('Enter');
+  await expect(page.getByRole('dialog')).toBeHidden();
+});

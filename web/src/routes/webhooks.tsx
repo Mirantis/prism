@@ -45,9 +45,10 @@ import { useAgent } from '@/lib/agent-context';
 import { useFormErrors } from '@/hooks/use-form-errors';
 import { CreateModal } from '@/components/shared/create-modal';
 import { DeleteConfirm } from '@/components/shared/delete-confirm';
+import { WebhookAuthBadge } from '@/components/webhooks/webhook-auth-badge';
+import { WebhookSubscriptionCard } from '@/components/webhooks/webhook-subscription-card';
 import { WebhookAuthDialog } from '@/components/webhooks/webhook-auth-dialog';
 import {
-  AUTH_TYPE_LABELS,
   EMPTY_WEBHOOK_AUTH,
   isWebhookAuthComplete,
   WebhookAuthFields,
@@ -220,109 +221,121 @@ function WebhooksPage() {
         </div>
       )}
 
-      <section className="space-y-3">
+      <section className="@container space-y-3">
         <SectionHeader
           title={`Subscriptions (${subscriptions?.length ?? 0})`}
           description={
             <>
-              Senders POST to <code>{webhookOrigin}</code>. Changes apply immediately. A disabled
-              subscription rejects incoming events.
+              Send events to <code className="break-all">{webhookOrigin}</code> using the endpoint for each subscription.
             </>
           }
         />
 
         {subscriptions && subscriptions.length > 0 ? (
-          <Card className="py-0">
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead className="pl-4">Name</TableHead>
-                  <TableHead className="hidden md:table-cell">Events</TableHead>
-                  <TableHead>Delivery</TableHead>
-                  <TableHead>Endpoint</TableHead>
-                  <TableHead className="hidden md:table-cell">Auth</TableHead>
-                  <TableHead className="w-[60px]">Active</TableHead>
-                  <TableHead className="w-[90px]" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {subscriptions.map((s) => (
-                  <TableRow key={s.id}>
-                    <TableCell className="pl-4">
-                      <div className="flex items-center gap-3">
-                        <IconTile icon={WebhookIcon} tone={s.isActive ? 'success' : 'neutral'} />
-                        <div className="min-w-0">
-                          <span className="font-medium text-strong">{s.name}</span>
-                          {s.description && (
-                            <p className="max-w-xs truncate text-xs text-muted-foreground">{s.description}</p>
-                          )}
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden text-sm text-muted-foreground md:table-cell">
-                      {s.events ? <code className="font-mono text-xs">{s.events}</code> : 'all'}
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      {DELIVER_LABELS[s.deliverTo]}
-                      {s.deliverOnly && <span className="block text-xs text-muted-foreground">direct — no agent</span>}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        <code className="max-w-[220px] truncate font-mono text-xs">/agents/webhooks/{s.name}</code>
-                        <CopyButton text={endpointUrl(s.name)} label="Copy endpoint URL" />
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
-                      {s.authType === 'none' ? (
-                        <span className="text-amber-600 dark:text-amber-500">Unverified</span>
-                      ) : (
-                        <>
-                          {AUTH_TYPE_LABELS[s.authType]}
-                          <code className="block font-mono text-xs">{s.authHeader}</code>
-                        </>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Switch
-                        checked={s.isActive}
-                        onCheckedChange={(checked: boolean) =>
-                          toggleMut.mutate({ id: s.id, isActive: checked })
-                        }
-                        aria-label={`Toggle ${s.name}`}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        title="Sender authentication"
-                        aria-label={`Authentication for ${s.name}`}
-                        className="text-muted-foreground"
-                        onClick={(e: React.MouseEvent) => {
-                          e.stopPropagation();
-                          setAuthTarget(s);
-                        }}
-                      >
-                        <KeyRound className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label={`Delete ${s.name}`}
-                        className="text-muted-foreground hover:text-destructive"
-                        onClick={(e: React.MouseEvent) => {
-                          e.stopPropagation();
-                          setDeleteTarget({ id: s.id, name: s.name });
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
+          <>
+            <div className="grid gap-3 @min-[640px]:grid-cols-2 @min-[1000px]:hidden">
+              {subscriptions.map((s) => (
+                <WebhookSubscriptionCard
+                  key={s.id}
+                  subscription={s}
+                  endpoint={endpointUrl(s.name)}
+                  deliveryLabel={DELIVER_LABELS[s.deliverTo]}
+                  isUpdating={toggleMut.isPending && toggleMut.variables?.id === s.id}
+                  onToggle={(isActive) => toggleMut.mutate({ id: s.id, isActive })}
+                  onAuthenticate={() => setAuthTarget(s)}
+                  onDelete={() => setDeleteTarget({ id: s.id, name: s.name })}
+                />
+              ))}
+            </div>
+            <Card className="hidden py-0 @min-[1000px]:block">
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="pl-4">Name</TableHead>
+                    <TableHead className="hidden md:table-cell">Events</TableHead>
+                    <TableHead>Delivery</TableHead>
+                    <TableHead>Endpoint</TableHead>
+                    <TableHead className="hidden md:table-cell">Auth</TableHead>
+                    <TableHead className="w-[60px]">Active</TableHead>
+                    <TableHead className="w-[90px]" />
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </Card>
+                </TableHeader>
+                <TableBody>
+                  {subscriptions.map((s) => (
+                    <TableRow key={s.id}>
+                      <TableCell className="pl-4">
+                        <div className="flex items-center gap-3">
+                          <IconTile icon={WebhookIcon} tone={s.isActive ? 'success' : 'neutral'} />
+                          <div className="min-w-0">
+                            <span className="block max-w-48 truncate font-medium text-strong" title={s.name}>{s.name}</span>
+                            {s.description && (
+                              <p className="max-w-48 truncate text-xs text-muted-foreground" title={s.description}>{s.description}</p>
+                            )}
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell className="hidden text-sm text-muted-foreground md:table-cell">
+                        {s.events ? <code className="block max-w-24 truncate font-mono text-xs" title={s.events}>{s.events}</code> : 'all'}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {DELIVER_LABELS[s.deliverTo]}
+                        {s.deliverOnly && <span className="block text-xs text-muted-foreground">direct — no agent</span>}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          <code className="max-w-[180px] truncate font-mono text-xs" title={endpointUrl(s.name)}>/agents/webhooks/{s.name}</code>
+                          <CopyButton text={endpointUrl(s.name)} label="Copy endpoint URL" />
+                        </div>
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
+                        <WebhookAuthBadge authType={s.authType} />
+                        {s.authHeader && s.authType !== 'none' && (
+                          <span className="mt-1 block max-w-44 truncate font-mono text-xs" title={s.authHeader}>{s.authHeader}</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Switch
+                          checked={s.isActive}
+                          disabled={toggleMut.isPending && toggleMut.variables?.id === s.id}
+                          onCheckedChange={(checked: boolean) =>
+                            toggleMut.mutate({ id: s.id, isActive: checked })
+                          }
+                          aria-label={`Toggle ${s.name}`}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          title="Sender authentication"
+                          aria-label={`Authentication for ${s.name}`}
+                          className="text-muted-foreground"
+                          onClick={(e: React.MouseEvent) => {
+                            e.stopPropagation();
+                            setAuthTarget(s);
+                          }}
+                        >
+                          <KeyRound className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={`Delete ${s.name}`}
+                          className="text-muted-foreground hover:text-destructive"
+                          onClick={(e: React.MouseEvent) => {
+                            e.stopPropagation();
+                            setDeleteTarget({ id: s.id, name: s.name });
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Card>
+          </>
         ) : (
           <Card>
             <EmptyState
@@ -361,13 +374,15 @@ function WebhooksPage() {
                 value={form.name}
                 onChange={(e) => setField('name', e.target.value)}
                 placeholder="e.g. github-push"
+                autoCapitalize="none"
+                spellCheck={false}
                 className="font-mono"
               />
               {fieldErrors.name ? (
                 <FieldError>{fieldErrors.name}</FieldError>
               ) : (
                 <FieldDescription>
-                  Becomes the endpoint path: <code>/agents/webhooks/&lt;name&gt;</code>
+                  Use lowercase letters, numbers, hyphens, or underscores. This becomes the endpoint name.
                 </FieldDescription>
               )}
             </Field>
@@ -439,12 +454,12 @@ function WebhooksPage() {
               </Field>
             </div>
             <Field data-invalid={Boolean(fieldErrors.prompt)}>
-              <FieldLabel htmlFor="webhook-prompt">Prompt</FieldLabel>
+              <FieldLabel htmlFor="webhook-prompt">{form.deliverOnly ? 'Message template' : 'Prompt'}</FieldLabel>
               <Textarea
                 id="webhook-prompt"
                 value={form.prompt}
                 onChange={(e) => setField('prompt', e.target.value)}
-                placeholder="Instructions for the agent when this webhook fires (optional)"
+                placeholder={form.deliverOnly ? 'Message to deliver, e.g. Alert: {status}' : 'Instructions for the agent when this webhook fires (optional)'}
                 rows={3}
               />
               {fieldErrors.prompt ? (
