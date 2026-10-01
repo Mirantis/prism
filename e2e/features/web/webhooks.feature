@@ -87,3 +87,21 @@ Feature: Inbound webhooks
     And a webhook-triggered message containing "Token alert: firing" is stored in the conversation
     When I POST the payload '{"status":"firing"}' to webhook "tokened" with header "Authorization" set to "Bearer nope"
     Then the webhook response status is 401
+
+  Scenario: Manage authentication on a narrow screen with the keyboard
+    When I use a narrow webhook viewport
+    And I navigate to the webhooks page
+    And I enable the webhook receiver
+    And I create a deliver-only webhook subscription named "mobile-hook" verified by HMAC header "X-Hub-Signature-256" prefix "sha256=" with secret "s3cret" and prompt "Mobile alert: {status}"
+    Then the subscription "mobile-hook" shows authentication and controls without horizontal scrolling
+    When I open authentication for webhook "mobile-hook" on a short screen
+    Then the webhook authentication form and its actions fit the viewport
+    When I save webhook authentication with an empty secret using Enter
+    And I POST the payload '{"status":"kept"}' to webhook "mobile-hook" signed with secret "s3cret"
+    Then the webhook response status is 200
+    When I open authentication for webhook "mobile-hook" on a short screen
+    And I replace the webhook secret with "rotated-secret" using Enter
+    And I POST the payload '{"status":"old"}' to webhook "mobile-hook" signed with secret "s3cret"
+    Then the webhook response status is 401
+    When I POST the payload '{"status":"rotated"}' to webhook "mobile-hook" signed with secret "rotated-secret"
+    Then the webhook response status is 200

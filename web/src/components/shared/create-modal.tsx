@@ -31,6 +31,7 @@ export function CreateModal({
   useEffect(() => { setError(null); }, [isOpen]);
 
   const handleSubmit = async () => {
+    if (submitDisabled || isSubmitting) return;
     setError(null);
     try {
       await onSubmit();
@@ -41,20 +42,28 @@ export function CreateModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-        </DialogHeader>
-        <div className="flex max-h-[60vh] flex-col gap-4 overflow-y-auto py-2">
-          {error && <FieldError>{error}</FieldError>}
-          {children}
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={handleSubmit} disabled={submitDisabled || isSubmitting}>
-            {isSubmitting ? `${submitLabel.replace(/e$/, '')}ing...` : submitLabel}
-          </Button>
-        </DialogFooter>
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col">
+        <form
+          className="flex min-h-0 flex-col gap-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void handleSubmit();
+          }}
+        >
+          <DialogHeader className="shrink-0 pr-6">
+            <DialogTitle className="break-words leading-snug">{title}</DialogTitle>
+          </DialogHeader>
+          <div className="flex min-h-0 max-h-[60vh] flex-col gap-4 overflow-y-auto px-1 py-2 -mx-1">
+            {error && <FieldError>{error}</FieldError>}
+            {children}
+          </div>
+          <DialogFooter className="shrink-0">
+            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+            <Button type="submit" disabled={submitDisabled || isSubmitting}>
+              {isSubmitting ? `${submitLabel.replace(/e$/, '')}ing...` : submitLabel}
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

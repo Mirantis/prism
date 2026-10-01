@@ -93,7 +93,9 @@ export class WebhooksPage extends BasePage {
   }
 
   subscriptionRow(name: string): Locator {
-    return this.page.getByRole('row').filter({ hasText: name });
+    return this.page.getByRole('row').filter({ hasText: name })
+      .or(this.page.getByLabel(`Subscription ${name}`, { exact: true }))
+      .filter({ visible: true });
   }
 
   /** Flip a subscription's Active switch. */

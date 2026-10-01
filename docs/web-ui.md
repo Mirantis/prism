@@ -212,7 +212,8 @@ Let external systems trigger the agent by POSTing JSON to a named endpoint.
 - Each row shows the endpoint path with a button that copies its full URL on
   the webhook port, the **Auth** scheme (`Unverified` when there is none), an
   **Active** switch (disabled subscriptions reject events), a key action to
-  change the scheme or rotate the secret, and a delete action. The secret itself is never displayed again.
+  change the scheme or rotate the secret, and a delete action. On narrow screens, cards keep authentication, the full endpoint URL,
+  and these controls together.
 
 See **[Webhooks](webhooks.md)** for the endpoint contract, prompt-template
 syntax, the authentication recipes, and copy-paste

@@ -56,15 +56,6 @@ export function isWebhookAuthComplete(
   return Boolean(values.authHeader.trim()) && (Boolean(values.secret) || hasSecret);
 }
 
-/** Marks a field the submit button waits for. */
-function RequiredMark() {
-  return (
-    <span aria-hidden="true" className="text-muted-foreground">
-      *
-    </span>
-  );
-}
-
 interface WebhookAuthFieldsProps {
   values: WebhookAuthFormValues;
   onChange: <K extends keyof WebhookAuthFormValues>(
@@ -87,8 +78,6 @@ export function WebhookAuthFields({
   return (
     <>
       <Field data-invalid={Boolean(fieldErrors.authType)}>
-        {/* "Scheme", not "Authentication" — the surrounding section is already
-            titled Authentication (create modal) or names it (rotate dialog). */}
         <FieldLabel htmlFor="webhook-auth-type">Scheme</FieldLabel>
         <Select
           value={authType}
@@ -96,7 +85,7 @@ export function WebhookAuthFields({
             if (value) onChange('authType', value as WebhookAuthType);
           }}
         >
-          <SelectTrigger id="webhook-auth-type" className="min-w-56">
+          <SelectTrigger id="webhook-auth-type" className="w-full min-w-0">
             <SelectValue>{AUTH_TYPE_LABELS[authType]}</SelectValue>
           </SelectTrigger>
           <SelectContent>
@@ -108,9 +97,12 @@ export function WebhookAuthFields({
         {fieldErrors.authType ? (
           <FieldError>{fieldErrors.authType}</FieldError>
         ) : (
-          <FieldDescription>
-            Verify that events really come from your sender. Without it, anyone who can reach this
-            endpoint can trigger the agent.
+          <FieldDescription className={authType === 'none' ? 'text-warning' : undefined}>
+            {authType === 'none'
+              ? 'Anyone who can reach this endpoint can send events. Choose a scheme to verify the sender.'
+              : authType === 'hmac'
+                ? 'Match the signature settings configured in your sender.'
+                : 'Match the token header configured in your sender.'}
           </FieldDescription>
         )}
       </Field>
@@ -119,7 +111,7 @@ export function WebhookAuthFields({
         <>
           <Field data-invalid={Boolean(fieldErrors.authHeader)}>
             <FieldLabel htmlFor="webhook-auth-header">
-              Header <RequiredMark />
+              Header <span aria-hidden="true" className="text-muted-foreground">*</span>
             </FieldLabel>
             <Input
               id="webhook-auth-header"
@@ -134,7 +126,7 @@ export function WebhookAuthFields({
               <FieldError>{fieldErrors.authHeader}</FieldError>
             ) : (
               <FieldDescription>
-                The request header carrying the {authType === 'hmac' ? 'signature' : 'token'}.
+                The request header containing the {authType === 'hmac' ? 'signature' : 'token'}.
               </FieldDescription>
             )}
           </Field>
@@ -153,15 +145,16 @@ export function WebhookAuthFields({
               <FieldError>{fieldErrors.authPrefix}</FieldError>
             ) : (
               <FieldDescription>
-                Optional literal in front of the value, e.g. <code>sha256=</code>, <code>v1=</code>{' '}
-                or <code>Bearer</code>. Leave empty for a bare value.
+                {authType === 'hmac'
+                  ? 'Text before the signature, such as sha256=. Leave empty if unused.'
+                  : 'Text before the token, such as Bearer. Leave empty if unused.'}
               </FieldDescription>
             )}
           </Field>
 
           {authType === 'hmac' && (
-            <div className="flex flex-wrap items-start gap-6">
-              <Field data-invalid={Boolean(fieldErrors.authAlgorithm)} className="w-auto">
+            <div className="grid grid-cols-2 gap-4">
+              <Field data-invalid={Boolean(fieldErrors.authAlgorithm)} className="min-w-0">
                 <FieldLabel htmlFor="webhook-auth-algorithm">Algorithm</FieldLabel>
                 <Select
                   value={values.authAlgorithm}
@@ -169,7 +162,7 @@ export function WebhookAuthFields({
                     if (value) onChange('authAlgorithm', value as WebhookAuthAlgorithm);
                   }}
                 >
-                  <SelectTrigger id="webhook-auth-algorithm" className="min-w-32">
+                  <SelectTrigger id="webhook-auth-algorithm" className="w-full min-w-0">
                     <SelectValue>{values.authAlgorithm}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
@@ -180,7 +173,7 @@ export function WebhookAuthFields({
                 </Select>
                 {fieldErrors.authAlgorithm && <FieldError>{fieldErrors.authAlgorithm}</FieldError>}
               </Field>
-              <Field data-invalid={Boolean(fieldErrors.authEncoding)} className="w-auto">
+              <Field data-invalid={Boolean(fieldErrors.authEncoding)} className="min-w-0">
                 <FieldLabel htmlFor="webhook-auth-encoding">Encoding</FieldLabel>
                 <Select
                   value={values.authEncoding}
@@ -188,7 +181,7 @@ export function WebhookAuthFields({
                     if (value) onChange('authEncoding', value as WebhookAuthEncoding);
                   }}
                 >
-                  <SelectTrigger id="webhook-auth-encoding" className="min-w-32">
+                  <SelectTrigger id="webhook-auth-encoding" className="w-full min-w-0">
                     <SelectValue>{values.authEncoding}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
@@ -203,7 +196,7 @@ export function WebhookAuthFields({
 
           <Field data-invalid={Boolean(fieldErrors.secret)}>
             <FieldLabel htmlFor="webhook-secret">
-              Secret {!hasSecret && <RequiredMark />}
+              Secret {!hasSecret && <span aria-hidden="true" className="text-muted-foreground">*</span>}
             </FieldLabel>
             <Input
               id="webhook-secret"
@@ -221,8 +214,8 @@ export function WebhookAuthFields({
             ) : (
               <FieldDescription>
                 {hasSecret
-                  ? 'A secret is stored. Enter a new one to replace it; it is never displayed again.'
-                  : 'Shared with the sender only. Stored on this agent and never shown again.'}
+                  ? 'Leave empty to keep the stored secret, or enter a new one to replace it.'
+                  : 'Use the same secret in your sender and this subscription.'}
               </FieldDescription>
             )}
           </Field>
