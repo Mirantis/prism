@@ -15,7 +15,7 @@ export interface NewSubscriptionInput {
   events?: string;
   prompt?: string;
   deliverOnly?: boolean;
-  /** Generic sender verification: 'token' or 'hmac' (default: none). */
+  /** Omit to explicitly select None for unsigned-delivery scenarios. */
   authType?: 'token' | 'hmac';
   authHeader?: string;
   authPrefix?: string;
@@ -62,6 +62,10 @@ export class WebhooksPage extends BasePage {
       await this.page
         .locator('[data-slot="dialog-content"] [data-slot="checkbox"]')
         .click();
+    }
+    if (!input.authType) {
+      await this.page.locator('#webhook-auth-type').click();
+      await this.page.getByRole('option', { name: 'None', exact: true }).click();
     }
     if (input.authType) {
       // Base UI Select: open the trigger, pick the option by its label.

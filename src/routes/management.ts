@@ -917,7 +917,7 @@ interface WebhookAuthFields {
 }
 
 const WEBHOOK_AUTH_DEFAULTS: WebhookAuthFields = {
-  authType: 'none',
+  authType: 'token',
   authHeader: null,
   authPrefix: null,
   authAlgorithm: 'sha256',
@@ -1050,7 +1050,7 @@ router.patch('/webhooks/receiver', async (req: Request, res: Response) => {
       return;
     }
     await webhookReceiverService.setEnabled(enabled);
-    res.json({ enabled });
+    res.json({ enabled: webhookReceiverService.enabled });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[Management] Failed to toggle webhook receiver: ${msg}`);
@@ -1148,9 +1148,9 @@ router.post('/webhook-subscriptions', async (req: Request, res: Response) => {
     });
     res.status(201).json(toPublicSubscription(subscription));
   } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to create webhook subscription: ${msg}`);
-    res.status(500).json({ error: msg });
+    logger.error({ errorName: error instanceof Error ? error.name : 'UnknownError' },
+      '[Management] Failed to create webhook subscription');
+    res.status(500).json({ error: 'Failed to create webhook subscription' });
   }
 });
 
@@ -1220,9 +1220,9 @@ router.patch('/webhook-subscriptions/:id', async (req: Request<{ id: string }>, 
     }
     res.json(toPublicSubscription(subscription));
   } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to update webhook subscription ${req.params.id}: ${msg}`);
-    res.status(500).json({ error: msg });
+    logger.error({ errorName: error instanceof Error ? error.name : 'UnknownError' },
+      '[Management] Failed to update webhook subscription');
+    res.status(500).json({ error: 'Failed to update webhook subscription' });
   }
 });
 

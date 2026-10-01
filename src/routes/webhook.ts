@@ -62,16 +62,11 @@ router.post('/webhooks/:name', async (req: Request<{ name: string }>, res: Respo
       case 'receiver_disabled':
         res.status(403).json({ error: 'Webhook receiver is disabled' });
         return;
-      case 'unauthorized':
-        // Uniform message for every failure reason — a probe must not be able
-        // to tell "wrong signature" from "no secret configured".
-        res.status(401).json({ error: 'Webhook sender verification failed' });
-        return;
       case 'not_found':
-        res.status(404).json({ error: `Unknown webhook: ${name}` });
-        return;
       case 'subscription_disabled':
-        res.status(403).json({ error: `Webhook subscription "${name}" is disabled` });
+      case 'unauthorized':
+        // Hide subscription names, state and verification failure reasons.
+        res.status(401).json({ error: 'Webhook sender verification failed' });
         return;
       case 'busy':
         res.status(429).json({ error: `Webhook "${name}" run queue is full — retry later` });

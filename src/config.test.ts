@@ -124,6 +124,12 @@ describe('config', () => {
       expect((await loadConfig()).webhookPort).toBe(3004);
     });
 
+    it('rejects a webhook port equal to the management port', async () => {
+      process.env.PORT = '4000';
+      process.env.WEBHOOK_PORT = '4000';
+      await expect(loadConfig()).rejects.toThrow('WEBHOOK_PORT must differ from PORT');
+    });
+
     it('takes WEBHOOK_PORT', async () => {
       process.env.WEBHOOK_PORT = '4010';
       expect((await loadConfig()).webhookPort).toBe(4010);

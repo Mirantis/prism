@@ -94,22 +94,17 @@ export function createApp() {
   return app;
 }
 
-/** The URL a log line names for `port` on the bound interface. */
-function localUrl(port: number): string {
-  // A wildcard bind is not an address a browser can open, so name the
-  // interface separately from the URL. An IPv6 literal needs brackets.
-  const wildcard = ['0.0.0.0', '::', '::0', '0:0:0:0:0:0:0:0'].includes(config.host);
-  const address = config.host.includes(':') ? `[${config.host}]` : config.host;
-  return `http://${wildcard ? 'localhost' : address}:${port}`;
-}
-
 /**
  * Bind the server to `config.host`, which `PRISM_HOST` sets and which defaults
  * to loopback.
  */
 export function listenOn(server: Pick<Server, 'listen'>): void {
   server.listen(config.port, config.host, () => {
-    const url = localUrl(config.port);
+    // A wildcard bind is not an address a browser can open, so name the
+    // interface separately from the URL. An IPv6 literal needs brackets.
+    const wildcard = ['0.0.0.0', '::', '::0', '0:0:0:0:0:0:0:0'].includes(config.host);
+    const address = config.host.includes(':') ? `[${config.host}]` : config.host;
+    const url = `http://${wildcard ? 'localhost' : address}:${config.port}`;
     logger.info(`Running on ${url} (interface ${config.host})`);
     logger.info(`Health: ${url}/health`);
   });

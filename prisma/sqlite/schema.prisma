@@ -106,9 +106,7 @@ model AgentWorkspace {
   dailyResetHour  Int  @default(4)
   idleTimeoutMins Int?
 
-  // Inbound webhook receiver master switch (the Webhooks page "Enable
-  // Webhooks" button). Off by default; POST /agents/webhooks/:name rejects
-  // with 403 while disabled.
+  // The Webhooks page receiver switch opens the dedicated port while enabled.
   webhooksEnabled Boolean @default(false)
 
   // When false (default), only the final text step of a multi-step chat turn
@@ -385,17 +383,17 @@ model Goal {
   status String @default("active")
 
   tokenBudget Int?
-  tokensUsed  Int  @default(0)
-  turnCount   Int  @default(0)
+  tokensUsed  Int @default(0)
+  turnCount   Int @default(0)
   maxTurns    Int
 
   // Consecutive zero-progress turns; goal is blocked once this hits GOAL_MAX_STALL_TURNS.
-  stallCount Int     @default(0)
+  stallCount Int @default(0)
   // Latest loop/gate reason (why it continued, blocked, or stopped) — surfaced in status.
   lastReason String?
 
   // Originating channel (REQUIRED) used for scoped delivery of goal-turn output.
-  originChannel   String // 'slack' | 'websocket'
+  originChannel String // 'slack' | 'websocket'
   // Nullable: absent for Slack DMs (delivery falls back to the DM mapping).
   originChannelId String?
 
@@ -673,9 +671,7 @@ model PendingSlackMessage {
 // | 'hmac'), `authHeader` names the header that carries the credential,
 // `authPrefix` is an optional literal stripped from that value ('sha256=',
 // 'Bearer', …), and `authAlgorithm`/`authEncoding` shape the HMAC digest.
-// Every real sender is a configuration recipe, not a code path. The secret is
-// stored plaintext (single-agent mode has no key material) and is never
-// returned by the management API.
+// The management API returns whether a secret is set.
 
 model WebhookSubscription {
   id          String  @id @default(uuid())
@@ -688,7 +684,7 @@ model WebhookSubscription {
   deliverOnly Boolean @default(false)
   isActive    Boolean @default(true)
 
-  authType      WebhookAuthType      @default(none)
+  authType      WebhookAuthType      @default(token)
   authHeader    String? // header carrying the token/signature
   authPrefix    String? // literal stripped before comparing (e.g. 'sha256=')
   authAlgorithm WebhookAuthAlgorithm @default(sha256) // hmac only

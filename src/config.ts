@@ -20,6 +20,7 @@ const nexusApiUrl = process.env.NEXUS_API_URL;
 const projectId = process.env.PROJECT_ID;
 const port = parseInt(process.env.PORT || '3003', 10);
 const webhookPort = parseInt(process.env.WEBHOOK_PORT || '3004', 10);
+if (webhookPort === port) throw new Error('WEBHOOK_PORT must differ from PORT');
 // Example: LENS_SANDBOX_INGRESS_PORTS=web=3003,metrics=9090 names port 3003 `web`.
 function ingressPortName(forPort: number): string | undefined {
   return process.env.LENS_SANDBOX_INGRESS_PORTS

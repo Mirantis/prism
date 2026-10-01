@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { webhookOrigin as getWebhookOrigin } from '@/components/webhooks/webhook-endpoint';
 import { createFileRoute } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card } from '@/components/ui/card';
@@ -111,8 +112,6 @@ function WebhooksPage() {
         prompt: input.prompt.trim() || undefined,
         deliverTo: input.deliverTo,
         deliverOnly: input.deliverOnly,
-        // Auth fields only travel when verification is actually configured;
-        // 'none' is the server default.
         ...(input.authType !== 'none'
           ? {
               authType: input.authType,
@@ -122,7 +121,7 @@ function WebhooksPage() {
               authEncoding: input.authEncoding,
               secret: input.secret,
             }
-          : {}),
+          : { authType: 'none' }),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['webhook-subscriptions', agent.agentId] });
@@ -178,10 +177,8 @@ function WebhooksPage() {
   }
 
   const enabled = receiver?.enabled === true;
-  // Senders reach the webhook port, not the origin this page was loaded from.
-  const webhookOrigin =
-    receiver?.publicUrl ?? `${window.location.protocol}//${window.location.hostname}:${receiver?.port}`;
-  const endpointUrl = (name: string) => `${webhookOrigin}/agents/webhooks/${name}`;
+  const webhookOrigin = getWebhookOrigin(receiver, window.location);
+  const endpointUrl = (name: string) => webhookOrigin ? `${webhookOrigin}/agents/webhooks/${name}` : null;
 
   return (
     <Page>
@@ -234,9 +231,11 @@ function WebhooksPage() {
         <SectionHeader
           title={`Subscriptions (${subscriptions?.length ?? 0})`}
           description={enabled ? (
-            <>
-              Send events to <code className="break-all">{webhookOrigin}</code> using the endpoint for each subscription.
-            </>
+            webhookOrigin ? (
+              <>
+                Send events to <code className="break-all">{webhookOrigin}</code> using the endpoint for each subscription.
+              </>
+            ) : `Webhook port ${receiver?.port} is not exposed. Expose it through your ingress or tunnel and use that address for deliveries.`
           ) : subscriptions?.length ? 'Enable the receiver to resume deliveries. Subscription settings are saved.' : undefined}
         />
 
@@ -292,8 +291,8 @@ function WebhooksPage() {
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
-                          <code className="max-w-[180px] truncate font-mono text-xs" title={endpointUrl(s.name)}>/agents/webhooks/{s.name}</code>
-                          <CopyButton text={endpointUrl(s.name)} label="Copy endpoint URL" />
+                          <code className="max-w-[180px] truncate font-mono text-xs" title={endpointUrl(s.name) ?? undefined}>/agents/webhooks/{s.name}</code>
+                          {webhookOrigin && <CopyButton text={endpointUrl(s.name)!} label="Copy endpoint URL" />}
                         </div>
                       </TableCell>
                       <TableCell className="hidden md:table-cell text-sm text-muted-foreground">

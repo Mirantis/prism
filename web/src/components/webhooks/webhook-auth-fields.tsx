@@ -25,7 +25,7 @@ export interface WebhookAuthFormValues {
 }
 
 export const EMPTY_WEBHOOK_AUTH: WebhookAuthFormValues = {
-  authType: 'none',
+  authType: 'token',
   authHeader: '',
   authPrefix: '',
   authAlgorithm: 'sha256',

@@ -18,9 +18,9 @@ const values = (overrides: Partial<WebhookAuthFormValues> = {}): WebhookAuthForm
 
 describe('isWebhookAuthComplete', () => {
   it('is satisfied when no verification is configured', () => {
-    expect(isWebhookAuthComplete(values())).toBe(true);
+    expect(isWebhookAuthComplete(values({ authType: 'none' }))).toBe(true);
     // Leftovers from a scheme the user switched away from don't matter.
-    expect(isWebhookAuthComplete(values({ authHeader: 'X-Token' }))).toBe(true);
+    expect(isWebhookAuthComplete(values({ authType: 'none', authHeader: 'X-Token' }))).toBe(true);
   });
 
   it('requires both a header and a secret for a shared token', () => {

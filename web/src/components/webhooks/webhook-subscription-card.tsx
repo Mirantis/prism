@@ -8,7 +8,7 @@ import type { WebhookSubscription } from '@/types';
 
 interface WebhookSubscriptionCardProps {
   subscription: WebhookSubscription;
-  endpoint: string;
+  endpoint: string | null;
   deliveryLabel: string;
   isUpdating: boolean;
   onToggle: (active: boolean) => void;
@@ -51,8 +51,8 @@ export function WebhookSubscriptionCard({
         </span>
       </div>
       <div className="flex min-w-0 items-center gap-2 rounded-lg bg-muted/40 p-2">
-        <code className="min-w-0 flex-1 break-all bg-transparent p-0 font-mono text-xs">{endpoint}</code>
-        <CopyButton text={endpoint} label="Copy endpoint URL" className="size-9 shrink-0" />
+        <code className="min-w-0 flex-1 break-all bg-transparent p-0 font-mono text-xs">{endpoint ?? `/agents/webhooks/${subscription.name}`}</code>
+        {endpoint && <CopyButton text={endpoint} label="Copy endpoint URL" className="size-9 shrink-0" />}
       </div>
       <div className="flex items-center justify-between gap-2">
         <Button variant="outline" className="h-9" onClick={onAuthenticate} aria-label={`Authentication for ${subscription.name}`}>
