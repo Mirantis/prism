@@ -283,6 +283,7 @@ RUN chmod +x ./start.sh
 # Set environment
 ENV NODE_ENV=production
 ENV PORT=3003
+ENV WEBHOOK_PORT=3004
 # A published port requires the runtime to listen on every interface. The
 # default is loopback, which is what a local install wants.
 ENV PRISM_HOST=0.0.0.0
@@ -310,7 +311,7 @@ RUN --mount=type=secret,id=otel_api_key \
       install -m 0444 /run/secrets/otel_api_key /app/.otel-api-key; \
     fi
 
-EXPOSE 3003
+EXPOSE 3003 3004
 
 # Per-agent SQLite DB and the installed skills bundles live here. Owned by node
 # so the runtime user can write; the skills/ subdir is pre-created so first-boot

@@ -19,18 +19,27 @@ import { resolveRealtimeConfiguration } from './lib/managed-realtime';
 const nexusApiUrl = process.env.NEXUS_API_URL;
 const projectId = process.env.PROJECT_ID;
 const port = parseInt(process.env.PORT || '3003', 10);
-// Example: LENS_SANDBOX_INGRESS_PORTS=web=3003,metrics=9090 selects the web origin for PORT=3003.
-const ingressPortName = process.env.LENS_SANDBOX_INGRESS_PORTS
-  ?.split(',')
-  .map((entry) => entry.trim().split('='))
-  .find(([, value]) => Number(value) === port)?.[0] ?? 'web';
+const webhookPort = parseInt(process.env.WEBHOOK_PORT || '3004', 10);
+// Example: LENS_SANDBOX_INGRESS_PORTS=web=3003,metrics=9090 names port 3003 `web`.
+function ingressPortName(forPort: number): string | undefined {
+  return process.env.LENS_SANDBOX_INGRESS_PORTS
+    ?.split(',')
+    .map((entry) => entry.trim().split('='))
+    .find(([, value]) => Number(value) === forPort)?.[0];
+}
 // Example: NEXUS_INGRESS_ORIGINS_WEB=https://prism.example.com,https://alias.example.com.
-const ingressOrigins = process.env[
-  `NEXUS_INGRESS_ORIGINS_${ingressPortName.toUpperCase().replaceAll('-', '_')}`
-];
+function ingressOrigin(portName: string): string | undefined {
+  return process.env[`NEXUS_INGRESS_ORIGINS_${portName.toUpperCase().replaceAll('-', '_')}`]
+    ?.split(',')[0]
+    ?.trim();
+}
 const publicUrl = (
-  process.env.PRISM_PUBLIC_URL?.trim() || ingressOrigins?.split(',')[0]?.trim()
+  process.env.PRISM_PUBLIC_URL?.trim() || ingressOrigin(ingressPortName(port) ?? 'web')
 )?.replace(/\/+$/, '') || null;
+// The webhook port has a public origin only when the deployment exposes it by name.
+const webhookPortName = ingressPortName(webhookPort);
+const webhookPublicUrl =
+  (webhookPortName && ingressOrigin(webhookPortName))?.replace(/\/+$/, '') || null;
 const awsRegion = process.env.AWS_REGION || 'us-east-1';
 
 // Which vendor the runtime talks to. One provider per container (matching one
@@ -708,6 +717,9 @@ export const config = {
   // sets `PRISM_HOST=0.0.0.0`, which is what a published port needs.
   host: process.env.PRISM_HOST?.trim() || '127.0.0.1',
   publicUrl,
+  // Webhook senders POST here, apart from the Web UI and the management API.
+  webhookPort,
+  webhookPublicUrl,
   // Dev convenience default; production sets DATABASE_URL=file:/data/agent.db
   // via start.sh so the container's mounted /data volume is used.
   databaseUrl: process.env.DATABASE_URL ?? 'file:./agent.db',

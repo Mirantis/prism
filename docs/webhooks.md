@@ -35,14 +35,17 @@ Click **New subscription** on the Webhooks page. **Delivery** and
 | Authentication | **Scheme** | How the sender proves itself: **None**, **Shared token in a header**, or **HMAC signature of the body**. |
 | Authentication | **Header** / **Prefix** / **Secret** (+ **Algorithm** / **Encoding**) | Where the credential arrives and what it's compared against; shown once Scheme isn't None. See [Authentication](#authentication). |
 
-Each row in the subscriptions list shows the endpoint path with a copy button,
-an **Active** switch (disabled subscriptions answer `403` without running
-anything), and a delete action. Changes apply immediately.
+Each row in the subscriptions list shows the endpoint path with a button that
+copies its full URL, an **Active** switch (disabled subscriptions answer `403`
+without running anything), and a delete action. Changes apply immediately.
 
 ## The endpoint
 
+Senders POST to the webhook port, **3004**, apart from the Web UI and its API
+on 3003. `WEBHOOK_PORT` moves it; in Docker, publish it with `-p 3004:3004`.
+
 ```
-POST /agents/webhooks/<name>
+POST http://<prism-host>:3004/agents/webhooks/<name>
 Content-Type: application/json
 ```
 
@@ -76,11 +79,11 @@ cost no LLM tokens.
 
 ## Authentication
 
-Like every other runtime endpoint, the platform routing in front of the
-container terminates auth — so don't expose the runtime port directly to the
-internet. On top of that, **each subscription can require its sender to prove
-itself**, which is what stops anyone who can reach the endpoint (and guess the
-name) from triggering agent runs with a payload they control.
+Expose the webhook port to your senders and keep port 3003 private: anyone who
+reaches 3003 controls the agent through the Web UI and its API. **Each
+subscription can require its sender to prove itself**, which is what stops
+anyone who can reach the endpoint (and guess the name) from triggering agent
+runs with a payload they control.
 
 Verification is **generic**: instead of a list of supported vendors, you point
 it at the header your sender uses and pick how the credential is compared. Any
@@ -205,7 +208,7 @@ A non-empty Events list accepts only matching types; everything else answers
 receivers:
   - name: prism
     webhook_configs:
-      - url: http://<prism-host>/agents/webhooks/alertmanager
+      - url: http://<prism-host>:3004/agents/webhooks/alertmanager
         send_resolved: true
         # Matches a subscription with Scheme = shared token in a header,
         # Header = Authorization, Prefix = Bearer.
@@ -225,15 +228,15 @@ out into concurrent agent runs, without dropping distinct alert groups.
 
 **PagerDuty** — create a v3 webhook subscription (Integrations → Developer
 Tools → Webhooks) pointing at
-`http://<prism-host>/agents/webhooks/pagerduty`. Events arrive as
+`http://<prism-host>:3004/agents/webhooks/pagerduty`. Events arrive as
 `{"event": {"event_type": "incident.triggered", ...}}`. Copy the signing secret
 shown at creation time into the subscription's Secret field with
 Scheme = HMAC, Header = `X-PagerDuty-Signature`, Prefix = `v1=`.
 
 **GitHub** — add a repository webhook (Settings → Webhooks) with content type
 `application/json` pointing at
-`http://<prism-host>/agents/webhooks/github`. Put the same string in GitHub's
-**Secret** field and in the subscription's Secret field with
+`http://<prism-host>:3004/agents/webhooks/github`. Put the same string in
+GitHub's **Secret** field and in the subscription's Secret field with
 Scheme = HMAC, Header = `X-Hub-Signature-256`, Prefix = `sha256=`. Use
 the Events field (e.g. `pull_request,issues`) to pick the event types you care
 about.
@@ -241,7 +244,7 @@ about.
 **Anything else** — any system that can POST JSON works. Unauthenticated:
 
 ```bash
-curl -X POST http://<prism-host>/agents/webhooks/my-hook \
+curl -X POST http://<prism-host>:3004/agents/webhooks/my-hook \
   -H 'Content-Type: application/json' \
   -d '{"event_type": "deploy.finished", "service": "api", "version": "1.4.2"}'
 ```
@@ -249,7 +252,7 @@ curl -X POST http://<prism-host>/agents/webhooks/my-hook \
 With a shared token (Header = `Authorization`, Prefix = `Bearer`):
 
 ```bash
-curl -X POST http://<prism-host>/agents/webhooks/my-hook \
+curl -X POST http://<prism-host>:3004/agents/webhooks/my-hook \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $PRISM_WEBHOOK_SECRET" \
   -d '{"event_type": "deploy.finished", "service": "api", "version": "1.4.2"}'
@@ -261,7 +264,7 @@ sign the exact bytes you send:
 ```bash
 BODY='{"event_type":"deploy.finished","service":"api"}'
 SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$PRISM_WEBHOOK_SECRET" | awk '{print $2}')
-curl -X POST http://<prism-host>/agents/webhooks/my-hook \
+curl -X POST http://<prism-host>:3004/agents/webhooks/my-hook \
   -H 'Content-Type: application/json' \
   -H "X-Hub-Signature-256: sha256=$SIG" \
   -d "$BODY"

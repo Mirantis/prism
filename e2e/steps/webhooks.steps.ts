@@ -17,6 +17,7 @@ import { expect } from '@playwright/test';
 import crypto from 'crypto';
 import type { Page } from '@playwright/test';
 import { WebhooksPage } from '../pages/webhooks.page';
+import { WEBHOOK_PORT } from '../support/webhook-port';
 import * as dbHelper from '../support/db-helper';
 import { getCurrentAgentId } from './common.steps';
 
@@ -25,9 +26,9 @@ const { When, Then } = createBdd();
 let lastWebhookStatus: number | null = null;
 
 /**
- * POST a webhook body as an exact byte string. Signature verification hashes
- * what arrives on the wire, so the payload must be sent verbatim (not handed to
- * Playwright as an object it would re-serialize).
+ * POST a webhook body as an exact byte string to the webhook listener.
+ * Signature verification hashes what arrives on the wire, so the payload must be
+ * sent verbatim (not handed to Playwright as an object it would re-serialize).
  */
 async function postWebhookBody(
   page: Page,
@@ -35,7 +36,7 @@ async function postWebhookBody(
   body: string,
   headers: Record<string, string> = {},
 ): Promise<number> {
-  const res = await page.request.post(`/agents/webhooks/${name}`, {
+  const res = await page.request.post(`http://localhost:${WEBHOOK_PORT}/agents/webhooks/${name}`, {
     headers: { 'content-type': 'application/json', ...headers },
     data: body,
   });
@@ -75,7 +76,9 @@ When('I enable the webhook receiver', async ({ page }) => {
 Then('the stored webhook receiver state is enabled', async ({ page }) => {
   const res = await page.request.get('/agents/webhooks/receiver');
   expect(res.ok()).toBe(true);
-  expect(await res.json()).toEqual({ enabled: true });
+  // The suite's runtime names only its web port to the ingress, so the
+  // webhook port has no public origin.
+  expect(await res.json()).toEqual({ enabled: true, port: WEBHOOK_PORT, publicUrl: null });
 });
 
 When(

@@ -322,6 +322,15 @@ export type WebhookAuthType = 'none' | 'token' | 'hmac';
 export type WebhookAuthAlgorithm = 'sha256' | 'sha1' | 'sha512';
 export type WebhookAuthEncoding = 'hex' | 'base64';
 
+/** The inbound receiver: whether it is on, and where senders reach it. */
+export interface WebhookReceiver {
+  enabled: boolean;
+  /** The port senders POST to, apart from the one serving this UI. */
+  port: number;
+  /** That port's public origin, when the deployment exposes one. */
+  publicUrl: string | null;
+}
+
 export interface WebhookSubscription {
   id: string;
   agentId: string;

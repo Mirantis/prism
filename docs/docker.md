@@ -5,7 +5,7 @@ agent, with its database persisted in a mounted volume.
 
 - **Image:** `ghcr.io/lensapp/prism-agent:latest`
 - **Architectures:** linux/amd64, linux/arm64
-- **Port:** 3003
+- **Ports:** 3003 (Web UI and API), 3004 ([webhooks](webhooks.md))
 - **Data:** the agent's SQLite database lives at `/data/agent.db` inside the
   container — mount a volume at `/data` to persist it.
 

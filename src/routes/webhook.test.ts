@@ -42,13 +42,13 @@ vi.mock('../logger', () => ({
 // ---------------------------------------------------------------------------
 
 import { webhookRouter } from './webhook';
-import { captureWebhookRawBody } from '../lib/raw-body';
+import { captureRawBody } from '../lib/raw-body';
 
 function createTestApp() {
   const app = express();
-  // Same parser configuration as server.ts, so the raw-body plumbing that
-  // signature verification depends on is exercised here too.
-  app.use(express.json({ verify: captureWebhookRawBody }));
+  // Same parser configuration as the webhook listener in server.ts, so the
+  // raw-body plumbing that signature verification depends on is exercised here too.
+  app.use(express.json({ verify: captureRawBody }));
   app.use('/agents', webhookRouter);
   return app;
 }

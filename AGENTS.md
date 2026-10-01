@@ -684,8 +684,8 @@ for the full env block.
 as a build secret so mise resolves its tools against an authenticated rate limit. Extra
 arguments reach `docker build`. `docker:start` then runs that image the way a deployment
 runs it, with only this checkout's `.env` mounted in and the `prism-data` volume for the
-agent's database, skills and browser profile. `PRISM_IMAGE`, `PRISM_PORT` and
-`PRISM_VOLUME` override the defaults. Use these two to try anything that needs the image's
+agent's database, skills and browser profile. `PRISM_IMAGE`, `PRISM_PORT`,
+`PRISM_WEBHOOK_PORT` and `PRISM_VOLUME` override the defaults. Use these two to try anything that needs the image's
 own toolchain from a clean start; use `docker:dev` below to iterate on code inside it.
 
 ### The container image with live code (`npm run docker:dev`)
@@ -693,8 +693,8 @@ own toolchain from a clean start; use `docker:dev` below to iterate on code insi
 `scripts/docker-dev.sh` runs the local image with this checkout's `.env`,
 `prisma/`, `dist/` and `web/dist` mounted in, compiles `src/` on the host with
 `tsc --watch`, and restarts the server in the container on every emit. Ctrl+C stops
-it and removes the container. `PRISM_IMAGE`, `PRISM_PORT`, `PRISM_CONTAINER` and
-`PRISM_VOLUME` override the defaults. The image still supplies `node_modules` and
+it and removes the container. `PRISM_IMAGE`, `PRISM_PORT`, `PRISM_WEBHOOK_PORT`,
+`PRISM_CONTAINER` and `PRISM_VOLUME` override the defaults. The image still supplies `node_modules` and
 the generated Prisma client, so the script warns when its `package-lock.json` or
 Prisma schema differs from the checkout's; pull a newer image or build one with
 `npm run docker:build` then. This is the loop for anything that needs the image's
@@ -1021,6 +1021,7 @@ What the operator sets on `docker run`:
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `PORT` | Agent runtime server port | `3003` |
+| `WEBHOOK_PORT` | Port of the webhook listener (`createWebhookApp`), which serves `POST /agents/webhooks/:name` alone, on the `PRISM_HOST` interface and behind the same origin guard. A literal default, not derived from `PORT`. A port that is taken is logged and the runtime runs without webhooks | `3004` |
 | `PRISM_HOST` | Interface the HTTP server binds. Loopback by default, and `lib/origin-guard.ts` then requires a loopback `Host` plus a loopback or absent `Origin` on every request — the guard is app-wide, `/health` included, and covers the `/api/ws` handshake — which is what closes DNS rebinding. A request stating `X-Forwarded-Host` is exempt from the loopback-`Host` rule (that is a proxy in front, a header no browser can state) and is held to the origin rules alone. A non-loopback bind relaxes that to an `Origin` matching the request's own `Host` or its first `X-Forwarded-Host` value, since the exposed address is the operator's to choose. The image sets `0.0.0.0`, which a published port needs | `127.0.0.1` (`0.0.0.0` in the image) |
 | `AGENT_ID` | UUID of the one `AgentWorkspace` this container owns | bootstrapped on first boot |
 | `DATABASE_URL` | SQLite URL for the runtime DB | `file:/data/agent.db` |

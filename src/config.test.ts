@@ -110,6 +110,41 @@ describe('config', () => {
     });
   });
 
+  describe('webhook port', () => {
+    beforeEach(() => {
+      delete process.env.WEBHOOK_PORT;
+      delete process.env.PORT;
+      delete process.env.LENS_SANDBOX_INGRESS_PORTS;
+      delete process.env.NEXUS_INGRESS_ORIGINS_WEB;
+      delete process.env.NEXUS_INGRESS_ORIGINS_WEBHOOKS;
+    });
+
+    it('defaults to 3004 whatever the main port is', async () => {
+      process.env.PORT = '4000';
+      expect((await loadConfig()).webhookPort).toBe(3004);
+    });
+
+    it('takes WEBHOOK_PORT', async () => {
+      process.env.WEBHOOK_PORT = '4010';
+      expect((await loadConfig()).webhookPort).toBe(4010);
+    });
+
+    it('uses the public origin of the exposed webhook port', async () => {
+      process.env.LENS_SANDBOX_INGRESS_PORTS = 'web=3003,webhooks=3004';
+      process.env.NEXUS_INGRESS_ORIGINS_WEB = 'https://prism.example.com';
+      process.env.NEXUS_INGRESS_ORIGINS_WEBHOOKS = ' https://hooks.example.com/,https://alias.example.com';
+      const loaded = await loadConfig();
+      expect(loaded.webhookPublicUrl).toBe('https://hooks.example.com');
+      expect(loaded.publicUrl).toBe('https://prism.example.com');
+    });
+
+    it('has no public origin when the deployment exposes only the web port', async () => {
+      process.env.LENS_SANDBOX_INGRESS_PORTS = 'web=3003';
+      process.env.NEXUS_INGRESS_ORIGINS_WEB = 'https://prism.example.com';
+      expect((await loadConfig()).webhookPublicUrl).toBeNull();
+    });
+  });
+
   it('reads PORT with default 3003', async () => {
     delete process.env.PORT;
     const cfg = await loadConfig();

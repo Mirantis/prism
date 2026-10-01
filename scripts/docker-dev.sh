@@ -9,10 +9,11 @@
 # reads it; the database and data dir live in a named volume. The container is removed
 # when this script exits, however it exits.
 #
-#   PRISM_IMAGE      image to run          (default prism-agent:local)
-#   PRISM_PORT       host port for :3003   (default 3003)
-#   PRISM_CONTAINER  container name        (default prism-dev)
-#   PRISM_VOLUME     named volume for /data (default prism-dev-data)
+#   PRISM_IMAGE         image to run           (default prism-agent:local)
+#   PRISM_PORT          host port for :3003    (default 3003)
+#   PRISM_WEBHOOK_PORT  host port for :3004    (default 3004)
+#   PRISM_CONTAINER     container name         (default prism-dev)
+#   PRISM_VOLUME        named volume for /data (default prism-dev-data)
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
@@ -20,6 +21,7 @@ cd "$REPO_ROOT"
 
 IMAGE="${PRISM_IMAGE:-prism-agent:local}"
 PORT="${PRISM_PORT:-3003}"
+WEBHOOK_PORT="${PRISM_WEBHOOK_PORT:-3004}"
 NAME="${PRISM_CONTAINER:-prism-dev}"
 VOLUME="${PRISM_VOLUME:-prism-dev-data}"
 
@@ -78,9 +80,11 @@ echo "Starting $IMAGE as $NAME on http://localhost:$PORT (Ctrl+C stops and remov
 # shellcheck disable=SC2086 # TTY_FLAGS is empty or -it, never a path.
 docker run --rm $TTY_FLAGS --name "$NAME" \
   -p "$PORT:3003" \
+  -p "$WEBHOOK_PORT:3004" \
   -e DATABASE_URL=file:/data/agent.db \
   -e PRISM_DATA_DIR=/data \
   -e PORT=3003 \
+  -e WEBHOOK_PORT=3004 \
   -v "$VOLUME:/data" \
   -v "$REPO_ROOT/.env:/app/.env:ro" \
   -v "$REPO_ROOT/prisma:/app/prisma:ro" \

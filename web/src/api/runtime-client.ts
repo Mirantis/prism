@@ -22,6 +22,7 @@ import type {
   SkillSummary,
   PluginSummary,
   Goal,
+  WebhookReceiver,
   WebhookSubscription,
   UpdateStatus,
   LlmUsageSummary,
@@ -291,7 +292,7 @@ export const runtimeApi = {
     request<{ success: true }>(`/agents/cron-tasks/${taskId}`, { method: 'DELETE' }),
 
   // Webhooks — inbound receiver toggle + subscription CRUD
-  getWebhookReceiver: () => request<{ enabled: boolean }>('/agents/webhooks/receiver'),
+  getWebhookReceiver: () => request<WebhookReceiver>('/agents/webhooks/receiver'),
   setWebhookReceiver: (enabled: boolean) =>
     request<{ enabled: boolean }>('/agents/webhooks/receiver', {
       method: 'PATCH',

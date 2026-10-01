@@ -209,10 +209,10 @@ Let external systems trigger the agent by POSTing JSON to a named endpoint.
   pick. Header and Secret are required once a scheme is chosen: **Create** stays
   disabled until both are filled in (as does **Save** in the per-row dialog,
   where an empty Secret keeps the stored one).
-- Each row shows the endpoint path with a copy button, the **Auth** scheme
-  (`Unverified` when there is none), an **Active** switch (disabled
-  subscriptions reject events), a key action to change the scheme or rotate the
-  secret, and a delete action. The secret itself is never displayed again.
+- Each row shows the endpoint path with a button that copies its full URL on
+  the webhook port, the **Auth** scheme (`Unverified` when there is none), an
+  **Active** switch (disabled subscriptions reject events), a key action to
+  change the scheme or rotate the secret, and a delete action. The secret itself is never displayed again.
 
 See **[Webhooks](webhooks.md)** for the endpoint contract, prompt-template
 syntax, the authentication recipes, and copy-paste
