@@ -945,7 +945,7 @@ describe('Management Routes', () => {
       const res = await authedRequest(app).get('/agents/webhooks/receiver');
 
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ enabled: false });
+      expect(res.body).toEqual({ enabled: false, port: 3004, publicUrl: null });
     });
 
     it('flips the receiver flag on the agent row', async () => {

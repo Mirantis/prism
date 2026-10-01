@@ -1019,12 +1019,17 @@ function readWebhookAuthFields(
 
 /**
  * GET /agents/webhooks/receiver
- * Whether the inbound webhook receiver is enabled.
+ * Whether the inbound webhook receiver is enabled, and where senders reach it:
+ * the webhook port, plus its public origin when the deployment exposes one.
  */
 router.get('/webhooks/receiver', async (_req: Request, res: Response) => {
   try {
     const agent = await agentWorkspaceService.getAgent();
-    res.json({ enabled: agent.webhooksEnabled });
+    res.json({
+      enabled: agent.webhooksEnabled,
+      port: config.webhookPort,
+      publicUrl: config.webhookPublicUrl,
+    });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[Management] Failed to read webhook receiver state: ${msg}`);

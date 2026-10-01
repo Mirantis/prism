@@ -236,9 +236,9 @@ web, or terminal conversation) instead of starting a new one.
 
 External systems push events at the agent instead of the agent polling for
 them. Each webhook is a named subscription — created on the Web UI's
-**Webhooks** page — with its own endpoint (`POST /agents/webhooks/<name>`),
-an optional event-type filter, an optional prompt template with payload
-substitution (`{field.path}`, `{__raw__}`), and a delivery target (all
+**Webhooks** page — with its own endpoint (`POST /agents/webhooks/<name>` on
+port 3004), an optional event-type filter, an optional prompt template with
+payload substitution (`{field.path}`, `{__raw__}`), and a delivery target (all
 channels, web chat, or Slack). Agent runs are asynchronous (`202 Accepted` +
 run id, result delivered to your channels); a **deliver-only** mode posts the
 rendered template directly with zero LLM cost. Each subscription can require
@@ -365,6 +365,7 @@ restarts.
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `PORT` | HTTP port | `3003` |
+| `WEBHOOK_PORT` | HTTP port webhook senders POST to | `3004` |
 | `PRISM_HOST` | Interface to listen on. The default accepts connections from this machine only; `0.0.0.0` accepts them from the network, which the Docker image sets so a published port works | `127.0.0.1` (Docker: `0.0.0.0`) |
 | `LLM_PROVIDER` | LLM platform: `bedrock`, `azure`, `bedrock-mantle`, `openai`, `openrouter`, or `anthropic` — see [Configuration](docs/configuration.md#provider-selection) for the non-default platforms' credentials and model IDs | `bedrock` |
 | `EMBEDDING_PROVIDER` | Memory-embedding platform, independent of `LLM_PROVIDER`: `bedrock`, `azure-openai`, `openai`, `openrouter`, or `none` — see [Configuration](docs/configuration.md#memory-embeddings) | derived from `LLM_PROVIDER` |

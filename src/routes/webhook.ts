@@ -7,11 +7,11 @@
  * the agent's response is delivered to the subscription's channels when the
  * run finishes. Deliver-only subscriptions publish synchronously (200).
  *
- * Platform routing in front of the container terminates auth for the runtime as
- * a whole (same as every other route); on top of that a subscription can
- * require its sender to prove itself with a token or an HMAC signature, which
- * the service verifies before doing any work (401 on failure). Subscription
- * CRUD lives in routes/management.ts.
+ * The webhook listener serves this router alone, on `WEBHOOK_PORT`
+ * (`createWebhookApp` in server.ts). A subscription can require its sender to
+ * prove itself with a token or an HMAC signature, which the service verifies
+ * before doing any work (401 on failure). Subscription CRUD lives in
+ * routes/management.ts, on the main port.
  */
 
 import { Router, Request, Response } from 'express';

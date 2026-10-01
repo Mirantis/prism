@@ -125,6 +125,7 @@ never the whole runtime port.
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `PORT` | HTTP port the runtime listens on | `3003` |
+| `WEBHOOK_PORT` | HTTP port [webhook](webhooks.md) senders POST to | `3004` |
 | `PRISM_HOST` | Network interface the runtime listens on. The default accepts connections from this machine only. Set it to `0.0.0.0` to accept them from the network — the Docker image does, so a published port works. The name is prefixed because a bare `HOST` is the machine's own hostname in some environments. | `127.0.0.1` (`0.0.0.0` in Docker) |
 | `DATABASE_URL` | SQLite URL for the agent database. The Docker image's `start.sh` sets this to `file:/data/agent.db`; locally it resolves next to the Prisma schema. | `file:/data/agent.db` (Docker) |
 | `AGENT_ID` | Pin the agent's UUID. Unset → a fresh UUID is generated on first boot and reused thereafter. | generated |
@@ -190,12 +191,11 @@ By default the runtime is reachable from this machine only.
   name (`ngrok --host-header=rewrite`) — otherwise its requests, webhook
   deliveries included, are answered with 403.
 
-[Webhooks](webhooks.md) need no environment variables — the receiver toggle,
-subscriptions and their sender credentials live in the database, managed from
-the Web UI. Endpoint auth is still the platform's job in front of the container,
-so don't expose the runtime port directly to the internet; on top of that each
-subscription can require a shared token or an HMAC signature from its sender
-(see [Authentication](webhooks.md#authentication)).
+[Webhooks](webhooks.md) arrive on their own port, `WEBHOOK_PORT`. The receiver
+toggle, subscriptions and their sender credentials live in the database, managed
+from the Web UI. Expose the webhook port to senders and keep `PORT` private;
+each subscription can require a shared token or an HMAC signature from its
+sender (see [Authentication](webhooks.md#authentication)).
 
 ## Tool risk gate
 

@@ -8,10 +8,10 @@
  * the LLM finishes); deliver-only subscriptions publish the rendered template
  * directly with no LLM call.
  *
- * Platform routing in front of the container still terminates auth for the
- * runtime as a whole; on top of that a subscription may require its sender to
- * prove itself (generic token/HMAC verification via lib/webhook-signature.ts),
- * checked here before any filtering, delivery or LLM work happens.
+ * Deliveries arrive on the webhook port, which a deployment exposes to senders.
+ * A subscription may require its sender to prove itself (generic token/HMAC
+ * verification via lib/webhook-signature.ts), checked here before any
+ * filtering, delivery or LLM work happens.
  */
 
 import { WebhookSubscription } from '@prisma/client';

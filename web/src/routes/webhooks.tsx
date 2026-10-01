@@ -164,8 +164,6 @@ function WebhooksPage() {
     }
   };
 
-  const endpointUrl = (name: string) => `${window.location.origin}/agents/webhooks/${name}`;
-
   if (receiverLoading || subsLoading) {
     return (
       <Page>
@@ -179,6 +177,10 @@ function WebhooksPage() {
   }
 
   const enabled = receiver?.enabled === true;
+  // Senders reach the webhook port, not the origin this page was loaded from.
+  const webhookOrigin =
+    receiver?.publicUrl ?? `${window.location.protocol}//${window.location.hostname}:${receiver?.port}`;
+  const endpointUrl = (name: string) => `${webhookOrigin}/agents/webhooks/${name}`;
 
   return (
     <Page>
@@ -221,7 +223,12 @@ function WebhooksPage() {
       <section className="space-y-3">
         <SectionHeader
           title={`Subscriptions (${subscriptions?.length ?? 0})`}
-          description="Changes apply immediately. A disabled subscription rejects incoming events."
+          description={
+            <>
+              Senders POST to <code>{webhookOrigin}</code>. Changes apply immediately. A disabled
+              subscription rejects incoming events.
+            </>
+          }
         />
 
         {subscriptions && subscriptions.length > 0 ? (
