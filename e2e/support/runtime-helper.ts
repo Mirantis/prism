@@ -18,10 +18,17 @@
 const RUNTIME_PORT = 3003;
 
 async function runtimeRequest<T>(
-  method: 'GET' | 'DELETE',
+  method: 'GET' | 'DELETE' | 'PATCH',
   reqPath: string,
+  body?: unknown,
 ): Promise<T> {
-  const res = await fetch(`http://localhost:${RUNTIME_PORT}${reqPath}`, { method });
+  const res = await fetch(`http://localhost:${RUNTIME_PORT}${reqPath}`, {
+    method,
+    ...(body === undefined ? {} : {
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  });
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
     throw new Error(`runtimeRequest ${method} ${reqPath} → ${res.status}: ${detail}`);
@@ -31,8 +38,8 @@ async function runtimeRequest<T>(
 }
 
 /**
- * Unschedule every cron task and stop every live goal, through the API so the
- * runtime drops its in-memory job/loop as well as the row.
+ * Close the webhook receiver, unschedule cron tasks and stop live goals through
+ * the API before resetting their saved state.
  *
  * Call *before* the raw DB wipe: once the rows are gone the runtime has nothing
  * left to enumerate, and the timers survive.
@@ -43,6 +50,7 @@ async function runtimeRequest<T>(
  */
 export async function resetScheduledWork(): Promise<void> {
   try {
+    await runtimeRequest('PATCH', '/agents/webhooks/receiver', { enabled: false });
     const tasks = await runtimeRequest<Array<{ id: string }>>('GET', '/agents/cron-tasks');
     for (const task of tasks) {
       await runtimeRequest('DELETE', `/agents/cron-tasks/${task.id}`);

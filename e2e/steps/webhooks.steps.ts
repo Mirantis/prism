@@ -1,7 +1,7 @@
 /**
  * Webhook Step Definitions (web)
  *
- * Drives the Webhooks page (receiver banner, subscription modal, row
+ * Drives the Webhooks page (receiver switch, subscription modal, row
  * toggles) and asserts on authoritative state: the receiver flag and
  * subscription list via the management API, and delivered messages via the
  * `conversation_messages` table (triggeredBy = WEBHOOK) — the agent run is
@@ -15,6 +15,7 @@
 import { createBdd } from 'playwright-bdd';
 import { expect } from '@playwright/test';
 import crypto from 'crypto';
+import net from 'node:net';
 import type { Page } from '@playwright/test';
 import { WebhooksPage } from '../pages/webhooks.page';
 import { WEBHOOK_PORT } from '../support/webhook-port';
@@ -64,9 +65,8 @@ When('I navigate to the webhooks page', async ({ page }) => {
   await webhooksPage.navigate();
 });
 
-Then('the webhook receiver banner is visible', async ({ page }) => {
-  await expect(page.getByText('Webhook receiver disabled')).toBeVisible();
-  await expect(new WebhooksPage(page).enableButton).toBeVisible();
+Then('the webhook receiver switch is off', async ({ page }) => {
+  await expect(new WebhooksPage(page).receiverSwitch).not.toBeChecked();
 });
 
 When('I enable the webhook receiver', async ({ page }) => {
@@ -121,11 +121,36 @@ When('I disable the subscription {string}', async ({ page }, name: string) => {
   );
 });
 
-When('I disable the webhook receiver via the API', async ({ page }) => {
-  const res = await page.request.patch('/agents/webhooks/receiver', {
-    data: { enabled: false },
+When('I disable the webhook receiver', async ({ page }) => {
+  await new WebhooksPage(page).receiverSwitch.click();
+  await expect(new WebhooksPage(page).receiverSwitch).not.toBeChecked();
+  await expect(new WebhooksPage(page).receiverSwitch).toBeEnabled();
+});
+
+async function webhookPortState(): Promise<'listening' | 'closed'> {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection(WEBHOOK_PORT, '127.0.0.1');
+    socket.setTimeout(1000, () => {
+      socket.destroy();
+      reject(new Error('Webhook port probe timed out'));
+    });
+    socket.once('connect', () => {
+      socket.destroy();
+      resolve('listening');
+    });
+    socket.once('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ECONNREFUSED') resolve('closed');
+      else reject(error);
+    });
   });
-  expect(res.ok()).toBe(true);
+}
+
+Then('the webhook port is closed', async () => {
+  await expect.poll(webhookPortState).toBe('closed');
+});
+
+Then('the webhook port is listening', async () => {
+  await expect.poll(webhookPortState).toBe('listening');
 });
 
 When(

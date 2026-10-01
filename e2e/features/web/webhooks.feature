@@ -13,11 +13,13 @@ Feature: Inbound webhooks
     Given I am logged in
     And I have a personal agent
 
-  Scenario: Enable the webhook receiver from the banner
+  Scenario: Enable the webhook receiver from its disabled default
     When I navigate to the webhooks page
-    Then the webhook receiver banner is visible
+    Then the webhook receiver switch is off
+    And the webhook port is closed
     When I enable the webhook receiver
     Then the stored webhook receiver state is enabled
+    And the webhook port is listening
 
   Scenario: A deliver-only subscription renders the payload into the conversation without the agent
     When I navigate to the webhooks page
@@ -45,13 +47,17 @@ Feature: Inbound webhooks
     When I POST the payload '{"a":1}' to webhook "paused-hook"
     Then the webhook response status is 403
 
-  Scenario: Events are rejected while the receiver is disabled
+  Scenario: Disabling the receiver closes its port and preserves subscriptions
     When I navigate to the webhooks page
     And I enable the webhook receiver
     And I create a deliver-only webhook subscription named "gated" with prompt "irrelevant"
-    And I disable the webhook receiver via the API
-    When I POST the payload '{"a":1}' to webhook "gated"
-    Then the webhook response status is 403
+    And I disable the webhook receiver
+    Then the webhook receiver switch is off
+    And the webhook port is closed
+    And the subscription "gated" appears in the subscriptions list
+    When I enable the webhook receiver
+    And I POST the payload '{"a":1}' to webhook "gated"
+    Then the webhook response status is 200
 
   Scenario: Unknown webhook names are rejected
     When I navigate to the webhooks page

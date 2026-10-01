@@ -125,7 +125,7 @@ never the whole runtime port.
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `PORT` | HTTP port the runtime listens on | `3003` |
-| `WEBHOOK_PORT` | HTTP port [webhook](webhooks.md) senders POST to | `3004` |
+| `WEBHOOK_PORT` | HTTP port opened when the [webhook receiver](webhooks.md) is enabled | `3004` |
 | `PRISM_HOST` | Network interface the runtime listens on. The default accepts connections from this machine only. Set it to `0.0.0.0` to accept them from the network — the Docker image does, so a published port works. The name is prefixed because a bare `HOST` is the machine's own hostname in some environments. | `127.0.0.1` (`0.0.0.0` in Docker) |
 | `DATABASE_URL` | SQLite URL for the agent database. The Docker image's `start.sh` sets this to `file:/data/agent.db`; locally it resolves next to the Prisma schema. | `file:/data/agent.db` (Docker) |
 | `AGENT_ID` | Pin the agent's UUID. Unset → a fresh UUID is generated on first boot and reused thereafter. | generated |

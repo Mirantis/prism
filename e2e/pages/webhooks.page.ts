@@ -1,7 +1,7 @@
 /**
  * Webhooks Page Object — /webhooks.
  *
- * Covers the receiver banner ("Enable Webhooks"), the New-subscription
+ * Covers the receiver switch, the New-subscription
  * modal (including the generic sender-verification fields), and per-row
  * controls (active toggle, delete).
  */
@@ -32,21 +32,21 @@ export class WebhooksPage extends BasePage {
     await this.page.waitForLoadState('networkidle');
   }
 
-  get enableButton(): Locator {
-    return this.page.getByTestId('enable-webhooks');
+  get receiverSwitch(): Locator {
+    return this.page.getByRole('switch', { name: 'Webhook receiver', exact: true });
   }
 
   get newSubscriptionButton(): Locator {
     return this.page.getByRole('button', { name: 'New subscription' });
   }
 
-  /** Click "Enable Webhooks" and wait for the enabled state to render. */
+  /** Enable the receiver and wait for the enabled state to render. */
   async enableReceiver() {
-    await this.enableButton.click();
+    await this.receiverSwitch.click();
     await this.newSubscriptionButton.waitFor({ timeout: 10_000 });
   }
 
-  /** Open the modal, fill the hermes-style fields, and submit. */
+  /** Open the modal, fill the subscription fields, and submit. */
   async createSubscription(input: NewSubscriptionInput) {
     await this.newSubscriptionButton.click();
     await this.page.locator('#webhook-name').fill(input.name);

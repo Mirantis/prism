@@ -14,10 +14,12 @@ connected channels.
 
 ## Enabling the receiver
 
-Webhooks are off by default. Open the **Webhooks** page in the
-[Web UI](web-ui.md) and click **Enable Webhooks**. The toggle takes effect
-immediately — no restart. While the receiver is disabled, every webhook
-endpoint answers `403`.
+Webhooks are off by default. Turn on **Webhook receiver** on the
+[Web UI](web-ui.md) **Webhooks** page to open the webhook port; turning it off
+closes the port immediately and keeps your subscriptions. The setting survives restarts.
+
+If enabling reports that the port is in use, choose a free `WEBHOOK_PORT`, restart,
+and enable the receiver again.
 
 ## Creating a subscription
 
@@ -58,7 +60,7 @@ see [Event filtering](#event-filtering)):
 | `200 OK` | Deliver-only message posted: `{"status":"delivered","event":"<type>"}` — or the event was filtered out by the Events list: `{"status":"ignored","event":"<type>"}`. |
 | `400` | Body was not a JSON object. |
 | `401` | Sender verification failed — see [Authentication](#authentication). |
-| `403` | Receiver disabled, or this subscription is disabled. |
+| `403` | This subscription is disabled. |
 | `404` | No subscription with that name. |
 | `429` | This subscription's run queue is full — retry later. |
 

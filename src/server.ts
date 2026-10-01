@@ -31,14 +31,12 @@ import { managementRouter } from './routes/management';
 import { threadsRouter } from './routes/threads';
 import { messagesRouter } from './routes/messages';
 import { teamsRouter } from './routes/teams';
-import { webhookRouter } from './routes/webhook';
 import { lockedInRouter } from './routes/locked-in';
 import { agentGuideRouter } from './routes/agent-guide';
 import { documentRevisionsRouter } from './routes/document-revisions';
 import { updateRouter } from './routes/update';
 import { originGuard } from './lib/origin-guard';
 import { activityRouter } from './routes/activity';
-import { captureRawBody } from './lib/raw-body';
 
 export function createApp() {
   const app = express();
@@ -96,16 +94,6 @@ export function createApp() {
   return app;
 }
 
-/** The webhook listener: POST /agents/webhooks/:name and nothing else. */
-export function createWebhookApp() {
-  const app = express();
-  app.use(originGuard);
-  // `verify` keeps the raw bytes for HMAC verification (see lib/raw-body.ts).
-  app.use(express.json({ limit: '5mb', verify: captureRawBody }));
-  app.use('/agents', webhookRouter);
-  return app;
-}
-
 /** The URL a log line names for `port` on the bound interface. */
 function localUrl(port: number): string {
   // A wildcard bind is not an address a browser can open, so name the
@@ -124,22 +112,5 @@ export function listenOn(server: Pick<Server, 'listen'>): void {
     const url = localUrl(config.port);
     logger.info(`Running on ${url} (interface ${config.host})`);
     logger.info(`Health: ${url}/health`);
-  });
-}
-
-/**
- * Bind the webhook listener to `config.webhookPort` on the same interface. The
- * receiver is opt-in, so a port that is taken is logged and the runtime keeps
- * running without it.
- */
-export function listenForWebhooks(server: Pick<Server, 'listen' | 'on'>): void {
-  server.on('error', (err) => {
-    logger.error(
-      { err },
-      `[Webhook] Cannot listen on port ${config.webhookPort}; webhook deliveries are not received. Set WEBHOOK_PORT to a free port.`,
-    );
-  });
-  server.listen(config.webhookPort, config.host, () => {
-    logger.info(`Webhooks: ${localUrl(config.webhookPort)}/agents/webhooks/<name>`);
   });
 }

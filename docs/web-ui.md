@@ -195,8 +195,8 @@ TUI, also accept natural-language schedules like "every weekday at 9am" — see
 
 Let external systems trigger the agent by POSTing JSON to a named endpoint.
 
-- **Enable Webhooks** turns the inbound receiver on (it starts disabled); the
-  toggle applies immediately, no restart.
+- **Webhook receiver** starts disabled. Turn it on to open the webhook port;
+  turning it off closes the port immediately and keeps your subscriptions.
 - **New subscription** creates a named route (`/agents/webhooks/<name>`). It
   starts with the name, description and event-type filter, then two sections:
   **Delivery** (target — All channels / Chat / Slack — a **deliver only** mode

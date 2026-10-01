@@ -97,8 +97,8 @@ function WebhooksPage() {
 
   const receiverMut = useMutation({
     mutationFn: (enabled: boolean) => runtimeApi.setWebhookReceiver(enabled),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['webhook-receiver', agent.agentId] });
+    onSettled: () => {
+      return queryClient.invalidateQueries({ queryKey: ['webhook-receiver', agent.agentId] });
     },
   });
 
@@ -198,37 +198,46 @@ function WebhooksPage() {
         }
       />
 
-      {!enabled && (
-        <div className="flex flex-col gap-4 rounded-xl bg-warning/8 p-4 ring-1 ring-warning/30 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start gap-3">
-            <IconTile icon={WebhookIcon} tone="warning" size="md" />
-            <div className="space-y-0.5">
-              <p className="font-medium text-strong">Webhook receiver disabled</p>
-              <p className="text-sm text-foreground/75">
-                Enable the receiver to accept incoming HTTP events. Subscriptions deliver agent
-                responses to your connected channels (web chat and Slack).
+      <Card className="gap-3 p-4">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <IconTile icon={WebhookIcon} tone={enabled ? 'success' : 'neutral'} size="md" />
+            <div className="space-y-1">
+              <label htmlFor="webhook-receiver" className="font-medium text-strong">
+                Webhook receiver
+              </label>
+              <p id="webhook-receiver-description" className="text-sm text-muted-foreground">
+                {enabled
+                  ? 'Accepting events for active subscriptions.'
+                  : 'Enable to accept events from external systems.'}
               </p>
             </div>
           </div>
-          <Button
-            onClick={() => receiverMut.mutate(true)}
-            disabled={receiverMut.isPending}
-            data-testid="enable-webhooks"
-          >
-            <WebhookIcon />
-            {receiverMut.isPending ? 'Enabling...' : 'Enable Webhooks'}
-          </Button>
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="text-sm text-muted-foreground">
+              {receiverMut.isPending ? 'Updating…' : enabled ? 'Enabled' : 'Disabled'}
+            </span>
+            <Switch
+              id="webhook-receiver"
+              checked={enabled}
+              onCheckedChange={(checked: boolean) => receiverMut.mutate(checked)}
+              disabled={receiverMut.isPending}
+              aria-label="Webhook receiver"
+              aria-describedby="webhook-receiver-description"
+            />
+          </div>
         </div>
-      )}
+        {receiverMut.isError && <FieldError>{receiverMut.error.message}</FieldError>}
+      </Card>
 
       <section className="@container space-y-3">
         <SectionHeader
           title={`Subscriptions (${subscriptions?.length ?? 0})`}
-          description={
+          description={enabled ? (
             <>
               Send events to <code className="break-all">{webhookOrigin}</code> using the endpoint for each subscription.
             </>
-          }
+          ) : subscriptions?.length ? 'Enable the receiver to resume deliveries. Subscription settings are saved.' : undefined}
         />
 
         {subscriptions && subscriptions.length > 0 ? (
@@ -340,8 +349,10 @@ function WebhooksPage() {
           <Card>
             <EmptyState
               icon={WebhookIcon}
-              title="No webhook subscriptions yet"
-              description="Create a subscription to give an external system its own endpoint."
+              title="No webhooks configured"
+              description={enabled
+                ? 'Create a subscription to give an external system its own endpoint.'
+                : 'Enable the receiver, then create your first subscription.'}
             />
           </Card>
         )}

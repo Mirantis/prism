@@ -7,7 +7,8 @@ vi.mock('./services/webhook.service', () => ({
   webhookService: { handleInbound: mockHandleInbound },
 }));
 
-import { createApp, createWebhookApp } from './server';
+import { createApp } from './server';
+import { createWebhookApp } from './services/webhook-receiver.service';
 
 describe('GET /health', () => {
   it('returns 200 with status ok', async () => {

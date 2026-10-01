@@ -8,7 +8,7 @@
  * run finishes. Deliver-only subscriptions publish synchronously (200).
  *
  * The webhook listener serves this router alone, on `WEBHOOK_PORT`
- * (`createWebhookApp` in server.ts). A subscription can require its sender to
+ * (`webhook-receiver.service.ts`). A subscription can require its sender to
  * prove itself with a token or an HMAC signature, which the service verifies
  * before doing any work (401 on failure). Subscription CRUD lives in
  * routes/management.ts, on the main port.
