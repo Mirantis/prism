@@ -104,6 +104,7 @@ import fs from 'fs';
 import multer from 'multer';
 import { AgentType, MessageRole, Prisma, ThreadSource } from '@prisma/client';
 import { logger } from '../logger';
+import { webhookReceiverService } from '../services/webhook-receiver.service';
 import { config } from '../config';
 import { trackEvent } from '../lib/telemetry';
 import { prisma } from '../lib/prisma';
@@ -1024,9 +1025,8 @@ function readWebhookAuthFields(
  */
 router.get('/webhooks/receiver', async (_req: Request, res: Response) => {
   try {
-    const agent = await agentWorkspaceService.getAgent();
     res.json({
-      enabled: agent.webhooksEnabled,
+      enabled: webhookReceiverService.enabled,
       port: config.webhookPort,
       publicUrl: config.webhookPublicUrl,
     });
@@ -1049,15 +1049,7 @@ router.patch('/webhooks/receiver', async (req: Request, res: Response) => {
       res.status(400).json({ error: 'enabled must be a boolean' });
       return;
     }
-    const agent = await agentWorkspaceService.getAgent();
-    await prisma.agentWorkspace.update({
-      where: { id: agent.id },
-      data: { webhooksEnabled: enabled },
-    });
-    trackEvent('webhook receiver toggled', agent.userId, {
-      'agent.id': agent.id,
-      'webhook.receiver_enabled': String(enabled),
-    });
+    await webhookReceiverService.setEnabled(enabled);
     res.json({ enabled });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';

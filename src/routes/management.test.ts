@@ -115,6 +115,12 @@ const {
   },
 }));
 
+const { mockSetReceiverEnabled } = vi.hoisted(() => ({ mockSetReceiverEnabled: vi.fn() }));
+
+vi.mock('../services/webhook-receiver.service', () => ({
+  webhookReceiverService: { enabled: false, setEnabled: mockSetReceiverEnabled },
+}));
+
 vi.mock('../services/heartbeat.service', () => ({
   heartbeatService: {
     startHeartbeat: mockStartHeartbeat,
@@ -948,7 +954,7 @@ describe('Management Routes', () => {
       expect(res.body).toEqual({ enabled: false, port: 3004, publicUrl: null });
     });
 
-    it('flips the receiver flag on the agent row', async () => {
+    it('waits for the receiver service to apply the toggle', async () => {
       mockGetAgent.mockResolvedValue({ id: 'agent-1', userId: 'user-1', webhooksEnabled: false });
       mockPrisma.agentWorkspace.update.mockResolvedValue({});
 
@@ -958,10 +964,16 @@ describe('Management Routes', () => {
 
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ enabled: true });
-      expect(mockPrisma.agentWorkspace.update).toHaveBeenCalledWith({
-        where: { id: 'agent-1' },
-        data: { webhooksEnabled: true },
-      });
+      expect(mockSetReceiverEnabled).toHaveBeenCalledWith(true);
+    });
+
+    it('reports a listener failure to the caller', async () => {
+      mockSetReceiverEnabled.mockRejectedValue(new Error('Webhook port is already in use'));
+      const res = await authedRequest(app)
+        .patch('/agents/webhooks/receiver')
+        .send({ enabled: true });
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Webhook port is already in use');
     });
 
     it('rejects a non-boolean enabled', async () => {

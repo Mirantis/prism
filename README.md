@@ -234,6 +234,8 @@ web, or terminal conversation) instead of starting a new one.
 
 ### Webhooks
 
+Webhooks start disabled. Turn on **Webhook receiver** in the Web UI to open
+port 3004; turning it off closes the port and keeps your subscriptions.
 External systems push events at the agent instead of the agent polling for
 them. Each webhook is a named subscription — created on the Web UI's
 **Webhooks** page — with its own endpoint (`POST /agents/webhooks/<name>` on

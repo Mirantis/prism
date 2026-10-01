@@ -24,7 +24,8 @@ if (dotenvLoadInfo.error) {
 } else {
   logger.info('[dotenv] injected %d env var(s) from %s', dotenvLoadInfo.loadedCount, dotenvLoadInfo.path);
 }
-import { createApp, createWebhookApp, listenForWebhooks, listenOn } from './server';
+import { createApp, listenOn } from './server';
+import { webhookReceiverService } from './services/webhook-receiver.service';
 import { initLangfuse, shutdownLangfuse } from './lib/langfuse';
 import { initTelemetry, shutdownTelemetry } from './lib/telemetry';
 import { trackAgentStarted } from './lib/startup-telemetry';
@@ -80,7 +81,6 @@ void refreshModelCatalog().catch((err) => {
 
 const app = createApp();
 const httpServer = createServer(app);
-const webhookServer = createServer(createWebhookApp());
 
 let fileJanitorTimer: NodeJS.Timeout | undefined;
 
@@ -315,8 +315,8 @@ const initialize = async () => {
 const getServer = async () => {
  await initialize();
 
+ await webhookReceiverService.initialize();
  listenOn(httpServer);
- listenForWebhooks(webhookServer);
  return httpServer;
 };
 
@@ -342,7 +342,7 @@ const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResp
   sessionManagerService.stopAll();
   updateService.stop();
   // A delivery starts an agent run, so deliveries stop with the timers.
-  webhookServer.close();
+  await webhookReceiverService.shutdown();
   if (fileJanitorTimer) clearInterval(fileJanitorTimer);
   // A SIGTERM early in boot would otherwise leave the catalog fetch holding a
   // socket, so server.close() waits and the 5s force-exit below fires.
