@@ -117,7 +117,7 @@ const ChatMessage = memo(function ChatMessage({
         <div className="flex max-w-[85%] flex-col items-end gap-1">
           <AttachmentChips message={message} />
           {hasText && (
-            <div className="rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-[15px] text-primary-foreground shadow-md shadow-primary/15 [&_a]:text-primary-foreground [&_a]:decoration-primary-foreground/50">
+            <div className="rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-[15px] text-primary-foreground shadow-md shadow-primary/15 selection:bg-primary-foreground selection:text-primary [&_a]:text-primary-foreground [&_a]:decoration-primary-foreground/50">
               <ChatMarkdown content={message.content} />
             </div>
           )}
