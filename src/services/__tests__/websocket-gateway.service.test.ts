@@ -101,6 +101,15 @@ vi.mock('../computer/computer-help.service', () => ({
 
 // Import after mocking
 import { webSocketGatewayService } from '../websocket-gateway.service';
+import { threadTitleService } from '../thread-title.service';
+import { conversationService } from '../conversation.service';
+import { contextUsageService } from '../context-usage.service';
+import { compactionService } from '../compaction.service';
+import { eventStreamService } from '../event-stream.service';
+
+// The gateway subscribes at import; keep the listeners before `clearAllMocks` drops the calls.
+const titleListener = vi.mocked(threadTitleService.events.on).mock.calls[0]![1] as (change: unknown) => void;
+const threadListener = vi.mocked(conversationService.events.on).mock.calls[0]![1] as (created: unknown) => void;
 
 // Access internal state for testing
 const service = webSocketGatewayService as any;
@@ -667,6 +676,31 @@ describe('Requirement: WebSocket Gateway', () => {
         type: 'dictation_error',
         payload: { error: 'Dictation needs a managed voice provider for this agent.' },
       });
+    });
+  });
+
+  describe('Scenario: a conversation stored under a user id other than the owner', () => {
+    it('puts its title, creation, context and compaction on the stream', () => {
+      const events: Array<{ type: string; payload: unknown }> = [];
+      const stop = eventStreamService.subscribe((entry) => {
+        const { type, payload } = entry.event;
+        events.push({ type, payload });
+      });
+      const userId = 'agent-record-user';
+      const createdAt = new Date('2026-10-02T09:00:00.000Z');
+
+      titleListener({ userId, threadId: 'thread-1', title: 'Hello' });
+      threadListener({ userId, threadId: 'thread-1', title: null, createdAt });
+      contextUsageService.events.emit('usage', { userId, threadId: 'thread-1', usedTokens: 10 });
+      compactionService.events.emit('compaction', { userId, threadId: 'thread-1', status: 'completed' });
+      stop();
+
+      expect(events).toEqual([
+        { type: 'thread', payload: { threadId: 'thread-1', title: 'Hello' } },
+        { type: 'thread', payload: { threadId: 'thread-1', title: null, createdAt: createdAt.toISOString() } },
+        { type: 'context', payload: { threadId: 'thread-1', usedTokens: 10 } },
+        { type: 'compaction', payload: { threadId: 'thread-1', status: 'completed' } },
+      ]);
     });
   });
 });

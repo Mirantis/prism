@@ -92,10 +92,7 @@ class InboundMessageService {
   // Subscribed here, at import, rather than by the gateway: the turn state is this
   // service's to announce, and the gateway imports it at boot.
   constructor() {
-    conversationThreadActivityService.events.on('change', ({ threadId, userId }: ThreadActivityChange) => {
-      // A Slack turn run as another Lens user is that user's work, not the owner's,
-      // and its thread is none of the owner's clients' business.
-      if (userId !== config.ownerUserId) return;
+    conversationThreadActivityService.events.on('change', ({ threadId }: ThreadActivityChange) => {
       this.announce(threadId);
     });
   }
@@ -130,7 +127,7 @@ class InboundMessageService {
     if (!agentId) {
       throw new InboundMessageError('unavailable', 'The agent is still starting. Try again shortly.');
     }
-    // The same bar as a send: a client stops only the owner's web conversations.
+    // The same bar as a send: a client stops only this agent's web conversations.
     await this.checkThread(threadId, agentId);
     const before = this.waiting.length;
     for (let i = this.waiting.length - 1; i >= 0; i--) {
@@ -229,14 +226,9 @@ class InboundMessageService {
   private async checkThread(threadId: string, agentId: string): Promise<void> {
     const thread = await prisma.conversationThread.findUnique({
       where: { id: threadId },
-      select: { agentId: true, userId: true, threadSource: true },
+      select: { agentId: true, threadSource: true },
     });
-    if (
-      !thread ||
-      thread.agentId !== agentId ||
-      thread.userId !== config.ownerUserId ||
-      thread.threadSource !== 'DATABASE'
-    ) {
+    if (!thread || thread.agentId !== agentId || thread.threadSource !== 'DATABASE') {
       throw new InboundMessageError('unknown_thread', 'That conversation does not exist.');
     }
   }
