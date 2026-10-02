@@ -29,6 +29,8 @@ export async function resolveOrBootstrapSingleAgent(): Promise<AgentWorkspace> {
   // access-control gate) sees a consistent value whether AGENT_ID came
   // from env or was synthesized here.
   (config as { agentId?: string }).agentId = agent.id;
+  // The row names the owner; `OWNER_USER_ID` seeds it on first boot only.
+  (config as { ownerUserId: string }).ownerUserId = agent.userId;
   return agent;
 }
 
