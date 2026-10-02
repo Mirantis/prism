@@ -226,15 +226,9 @@ class InboundMessageService {
   private async checkThread(threadId: string, agentId: string): Promise<void> {
     const thread = await prisma.conversationThread.findUnique({
       where: { id: threadId },
-      select: { agentId: true, threadSource: true, externalThreadId: true },
+      select: { agentId: true, threadSource: true },
     });
-    // A Slack DM or a Teams conversation is also a DATABASE thread, keyed by its external id.
-    if (
-      !thread ||
-      thread.agentId !== agentId ||
-      thread.threadSource !== 'DATABASE' ||
-      thread.externalThreadId !== null
-    ) {
+    if (!thread || thread.agentId !== agentId || thread.threadSource !== 'DATABASE') {
       throw new InboundMessageError('unknown_thread', 'That conversation does not exist.');
     }
   }
