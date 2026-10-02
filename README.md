@@ -369,7 +369,7 @@ restarts.
 | `PORT` | HTTP port | `3003` |
 | `WEBHOOK_PORT` | HTTP port webhook senders POST to | `3004` |
 | `PRISM_HOST` | Interface to listen on. The default accepts connections from this machine only; `0.0.0.0` accepts them from the network, which the Docker image sets so a published port works | `127.0.0.1` (Docker: `0.0.0.0`) |
-| `PRISM_ALLOWED_ORIGINS` | Comma-separated web origins on other sites whose pages may call the runtime, as `https://app.example.com` or `https://app.example.com:*` for any port. Set it only when an authenticating proxy is in front; with a loopback `PRISM_HOST` the runtime refuses to start | empty |
+| `PRISM_ALLOWED_ORIGINS` | Comma-separated web origins on other sites whose pages may use the runtime (API, chat and Computer desktop), as `https://app.example.com` or `https://app.example.com:*` for any port. Set it only when an authenticating proxy is in front; with a loopback `PRISM_HOST` the runtime refuses to start | empty |
 | `LLM_PROVIDER` | LLM platform: `bedrock`, `azure`, `bedrock-mantle`, `openai`, `openrouter`, or `anthropic` — see [Configuration](docs/configuration.md#provider-selection) for the non-default platforms' credentials and model IDs | `bedrock` |
 | `EMBEDDING_PROVIDER` | Memory-embedding platform, independent of `LLM_PROVIDER`: `bedrock`, `azure-openai`, `openai`, `openrouter`, or `none` — see [Configuration](docs/configuration.md#memory-embeddings) | derived from `LLM_PROVIDER` |
 | `DATABASE_URL` | SQLite URL. The local default resolves to `prisma/sqlite/agent.db` (Prisma's schema-relative rule); the Docker image's `start.sh` overrides to `file:/data/agent.db` so the mounted `/data` volume is used | `file:./agent.db` (Docker: `file:/data/agent.db`) |

@@ -202,7 +202,22 @@ describe('config', () => {
       );
     });
 
-    it.each(['127.0.0.1', 'localhost', '::1'])(
+    it.each([
+      '127.0.0.1',
+      'localhost',
+      '::1',
+      '127.1',
+      '0x7f.1',
+      '2130706433',
+      '::ffff:127.0.0.1',
+      '0:0:0:0:0:0:0:1',
+      '[::1]',
+      'localhost.',
+      'LOCALHOST',
+      '::1%lo0',
+      '[::1%lo0]',
+      'agent.localhost',
+    ])(
       'stops startup when the bind is the loopback address %s',
       async (host) => {
         process.env.PRISM_HOST = host;
@@ -212,6 +227,24 @@ describe('config', () => {
         );
       },
     );
+
+    it.each(['0.0.0.0', '::', '192.0.2.10', '::ffff:192.0.2.10', 'fe80::1%en0'])(
+      'starts on the non-loopback bind %s and keeps the address as written',
+      async (host) => {
+        process.env.PRISM_HOST = host;
+        process.env.PRISM_ALLOWED_ORIGINS = 'https://app.example.com';
+        const loaded = await loadConfig();
+        expect(loaded.host).toBe(host);
+        expect(loaded.listensOnLoopback).toBe(false);
+      },
+    );
+
+    it('keeps a loopback bind as written for listen', async () => {
+      process.env.PRISM_HOST = '127.1';
+      const loaded = await loadConfig();
+      expect(loaded.host).toBe('127.1');
+      expect(loaded.listensOnLoopback).toBe(true);
+    });
 
     it('stops startup on the default loopback bind', async () => {
       process.env.PRISM_ALLOWED_ORIGINS = 'https://app.example.com';

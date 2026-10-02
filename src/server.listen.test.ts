@@ -6,12 +6,8 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { config } from './config';
 import { listenOn } from './server';
-
-const boundTo = (host: string) => {
-  (config as unknown as { host: string }).host = host;
-};
+import { boundTo } from './test-utils/origin-config';
 
 describe('listenOn', () => {
   afterEach(() => boundTo('127.0.0.1'));

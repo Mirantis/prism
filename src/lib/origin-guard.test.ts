@@ -11,20 +11,10 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import express from 'express';
 import type { NextFunction, Request, Response } from 'express';
 import request from 'supertest';
-import { config } from '../config';
+import { allowing, boundTo } from '../test-utils/origin-config';
 import { isAllowedOrigin, originGuard } from './origin-guard';
-import { type OriginPattern, parseOriginPatterns } from './origin-patterns';
 
 // The rules differ by what the server is bound to, so each test says which.
-const boundTo = (host: string) => {
-  (config as unknown as { host: string }).host = host;
-};
-
-// The configured `PRISM_ALLOWED_ORIGINS`, empty unless a test sets it.
-const allowing = (csv: string) => {
-  (config as unknown as { allowedOrigins: OriginPattern[] }).allowedOrigins =
-    parseOriginPatterns(csv);
-};
 
 describe('isAllowedOrigin', () => {
   afterEach(() => boundTo('127.0.0.1'));
@@ -187,6 +177,7 @@ describe('isAllowedOrigin with PRISM_ALLOWED_ORIGINS', () => {
   });
 
   it('keeps rebinding refused at the loopback bind without X-Forwarded-Host', () => {
+    // Startup refuses a list on a loopback bind; this pins rule 1 ahead of the list.
     allowing('https://app.example.com');
     expect(isAllowedOrigin('https://app.example.com', 'app.example.com')).toBe(false);
     // The proxy header is what lets network traffic in at a loopback bind.
@@ -249,27 +240,49 @@ describe('originGuard CORS headers', () => {
     expect(res.headers['access-control-expose-headers']).toBeUndefined();
   });
 
-  it('adds no CORS headers for a same-host origin, listed or not', async () => {
-    boundTo('0.0.0.0');
-    allowing('https://agent.example.com');
-    const res = await request(app())
-      .get('/probe')
-      .set('Host', 'agent.example.com')
-      .set('Origin', 'https://agent.example.com');
-    expect(res.status).toBe(200);
-    expect(res.headers['access-control-allow-origin']).toBeUndefined();
-    expect(res.headers.vary).toBeUndefined();
-  });
-
-  it('adds no CORS headers for an unlisted loopback origin', async () => {
+  it('echoes the origin in the form the browser compares against', async () => {
     boundTo('0.0.0.0');
     allowing('https://app.example.com');
     const res = await request(app())
       .get('/probe')
       .set('Host', 'runtime:3003')
-      .set('Origin', 'http://localhost:5173');
+      .set('Origin', 'HTTPS://App.Example.COM:443/');
     expect(res.status).toBe(200);
-    expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    expect(res.headers['access-control-allow-origin']).toBe('https://app.example.com');
+  });
+
+  it('names a listed origin on the same host, whose scheme can still differ', async () => {
+    boundTo('0.0.0.0');
+    allowing('http://agent.example.com');
+    const res = await request(app())
+      .get('/probe')
+      .set('Host', 'agent.example.com')
+      .set('Origin', 'http://agent.example.com');
+    expect(res.status).toBe(200);
+    expect(res.headers['access-control-allow-origin']).toBe('http://agent.example.com');
+  });
+
+  it('names no unlisted same-host or loopback origin, and still varies on Origin', async () => {
+    boundTo('0.0.0.0');
+    allowing('https://app.example.com');
+    for (const [host, origin] of [
+      ['agent.example.com', 'https://agent.example.com'],
+      ['runtime:3003', 'http://localhost:5173'],
+    ]) {
+      const res = await request(app()).get('/probe').set('Host', host).set('Origin', origin);
+      expect(res.status, origin).toBe(200);
+      expect(res.headers['access-control-allow-origin'], origin).toBeUndefined();
+      expect(res.headers.vary, origin).toBe('Origin');
+    }
+  });
+
+  it('adds no Vary header while no list is configured', async () => {
+    boundTo('0.0.0.0');
+    const res = await request(app())
+      .get('/probe')
+      .set('Host', 'agent.example.com')
+      .set('Origin', 'https://agent.example.com');
+    expect(res.status).toBe(200);
     expect(res.headers.vary).toBeUndefined();
   });
 
@@ -296,7 +309,7 @@ describe('originGuard CORS headers', () => {
       .set('Access-Control-Request-Headers', 'authorization, content-type');
     expect(res.status).toBe(204);
     expect(res.headers['access-control-allow-origin']).toBe('https://app.example.com');
-    expect(res.headers['access-control-allow-methods']).toBe('GET, POST, DELETE');
+    expect(res.headers['access-control-allow-methods']).toBe('GET, HEAD, POST, PUT, PATCH, DELETE');
     expect(res.headers['access-control-allow-headers']).toBe('Authorization, Content-Type');
     expect(res.headers['access-control-max-age']).toBe('600');
     expect(res.headers.vary).toBe('Origin');
@@ -326,6 +339,7 @@ describe('originGuard CORS headers', () => {
         .set('Access-Control-Request-Method', 'GET');
       expect(res.status, method).toBe(403);
       expect(res.headers['access-control-allow-origin'], method).toBeUndefined();
+      expect(res.headers.vary, method).toBe('Origin');
     }
   });
 });
