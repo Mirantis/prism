@@ -5,7 +5,7 @@
  * cron schedule/unschedule, auth validation, and error responses.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import { Prisma } from '@prisma/client';
 import { logger } from '../logger';
@@ -278,6 +278,7 @@ vi.mock('../lib/telemetry', () => ({
 
 import { createApp } from '../server';
 import { config } from '../config';
+import { type OriginPattern, parseOriginPatterns } from '../lib/origin-patterns';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -337,6 +338,74 @@ describe('Management Routes', () => {
 
       expect(res.status).toBe(200);
       expect(mockTriggerHeartbeat).toHaveBeenCalled();
+    });
+
+    describe('for an origin PRISM_ALLOWED_ORIGINS lists', () => {
+      const ORIGIN = 'https://app.example.com';
+
+      // The production shape: the list is set only on a widened bind.
+      beforeEach(() => {
+        (config as unknown as { host: string }).host = '0.0.0.0';
+        (config as unknown as { allowedOrigins: OriginPattern[] }).allowedOrigins =
+          parseOriginPatterns(ORIGIN);
+      });
+
+      afterEach(() => {
+        (config as unknown as { host: string }).host = '127.0.0.1';
+        (config as unknown as { allowedOrigins: OriginPattern[] }).allowedOrigins = [];
+      });
+
+      const expectCors = (res: { headers: Record<string, string | undefined> }) => {
+        expect(res.headers['access-control-allow-origin']).toBe(ORIGIN);
+        expect(res.headers.vary).toContain('Origin');
+        expect(res.headers['access-control-allow-credentials']).toBeUndefined();
+      };
+
+      it('names the origin on an attachment download', async () => {
+        mockAttachmentGetById.mockResolvedValue({
+          id: 'att-1',
+          filename: 'pic.png',
+          mediaType: 'image/png',
+          storagePath: 'att-1-pic.png',
+        });
+        mockAttachmentLoadBytes.mockResolvedValue(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+        const res = await authedRequest(app).get('/agents/attachments/att-1').set('Origin', ORIGIN);
+
+        expect(res.status).toBe(200);
+        expectCors(res);
+      });
+
+      it('names the origin on a rejected attachment upload', async () => {
+        const res = await authedRequest(app)
+          .post('/agents/attachments')
+          .set('Origin', ORIGIN)
+          .attach('not-file', Buffer.from('hello'), 'notes.txt');
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain('Upload rejected');
+        expectCors(res);
+        expect(mockAttachmentCreate).not.toHaveBeenCalled();
+      });
+
+      it('names the origin on an error the body parser raises', async () => {
+        const res = await authedRequest(app)
+          .post('/agents/heartbeat/trigger')
+          .set('Origin', ORIGIN)
+          .set('Content-Type', 'application/json')
+          .send('{');
+
+        expect(res.status).toBe(400);
+        expectCors(res);
+        expect(mockTriggerHeartbeat).not.toHaveBeenCalled();
+      });
+
+      it('names the origin on a route that does not exist', async () => {
+        const res = await authedRequest(app).get('/agents/no-such-route').set('Origin', ORIGIN);
+
+        expect(res.status).toBe(404);
+        expectCors(res);
+      });
     });
   });
 

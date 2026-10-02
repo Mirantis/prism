@@ -32,6 +32,9 @@ describe('config', () => {
     codexHome = fs.mkdtempSync(path.join(os.tmpdir(), 'prism-config-codex-'));
     process.env.CODEX_HOME = codexHome;
     delete process.env.CODEX_API_KEY;
+    // Set together they stop startup, so a developer's shell must not leak either.
+    delete process.env.PRISM_ALLOWED_ORIGINS;
+    delete process.env.PRISM_HOST;
     vi.resetModules();
   });
 
@@ -170,6 +173,55 @@ describe('config', () => {
   it('falls back to loopback for a whitespace-only PRISM_HOST', async () => {
     process.env.PRISM_HOST = '   ';
     expect((await loadConfig()).host).toBe('127.0.0.1');
+  });
+
+  describe('PRISM_ALLOWED_ORIGINS', () => {
+    beforeEach(() => {
+      delete process.env.PRISM_ALLOWED_ORIGINS;
+      delete process.env.PRISM_HOST;
+    });
+
+    it('is empty by default', async () => {
+      expect((await loadConfig()).allowedOrigins).toEqual([]);
+    });
+
+    it('parses the list on a widened bind', async () => {
+      process.env.PRISM_HOST = '0.0.0.0';
+      process.env.PRISM_ALLOWED_ORIGINS = 'https://app.example.com:*, https://b.example.com';
+      expect((await loadConfig()).allowedOrigins).toEqual([
+        { protocol: 'https:', hostname: 'app.example.com', port: '*' },
+        { protocol: 'https:', hostname: 'b.example.com', port: '' },
+      ]);
+    });
+
+    it('stops startup on an invalid entry and names it', async () => {
+      process.env.PRISM_HOST = '0.0.0.0';
+      process.env.PRISM_ALLOWED_ORIGINS = 'https://app.example.com,https://*.example.com';
+      await expect(loadConfig()).rejects.toThrow(
+        'PRISM_ALLOWED_ORIGINS: Invalid origin pattern "https://*.example.com"',
+      );
+    });
+
+    it.each(['127.0.0.1', 'localhost', '::1'])(
+      'stops startup when the bind is the loopback address %s',
+      async (host) => {
+        process.env.PRISM_HOST = host;
+        process.env.PRISM_ALLOWED_ORIGINS = 'https://app.example.com';
+        await expect(loadConfig()).rejects.toThrow(
+          `PRISM_ALLOWED_ORIGINS is set while PRISM_HOST is the loopback address ${host}`,
+        );
+      },
+    );
+
+    it('stops startup on the default loopback bind', async () => {
+      process.env.PRISM_ALLOWED_ORIGINS = 'https://app.example.com';
+      await expect(loadConfig()).rejects.toThrow('only for a runtime behind an authenticating proxy');
+    });
+
+    it('starts on a loopback bind when the list is blank', async () => {
+      process.env.PRISM_ALLOWED_ORIGINS = ' , ';
+      expect((await loadConfig()).allowedOrigins).toEqual([]);
+    });
   });
 
   it('reads PORT from env', async () => {

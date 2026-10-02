@@ -34,6 +34,16 @@ describe('dockerBaseEnv', () => {
     ]);
   });
 
+  it("drops the runtime's own server wiring", () => {
+    const env = dockerBaseEnv({
+      PORT: '3003',
+      PRISM_HOST: '0.0.0.0',
+      PRISM_ALLOWED_ORIGINS: 'https://app.example.com',
+    });
+    // The pair goes together: one without the other stops a nested runtime's startup.
+    expect(env).toEqual({});
+  });
+
   it('drops a variable that names a path or socket on this machine', () => {
     const env = dockerBaseEnv({
       KUBECONFIG: '/Users/me/.kube/config',
