@@ -67,6 +67,7 @@ describe('InboundMessageService', () => {
       agentId: 'agent-1',
       userId: 'owner-1',
       threadSource: 'DATABASE',
+      externalThreadId: null,
     });
     mockPrisma.conversationMessage.findUnique.mockResolvedValue(null);
     mockPrisma.conversationMessage.findFirst.mockResolvedValue(null);
@@ -344,6 +345,7 @@ describe('InboundMessageService', () => {
         agentId: 'agent-1',
         userId: 'agent-record-user',
         threadSource: 'DATABASE',
+        externalThreadId: null,
       });
     });
 
@@ -383,11 +385,25 @@ describe('InboundMessageService', () => {
       expect(mockEngine.cancel).not.toHaveBeenCalled();
     });
 
+    it('refuses a send to a Slack DM or Teams conversation stored as a DATABASE thread', async () => {
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({
+        agentId: 'agent-1',
+        userId: 'slack-user',
+        threadSource: 'DATABASE',
+        externalThreadId: 'D0123456',
+      });
+      await expect(inboundMessageService.accept(inbound('m-1'))).rejects.toMatchObject({ code: 'unknown_thread' });
+      await expect(inboundMessageService.cancel(THREAD_A)).rejects.toMatchObject({ code: 'unknown_thread' });
+      expect(mockEngine.acceptUserMessage).not.toHaveBeenCalled();
+      expect(mockEngine.cancel).not.toHaveBeenCalled();
+    });
+
     it('refuses a send to another agent’s thread', async () => {
       mockPrisma.conversationThread.findUnique.mockResolvedValue({
         agentId: 'agent-2',
         userId: 'owner-1',
         threadSource: 'DATABASE',
+        externalThreadId: null,
       });
       await expect(inboundMessageService.accept(inbound('m-1'))).rejects.toMatchObject({ code: 'unknown_thread' });
       expect(mockEngine.acceptUserMessage).not.toHaveBeenCalled();
