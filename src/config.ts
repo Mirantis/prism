@@ -26,6 +26,9 @@ if (webhookPort === port) throw new Error('WEBHOOK_PORT must differ from PORT');
 // Loopback by default, so only this machine connects. The container image
 // sets `PRISM_HOST=0.0.0.0`, which is what a published port needs.
 const host = process.env.PRISM_HOST?.trim() || '127.0.0.1';
+// Judged once, after URL normalization, so `127.1` or `::ffff:127.0.0.1` counts
+// as loopback too. `listen` still receives the address as written.
+const listensOnLoopback = isLoopbackHostname(host);
 
 /**
  * `PRISM_ALLOWED_ORIGINS`: browser origins on other sites that may call the
@@ -46,7 +49,7 @@ function readAllowedOrigins(): OriginPattern[] {
       cause: err,
     });
   }
-  if (patterns.length > 0 && isLoopbackHostname(host)) {
+  if (patterns.length > 0 && listensOnLoopback) {
     throw new Error(
       `PRISM_ALLOWED_ORIGINS is set while PRISM_HOST is the loopback address ${host}. ` +
         'The setting is only for a runtime behind an authenticating proxy. ' +
@@ -752,6 +755,7 @@ function resolveToolOutputTtlHours(): number {
 export const config = {
   port,
   host,
+  listensOnLoopback,
   // Cross-origin browser access; see `readAllowedOrigins`. Empty by default.
   allowedOrigins,
   publicUrl,

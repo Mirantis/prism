@@ -278,7 +278,7 @@ vi.mock('../lib/telemetry', () => ({
 
 import { createApp } from '../server';
 import { config } from '../config';
-import { type OriginPattern, parseOriginPatterns } from '../lib/origin-patterns';
+import { allowing, boundTo } from '../test-utils/origin-config';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -345,14 +345,13 @@ describe('Management Routes', () => {
 
       // The production shape: the list is set only on a widened bind.
       beforeEach(() => {
-        (config as unknown as { host: string }).host = '0.0.0.0';
-        (config as unknown as { allowedOrigins: OriginPattern[] }).allowedOrigins =
-          parseOriginPatterns(ORIGIN);
+        boundTo('0.0.0.0');
+        allowing(ORIGIN);
       });
 
       afterEach(() => {
-        (config as unknown as { host: string }).host = '127.0.0.1';
-        (config as unknown as { allowedOrigins: OriginPattern[] }).allowedOrigins = [];
+        boundTo('127.0.0.1');
+        allowing('');
       });
 
       const expectCors = (res: { headers: Record<string, string | undefined> }) => {

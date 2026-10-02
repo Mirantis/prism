@@ -5,13 +5,12 @@
  * `lib/origin-guard.ts` to its own WebSocket upgrade.
  */
 
-import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { createServer, Server } from 'http';
 import type { AddressInfo } from 'net';
 import WebSocket from 'ws';
-import { config } from '../../../config';
-import { type OriginPattern, parseOriginPatterns } from '../../../lib/origin-patterns';
+import { allowing, boundTo } from '../../../test-utils/origin-config';
 import { COMPUTER_PATH, computerEndpoint } from '../computer-endpoint';
 
 vi.mock('../../../logger', () => ({
@@ -27,12 +26,6 @@ vi.mock('../computer.service', () => ({
     status: () => ({ running: true }),
   },
 }));
-
-// The configured `PRISM_ALLOWED_ORIGINS`, empty unless a test sets it.
-const allowing = (csv: string) => {
-  (config as unknown as { allowedOrigins: OriginPattern[] }).allowedOrigins =
-    parseOriginPatterns(csv);
-};
 
 function handshake(url: string, headers: Record<string, string>): Promise<string> {
   return new Promise((resolve) => {
@@ -72,7 +65,13 @@ describe('computer handshake origin rules', () => {
     await new Promise((resolve) => server.close(resolve));
   });
 
-  afterEach(() => allowing(''));
+  // The production shape: the list is set only on a widened bind.
+  beforeEach(() => boundTo('0.0.0.0'));
+
+  afterEach(() => {
+    boundTo('127.0.0.1');
+    allowing('');
+  });
 
   it('opens for a listed origin', async () => {
     allowing('https://app.example.com:*');

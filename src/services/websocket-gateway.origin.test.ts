@@ -10,15 +10,8 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { createServer, Server } from 'http';
 import type { AddressInfo } from 'net';
 import WebSocket, { WebSocketServer } from 'ws';
-import { config } from '../config';
-import { type OriginPattern, parseOriginPatterns } from '../lib/origin-patterns';
+import { allowing, boundTo } from '../test-utils/origin-config';
 import { webSocketGatewayService } from './websocket-gateway.service';
-
-// The configured `PRISM_ALLOWED_ORIGINS`, empty unless a test sets it.
-const allowing = (csv: string) => {
-  (config as unknown as { allowedOrigins: OriginPattern[] }).allowedOrigins =
-    parseOriginPatterns(csv);
-};
 
 function handshake(url: string, headers: Record<string, string>): Promise<string> {
   return new Promise((resolve) => {
@@ -80,19 +73,25 @@ describe('WebSocket handshake origin rules', () => {
   });
 
   describe('with PRISM_ALLOWED_ORIGINS', () => {
-    afterEach(() => allowing(''));
+    afterEach(() => {
+      boundTo('127.0.0.1');
+      allowing('');
+    });
 
     it('opens for a listed origin', async () => {
+      boundTo('0.0.0.0');
       allowing('https://app.example.com:*');
       expect(await handshake(url, { Origin: 'https://app.example.com:4444' })).toBe('open');
     });
 
     it('refuses an unlisted foreign origin with 403', async () => {
+      boundTo('0.0.0.0');
       allowing('https://app.example.com:*');
       expect(await handshake(url, { Origin: 'https://evil.example' })).toBe('refused 403');
     });
 
     it('refuses a listed origin under a rebound host', async () => {
+      // Startup refuses a list on a loopback bind; this pins rule 1 ahead of the list.
       allowing('https://app.example.com:*');
       const port = (server.address() as AddressInfo).port;
       const verdict = await handshake(url, {

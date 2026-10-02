@@ -13,8 +13,8 @@
  *    page and the request agree on a name so the browser treats the runtime as
  *    same-origin. A widened bind (`PRISM_HOST`) accepts any `Host`, since the
  *    exposed address is the operator's to choose.
- * 2. **A stated `Origin` must be loopback, the host the browser addressed, or
- *    one `PRISM_ALLOWED_ORIGINS` lists.** The addressed host is the request's
+ * 2. **A stated `Origin` must be one `PRISM_ALLOWED_ORIGINS` lists, the host the
+ *    browser addressed, or loopback.** The addressed host is the request's
  *    own `Host`, or the first `X-Forwarded-Host` value when a proxy rewrote
  *    `Host` on the way in; that is what serves the Web UI of a deliberately
  *    widened runtime, hosted deployments included. The list admits a web app on
@@ -26,12 +26,11 @@
  * — the terminal UI, `curl`, a webhook sender — and a browser states the header
  * on the cross-origin requests these rules are about.
  *
- * An HTTP request from a listed origin other than the addressed host gets
- * `Access-Control-Allow-Origin` naming its origin, so the page can read the
- * response; a same-site page needs no such header. The guard runs
- * ahead of every route and body parser, so error responses have it too. It
- * also answers that origin's CORS preflight, which a proxy in front may
- * answer first.
+ * An HTTP request from a listed origin gets `Access-Control-Allow-Origin` naming
+ * that origin, so the page can read the response, and with a list configured
+ * every response varies on `Origin`. The guard runs ahead of every route and
+ * body parser, so error responses have the header too. It also answers that
+ * origin's CORS preflight, which a proxy in front may answer first.
  *
  * Trusting `X-Forwarded-Host` keeps the browser rules intact: a browser cannot
  * state that header itself — the WebSocket API sends no custom headers, and a
@@ -45,6 +44,14 @@ import { logger } from '../logger';
 import { isLoopbackHostname } from './loopback-host';
 import { matchesOrigin } from './origin-patterns';
 
+// Every method a route here serves, and the request headers a cross-origin client
+// sends. The sandbox ingress answers the same preflight with the same values
+// (`PREFLIGHT_ALLOW_*` in nexus-monorepo
+// `packages/nexus/src/api/sandbox-ingress/handler.ts`), so the two change together.
+const PREFLIGHT_ALLOW_METHODS = 'GET, HEAD, POST, PUT, PATCH, DELETE';
+const PREFLIGHT_ALLOW_HEADERS = 'Authorization, Content-Type';
+const PREFLIGHT_MAX_AGE_SECONDS = '600';
+
 /** The `Host` header is `hostname:port` with no scheme, and may hold `[::1]`. */
 function hostnameOf(hostHeader: string): string | null {
   try {
@@ -55,7 +62,7 @@ function hostnameOf(hostHeader: string): string | null {
 }
 
 function isAllowedHost(host: string | undefined, forwardedHost: string | undefined): boolean {
-  if (!isLoopbackHostname(config.host)) return true;
+  if (!config.listensOnLoopback) return true;
   // A proxy in front — the one way network traffic legitimately arrives at a
   // loopback bind. A browser cannot state the header, so rebinding stays closed.
   if (forwardedHost) return true;
@@ -70,8 +77,14 @@ function firstForwardedHost(header: string | string[] | undefined): string | und
   return value?.split(',')[0].trim() || undefined;
 }
 
-/** `listed` when `PRISM_ALLOWED_ORIGINS` admits an origin other than the addressed host. */
-type Verdict = 'refused' | 'allowed' | 'listed';
+/**
+ * A refused request, or an admitted one. `corsOrigin` is set when the list
+ * admitted it, and holds the origin in the form the browser compares against.
+ */
+type Verdict = { admitted: false } | { admitted: true; corsOrigin?: string };
+
+const REFUSED: Verdict = { admitted: false };
+const ADMITTED: Verdict = { admitted: true };
 
 function judge(
   origin: string | undefined,
@@ -79,23 +92,26 @@ function judge(
   forwardedHost: string | string[] | undefined,
 ): Verdict {
   const forwarded = firstForwardedHost(forwardedHost);
-  if (!isAllowedHost(host, forwarded)) return 'refused';
-  if (!origin) return 'allowed';
+  if (!isAllowedHost(host, forwarded)) return REFUSED;
+  if (!origin) return ADMITTED;
+  // Ahead of the host comparisons: `http://h` calling `https://h` has the same
+  // host and another origin, and its page needs the CORS headers to read.
+  if (matchesOrigin(config.allowedOrigins, origin)) {
+    return { admitted: true, corsOrigin: new URL(origin).origin };
+  }
 
   let parsed: URL;
   try {
     parsed = new URL(origin);
   } catch {
     // Includes the literal `null` a sandboxed page sends.
-    return 'refused';
+    return REFUSED;
   }
 
   const stated = parsed.host.toLowerCase();
-  if (host && stated === host.toLowerCase()) return 'allowed';
-  if (forwarded && stated === forwarded.toLowerCase()) return 'allowed';
-  // Ahead of the loopback rule, so a listed loopback page can read responses.
-  if (matchesOrigin(config.allowedOrigins, origin)) return 'listed';
-  return isLoopbackHostname(parsed.hostname) ? 'allowed' : 'refused';
+  if (host && stated === host.toLowerCase()) return ADMITTED;
+  if (forwarded && stated === forwarded.toLowerCase()) return ADMITTED;
+  return isLoopbackHostname(parsed.hostname) ? ADMITTED : REFUSED;
 }
 
 /**
@@ -107,7 +123,7 @@ export function isAllowedOrigin(
   host: string | undefined,
   forwardedHost?: string | string[],
 ): boolean {
-  return judge(origin, host, forwardedHost) !== 'refused';
+  return judge(origin, host, forwardedHost).admitted;
 }
 
 /**
@@ -115,22 +131,21 @@ export function isAllowedOrigin(
  * gives a listed origin its CORS headers.
  */
 export function originGuard(req: Request, res: Response, next: NextFunction): void {
-  const { origin } = req.headers;
-  const verdict = judge(origin, req.headers.host, req.headers['x-forwarded-host']);
-  if (verdict === 'allowed') {
-    next();
-    return;
-  }
-  if (verdict === 'listed' && origin) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.vary('Origin');
+  // With a list configured, every response depends on `Origin`, refusals included.
+  if (config.allowedOrigins.length > 0) res.vary('Origin');
+
+  const verdict = judge(req.headers.origin, req.headers.host, req.headers['x-forwarded-host']);
+  if (verdict.admitted && verdict.corsOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', verdict.corsOrigin);
     if (req.method === 'OPTIONS' && req.headers['access-control-request-method']) {
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE');
-      res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
-      res.setHeader('Access-Control-Max-Age', '600');
+      res.setHeader('Access-Control-Allow-Methods', PREFLIGHT_ALLOW_METHODS);
+      res.setHeader('Access-Control-Allow-Headers', PREFLIGHT_ALLOW_HEADERS);
+      res.setHeader('Access-Control-Max-Age', PREFLIGHT_MAX_AGE_SECONDS);
       res.status(204).end();
       return;
     }
+  }
+  if (verdict.admitted) {
     next();
     return;
   }

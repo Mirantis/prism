@@ -41,6 +41,7 @@ vi.mock('../config', () => ({
   config: {
     port: 3003,
     host: '127.0.0.1',
+    listensOnLoopback: true,
     allowedOrigins: [],
     webhookPort: 3004,
     webhookPublicUrl: null,

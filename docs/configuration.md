@@ -127,7 +127,7 @@ never the whole runtime port.
 | `PORT` | HTTP port the runtime listens on | `3003` |
 | `WEBHOOK_PORT` | HTTP port opened when the [webhook receiver](webhooks.md) is enabled | `3004` |
 | `PRISM_HOST` | Network interface the runtime listens on. The default accepts connections from this machine only. Set it to `0.0.0.0` to accept them from the network — the Docker image does, so a published port works. The name is prefixed because a bare `HOST` is the machine's own hostname in some environments. | `127.0.0.1` (`0.0.0.0` in Docker) |
-| `PRISM_ALLOWED_ORIGINS` | Comma-separated web origins on other sites whose pages may call the runtime and open its chat connection. Write each as `https://app.example.com`, or `https://app.example.com:*` for any port. Set it only when an authenticating proxy is in front of the runtime: with a loopback `PRISM_HOST` the runtime refuses to start. | empty |
+| `PRISM_ALLOWED_ORIGINS` | Comma-separated web origins on other sites whose pages may call the runtime, open its chat connection and use the [Computer](computer.md) desktop with pointer and keyboard. Write each as `https://app.example.com`, or `https://app.example.com:*` for any port. Set it only when an authenticating proxy is in front of the runtime: with a loopback `PRISM_HOST` the runtime refuses to start. | empty |
 | `DATABASE_URL` | SQLite URL for the agent database. The Docker image's `start.sh` sets this to `file:/data/agent.db`; locally it resolves next to the Prisma schema. | `file:/data/agent.db` (Docker) |
 | `AGENT_ID` | Pin the agent's UUID. Unset → a fresh UUID is generated on first boot and reused thereafter. | generated |
 | `AGENT_NAME` | Display name on first boot | `Prism` |
@@ -179,11 +179,17 @@ By default the runtime is reachable from this machine only.
   authenticating proxy in front of the port before you do.
 - While it listens on `127.0.0.1`, a browser request that comes from another
   site is answered with 403.
-- `PRISM_ALLOWED_ORIGINS` lets pages on the sites it lists call the runtime.
-  Those pages then act with the access of whoever signed in to the proxy, so
-  set it only with an authenticating proxy in front. The runtime refuses it
-  only while it listens on a loopback address; in Docker it listens on
-  `0.0.0.0` whatever host port you publish, so the setting is accepted there.
+- `PRISM_ALLOWED_ORIGINS` lets pages on the sites it lists use the runtime:
+  its API, the chat connection and the Computer desktop. Those pages then act
+  with the access of whoever signed in to the proxy, so set it only with an
+  authenticating proxy in front. The runtime refuses it only while it listens
+  on a loopback address; in Docker it listens on `0.0.0.0` whatever host port
+  you publish, so the setting is accepted there.
+- Cross-origin HTTP responses allow no credentials: a page on those sites reads
+  only responses to requests it sent without cookies. A browser sends cookies
+  when it opens a WebSocket whatever the page's origin, so the proxy in
+  front must authenticate the chat and Computer connections from another site
+  by token, not by its own session cookie. The runtime sets no cookies.
 - In Docker the runtime listens on `0.0.0.0` — a published port needs that — so
   the container answers requests for any host name. `-p 127.0.0.1:3003:3003`
   keeps the port reachable from the host machine only; an authenticating proxy
