@@ -3,3 +3,5 @@ export * from './errors.js';
 export * from './protocol.js';
 export * from './transcript.js';
 export * from './chat-connection.js';
+export * from './runtime-client.js';
+export * from './ingress.js';

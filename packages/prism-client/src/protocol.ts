@@ -9,7 +9,7 @@
 
 export const PROTOCOL_VERSION = 2;
 
-/** The name this client gives in `hello`. */
+/** The name a client gives in `hello` when it names no other: the Prism web UI's. */
 export const CLIENT_NAME = 'web';
 
 /** The close codes the client treats specially. Every other close is reconnected. */

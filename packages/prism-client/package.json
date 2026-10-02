@@ -1,7 +1,7 @@
 {
   "name": "@lensapp/prism-client",
   "version": "0.1.0",
-  "description": "Browser client for a Prism agent runtime: the /api/ws chat protocol and the REST types.",
+  "description": "Browser client for a Prism agent runtime: the /api/ws chat protocol and a REST client with its types.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
