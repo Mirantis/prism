@@ -2,18 +2,28 @@
  * Origin Guard Tests
  *
  * The rule under test: a request with no `Origin` is allowed (every non-browser
- * client), a request stating this server's own origin or a loopback one is
- * allowed, and every other stated origin is refused.
+ * client), a request stating this server's own origin, a loopback one or one
+ * `PRISM_ALLOWED_ORIGINS` lists is allowed, and every other stated origin is
+ * refused.
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import express from 'express';
 import type { NextFunction, Request, Response } from 'express';
+import request from 'supertest';
 import { config } from '../config';
 import { isAllowedOrigin, originGuard } from './origin-guard';
+import { type OriginPattern, parseOriginPatterns } from './origin-patterns';
 
 // The rules differ by what the server is bound to, so each test says which.
 const boundTo = (host: string) => {
   (config as unknown as { host: string }).host = host;
+};
+
+// The configured `PRISM_ALLOWED_ORIGINS`, empty unless a test sets it.
+const allowing = (csv: string) => {
+  (config as unknown as { allowedOrigins: OriginPattern[] }).allowedOrigins =
+    parseOriginPatterns(csv);
 };
 
 describe('isAllowedOrigin', () => {
@@ -151,6 +161,41 @@ describe('isAllowedOrigin', () => {
   });
 });
 
+describe('isAllowedOrigin with PRISM_ALLOWED_ORIGINS', () => {
+  afterEach(() => {
+    boundTo('127.0.0.1');
+    allowing('');
+  });
+
+  it('allows a listed origin behind a proxy that rewrote the host', () => {
+    boundTo('0.0.0.0');
+    allowing('https://app.example.com:*');
+    expect(
+      isAllowedOrigin('https://app.example.com:53224', 'runtime:3003', 'agent.platform.example'),
+    ).toBe(true);
+    expect(isAllowedOrigin('https://app.example.com', 'runtime:3003')).toBe(true);
+  });
+
+  it('still refuses an unlisted foreign origin', () => {
+    boundTo('0.0.0.0');
+    allowing('https://app.example.com');
+    expect(isAllowedOrigin('https://evil.example', 'runtime:3003', 'agent.platform.example')).toBe(
+      false,
+    );
+    expect(isAllowedOrigin('https://app.example.com:8443', 'runtime:3003')).toBe(false);
+    expect(isAllowedOrigin('null', 'runtime:3003')).toBe(false);
+  });
+
+  it('keeps rebinding refused at the loopback bind without X-Forwarded-Host', () => {
+    allowing('https://app.example.com');
+    expect(isAllowedOrigin('https://app.example.com', 'app.example.com')).toBe(false);
+    // The proxy header is what lets network traffic in at a loopback bind.
+    expect(isAllowedOrigin('https://app.example.com', 'app.example.com', 'app.example.com')).toBe(
+      true,
+    );
+  });
+});
+
 describe('originGuard', () => {
   const runGuard = (origin?: string) => {
     const req = { headers: { origin, host: 'localhost:3003' }, method: 'POST', path: '/agents/chat' };
@@ -172,5 +217,115 @@ describe('originGuard', () => {
     expect(next).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(403);
     expect(json).toHaveBeenCalledWith({ error: 'Forbidden origin' });
+  });
+});
+
+describe('originGuard CORS headers', () => {
+  afterEach(() => {
+    boundTo('127.0.0.1');
+    allowing('');
+  });
+
+  const app = () => {
+    const server = express();
+    server.use(originGuard);
+    server.all('/probe', (_req, res) => {
+      res.json({ ok: true });
+    });
+    return server;
+  };
+
+  it('names a listed origin in Access-Control-Allow-Origin and varies on Origin', async () => {
+    boundTo('0.0.0.0');
+    allowing('https://app.example.com:*');
+    const res = await request(app())
+      .get('/probe')
+      .set('Host', 'runtime:3003')
+      .set('Origin', 'https://app.example.com:4444');
+    expect(res.status).toBe(200);
+    expect(res.headers['access-control-allow-origin']).toBe('https://app.example.com:4444');
+    expect(res.headers.vary).toBe('Origin');
+    expect(res.headers['access-control-allow-credentials']).toBeUndefined();
+    expect(res.headers['access-control-expose-headers']).toBeUndefined();
+  });
+
+  it('adds no CORS headers for a same-host origin, listed or not', async () => {
+    boundTo('0.0.0.0');
+    allowing('https://agent.example.com');
+    const res = await request(app())
+      .get('/probe')
+      .set('Host', 'agent.example.com')
+      .set('Origin', 'https://agent.example.com');
+    expect(res.status).toBe(200);
+    expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    expect(res.headers.vary).toBeUndefined();
+  });
+
+  it('adds no CORS headers for an unlisted loopback origin', async () => {
+    boundTo('0.0.0.0');
+    allowing('https://app.example.com');
+    const res = await request(app())
+      .get('/probe')
+      .set('Host', 'runtime:3003')
+      .set('Origin', 'http://localhost:5173');
+    expect(res.status).toBe(200);
+    expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    expect(res.headers.vary).toBeUndefined();
+  });
+
+  it('names a listed loopback origin, so that page can read the response', async () => {
+    boundTo('0.0.0.0');
+    allowing('http://localhost:*');
+    const res = await request(app())
+      .get('/probe')
+      .set('Host', 'runtime:3003')
+      .set('Origin', 'http://localhost:5173');
+    expect(res.status).toBe(200);
+    expect(res.headers['access-control-allow-origin']).toBe('http://localhost:5173');
+    expect(res.headers.vary).toBe('Origin');
+  });
+
+  it('answers the preflight of a listed origin with 204', async () => {
+    boundTo('0.0.0.0');
+    allowing('https://app.example.com');
+    const res = await request(app())
+      .options('/probe')
+      .set('Host', 'runtime:3003')
+      .set('Origin', 'https://app.example.com')
+      .set('Access-Control-Request-Method', 'POST')
+      .set('Access-Control-Request-Headers', 'authorization, content-type');
+    expect(res.status).toBe(204);
+    expect(res.headers['access-control-allow-origin']).toBe('https://app.example.com');
+    expect(res.headers['access-control-allow-methods']).toBe('GET, POST, DELETE');
+    expect(res.headers['access-control-allow-headers']).toBe('Authorization, Content-Type');
+    expect(res.headers['access-control-max-age']).toBe('600');
+    expect(res.headers.vary).toBe('Origin');
+    expect(res.headers['access-control-allow-credentials']).toBeUndefined();
+  });
+
+  it('passes an OPTIONS request that is not a preflight to the routes', async () => {
+    boundTo('0.0.0.0');
+    allowing('https://app.example.com');
+    const res = await request(app())
+      .options('/probe')
+      .set('Host', 'runtime:3003')
+      .set('Origin', 'https://app.example.com');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+    expect(res.headers['access-control-allow-origin']).toBe('https://app.example.com');
+  });
+
+  it('answers 403 with no CORS headers to an unlisted origin and its preflight', async () => {
+    boundTo('0.0.0.0');
+    allowing('https://app.example.com');
+    for (const method of ['get', 'options'] as const) {
+      const res = await request(app())
+        [method]('/probe')
+        .set('Host', 'runtime:3003')
+        .set('Origin', 'https://evil.example')
+        .set('Access-Control-Request-Method', 'GET');
+      expect(res.status, method).toBe(403);
+      expect(res.headers['access-control-allow-origin'], method).toBeUndefined();
+    }
   });
 });

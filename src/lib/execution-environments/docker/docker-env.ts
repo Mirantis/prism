@@ -45,6 +45,7 @@ const RUNTIME_SERVER_VARS = [
   'HUSKY',
   'PORT',
   'PRISM_HOST',
+  'PRISM_ALLOWED_ORIGINS',
   'DATABASE_URL',
   'EXECUTION_ENVIRONMENT',
   // The host's display and bus, which the meeting and computer stacks own.

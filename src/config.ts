@@ -11,6 +11,8 @@ import {
 import { readAgentModelDefaults } from './lib/prism-settings';
 import { logger } from './logger';
 import { resolveRealtimeConfiguration } from './lib/managed-realtime';
+import { isLoopbackHostname } from './lib/loopback-host';
+import { type OriginPattern, parseOriginPatterns } from './lib/origin-patterns';
 
 /**
  * Centralized configuration — single place for all env var reads.
@@ -21,6 +23,41 @@ const projectId = process.env.PROJECT_ID;
 const port = parseInt(process.env.PORT || '3003', 10);
 const webhookPort = parseInt(process.env.WEBHOOK_PORT || '3004', 10);
 if (webhookPort === port) throw new Error('WEBHOOK_PORT must differ from PORT');
+// Loopback by default, so only this machine connects. The container image
+// sets `PRISM_HOST=0.0.0.0`, which is what a published port needs.
+const host = process.env.PRISM_HOST?.trim() || '127.0.0.1';
+
+/**
+ * `PRISM_ALLOWED_ORIGINS`: browser origins on other sites that may call the
+ * runtime, in the syntax of `lib/origin-patterns.ts`. An invalid entry stops
+ * startup. The list gives those pages the whole runtime, so it is only for a
+ * runtime behind an authenticating proxy. A loopback listen stops startup too:
+ * that is the standalone install, which has no auth, and at startup a proxy
+ * forwarding to it (the origin guard accepts its `X-Forwarded-Host`) looks the
+ * same. A wider listen is accepted as stated, including a container published
+ * on a loopback host port, so the proxy in front is the operator's to provide.
+ */
+function readAllowedOrigins(): OriginPattern[] {
+  let patterns: OriginPattern[];
+  try {
+    patterns = parseOriginPatterns(process.env.PRISM_ALLOWED_ORIGINS ?? '');
+  } catch (err) {
+    throw new Error(`PRISM_ALLOWED_ORIGINS: ${err instanceof Error ? err.message : String(err)}`, {
+      cause: err,
+    });
+  }
+  if (patterns.length > 0 && isLoopbackHostname(host)) {
+    throw new Error(
+      `PRISM_ALLOWED_ORIGINS is set while PRISM_HOST is the loopback address ${host}. ` +
+        'The setting is only for a runtime behind an authenticating proxy. ' +
+        'Behind a proxy on this machine, set PRISM_HOST to a non-loopback address and ' +
+        'firewall the port; otherwise unset PRISM_ALLOWED_ORIGINS.',
+    );
+  }
+  return patterns;
+}
+const allowedOrigins = readAllowedOrigins();
+
 // Example: LENS_SANDBOX_INGRESS_PORTS=web=3003,metrics=9090 names port 3003 `web`.
 function ingressPortName(forPort: number): string | undefined {
   return process.env.LENS_SANDBOX_INGRESS_PORTS
@@ -714,9 +751,9 @@ function resolveToolOutputTtlHours(): number {
 
 export const config = {
   port,
-  // Loopback by default, so only this machine connects. The container image
-  // sets `PRISM_HOST=0.0.0.0`, which is what a published port needs.
-  host: process.env.PRISM_HOST?.trim() || '127.0.0.1',
+  host,
+  // Cross-origin browser access; see `readAllowedOrigins`. Empty by default.
+  allowedOrigins,
   publicUrl,
   // Webhook senders POST here, apart from the Web UI and the management API.
   webhookPort,

@@ -15,9 +15,10 @@
  *
  * Auth is handled by the routing in front of the runtime; the container itself
  * trusts every incoming connection, with two exceptions. `originGuard` answers
- * 403 to a browser request that comes from another site (see
- * `lib/origin-guard.ts`), and a webhook subscription can require a signed or
- * token-bearing request from its sender (see `lib/webhook-signature.ts`).
+ * 403 to a browser request that comes from another site, unless
+ * `PRISM_ALLOWED_ORIGINS` lists that site (see `lib/origin-guard.ts`), and a
+ * webhook subscription can require a signed or token-bearing request from its
+ * sender (see `lib/webhook-signature.ts`).
  */
 
 import express from 'express';
@@ -41,7 +42,8 @@ import { activityRouter } from './routes/activity';
 export function createApp() {
   const app = express();
 
-  // Ahead of the body parser: a refused request costs nothing to read.
+  // Ahead of the body parser: a refused request costs nothing to read, and the
+  // CORS headers of a listed origin are on every response, errors included.
   app.use(originGuard);
 
   app.use(express.json({ limit: '5mb' }));
