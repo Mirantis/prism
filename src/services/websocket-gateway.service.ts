@@ -240,36 +240,27 @@ class WebSocketGatewayService {
 
   constructor() {
     // Everything below is owned by a channel-agnostic service; the gateway only
-    // puts it on the stream. Each is the owner's news: a Slack turn run as
-    // another Lens user reports under that user, and those reached no socket
-    // before this stream existed either.
-    const owned = (userId: string | null | undefined) => userId === config.ownerUserId;
-
-    threadTitleService.events.on('change', ({ userId, threadId, title }: ThreadTitleChange) => {
-      if (!owned(userId)) return;
+    // puts it on the stream.
+    threadTitleService.events.on('change', ({ threadId, title }: ThreadTitleChange) => {
       eventStreamService.publish({ type: 'thread', payload: { threadId, title } });
     });
 
     // A conversation started on one device appears in every other device's list.
-    conversationService.events.on('thread', ({ userId, threadId, title, createdAt }: ThreadCreated) => {
-      if (!owned(userId)) return;
+    conversationService.events.on('thread', ({ threadId, title, createdAt }: ThreadCreated) => {
       eventStreamService.publish({
         type: 'thread',
         payload: { threadId, title, createdAt: createdAt.toISOString() },
       });
     });
 
-    contextUsageService.events.on('usage', ({ userId, ...payload }: ContextUsageEvent) => {
-      if (!owned(userId)) return;
+    contextUsageService.events.on('usage', ({ userId: _userId, ...payload }: ContextUsageEvent) => {
       eventStreamService.publish({ type: 'context', payload });
     });
 
-    compactionService.events.on('compaction', ({ userId, ...payload }: CompactionEvent) => {
-      if (!owned(userId)) return;
+    compactionService.events.on('compaction', ({ userId: _userId, ...payload }: CompactionEvent) => {
       eventStreamService.publish({ type: 'compaction', payload });
     });
 
-    // Install-level, so it is always the owner's.
     updateService.events.on('update', (payload: UpdateEvent) => {
       eventStreamService.publish({ type: 'update', payload: { ...payload } });
     });

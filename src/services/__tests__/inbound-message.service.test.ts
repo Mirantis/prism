@@ -338,24 +338,59 @@ describe('InboundMessageService', () => {
     });
   });
 
-  describe('Scenario: another user’s conversation', () => {
-    it('tells the owner’s clients nothing about a turn run as someone else', async () => {
-      const { events, stop } = turnEvents();
-      const end = conversationThreadActivityService.beginThread('slack-thread', 'someone-else');
-      end();
-      expect(events).toEqual([]);
-      expect(inboundMessageService.turns()).toEqual([]);
-      stop();
-    });
-
-    it('refuses to cancel it', async () => {
+  describe('Scenario: a web conversation stored under another user id', () => {
+    beforeEach(() => {
       mockPrisma.conversationThread.findUnique.mockResolvedValue({
         agentId: 'agent-1',
-        userId: 'someone-else',
+        userId: 'agent-record-user',
+        threadSource: 'DATABASE',
+      });
+    });
+
+    it('accepts a send to it', async () => {
+      const acceptance = await inboundMessageService.accept(inbound('m-1'));
+      expect(acceptance).toMatchObject({ queued: false, duplicate: false });
+      expect(mockEngine.acceptUserMessage).toHaveBeenCalledWith(expect.anything(), THREAD_A, 'm-1');
+    });
+
+    it('cancels its running turn', async () => {
+      mockEngine.cancel.mockReturnValue(true);
+      expect(await inboundMessageService.cancel(THREAD_A)).toBe(true);
+      expect(mockEngine.cancel).toHaveBeenCalledWith(THREAD_A);
+    });
+
+    it('shows its turn state', () => {
+      const { events, stop } = turnEvents();
+      const end = conversationThreadActivityService.beginThread(THREAD_A, 'agent-record-user');
+      expect(inboundMessageService.turns()).toEqual([{ threadId: THREAD_A, state: 'running' }]);
+      end();
+      expect(events).toEqual([
+        { threadId: THREAD_A, state: 'running' },
+        { threadId: THREAD_A, state: 'idle', outcome: 'completed' },
+      ]);
+      stop();
+    });
+  });
+
+  describe('Scenario: a conversation that is not a web thread of this agent', () => {
+    it('refuses to cancel a Slack thread', async () => {
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({
+        agentId: 'agent-1',
+        userId: 'owner-1',
         threadSource: 'SLACK',
       });
       await expect(inboundMessageService.cancel('slack-thread')).rejects.toMatchObject({ code: 'unknown_thread' });
       expect(mockEngine.cancel).not.toHaveBeenCalled();
+    });
+
+    it('refuses a send to another agent’s thread', async () => {
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({
+        agentId: 'agent-2',
+        userId: 'owner-1',
+        threadSource: 'DATABASE',
+      });
+      await expect(inboundMessageService.accept(inbound('m-1'))).rejects.toMatchObject({ code: 'unknown_thread' });
+      expect(mockEngine.acceptUserMessage).not.toHaveBeenCalled();
     });
   });
 
