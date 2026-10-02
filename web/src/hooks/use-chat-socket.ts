@@ -1,5 +1,5 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react';
-import type { ChatListener } from '@/lib/chat-socket/chat-connection';
+import type { ChatListener } from '@lensapp/prism-client';
 import { useChatConnection } from '@/lib/chat-socket/chat-connection-context';
 
 /** The events a component can hear. A reload after a lost replay belongs to the feed. */

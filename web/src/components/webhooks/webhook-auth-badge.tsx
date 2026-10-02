@@ -1,6 +1,6 @@
 import { KeyRound, ShieldAlert } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import type { WebhookAuthType } from '@/types';
+import type { WebhookAuthType } from '@lensapp/prism-client';
 
 export function WebhookAuthBadge({ authType }: { authType: WebhookAuthType }) {
   return (

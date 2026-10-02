@@ -27,14 +27,13 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ApiError } from '@/api/errors';
+import { ApiError, type AgentDetails, type DocumentRevisionSummary } from '@lensapp/prism-client';
 import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
 import { cn } from '@/lib/utils';
 import { revisionTitle } from '@/lib/revision-labels';
 import { RevisionDiff } from './revision-diff';
 import { RevisionListItem } from './revision-list-item';
-import type { AgentDetails, DocumentRevisionSummary } from '@/types';
 
 const LIVE = 'live';
 

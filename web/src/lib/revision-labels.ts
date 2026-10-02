@@ -1,4 +1,4 @@
-import type { DocumentRevisionSummary } from '@/types';
+import type { DocumentRevisionSummary } from '@lensapp/prism-client';
 
 const METHODS: Record<string, string> = {
   seed: 'Initial version',

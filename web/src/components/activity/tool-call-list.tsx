@@ -9,7 +9,7 @@ import ToolCallCard from '@/components/chat/tool-call-card';
 import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
 import { formatRelativeTime } from '@/lib/format';
-import type { MessageTrigger } from '@/types';
+import type { MessageTrigger } from '@lensapp/prism-client';
 
 const PAGE_SIZE = 30;
 

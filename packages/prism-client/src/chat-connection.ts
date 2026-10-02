@@ -5,7 +5,7 @@ import type {
   ContextUsage,
   ConversationMessage,
   UpdateEvent,
-} from '@/types';
+} from './types.js';
 import {
   CLIENT_NAME,
   CLIENT_PING_INTERVAL_MS,
@@ -24,8 +24,8 @@ import {
   type VoiceFormat,
   type VoiceStartOptions,
   type WelcomePayload,
-} from './protocol';
-import type { TranscriptMessage } from './transcript';
+} from './protocol.js';
+import type { TranscriptMessage } from './transcript.js';
 
 const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;

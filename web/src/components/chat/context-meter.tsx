@@ -1,4 +1,4 @@
-import type { ContextUsage } from '@/types';
+import type { ContextUsage } from '@lensapp/prism-client';
 
 /** Above HIGH the reading turns amber; above CRITICAL, red. */
 const HIGH_USAGE_PERCENT = 80;

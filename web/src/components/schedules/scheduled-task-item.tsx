@@ -4,7 +4,7 @@ import { IconTile } from '@/components/shared/icon-tile';
 import { describeSchedule } from '@/lib/cron-presets';
 import { formatRelativeTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import type { CronTask } from '@/types';
+import type { CronTask } from '@lensapp/prism-client';
 
 /** One scheduled task: what it does, when it runs, and whether it is running at all. */
 export function ScheduledTaskItem({ task, onDelete }: { task: CronTask; onDelete: () => void }) {

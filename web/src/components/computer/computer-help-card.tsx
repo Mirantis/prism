@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { computerRequest } from '@/api/computer';
 import { useComputerStatus } from '@/hooks/use-computer-status';
 import { SignInForm } from './sign-in-form';
-import type { ComputerHelp } from '@/types';
+import type { ComputerHelp } from '@lensapp/prism-client';
 
 export function ComputerHelpCard({
   help,

@@ -5,6 +5,7 @@
   "license": "Apache-2.0",
   "main": "dist/index.js",
   "workspaces": [
+    "packages/prism-client",
     "web",
     "cli",
     "e2e"

@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
-import type { AgentSummary } from '@/types';
+import type { AgentSummary } from '@lensapp/prism-client';
 
 /** The router and the sidebar chrome are not what this asserts; the nav list is. */
 vi.mock('@tanstack/react-router', () => ({

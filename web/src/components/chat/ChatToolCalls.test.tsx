@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
-import type { ToolCallRecord } from '@/types';
+import type { ToolCallRecord } from '@lensapp/prism-client';
 import ChatToolCalls from './ChatToolCalls';
 
 const call = (overrides: Partial<ToolCallRecord> = {}): ToolCallRecord => ({

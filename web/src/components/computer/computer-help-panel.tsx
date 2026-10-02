@@ -1,4 +1,4 @@
-import type { ComputerHelp } from '@/types';
+import type { ComputerHelp } from '@lensapp/prism-client';
 import { ComputerHelpCard } from './computer-help-card';
 
 export function ComputerHelpPanel({

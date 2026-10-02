@@ -1,6 +1,5 @@
 import { runtimeApi } from '@/api/runtime-client';
-import { ApiError } from '@/api/errors';
-import type { PluginSummary } from '@/types';
+import { ApiError, type PluginSummary } from '@lensapp/prism-client';
 import type { SlashCommand } from './types';
 
 /** One plugin as a markdown list item, with its contributions nested beneath. */

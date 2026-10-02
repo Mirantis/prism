@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, act, waitFor, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { ComputerHelp, ComputerStatus } from '@/types';
+import type { ComputerHelp, ComputerStatus } from '@lensapp/prism-client';
 
 const { mockComputerRequest } = vi.hoisted(() => ({ mockComputerRequest: vi.fn() }));
 vi.mock('@/api/computer', () => ({ computerRequest: mockComputerRequest }));

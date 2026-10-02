@@ -2,7 +2,7 @@ import { Check, RotateCcw } from 'lucide-react';
 import { formatRelativeTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { revisionMethod, revisionTitle } from '@/lib/revision-labels';
-import type { DocumentRevisionSummary } from '@/types';
+import type { DocumentRevisionSummary } from '@lensapp/prism-client';
 
 export function RevisionListItem({
   revision,

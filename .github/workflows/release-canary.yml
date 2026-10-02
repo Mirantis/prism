@@ -11,6 +11,7 @@ on:
       - 'Dockerfile.exec'
       - 'src/**'
       - 'web/**'
+      - 'packages/**'
       - 'cli/**'
       - 'prisma/**'
       - 'tsconfig.json'

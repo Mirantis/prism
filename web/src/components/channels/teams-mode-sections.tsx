@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/table';
 import { runtimeApi } from '@/api/runtime-client';
 import { DeleteConfirm } from '@/components/shared/delete-confirm';
-import type { TeamsChannelMapping } from '@/types';
+import type { TeamsChannelMapping } from '@lensapp/prism-client';
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ConversationMessage } from '@/types';
-import { ChatConnection } from './chat-connection';
-import { FakeWebSocket, STREAM_ID, welcomeFrame } from './fake-web-socket';
+import type { ConversationMessage } from './types.js';
+import { ChatConnection } from './chat-connection.js';
+import { FakeWebSocket, STREAM_ID, welcomeFrame } from './testing/fake-web-socket.js';
 
 const THREAD = '9db4a6ef-9160-4784-bcda-c2e649edf269';
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;

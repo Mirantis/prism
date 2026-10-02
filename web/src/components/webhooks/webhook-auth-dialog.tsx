@@ -10,7 +10,7 @@ import {
   WebhookAuthFields,
   type WebhookAuthFormValues,
 } from './webhook-auth-fields';
-import type { WebhookSubscription } from '@/types';
+import type { WebhookSubscription } from '@lensapp/prism-client';
 
 interface WebhookAuthDialogProps {
   subscription: WebhookSubscription;

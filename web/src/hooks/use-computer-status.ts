@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { computerRequest } from '@/api/computer';
-import type { ComputerStatus } from '@/types';
+import type { ComputerStatus } from '@lensapp/prism-client';
 
 /**
  * The state of the desktop. Fetched once when a page opens and kept current by the

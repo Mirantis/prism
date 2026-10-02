@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '@testing-library/jest-dom/vitest';
-import type { LlmUsageSummary } from '@/types';
+import type { LlmUsageSummary } from '@lensapp/prism-client';
 
 const { mockLlmUsage } = vi.hoisted(() => ({ mockLlmUsage: vi.fn() }));
 

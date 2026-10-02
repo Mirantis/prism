@@ -6,6 +6,10 @@ This page is for people writing a client for Prism's chat. It describes version
 The schemas in `src/protocol/chat-protocol.ts` are the authority. The frames in
 `src/protocol/fixtures/` are real examples.
 
+A browser client does not have to implement this page: the
+`@lensapp/prism-client` package (`packages/prism-client/`) is the client the web
+UI is built on.
+
 ## What the protocol promises
 
 - Every client of an agent sees the same conversations, in the same order,

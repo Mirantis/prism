@@ -16,9 +16,8 @@ import {
   InputGroupTextarea,
 } from '@/components/ui/input-group';
 import { ArrowUp, Mic, Paperclip, Square, X } from 'lucide-react';
-import type { ConnectionStatus } from '@/lib/chat-socket/protocol';
+import type { ConnectionStatus, ContextUsage } from '@lensapp/prism-client';
 import type { Dictation } from '@/hooks/use-dictation';
-import type { ContextUsage } from '@/types';
 import { PendingAttachmentChip, type PendingAttachment } from './ChatAttachmentChip';
 import CommandPopup from './CommandPopup';
 import ContextMeter from './context-meter';

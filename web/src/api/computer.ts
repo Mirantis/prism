@@ -1,4 +1,4 @@
-import type { ComputerStatus } from '@/types';
+import type { ComputerStatus } from '@lensapp/prism-client';
 
 export async function computerRequest<T = ComputerStatus>(path = '', body?: object): Promise<T> {
   const response = await fetch(`/agents/computer${path}`, {

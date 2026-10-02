@@ -45,7 +45,7 @@ import { DocumentWorkspace } from '@/components/profile/document-workspace';
 import { Page } from '@/components/layout/page';
 import { PageHeader } from '@/components/layout/page-header';
 import { StatusPill } from '@/components/shared/status-pill';
-import type { AgentDetails } from '@/types';
+import type { AgentDetails } from '@lensapp/prism-client';
 
 const SECTIONS = [
   { key: 'agentMd', label: 'Agent', icon: Bot },

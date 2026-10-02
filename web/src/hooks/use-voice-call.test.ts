@@ -10,7 +10,7 @@ vi.mock('@/lib/voice-audio', () => ({
 }));
 
 import { useVoiceCall, type UseVoiceCallOptions } from './use-voice-call';
-import type { VoiceStartOptions } from '@/lib/chat-socket/protocol';
+import type { VoiceStartOptions } from '@lensapp/prism-client';
 
 /** The audio side of a call, as `startVoiceAudio` hands it over. */
 function fakeAudio() {

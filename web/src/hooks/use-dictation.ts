@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { audioLevel } from '@/lib/audio-level';
 import { startVoiceAudio, VOICE_SAMPLE_RATE, type VoiceAudio } from '@/lib/voice-audio';
-import type { DictationEvent } from '@/lib/chat-socket/protocol';
+import type { DictationEvent } from '@lensapp/prism-client';
 
 /**
  * A spoken message: the microphone, the wait for the words, and the state a composer

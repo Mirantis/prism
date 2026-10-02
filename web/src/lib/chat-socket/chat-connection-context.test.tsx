@@ -5,9 +5,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useChatSocket } from '@/hooks/use-chat-socket';
 import { useComputerVoice } from '@/hooks/use-computer-voice';
 import { UpdateRequiredBanner } from '@/components/layout/update-required-banner';
-import type { ConversationThread } from '@/types';
+import type { ConversationThread } from '@lensapp/prism-client';
 import { ChatConnectionProvider } from './chat-connection-context';
-import { FakeWebSocket, welcomeFrame } from './fake-web-socket';
+import { FakeWebSocket, welcomeFrame } from '@lensapp/prism-client/testing';
 
 vi.mock('@/lib/agent-context', () => ({
   useAgent: () => ({ agentId: 'a1', userId: 'u1', name: 'Prism' }),

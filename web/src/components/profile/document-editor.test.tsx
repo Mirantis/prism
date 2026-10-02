@@ -3,7 +3,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '@testing-library/jest-dom/vitest';
-import type { AgentDetails, DocumentField } from '@/types';
+import type { AgentDetails, DocumentField } from '@lensapp/prism-client';
 
 const { mockUpdateWorkspaceDoc } = vi.hoisted(() => ({ mockUpdateWorkspaceDoc: vi.fn() }));
 vi.mock('@/api/runtime-client', () => ({

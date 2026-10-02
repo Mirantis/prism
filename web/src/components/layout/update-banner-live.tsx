@@ -3,7 +3,7 @@ import { ArrowUpCircle, Loader2, X } from 'lucide-react';
 import { runtimeApi } from '@/api/runtime-client';
 import { useChatSocket } from '@/hooks/use-chat-socket';
 import { Button } from '@/components/ui/button';
-import type { UpdateEvent, UpdateStatus } from '@/types';
+import type { UpdateEvent, UpdateStatus } from '@lensapp/prism-client';
 
 /**
  * The live half of the update strip, mounted by UpdateBanner only when the

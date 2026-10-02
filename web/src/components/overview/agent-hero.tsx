@@ -7,7 +7,7 @@ import { StatusPill } from '@/components/shared/status-pill';
 import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
 import { cn } from '@/lib/utils';
-import type { AgentDetails } from '@/types';
+import type { AgentDetails } from '@lensapp/prism-client';
 
 /** The top of the Overview: who the agent is, what it runs on, and the way into a conversation. */
 export function AgentHero({ details }: { details: AgentDetails | undefined }) {

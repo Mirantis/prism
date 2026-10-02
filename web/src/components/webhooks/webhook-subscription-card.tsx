@@ -4,7 +4,7 @@ import { Card } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { CopyButton } from '@/components/shared/copy-button';
 import { WebhookAuthBadge } from './webhook-auth-badge';
-import type { WebhookSubscription } from '@/types';
+import type { WebhookSubscription } from '@lensapp/prism-client';
 
 interface WebhookSubscriptionCardProps {
   subscription: WebhookSubscription;

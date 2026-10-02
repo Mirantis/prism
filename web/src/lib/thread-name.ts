@@ -1,4 +1,4 @@
-import type { ConversationThread } from '@/types';
+import type { ConversationThread } from '@lensapp/prism-client';
 
 /**
  * Display name for a conversation thread in the Recents list.
