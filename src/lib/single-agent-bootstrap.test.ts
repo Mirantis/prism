@@ -57,6 +57,7 @@ describe('resolveOrBootstrapSingleAgent', () => {
     mockFindFirst.mockReset();
     mockCreateAgent.mockReset();
     (config as { agentId?: string }).agentId = undefined;
+    (config as { ownerUserId: string }).ownerUserId = '00000000-0000-0000-0000-000000000001';
   });
 
   it('uses existing row when AGENT_ID is set and row exists', async () => {
@@ -119,5 +120,14 @@ describe('resolveOrBootstrapSingleAgent', () => {
     await resolveOrBootstrapSingleAgent();
 
     expect(config.agentId).toBe('discovered-id');
+  });
+
+  it('pins the owner from the existing row when it differs from OWNER_USER_ID', async () => {
+    (config as { agentId?: string }).agentId = 'fixed-id';
+    mockFindUnique.mockResolvedValue(fixture('fixed-id', { userId: 'agent-record-user' }));
+
+    await resolveOrBootstrapSingleAgent();
+
+    expect(config.ownerUserId).toBe('agent-record-user');
   });
 });

@@ -818,7 +818,8 @@ export const config = {
   // First-boot bootstrap defaults. When the SQLite DB is empty (fresh
   // container, or operator wiped /data), the runtime auto-creates an
   // `AgentWorkspace` row using these. Subsequent boots find the row via
-  // `findFirst()` and ignore these entirely.
+  // `findFirst()` and ignore these; boot then replaces `ownerUserId` with the
+  // row's `userId`.
   // OWNER_USER_ID's default is the "local-owner" sentinel: per-message
   // Slack mappings overlay the real `lensUserId` once the user links.
   ownerUserId: process.env.OWNER_USER_ID || '00000000-0000-0000-0000-000000000001',
