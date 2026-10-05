@@ -10,10 +10,10 @@ import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui
 import type { WebhookAuthAlgorithm, WebhookAuthEncoding, WebhookAuthType } from '@/types';
 
 /**
- * The generic sender-verification fields, shared by the create modal and the
- * per-row rotate dialog. Provider-agnostic by design: the operator names the
- * header and prefix their sender uses (recipes live in the docs), so no
- * vendor is hard-coded here or in the runtime.
+ * The generic sender-verification fields of the create and edit forms.
+ * Provider-agnostic by design: the operator names the header and prefix their
+ * sender uses (recipes live in the docs), so no vendor is hard-coded here or in
+ * the runtime.
  */
 export interface WebhookAuthFormValues {
   authType: WebhookAuthType;
@@ -44,7 +44,7 @@ export const AUTH_TYPE_LABELS: Record<WebhookAuthType, string> = {
  * enforces (a scheme other than 'none' needs both a header and a secret), so
  * the submit button can be disabled instead of letting the request 400.
  *
- * `hasSecret` is for the rotate flow: a subscription that already stores a
+ * `hasSecret` is for the edit form: a subscription that already stores a
  * secret keeps it when the field is left empty, so the field isn't required
  * there.
  */

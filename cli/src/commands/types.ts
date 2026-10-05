@@ -11,7 +11,7 @@ import { ApiClient } from '../api-client.js';
 import { AttachmentMeta } from '../attachments.js';
 
 /** Panels that a command can ask the UI to open. */
-export type PanelId = 'schedules' | 'config';
+export type PanelId = 'schedules' | 'config' | 'webhooks';
 
 /**
  * Canonical name of the /attach command — single source of truth shared by
@@ -29,7 +29,7 @@ export interface CommandContext {
   args: string[];
   /** Everything after the command word, trimmed (preserves inner spaces). */
   rawArgs: string;
-  /** Opens one of the full-screen panels (schedules, config). */
+  /** Opens one of the full-screen panels. */
   openPanel: (id: PanelId) => void;
   /** Typed HTTP client for the agent-runtime management API. */
   api: ApiClient;

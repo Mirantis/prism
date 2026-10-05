@@ -1,4 +1,4 @@
-import { KeyRound, Trash2 } from 'lucide-react';
+import { Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
@@ -12,7 +12,7 @@ interface WebhookSubscriptionCardProps {
   deliveryLabel: string;
   isUpdating: boolean;
   onToggle: (active: boolean) => void;
-  onAuthenticate: () => void;
+  onEdit: () => void;
   onDelete: () => void;
 }
 
@@ -22,7 +22,7 @@ export function WebhookSubscriptionCard({
   deliveryLabel,
   isUpdating,
   onToggle,
-  onAuthenticate,
+  onEdit,
   onDelete,
 }: WebhookSubscriptionCardProps) {
   return (
@@ -55,9 +55,9 @@ export function WebhookSubscriptionCard({
         {endpoint && <CopyButton text={endpoint} label="Copy endpoint URL" className="size-9 shrink-0" />}
       </div>
       <div className="flex items-center justify-between gap-2">
-        <Button variant="outline" className="h-9" onClick={onAuthenticate} aria-label={`Authentication for ${subscription.name}`}>
-          <KeyRound />
-          Authentication
+        <Button variant="outline" className="h-9" onClick={onEdit} aria-label={`Edit ${subscription.name}`}>
+          <Pencil />
+          Edit
         </Button>
         <Button variant="ghost" size="icon-lg" onClick={onDelete} aria-label={`Delete ${subscription.name}`} className="text-muted-foreground hover:text-destructive">
           <Trash2 />

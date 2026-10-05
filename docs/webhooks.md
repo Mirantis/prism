@@ -39,7 +39,13 @@ Click **New subscription** on the Webhooks page. **Delivery** and
 
 Each row in the subscriptions list shows the endpoint path with a button that
 copies its full URL, an **Active** switch (disabled subscriptions answer `401`
-without running anything), and a delete action. Changes apply immediately.
+without running anything), an **Edit** action, and a delete action. **Edit**
+opens the same form; the name is the endpoint path and stays fixed, so create a
+new subscription for a new path. Changes apply immediately.
+
+In the [terminal UI](terminal-ui.md#webhooks-panel-webhooks), `/webhooks` pauses
+and resumes subscriptions and edits their description, events, delivery and
+prompt.
 
 ## The endpoint
 
@@ -116,9 +122,9 @@ The parameters:
   keep working. Token mode compares the whole value, so a token may contain a
   comma.
 - Set both **Header** and **Secret** when creating a verified subscription.
-- **Rotating a secret** doesn't need a new endpoint: use the key icon on the
-  subscription row, enter the new secret, and save. Leaving the field empty
-  keeps the current one.
+- **Rotating a secret** doesn't need a new endpoint: open **Edit** on the
+  subscription, enter the new secret, and save. Leaving the field empty keeps
+  the current one.
 - The secret is stored in the agent's own database.
 
 ### Recipes for common senders

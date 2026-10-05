@@ -105,19 +105,32 @@ Feature: Inbound webhooks
     When I POST the payload '{"status":"firing"}' to webhook "tokened" with header "Authorization" set to "Bearer nope"
     Then the webhook response status is 401
 
+  Scenario: Edit a subscription's template and event filter
+    When I navigate to the webhooks page
+    And I enable the webhook receiver
+    And I create a deliver-only webhook subscription named "editable" with prompt "Before edit: {status}"
+    When I edit webhook "editable"
+    Then the webhook edit form shows the prompt "Before edit: {status}"
+    When I change the webhook prompt to "After edit: {status}" and the events to "deploy" and save
+    Then the stored webhook subscription "editable" has the prompt "After edit: {status}" and the events "deploy"
+    When I POST the payload '{"event_type":"build","status":"filtered"}' to webhook "editable"
+    And I POST the payload '{"event_type":"deploy","status":"done"}' to webhook "editable"
+    Then a webhook-triggered message containing "After edit: done" is stored in the conversation
+    And no webhook-triggered message containing "filtered" is stored in the conversation
+
   Scenario: Manage authentication on a narrow screen with the keyboard
     When I use a narrow webhook viewport
     And I navigate to the webhooks page
     And I enable the webhook receiver
     And I create a deliver-only webhook subscription named "mobile-hook" verified by HMAC header "X-Hub-Signature-256" prefix "sha256=" with secret "s3cret" and prompt "Mobile alert: {status}"
     Then the subscription "mobile-hook" shows authentication and controls without horizontal scrolling
-    When I open authentication for webhook "mobile-hook" on a short screen
-    Then the webhook authentication form and its actions fit the viewport
+    When I edit webhook "mobile-hook" on a short screen
+    Then the webhook edit form and its actions fit the viewport
     When I clear and restore the webhook authentication header
-    And I save webhook authentication with an empty secret using Enter
+    And I save the webhook edit with an empty secret using Enter
     And I POST the payload '{"status":"kept"}' to webhook "mobile-hook" signed with secret "s3cret"
     Then the webhook response status is 200
-    When I open authentication for webhook "mobile-hook" on a short screen
+    When I edit webhook "mobile-hook" on a short screen
     And I replace the webhook secret with "rotated-secret" using Enter
     And I POST the payload '{"status":"old"}' to webhook "mobile-hook" signed with secret "s3cret"
     Then the webhook response status is 401

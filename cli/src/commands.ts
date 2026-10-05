@@ -13,6 +13,7 @@
 import type { SlashCommand } from './commands/types.js';
 import { copyCommand } from './commands/copy.js';
 import { schedulesCommand } from './commands/schedules.js';
+import { webhooksCommand } from './commands/webhooks.js';
 import { configCommand } from './commands/config.js';
 import { agentGuideCommand } from './commands/agent-guide.js';
 import { renameCommand } from './commands/rename.js';
@@ -39,6 +40,7 @@ export { parseInterval } from './commands/heartbeat.js';
 export const COMMANDS: SlashCommand[] = [
   copyCommand,
   schedulesCommand,
+  webhooksCommand,
   configCommand,
   agentGuideCommand,
   renameCommand,

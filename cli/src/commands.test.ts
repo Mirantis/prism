@@ -44,6 +44,8 @@ function stubApi(): { [K in keyof ApiClient]: ReturnType<typeof vi.fn> } {
     listCronTasks: vi.fn(),
     createCronTask: vi.fn(),
     deleteCronTask: vi.fn(),
+    listWebhookSubscriptions: vi.fn(),
+    updateWebhookSubscription: vi.fn(),
     createGoal: vi.fn(),
     getThreadGoal: vi.fn(),
     listGoals: vi.fn(),
@@ -574,11 +576,18 @@ describe('/cron-model', () => {
   });
 });
 
-describe('/schedules and /config open panels', () => {
+describe('/schedules, /webhooks and /config open panels', () => {
   it('/schedules opens the schedules panel and returns empty', async () => {
     const openPanel = vi.fn<(id: PanelId) => void>();
     const out = await cmd('/schedules').run(makeCtx({ openPanel }));
     expect(openPanel).toHaveBeenCalledWith('schedules');
+    expect(out).toBe('');
+  });
+
+  it('/webhooks opens the webhooks panel and returns empty', async () => {
+    const openPanel = vi.fn<(id: PanelId) => void>();
+    const out = await cmd('/webhooks').run(makeCtx({ openPanel }));
+    expect(openPanel).toHaveBeenCalledWith('webhooks');
     expect(out).toBe('');
   });
 

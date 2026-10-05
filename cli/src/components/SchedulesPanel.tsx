@@ -34,9 +34,11 @@ function formatNextRun(iso: string | null): string {
 interface Props {
   api: ApiClient;
   onClose: () => void;
+  /** False while another panel covers this one. */
+  inputActive?: boolean;
 }
 
-export const SchedulesPanel: React.FC<Props> = ({ api, onClose }) => {
+export const SchedulesPanel: React.FC<Props> = ({ api, onClose, inputActive = true }) => {
   const [mode, setMode] = useState<Mode>('list');
   const [loadState, setLoadState] = useState<LoadState>('loading');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -227,7 +229,7 @@ export const SchedulesPanel: React.FC<Props> = ({ api, onClose }) => {
       }
       return;
     }
-  });
+  }, { isActive: inputActive });
 
   if (loadState === 'loading') {
     return (
@@ -261,7 +263,7 @@ export const SchedulesPanel: React.FC<Props> = ({ api, onClose }) => {
             key={focusedField === 0 ? 'name-active' : 'name'}
             value={formName}
             onChange={setFormName}
-            focus={focusedField === 0}
+            focus={inputActive && focusedField === 0}
           />
         </Box>
         <Box>
@@ -274,7 +276,7 @@ export const SchedulesPanel: React.FC<Props> = ({ api, onClose }) => {
             key={focusedField === 1 ? 'schedule-active' : 'schedule'}
             value={formSchedule}
             onChange={setFormSchedule}
-            focus={focusedField === 1}
+            focus={inputActive && focusedField === 1}
           />
         </Box>
         <Box>
@@ -287,7 +289,7 @@ export const SchedulesPanel: React.FC<Props> = ({ api, onClose }) => {
             key={focusedField === 2 ? 'instruction-active' : 'instruction'}
             value={formInstruction}
             onChange={setFormInstruction}
-            focus={focusedField === 2}
+            focus={inputActive && focusedField === 2}
           />
         </Box>
         <Box marginTop={1} flexDirection="column">
