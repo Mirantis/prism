@@ -849,6 +849,7 @@ src/
 │   ├── context.service.ts      # Builds agent context (agent data from backend + conversation from DB)
 │   ├── llm-usage.service.ts    # Token spend: aggregates `llm_calls` over a window
 │   ├── tool-call-history.service.ts # Pages stored tool calls out of the toolCalls column
+│   ├── webhook-run.service.ts  # One `webhook_runs` row per accepted webhook event: queued, running, its result, the message it delivered
 │   ├── llm-call.service.ts     # Writes one `llm_calls` row per model call (fire-and-forget)
 │   ├── conversation.service.ts # Thread/message CRUD via Prisma, pluggable thread providers
 │   ├── attachment.service.ts   # All MessageAttachment DB access + media-type detection; content as files (lib/media-store.ts), metadata stubs to the model
@@ -913,7 +914,7 @@ src/
 │   └── skills/                 # The `skill` tool (loads a SKILL.md body on demand)
 ├── routes/
 │   ├── management.ts           # Management API for backend to push heartbeat/cron/slack-heartbeat-trigger events
-│   ├── activity.ts             # Activity page reads: token totals, paged tool calls
+│   ├── activity.ts             # Activity page reads: token totals, paged tool calls, paged webhook runs
 │   └── document-revisions.ts   # Per identity document: the write, the history, one revision with its content, and the restore
 ├── utils/
 │   ├── async-channel.ts        # Bridges SDK push-based onStepFinish into async iteration (used by invokeStream)

@@ -26,6 +26,7 @@ if (dotenvLoadInfo.error) {
 }
 import { createApp, listenOn } from './server';
 import { webhookReceiverService } from './services/webhook-receiver.service';
+import { webhookRunService } from './services/webhook-run.service';
 import { initLangfuse, shutdownLangfuse } from './lib/langfuse';
 import { initTelemetry, shutdownTelemetry } from './lib/telemetry';
 import { trackAgentStarted } from './lib/startup-telemetry';
@@ -228,6 +229,11 @@ const initialize = async () => {
       where: { id: agent.id, status: 'RUNNING' },
       data: { status: 'IDLE' },
     });
+
+    const interruptedWebhookRuns = await webhookRunService.failInterrupted(agent.id);
+    if (interruptedWebhookRuns > 0) {
+      logger.warn('[Startup] %d webhook run(s) did not finish before the restart', interruptedWebhookRuns);
+    }
 
     // Boot keeps the schedule the last run set, so a restart cannot defer a
     // check, and an overdue one runs promptly.

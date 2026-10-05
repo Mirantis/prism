@@ -1,6 +1,6 @@
 Feature: Activity page
   As a user I want to see what the agent has spent and what it has done, so I
-  can tell where its tokens went and which tools it used
+  can tell where its tokens went, which webhooks fired and which tools it used
 
   Background:
     Given I am logged in
@@ -11,6 +11,7 @@ Feature: Activity page
     Then the Activity nav item comes after Profile
     And the token totals are all zero
     And the cache hit rate is not reported
+    And the webhook run list says there are none yet
     And the tool call list says there are none yet
 
   Scenario: A completed turn shows up as usage and as tool calls
@@ -31,6 +32,20 @@ Feature: Activity page
     When I scroll to the end of the tool call list
     Then all 40 tool calls are listed
     And no tool call is listed twice
+
+  Scenario: Webhook runs are listed newest first with their result
+    Given the agent has a completed, a failed and a spending-limit webhook run
+    When I navigate to the activity page
+    Then the webhook runs read newest first:
+      | name         | result                 |
+      | budget-hook  | Spending limit reached |
+      | nightly-sync | Failed                 |
+      | deploy-hook  | Completed              |
+    When I expand the webhook run "nightly-sync"
+    Then the webhook run shows the error "The runtime restarted before the run finished."
+    When I expand the webhook run "deploy-hook"
+    Then its delivered message contains "Deploy finished."
+    And the webhook run lists 2 tool calls
 
   Scenario: Autonomous turns are labelled by what triggered them
     Given the agent has a stored tool call from a scheduled task

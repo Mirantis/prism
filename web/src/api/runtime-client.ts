@@ -27,6 +27,8 @@ import type {
   UpdateStatus,
   LlmUsageSummary,
   ToolCallHistoryPage,
+  WebhookRunDetail,
+  WebhookRunPage,
 } from '@/types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -427,6 +429,15 @@ export const runtimeApi = {
     const query = params.toString();
     return request<ToolCallHistoryPage>(`/agents/activity/tool-calls${query ? `?${query}` : ''}`);
   },
+  listWebhookRuns: (opts?: { limit?: number; cursor?: string }) => {
+    const params = new URLSearchParams();
+    if (opts?.limit) params.set('limit', String(opts.limit));
+    if (opts?.cursor) params.set('cursor', opts.cursor);
+    const query = params.toString();
+    return request<WebhookRunPage>(`/agents/activity/webhook-runs${query ? `?${query}` : ''}`);
+  },
+  getWebhookRun: (id: string) =>
+    request<WebhookRunDetail>(`/agents/activity/webhook-runs/${encodeURIComponent(id)}`),
 };
 
 /** URL to download/preview a stored attachment by id. */

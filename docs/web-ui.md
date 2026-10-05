@@ -285,6 +285,14 @@ What the agent has spent, and what it has done.
   `0%` when it reports one and nothing was served from cache. See
   **[Configuration → Provider selection](configuration.md#provider-selection)**.
 
+- **Webhook runs.** Every event a [webhook](webhooks.md) accepted, newest first,
+  with the webhook's name, the time and the result: **Completed**, **Failed**,
+  **Spending limit reached**, or **Delivered** for a deliver-only webhook. A run
+  that has not finished reads **Queued** or **Running**, and one cut off by a
+  restart reads **Failed**. Expand a run to see the message it delivered and the
+  tool calls it made. When it delivered to web chat, **Open conversation** opens
+  that chat. The 1,000 newest finished runs are kept.
+
 - **Tool calls.** The tool calls the agent has stored, newest turn first, across
   every conversation, running back through the whole history.
 

@@ -14,9 +14,10 @@
  * filtering, delivery or LLM work happens.
  */
 
-import { WebhookSubscription } from '@prisma/client';
+import { ConversationMessage, WebhookSubscription } from '@prisma/client';
 import { invoke } from '../invoke';
 import { messageDeliveryService, PublishOptions } from './message-delivery.service';
+import { webhookRunService, WebhookRunResult } from './webhook-run.service';
 import { conversationService } from './conversation.service';
 import { agentWorkspaceService } from './agent-workspace.service';
 import { slackMappingService } from './slack-mapping.service';
@@ -236,9 +237,24 @@ export class WebhookService {
 
     const prompt = renderWebhookPrompt(subscription.prompt, payload, eventType, name);
 
+    const run = { id: runId, agentId: agent.id, name, event: eventType };
+
     if (subscription.deliverOnly) {
-      // Direct delivery: the rendered template IS the message. No LLM.
-      await this.deliver(agent.id, agent.userId, subscription.deliverTo, prompt);
+      // Direct delivery: the rendered template IS the message. No LLM. The row
+      // is written first, so a database that cannot record the event answers
+      // 500 before anything is sent.
+      await webhookRunService.accept(run, 'running');
+      let message: ConversationMessage;
+      try {
+        message = await this.deliver(agent.id, agent.userId, subscription.deliverTo, prompt);
+      } catch (error: unknown) {
+        await webhookRunService.finish(runId, {
+          status: 'failed',
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+      await webhookRunService.finish(runId, { status: 'delivered', messageId: message.id });
       trackEvent('webhook processed', agent.userId, {
         'agent.id': agent.id,
         'webhook.run_id': runId,
@@ -256,9 +272,20 @@ export class WebhookService {
       logger.warn(`[Webhook] '${name}' queue is full (${queue.length} pending) — rejecting with 429`);
       return { status: 'busy' };
     }
-    queue.push(() => this.runAgent(subscription, prompt, runId, startTime));
+    // The slot is taken in the same tick as the check above, so concurrent
+    // deliveries cannot overfill the queue. The run waits for its row and is
+    // skipped without one; the rejection below reports that failure.
+    const accepted = webhookRunService.accept(run, 'queued');
+    const recorded = accepted.then(
+      () => true,
+      () => false,
+    );
+    queue.push(async () => {
+      if (await recorded) await this.runAgent(subscription, prompt, runId, startTime);
+    });
     this.pending.set(subscription.id, queue);
     this.drainQueue(subscription.id);
+    await accepted;
     return { status: 'accepted', event: eventType };
   }
 
@@ -273,8 +300,7 @@ export class WebhookService {
     this.running.add(subscriptionId);
     next()
       .catch((error: unknown) => {
-        const msg = error instanceof Error ? error.message : String(error);
-        logger.error(`[Webhook] Agent run failed: ${msg}`);
+        logger.error({ err: error }, '[Webhook] Agent run failed');
       })
       .finally(() => {
         this.running.delete(subscriptionId);
@@ -282,7 +308,7 @@ export class WebhookService {
       });
   }
 
-  /** Invoke the agent over the rendered prompt and deliver its final response. */
+  /** Run the agent over the rendered prompt and record how the run ended. */
   private async runAgent(
     subscription: WebhookSubscription,
     prompt: string,
@@ -290,65 +316,103 @@ export class WebhookService {
     startTime: number,
   ): Promise<void> {
     const agent = await agentWorkspaceService.getAgent();
-    const trackRun = (status: 'completed' | 'budget_exceeded' | 'error') =>
-      trackEvent('webhook processed', agent.userId, {
-        'agent.id': agent.id,
-        'webhook.run_id': runId,
-        'webhook.subscription_id': subscription.id,
-        'webhook.status': status,
-        'webhook.elapsed_ms': String(Date.now() - startTime),
-      });
+    await webhookRunService.start(runId);
 
+    let result: WebhookRunResult;
     try {
-      const result = await invoke({
-        userId: agent.userId,
-        agentId: agent.id,
-        mode: 'webhook',
-        prompt,
-      });
-
-      if (result.error?.type === 'budget_exceeded') {
-        const budgetMessage = `**Webhook: ${subscription.name}**\n\nThis event could not be processed — your organization's AI spending limit has been reached${result.error.detail ? `: ${result.error.detail}` : ''}. Please contact your administrator to increase the budget.`;
-        await this.deliver(agent.id, agent.userId, subscription.deliverTo, budgetMessage);
-        trackRun('budget_exceeded');
-        return;
-      }
-
-      // Use only the last step's text (the final summary), not intermediate step texts
-      const lastStep = result.steps[result.steps.length - 1];
-      const responseText = (lastStep?.text ?? '').trim();
-      const body = responseText || result.response;
-
-      await this.deliver(agent.id, agent.userId, subscription.deliverTo, `**Webhook: ${subscription.name}**\n\n${body}`, {
-        toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined,
-        attachmentIds: result.attachmentIds,
-      });
-
-      logger.info(`[Webhook] '${subscription.name}' completed in ${Date.now() - startTime}ms`);
-      trackRun('completed');
+      result = await this.invokeAndDeliver(agent, subscription, prompt);
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : 'Unknown error';
-      logger.error(`[Webhook] '${subscription.name}' failed: ${msg}`);
-      trackRun('error');
-      // The sender already got 202 and won't retry — a silent failure would
-      // mean the user never hears about the event at all. Deliver a brief
-      // notice (best-effort; delivery itself may be what failed).
-      try {
-        await this.deliver(
-          agent.id,
-          agent.userId,
-          subscription.deliverTo,
-          `**Webhook: ${subscription.name}**\n\nThis event could not be processed — the run failed with: ${msg}`,
-        );
-      } catch (deliverError: unknown) {
-        const deliverMsg = deliverError instanceof Error ? deliverError.message : String(deliverError);
-        logger.error(`[Webhook] '${subscription.name}' failure notice could not be delivered: ${deliverMsg}`);
-      }
+      logger.error({ err: error }, `[Webhook] '${subscription.name}' failed`);
+      result = {
+        status: 'failed',
+        error: msg,
+        messageId: await this.deliverFailureNotice(agent, subscription, msg),
+      };
+    }
+
+    await webhookRunService.finish(runId, result);
+    if (result.status === 'completed') {
+      logger.info(`[Webhook] '${subscription.name}' completed in ${Date.now() - startTime}ms`);
+    }
+    trackEvent('webhook processed', agent.userId, {
+      'agent.id': agent.id,
+      'webhook.run_id': runId,
+      'webhook.subscription_id': subscription.id,
+      'webhook.status': result.status === 'failed' ? 'error' : result.status,
+      'webhook.elapsed_ms': String(Date.now() - startTime),
+    });
+  }
+
+  /** Invoke the agent and deliver its final response, or the spending-limit notice. */
+  private async invokeAndDeliver(
+    agent: { id: string; userId: string },
+    subscription: WebhookSubscription,
+    prompt: string,
+  ): Promise<WebhookRunResult> {
+    const result = await invoke({
+      userId: agent.userId,
+      agentId: agent.id,
+      mode: 'webhook',
+      prompt,
+    });
+
+    // The message stores the run's tool calls and shared files whatever the result.
+    const stored = {
+      toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined,
+      attachmentIds: result.attachmentIds,
+    };
+
+    if (result.error?.type === 'budget_exceeded') {
+      const budgetMessage = `**Webhook: ${subscription.name}**\n\nThis event could not be processed — your organization's AI spending limit has been reached${result.error.detail ? `: ${result.error.detail}` : ''}. Please contact your administrator to increase the budget.`;
+      const message = await this.deliver(agent.id, agent.userId, subscription.deliverTo, budgetMessage, stored);
+      return { status: 'budget_exceeded', error: result.error.detail, messageId: message.id };
+    }
+
+    // Use only the last step's text (the final summary), not intermediate step texts
+    const lastStep = result.steps[result.steps.length - 1];
+    const responseText = (lastStep?.text ?? '').trim();
+    const body = responseText || result.response;
+
+    const message = await this.deliver(
+      agent.id,
+      agent.userId,
+      subscription.deliverTo,
+      `**Webhook: ${subscription.name}**\n\n${body}`,
+      stored,
+    );
+
+    // A model error ends the run on an error step, delivered like any reply.
+    if (result.error) return { status: 'failed', error: result.error.detail, messageId: message.id };
+    return { status: 'completed', messageId: message.id };
+  }
+
+  /**
+   * The sender already got 202 and won't retry, so a run that threw tells the
+   * user in a brief notice. Best-effort, since delivery may be what failed.
+   */
+  private async deliverFailureNotice(
+    agent: { id: string; userId: string },
+    subscription: WebhookSubscription,
+    msg: string,
+  ): Promise<string | null> {
+    try {
+      const message = await this.deliver(
+        agent.id,
+        agent.userId,
+        subscription.deliverTo,
+        `**Webhook: ${subscription.name}**\n\nThis event could not be processed — the run failed with: ${msg}`,
+      );
+      return message.id;
+    } catch (deliverError: unknown) {
+      logger.error({ err: deliverError }, `[Webhook] '${subscription.name}' failure notice could not be delivered`);
+      return null;
     }
   }
 
   /**
-   * Deliver a webhook message per the subscription's target:
+   * Deliver a webhook message per the subscription's target, and return the
+   * stored message:
    * - 'all' — broadcast to every connected channel (heartbeat/cron behavior);
    *   post-#58 the Slack side is the DM + main channel, not every channel.
    * - 'chat' — scoped to web chat; stored in the web-visible latest thread.
@@ -365,14 +429,13 @@ export class WebhookService {
     deliverTo: string,
     content: string,
     options?: Pick<PublishOptions, 'toolCalls' | 'attachmentIds'>,
-  ): Promise<void> {
+  ): Promise<ConversationMessage> {
     if (deliverTo === 'chat') {
       const thread = await conversationService.getOrCreateLatestThread(agentId, userId);
-      await messageDeliveryService.publish(userId, thread.id, content, 'WEBHOOK', {
+      return messageDeliveryService.publish(userId, thread.id, content, 'WEBHOOK', {
         ...options,
         channelContext: { channel: 'websocket', threadId: thread.id },
       });
-      return;
     }
 
     if (deliverTo === 'slack') {
@@ -386,19 +449,17 @@ export class WebhookService {
         // routing. (A channelId would route to deliverToChannel, which can't
         // post to DM ids.)
         const thread = await conversationService.getOrCreateThreadByExternalId(userId, agentId, destChannelId);
-        await messageDeliveryService.publish(userId, thread.id, content, 'WEBHOOK', {
+        return messageDeliveryService.publish(userId, thread.id, content, 'WEBHOOK', {
           ...options,
           channelContext: { channel: 'slack', threadId: thread.id },
         });
-        return;
       }
       // No DM or channel linked — Slack delivery is impossible. Store in the
       // web-visible latest thread so the event isn't silently lost, and warn.
       logger.warn(
         "[Webhook] deliverTo:'slack' but no Slack DM or channel is linked — storing in the web thread instead",
       );
-      await messageDeliveryService.publishToLatestThread(agentId, userId, content, 'WEBHOOK', options);
-      return;
+      return messageDeliveryService.publishToLatestThread(agentId, userId, content, 'WEBHOOK', options);
     }
 
     if (deliverTo === 'teams') {
@@ -411,7 +472,7 @@ export class WebhookService {
         // must carry it — a Teams channelContext without a channelId is
         // DM-scoped by design and would deliver nothing in Team Mode.
         const thread = await conversationService.getOrCreateThreadByExternalId(userId, agentId, dest.conversationId);
-        await messageDeliveryService.publish(userId, thread.id, content, 'WEBHOOK', {
+        return messageDeliveryService.publish(userId, thread.id, content, 'WEBHOOK', {
           ...options,
           channelContext: {
             channel: 'teams',
@@ -419,17 +480,15 @@ export class WebhookService {
             threadId: thread.id,
           },
         });
-        return;
       }
       logger.warn(
         "[Webhook] deliverTo:'teams' but no Teams DM or channel is linked — storing in the web thread instead",
       );
-      await messageDeliveryService.publishToLatestThread(agentId, userId, content, 'WEBHOOK', options);
-      return;
+      return messageDeliveryService.publishToLatestThread(agentId, userId, content, 'WEBHOOK', options);
     }
 
     // 'all' — broadcast (web + Slack/Teams DM/main channel).
-    await messageDeliveryService.publishToLatestThread(agentId, userId, content, 'WEBHOOK', options);
+    return messageDeliveryService.publishToLatestThread(agentId, userId, content, 'WEBHOOK', options);
   }
 
   /**

@@ -1,7 +1,7 @@
 /**
  * Activity Route Tests
  *
- * The two read endpoints behind the Activity page: how each one reads its query
+ * The read endpoints behind the Activity page: how each one reads its query
  * parameters, and that a failing read becomes a 500 rather than an unhandled
  * rejection. The arithmetic itself is covered in the service's own tests.
  */
@@ -10,9 +10,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 
-const { mockLlmUsage, mockToolCalls } = vi.hoisted(() => ({
+const { mockLlmUsage, mockToolCalls, mockWebhookRunPage, mockWebhookRunGet } = vi.hoisted(() => ({
   mockLlmUsage: vi.fn(),
   mockToolCalls: vi.fn(),
+  mockWebhookRunPage: vi.fn(),
+  mockWebhookRunGet: vi.fn(),
 }));
 
 vi.mock('../services/llm-usage.service', () => ({
@@ -20,6 +22,9 @@ vi.mock('../services/llm-usage.service', () => ({
 }));
 vi.mock('../services/tool-call-history.service', () => ({
   toolCallHistoryService: { page: mockToolCalls },
+}));
+vi.mock('../services/webhook-run.service', () => ({
+  webhookRunService: { page: mockWebhookRunPage, get: mockWebhookRunGet },
 }));
 
 vi.mock('../logger', () => ({
@@ -51,6 +56,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockLlmUsage.mockResolvedValue(SUMMARY);
   mockToolCalls.mockResolvedValue({ items: [], nextCursor: null });
+  mockWebhookRunPage.mockResolvedValue({ items: [], nextCursor: null });
 });
 
 describe('GET /agents/activity/llm-usage', () => {
@@ -159,5 +165,68 @@ describe('GET /agents/activity/tool-calls', () => {
 
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: 'nope' });
+  });
+});
+
+describe('GET /agents/activity/webhook-runs', () => {
+  it('defaults to 30 runs and no cursor', async () => {
+    const res = await request(createTestApp()).get('/agents/activity/webhook-runs');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ items: [], nextCursor: null });
+    expect(mockWebhookRunPage).toHaveBeenCalledWith(30, undefined);
+  });
+
+  it('passes the limit and the cursor through', async () => {
+    await request(createTestApp()).get('/agents/activity/webhook-runs?limit=10&cursor=run-9');
+
+    expect(mockWebhookRunPage).toHaveBeenCalledWith(10, 'run-9');
+  });
+
+  it('rejects a page size outside 1..the cap', async () => {
+    const app = createTestApp();
+
+    for (const query of ['limit=0', 'limit=abc', 'limit=5000']) {
+      const res = await request(app).get(`/agents/activity/webhook-runs?${query}`);
+      expect(res.status).toBe(400);
+    }
+    expect(mockWebhookRunPage).not.toHaveBeenCalled();
+  });
+
+  it('maps a failing read to a 500', async () => {
+    mockWebhookRunPage.mockRejectedValue(new Error('database is locked'));
+
+    const res = await request(createTestApp()).get('/agents/activity/webhook-runs');
+
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'database is locked' });
+  });
+});
+
+describe('GET /agents/activity/webhook-runs/:id', () => {
+  it('returns the run the service read', async () => {
+    mockWebhookRunGet.mockResolvedValue({ id: 'run-1', status: 'completed', delivered: null });
+
+    const res = await request(createTestApp()).get('/agents/activity/webhook-runs/run-1');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ id: 'run-1', status: 'completed', delivered: null });
+    expect(mockWebhookRunGet).toHaveBeenCalledWith('run-1');
+  });
+
+  it('404s a run the agent does not have', async () => {
+    mockWebhookRunGet.mockResolvedValue(null);
+
+    const res = await request(createTestApp()).get('/agents/activity/webhook-runs/nope');
+
+    expect(res.status).toBe(404);
+  });
+
+  it('maps a failing read to a 500', async () => {
+    mockWebhookRunGet.mockRejectedValue(new Error('nope'));
+
+    const res = await request(createTestApp()).get('/agents/activity/webhook-runs/run-1');
+
+    expect(res.status).toBe(500);
   });
 });

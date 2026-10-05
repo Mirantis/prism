@@ -149,6 +149,7 @@ model AgentWorkspace {
   teamsMappings          TeamsMapping[]
   teamsVerificationCodes TeamsVerificationCode[]
   webhookSubscriptions   WebhookSubscription[]
+  webhookRuns            WebhookRun[]
   subagentLinks          AgentSubagent[]         @relation("ParentAgent")
   parentAgentLinks       AgentSubagent[]         @relation("ChildAgent")
 
@@ -266,6 +267,7 @@ model ConversationMessage {
 
   thread      ConversationThread  @relation(fields: [threadId], references: [id], onDelete: Cascade)
   attachments MessageAttachment[]
+  webhookRun  WebhookRun?
 
   @@index([role, createdAt])
   @@map("conversation_messages")
@@ -698,6 +700,31 @@ model WebhookSubscription {
 
   @@index([agentId])
   @@map("webhook_subscriptions")
+}
+
+// One webhook event the runtime accepted: an agent run or a deliver-only
+// publish, read by the Activity page. `name` is the subscription's name at the
+// time, with no relation to the subscription, so deleting one keeps its runs.
+// Bounded at `MAX_WEBHOOK_RUNS`, trimmed at insert.
+model WebhookRun {
+  id      String @id // the runId the receiver answered with
+  agentId String
+  name    String
+  event   String
+  status  String // `WEBHOOK_RUN_STATUSES`
+  error   String?
+
+  /// The message the run delivered, if it delivered one.
+  messageId String? @unique
+
+  createdAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  agentWorkspace AgentWorkspace       @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  message        ConversationMessage? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  @@index([agentId, createdAt])
+  @@map("webhook_runs")
 }
 
 // ============================================================================
