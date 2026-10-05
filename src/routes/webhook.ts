@@ -23,6 +23,12 @@ import { logger } from '../logger';
 
 const router = Router();
 
+// Some senders check the endpoint with a HEAD request before they save it.
+// Every name answers 200, so the check reveals no subscription names.
+router.head('/webhooks/:name', (_req: Request, res: Response) => {
+  res.status(200).end();
+});
+
 router.post('/webhooks/:name', async (req: Request<{ name: string }>, res: Response) => {
   const { name } = req.params;
   try {

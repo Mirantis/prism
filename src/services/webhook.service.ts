@@ -212,6 +212,7 @@ export class WebhookService {
       authPrefix: subscription.authPrefix,
       authAlgorithm: subscription.authAlgorithm,
       authEncoding: subscription.authEncoding,
+      authSignedUrl: subscription.authSignedUrl,
       headers,
       rawBody,
     });

@@ -1133,6 +1133,55 @@ describe('Management Routes', () => {
       expect(res.body.hasSecret).toBe(true);
     });
 
+    describe('signed URL', () => {
+      const hmacBody = {
+        name: 'boards',
+        authType: 'hmac',
+        authHeader: 'X-Signature',
+        authAlgorithm: 'sha1',
+        authEncoding: 'base64',
+        secret: 'shhh',
+      };
+
+      it('stores a trimmed http(s) URL for an HMAC scheme', async () => {
+        mockPrisma.webhookSubscription.create.mockResolvedValue({ id: 'wh-1', name: 'boards' });
+
+        const res = await authedRequest(app).post('/agents/webhook-subscriptions')
+          .send({ ...hmacBody, authSignedUrl: ' https://prism.example.com/agents/webhooks/boards ' });
+
+        expect(res.status).toBe(201);
+        expect(mockPrisma.webhookSubscription.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            authSignedUrl: 'https://prism.example.com/agents/webhooks/boards',
+          }),
+        });
+      });
+
+      it('rejects a value that is not an absolute http(s) URL', async () => {
+        for (const authSignedUrl of ['/agents/webhooks/boards', 'ftp://prism.example.com/x', 'not a url']) {
+          const res = await authedRequest(app).post('/agents/webhook-subscriptions')
+            .send({ ...hmacBody, authSignedUrl });
+          expect(res.status).toBe(400);
+          expect(res.body.fieldErrors.authSignedUrl).toBeTruthy();
+        }
+        expect(mockPrisma.webhookSubscription.create).not.toHaveBeenCalled();
+      });
+
+      it('drops the URL when the scheme does not sign the body', async () => {
+        mockPrisma.webhookSubscription.create.mockResolvedValue({ id: 'wh-1', name: 'boards' });
+
+        await authedRequest(app).post('/agents/webhook-subscriptions').send({
+          ...hmacBody,
+          authType: 'token',
+          authSignedUrl: 'https://prism.example.com/agents/webhooks/boards',
+        });
+
+        expect(mockPrisma.webhookSubscription.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ authType: 'token', authSignedUrl: null }),
+        });
+      });
+    });
+
     // Header and secret are trimmed; the prefix is stored exactly as typed,
     // since only the operator knows what their sender puts on the wire.
     // (Matching tolerates the space either way — see webhook-signature.test.ts.)
@@ -1408,6 +1457,7 @@ describe('Management Routes', () => {
           'authEncoding',
           'authHeader',
           'authPrefix',
+          'authSignedUrl',
           'authType',
           'secret',
         ]);
@@ -1430,6 +1480,41 @@ describe('Management Routes', () => {
         expect(res.status).toBe(400);
         expect(res.body.fieldErrors.secret).toBeTruthy();
         expect(mockPrisma.webhookSubscription.update).not.toHaveBeenCalled();
+      });
+
+      it('sets the signed URL on an HMAC subscription', async () => {
+        const url = 'https://prism.example.com/agents/webhooks/alerts';
+        mockPrisma.webhookSubscription.findUnique.mockResolvedValue({ ...stored, authSignedUrl: null });
+        mockPrisma.webhookSubscription.update.mockResolvedValue({ ...stored, authSignedUrl: url });
+
+        const res = await authedRequest(app)
+          .patch('/agents/webhook-subscriptions/wh-1')
+          .send({ authSignedUrl: url });
+
+        expect(res.status).toBe(200);
+        expect(mockPrisma.webhookSubscription.update).toHaveBeenCalledWith({
+          where: { id: 'wh-1' },
+          data: expect.objectContaining({ authType: 'hmac', authSignedUrl: url, secret: 'old-secret' }),
+        });
+      });
+
+      // The edit dialog sends '' when the field is emptied.
+      it('clears the signed URL when it is sent empty', async () => {
+        mockPrisma.webhookSubscription.findUnique.mockResolvedValue({
+          ...stored,
+          authSignedUrl: 'https://prism.example.com/agents/webhooks/alerts',
+        });
+        mockPrisma.webhookSubscription.update.mockResolvedValue({ ...stored, authSignedUrl: null });
+
+        const res = await authedRequest(app)
+          .patch('/agents/webhook-subscriptions/wh-1')
+          .send({ authSignedUrl: '' });
+
+        expect(res.status).toBe(200);
+        expect(mockPrisma.webhookSubscription.update).toHaveBeenCalledWith({
+          where: { id: 'wh-1' },
+          data: expect.objectContaining({ authType: 'hmac', authSignedUrl: null }),
+        });
       });
 
       it('clears the stored credential when verification is switched off', async () => {

@@ -204,11 +204,11 @@ Let external systems trigger the agent by POSTing JSON to a named endpoint.
   template) and **Authentication**.
 - **Authentication** starts with a **Scheme** — a shared token in a header or an
   HMAC signature of the body — which reveals the **Header**, **Prefix** and
-  **Secret** fields (plus **Algorithm**/**Encoding** for HMAC). It's generic:
-  you name the header your sender uses, so there's nothing vendor-specific to
-  pick. Header and Secret are required once a scheme is chosen: **Create** stays
-  disabled until both are filled in (as does **Save** in the **Edit** dialog,
-  where an empty Secret keeps the stored one).
+  **Secret** fields (plus **Algorithm**/**Encoding**/**Signed URL** for HMAC).
+  It's generic: you name the header your sender uses, so there's nothing
+  vendor-specific to pick. Header and Secret are required once a scheme is
+  chosen: **Create** stays disabled until both are filled in (as does **Save**
+  in the **Edit** dialog, where an empty Secret keeps the stored one).
 - Each row shows the endpoint path with a button that copies its full URL on
   the webhook port, the **Auth** scheme (`Unverified` when there is none), an
   **Active** switch (disabled subscriptions reject events), an **Edit** action

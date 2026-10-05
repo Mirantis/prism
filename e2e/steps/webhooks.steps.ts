@@ -239,6 +239,49 @@ When(
   },
 );
 
+When(
+  'I create a deliver-only webhook subscription named {string} verified by a sha1 base64 HMAC in header {string} that signs the URL {string}, with secret {string} and prompt {string}',
+  async ({ page }, name: string, authHeader: string, authSignedUrl: string, secret: string, prompt: string) => {
+    await new WebhooksPage(page).createSubscription({
+      name,
+      prompt,
+      deliverOnly: true,
+      authType: 'hmac',
+      authHeader,
+      authAlgorithm: 'sha1',
+      authEncoding: 'base64',
+      authSignedUrl,
+      secret,
+    });
+  },
+);
+
+/** A base64 HMAC-SHA1 over exactly the bytes given, computed independently of the runtime. */
+function sha1Base64(content: string, secret: string): string {
+  return crypto.createHmac('sha1', secret).update(Buffer.from(content, 'utf8')).digest('base64');
+}
+
+When(
+  'I POST the payload {string} to webhook {string} with header {string} set to a sha1 base64 HMAC of the body alone using secret {string}',
+  async ({ page }, payload: string, name: string, header: string, secret: string) => {
+    lastWebhookStatus = await postWebhookBody(page, name, payload, { [header]: sha1Base64(payload, secret) });
+  },
+);
+
+When(
+  'I POST the payload {string} to webhook {string} with header {string} set to a sha1 base64 HMAC of the body followed by {string} using secret {string}',
+  async ({ page }, payload: string, name: string, header: string, url: string, secret: string) => {
+    lastWebhookStatus = await postWebhookBody(page, name, payload, {
+      [header]: sha1Base64(payload + url, secret),
+    });
+  },
+);
+
+Then('a HEAD request to webhook {string} answers {int}', async ({ page }, name: string, status: number) => {
+  const res = await page.request.head(`http://localhost:${WEBHOOK_PORT}/agents/webhooks/${name}`);
+  expect(res.status()).toBe(status);
+});
+
 Then('the webhook response status is {int}', async ({}, status: number) => {
   expect(lastWebhookStatus).toBe(status);
 });

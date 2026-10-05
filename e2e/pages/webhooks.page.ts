@@ -19,6 +19,9 @@ export interface NewSubscriptionInput {
   authType?: 'token' | 'hmac';
   authHeader?: string;
   authPrefix?: string;
+  authAlgorithm?: 'sha256' | 'sha1' | 'sha512';
+  authEncoding?: 'hex' | 'base64';
+  authSignedUrl?: string;
   secret?: string;
 }
 
@@ -83,6 +86,17 @@ export class WebhooksPage extends BasePage {
       }
       if (input.authPrefix) {
         await this.page.locator('#webhook-auth-prefix').fill(input.authPrefix);
+      }
+      if (input.authAlgorithm) {
+        await this.page.locator('#webhook-auth-algorithm').click();
+        await this.page.getByRole('option', { name: input.authAlgorithm, exact: true }).click();
+      }
+      if (input.authEncoding) {
+        await this.page.locator('#webhook-auth-encoding').click();
+        await this.page.getByRole('option', { name: input.authEncoding, exact: true }).click();
+      }
+      if (input.authSignedUrl) {
+        await this.page.locator('#webhook-auth-signed-url').fill(input.authSignedUrl);
       }
       if (input.secret) {
         await this.page.locator('#webhook-secret').fill(input.secret);

@@ -57,6 +57,17 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+describe('HEAD /agents/webhooks/:name', () => {
+  it('answers 200 for any name without reaching the service', async () => {
+    for (const name of ['alerts', 'no-such-subscription']) {
+      const res = await request(createTestApp()).head(`/agents/webhooks/${name}`);
+      expect(res.status).toBe(200);
+    }
+    expect(mockHandleInbound).not.toHaveBeenCalled();
+    expect(mockTrackEvent).not.toHaveBeenCalled();
+  });
+});
+
 describe('POST /agents/webhooks/:name', () => {
   it('400s non-object bodies', async () => {
     const app = createTestApp();

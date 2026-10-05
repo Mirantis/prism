@@ -691,6 +691,7 @@ model WebhookSubscription {
   authPrefix    String? // literal stripped before comparing (e.g. 'sha256=')
   authAlgorithm WebhookAuthAlgorithm @default(sha256) // hmac only
   authEncoding  WebhookAuthEncoding  @default(hex) // hmac only
+  authSignedUrl String? // hmac only: URL the sender signs after the body
   secret        String? // shared token / HMAC key; never leaves the process
 
   createdAt DateTime @default(now())

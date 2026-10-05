@@ -8,7 +8,8 @@
  *             literal `authPrefix` ('Bearer', …)
  *   'hmac'  — `authHeader` must carry HMAC(secret, raw body) in `authAlgorithm`
  *             + `authEncoding`, after an optional literal `authPrefix`
- *             ('sha256=', 'v1=', …)
+ *             ('sha256=', 'v1=', …). With `authSignedUrl` set, the digest
+ *             covers the raw body followed by that URL.
  *
  * In 'hmac' mode the header value is split on ',' and any matching candidate
  * passes, which is what makes senders that emit several signatures during a
@@ -57,6 +58,7 @@ export interface WebhookAuthConfig {
   authPrefix: string | null;
   authAlgorithm: string;
   authEncoding: string;
+  authSignedUrl: string | null;
 }
 
 export interface WebhookAuthInput extends WebhookAuthConfig {
@@ -100,7 +102,8 @@ function stripPrefix(value: string, prefix: string | null): string {
  * Never throws: an unexpected shape is a rejection.
  */
 export function verifyWebhookAuth(input: WebhookAuthInput): WebhookAuthOutcome {
-  const { authType, secret, authHeader, authPrefix, authAlgorithm, authEncoding } = input;
+  const { authType, secret, authHeader, authPrefix, authAlgorithm, authEncoding, authSignedUrl } =
+    input;
 
   // Configuration first, so a broken subscription reads as 'misconfigured'
   // whatever the request happens to carry.
@@ -130,7 +133,9 @@ export function verifyWebhookAuth(input: WebhookAuthInput): WebhookAuthOutcome {
   const rawBody = input.rawBody;
   if (!rawBody) return 'invalid';
 
-  const digest = crypto.createHmac(algorithm, secret).update(rawBody).digest(encoding);
+  const hmac = crypto.createHmac(algorithm, secret).update(rawBody);
+  if (authSignedUrl) hmac.update(authSignedUrl, 'utf8');
+  const digest = hmac.digest(encoding);
   // Hex is case-insensitive and senders disagree on case; base64 is not.
   const normalize = (value: string) => (encoding === 'hex' ? value.toLowerCase() : value);
   const expected = normalize(digest);

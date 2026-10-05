@@ -45,6 +45,7 @@ export function subscriptionFormValues(subscription: WebhookSubscription): Webho
     authPrefix: subscription.authPrefix ?? '',
     authAlgorithm: subscription.authAlgorithm,
     authEncoding: subscription.authEncoding,
+    authSignedUrl: subscription.authSignedUrl ?? '',
     secret: '',
   };
 }
