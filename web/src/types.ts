@@ -433,6 +433,44 @@ export interface ToolCallHistoryPage {
   items: ToolCallHistoryEntry[];
   nextCursor: string | null;
 }
+
+/** Mirrors `WEBHOOK_RUN_STATUSES` in src/services/webhook-run.service.ts. */
+export type WebhookRunStatus =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'budget_exceeded'
+  | 'delivered';
+
+/** One webhook event in the Activity feed (GET /agents/activity/webhook-runs). */
+export interface WebhookRunSummary {
+  id: string;
+  name: string;
+  event: string;
+  status: WebhookRunStatus;
+  error: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+  /** The message the run delivered, if it delivered one. */
+  message: {
+    id: string;
+    threadId: string;
+    threadTitle: string | null;
+    /** The thread is a web conversation, not a Slack or Teams destination's own thread. */
+    inWebChat: boolean;
+  } | null;
+}
+
+export interface WebhookRunPage {
+  items: WebhookRunSummary[];
+  nextCursor: string | null;
+}
+
+/** GET /agents/activity/webhook-runs/:id */
+export interface WebhookRunDetail extends WebhookRunSummary {
+  delivered: { content: string; toolCalls: ToolCallRecord[] } | null;
+}
 export interface ComputerHelp {
   type: 'computer_help';
   id: string;

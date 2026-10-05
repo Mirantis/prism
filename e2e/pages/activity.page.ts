@@ -1,8 +1,9 @@
 /**
  * Activity Page Object — activity view at /activity.
  *
- * Two sections: token totals for the last 24 hours as four cards, and every
- * tool call the agent has made as an expandable list that pages on scroll.
+ * Three sections: token totals for the last 24 hours as four cards, every
+ * webhook run as an expandable list paged by a button, and every tool call the
+ * agent has made as an expandable list that pages on scroll.
  */
 
 import { Page, Locator } from '@playwright/test';
@@ -16,6 +17,12 @@ export class ActivityPage extends BasePage {
   /** One row per tool call; the trigger that expands it. */
   readonly toolCalls: Locator;
   readonly emptyToolCalls: Locator;
+  /** One row per webhook run; the trigger that expands it. */
+  readonly webhookRuns: Locator;
+  readonly emptyWebhookRuns: Locator;
+  readonly webhookRunMessage: Locator;
+  readonly webhookRunToolCalls: Locator;
+  readonly webhookRunDetails: Locator;
 
   constructor(page: Page) {
     super(page);
@@ -25,6 +32,16 @@ export class ActivityPage extends BasePage {
     this.cacheHitRate = page.getByTestId('activity-cache-hit-rate');
     this.toolCalls = page.getByTestId('activity-tool-call');
     this.emptyToolCalls = page.getByTestId('activity-tool-calls-empty');
+    this.webhookRuns = page.getByTestId('activity-webhook-run');
+    this.emptyWebhookRuns = page.getByTestId('activity-webhook-runs-empty');
+    this.webhookRunMessage = page.getByTestId('activity-webhook-run-message');
+    this.webhookRunToolCalls = page.getByTestId('activity-webhook-run-tool-call');
+    this.webhookRunDetails = page.getByTestId('activity-webhook-run-details');
+  }
+
+  /** The row of the newest run of the webhook `name`. */
+  webhookRun(name: string): Locator {
+    return this.webhookRuns.filter({ hasText: name }).first();
   }
 
   async navigate() {

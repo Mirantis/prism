@@ -86,7 +86,7 @@ function parseCursor(raw: string | undefined): Position | null {
  * `index` is the position in the *stored* array, not in this reversed view, so
  * a cursor built from it stays valid however the page is read.
  */
-function readToolCalls(stored: unknown): Array<{ index: number; call: ToolCallRecord }> {
+export function readToolCalls(stored: unknown): Array<{ index: number; call: ToolCallRecord }> {
   if (!Array.isArray(stored)) return [];
 
   const calls: Array<{ index: number; call: ToolCallRecord }> = [];

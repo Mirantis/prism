@@ -3,7 +3,8 @@
  *
  * Covers prompt template rendering (hermes semantics), event-type resolution
  * and filtering, generic sender verification, deliver-only vs agent-mode
- * handling, scoped vs broadcast delivery, and the budget/error paths.
+ * handling, scoped vs broadcast delivery, the budget/error paths, and the run
+ * record each accepted event leaves.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -26,6 +27,10 @@ const {
   mockSlackMappingFindFirst,
   mockTeamsMappingFindFirst,
   mockTrackEvent,
+  mockRunAccept,
+  mockRunStart,
+  mockRunFinish,
+  mockWebhookRunUpdate,
 } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
   mockPublishToLatestThread: vi.fn(),
@@ -39,6 +44,10 @@ const {
   mockSlackMappingFindFirst: vi.fn(),
   mockTeamsMappingFindFirst: vi.fn(),
   mockTrackEvent: vi.fn(),
+  mockRunAccept: vi.fn(),
+  mockRunStart: vi.fn(),
+  mockRunFinish: vi.fn(),
+  mockWebhookRunUpdate: vi.fn(),
 }));
 
 vi.mock('../invoke', () => ({
@@ -49,6 +58,14 @@ vi.mock('./message-delivery.service', () => ({
   messageDeliveryService: {
     publishToLatestThread: mockPublishToLatestThread,
     publish: mockPublish,
+  },
+}));
+
+vi.mock('./webhook-run.service', () => ({
+  webhookRunService: {
+    accept: mockRunAccept,
+    start: mockRunStart,
+    finish: mockRunFinish,
   },
 }));
 
@@ -77,8 +94,8 @@ vi.mock('./teams/teams-mapping.service', () => ({
   },
 }));
 
-vi.mock('../lib/prisma', () => ({
-  prisma: {
+vi.mock('../lib/prisma', () => {
+  const prisma = {
     webhookSubscription: {
       findUnique: mockSubscriptionFindUnique,
     },
@@ -88,8 +105,13 @@ vi.mock('../lib/prisma', () => ({
     teamsMapping: {
       findFirst: mockTeamsMappingFindFirst,
     },
-  },
-}));
+    // Read by the real run service, which two tests call through.
+    webhookRun: {
+      update: mockWebhookRunUpdate,
+    },
+  };
+  return { prisma, default: prisma };
+});
 
 vi.mock('../lib/telemetry', () => ({
   langfuseTelemetry: () => ({}),
@@ -117,6 +139,7 @@ import {
   isValidDeliverTo,
   WEBHOOK_MAX_PENDING,
 } from './webhook.service';
+import { logger } from '../logger';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -160,6 +183,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetAgent.mockResolvedValue(AGENT);
   mockGetOrCreateLatestThread.mockResolvedValue({ id: 'thread-1' });
+  mockPublishToLatestThread.mockResolvedValue({ id: 'msg-1' });
+  mockPublish.mockResolvedValue({ id: 'msg-1' });
+  mockRunAccept.mockResolvedValue(undefined);
   // Default: no Slack/Teams destination linked. Scoped tests override these.
   mockSlackMappingFindFirst.mockResolvedValue(null);
   mockGetMainChannel.mockResolvedValue(null);
@@ -280,6 +306,18 @@ describe('handleInbound gates', () => {
     const result = await webhookService.handleInbound('alerts', {}, {}, 'run-1');
     expect(result).toEqual({ status: 'subscription_disabled' });
     expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it('records no run for an event it turns away', async () => {
+    mockGetAgent.mockResolvedValue({ ...AGENT, webhooksEnabled: false });
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    mockGetAgent.mockResolvedValue(AGENT);
+    mockSubscriptionFindUnique.mockResolvedValue(null);
+    await webhookService.handleInbound('alerts', {}, {}, 'run-2');
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ events: 'push' }));
+    await webhookService.handleInbound('alerts', {}, { 'x-github-event': 'issues' }, 'run-3');
+
+    expect(mockRunAccept).not.toHaveBeenCalled();
   });
 
   it('ignores events not in the allowlist without invoking', async () => {
@@ -471,6 +509,59 @@ describe('handleInbound deliver-only', () => {
     );
   });
 
+  it('records the event before it publishes, then finishes it as delivered with the message', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverOnly: true, prompt: 'ping' }));
+
+    await webhookService.handleInbound('alerts', {}, { 'x-github-event': 'push' }, 'run-1');
+
+    expect(mockRunAccept).toHaveBeenCalledWith(
+      { id: 'run-1', agentId: 'agent-1', name: 'alerts', event: 'push' },
+      'running',
+    );
+    expect(mockRunAccept.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPublishToLatestThread.mock.invocationCallOrder[0],
+    );
+    expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status: 'delivered', messageId: 'msg-1' });
+  });
+
+  it('answers delivered when the message went out but its result cannot be recorded', async () => {
+    const { webhookRunService: realRuns } =
+      await vi.importActual<typeof import('./webhook-run.service')>('./webhook-run.service');
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverOnly: true, prompt: 'ping' }));
+    mockRunFinish.mockImplementation((id: string, result) => realRuns.finish(id, result));
+    mockWebhookRunUpdate.mockRejectedValue(new Error('database is locked'));
+
+    await expect(webhookService.handleInbound('alerts', {}, {}, 'run-1')).resolves.toEqual({
+      status: 'delivered',
+      event: 'unknown',
+    });
+    expect(mockPublishToLatestThread).toHaveBeenCalledTimes(1);
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'webhook processed',
+      'user-1',
+      expect.objectContaining({ 'webhook.status': 'delivered_direct' }),
+    );
+  });
+
+  it('publishes nothing when the event cannot be recorded', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverOnly: true, prompt: 'ping' }));
+    mockRunAccept.mockRejectedValue(new Error('database is locked'));
+
+    await expect(webhookService.handleInbound('alerts', {}, {}, 'run-1')).rejects.toThrow(
+      'database is locked',
+    );
+    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
+  });
+
+  it('finishes the event as failed when its publish fails, and rethrows', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverOnly: true, prompt: 'ping' }));
+    mockPublishToLatestThread.mockRejectedValue(new Error('disk full'));
+
+    await expect(webhookService.handleInbound('alerts', {}, {}, 'run-1')).rejects.toThrow('disk full');
+    expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status: 'failed', error: 'disk full' });
+    expect(mockTrackEvent).not.toHaveBeenCalled();
+  });
+
   it('scopes deliver-only chat delivery via channelContext', async () => {
     mockSubscriptionFindUnique.mockResolvedValue(
       createSubscription({ deliverOnly: true, deliverTo: 'chat', prompt: 'ping' }),
@@ -521,6 +612,92 @@ describe('handleInbound agent mode', () => {
       'webhook processed',
       'user-1',
       expect.objectContaining({ 'webhook.status': 'completed' }),
+    );
+  });
+
+  it('records the run as queued, then running, then finished with the message it delivered', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
+    let resolveInvoke!: (v: unknown) => void;
+    mockInvoke.mockReturnValue(new Promise((r) => (resolveInvoke = r)));
+
+    await webhookService.handleInbound('alerts', {}, { 'x-github-event': 'push' }, 'run-1');
+    expect(mockRunAccept).toHaveBeenCalledWith(
+      { id: 'run-1', agentId: 'agent-1', name: 'alerts', event: 'push' },
+      'queued',
+    );
+    await vi.waitFor(() => expect(mockRunStart).toHaveBeenCalledWith('run-1'));
+    expect(mockRunFinish).not.toHaveBeenCalled();
+
+    resolveInvoke(invokeResult('done'));
+    await vi.waitFor(() =>
+      expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status: 'completed', messageId: 'msg-1' }),
+    );
+  });
+
+  it('answers 500 rather than 202 when the run cannot be recorded, and runs nothing', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
+    mockRunAccept.mockRejectedValue(new Error('database is locked'));
+
+    await expect(webhookService.handleInbound('alerts', {}, {}, 'run-1')).rejects.toThrow(
+      'database is locked',
+    );
+    // Let the queued closure settle on the same rejection.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockInvoke).not.toHaveBeenCalled();
+    // The route reports the failure; the queue does not report it a second time.
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('runs and records the result when the run cannot be marked running', async () => {
+    const { webhookRunService: realRuns } =
+      await vi.importActual<typeof import('./webhook-run.service')>('./webhook-run.service');
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
+    mockRunStart.mockImplementation((id: string) => realRuns.start(id));
+    mockRunFinish.mockImplementation((id: string, result) => realRuns.finish(id, result));
+    mockWebhookRunUpdate.mockRejectedValueOnce(new Error('database is locked')).mockResolvedValue({});
+    mockInvoke.mockResolvedValue(invokeResult('done'));
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+
+    await vi.waitFor(() =>
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'webhook processed',
+        'user-1',
+        expect.objectContaining({ 'webhook.status': 'completed' }),
+      ),
+    );
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    expect(mockPublishToLatestThread).toHaveBeenCalledTimes(1);
+    expect(mockWebhookRunUpdate).toHaveBeenLastCalledWith({
+      where: { id: 'run-1' },
+      data: expect.objectContaining({ status: 'completed', messageId: 'msg-1' }),
+    });
+  });
+
+  it('finishes a run that ended on a model error as failed, and still delivers its reply', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
+    mockInvoke.mockResolvedValue(
+      invokeResult('I encountered an error.', {
+        error: { type: 'generic', detail: 'model unavailable' },
+      }),
+    );
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+
+    await vi.waitFor(() =>
+      expect(mockRunFinish).toHaveBeenCalledWith('run-1', {
+        status: 'failed',
+        error: 'model unavailable',
+        messageId: 'msg-1',
+      }),
+    );
+    expect(mockPublishToLatestThread.mock.calls[0][2]).toBe(
+      '**Webhook: alerts**\n\nI encountered an error.',
+    );
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'webhook processed',
+      'user-1',
+      expect.objectContaining({ 'webhook.status': 'error' }),
     );
   });
 
@@ -668,6 +845,24 @@ describe('handleInbound agent mode', () => {
       'user-1',
       expect.objectContaining({ 'webhook.status': 'budget_exceeded' }),
     );
+    expect(mockRunFinish).toHaveBeenCalledWith('run-1', {
+      status: 'budget_exceeded',
+      error: 'monthly cap',
+      messageId: 'msg-1',
+    });
+  });
+
+  it('stores the tool calls a run made before it hit the spending limit', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
+    const toolCalls = [{ tool: 'shell_exec', input: '{}', output: 'ok', success: true }];
+    mockInvoke.mockResolvedValue(
+      invokeResult('', { toolCalls, error: { type: 'budget_exceeded', detail: null } }),
+    );
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+
+    await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalled());
+    expect(mockPublishToLatestThread.mock.calls[0][4]).toEqual(expect.objectContaining({ toolCalls }));
   });
 
   it('delivers a failure notice when the run throws (the sender will not retry)', async () => {
@@ -686,6 +881,29 @@ describe('handleInbound agent mode', () => {
     const [, , content] = mockPublishToLatestThread.mock.calls[0];
     expect(content).toContain('**Webhook: alerts**');
     expect(content).toContain('bedrock down');
+    expect(mockRunFinish).toHaveBeenCalledWith('run-1', {
+      status: 'failed',
+      error: 'bedrock down',
+      messageId: 'msg-1',
+    });
+    // Through `err`, so the log redaction serializer sees the error.
+    expect(logger.error).toHaveBeenCalledWith({ err: expect.any(Error) }, "[Webhook] 'alerts' failed");
+  });
+
+  it('finishes a run as failed with no message when the failure notice cannot be delivered either', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
+    mockInvoke.mockResolvedValue(invokeResult('done'));
+    mockPublishToLatestThread.mockRejectedValue(new Error('database is locked'));
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+
+    await vi.waitFor(() =>
+      expect(mockRunFinish).toHaveBeenCalledWith('run-1', {
+        status: 'failed',
+        error: 'database is locked',
+        messageId: null,
+      }),
+    );
   });
 
   it('queues concurrent deliveries and runs them serially, dropping nothing', async () => {
@@ -728,6 +946,8 @@ describe('handleInbound agent mode', () => {
     // The next one overflows the cap.
     const overflow = await webhookService.handleInbound('alerts', {}, {}, 'run-overflow');
     expect(overflow).toEqual({ status: 'busy' });
+    expect(mockRunAccept).toHaveBeenCalledTimes(WEBHOOK_MAX_PENDING + 1);
+    expect(mockRunAccept).not.toHaveBeenCalledWith(expect.objectContaining({ id: 'run-overflow' }));
 
     // Unwind so the queued runs don't leak into other tests.
     mockInvoke.mockResolvedValue(invokeResult('done'));

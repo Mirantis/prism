@@ -41,6 +41,8 @@ Feature: Inbound webhooks
     When I POST the payload '{"status":"firing","commonLabels":{"alertname":"HighMemory"}}' to webhook "notify"
     Then the webhook response status is 200
     And a webhook-triggered message containing "Alert: HighMemory is firing" is stored in the conversation
+    When I navigate to the activity page
+    Then the webhook run "notify" is listed as "Delivered"
 
   Scenario: An agent-mode subscription runs the agent and delivers its response
     When I navigate to the webhooks page
@@ -49,6 +51,11 @@ Feature: Inbound webhooks
     When I POST the payload '{"status":"firing"}' to webhook "alerts"
     Then the webhook response status is 202
     And a webhook-triggered message containing "WEBHOOK_RAN_OK" is stored in the conversation
+    When I navigate to the activity page
+    Then the webhook run "alerts" is listed as "Completed"
+    When I expand the webhook run "alerts"
+    Then its delivered message contains "WEBHOOK_RAN_OK"
+    And the webhook run lists 0 tool calls
 
   Scenario: A disabled subscription rejects incoming events
     When I navigate to the webhooks page

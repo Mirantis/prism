@@ -5,7 +5,7 @@
  * figures on read, so agreeing with the database is the claim worth proving.
  */
 
-import { createBdd } from 'playwright-bdd';
+import { createBdd, DataTable } from 'playwright-bdd';
 import { expect } from '@playwright/test';
 import * as dbHelper from '../support/db-helper';
 import { ActivityPage } from '../pages/activity.page';
@@ -58,6 +58,65 @@ Given('the agent has 40 stored tool calls', async () => {
   }
 });
 
+Given('the agent has a completed, a failed and a spending-limit webhook run', async () => {
+  const db = dbHelper.getPrisma();
+  const threadId = await seedThread();
+  const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000);
+
+  const completed = await db.conversationMessage.create({
+    data: {
+      threadId,
+      role: 'AGENT',
+      content: '**Webhook: deploy-hook**\n\nDeploy finished.',
+      triggeredBy: 'WEBHOOK',
+      toolCalls: seededCalls('deploy', 2),
+    },
+  });
+  const budget = await db.conversationMessage.create({
+    data: {
+      threadId,
+      role: 'AGENT',
+      content: "**Webhook: budget-hook**\n\nThis event could not be processed — your organization's AI spending limit has been reached.",
+      triggeredBy: 'WEBHOOK',
+    },
+  });
+
+  await db.webhookRun.createMany({
+    data: [
+      {
+        id: 'run-deploy',
+        agentId: DEFAULT_AGENT_ID,
+        name: 'deploy-hook',
+        event: 'deployment',
+        status: 'completed',
+        messageId: completed.id,
+        createdAt: at(30),
+        finishedAt: at(29),
+      },
+      {
+        id: 'run-nightly',
+        agentId: DEFAULT_AGENT_ID,
+        name: 'nightly-sync',
+        event: 'unknown',
+        status: 'failed',
+        error: 'The runtime restarted before the run finished.',
+        createdAt: at(20),
+        finishedAt: at(10),
+      },
+      {
+        id: 'run-budget',
+        agentId: DEFAULT_AGENT_ID,
+        name: 'budget-hook',
+        event: 'unknown',
+        status: 'budget_exceeded',
+        messageId: budget.id,
+        createdAt: at(5),
+        finishedAt: at(5),
+      },
+    ],
+  });
+});
+
 Given('the agent has a stored tool call from a scheduled task', async () => {
   const db = dbHelper.getPrisma();
   const threadId = await seedThread();
@@ -94,6 +153,10 @@ When('a chat turn that uses a tool completes', async ({ page }) => {
 When('I expand the newest tool call', async ({ page }) => {
   const activityPage = new ActivityPage(page);
   await activityPage.toolCalls.first().click();
+});
+
+When('I expand the webhook run {string}', async ({ page }, name: string) => {
+  await new ActivityPage(page).webhookRun(name).click();
 });
 
 When('I scroll to the end of the tool call list', async ({ page }) => {
@@ -136,6 +199,45 @@ Then('I should see the tool calls section', async ({ page }) => {
 
 Then('the tool call list says there are none yet', async ({ page }) => {
   await expect(new ActivityPage(page).emptyToolCalls).toBeVisible();
+});
+
+Then('the webhook run list says there are none yet', async ({ page }) => {
+  await expect(new ActivityPage(page).emptyWebhookRuns).toBeVisible();
+});
+
+Then('the webhook runs read newest first:', async ({ page }, table: DataTable) => {
+  const expected = table.hashes();
+  const rows = new ActivityPage(page).webhookRuns;
+  await expect(rows).toHaveCount(expected.length, { timeout: 15_000 });
+  for (const [i, { name, result }] of expected.entries()) {
+    await expect(rows.nth(i)).toContainText(name);
+    await expect(rows.nth(i)).toContainText(result);
+  }
+});
+
+Then(
+  'the webhook run {string} is listed as {string}',
+  async ({ page }, name: string, result: string) => {
+    // A run finishes just after its message is stored; the list reads again
+    // while a run it shows is unfinished.
+    await expect(new ActivityPage(page).webhookRun(name)).toContainText(result, { timeout: 30_000 });
+  },
+);
+
+Then('its delivered message contains {string}', async ({ page }, text: string) => {
+  await expect(new ActivityPage(page).webhookRunMessage).toContainText(text, { timeout: 15_000 });
+});
+
+Then('the webhook run lists {int} tool calls', async ({ page }, count: number) => {
+  // The message and the tool calls render together, so a count of 0 is read
+  // only once the run has loaded.
+  const activityPage = new ActivityPage(page);
+  await expect(activityPage.webhookRunMessage).toBeVisible({ timeout: 15_000 });
+  await expect(activityPage.webhookRunToolCalls).toHaveCount(count);
+});
+
+Then('the webhook run shows the error {string}', async ({ page }, error: string) => {
+  await expect(new ActivityPage(page).webhookRunDetails.getByText(error)).toBeVisible({ timeout: 15_000 });
 });
 
 Then('the token totals are above zero', async ({ page }) => {
