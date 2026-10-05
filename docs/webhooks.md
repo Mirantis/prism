@@ -35,7 +35,7 @@ Click **New subscription** on the Webhooks page. **Delivery** and
 | Delivery | **Deliver only** | Skip the agent: the rendered prompt template is posted directly as the message. Zero LLM cost — useful for plain notifications. |
 | Delivery | **Prompt** / **Message template** | Instructions for the agent, or the message sent in **Deliver only** mode. Supports payload substitution — see below. |
 | Authentication | **Scheme** | How the sender proves itself: **Shared token in a header** (default), **HMAC signature of the body**, or **None**. |
-| Authentication | **Header** / **Prefix** / **Secret** (+ **Algorithm** / **Encoding**) | Where the credential arrives and what it's compared against; shown once Scheme isn't None. See [Authentication](#authentication). |
+| Authentication | **Header** / **Prefix** / **Secret** (+ **Algorithm** / **Encoding** / **Signed URL**) | Where the credential arrives and what it's compared against; shown once Scheme isn't None. See [Authentication](#authentication). |
 
 Each row in the subscriptions list shows the endpoint path with a button that
 copies its full URL, an **Active** switch (disabled subscriptions answer `401`
@@ -115,6 +115,7 @@ The parameters:
 | **Prefix** | Optional literal stripped from the header value before comparing, e.g. `sha256=`, `v1=`, `Bearer`. Any space between the prefix and the credential is ignored, and a value that arrives without the prefix at all is still accepted. |
 | **Secret** | The shared secret / HMAC key. Write-only: the API returns whether a secret is set, never the value. |
 | **Algorithm** / **Encoding** | HMAC only: `sha256` (default), `sha1` or `sha512`, encoded as `hex` (default, case-insensitive) or `base64`. |
+| **Signed URL** | HMAC only, optional: for a sender that signs the body followed by its webhook URL. Enter the exact URL configured in the sender. |
 
 - **Multiple signatures are supported**: an HMAC header may carry several
   comma-separated candidates and the request passes if any matches — that's how
@@ -135,6 +136,7 @@ The parameters:
 | GitLab | Shared token | `X-Gitlab-Token` | — | GitLab's **Secret token** field; it sends the token as-is, no HMAC. |
 | PagerDuty | HMAC | `X-PagerDuty-Signature` | `v1=` | Uses the signing secret shown when the v3 webhook subscription is created; sends several `v1=` signatures while rotating. |
 | Alertmanager | Shared token | `Authorization` | `Bearer` | Configure `http_config.authorization` on the receiver (see below). |
+| Trello | HMAC | `X-Trello-Webhook` | — | Algorithm `sha1`, Encoding `base64`, **Signed URL** = the `callbackURL` (see below). |
 | Anything with a base64 HMAC | HMAC | (their header) | — | Set Encoding to `base64`. |
 | Custom scripts | Shared token | any header you like | — | Simplest option for internal senders. |
 
@@ -248,6 +250,23 @@ GitHub's **Secret** field and in the subscription's Secret field with
 Scheme = HMAC, Header = `X-Hub-Signature-256`, Prefix = `sha256=`. Use
 the Events field (e.g. `pull_request,issues`) to pick the event types you care
 about.
+
+**Trello** — create the webhook with Trello's REST API. Enable the receiver
+first: Trello checks the URL when the webhook is created. In the subscription,
+set Scheme = HMAC, Header = `X-Trello-Webhook`,
+Algorithm = `sha1`, Encoding = `base64`, Signed URL = the same `callbackURL`, and
+Secret = the API secret from your Trello Power-Up admin page. Leave Events empty:
+the Events filter cannot match a Trello delivery.
+
+```bash
+curl -X POST "https://api.trello.com/1/webhooks/?key=$TRELLO_KEY&token=$TRELLO_TOKEN" \
+  -d callbackURL="https://<prism-host>/agents/webhooks/trello" \
+  -d idModel="<board id>" \
+  -d description="Prism"
+```
+
+`{action.type}`, `{action.data.card.name}`, `{action.memberCreator.fullName}`
+and `{model.name}` are useful template fields.
 
 **Anything else** — any system that can POST JSON works. With Scheme = **None**:
 

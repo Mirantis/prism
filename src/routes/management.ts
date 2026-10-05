@@ -913,6 +913,7 @@ interface WebhookAuthFields {
   authPrefix: string | null;
   authAlgorithm: WebhookAuthAlgorithm;
   authEncoding: WebhookAuthEncoding;
+  authSignedUrl: string | null;
   secret: string | null;
 }
 
@@ -922,6 +923,7 @@ const WEBHOOK_AUTH_DEFAULTS: WebhookAuthFields = {
   authPrefix: null,
   authAlgorithm: 'sha256',
   authEncoding: 'hex',
+  authSignedUrl: null,
   secret: null,
 };
 
@@ -931,8 +933,19 @@ const WEBHOOK_AUTH_KEYS = [
   'authPrefix',
   'authAlgorithm',
   'authEncoding',
+  'authSignedUrl',
   'secret',
 ] as const;
+
+/** Whether `value` is an absolute http(s) URL, the only kind a sender can sign. */
+function isHttpUrl(value: string): boolean {
+  try {
+    const { protocol } = new URL(value);
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Read + validate the generic auth fields from a request body against the
@@ -963,6 +976,7 @@ function readWebhookAuthFields(
     authPrefix: current.authPrefix,
     authAlgorithm: current.authAlgorithm,
     authEncoding: current.authEncoding,
+    authSignedUrl: current.authSignedUrl,
     secret: current.secret,
   };
 
@@ -987,9 +1001,9 @@ function readWebhookAuthFields(
     }
     values.authEncoding = body.authEncoding;
   }
-  // Header, prefix and secret: '' clears, non-strings are rejected. The prefix
-  // keeps its inner spacing ('Bearer ') — only the credential itself is trimmed.
-  for (const key of ['authHeader', 'authPrefix', 'secret'] as const) {
+  // Header, prefix, signed URL and secret: '' clears, non-strings are rejected.
+  // The prefix keeps its inner spacing ('Bearer '); the others are trimmed.
+  for (const key of ['authHeader', 'authPrefix', 'authSignedUrl', 'secret'] as const) {
     if (body[key] === undefined) continue;
     if (body[key] !== null && typeof body[key] !== 'string') {
       return fail(key, `${key} must be a string`);
@@ -997,6 +1011,12 @@ function readWebhookAuthFields(
     const raw = body[key] === null ? '' : (body[key] as string);
     const normalized = key === 'authPrefix' ? raw : raw.trim();
     values[key] = normalized.length > 0 ? normalized : null;
+  }
+
+  // Only an HMAC signs a URL.
+  if (values.authType !== 'hmac') values.authSignedUrl = null;
+  if (values.authSignedUrl && !isHttpUrl(values.authSignedUrl)) {
+    return fail('authSignedUrl', 'The signed URL must be an absolute http or https URL');
   }
 
   if (values.authType === 'none') {
@@ -1080,7 +1100,7 @@ router.get('/webhook-subscriptions', async (_req: Request, res: Response) => {
  * Create a webhook subscription.
  * Body: { name, description?, events?, prompt?, deliverTo?, deliverOnly?,
  *         authType?, authHeader?, authPrefix?, authAlgorithm?, authEncoding?,
- *         secret? }
+ *         authSignedUrl?, secret? }
  */
 router.post('/webhook-subscriptions', async (req: Request, res: Response) => {
   try {
@@ -1181,7 +1201,7 @@ function trackSubscriptionUpdate(
  * Update a subscription (isActive toggle and/or editable fields).
  * Body: any of { isActive, description, events, prompt, deliverTo, deliverOnly,
  *                authType, authHeader, authPrefix, authAlgorithm, authEncoding,
- *                secret }
+ *                authSignedUrl, secret }
  *
  * Auth fields are validated against the row's current state, so the *result*
  * of the update has to be verifiable — and switching authType to 'none' clears

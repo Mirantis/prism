@@ -17,6 +17,7 @@ const stored: WebhookSubscription = {
   authPrefix: 'sha256=',
   authAlgorithm: 'sha512',
   authEncoding: 'base64',
+  authSignedUrl: 'https://agent.example.com/agents/webhooks/alerts',
   hasSecret: true,
   createdAt: '2026-10-01T00:00:00.000Z',
   updatedAt: '2026-10-02T00:00:00.000Z',
@@ -36,6 +37,7 @@ describe('subscriptionFormValues', () => {
       authPrefix: 'sha256=',
       authAlgorithm: 'sha512',
       authEncoding: 'base64',
+      authSignedUrl: 'https://agent.example.com/agents/webhooks/alerts',
       secret: '',
     });
   });
@@ -49,6 +51,7 @@ describe('subscriptionFormValues', () => {
       authType: 'none',
       authHeader: null,
       authPrefix: null,
+      authSignedUrl: null,
       hasSecret: false,
     });
     expect(values).toMatchObject({
@@ -57,6 +60,7 @@ describe('subscriptionFormValues', () => {
       prompt: '',
       authHeader: '',
       authPrefix: '',
+      authSignedUrl: '',
       secret: '',
     });
   });

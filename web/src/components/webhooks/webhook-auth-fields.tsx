@@ -21,6 +21,7 @@ export interface WebhookAuthFormValues {
   authPrefix: string;
   authAlgorithm: WebhookAuthAlgorithm;
   authEncoding: WebhookAuthEncoding;
+  authSignedUrl: string;
   secret: string;
 }
 
@@ -30,6 +31,7 @@ export const EMPTY_WEBHOOK_AUTH: WebhookAuthFormValues = {
   authPrefix: '',
   authAlgorithm: 'sha256',
   authEncoding: 'hex',
+  authSignedUrl: '',
   secret: '',
 };
 
@@ -192,6 +194,31 @@ export function WebhookAuthFields({
                 {fieldErrors.authEncoding && <FieldError>{fieldErrors.authEncoding}</FieldError>}
               </Field>
             </div>
+          )}
+
+          {authType === 'hmac' && (
+            <Field data-invalid={Boolean(fieldErrors.authSignedUrl)}>
+              <FieldLabel htmlFor="webhook-auth-signed-url">Signed URL</FieldLabel>
+              <Input
+                id="webhook-auth-signed-url"
+                inputMode="url"
+                autoCapitalize="none"
+                spellCheck={false}
+                aria-invalid={Boolean(fieldErrors.authSignedUrl) || undefined}
+                value={values.authSignedUrl}
+                onChange={(e) => onChange('authSignedUrl', e.target.value)}
+                placeholder="https://…/agents/webhooks/name"
+                className="font-mono"
+              />
+              {fieldErrors.authSignedUrl ? (
+                <FieldError>{fieldErrors.authSignedUrl}</FieldError>
+              ) : (
+                <FieldDescription>
+                  For a sender that signs the body followed by the endpoint URL: enter the exact URL
+                  configured in the sender. Leave empty if it signs the body alone.
+                </FieldDescription>
+              )}
+            </Field>
           )}
 
           <Field data-invalid={Boolean(fieldErrors.secret)}>

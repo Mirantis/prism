@@ -350,6 +350,8 @@ export interface WebhookSubscription {
   authPrefix: string | null;
   authAlgorithm: WebhookAuthAlgorithm;
   authEncoding: WebhookAuthEncoding;
+  /** HMAC only: the URL the sender signs after the body; null when it signs the body alone. */
+  authSignedUrl: string | null;
   /** Whether a secret is stored. The secret itself is never returned. */
   hasSecret: boolean;
   createdAt: string;

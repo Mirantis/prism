@@ -48,6 +48,7 @@ export function WebhookEditDialog({ subscription, onClose }: WebhookEditDialogPr
         authPrefix: values.authPrefix || null,
         authAlgorithm: values.authAlgorithm,
         authEncoding: values.authEncoding,
+        authSignedUrl: values.authSignedUrl.trim(),
         // Omitted when blank so the stored secret survives an unrelated edit.
         ...(values.secret ? { secret: values.secret } : {}),
       }),

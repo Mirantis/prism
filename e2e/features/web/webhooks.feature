@@ -95,6 +95,19 @@ Feature: Inbound webhooks
     Then the webhook response status is 401
     And no webhook-triggered message containing "Should never appear" is stored in the conversation
 
+  # Some senders check the endpoint with a HEAD request before they save it,
+  # and sign the body followed by the endpoint URL.
+  Scenario: A subscription whose sender signs the body and the URL accepts a matching delivery
+    When I navigate to the webhooks page
+    And I enable the webhook receiver
+    Then a HEAD request to webhook "boards" answers 200
+    When I create a deliver-only webhook subscription named "boards" verified by a sha1 base64 HMAC in header "X-Trello-Webhook" that signs the URL "https://prism.example.com/agents/webhooks/boards", with secret "s3cret" and prompt "Board event: {action.type}"
+    And I POST the payload '{"action":{"type":"createCard"}}' to webhook "boards" with header "X-Trello-Webhook" set to a sha1 base64 HMAC of the body alone using secret "s3cret"
+    Then the webhook response status is 401
+    When I POST the payload '{"action":{"type":"createCard"}}' to webhook "boards" with header "X-Trello-Webhook" set to a sha1 base64 HMAC of the body followed by "https://prism.example.com/agents/webhooks/boards" using secret "s3cret"
+    Then the webhook response status is 200
+    And a webhook-triggered message containing "Board event: createCard" is stored in the conversation
+
   Scenario: A token-verified subscription accepts the shared token in a header
     When I navigate to the webhooks page
     And I enable the webhook receiver

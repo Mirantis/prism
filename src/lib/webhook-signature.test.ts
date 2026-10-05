@@ -32,6 +32,7 @@ function config(overrides: Record<string, unknown> = {}) {
     authPrefix: null,
     authAlgorithm: 'sha256',
     authEncoding: 'hex',
+    authSignedUrl: null,
     headers: {},
     rawBody: Buffer.from(BODY, 'utf8'),
     ...overrides,
@@ -192,6 +193,28 @@ describe("authType 'hmac'", () => {
     expect(
       verifyWebhookAuth(config({ ...base, headers: { 'x-signature': hmac(BODY) } })),
     ).toBe('ok');
+  });
+
+  describe('with a signed URL', () => {
+    const url = 'https://prism.example.com/agents/webhooks/boards';
+
+    it('accepts a digest over the body followed by the URL', () => {
+      expect(
+        verifyWebhookAuth(
+          config({ ...base, authSignedUrl: url, headers: { 'x-signature': hmac(BODY + url) } }),
+        ),
+      ).toBe('ok');
+    });
+
+    it('rejects a digest over the body alone, or over another URL', () => {
+      for (const signed of [BODY, BODY + 'https://elsewhere.example.com/hook', url + BODY]) {
+        expect(
+          verifyWebhookAuth(
+            config({ ...base, authSignedUrl: url, headers: { 'x-signature': hmac(signed) } }),
+          ),
+        ).toBe('invalid');
+      }
+    });
   });
 
   it('rejects a digest over re-serialized (differently spaced) JSON', () => {
@@ -377,6 +400,25 @@ describe('documented sender recipes', () => {
           authHeader: 'X-Sender-Hmac-Sha256',
           authEncoding: 'base64',
           headers: { 'x-sender-hmac-sha256': hmac(BODY, SECRET, 'sha256', 'base64') },
+        }),
+      ),
+    ).toBe('ok');
+  });
+
+  it('verifies a Trello-style signature (hmac, X-Trello-Webhook, sha1, base64, signed URL)', () => {
+    const callbackUrl = 'https://prism.example.com/agents/webhooks/trello';
+    const body = '{"action":{"type":"createCard","data":{"card":{"name":"Fix login ✓"}}}}';
+    expect(
+      verifyWebhookAuth(
+        config({
+          authType: 'hmac',
+          secret: SECRET,
+          authHeader: 'X-Trello-Webhook',
+          authAlgorithm: 'sha1',
+          authEncoding: 'base64',
+          authSignedUrl: callbackUrl,
+          rawBody: Buffer.from(body, 'utf8'),
+          headers: { 'x-trello-webhook': hmac(body + callbackUrl, SECRET, 'sha1', 'base64') },
         }),
       ),
     ).toBe('ok');

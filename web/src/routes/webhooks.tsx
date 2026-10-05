@@ -85,6 +85,7 @@ function WebhooksPage() {
               authPrefix: input.authPrefix || undefined,
               authAlgorithm: input.authAlgorithm,
               authEncoding: input.authEncoding,
+              authSignedUrl: input.authSignedUrl.trim() || undefined,
               secret: input.secret,
             }
           : { authType: 'none' }),

@@ -312,6 +312,7 @@ export const runtimeApi = {
     authPrefix?: string;
     authAlgorithm?: WebhookSubscription['authAlgorithm'];
     authEncoding?: WebhookSubscription['authEncoding'];
+    authSignedUrl?: string;
     /** Write-only: never returned by the API (see `hasSecret`). */
     secret?: string;
   }) =>
@@ -335,6 +336,7 @@ export const runtimeApi = {
         | 'authPrefix'
         | 'authAlgorithm'
         | 'authEncoding'
+        | 'authSignedUrl'
       >
     > & { secret?: string },
   ) =>
