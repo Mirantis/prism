@@ -53,7 +53,11 @@ describe('config', () => {
     it.each(['small', 'medium', 'large'] as const)('reads ' + agent + ' %s model override', async (tier) => {
       const name = prefix + '_MODEL_' + tier.toUpperCase();
       const defaults = agent === 'claude-code'
-        ? { small: 'haiku', medium: 'sonnet', large: 'opus' }[tier]
+        ? {
+          small: { default: 'haiku', bedrock: 'haiku' },
+          medium: { default: 'sonnet', bedrock: 'global.anthropic.claude-sonnet-5-5' },
+          large: { default: 'opus', bedrock: 'opus' },
+        }[tier]
         : {
           small: { openai: 'gpt-5.6-luna', bedrock: 'openai.gpt-5.6-luna' },
           medium: { openai: 'gpt-5.6-terra', bedrock: 'openai.gpt-5.6-terra' },
@@ -64,7 +68,9 @@ describe('config', () => {
       process.env[name] = '  custom-model  ';
       vi.resetModules();
       expect((await loadConfig()).codingAgentModels[agent][tier]).toEqual(
-        agent === 'claude-code' ? 'custom-model' : { openai: 'custom-model', bedrock: 'custom-model' },
+        agent === 'claude-code'
+          ? { default: 'custom-model', bedrock: 'custom-model' }
+          : { openai: 'custom-model', bedrock: 'custom-model' },
       );
       process.env[name] = '   ';
       vi.resetModules();
