@@ -60,16 +60,17 @@ export function createClaudeCodeAgent(environment?: ExecutionEnvironment): Codin
       return prepareSharedSkillsHome(env, env.paths().claudeHome, process.env.CLAUDE_CONFIG_DIR);
     },
     isAvailable: hasClaudeCodeCredentials,
-    run: (task: CodingAgentTask): CodingAgentRun =>
-      runCli(
+    run: (task: CodingAgentTask): CodingAgentRun => {
+      const env = claudeCodeEnvironment(task.env);
+      return runCli(
         {
           taskId: task.taskId,
           displayName: DISPLAY_NAME,
           command: COMMAND,
-          args: buildArgs(task),
+          args: buildArgs(task, env.CLAUDE_CODE_USE_BEDROCK === '1'),
           cwd: task.workdir,
           env: {
-            ...claudeCodeEnvironment(task.env),
+            ...env,
             // Stated on the task's env rather than inherited from this
             // process: the CLI runs in the execution environment.
             CLAUDE_CONFIG_DIR: (environment ?? getExecutionEnvironment()).paths().claudeHome,
@@ -77,11 +78,12 @@ export function createClaudeCodeAgent(environment?: ExecutionEnvironment): Codin
           parseLine,
         },
         environment,
-      ),
+      );
+    },
   };
 }
 
-function buildArgs(task: CodingAgentTask): string[] {
+function buildArgs(task: CodingAgentTask, useBedrock: boolean): string[] {
   const args: string[] = [
     '-p',
     task.prompt,
@@ -122,7 +124,7 @@ function buildArgs(task: CodingAgentTask): string[] {
   // configured model and effort stay in force. Keep both optional, including
   // on resume; a default tier would silently override that configuration.
   if (task.modelTier) {
-    args.push('--model', config.codingAgentModels['claude-code'][task.modelTier]);
+    args.push('--model', config.codingAgentModels['claude-code'][task.modelTier][useBedrock ? 'bedrock' : 'default']);
   }
   if (task.effort) args.push('--effort', task.effort);
   if (task.sessionId) {

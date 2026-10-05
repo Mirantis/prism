@@ -1036,7 +1036,7 @@ What the operator sets on `docker run`:
 | `LLM_PROVIDER` | LLM vendor: `bedrock`, `azure`, `bedrock-mantle`, `openai`, `openrouter`, or `anthropic` (one per container) | `bedrock` |
 | `CODING_AGENT` | Default coding agent: `claude-code` or `codex`. Each task may override it with `agent`. | Claude credentials first, then an OpenAI key, else `claude-code` |
 | `CLAUDE_CODE_MODEL_SMALL` | Model for the Claude Code small tier | `haiku` |
-| `CLAUDE_CODE_MODEL_MEDIUM` | Model for the Claude Code medium tier | `sonnet` |
+| `CLAUDE_CODE_MODEL_MEDIUM` | Model for the Claude Code medium tier | `sonnet` (Bedrock: `global.anthropic.claude-sonnet-5-5`) |
 | `CLAUDE_CODE_MODEL_LARGE` | Model for the Claude Code large tier | `opus` |
 | `CODEX_MODEL_SMALL` | Model for the Codex small tier | `gpt-5.6-luna` (Bedrock: `openai.gpt-5.6-luna`) |
 | `CODEX_MODEL_MEDIUM` | Model for the Codex medium tier | `gpt-5.6-terra` (Bedrock: `openai.gpt-5.6-terra`) |
