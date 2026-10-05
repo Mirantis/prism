@@ -235,7 +235,7 @@ function WebhooksPage() {
               <>
                 Send events to <code className="break-all">{webhookOrigin}</code> using the endpoint for each subscription.
               </>
-            ) : `Webhook port ${receiver?.port} is not exposed. Expose it through your ingress or tunnel and use that address for deliveries.`
+            ) : `Use your public ingress or tunnel URL with the endpoint paths below. The receiver listens on port ${receiver?.port}.`
           ) : subscriptions?.length ? 'Enable the receiver to resume deliveries. Subscription settings are saved.' : undefined}
         />
 

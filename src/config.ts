@@ -77,7 +77,7 @@ function ingressOrigin(portName: string): string | undefined {
 const publicUrl = (
   process.env.PRISM_PUBLIC_URL?.trim() || ingressOrigin(ingressPortName(port) ?? 'web')
 )?.replace(/\/+$/, '') || null;
-// The webhook port has a public origin only when the deployment exposes it by name.
+// Discover the webhook URL from the deployment’s named port metadata.
 const webhookPortName = ingressPortName(webhookPort);
 const webhookPublicUrl =
   (webhookPortName && ingressOrigin(webhookPortName))?.replace(/\/+$/, '') || null;

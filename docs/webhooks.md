@@ -49,8 +49,8 @@ publish it with `-p 3004:3004`.
 
 Expose the webhook port through your ingress or tunnel. When a public address is
 configured, **Copy endpoint URL** copies it. Otherwise, a remotely opened Webhooks
-page shows the endpoint path and asks you to expose the port. Use your tunnel
-address with that path.
+page shows the endpoint path. Combine that path with your public ingress or
+tunnel URL.
 
 ```
 POST http://<prism-host>:3004/agents/webhooks/<name>
