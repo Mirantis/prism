@@ -61,11 +61,7 @@ vi.mock('../config', () => ({
     invalidToolRiskGateMode: null,
     codingAgent: 'claude-code',
     codingAgentModels: {
-      'claude-code': {
-        small: { default: 'haiku', bedrock: 'haiku' },
-        medium: { default: 'sonnet', bedrock: 'global.anthropic.claude-sonnet-5-5' },
-        large: { default: 'opus', bedrock: 'opus' },
-      },
+      'claude-code': { small: 'haiku', medium: 'sonnet', large: 'opus' },
       codex: {
         small: { openai: 'gpt-5.6-luna', bedrock: 'openai.gpt-5.6-luna' },
         medium: { openai: 'gpt-5.6-terra', bedrock: 'openai.gpt-5.6-terra' },

@@ -368,18 +368,11 @@ describe('model tier and effort', () => {
     });
   }
 
-  const providerEnvs = {
-    'explicit Bedrock': { PATH: '/bin', CLAUDE_CODE_USE_BEDROCK: '1' },
-    'detected Bedrock': { PATH: '/bin', AWS_BEARER_TOKEN_BEDROCK: 'test-token' },
-    'Anthropic API': { PATH: '/bin', ANTHROPIC_API_KEY: 'test-key', AWS_BEARER_TOKEN_BEDROCK: 'test-token' },
-  };
-  const providerModels = {
-    'explicit Bedrock': ['haiku', 'global.anthropic.claude-sonnet-5-5', 'opus'],
-    'detected Bedrock': ['haiku', 'global.anthropic.claude-sonnet-5-5', 'opus'],
-    'Anthropic API': ['haiku', 'sonnet', 'opus'],
-  };
-  for (const [provider, env] of Object.entries(providerEnvs) as [keyof typeof providerEnvs, NodeJS.ProcessEnv][]) {
-    it.each(tiers)('maps %s on ' + provider, async (modelTier) => {
+  it.each(tiers)('uses the override for %s', async (modelTier) => {
+    const overrides = config.codingAgentModels['claude-code'];
+    const previous = overrides[modelTier];
+    overrides[modelTier] = 'custom-model';
+    try {
       const child = new FakeChild();
       let args: readonly string[] = [];
       const run = createClaudeCodeAgent(
@@ -389,35 +382,14 @@ describe('model tier and effort', () => {
             return child.asExecProcess();
           },
         }),
-      ).run({ ...baseTask, env, modelTier });
-      expect(args[args.indexOf('--model') + 1]).toBe(providerModels[provider][tiers.indexOf(modelTier)]);
+      ).run({ ...baseTask, modelTier, effort: 'high', sessionId: 'session-1' });
+      expect(args[args.indexOf('--model') + 1]).toBe('custom-model');
       child.finish(0);
       await Array.fromAsync(run.events);
-    });
-
-    it.each(tiers)('uses the override for %s on ' + provider, async (modelTier) => {
-      const overrides = config.codingAgentModels['claude-code'];
-      const previous = overrides[modelTier];
-      overrides[modelTier] = { default: 'custom-model', bedrock: 'custom-model' };
-      try {
-        const child = new FakeChild();
-        let args: readonly string[] = [];
-        const run = createClaudeCodeAgent(
-          fakeExecutionEnvironment({
-            runProgram: (_command, argv) => {
-              args = argv;
-              return child.asExecProcess();
-            },
-          }),
-        ).run({ ...baseTask, env, modelTier, effort: 'high', sessionId: 'session-1' });
-        expect(args[args.indexOf('--model') + 1]).toBe('custom-model');
-        child.finish(0);
-        await Array.fromAsync(run.events);
-      } finally {
-        overrides[modelTier] = previous;
-      }
-    });
-  }
+    } finally {
+      overrides[modelTier] = previous;
+    }
+  });
 
   it('preserves deployment defaults when both parameters are omitted', async () => {
     const child = new FakeChild();
