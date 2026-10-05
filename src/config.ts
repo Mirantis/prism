@@ -720,21 +720,13 @@ const codingAgentModelOverrides = {
 };
 
 const codingAgentModels = {
-  // On Bedrock the `sonnet` alias resolves to an older Sonnet release, so the
-  // Bedrock medium default is a full model id. Operator overrides apply on every provider.
+  // On Bedrock the `sonnet` alias resolves to an older Sonnet release.
   'claude-code': {
-    small: {
-      default: codingAgentModelOverrides['claude-code'].small ?? 'haiku',
-      bedrock: codingAgentModelOverrides['claude-code'].small ?? 'haiku',
-    },
-    medium: {
-      default: codingAgentModelOverrides['claude-code'].medium ?? 'sonnet',
-      bedrock: codingAgentModelOverrides['claude-code'].medium ?? 'global.anthropic.claude-sonnet-5-5',
-    },
-    large: {
-      default: codingAgentModelOverrides['claude-code'].large ?? 'opus',
-      bedrock: codingAgentModelOverrides['claude-code'].large ?? 'opus',
-    },
+    small: codingAgentModelOverrides['claude-code'].small ?? 'haiku',
+    medium:
+      codingAgentModelOverrides['claude-code'].medium ??
+      (llmProvider === 'bedrock' ? 'global.anthropic.claude-sonnet-5-5' : 'sonnet'),
+    large: codingAgentModelOverrides['claude-code'].large ?? 'opus',
   },
   // Reuse the repository's model choices: luna is the fast classification model,
   // sol is the main model, and terra is the Codex adapter's existing Bedrock default.
