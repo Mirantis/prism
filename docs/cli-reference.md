@@ -57,6 +57,7 @@ or **Enter** to complete the selection, then **Enter** to run.
 | `/compact` | — | Summarize older history to free up context ([compaction](compaction.md)). |
 | `/update` | — | Check for a newer Prism release and install it (native installs only). |
 | `/schedules` | — | Open the scheduled-tasks panel. |
+| `/webhooks` | — | Open the webhooks panel. |
 | `/config` | — | Open the identity/config viewer panel. |
 | `/agent-guide` | — | Edit the agent guide in `$EDITOR` (the agent cannot write it). |
 | `/exit` | — | Shut down the TUI. |
@@ -98,6 +99,18 @@ or **Enter** to complete the selection, then **Enter** to run.
 | `d` | Delete the selected schedule (`y` to confirm). |
 | `Tab` / arrows | Move between fields in the create form. |
 | `Enter` | Submit the form. |
+| `Esc` | Close the panel / cancel. |
+
+### Webhooks panel (`/webhooks`)
+
+| Key | Action |
+|-----|--------|
+| `Up` / `Down` | Navigate the list. |
+| `Space` | Pause or resume the selected subscription. |
+| `Enter` | Edit the selected subscription; in the form, save it. |
+| `Tab` / arrows | Move between fields in the form. |
+| `Left` / `Right` | Change **Deliver to**. |
+| `Space` (form) | Toggle **Deliver only**, or open the prompt in `$EDITOR`. |
 | `Esc` | Close the panel / cancel. |
 
 ### Config panel (`/config`)

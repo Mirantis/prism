@@ -49,7 +49,7 @@ describe('isWebhookAuthComplete', () => {
     ).toBe(false);
   });
 
-  it('lets a stored secret stand in for an empty field (rotate flow)', () => {
+  it('lets a stored secret stand in for an empty field (edit form)', () => {
     const rotating = values({ authType: 'token', authHeader: 'Authorization' });
     expect(isWebhookAuthComplete(rotating, true)).toBe(true);
     expect(isWebhookAuthComplete(rotating, false)).toBe(false);

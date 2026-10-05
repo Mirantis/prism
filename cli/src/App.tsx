@@ -23,6 +23,7 @@ import { StatusBar } from './components/StatusBar.js';
 import { CommandPopup, PopupItem } from './components/CommandPopup.js';
 import { SchedulesPanel } from './components/SchedulesPanel.js';
 import { ConfigPanel } from './components/ConfigPanel.js';
+import { WebhooksPanel } from './components/webhooks-panel.js';
 import { SignInPanel } from './components/SignInPanel.js';
 import { ResumeList } from './components/ResumeList.js';
 import { apiClient } from './api-client.js';
@@ -598,23 +599,44 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   }
 
   // A child process owns the terminal: draw nothing, so Ink's frame does not
-  // land on top of the editor when state changes underneath it.
-  if (suspended) return null;
+  // land on top of the editor when state changes underneath it. An open panel
+  // stays mounted in a hidden box instead, so a form that opened the editor
+  // keeps what was typed into it. The panel turns its own input off.
+  if (suspended && activePanel === null) return null;
 
+  // A sign-in waits until the editor returns the terminal, because its input
+  // hook would put the tty back in raw mode under the editor. It then covers an
+  // open panel, which stays mounted with its input off and keeps its form.
+  const showSignIn = signInRequest !== null && !suspended;
+
+  // The key makes React mount a new root Box for the shutdown frame instead of
+  // updating this one: Ink hides a Box whose update drops its `display` prop.
   return (
-    <Box flexDirection="column" paddingX={1}>
+    <Box key="chat" flexDirection="column" paddingX={1} display={suspended ? 'none' : 'flex'}>
       <Header agentName={agent.name} />
-      {signInRequest ? (
+      {showSignIn && (
         <SignInPanel
           api={apiClient}
           request={signInRequest}
           onClose={() => setSignInRequest(null)}
         />
-      ) : activePanel === 'schedules' ? (
-        <SchedulesPanel api={apiClient} onClose={closePanel} />
-      ) : activePanel === 'config' ? (
-        <ConfigPanel api={apiClient} onClose={closePanel} />
-      ) : (
+      )}
+      {activePanel !== null ? (
+        <Box flexDirection="column" display={showSignIn ? 'none' : 'flex'}>
+          {activePanel === 'schedules' ? (
+            <SchedulesPanel api={apiClient} onClose={closePanel} inputActive={!showSignIn} />
+          ) : activePanel === 'config' ? (
+            <ConfigPanel api={apiClient} onClose={closePanel} inputActive={!showSignIn} />
+          ) : (
+            <WebhooksPanel
+              api={apiClient}
+              onClose={closePanel}
+              suspendInput={suspendInput}
+              inputActive={!showSignIn}
+            />
+          )}
+        </Box>
+      ) : showSignIn ? null : (
         <>
           <MessageList
             agentName={agent.name}

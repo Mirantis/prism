@@ -290,7 +290,7 @@ Then(
     await expect(card.getByText('HMAC signature', { exact: true })).toBeVisible();
     for (const control of [
       card.getByRole('button', { name: 'Copy endpoint URL' }),
-      card.getByRole('button', { name: `Authentication for ${name}` }),
+      card.getByRole('button', { name: `Edit ${name}` }),
       card.getByRole('button', { name: `Delete ${name}` }),
       card.getByRole('switch', { name: `Toggle ${name}` }),
     ]) {
@@ -301,12 +301,12 @@ Then(
   },
 );
 
-When('I open authentication for webhook {string} on a short screen', async ({ page }, name: string) => {
+When('I edit webhook {string} on a short screen', async ({ page }, name: string) => {
   await page.setViewportSize({ width: 568, height: 320 });
-  await page.getByRole('button', { name: `Authentication for ${name}`, exact: true }).click();
+  await new WebhooksPage(page).openEdit(name);
 });
 
-Then('the webhook authentication form and its actions fit the viewport', async ({ page }) => {
+Then('the webhook edit form and its actions fit the viewport', async ({ page }) => {
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
   await expect.poll(async () => {
@@ -324,7 +324,7 @@ When('I clear and restore the webhook authentication header', async ({ page }) =
   await page.locator('#webhook-auth-header').fill('X-Hub-Signature-256');
 });
 
-When('I save webhook authentication with an empty secret using Enter', async ({ page }) => {
+When('I save the webhook edit with an empty secret using Enter', async ({ page }) => {
   await page.locator('#webhook-auth-header').press('Enter');
   await expect(page.getByRole('dialog')).toBeHidden();
 });
@@ -354,3 +354,34 @@ When('I create the webhook with header {string} and secret {string} using Enter'
   await page.locator('#webhook-secret').press('Enter');
   await expect(page.getByRole('dialog')).toBeHidden();
 });
+
+When('I edit webhook {string}', async ({ page }, name: string) => {
+  await new WebhooksPage(page).openEdit(name);
+});
+
+Then('the webhook edit form shows the prompt {string}', async ({ page }, prompt: string) => {
+  await expect(page.getByRole('dialog')).toContainText('Edit ');
+  await expect(page.locator('#webhook-name')).toHaveCount(0);
+  await expect(page.locator('#webhook-prompt')).toHaveValue(prompt);
+});
+
+When(
+  'I change the webhook prompt to {string} and the events to {string} and save',
+  async ({ page }, prompt: string, events: string) => {
+    await page.locator('#webhook-prompt').fill(prompt);
+    await page.locator('#webhook-events').fill(events);
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(page.getByRole('dialog')).toBeHidden();
+  },
+);
+
+Then(
+  'the stored webhook subscription {string} has the prompt {string} and the events {string}',
+  async ({ page }, name: string, prompt: string, events: string) => {
+    const res = await page.request.get('/agents/webhook-subscriptions');
+    expect(res.ok()).toBe(true);
+    const subscriptions = (await res.json()) as Array<{ name: string; prompt: string; events: string }>;
+    const subscription = subscriptions.find((s) => s.name === name);
+    expect({ prompt: subscription?.prompt, events: subscription?.events }).toEqual({ prompt, events });
+  },
+);

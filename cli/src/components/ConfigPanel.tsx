@@ -19,7 +19,14 @@ const DOCS: { label: string; field: keyof AgentDetails }[] = [
 
 type Pane = 'list' | 'content';
 
-export const ConfigPanel: React.FC<{ api: ApiClient; onClose: () => void }> = ({ api, onClose }) => {
+interface Props {
+  api: ApiClient;
+  onClose: () => void;
+  /** False while another panel covers this one. */
+  inputActive?: boolean;
+}
+
+export const ConfigPanel: React.FC<Props> = ({ api, onClose, inputActive = true }) => {
   const [details, setDetails] = useState<AgentDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -119,7 +126,7 @@ export const ConfigPanel: React.FC<{ api: ApiClient; onClose: () => void }> = ({
     } else if (key.pageDown) {
       setScrollOffset((o) => Math.min(maxOffset, o + windowSize));
     }
-  });
+  }, { isActive: inputActive });
 
   if (loading) {
     return (

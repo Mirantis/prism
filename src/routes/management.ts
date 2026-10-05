@@ -102,7 +102,7 @@ import { Router, Request, Response } from 'express';
 import { randomBytes } from 'crypto';
 import fs from 'fs';
 import multer from 'multer';
-import { AgentType, MessageRole, Prisma, ThreadSource } from '@prisma/client';
+import { AgentType, MessageRole, Prisma, ThreadSource, WebhookSubscription } from '@prisma/client';
 import { logger } from '../logger';
 import { webhookReceiverService } from '../services/webhook-receiver.service';
 import { config } from '../config';
@@ -1155,6 +1155,28 @@ router.post('/webhook-subscriptions', async (req: Request, res: Response) => {
 });
 
 /**
+ * The update route's one telemetry event, sent on every terminal outcome with
+ * the stored state on success.
+ */
+function trackSubscriptionUpdate(
+  subscriptionId: string,
+  outcome: 'success' | 'invalid' | 'not_found' | 'error',
+  stored?: WebhookSubscription,
+): void {
+  trackEvent('webhook subscription updated', config.ownerUserId, {
+    ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+    'webhook.subscription_id': subscriptionId,
+    'webhook.outcome': outcome,
+    ...(stored && {
+      'webhook.is_active': String(stored.isActive),
+      'webhook.deliver_to': stored.deliverTo,
+      'webhook.deliver_only': String(stored.deliverOnly),
+      'webhook.auth_type': stored.authType,
+    }),
+  });
+}
+
+/**
  * PATCH /agents/webhook-subscriptions/:id
  * Update a subscription (isActive toggle and/or editable fields).
  * Body: any of { isActive, description, events, prompt, deliverTo, deliverOnly,
@@ -1166,6 +1188,11 @@ router.post('/webhook-subscriptions', async (req: Request, res: Response) => {
  * the stored credential.
  */
 router.patch('/webhook-subscriptions/:id', async (req: Request<{ id: string }>, res: Response) => {
+  const id = req.params.id;
+  const reject = (status: 400 | 404, body: Record<string, unknown>) => {
+    trackSubscriptionUpdate(id, status === 404 ? 'not_found' : 'invalid');
+    res.status(status).json(body);
+  };
   try {
     const body = req.body ?? {};
     const data: Prisma.WebhookSubscriptionUpdateInput = {};
@@ -1175,7 +1202,7 @@ router.patch('/webhook-subscriptions/:id', async (req: Request<{ id: string }>, 
     if (typeof body.prompt === 'string') data.prompt = body.prompt.trim() || null;
     if (body.deliverTo !== undefined) {
       if (!isValidDeliverTo(body.deliverTo)) {
-        res.status(400).json({
+        reject(400, {
           error: `deliverTo must be one of: ${WEBHOOK_DELIVER_TARGETS.join(', ')}`,
           fieldErrors: { deliverTo: `Must be one of: ${WEBHOOK_DELIVER_TARGETS.join(', ')}` },
         });
@@ -1187,41 +1214,40 @@ router.patch('/webhook-subscriptions/:id', async (req: Request<{ id: string }>, 
 
     // Auth fields need the current row to validate the effective result.
     if (WEBHOOK_AUTH_KEYS.some((key) => body[key] !== undefined)) {
-      const current = await prisma.webhookSubscription.findUnique({ where: { id: req.params.id } });
+      const current = await prisma.webhookSubscription.findUnique({ where: { id } });
       if (!current) {
-        res.status(404).json({ error: 'Webhook subscription not found' });
+        reject(404, { error: 'Webhook subscription not found' });
         return;
       }
       const auth = readWebhookAuthFields(body, current);
       if (!auth.ok) {
-        res.status(400).json({ error: auth.error, fieldErrors: auth.fieldErrors });
+        reject(400, { error: auth.error, fieldErrors: auth.fieldErrors });
         return;
       }
       Object.assign(data, auth.values);
     }
 
     if (Object.keys(data).length === 0) {
-      res.status(400).json({ error: 'No updatable fields provided' });
+      reject(400, { error: 'No updatable fields provided' });
       return;
     }
 
     let subscription;
     try {
-      subscription = await prisma.webhookSubscription.update({
-        where: { id: req.params.id },
-        data,
-      });
+      subscription = await prisma.webhookSubscription.update({ where: { id }, data });
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
-        res.status(404).json({ error: 'Webhook subscription not found' });
+        reject(404, { error: 'Webhook subscription not found' });
         return;
       }
       throw err;
     }
+    trackSubscriptionUpdate(id, 'success', subscription);
     res.json(toPublicSubscription(subscription));
   } catch (error: unknown) {
     logger.error({ errorName: error instanceof Error ? error.name : 'UnknownError' },
       '[Management] Failed to update webhook subscription');
+    trackSubscriptionUpdate(id, 'error');
     res.status(500).json({ error: 'Failed to update webhook subscription' });
   }
 });

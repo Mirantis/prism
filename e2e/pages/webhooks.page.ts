@@ -3,7 +3,7 @@
  *
  * Covers the receiver switch, the New-subscription
  * modal (including the generic sender-verification fields), and per-row
- * controls (active toggle, delete).
+ * controls (active toggle, edit, delete).
  */
 
 import { Page, Locator } from '@playwright/test';
@@ -100,6 +100,11 @@ export class WebhooksPage extends BasePage {
     return this.page.getByRole('row').filter({ hasText: name })
       .or(this.page.getByLabel(`Subscription ${name}`, { exact: true }))
       .filter({ visible: true });
+  }
+
+  /** Open a subscription's Edit dialog from its row or card. */
+  async openEdit(name: string) {
+    await this.page.getByRole('button', { name: `Edit ${name}`, exact: true }).click();
   }
 
   /** Flip a subscription's Active switch. */

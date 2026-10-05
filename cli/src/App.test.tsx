@@ -6,7 +6,7 @@ import { render } from 'ink-testing-library';
 // the top of the file, so the stub has to be declared via `vi.hoisted()` —
 // which itself runs before module imports, so we require EventEmitter
 // inline rather than importing it at the top of this file.
-const { adapterStub, apiStub } = vi.hoisted(() => {
+const { adapterStub, apiStub, mockEditText } = vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { EventEmitter } = require('events');
   return {
@@ -49,7 +49,21 @@ const { adapterStub, apiStub } = vi.hoisted(() => {
         lastAttempt: null,
       }),
       applyUpdate: vi.fn().mockResolvedValue({ ok: true, version: 'v2026.1.1000000' }),
+      listWebhookSubscriptions: vi.fn().mockResolvedValue([
+        {
+          id: 'wh-1',
+          name: 'alerts',
+          description: null,
+          events: null,
+          prompt: 'Alert: {status}',
+          deliverTo: 'all',
+          deliverOnly: false,
+          isActive: true,
+          authType: 'none',
+        },
+      ]),
     },
+    mockEditText: vi.fn(),
   };
 });
 
@@ -61,6 +75,11 @@ vi.mock('./api-client.js', () => ({
   apiClient: apiStub,
   // Re-export ApiError so the panels' `instanceof ApiError` checks compile.
   ApiError: class ApiError extends Error {},
+}));
+
+vi.mock('./editor.js', () => ({
+  editText: mockEditText,
+  resolveEditor: () => 'test-editor',
 }));
 
 import { App } from './App.js';
@@ -464,6 +483,18 @@ describe('App', () => {
     unmount();
   });
 
+  it('draws the shutdown frame when /exit is submitted', async () => {
+    const { frames, stdin, unmount } = render(<App {...baseProps} />);
+    await settle();
+    // The trailing space closes the slash popup, so one Enter runs the command.
+    stdin.write('/exit ');
+    await settle();
+    stdin.write('\r');
+    await settle(5);
+    expect(frames.some((frame) => frame.includes('Shutting down'))).toBe(true);
+    unmount();
+  });
+
   it('opens the schedules panel when /schedules is submitted', async () => {
     const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
     /**
@@ -493,6 +524,48 @@ describe('App', () => {
     // Panel header replaces the chat surface.
     expect(frame).toContain('Schedules');
     expect(apiStub.listCronTasks).toHaveBeenCalled();
+    unmount();
+  });
+
+  it('keeps the webhook form through a sign-in that arrives while the editor is open', async () => {
+    const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
+    let closeEditor: (text: string) => void = () => {};
+    mockEditText.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          closeEditor = (text) => resolve({ text, changed: true, file: '/tmp/p/d.md', discard: vi.fn() });
+        }),
+    );
+    await settle();
+    stdin.write('/webhooks ');
+    await settle();
+    stdin.write('\r');
+    await settle(5);
+    expect(lastFrame()).toContain('alerts');
+
+    // Edit the selected webhook and open its prompt, the fifth row, in the editor.
+    for (const key of ['\r', '\t', '\t', '\t', '\t', ' ']) {
+      stdin.write(key);
+      await settle(1);
+    }
+    await settle();
+    expect(mockEditText).toHaveBeenCalledWith('Alert: {status}', { suffix: '.md' });
+
+    adapterStub.events.emit('signIn', { id: 'sign-in-1', reason: 'The dashboard asks for a sign-in.' });
+    await settle();
+    expect(lastFrame()).not.toContain('Prism needs a sign-in');
+
+    closeEditor('Edited: {status}');
+    await settle(5);
+    expect(lastFrame()).toContain('Prism needs a sign-in');
+    expect(lastFrame()).not.toContain('Edit webhook alerts');
+
+    // Esc closes the sign-in alone; the form under it keeps the edited prompt.
+    await pressEscape(stdin);
+    await settle();
+    expect(lastFrame()).not.toContain('Prism needs a sign-in');
+    expect(lastFrame()).toContain('Edit webhook alerts');
+    expect(lastFrame()).toContain('Edited: {status}');
     unmount();
   });
 

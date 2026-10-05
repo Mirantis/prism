@@ -76,6 +76,35 @@ export interface CronTask {
   updatedAt: string;
 }
 
+/** The delivery targets this CLI offers. */
+export type WebhookDeliverTo = 'all' | 'chat' | 'slack' | 'teams';
+
+/** GET /agents/webhook-subscriptions row, less the fields the TUI does not show. */
+export interface WebhookSubscription {
+  id: string;
+  name: string;
+  description: string | null;
+  /** Comma-separated event-type allowlist; null accepts every event. */
+  events: string | null;
+  /** Prompt or message template; null sends the raw payload. */
+  prompt: string | null;
+  /** A `WebhookDeliverTo`, or a target that a newer runtime added. */
+  deliverTo: string;
+  deliverOnly: boolean;
+  isActive: boolean;
+  authType: 'none' | 'token' | 'hmac';
+}
+
+/** PATCH body: an empty string clears `description`, `events` or `prompt`. */
+export interface WebhookSubscriptionUpdate {
+  isActive?: boolean;
+  description?: string;
+  events?: string;
+  prompt?: string;
+  deliverTo?: string;
+  deliverOnly?: boolean;
+}
+
 export interface Goal {
   id: string;
   threadId: string;
@@ -161,6 +190,8 @@ export interface ApiClient {
     instruction?: string;
   }): Promise<CronTask>;
   deleteCronTask(taskId: string): Promise<{ success: boolean }>;
+  listWebhookSubscriptions(): Promise<WebhookSubscription[]>;
+  updateWebhookSubscription(id: string, update: WebhookSubscriptionUpdate): Promise<WebhookSubscription>;
   createGoal(input: { threadId: string; objective: string; tokenBudget?: number }): Promise<Goal>;
   getThreadGoal(threadId: string): Promise<Goal | null>;
   listGoals(): Promise<Goal[]>;
@@ -296,6 +327,14 @@ export class HttpApiClient implements ApiClient {
 
   deleteCronTask(taskId: string): Promise<{ success: boolean }> {
     return this.request('DELETE', `/agents/cron-tasks/${taskId}`);
+  }
+
+  listWebhookSubscriptions(): Promise<WebhookSubscription[]> {
+    return this.request('GET', '/agents/webhook-subscriptions');
+  }
+
+  updateWebhookSubscription(id: string, update: WebhookSubscriptionUpdate): Promise<WebhookSubscription> {
+    return this.request('PATCH', `/agents/webhook-subscriptions/${encodeURIComponent(id)}`, update);
   }
 
   createGoal(input: { threadId: string; objective: string; tokenBudget?: number }): Promise<Goal> {

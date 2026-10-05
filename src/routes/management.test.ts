@@ -1271,6 +1271,82 @@ describe('Management Routes', () => {
       expect(mockPrisma.webhookSubscription.findUnique).not.toHaveBeenCalled();
     });
 
+    it('edits the delivery fields, clearing a field sent as an empty string', async () => {
+      const updated = {
+        id: 'wh-1',
+        isActive: true,
+        deliverTo: 'slack',
+        deliverOnly: true,
+        authType: 'token',
+        secret: 'kept',
+      };
+      mockPrisma.webhookSubscription.update.mockResolvedValue(updated);
+
+      const res = await authedRequest(app).patch('/agents/webhook-subscriptions/wh-1').send({
+        description: '',
+        events: ' push, pull_request ',
+        prompt: 'Alert: {status}',
+        deliverTo: 'slack',
+        deliverOnly: true,
+      });
+
+      expect(res.status).toBe(200);
+      expect(mockPrisma.webhookSubscription.update).toHaveBeenCalledWith({
+        where: { id: 'wh-1' },
+        data: {
+          description: null,
+          events: 'push, pull_request',
+          prompt: 'Alert: {status}',
+          deliverTo: 'slack',
+          deliverOnly: true,
+        },
+      });
+      expect(mockTrackEvent).toHaveBeenCalledWith('webhook subscription updated', config.ownerUserId, {
+        'agent.id': config.agentId,
+        'webhook.subscription_id': 'wh-1',
+        'webhook.outcome': 'success',
+        'webhook.is_active': 'true',
+        'webhook.deliver_to': 'slack',
+        'webhook.deliver_only': 'true',
+        'webhook.auth_type': 'token',
+      });
+    });
+
+    it.each([
+      {
+        outcome: 'invalid',
+        status: 400,
+        body: { deliverTo: 'pager' },
+        arrange: () => {},
+      },
+      {
+        outcome: 'not_found',
+        status: 404,
+        body: { isActive: true },
+        arrange: () =>
+          mockPrisma.webhookSubscription.update.mockRejectedValue(
+            new Prisma.PrismaClientKnownRequestError('Not found', { code: 'P2025', clientVersion: 'test' }),
+          ),
+      },
+      {
+        outcome: 'error',
+        status: 500,
+        body: { isActive: true },
+        arrange: () => mockPrisma.webhookSubscription.update.mockRejectedValue(new Error('disk I/O error')),
+      },
+    ])('records a $status answer as outcome $outcome', async ({ outcome, status, body, arrange }) => {
+      arrange();
+
+      const res = await authedRequest(app).patch('/agents/webhook-subscriptions/wh-1').send(body);
+
+      expect(res.status).toBe(status);
+      expect(mockTrackEvent).toHaveBeenCalledWith('webhook subscription updated', config.ownerUserId, {
+        'agent.id': config.agentId,
+        'webhook.subscription_id': 'wh-1',
+        'webhook.outcome': outcome,
+      });
+    });
+
     describe('auth fields', () => {
       const stored = {
         id: 'wh-1',
