@@ -196,9 +196,14 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     });
 
     When('I ask the agent what the marker line says', async () => {
+      // The saved copy of a `shell_read_file` result is its JSON rendering on one
+      // line, so a bare grep returns the whole file and the agent takes several
+      // more steps to get the line out. Naming jq keeps the turn to one search.
       session!.send(
-        'That output was cut. The notice gives the path of the saved copy — grep it ' +
-          'for MIDDLE-MARKER-4T7X with the shell and tell me the whole line.',
+        'That output was cut. The notice gives the path of the saved copy. It holds ' +
+          'the tool result as JSON on one line, so get the line with one shell_exec ' +
+          'call: `jq -r .content <that path> | grep MIDDLE-MARKER-4T7X`. Tell me the ' +
+          'whole line.',
       );
       await sleep(200);
       session!.send(KEYS.ENTER);
