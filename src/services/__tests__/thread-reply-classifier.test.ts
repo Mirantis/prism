@@ -145,6 +145,7 @@ describe('threadReplyClassifierService', () => {
 
       const { system } = mockGenerateObject.mock.calls[0][0];
       expect(system).toContain('an approval');
+      expect(system).toContain('whoever in the thread asks it');
       expect(system).toContain(
         'When you are unsure whether the last message asks the bot for something, choose "respond".',
       );
@@ -152,16 +153,21 @@ describe('threadReplyClassifierService', () => {
   });
 
   describe('the verdict', () => {
-    it('returns the reaction emoji the model chose', async () => {
-      mockGenerateObject.mockResolvedValue({ object: { action: 'react', emoji: 'thumbsup' } });
+    it.each([
+      ['respond', 'respond', { action: 'respond' }],
+      ['no_reply', 'ignore', { action: 'no_reply' }],
+    ] as const)('reads the model label %s as %s', async (_label, action, object) => {
+      mockGenerateObject.mockResolvedValue({ object });
 
-      await expect(classify()).resolves.toEqual({ action: 'react', emoji: 'thumbsup' });
+      await expect(classify()).resolves.toEqual({ action });
     });
 
-    it('defaults the emoji when the model omits it', async () => {
-      mockGenerateObject.mockResolvedValue({ object: { action: 'react' } });
+    it('offers the model respond and no_reply only', async () => {
+      // The label name is part of where the respond boundary falls.
+      await classify();
 
-      await expect(classify()).resolves.toEqual({ action: 'react', emoji: 'eyes' });
+      const { schema } = mockGenerateObject.mock.calls[0][0];
+      expect(schema.shape.action.options).toEqual(['respond', 'no_reply']);
     });
 
     it('falls back to respond when the call throws', async () => {

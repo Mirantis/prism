@@ -51,9 +51,6 @@ vi.mock('../slack-message-queue.service', () => ({
   slackMessageQueueService: { enqueue: vi.fn() },
 }));
 
-vi.mock('../../queues/channel-learning.queue', () => ({
-  channelLearningQueue: { add: vi.fn() },
-}));
 
 vi.mock('../../queues/slack-heartbeat-throttle-queue', () => ({
   getSlackHeartbeatThrottleQueue: vi.fn(),

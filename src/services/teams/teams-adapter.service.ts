@@ -543,9 +543,6 @@ class TeamsAdapterService implements ChannelAdapter {
       return;
     }
 
-    // A Teams bot cannot react to a message, so "react" leaves the reply
-    // unanswered, as "ignore" does.
-    //
     // This stores the reply directly rather than through chat()/claimOrOffer: it
     // is history for the next turn and the next classification to read, not a
     // turn of its own. If a turn claims this thread at this moment the running

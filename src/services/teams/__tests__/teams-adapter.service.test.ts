@@ -751,25 +751,22 @@ describe('TeamsAdapterService', () => {
       );
     });
 
-    it.each(['ignore', 'react'] as const)(
-      'stores a reply the classifier answers "%s" to, without a turn or a typing cue',
-      async (action) => {
-        mockClassify.mockResolvedValue(action === 'react' ? { action, emoji: 'eyes' } : { action });
+    it('stores a reply the classifier ignores, without a turn or a typing cue', async () => {
+      mockClassify.mockResolvedValue({ action: 'ignore' });
 
-        const { send } = await receive(channelActivity(REPLY));
+      const { send } = await receive(channelActivity(REPLY));
 
-        expect(mockConversationService.addMessage).toHaveBeenCalledWith('thread-1', {
-          role: 'USER',
-          content: '<@aad-user-1:Jane Doe>: what time is it?',
-          triggeredBy: 'USER_INPUT',
-          senderExternalId: 'aad-user-1',
-          senderName: 'Jane Doe',
-        });
-        expect(mockChat).not.toHaveBeenCalled();
-        expect(send).not.toHaveBeenCalled();
-        expect(lastApp().reply).not.toHaveBeenCalled();
-      }
-    );
+      expect(mockConversationService.addMessage).toHaveBeenCalledWith('thread-1', {
+        role: 'USER',
+        content: '<@aad-user-1:Jane Doe>: what time is it?',
+        triggeredBy: 'USER_INPUT',
+        senderExternalId: 'aad-user-1',
+        senderName: 'Jane Doe',
+      });
+      expect(mockChat).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalled();
+      expect(lastApp().reply).not.toHaveBeenCalled();
+    });
 
     it('leaves a reply that mentions somebody else to them', async () => {
       await receive(

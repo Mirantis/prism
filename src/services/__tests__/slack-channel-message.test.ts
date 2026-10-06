@@ -21,7 +21,6 @@ const {
   mockSlackMessageQueueService,
   mockConversationService,
   mockConversationEngineService,
-  mockChannelLearningQueue,
 } = vi.hoisted(() => ({
   mockSlackMappingService: {
     findByChannelId: vi.fn(),
@@ -37,9 +36,6 @@ const {
   },
   mockConversationEngineService: {
     chat: vi.fn(),
-  },
-  mockChannelLearningQueue: {
-    add: vi.fn(),
   },
 }));
 
@@ -61,10 +57,6 @@ vi.mock('../conversation.service', () => ({
 
 vi.mock('../conversation-engine.service', () => ({
   conversationEngineService: mockConversationEngineService,
-}));
-
-vi.mock('../../queues/channel-learning.queue', () => ({
-  channelLearningQueue: mockChannelLearningQueue,
 }));
 
 vi.mock('../../queues/slack-heartbeat-throttle-queue', () => ({
@@ -162,9 +154,7 @@ describe('Requirement: Channel message mention detection', () => {
         undefined, MESSAGE_TS, mockSay, BOT_USER_ID, TEAM_ID
       );
 
-      // Should have responded (not queued for learning)
       expect(mockConversationEngineService.chat).toHaveBeenCalled();
-      expect(mockChannelLearningQueue.add).not.toHaveBeenCalled();
     });
 
     it('should NOT detect mention if bot ID was already replaced with a display name', async () => {
@@ -178,9 +168,8 @@ describe('Requirement: Channel message mention detection', () => {
         undefined, MESSAGE_TS, mockSay, BOT_USER_ID, TEAM_ID
       );
 
-      // No mention detected -> top-level message -> queued for learning, not responded
+      // No mention detected -> top-level message -> not answered
       expect(mockConversationEngineService.chat).not.toHaveBeenCalled();
-      expect(mockChannelLearningQueue.add).toHaveBeenCalled();
     });
 
     it('should detect mention anywhere in the message text', async () => {
@@ -211,7 +200,6 @@ describe('Requirement: Channel message mention detection', () => {
       );
 
       expect(mockConversationEngineService.chat).not.toHaveBeenCalled();
-      expect(mockChannelLearningQueue.add).toHaveBeenCalled();
     });
 
     it('should respond to top-level messages with a mention', async () => {
@@ -350,6 +338,60 @@ describe('Requirement: Channel message mention detection', () => {
         text: '(shared a file: trace.log)',
         ts: MESSAGE_TS,
       });
+    });
+  });
+
+  describe('Scenario: Thread messages without mention', () => {
+    let reactionsAdd: ReturnType<typeof vi.fn>;
+    let classifyThreadMessage: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      mockSlackMappingService.findByChannelId.mockResolvedValue(makeMapping());
+      reactionsAdd = vi.fn().mockResolvedValue({ ok: true });
+      (slackAdapterService as any).apps = new Map([
+        [TEAM_ID, { app: { client: { reactions: { add: reactionsAdd } } }, teamId: TEAM_ID }],
+      ]);
+      classifyThreadMessage = vi.fn();
+      (slackAdapterService as any).classifyThreadMessage = classifyThreadMessage;
+    });
+
+    it('posts nothing and adds no reaction when the classifier ignores the reply', async () => {
+      (slackAdapterService as any).isBotInThread = vi.fn().mockResolvedValue({
+        result: { action: 'respond' },
+        messages: [{ user: SLACK_USER_ID, text: 'thanks Dana, all sorted', ts: MESSAGE_TS }],
+      });
+      classifyThreadMessage.mockResolvedValue({ action: 'ignore' });
+
+      await handleChannelMessage(
+        CONNECTION_ID, CHANNEL_ID, SLACK_USER_ID,
+        'thanks Dana, all sorted',
+        THREAD_TS, MESSAGE_TS, mockSay, BOT_USER_ID, TEAM_ID
+      );
+
+      expect(classifyThreadMessage).toHaveBeenCalledOnce();
+      expect(reactionsAdd).not.toHaveBeenCalled();
+      expect(mockConversationEngineService.chat).not.toHaveBeenCalled();
+    });
+
+    it('reacts with eyes, without the classifier, to a reply that tags another person', async () => {
+      (slackAdapterService as any).isBotInThread = vi.fn().mockResolvedValue({
+        result: { action: 'react' },
+        messages: [],
+      });
+
+      await handleChannelMessage(
+        CONNECTION_ID, CHANNEL_ID, SLACK_USER_ID,
+        'thanks <@U_DANA>',
+        THREAD_TS, MESSAGE_TS, mockSay, BOT_USER_ID, TEAM_ID
+      );
+
+      expect(reactionsAdd).toHaveBeenCalledExactlyOnceWith({
+        channel: CHANNEL_ID,
+        timestamp: MESSAGE_TS,
+        name: 'eyes',
+      });
+      expect(classifyThreadMessage).not.toHaveBeenCalled();
+      expect(mockConversationEngineService.chat).not.toHaveBeenCalled();
     });
   });
 
