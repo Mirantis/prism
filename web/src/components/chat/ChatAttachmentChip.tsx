@@ -1,6 +1,6 @@
 import { File as FileIcon, FileText, Image as ImageIcon, Loader2, X } from 'lucide-react';
 import { attachmentUrl } from '@/api/runtime-client';
-import type { Attachment, AttachmentCategory } from '@/types';
+import type { Attachment, AttachmentCategory } from '@lensapp/prism-client';
 
 /** A file in the composer, before/while uploading, or after it's stored. */
 export interface PendingAttachment {

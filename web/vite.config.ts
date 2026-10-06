@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defaultClientConditions, defaultServerConditions, defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { TanStackRouterVite } from '@tanstack/router-plugin/vite';
@@ -9,6 +9,14 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+    },
+    // Workspace packages export their TypeScript source under `source`, so the SPA and
+    // its tests build from it with no package build step in between.
+    conditions: ['source', ...defaultClientConditions],
+  },
+  ssr: {
+    resolve: {
+      conditions: ['source', ...defaultServerConditions],
     },
   },
   build: {

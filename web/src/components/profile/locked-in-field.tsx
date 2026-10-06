@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Switch } from '@/components/ui/switch';
 import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
-import type { AgentDetails } from '@/types';
+import type { AgentDetails } from '@lensapp/prism-client';
 
 export function LockedInField({ details }: { details: AgentDetails }) {
   const agent = useAgent();

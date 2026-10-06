@@ -2,7 +2,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ComputerHelp, ComputerStatus } from '@/types';
+import type { ComputerHelp, ComputerStatus } from '@lensapp/prism-client';
 import { ChatComputerHelp } from './chat-computer-help';
 
 const { state } = vi.hoisted(() => ({

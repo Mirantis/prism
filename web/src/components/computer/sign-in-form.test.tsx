@@ -2,7 +2,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ComputerHelp } from '@/types';
+import type { ComputerHelp } from '@lensapp/prism-client';
 import { SignInForm } from './sign-in-form';
 
 const { computerRequest } = vi.hoisted(() => ({ computerRequest: vi.fn() }));

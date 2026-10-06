@@ -1,4 +1,4 @@
-import type { ConversationMessage } from '@/types';
+import type { ConversationMessage } from './types.js';
 
 /** A row in the chat: a stored message, or one of ours the runtime has not stored yet. */
 export interface TranscriptMessage extends ConversationMessage {

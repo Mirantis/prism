@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
-import type { ToolCallRecord } from '@/types';
+import type { ToolCallRecord } from '@lensapp/prism-client';
 
 import ToolCallCard from './tool-call-card';
 

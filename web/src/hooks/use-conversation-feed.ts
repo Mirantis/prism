@@ -1,9 +1,7 @@
 import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAgent } from '@/lib/agent-context';
-import type { ChatConnection } from '@/lib/chat-socket/chat-connection';
-import { upsertMessage } from '@/lib/chat-socket/transcript';
-import type { ConversationThread } from '@/types';
+import { type ChatConnection, upsertMessage, type ConversationThread } from '@lensapp/prism-client';
 import { useComputerStatusFeed } from './use-computer-status';
 import { recentThreadsQueryKey } from './use-recent-threads';
 import { threadQueryKey } from './use-thread';

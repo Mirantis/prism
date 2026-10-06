@@ -1,4 +1,4 @@
-import type { ConversationThread } from '@/types';
+import type { ConversationThread } from '@lensapp/prism-client';
 
 export type ThreadGroupLabel = 'Today' | 'Yesterday' | 'Previous 7 days' | 'Previous 30 days' | 'Older';
 

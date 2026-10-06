@@ -3,7 +3,7 @@ import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/component
 import { Badge } from '@/components/ui/badge';
 import { ChevronRight, Wrench } from 'lucide-react';
 import ToolCallCard from './tool-call-card';
-import type { ToolCallRecord } from '@/types';
+import type { ToolCallRecord } from '@lensapp/prism-client';
 
 interface ChatToolCallsProps {
   toolCalls: ToolCallRecord[];

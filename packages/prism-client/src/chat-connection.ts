@@ -5,7 +5,7 @@ import type {
   ContextUsage,
   ConversationMessage,
   UpdateEvent,
-} from '@/types';
+} from './types.js';
 import {
   CLIENT_NAME,
   CLIENT_PING_INTERVAL_MS,
@@ -24,8 +24,8 @@ import {
   type VoiceFormat,
   type VoiceStartOptions,
   type WelcomePayload,
-} from './protocol';
-import type { TranscriptMessage } from './transcript';
+} from './protocol.js';
+import type { TranscriptMessage } from './transcript.js';
 
 const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
@@ -51,6 +51,17 @@ export interface ChatListener {
    * stream's events wait until the returned promise settles.
    */
   resync?: () => Promise<unknown> | void;
+}
+
+export interface ChatConnectionOptions {
+  /**
+   * The WebSocket subprotocols to offer, asked for again before each connect so a
+   * short-lived token is always the current one. A page on another origin than the
+   * runtime authenticates this way: `() => ingressProtocols(token)`.
+   */
+  protocols?: () => string[] | Promise<string[]>;
+  /** The name this client gives in `hello`. */
+  clientName?: string;
 }
 
 export interface ChatConnectionState {
@@ -98,7 +109,13 @@ type Timer = ReturnType<typeof setTimeout> | undefined;
  */
 export class ChatConnection {
   private readonly url: () => string;
+  private readonly protocols: ChatConnectionOptions['protocols'];
+  private readonly clientName: string;
   private ws: WebSocket | null = null;
+  /** True while the protocols for the next socket are being fetched. */
+  private opening = false;
+  /** Counts connects, so protocols that arrive after a `stop` open nothing. */
+  private connectAttempt = 0;
   /** True between this socket's `welcome` and its close. Nothing but `hello` is sent before. */
   private ready = false;
   private running = false;
@@ -120,8 +137,10 @@ export class ChatConnection {
   private readonly subscribers = new Set<() => void>();
   private state: ChatConnectionState = { status: 'disconnected', you: undefined, turns: {}, pending: [] };
 
-  constructor(url: () => string) {
+  constructor(url: () => string, options: ChatConnectionOptions = {}) {
     this.url = url;
+    this.protocols = options.protocols;
+    this.clientName = options.clientName ?? CLIENT_NAME;
   }
 
   start = (): void => {
@@ -132,6 +151,8 @@ export class ChatConnection {
 
   stop = (): void => {
     this.running = false;
+    this.opening = false;
+    this.connectAttempt++;
     clearTimeout(this.reconnectTimer);
     this.stopWaitingForVisible();
     this.abandon();
@@ -238,8 +259,43 @@ export class ChatConnection {
   };
 
   private connect(): void {
-    if (!this.running || this.ws || this.state.status === 'update-required') return;
-    const ws = new WebSocket(this.url());
+    if (!this.running || this.ws || this.opening || this.state.status === 'update-required') return;
+    let offered: string[] | Promise<string[]> | undefined;
+    try {
+      offered = this.protocols?.();
+    } catch {
+      this.protocolsFailed();
+      return;
+    }
+    if (!(offered instanceof Promise)) {
+      this.open(offered);
+      return;
+    }
+    const attempt = ++this.connectAttempt;
+    this.opening = true;
+    this.publish({ status: 'connecting' });
+    offered.then(
+      (protocols) => {
+        if (attempt !== this.connectAttempt) return;
+        this.opening = false;
+        this.open(protocols);
+      },
+      () => {
+        if (attempt !== this.connectAttempt) return;
+        this.opening = false;
+        this.protocolsFailed();
+      },
+    );
+  }
+
+  /** A connect without its protocols is retried like a socket that failed to open. */
+  private protocolsFailed(): void {
+    this.publish({ status: 'disconnected' });
+    this.scheduleReconnect();
+  }
+
+  private open(protocols: string[] | undefined): void {
+    const ws = new WebSocket(this.url(), protocols);
     // Speech arrives as binary frames. A Blob needs an asynchronous read, which would
     // let audio overtake the `voice_clear` that cancels it.
     ws.binaryType = 'arraybuffer';
@@ -256,7 +312,7 @@ export class ChatConnection {
       id: this.nextId('hello'),
       payload: {
         protocol: PROTOCOL_VERSION,
-        client: { name: CLIENT_NAME },
+        client: { name: this.clientName },
         ...(this.cursor ? { resume: this.cursor } : {}),
       },
     });

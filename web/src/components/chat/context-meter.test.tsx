@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import ContextMeter from './context-meter';
-import type { ContextUsage } from '@/types';
+import type { ContextUsage } from '@lensapp/prism-client';
 
 afterEach(cleanup);
 

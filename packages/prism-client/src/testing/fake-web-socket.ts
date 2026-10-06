@@ -16,12 +16,15 @@ export class FakeWebSocket {
   readyState = FakeWebSocket.CONNECTING;
   binaryType = 'blob';
   readonly url: string;
+  /** The subprotocols the client offered. */
+  readonly protocols: string | string[] | undefined;
   readonly sent: (string | ArrayBuffer)[] = [];
   /** The code the client closed this socket with. */
   closedWith: number | null = null;
 
-  constructor(url: string) {
+  constructor(url: string, protocols?: string | string[]) {
     this.url = url;
+    this.protocols = protocols;
     FakeWebSocket.instances.push(this);
   }
 

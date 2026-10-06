@@ -6,6 +6,7 @@ node_modules
 # Build outputs the image produces itself.
 dist
 web/dist
+packages/*/dist
 cli/dist
 
 # Never in an image.

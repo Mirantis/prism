@@ -3,11 +3,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, act, waitFor, cleanup, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
-import type { ComputerStatus, ConversationMessage } from '@/types';
+import type { ComputerStatus, ConversationMessage, TranscriptMessage } from '@lensapp/prism-client';
 import type { Dictation } from '@/hooks/use-dictation';
-import type { TranscriptMessage } from '@/lib/chat-socket/transcript';
 import { ChatConnectionProvider } from '@/lib/chat-socket/chat-connection-context';
-import { FakeWebSocket, welcomeFrame } from '@/lib/chat-socket/fake-web-socket';
+import { FakeWebSocket, welcomeFrame } from '@lensapp/prism-client/testing';
 import { HeaderActionsProvider } from '@/lib/header-actions-context';
 import { HeaderActionsSlot } from '@/components/layout/header-actions-slot';
 

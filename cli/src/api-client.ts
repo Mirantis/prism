@@ -117,7 +117,7 @@ export interface PluginSummary {
   diagnostics: string[];
 }
 
-/** GET /agents/update/status response (mirrors web/src/types.ts). */
+/** GET /agents/update/status response (mirrors packages/prism-client/src/types.ts). */
 export interface UpdateStatus {
   enabled: boolean;
   /** Why the updater is off; null when enabled. */

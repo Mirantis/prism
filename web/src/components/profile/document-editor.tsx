@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
-import type { AgentDetails, DocumentField } from '@/types';
+import type { AgentDetails, DocumentField } from '@lensapp/prism-client';
 
 /**
  * One identity document on the Profile page. Every tab renders this: the user

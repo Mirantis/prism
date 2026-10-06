@@ -2,7 +2,7 @@ import { useState, useMemo, type ReactNode } from 'react';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 import { Badge } from '@/components/ui/badge';
 import { ChevronRight } from 'lucide-react';
-import type { ToolCallRecord } from '@/types';
+import type { ToolCallRecord } from '@lensapp/prism-client';
 
 function formatToolLabel(toolName: string): string {
   return toolName

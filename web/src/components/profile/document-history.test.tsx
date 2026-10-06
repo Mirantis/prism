@@ -3,8 +3,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, cleanup, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '@testing-library/jest-dom/vitest';
-import { ApiError } from '@/api/errors';
-import type { DocumentRevisionHistory, DocumentRevisionSummary } from '@/types';
+import { ApiError, type DocumentRevisionHistory, type DocumentRevisionSummary } from '@lensapp/prism-client';
 
 const { mockDocumentRevisions, mockDocumentRevision, mockRestore } = vi.hoisted(() => ({
   mockDocumentRevisions: vi.fn(),

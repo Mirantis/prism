@@ -54,7 +54,7 @@ import {
   isWebhookAuthComplete,
   WebhookAuthFields,
 } from '@/components/webhooks/webhook-auth-fields';
-import type { WebhookDeliverTo, WebhookSubscription } from '@/types';
+import type { WebhookDeliverTo, WebhookSubscription } from '@lensapp/prism-client';
 
 export const Route = createFileRoute('/webhooks')({
   component: WebhooksPage,

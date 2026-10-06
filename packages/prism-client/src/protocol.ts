@@ -1,15 +1,15 @@
 /**
- * The web client's copy of the chat socket contract, `/api/ws` version 2.
+ * The browser clients' copy of the chat socket contract, `/api/ws` version 2.
  *
  * The runtime's schemas in `src/protocol/chat-protocol.ts` are the authority, and
- * `docs/websocket-protocol.md` describes them. This workspace cannot import runtime
- * code, so the shapes are repeated here, and the contract test replays the recorded
- * session in `src/protocol/fixtures/` against them.
+ * `docs/websocket-protocol.md` describes them. A client cannot import runtime code,
+ * so the shapes are repeated here, and the contract test replays the recorded session
+ * in `src/protocol/fixtures/` against them.
  */
 
 export const PROTOCOL_VERSION = 2;
 
-/** The name this client gives in `hello`. */
+/** The name a client gives in `hello` when it names no other: the Prism web UI's. */
 export const CLIENT_NAME = 'web';
 
 /** The close codes the client treats specially. Every other close is reconnected. */

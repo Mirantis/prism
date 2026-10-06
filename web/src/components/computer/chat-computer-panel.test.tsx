@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ComputerHelp, ComputerStatus } from '@/types';
+import type { ComputerHelp, ComputerStatus } from '@lensapp/prism-client';
 import { ChatComputerPanel } from './chat-computer-panel';
 
 const { computerRequest, state } = vi.hoisted(() => ({

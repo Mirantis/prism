@@ -8,9 +8,10 @@ FROM node:26-bookworm-slim AS builder
 
 WORKDIR /app
 
-# All three workspace manifests up front so a single root `npm ci` resolves
-# the full graph (root + web + cli) against the committed lockfile.
+# The workspace manifests up front so a single root `npm ci` resolves the full
+# graph (root + prism-client + web + cli) against the committed lockfile.
 COPY package.json package-lock.json ./
+COPY packages/prism-client/package.json ./packages/prism-client/
 COPY web/package.json ./web/
 COPY cli/package.json ./cli/
 
@@ -36,7 +37,9 @@ RUN npx prisma generate --schema=prisma/sqlite/schema.prisma
 # Build runtime TypeScript
 RUN npx tsc
 
-# Build the web bundle from the workspace.
+# Build the web bundle from the workspace. It builds from the client package's
+# source, so the package comes first.
+COPY packages ./packages
 COPY web ./web
 RUN npm run build --workspace=prism-agent-web
 
@@ -142,6 +145,7 @@ RUN awk '/BEGIN CERTIFICATE/{c=1;b="";next} /END CERTIFICATE/{c=0;print b;next} 
 # workspace's node_modules isn't needed at runtime (we only ship its
 # built dist/), so skip it to keep the image smaller.
 COPY package.json package-lock.json ./
+COPY packages/prism-client/package.json ./packages/prism-client/
 COPY web/package.json ./web/
 COPY cli/package.json ./cli/
 

@@ -13,7 +13,7 @@ The GitHub repository is [`lensapp/prism-agent`](https://github.com/lensapp/pris
 
 Runtime source paths in this file are relative to `src/` — `invoke.ts` is
 `src/invoke.ts`. A path outside the runtime source starts from the repo root:
-`prisma/`, `docs/`, `web/`, `cli/`, `e2e/`, `scripts/`.
+`prisma/`, `docs/`, `web/`, `packages/`, `cli/`, `e2e/`, `scripts/`.
 
 ## Repair doctrine
 
@@ -1414,7 +1414,7 @@ The agent-runtime owns the full Slack adapter implementation. It manages Bolt ap
 
 ## WebSocket Gateway
 
-The agent-runtime owns the chat socket, `/api/ws`, which the web UI, the TUI and any other client share. `docs/websocket-protocol.md` is its contract for client authors; `protocol/chat-protocol.ts` holds the schemas, and `protocol/fixtures/v2-session.json` is a session recorded from a real runtime that every client's tests replay.
+The agent-runtime owns the chat socket, `/api/ws`, which the web UI, the TUI and any other client share. `docs/websocket-protocol.md` is its contract for client authors; `protocol/chat-protocol.ts` holds the schemas, and `protocol/fixtures/v2-session.json` is a session recorded from a real runtime that every client's tests replay. A browser client is built on `packages/prism-client/` (`@lensapp/prism-client`): the protocol types, `ChatConnection` and the REST types, which the web UI uses and other web apps can install.
 
 ### WebSocket Architecture
 

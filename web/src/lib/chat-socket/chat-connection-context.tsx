@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { webSocketUrl } from '@/api/runtime-client';
 import { useConversationFeed } from '@/hooks/use-conversation-feed';
-import { ChatConnection } from './chat-connection';
+import { ChatConnection } from '@lensapp/prism-client';
 
 const ChatConnectionContext = createContext<ChatConnection | null>(null);
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { startVoiceAudio, VOICE_SAMPLE_RATE, type VoiceAudio } from '@/lib/voice-audio';
-import type { VoiceEvent, VoiceFormat, VoiceStartOptions } from '@/lib/chat-socket/protocol';
+import type { VoiceEvent, VoiceFormat, VoiceStartOptions } from '@lensapp/prism-client';
 
 /**
  * A voice call with the agent: the microphone, the playback, and the call's state.

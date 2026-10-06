@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ConversationMessage } from '@/types';
-import { ChatConnection } from './chat-connection';
-import { FakeWebSocket, STREAM_ID, welcomeFrame } from './fake-web-socket';
+import type { ConversationMessage } from './types.js';
+import { ChatConnection } from './chat-connection.js';
+import { FakeWebSocket, STREAM_ID, welcomeFrame } from './testing/fake-web-socket.js';
 
 const THREAD = '9db4a6ef-9160-4784-bcda-c2e649edf269';
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -459,5 +459,113 @@ describe('ChatConnection', () => {
       { type: 'result', text: 'Mock dictation of 1000 ms.' },
       { type: 'error', error: 'The dictation could not be transcribed.' },
     ]);
+  });
+});
+
+describe('ChatConnection on another origin', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(1);
+    FakeWebSocket.instances = [];
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it('offers the protocols it is given, asked for again on every connect', async () => {
+    let token = 'first';
+    const connection = new ChatConnection(() => 'wss://agent.example.com/api/ws', {
+      protocols: () => ['prism.chat.v2', token],
+    });
+    connection.start();
+    expect(FakeWebSocket.latest().protocols).toEqual(['prism.chat.v2', 'first']);
+
+    token = 'second';
+    FakeWebSocket.latest().serverClose(1006);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    expect(FakeWebSocket.latest().protocols).toEqual(['prism.chat.v2', 'second']);
+    connection.stop();
+  });
+
+  it('opens the socket once protocols that take a while arrive', async () => {
+    let resolve: (protocols: string[]) => void = () => {};
+    const connection = new ChatConnection(() => 'wss://agent.example.com/api/ws', {
+      protocols: () => new Promise((r) => (resolve = r)),
+    });
+    connection.start();
+    expect(connection.getState().status).toBe('connecting');
+    expect(FakeWebSocket.instances).toHaveLength(0);
+
+    resolve(['prism.chat.v2']);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(FakeWebSocket.latest().protocols).toEqual(['prism.chat.v2']);
+    connection.stop();
+  });
+
+  it('opens nothing for protocols that arrive after a stop', async () => {
+    const pending: Array<(protocols: string[]) => void> = [];
+    const connection = new ChatConnection(() => 'wss://agent.example.com/api/ws', {
+      protocols: () => new Promise((r) => pending.push(r)),
+    });
+    connection.start();
+    connection.stop();
+    connection.start();
+    pending[0]!(['stale']);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(FakeWebSocket.instances).toHaveLength(0);
+
+    pending[1]!(['fresh']);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(FakeWebSocket.latest().protocols).toEqual(['fresh']);
+    connection.stop();
+  });
+
+  it('tries again later when the protocols cannot be had', async () => {
+    let fail = true;
+    const connection = new ChatConnection(() => 'wss://agent.example.com/api/ws', {
+      protocols: () => (fail ? Promise.reject(new Error('no token')) : Promise.resolve(['prism.chat.v2'])),
+    });
+    connection.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(connection.getState().status).toBe('disconnected');
+    expect(FakeWebSocket.instances).toHaveLength(0);
+
+    fail = false;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    connection.stop();
+  });
+
+  it('tries again later when asking for the protocols throws', async () => {
+    let fail = true;
+    const connection = new ChatConnection(() => 'wss://agent.example.com/api/ws', {
+      protocols: () => {
+        if (fail) throw new Error('no token');
+        return ['prism.chat.v2'];
+      },
+    });
+    connection.start();
+    expect(connection.getState().status).toBe('disconnected');
+
+    fail = false;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    connection.stop();
+  });
+
+  it('gives its own name in hello', () => {
+    const connection = new ChatConnection(() => 'wss://agent.example.com/api/ws', { clientName: 'portal' });
+    connection.start();
+    const ws = FakeWebSocket.latest();
+    ws.open();
+    expect(ws.frames[0]).toMatchObject({ type: 'hello', payload: { client: { name: 'portal' } } });
+    connection.stop();
   });
 });

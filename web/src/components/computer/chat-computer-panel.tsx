@@ -7,7 +7,7 @@ import { computerRequest } from '@/api/computer';
 import { useComputerScreen } from '@/hooks/use-computer-screen';
 import { useComputerStatus } from '@/hooks/use-computer-status';
 import { cn } from '@/lib/utils';
-import type { ComputerHelp } from '@/types';
+import type { ComputerHelp } from '@lensapp/prism-client';
 import { ComputerHelpCard } from './computer-help-card';
 
 const PANEL_TRANSITION_MS = 1200;

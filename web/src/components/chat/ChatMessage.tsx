@@ -1,5 +1,10 @@
 import { ChatComputerHelp } from '@/components/computer/chat-computer-help';
-import { computerHelpBlocks } from '@/types';
+import {
+  computerHelpBlocks,
+  type TranscriptMessage,
+  type Viewer,
+  type ConversationMessage,
+} from '@lensapp/prism-client';
 import { memo } from 'react';
 import { CopyButton } from '@/components/shared/copy-button';
 import AgentAvatar from './agent-avatar';
@@ -7,9 +12,6 @@ import ParticipantAvatar from './participant-avatar';
 import ChatMarkdown from './ChatMarkdown';
 import ChatToolCalls from './ChatToolCalls';
 import { MessageAttachmentChip } from './ChatAttachmentChip';
-import type { TranscriptMessage } from '@/lib/chat-socket/transcript';
-import type { Viewer } from '@/lib/chat-socket/protocol';
-import type { ConversationMessage } from '@/types';
 
 function AttachmentChips({ message }: { message: ConversationMessage }) {
   if (!message.attachments || message.attachments.length === 0) return null;

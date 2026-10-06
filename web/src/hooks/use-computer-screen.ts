@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { computerWebSocketUrl } from '@/api/runtime-client';
-import type { ComputerStatus } from '@/types';
+import type { ComputerStatus } from '@lensapp/prism-client';
 import { canDecodeVideo, ScreenCanvas } from '@/lib/screen-canvas';
 
 /** Live desktop video, sound, and user input on a dedicated socket. */

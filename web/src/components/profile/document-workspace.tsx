@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { DocumentEditor } from './document-editor';
 import { DocumentHistory } from './document-history';
-import type { AgentDetails, DocumentField } from '@/types';
+import type { AgentDetails, DocumentField } from '@lensapp/prism-client';
 
 export function DocumentWorkspace({
   field,

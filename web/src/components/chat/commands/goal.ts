@@ -1,6 +1,5 @@
 import { runtimeApi } from '@/api/runtime-client';
-import { ApiError } from '@/api/errors';
-import type { Goal } from '@/types';
+import { ApiError, type Goal } from '@lensapp/prism-client';
 import type { SlashCommand } from './types';
 
 /** Reserved single-word /goal subcommands (everything else is an objective). */

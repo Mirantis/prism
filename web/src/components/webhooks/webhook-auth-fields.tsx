@@ -7,7 +7,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui/field';
-import type { WebhookAuthAlgorithm, WebhookAuthEncoding, WebhookAuthType } from '@/types';
+import type { WebhookAuthAlgorithm, WebhookAuthEncoding, WebhookAuthType } from '@lensapp/prism-client';
 
 /**
  * The generic sender-verification fields, shared by the create modal and the

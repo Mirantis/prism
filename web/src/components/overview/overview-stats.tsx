@@ -5,7 +5,7 @@ import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
 import { useSlackStatus } from '@/hooks/use-slack-status';
 import { formatInterval, formatRelativeTime, formatTokens } from '@/lib/format';
-import type { CronTask } from '@/types';
+import type { CronTask } from '@lensapp/prism-client';
 
 /** Four figures across the Overview, each linking to the page that manages it. */
 export function OverviewStats() {

@@ -1,14 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ConversationMessage } from '@/types';
-import { ChatConnection } from './chat-connection';
-import { FakeWebSocket } from './fake-web-socket';
-import { upsertMessage } from './transcript';
+import type { ConversationMessage } from './types.js';
+import { ChatConnection } from './chat-connection.js';
+import { FakeWebSocket } from './testing/fake-web-socket.js';
+import { upsertMessage } from './transcript.js';
 
 /**
  * A session recorded from the v2 runtime: two clients, "web" and "phone", on one
  * thread, with a phone reconnect that resumes. Read from disk rather than imported,
- * since the web build cannot depend on runtime code.
+ * since a client package cannot depend on runtime code.
  */
 interface Recording {
   threadId: string;
@@ -19,7 +19,7 @@ interface Recording {
 }
 
 const recording = JSON.parse(
-  readFileSync(new URL('../../../../src/protocol/fixtures/v2-session.json', import.meta.url), 'utf8'),
+  readFileSync(new URL('../../../src/protocol/fixtures/v2-session.json', import.meta.url), 'utf8'),
 ) as Recording;
 
 function framesOf(client: string, direction: 'sent' | 'received') {

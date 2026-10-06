@@ -1,0 +1,3 @@
+# The npm tarball carries the repo licence; prepack copies it in.
+/LICENSE
+/NOTICE

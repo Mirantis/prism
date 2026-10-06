@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { CircleCheck, CircleX, LockKeyhole, Monitor } from 'lucide-react';
 import { useComputerStatus } from '@/hooks/use-computer-status';
 import { SignInForm } from '@/components/computer/sign-in-form';
-import type { ComputerHelp } from '@/types';
+import type { ComputerHelp } from '@lensapp/prism-client';
 
 export function ChatComputerHelp({
   help,

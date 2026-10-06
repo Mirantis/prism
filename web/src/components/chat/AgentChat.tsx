@@ -4,21 +4,23 @@ import { useState, useEffect, useCallback, useMemo, useRef, type FormEvent } fro
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { runtimeApi } from '@/api/runtime-client';
-import { ApiError } from '@/api/errors';
-import { useAgent } from '@/lib/agent-context';
-import { buildTranscript, compareMessages, type TranscriptNote } from '@/lib/chat-socket/transcript';
-import { useChatSocket } from '@/hooks/use-chat-socket';
-import { useThread } from '@/hooks/use-thread';
-import { useDictation, type Dictation } from '@/hooks/use-dictation';
-import { useVoiceCall, type VoiceCall } from '@/hooks/use-voice-call';
-import { HeaderActions } from '@/components/layout/header-actions';
 import {
+  ApiError,
+  buildTranscript,
+  compareMessages,
+  type TranscriptNote,
   MAX_ATTACHMENTS_PER_MESSAGE,
   type Attachment,
   type CompactionEvent,
   type ContextUsage,
   computerHelpBlocks,
-} from '@/types';
+} from '@lensapp/prism-client';
+import { useAgent } from '@/lib/agent-context';
+import { useChatSocket } from '@/hooks/use-chat-socket';
+import { useThread } from '@/hooks/use-thread';
+import { useDictation, type Dictation } from '@/hooks/use-dictation';
+import { useVoiceCall, type VoiceCall } from '@/hooks/use-voice-call';
+import { HeaderActions } from '@/components/layout/header-actions';
 import ChatMessageList from './ChatMessageList';
 import ChatInput from './ChatInput';
 import VoiceCallBar from './voice-call-bar';

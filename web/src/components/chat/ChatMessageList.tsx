@@ -1,4 +1,4 @@
-import type { Viewer } from '@/lib/chat-socket/protocol';
+import type { Viewer, TurnState, TranscriptMessage } from '@lensapp/prism-client';
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { ArrowDown } from 'lucide-react';
 import ChatMessage from './ChatMessage';
@@ -6,8 +6,6 @@ import ChatTypingIndicator from './ChatTypingIndicator';
 import ChatWelcome from './ChatWelcome';
 import DayDivider from './day-divider';
 import { isSameDay } from '@/lib/day-label';
-import type { TurnState } from '@/lib/chat-socket/protocol';
-import type { TranscriptMessage } from '@/lib/chat-socket/transcript';
 
 /** How close to the end, in pixels, still counts as reading the latest message. */
 const AT_BOTTOM_PX = 120;

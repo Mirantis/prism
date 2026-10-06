@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import type { TranscriptMessage } from '@/lib/chat-socket/transcript';
-import type { Viewer } from '@/lib/chat-socket/protocol';
+import type { TranscriptMessage, Viewer } from '@lensapp/prism-client';
 import ChatMessage from './ChatMessage';
 
 const ADA: Viewer = { id: 'ada@example.com', name: 'ada@example.com' };

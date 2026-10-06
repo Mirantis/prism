@@ -1,5 +1,5 @@
 import { runtimeApi } from '@/api/runtime-client';
-import { ApiError } from '@/api/errors';
+import { ApiError } from '@lensapp/prism-client';
 import type { SlashCommand } from './types';
 
 export const skillsCommand: SlashCommand = {

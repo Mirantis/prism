@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, waitFor, act, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '@testing-library/jest-dom/vitest';
-import type { ToolCallHistoryEntry, ToolCallHistoryPage } from '@/types';
+import type { ToolCallHistoryEntry, ToolCallHistoryPage } from '@lensapp/prism-client';
 
 const { mockListToolCalls } = vi.hoisted(() => ({ mockListToolCalls: vi.fn() }));
 

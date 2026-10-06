@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { computerRequest } from '@/api/computer';
-import type { ComputerHelp } from '@/types';
+import type { ComputerHelp } from '@lensapp/prism-client';
 
 /** The runtime enters credentials into the website while Prism is paused. */
 export function SignInForm({

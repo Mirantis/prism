@@ -37,7 +37,7 @@ import { useFormErrors } from '@/hooks/use-form-errors';
 import { CreateModal } from '@/components/shared/create-modal';
 import { DeleteConfirm } from '@/components/shared/delete-confirm';
 import { TeamsModeSections } from '@/components/channels/teams-mode-sections';
-import type { SlackChannelMapping, SlackHeartbeatTrigger } from '@/types';
+import type { SlackChannelMapping, SlackHeartbeatTrigger } from '@lensapp/prism-client';
 
 export const Route = createFileRoute('/channels')({
   component: ChannelsPage,

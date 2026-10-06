@@ -1,5 +1,5 @@
 import { useParams, useRouterState } from '@tanstack/react-router';
-import type { ConversationThread } from '@/types';
+import type { ConversationThread } from '@lensapp/prism-client';
 import { useRecentThreads } from './use-recent-threads';
 import { useThread } from './use-thread';
 

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ApiError } from '../api/errors';
+import { ApiError } from '@lensapp/prism-client';
 
 export function useFormErrors() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});

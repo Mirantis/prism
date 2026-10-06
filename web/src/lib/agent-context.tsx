@@ -1,7 +1,7 @@
 import { createContext, useContext, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { runtimeApi } from '@/api/runtime-client';
-import type { AgentSummary } from '@/types';
+import type { AgentSummary } from '@lensapp/prism-client';
 
 const AgentContext = createContext<AgentSummary | null>(null);
 
