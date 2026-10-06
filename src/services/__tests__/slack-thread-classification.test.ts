@@ -41,21 +41,21 @@ type ThreadMessage = { user?: string; text?: string; ts?: string };
 type ArrivingMessage = { user: string; text: string; ts: string };
 
 /** `classifyThreadMessage` is private; exercise it through the instance. */
-function classify(messages: ThreadMessage[]): Promise<{ action: string; emoji?: string }> {
+function classify(messages: ThreadMessage[]): Promise<{ action: string }> {
   return (
     slackAdapterService as unknown as {
       classifyThreadMessage(
         m: ThreadMessage[],
         botUserId: string,
         agentId: string,
-      ): Promise<{ action: string; emoji?: string }>;
+      ): Promise<{ action: string }>;
     }
   ).classifyThreadMessage(messages, 'BOT1', 'agent-1');
 }
 
 /** `isBotInThread` is private too; same route. */
 function gate(arriving: ArrivingMessage): Promise<{
-  result: { action: string; emoji?: string };
+  result: { action: string };
   messages: ThreadMessage[];
 }> {
   return (
@@ -65,7 +65,7 @@ function gate(arriving: ArrivingMessage): Promise<{
         threadTs: string,
         teamId: string,
         arriving: ArrivingMessage,
-      ): Promise<{ result: { action: string; emoji?: string }; messages: ThreadMessage[] }>;
+      ): Promise<{ result: { action: string }; messages: ThreadMessage[] }>;
     }
   ).isBotInThread('C1', '100.0', 'T1', arriving);
 }
@@ -195,7 +195,7 @@ describe('Slack thread classification', () => {
 
       const { result } = await gate({ user: 'U1', text: 'thanks <@UOTHER01>', ts: '300.0' });
 
-      expect(result).toEqual({ action: 'react', emoji: 'eyes' });
+      expect(result).toEqual({ action: 'react' });
     });
 
     it('does not read a tag of the bot itself as a branch', async () => {

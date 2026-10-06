@@ -40,7 +40,6 @@ import { conversationEngineService } from './conversation-engine.service';
 import { threadReplyClassifierService, ThreadAction } from './thread-reply-classifier.service';
 import { SlackThreadProvider } from './providers/slack-thread.provider';
 import { getSlackHeartbeatThrottleQueue } from '../queues/slack-heartbeat-throttle-queue';
-import { channelLearningQueue } from '../queues/channel-learning.queue';
 import { getActiveSlackConnections, getSlackConnection } from '../lib/slack-source';
 import { attachmentService, detectMediaType, classifyMediaType } from './attachment.service';
 import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB, MAX_ATTACHMENTS_PER_MESSAGE } from '../constants';
@@ -70,6 +69,12 @@ export const FEEDBACK_ACK_LINGER_MS = 3000;
 
 /** The fields of a thread message the gate reads. */
 type GateMessage = { user?: string; text?: string; ts?: string };
+
+/**
+ * The participation rule's verdict. `respond` passes the message on to the
+ * thread classifier; `react` puts 👀 on a message addressed to another person.
+ */
+type ThreadParticipation = ThreadAction | { action: 'react' };
 
 export interface SlackApp {
   app: App;
@@ -102,9 +107,9 @@ interface SlackFileDownloadResult {
 
 /**
  * Placeholder body for a Slack message whose only content is its file(s).
- * Used for the stored chat message AND the heartbeat-trigger/channel-learning
- * queues, so a file event never becomes an empty-text entry that silently
- * drops the fact that a file was shared.
+ * Used for the stored chat message AND the heartbeat-trigger queue, so a file
+ * event never becomes an empty-text entry that silently drops the fact that a
+ * file was shared.
  */
 function describeSharedFiles(files: SlackFileMeta[]): string {
   const names = files.map((f) => f.name || 'file').join(', ');
@@ -897,8 +902,7 @@ class SlackAdapterService implements ChannelAdapter {
   /**
    * Handle channel messages (team agent mode)
    *
-   * Passive learning: Queue messages for agent to learn from
-   * Active response: Only respond in threads the bot started or when mentioned
+   * Only respond in threads the bot takes part in or when mentioned
    */
   private async handleChannelMessage(
     connectionId: string,
@@ -930,7 +934,7 @@ class SlackAdapterService implements ChannelAdapter {
 
     // File-only messages reach the queue paths below with empty text — those
     // paths never download files, so describe them instead of enqueueing ''
-    // (which would render as an empty heartbeat/learning entry while the file
+    // (which would render as an empty heartbeat entry while the file
     // silently vanishes).
     const queueText = messageText || (files.length > 0 ? describeSharedFiles(files) : messageText);
 
@@ -992,13 +996,11 @@ class SlackAdapterService implements ChannelAdapter {
 
     // For top-level messages (not in a thread), only respond if mentioned
     if (!threadTs && !isMentioned) {
-      // Queue for passive learning (agent will process async)
       logger.info(
-        'Queueing channel message for learning: top-level message without bot mention (agent=%s, channel=%s)',
+        'Channel message not answered: top-level message without bot mention (agent=%s, channel=%s)',
         mapping.agentId,
         mapping.slackChannelName || channelId
       );
-      await this.queueForLearning(mapping.agentId, userId, channelId, slackUserId, queueText, mapping.connection.teamId);
       return;
     }
 
@@ -1015,22 +1017,20 @@ class SlackAdapterService implements ChannelAdapter {
 
       if (result.action === 'ignore') {
         logger.info(
-          'Queueing channel message for learning: thread message where bot is not participating (agent=%s, channel=%s)',
+          'Channel message not answered: thread message where bot is not participating (agent=%s, channel=%s)',
           mapping.agentId,
           mapping.slackChannelName || channelId
         );
-        await this.queueForLearning(mapping.agentId, userId, channelId, slackUserId, queueText, mapping.connection.teamId);
         return;
       }
 
       if (result.action === 'react') {
-        await this.addReaction(channelId, messageTs, mapping.connection.teamId, result.emoji);
+        await this.addReaction(channelId, messageTs, mapping.connection.teamId, 'eyes');
         logger.info(
-          'Queueing channel message for learning: thread message warranted only a reaction (heuristic) (agent=%s, channel=%s)',
+          'Channel message not answered: thread message addressed to another person, reacted (agent=%s, channel=%s)',
           mapping.agentId,
           mapping.slackChannelName || channelId
         );
-        await this.queueForLearning(mapping.agentId, userId, channelId, slackUserId, queueText, mapping.connection.teamId);
         return;
       }
 
@@ -1039,22 +1039,10 @@ class SlackAdapterService implements ChannelAdapter {
 
       if (llmResult.action === 'ignore') {
         logger.info(
-          'Queueing channel message for learning: LLM classifier decided to ignore thread message (agent=%s, channel=%s)',
+          'Channel message not answered: LLM classifier decided to ignore thread message (agent=%s, channel=%s)',
           mapping.agentId,
           mapping.slackChannelName || channelId
         );
-        await this.queueForLearning(mapping.agentId, userId, channelId, slackUserId, queueText, mapping.connection.teamId);
-        return;
-      }
-
-      if (llmResult.action === 'react') {
-        await this.addReaction(channelId, messageTs, mapping.connection.teamId, llmResult.emoji);
-        logger.info(
-          'Queueing channel message for learning: LLM classifier decided only a reaction (no response) (agent=%s, channel=%s)',
-          mapping.agentId,
-          mapping.slackChannelName || channelId
-        );
-        await this.queueForLearning(mapping.agentId, userId, channelId, slackUserId, queueText, mapping.connection.teamId);
         return;
       }
     }
@@ -1532,8 +1520,8 @@ class SlackAdapterService implements ChannelAdapter {
    * Check if bot is participating in a thread (heuristic pass)
    *
    * Judges `arriving`, the message this call was triggered by, and returns a
-   * ThreadAction plus the thread messages so the caller can forward them to the
-   * LLM classifier without re-fetching. The returned transcript ends on
+   * ThreadParticipation plus the thread messages so the caller can forward them
+   * to the LLM classifier without re-fetching. The returned transcript ends on
    * `arriving`, which is the message the caller reacts to or answers.
    */
   private async isBotInThread(
@@ -1541,7 +1529,7 @@ class SlackAdapterService implements ChannelAdapter {
     threadTs: string,
     teamId: string,
     arriving: Required<GateMessage>,
-  ): Promise<{ result: ThreadAction; messages: GateMessage[] }> {
+  ): Promise<{ result: ThreadParticipation; messages: GateMessage[] }> {
     const slackApp = this.apps.get(teamId);
     if (!slackApp) return { result: { action: 'ignore' }, messages: [] };
 
@@ -1576,7 +1564,7 @@ class SlackAdapterService implements ChannelAdapter {
       // aimed at the bot answerable.
       for (const match of arriving.text.matchAll(/<@([A-Z0-9]+)>/g)) {
         if (match[1] !== slackApp.botUserId) {
-          return { result: { action: 'react', emoji: 'eyes' }, messages };
+          return { result: { action: 'react' }, messages };
         }
       }
 
@@ -1591,7 +1579,7 @@ class SlackAdapterService implements ChannelAdapter {
 
   /**
    * Second pass after the heuristic: the shared classifier decides whether the
-   * bot responds, reacts or ignores the last message of `messages`.
+   * bot responds to or ignores the last message of `messages`.
    */
   private classifyThreadMessage(
     messages: GateMessage[],
@@ -1999,30 +1987,6 @@ class SlackAdapterService implements ChannelAdapter {
     } else if (result.remainingSeconds && result.remainingSeconds > 0) {
       await getSlackHeartbeatThrottleQueue().scheduleDeferred(agentId, result.remainingSeconds);
     }
-  }
-
-  /**
-   * Queue a message for passive learning
-   */
-  private async queueForLearning(
-    agentId: string,
-    userId: string,
-    channelId: string,
-    slackUserId: string,
-    messageText: string,
-    teamId: string
-  ): Promise<void> {
-    const channelName = await this.getChannelName(channelId, teamId);
-    const userInfo = await this.getUserInfo(slackUserId, teamId);
-    await channelLearningQueue.add({
-      agentId,
-      userId,
-      channelId,
-      channelName: channelName ?? undefined,
-      message: messageText,
-      senderName: userInfo?.real_name || userInfo?.name || undefined,
-      timestamp: Date.now(),
-    });
   }
 
   /**

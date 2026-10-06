@@ -105,7 +105,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, Scenario }) =
   });
 
   Scenario(
-    'Reacts with an emoji instead of replying to human-to-human chatter',
+    'Stays quiet on human-to-human chatter',
     ({ Given, And, When, Then }) => {
       Given('a Slack channel linked to the mantle agent', async () => {
         if (skip()) return;
@@ -177,7 +177,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, Scenario }) =
         await postFollowUp();
       });
 
-      Then('the classifier decides on a reaction rather than a reply', async () => {
+      Then('the classifier decides to ignore the follow-up', async () => {
         if (skip()) return;
         // The log line names the LLM branch, so it separates a real
         // classification from the heuristic shortcut and the catch's fallback.
@@ -185,17 +185,16 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, Scenario }) =
         const delivered = await postUntilReceived(postFollowUp, 'chatter');
         expect(delivered, 'runtime never received the follow-up').toBe(true);
 
-        const decided = /LLM classifier decided only a reaction \(no response\)/;
+        const decided = /LLM classifier decided to ignore thread message/;
         const seen = await waitForLog(decided, 90_000);
         expect(seen, `runtime log never matched ${decided}`).toBe(true);
       });
 
-      And('the bot adds an emoji reaction to that message', async () => {
+      And('the bot adds no reaction to the follow-up', async () => {
         if (skip()) return;
-        // Whichever follow-up the runtime was actually handed is the one that
-        // carries the reaction, and that is not necessarily the last one posted.
-        const reacted = await waitForAnyReaction(thread.channelId, thread.followUpTs, 30_000);
-        expect(reacted, 'no reaction appeared on any follow-up').toBe(true);
+        // The verdict's log line is the adapter's last step for this message,
+        // so a reaction the runtime added is already visible here.
+        expect(await reactedFollowUps()).toEqual([]);
       });
 
       And('the bot posts no reply to the follow-up', async () => {
@@ -392,30 +391,25 @@ async function waitForBotReply(
 }
 
 /**
- * True as soon as any of `timestamps` carries a reaction. One
+ * The timestamps of the follow-ups that carry a reaction. One
  * `conversations.replies` carries every message's reactions at once, on a more
  * generous rate limit than per-message `reactions.get`.
  */
-async function waitForAnyReaction(
-  channel: string,
-  timestamps: string[],
-  timeoutMs: number,
-): Promise<boolean> {
-  const wanted = new Set(timestamps);
-  const found = await pollUntil(
-    async () => {
-      const res = await user.conversations.replies({ channel, ts: thread.threadTs, limit: 50 });
-      const reacted = (res.messages ?? []).some(
-        (m) =>
-          m.ts !== undefined &&
-          wanted.has(m.ts) &&
-          ((m as { reactions?: unknown[] }).reactions?.length ?? 0) > 0,
-      );
-      return reacted ? true : null;
-    },
-    { timeoutMs, label: `reaction on ${timestamps.length} follow-up(s)` },
-  );
-  return found === true;
+async function reactedFollowUps(): Promise<string[]> {
+  const wanted = new Set(thread.followUpTs);
+  const res = await user.conversations.replies({
+    channel: thread.channelId,
+    ts: thread.threadTs,
+    limit: 50,
+  });
+  return (res.messages ?? [])
+    .filter(
+      (m) =>
+        m.ts !== undefined &&
+        wanted.has(m.ts) &&
+        ((m as { reactions?: unknown[] }).reactions?.length ?? 0) > 0,
+    )
+    .map((m) => m.ts!);
 }
 
 /**

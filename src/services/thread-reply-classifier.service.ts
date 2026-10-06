@@ -2,9 +2,9 @@
  * Thread Reply Classifier
  *
  * Decides what the bot does with a reply that does not mention it, in a chat
- * thread the bot takes part in: answer it, acknowledge it, or leave it. Each
- * channel adapter decides first whether the bot takes part in the thread, and
- * then asks here about the last line of the transcript.
+ * thread the bot takes part in: answer it or leave it. Each channel adapter
+ * decides first whether the bot takes part in the thread, and then asks here
+ * about the last line of the transcript.
  */
 
 import { z } from 'zod';
@@ -15,10 +15,7 @@ import { getClassificationRequest } from '../lib/classification';
 import { callModelForObject } from '../lib/model-call';
 import type { LlmCallPurpose } from './llm-call.service';
 
-export type ThreadAction =
-  | { action: 'respond' }
-  | { action: 'react'; emoji: string }
-  | { action: 'ignore' };
+export type ThreadAction = { action: 'respond' } | { action: 'ignore' };
 
 /** One message of the thread, oldest first; the last one is judged. */
 export interface ThreadLine {
@@ -50,8 +47,7 @@ const PLATFORMS: Record<
 export const THREAD_TRANSCRIPT_LINES = 10;
 
 const threadClassificationSchema = z.object({
-  action: z.enum(['respond', 'react', 'ignore']),
-  emoji: z.string().optional(),
+  action: z.enum(['respond', 'no_reply']),
 });
 
 /**
@@ -67,19 +63,21 @@ function errorShape(error: unknown): Record<string, string> {
   };
 }
 
+/**
+ * The label name and the "whoever in the thread asks it" sentence set where the
+ * respond boundary falls: an edit here changes which messages the bot answers, so
+ * compare it on sample threads before shipping it.
+ */
 function systemPrompt(platformName: string): string {
   return [
     `You are a ${platformName} thread classifier for an AI assistant bot.`,
     'Given the recent messages in a thread, decide what the bot should do with the LAST message.',
     '',
     'Return a JSON object with:',
-    '- action: "respond" if the last message needs the bot to answer or to act. This covers a question, a request, an instruction, an approval, an authorization, a go-ahead ("approved", "yes please", "go ahead", "merge it"), and a correction of what the bot said or did. An instruction counts even when it asks for no answer: the bot answers it by doing the work.',
-    `- action: "react" if the last message needs nothing from the bot: one human is answering or thanking another, or the message is an aside that names no work for the bot. Also pick a contextually appropriate ${platformName} emoji name (e.g. "eyes", "thumbsup", "thinking_face", "white_check_mark").`,
-    '- action: "ignore" if the message is completely irrelevant to the bot',
+    '- action: "respond" if the last message needs the bot to answer or to act. This covers a question, a request, an instruction, an approval, an authorization, a go-ahead ("approved", "yes please", "go ahead", "merge it"), and a correction of what the bot said or did. An instruction counts even when it asks for no answer: the bot answers it by doing the work. A question about what the bot said or did needs the bot, whoever in the thread asks it.',
+    '- action: "no_reply" if the last message needs nothing from the bot: one human is answering or thanking another, or the message is an aside that names no work for the bot.',
     '',
-    `When action is "react", include an "emoji" field with the ${platformName} reaction emoji name.`,
-    '',
-    'The two mistakes cost different amounts. A wrong "respond" makes the bot answer a message that was not aimed at it. A wrong "react" drops an instruction the user gave the bot, and the user has to send it again. When you are unsure whether the last message asks the bot for something, choose "respond".',
+    'The two mistakes cost different amounts. A wrong "respond" makes the bot answer a message that was not aimed at it. A wrong "no_reply" drops an instruction the user gave the bot, and the user has to send it again. When you are unsure whether the last message asks the bot for something, choose "respond".',
   ].join('\n');
 }
 
@@ -106,7 +104,7 @@ class ThreadReplyClassifierService {
       // One provider build for both the model and its structured-output
       // options. Whatever the active vendor needs is forwarded as-is. Getting it
       // wrong is invisible: the catch below answers `respond`, so the bot would
-      // answer every threaded message instead of ever reacting or ignoring.
+      // answer every threaded message instead of ignoring any.
       const { model, providerOptions, samplingParams } = getClassificationRequest();
 
       const { object } = await callModelForObject({ purpose: platform.purpose }, {
@@ -123,10 +121,9 @@ class ThreadReplyClassifierService {
         prompt: transcript,
       });
 
-      if (object.action === 'react') {
-        return { action: 'react', emoji: object.emoji ?? 'eyes' };
-      }
-      return { action: object.action };
+      // The prompt's label is `no_reply`, not `ignore`: with `ignore` the model
+      // left more questions to the bot unanswered.
+      return { action: object.action === 'respond' ? 'respond' : 'ignore' };
     } catch (error) {
       // Under `err`, not interpolated into the message: a string built from
       // `error.message` is the one shape the redacting serializer cannot see.
