@@ -27,8 +27,8 @@ import { BOOT_FRAME_TIMEOUT_MS, startPrism, KEYS, type TuiSession } from '../har
 import {
   setupRuntime,
   resetThread,
-  countMessages,
-  waitForMessageCount,
+  countAgentRepliesWithAttachments,
+  waitForAgentRepliesWithAttachments,
   type RuntimeTestEnv,
 } from '../setup';
 
@@ -123,10 +123,11 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       expect(fs.readFileSync(savedPath, 'utf8')).toContain(content);
     });
     When('I ask the agent to change it to {string} and share it again', async (_ctx, content: string) => {
-      // Wait on the stored count, not on a frame: the chip and the /save hint from
-      // the FIRST share are still on screen, so a frame matcher for either is
-      // satisfied instantly and the step would assert against the old attachment.
-      const agentsBefore = countMessages(env.dbPath, 'AGENT');
+      // Wait on the stored reply that has the new attachment, not on a frame: the
+      // chip and the /save hint from the FIRST share are still on screen, so a
+      // frame matcher for either is satisfied instantly and the step would assert
+      // against the old attachment.
+      const repliesBefore = countAgentRepliesWithAttachments(env.dbPath);
 
       // Phrased as one request so the model is free to batch the edit and the
       // share into a single tool block — which is what provoked the defect.
@@ -138,7 +139,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       session.send(KEYS.ENTER);
       await session.waitForFrame(/▌ You/, 5_000);
 
-      await waitForMessageCount(env.dbPath, 'AGENT', agentsBefore + 1, 300_000);
+      await waitForAgentRepliesWithAttachments(env.dbPath, repliesBefore + 1, 300_000);
       // /save reads the newest agent message carrying attachments, so give the
       // client a moment to render that message before invoking it.
       await sleep(1_000);

@@ -248,6 +248,45 @@ export async function waitForMessageCount(
 }
 
 /**
+ * Wait until `expected` delivered agent replies have at least one attachment.
+ *
+ * A turn's shared files are linked to its final reply. `internalStep` rows are
+ * stored mid-turn, before that reply, so a plain AGENT count can grow while the
+ * new attachment does not exist yet.
+ */
+export async function waitForAgentRepliesWithAttachments(
+  dbPath: string,
+  expected: number,
+  timeoutMs = 30_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const n = countAgentRepliesWithAttachments(dbPath);
+    if (n >= expected) return;
+    if (Date.now() > deadline) {
+      throw new Error(`Expected ${expected} agent reply(s) with attachments, found ${n} after ${timeoutMs}ms`);
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+
+export function countAgentRepliesWithAttachments(dbPath: string): number {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    const row = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM conversation_messages m
+         WHERE m.role = 'AGENT' AND m.internalStep = 0
+           AND EXISTS (SELECT 1 FROM message_attachments a WHERE a.messageId = m.id)`,
+      )
+      .get() as { n: number };
+    return row.n;
+  } finally {
+    db.close();
+  }
+}
+
+/**
  * Minimal JSON HTTP client for the runtime's management API. Specs use it to
  * seed state (e.g. a cron task) and to assert side effects authoritatively —
  * the on-screen frame shows the SYSTEM reply; this confirms the runtime row.

@@ -76,11 +76,17 @@ function latestContextTokens(dbPath: string): number | null {
   }
 }
 
+/**
+ * The suite's ceiling for one agent turn. A turn's tool calls are stored with
+ * its reply, so every wait below ends when the turn does.
+ */
+const TURN_TIMEOUT_MS = 300_000;
+
 /** Poll until a tool call matching `name` has been persisted. */
 async function waitForToolCall(
   dbPath: string,
   name: string,
-  timeoutMs = 180_000,
+  timeoutMs = TURN_TIMEOUT_MS,
 ): Promise<StoredToolCall> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -222,7 +228,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     });
 
     And('it answers with the marker text', async () => {
-      await session!.waitForFrame(/chartreuse/, 180_000);
+      await session!.waitForFrame(/chartreuse/, TURN_TIMEOUT_MS);
     });
 
     When('I ask an unrelated question in the same conversation', async () => {
@@ -231,7 +237,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       session!.send('In one short sentence, what is the capital of France?');
       await sleep(200);
       session!.send(KEYS.ENTER);
-      await session!.waitForFrame(/Paris/i, 180_000);
+      await session!.waitForFrame(/Paris/i, TURN_TIMEOUT_MS);
     });
 
     Then("the conversation's context stays far below the size of the raw result", async () => {
