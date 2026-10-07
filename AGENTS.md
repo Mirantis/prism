@@ -264,6 +264,11 @@ live in `e2e/`:
   `AfterEachScenario`/`AfterAllScenarios` hooks; shared steps go through
   `defineSteps`. Run via `npm run test:e2e:tui --workspace=prism-agent-e2e`.
 
+Both suites answer a chat or classification call from the e2e LLM cache
+(`e2e/support/llm-cache.ts`) when an earlier green run made the same call, and
+send every other model call to Bedrock. `AGENTIC_EVALS_CACHE_MODE=off` sends
+every call to Bedrock.
+
 Test each runtime behavior once, in the web suite. It is not necessary to test
 the same backend functionality through several clients, since every UI is a
 client of the same code, and each extra suite costs another runtime boot and,

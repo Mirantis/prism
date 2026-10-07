@@ -109,7 +109,17 @@ export class HomePage extends BasePage {
     await expect(button).toBeEnabled();
     sendBaseline.set(this.page, await this.getAgentMessages().count());
     await button.click();
-    await this.workingIndicator.first().waitFor({ state: 'visible', timeout: turnStartTimeout });
+    await this.waitForTurnStart(turnStartTimeout);
+  }
+
+  /**
+   * The working indicator, or this turn's reply if it is already in the list. A turn the e2e LLM
+   * cache answers (`support/llm-cache.ts`) can end before the indicator is drawn, and its reply
+   * shows the same thing.
+   */
+  private async waitForTurnStart(timeout: number) {
+    const reply = this.getAgentMessages().nth(sendBaseline.get(this.page) ?? 0);
+    await this.workingIndicator.or(reply).first().waitFor({ state: 'visible', timeout });
   }
 
   /** Visible Recents row labels, in document (top-to-bottom) order. */
@@ -133,10 +143,12 @@ export class HomePage extends BasePage {
    * The working indicator appears when the runtime reports the conversation's
    * turn running, or the message queued behind another conversation — so this
    * wait proves the message was stored and scheduled, not only that the page
-   * drew it. A send that never arrives surfaces here, rather than further down as
-   * an empty conversation or a missing thread row. It also makes
+   * drew it. A reply to this turn shows the same, for a turn that ends before
+   * the indicator is drawn. A send that never arrives surfaces here, rather than
+   * further down as an empty conversation or a missing thread row. It also makes
    * `waitForStreamComplete()`'s `detached` wait sound: that wait is only
-   * meaningful once the indicator is known to have appeared.
+   * meaningful once the turn is known to have started, which either the
+   * indicator or the turn's reply shows.
    *
    * The budget covers the round trip to the runtime and the start of the turn.
    *
@@ -165,7 +177,7 @@ export class HomePage extends BasePage {
     sendBaseline.set(this.page, await this.getAgentMessages().count());
     await this.sendButton.click();
     if (staged.startsWith('/')) return;
-    await this.workingIndicator.first().waitFor({ state: 'visible', timeout: turnStartTimeout });
+    await this.waitForTurnStart(turnStartTimeout);
   }
 
   /**

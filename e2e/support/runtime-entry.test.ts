@@ -10,6 +10,7 @@ afterEach(() => {
   vi.doUnmock('../../src/index');
 });
 vi.mock('../../src/lib/environment', () => ({}));
+vi.mock('./llm-cache', () => ({}));
 
 it.each([undefined, '', 'test-api-key'])('discovers managed voice without changing inherited key %s', async (apiKey) => {
   vi.resetModules();

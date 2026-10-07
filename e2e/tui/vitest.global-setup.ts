@@ -11,7 +11,13 @@
  * to avoid any default-export interop ambiguity across module loaders.
  */
 import { hardenSourceMapSymbolication } from './harden-source-map';
+import { reportLlmCacheStats, resetLlmCacheStats } from '../support/llm-cache-files';
 
 export function setup(): void {
   hardenSourceMapSymbolication();
+  resetLlmCacheStats();
+}
+
+export function teardown(): void {
+  reportLlmCacheStats('tui');
 }

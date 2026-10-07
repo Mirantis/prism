@@ -1,3 +1,4 @@
+import './llm-cache';
 import '../../src/lib/environment';
 import { MOCK_REALTIME_PORT } from './mock-realtime-port';
 import { MANAGED_VOICE_KEY, MANAGED_VOICE_PATH } from './managed-voice';

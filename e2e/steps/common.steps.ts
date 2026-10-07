@@ -6,8 +6,11 @@ import { createBdd, DataTable } from 'playwright-bdd';
 import * as dbHelper from '../support/db-helper';
 import { clearTelemetryBucket } from '../support/s3-helper';
 import { resetScheduledWork } from '../support/runtime-helper';
+import { forgetLlmCacheEntriesSince } from '../support/llm-cache-files';
 
-const { Given, Before } = createBdd();
+const { Given, Before, After } = createBdd();
+
+let scenarioStartedAt = 0;
 
 // Store the current agent ID in test context via a module-level variable.
 // This works because tests run sequentially (workers: 1).
@@ -18,6 +21,7 @@ export function getCurrentAgentId(): string {
 }
 
 Before(async () => {
+  scenarioStartedAt = Date.now();
   // Unschedule first, wipe second. The DB wipe alone leaves the runtime's
   // in-memory cron timers and goal loops alive with no rows behind them, so a
   // task one scenario scheduled fires inside a later one. See runtime-helper.
@@ -27,6 +31,11 @@ Before(async () => {
   await clearTelemetryBucket();
   const agentId = await dbHelper.seed();
   currentAgentId = agentId;
+});
+
+// A failed scenario's recorded responses are dropped, so its retry asks the model again.
+After(async ({ $testInfo }) => {
+  if ($testInfo.status !== $testInfo.expectedStatus) forgetLlmCacheEntriesSince(scenarioStartedAt);
 });
 
 // ========== Given ==========

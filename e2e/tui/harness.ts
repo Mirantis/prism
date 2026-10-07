@@ -22,6 +22,9 @@ export const PRISM_CLI_DIR = path.resolve(import.meta.dirname, '../../cli');
 // node-pty when the env's PATH has been substituted, so we point at
 // the node binary that's already running this process.
 const TSX_CLI = createRequire(import.meta.url).resolve('tsx/cli');
+// Loaded into each runtime ahead of its entry, so its chat and classification calls go through the
+// e2e LLM cache.
+const LLM_CACHE_MODULE = path.resolve(import.meta.dirname, '../support/llm-cache.ts');
 
 /**
  * Budget for a CLI's *first* frame — the `waitForFrame(/Prism/, …)` every spec
@@ -89,7 +92,7 @@ export function startRuntime(opts: StartRuntimeOptions): RuntimeHandle {
 
   const child: ChildProcess = spawn(
     process.execPath,
-    [TSX_CLI, 'src/index.ts'],
+    [TSX_CLI, '--import', LLM_CACHE_MODULE, 'src/index.ts'],
     {
       cwd: AGENT_RUNTIME_DIR,
       env: sanitizeEnv(opts.env) as NodeJS.ProcessEnv,

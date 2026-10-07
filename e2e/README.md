@@ -79,6 +79,10 @@ npm run test:e2e:web --workspace=prism-agent-e2e -- --shard=2/4
 
 The durations are in `support/web-shard-timings.json`. To refresh them, download the `playwright-report` artifact of a green E2E run and run `npx tsx support/update-web-shard-timings.ts results.json` from `e2e/`.
 
+### LLM cache
+
+Both suites answer a chat or classification call from `e2e/llm-cache/` when an earlier run made the same call, and record every other one there. CI keeps the directory between green runs. Set `AGENTIC_EVALS_CACHE_MODE=off` to send every call to the model, and delete the directory to start over. A recording holds the model's output and its tool-call arguments, so keep secrets out of test inputs.
+
 ## TUI (CLI) tests
 
 The `prism-cli` end-to-end tests live in `tui/` and are **separate** from the
