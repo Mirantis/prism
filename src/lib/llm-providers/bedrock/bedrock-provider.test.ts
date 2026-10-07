@@ -39,28 +39,7 @@ vi.mock('@aws-sdk/credential-provider-node', () => ({
   defaultProvider: mockDefaultProvider,
 }));
 
-import { createBedrockProvider, isBedrockConfigured } from './bedrock-provider';
-
-describe('isBedrockConfigured', () => {
-  beforeEach(() => {
-    config.awsRegion = 'us-east-1';
-    config.bedrockModelId = 'anthropic.claude-3-sonnet';
-  });
-
-  it('returns true when both awsRegion and bedrockModelId are set', () => {
-    expect(isBedrockConfigured()).toBe(true);
-  });
-
-  it('returns false when awsRegion is empty', () => {
-    config.awsRegion = '';
-    expect(isBedrockConfigured()).toBe(false);
-  });
-
-  it('returns false when bedrockModelId is empty', () => {
-    config.bedrockModelId = '';
-    expect(isBedrockConfigured()).toBe(false);
-  });
-});
+import { createBedrockProvider } from './bedrock-provider';
 
 describe('createBedrockProvider', () => {
   beforeEach(() => {

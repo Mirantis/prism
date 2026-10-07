@@ -63,7 +63,7 @@ import { ensureCodingAgentsDetected } from './lib/coding-agents/availability';
 import { getProcessManager } from './tools/shell/process-manager';
 import { getAgentTaskManager } from './tools/shell/agent-task-manager';
 import { cancelModelCatalogRefresh, refreshModelCatalog } from './lib/model-catalog';
-import { createProvider } from './lib/llm-providers/create-provider';
+import { createProvider, missingProviderSettings } from './lib/llm-providers/create-provider';
 import { runBackfill } from './scripts/backfill-embeddings';
 
 // What `ps` and `top` show for this process.
@@ -187,6 +187,13 @@ const initialize = async () => {
       },
       '[Startup] LLM provider',
     );
+    const missingSettings = missingProviderSettings();
+    if (missingSettings.length > 0) {
+      logger.warn(
+        { provider: config.llmProvider, missingSettings },
+        '[Startup] the LLM provider is missing settings; chat answers with a notice until they are set',
+      );
+    }
     // Not awaited: a check that waits on the network must not hold up boot.
     void provider.startupCheck?.();
 

@@ -52,12 +52,10 @@ export function createOpenRouterProvider(baseURL: string): LlmProvider {
 }
 
 /**
- * Check if OpenRouter is configured. Through the gateway only the model id is
- * needed — the gateway holds the key (Azure/mantle/OpenAI parity). Direct mode
- * needs `OPENROUTER_API_KEY`.
+ * The settings OpenRouter still needs, by variable name; empty when it can serve
+ * requests. Through the gateway it needs none, since the gateway holds the key.
  */
-export function isOpenRouterConfigured(): boolean {
-  if (!config.openrouterModelId) return false;
-  if (config.nexusOpenRouterBaseUrl) return true;
-  return Boolean(config.openrouterApiKey);
+export function missingOpenRouterSettings(): string[] {
+  if (config.nexusOpenRouterBaseUrl) return [];
+  return config.openrouterApiKey ? [] : ['OPENROUTER_API_KEY'];
 }

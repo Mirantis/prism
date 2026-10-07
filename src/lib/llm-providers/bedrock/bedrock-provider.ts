@@ -106,13 +106,3 @@ function promptCacheFragment(modelId: string): CachePointFragment {
   const knownToCache = CONVERSE_PROMPT_CACHE_FAMILIES.some((family) => modelId.includes(family));
   return knownToCache ? BEDROCK_CACHE_POINT : NO_CACHE_POINT;
 }
-
-/**
- * Check if Bedrock is configured.
- *
- * In ECS, credentials come from the task role (no explicit keys needed).
- * Only AWS_REGION and BEDROCK_MODEL_ID are required as env vars.
- */
-export function isBedrockConfigured(): boolean {
-  return Boolean(config.awsRegion && config.bedrockModelId);
-}

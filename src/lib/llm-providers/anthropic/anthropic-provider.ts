@@ -17,7 +17,7 @@
  * break its stored model.
  *
  * Routing: direct-only — the factory takes no baseURL argument, and
- * `isAnthropicConfigured()` always requires the key. The key is sent as the
+ * `missingAnthropicSettings()` always requires the key. The key is sent as the
  * `x-api-key` header, with `anthropic-version` added by the SDK.
  *
  * The optional vendor declarations all stay unset: api.anthropic.com accepts
@@ -85,9 +85,9 @@ export function createAnthropicProvider(): LlmProvider {
 }
 
 /**
- * Check if Anthropic is configured. Direct-only, so a chat model and the API
- * key are both required.
+ * The settings Anthropic still needs, by variable name; empty when it can serve
+ * requests. Direct-only, so the API key is always required.
  */
-export function isAnthropicConfigured(): boolean {
-  return Boolean(config.anthropicModelId && config.anthropicApiKey);
+export function missingAnthropicSettings(): string[] {
+  return config.anthropicApiKey ? [] : ['ANTHROPIC_API_KEY'];
 }

@@ -70,9 +70,7 @@ vi.mock('../../lib/backend-client', () => ({
   backendClient: {},
 }));
 
-vi.mock('../../lib/llm-providers/bedrock/bedrock-provider', () => ({
-  isBedrockConfigured: vi.fn().mockReturnValue(false),
-}));
+vi.mock('../../lib/llm-providers/bedrock/bedrock-provider', () => ({}));
 
 vi.mock('../../lib/classification', () => ({
   getClassificationRequest: vi.fn(),
