@@ -101,6 +101,14 @@ export type LlmProvider = ((modelId: string) => LanguageModel) & {
    */
   promptCacheState?: (modelId: string) => 'on' | 'off';
   /**
+   * A check the vendor runs once at startup, logging what the operator has to
+   * fix; undefined when the vendor has nothing to verify. It never rejects.
+   *
+   * LiteLLM declares it: its model ids are the operator's own aliases, so only
+   * the proxy's model list can confirm that the configured ones exist.
+   */
+  startupCheck?: () => Promise<void>;
+  /**
    * `providerOptions` to merge into structured-output (`generateObject`) calls
    * on this vendor, or undefined when the SDK's default path already works.
    *

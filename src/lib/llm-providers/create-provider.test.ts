@@ -1,6 +1,6 @@
 /**
  * create-provider switch tests: vendor (bedrock/azure/bedrock-mantle/openai/
- * openrouter/anthropic) x routing (direct/gateway; anthropic is direct-only).
+ * openrouter/anthropic/litellm) x routing (direct/gateway; anthropic is direct-only).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -13,12 +13,14 @@ const {
   mockCreateOpenAiProvider,
   mockCreateOpenRouterProvider,
   mockCreateAnthropicProvider,
+  mockCreateLiteLlmProvider,
   mockIsBedrockConfigured,
   mockIsAzureConfigured,
   mockIsBedrockMantleConfigured,
   mockIsOpenAiConfigured,
   mockIsOpenRouterConfigured,
   mockIsAnthropicConfigured,
+  mockIsLiteLlmConfigured,
 } = vi.hoisted(() => ({
   mockCreateBedrockProvider: vi.fn(() => 'bedrock-provider'),
   mockCreateAzureProvider: vi.fn(() => 'azure-provider'),
@@ -26,12 +28,14 @@ const {
   mockCreateOpenAiProvider: vi.fn(() => 'openai-provider'),
   mockCreateOpenRouterProvider: vi.fn(() => 'openrouter-provider'),
   mockCreateAnthropicProvider: vi.fn(() => 'anthropic-provider'),
+  mockCreateLiteLlmProvider: vi.fn(() => 'litellm-provider'),
   mockIsBedrockConfigured: vi.fn(() => true),
   mockIsAzureConfigured: vi.fn(() => true),
   mockIsBedrockMantleConfigured: vi.fn(() => true),
   mockIsOpenAiConfigured: vi.fn(() => true),
   mockIsOpenRouterConfigured: vi.fn(() => true),
   mockIsAnthropicConfigured: vi.fn(() => true),
+  mockIsLiteLlmConfigured: vi.fn(() => true),
 }));
 
 vi.mock('./bedrock/bedrock-provider', () => ({
@@ -58,6 +62,10 @@ vi.mock('./anthropic/anthropic-provider', () => ({
   createAnthropicProvider: mockCreateAnthropicProvider,
   isAnthropicConfigured: mockIsAnthropicConfigured,
 }));
+vi.mock('./litellm/litellm-provider', () => ({
+  createLiteLlmProvider: mockCreateLiteLlmProvider,
+  isLiteLlmConfigured: mockIsLiteLlmConfigured,
+}));
 
 import { createProvider, isProviderConfigured } from './create-provider';
 
@@ -68,6 +76,7 @@ describe('createProvider', () => {
     mantle: 'https://gateway.example.com/llm/bedrock-mantle/anthropic/us-east-1/v1',
     openai: 'https://gateway.example.com/llm/openai/v1',
     openrouter: 'https://gateway.example.com/llm/openrouter/openai/v1',
+    litellm: 'https://gateway.example.com/llm/litellm/anthropic/v1',
   };
 
   beforeEach(() => {
@@ -81,6 +90,7 @@ describe('createProvider', () => {
     config.bedrockMantleChatEndpoint = 'https://bedrock-mantle.us-east-1.api.aws/anthropic/v1';
     config.openaiEndpoint = undefined;
     config.openrouterEndpoint = 'https://openrouter.ai/api/v1';
+    config.litellmEndpoint = undefined;
     vi.clearAllMocks();
   });
 
@@ -208,6 +218,17 @@ describe('createProvider', () => {
     expect(createProvider()).toBe('anthropic-provider');
     expect(mockCreateAnthropicProvider).toHaveBeenCalledWith();
   });
+
+  it('litellm → the resolved LiteLLM endpoint, never another backend\'s mount', () => {
+    // The gateway meters LiteLLM by the cost LiteLLM reports, on its own mount.
+    config.llmProvider = 'litellm';
+    config.nexusOpenAiBaseUrl = MOUNT.openai;
+    config.litellmEndpoint = MOUNT.litellm;
+    expect(createProvider()).toBe('litellm-provider');
+    expect(mockCreateLiteLlmProvider).toHaveBeenCalledWith(MOUNT.litellm);
+    expect(mockCreateAnthropicProvider).not.toHaveBeenCalled();
+    expect(mockCreateOpenAiProvider).not.toHaveBeenCalled();
+  });
 });
 
 describe('isProviderConfigured', () => {
@@ -263,5 +284,13 @@ describe('isProviderConfigured', () => {
     expect(mockIsAzureConfigured).not.toHaveBeenCalled();
     expect(mockIsBedrockMantleConfigured).not.toHaveBeenCalled();
     expect(mockIsOpenAiConfigured).not.toHaveBeenCalled();
+  });
+
+  it('delegates to isLiteLlmConfigured for litellm', () => {
+    config.llmProvider = 'litellm';
+    mockIsLiteLlmConfigured.mockReturnValue(false);
+    expect(isProviderConfigured()).toBe(false);
+    expect(mockIsAnthropicConfigured).not.toHaveBeenCalled();
+    expect(mockIsBedrockConfigured).not.toHaveBeenCalled();
   });
 });

@@ -487,10 +487,19 @@ describe('config', () => {
       expect(cfg.chatModelId).toBe('global.anthropic.claude-opus-5');
     });
 
-    it('falls back to bedrock on an unrecognized value', async () => {
-      process.env.LLM_PROVIDER = 'mantle';
+    it('falls back to bedrock on an unrecognized value, preserving it for the startup warning', async () => {
+      process.env.LLM_PROVIDER = 'Mantle';
       const cfg = await loadConfig();
       expect(cfg.llmProvider).toBe('bedrock');
+      expect(cfg.invalidLlmProvider).toBe('mantle');
+    });
+
+    it('reports no invalid LLM_PROVIDER when it is unset or valid', async () => {
+      delete process.env.LLM_PROVIDER;
+      expect((await loadConfig()).invalidLlmProvider).toBeNull();
+      vi.resetModules();
+      process.env.LLM_PROVIDER = 'litellm';
+      expect((await loadConfig()).invalidLlmProvider).toBeNull();
     });
 
     it('selects azure and resolves the neutral model IDs to deployment names', async () => {
@@ -659,6 +668,63 @@ describe('config', () => {
     it('reads ANTHROPIC_BASE_URL as the direct endpoint override', async () => {
       process.env.ANTHROPIC_BASE_URL = 'https://gw.example/anthropic/v1';
       expect((await loadConfig()).anthropicBaseUrl).toBe('https://gw.example/anthropic/v1');
+    });
+
+    it('selects litellm (case-insensitive) with the first-party names of the default models', async () => {
+      process.env.LLM_PROVIDER = 'LiteLLM';
+      const cfg = await loadConfig();
+      expect(cfg.llmProvider).toBe('litellm');
+      expect(cfg.chatModelId).toBe('claude-opus-5-5');
+      expect(cfg.classificationModelId).toBe('claude-haiku-4-5');
+    });
+
+    it('reads the proxy\'s own aliases from LITELLM_MODEL_ID and LITELLM_CLASSIFICATION_MODEL_ID', async () => {
+      process.env.LLM_PROVIDER = 'litellm';
+      process.env.LITELLM_MODEL_ID = 'opus';
+      process.env.LITELLM_CLASSIFICATION_MODEL_ID = 'haiku';
+      const cfg = await loadConfig();
+      expect(cfg.chatModelId).toBe('opus');
+      expect(cfg.classificationModelId).toBe('haiku');
+    });
+
+    it('litellm runs without embeddings by default', async () => {
+      process.env.LLM_PROVIDER = 'litellm';
+      process.env.OPENAI_API_KEY = 'sk-test';
+      const cfg = await loadConfig();
+      expect(cfg.embeddingProvider).toBe('none');
+      expect(cfg.embeddingModelId).toBe('');
+    });
+
+    it('litellm direct: LITELLM_BASE_URL is the endpoint, and the key is read verbatim', async () => {
+      delete process.env.NEXUS_API_URL;
+      process.env.LLM_PROVIDER = 'litellm';
+      process.env.LITELLM_BASE_URL = 'https://litellm.example.com/v1';
+      process.env.LITELLM_API_KEY = '__nexus_cred:1234-uuid__';
+      const cfg = await loadConfig();
+      expect(cfg.litellmEndpoint).toBe('https://litellm.example.com/v1');
+      expect(cfg.litellmApiKey).toBe('__nexus_cred:1234-uuid__');
+      expect(cfg.chatRouting).toBe('direct');
+    });
+
+    it.each([
+      ['https://litellm.example.com', 'adds /v1 when it is missing'],
+      ['https://litellm.example.com/v1/', 'drops a trailing slash'],
+      ['https://litellm.example.com//', 'drops every trailing slash, then adds /v1'],
+      ['https://litellm.example.com/v1', 'keeps a URL that already ends at /v1'],
+    ])('LITELLM_BASE_URL %s: %s', async (value) => {
+      // The SDK appends `/messages` and the startup check `/models` to this one
+      // string, and LiteLLM serves the Messages API only under `/v1`.
+      delete process.env.NEXUS_API_URL;
+      process.env.LLM_PROVIDER = 'litellm';
+      process.env.LITELLM_BASE_URL = value;
+      expect((await loadConfig()).litellmEndpoint).toBe('https://litellm.example.com/v1');
+    });
+
+    it('litellm has no endpoint without LITELLM_BASE_URL or the gateway', async () => {
+      delete process.env.NEXUS_API_URL;
+      delete process.env.LITELLM_BASE_URL;
+      process.env.LLM_PROVIDER = 'litellm';
+      expect((await loadConfig()).litellmEndpoint).toBeUndefined();
     });
   });
 
@@ -857,6 +923,23 @@ describe('config', () => {
       );
     });
 
+    it('is the litellm anthropic mount on litellm', async () => {
+      process.env.LLM_PROVIDER = 'litellm';
+      const cfg = await loadConfig();
+      expect(cfg.nexusChatBaseUrl).toBe('https://gateway.example.com/llm/litellm/anthropic/v1');
+    });
+
+    it('builds the explicit-project litellm mount when PROJECT_ID is set', async () => {
+      // NEXUS_API_URL ends at `/v1`, so this lands on the gateway's
+      // `/v1/projects/{id}/llm/litellm/anthropic/v1/messages`.
+      process.env.LLM_PROVIDER = 'litellm';
+      process.env.PROJECT_ID = 'proj-42';
+      const cfg = await loadConfig();
+      expect(cfg.litellmEndpoint).toBe(
+        'https://gateway.example.com/projects/proj-42/llm/litellm/anthropic/v1',
+      );
+    });
+
     it('is null for every provider when NEXUS_API_URL is unset', async () => {
       delete process.env.NEXUS_API_URL;
       process.env.LLM_PROVIDER = 'bedrock-mantle';
@@ -886,6 +969,7 @@ describe('config', () => {
       process.env.AWS_REGION = 'us-east-1';
       delete process.env.OPENAI_BASE_URL;
       delete process.env.OPENROUTER_BASE_URL;
+      delete process.env.LITELLM_BASE_URL;
       delete process.env.AZURE_FOUNDRY_BASE_URL;
       delete process.env.BEDROCK_MANTLE_BASE_URL;
       delete process.env.AZURE_RESOURCE_NAME;
@@ -908,6 +992,15 @@ describe('config', () => {
       const cfg = await loadConfig();
       expect(cfg.openrouterEndpoint).toBe('https://proxy.example/openrouter/v1');
       expect(cfg.chatEndpointSource).toBe('override');
+    });
+
+    it('LITELLM_BASE_URL wins over the derived litellm mount', async () => {
+      process.env.LLM_PROVIDER = 'litellm';
+      process.env.LITELLM_BASE_URL = 'https://litellm.example.com/v1';
+      const cfg = await loadConfig();
+      expect(cfg.litellmEndpoint).toBe('https://litellm.example.com/v1');
+      expect(cfg.chatEndpointSource).toBe('override');
+      expect(cfg.chatRouting).toBe('direct');
     });
 
     it('AZURE_FOUNDRY_BASE_URL wins over the derived azure mount', async () => {
@@ -935,7 +1028,7 @@ describe('config', () => {
       expect(cfg.chatRouting).toBe('nexus');
     });
 
-    it.each(['azure', 'bedrock-mantle', 'openrouter'] as const)(
+    it.each(['azure', 'bedrock-mantle', 'openrouter', 'litellm'] as const)(
       '%s with no override takes its own gateway mount',
       async (provider) => {
         process.env.LLM_PROVIDER = provider;

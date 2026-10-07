@@ -186,6 +186,15 @@ const initialize = async () => {
       },
       '[Startup] LLM provider',
     );
+    // Not awaited: a check that waits on the network must not hold up boot.
+    void provider.startupCheck?.();
+
+    if (config.invalidLlmProvider) {
+      logger.warn(
+        { configuredProvider: config.invalidLlmProvider, effectiveProvider: config.llmProvider },
+        '[Startup] invalid LLM_PROVIDER; using bedrock',
+      );
+    }
 
     // A typo'd EMBEDDING_PROVIDER keeps the derived default running, so
     // nothing ever looks broken without this line (same pattern as the

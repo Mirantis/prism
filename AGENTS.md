@@ -493,10 +493,10 @@ be platform credential sentinels (`__nexus_cred:<uuid>__`) rewritten by the MITM
 proxy.
 
 One LLM provider per container, selected by `LLM_PROVIDER` (`bedrock`
-default, `azure`, `bedrock-mantle`, `openai`, `openrouter`, or `anthropic`).
-`bedrock`, `azure`, `bedrock-mantle` and `anthropic` serve **Claude**;
-`openai` serves OpenAI models and `openrouter` whatever vendor its
-`vendor/model` id names.
+default, `azure`, `bedrock-mantle`, `openai`, `openrouter`, `anthropic`, or
+`litellm`). `bedrock`, `azure`, `bedrock-mantle` and `anthropic` serve
+**Claude**; `openai` serves OpenAI models, `openrouter` whatever vendor its
+`vendor/model` id names, and `litellm` whatever an operator's alias routes to.
 **Bedrock** via Bearer API key (`AWS_BEARER_TOKEN_BEDROCK`) — the SDK
 auto-selects Bearer over SigV4 when set. **Azure = Claude via Microsoft
 Foundry**: chat/classification
@@ -556,6 +556,16 @@ resolves to null even with `NEXUS_API_URL` set. Anthropic serves no embedding
 models; under it the embedding provider defaults to `openai` when
 `OPENAI_API_KEY` is set or the gateway can hold the key (`NEXUS_API_URL`
 set), else `none`.
+**LiteLLM** is an operator's own LiteLLM proxy, spoken to in the Anthropic
+Messages format: direct at `LITELLM_BASE_URL` with `LITELLM_API_KEY` as
+`x-api-key`, or through the gateway's LiteLLM backend, which meters it by the
+cost LiteLLM reports. Lens Agents' Prism template passes the project's backend
+id through as `LLM_PROVIDER`, so this name matches the gateway's. Model ids are
+the operator's aliases, defaulting to the first-party names of the default
+models (`claude-opus-5-5` / `claude-haiku-4-5`), and the provider's
+`startupCheck` logs the proxy's model list when either alias is not served. An alias can route to a
+non-Anthropic upstream, so structured output uses `jsonTool` and the gates send
+no temperature. Embeddings default to `none`.
 Memory embeddings are their own feature (`lib/embedding-providers/`), selected
 by `EMBEDDING_PROVIDER` (`bedrock` | `azure-openai` | `openai` | `openrouter`
 | `none`; unset derives the chat vendor's default) — decoupled from
@@ -571,6 +581,7 @@ bedrock mount; openai chat, classification and embeddings all ride
 `…/llm/openai/v1`, a gateway backend; openrouter rides
 `…/llm/openrouter/openai/v1` — a distinct mount because the managed-inference
 gate 403s a path whose backend is not the one the project's policy selected;
+litellm rides `…/llm/litellm/anthropic/v1` for the same reason;
 the gateway holds the platform credentials, so no local LLM key is needed on that path). Voice Realtime resolves its endpoint and credential independently: explicit
 voice settings, capability-based managed discovery (`lib/managed-realtime.ts`),
 then eligible direct OpenAI credentials. Managed selection is primary first, then
@@ -926,7 +937,7 @@ src/
 │   ├── workspace-docs.ts       # The seven identity-document columns, their labels, and the actor/method words a revision is described with
 │   ├── llm-providers/          # One folder per chat vendor, plus the shared contract and the selector
 │   │   ├── llm-provider.ts     # Shared `LlmProvider` type: the callable `(modelId) => LanguageModel` contract every vendor factory returns, plus each vendor's `cachePoint` fragment (the Anthropic breakpoint, Converse's own `BEDROCK_CACHE_POINT`, or the empty `NO_CACHE_POINT` — which covers both a vendor that caches without breakpoints and a model whose support is unknown) and the optional `structuredOutputOptions` / `classificationProviderOptions` it declares. The startup log reads this contract for the configured model, so no caller names a vendor to report prompt caching
-│   │   ├── create-provider.ts  # Unified LLM provider factory: picks vendor (bedrock/azure/bedrock-mantle/openai/openrouter/anthropic), passes each its optional gateway baseURL (anthropic is direct-only, no argument); `isProviderConfigured()`
+│   │   ├── create-provider.ts  # Unified LLM provider factory: picks vendor (bedrock/azure/bedrock-mantle/openai/openrouter/anthropic/litellm), passes each its optional gateway baseURL (anthropic is direct-only, no argument); `isProviderConfigured()`
 │   │   ├── bedrock-shared.ts   # bedrock-runtime plumbing both AWS vendors (and the bedrock embedding provider) need: AWS credential resolution, `isAnthropicModelId()`
 │   │   ├── bedrock/
 │   │   │   └── bedrock-provider.ts # AWS Bedrock provider factory: `createBedrockProvider(baseURL?)` (direct, or gateway-routed when baseURL set). Owns which model gets a prompt-cache breakpoint: Claude on the Anthropic Messages branch always, a Converse family only when it is on `CONVERSE_PROMPT_CACHE_FAMILIES` — empty, since no source the runtime can read names one, and a `cachePoint` block on a model without support fails every turn
@@ -939,8 +950,10 @@ src/
 │   │   │   └── openai-provider.ts # OpenAI factory (Responses API; pins gate calls to reasoningEffort 'none'): `createOpenAiProvider(baseURL?)`
 │   │   ├── openrouter/
 │   │   │   └── openrouter-provider.ts # OpenRouter factory (same OpenAI surface; direct at openrouter.ai or the gateway mount, `vendor/model` ids): `createOpenRouterProvider(baseURL?)`
-│   │   └── anthropic/
-│   │       └── anthropic-provider.ts # First-party Anthropic API factory (api.anthropic.com; direct-only, bare model IDs): `createAnthropicProvider()`
+│   │   ├── anthropic/
+│   │   │   └── anthropic-provider.ts # First-party Anthropic API factory (api.anthropic.com; direct-only, bare model IDs): `createAnthropicProvider()`
+│   │   └── litellm/
+│   │       └── litellm-provider.ts # An operator's LiteLLM proxy (Anthropic Messages surface; aliases pass through; startup model check): `createLiteLlmProvider(baseURL?)`
 │   ├── coding-agents/          # One folder per coding agent, plus the shared contract and the selector (`CODING_AGENT` and per-task `agent`)
 │   │   ├── coding-agent.ts     # The `CodingAgent` contract: `id`, `displayName`, `prepareHome()` and `run(task)`, which returns a `CodingAgentRun` (an event stream of `text` / `session` / `result`, `exited`, `stop()`). States what the runtime needs and nothing about how an agent is launched
 │   │   ├── cli-run.ts          # `runCli()`: the process plumbing a CLI-shaped adapter calls — spawn, stdout lines through the adapter's parser, exit wait, the closing `result` when the agent reported none, SIGTERM→SIGKILL stop
@@ -1033,7 +1046,7 @@ What the operator sets on `docker run`:
 | `TEAMS_APP_PASSWORD` | Entra client secret, or on Lens Agents the `__nexus_cred:…__` sentinel of an OAuth client-credentials credential: the sandbox proxy answers the SDK's token request with a placeholder token and injects the real bot token on `smba.trafficmanager.net`. It has to be that credential type, since the grant sends the secret in the POST body and the proxy rewrites headers only | — |
 | `TEAMS_APP_TENANT_ID` | Entra tenant of the app registration | — |
 | `TEAMS_PORT` | Port of the Teams bot endpoint's own listener, which serves `POST /agents/teams/messages` and nothing else — the port to publish | `3979` |
-| `LLM_PROVIDER` | LLM vendor: `bedrock`, `azure`, `bedrock-mantle`, `openai`, `openrouter`, or `anthropic` (one per container) | `bedrock` |
+| `LLM_PROVIDER` | LLM vendor: `bedrock`, `azure`, `bedrock-mantle`, `openai`, `openrouter`, `anthropic`, or `litellm` (one per container). Any other value runs `bedrock` and logs a startup warning | `bedrock` |
 | `CODING_AGENT` | Default coding agent: `claude-code` or `codex`. Each task may override it with `agent`. | Claude credentials first, then an OpenAI key, else `claude-code` |
 | `CLAUDE_CODE_MODEL_SMALL` | Model for the Claude Code small tier | `haiku` |
 | `CLAUDE_CODE_MODEL_MEDIUM` | Model for the Claude Code medium tier | `sonnet` |
@@ -1066,6 +1079,9 @@ What the operator sets on `docker run`:
 | `ANTHROPIC_API_KEY` | First-party Anthropic API key, sent as `x-api-key`; **always required** under `LLM_PROVIDER=anthropic` (direct-only — no Nexus mount). May be a `__nexus_cred:<uuid>__` sentinel | — |
 | `ANTHROPIC_MODEL_ID` / `ANTHROPIC_CLASSIFICATION_MODEL_ID` | Bare first-party model IDs (chat / classification gate) | `claude-opus-5` / `claude-haiku-4-5` |
 | `ANTHROPIC_BASE_URL` | Override the direct chat endpoint (must end at `/v1`) | SDK default (`https://api.anthropic.com/v1`) |
+| `LITELLM_BASE_URL` | The operator's LiteLLM proxy, normalised to end at `/v1`; outranks the gateway mount. Direct mode needs it, since a proxy has no public host | — |
+| `LITELLM_API_KEY` | LiteLLM key, sent as `x-api-key`. Required direct, where a model call without it fails before any request; not needed through the gateway. May be a `__nexus_cred:<uuid>__` sentinel | — |
+| `LITELLM_MODEL_ID` / `LITELLM_CLASSIFICATION_MODEL_ID` | The proxy's aliases (chat / classification gate). Classification should be Claude or non-reasoning, since the gates allow a few output tokens | `claude-opus-5-5` / `claude-haiku-4-5` |
 | `CONTEXT_WINDOW_TOKENS` | Input-context window assumed for the context-usage indicator; only needed for a model the catalog doesn't know | derived from the model ID |
 | `MODELS_DEV_URL` | Opt in to refreshing the model-window catalog from a registry once at startup (e.g. `https://models.dev/api.json`); unset = no outbound call, bundled catalog only | — (disabled) |
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-compact a thread when context occupancy reaches this percent of the model's window; `0` disables | `90` |

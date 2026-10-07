@@ -3,7 +3,7 @@
  *
  * Two orthogonal choices:
  *  - Vendor: `config.llmProvider` (`bedrock` default, `azure`,
- *    `bedrock-mantle`, `openai`, `openrouter`, or `anthropic`).
+ *    `bedrock-mantle`, `openai`, `openrouter`, `anthropic`, or `litellm`).
  *  - Endpoint: each vendor's factory takes the endpoint `config.ts` resolved for
  *    it — the explicit `*_BASE_URL` override, else the Lens Agents gateway mount,
  *    else the vendor's own host. The factory receives one endpoint and chooses
@@ -38,6 +38,10 @@
  * **direct-only**: no gateway mount serves api.anthropic.com, so its factory
  * takes no baseURL and `ANTHROPIC_API_KEY` is always required. Model IDs are
  * bare first-party IDs (`claude-opus-5`).
+ *
+ * **litellm** is an operator's own LiteLLM proxy, spoken to in the Anthropic
+ * Messages format at `LITELLM_BASE_URL` or the `…/llm/litellm/anthropic/v1`
+ * mount. Model IDs are the operator's aliases.
  */
 
 import { config } from '../../config';
@@ -53,6 +57,7 @@ import {
   isOpenRouterConfigured,
 } from './openrouter/openrouter-provider';
 import { createAnthropicProvider, isAnthropicConfigured } from './anthropic/anthropic-provider';
+import { createLiteLlmProvider, isLiteLlmConfigured } from './litellm/litellm-provider';
 import type { LlmProvider } from './llm-provider';
 
 export function createProvider(): LlmProvider {
@@ -67,6 +72,8 @@ export function createProvider(): LlmProvider {
       return createOpenRouterProvider(config.openrouterEndpoint);
     case 'anthropic':
       return createAnthropicProvider();
+    case 'litellm':
+      return createLiteLlmProvider(config.litellmEndpoint);
     default:
       return createBedrockProvider(config.nexusLlmBaseUrl ?? undefined);
   }
@@ -85,6 +92,8 @@ export function isProviderConfigured(): boolean {
       return isOpenRouterConfigured();
     case 'anthropic':
       return isAnthropicConfigured();
+    case 'litellm':
+      return isLiteLlmConfigured();
     default:
       return isBedrockConfigured();
   }
