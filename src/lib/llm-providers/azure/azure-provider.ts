@@ -61,13 +61,14 @@ export function createAzureProvider(baseURL?: string): LlmProvider {
 }
 
 /**
- * Check if Azure is configured. Through the Lens Agents gateway only a chat
- * deployment is needed — the gateway holds the Foundry key (Bedrock parity: no
- * local credentials when routed that way). Direct mode needs the deployment, an
- * api-key, and a Foundry endpoint (resource name or explicit base URL).
+ * The settings Azure still needs, by variable name; empty when it can serve
+ * requests. Through the Lens Agents gateway it needs none, since the gateway
+ * holds the Foundry key. Direct mode needs an api-key and a Foundry endpoint.
  */
-export function isAzureConfigured(): boolean {
-  if (!config.azureModelId) return false;
-  if (config.nexusAzureBaseUrl) return true;
-  return Boolean(config.azureApiKey && config.azureDirectEndpoint);
+export function missingAzureSettings(): string[] {
+  if (config.nexusAzureBaseUrl) return [];
+  return [
+    ...(config.azureApiKey ? [] : ['AZURE_API_KEY']),
+    ...(config.azureDirectEndpoint ? [] : ['AZURE_RESOURCE_NAME (or AZURE_FOUNDRY_BASE_URL)']),
+  ];
 }

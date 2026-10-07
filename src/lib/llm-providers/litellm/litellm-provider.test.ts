@@ -23,7 +23,7 @@ vi.mock('@ai-sdk/anthropic', () => ({
 }));
 vi.mock('../../../logger', () => ({ logger: { info: vi.fn(), warn: mockWarn } }));
 
-import { createLiteLlmProvider, isLiteLlmConfigured } from './litellm-provider';
+import { createLiteLlmProvider, missingLiteLlmSettings } from './litellm-provider';
 
 const PROXY = 'https://litellm.example.com/v1';
 const MOUNT = 'https://gateway.example.com/projects/p/llm/litellm/anthropic/v1';
@@ -115,15 +115,14 @@ describe('startupCheck', () => {
     );
   });
 
-  it('off the gateway without a key, names the missing key and asks the proxy nothing', async () => {
+  it('off the gateway without a key, asks the proxy nothing', async () => {
+    // The startup warning for missing provider settings names the key.
     config.litellmApiKey = undefined;
 
     await createLiteLlmProvider(PROXY).startupCheck!();
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(mockWarn).toHaveBeenCalledWith(
-      '[Startup] LITELLM_API_KEY is not set; the agent cannot reach the LiteLLM proxy',
-    );
+    expect(mockWarn).not.toHaveBeenCalled();
   });
 
   it('is quiet when both aliases are served', async () => {
@@ -198,29 +197,30 @@ describe('startupCheck', () => {
   });
 });
 
-describe('isLiteLlmConfigured', () => {
+describe('missingLiteLlmSettings', () => {
   beforeEach(() => {
     config.litellmApiKey = 'sk-litellm';
     config.litellmEndpoint = PROXY;
   });
 
-  it('true with a key and the proxy endpoint (direct)', () => {
-    expect(isLiteLlmConfigured()).toBe(true);
+  it('none with a key and the proxy endpoint (direct)', () => {
+    expect(missingLiteLlmSettings()).toEqual([]);
   });
 
-  it('true on the gateway mount without a key (the gateway holds it)', () => {
+  it('none on the gateway mount without a key (the gateway holds it)', () => {
     config.litellmApiKey = undefined;
     config.litellmEndpoint = MOUNT;
-    expect(isLiteLlmConfigured()).toBe(true);
+    expect(missingLiteLlmSettings()).toEqual([]);
   });
 
-  it('false off the gateway without a key', () => {
+  it('names the key off the gateway', () => {
     config.litellmApiKey = undefined;
-    expect(isLiteLlmConfigured()).toBe(false);
+    expect(missingLiteLlmSettings()).toEqual(['LITELLM_API_KEY']);
   });
 
-  it('false without an endpoint', () => {
+  it('names the proxy address, and the key, when there is no endpoint at all', () => {
     config.litellmEndpoint = undefined;
-    expect(isLiteLlmConfigured()).toBe(false);
+    config.litellmApiKey = undefined;
+    expect(missingLiteLlmSettings()).toEqual(['LITELLM_BASE_URL', 'LITELLM_API_KEY']);
   });
 });

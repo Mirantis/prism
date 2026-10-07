@@ -47,12 +47,10 @@ export function createOpenAiProvider(baseURL?: string): LlmProvider {
 }
 
 /**
- * Check if OpenAI is configured. Through the gateway only the model id is needed —
- * the gateway holds the key (Azure/mantle parity). Direct mode needs the key
- * too.
+ * The settings OpenAI still needs, by variable name; empty when it can serve
+ * requests. Through the gateway it needs none, since the gateway holds the key.
  */
-export function isOpenAiConfigured(): boolean {
-  if (!config.openaiModelId) return false;
-  if (config.nexusOpenAiBaseUrl) return true;
-  return Boolean(config.openaiApiKey);
+export function missingOpenAiSettings(): string[] {
+  if (config.nexusOpenAiBaseUrl) return [];
+  return config.openaiApiKey ? [] : ['OPENAI_API_KEY'];
 }

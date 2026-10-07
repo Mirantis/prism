@@ -10,7 +10,7 @@ import { attachmentService } from './services/attachment.service';
 
 const {
   mockGenerateText,
-  mockIsBedrockConfigured,
+  mockMissingProviderSettings,
   mockCreateBedrockProvider,
   mockGetMCPTools,
   mockGetPluginTools,
@@ -34,7 +34,7 @@ const {
   mockWithToolRiskGate,
 } = vi.hoisted(() => ({
   mockGenerateText: vi.fn(),
-  mockIsBedrockConfigured: vi.fn(),
+  mockMissingProviderSettings: vi.fn(),
   mockCreateBedrockProvider: vi.fn(),
   mockGetMCPTools: vi.fn(),
   mockGetPluginTools: vi.fn(),
@@ -85,7 +85,7 @@ vi.mock('ai', () => ({
 }));
 
 vi.mock('./lib/llm-providers/create-provider', () => ({
-  isProviderConfigured: mockIsBedrockConfigured,
+  missingProviderSettings: mockMissingProviderSettings,
   createProvider: mockCreateBedrockProvider,
 }));
 
@@ -282,7 +282,7 @@ describe('invoke', () => {
     mockGetSkillTools.mockReturnValue({});
     mockWithToolRiskGate.mockImplementation((tools) => tools);
 
-    mockIsBedrockConfigured.mockReturnValue(true);
+    mockMissingProviderSettings.mockReturnValue([]);
     mockCreateBedrockProvider.mockReturnValue(Object.assign(() => 'model-instance', { cachePoint: () => ({ anthropic: { cacheControl: { type: 'ephemeral' } } }) }));
     mockGetMCPTools.mockResolvedValue({});
     mockGetPluginTools.mockResolvedValue({});
@@ -339,16 +339,16 @@ describe('invoke', () => {
     expect(result.response).not.toContain("I can't help");
   });
 
-  it('returns placeholder response when the LLM provider is not configured', async () => {
-    mockIsBedrockConfigured.mockReturnValue(false);
+  it('names the missing settings when the LLM provider is not configured', async () => {
+    config.llmProvider = 'litellm';
+    mockMissingProviderSettings.mockReturnValue(['LITELLM_BASE_URL', 'LITELLM_API_KEY']);
 
     const result = await invoke(createTestInvokeRequest());
 
-    expect(result.response).toContain('not fully configured');
     expect(result.toolCalls).toEqual([]);
     expect(result.steps).toEqual([
       {
-        text: "I apologize, but I am not fully configured yet. Please ensure the LLM credentials are set up.",
+        text: 'I am not fully configured yet: the litellm LLM provider needs LITELLM_BASE_URL and LITELLM_API_KEY.',
         toolCalls: [],
       },
     ]);
@@ -1929,8 +1929,8 @@ describe('invoke', () => {
       expect(mockSetDoneProcessing).not.toHaveBeenCalled();
     });
 
-    it('should not set status when Bedrock is not configured', async () => {
-      mockIsBedrockConfigured.mockReturnValue(false);
+    it('should not set status when the LLM provider is not configured', async () => {
+      mockMissingProviderSettings.mockReturnValue(['AWS_BEARER_TOKEN_BEDROCK']);
 
       await invoke(createTestInvokeRequest());
 
@@ -1950,8 +1950,8 @@ describe('invoke', () => {
       });
     });
 
-    it('emits nothing when preflight short-circuits (Bedrock unconfigured)', async () => {
-      mockIsBedrockConfigured.mockReturnValue(false);
+    it('emits nothing when preflight short-circuits (provider unconfigured)', async () => {
+      mockMissingProviderSettings.mockReturnValue(['AWS_BEARER_TOKEN_BEDROCK']);
 
       await invoke(createTestInvokeRequest());
 

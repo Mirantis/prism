@@ -45,19 +45,19 @@
  */
 
 import { config } from '../../config';
-import { createBedrockProvider, isBedrockConfigured } from './bedrock/bedrock-provider';
-import { createAzureProvider, isAzureConfigured } from './azure/azure-provider';
+import { createBedrockProvider } from './bedrock/bedrock-provider';
+import { createAzureProvider, missingAzureSettings } from './azure/azure-provider';
 import {
   createBedrockMantleProvider,
-  isBedrockMantleConfigured,
+  missingBedrockMantleSettings,
 } from './bedrock-mantle/bedrock-mantle-provider';
-import { createOpenAiProvider, isOpenAiConfigured } from './openai/openai-provider';
+import { createOpenAiProvider, missingOpenAiSettings } from './openai/openai-provider';
 import {
   createOpenRouterProvider,
-  isOpenRouterConfigured,
+  missingOpenRouterSettings,
 } from './openrouter/openrouter-provider';
-import { createAnthropicProvider, isAnthropicConfigured } from './anthropic/anthropic-provider';
-import { createLiteLlmProvider, isLiteLlmConfigured } from './litellm/litellm-provider';
+import { createAnthropicProvider, missingAnthropicSettings } from './anthropic/anthropic-provider';
+import { createLiteLlmProvider, missingLiteLlmSettings } from './litellm/litellm-provider';
 import type { LlmProvider } from './llm-provider';
 
 export function createProvider(): LlmProvider {
@@ -79,22 +79,28 @@ export function createProvider(): LlmProvider {
   }
 }
 
-/** Whether the selected provider has the config it needs to serve requests. */
-export function isProviderConfigured(): boolean {
+/**
+ * The settings the selected provider still needs, by variable name; empty when
+ * it can serve requests. Every model id has a default, so what can be missing
+ * is a key or an endpoint.
+ */
+export function missingProviderSettings(): string[] {
   switch (config.llmProvider) {
     case 'azure':
-      return isAzureConfigured();
+      return missingAzureSettings();
     case 'bedrock-mantle':
-      return isBedrockMantleConfigured();
+      return missingBedrockMantleSettings();
     case 'openai':
-      return isOpenAiConfigured();
+      return missingOpenAiSettings();
     case 'openrouter':
-      return isOpenRouterConfigured();
+      return missingOpenRouterSettings();
     case 'anthropic':
-      return isAnthropicConfigured();
+      return missingAnthropicSettings();
     case 'litellm':
-      return isLiteLlmConfigured();
+      return missingLiteLlmSettings();
     default:
-      return isBedrockConfigured();
+      // Bedrock finds its credentials through the AWS SDK's own chain (the task
+      // role in ECS) when a request is made.
+      return [];
   }
 }

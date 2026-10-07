@@ -22,7 +22,7 @@ vi.mock('@ai-sdk/anthropic', () => ({
 
 import {
   createBedrockMantleProvider,
-  isBedrockMantleConfigured,
+  missingBedrockMantleSettings,
   toBareBedrockModelId,
 } from './bedrock-mantle-provider';
 
@@ -127,37 +127,25 @@ describe('toBareBedrockModelId', () => {
   });
 });
 
-describe('isBedrockMantleConfigured', () => {
+describe('missingBedrockMantleSettings', () => {
   beforeEach(() => {
-    config.bedrockMantleModelId = 'anthropic.claude-opus-5';
     config.bedrockApiKey = 'bedrock-key';
-    config.bedrockMantleDirectEndpoint = 'https://bedrock-mantle.us-east-1.api.aws/anthropic/v1';
     config.nexusBedrockMantleBaseUrl = null;
   });
 
-  it('true with model + key + endpoint (direct)', () => {
-    expect(isBedrockMantleConfigured()).toBe(true);
+  it('none with a key (direct)', () => {
+    expect(missingBedrockMantleSettings()).toEqual([]);
   });
 
-  it('true with model + gateway base URL and NO key (gateway holds the credential)', () => {
+  it('none on the gateway without a key (the gateway holds the credential)', () => {
     config.bedrockApiKey = undefined;
     config.nexusBedrockMantleBaseUrl =
       'https://gateway.example.com/llm/bedrock-mantle/anthropic/us-east-1/v1';
-    expect(isBedrockMantleConfigured()).toBe(true);
+    expect(missingBedrockMantleSettings()).toEqual([]);
   });
 
-  it('false without the Bedrock API key — there is no SigV4 path on this surface', () => {
+  it('names the Bedrock API key off the gateway — there is no SigV4 path on this surface', () => {
     config.bedrockApiKey = undefined;
-    expect(isBedrockMantleConfigured()).toBe(false);
-  });
-
-  it('false without a chat endpoint', () => {
-    config.bedrockMantleDirectEndpoint = '';
-    expect(isBedrockMantleConfigured()).toBe(false);
-  });
-
-  it('false without a chat model', () => {
-    config.bedrockMantleModelId = '';
-    expect(isBedrockMantleConfigured()).toBe(false);
+    expect(missingBedrockMantleSettings()).toEqual(['AWS_BEARER_TOKEN_BEDROCK']);
   });
 });

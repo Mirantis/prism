@@ -20,7 +20,7 @@ vi.mock('@ai-sdk/anthropic', () => ({
   createAnthropic: mockCreateAnthropic,
 }));
 
-import { createAzureProvider, isAzureConfigured } from './azure-provider';
+import { createAzureProvider, missingAzureSettings } from './azure-provider';
 
 describe('createAzureProvider', () => {
   const FOUNDRY = 'https://my-resource.services.ai.azure.com/anthropic/v1';
@@ -81,38 +81,31 @@ describe('createAzureProvider', () => {
   });
 });
 
-describe('isAzureConfigured', () => {
+describe('missingAzureSettings', () => {
   beforeEach(() => {
-    config.azureModelId = 'claude-opus-4-8';
     config.azureApiKey = 'azure-key';
     config.azureDirectEndpoint = 'https://my-resource.services.ai.azure.com/anthropic/v1';
     config.nexusAzureBaseUrl = null;
   });
 
-  it('true with deployment + key + Foundry endpoint (direct)', () => {
-    expect(isAzureConfigured()).toBe(true);
+  it('none with a key and a Foundry endpoint (direct)', () => {
+    expect(missingAzureSettings()).toEqual([]);
   });
 
-  it('true with deployment + gateway base URL and NO key/resource (gateway holds the key)', () => {
+  it('none on the gateway, without a key or resource (the gateway holds the key)', () => {
     config.azureDirectEndpoint = undefined;
     config.azureApiKey = undefined;
     config.nexusAzureBaseUrl = 'https://gateway.example.com/llm/azure/anthropic/v1';
-    expect(isAzureConfigured()).toBe(true);
+    expect(missingAzureSettings()).toEqual([]);
   });
 
-  it('false without a chat endpoint (neither Foundry URL nor gateway URL)', () => {
+  it('names the endpoint when there is neither a Foundry URL nor the gateway', () => {
     config.azureDirectEndpoint = undefined;
-    config.nexusAzureBaseUrl = null;
-    expect(isAzureConfigured()).toBe(false);
+    expect(missingAzureSettings()).toEqual(['AZURE_RESOURCE_NAME (or AZURE_FOUNDRY_BASE_URL)']);
   });
 
-  it('false without an api-key', () => {
+  it('names the api-key off the gateway', () => {
     config.azureApiKey = undefined;
-    expect(isAzureConfigured()).toBe(false);
-  });
-
-  it('false without a chat deployment', () => {
-    config.azureModelId = '';
-    expect(isAzureConfigured()).toBe(false);
+    expect(missingAzureSettings()).toEqual(['AZURE_API_KEY']);
   });
 });

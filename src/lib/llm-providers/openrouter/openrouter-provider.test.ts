@@ -22,7 +22,7 @@ vi.mock('@ai-sdk/openai', () => ({
   createOpenAI: mockCreateOpenAI,
 }));
 
-import { createOpenRouterProvider, isOpenRouterConfigured } from './openrouter-provider';
+import { createOpenRouterProvider, missingOpenRouterSettings } from './openrouter-provider';
 
 describe('createOpenRouterProvider', () => {
   const OPENROUTER_DIRECT = 'https://openrouter.ai/api/v1';
@@ -95,36 +95,25 @@ describe('createOpenRouterProvider', () => {
   });
 });
 
-describe('isOpenRouterConfigured', () => {
+describe('missingOpenRouterSettings', () => {
   beforeEach(() => {
-    config.openrouterModelId = 'openai/gpt-5.6-sol';
     config.openrouterApiKey = 'sk-or-test';
     config.nexusOpenRouterBaseUrl = null;
     config.openrouterEmbeddingModelId = '';
   });
 
-  it('true with key + model (direct)', () => {
-    expect(isOpenRouterConfigured()).toBe(true);
+  it('none with a key (direct), and no embedding model (OpenRouter ships no default one)', () => {
+    expect(missingOpenRouterSettings()).toEqual([]);
   });
 
-  it('true with model + gateway mount and NO key (gateway holds the key)', () => {
+  it('none on the gateway mount without a key (the gateway holds the key)', () => {
     config.openrouterApiKey = undefined;
     config.nexusOpenRouterBaseUrl = 'https://gateway.example.com/llm/openrouter/openai/v1';
-    expect(isOpenRouterConfigured()).toBe(true);
+    expect(missingOpenRouterSettings()).toEqual([]);
   });
 
-  it('does not require embedding config (OpenRouter ships no default one)', () => {
-    expect(config.openrouterEmbeddingModelId).toBe('');
-    expect(isOpenRouterConfigured()).toBe(true);
-  });
-
-  it('false without a key when there is no gateway mount', () => {
+  it('names the key when there is no gateway mount', () => {
     config.openrouterApiKey = undefined;
-    expect(isOpenRouterConfigured()).toBe(false);
-  });
-
-  it('false without a chat model id', () => {
-    config.openrouterModelId = '';
-    expect(isOpenRouterConfigured()).toBe(false);
+    expect(missingOpenRouterSettings()).toEqual(['OPENROUTER_API_KEY']);
   });
 });

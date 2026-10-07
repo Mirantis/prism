@@ -14,13 +14,12 @@ const {
   mockCreateOpenRouterProvider,
   mockCreateAnthropicProvider,
   mockCreateLiteLlmProvider,
-  mockIsBedrockConfigured,
-  mockIsAzureConfigured,
-  mockIsBedrockMantleConfigured,
-  mockIsOpenAiConfigured,
-  mockIsOpenRouterConfigured,
-  mockIsAnthropicConfigured,
-  mockIsLiteLlmConfigured,
+  mockMissingAzureSettings,
+  mockMissingBedrockMantleSettings,
+  mockMissingOpenAiSettings,
+  mockMissingOpenRouterSettings,
+  mockMissingAnthropicSettings,
+  mockMissingLiteLlmSettings,
 } = vi.hoisted(() => ({
   mockCreateBedrockProvider: vi.fn(() => 'bedrock-provider'),
   mockCreateAzureProvider: vi.fn(() => 'azure-provider'),
@@ -29,45 +28,43 @@ const {
   mockCreateOpenRouterProvider: vi.fn(() => 'openrouter-provider'),
   mockCreateAnthropicProvider: vi.fn(() => 'anthropic-provider'),
   mockCreateLiteLlmProvider: vi.fn(() => 'litellm-provider'),
-  mockIsBedrockConfigured: vi.fn(() => true),
-  mockIsAzureConfigured: vi.fn(() => true),
-  mockIsBedrockMantleConfigured: vi.fn(() => true),
-  mockIsOpenAiConfigured: vi.fn(() => true),
-  mockIsOpenRouterConfigured: vi.fn(() => true),
-  mockIsAnthropicConfigured: vi.fn(() => true),
-  mockIsLiteLlmConfigured: vi.fn(() => true),
+  mockMissingAzureSettings: vi.fn((): string[] => []),
+  mockMissingBedrockMantleSettings: vi.fn((): string[] => []),
+  mockMissingOpenAiSettings: vi.fn((): string[] => []),
+  mockMissingOpenRouterSettings: vi.fn((): string[] => []),
+  mockMissingAnthropicSettings: vi.fn((): string[] => []),
+  mockMissingLiteLlmSettings: vi.fn((): string[] => []),
 }));
 
 vi.mock('./bedrock/bedrock-provider', () => ({
   createBedrockProvider: mockCreateBedrockProvider,
-  isBedrockConfigured: mockIsBedrockConfigured,
 }));
 vi.mock('./azure/azure-provider', () => ({
   createAzureProvider: mockCreateAzureProvider,
-  isAzureConfigured: mockIsAzureConfigured,
+  missingAzureSettings: mockMissingAzureSettings,
 }));
 vi.mock('./bedrock-mantle/bedrock-mantle-provider', () => ({
   createBedrockMantleProvider: mockCreateBedrockMantleProvider,
-  isBedrockMantleConfigured: mockIsBedrockMantleConfigured,
+  missingBedrockMantleSettings: mockMissingBedrockMantleSettings,
 }));
 vi.mock('./openai/openai-provider', () => ({
   createOpenAiProvider: mockCreateOpenAiProvider,
-  isOpenAiConfigured: mockIsOpenAiConfigured,
+  missingOpenAiSettings: mockMissingOpenAiSettings,
 }));
 vi.mock('./openrouter/openrouter-provider', () => ({
   createOpenRouterProvider: mockCreateOpenRouterProvider,
-  isOpenRouterConfigured: mockIsOpenRouterConfigured,
+  missingOpenRouterSettings: mockMissingOpenRouterSettings,
 }));
 vi.mock('./anthropic/anthropic-provider', () => ({
   createAnthropicProvider: mockCreateAnthropicProvider,
-  isAnthropicConfigured: mockIsAnthropicConfigured,
+  missingAnthropicSettings: mockMissingAnthropicSettings,
 }));
 vi.mock('./litellm/litellm-provider', () => ({
   createLiteLlmProvider: mockCreateLiteLlmProvider,
-  isLiteLlmConfigured: mockIsLiteLlmConfigured,
+  missingLiteLlmSettings: mockMissingLiteLlmSettings,
 }));
 
-import { createProvider, isProviderConfigured } from './create-provider';
+import { createProvider, missingProviderSettings } from './create-provider';
 
 describe('createProvider', () => {
   const MOUNT = {
@@ -231,66 +228,38 @@ describe('createProvider', () => {
   });
 });
 
-describe('isProviderConfigured', () => {
+describe('missingProviderSettings', () => {
   beforeEach(() => {
     config.llmProvider = 'bedrock';
     vi.clearAllMocks();
   });
 
-  it('delegates to isBedrockConfigured for bedrock', () => {
-    mockIsBedrockConfigured.mockReturnValue(false);
-    expect(isProviderConfigured()).toBe(false);
-    expect(mockIsAzureConfigured).not.toHaveBeenCalled();
-    expect(mockIsBedrockMantleConfigured).not.toHaveBeenCalled();
+  it('bedrock needs nothing here: the AWS SDK finds its credentials at request time', () => {
+    expect(missingProviderSettings()).toEqual([]);
+    expect(mockMissingAzureSettings).not.toHaveBeenCalled();
+    expect(mockMissingBedrockMantleSettings).not.toHaveBeenCalled();
   });
 
-  it('delegates to isOpenRouterConfigured for openrouter', () => {
-    config.llmProvider = 'openrouter';
-    mockIsOpenRouterConfigured.mockReturnValue(false);
-    expect(isProviderConfigured()).toBe(false);
-    expect(mockIsOpenAiConfigured).not.toHaveBeenCalled();
-  });
-
-  it('delegates to isAzureConfigured for azure', () => {
-    config.llmProvider = 'azure';
-    mockIsAzureConfigured.mockReturnValue(true);
-    expect(isProviderConfigured()).toBe(true);
-    expect(mockIsBedrockConfigured).not.toHaveBeenCalled();
-    expect(mockIsBedrockMantleConfigured).not.toHaveBeenCalled();
-  });
-
-  it('delegates to isBedrockMantleConfigured for bedrock-mantle', () => {
-    config.llmProvider = 'bedrock-mantle';
-    mockIsBedrockMantleConfigured.mockReturnValue(false);
-    expect(isProviderConfigured()).toBe(false);
-    expect(mockIsBedrockConfigured).not.toHaveBeenCalled();
-    expect(mockIsAzureConfigured).not.toHaveBeenCalled();
-  });
-
-  it('delegates to isOpenAiConfigured for openai', () => {
-    config.llmProvider = 'openai';
-    mockIsOpenAiConfigured.mockReturnValue(false);
-    expect(isProviderConfigured()).toBe(false);
-    expect(mockIsBedrockConfigured).not.toHaveBeenCalled();
-    expect(mockIsAzureConfigured).not.toHaveBeenCalled();
-    expect(mockIsBedrockMantleConfigured).not.toHaveBeenCalled();
-  });
-
-  it('delegates to isAnthropicConfigured for anthropic', () => {
-    config.llmProvider = 'anthropic';
-    mockIsAnthropicConfigured.mockReturnValue(false);
-    expect(isProviderConfigured()).toBe(false);
-    expect(mockIsBedrockConfigured).not.toHaveBeenCalled();
-    expect(mockIsAzureConfigured).not.toHaveBeenCalled();
-    expect(mockIsBedrockMantleConfigured).not.toHaveBeenCalled();
-    expect(mockIsOpenAiConfigured).not.toHaveBeenCalled();
-  });
-
-  it('delegates to isLiteLlmConfigured for litellm', () => {
-    config.llmProvider = 'litellm';
-    mockIsLiteLlmConfigured.mockReturnValue(false);
-    expect(isProviderConfigured()).toBe(false);
-    expect(mockIsAnthropicConfigured).not.toHaveBeenCalled();
-    expect(mockIsBedrockConfigured).not.toHaveBeenCalled();
+  it.each([
+    ['azure', mockMissingAzureSettings, 'AZURE_API_KEY'],
+    ['bedrock-mantle', mockMissingBedrockMantleSettings, 'AWS_BEARER_TOKEN_BEDROCK'],
+    ['openai', mockMissingOpenAiSettings, 'OPENAI_API_KEY'],
+    ['openrouter', mockMissingOpenRouterSettings, 'OPENROUTER_API_KEY'],
+    ['anthropic', mockMissingAnthropicSettings, 'ANTHROPIC_API_KEY'],
+    ['litellm', mockMissingLiteLlmSettings, 'LITELLM_API_KEY'],
+  ] as const)('%s answers with its own provider\'s list', (provider, mock, setting) => {
+    config.llmProvider = provider;
+    mock.mockReturnValue([setting]);
+    expect(missingProviderSettings()).toEqual([setting]);
+    for (const other of [
+      mockMissingAzureSettings,
+      mockMissingBedrockMantleSettings,
+      mockMissingOpenAiSettings,
+      mockMissingOpenRouterSettings,
+      mockMissingAnthropicSettings,
+      mockMissingLiteLlmSettings,
+    ]) {
+      if (other !== mock) expect(other).not.toHaveBeenCalled();
+    }
   });
 });

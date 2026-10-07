@@ -138,14 +138,13 @@ export function createBedrockMantleProvider(baseURL: string): LlmProvider {
 }
 
 /**
- * Check if Bedrock Mantle is configured. Through the gateway only a chat model is
- * needed — the gateway holds the Bedrock credential. Direct mode also needs
- * the API key and an endpoint: unlike the native Bedrock provider there is no
- * SigV4 fallback, and without an explicit key `createAnthropic` would silently
- * pick up an ambient `ANTHROPIC_API_KEY` and fail at first request instead.
+ * The settings Bedrock Mantle still needs, by variable name; empty when it can
+ * serve requests. Through the gateway it needs none, since the gateway holds the
+ * Bedrock credential. Direct mode needs the API key: unlike the native Bedrock
+ * provider there is no SigV4 fallback, and without an explicit key
+ * `createAnthropic` would pick up an ambient `ANTHROPIC_API_KEY` instead.
  */
-export function isBedrockMantleConfigured(): boolean {
-  if (!config.bedrockMantleModelId) return false;
-  if (config.nexusBedrockMantleBaseUrl) return true;
-  return Boolean(config.bedrockApiKey && config.bedrockMantleDirectEndpoint);
+export function missingBedrockMantleSettings(): string[] {
+  if (config.nexusBedrockMantleBaseUrl) return [];
+  return config.bedrockApiKey ? [] : ['AWS_BEARER_TOKEN_BEDROCK'];
 }

@@ -22,7 +22,7 @@ vi.mock('@ai-sdk/anthropic', () => ({
 
 import {
   createAnthropicProvider,
-  isAnthropicConfigured,
+  missingAnthropicSettings,
   toFirstPartyModelId,
 } from './anthropic-provider';
 
@@ -108,23 +108,17 @@ describe('toFirstPartyModelId', () => {
   });
 });
 
-describe('isAnthropicConfigured', () => {
+describe('missingAnthropicSettings', () => {
   beforeEach(() => {
-    config.anthropicModelId = 'claude-opus-5';
     config.anthropicApiKey = 'sk-ant-test';
   });
 
-  it('true with key + model', () => {
-    expect(isAnthropicConfigured()).toBe(true);
+  it('none with a key', () => {
+    expect(missingAnthropicSettings()).toEqual([]);
   });
 
-  it('false without a key — direct-only', () => {
+  it('names the key — direct-only', () => {
     config.anthropicApiKey = undefined;
-    expect(isAnthropicConfigured()).toBe(false);
-  });
-
-  it('false without a chat model id', () => {
-    config.anthropicModelId = '';
-    expect(isAnthropicConfigured()).toBe(false);
+    expect(missingAnthropicSettings()).toEqual(['ANTHROPIC_API_KEY']);
   });
 });

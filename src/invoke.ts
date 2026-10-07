@@ -14,7 +14,7 @@ import { ModelMessage, SystemModelMessage, stepCountIs } from 'ai';
 import { callModel } from './lib/model-call';
 import { config } from './config';
 import { logger } from './logger';
-import { createProvider, isProviderConfigured } from './lib/llm-providers/create-provider';
+import { createProvider, missingProviderSettings } from './lib/llm-providers/create-provider';
 import { collectTools, withToolsCacheControl } from './lib/tool-collection';
 import { createPendingFileWrites } from './lib/pending-file-writes';
 import { SHARE_FILE_TOOL_NAME } from './tools/share-file';
@@ -81,10 +81,16 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
   const startTime = Date.now();
 
   // Preflight: short-circuit before any DB call.
-  if (!isProviderConfigured()) {
-    logger.error(`LLM provider (${config.llmProvider}) not configured, returning placeholder response`);
+  const missingSettings = missingProviderSettings();
+  if (missingSettings.length > 0) {
+    logger.error(
+      { provider: config.llmProvider, missingSettings },
+      'LLM provider not configured, returning placeholder response',
+    );
     yield {
-      text: 'I apologize, but I am not fully configured yet. Please ensure the LLM credentials are set up.',
+      text:
+        `I am not fully configured yet: the ${config.llmProvider} LLM provider needs ` +
+        `${missingSettings.join(' and ')}.`,
       toolCalls: [],
     };
     return;

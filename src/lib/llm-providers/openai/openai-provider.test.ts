@@ -20,7 +20,7 @@ vi.mock('@ai-sdk/openai', () => ({
   createOpenAI: mockCreateOpenAI,
 }));
 
-import { createOpenAiProvider, isOpenAiConfigured } from './openai-provider';
+import { createOpenAiProvider, missingOpenAiSettings } from './openai-provider';
 
 describe('createOpenAiProvider', () => {
   beforeEach(() => {
@@ -109,30 +109,24 @@ describe('createOpenAiProvider', () => {
   });
 });
 
-describe('isOpenAiConfigured', () => {
+describe('missingOpenAiSettings', () => {
   beforeEach(() => {
-    config.openaiModelId = 'gpt-5.6-sol';
     config.openaiApiKey = 'sk-test';
     config.nexusOpenAiBaseUrl = null;
   });
 
-  it('true with key + model (direct)', () => {
-    expect(isOpenAiConfigured()).toBe(true);
+  it('none with a key (direct)', () => {
+    expect(missingOpenAiSettings()).toEqual([]);
   });
 
-  it('true with model + gateway mount and NO key (gateway holds the key)', () => {
+  it('none on the gateway mount without a key (the gateway holds the key)', () => {
     config.openaiApiKey = undefined;
     config.nexusOpenAiBaseUrl = 'https://gateway.example.com/llm/openai/v1';
-    expect(isOpenAiConfigured()).toBe(true);
+    expect(missingOpenAiSettings()).toEqual([]);
   });
 
-  it('false without a key when there is no gateway mount', () => {
+  it('names the key when there is no gateway mount', () => {
     config.openaiApiKey = undefined;
-    expect(isOpenAiConfigured()).toBe(false);
-  });
-
-  it('false without a chat model id', () => {
-    config.openaiModelId = '';
-    expect(isOpenAiConfigured()).toBe(false);
+    expect(missingOpenAiSettings()).toEqual(['OPENAI_API_KEY']);
   });
 });

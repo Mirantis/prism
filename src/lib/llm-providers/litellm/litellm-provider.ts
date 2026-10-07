@@ -57,10 +57,7 @@ export function createLiteLlmProvider(baseURL?: string): LlmProvider {
  * alias is right.
  */
 async function checkModels(baseURL: string, apiKey: string | undefined): Promise<void> {
-  if (!apiKey) {
-    logger.warn('[Startup] LITELLM_API_KEY is not set; the agent cannot reach the LiteLLM proxy');
-    return;
-  }
+  if (!apiKey) return;
   let served: string[];
   try {
     const response = await fetch(`${baseURL}/models`, {
@@ -89,10 +86,14 @@ async function checkModels(baseURL: string, apiKey: string | undefined): Promise
 }
 
 /**
- * Check if LiteLLM is configured: an endpoint, and a key unless the gateway
- * serves that endpoint and holds the key.
+ * The settings LiteLLM still needs, by variable name; empty when it can serve
+ * requests. Through the gateway it needs none, since the gateway holds the key.
+ * Direct mode needs the proxy's address and a key.
  */
-export function isLiteLlmConfigured(): boolean {
-  if (!config.litellmEndpoint) return false;
-  return Boolean(config.litellmApiKey) || isGatewayEndpoint(config.litellmEndpoint);
+export function missingLiteLlmSettings(): string[] {
+  if (isGatewayEndpoint(config.litellmEndpoint)) return [];
+  return [
+    ...(config.litellmEndpoint ? [] : ['LITELLM_BASE_URL']),
+    ...(config.litellmApiKey ? [] : ['LITELLM_API_KEY']),
+  ];
 }
