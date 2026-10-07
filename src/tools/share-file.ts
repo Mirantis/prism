@@ -154,10 +154,10 @@ export async function runShareFile(
   }
 
   // Read, then confirm the file did not move under the read. The barrier covers
-  // the writers whose path we can see; this catches the rest (`shell_exec`,
-  // `coding_agent`) in the one window where they are observable at all. One retry:
-  // a second change means something is still writing, and guessing which revision
-  // the reply describes is exactly the mistake being fixed.
+  // the writes in this step; this catches the writers that outlive their call
+  // (`coding_agent`, `shell_spawn`) in the one window where they are observable
+  // at all. One retry: a second change means something is still writing, and
+  // guessing which revision the reply describes is exactly the mistake being fixed.
   let data: Buffer;
   try {
     let before = stat;
@@ -223,8 +223,8 @@ export async function runShareFile(
 }
 
 /**
- * Wait for the step's writes to `fullPath`. Returns a failure to hand straight
- * back to the model, or `null` to carry on with the read.
+ * Wait for the step's writes that can change `fullPath`. Returns a failure to
+ * hand straight back to the model, or `null` to carry on with the read.
  *
  * The canary is the `wasAnnounced` check. An empty registry is ambiguous — it
  * means either "no writes in this step" or "the announce hook never ran" — and
@@ -256,7 +256,7 @@ async function awaitPendingWrites(
   if (outcome.status === 'settled') {
     logger.info(
       { toolNames: outcome.toolNames, elapsedMs: outcome.elapsedMs },
-      'share_file waited for a write to the same file in its own step',
+      'share_file waited for writes in its own step that can change the file',
     );
     return null;
   }
@@ -271,7 +271,7 @@ async function awaitPendingWrites(
   return {
     success: false,
     error:
-      `Not shared: ${writer} was writing ${path.basename(fullPath)} in this same tool block and ${reason}. ` +
+      `Not shared: ${writer} can change ${path.basename(fullPath)}, ran in this same tool block, and ${reason}. ` +
       `share_file captures the file when it runs, so the attachment would have held the bytes from before that write. ` +
       // Deliberately not "once the write has returned its result": the write may
       // have been rejected outright (the tool risk gate blocks before the handler

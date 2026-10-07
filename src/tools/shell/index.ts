@@ -44,9 +44,13 @@ import {
  * and the concrete path is handed to every tool's handler.
  *
  * `pendingWrites` lets a reader in the same step wait for a write to the file it
- * is about to read — see `lib/pending-file-writes.ts`. Only the two tools whose
- * target path is in their input can take part: `shell_exec` and `coding_agent`
- * write files too, but nothing here can know which. Optional, because a caller
+ * is about to read — see `lib/pending-file-writes.ts`. The two file tools register
+ * their path; `shell_exec` registers none, since it can write any file. So a
+ * `share_file` in the same step as any `shell_exec` waits for that command, and
+ * one that runs past `PENDING_WRITE_TIMEOUT_MS` gets the share refused. A call the
+ * tool risk gate blocks never reaches `execute`, so it holds its sibling shares
+ * for that whole timeout. `coding_agent` and `shell_spawn` write after their call
+ * returns, so no reader in the step can wait for them. Optional, because a caller
  * that passes none (the meeting tool bridge, tests) must keep today's behaviour.
  */
 export function getShellTools(
@@ -59,20 +63,26 @@ export function getShellTools(
   const availableAgents = config.availableCodingAgents.join(', ') || 'none detected';
 
   /**
-   * Announce the path before the step's tools start, and release it once the
-   * write has returned — including when it returns an error, so a failed write
-   * never strands a reader for the whole timeout.
+   * Announce the write before the step's tools start, to `pathOf(input)` or, with
+   * no `pathOf`, to any file, and release it once the write has returned —
+   * including when it returns an error, so a failed write never strands a reader
+   * for the whole timeout.
    */
-  const tracked = <I extends { path: string }, R>(
+  const tracked = <I, R>(
     toolName: string,
-    run: (input: I) => Promise<R>,
+    run: (input: I, abortSignal?: AbortSignal) => Promise<R>,
+    pathOf?: (input: I) => string,
   ) => ({
     onInputAvailable: ({ input, toolCallId }: { input: I; toolCallId: string }) => {
-      pendingWrites?.register(toolCallId, toolName, resolvePath(workspace, input.path));
+      const fullPath = pathOf ? resolvePath(workspace, pathOf(input)) : undefined;
+      pendingWrites?.register(toolCallId, toolName, fullPath);
     },
-    execute: async (input: I, { toolCallId }: { toolCallId: string }) => {
+    execute: async (
+      input: I,
+      { toolCallId, abortSignal }: { toolCallId: string; abortSignal?: AbortSignal },
+    ) => {
       try {
-        return await run(input);
+        return await run(input, abortSignal);
       } finally {
         pendingWrites?.settle(toolCallId);
       }
@@ -85,7 +95,9 @@ export function getShellTools(
       inputSchema: shellExecInput,
       // Forward the per-turn AbortSignal so a canceled turn kills the child
       // process instead of leaving it to run on to its own timeout.
-      execute: async (input, { abortSignal }) => runShellExec(input, workspace, abortSignal),
+      ...tracked('shell_exec', (input: z.infer<typeof shellExecInput>, abortSignal) =>
+        runShellExec(input, workspace, abortSignal),
+      ),
     }),
 
     shell_read_file: tool({
@@ -99,8 +111,10 @@ export function getShellTools(
       description:
         'Write a file. Overwrites existing files. Use shell_edit_file for modifying existing files; only use this for new files or full rewrites.',
       inputSchema: writeFileInput,
-      ...tracked('shell_write_file', (input: z.infer<typeof writeFileInput>) =>
-        runWriteFile(input, workspace),
+      ...tracked(
+        'shell_write_file',
+        (input: z.infer<typeof writeFileInput>) => runWriteFile(input, workspace),
+        (input) => input.path,
       ),
     }),
 
@@ -108,8 +122,10 @@ export function getShellTools(
       description:
         'Perform exact string replacement in a file. Must call shell_read_file first. Fails if old_string is not found, or matches multiple times without replace_all. Falls back to whitespace-tolerant matching if the exact match fails.',
       inputSchema: editFileInput,
-      ...tracked('shell_edit_file', (input: z.infer<typeof editFileInput>) =>
-        runEditFile(input, workspace),
+      ...tracked(
+        'shell_edit_file',
+        (input: z.infer<typeof editFileInput>) => runEditFile(input, workspace),
+        (input) => input.path,
       ),
     }),
 

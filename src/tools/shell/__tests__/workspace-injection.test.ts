@@ -86,13 +86,13 @@ describe('getShellTools write announcements', () => {
   });
 
   const makeRegistry = () => {
-    const registered: Array<{ id: string; tool: string; path: string }> = [];
+    const registered: Array<{ id: string; tool: string; path?: string }> = [];
     const settled: string[] = [];
     return {
       registered,
       settled,
       registry: {
-        register: (id: string | undefined, tool: string, fullPath: string) =>
+        register: (id: string | undefined, tool: string, fullPath?: string) =>
           registered.push({ id: id!, tool, path: fullPath }),
         settle: (id: string | undefined) => settled.push(id!),
         announce: () => undefined,
@@ -126,6 +126,23 @@ describe('getShellTools write announcements', () => {
       expect(settled).toEqual(['call-1']);
     });
   }
+
+  it('shell_exec announces a write with no path and settles when it returns', async () => {
+    const { registered, settled, registry } = makeRegistry();
+    const tools = getShellTools(workspace, registry);
+    const tool = tools.shell_exec as never as {
+      onInputAvailable: (o: { input: unknown; toolCallId: string }) => void;
+      execute: (i: unknown, o: { toolCallId: string }) => Promise<unknown>;
+    };
+    const input = { command: "printf '%s' rev > draft.md" };
+
+    tool.onInputAvailable({ input, toolCallId: 'call-1' });
+    expect(registered).toEqual([{ id: 'call-1', tool: 'shell_exec', path: undefined }]);
+
+    await tool.execute(input, { toolCallId: 'call-1' });
+    expect(settled).toEqual(['call-1']);
+    await expect(fs.readFile(path.join(workspace, 'draft.md'), 'utf8')).resolves.toBe('rev');
+  });
 
   it('resolves an absolute path to the same string a relative one produces', () => {
     const { registered, registry } = makeRegistry();

@@ -153,6 +153,30 @@ describe('runShareFile', () => {
       );
     });
 
+    // A batched `printf … > draft.md` and share. The command names no path the
+    // tool can see, so it holds the share whatever file that is.
+    it('captures the bytes a sibling shell_exec produced', async () => {
+      const file = path.join(workspace, 'draft.md');
+      await fs.writeFile(file, 'rev 1\n');
+
+      const pendingWrites = createPendingFileWrites();
+      pendingWrites.register('call-exec', 'shell_exec');
+      pendingWrites.announce('call-share', 'share_file');
+
+      const sharing = runShareFile({ path: 'draft.md' }, workspace, {
+        pendingWrites,
+        toolCallId: 'call-share',
+      });
+
+      await fs.writeFile(file, 'rev 2\n');
+      pendingWrites.settle('call-exec');
+
+      await expect(sharing).resolves.toMatchObject({ success: true });
+      expect(createSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ data: Buffer.from('rev 2\n') }),
+      );
+    });
+
     it('waits for a write that has not created the file yet', async () => {
       const file = path.join(workspace, 'fresh.txt');
       const pendingWrites = createPendingFileWrites();
@@ -205,8 +229,7 @@ describe('runShareFile', () => {
 
       expect(result.success).toBe(false);
       if (result.success) return;
-      expect(result.error).toMatch(/was writing/i);
-      expect(result.error).toMatch(/shell_edit_file/);
+      expect(result.error).toMatch(/shell_edit_file can change draft\.md, ran in this same tool block/);
       // Points at the write's own result rather than promising one it may never
       // return: the risk gate can reject a call before its handler ever runs.
       expect(result.error).toMatch(/Check that write's result/i);
