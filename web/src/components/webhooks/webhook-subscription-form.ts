@@ -6,6 +6,7 @@ export const DELIVER_LABELS: Record<WebhookDeliverTo, string> = {
   chat: 'Chat',
   slack: 'Slack',
   teams: 'Microsoft Teams',
+  none: 'None',
 };
 
 /** Every field of the create and edit forms. Edit leaves `name` alone. */

@@ -312,7 +312,7 @@ export interface CronTask {
   updatedAt: string;
 }
 
-export type WebhookDeliverTo = 'all' | 'chat' | 'slack' | 'teams';
+export type WebhookDeliverTo = 'all' | 'chat' | 'slack' | 'teams' | 'none';
 
 /**
  * Sender-verification scheme. Deliberately generic — no provider names: the
@@ -443,7 +443,8 @@ export type WebhookRunStatus =
   | 'completed'
   | 'failed'
   | 'budget_exceeded'
-  | 'delivered';
+  | 'delivered'
+  | 'suppressed';
 
 /** One webhook event in the Activity feed (GET /agents/activity/webhook-runs). */
 export interface WebhookRunSummary {

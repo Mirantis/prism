@@ -21,6 +21,7 @@ export const WEBHOOK_RUN_STATUSES = [
   'failed',
   'budget_exceeded',
   'delivered',
+  'suppressed',
 ] as const;
 export type WebhookRunStatus = (typeof WEBHOOK_RUN_STATUSES)[number];
 
@@ -29,7 +30,7 @@ const UNFINISHED: WebhookRunStatus[] = ['queued', 'running'];
 
 /** How a run ended. */
 export interface WebhookRunResult {
-  status: 'completed' | 'failed' | 'budget_exceeded' | 'delivered';
+  status: 'completed' | 'failed' | 'budget_exceeded' | 'delivered' | 'suppressed';
   error?: string | null;
   /** The message the run delivered; absent when the delivery itself failed. */
   messageId?: string | null;

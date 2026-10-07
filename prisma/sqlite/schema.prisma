@@ -682,7 +682,7 @@ model WebhookSubscription {
   description String?
   events      String? // comma-separated allowlist; null/empty = all events
   prompt      String? // template; null/empty = raw payload dump
-  deliverTo   String  @default("all") // 'all' | 'chat' | 'slack'
+  deliverTo   String  @default("all") // 'all' | 'chat' | 'slack' | 'teams' | 'none'
   deliverOnly Boolean @default(false)
   isActive    Boolean @default(true)
 

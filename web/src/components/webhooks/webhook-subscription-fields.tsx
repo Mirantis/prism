@@ -114,7 +114,11 @@ export function WebhookSubscriptionFields({
             <Select
               value={values.deliverTo}
               onValueChange={(value) => {
-                if (value) onChange('deliverTo', value as WebhookDeliverTo);
+                if (!value) return;
+                const deliverTo = value as WebhookDeliverTo;
+                onChange('deliverTo', deliverTo);
+                // Deliver only posts the template, so it needs a target.
+                if (deliverTo === 'none') onChange('deliverOnly', false);
               }}
             >
               <SelectTrigger id="webhook-deliver-to" className="min-w-40">
@@ -125,22 +129,27 @@ export function WebhookSubscriptionFields({
                 <SelectItem value="chat">{DELIVER_LABELS.chat}</SelectItem>
                 <SelectItem value="slack">{DELIVER_LABELS.slack}</SelectItem>
                 <SelectItem value="teams">{DELIVER_LABELS.teams}</SelectItem>
+                <SelectItem value="none">{DELIVER_LABELS.none}</SelectItem>
               </SelectContent>
             </Select>
             {fieldErrors.deliverTo && <FieldError>{fieldErrors.deliverTo}</FieldError>}
           </Field>
           <Field className="w-auto">
             <FieldLabel htmlFor="webhook-deliver-only">Deliver only</FieldLabel>
-            <label className="flex items-center gap-2 text-sm" htmlFor="webhook-deliver-only">
+            <label className="flex items-center gap-2 text-sm has-data-disabled:text-muted-foreground" htmlFor="webhook-deliver-only">
               <Checkbox
                 id="webhook-deliver-only"
                 checked={values.deliverOnly}
+                disabled={values.deliverTo === 'none'}
                 onCheckedChange={(checked: boolean) => onChange('deliverOnly', checked)}
               />
-              Skip the agent, deliver payload directly
+              Skip the agent, post the template
             </label>
           </Field>
         </div>
+        {values.deliverTo === 'none' && (
+          <FieldDescription>The agent runs and posts no message, even when the run fails.</FieldDescription>
+        )}
         <Field data-invalid={Boolean(fieldErrors.prompt)}>
           <FieldLabel htmlFor="webhook-prompt">{values.deliverOnly ? 'Message template' : 'Prompt'}</FieldLabel>
           <Textarea

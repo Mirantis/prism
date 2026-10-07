@@ -199,9 +199,9 @@ Let external systems trigger the agent by POSTing JSON to a named endpoint.
   turning it off closes the port immediately and keeps your subscriptions.
 - **New subscription** creates a named route (`/agents/webhooks/<name>`). It
   starts with the name, description and event-type filter, then two sections:
-  **Delivery** (target — All channels / Chat / Slack — a **deliver only** mode
-  that posts the rendered payload without running the agent, and the prompt
-  template) and **Authentication**.
+  **Delivery** (target — All channels / Chat / Slack / Microsoft Teams / None —
+  a **deliver only** mode that posts the rendered template without running the
+  agent, and the prompt template) and **Authentication**.
 - **Authentication** starts with a **Scheme** — a shared token in a header or an
   HMAC signature of the body — which reveals the **Header**, **Prefix** and
   **Secret** fields (plus **Algorithm**/**Encoding**/**Signed URL** for HMAC).
@@ -287,11 +287,12 @@ What the agent has spent, and what it has done.
 
 - **Webhook runs.** Every event a [webhook](webhooks.md) accepted, newest first,
   with the webhook's name, the time and the result: **Completed**, **Failed**,
-  **Spending limit reached**, or **Delivered** for a deliver-only webhook. A run
-  that has not finished reads **Queued** or **Running**, and one cut off by a
-  restart reads **Failed**. Expand a run to see the message it delivered and the
-  tool calls it made. When it delivered to web chat, **Open conversation** opens
-  that chat. The 1,000 newest finished runs are kept.
+  **Spending limit reached**, **Nothing to report** when the reply was held back,
+  or **Delivered** for a deliver-only webhook. A run that has not finished reads
+  **Queued** or **Running**, and one cut off by a restart reads **Failed**.
+  Expand a run to see the message it delivered and the tool calls it made. When
+  it delivered to web chat, **Open conversation** opens that chat. The 1,000
+  newest finished runs are kept.
 
 - **Tool calls.** The tool calls the agent has stored, newest turn first, across
   every conversation, running back through the whole history.

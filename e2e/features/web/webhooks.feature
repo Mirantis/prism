@@ -4,7 +4,9 @@ Feature: Inbound webhooks
   Webhooks page. The receiver starts disabled per scenario (per-scenario DB
   reset), so each scenario enables it first. Deliver-only subscriptions render
   the payload template straight into the conversation with no LLM call; the
-  agent-mode scenario exercises a real Bedrock run end-to-end. Sender
+  agent-mode scenarios exercise a real Bedrock run end-to-end, including the
+  delivery gate that holds a reply with nothing to report and the None target
+  that posts nothing at all. Sender
   verification is generic — the scenarios configure a header, a prefix and a
   secret, which is how any real sender (GitHub, PagerDuty, Alertmanager, …) is
   expressed.
@@ -56,6 +58,30 @@ Feature: Inbound webhooks
     When I expand the webhook run "alerts"
     Then its delivered message contains "WEBHOOK_RAN_OK"
     And the webhook run lists 0 tool calls
+
+  Scenario: An agent-mode reply with nothing to report is not delivered
+    When I navigate to the webhooks page
+    And I enable the webhook receiver
+    And I create a webhook subscription named "quiet" with prompt "The alert status is {status}. Do not use any tools. Message me only when the status is firing. When it is not firing, reply only: Nothing to report."
+    When I POST the payload '{"status":"resolved"}' to webhook "quiet"
+    Then the webhook response status is 202
+    And the delivery gate has decided on the webhook reply
+    And no webhook-triggered message is stored in the conversation
+    When I navigate to the activity page
+    Then the webhook run "quiet" is listed as "Nothing to report"
+
+  Scenario: A subscription delivered to None runs the agent and posts nothing
+    When I navigate to the webhooks page
+    And I enable the webhook receiver
+    And I fill in a webhook subscription named "silent" delivered to "None" with prompt "Ignore the payload. Reply with exactly WEBHOOK_RAN_OK and nothing else. Do not use any tools."
+    Then the deliver-only option is unavailable
+    When I submit the webhook subscription "silent"
+    And I POST the payload '{"status":"firing"}' to webhook "silent"
+    Then the webhook response status is 202
+    And the agent has run for the webhook
+    And no webhook-triggered message is stored in the conversation
+    When I navigate to the activity page
+    Then the webhook run "silent" is listed as "Completed"
 
   Scenario: A disabled subscription rejects incoming events
     When I navigate to the webhooks page

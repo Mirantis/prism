@@ -1,6 +1,6 @@
 /**
  * Classification gate — the DELIVER/SUPPRESS LLM call shared by the delivery
- * gates (heartbeat, cron). The caller owns its verdict-rules prompt and
+ * gates. The caller owns its verdict-rules prompt and
  * user-message construction; this module owns the call shape: fast
  * classification model, tiny output budget, deterministic sampling where
  * the vendor accepts it, and the fail-open default (a transient gate

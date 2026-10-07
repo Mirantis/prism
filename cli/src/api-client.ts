@@ -77,7 +77,7 @@ export interface CronTask {
 }
 
 /** The delivery targets this CLI offers. */
-export type WebhookDeliverTo = 'all' | 'chat' | 'slack' | 'teams';
+export type WebhookDeliverTo = 'all' | 'chat' | 'slack' | 'teams' | 'none';
 
 /** GET /agents/webhook-subscriptions row, less the fields the TUI does not show. */
 export interface WebhookSubscription {

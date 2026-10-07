@@ -16,6 +16,13 @@ interface WebhookSubscriptionCardProps {
   onDelete: () => void;
 }
 
+/** What a delivery from this subscription posts. */
+function deliveryMode(subscription: WebhookSubscription): string {
+  if (subscription.deliverOnly) return 'Direct delivery';
+  if (subscription.deliverTo === 'none') return 'Agent runs';
+  return 'Agent response';
+}
+
 export function WebhookSubscriptionCard({
   subscription,
   endpoint,
@@ -47,7 +54,7 @@ export function WebhookSubscriptionCard({
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <WebhookAuthBadge authType={subscription.authType} />
         <span className="text-xs text-muted-foreground">
-          {deliveryLabel}{subscription.deliverOnly ? ' · Direct delivery' : ' · Agent response'}
+          {deliveryLabel} · {deliveryMode(subscription)}
         </span>
       </div>
       <div className="flex min-w-0 items-center gap-2 rounded-lg bg-muted/40 p-2">

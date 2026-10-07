@@ -1261,6 +1261,29 @@ describe('Management Routes', () => {
       expect(res.body.fieldErrors.deliverTo).toBeTruthy();
     });
 
+    it('stores an agent-mode subscription that delivers nowhere', async () => {
+      mockPrisma.webhookSubscription.create.mockResolvedValue({ id: 'wh-1', name: 'reviews', deliverTo: 'none' });
+
+      const res = await authedRequest(app)
+        .post('/agents/webhook-subscriptions')
+        .send({ name: 'reviews', deliverTo: 'none', authType: 'none' });
+
+      expect(res.status).toBe(201);
+      expect(mockPrisma.webhookSubscription.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ deliverTo: 'none', deliverOnly: false }),
+      });
+    });
+
+    it('rejects deliver only without a target', async () => {
+      const res = await authedRequest(app)
+        .post('/agents/webhook-subscriptions')
+        .send({ name: 'reviews', deliverTo: 'none', deliverOnly: true, authType: 'none' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.fieldErrors.deliverOnly).toBeTruthy();
+      expect(mockPrisma.webhookSubscription.create).not.toHaveBeenCalled();
+    });
+
     it('409s duplicate names', async () => {
       mockPrisma.webhookSubscription.create.mockRejectedValue(
         new Prisma.PrismaClientKnownRequestError('Unique constraint', {
@@ -1329,6 +1352,7 @@ describe('Management Routes', () => {
         authType: 'token',
         secret: 'kept',
       };
+      mockPrisma.webhookSubscription.findUnique.mockResolvedValue({ id: 'wh-1', deliverTo: 'all', deliverOnly: false });
       mockPrisma.webhookSubscription.update.mockResolvedValue(updated);
 
       const res = await authedRequest(app).patch('/agents/webhook-subscriptions/wh-1').send({
@@ -1393,6 +1417,51 @@ describe('Management Routes', () => {
         'agent.id': config.agentId,
         'webhook.subscription_id': 'wh-1',
         'webhook.outcome': outcome,
+      });
+    });
+
+    describe('delivery fields', () => {
+      it('switches an agent-mode subscription to deliver nowhere', async () => {
+        mockPrisma.webhookSubscription.findUnique.mockResolvedValue({ id: 'wh-1', deliverTo: 'slack', deliverOnly: false });
+        mockPrisma.webhookSubscription.update.mockResolvedValue({ id: 'wh-1', deliverTo: 'none' });
+
+        const res = await authedRequest(app)
+          .patch('/agents/webhook-subscriptions/wh-1')
+          .send({ deliverTo: 'none' });
+
+        expect(res.status).toBe(200);
+        expect(mockPrisma.webhookSubscription.update).toHaveBeenCalledWith({
+          where: { id: 'wh-1' },
+          data: { deliverTo: 'none' },
+        });
+      });
+
+      it('validates the effective result: a deliver-only row cannot lose its target', async () => {
+        mockPrisma.webhookSubscription.findUnique.mockResolvedValue({ id: 'wh-1', deliverTo: 'all', deliverOnly: true });
+
+        const res = await authedRequest(app)
+          .patch('/agents/webhook-subscriptions/wh-1')
+          .send({ deliverTo: 'none' });
+
+        expect(res.status).toBe(400);
+        expect(res.body.fieldErrors.deliverOnly).toBeTruthy();
+        expect(mockPrisma.webhookSubscription.update).not.toHaveBeenCalled();
+        expect(mockTrackEvent).toHaveBeenCalledWith(
+          'webhook subscription updated',
+          config.ownerUserId,
+          expect.objectContaining({ 'webhook.outcome': 'invalid' }),
+        );
+      });
+
+      it('validates the effective result: a row with no target cannot turn on deliver only', async () => {
+        mockPrisma.webhookSubscription.findUnique.mockResolvedValue({ id: 'wh-1', deliverTo: 'none', deliverOnly: false });
+
+        const res = await authedRequest(app)
+          .patch('/agents/webhook-subscriptions/wh-1')
+          .send({ deliverOnly: true });
+
+        expect(res.status).toBe(400);
+        expect(mockPrisma.webhookSubscription.update).not.toHaveBeenCalled();
       });
     });
 

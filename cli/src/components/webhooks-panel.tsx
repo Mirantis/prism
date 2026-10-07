@@ -14,12 +14,13 @@ import { editText, resolveEditor, type EditResult } from '../editor.js';
 type Mode = 'list' | 'edit';
 type LoadState = 'loading' | 'ready' | 'error';
 
-const DELIVER_TARGETS: WebhookDeliverTo[] = ['all', 'chat', 'slack', 'teams'];
+const DELIVER_TARGETS: WebhookDeliverTo[] = ['all', 'chat', 'slack', 'teams', 'none'];
 const DELIVER_LABELS: Record<WebhookDeliverTo, string> = {
   all: 'All channels',
   chat: 'Chat',
   slack: 'Slack',
   teams: 'Microsoft Teams',
+  none: 'None',
 };
 
 /** A target that a newer runtime added shows as its stored value. */
@@ -219,7 +220,8 @@ export const WebhooksPanel: React.FC<Props> = ({ api, onClose, suspendInput, inp
       if (!f) return f;
       const i = (DELIVER_TARGETS as string[]).indexOf(f.deliverTo);
       const next = DELIVER_TARGETS[(i + step + DELIVER_TARGETS.length) % DELIVER_TARGETS.length]!;
-      return { ...f, deliverTo: next };
+      // Deliver only posts the template, so it needs a target.
+      return { ...f, deliverTo: next, deliverOnly: next === 'none' ? false : f.deliverOnly };
     });
   }, []);
 
@@ -271,7 +273,7 @@ export const WebhooksPanel: React.FC<Props> = ({ api, onClose, suspendInput, inp
         if (key.leftArrow) cycleDeliverTo(-1);
         else if (key.rightArrow || input === ' ') cycleDeliverTo(1);
       } else if (focused === 'deliverOnly' && input === ' ') {
-        setForm((f) => (f ? { ...f, deliverOnly: !f.deliverOnly } : f));
+        setForm((f) => (f && f.deliverTo !== 'none' ? { ...f, deliverOnly: !f.deliverOnly } : f));
       } else if (focused === 'prompt' && input === ' ') {
         void editPrompt();
       }
@@ -345,7 +347,9 @@ export const WebhooksPanel: React.FC<Props> = ({ api, onClose, suspendInput, inp
         </Box>
         <Box>
           {label('deliverOnly', 'Deliver only')}
-          <Text>{form.deliverOnly ? '[x]' : '[ ]'} Skip the agent, deliver the template directly</Text>
+          <Text dimColor={form.deliverTo === 'none'}>
+            {form.deliverOnly ? '[x]' : '[ ]'} Skip the agent, deliver the template directly
+          </Text>
         </Box>
         <Box>
           {label('prompt', form.deliverOnly ? 'Template' : 'Prompt')}

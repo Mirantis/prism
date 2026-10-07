@@ -993,7 +993,7 @@ src/
 │   │   ├── openai-embedding-provider.ts # text-embedding-3 on the OpenAI API
 │   │   └── openrouter-embedding-provider.ts # OpenAI SDK at openrouter.ai (`vendor/model` ids; off by default)
 │   ├── classification.ts       # Classification-gate request factories (`getGateRequest()` for the generateText gates, `getClassificationRequest()` for generateObject) — model + the active vendor's merged `providerOptions`
-│   ├── classification-gate.ts  # Shared one-word-verdict gate call (`runClassificationGate`) + `isRecentDuplicate`, used by the heartbeat and cron DELIVER/SUPPRESS gates
+│   ├── classification-gate.ts  # Shared one-word-verdict gate call (`runClassificationGate`) + `isRecentDuplicate`, used by the DELIVER/SUPPRESS gates
 │   ├── file-janitor.ts         # Hourly sweep of the durable file stores: orphaned uploads, stale hydrate scratch dirs, over-TTL attachment content, stray media files, over-TTL saved tool outputs
 │   ├── llm-errors.ts           # Single owner of LLM/runtime error → user-facing text (`buildErrorStep`, budget detection)
 │   ├── log-redaction.ts        # The global pino `err` serializer: an allow-list, so no SDK request/response body is ever logged
@@ -1011,6 +1011,7 @@ src/
     ├── context-builder.ts      # System prompt and message construction
     ├── channel-prompt.ts       # Channel-specific behavior instructions
     ├── cron-prompt.ts          # Scheduled-task DELIVER/SUPPRESS gate prompt (instruction-aware) + gate user-message builder
+    ├── webhook-gate-prompt.ts  # Webhook agent-reply DELIVER/SUPPRESS gate prompt (reads the subscription prompt as the instruction)
     └── early-stopping-prompt.ts # Prompt for summarizing when step limit is reached
 ```
 
