@@ -2,9 +2,10 @@
  * Pending-file-writes registry tests.
  *
  * The registry exists so a reader in a step can wait for that step's writes to
- * the same file. What matters here is the bookkeeping: only the matching path is
- * waited for, a write that never settles is bounded by the timeout rather than
- * hanging the turn, and a step boundary cannot leave a waiter stranded.
+ * the same file. What matters here is the bookkeeping: only the matching path,
+ * or a write with no path, is waited for, a write that never settles is bounded
+ * by the timeout rather than hanging the turn, and a step boundary cannot leave
+ * a waiter stranded.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -33,6 +34,17 @@ describe('createPendingFileWrites', () => {
     expect(outcome.status).toBe('settled');
     if (outcome.status !== 'settled') return;
     expect(outcome.toolNames).toEqual(['shell_write_file', 'shell_edit_file']);
+  });
+
+  it('holds a reader of any file while a write with no path is outstanding', async () => {
+    // shell_exec registers this way: its command can write any file.
+    const registry = createPendingFileWrites();
+    registry.register('c1', 'shell_exec');
+
+    const waiting = registry.waitFor('/ws/draft.md', { timeoutMs: 1000 });
+    registry.settle('c1');
+
+    await expect(waiting).resolves.toMatchObject({ status: 'settled', toolNames: ['shell_exec'] });
   });
 
   it('keeps waiting while one of several writes to the path is outstanding', async () => {

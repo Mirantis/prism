@@ -18,6 +18,9 @@
  * the `streamText` path announce and execute interleave per call, which would
  * break it — `invoke.ts` uses `generateText` only).
  *
+ * A write whose target is unknown registers with no path and holds every reader
+ * in the step: `shell_exec` can change any file, and nothing can tell which.
+ *
  * Waiting is free. The step already joins on every tool promise before the next
  * model call, so a reader finishing last within its own step delays nothing.
  *
@@ -35,12 +38,13 @@ export type PendingWaitOutcome =
 
 export interface PendingFileWrites {
   /**
-   * Record a write the model has asked for. Called from a write tool's
-   * `onInputAvailable`, which the SDK runs for every call in the step before any
-   * of them executes — registering from `execute` instead would defeat the point,
-   * since concurrent siblings have no ordering between them.
+   * Record a write the model has asked for, to `fullPath` or, without one, to any
+   * file. Called from a write tool's `onInputAvailable`, which the SDK runs for
+   * every call in the step before any of them executes — registering from
+   * `execute` instead would defeat the point, since concurrent siblings have no
+   * ordering between them.
    */
-  register(toolCallId: string | undefined, toolName: string, fullPath: string): void;
+  register(toolCallId: string | undefined, toolName: string, fullPath?: string): void;
   /** Release a registered write. Called from the write tool's `execute` finally. */
   settle(toolCallId: string | undefined): void;
   /**
@@ -51,7 +55,10 @@ export interface PendingFileWrites {
   announce(toolCallId: string | undefined, toolName: string): void;
   /** Whether this call id passed through `onInputAvailable`. */
   wasAnnounced(toolCallId: string | undefined): boolean;
-  /** Wait for the unsettled writes to `fullPath`, matched by exact string. */
+  /**
+   * Wait for the unsettled writes that can change `fullPath`: the ones to that
+   * exact string, and the ones with no path.
+   */
   waitFor(
     fullPath: string,
     options: { timeoutMs: number; abortSignal?: AbortSignal },
@@ -66,7 +73,8 @@ export interface PendingFileWrites {
 
 interface PendingWrite {
   toolName: string;
-  fullPath: string;
+  /** Undefined when the write can change any file. */
+  fullPath?: string;
   done: Promise<'settled' | 'cleared'>;
   resolve: (how: 'settled' | 'cleared') => void;
 }
@@ -107,7 +115,9 @@ export function createPendingFileWrites(): PendingFileWrites {
     },
 
     async waitFor(fullPath, options) {
-      const matching = [...writes.values()].filter((w) => w.fullPath === fullPath);
+      const matching = [...writes.values()].filter(
+        (w) => w.fullPath === undefined || w.fullPath === fullPath,
+      );
       if (matching.length === 0) return { status: 'none' };
 
       const toolNames = matching.map((w) => w.toolName);
