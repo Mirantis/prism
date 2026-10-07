@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { WebhookSubscription } from '@/types';
-import { subscriptionFormValues } from './webhook-subscription-form';
+import type { SlackChannelMapping, WebhookSubscription } from '@/types';
+import {
+  slackChannelNames,
+  slackChannelsToSave,
+  subscriptionFormValues,
+} from './webhook-subscription-form';
 
 const stored: WebhookSubscription = {
   id: 'wh-1',
@@ -10,6 +14,7 @@ const stored: WebhookSubscription = {
   events: 'push,pull_request',
   prompt: 'Alert: {status}',
   deliverTo: 'slack',
+  slackChannelIds: ['C_REL'],
   deliverOnly: true,
   isActive: false,
   authType: 'hmac',
@@ -30,6 +35,7 @@ describe('subscriptionFormValues', () => {
       description: 'Cluster alerts',
       events: 'push,pull_request',
       deliverTo: 'slack',
+      slackChannelIds: ['C_REL'],
       deliverOnly: true,
       prompt: 'Alert: {status}',
       authType: 'hmac',
@@ -63,5 +69,23 @@ describe('subscriptionFormValues', () => {
       authSignedUrl: '',
       secret: '',
     });
+  });
+});
+
+describe('slackChannelsToSave', () => {
+  it('saves the chosen channels for the Slack target and none for another', () => {
+    const values = subscriptionFormValues(stored);
+    expect(slackChannelsToSave(values)).toEqual(['C_REL']);
+    expect(slackChannelsToSave({ ...values, deliverTo: 'chat' })).toEqual([]);
+  });
+});
+
+describe('slackChannelNames', () => {
+  const linked: SlackChannelMapping[] = [
+    { id: 'm-1', channelId: 'C_REL', channelName: 'release-notes', agentName: 'Prism', linkedAt: '', isMain: false },
+  ];
+
+  it('names a linked channel and shows the id of one unlinked since', () => {
+    expect(slackChannelNames(['C_REL', 'C_GONE'], linked)).toBe('#release-notes, C_GONE');
   });
 });

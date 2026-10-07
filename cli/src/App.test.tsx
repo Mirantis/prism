@@ -49,6 +49,7 @@ const { adapterStub, apiStub, mockEditText } = vi.hoisted(() => {
         lastAttempt: null,
       }),
       applyUpdate: vi.fn().mockResolvedValue({ ok: true, version: 'v2026.1.1000000' }),
+      listSlackChannels: vi.fn().mockResolvedValue([]),
       listWebhookSubscriptions: vi.fn().mockResolvedValue([
         {
           id: 'wh-1',

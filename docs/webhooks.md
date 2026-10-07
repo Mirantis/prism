@@ -32,6 +32,7 @@ Click **New subscription** on the Webhooks page. **Delivery** and
 | — | **Description** | What this webhook does (optional, shown in the list). |
 | — | **Events** | Comma-separated event-type allowlist; empty = accept all. See [Event filtering](#event-filtering). |
 | Delivery | **Deliver to** | Where results go: **All channels** (default — web chat, Slack and Teams, like heartbeat alerts), **Chat** (web chat only), **Slack** (Slack only), **Microsoft Teams** (Teams only), or **None** (nowhere) — see [Delivery targets & storage](#delivery-targets--storage). |
+| Delivery | **Slack channels** | Shown when **Deliver to** is **Slack**: the linked channels to post to. With none checked, the message goes to your DM, else the main channel. |
 | Delivery | **Deliver only** | Skip the agent: the rendered prompt template is posted directly as the message. Zero LLM cost — useful for plain notifications. |
 | Delivery | **Prompt** / **Message template** | Instructions for the agent, or the message sent in **Deliver only** mode. Supports payload substitution — see below. |
 | Authentication | **Scheme** | How the sender proves itself: **Shared token in a header** (default), **HMAC signature of the body**, or **None**. |
@@ -159,7 +160,10 @@ sent and where it's recorded:
   personal mode; a dedicated per-channel thread in team mode), which the web
   Recents list and CLI resume picker don't show. If no Slack DM or channel is
   linked, the message falls back to the web thread (and the runtime logs a
-  warning) so a triggered event is never silently lost.
+  warning) so a triggered event is never silently lost. With **Slack
+  channels** checked, the message goes to each checked channel instead, stored
+  in that channel's own thread. A checked channel that is unlinked later gets
+  nothing; when none of them is still linked, the message goes to web chat.
 - **Microsoft Teams** — Teams only; same semantics as the Slack target, using
   the Teams personal chat or main channel.
 - **None** — the agent runs and posts no message, even when the run fails. Use

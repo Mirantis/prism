@@ -308,6 +308,7 @@ export const runtimeApi = {
     events?: string;
     prompt?: string;
     deliverTo?: WebhookSubscription['deliverTo'];
+    slackChannelIds?: string[];
     deliverOnly?: boolean;
     authType?: WebhookSubscription['authType'];
     authHeader?: string;
@@ -332,6 +333,7 @@ export const runtimeApi = {
         | 'events'
         | 'prompt'
         | 'deliverTo'
+        | 'slackChannelIds'
         | 'deliverOnly'
         | 'authType'
         | 'authHeader'

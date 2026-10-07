@@ -28,7 +28,9 @@ export function useSlackStatus() {
     enabled: Boolean(workspace),
   });
 
-  const channelCount = channels.data?.channels.length ?? 0;
+  // A disabled query still returns cached data, and `useSlackChannels` fills
+  // this key while no workspace is connected.
+  const channelCount = workspace ? (channels.data?.channels.length ?? 0) : 0;
   const hasDm = Boolean(linkStatus.data?.hasDmMapping);
   const isLoading =
     workspaces.isLoading || (Boolean(workspace) && (linkStatus.isPending || channels.isPending));

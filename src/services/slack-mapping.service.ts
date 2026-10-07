@@ -297,6 +297,15 @@ class SlackMappingService {
     }
   }
 
+  /** The ids of the channels linked to the agent. */
+  async listChannelIds(agentId: string): Promise<string[]> {
+    const channels = await prisma.slackMapping.findMany({
+      where: { agentId, slackChannelId: { not: null } },
+      select: { slackChannelId: true },
+    });
+    return channels.flatMap((m) => (m.slackChannelId ? [m.slackChannelId] : []));
+  }
+
   /**
    * Resolve the agent's main channel id: the flagged channel, else the oldest
    * linked channel (same "flagged, else oldest" rule the adapter uses to route
