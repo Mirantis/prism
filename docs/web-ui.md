@@ -199,9 +199,10 @@ Let external systems trigger the agent by POSTing JSON to a named endpoint.
   turning it off closes the port immediately and keeps your subscriptions.
 - **New subscription** creates a named route (`/agents/webhooks/<name>`). It
   starts with the name, description and event-type filter, then two sections:
-  **Delivery** (target — All channels / Chat / Slack / Microsoft Teams / None —
-  a **deliver only** mode that posts the rendered template without running the
-  agent, and the prompt template) and **Authentication**.
+  **Delivery** (target — All channels / Chat / Slack / Microsoft Teams / None,
+  and for Slack the linked channels to post to — a **deliver only** mode that
+  posts the rendered template without running the agent, and the prompt
+  template) and **Authentication**.
 - **Authentication** starts with a **Scheme** — a shared token in a header or an
   HMAC signature of the body — which reveals the **Header**, **Prefix** and
   **Secret** fields (plus **Algorithm**/**Encoding**/**Signed URL** for HMAC).

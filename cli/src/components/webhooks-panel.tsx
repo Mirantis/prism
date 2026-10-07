@@ -5,6 +5,7 @@ import { Spinner } from './Spinner.js';
 import {
   ApiClient,
   ApiError,
+  SlackChannel,
   WebhookDeliverTo,
   WebhookSubscription,
   WebhookSubscriptionUpdate,
@@ -28,13 +29,39 @@ function deliverLabel(target: string): string {
   return (DELIVER_LABELS as Partial<Record<string, string>>)[target] ?? target;
 }
 
-// The edit form's rows, in focus order.
-const FIELDS = ['description', 'events', 'deliverTo', 'deliverOnly', 'prompt'] as const;
-type Field = (typeof FIELDS)[number];
+/** An edit form row. A Slack channel row is named for its channel id. */
+type Field = 'description' | 'events' | 'deliverTo' | 'deliverOnly' | 'prompt' | `channel:${string}`;
+
+/** One checkbox row of the Slack channel list. */
+interface ChannelOption {
+  id: string;
+  label: string;
+  isMain: boolean;
+  isLinked: boolean;
+}
+
+/**
+ * The linked channels, then each chosen channel that was unlinked since, so
+ * the user can see it and clear it.
+ */
+function channelOptions(linked: SlackChannel[], chosen: string[]): ChannelOption[] {
+  return [
+    ...linked.map((c) => ({ id: c.channelId, label: `#${c.channelName ?? c.channelId}`, isMain: c.isMain, isLinked: true })),
+    ...chosen
+      .filter((id) => !linked.some((c) => c.channelId === id))
+      .map((id) => ({ id, label: id, isMain: false, isLinked: false })),
+  ];
+}
+
+/** The edit form's rows in focus order. Channel rows show for the Slack target only. */
+function fieldOrder(deliverTo: string, options: ChannelOption[]): Field[] {
+  const channels = deliverTo === 'slack' ? options.map((o): Field => `channel:${o.id}`) : [];
+  return ['description', 'events', 'deliverTo', ...channels, 'deliverOnly', 'prompt'];
+}
 
 /** The row `step` rows away from `field`, wrapping at either end. */
-function stepField(field: Field, step: 1 | -1): Field {
-  return FIELDS[(FIELDS.indexOf(field) + step + FIELDS.length) % FIELDS.length]!;
+function stepField(order: Field[], field: Field, step: 1 | -1): Field {
+  return order[(order.indexOf(field) + step + order.length) % order.length]!;
 }
 
 const LABEL_WIDTH = 16;
@@ -49,6 +76,7 @@ interface Form {
   description: string;
   events: string;
   deliverTo: string;
+  slackChannelIds: string[];
   deliverOnly: boolean;
   prompt: string;
 }
@@ -58,6 +86,7 @@ function formFrom(s: WebhookSubscription): Form {
     description: s.description ?? '',
     events: s.events ?? '',
     deliverTo: s.deliverTo,
+    slackChannelIds: s.slackChannelIds ?? [],
     deliverOnly: s.deliverOnly,
     prompt: s.prompt ?? '',
   };
@@ -94,6 +123,7 @@ export const WebhooksPanel: React.FC<Props> = ({ api, onClose, suspendInput, inp
   const [loadState, setLoadState] = useState<LoadState>('loading');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [subscriptions, setSubscriptions] = useState<WebhookSubscription[]>([]);
+  const [slackChannels, setSlackChannels] = useState<SlackChannel[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [toggling, setToggling] = useState(false);
 
@@ -112,9 +142,10 @@ export const WebhooksPanel: React.FC<Props> = ({ api, onClose, suspendInput, inp
       setLoadState('loading');
       setErrorMsg(null);
       try {
-        const list = await api.listWebhookSubscriptions();
+        const [list, channels] = await Promise.all([api.listWebhookSubscriptions(), api.listSlackChannels()]);
         if (cancelled?.current) return;
         setSubscriptions(list);
+        setSlackChannels(channels);
         setSelectedIndex((i) => (list.length === 0 ? 0 : Math.min(i, list.length - 1)));
         setLoadState('ready');
       } catch (err) {
@@ -135,6 +166,8 @@ export const WebhooksPanel: React.FC<Props> = ({ api, onClose, suspendInput, inp
   }, [reload]);
 
   const selected = subscriptions[selectedIndex];
+  const options = channelOptions(slackChannels, selected?.slackChannelIds ?? []);
+  const order = fieldOrder(form?.deliverTo ?? '', options);
 
   const replaceSubscription = useCallback((updated: WebhookSubscription) => {
     setSubscriptions((list) => list.map((s) => (s.id === updated.id ? updated : s)));
@@ -182,6 +215,8 @@ export const WebhooksPanel: React.FC<Props> = ({ api, onClose, suspendInput, inp
       events: form.events.trim(),
       prompt: form.prompt.trim(),
       deliverTo: form.deliverTo,
+      // The runtime accepts a channel list for the Slack target only.
+      slackChannelIds: form.deliverTo === 'slack' ? form.slackChannelIds : [],
       deliverOnly: form.deliverOnly,
     };
     try {
@@ -225,6 +260,14 @@ export const WebhooksPanel: React.FC<Props> = ({ api, onClose, suspendInput, inp
     });
   }, []);
 
+  const toggleChannel = useCallback((id: string) => {
+    setForm((f) => {
+      if (!f) return f;
+      const chosen = f.slackChannelIds.includes(id);
+      return { ...f, slackChannelIds: chosen ? f.slackChannelIds.filter((c) => c !== id) : [...f.slackChannelIds, id] };
+    });
+  }, []);
+
   // One handler for the whole panel, branching by mode. The form's TextInputs
   // take keys through their own `focus` prop and coexist with it.
   useInput(
@@ -262,16 +305,18 @@ export const WebhooksPanel: React.FC<Props> = ({ api, onClose, suspendInput, inp
         return;
       }
       if ((key.tab && key.shift) || key.upArrow) {
-        setFocused((f) => stepField(f, -1));
+        setFocused((f) => stepField(order, f, -1));
         return;
       }
       if (key.tab || key.downArrow) {
-        setFocused((f) => stepField(f, 1));
+        setFocused((f) => stepField(order, f, 1));
         return;
       }
       if (focused === 'deliverTo') {
         if (key.leftArrow) cycleDeliverTo(-1);
         else if (key.rightArrow || input === ' ') cycleDeliverTo(1);
+      } else if (focused.startsWith('channel:') && input === ' ') {
+        toggleChannel(focused.slice('channel:'.length));
       } else if (focused === 'deliverOnly' && input === ' ') {
         setForm((f) => (f && f.deliverTo !== 'none' ? { ...f, deliverOnly: !f.deliverOnly } : f));
       } else if (focused === 'prompt' && input === ' ') {
@@ -312,7 +357,7 @@ export const WebhooksPanel: React.FC<Props> = ({ api, onClose, suspendInput, inp
     const keyHint =
       focused === 'deliverTo'
         ? '←→ change'
-        : focused === 'deliverOnly'
+        : focused === 'deliverOnly' || focused.startsWith('channel:')
           ? 'space toggle'
           : focused === 'prompt'
             ? 'space open in editor'
@@ -345,6 +390,28 @@ export const WebhooksPanel: React.FC<Props> = ({ api, onClose, suspendInput, inp
           {label('deliverTo', 'Deliver to')}
           <Text>‹ {deliverLabel(form.deliverTo)} ›</Text>
         </Box>
+        {form.deliverTo === 'slack' && options.length === 0 && (
+          <Box>
+            <Box width={LABEL_WIDTH}>
+              <Text>Slack channels</Text>
+            </Box>
+            <Text dimColor>none linked: posts to your DM, else the main channel</Text>
+          </Box>
+        )}
+        {form.deliverTo === 'slack' &&
+          options.map((option, i) => (
+            <Box key={option.id}>
+              {i === 0 ? label(`channel:${option.id}`, 'Slack channels') : <Box width={LABEL_WIDTH} />}
+              <Text
+                color={focused === `channel:${option.id}` ? 'cyan' : undefined}
+                bold={focused === `channel:${option.id}`}
+              >
+                {form.slackChannelIds.includes(option.id) ? '[x]' : '[ ]'} {option.label}
+              </Text>
+              {option.isMain && <Text dimColor> main</Text>}
+              {!option.isLinked && <Text dimColor> not linked</Text>}
+            </Box>
+          ))}
         <Box>
           {label('deliverOnly', 'Deliver only')}
           <Text dimColor={form.deliverTo === 'none'}>
@@ -372,6 +439,9 @@ export const WebhooksPanel: React.FC<Props> = ({ api, onClose, suspendInput, inp
             Events is a comma-separated allowlist; empty accepts every event. Prompts substitute
             {' {field.path} and {__raw__}.'}
           </Text>
+          {form.deliverTo === 'slack' && options.length > 0 && (
+            <Text dimColor>With no Slack channel checked, Slack delivery goes to your DM, else the main channel.</Text>
+          )}
         </Box>
         {errorMsg && <Text color="red">{errorMsg}</Text>}
         <Box marginTop={1}>

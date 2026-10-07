@@ -72,6 +72,7 @@ const {
   mockSlackMappingService: {
     setMainChannel: vi.fn(),
     getMainChannel: vi.fn(),
+    listChannelIds: vi.fn(),
   },
   mockPrisma: {
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
@@ -1069,7 +1070,7 @@ describe('Management Routes', () => {
         .send({ name: '  GitHub Push ', description: 'PR events', authType: 'none' });
 
       expect(res.status).toBe(201);
-      expect(res.body).toEqual({ ...created, hasSecret: false });
+      expect(res.body).toEqual({ ...created, slackChannelIds: [], hasSecret: false });
       expect(mockPrisma.webhookSubscription.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           agentId: 'agent-1',
@@ -1082,6 +1083,53 @@ describe('Management Routes', () => {
           secret: null,
         }),
       });
+    });
+
+    it('stores the chosen Slack channels when each is linked to the agent', async () => {
+      mockSlackMappingService.listChannelIds.mockResolvedValueOnce(['C_MAIN', 'C_REL', 'C_IOS']);
+      mockPrisma.webhookSubscription.create.mockResolvedValue({
+        id: 'wh-1',
+        deliverTo: 'slack',
+        slackChannelIds: 'C_REL,C_IOS',
+      });
+
+      const res = await authedRequest(app).post('/agents/webhook-subscriptions').send({
+        name: 'release-notes',
+        deliverTo: 'slack',
+        slackChannelIds: [' C_REL', 'C_REL', 'C_IOS'],
+        authType: 'none',
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body.slackChannelIds).toEqual(['C_REL', 'C_IOS']);
+      expect(mockSlackMappingService.listChannelIds).toHaveBeenCalledWith('agent-1');
+      expect(mockPrisma.webhookSubscription.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ deliverTo: 'slack', slackChannelIds: 'C_REL,C_IOS' }),
+      });
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'webhook subscription created',
+        'user-1',
+        expect.objectContaining({ 'webhook.slack_channels': '2' }),
+      );
+    });
+
+    it.each([
+      { case: 'a channel not linked to the agent', deliverTo: 'slack', slackChannelIds: ['C_OTHER'] },
+      { case: 'a list for another target', deliverTo: 'all', slackChannelIds: ['C_REL'] },
+      { case: 'a list that is not an array of ids', deliverTo: 'slack', slackChannelIds: 'C_REL' },
+    ])('rejects $case', async ({ deliverTo, slackChannelIds }) => {
+      mockSlackMappingService.listChannelIds.mockResolvedValueOnce(['C_REL']);
+
+      const res = await authedRequest(app).post('/agents/webhook-subscriptions').send({
+        name: 'release-notes',
+        deliverTo,
+        slackChannelIds,
+        authType: 'none',
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.body.fieldErrors.slackChannelIds).toBeTruthy();
+      expect(mockPrisma.webhookSubscription.create).not.toHaveBeenCalled();
     });
 
     it('requires credentials by default and stores token authentication when supplied', async () => {
@@ -1334,7 +1382,7 @@ describe('Management Routes', () => {
         .send({ isActive: false });
 
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ ...updated, hasSecret: false });
+      expect(res.body).toEqual({ ...updated, slackChannelIds: [], hasSecret: false });
       expect(mockPrisma.webhookSubscription.update).toHaveBeenCalledWith({
         where: { id: 'wh-1' },
         data: { isActive: false },
@@ -1380,8 +1428,92 @@ describe('Management Routes', () => {
         'webhook.outcome': 'success',
         'webhook.is_active': 'true',
         'webhook.deliver_to': 'slack',
+        'webhook.slack_channels': '0',
         'webhook.deliver_only': 'true',
         'webhook.auth_type': 'token',
+      });
+    });
+
+    it('keeps a stored channel unlinked since it was chosen, and refuses a new unlinked one', async () => {
+      const current = { id: 'wh-1', agentId: 'agent-1', deliverTo: 'slack', slackChannelIds: 'C_GONE' };
+      mockPrisma.webhookSubscription.findUnique.mockResolvedValue(current);
+      mockSlackMappingService.listChannelIds.mockResolvedValue(['C_REL']);
+      mockPrisma.webhookSubscription.update.mockResolvedValue({ ...current, slackChannelIds: 'C_GONE,C_REL' });
+
+      const kept = await authedRequest(app).patch('/agents/webhook-subscriptions/wh-1').send({
+        description: 'Release notes',
+        slackChannelIds: ['C_GONE', 'C_REL'],
+      });
+      expect(kept.status).toBe(200);
+      expect(mockPrisma.webhookSubscription.update).toHaveBeenCalledWith({
+        where: { id: 'wh-1' },
+        data: { description: 'Release notes', slackChannelIds: 'C_GONE,C_REL' },
+      });
+
+      const refused = await authedRequest(app).patch('/agents/webhook-subscriptions/wh-1').send({
+        slackChannelIds: ['C_OTHER'],
+      });
+      expect(refused.status).toBe(400);
+      expect(refused.body.fieldErrors.slackChannelIds).toContain('C_OTHER');
+      expect(mockPrisma.webhookSubscription.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('clears the channel list sent as null', async () => {
+      mockPrisma.webhookSubscription.findUnique.mockResolvedValue({
+        id: 'wh-1',
+        agentId: 'agent-1',
+        deliverTo: 'slack',
+        deliverOnly: false,
+        slackChannelIds: 'C_REL',
+      });
+      mockPrisma.webhookSubscription.update.mockResolvedValue({ id: 'wh-1', deliverTo: 'slack' });
+
+      const res = await authedRequest(app).patch('/agents/webhook-subscriptions/wh-1').send({
+        slackChannelIds: null,
+      });
+
+      expect(res.status).toBe(200);
+      expect(mockPrisma.webhookSubscription.update).toHaveBeenCalledWith({
+        where: { id: 'wh-1' },
+        data: { slackChannelIds: null },
+      });
+    });
+
+    it('judges the list against the target the same request sets', async () => {
+      mockPrisma.webhookSubscription.findUnique.mockResolvedValue({
+        id: 'wh-1',
+        agentId: 'agent-1',
+        deliverTo: 'slack',
+        slackChannelIds: null,
+      });
+
+      const res = await authedRequest(app).patch('/agents/webhook-subscriptions/wh-1').send({
+        deliverTo: 'chat',
+        slackChannelIds: ['C_REL'],
+      });
+
+      expect(res.status).toBe(400);
+      expect(mockPrisma.webhookSubscription.update).not.toHaveBeenCalled();
+    });
+
+    it('clears the channel list when the target moves off Slack', async () => {
+      mockPrisma.webhookSubscription.findUnique.mockResolvedValue({
+        id: 'wh-1',
+        agentId: 'agent-1',
+        deliverTo: 'slack',
+        deliverOnly: false,
+        slackChannelIds: 'C_REL',
+      });
+      mockPrisma.webhookSubscription.update.mockResolvedValue({ id: 'wh-1', deliverTo: 'chat' });
+
+      const res = await authedRequest(app).patch('/agents/webhook-subscriptions/wh-1').send({
+        deliverTo: 'chat',
+      });
+
+      expect(res.status).toBe(200);
+      expect(mockPrisma.webhookSubscription.update).toHaveBeenCalledWith({
+        where: { id: 'wh-1' },
+        data: { deliverTo: 'chat', slackChannelIds: null },
       });
     });
 
@@ -1432,7 +1564,7 @@ describe('Management Routes', () => {
         expect(res.status).toBe(200);
         expect(mockPrisma.webhookSubscription.update).toHaveBeenCalledWith({
           where: { id: 'wh-1' },
-          data: { deliverTo: 'none' },
+          data: { deliverTo: 'none', slackChannelIds: null },
         });
       });
 

@@ -23,6 +23,7 @@ const {
   mockGetOrCreateThreadByExternalId,
   mockGetAgent,
   mockGetMainChannel,
+  mockListChannelIds,
   mockGetTeamsMainChannel,
   mockSubscriptionFindUnique,
   mockSlackMappingFindFirst,
@@ -41,6 +42,7 @@ const {
   mockGetOrCreateThreadByExternalId: vi.fn(),
   mockGetAgent: vi.fn(),
   mockGetMainChannel: vi.fn(),
+  mockListChannelIds: vi.fn(),
   mockGetTeamsMainChannel: vi.fn(),
   mockSubscriptionFindUnique: vi.fn(),
   mockSlackMappingFindFirst: vi.fn(),
@@ -88,6 +90,7 @@ vi.mock('./agent-workspace.service', () => ({
 vi.mock('./slack-mapping.service', () => ({
   slackMappingService: {
     getMainChannel: mockGetMainChannel,
+    listChannelIds: mockListChannelIds,
   },
 }));
 
@@ -141,7 +144,8 @@ import {
   webhookService,
   renderWebhookPrompt,
   resolveEventType,
-  parseEventsList,
+  parseCommaList,
+  toPublicSubscription,
   normalizeWebhookName,
   isValidDeliverTo,
   WEBHOOK_MAX_PENDING,
@@ -163,6 +167,7 @@ function createSubscription(overrides: Record<string, unknown> = {}) {
     events: null,
     prompt: null,
     deliverTo: 'all',
+    slackChannelIds: null,
     deliverOnly: false,
     isActive: true,
     authType: 'none',
@@ -198,6 +203,7 @@ beforeEach(() => {
   // Default: no Slack/Teams destination linked. Scoped tests override these.
   mockSlackMappingFindFirst.mockResolvedValue(null);
   mockGetMainChannel.mockResolvedValue(null);
+  mockListChannelIds.mockResolvedValue([]);
   mockTeamsMappingFindFirst.mockResolvedValue(null);
   mockGetTeamsMainChannel.mockResolvedValue(null);
   mockGetOrCreateThreadByExternalId.mockImplementation((_u, _a, ext) =>
@@ -252,7 +258,7 @@ describe('renderWebhookPrompt', () => {
 });
 
 // ---------------------------------------------------------------------------
-// resolveEventType / parseEventsList
+// resolveEventType / parseCommaList
 // ---------------------------------------------------------------------------
 
 describe('resolveEventType', () => {
@@ -270,11 +276,23 @@ describe('resolveEventType', () => {
   });
 });
 
-describe('parseEventsList', () => {
+describe('parseCommaList', () => {
   it('splits and trims, dropping empties', () => {
-    expect(parseEventsList(' push, pull_request ,,')).toEqual(['push', 'pull_request']);
-    expect(parseEventsList(null)).toEqual([]);
-    expect(parseEventsList('')).toEqual([]);
+    expect(parseCommaList(' push, pull_request ,,')).toEqual(['push', 'pull_request']);
+    expect(parseCommaList(null)).toEqual([]);
+    expect(parseCommaList('')).toEqual([]);
+  });
+});
+
+describe('toPublicSubscription', () => {
+  it('lists the Slack channels and reports only whether a secret is set', () => {
+    const row = createSubscription({ slackChannelIds: 'C_REL,C_IOS', secret: 's3cret' });
+    const projected = toPublicSubscription(row as Parameters<typeof toPublicSubscription>[0]);
+    expect(projected.slackChannelIds).toEqual(['C_REL', 'C_IOS']);
+    expect(projected.hasSecret).toBe(true);
+    expect(projected).not.toHaveProperty('secret');
+    expect(toPublicSubscription(createSubscription() as Parameters<typeof toPublicSubscription>[0]).slackChannelIds)
+      .toEqual([]);
   });
 });
 
@@ -772,6 +790,98 @@ describe('handleInbound agent mode', () => {
       '**Webhook: alerts**\n\nhandled',
       'WEBHOOK',
       expect.objectContaining({}),
+    );
+  });
+
+  it('chosen channels: posts to each one in its own channel thread, and nowhere else', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(
+      createSubscription({ deliverTo: 'slack', slackChannelIds: 'C_REL,C_IOS' }),
+    );
+    mockListChannelIds.mockResolvedValue(['C_MAIN', 'C_REL', 'C_IOS']);
+    mockSlackMappingFindFirst.mockResolvedValue({ dmChannelId: 'D123' });
+    mockPublish.mockResolvedValueOnce({ id: 'msg-rel' }).mockResolvedValueOnce({ id: 'msg-ios' });
+    mockInvoke.mockResolvedValue(invokeResult('handled', { attachmentIds: ['att-1'] }));
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalled());
+
+    expect(mockListChannelIds).toHaveBeenCalledWith('agent-1');
+    expect(mockPublish.mock.calls.map((call) => [call[1], call[4].channelContext])).toEqual([
+      ['thread-for-C_REL', { channel: 'slack', channelId: 'C_REL', threadId: 'thread-for-C_REL' }],
+      ['thread-for-C_IOS', { channel: 'slack', channelId: 'C_IOS', threadId: 'thread-for-C_IOS' }],
+    ]);
+    expect(mockPublish.mock.calls[0][4]).toMatchObject({ attachmentIds: ['att-1'] });
+    // The list replaces the DM and the main channel.
+    expect(mockSlackMappingFindFirst).not.toHaveBeenCalled();
+    expect(mockGetMainChannel).not.toHaveBeenCalled();
+    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
+    expect(mockRunFinish).toHaveBeenCalledWith('run-1', expect.objectContaining({ status: 'completed', messageId: 'msg-rel' }));
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'webhook processed',
+      'user-1',
+      expect.objectContaining({ 'webhook.slack_posted': '2', 'webhook.slack_skipped': '0' }),
+    );
+  });
+
+  it('chosen channels: skips one unlinked after it was chosen and still reaches the others', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(
+      createSubscription({ deliverTo: 'slack', deliverOnly: true, prompt: 'Release {v}', slackChannelIds: 'C_GONE,C_REL' }),
+    );
+    mockListChannelIds.mockResolvedValue(['C_MAIN', 'C_REL']);
+
+    await expect(webhookService.handleInbound('release', { v: '1.2' }, {}, 'run-1')).resolves.toEqual({
+      status: 'delivered',
+      event: 'unknown',
+    });
+
+    expect(mockPublish).toHaveBeenCalledTimes(1);
+    expect(mockPublish).toHaveBeenCalledWith('user-1', 'thread-for-C_REL', 'Release 1.2', 'WEBHOOK', {
+      channelContext: { channel: 'slack', channelId: 'C_REL', threadId: 'thread-for-C_REL' },
+    });
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('C_GONE'));
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'webhook processed',
+      'user-1',
+      expect.objectContaining({ 'webhook.slack_posted': '1', 'webhook.slack_skipped': '1' }),
+    );
+  });
+
+  it('chosen channels: stores the message in web chat only when none of them is linked', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(
+      createSubscription({ deliverTo: 'slack', deliverOnly: true, prompt: 'ping', slackChannelIds: 'C_GONE' }),
+    );
+    mockListChannelIds.mockResolvedValue(['C_MAIN']);
+    mockGetMainChannel.mockResolvedValue('C_MAIN');
+
+    await webhookService.handleInbound('release', {}, {}, 'run-1');
+
+    // Scoped to the web socket: a broadcast would reach the main channel.
+    expect(mockPublish).toHaveBeenCalledTimes(1);
+    expect(mockPublish).toHaveBeenCalledWith('user-1', 'thread-1', 'ping', 'WEBHOOK', {
+      channelContext: { channel: 'websocket', threadId: 'thread-1' },
+    });
+    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
+    expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status: 'delivered', messageId: 'msg-1' });
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'webhook processed',
+      'user-1',
+      expect.objectContaining({ 'webhook.slack_posted': '0', 'webhook.slack_skipped': '1' }),
+    );
+  });
+
+  it('chosen channels apply to the Slack target only', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(
+      createSubscription({ deliverTo: 'all', deliverOnly: true, prompt: 'ping', slackChannelIds: 'C_REL' }),
+    );
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+
+    expect(mockListChannelIds).not.toHaveBeenCalled();
+    expect(mockPublishToLatestThread).toHaveBeenCalledWith('agent-1', 'user-1', 'ping', 'WEBHOOK', undefined);
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'webhook processed',
+      'user-1',
+      expect.not.objectContaining({ 'webhook.slack_posted': expect.anything() }),
     );
   });
 

@@ -164,6 +164,19 @@ Feature: Inbound webhooks
     Then a webhook-triggered message containing "After edit: done" is stored in the conversation
     And no webhook-triggered message containing "filtered" is stored in the conversation
 
+  # The channels are linked rows in the agent's database: this suite runs with
+  # no Slack connection. Delivery to real channels is in the Slack suite.
+  Scenario: Choose the linked Slack channels a Slack delivery posts to
+    Given the agent has the linked Slack channels "release-notes" and "ios-testflight"
+    When I navigate to the webhooks page
+    And I enable the webhook receiver
+    And I create a deliver-only webhook subscription named "release" that posts to the Slack channel "ios-testflight"
+    Then the stored webhook subscription "release" posts to the Slack channels "ios-testflight"
+    And the subscription "release" lists the Slack channels "#ios-testflight"
+    When I edit webhook "release"
+    And I check the Slack channel "release-notes" and save
+    Then the stored webhook subscription "release" posts to the Slack channels "ios-testflight, release-notes"
+
   Scenario: Manage authentication on a narrow screen with the keyboard
     When I use a narrow webhook viewport
     And I navigate to the webhooks page

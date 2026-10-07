@@ -46,6 +46,7 @@ const alerts: WebhookSubscription = {
 function renderPanel(updateWebhookSubscription = vi.fn()) {
   const api = {
     listWebhookSubscriptions: vi.fn().mockResolvedValue([alerts]),
+    listSlackChannels: vi.fn().mockResolvedValue([]),
     updateWebhookSubscription,
   } as unknown as ApiClient;
   const order: string[] = [];
@@ -78,6 +79,7 @@ describe('the terminal webhooks panel', () => {
   it('shows a delivery target that a newer runtime added as its stored value', async () => {
     const api = {
       listWebhookSubscriptions: vi.fn().mockResolvedValue([{ ...alerts, deliverTo: 'pagerduty' }]),
+      listSlackChannels: vi.fn().mockResolvedValue([]),
     } as unknown as ApiClient;
     const { lastFrame, stdin, unmount } = render(
       <WebhooksPanel api={api} onClose={vi.fn()} suspendInput={(fn) => fn()} />,
@@ -137,9 +139,47 @@ describe('the terminal webhooks panel', () => {
       events: 'push',
       prompt: 'Fired: {status}',
       deliverTo: 'chat',
+      slackChannelIds: [],
       deliverOnly: false,
     });
     expect(lastFrame()).toContain('Webhooks');
+    unmount();
+  });
+
+  it('chooses the Slack channels of a Slack subscription, keeping one unlinked since in view', async () => {
+    const update = vi.fn().mockResolvedValue(alerts);
+    const api = {
+      listWebhookSubscriptions: vi
+        .fn()
+        .mockResolvedValue([{ ...alerts, deliverTo: 'slack', slackChannelIds: ['C_GONE'] }]),
+      listSlackChannels: vi.fn().mockResolvedValue([
+        { channelId: 'C_MAIN', channelName: 'general', isMain: true },
+        { channelId: 'C_REL', channelName: 'release-notes', isMain: false },
+      ]),
+      updateWebhookSubscription: update,
+    } as unknown as ApiClient;
+    const { lastFrame, stdin, unmount } = render(
+      <WebhooksPanel api={api} onClose={vi.fn()} suspendInput={(fn) => fn()} />,
+    );
+    await flush();
+
+    await type(stdin, ENTER);
+    const frame = lastFrame() ?? '';
+    expect(frame).toMatch(/Slack channels\s+\[ \] #general main/);
+    expect(frame).toContain('[ ] #release-notes');
+    expect(frame).toContain('[x] C_GONE not linked');
+
+    // Description → Events → Deliver to → #general → #release-notes, then C_GONE.
+    await type(stdin, TAB, TAB, TAB, TAB, ' ', TAB, ' ');
+    expect(lastFrame()).toContain('[x] #release-notes');
+    expect(lastFrame()).toContain('[ ] C_GONE');
+
+    await type(stdin, ENTER);
+    await settle();
+    expect(update).toHaveBeenCalledWith('wh-1', expect.objectContaining({
+      deliverTo: 'slack',
+      slackChannelIds: ['C_REL'],
+    }));
     unmount();
   });
 
@@ -148,6 +188,7 @@ describe('the terminal webhooks panel', () => {
       listWebhookSubscriptions: vi
         .fn()
         .mockResolvedValue([{ ...alerts, prompt: 'Fired:\n\n{__raw__}\n\nTriage it.\nThen report.' }]),
+      listSlackChannels: vi.fn().mockResolvedValue([]),
     } as unknown as ApiClient;
     const { lastFrame, stdin, unmount } = render(
       <WebhooksPanel api={api} onClose={vi.fn()} suspendInput={(fn) => fn()} />,

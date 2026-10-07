@@ -17,6 +17,8 @@ export interface NewSubscriptionInput {
   /** The Deliver to option's label; omit to keep the default (All channels). */
   deliverTo?: string;
   deliverOnly?: boolean;
+  /** Linked Slack channel names to check; needs `deliverTo: 'Slack'`. */
+  slackChannels?: string[];
   /** Omit to explicitly select None for unsigned-delivery scenarios. */
   authType?: 'token' | 'hmac';
   authHeader?: string;
@@ -59,9 +61,9 @@ export class WebhooksPage extends BasePage {
 
   /** The Deliver only checkbox in the New-subscription modal. */
   get deliverOnlyCheckbox(): Locator {
-    // Base UI's Checkbox puts the id on a hidden input; the visible
-    // role=checkbox element (scoped to the dialog) is the control.
-    return this.page.locator('[data-slot="dialog-content"] [data-slot="checkbox"]');
+    return this.page
+      .getByRole('dialog')
+      .getByRole('checkbox', { name: 'Skip the agent, post the template', exact: true });
   }
 
   /** Open the modal and fill the subscription fields, leaving it open. */
@@ -82,6 +84,9 @@ export class WebhooksPage extends BasePage {
     }
     if (input.deliverOnly) {
       await this.deliverOnlyCheckbox.click();
+    }
+    for (const channel of input.slackChannels ?? []) {
+      await this.slackChannelCheckbox(channel).click();
     }
     if (!input.authType) {
       await this.page.locator('#webhook-auth-type').click();
@@ -135,6 +140,11 @@ export class WebhooksPage extends BasePage {
     return this.page.getByRole('row').filter({ hasText: name })
       .or(this.page.getByLabel(`Subscription ${name}`, { exact: true }))
       .filter({ visible: true });
+  }
+
+  /** A linked Slack channel's checkbox in the open form. */
+  slackChannelCheckbox(channelName: string): Locator {
+    return this.page.getByRole('dialog').getByRole('checkbox', { name: `#${channelName}`, exact: true });
   }
 
   /** Open a subscription's Edit dialog from its row or card. */

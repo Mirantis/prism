@@ -145,6 +145,7 @@ import {
   WEBHOOK_NAME_RE,
   isValidDeliverTo,
   normalizeWebhookName,
+  parseCommaList,
   toPublicSubscription,
   WEBHOOK_DELIVER_TARGETS,
 } from '../services/webhook.service';
@@ -1039,6 +1040,42 @@ function readWebhookAuthFields(
 }
 
 /**
+ * Read the Slack channel list from a request body, as the stored column value.
+ * The list belongs to the Slack target. Each id has to name a channel linked
+ * to the agent, or one the subscription already holds, so a channel unlinked
+ * after it was chosen does not block an unrelated edit.
+ */
+async function readSlackChannelIds(
+  raw: unknown,
+  deliverTo: string,
+  agentId: string,
+  stored: string[],
+): Promise<
+  | { ok: false; error: string; fieldErrors: Record<string, string> }
+  | { ok: true; value: string | null }
+> {
+  const fail = (message: string) =>
+    ({ ok: false as const, error: message, fieldErrors: { slackChannelIds: message } });
+
+  // null clears the list, as it clears the nullable fields beside it.
+  const list = raw === null ? [] : raw;
+  if (!Array.isArray(list) || list.some((id) => typeof id !== 'string')) {
+    return fail('slackChannelIds must be an array of Slack channel ids');
+  }
+  const ids = [...new Set((list as string[]).map((id) => id.trim()).filter((id) => id.length > 0))];
+  if (ids.length === 0) return { ok: true, value: null };
+  if (deliverTo !== 'slack') {
+    return fail("Slack channels apply only when deliverTo is 'slack'");
+  }
+  const linked = new Set(await slackMappingService.listChannelIds(agentId));
+  const unknown = ids.filter((id) => !linked.has(id) && !stored.includes(id));
+  if (unknown.length > 0) {
+    return fail(`Not a Slack channel linked to the agent: ${unknown.join(', ')}`);
+  }
+  return { ok: true, value: ids.join(',') };
+}
+
+/**
  * GET /agents/webhooks/receiver
  * Whether the inbound webhook receiver is enabled, and where senders reach it:
  * the webhook port, plus its public origin when the deployment exposes one.
@@ -1104,9 +1141,9 @@ const DELIVER_ONLY_NEEDS_TARGET = {
 /**
  * POST /agents/webhook-subscriptions
  * Create a webhook subscription.
- * Body: { name, description?, events?, prompt?, deliverTo?, deliverOnly?,
- *         authType?, authHeader?, authPrefix?, authAlgorithm?, authEncoding?,
- *         authSignedUrl?, secret? }
+ * Body: { name, description?, events?, prompt?, deliverTo?, slackChannelIds?,
+ *         deliverOnly?, authType?, authHeader?, authPrefix?, authAlgorithm?,
+ *         authEncoding?, authSignedUrl?, secret? }
  */
 router.post('/webhook-subscriptions', async (req: Request, res: Response) => {
   try {
@@ -1144,6 +1181,14 @@ router.post('/webhook-subscriptions', async (req: Request, res: Response) => {
     }
 
     const agent = await agentWorkspaceService.getAgent();
+    const channels = body.slackChannelIds === undefined
+      ? { ok: true as const, value: null }
+      : await readSlackChannelIds(body.slackChannelIds, deliverTo, agent.id, []);
+    if (!channels.ok) {
+      res.status(400).json({ error: channels.error, fieldErrors: channels.fieldErrors });
+      return;
+    }
+
     let subscription;
     try {
       subscription = await prisma.webhookSubscription.create({
@@ -1154,6 +1199,7 @@ router.post('/webhook-subscriptions', async (req: Request, res: Response) => {
           events: typeof body.events === 'string' && body.events.trim() ? body.events.trim() : null,
           prompt: typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt.trim() : null,
           deliverTo,
+          slackChannelIds: channels.value,
           deliverOnly,
           ...auth.values,
         },
@@ -1174,6 +1220,7 @@ router.post('/webhook-subscriptions', async (req: Request, res: Response) => {
       'agent.id': agent.id,
       'webhook.subscription_id': subscription.id,
       'webhook.deliver_to': subscription.deliverTo,
+      'webhook.slack_channels': String(parseCommaList(subscription.slackChannelIds).length),
       'webhook.deliver_only': String(subscription.deliverOnly),
       'webhook.auth_type': subscription.authType,
     });
@@ -1201,6 +1248,7 @@ function trackSubscriptionUpdate(
     ...(stored && {
       'webhook.is_active': String(stored.isActive),
       'webhook.deliver_to': stored.deliverTo,
+      'webhook.slack_channels': String(parseCommaList(stored.slackChannelIds).length),
       'webhook.deliver_only': String(stored.deliverOnly),
       'webhook.auth_type': stored.authType,
     }),
@@ -1210,13 +1258,14 @@ function trackSubscriptionUpdate(
 /**
  * PATCH /agents/webhook-subscriptions/:id
  * Update a subscription (isActive toggle and/or editable fields).
- * Body: any of { isActive, description, events, prompt, deliverTo, deliverOnly,
- *                authType, authHeader, authPrefix, authAlgorithm, authEncoding,
- *                authSignedUrl, secret }
+ * Body: any of { isActive, description, events, prompt, deliverTo,
+ *                slackChannelIds, deliverOnly, authType, authHeader, authPrefix,
+ *                authAlgorithm, authEncoding, authSignedUrl, secret }
  *
  * Auth fields are validated against the row's current state, so the *result*
  * of the update has to be verifiable — and switching authType to 'none' clears
- * the stored credential.
+ * the stored credential. The Slack channel list is validated against the
+ * effective target, and a target other than 'slack' clears it.
  */
 router.patch('/webhook-subscriptions/:id', async (req: Request<{ id: string }>, res: Response) => {
   const id = req.params.id;
@@ -1243,10 +1292,12 @@ router.patch('/webhook-subscriptions/:id', async (req: Request<{ id: string }>, 
     }
     if (typeof body.deliverOnly === 'boolean') data.deliverOnly = body.deliverOnly;
 
-    // Auth and delivery fields need the current row to validate the effective result.
+    // Auth, delivery and Slack channel fields need the current row to validate
+    // the effective result.
     const editsAuth = WEBHOOK_AUTH_KEYS.some((key) => body[key] !== undefined);
     const editsDelivery = data.deliverTo !== undefined || data.deliverOnly !== undefined;
-    if (editsAuth || editsDelivery) {
+    const editsChannels = body.slackChannelIds !== undefined;
+    if (editsAuth || editsDelivery || editsChannels) {
       const current = await prisma.webhookSubscription.findUnique({ where: { id } });
       if (!current) {
         reject(404, { error: 'Webhook subscription not found' });
@@ -1265,6 +1316,21 @@ router.patch('/webhook-subscriptions/:id', async (req: Request<{ id: string }>, 
           return;
         }
         Object.assign(data, auth.values);
+      }
+      if (editsChannels) {
+        const channels = await readSlackChannelIds(
+          body.slackChannelIds,
+          deliverTo,
+          current.agentId,
+          parseCommaList(current.slackChannelIds),
+        );
+        if (!channels.ok) {
+          reject(400, { error: channels.error, fieldErrors: channels.fieldErrors });
+          return;
+        }
+        data.slackChannelIds = channels.value;
+      } else if (data.deliverTo !== undefined && deliverTo !== 'slack') {
+        data.slackChannelIds = null;
       }
     }
 

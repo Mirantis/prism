@@ -21,9 +21,10 @@ import type { Page } from '@playwright/test';
 import { WebhooksPage } from '../pages/webhooks.page';
 import { WEBHOOK_PORT } from '../support/webhook-port';
 import * as dbHelper from '../support/db-helper';
+import { TEST_USER } from '../fixtures/test-data';
 import { getCurrentAgentId } from './common.steps';
 
-const { When, Then } = createBdd();
+const { Given, When, Then } = createBdd();
 
 let lastWebhookStatus: number | null = null;
 
@@ -487,3 +488,72 @@ Then(
     expect({ prompt: subscription?.prompt, events: subscription?.events }).toEqual({ prompt, events });
   },
 );
+
+/** The Slack id a seeded channel is stored under, derived from its name. */
+function seededChannelId(name: string): string {
+  return `C${name.toUpperCase().replace(/[^A-Z0-9]/g, '')}`;
+}
+
+Given(
+  'the agent has the linked Slack channels {string} and {string}',
+  async ({}, first: string, second: string) => {
+    for (const name of [first, second]) {
+      await dbHelper.getPrisma().slackMapping.create({
+        data: {
+          connectionId: 'T0E2EWORKSPACE',
+          agentId: getCurrentAgentId(),
+          lensUserId: TEST_USER.id,
+          slackChannelId: seededChannelId(name),
+          slackChannelName: name,
+        },
+      });
+    }
+  },
+);
+
+When(
+  'I create a deliver-only webhook subscription named {string} that posts to the Slack channel {string}',
+  async ({ page }, name: string, channel: string) => {
+    await new WebhooksPage(page).createSubscription({
+      name,
+      prompt: 'Release {version} is out',
+      deliverTo: 'Slack',
+      deliverOnly: true,
+      slackChannels: [channel],
+    });
+  },
+);
+
+Then(
+  'the stored webhook subscription {string} posts to the Slack channels {string}',
+  async ({ page }, name: string, channels: string) => {
+    const expected = channels.split(',').map((channel) => seededChannelId(channel.trim()));
+    await expect
+      .poll(async () => {
+        const res = await page.request.get('/agents/webhook-subscriptions');
+        const subscriptions = (await res.json()) as Array<{
+          name: string;
+          deliverTo: string;
+          slackChannelIds: string[];
+        }>;
+        const subscription = subscriptions.find((s) => s.name === name);
+        return { deliverTo: subscription?.deliverTo, slackChannelIds: subscription?.slackChannelIds };
+      })
+      .toEqual({ deliverTo: 'slack', slackChannelIds: expected });
+  },
+);
+
+Then(
+  'the subscription {string} lists the Slack channels {string}',
+  async ({ page }, name: string, channels: string) => {
+    await expect(new WebhooksPage(page).subscriptionRow(name)).toContainText(channels);
+  },
+);
+
+When('I check the Slack channel {string} and save', async ({ page }, channel: string) => {
+  const webhooksPage = new WebhooksPage(page);
+  await webhooksPage.slackChannelCheckbox(channel).click();
+  await expect(webhooksPage.slackChannelCheckbox(channel)).toBeChecked();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByRole('dialog')).toBeHidden();
+});

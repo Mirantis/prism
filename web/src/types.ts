@@ -341,6 +341,8 @@ export interface WebhookSubscription {
   /** Prompt template ({dot.path} / {__raw__}); null = raw payload dump. */
   prompt: string | null;
   deliverTo: WebhookDeliverTo;
+  /** Linked Slack channel ids a Slack delivery posts to; empty = the DM, else the main channel. */
+  slackChannelIds: string[];
   deliverOnly: boolean;
   isActive: boolean;
   authType: WebhookAuthType;

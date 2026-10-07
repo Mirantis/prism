@@ -24,6 +24,7 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { IconTile } from '@/components/shared/icon-tile';
 import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
+import { useSlackChannels } from '@/hooks/use-slack-channels';
 import { useFormErrors } from '@/hooks/use-form-errors';
 import { CreateModal } from '@/components/shared/create-modal';
 import { DeleteConfirm } from '@/components/shared/delete-confirm';
@@ -35,6 +36,8 @@ import { WebhookSubscriptionFields } from '@/components/webhooks/webhook-subscri
 import {
   DELIVER_LABELS,
   EMPTY_WEBHOOK_SUBSCRIPTION_FORM,
+  slackChannelNames,
+  slackChannelsToSave,
   type WebhookSubscriptionFormValues,
 } from '@/components/webhooks/webhook-subscription-form';
 import type { WebhookSubscription } from '@/types';
@@ -62,6 +65,10 @@ function WebhooksPage() {
     queryFn: () => runtimeApi.listWebhookSubscriptions(),
   });
 
+  // Names the Slack channels each subscription posts to.
+  const { data: slackChannels } = useSlackChannels();
+  const channelNames = (s: WebhookSubscription) => slackChannelNames(s.slackChannelIds, slackChannels?.channels ?? []);
+
   const receiverMut = useMutation({
     mutationFn: (enabled: boolean) => runtimeApi.setWebhookReceiver(enabled),
     onSettled: () => {
@@ -77,6 +84,7 @@ function WebhooksPage() {
         events: input.events.trim() || undefined,
         prompt: input.prompt.trim() || undefined,
         deliverTo: input.deliverTo,
+        slackChannelIds: slackChannelsToSave(input),
         deliverOnly: input.deliverOnly,
         ...(input.authType !== 'none'
           ? {
@@ -217,7 +225,7 @@ function WebhooksPage() {
                   key={s.id}
                   subscription={s}
                   endpoint={endpointUrl(s.name)}
-                  deliveryLabel={DELIVER_LABELS[s.deliverTo]}
+                  deliveryLabel={[DELIVER_LABELS[s.deliverTo], channelNames(s)].filter(Boolean).join(': ')}
                   isUpdating={toggleMut.isPending && toggleMut.variables?.id === s.id}
                   onToggle={(isActive) => toggleMut.mutate({ id: s.id, isActive })}
                   onEdit={() => setEditTarget(s)}
@@ -257,6 +265,11 @@ function WebhooksPage() {
                       </TableCell>
                       <TableCell className="text-sm">
                         {DELIVER_LABELS[s.deliverTo]}
+                        {s.slackChannelIds.length > 0 && (
+                          <span className="block max-w-44 truncate text-xs text-muted-foreground" title={channelNames(s)}>
+                            {channelNames(s)}
+                          </span>
+                        )}
                         {s.deliverOnly && <span className="block text-xs text-muted-foreground">direct — no agent</span>}
                       </TableCell>
                       <TableCell>

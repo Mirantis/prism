@@ -90,6 +90,8 @@ export interface WebhookSubscription {
   prompt: string | null;
   /** A `WebhookDeliverTo`, or a target that a newer runtime added. */
   deliverTo: string;
+  /** Linked Slack channel ids a Slack delivery posts to; absent from an older runtime. */
+  slackChannelIds?: string[];
   deliverOnly: boolean;
   isActive: boolean;
   authType: 'none' | 'token' | 'hmac';
@@ -102,7 +104,17 @@ export interface WebhookSubscriptionUpdate {
   events?: string;
   prompt?: string;
   deliverTo?: string;
+  /** An empty list posts to the DM, else the main channel. */
+  slackChannelIds?: string[];
   deliverOnly?: boolean;
+}
+
+/** A Slack channel linked to the agent, from GET /agents/slack-channel-mappings. */
+export interface SlackChannel {
+  channelId: string;
+  channelName: string | null;
+  /** The agent's main channel. */
+  isMain: boolean;
 }
 
 export interface Goal {
@@ -192,6 +204,7 @@ export interface ApiClient {
   deleteCronTask(taskId: string): Promise<{ success: boolean }>;
   listWebhookSubscriptions(): Promise<WebhookSubscription[]>;
   updateWebhookSubscription(id: string, update: WebhookSubscriptionUpdate): Promise<WebhookSubscription>;
+  listSlackChannels(): Promise<SlackChannel[]>;
   createGoal(input: { threadId: string; objective: string; tokenBudget?: number }): Promise<Goal>;
   getThreadGoal(threadId: string): Promise<Goal | null>;
   listGoals(): Promise<Goal[]>;
@@ -335,6 +348,11 @@ export class HttpApiClient implements ApiClient {
 
   updateWebhookSubscription(id: string, update: WebhookSubscriptionUpdate): Promise<WebhookSubscription> {
     return this.request('PATCH', `/agents/webhook-subscriptions/${encodeURIComponent(id)}`, update);
+  }
+
+  async listSlackChannels(): Promise<SlackChannel[]> {
+    const { channels } = await this.request<{ channels: SlackChannel[] }>('GET', '/agents/slack-channel-mappings');
+    return channels;
   }
 
   createGoal(input: { threadId: string; objective: string; tokenBudget?: number }): Promise<Goal> {

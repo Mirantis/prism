@@ -1,4 +1,4 @@
-import type { WebhookDeliverTo, WebhookSubscription } from '@/types';
+import type { SlackChannelMapping, WebhookDeliverTo, WebhookSubscription } from '@/types';
 import { EMPTY_WEBHOOK_AUTH, type WebhookAuthFormValues } from './webhook-auth-fields';
 
 export const DELIVER_LABELS: Record<WebhookDeliverTo, string> = {
@@ -15,6 +15,8 @@ export interface WebhookSubscriptionFormValues extends WebhookAuthFormValues {
   description: string;
   events: string;
   deliverTo: WebhookDeliverTo;
+  /** The Slack channels a Slack delivery posts to; kept while another target is picked. */
+  slackChannelIds: string[];
   deliverOnly: boolean;
   prompt: string;
 }
@@ -24,6 +26,7 @@ export const EMPTY_WEBHOOK_SUBSCRIPTION_FORM: WebhookSubscriptionFormValues = {
   description: '',
   events: '',
   deliverTo: 'all',
+  slackChannelIds: [],
   deliverOnly: false,
   prompt: '',
   ...EMPTY_WEBHOOK_AUTH,
@@ -39,6 +42,7 @@ export function subscriptionFormValues(subscription: WebhookSubscription): Webho
     description: subscription.description ?? '',
     events: subscription.events ?? '',
     deliverTo: subscription.deliverTo,
+    slackChannelIds: subscription.slackChannelIds,
     deliverOnly: subscription.deliverOnly,
     prompt: subscription.prompt ?? '',
     authType: subscription.authType,
@@ -49,4 +53,19 @@ export function subscriptionFormValues(subscription: WebhookSubscription): Webho
     authSignedUrl: subscription.authSignedUrl ?? '',
     secret: '',
   };
+}
+
+/** The channel list to save: the runtime accepts one for the Slack target only. */
+export function slackChannelsToSave(values: WebhookSubscriptionFormValues): string[] {
+  return values.deliverTo === 'slack' ? values.slackChannelIds : [];
+}
+
+/** `#name` for each chosen channel; one no longer linked shows its id. */
+export function slackChannelNames(ids: string[], linked: SlackChannelMapping[]): string {
+  return ids
+    .map((id) => {
+      const channel = linked.find((c) => c.channelId === id);
+      return channel ? `#${channel.channelName ?? id}` : id;
+    })
+    .join(', ');
 }

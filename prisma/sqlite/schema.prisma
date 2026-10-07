@@ -683,6 +683,9 @@ model WebhookSubscription {
   events      String? // comma-separated allowlist; null/empty = all events
   prompt      String? // template; null/empty = raw payload dump
   deliverTo   String  @default("all") // 'all' | 'chat' | 'slack' | 'teams' | 'none'
+  // Comma-separated linked Slack channel ids a 'slack' delivery posts to;
+  // null = the DM, else the main channel.
+  slackChannelIds String?
   deliverOnly Boolean @default(false)
   isActive    Boolean @default(true)
 

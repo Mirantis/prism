@@ -46,6 +46,7 @@ function stubApi(): { [K in keyof ApiClient]: ReturnType<typeof vi.fn> } {
     deleteCronTask: vi.fn(),
     listWebhookSubscriptions: vi.fn(),
     updateWebhookSubscription: vi.fn(),
+    listSlackChannels: vi.fn(),
     createGoal: vi.fn(),
     getThreadGoal: vi.fn(),
     listGoals: vi.fn(),

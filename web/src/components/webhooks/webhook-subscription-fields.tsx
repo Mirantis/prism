@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/field';
 import type { WebhookDeliverTo } from '@/types';
 import { WebhookAuthFields } from './webhook-auth-fields';
+import { WebhookSlackChannelsField } from './webhook-slack-channels-field';
 import { DELIVER_LABELS, type WebhookSubscriptionFormValues } from './webhook-subscription-form';
 
 interface WebhookSubscriptionFieldsProps {
@@ -149,6 +150,13 @@ export function WebhookSubscriptionFields({
         </div>
         {values.deliverTo === 'none' && (
           <FieldDescription>The agent runs and posts no message, even when the run fails.</FieldDescription>
+        )}
+        {values.deliverTo === 'slack' && (
+          <WebhookSlackChannelsField
+            value={values.slackChannelIds}
+            onChange={(ids) => onChange('slackChannelIds', ids)}
+            error={fieldErrors.slackChannelIds}
+          />
         )}
         <Field data-invalid={Boolean(fieldErrors.prompt)}>
           <FieldLabel htmlFor="webhook-prompt">{values.deliverOnly ? 'Message template' : 'Prompt'}</FieldLabel>

@@ -11,6 +11,7 @@ import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { expect } from 'vitest';
+import Database from 'better-sqlite3';
 import { loadFeatureFromText, describeFeature } from '@amiceli/vitest-cucumber';
 import { BOOT_FRAME_TIMEOUT_MS, startPrism, KEYS, type TuiSession } from '../harness';
 import { setupRuntime, runtimeRequest, type RuntimeTestEnv } from '../setup';
@@ -25,6 +26,7 @@ interface StoredSubscription {
   description: string | null;
   prompt: string | null;
   isActive: boolean;
+  slackChannelIds: string[];
 }
 
 let env: RuntimeTestEnv;
@@ -49,6 +51,30 @@ function makeEditor(text: string): string {
   const file = join(dir, 'editor.sh');
   writeFileSync(file, `#!/bin/sh\nprintf '%s' ${shellLiteral(text)} > "$1"\n`, { mode: 0o755 });
   return file;
+}
+
+/** The Slack id a seeded channel is stored under, derived from its name. */
+function seededChannelId(name: string): string {
+  return `C${name.toUpperCase().replace(/[^A-Z0-9]/g, '')}`;
+}
+
+/** Link channels to the agent straight in its database, oldest first. */
+async function linkSlackChannels(names: string[]): Promise<void> {
+  const { agentId, userId } = await runtimeRequest<{ agentId: string; userId: string }>(env.port, 'GET', '/agents/me');
+  const db = new Database(env.dbPath);
+  try {
+    const insert = db.prepare(
+      `INSERT OR IGNORE INTO slack_mappings (id, connectionId, agentId, lensUserId, slackChannelId, slackChannelName, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const now = Date.now();
+    names.forEach((name, i) => {
+      const channelId = seededChannelId(name);
+      insert.run(`map-${channelId}`, 'T0E2EWORKSPACE', agentId, userId, channelId, name, now + i, now + i);
+    });
+  } finally {
+    db.close();
+  }
 }
 
 async function listSubscriptions(): Promise<StoredSubscription[]> {
@@ -119,6 +145,53 @@ describeFeature(
         await expect.poll(async () => (await storedSubscription(name))?.isActive, { timeout: 10_000 }).toBe(false);
         await session!.waitForFrame('✗', 5_000);
       });
+    });
+
+    Scenario('Choose the Slack channel a Slack subscription posts to', ({ Given, And, When, Then }) => {
+      Given('a Slack webhook subscription {string} exists', async (_ctx, name: string) => {
+        await runtimeRequest(env.port, 'POST', '/agents/webhook-subscriptions', {
+          name,
+          deliverOnly: true,
+          deliverTo: 'slack',
+          prompt: 'Release {version} is out',
+          authType: 'none',
+        });
+      });
+      And(
+        'the agent has the linked Slack channels {string} and {string}',
+        async (_ctx, first: string, second: string) => {
+          await linkSlackChannels([first, second]);
+        },
+      );
+      When('I open the webhooks panel', async () => {
+        await openPanel();
+      });
+      And(
+        'I check the Slack channel {string} of {string} and save',
+        async (_ctx, channel: string, name: string) => {
+          // One seeded row, so it is the selected one. Enter saves once the
+          // form is open, so it is sent once, never resent.
+          session!.send(KEYS.ENTER);
+          await session!.waitForFrame(`Edit webhook ${name}`, 5_000);
+          await session!.waitForFrame(`[ ] #${channel}`, 5_000);
+          // Description → Events → Deliver to → the first channel → the second.
+          for (let i = 0; i < 4; i++) {
+            session!.send(KEYS.DOWN);
+            await sleep(150);
+          }
+          session!.send(' ');
+          await session!.waitForFrame(`[x] #${channel}`, 5_000);
+          session!.send(KEYS.ENTER);
+        },
+      );
+      Then(
+        'the stored subscription {string} posts to the Slack channel {string}',
+        async (_ctx, name: string, channel: string) => {
+          await expect
+            .poll(async () => (await storedSubscription(name))?.slackChannelIds, { timeout: 10_000 })
+            .toEqual([seededChannelId(channel)]);
+        },
+      );
     });
 
     Scenario('Edit a subscription, with the prompt written in the editor', ({ When, And, Then }) => {

@@ -15,6 +15,7 @@ const SUBSCRIPTION: WebhookSubscription = {
   events: null,
   prompt: null,
   deliverTo: 'all',
+  slackChannelIds: [],
   deliverOnly: false,
   isActive: true,
   authType: 'none',

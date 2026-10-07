@@ -134,8 +134,9 @@ schedule, next run, and active state. From the list:
 Lists the agent's [webhook subscriptions](webhooks.md) with where each one
 delivers, whether it runs the agent, and whether it is active. **Space** pauses
 or resumes the selected subscription. **Enter** opens a form for its
-description, events, delivery target, deliver-only mode and prompt; **Space** on
-the prompt opens it in your editor, and **Enter** saves the form. Create
+description, events, delivery target, Slack channels, deliver-only mode and
+prompt; **Space** checks a Slack channel or opens the prompt in your editor, and
+**Enter** saves the form. Create
 subscriptions and set their authentication on the Web UI's
 [Webhooks](web-ui.md#webhooks) page.
 
