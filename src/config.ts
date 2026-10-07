@@ -94,12 +94,18 @@ const LLM_PROVIDERS = [
   'openai',
   'openrouter',
   'anthropic',
+  'litellm',
 ] as const;
 type LlmProviderName = (typeof LLM_PROVIDERS)[number];
 const rawLlmProvider = (process.env.LLM_PROVIDER || '').trim().toLowerCase();
-const llmProvider: LlmProviderName = (LLM_PROVIDERS as readonly string[]).includes(rawLlmProvider)
+const isValidLlmProvider = (LLM_PROVIDERS as readonly string[]).includes(rawLlmProvider);
+const llmProvider: LlmProviderName = isValidLlmProvider
   ? (rawLlmProvider as LlmProviderName)
   : 'bedrock';
+// Kept for the startup warning: a fallback to bedrock on a value nobody meant as
+// bedrock otherwise surfaces only as a refused gateway call.
+const invalidLlmProvider =
+  rawLlmProvider === '' || isValidLlmProvider ? null : rawLlmProvider;
 
 // Lens Agents LLM proxy base URL for native Bedrock (bedrock-runtime). Mirrors
 // the gateway's route mounts:
@@ -180,24 +186,32 @@ const nexusOpenRouterBaseUrl = nexusApiUrl
       : `${nexusApiUrl}/llm/openrouter/openai/v1`)
   : null;
 
+// Lens Agents LLM proxy base URL for LiteLLM's Anthropic surface, mounted as
+// `…/llm/litellm/anthropic/{path}`. Ends at `/v1` because the anthropic SDK
+// appends `/messages`. Keyless: the gateway injects the LiteLLM key, and it
+// meters this backend by the cost LiteLLM reports, so it must be this mount.
+// null when NEXUS_API_URL is unset (callers talk to the proxy directly).
+const nexusLiteLlmBaseUrl = nexusApiUrl
+  ? (projectId
+      ? `${nexusApiUrl}/projects/${projectId}/llm/litellm/anthropic/v1`
+      : `${nexusApiUrl}/llm/litellm/anthropic/v1`)
+  : null;
+
 // The selected vendor's gateway *chat* mount, resolved once so callers that
 // only need "is chat routed through the gateway?" (the startup log, startup
 // telemetry) don't each re-derive the per-vendor branch. null → chat goes direct.
-const nexusChatBaseUrl =
-  llmProvider === 'azure'
-    ? nexusAzureBaseUrl
-    : llmProvider === 'bedrock-mantle'
-      ? nexusBedrockMantleBaseUrl
-      : llmProvider === 'openai'
-        ? nexusOpenAiBaseUrl
-        : llmProvider === 'openrouter'
-          ? nexusOpenRouterBaseUrl
-          : llmProvider === 'anthropic'
-            ? // No gateway mount serves api.anthropic.com — anthropic chat is
-              // always direct, even with NEXUS_API_URL set. Explicit rather
-              // than the fall-through, which would report the bedrock mount.
-              null
-            : nexusLlmBaseUrl;
+const nexusChatBaseUrls: Record<LlmProviderName, string | null> = {
+  bedrock: nexusLlmBaseUrl,
+  azure: nexusAzureBaseUrl,
+  'bedrock-mantle': nexusBedrockMantleBaseUrl,
+  openai: nexusOpenAiBaseUrl,
+  openrouter: nexusOpenRouterBaseUrl,
+  // No gateway mount serves api.anthropic.com, so anthropic chat is always
+  // direct, even with NEXUS_API_URL set.
+  anthropic: null,
+  litellm: nexusLiteLlmBaseUrl,
+};
+const nexusChatBaseUrl = nexusChatBaseUrls[llmProvider];
 
 // Scheme, host and port of an http(s) URL; undefined for anything else, so a
 // value that is unset, unparseable or of another scheme never matches. Two
@@ -361,6 +375,29 @@ const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
 // undefined → the SDK's own default, https://api.anthropic.com/v1.
 const anthropicBaseUrl = process.env.ANTHROPIC_BASE_URL || undefined;
 
+// LiteLLM model ids (used when LLM_PROVIDER=litellm) are the operator's own
+// aliases. The defaults are the first-party names of the chat and
+// classification models the other vendors default to, which is how a LiteLLM
+// proxy commonly names them. The startup check lists the proxy's models when
+// it does not serve one.
+const litellmModelId = process.env.LITELLM_MODEL_ID || 'claude-opus-5-5';
+const litellmClassificationModelId =
+  process.env.LITELLM_CLASSIFICATION_MODEL_ID || 'claude-haiku-4-5';
+// The LiteLLM key, sent as the `x-api-key` header, for direct mode. Not needed
+// through the gateway, which holds its own. May be a `__nexus_cred:<uuid>__`
+// sentinel, since it only rides a header.
+const litellmApiKey = process.env.LITELLM_API_KEY;
+function withV1(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  const trimmed = url.replace(/\/+$/, '');
+  return trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`;
+}
+// The proxy's own endpoint. A LiteLLM proxy has no public host, so direct mode
+// needs this set. Normalised to end at `/v1` with no trailing slash: LiteLLM
+// serves the Messages API only under `/v1`, the anthropic SDK appends
+// `/messages`, and the startup check appends `/models` to the same string.
+const litellmOverride = withV1(process.env.LITELLM_BASE_URL);
+
 // The endpoint each vendor's client uses, in precedence order: the explicit
 // `*_BASE_URL` override, else the gateway mount, else the vendor's own host. The
 // override comes first because the operator named a host, and because the
@@ -377,6 +414,8 @@ const bedrockMantleChatEndpoint =
 const openaiEndpoint = openaiOverride ?? nexusOpenAiBaseUrl ?? undefined;
 const openrouterEndpoint =
   openrouterOverride ?? nexusOpenRouterBaseUrl ?? OPENROUTER_DIRECT_BASE_URL;
+// undefined → no endpoint at all, and `isLiteLlmConfigured` answers false.
+const litellmEndpoint = litellmOverride ?? nexusLiteLlmBaseUrl ?? undefined;
 
 // The selected vendor's chat endpoint and the override that supplied it, for the
 // startup log. Anthropic has no mount, so its override is its whole endpoint.
@@ -387,6 +426,7 @@ const chatEndpoints: Record<LlmProviderName, { endpoint?: string; override?: str
   openai: { endpoint: openaiEndpoint, override: openaiOverride },
   openrouter: { endpoint: openrouterEndpoint, override: openrouterOverride },
   anthropic: { endpoint: anthropicBaseUrl, override: anthropicBaseUrl },
+  litellm: { endpoint: litellmEndpoint, override: litellmOverride },
 };
 const chatEndpoint = chatEndpoints[llmProvider];
 
@@ -440,6 +480,10 @@ const modelIds = {
     chat: anthropicModelId,
     classification: anthropicClassificationModelId,
   },
+  litellm: {
+    chat: litellmModelId,
+    classification: litellmClassificationModelId,
+  },
 }[llmProvider];
 
 // Which vendor serves memory embeddings. Its own selection, decoupled from
@@ -456,7 +500,9 @@ type EmbeddingProviderName = (typeof EMBEDDING_PROVIDERS)[number];
 // (openrouter's embedding model id defaults to '', so it stays off until one
 // is named). anthropic serves no embedding models, so it borrows OpenAI's when
 // a local key is present or the gateway's openai mount can hold one
-// (NEXUS_API_URL set), and otherwise runs without vectors.
+// (NEXUS_API_URL set), and otherwise runs without vectors. litellm runs without
+// them: its embedding models are the operator's aliases, so none is right by
+// default.
 const EMBEDDING_PROVIDER_DEFAULTS: Record<LlmProviderName, EmbeddingProviderName> = {
   bedrock: 'bedrock',
   azure: 'azure-openai',
@@ -464,6 +510,7 @@ const EMBEDDING_PROVIDER_DEFAULTS: Record<LlmProviderName, EmbeddingProviderName
   openai: 'openai',
   openrouter: 'openrouter',
   anthropic: openaiApiKey || nexusOpenAiBaseUrl ? 'openai' : 'none',
+  litellm: 'none',
 };
 const rawEmbeddingProvider = (process.env.EMBEDDING_PROVIDER || '').trim().toLowerCase();
 const isValidEmbeddingProvider = (EMBEDDING_PROVIDERS as readonly string[]).includes(
@@ -775,10 +822,13 @@ export const config = {
   awsSessionToken: process.env.AWS_SESSION_TOKEN, // Optional, only needed for temporary credentials
 
   // LLM provider selection. `bedrock` (default), `azure`, `bedrock-mantle`,
-  // `openai`, or `anthropic`. See the neutral `chatModelId`/
-  // `classificationModelId`/`embeddingModelId` below, which the rest of the
-  // runtime reads instead of the vendor-specific fields.
+  // `openai`, `openrouter`, `anthropic`, or `litellm`. See the neutral
+  // `chatModelId`/`classificationModelId`/`embeddingModelId` below, which the
+  // rest of the runtime reads instead of the vendor-specific fields.
   llmProvider,
+  // The unrecognized non-empty LLM_PROVIDER value, kept for the startup
+  // warning; null when the value was valid or unset.
+  invalidLlmProvider,
 
   // Embedding provider selection (EMBEDDING_PROVIDER): `bedrock`,
   // `azure-openai`, `openai`, `openrouter`, or `none`. Its own feature
@@ -864,6 +914,17 @@ export const config = {
   anthropicModelId,
   anthropicClassificationModelId,
   anthropicBaseUrl,
+
+  // LiteLLM (used when LLM_PROVIDER=litellm): an operator's own LiteLLM proxy,
+  // spoken to in the Anthropic Messages format at `litellmEndpoint`:
+  // LITELLM_BASE_URL if set, else the Lens Agents `…/llm/litellm/anthropic/v1`
+  // mount when NEXUS_API_URL is set. Direct it needs `litellmApiKey`. Model ids
+  // are the operator's aliases, defaulting to Prism's default models' names.
+  litellmModelId,
+  litellmClassificationModelId,
+  litellmApiKey,
+  litellmEndpoint,
+  nexusLiteLlmBaseUrl,
 
   // AGENT_ID is optional — when unset, `resolveOrBootstrapSingleAgent`
   // either picks up the existing row via findFirst() or creates a fresh
