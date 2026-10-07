@@ -3,8 +3,9 @@
  *
  * Covers prompt template rendering (hermes semantics), event-type resolution
  * and filtering, generic sender verification, deliver-only vs agent-mode
- * handling, scoped vs broadcast delivery, the budget/error paths, and the run
- * record each accepted event leaves.
+ * handling, scoped vs broadcast delivery, the delivery gate, the 'none'
+ * target, the budget/error paths, and the run record each accepted event
+ * leaves.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -31,6 +32,7 @@ const {
   mockRunStart,
   mockRunFinish,
   mockWebhookRunUpdate,
+  mockRunClassificationGate,
 } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
   mockPublishToLatestThread: vi.fn(),
@@ -48,6 +50,7 @@ const {
   mockRunStart: vi.fn(),
   mockRunFinish: vi.fn(),
   mockWebhookRunUpdate: vi.fn(),
+  mockRunClassificationGate: vi.fn(),
 }));
 
 vi.mock('../invoke', () => ({
@@ -118,6 +121,10 @@ vi.mock('../lib/telemetry', () => ({
   trackEvent: mockTrackEvent,
 }));
 
+vi.mock('../lib/classification-gate', () => ({
+  runClassificationGate: mockRunClassificationGate,
+}));
+
 vi.mock('../logger', () => ({
   logger: {
     info: vi.fn(),
@@ -182,6 +189,8 @@ function invokeResult(text: string, overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetAgent.mockResolvedValue(AGENT);
+  // Default: the gate lets every reply through. Gate tests override this.
+  mockRunClassificationGate.mockResolvedValue(true);
   mockGetOrCreateLatestThread.mockResolvedValue({ id: 'thread-1' });
   mockPublishToLatestThread.mockResolvedValue({ id: 'msg-1' });
   mockPublish.mockResolvedValue({ id: 'msg-1' });
@@ -279,6 +288,8 @@ describe('validation helpers', () => {
     expect(isValidDeliverTo('all')).toBe(true);
     expect(isValidDeliverTo('chat')).toBe(true);
     expect(isValidDeliverTo('slack')).toBe(true);
+    expect(isValidDeliverTo('teams')).toBe(true);
+    expect(isValidDeliverTo('none')).toBe(true);
     expect(isValidDeliverTo('log')).toBe(false);
   });
 });
@@ -840,6 +851,7 @@ describe('handleInbound agent mode', () => {
     const [, , content] = mockPublishToLatestThread.mock.calls[0];
     expect(content).toContain('spending limit');
     expect(content).toContain('monthly cap');
+    expect(mockRunClassificationGate).not.toHaveBeenCalled();
     expect(mockTrackEvent).toHaveBeenCalledWith(
       'webhook processed',
       'user-1',
@@ -904,6 +916,165 @@ describe('handleInbound agent mode', () => {
         messageId: null,
       }),
     );
+  });
+
+  it('asks the gate with the prompt template as the instruction', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(
+      createSubscription({ prompt: 'Only tell me if {status} is firing.' }),
+    );
+    mockInvoke.mockResolvedValue(invokeResult('HighMemory is firing on node-3.'));
+
+    await webhookService.handleInbound('alerts', { status: 'firing' }, {}, 'run-1');
+    await vi.waitFor(() => expect(mockPublishToLatestThread).toHaveBeenCalled());
+
+    // The template, not the rendered prompt: the gate reads what the user asked
+    // for, and the payload stays out of the gate's input.
+    expect(mockRunClassificationGate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        functionId: 'webhook-gate',
+        agentId: 'agent-1',
+        user: '## Webhook Instruction\nOnly tell me if {status} is firing.\n\n## Agent Reply\n```\nHighMemory is firing on node-3.\n```',
+      }),
+    );
+  });
+
+  it('delivers every reply of a subscription without a prompt, without a gate call', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ prompt: null }));
+    mockInvoke.mockResolvedValue(invokeResult('Alert HighMemory resolved, nothing further.'));
+    mockRunClassificationGate.mockResolvedValue(false);
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    await vi.waitFor(() => expect(mockPublishToLatestThread).toHaveBeenCalled());
+
+    expect(mockRunClassificationGate).not.toHaveBeenCalled();
+  });
+
+  it('posts nothing when the gate suppresses the reply', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(
+      createSubscription({ deliverTo: 'slack', prompt: 'Review the PR. Only message me if the review fails.' }),
+    );
+    mockSlackMappingFindFirst.mockResolvedValue({ dmChannelId: 'D123' });
+    mockInvoke.mockResolvedValue(invokeResult('Nothing to do: the PR is a draft.'));
+    mockRunClassificationGate.mockResolvedValue(false);
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    await vi.waitFor(() =>
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'webhook processed',
+        'user-1',
+        expect.objectContaining({ 'webhook.status': 'suppressed' }),
+      ),
+    );
+
+    expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status: 'suppressed' });
+    expect(mockPublish).not.toHaveBeenCalled();
+    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
+  });
+
+  it('posts nothing for an empty reply, without a gate call', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
+    mockInvoke.mockResolvedValue(invokeResult('   '));
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    await vi.waitFor(() =>
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'webhook processed',
+        'user-1',
+        expect.objectContaining({ 'webhook.status': 'suppressed' }),
+      ),
+    );
+
+    expect(mockRunClassificationGate).not.toHaveBeenCalled();
+    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
+  });
+
+  it('delivers an error reply without asking the gate', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
+    mockInvoke.mockResolvedValue(
+      invokeResult('I encountered an error while processing your request.', {
+        error: { type: 'generic', detail: 'tool failed' },
+      }),
+    );
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    await vi.waitFor(() => expect(mockPublishToLatestThread).toHaveBeenCalled());
+
+    expect(mockRunClassificationGate).not.toHaveBeenCalled();
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'webhook processed',
+      'user-1',
+      expect.objectContaining({ 'webhook.status': 'error' }),
+    );
+  });
+
+  it("tracks a 'none' run that ends in an error step as an error, and posts nothing", async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'none' }));
+    mockInvoke.mockResolvedValue(
+      invokeResult('I encountered an error while processing your request.', {
+        error: { type: 'generic', detail: 'tool failed' },
+      }),
+    );
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    await vi.waitFor(() =>
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'webhook processed',
+        'user-1',
+        expect.objectContaining({ 'webhook.status': 'error' }),
+      ),
+    );
+
+    expect(mockTrackEvent).not.toHaveBeenCalledWith(
+      'webhook processed',
+      'user-1',
+      expect.objectContaining({ 'webhook.status': 'completed' }),
+    );
+    expect(mockRunFinish).toHaveBeenCalledWith('run-1', {
+      status: 'failed',
+      error: 'tool failed',
+      messageId: undefined,
+    });
+    expect(mockPublish).not.toHaveBeenCalled();
+    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
+  });
+
+  it("runs the agent for a 'none' subscription and posts nothing, without a gate call", async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'none' }));
+    mockInvoke.mockResolvedValue(invokeResult('Posted the review on GitHub.'));
+
+    const result = await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    expect(result).toEqual({ status: 'accepted', event: 'unknown' });
+    await vi.waitFor(() =>
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'webhook processed',
+        'user-1',
+        expect.objectContaining({ 'webhook.status': 'completed' }),
+      ),
+    );
+
+    expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ mode: 'webhook' }));
+    expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status: 'completed', messageId: undefined });
+    expect(mockRunClassificationGate).not.toHaveBeenCalled();
+    expect(mockPublish).not.toHaveBeenCalled();
+    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
+    expect(mockGetOrCreateLatestThread).not.toHaveBeenCalled();
+  });
+
+  it("posts no failure notice for a 'none' subscription", async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'none' }));
+    mockInvoke.mockRejectedValue(new Error('bedrock down'));
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    await vi.waitFor(() =>
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'webhook processed',
+        'user-1',
+        expect.objectContaining({ 'webhook.status': 'error' }),
+      ),
+    );
+
+    expect(mockPublish).not.toHaveBeenCalled();
+    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
   });
 
   it('queues concurrent deliveries and runs them serially, dropping nothing', async () => {

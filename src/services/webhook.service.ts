@@ -25,13 +25,15 @@ import { teamsMappingService } from './teams/teams-mapping.service';
 import { prisma } from '../lib/prisma';
 import { trackEvent } from '../lib/telemetry';
 import { verifyWebhookAuth } from '../lib/webhook-signature';
+import { runClassificationGate } from '../lib/classification-gate';
+import { WEBHOOK_GATE_PROMPT, buildWebhookGateUserMessage } from '../prompts/webhook-gate-prompt';
 import { logger } from '../logger';
 
 // ============================================================================
 // Types
 // ============================================================================
 
-export const WEBHOOK_DELIVER_TARGETS = ['all', 'chat', 'slack', 'teams'] as const;
+export const WEBHOOK_DELIVER_TARGETS = ['all', 'chat', 'slack', 'teams', 'none'] as const;
 export type WebhookDeliverTo = (typeof WEBHOOK_DELIVER_TARGETS)[number];
 
 /** Subscription name rule, borrowed from hermes: lowercase slug. */
@@ -245,7 +247,7 @@ export class WebhookService {
       // is written first, so a database that cannot record the event answers
       // 500 before anything is sent.
       await webhookRunService.accept(run, 'running');
-      let message: ConversationMessage;
+      let message: ConversationMessage | null;
       try {
         message = await this.deliver(agent.id, agent.userId, subscription.deliverTo, prompt);
       } catch (error: unknown) {
@@ -255,7 +257,7 @@ export class WebhookService {
         });
         throw error;
       }
-      await webhookRunService.finish(runId, { status: 'delivered', messageId: message.id });
+      await webhookRunService.finish(runId, { status: 'delivered', messageId: message?.id });
       trackEvent('webhook processed', agent.userId, {
         'agent.id': agent.id,
         'webhook.run_id': runId,
@@ -333,8 +335,11 @@ export class WebhookService {
     }
 
     await webhookRunService.finish(runId, result);
-    if (result.status === 'completed') {
-      logger.info(`[Webhook] '${subscription.name}' completed in ${Date.now() - startTime}ms`);
+    const elapsed = Date.now() - startTime;
+    if (result.status === 'failed' || result.status === 'budget_exceeded') {
+      logger.warn(`[Webhook] '${subscription.name}' ended ${result.status} after ${elapsed}ms: ${result.error ?? 'no detail'}`);
+    } else {
+      logger.info(`[Webhook] '${subscription.name}' ${result.status} in ${elapsed}ms`);
     }
     trackEvent('webhook processed', agent.userId, {
       'agent.id': agent.id,
@@ -367,13 +372,21 @@ export class WebhookService {
     if (result.error?.type === 'budget_exceeded') {
       const budgetMessage = `**Webhook: ${subscription.name}**\n\nThis event could not be processed — your organization's AI spending limit has been reached${result.error.detail ? `: ${result.error.detail}` : ''}. Please contact your administrator to increase the budget.`;
       const message = await this.deliver(agent.id, agent.userId, subscription.deliverTo, budgetMessage, stored);
-      return { status: 'budget_exceeded', error: result.error.detail, messageId: message.id };
+      return { status: 'budget_exceeded', error: result.error.detail, messageId: message?.id };
     }
 
     // Use only the last step's text (the final summary), not intermediate step texts
     const lastStep = result.steps[result.steps.length - 1];
     const responseText = (lastStep?.text ?? '').trim();
     const body = responseText || result.response;
+
+    // 'none' delivers nothing, so it skips the gate's model call too.
+    if (
+      subscription.deliverTo !== 'none' &&
+      !(await this.passesDeliveryGate(subscription, body, result.error !== undefined, agent))
+    ) {
+      return { status: 'suppressed' };
+    }
 
     const message = await this.deliver(
       agent.id,
@@ -384,8 +397,33 @@ export class WebhookService {
     );
 
     // A model error ends the run on an error step, delivered like any reply.
-    if (result.error) return { status: 'failed', error: result.error.detail, messageId: message.id };
-    return { status: 'completed', messageId: message.id };
+    if (result.error) return { status: 'failed', error: result.error.detail, messageId: message?.id };
+    return { status: 'completed', messageId: message?.id };
+  }
+
+  /**
+   * Whether an agent-mode reply is delivered. An empty reply is not. An error
+   * reply always is, and so is every reply of a subscription without a prompt,
+   * which set the agent no condition. The classification gate decides the rest
+   * from the prompt, so a webhook that asks for a message on every event gets
+   * one, and a reply with nothing to report stays quiet.
+   */
+  private async passesDeliveryGate(
+    subscription: WebhookSubscription,
+    body: string,
+    isError: boolean,
+    agent: { id: string; userId: string },
+  ): Promise<boolean> {
+    if (!body.trim()) return false;
+    if (isError || !subscription.prompt) return true;
+    return runClassificationGate({
+      system: WEBHOOK_GATE_PROMPT,
+      user: buildWebhookGateUserMessage({ instruction: subscription.prompt, replyText: body }),
+      functionId: 'webhook-gate',
+      userId: agent.userId,
+      agentId: agent.id,
+      logLabel: 'Webhook:Gate',
+    });
   }
 
   /**
@@ -404,7 +442,7 @@ export class WebhookService {
         subscription.deliverTo,
         `**Webhook: ${subscription.name}**\n\nThis event could not be processed — the run failed with: ${msg}`,
       );
-      return message.id;
+      return message?.id ?? null;
     } catch (deliverError: unknown) {
       logger.error({ err: deliverError }, `[Webhook] '${subscription.name}' failure notice could not be delivered`);
       return null;
@@ -413,7 +451,7 @@ export class WebhookService {
 
   /**
    * Deliver a webhook message per the subscription's target, and return the
-   * stored message:
+   * stored message, or null for 'none':
    * - 'all' — broadcast to every connected channel (heartbeat/cron behavior);
    *   post-#58 the Slack side is the DM + main channel, not every channel.
    * - 'chat' — scoped to web chat; stored in the web-visible latest thread.
@@ -423,6 +461,7 @@ export class WebhookService {
    *   both keyed by a non-null externalThreadId, so `listThreads` hides them
    *   from web Recents + the CLI resume picker. Falls back to the latest
    *   (web-visible) thread + a warning when no Slack destination is linked.
+   * - 'none' — nothing is published or stored.
    */
   private async deliver(
     agentId: string,
@@ -430,7 +469,9 @@ export class WebhookService {
     deliverTo: string,
     content: string,
     options?: Pick<PublishOptions, 'toolCalls' | 'attachmentIds'>,
-  ): Promise<ConversationMessage> {
+  ): Promise<ConversationMessage | null> {
+    if (deliverTo === 'none') return null;
+
     if (deliverTo === 'chat') {
       const thread = await conversationService.getOrCreateLatestThread(agentId, userId);
       return messageDeliveryService.publish(userId, thread.id, content, 'WEBHOOK', {

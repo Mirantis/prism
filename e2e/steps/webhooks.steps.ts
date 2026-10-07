@@ -5,7 +5,8 @@
  * toggles) and asserts on authoritative state: the receiver flag and
  * subscription list via the management API, and delivered messages via the
  * `conversation_messages` table (triggeredBy = WEBHOOK) — the agent run is
- * asynchronous, so on-screen text alone would race it.
+ * asynchronous, so on-screen text alone would race it. A message that must not
+ * arrive is checked once the run's model calls are in `llm_calls`.
  *
  * Sender verification is exercised end-to-end by signing the exact bytes the
  * POST sends, so a mismatch between what the runtime hashes and what the sender
@@ -94,6 +95,21 @@ When(
     await new WebhooksPage(page).createSubscription({ name, prompt });
   },
 );
+
+When(
+  'I fill in a webhook subscription named {string} delivered to {string} with prompt {string}',
+  async ({ page }, name: string, deliverTo: string, prompt: string) => {
+    await new WebhooksPage(page).fillSubscription({ name, prompt, deliverTo });
+  },
+);
+
+Then('the deliver-only option is unavailable', async ({ page }) => {
+  await expect(new WebhooksPage(page).deliverOnlyCheckbox).toBeDisabled();
+});
+
+When('I submit the webhook subscription {string}', async ({ page }, name: string) => {
+  await new WebhooksPage(page).submitSubscription(name);
+});
 
 Then('the subscription {string} appears in the subscriptions list', async ({ page }, name: string) => {
   await expect(new WebhooksPage(page).subscriptionRow(name)).toBeVisible();
@@ -321,6 +337,49 @@ Then(
     expect(messages.some((m) => m.content.includes(text))).toBe(false);
   },
 );
+
+/** The newest `llm_calls` row for this purpose, or null before the call is recorded. */
+async function latestLlmCall(purpose: string): Promise<{ createdAt: Date } | null> {
+  return dbHelper.getPrisma().llmCall.findFirst({
+    where: { agentId: getCurrentAgentId(), purpose },
+    orderBy: { createdAt: 'desc' },
+    select: { createdAt: true },
+  });
+}
+
+Then('the agent has run for the webhook', async () => {
+  const run = await pollUntil(() => latestLlmCall('webhook'), (row) => row !== null, 120_000);
+  expect(run).not.toBeNull();
+});
+
+Then('the delivery gate has decided on the webhook reply', async () => {
+  // The gate runs after the agent's call, so its row is the newer one.
+  const decided = await pollUntil(
+    async () => {
+      const [run, gate] = await Promise.all([latestLlmCall('webhook'), latestLlmCall('delivery-gate')]);
+      return Boolean(run && gate && gate.createdAt >= run.createdAt);
+    },
+    (done) => done,
+    120_000,
+  );
+  expect(decided).toBe(true);
+});
+
+Then('no webhook-triggered message is stored in the conversation', async () => {
+  const agentId = getCurrentAgentId();
+  // Called once the run's last model call is recorded: a delivery follows that
+  // call within milliseconds, so a short grace period catches one.
+  const messages = await pollUntil(
+    () =>
+      dbHelper.getPrisma().conversationMessage.findMany({
+        where: { triggeredBy: 'WEBHOOK', thread: { agentId } },
+      }),
+    (rows) => rows.length > 0,
+    3_000,
+    500,
+  );
+  expect(messages.map((m) => m.content)).toEqual([]);
+});
 
 When('I use a narrow webhook viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });

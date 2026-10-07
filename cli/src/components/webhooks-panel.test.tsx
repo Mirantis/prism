@@ -20,6 +20,7 @@ async function settle(): Promise<void> {
 const TAB = '\t';
 const ENTER = '\r';
 const RIGHT = '\x1B[C';
+const LEFT = '\x1B[D';
 
 /** Ink parses one write per render, so each key needs the render it belongs to. */
 async function type(stdin: { write: (data: string) => void }, ...keys: string[]): Promise<void> {
@@ -76,16 +77,34 @@ describe('the terminal webhooks panel', () => {
 
   it('shows a delivery target that a newer runtime added as its stored value', async () => {
     const api = {
-      listWebhookSubscriptions: vi.fn().mockResolvedValue([{ ...alerts, deliverTo: 'none' }]),
+      listWebhookSubscriptions: vi.fn().mockResolvedValue([{ ...alerts, deliverTo: 'pagerduty' }]),
     } as unknown as ApiClient;
     const { lastFrame, stdin, unmount } = render(
       <WebhooksPanel api={api} onClose={vi.fn()} suspendInput={(fn) => fn()} />,
     );
     await flush();
-    expect(lastFrame()).toMatch(/alerts\s+none\s+direct/);
+    expect(lastFrame()).toMatch(/alerts\s+pagerduty\s+direct/);
 
     await type(stdin, ENTER);
-    expect(lastFrame()).toContain('‹ none ›');
+    expect(lastFrame()).toContain('‹ pagerduty ›');
+    unmount();
+  });
+
+  it('turns deliver only off when the target becomes None, and keeps it off', async () => {
+    const update = vi.fn().mockResolvedValue({ ...alerts, deliverTo: 'none', deliverOnly: false });
+    const { lastFrame, stdin, unmount } = renderPanel(update);
+    await flush();
+
+    // All channels wraps back to None; then Space on Deliver only.
+    await type(stdin, ENTER, TAB, TAB, LEFT);
+    expect(lastFrame()).toContain('‹ None ›');
+    expect(lastFrame()).toContain('[ ] Skip the agent');
+    await type(stdin, TAB, ' ');
+    expect(lastFrame()).toContain('[ ] Skip the agent');
+
+    await type(stdin, ENTER);
+    await settle();
+    expect(update).toHaveBeenCalledWith('wh-1', expect.objectContaining({ deliverTo: 'none', deliverOnly: false }));
     unmount();
   });
 

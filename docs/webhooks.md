@@ -31,7 +31,7 @@ Click **New subscription** on the Webhooks page. **Delivery** and
 | — | **Name** | Lowercase slug (`[a-z0-9][a-z0-9_-]*`); becomes the endpoint path `/agents/webhooks/<name>`. Spaces are normalized to hyphens. |
 | — | **Description** | What this webhook does (optional, shown in the list). |
 | — | **Events** | Comma-separated event-type allowlist; empty = accept all. See [Event filtering](#event-filtering). |
-| Delivery | **Deliver to** | Where results go: **All channels** (default — web chat + Slack, like heartbeat alerts), **Chat** (web chat only), or **Slack** (Slack only — see [Delivery targets & storage](#delivery-targets--storage)). |
+| Delivery | **Deliver to** | Where results go: **All channels** (default — web chat, Slack and Teams, like heartbeat alerts), **Chat** (web chat only), **Slack** (Slack only), **Microsoft Teams** (Teams only), or **None** (nowhere) — see [Delivery targets & storage](#delivery-targets--storage). |
 | Delivery | **Deliver only** | Skip the agent: the rendered prompt template is posted directly as the message. Zero LLM cost — useful for plain notifications. |
 | Delivery | **Prompt** / **Message template** | Instructions for the agent, or the message sent in **Deliver only** mode. Supports payload substitution — see below. |
 | Authentication | **Scheme** | How the sender proves itself: **Shared token in a header** (default), **HMAC signature of the body**, or **None**. |
@@ -162,6 +162,14 @@ sent and where it's recorded:
   warning) so a triggered event is never silently lost.
 - **Microsoft Teams** — Teams only; same semantics as the Slack target, using
   the Teams personal chat or main channel.
+- **None** — the agent runs and posts no message, even when the run fails. Use
+  it when the agent's work lands somewhere else, such as a review on GitHub.
+
+An agent reply is posted only when it has something to report. Put the
+condition in the prompt, for example "Review the PR. Message me only if the
+review finds a blocking problem." A prompt that asks for a message on every
+event, or an empty prompt, gets one every time. A failed run is always posted,
+except with **None**.
 
 ## Prompt templates
 

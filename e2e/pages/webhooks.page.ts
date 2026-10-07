@@ -14,6 +14,8 @@ export interface NewSubscriptionInput {
   description?: string;
   events?: string;
   prompt?: string;
+  /** The Deliver to option's label; omit to keep the default (All channels). */
+  deliverTo?: string;
   deliverOnly?: boolean;
   /** Omit to explicitly select None for unsigned-delivery scenarios. */
   authType?: 'token' | 'hmac';
@@ -51,6 +53,19 @@ export class WebhooksPage extends BasePage {
 
   /** Open the modal, fill the subscription fields, and submit. */
   async createSubscription(input: NewSubscriptionInput) {
+    await this.fillSubscription(input);
+    await this.submitSubscription(input.name);
+  }
+
+  /** The Deliver only checkbox in the New-subscription modal. */
+  get deliverOnlyCheckbox(): Locator {
+    // Base UI's Checkbox puts the id on a hidden input; the visible
+    // role=checkbox element (scoped to the dialog) is the control.
+    return this.page.locator('[data-slot="dialog-content"] [data-slot="checkbox"]');
+  }
+
+  /** Open the modal and fill the subscription fields, leaving it open. */
+  async fillSubscription(input: NewSubscriptionInput) {
     await this.newSubscriptionButton.click();
     await this.page.locator('#webhook-name').fill(input.name);
     if (input.description) {
@@ -59,12 +74,14 @@ export class WebhooksPage extends BasePage {
     if (input.events) {
       await this.page.locator('#webhook-events').fill(input.events);
     }
+    if (input.deliverTo) {
+      await this.page.locator('#webhook-deliver-to').click();
+      await this.page.getByRole('option', { name: input.deliverTo, exact: true }).click();
+      // The authentication select also has a "None" option; let this list close first.
+      await this.page.getByRole('listbox').waitFor({ state: 'hidden' });
+    }
     if (input.deliverOnly) {
-      // Base UI's Checkbox puts the id on a hidden input; click the visible
-      // role=checkbox element (scoped to the dialog) instead.
-      await this.page
-        .locator('[data-slot="dialog-content"] [data-slot="checkbox"]')
-        .click();
+      await this.deliverOnlyCheckbox.click();
     }
     if (!input.authType) {
       await this.page.locator('#webhook-auth-type').click();
@@ -105,9 +122,13 @@ export class WebhooksPage extends BasePage {
     if (input.prompt) {
       await this.page.locator('#webhook-prompt').fill(input.prompt);
     }
+  }
+
+  /** Submit the open modal and wait for the new subscription's row. */
+  async submitSubscription(name: string) {
     await this.page.getByRole('button', { name: 'Create', exact: true }).click();
     // Row appears once the create + list-invalidate round trip completes.
-    await this.subscriptionRow(input.name).waitFor({ timeout: 10_000 });
+    await this.subscriptionRow(name).waitFor({ timeout: 10_000 });
   }
 
   subscriptionRow(name: string): Locator {

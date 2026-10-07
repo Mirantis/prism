@@ -11,6 +11,7 @@ const STATUS: Record<WebhookRunStatus, { label: string; dot: string; badge: stri
   running: { label: 'Running', dot: 'bg-primary animate-pulse', badge: '' },
   completed: { label: 'Completed', dot: 'bg-success', badge: '' },
   delivered: { label: 'Delivered', dot: 'bg-success', badge: '' },
+  suppressed: { label: 'Nothing to report', dot: 'bg-muted-foreground', badge: '' },
   failed: { label: 'Failed', dot: 'bg-destructive', badge: 'bg-destructive/10 text-destructive' },
   budget_exceeded: {
     label: 'Spending limit reached',

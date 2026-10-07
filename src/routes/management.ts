@@ -1095,6 +1095,12 @@ router.get('/webhook-subscriptions', async (_req: Request, res: Response) => {
   }
 });
 
+/** Deliver only posts the message template, and 'none' would discard it. */
+const DELIVER_ONLY_NEEDS_TARGET = {
+  error: "deliverOnly needs a deliverTo other than 'none'",
+  fieldErrors: { deliverOnly: 'Deliver only needs a target. Choose a target other than None.' },
+};
+
 /**
  * POST /agents/webhook-subscriptions
  * Create a webhook subscription.
@@ -1125,6 +1131,11 @@ router.post('/webhook-subscriptions', async (req: Request, res: Response) => {
       });
       return;
     }
+    const deliverOnly = body.deliverOnly === true;
+    if (deliverOnly && deliverTo === 'none') {
+      res.status(400).json(DELIVER_ONLY_NEEDS_TARGET);
+      return;
+    }
 
     const auth = readWebhookAuthFields(body, WEBHOOK_AUTH_DEFAULTS);
     if (!auth.ok) {
@@ -1143,7 +1154,7 @@ router.post('/webhook-subscriptions', async (req: Request, res: Response) => {
           events: typeof body.events === 'string' && body.events.trim() ? body.events.trim() : null,
           prompt: typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt.trim() : null,
           deliverTo,
-          deliverOnly: body.deliverOnly === true,
+          deliverOnly,
           ...auth.values,
         },
       });
@@ -1232,19 +1243,29 @@ router.patch('/webhook-subscriptions/:id', async (req: Request<{ id: string }>, 
     }
     if (typeof body.deliverOnly === 'boolean') data.deliverOnly = body.deliverOnly;
 
-    // Auth fields need the current row to validate the effective result.
-    if (WEBHOOK_AUTH_KEYS.some((key) => body[key] !== undefined)) {
+    // Auth and delivery fields need the current row to validate the effective result.
+    const editsAuth = WEBHOOK_AUTH_KEYS.some((key) => body[key] !== undefined);
+    const editsDelivery = data.deliverTo !== undefined || data.deliverOnly !== undefined;
+    if (editsAuth || editsDelivery) {
       const current = await prisma.webhookSubscription.findUnique({ where: { id } });
       if (!current) {
         reject(404, { error: 'Webhook subscription not found' });
         return;
       }
-      const auth = readWebhookAuthFields(body, current);
-      if (!auth.ok) {
-        reject(400, { error: auth.error, fieldErrors: auth.fieldErrors });
+      const deliverTo = body.deliverTo ?? current.deliverTo;
+      const deliverOnly = typeof body.deliverOnly === 'boolean' ? body.deliverOnly : current.deliverOnly;
+      if (deliverOnly && deliverTo === 'none') {
+        reject(400, DELIVER_ONLY_NEEDS_TARGET);
         return;
       }
-      Object.assign(data, auth.values);
+      if (editsAuth) {
+        const auth = readWebhookAuthFields(body, current);
+        if (!auth.ok) {
+          reject(400, { error: auth.error, fieldErrors: auth.fieldErrors });
+          return;
+        }
+        Object.assign(data, auth.values);
+      }
     }
 
     if (Object.keys(data).length === 0) {

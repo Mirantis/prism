@@ -241,12 +241,14 @@ them. Each webhook is a named subscription — created on the Web UI's
 **Webhooks** page — with its own endpoint (`POST /agents/webhooks/<name>` on
 port 3004), an optional event-type filter, an optional prompt template with
 payload substitution (`{field.path}`, `{__raw__}`), and a delivery target (all
-channels, web chat, or Slack). Agent runs are asynchronous (`202 Accepted` +
-run id, result delivered to your channels); a **deliver-only** mode posts the
-rendered template directly with zero LLM cost. Each subscription can require
-its sender to prove itself — a shared token in a header or an HMAC signature of
-the body, configured generically (you name the header, prefix and digest), so
-GitHub, GitLab, PagerDuty, Alertmanager and anything else are just recipes.
+channels, web chat, Slack, Teams, or none). Agent runs are asynchronous
+(`202 Accepted` + run id, result delivered to your channels); a prompt that
+sets a condition keeps a reply with nothing to report out of them. A
+**deliver-only** mode posts the rendered template directly with zero LLM cost.
+Each subscription can require its sender to prove itself — a shared token in
+a header or an HMAC signature of the body, configured generically (you name the
+header, prefix and digest), so GitHub, GitLab, PagerDuty, Alertmanager and
+anything else are just recipes.
 New subscriptions default to shared-token authentication. Set the header and
 secret to match your sender, or choose an HMAC signature —
 see [docs/webhooks.md](docs/webhooks.md).
