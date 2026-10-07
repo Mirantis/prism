@@ -6,3 +6,4 @@ tui-test-results/
 playwright-report/
 .features-gen/
 blob-report/
+llm-cache/

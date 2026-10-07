@@ -17,6 +17,7 @@ import path from 'path';
 import { execSync } from 'child_process';
 import { resetAll, seed, disconnect } from './support/db-helper';
 import { resetScheduledWork } from './support/runtime-helper';
+import { resetLlmCacheStats } from './support/llm-cache-files';
 
 /**
  * Container state + recent logs for the telemetry stack, for embedding in a
@@ -88,6 +89,7 @@ async function globalSetup() {
   console.log('[e2e] OTEL Collector ready');
 
   // 3. Reset + seed
+  resetLlmCacheStats();
   await resetScheduledWork();
   await resetAll();
   const agentId = await seed();

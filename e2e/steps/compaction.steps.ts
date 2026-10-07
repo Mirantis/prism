@@ -47,6 +47,20 @@ async function pollUntil<T>(
   return last;
 }
 
+/**
+ * The indicator shows while the summarizer runs, which can be shorter than a poll when the e2e LLM
+ * cache answers it. The script sets a flag when the indicator first appears. The flag shows that
+ * the indicator was added to the page, not that it was visible: a replayed summarizer can remove it
+ * before the next paint.
+ */
+function watchCompactingIndicator() {
+  const w = window as unknown as { __compactingSeen: boolean };
+  w.__compactingSeen = false;
+  new MutationObserver(() => {
+    if (document.querySelector('[data-testid="compacting-indicator"]')) w.__compactingSeen = true;
+  }).observe(document, { childList: true, subtree: true });
+}
+
 async function latestThread() {
   const thread = await dbHelper.getPrisma().conversationThread.findFirst({
     where: { agentId: DEFAULT_AGENT_ID },
@@ -67,12 +81,16 @@ Given('a conversation seeded with 10 messages', async ({ page }) => {
   await expect(new HomePage(page).getMessageByText(seededContent(0))).toBeVisible({
     timeout: 10_000,
   });
+  await page.evaluate(watchCompactingIndicator);
 });
 
 Then('the compacting indicator appears', async ({ page }) => {
-  // Broadcast as the `started` compaction frame; the summarizer call keeps it
-  // up for seconds, so catching it is not racy.
-  await expect(page.getByTestId('compacting-indicator')).toBeVisible({ timeout: 30_000 });
+  // Broadcast as the `started` compaction frame.
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { __compactingSeen: boolean }).__compactingSeen), {
+      timeout: 30_000,
+    })
+    .toBe(true);
 });
 
 Then('the compaction note appears in the conversation', async ({ page }) => {

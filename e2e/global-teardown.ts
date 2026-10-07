@@ -7,9 +7,11 @@
 import { execSync } from 'child_process';
 import path from 'path';
 import { disconnect } from './support/db-helper';
+import { reportLlmCacheStats } from './support/llm-cache-files';
 
 async function globalTeardown() {
   await disconnect();
+  reportLlmCacheStats('web');
 
   // Stop OTEL Collector + MinIO
   try {

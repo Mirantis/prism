@@ -68,6 +68,17 @@ jobs:
       - name: Install coding agents
         run: npm install -g @anthropic-ai/claude-code @openai/codex
 
+      # The model responses this shard recorded on its last green run. A run
+      # saves under its own key, so the newest save is the one restored. The
+      # lockfile hash starts an empty cache when a dependency changes, so an
+      # `ai` or provider SDK update sends every call to the model.
+      - name: Restore the LLM cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: e2e/llm-cache
+          key: e2e-llm-web-${{ matrix.shard }}of${{ strategy.job-total }}-${{ hashFiles('package-lock.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: e2e-llm-web-${{ matrix.shard }}of${{ strategy.job-total }}-${{ hashFiles('package-lock.json') }}-
+
       # No SLACK_* env, and `--grep-invert @slack` so a token added here later
       # still cannot make those scenarios run. They belong to `e2e-slack`.
       - name: Run E2E tests
@@ -81,6 +92,13 @@ jobs:
           # runner, and its delegated Graph token expires in about an hour, so a
           # static CI secret cannot keep it green. Without TEAMS_E2E_* the suite
           # skips. It runs locally against a test tenant — see e2e/README.md.
+
+      # Only a green run saves, so a response that failed a scenario is never replayed.
+      - name: Save the LLM cache
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: e2e/llm-cache
+          key: e2e-llm-web-${{ matrix.shard }}of${{ strategy.job-total }}-${{ hashFiles('package-lock.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload blob report
         if: ${{ !cancelled() }}
@@ -116,11 +134,24 @@ jobs:
 
       - uses: ./.github/actions/e2e-setup
 
+      - name: Restore the LLM cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: e2e/llm-cache
+          key: e2e-llm-tui-${{ matrix.shard }}of${{ strategy.job-total }}-${{ hashFiles('package-lock.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: e2e-llm-tui-${{ matrix.shard }}of${{ strategy.job-total }}-${{ hashFiles('package-lock.json') }}-
+
       - name: Run TUI E2E tests
         run: npm run test:e2e:tui --workspace=prism-agent-e2e -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}
         env:
           CI: true
           AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+
+      - name: Save the LLM cache
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: e2e/llm-cache
+          key: e2e-llm-tui-${{ matrix.shard }}of${{ strategy.job-total }}-${{ hashFiles('package-lock.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload TUI test results
         if: failure()
@@ -230,6 +261,13 @@ jobs:
       - if: always()
         run: rm -f "$RUNNER_TEMP/.gh-token-secret"
 
+      - name: Restore the LLM cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: e2e/llm-cache
+          key: e2e-llm-docker-${{ hashFiles('package-lock.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: e2e-llm-docker-${{ hashFiles('package-lock.json') }}-
+
       - name: Run the container-mode E2E scenario
         run: npm run test:e2e:docker --workspace=prism-agent-e2e
         env:
@@ -237,6 +275,12 @@ jobs:
           EXECUTION_ENVIRONMENT: docker
           SERVICE_VERSION: e2e-${{ github.sha }}
           AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+
+      - name: Save the LLM cache
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: e2e/llm-cache
+          key: e2e-llm-docker-${{ hashFiles('package-lock.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload test results
         if: failure()
@@ -266,6 +310,13 @@ jobs:
       - uses: ./.github/actions/e2e-setup
         with:
           web: 'true'
+
+      - name: Restore the LLM cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: e2e/llm-cache
+          key: e2e-llm-slack-${{ hashFiles('package-lock.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: e2e-llm-slack-${{ hashFiles('package-lock.json') }}-
 
       # The TUI spec runs first because its runtime closes its websocket on
       # SIGTERM, while Playwright kills its webServer and leaves a socket Slack
@@ -303,6 +354,12 @@ jobs:
           # Required by the `@slack` skip guard. The runtime also checks the bot
           # token's app_id against it, so a wrong value fails the boot.
           SLACK_E2E_EXPECTED_APP_ID: ${{ secrets.SLACK_E2E_EXPECTED_APP_ID }}
+
+      - name: Save the LLM cache
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: e2e/llm-cache
+          key: e2e-llm-slack-${{ hashFiles('package-lock.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload Slack test results
         if: failure()

@@ -56,6 +56,8 @@ describeFeature(
           // IDs deliberately do not inherit from it. Letting the runtime's own
           // bare defaults win is the configuration worth covering.
           BEDROCK_MODEL_ID: undefined,
+          // This spec checks the mantle endpoint itself, so every call goes to it.
+          AGENTIC_EVALS_CACHE_MODE: 'off',
         },
       });
     });
