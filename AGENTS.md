@@ -214,7 +214,9 @@ actually need a second pair of eyes.
 
 A change a user can see — the web SPA, the TUI, or chat and session behavior —
 needs before-and-after screenshots or a short video from a real running
-surface. Sanitize the frame first: no real names, no tokens, no customer data.
+surface. A non-trivial web UI change, such as a new feature with a clearly
+different screen, needs a video recording. Sanitize every frame first: no real
+names, no tokens, no customer data.
 
 Upload the assets to GitHub. Never commit them to a branch, and never create a
 `.github/pr-assets` directory:
