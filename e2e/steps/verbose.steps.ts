@@ -70,6 +70,31 @@ Then('the intermediate steps are flagged internal in the database', async () => 
   expect(delivered).toBeGreaterThan(0);
 });
 
+Then('the agent message shows the tool calls of the hidden steps', async ({ page }) => {
+  // The narration step that ran the shell command is hidden, and its call has to
+  // reach the one message shown, live and after a reload.
+  const prisma = dbHelper.getPrisma();
+  const hidden = await prisma.conversationMessage.findMany({
+    where: { role: 'AGENT', internalStep: true },
+    select: { toolCalls: true },
+  });
+  const tools = hidden.flatMap((row) =>
+    Array.isArray(row.toolCalls) ? (row.toolCalls as Array<{ tool: string }>).map((tc) => tc.tool) : [],
+  );
+  expect(tools.length).toBeGreaterThan(0);
+
+  const message = new HomePage(page).getAgentMessages().last();
+  await message.getByText(/\d+ tools? used/).click();
+  // The card renders the tool name as formatToolLabel does, e.g. shell_exec -> Shell Exec.
+  for (const tool of new Set(tools)) {
+    const label = tool
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+    await expect(message.getByText(label, { exact: true }).first()).toBeVisible();
+  }
+});
+
 // Note: the "I reload the chat page" step is defined once in file-sharing.steps.ts
 // and shared across features — don't redefine it here (playwright-bdd errors on
 // duplicate step definitions).

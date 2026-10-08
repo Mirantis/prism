@@ -618,8 +618,8 @@ describe('ConversationService', () => {
       const callIds = (message?: { toolCalls: unknown }) =>
         ((message?.toolCalls ?? []) as Array<{ id: string }>).map((c) => c.id);
       const call = (id: string) => ({ id, tool: `tool-${id}`, input: '{}', output: 'ok', success: true });
-      const row = (id: string, role: 'USER' | 'AGENT', second: number, toolCalls: unknown[] | null = null, internalStep = false) => ({
-        id, threadId: 'thread-db', role, content: id, triggeredBy: 'USER_INPUT', toolCalls, blocks: null,
+      const row = (id: string, role: 'USER' | 'AGENT', second: number, toolCalls: unknown[] | null = null, internalStep = false, triggeredBy = 'USER_INPUT') => ({
+        id, threadId: 'thread-db', role, content: id, triggeredBy, toolCalls, blocks: null,
         senderExternalId: null, senderName: null, isCompacted: false, internalStep, createdAt: at(second),
       });
 
@@ -712,6 +712,31 @@ describe('ConversationService', () => {
         const answer = messages.find((m) => m.id === 'answer');
         expect(callIds(answer)).toEqual(['fresh', 'own']);
         expect(messages.find((m) => m.id === 'next-question')?.toolCalls).toBeNull();
+      });
+
+      it('shows a cancelled turn\'s calls nowhere when a heartbeat speaks next', async () => {
+        mockPrisma.conversationMessage.findMany.mockResolvedValue([row('cancelled-step', 'AGENT', 2, [call('stale')], true)]);
+        mockPrisma.conversationMessage.findFirst.mockResolvedValue({ createdAt: at(1) });
+
+        const [heartbeat] = await conversationService.withHiddenStepToolCalls('thread-db', [
+          row('heartbeat', 'AGENT', 3, null, false, 'HEARTBEAT'),
+        ]);
+
+        expect(heartbeat.toolCalls).toBeNull();
+      });
+
+      it('passes over a heartbeat that lands mid-turn, and shows the calls on the answer', async () => {
+        mockPrisma.conversationMessage.findMany.mockResolvedValue([row('step', 'AGENT', 2, [call('a')], true)]);
+        mockPrisma.conversationMessage.findFirst.mockResolvedValue(null);
+
+        const messages = await conversationService.withHiddenStepToolCalls('thread-db', [
+          row('question', 'USER', 1),
+          row('heartbeat', 'AGENT', 3, null, false, 'HEARTBEAT'),
+          row('answer', 'AGENT', 4),
+        ]);
+
+        expect(messages.find((m) => m.id === 'heartbeat')?.toolCalls).toBeNull();
+        expect(callIds(messages.find((m) => m.id === 'answer'))).toEqual(['a']);
       });
 
       it('leaves the model\'s read as stored, so each call is replayed once', async () => {
