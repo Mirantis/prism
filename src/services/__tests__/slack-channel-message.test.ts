@@ -413,7 +413,10 @@ describe('Requirement: Channel message mention detection', () => {
         expect.objectContaining({
           message: `<@${SLACK_USER_ID}:Alice>: what's the weather?`,
           // The channel name is forwarded so the engine can surface it to the LLM.
-          metadata: expect.objectContaining({ channel: 'slack', channelName: 'general' }),
+          metadata: expect.objectContaining({
+            channel: 'slack',
+            channelLabel: 'the team Slack channel **#general**',
+          }),
         })
       );
     });

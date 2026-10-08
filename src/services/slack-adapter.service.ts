@@ -15,7 +15,13 @@
 import { App, LogLevel, SayFn } from '@slack/bolt';
 import { logger } from '../logger';
 import prisma from '../lib/prisma';
-import { ChannelAdapter, DeliverableMessage } from './channel-adapter.interface';
+import { ThreadSource } from '@prisma/client';
+import {
+  ChannelAdapter,
+  ChannelContext,
+  ChannelDestination,
+  DeliverableMessage,
+} from './channel-adapter.interface';
 import { AttachmentMeta } from './attachment.service';
 import { slackMappingService } from './slack-mapping.service';
 import {
@@ -30,6 +36,7 @@ import {
   FeedbackRating,
   FormatSlackMessageOptions,
   SlackBlock,
+  slackChannelLabel,
 } from '../utils/slack-formatter';
 import { trackEvent } from '../lib/telemetry';
 import { slackMessageQueueService } from './slack-message-queue.service';
@@ -181,7 +188,7 @@ class SlackAdapterService implements ChannelAdapter {
   async deliver(
     userId: string,
     message: DeliverableMessage,
-    channelContext?: { channel: string; channelId?: string; threadTs?: string; threadId: string; includeFeedback?: boolean }
+    channelContext?: ChannelContext
   ): Promise<void> {
     const includeFeedback = channelContext?.includeFeedback === true;
     const attachments = message.attachments ?? [];
@@ -192,7 +199,7 @@ class SlackAdapterService implements ChannelAdapter {
         channelContext.channelId,
         message.content,
         channelContext.threadId,
-        channelContext.threadTs,
+        channelContext.channelThreadId,
         (message.toolCalls as Array<{ tool: string }>) ?? undefined,
         message.id,
         includeFeedback,
@@ -262,7 +269,7 @@ class SlackAdapterService implements ChannelAdapter {
             channel: mapping.dmChannelId,
             // Reply into the DM thread if the incoming message was in one;
             // undefined posts the reply top-level (existing behavior).
-            thread_ts: channelContext?.threadTs,
+            thread_ts: channelContext?.channelThreadId,
             text: formatted.text,
             blocks: formatted.blocks,
             metadata: {
@@ -290,11 +297,11 @@ class SlackAdapterService implements ChannelAdapter {
           // Slack clears the assistant status on any bot post — set it again.
           // The indicator itself no-ops unless a turn is live on this DM
           // thread; the guard here only ensures there is a thread to target.
-          if (channelContext?.threadTs) {
+          if (channelContext?.channelThreadId) {
             this.workingIndicator.setStatus(
               connection.teamId,
               mapping.dmChannelId,
-              channelContext.threadTs,
+              channelContext.channelThreadId,
             );
           }
 
@@ -348,7 +355,7 @@ class SlackAdapterService implements ChannelAdapter {
     // Find the mapping for this channel. DM channels are keyed by dmChannelId
     // (not slackChannelId), so findByChannelId misses them — fall back to the
     // single Slack connection so thread-bound continuations to a DM still post.
-    // (getChannelContext resolves the DM channel id here for DM-originated
+    // (threadDestination resolves the DM channel id here for DM-originated
     // cron/goal "continue in this conversation" resumes.)
     const mapping = await slackMappingService.findByChannelId(channelId);
     const teamId = mapping?.connection.teamId ?? (await getSlackConnection())?.teamId;
@@ -475,6 +482,64 @@ class SlackAdapterService implements ChannelAdapter {
     // Query database via slackMappingService (includes both DM and channel mappings)
     const count = await slackMappingService.countAllMappings(userId);
     return count > 0;
+  }
+
+  /**
+   * A Slack thread continues where it started. A DM-originated thread carries
+   * no channel id (the DM path does not capture one, and DM threads have no
+   * externalChannelId). Without one, `deliver` falls back to its mapping
+   * broadcast, which can also post into the user's linked channels, so the
+   * user's DM channel is resolved to keep the continuation in the DM.
+   */
+  async threadDestination(threadId: string, originChannelId?: string): Promise<ChannelDestination> {
+    const thread = await prisma.conversationThread.findUnique({
+      where: { id: threadId },
+      select: { externalThreadId: true, externalChannelId: true, threadSource: true, userId: true, agentId: true },
+    });
+    let channelId = originChannelId ?? thread?.externalChannelId ?? undefined;
+    if (!channelId && thread) {
+      const dm = await prisma.slackMapping.findFirst({
+        where: { lensUserId: thread.userId, agentId: thread.agentId, dmChannelId: { not: null } },
+        select: { dmChannelId: true },
+      });
+      channelId = dm?.dmChannelId ?? undefined;
+    }
+    // With no channel id there is nowhere to post, and the resume is dropped. A
+    // thread-bound task resumes in its own thread or not at all: the main
+    // channel would put its output in an unrelated conversation.
+    if (!channelId) {
+      logger.warn(
+        'No Slack channel resolved for thread %s (no origin/external channel id and no DM mapping) — a "continue in thread" resume will not be delivered',
+        threadId,
+      );
+    }
+    return {
+      channelId,
+      channelLabel: channelId ? slackChannelLabel(channelId) : undefined,
+      // Only SLACK-sourced threads keep a real thread_ts in externalThreadId.
+      // A top-level DM thread is DATABASE-sourced and stores its `D…` channel
+      // id there, which is no thread_ts, so it resumes top-level in the DM.
+      channelThreadId:
+        thread?.threadSource === ThreadSource.SLACK ? (thread.externalThreadId ?? undefined) : undefined,
+    };
+  }
+
+  /**
+   * The user's DM channel, else the agent's main linked channel. No channel id
+   * goes with it: `deliver`'s mapping fallback posts to the DM or the main
+   * channel, while a channel id routes to `deliverToChannel`, which cannot post
+   * to a DM.
+   */
+  async defaultDestination(
+    agentId: string,
+    userId: string,
+  ): Promise<(ChannelDestination & { threadKey: string }) | null> {
+    const dm = await prisma.slackMapping.findFirst({
+      where: { lensUserId: userId, agentId, dmChannelId: { not: null } },
+      select: { dmChannelId: true },
+    });
+    const conversation = dm?.dmChannelId ?? (await slackMappingService.getMainChannel(agentId));
+    return conversation ? { threadKey: conversation } : null;
   }
 
   /**
@@ -864,11 +929,11 @@ class SlackAdapterService implements ChannelAdapter {
         mapping.lensUserId!,
         mapping.agentId,
         threadKey,
-        threadTs ? { channelId: dmChannelId } : undefined,
+        threadTs ? { source: ThreadSource.SLACK, channelId: dmChannelId } : undefined,
       );
 
       // Route through local conversation engine (direct call).
-      // metadata.channel='slack' scopes delivery to Slack only; slackThreadTs
+      // metadata.channel='slack' scopes delivery to Slack only; channelThreadId
       // makes the reply land in the same DM thread (undefined → top-level).
       await conversationEngineService.chat({
         userId: mapping.lensUserId!,
@@ -878,7 +943,7 @@ class SlackAdapterService implements ChannelAdapter {
         attachmentIds,
         runtimeNotices: failures.length ? [this.buildAttachmentFailureNote(failures)] : undefined,
         onToolEvent: indicator ? createToolStatusListener(indicator) : undefined,
-        metadata: { channel: 'slack', slackThreadTs: threadTs },
+        metadata: { channel: 'slack', channelThreadId: threadTs },
       });
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : String(error);
@@ -1065,7 +1130,7 @@ class SlackAdapterService implements ChannelAdapter {
 
       // Get or create thread bound to this Slack thread
       const thread = await conversationService.getOrCreateThreadByExternalId(
-        userId, mapping.agentId, slackThreadId, { channelId }
+        userId, mapping.agentId, slackThreadId, { source: ThreadSource.SLACK, channelId }
       );
 
       // Add participant tracking
@@ -1110,8 +1175,8 @@ class SlackAdapterService implements ChannelAdapter {
         metadata: {
           channel: 'slack',
           channelId,
-          channelName: mapping.slackChannelName ?? undefined,
-          slackThreadTs: slackThreadId,
+          channelThreadId: slackThreadId,
+          channelLabel: slackChannelLabel(mapping.slackChannelName ?? channelId),
           senderExternalId: slackUserId,
           senderName,
         },
@@ -1587,7 +1652,7 @@ class SlackAdapterService implements ChannelAdapter {
     agentId: string,
   ): Promise<ThreadAction> {
     return threadReplyClassifierService.classify({
-      platform: 'slack',
+      platform: { channel: this.name, name: 'Slack' },
       agentId,
       lines: messages.map((m) => ({
         fromBot: m.user === botUserId,
@@ -1739,7 +1804,7 @@ class SlackAdapterService implements ChannelAdapter {
           continue;
         }
 
-        if (await attachmentService.existsBySlackFileId(file.id)) {
+        if (await attachmentService.existsByExternalFileId(file.id)) {
           logger.info('[SlackAdapter] file %s already stored; skipping', file.id);
           continue;
         }
@@ -1764,14 +1829,14 @@ class SlackAdapterService implements ChannelAdapter {
         }
 
         const mediaType = detectMediaType(buffer, filename, file.mimetype);
-        const row = await attachmentService.createSlackAttachment({
+        const row = await attachmentService.createOnce({
           filename,
           mediaType,
           sizeBytes: buffer.byteLength,
           data: buffer,
           category: classifyMediaType(mediaType),
           source: 'slack',
-          slackFileId: file.id,
+          externalFileId: file.id,
           externalTs: ctx.externalTs,
           threadId: ctx.threadId,
         });
@@ -1980,7 +2045,7 @@ class SlackAdapterService implements ChannelAdapter {
     if (result.claimed) {
       try {
         // Direct local call to heartbeat service
-        heartbeatService.triggerFromSlack();
+        heartbeatService.triggerFrom(slackMessageQueueService);
       } catch (error) {
         logger.error('[ThrottledNotify] Failed to trigger heartbeat for agent %s: %s', agentId, error instanceof Error ? error.message : String(error));
       }

@@ -9,7 +9,7 @@ import { agentWorkspaceService } from './agent-workspace.service';
 import { conversationService } from './conversation.service';
 import { attachmentService } from './attachment.service';
 import { AgentContext } from '../types';
-import type { ConversationMessage as PrismaConversationMessage } from '@prisma/client';
+import { ThreadSource, type ConversationMessage as PrismaConversationMessage } from '@prisma/client';
 
 class ContextService {
   async getAgentContext(
@@ -68,17 +68,17 @@ class ContextService {
    * here. Attachment bytes are never loaded into the context window — the
    * agent pulls content on demand via hydrate_attachment / view_attachment
    * tools. Attachment keys differ by source: DB threads key by messageId,
-   * live-read Slack threads key by the Slack message ts (externalMessageId).
+   * live-read threads key by the channel's message id (externalMessageId).
    */
   private async attachFiles(
     threadId: string,
-    threadSource: 'DATABASE' | 'SLACK',
+    threadSource: ThreadSource,
     messages: PrismaConversationMessage[],
   ): Promise<AgentContext['recentMessages']> {
-    const isSlack = threadSource === 'SLACK';
-    const keyOf = (m: PrismaConversationMessage) => (isSlack ? m.externalMessageId ?? '' : m.id);
+    const liveRead = threadSource !== ThreadSource.DATABASE;
+    const keyOf = (m: PrismaConversationMessage) => (liveRead ? m.externalMessageId ?? '' : m.id);
 
-    const metaMap = isSlack
+    const metaMap = liveRead
       ? await attachmentService.getMetaByExternalTs(
           threadId,
           messages.map(m => m.externalMessageId).filter((t): t is string => Boolean(t)),

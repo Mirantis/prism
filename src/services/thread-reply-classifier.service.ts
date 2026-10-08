@@ -13,7 +13,7 @@ import { logger } from '../logger';
 import { trackEvent } from '../lib/telemetry';
 import { getClassificationRequest } from '../lib/classification';
 import { callModelForObject } from '../lib/model-call';
-import type { LlmCallPurpose } from './llm-call.service';
+import type { ChatPlatform } from './channel-adapter.interface';
 
 export type ThreadAction = { action: 'respond' } | { action: 'ignore' };
 
@@ -25,23 +25,13 @@ export interface ThreadLine {
   text: string;
 }
 
-export type ThreadPlatform = 'slack' | 'teams';
-
-const PLATFORMS: Record<
-  ThreadPlatform,
-  { name: string; purpose: LlmCallPurpose; failureEvent: string }
-> = {
-  slack: {
-    name: 'Slack',
-    purpose: 'slack-thread-gate',
-    failureEvent: 'slack thread classification failed',
-  },
-  teams: {
-    name: 'Microsoft Teams',
-    purpose: 'teams-thread-gate',
-    failureEvent: 'teams thread classification failed',
-  },
-};
+/** The chat platform a thread is on. */
+export interface ThreadPlatform {
+  /** The channel adapter's name; the call's purpose and failure event carry it. */
+  channel: ChatPlatform;
+  /** How the prompt names the platform. */
+  name: string;
+}
 
 /** The newest lines of the thread the classifier reads. */
 export const THREAD_TRANSCRIPT_LINES = 10;
@@ -83,18 +73,17 @@ function systemPrompt(platformName: string): string {
 
 class ThreadReplyClassifierService {
   /**
-   * Owns each platform's `failureEvent`. Worth an event because the
-   * failure mode is degradation rather than an outage: a failed call answers
-   * `respond`, so a classifier that has stopped working looks exactly like a
-   * chatty bot and shows up nowhere else.
+   * Owns each platform's `<channel> thread classification failed` event. Worth
+   * an event because the failure mode is degradation rather than an outage: a
+   * failed call answers `respond`, so a classifier that has stopped working
+   * looks exactly like a chatty bot and shows up nowhere else.
    */
   async classify(input: {
     platform: ThreadPlatform;
     agentId: string;
     lines: ThreadLine[];
   }): Promise<ThreadAction> {
-    const { agentId, lines } = input;
-    const platform = PLATFORMS[input.platform];
+    const { agentId, lines, platform } = input;
     try {
       const transcript = lines
         .slice(-THREAD_TRANSCRIPT_LINES)
@@ -107,7 +96,7 @@ class ThreadReplyClassifierService {
       // answer every threaded message instead of ignoring any.
       const { model, providerOptions, samplingParams } = getClassificationRequest();
 
-      const { object } = await callModelForObject({ purpose: platform.purpose }, {
+      const { object } = await callModelForObject({ purpose: `${platform.channel}-thread-gate` }, {
         model,
         schema: threadClassificationSchema,
         // temperature: 0 on the vendors that accept it, omitted elsewhere.
@@ -130,7 +119,7 @@ class ThreadReplyClassifierService {
       logger.warn({ err: error }, 'Thread classification failed, falling back to respond');
       // Props stay to ids, the active model and the error's shape, never the
       // transcript or the message text the classifier ran on.
-      trackEvent(platform.failureEvent, null, {
+      trackEvent(`${platform.channel} thread classification failed`, null, {
         'agent.id': agentId,
         'llm.provider': config.llmProvider,
         'llm.classification_model': config.classificationModelId,

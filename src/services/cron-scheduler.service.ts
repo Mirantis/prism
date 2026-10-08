@@ -14,7 +14,6 @@
 import * as cron from 'node-cron';
 import { invoke } from '../invoke';
 import { messageDeliveryService } from './message-delivery.service';
-import { conversationService } from './conversation.service';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { isTimezone } from '../lib/timezone';
@@ -22,6 +21,7 @@ import { runClassificationGate } from '../lib/classification-gate';
 import { CRON_TASK_GATE_PROMPT, buildCronGateUserMessage } from '../prompts/cron-prompt';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
+import type { ChannelName } from './channel-adapter.interface';
 
 // ============================================================================
 // Types
@@ -320,16 +320,16 @@ class CronSchedulerService {
         ...(boundThreadId
           ? {
               threadId: boundThreadId,
-              originChannel: (task.originChannel as 'slack' | 'websocket' | 'teams' | null) ?? undefined,
+              originChannel: (task.originChannel as ChannelName | null) ?? undefined,
               originChannelId: task.originChannelId ?? undefined,
             }
           : {}),
       });
 
-      // Build channel-neutral routing for a bound task once (Slack thread_ts /
-      // WebSocket session recovered from the thread row); undefined for unbound.
+      // Build channel-neutral routing for a bound task once (the origin
+      // channel's own thread, recovered from the thread row); undefined for unbound.
       const channelContext = boundThreadId
-        ? await conversationService.getChannelContext(boundThreadId, task.originChannel, task.originChannelId)
+        ? await messageDeliveryService.threadContext(boundThreadId, task.originChannel, task.originChannelId)
         : undefined;
 
       // Budget exceeded — notify user and record the attempt

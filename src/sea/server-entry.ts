@@ -6,7 +6,7 @@
  *   2. Promote any staged `.prism` restore before the DB is opened.
  *   3. Apply migrations directly via better-sqlite3 (no Prisma CLI in the binary).
  *   4. Kick off the embedding backfill in the background (best-effort).
- *   5. Boot the runtime (src/index.ts: HTTP + WS + heartbeats + cron + Slack).
+ *   5. Boot the runtime (src/index.ts: HTTP + WS + heartbeats + cron + channels).
  *
  * Native deps (better-sqlite3, @prisma/client, sqlite-vec) are NOT bundled —
  * they load from the `node_modules/` sidecar next to this executable.

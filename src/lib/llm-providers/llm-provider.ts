@@ -114,8 +114,8 @@ export type LlmProvider = ((modelId: string) => LanguageModel) & {
    *
    * This exists so vendor quirks stay behind the seam. Left to itself the SDK
    * sends Anthropic's native `output_config.format` for any model id it
-   * recognizes, which some platforms reject — but a caller like the Slack
-   * thread classifier has no business knowing which. It asks the active
+   * recognizes, which some platforms reject — but a caller like the thread
+   * reply classifier has no business knowing which. It asks the active
    * provider what to send and forwards it.
    */
   structuredOutputOptions?: ProviderOptionsFragment;

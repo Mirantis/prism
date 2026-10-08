@@ -17,7 +17,7 @@ const {
   mockDeliverMessage,
   mockUpdateHeartbeatSchedule,
   mockUpdateAgentHeartbeatStatus,
-  mockDrainSlackMessages,
+  mockDrainTriggerMessages,
   mockGenerateText,
   mockGetGateRequest,
   mockLoggerInfo,
@@ -28,7 +28,7 @@ const {
   mockDeliverMessage: vi.fn(),
   mockUpdateHeartbeatSchedule: vi.fn(),
   mockUpdateAgentHeartbeatStatus: vi.fn(),
-  mockDrainSlackMessages: vi.fn(),
+  mockDrainTriggerMessages: vi.fn(),
   mockGenerateText: vi.fn(),
   mockGetGateRequest: vi.fn(),
   mockLoggerInfo: vi.fn(),
@@ -43,12 +43,6 @@ vi.mock('../invoke', () => ({
 vi.mock('./message-delivery.service', () => ({
   messageDeliveryService: {
     publishToLatestThread: mockDeliverMessage,
-  },
-}));
-
-vi.mock('./slack-message-queue.service', () => ({
-  slackMessageQueueService: {
-    drain: mockDrainSlackMessages,
   },
 }));
 
@@ -88,6 +82,10 @@ vi.mock('../logger', () => ({
 // ---------------------------------------------------------------------------
 
 import { heartbeatService } from './heartbeat.service';
+
+/** A channel that queues messages for the heartbeat. */
+const triggerSource = { channel: 'slack', platform: 'Slack', drain: mockDrainTriggerMessages };
+heartbeatService.registerTriggerSource(triggerSource);
 import { AgentWorkspace } from '@prisma/client';
 
 // ---------------------------------------------------------------------------
@@ -166,7 +164,7 @@ describe('HeartbeatService', () => {
     mockUpdateHeartbeatSchedule.mockResolvedValue(undefined);
     mockUpdateAgentHeartbeatStatus.mockResolvedValue(undefined);
     mockDeliverMessage.mockResolvedValue({ messageId: 'msg-1', threadId: 'thr-1' });
-    mockDrainSlackMessages.mockResolvedValue([]);
+    mockDrainTriggerMessages.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -564,8 +562,8 @@ describe('HeartbeatService', () => {
       );
     });
 
-    it.each(['timer', 'slack'])('%s delivers an alert before an empty final step', async (trigger) => {
-      // The Slack e2e run wrote an alert with memory_write, then ended with an empty step.
+    it.each(['timer', 'channel'])('%s delivers an alert before an empty final step', async (trigger) => {
+      // A recorded e2e run wrote an alert with memory_write, then ended with an empty step.
       const alert = '**⚠️ ALERT: Production Deployment Failure**';
       mockInvoke.mockResolvedValue({
         response: `Checking the deployment.\n\n${alert}`,
@@ -579,11 +577,11 @@ describe('HeartbeatService', () => {
       mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
       heartbeatService.startHeartbeat(createAgent());
 
-      if (trigger === 'slack') {
-        mockDrainSlackMessages.mockResolvedValueOnce([{
+      if (trigger === 'channel') {
+        mockDrainTriggerMessages.mockResolvedValueOnce([{
           sender: 'Test Operator', text: 'deployment failed', timestamp: '2025-01-15T12:00:00Z',
         }]);
-        heartbeatService.triggerFromSlack();
+        heartbeatService.triggerFrom(triggerSource);
         await vi.advanceTimersByTimeAsync(0);
       } else {
         await heartbeatService.triggerHeartbeat();
@@ -692,8 +690,8 @@ describe('HeartbeatService', () => {
       expect(stepLogs[1]).toContain('text="All clear"');
     });
 
-    it('logs each step for slack-triggered heartbeat', async () => {
-      mockDrainSlackMessages.mockResolvedValueOnce([{
+    it('logs each step for a channel-triggered heartbeat', async () => {
+      mockDrainTriggerMessages.mockResolvedValueOnce([{
         sender: 'Alice',
         text: 'deploy failed',
         timestamp: '2025-01-15T12:00:00Z',
@@ -709,7 +707,7 @@ describe('HeartbeatService', () => {
       mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
-      heartbeatService.triggerFromSlack();
+      heartbeatService.triggerFrom(triggerSource);
       await vi.advanceTimersByTimeAsync(0);
 
       const stepLogs = mockLoggerInfo.mock.calls
@@ -1273,11 +1271,11 @@ describe('HeartbeatService', () => {
   });
 
   // ==========================================================================
-  // Slack-triggered heartbeat (triggerFromSlack)
+  // Channel-triggered heartbeat (triggerFrom)
   // ==========================================================================
 
-  describe('triggerFromSlack', () => {
-    const slackMsg = (text: string) => ({
+  describe('triggerFrom', () => {
+    const channelMsg = (text: string) => ({
       sender: 'Alice',
       text,
       timestamp: '2025-01-15T12:00:00Z',
@@ -1289,13 +1287,32 @@ describe('HeartbeatService', () => {
     });
 
     it('returns ignored when agent has no heartbeat state', () => {
-      const status = heartbeatService.triggerFromSlack();
+      const status = heartbeatService.triggerFrom(triggerSource);
       expect(status).toBe('ignored');
       expect(mockInvoke).not.toHaveBeenCalled();
     });
 
+    it('a timer heartbeat drains every source so nothing queued waits', async () => {
+      mockDrainTriggerMessages.mockResolvedValueOnce([channelMsg('disk at 95%')]);
+      mockInvoke.mockResolvedValue({
+        response: 'Disk alert',
+        toolCalls: [],
+        steps: [{ text: 'Disk alert', toolCalls: [] }],
+      });
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockDrainTriggerMessages).toHaveBeenCalledWith('agent-1');
+      expect(mockInvoke).toHaveBeenCalledWith(
+        expect.objectContaining({
+          heartbeatTriggers: [{ platform: 'Slack', messages: [channelMsg('disk at 95%')] }],
+        }),
+      );
+    });
+
     it('drains messages from DB and passes them into invoke', async () => {
-      mockDrainSlackMessages.mockResolvedValueOnce([slackMsg('deploy failed')]);
+      mockDrainTriggerMessages.mockResolvedValueOnce([channelMsg('deploy failed')]);
       mockInvoke.mockResolvedValue({
         response: 'Incident detected!',
         toolCalls: [],
@@ -1303,17 +1320,18 @@ describe('HeartbeatService', () => {
       });
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
-      heartbeatService.triggerFromSlack();
+      heartbeatService.triggerFrom(triggerSource);
 
       // Let the fire-and-forget promise resolve
       await vi.advanceTimersByTimeAsync(0);
 
-      expect(mockDrainSlackMessages).toHaveBeenCalledWith('agent-1');
+      expect(mockDrainTriggerMessages).toHaveBeenCalledWith('agent-1');
       expect(mockInvoke).toHaveBeenCalledWith(
         expect.objectContaining({
           userId: 'user-abc-123',
           mode: 'heartbeat',
-          slackMessages: [slackMsg('deploy failed')],
+          heartbeatTriggers: [{ platform: 'Slack', messages: [channelMsg('deploy failed')] }],
+          prompt: 'Perform your heartbeat check now. This heartbeat was triggered by new messages in the monitored Slack channel.',
         }),
       );
     });
@@ -1321,18 +1339,18 @@ describe('HeartbeatService', () => {
     it('returns ignored when heartbeat is already running (throttle queue handles next trigger)', async () => {
       let resolveFirst!: (v: unknown) => void;
       mockInvoke.mockReturnValueOnce(new Promise(r => { resolveFirst = r; }));
-      mockDrainSlackMessages.mockResolvedValueOnce([slackMsg('msg-1')]);
+      mockDrainTriggerMessages.mockResolvedValueOnce([channelMsg('msg-1')]);
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
 
       // First trigger starts execution
-      heartbeatService.triggerFromSlack();
+      heartbeatService.triggerFrom(triggerSource);
       await vi.advanceTimersByTimeAsync(0);
 
       expect(mockInvoke).toHaveBeenCalledTimes(1);
 
       // Second trigger while first is running — returns ignored
-      const status = heartbeatService.triggerFromSlack();
+      const status = heartbeatService.triggerFrom(triggerSource);
       expect(status).toBe('ignored');
 
       // Resolve the first invoke — no re-trigger happens
@@ -1348,7 +1366,7 @@ describe('HeartbeatService', () => {
     });
 
     it('delivers the response when gate says DELIVER', async () => {
-      mockDrainSlackMessages.mockResolvedValueOnce([slackMsg('prod is down')]);
+      mockDrainTriggerMessages.mockResolvedValueOnce([channelMsg('prod is down')]);
       mockInvoke.mockResolvedValue({
         response: 'Incident in prod!',
         toolCalls: [],
@@ -1356,7 +1374,7 @@ describe('HeartbeatService', () => {
       });
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
-      heartbeatService.triggerFromSlack();
+      heartbeatService.triggerFrom(triggerSource);
       await vi.advanceTimersByTimeAsync(0);
 
       expect(mockDeliverMessage).toHaveBeenCalledWith(
@@ -1369,7 +1387,7 @@ describe('HeartbeatService', () => {
     });
 
     it('resets isRunning after completion', async () => {
-      mockDrainSlackMessages.mockResolvedValueOnce([slackMsg('check')]);
+      mockDrainTriggerMessages.mockResolvedValueOnce([channelMsg('check')]);
       mockInvoke.mockResolvedValue({
         response: 'All good',
         toolCalls: [],
@@ -1377,7 +1395,7 @@ describe('HeartbeatService', () => {
       });
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
-      heartbeatService.triggerFromSlack();
+      heartbeatService.triggerFrom(triggerSource);
       await vi.advanceTimersByTimeAsync(0);
 
       expect(heartbeatService.getStatus()?.isRunning).toBe(false);
@@ -1493,8 +1511,8 @@ describe('HeartbeatService', () => {
       );
     });
 
-    it('tags Slack-triggered runs with trigger=slack', async () => {
-      mockDrainSlackMessages.mockResolvedValueOnce([
+    it('tags channel-triggered runs with the channel as the trigger', async () => {
+      mockDrainTriggerMessages.mockResolvedValueOnce([
         { sender: 'Alice', text: 'deploy failed', timestamp: '2025-01-15T12:00:00Z' },
       ]);
       mockInvoke.mockResolvedValue({
@@ -1505,7 +1523,7 @@ describe('HeartbeatService', () => {
       mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
-      heartbeatService.triggerFromSlack();
+      heartbeatService.triggerFrom(triggerSource);
       await vi.advanceTimersByTimeAsync(0);
 
       expect(mockTrackEvent).toHaveBeenCalledWith(

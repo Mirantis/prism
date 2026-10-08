@@ -44,6 +44,10 @@ import { teamsAdapterService } from './services/teams/teams-adapter.service';
 import { webSocketAdapterService } from './services/websocket-adapter.service';
 import { webSocketGatewayService } from './services/websocket-gateway.service';
 import { messageDeliveryService } from './services/message-delivery.service';
+import { conversationService } from './services/conversation.service';
+import { slackMessageQueueService } from './services/slack-message-queue.service';
+import { SlackThreadProvider } from './services/providers/slack-thread.provider';
+import { ThreadSource } from '@prisma/client';
 import { pluginMcpService } from './services/plugin-mcp.service';
 import { updateService } from './services/update/update.service';
 import { pluginCatalogService } from './services/plugin-catalog.service';
@@ -90,6 +94,8 @@ let fileJanitorTimer: NodeJS.Timeout | undefined;
 messageDeliveryService.register(webSocketAdapterService);
 messageDeliveryService.register(slackAdapterService);
 messageDeliveryService.register(teamsAdapterService);
+conversationService.registerThreadProvider(ThreadSource.SLACK, new SlackThreadProvider());
+heartbeatService.registerTriggerSource(slackMessageQueueService);
 
 // Initialize WebSocket gateway before listening
 webSocketGatewayService.initialize(httpServer);

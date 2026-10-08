@@ -2,10 +2,10 @@ export const STEP_LIMIT = 100;
 export const MAX_OUTPUT_TOKENS = 16000;
 
 /**
- * Max size of a single shared file (web upload or Slack attachment). Mirrors
- * the shell output cap (`MAX_EXEC_OUTPUT_BYTES`). Enforced by the multer limit
- * on the upload route and re-checked server-side; oversized Slack files are
- * skipped before download.
+ * Max size of a single shared file (web upload or a file a channel received).
+ * Mirrors the shell output cap (`MAX_EXEC_OUTPUT_BYTES`). Enforced by the multer
+ * limit on the upload route and re-checked server-side; a channel skips an
+ * oversized file before download.
  */
 export const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -16,7 +16,7 @@ export const MAX_FILE_SIZE_MB = MAX_FILE_SIZE_BYTES / (1024 * 1024);
  * Max attachments linked to a single message. Bounds the per-message stub
  * count in the LLM context and the media-dir write volume one message can
  * cause. Enforced server-side in `attachmentService.linkToMessage` (the
- * chokepoint for web + Slack) and mirrored as a UX guard in the web composer
+ * chokepoint for every upload path) and mirrored as a UX guard in the web composer
  * and CLI.
  */
 export const MAX_ATTACHMENTS_PER_MESSAGE = 100;

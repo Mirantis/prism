@@ -43,8 +43,8 @@ router.get('/threads', async (_req: Request, res: Response) => {
       res.status(503).json({ error: 'Agent not initialized (agentId unset)' });
       return;
     }
-    // Resumable threads only (newest first): threadSource DATABASE drops Slack
-    // threads, which cannot be reopened outside Slack. 50 bounds the response
+    // Resumable threads only (newest first): threadSource DATABASE drops the
+    // threads a channel reads live, which reopen only there. 50 bounds the response
     // while leaving a scrollable list plenty of rows. Each row is labelled with
     // the git branch of its workspace root when set.
     const threads = await conversationService.listThreads(

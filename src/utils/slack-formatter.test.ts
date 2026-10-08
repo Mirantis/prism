@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import {
   formatSlackMessage,
   formatNotification,
+  slackChannelLabel,
   buildFeedbackActionsBlock,
   buildFeedbackAckBlock,
   FEEDBACK_BLOCK_ID,
@@ -329,4 +330,11 @@ describe('feedback actions block', () => {
     expect(ack.elements[0].text).not.toContain('👎');
   });
 
+});
+
+describe('slackChannelLabel', () => {
+  it('names the channel with one #', () => {
+    expect(slackChannelLabel('alerts')).toBe('the team Slack channel **#alerts**');
+    expect(slackChannelLabel('#general')).toBe('the team Slack channel **#general**');
+  });
 });

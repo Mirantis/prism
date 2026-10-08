@@ -22,11 +22,8 @@ const {
   mockGetOrCreateLatestThread,
   mockGetOrCreateThreadByExternalId,
   mockGetAgent,
-  mockGetMainChannel,
-  mockGetTeamsMainChannel,
+  mockDefaultDestination,
   mockSubscriptionFindUnique,
-  mockSlackMappingFindFirst,
-  mockTeamsMappingFindFirst,
   mockTrackEvent,
   mockRunAccept,
   mockRunStart,
@@ -40,11 +37,8 @@ const {
   mockGetOrCreateLatestThread: vi.fn(),
   mockGetOrCreateThreadByExternalId: vi.fn(),
   mockGetAgent: vi.fn(),
-  mockGetMainChannel: vi.fn(),
-  mockGetTeamsMainChannel: vi.fn(),
+  mockDefaultDestination: vi.fn(),
   mockSubscriptionFindUnique: vi.fn(),
-  mockSlackMappingFindFirst: vi.fn(),
-  mockTeamsMappingFindFirst: vi.fn(),
   mockTrackEvent: vi.fn(),
   mockRunAccept: vi.fn(),
   mockRunStart: vi.fn(),
@@ -57,12 +51,17 @@ vi.mock('../invoke', () => ({
   invoke: mockInvoke,
 }));
 
-vi.mock('./message-delivery.service', () => ({
-  messageDeliveryService: {
-    publishToLatestThread: mockPublishToLatestThread,
-    publish: mockPublish,
-  },
-}));
+vi.mock('./message-delivery.service', () => {
+  // The chat socket has no default destination; Slack has one.
+  const adapters = [{ name: 'websocket' }, { name: 'slack', defaultDestination: mockDefaultDestination }];
+  return {
+    messageDeliveryService: {
+      publishToLatestThread: mockPublishToLatestThread,
+      publish: mockPublish,
+      getAdapter: (name: string) => adapters.find((adapter) => adapter.name === name),
+    },
+  };
+});
 
 vi.mock('./webhook-run.service', () => ({
   webhookRunService: {
@@ -85,28 +84,10 @@ vi.mock('./agent-workspace.service', () => ({
   },
 }));
 
-vi.mock('./slack-mapping.service', () => ({
-  slackMappingService: {
-    getMainChannel: mockGetMainChannel,
-  },
-}));
-
-vi.mock('./teams/teams-mapping.service', () => ({
-  teamsMappingService: {
-    getMainChannel: mockGetTeamsMainChannel,
-  },
-}));
-
 vi.mock('../lib/prisma', () => {
   const prisma = {
     webhookSubscription: {
       findUnique: mockSubscriptionFindUnique,
-    },
-    slackMapping: {
-      findFirst: mockSlackMappingFindFirst,
-    },
-    teamsMapping: {
-      findFirst: mockTeamsMappingFindFirst,
     },
     // Read by the real run service, which two tests call through.
     webhookRun: {
@@ -195,11 +176,8 @@ beforeEach(() => {
   mockPublishToLatestThread.mockResolvedValue({ id: 'msg-1' });
   mockPublish.mockResolvedValue({ id: 'msg-1' });
   mockRunAccept.mockResolvedValue(undefined);
-  // Default: no Slack/Teams destination linked. Scoped tests override these.
-  mockSlackMappingFindFirst.mockResolvedValue(null);
-  mockGetMainChannel.mockResolvedValue(null);
-  mockTeamsMappingFindFirst.mockResolvedValue(null);
-  mockGetTeamsMainChannel.mockResolvedValue(null);
+  // Default: no channel destination linked. Scoped tests override this.
+  mockDefaultDestination.mockResolvedValue(null);
   mockGetOrCreateThreadByExternalId.mockImplementation((_u, _a, ext) =>
     Promise.resolve({ id: `thread-for-${ext}` }),
   );
@@ -712,18 +690,19 @@ describe('handleInbound agent mode', () => {
     );
   });
 
-  it('personal mode: stores slack-scoped output in the DM thread (keyed by dmChannelId), hidden from web', async () => {
+  it("stores channel-scoped output in the destination's own thread, hidden from web", async () => {
     mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'slack' }));
-    mockSlackMappingFindFirst.mockResolvedValue({ dmChannelId: 'D123' });
+    mockDefaultDestination.mockResolvedValue({ threadKey: 'D123' });
     mockInvoke.mockResolvedValue(invokeResult('handled'));
 
     await webhookService.handleInbound('alerts', {}, {}, 'run-1');
     await vi.waitFor(() => expect(mockPublish).toHaveBeenCalled());
 
-    // Keyed on the DM channel id → the same DATABASE thread the DM chat uses,
-    // hidden from web Recents by the listThreads externalThreadId filter.
+    // Keyed on the destination's conversation id → the same DATABASE thread the
+    // channel's chat uses, hidden from web Recents by the listThreads
+    // externalThreadId filter.
+    expect(mockDefaultDestination).toHaveBeenCalledWith('agent-1', 'user-1');
     expect(mockGetOrCreateThreadByExternalId).toHaveBeenCalledWith('user-1', 'agent-1', 'D123');
-    expect(mockGetMainChannel).not.toHaveBeenCalled();
     expect(mockPublish).toHaveBeenCalledWith(
       'user-1',
       'thread-for-D123',
@@ -736,30 +715,27 @@ describe('handleInbound agent mode', () => {
     expect(mockPublishToLatestThread).not.toHaveBeenCalled();
   });
 
-  it('team mode: stores slack-scoped output in a thread keyed by the main channel id', async () => {
+  it('routes to the conversation the destination names', async () => {
     mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'slack' }));
-    mockSlackMappingFindFirst.mockResolvedValue(null); // no DM link
-    mockGetMainChannel.mockResolvedValue('C_MAIN');
+    mockDefaultDestination.mockResolvedValue({ threadKey: 'C_MAIN', channelId: 'C_MAIN' });
     mockInvoke.mockResolvedValue(invokeResult('handled'));
 
     await webhookService.handleInbound('alerts', {}, {}, 'run-1');
     await vi.waitFor(() => expect(mockPublish).toHaveBeenCalled());
 
-    expect(mockGetOrCreateThreadByExternalId).toHaveBeenCalledWith('user-1', 'agent-1', 'C_MAIN');
     expect(mockPublish).toHaveBeenCalledWith(
       'user-1',
       'thread-for-C_MAIN',
       '**Webhook: alerts**\n\nhandled',
       'WEBHOOK',
-      expect.objectContaining({ channelContext: { channel: 'slack', threadId: 'thread-for-C_MAIN' } }),
+      expect.objectContaining({
+        channelContext: { channel: 'slack', channelId: 'C_MAIN', threadId: 'thread-for-C_MAIN' },
+      }),
     );
-    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
   });
 
-  it('no Slack linked: falls back to the web latest thread and warns', async () => {
+  it('no destination linked: falls back to the web latest thread and warns', async () => {
     mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'slack' }));
-    mockSlackMappingFindFirst.mockResolvedValue(null);
-    mockGetMainChannel.mockResolvedValue(null);
     mockInvoke.mockResolvedValue(invokeResult('handled'));
 
     await webhookService.handleInbound('alerts', {}, {}, 'run-1');
@@ -773,70 +749,6 @@ describe('handleInbound agent mode', () => {
       'WEBHOOK',
       expect.objectContaining({}),
     );
-  });
-
-  it('personal mode: stores teams-scoped output in the DM-conversation thread, hidden from web', async () => {
-    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'teams' }));
-    mockTeamsMappingFindFirst.mockResolvedValue({ dmConversationId: 'a:dm-1' });
-    mockInvoke.mockResolvedValue(invokeResult('handled'));
-
-    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
-    await vi.waitFor(() => expect(mockPublish).toHaveBeenCalled());
-
-    expect(mockGetOrCreateThreadByExternalId).toHaveBeenCalledWith('user-1', 'agent-1', 'a:dm-1');
-    expect(mockGetTeamsMainChannel).not.toHaveBeenCalled();
-    expect(mockPublish).toHaveBeenCalledWith(
-      'user-1',
-      'thread-for-a:dm-1',
-      '**Webhook: alerts**\n\nhandled',
-      'WEBHOOK',
-      expect.objectContaining({
-        channelContext: { channel: 'teams', threadId: 'thread-for-a:dm-1' },
-      }),
-    );
-    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
-  });
-
-  it('team mode: stores teams-scoped output in a thread keyed by the main channel conversation id', async () => {
-    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'teams' }));
-    mockTeamsMappingFindFirst.mockResolvedValue(null); // no DM link
-    mockGetTeamsMainChannel.mockResolvedValue('19:main@thread.tacv2');
-    mockInvoke.mockResolvedValue(invokeResult('handled'));
-
-    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
-    await vi.waitFor(() => expect(mockPublish).toHaveBeenCalled());
-
-    expect(mockGetOrCreateThreadByExternalId).toHaveBeenCalledWith(
-      'user-1',
-      'agent-1',
-      '19:main@thread.tacv2',
-    );
-    // A channel destination MUST carry channelId: a Teams channelContext
-    // without one is DM-scoped in the adapter and would deliver nothing in
-    // Team Mode (no DM link).
-    expect(mockPublish).toHaveBeenCalledWith(
-      'user-1',
-      'thread-for-19:main@thread.tacv2',
-      '**Webhook: alerts**\n\nhandled',
-      'WEBHOOK',
-      expect.objectContaining({
-        channelContext: {
-          channel: 'teams',
-          channelId: '19:main@thread.tacv2',
-          threadId: 'thread-for-19:main@thread.tacv2',
-        },
-      }),
-    );
-  });
-
-  it('no Teams linked: falls back to the web latest thread and warns', async () => {
-    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'teams' }));
-    mockInvoke.mockResolvedValue(invokeResult('handled'));
-
-    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
-    await vi.waitFor(() => expect(mockPublishToLatestThread).toHaveBeenCalled());
-
-    expect(mockGetOrCreateThreadByExternalId).not.toHaveBeenCalled();
   });
 
   it('delivers a friendly budget note when the run hits the spending limit', async () => {
@@ -953,7 +865,7 @@ describe('handleInbound agent mode', () => {
     mockSubscriptionFindUnique.mockResolvedValue(
       createSubscription({ deliverTo: 'slack', prompt: 'Review the PR. Only message me if the review fails.' }),
     );
-    mockSlackMappingFindFirst.mockResolvedValue({ dmChannelId: 'D123' });
+    mockDefaultDestination.mockResolvedValue({ threadKey: 'D123' });
     mockInvoke.mockResolvedValue(invokeResult('Nothing to do: the PR is a draft.'));
     mockRunClassificationGate.mockResolvedValue(false);
 

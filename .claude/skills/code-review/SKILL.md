@@ -146,6 +146,13 @@ e2e suites.
   a thread rooted elsewhere), `LlmProvider`, `ChannelAdapter`. Flag each bypass.
 - Code for one vendor or platform (a Realtime vendor, a meeting platform) keeps a
   shape that a provider seam can replace later.
+- Shared code names no channel (`AGENTS.md` **Architecture rules**). Flag a
+  channel's name, a field named for one channel, an import from a channel's
+  modules or a comment about one channel in any module that is not that
+  channel's own. The fix is an optional `ChannelAdapter` member or a registry the
+  channel joins in `index.ts`. A second branch for the next channel is not a fix.
+  A channel name typed as `string` instead of `ChannelName` or `ChatPlatform` is
+  a finding.
 
 ### Prose: comments, docs and the PR body
 

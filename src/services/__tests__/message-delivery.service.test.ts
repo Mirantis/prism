@@ -350,6 +350,54 @@ describe('MessageDeliveryService', () => {
     });
   });
 
+  describe('threadContext', () => {
+    it("asks the origin channel's adapter where the thread continues", async () => {
+      const adapter = {
+        ...createMockAdapter('slack'),
+        threadDestination: vi.fn().mockResolvedValue({
+          channelId: 'C1',
+          channelThreadId: 'root-1',
+          channelLabel: 'the channel **#ops**',
+        }),
+      };
+      service.register(createMockAdapter('websocket'));
+      service.register(adapter);
+
+      const context = await service.threadContext('thread-1', 'slack', 'C1');
+
+      expect(adapter.threadDestination).toHaveBeenCalledWith('thread-1', 'C1');
+      expect(context).toEqual({
+        channel: 'slack',
+        threadId: 'thread-1',
+        channelId: 'C1',
+        channelThreadId: 'root-1',
+        channelLabel: 'the channel **#ops**',
+      });
+    });
+
+    it('passes no origin id when the thread stored none', async () => {
+      const adapter = { ...createMockAdapter('slack'), threadDestination: vi.fn().mockResolvedValue({}) };
+      service.register(adapter);
+
+      await service.threadContext('thread-1', 'slack', null);
+
+      expect(adapter.threadDestination).toHaveBeenCalledWith('thread-1', undefined);
+    });
+
+    it('scopes the thread to its channel alone when the adapter reconstructs nothing', async () => {
+      service.register(createMockAdapter('websocket'));
+
+      expect(await service.threadContext('thread-1', 'websocket')).toEqual({
+        channel: 'websocket',
+        threadId: 'thread-1',
+      });
+    });
+
+    it('continues a thread with no stored origin in the chat socket', async () => {
+      expect(await service.threadContext('thread-1', null)).toEqual({ channel: 'websocket', threadId: 'thread-1' });
+    });
+  });
+
   describe('publishToLatestThread', () => {
     it('should get or create active thread and publish', async () => {
       const adapter = createMockAdapter('test');

@@ -386,7 +386,7 @@ function fenceSafe(text: string): string {
 /**
  * One message on one line: who sent it, what they typed, and whether the read cut it.
  *
- * A name loses the characters the Slack sender tag drops as well, since a name holding a
+ * A name loses the characters a channel's sender tag drops as well, since a name holding a
  * colon or a bracket would read as a second sender. A name the panel did not show leaves
  * the line with the text alone.
  */

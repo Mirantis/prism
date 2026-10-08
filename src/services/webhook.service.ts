@@ -20,9 +20,8 @@ import { messageDeliveryService, PublishOptions } from './message-delivery.servi
 import { webhookRunService, WebhookRunResult } from './webhook-run.service';
 import { conversationService } from './conversation.service';
 import { agentWorkspaceService } from './agent-workspace.service';
-import { slackMappingService } from './slack-mapping.service';
-import { teamsMappingService } from './teams/teams-mapping.service';
 import { prisma } from '../lib/prisma';
+import { CHAT_PLATFORMS } from './channel-adapter.interface';
 import { trackEvent } from '../lib/telemetry';
 import { verifyWebhookAuth } from '../lib/webhook-signature';
 import { runClassificationGate } from '../lib/classification-gate';
@@ -33,7 +32,7 @@ import { logger } from '../logger';
 // Types
 // ============================================================================
 
-export const WEBHOOK_DELIVER_TARGETS = ['all', 'chat', 'slack', 'teams', 'none'] as const;
+export const WEBHOOK_DELIVER_TARGETS = ['all', 'chat', ...CHAT_PLATFORMS, 'none'] as const;
 export type WebhookDeliverTo = (typeof WEBHOOK_DELIVER_TARGETS)[number];
 
 /** Subscription name rule, borrowed from hermes: lowercase slug. */
@@ -452,15 +451,13 @@ export class WebhookService {
   /**
    * Deliver a webhook message per the subscription's target, and return the
    * stored message, or null for 'none':
-   * - 'all' — broadcast to every connected channel (heartbeat/cron behavior);
-   *   post-#58 the Slack side is the DM + main channel, not every channel.
+   * - 'all' — broadcast to every connected channel (heartbeat/cron behavior).
    * - 'chat' — scoped to web chat; stored in the web-visible latest thread.
-   * - 'slack' — scoped to Slack (DM in personal mode, main channel in team
-   *   mode). Stored in the Slack destination's own thread — the DM
-   *   conversation thread (keyed by dmChannelId) or a per-main-channel thread —
-   *   both keyed by a non-null externalThreadId, so `listThreads` hides them
-   *   from web Recents + the CLI resume picker. Falls back to the latest
-   *   (web-visible) thread + a warning when no Slack destination is linked.
+   * - a channel's name — scoped to that channel's default destination (the
+   *   direct conversation, else the main channel). Stored in the destination's
+   *   own thread, keyed by a non-null externalThreadId, so `listThreads` hides
+   *   it from web Recents + the CLI resume picker. Falls back to the latest
+   *   (web-visible) thread + a warning when the channel has no destination.
    * - 'none' — nothing is published or stored.
    */
   private async deliver(
@@ -480,90 +477,30 @@ export class WebhookService {
       });
     }
 
-    if (deliverTo === 'slack') {
-      const destChannelId = await this.resolveSlackDestination(agentId, userId);
-      if (destChannelId) {
-        // Reuse the Slack destination's conversation thread (the DM chat thread
-        // in personal mode; a dedicated per-channel thread in team mode). Both
-        // are DATABASE-source with externalThreadId set, hidden from web/CLI.
-        // No channelId in channelContext → the adapter's mapping fallback posts
-        // to the DM (personal) or the main channel (team), matching autonomous
-        // routing. (A channelId would route to deliverToChannel, which can't
-        // post to DM ids.)
-        const thread = await conversationService.getOrCreateThreadByExternalId(userId, agentId, destChannelId);
+    const channel = messageDeliveryService.getAdapter(deliverTo);
+    if (channel?.defaultDestination) {
+      const destination = await channel.defaultDestination(agentId, userId);
+      if (destination) {
+        // Reuse the destination's own conversation thread, keyed by its
+        // conversation id and hidden from web/CLI Recents.
+        const { threadKey, ...route } = destination;
+        const thread = await conversationService.getOrCreateThreadByExternalId(userId, agentId, threadKey);
         return messageDeliveryService.publish(userId, thread.id, content, 'WEBHOOK', {
           ...options,
-          channelContext: { channel: 'slack', threadId: thread.id },
+          channelContext: { channel: channel.name, ...route, threadId: thread.id },
         });
       }
-      // No DM or channel linked — Slack delivery is impossible. Store in the
-      // web-visible latest thread so the event isn't silently lost, and warn.
+      // No direct conversation or channel linked, so the channel cannot deliver.
+      // Store in the web-visible latest thread so the event isn't silently lost.
       logger.warn(
-        "[Webhook] deliverTo:'slack' but no Slack DM or channel is linked — storing in the web thread instead",
+        "[Webhook] deliverTo:'%s' but no direct conversation or channel is linked — storing in the web thread instead",
+        deliverTo,
       );
       return messageDeliveryService.publishToLatestThread(agentId, userId, content, 'WEBHOOK', options);
     }
 
-    if (deliverTo === 'teams') {
-      const dest = await this.resolveTeamsDestination(agentId, userId);
-      if (dest) {
-        // Mirror of the Slack branch: reuse the destination's own conversation
-        // thread, keyed by the conversation id, hidden from web/CLI Recents.
-        // A DM destination carries no channelId (the adapter's DM-scoped path
-        // posts to the user's personal conversation); a channel destination
-        // must carry it — a Teams channelContext without a channelId is
-        // DM-scoped by design and would deliver nothing in Team Mode.
-        const thread = await conversationService.getOrCreateThreadByExternalId(userId, agentId, dest.conversationId);
-        return messageDeliveryService.publish(userId, thread.id, content, 'WEBHOOK', {
-          ...options,
-          channelContext: {
-            channel: 'teams',
-            ...(dest.kind === 'channel' ? { channelId: dest.conversationId } : {}),
-            threadId: thread.id,
-          },
-        });
-      }
-      logger.warn(
-        "[Webhook] deliverTo:'teams' but no Teams DM or channel is linked — storing in the web thread instead",
-      );
-      return messageDeliveryService.publishToLatestThread(agentId, userId, content, 'WEBHOOK', options);
-    }
-
-    // 'all' — broadcast (web + Slack/Teams DM/main channel).
+    // 'all' — broadcast to every connected channel.
     return messageDeliveryService.publishToLatestThread(agentId, userId, content, 'WEBHOOK', options);
-  }
-
-  /**
-   * Resolve the Slack destination channel id for a slack-scoped delivery:
-   * the user's DM channel (personal mode) if linked, else the agent's main
-   * linked channel (team mode), else null when Slack isn't linked.
-   */
-  private async resolveSlackDestination(agentId: string, userId: string): Promise<string | null> {
-    const dm = await prisma.slackMapping.findFirst({
-      where: { lensUserId: userId, agentId, dmChannelId: { not: null } },
-      select: { dmChannelId: true },
-    });
-    if (dm?.dmChannelId) return dm.dmChannelId;
-    return slackMappingService.getMainChannel(agentId);
-  }
-
-  /**
-   * Resolve the Teams destination for a teams-scoped delivery: the user's
-   * personal conversation if linked, else the agent's main linked channel,
-   * else null when Teams isn't linked. The kind matters downstream — channel
-   * destinations must ride channelContext.channelId.
-   */
-  private async resolveTeamsDestination(
-    agentId: string,
-    userId: string,
-  ): Promise<{ conversationId: string; kind: 'dm' | 'channel' } | null> {
-    const dm = await prisma.teamsMapping.findFirst({
-      where: { lensUserId: userId, agentId, dmConversationId: { not: null } },
-      select: { dmConversationId: true },
-    });
-    if (dm?.dmConversationId) return { conversationId: dm.dmConversationId, kind: 'dm' };
-    const mainChannel = await teamsMappingService.getMainChannel(agentId);
-    return mainChannel ? { conversationId: mainChannel, kind: 'channel' } : null;
   }
 }
 

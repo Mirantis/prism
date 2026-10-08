@@ -56,3 +56,8 @@ export function formatTeamsMessage(
 
   return chunks;
 }
+
+/** How the system prompt names a Teams channel. */
+export function teamsChannelLabel(channelName: string): string {
+  return `the Microsoft Teams channel **${channelName}**`;
+}

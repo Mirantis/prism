@@ -33,7 +33,7 @@ vi.mock('../../lib/telemetry', () => ({
   trackEvent: mockTrackEvent,
 }));
 
-import { threadReplyClassifierService, ThreadLine } from '../thread-reply-classifier.service';
+import { threadReplyClassifierService, ThreadLine, type ThreadPlatform } from '../thread-reply-classifier.service';
 
 const TRANSCRIPT: ThreadLine[] = [
   { fromBot: false, author: 'U1', text: 'hey what broke the build?' },
@@ -41,7 +41,10 @@ const TRANSCRIPT: ThreadLine[] = [
   { fromBot: false, author: 'U1', text: 'Approved - you can merge 194' },
 ];
 
-function classify(lines: ThreadLine[] = TRANSCRIPT, platform: 'slack' | 'teams' = 'slack') {
+const SLACK: ThreadPlatform = { channel: 'slack', name: 'Slack' };
+const TEAMS: ThreadPlatform = { channel: 'teams', name: 'Microsoft Teams' };
+
+function classify(lines: ThreadLine[] = TRANSCRIPT, platform = SLACK) {
   return threadReplyClassifierService.classify({ platform, agentId: 'agent-1', lines });
 }
 
@@ -132,7 +135,7 @@ describe('threadReplyClassifierService', () => {
     });
 
     it('names the platform the thread is on', async () => {
-      await classify(TRANSCRIPT, 'teams');
+      await classify(TRANSCRIPT, TEAMS);
 
       const { system } = mockGenerateObject.mock.calls[0][0];
       expect(system).toContain('You are a Microsoft Teams thread classifier');
@@ -179,8 +182,8 @@ describe('threadReplyClassifierService', () => {
 
   describe('failure telemetry', () => {
     it.each([
-      ['slack', 'slack thread classification failed'],
-      ['teams', 'teams thread classification failed'],
+      [SLACK, 'slack thread classification failed'],
+      [TEAMS, 'teams thread classification failed'],
     ] as const)('emits the %s event with the active model and error shape', async (platform, event) => {
       const err = Object.assign(new Error('output_config.format: Extra inputs'), {
         name: 'AI_APICallError',

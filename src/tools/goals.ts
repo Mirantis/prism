@@ -15,12 +15,13 @@ import { z } from 'zod';
 import { goalService } from '../services/goal.service';
 import { GOAL_MAX_OBJECTIVE_CHARS } from '../constants';
 import { logger } from '../logger';
+import type { ChannelName } from '../services/channel-adapter.interface';
 
 export function getGoalTools(
   userId: string,
   agentId: string,
   threadId: string | undefined,
-  originChannel: 'slack' | 'websocket' | 'teams',
+  originChannel: ChannelName,
   originChannelId: string | undefined,
 ): Record<string, Tool> {
   return {

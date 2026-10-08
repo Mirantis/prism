@@ -12,7 +12,7 @@ import { config } from '../config';
 import { memoryManagerService } from '../services/memory-manager.service';
 import type { AttachmentMeta } from '../services/attachment.service';
 import { humanFileSize } from '../services/attachment.service';
-import { SlackTriggerMessage } from '../types';
+import { HeartbeatTrigger } from '../types';
 import { skillCatalogService, type SkillSource } from '../services/skill-catalog.service';
 import { getExecutionEnvironment } from '../lib/execution-environments/get-execution-environment';
 import { pluginCatalogService } from '../services/plugin-catalog.service';
@@ -27,9 +27,10 @@ export interface ConversationMessage {
   content: string;
   toolCalls?: unknown;
   // Provenance fields the compaction fork records so its commit can mark
-  // exactly the rows that were in this context (Slack rows are watermarked by
-  // ts, internal-step rows are flag-flipped). Optional because synthetic
-  // messages don't carry them; real rows from the context service always do.
+  // exactly the rows that were in this context (rows read live from a channel
+  // are watermarked by their external id, internal-step rows are flag-flipped).
+  // Optional because synthetic messages don't carry them; real rows from the
+  // context service always do.
   externalMessageId?: string | null;
   internalStep?: boolean;
   // Attachment metadata (no bytes) — the agent pulls content on demand via
@@ -90,7 +91,7 @@ export interface SystemPromptPart {
 export async function buildSystemPromptParts(
   context: AgentContext,
   mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal' | 'webhook' | 'meeting' = 'chat',
-  slackMessages?: SlackTriggerMessage[],
+  heartbeatTriggers?: HeartbeatTrigger[],
   workspaceRoot?: string,
 ): Promise<SystemPromptPart[]> {
   const stableSections: string[] = [];
@@ -180,7 +181,7 @@ export async function buildSystemPromptParts(
   // Mode-specific instructions
   if (mode === 'heartbeat') {
     stableSections.push(getHeartbeatBaseInstructions(context.heartbeatMd));
-    const heartbeatContext = getHeartbeatContextInstructions(context, slackMessages);
+    const heartbeatContext = getHeartbeatContextInstructions(context, heartbeatTriggers);
     if (heartbeatContext) {
       stableSections.push(heartbeatContext);
     }
@@ -323,7 +324,7 @@ export function recalledMemoriesMessage(recalled: string): ModelMessage {
  * The stored and sent form of a recall block — one string, so the two cannot drift.
  *
  * A tag inside an entry is broken before wrapping. Entries are the agent's own
- * writing, but what it writes can come from anywhere it read — a Slack channel, a web
+ * writing, but what it writes can come from anywhere it read — a chat channel, a web
  * page, a tool result — so an entry can be made to carry `</recalled-memories>` and
  * put the rest of itself outside the block, where it reads as ordinary user text.
  *
@@ -640,8 +641,8 @@ function buildUserContentParts(msg: ConversationMessage): UserContentPart[] {
  *
  * Stored names go through `toModelToolName` — the same function that names the
  * tools block — because this is the one choke point for every path that replays
- * history into a request: an ordinary thread, a Slack live-read thread, and
- * compaction. A name stored when it was still sent whole would otherwise be
+ * history into a request: an ordinary thread, a thread read live from a channel,
+ * and compaction. A name stored when it was still sent whole would otherwise be
  * re-sent on every later turn, naming a tool the request no longer offers. The
  * function is deterministic and idempotent, so an old name maps onto exactly the
  * name the current tools block carries.
@@ -746,12 +747,12 @@ function getHeartbeatBaseInstructions(heartbeatMd?: string): string {
 
 /**
  * Heartbeat dynamic instructions — changes per invocation.
- * Contains last alert context and Slack trigger messages.
+ * Contains last alert context and the messages channels queued to trigger it.
  * Returns null when there's no dynamic content.
  */
 function getHeartbeatContextInstructions(
   context: AgentContext,
-  slackMessages?: SlackTriggerMessage[],
+  triggers: HeartbeatTrigger[] = [],
 ): string | null {
   const sections: string[] = [];
 
@@ -767,11 +768,11 @@ function getHeartbeatContextInstructions(
     );
   }
 
-  if (slackMessages && slackMessages.length > 0) {
-    sections.push(`### Recent Slack Messages (triggering this heartbeat)`);
-    sections.push('The following messages were posted in the monitored Slack channel since your last heartbeat:');
+  for (const { platform, messages } of triggers) {
+    sections.push(`### Recent ${platform} Messages (triggering this heartbeat)`);
+    sections.push(`The following messages were posted in the monitored ${platform} channel since your last heartbeat:`);
     sections.push('');
-    for (const msg of slackMessages) {
+    for (const msg of messages) {
       const ago = formatTimeAgo(new Date(msg.timestamp).getTime());
       sections.push(`- **${msg.sender}** (${ago}): "${msg.text}"`);
     }

@@ -21,6 +21,7 @@
 
 import { slackHeartbeatTriggerService } from '../services/slack-heartbeat-trigger.service';
 import { heartbeatService } from '../services/heartbeat.service';
+import { slackMessageQueueService } from '../services/slack-message-queue.service';
 import { logger } from '../logger';
 
 export class SlackHeartbeatThrottleQueue {
@@ -63,7 +64,7 @@ export class SlackHeartbeatThrottleQueue {
     try {
       const result = await slackHeartbeatTriggerService.tryClaimTrigger();
       if (result.claimed) {
-        heartbeatService.triggerFromSlack();
+        heartbeatService.triggerFrom(slackMessageQueueService);
         logger.info({ agentId }, '[ThrottleQueue] Triggered heartbeat for agent %s', agentId);
       } else {
         logger.info(
