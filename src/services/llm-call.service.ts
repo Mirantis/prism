@@ -10,6 +10,7 @@ import { config } from '../config';
 import { logger } from '../logger';
 import { toStepUsage } from '../lib/step-usage';
 import type { LanguageModelUsage } from 'ai';
+import type { ChatPlatform } from './channel-adapter.interface';
 
 /**
  * What a call was for: an invoke mode, or a named side call.
@@ -33,12 +34,12 @@ export type LlmCallPurpose =
   | 'feedback-gate'
   | 'goal-gate'
   | 'risk-gate'
-  | 'slack-thread-gate'
-  | 'teams-thread-gate';
+  // A chat platform's thread reply classifier, named for the platform.
+  | `${ChatPlatform}-thread-gate`;
 
 /**
- * Every purpose, so a test can assert the union and the recorders agree. A
- * value here with no recorder is spend nobody is counting.
+ * Every fixed purpose, so a test can assert the union and the recorders agree.
+ * A value here with no recorder is spend nobody is counting.
  */
 export const LLM_CALL_PURPOSES: readonly LlmCallPurpose[] = [
   'chat',
@@ -54,8 +55,6 @@ export const LLM_CALL_PURPOSES: readonly LlmCallPurpose[] = [
   'feedback-gate',
   'goal-gate',
   'risk-gate',
-  'slack-thread-gate',
-  'teams-thread-gate',
 ];
 
 interface RecordInput {

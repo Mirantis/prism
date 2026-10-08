@@ -9,7 +9,7 @@
  * (`source: 'agent'`, unlinked), and returns its `attachmentId`. The invoke
  * loop collects those ids onto the `InvokeStep`; the conversation engine /
  * heartbeat / cron then link them to the delivered message, and each channel
- * adapter renders them (web + CLI download chips, Slack `files.uploadV2`).
+ * adapter renders them its own way.
  *
  * A share is sequenced against the writes in its own step. The model routinely
  * asks for the edit and the share in one assistant message, and a step's tool
@@ -203,8 +203,8 @@ export async function runShareFile(
   const row = await attachmentService.create({
     filename,
     mediaType,
-    // The bytes read, not `stat.size` from before the read: this value is what the
-    // download chip and the Slack upload show, so a stat taken earlier can label
+    // The bytes read, not `stat.size` from before the read: this value is what
+    // every channel shows, so a stat taken earlier can label
     // the attachment with a size it does not have.
     sizeBytes: data.length,
     data,

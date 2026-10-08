@@ -12,7 +12,14 @@
  */
 
 import { ConversationMessage } from '@prisma/client';
-import { ChannelAdapter, DeliverableMessage } from './channel-adapter.interface';
+import {
+  ChannelAdapter,
+  ChannelContext,
+  ChannelDestination,
+  ChannelName,
+  DeliverableMessage,
+  isChatPlatform,
+} from './channel-adapter.interface';
 import { conversationService } from './conversation.service';
 import { attachmentService } from './attachment.service';
 import { logger } from '../logger';
@@ -49,19 +56,12 @@ export interface PublishOptions {
    */
   attachmentIds?: string[];
   /**
-   * Per-message context: routing (channel/channelId/threadTs) + rendering
+   * Per-message context: routing (channel/channelId/channelThreadId) + rendering
    * hints (e.g. `includeFeedback`). The caller (conversation engine for
    * user turns; heartbeat/cron leave it undefined) is the single owner of
    * this object — `publish` just forwards it.
    */
-  channelContext?: {
-    channel: 'slack' | 'websocket' | 'teams';
-    channelId?: string;
-    threadTs?: string;
-    /** Internal database thread ID */
-    threadId: string;
-    includeFeedback?: boolean;
-  };
+  channelContext?: ChannelContext;
 }
 
 /**
@@ -93,6 +93,30 @@ export class MessageDeliveryService {
    */
   getAdapters(): readonly ChannelAdapter[] {
     return this.adapters;
+  }
+
+  /** The registered adapter named `name`. */
+  getAdapter(name: string): ChannelAdapter | undefined {
+    return this.adapters.find((adapter) => adapter.name === name);
+  }
+
+  /**
+   * The delivery context for an autonomous message that continues `threadId`
+   * where it started: the stored origin channel, and the destination that
+   * channel's adapter reconstructs from the thread. A thread with no stored
+   * origin started in the chat socket.
+   */
+  async threadContext(
+    threadId: string,
+    originChannel?: string | null,
+    originChannelId?: string | null,
+  ): Promise<ChannelContext & ChannelDestination> {
+    const channel: ChannelName = isChatPlatform(originChannel) ? originChannel : 'websocket';
+    const destination = await this.getAdapter(channel)?.threadDestination?.(
+      threadId,
+      originChannelId ?? undefined,
+    );
+    return { channel, threadId, ...destination };
   }
 
   /**
@@ -166,9 +190,9 @@ export class MessageDeliveryService {
    *   help card: answering it changes its status, and every open client has to
    *   stop offering to answer it.
    *
-   * A channel that posts only the agent's replies, such as Slack, is skipped: it
-   * shows a person's message itself, and posting a change there would post the
-   * message twice.
+   * A channel that posts only the agent's replies is skipped: it shows a
+   * person's message itself, and posting a change there would post the message
+   * twice.
    */
   async showInConversation(userId: string, message: ConversationMessage): Promise<void> {
     const channels = this.adapters.filter((adapter) => adapter.showsWholeConversation);
@@ -202,8 +226,8 @@ export class MessageDeliveryService {
 
     // Fail-closed: USER_INPUT replies must always be scoped to a channel.
     // If a caller forgot to pass channelContext, broadcasting would leak the
-    // reply to every connected adapter (e.g. a Slack DM response showing up
-    // in webchat). Better to log loudly and drop delivery than to leak.
+    // reply to every connected adapter, a direct message's answer included.
+    // Better to log loudly and drop delivery than to leak.
     // Heartbeat/cron (HEARTBEAT/CRON_TASK) legitimately broadcast and are unaffected.
     if (!channelContext && message.triggeredBy === 'USER_INPUT') {
       logger.error(

@@ -316,7 +316,7 @@ class UpdateService {
    * Raises SIGTERM rather than exiting outright, so the restart runs the same
    * graceful shutdown a `docker stop` gets: plugin MCP child processes closed
    * instead of orphaned, a live meeting left rather than frozen in the room,
-   * Slack disconnected, and telemetry flushed.
+   * channels disconnected, and telemetry flushed.
    */
   scheduleRestartExit(delayMs = 500): void {
     logger.info('[Update] restarting to finish the update');

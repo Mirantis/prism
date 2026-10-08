@@ -956,10 +956,10 @@ describe('invoke', () => {
     expect(mockGetMCPTools).not.toHaveBeenCalled();
   });
 
-  it('appends channel instructions to the stable part when isChannelMessage is true', async () => {
-    await invoke(createTestInvokeRequest({ isChannelMessage: true, channelName: 'general' }));
+  it('appends channel instructions to the stable part for a turn with a channel label', async () => {
+    await invoke(createTestInvokeRequest({ channelLabel: 'the channel **#general**' }));
 
-    expect(mockGetChannelBehaviorInstructions).toHaveBeenCalled();
+    expect(mockGetChannelBehaviorInstructions).toHaveBeenCalledWith('the channel **#general**');
     const callArgs = mockGenerateText.mock.calls[0][0];
     const systemMessages = callArgs.system as Array<{ content: string }>;
     const stablePart = systemMessages.find((p) => p.content.includes('stable system prompt'));

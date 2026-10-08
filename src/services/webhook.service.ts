@@ -20,9 +20,8 @@ import { messageDeliveryService, PublishOptions } from './message-delivery.servi
 import { webhookRunService, WebhookRunResult } from './webhook-run.service';
 import { conversationService } from './conversation.service';
 import { agentWorkspaceService } from './agent-workspace.service';
-import { slackMappingService } from './slack-mapping.service';
-import { teamsMappingService } from './teams/teams-mapping.service';
 import { prisma } from '../lib/prisma';
+import { CHAT_PLATFORMS, type ChannelName } from './channel-adapter.interface';
 import { trackEvent } from '../lib/telemetry';
 import { verifyWebhookAuth } from '../lib/webhook-signature';
 import { runClassificationGate } from '../lib/classification-gate';
@@ -33,7 +32,7 @@ import { logger } from '../logger';
 // Types
 // ============================================================================
 
-export const WEBHOOK_DELIVER_TARGETS = ['all', 'chat', 'slack', 'teams', 'none'] as const;
+export const WEBHOOK_DELIVER_TARGETS = ['all', 'chat', ...CHAT_PLATFORMS, 'none'] as const;
 export type WebhookDeliverTo = (typeof WEBHOOK_DELIVER_TARGETS)[number];
 
 /** Subscription name rule, borrowed from hermes: lowercase slug. */
@@ -52,21 +51,24 @@ export type WebhookInboundResult =
 
 /**
  * What a delivery stored: the message, or null for 'none'. A delivery to chosen
- * Slack channels also counts the channels it posted to and the unlinked ones
- * it skipped.
+ * channels also counts the channels it posted to and the unlinked ones it
+ * skipped.
  */
 interface Delivery {
   message: ConversationMessage | null;
-  slack?: { posted: number; skipped: number };
+  chosenChannels?: { channel: ChannelName; posted: number; skipped: number };
 }
 
 /** A run's result, with the channel counts its delivery reported. */
-type RunOutcome = WebhookRunResult & Pick<Delivery, 'slack'>;
+type RunOutcome = WebhookRunResult & Pick<Delivery, 'chosenChannels'>;
 
-/** The `webhook processed` props for a delivery to chosen Slack channels. */
-function slackChannelProps(slack: Delivery['slack']): Record<string, string> {
-  if (!slack) return {};
-  return { 'webhook.slack_posted': String(slack.posted), 'webhook.slack_skipped': String(slack.skipped) };
+/** The `webhook processed` props for a delivery to chosen channels, named for the channel. */
+function chosenChannelProps(chosen: Delivery['chosenChannels']): Record<string, string> {
+  if (!chosen) return {};
+  return {
+    [`webhook.${chosen.channel}_posted`]: String(chosen.posted),
+    [`webhook.${chosen.channel}_skipped`]: String(chosen.skipped),
+  };
 }
 
 /**
@@ -289,7 +291,7 @@ export class WebhookService {
         'webhook.subscription_id': subscription.id,
         'webhook.status': 'delivered_direct',
         'webhook.elapsed_ms': String(Date.now() - startTime),
-        ...slackChannelProps(delivery.slack),
+        ...chosenChannelProps(delivery.chosenChannels),
       });
       return { status: 'delivered', event: eventType };
     }
@@ -354,7 +356,12 @@ export class WebhookService {
       const msg = error instanceof Error ? error.message : 'Unknown error';
       logger.error({ err: error }, `[Webhook] '${subscription.name}' failed`);
       const notice = await this.deliverFailureNotice(agent, subscription, msg);
-      result = { status: 'failed', error: msg, messageId: notice?.message?.id ?? null, slack: notice?.slack };
+      result = {
+        status: 'failed',
+        error: msg,
+        messageId: notice?.message?.id ?? null,
+        chosenChannels: notice?.chosenChannels,
+      };
     }
 
     await webhookRunService.finish(runId, result);
@@ -370,7 +377,7 @@ export class WebhookService {
       'webhook.subscription_id': subscription.id,
       'webhook.status': result.status === 'failed' ? 'error' : result.status,
       'webhook.elapsed_ms': String(Date.now() - startTime),
-      ...slackChannelProps(result.slack),
+      ...chosenChannelProps(result.chosenChannels),
     });
   }
 
@@ -395,8 +402,8 @@ export class WebhookService {
 
     if (result.error?.type === 'budget_exceeded') {
       const budgetMessage = `**Webhook: ${subscription.name}**\n\nThis event could not be processed — your organization's AI spending limit has been reached${result.error.detail ? `: ${result.error.detail}` : ''}. Please contact your administrator to increase the budget.`;
-      const { message, slack } = await this.deliver(agent.id, agent.userId, subscription, budgetMessage, stored);
-      return { status: 'budget_exceeded', error: result.error.detail, messageId: message?.id, slack };
+      const { message, chosenChannels } = await this.deliver(agent.id, agent.userId, subscription, budgetMessage, stored);
+      return { status: 'budget_exceeded', error: result.error.detail, messageId: message?.id, chosenChannels };
     }
 
     // Use only the last step's text (the final summary), not intermediate step texts
@@ -412,7 +419,7 @@ export class WebhookService {
       return { status: 'suppressed' };
     }
 
-    const { message, slack } = await this.deliver(
+    const { message, chosenChannels } = await this.deliver(
       agent.id,
       agent.userId,
       subscription,
@@ -421,8 +428,8 @@ export class WebhookService {
     );
 
     // A model error ends the run on an error step, delivered like any reply.
-    if (result.error) return { status: 'failed', error: result.error.detail, messageId: message?.id, slack };
-    return { status: 'completed', messageId: message?.id, slack };
+    if (result.error) return { status: 'failed', error: result.error.detail, messageId: message?.id, chosenChannels };
+    return { status: 'completed', messageId: message?.id, chosenChannels };
   }
 
   /**
@@ -473,8 +480,9 @@ export class WebhookService {
   }
 
   /**
-   * Deliver a webhook message: to the chosen channels of a Slack subscription
-   * that has them, else per the subscription's target.
+   * Deliver a webhook message: to the chosen channels of a subscription that
+   * has them, when its target links channels, else per the subscription's
+   * target.
    */
   private async deliver(
     agentId: string,
@@ -484,8 +492,10 @@ export class WebhookService {
     options?: Pick<PublishOptions, 'toolCalls' | 'attachmentIds'>,
   ): Promise<Delivery> {
     const chosen = parseCommaList(target.slackChannelIds);
-    if (target.deliverTo === 'slack' && chosen.length > 0) {
-      return this.deliverToSlackChannels(agentId, userId, chosen, content, options);
+    const channel = messageDeliveryService.getAdapter(target.deliverTo);
+    if (chosen.length > 0 && channel?.linkedChannelIds) {
+      const linked = new Set(await channel.linkedChannelIds(agentId));
+      return this.deliverToChosenChannels(agentId, userId, channel.name, linked, chosen, content, options);
     }
     return { message: await this.deliverToTarget(agentId, userId, target.deliverTo, content, options) };
   }
@@ -493,15 +503,13 @@ export class WebhookService {
   /**
    * Deliver a webhook message per the subscription's target, and return the
    * stored message, or null for 'none':
-   * - 'all' — broadcast to every connected channel (heartbeat/cron behavior);
-   *   post-#58 the Slack side is the DM + main channel, not every channel.
+   * - 'all' — broadcast to every connected channel (heartbeat/cron behavior).
    * - 'chat' — scoped to web chat; stored in the web-visible latest thread.
-   * - 'slack' — scoped to Slack (DM in personal mode, main channel in team
-   *   mode). Stored in the Slack destination's own thread — the DM
-   *   conversation thread (keyed by dmChannelId) or a per-main-channel thread —
-   *   both keyed by a non-null externalThreadId, so `listThreads` hides them
-   *   from web Recents + the CLI resume picker. Falls back to the latest
-   *   (web-visible) thread + a warning when no Slack destination is linked.
+   * - a channel's name — scoped to that channel's default destination (the
+   *   direct conversation, else the main channel). Stored in the destination's
+   *   own thread, keyed by a non-null externalThreadId, so `listThreads` hides
+   *   it from web Recents + the CLI resume picker. Falls back to the latest
+   *   (web-visible) thread + a warning when the channel has no destination.
    * - 'none' — nothing is published or stored.
    */
   private async deliverToTarget(
@@ -517,56 +525,29 @@ export class WebhookService {
       return this.deliverToChat(agentId, userId, content, options);
     }
 
-    if (deliverTo === 'slack') {
-      const destChannelId = await this.resolveSlackDestination(agentId, userId);
-      if (destChannelId) {
-        // Reuse the Slack destination's conversation thread (the DM chat thread
-        // in personal mode; a dedicated per-channel thread in team mode). Both
-        // are DATABASE-source with externalThreadId set, hidden from web/CLI.
-        // No channelId in channelContext → the adapter's mapping fallback posts
-        // to the DM (personal) or the main channel (team), matching autonomous
-        // routing. (A channelId would route to deliverToChannel, which can't
-        // post to DM ids.)
-        const thread = await conversationService.getOrCreateThreadByExternalId(userId, agentId, destChannelId);
+    const channel = messageDeliveryService.getAdapter(deliverTo);
+    if (channel?.defaultDestination) {
+      const destination = await channel.defaultDestination(agentId, userId);
+      if (destination) {
+        // Reuse the destination's own conversation thread, keyed by its
+        // conversation id and hidden from web/CLI Recents.
+        const { threadKey, ...route } = destination;
+        const thread = await conversationService.getOrCreateThreadByExternalId(userId, agentId, threadKey);
         return messageDeliveryService.publish(userId, thread.id, content, 'WEBHOOK', {
           ...options,
-          channelContext: { channel: 'slack', threadId: thread.id },
+          channelContext: { channel: channel.name, ...route, threadId: thread.id },
         });
       }
-      // No DM or channel linked — Slack delivery is impossible. Store in the
-      // web-visible latest thread so the event isn't silently lost, and warn.
+      // No direct conversation or channel linked, so the channel cannot deliver.
+      // Store in the web-visible latest thread so the event isn't silently lost.
       logger.warn(
-        "[Webhook] deliverTo:'slack' but no Slack DM or channel is linked — storing in the web thread instead",
+        "[Webhook] deliverTo:'%s' but no direct conversation or channel is linked — storing in the web thread instead",
+        deliverTo,
       );
       return messageDeliveryService.publishToLatestThread(agentId, userId, content, 'WEBHOOK', options);
     }
 
-    if (deliverTo === 'teams') {
-      const dest = await this.resolveTeamsDestination(agentId, userId);
-      if (dest) {
-        // Mirror of the Slack branch: reuse the destination's own conversation
-        // thread, keyed by the conversation id, hidden from web/CLI Recents.
-        // A DM destination carries no channelId (the adapter's DM-scoped path
-        // posts to the user's personal conversation); a channel destination
-        // must carry it — a Teams channelContext without a channelId is
-        // DM-scoped by design and would deliver nothing in Team Mode.
-        const thread = await conversationService.getOrCreateThreadByExternalId(userId, agentId, dest.conversationId);
-        return messageDeliveryService.publish(userId, thread.id, content, 'WEBHOOK', {
-          ...options,
-          channelContext: {
-            channel: 'teams',
-            ...(dest.kind === 'channel' ? { channelId: dest.conversationId } : {}),
-            threadId: thread.id,
-          },
-        });
-      }
-      logger.warn(
-        "[Webhook] deliverTo:'teams' but no Teams DM or channel is linked — storing in the web thread instead",
-      );
-      return messageDeliveryService.publishToLatestThread(agentId, userId, content, 'WEBHOOK', options);
-    }
-
-    // 'all' — broadcast (web + Slack/Teams DM/main channel).
+    // 'all' — broadcast to every connected channel.
     return messageDeliveryService.publishToLatestThread(agentId, userId, content, 'WEBHOOK', options);
   }
 
@@ -590,21 +571,22 @@ export class WebhookService {
    * A shared file belongs to one message, so files go with the first post
    * only: a run that shares files and posts to several channels is rare.
    * When no chosen channel is linked any more, the message goes to web chat
-   * only, because the list excludes every other Slack destination.
+   * only, because the list excludes every other destination on that platform.
    */
-  private async deliverToSlackChannels(
+  private async deliverToChosenChannels(
     agentId: string,
     userId: string,
+    channel: ChannelName,
+    linked: Set<string>,
     chosen: string[],
     content: string,
     options?: Pick<PublishOptions, 'toolCalls' | 'attachmentIds'>,
   ): Promise<Delivery> {
-    const linked = new Set(await slackMappingService.listChannelIds(agentId));
     const reachable = chosen.filter((id) => linked.has(id));
-    const slack = { posted: reachable.length, skipped: chosen.length - reachable.length };
-    if (slack.skipped > 0) {
+    const chosenChannels = { channel, posted: reachable.length, skipped: chosen.length - reachable.length };
+    if (chosenChannels.skipped > 0) {
       const unlinked = chosen.filter((id) => !linked.has(id));
-      logger.warn(`[Webhook] Skipping Slack channels that are no longer linked: ${unlinked.join(', ')}`);
+      logger.warn(`[Webhook] Skipping ${channel} channels that are no longer linked: ${unlinked.join(', ')}`);
     }
 
     let first: ConversationMessage | null = null;
@@ -612,47 +594,14 @@ export class WebhookService {
       const thread = await conversationService.getOrCreateThreadByExternalId(userId, agentId, channelId);
       const message = await messageDeliveryService.publish(userId, thread.id, content, 'WEBHOOK', {
         ...options,
-        channelContext: { channel: 'slack', channelId, threadId: thread.id },
+        channelContext: { channel, channelId, threadId: thread.id },
       });
       first ??= message;
     }
-    if (first) return { message: first, slack };
+    if (first) return { message: first, chosenChannels };
 
-    logger.warn('[Webhook] None of the chosen Slack channels is linked — storing in the web thread instead');
-    return { message: await this.deliverToChat(agentId, userId, content, options), slack };
-  }
-
-  /**
-   * Resolve the Slack destination channel id for a slack-scoped delivery:
-   * the user's DM channel (personal mode) if linked, else the agent's main
-   * linked channel (team mode), else null when Slack isn't linked.
-   */
-  private async resolveSlackDestination(agentId: string, userId: string): Promise<string | null> {
-    const dm = await prisma.slackMapping.findFirst({
-      where: { lensUserId: userId, agentId, dmChannelId: { not: null } },
-      select: { dmChannelId: true },
-    });
-    if (dm?.dmChannelId) return dm.dmChannelId;
-    return slackMappingService.getMainChannel(agentId);
-  }
-
-  /**
-   * Resolve the Teams destination for a teams-scoped delivery: the user's
-   * personal conversation if linked, else the agent's main linked channel,
-   * else null when Teams isn't linked. The kind matters downstream — channel
-   * destinations must ride channelContext.channelId.
-   */
-  private async resolveTeamsDestination(
-    agentId: string,
-    userId: string,
-  ): Promise<{ conversationId: string; kind: 'dm' | 'channel' } | null> {
-    const dm = await prisma.teamsMapping.findFirst({
-      where: { lensUserId: userId, agentId, dmConversationId: { not: null } },
-      select: { dmConversationId: true },
-    });
-    if (dm?.dmConversationId) return { conversationId: dm.dmConversationId, kind: 'dm' };
-    const mainChannel = await teamsMappingService.getMainChannel(agentId);
-    return mainChannel ? { conversationId: mainChannel, kind: 'channel' } : null;
+    logger.warn(`[Webhook] None of the chosen ${channel} channels is linked — storing in the web thread instead`);
+    return { message: await this.deliverToChat(agentId, userId, content, options), chosenChannels };
   }
 }
 

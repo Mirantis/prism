@@ -12,6 +12,8 @@
  * *this process* or *this host*, and the runtime's own credentials.
  */
 
+import { CHAT_PLATFORMS } from '../../../services/channel-adapter.interface';
+
 /** Set by the image, and true of the container rather than the host. */
 const HOST_PROCESS_VARS = [
   'PATH',
@@ -57,13 +59,14 @@ const RUNTIME_SERVER_VARS = [
 
 /**
  * The runtime's own credentials, by family. The agent's shell has no use for
- * them, and with one it could post as the Slack bot, sign in to the meeting
- * account, open the runtime's voice sessions, or write to the runtime's traces
- * and telemetry. A prefix, so a new variable in one of these families stays out
- * without a change here.
+ * them, and with one it could post as a chat platform's bot, sign in to the
+ * meeting account, open the runtime's voice sessions, or write to the runtime's
+ * traces and telemetry. A prefix, so a new variable in one of these families
+ * stays out without a change here. A chat platform's variables start with its
+ * name, so a new platform's credentials stay out as well.
  */
 const RUNTIME_SECRET_PREFIXES = [
-  'SLACK_',
+  ...CHAT_PLATFORMS.map((platform) => `${platform.toUpperCase()}_`),
   'GOOGLE_BOT_',
   'LANGFUSE_',
   'OTEL_',

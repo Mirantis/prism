@@ -30,17 +30,18 @@
  * message that lands between fork and commit is never swallowed: it stays
  * uncompacted and verbatim in the next context.
  *
- * Slack threads: their history is re-read live from the Slack API each turn and
- * the synthesized rows carry hash ids, so row flags cannot hide them. Slack
- * compaction instead advances a Slack-ts watermark (`compactedThroughTs`) that
- * the Slack thread provider passes as `oldest`. Only the interleaved
- * internal-step DB rows are flag-flipped there.
+ * Live-read threads (any threadSource but DATABASE): their history is re-read
+ * from the channel each turn and the synthesized rows carry hash ids, so row
+ * flags cannot hide them. Their compaction instead advances a watermark
+ * (`compactedThroughTs`, the newest compacted external message id) that the
+ * thread provider passes as `oldest`. Only the interleaved internal-step DB
+ * rows are flag-flipped there.
  *
  * Nothing here knows about WebSockets — progress is announced on the `events`
  * emitter as `'compaction'` and transports subscribe, matching
  * `context-usage.service.ts`. Nothing is ever delivered through
  * `messageDeliveryService`: compaction is a context-build concern, and a
- * "summarizing…" artifact must never land in Slack or the web chat as a
+ * "summarizing…" artifact must never land in a channel or the web chat as a
  * conversation message.
  */
 
@@ -373,8 +374,8 @@ class CompactionService {
 
   /**
    * Cheap REST precheck. Counts DB rows, which is right for DATABASE threads;
-   * Slack threads pass through (their history lives in Slack, and compactNow's
-   * own row check covers them).
+   * live-read threads pass through (their history lives in the channel, and
+   * compactNow's own row check covers them).
    */
   async hasCompactableHistory(threadId: string): Promise<boolean> {
     const thread = await prisma.conversationThread.findUnique({
@@ -550,10 +551,11 @@ class CompactionService {
    * a summarizer that produced nothing writes nothing.
    *
    * DATABASE threads: row flags are authoritative; the watermark is stored as
-   * the newest compacted row's createdAt ISO for observability. SLACK threads:
-   * the watermark (max Slack ts among compacted rows) is authoritative and only
-   * the interleaved internal-step DB rows get flags — Slack-derived rows have
-   * synthesized hash ids that match nothing in the DB.
+   * the newest compacted row's createdAt ISO for observability. Live-read
+   * threads: the watermark (the newest external message id among compacted
+   * rows) is authoritative and only the interleaved internal-step DB rows get
+   * flags — rows read from the channel have synthesized hash ids that match
+   * nothing in the DB.
    */
   private async commit(
     threadId: string,

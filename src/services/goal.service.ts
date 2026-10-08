@@ -26,6 +26,7 @@ import { invoke } from '../invoke';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { messageDeliveryService } from './message-delivery.service';
+import { ChannelName, isChatPlatform } from './channel-adapter.interface';
 import { threadTurnService } from './thread-turn.service';
 import { getGateRequest } from '../lib/classification';
 
@@ -39,10 +40,8 @@ import { ToolCallRecord } from '../types';
 const LIVE_STATUSES = ['active', 'paused'] as const;
 
 /** The channel the goal was started in, where its turns deliver and ask for help. */
-function goalChannel(goal: Goal): 'slack' | 'websocket' | 'teams' {
-  return goal.originChannel === 'slack' || goal.originChannel === 'teams'
-    ? goal.originChannel
-    : 'websocket';
+function goalChannel(goal: Goal): ChannelName {
+  return isChatPlatform(goal.originChannel) ? goal.originChannel : 'websocket';
 }
 
 interface GoalRuntime {

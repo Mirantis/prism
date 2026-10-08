@@ -6,6 +6,7 @@
 
 import { ConversationMessage, SteeringMessage } from './prompts/context-builder';
 import { ToolLifecycleListener } from './lib/tool-lifecycle';
+import type { ChannelName } from './services/channel-adapter.interface';
 
 // ============================================================================
 // Agent Status
@@ -55,13 +56,21 @@ export interface AgentContext {
 // Invoke Request (used by queue worker, heartbeat, cron, subagent)
 // ============================================================================
 
-export interface SlackTriggerMessage {
+/** A message a channel queued to start the heartbeat. */
+export interface ChannelTriggerMessage {
   sender: string;
   text: string;
   timestamp: string;
 }
 
-interface InvokeRequestBase {
+/** The messages one channel queued since the last heartbeat. */
+export interface HeartbeatTrigger {
+  /** How the prompt names the channel's platform. */
+  platform: string;
+  messages: ChannelTriggerMessage[];
+}
+
+export interface InvokeRequest {
   userId: string;
   agentId: string;
   mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal' | 'webhook';
@@ -79,11 +88,17 @@ interface InvokeRequestBase {
    * tool can record where to deliver a goal's autonomous turns. Defaults to
    * 'websocket' when unset.
    */
-  originChannel?: 'slack' | 'websocket' | 'teams';
+  originChannel?: ChannelName;
   originChannelId?: string;
+  /**
+   * The shared channel this turn's message was posted in, as the system prompt
+   * names it. Set, the prompt gets the channel participation guidelines.
+   */
+  channelLabel?: string;
   lastHeartbeatAlert?: string;
   lastHeartbeatAlertAt?: number;
-  slackMessages?: SlackTriggerMessage[];
+  /** Messages that channels queued for this heartbeat, one entry per channel. */
+  heartbeatTriggers?: HeartbeatTrigger[];
   /**
    * Transient, authoritative notices about events that occurred while
    * preparing this turn (e.g. an attachment that failed to download). Injected
@@ -123,19 +138,6 @@ interface InvokeRequestBase {
    */
   appendPrompt?: boolean;
 }
-
-/**
- * Whether this turn originates from a Slack *channel* message. When it does,
- * the channel's human-readable name (no `#`) travels with it so the
- * channel-participation system prompt can name it. The two are coupled as a
- * discriminated union: wherever `isChannelMessage` is true, `channelName` is
- * guaranteed to be a `string` (no null-checking needed downstream).
- */
-export type ChannelOrigin =
-  | { isChannelMessage: true; channelName: string; channelPlatform?: 'slack' | 'teams' }
-  | { isChannelMessage?: false; channelName?: undefined; channelPlatform?: undefined };
-
-export type InvokeRequest = InvokeRequestBase & ChannelOrigin;
 
 // ============================================================================
 // Response Types

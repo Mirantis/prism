@@ -2,7 +2,7 @@
  * Tool Lifecycle Events
  *
  * Wraps each tool's execute() to report when it starts and finishes, for live
- * progress UI (the Slack working indicator renders "is running <tool>…").
+ * progress UI, such as a channel's working indicator.
  * Purely observational: listener errors are swallowed, and the wrapper never
  * changes a tool's arguments, result, or thrown error.
  */

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatTeamsMessage, TEAMS_TEXT_LIMIT } from './teams-formatter';
+import { formatTeamsMessage, teamsChannelLabel, TEAMS_TEXT_LIMIT } from './teams-formatter';
 
 describe('formatTeamsMessage', () => {
   it('returns the content as a single chunk', () => {
@@ -54,5 +54,11 @@ describe('formatTeamsMessage', () => {
     for (const chunk of chunks) {
       expect(chunk.length).toBeLessThanOrEqual(TEAMS_TEXT_LIMIT + 100);
     }
+  });
+});
+
+describe('teamsChannelLabel', () => {
+  it('names the channel as Teams shows it', () => {
+    expect(teamsChannelLabel('General')).toBe('the Microsoft Teams channel **General**');
   });
 });

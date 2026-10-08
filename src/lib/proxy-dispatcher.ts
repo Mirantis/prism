@@ -12,8 +12,8 @@
  * undici can't be loaded, so callers degrade to a direct `fetch`.
  *
  * `HTTP_PROXY` and `NO_PROXY` are deliberately not read. That's a pre-existing
- * gap; honouring them would change the behaviour of the Slack download path that
- * this was extracted from.
+ * gap; honouring them would change the behaviour of every channel's file
+ * download.
  */
 import { logger } from '../logger';
 

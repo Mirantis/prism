@@ -11,7 +11,7 @@
  *
  * They differ only in budget — a meeting's is deliberately smaller, see the
  * bridge — never in shape, because a truncation that behaves differently per
- * channel is a bug report waiting to happen: a payload that reads whole in Slack
+ * channel is a bug report waiting to happen: a payload that reads whole in a chat
  * and arrives beheaded in a call looks like the *data* is missing.
  *
  * Strategy:

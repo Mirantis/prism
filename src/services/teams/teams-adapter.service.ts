@@ -41,7 +41,7 @@ import {
   ThreadLine,
   THREAD_TRANSCRIPT_LINES,
 } from '../thread-reply-classifier.service';
-import { formatTeamsMessage } from '../../utils/teams-formatter';
+import { formatTeamsMessage, teamsChannelLabel } from '../../utils/teams-formatter';
 import { MAX_FILE_SIZE_BYTES } from '../../constants';
 import { getProxyDispatcher } from '../../lib/proxy-dispatcher';
 import {
@@ -51,7 +51,12 @@ import {
   TeamsFileTooLargeError,
   TeamsInboundFiles,
 } from './teams-attachments';
-import { ChannelAdapter, DeliverableMessage } from '../channel-adapter.interface';
+import {
+  ChannelAdapter,
+  ChannelContext,
+  ChannelDestination,
+  DeliverableMessage,
+} from '../channel-adapter.interface';
 import { AttachmentMeta } from '../attachment.service';
 
 /** The public messaging endpoint registered on the Azure Bot resource. */
@@ -272,6 +277,62 @@ class TeamsAdapterService implements ChannelAdapter {
   }
 
   /**
+   * A Teams thread continues where it started. A channel thread stores
+   * `${channelConversationId};messageid=${rootMessageId}`, so a continuation
+   * posts into the original reply chain. A DM thread stores no reply chain and
+   * carries no channel id, so the user's personal conversation is resolved:
+   * the continuation stays in the DM instead of the mapping broadcast.
+   */
+  async threadDestination(threadId: string, originChannelId?: string): Promise<ChannelDestination> {
+    const thread = await prisma.conversationThread.findUnique({
+      where: { id: threadId },
+      select: { userId: true, agentId: true, externalThreadId: true },
+    });
+    const [channelConversationId, rootMessageId] = (thread?.externalThreadId ?? '').split(';messageid=');
+    if (channelConversationId && rootMessageId) {
+      return {
+        channelId: channelConversationId,
+        channelThreadId: rootMessageId,
+        channelLabel: teamsChannelLabel(channelConversationId),
+      };
+    }
+    let channelId = originChannelId;
+    if (!channelId && thread) {
+      const dm = await prisma.teamsMapping.findFirst({
+        where: { lensUserId: thread.userId, agentId: thread.agentId, dmConversationId: { not: null } },
+        select: { dmConversationId: true },
+      });
+      channelId = dm?.dmConversationId ?? undefined;
+    }
+    if (!channelId) {
+      logger.warn(
+        'No Teams conversation resolved for thread %s (no origin channel id and no DM mapping) — a "continue in thread" resume will not be delivered',
+        threadId,
+      );
+    }
+    // Personal chats have no reply chains, so the continuation posts top-level.
+    return { channelId, channelLabel: channelId ? teamsChannelLabel(channelId) : undefined };
+  }
+
+  /**
+   * The user's personal conversation, else the agent's main linked channel. A
+   * channel destination carries its id: a Teams context without one is
+   * DM-scoped and would deliver nothing in Team Mode.
+   */
+  async defaultDestination(
+    agentId: string,
+    userId: string,
+  ): Promise<(ChannelDestination & { threadKey: string }) | null> {
+    const dm = await prisma.teamsMapping.findFirst({
+      where: { lensUserId: userId, agentId, dmConversationId: { not: null } },
+      select: { dmConversationId: true },
+    });
+    if (dm?.dmConversationId) return { threadKey: dm.dmConversationId };
+    const mainChannel = await teamsMappingService.getMainChannel(agentId);
+    return mainChannel ? { threadKey: mainChannel, channelId: mainChannel } : null;
+  }
+
+  /**
    * Deliver a message to Teams — always a proactive send.
    *
    * - Channel-scoped (channelContext with channelId): threaded reply under the
@@ -287,13 +348,7 @@ class TeamsAdapterService implements ChannelAdapter {
   async deliver(
     userId: string,
     message: DeliverableMessage,
-    channelContext?: {
-      channel: string;
-      channelId?: string;
-      threadTs?: string;
-      threadId: string;
-      includeFeedback?: boolean;
-    }
+    channelContext?: ChannelContext
   ): Promise<void> {
     if (!this.app) return;
 
@@ -306,7 +361,7 @@ class TeamsAdapterService implements ChannelAdapter {
 
     // Channel-scoped delivery: reply into the originating thread.
     if (channelContext?.channel === 'teams' && channelContext.channelId) {
-      const sent = await this.sendChunks(channelContext.channelId, channelContext.threadTs, chunks);
+      const sent = await this.sendChunks(channelContext.channelId, channelContext.channelThreadId, chunks);
       if (sent) {
         trackEvent('teams message delivered', userId, {
           ...(config.agentId ? { 'agent.id': config.agentId } : {}),
@@ -573,7 +628,11 @@ class TeamsAdapterService implements ChannelAdapter {
         text: m.role === 'USER' ? this.stripSenderTag(m.content) : m.content,
       }));
     lines.push({ fromBot: false, author: sender.name ?? sender.id, text });
-    return threadReplyClassifierService.classify({ platform: 'teams', agentId, lines });
+    return threadReplyClassifierService.classify({
+      platform: { channel: this.name, name: 'Microsoft Teams' },
+      agentId,
+      lines,
+    });
   }
 
   /** One turn in the reply chain rooted at `rootMessageId`. */
@@ -607,8 +666,8 @@ class TeamsAdapterService implements ChannelAdapter {
       metadata: {
         channel: 'teams',
         channelId: channelConversationId,
-        channelName: mapping.channelName ?? undefined,
-        teamsThreadId: rootMessageId,
+        channelThreadId: rootMessageId,
+        channelLabel: teamsChannelLabel(mapping.channelName ?? channelConversationId),
         senderExternalId: sender.id,
         senderName: sender.name,
       },

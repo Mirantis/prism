@@ -37,7 +37,7 @@
  * A caller that takes the mutex without claiming (the goal loop, via `run()`) is
  * simply not steerable: an autonomous turn is not redirected by a user message.
  *
- * Channel-agnostic: transports (Slack adapter, WS gateway) never touch this —
+ * Channel-agnostic: transports (channel adapters, WS gateway) never touch this —
  * they call the conversation engine, which owns the offer/own/coalesce decision.
  */
 

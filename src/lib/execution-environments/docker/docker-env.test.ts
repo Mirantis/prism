@@ -6,6 +6,9 @@ describe('dockerBaseEnv', () => {
     const env = dockerBaseEnv({
       SLACK_BOT_TOKEN: 'xoxb-test',
       SLACK_APP_TOKEN: 'xapp-test',
+      TEAMS_APP_ID: 'test-app-id',
+      TEAMS_APP_PASSWORD: 'test-client-secret',
+      TEAMS_APP_TENANT_ID: 'test-tenant-id',
       GOOGLE_BOT_EMAIL: 'bot@example.test',
       GOOGLE_BOT_PASSWORD: 'test-password',
       LANGFUSE_SECRET_KEY: 'test-secret',
@@ -13,8 +16,8 @@ describe('dockerBaseEnv', () => {
       NEXUS_API_URL: 'https://nexus.example.test',
       OPENAI_REALTIME_API_KEY: 'test-realtime-key',
     });
-    // With any of these the agent's shell could post as the Slack bot or sign
-    // in to the meeting account.
+    // With any of these the agent's shell could post as the Slack or Teams bot
+    // or sign in to the meeting account.
     expect(env).toEqual({});
   });
 

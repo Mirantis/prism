@@ -36,9 +36,6 @@ const { mockPrisma } = vi.hoisted(() => ({
       updateMany: vi.fn(),
       count: vi.fn(),
     },
-    slackMapping: {
-      findFirst: vi.fn(),
-    },
     messageAttachment: {
       findMany: vi.fn(),
     },
@@ -162,7 +159,7 @@ describe('ConversationService', () => {
       });
     });
 
-    it('SLACK filter is untouched (no externalThreadId constraint)', async () => {
+    it("another source's filter is untouched (no externalThreadId constraint)", async () => {
       mockPrisma.conversationThread.findMany.mockResolvedValue([]);
 
       await conversationService.listThreads('user-123', 'agent-123', { threadSource: 'SLACK' });
@@ -206,7 +203,7 @@ describe('ConversationService', () => {
   // ==========================================================================
 
   describe('getOrCreateLatestThread', () => {
-    it('should return the existing latest (non-Slack) thread', async () => {
+    it('should return the existing latest web thread', async () => {
       const existingThread = createTestThread();
       mockPrisma.conversationThread.findFirst.mockResolvedValue(existingThread);
 
@@ -739,17 +736,18 @@ describe('ConversationService', () => {
         expect(callIds(messages.find((m) => m.id === 'answer'))).toEqual(['a']);
       });
 
-      it('shows them on a Slack thread\'s answer too, so a reload matches the live reply', async () => {
+      it('shows them on a live-read thread\'s answer too, so a reload matches the live reply', async () => {
         mockPrisma.conversationThread.findUnique.mockResolvedValue({ threadSource: 'SLACK', compactionSummary: null });
-        const slack = (conversationService as unknown as { slackProvider: { getRecentMessages: (...args: unknown[]) => unknown } }).slackProvider;
-        const read = vi.spyOn(slack, 'getRecentMessages').mockResolvedValue([row('slack-question', 'USER', 1), row('slack-answer', 'AGENT', 3)]);
+        conversationService.registerThreadProvider('SLACK', {
+          getMessages: vi.fn(),
+          getRecentMessages: vi.fn(async () => [row('live-question', 'USER', 1), row('live-answer', 'AGENT', 3)]),
+        } as never);
         mockPrisma.conversationMessage.findMany.mockResolvedValue([row('step', 'AGENT', 2, [call('a')], true)]);
         mockPrisma.conversationMessage.findFirst.mockResolvedValue(null);
 
         const messages = await conversationService.getRecentMessages('thread-db', 10);
 
-        expect(callIds(messages.find((m) => m.id === 'slack-answer'))).toEqual(['a']);
-        read.mockRestore();
+        expect(callIds(messages.find((m) => m.id === 'live-answer'))).toEqual(['a']);
       });
 
       it('leaves the model\'s read as stored, so each call is replayed once', async () => {
@@ -789,7 +787,7 @@ describe('ConversationService', () => {
   // ==========================================================================
 
   describe('getLatestThread', () => {
-    it('should return the latest (non-Slack) thread for a user', async () => {
+    it('should return the latest web thread for a user', async () => {
       const latestThread = createTestThread();
       mockPrisma.conversationThread.findFirst.mockResolvedValue(latestThread);
 
@@ -931,16 +929,22 @@ describe('ConversationService', () => {
     it('emits "thread created" when the external-id upsert creates a thread', async () => {
       const now = new Date('2025-01-15T12:00:00Z');
       mockPrisma.conversationThread.upsert.mockResolvedValue(
-        createTestThread({ id: 'thread-slack', createdAt: now, updatedAt: now }),
+        createTestThread({ id: 'thread-live', createdAt: now, updatedAt: now }),
       );
 
       await conversationService.getOrCreateThreadByExternalId(
-        'user-123', 'agent-123', '1234.5678', { channelId: 'C123' },
+        'user-123', 'agent-123', '1234.5678', { source: 'SLACK', channelId: 'C123' },
       );
 
+      expect(mockPrisma.conversationThread.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({ threadSource: 'SLACK', externalChannelId: 'C123' }),
+          update: { threadSource: 'SLACK', externalChannelId: 'C123' },
+        }),
+      );
       expect(mockTrackEvent).toHaveBeenCalledWith('thread created', 'user-123', {
         'agent.id': 'agent-123',
-        'thread.id': 'thread-slack',
+        'thread.id': 'thread-live',
         'thread.source': 'slack',
       });
     });
@@ -951,7 +955,7 @@ describe('ConversationService', () => {
         createTestThread({ id: 'thread-dm', createdAt: now, updatedAt: now }),
       );
 
-      // Top-level DM: keyed by dmChannelId, no channelId option → DATABASE.
+      // Top-level DM: keyed by its conversation id, not live-read → DATABASE.
       await conversationService.getOrCreateThreadByExternalId(
         'user-123', 'agent-123', 'D07ERBJA69M',
       );
@@ -1029,122 +1033,29 @@ describe('ConversationService', () => {
   });
 
   // ==========================================================================
-  // getChannelContext — channel-neutral routing for thread-bound delivery
+  // Live-read thread providers
   // ==========================================================================
 
-  describe('getChannelContext', () => {
-    it('returns a websocket context for non-slack threads (no DB lookup)', async () => {
-      const ctx = await conversationService.getChannelContext('thread-1', 'websocket');
-
-      expect(ctx).toEqual({ channel: 'websocket', threadId: 'thread-1' });
-      expect(mockPrisma.conversationThread.findUnique).not.toHaveBeenCalled();
-    });
-
-    it('recovers the Slack thread_ts + channel for a channel-bound thread', async () => {
+  describe('registerThreadProvider', () => {
+    it('reads a thread through the provider registered for its source', async () => {
+      const live = {
+        getMessages: vi.fn(async () => [{ id: 'live-1' }]),
+        getRecentMessages: vi.fn(async () => [{ id: 'live-2', senderExternalId: 'U1' }]),
+      };
+      conversationService.registerThreadProvider('SLACK', live as never);
       mockPrisma.conversationThread.findUnique.mockResolvedValue({
-        externalThreadId: '1700000000.000100',
-        externalChannelId: 'C123',
+        compactionSummary: null,
         threadSource: 'SLACK',
-        userId: 'user-123',
-        agentId: 'agent-123',
       });
 
-      const ctx = await conversationService.getChannelContext('thread-1', 'slack', 'C123');
+      const context = await conversationService.getThreadContext('thread-live');
+      const recent = await conversationService.getRecentMessages('thread-live', 5);
 
-      expect(ctx).toEqual({
-        channel: 'slack',
-        channelId: 'C123',
-        threadTs: '1700000000.000100',
-        threadId: 'thread-1',
-      });
-      // A known channel id means no DM fallback lookup is needed.
-      expect(mockPrisma.slackMapping.findFirst).not.toHaveBeenCalled();
-    });
-
-    it('falls back to the user DM channel for a DM-originated thread with no channel id', async () => {
-      mockPrisma.conversationThread.findUnique.mockResolvedValue({
-        externalThreadId: null,
-        externalChannelId: null,
-        userId: 'user-123',
-        agentId: 'agent-123',
-      });
-      mockPrisma.slackMapping.findFirst.mockResolvedValue({ dmChannelId: 'D999' });
-
-      const ctx = await conversationService.getChannelContext('thread-1', 'slack');
-
-      expect(mockPrisma.slackMapping.findFirst).toHaveBeenCalledWith({
-        where: { lensUserId: 'user-123', agentId: 'agent-123', dmChannelId: { not: null } },
-        select: { dmChannelId: true },
-      });
-      // Scoped to the DM channel (so the Slack adapter won't broadcast to mappings).
-      expect(ctx).toEqual({
-        channel: 'slack',
-        channelId: 'D999',
-        threadTs: undefined,
-        threadId: 'thread-1',
-      });
-      // A resolved channel is deliverable — no warning.
-      expect(mockLogger.warn).not.toHaveBeenCalled();
-    });
-
-    it('does NOT treat a top-level DM thread externalThreadId as a Slack thread_ts', async () => {
-      // Top-level DMs are threadSource=DATABASE and store the dmChannelId in
-      // externalThreadId. A cron/goal continuation must post top-level (into the
-      // DM channel), NOT with thread_ts=dmChannelId (an invalid Slack ts).
-      mockPrisma.conversationThread.findUnique.mockResolvedValue({
-        externalThreadId: 'D07ERBJA69M',
-        externalChannelId: null,
-        threadSource: 'DATABASE',
-        userId: 'user-123',
-        agentId: 'agent-123',
-      });
-      mockPrisma.slackMapping.findFirst.mockResolvedValue({ dmChannelId: 'D07ERBJA69M' });
-
-      const ctx = await conversationService.getChannelContext('thread-1', 'slack');
-
-      expect(ctx).toEqual({
-        channel: 'slack',
-        channelId: 'D07ERBJA69M',
-        threadTs: undefined,
-        threadId: 'thread-1',
-      });
-      expect(mockLogger.warn).not.toHaveBeenCalled();
-    });
-
-    it('warns when no Slack channel can be resolved (undeliverable resume)', async () => {
-      mockPrisma.conversationThread.findUnique.mockResolvedValue({
-        externalThreadId: null,
-        externalChannelId: null,
-        userId: 'user-123',
-        agentId: 'agent-123',
-      });
-      mockPrisma.slackMapping.findFirst.mockResolvedValue(null);
-
-      const ctx = await conversationService.getChannelContext('thread-1', 'slack');
-
-      expect(ctx.channelId).toBeUndefined();
-      // A thread-bound resume with no resolvable channel is NOT rerouted to the
-      // main channel — it's logged and left undelivered.
-      expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('No Slack channel resolved'), 'thread-1');
-    });
-
-    it('continues a Teams channel thread in its reply chain', async () => {
-      // A channel thread stores `${conversationId};messageid=${rootMessageId}`,
-      // so the continuation posts into the chain, as Slack does — not top-level.
-      mockPrisma.conversationThread.findUnique.mockResolvedValue({
-        userId: 'user-123',
-        agentId: 'agent-123',
-        externalThreadId: '19:chan@thread.tacv2;messageid=1755000000000',
-      });
-
-      const ctx = await conversationService.getChannelContext('thread-1', 'teams');
-
-      expect(ctx).toEqual({
-        channel: 'teams',
-        channelId: '19:chan@thread.tacv2',
-        threadTs: '1755000000000',
-        threadId: 'thread-1',
-      });
+      expect(live.getMessages).toHaveBeenCalledWith('thread-live');
+      expect(context).toEqual({ compactionSummary: null, threadSource: 'SLACK', messages: [{ id: 'live-1' }] });
+      expect(live.getRecentMessages).toHaveBeenCalledWith('thread-live', 5, { view: 'client' });
+      expect(recent).toEqual([{ id: 'live-2', senderExternalId: 'U1', senderId: 'U1' }]);
+      expect(mockPrisma.conversationMessage.findMany).not.toHaveBeenCalled();
     });
   });
 });

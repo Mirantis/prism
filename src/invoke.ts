@@ -84,16 +84,14 @@ export async function buildTurnRequest(
   const systemParts = await buildSystemPromptParts(
     context,
     request.mode,
-    request.slackMessages,
+    request.heartbeatTriggers,
     request.workspaceRoot,
   );
 
   // Append channel/task instructions to the stable (cacheable) part
   const stablePart = systemParts.find((p) => p.cacheable);
-  if (request.isChannelMessage && request.mode !== 'subagent' && stablePart) {
-    stablePart.text +=
-      '\n\n' +
-      getChannelBehaviorInstructions(request.channelName, request.channelPlatform ?? 'slack');
+  if (request.channelLabel && request.mode !== 'subagent' && stablePart) {
+    stablePart.text += '\n\n' + getChannelBehaviorInstructions(request.channelLabel);
   }
 
   if (subagents.length > 0 && request.mode !== 'subagent' && stablePart) {
@@ -199,7 +197,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     }
 
     // Per-turn runtime notices → surfaced as an authoritative system-prompt
-    // section (e.g. a Slack attachment that failed to download).
+    // section (e.g. an attachment that failed to download).
     context.runtimeNotices = request.runtimeNotices;
     if (hasComputerForMode(request.mode)) {
       const help = await computerHelpService.forTurn(request.agentId, request.userId, request.threadId);

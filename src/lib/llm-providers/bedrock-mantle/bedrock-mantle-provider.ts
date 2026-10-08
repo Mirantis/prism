@@ -36,7 +36,7 @@
  *
  * Feature caveat: mantle rejects structured outputs (`output_config.format`)
  * with a 400. `invoke.ts` never asks for them; the one `generateObject` caller
- * (Slack thread classification) already catches and falls back.
+ * (the thread reply classifier) already catches and falls back.
  */
 
 import { createAnthropic } from '@ai-sdk/anthropic';

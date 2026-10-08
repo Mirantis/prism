@@ -3,15 +3,19 @@
  *
  * Persists pending Slack messages for heartbeat triggers in the database.
  * Messages are enqueued when a Slack message arrives in a heartbeat trigger channel,
- * and drained atomically by the agent-runtime when processing a heartbeat.
+ * and drained atomically by the heartbeat, which this queue is a trigger source of.
  */
 
 import prisma from '../lib/prisma';
 import { logger } from '../logger';
-import { SlackTriggerMessage } from '../types';
+import { ChannelTriggerMessage } from '../types';
+import type { HeartbeatTriggerSource } from './heartbeat.service';
 
-class SlackMessageQueueService {
-  async enqueue(agentId: string, message: SlackTriggerMessage): Promise<void> {
+class SlackMessageQueueService implements HeartbeatTriggerSource {
+  readonly channel = 'slack';
+  readonly platform = 'Slack';
+
+  async enqueue(agentId: string, message: ChannelTriggerMessage): Promise<void> {
     logger.info(`[SlackMessageQueue] Enqueuing message for agent ${agentId.substring(0, 8)} from sender ${message.sender}`);
     await prisma.pendingSlackMessage.create({
       data: {
@@ -23,7 +27,7 @@ class SlackMessageQueueService {
     });
   }
 
-  async drain(agentId: string): Promise<SlackTriggerMessage[]> {
+  async drain(agentId: string): Promise<ChannelTriggerMessage[]> {
     logger.info(`[SlackMessageQueue] Draining messages for agent ${agentId.substring(0, 8)}`);
     return prisma.$transaction(async (tx) => {
       const rows = await tx.pendingSlackMessage.findMany({

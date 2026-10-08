@@ -60,7 +60,7 @@ export interface WebhookRunSummary {
     id: string;
     threadId: string;
     threadTitle: string | null;
-    /** The thread is a web conversation, not a Slack or Teams destination's own thread. */
+    /** The thread is a web conversation, not a channel destination's own thread. */
     inWebChat: boolean;
   } | null;
 }

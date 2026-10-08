@@ -57,6 +57,7 @@ const {
       findByConversationId: vi.fn(),
       updateDmConversationId: vi.fn(),
       countAllMappings: vi.fn(),
+      getMainChannel: vi.fn(),
     },
     mockConversationService: {
       getOrCreateThreadByExternalId: vi.fn(),
@@ -494,8 +495,8 @@ describe('TeamsAdapterService', () => {
         metadata: {
           channel: 'teams',
           channelId: '19:chan@thread.tacv2',
-          channelName: 'General',
-          teamsThreadId: '1755000000000',
+          channelThreadId: '1755000000000',
+          channelLabel: 'the Microsoft Teams channel **General**',
           senderExternalId: 'aad-user-1',
           senderName: 'Jane Doe',
         },
@@ -732,7 +733,7 @@ describe('TeamsAdapterService', () => {
         '19:chan@thread.tacv2;messageid=1755000000000'
       );
       expect(mockClassify).toHaveBeenCalledWith({
-        platform: 'teams',
+        platform: { channel: 'teams', name: 'Microsoft Teams' },
         agentId: 'agent-1',
         lines: [
           { fromBot: false, author: 'Jane Doe', text: 'what broke the build?' },
@@ -746,7 +747,10 @@ describe('TeamsAdapterService', () => {
         expect.objectContaining({
           threadId: 'thread-1',
           message: '<@aad-user-1:Jane Doe>: what time is it?',
-          metadata: expect.objectContaining({ channelName: 'Incidents', teamsThreadId: '1755000000000' }),
+          metadata: expect.objectContaining({
+            channelLabel: 'the Microsoft Teams channel **Incidents**',
+            channelThreadId: '1755000000000',
+          }),
         })
       );
     });
@@ -843,7 +847,7 @@ describe('TeamsAdapterService', () => {
       await teamsAdapterService.deliver('lens-1', baseMessage as never, {
         channel: 'teams',
         channelId: '19:chan@thread.tacv2',
-        threadTs: '1755000000000',
+        channelThreadId: '1755000000000',
         threadId: 'thread-1',
       });
 
@@ -1001,6 +1005,79 @@ describe('TeamsAdapterService', () => {
         mockTrackEvent.mock.calls.filter(([name]) => name === 'teams adapter shutdown').length
       ).toBe(1);
       expect(await teamsAdapterService.isUserConnected('lens-1')).toBe(false);
+    });
+  });
+});
+
+describe('Teams routing for messages nobody replied to', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe('threadDestination', () => {
+    it('continues a channel thread in its reply chain, labelled by its id', async () => {
+      // A channel thread stores `${conversationId};messageid=${rootMessageId}`,
+      // so the continuation posts into the chain, not top-level.
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({
+        userId: 'lens-1',
+        agentId: 'agent-1',
+        externalThreadId: '19:chan@thread.tacv2;messageid=1755000000000',
+      });
+
+      expect(await teamsAdapterService.threadDestination('thread-1')).toEqual({
+        channelId: '19:chan@thread.tacv2',
+        channelThreadId: '1755000000000',
+        channelLabel: 'the Microsoft Teams channel **19:chan@thread.tacv2**',
+      });
+      expect(mockPrisma.teamsMapping.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("keeps a DM thread's continuation in the personal conversation", async () => {
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({
+        userId: 'lens-1',
+        agentId: 'agent-1',
+        externalThreadId: 'a:dm-1',
+      });
+      mockPrisma.teamsMapping.findFirst.mockResolvedValue({ dmConversationId: 'a:dm-1' });
+
+      expect(await teamsAdapterService.threadDestination('thread-1')).toEqual({
+        channelId: 'a:dm-1',
+        channelLabel: 'the Microsoft Teams channel **a:dm-1**',
+      });
+      expect(mockPrisma.teamsMapping.findFirst).toHaveBeenCalledWith({
+        where: { lensUserId: 'lens-1', agentId: 'agent-1', dmConversationId: { not: null } },
+        select: { dmConversationId: true },
+      });
+    });
+  });
+
+  describe('defaultDestination', () => {
+    it('picks the personal conversation first', async () => {
+      mockPrisma.teamsMapping.findFirst.mockResolvedValue({ dmConversationId: 'a:dm-1' });
+
+      expect(await teamsAdapterService.defaultDestination('agent-1', 'lens-1')).toEqual({
+        threadKey: 'a:dm-1',
+      });
+      expect(mockTeamsMappingService.getMainChannel).not.toHaveBeenCalled();
+    });
+
+    it('names the main channel, which a channel-scoped delivery needs', async () => {
+      // A Teams context without a channel id is DM-scoped and delivers nothing
+      // in Team Mode.
+      mockPrisma.teamsMapping.findFirst.mockResolvedValue(null);
+      mockTeamsMappingService.getMainChannel.mockResolvedValue('19:main@thread.tacv2');
+
+      expect(await teamsAdapterService.defaultDestination('agent-1', 'lens-1')).toEqual({
+        threadKey: '19:main@thread.tacv2',
+        channelId: '19:main@thread.tacv2',
+      });
+    });
+
+    it('has none when Teams is not linked', async () => {
+      mockPrisma.teamsMapping.findFirst.mockResolvedValue(null);
+      mockTeamsMappingService.getMainChannel.mockResolvedValue(null);
+
+      expect(await teamsAdapterService.defaultDestination('agent-1', 'lens-1')).toBeNull();
     });
   });
 });
