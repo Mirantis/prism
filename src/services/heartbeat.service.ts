@@ -29,6 +29,13 @@ import { ChannelTriggerMessage, HeartbeatTrigger, InvokeStep } from '../types';
 import { heartbeatDelayMs, heartbeatDueAt } from './heartbeat-schedule';
 import type { ChatPlatform } from './channel-adapter.interface';
 
+/**
+ * The stored text of a heartbeat run that stopped at the spending limit. It is
+ * kept, not delivered, when the run sent a message before the limit.
+ */
+const HEARTBEAT_BUDGET_NOTICE =
+  "This heartbeat check stopped: your organization's AI spending limit has been reached.";
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -425,7 +432,7 @@ class HeartbeatService {
         await outboundMessageService.keepWithheldRun({
           agentId: state.agentId,
           userId,
-          content: '',
+          content: HEARTBEAT_BUDGET_NOTICE,
           triggeredBy: 'HEARTBEAT',
           toolCalls: invokeResult.toolCalls,
         });
@@ -606,7 +613,7 @@ class HeartbeatService {
         await outboundMessageService.keepWithheldRun({
           agentId: state.agentId,
           userId: state.userId,
-          content: '',
+          content: HEARTBEAT_BUDGET_NOTICE,
           triggeredBy: 'HEARTBEAT',
           toolCalls: invokeResult.toolCalls,
         });
