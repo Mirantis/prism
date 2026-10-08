@@ -58,6 +58,47 @@ export type ChannelDestination = Pick<ChannelContext, 'channelId' | 'channelThre
 };
 
 /**
+ * A conversation linked to the agent that the agent may post into on its own
+ * initiative: a linked channel, or a linked DM.
+ */
+export interface LinkedTarget {
+  /** `<platform>:<conversation id>`, the name the agent sends to. */
+  key: string;
+  platform: 'slack' | 'teams';
+  kind: 'channel' | 'dm';
+  conversationId: string;
+  name: string | null;
+  isMain: boolean;
+}
+
+/**
+ * A send the runtime refuses. The message is the reason the agent reads, so it
+ * names the rule and, for a mention, the person.
+ */
+export class SendRefusedError extends Error {
+  constructor(
+    message: string,
+    /** Telemetry-safe reason code. */
+    readonly code: string,
+  ) {
+    super(message);
+    this.name = 'SendRefusedError';
+  }
+}
+
+/**
+ * The `<@ID>` and `<@ID:Name>` mention tokens the agent writes. Global, so use
+ * it with `matchAll` and `replace` only.
+ */
+export const MENTION_TOKEN = /<@([^>:]*)(?::([^>]*))?>/g;
+
+/** How a refusal names a target to the agent. */
+export function describeTarget(target: LinkedTarget): string {
+  if (target.kind === 'dm') return target.name ? `the DM with ${target.name}` : 'the DM';
+  return target.name ? `#${target.name}` : target.key;
+}
+
+/**
  * Interface for message delivery channels
  *
  * Each channel adapter is responsible for:
@@ -130,6 +171,18 @@ export interface ChannelAdapter {
    * @returns true if user can receive messages on this channel
    */
   isUserConnected(userId: string): Promise<boolean>;
+
+  /** The agent's linked channels and DMs on this platform. */
+  listLinkedTargets?(agentId: string): Promise<LinkedTarget[]>;
+
+  /**
+   * Post agent-written text into a linked target, in the reply chain rooted at
+   * `thread` when given. Every `<@ID>` token must name a member of the target,
+   * and becomes a mention that notifies. Throws `SendRefusedError` for a send
+   * the platform rules refuse, and the platform's error when the post fails.
+   * Returns the id of the posted message.
+   */
+  postToTarget?(target: LinkedTarget, text: string, thread?: string): Promise<{ messageId: string }>;
 
   /**
    * Initialize the channel adapter
