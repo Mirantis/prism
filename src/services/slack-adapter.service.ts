@@ -21,6 +21,10 @@ import {
   ChannelContext,
   ChannelDestination,
   DeliverableMessage,
+  describeTarget,
+  LinkedTarget,
+  MENTION_TOKEN,
+  SendRefusedError,
 } from './channel-adapter.interface';
 import { AttachmentMeta } from './attachment.service';
 import { slackMappingService } from './slack-mapping.service';
@@ -71,6 +75,12 @@ import { retirableFetch, retireSocketApp } from './slack-socket-retire';
  * transient, long enough that the clicker registers the confirmation.
  */
 export const FEEDBACK_ACK_LINGER_MS = 3000;
+
+/** A Slack user id: `U…`, or `W…` on an Enterprise Grid org. */
+const SLACK_USER_ID = /^[UW][A-Z0-9]{2,}$/;
+
+/** A Slack message ts, which is also a thread id. */
+const SLACK_TS = /^\d+\.\d+$/;
 
 // ============================================================================
 // Types
@@ -438,6 +448,126 @@ class SlackAdapterService implements ChannelAdapter {
       const message = error instanceof Error ? error.message : String(error);
       logger.error('Slack channel delivery failed for %s: %s', channelId, message);
     }
+  }
+
+  async listLinkedTargets(agentId: string): Promise<LinkedTarget[]> {
+    const mappings = await prisma.slackMapping.findMany({
+      where: { agentId },
+      orderBy: { createdAt: 'asc' },
+    });
+    const channels = mappings.filter((m) => m.slackChannelId);
+    const mainChannelId = (channels.find((m) => m.isMainChannel) ?? channels[0])?.slackChannelId ?? null;
+
+    const targets: LinkedTarget[] = [];
+    for (const mapping of mappings) {
+      if (mapping.slackChannelId) {
+        targets.push({
+          key: `slack:${mapping.slackChannelId}`,
+          platform: 'slack',
+          kind: 'channel',
+          conversationId: mapping.slackChannelId,
+          name: mapping.slackChannelName,
+          isMain: mapping.slackChannelId === mainChannelId,
+        });
+      }
+      if (mapping.dmChannelId) {
+        targets.push({
+          key: `slack:${mapping.dmChannelId}`,
+          platform: 'slack',
+          kind: 'dm',
+          conversationId: mapping.dmChannelId,
+          name: mapping.slackUserId ? `<@${mapping.slackUserId}>` : null,
+          isMain: false,
+        });
+      }
+    }
+    return targets;
+  }
+
+  /**
+   * Posts with `chat.postMessage` alone. It binds no conversation thread and
+   * swallows no error, unlike reply delivery, because the caller is a tool that
+   * reports the outcome to the agent.
+   */
+  async postToTarget(target: LinkedTarget, text: string, thread?: string): Promise<{ messageId: string }> {
+    const connection = await getSlackConnection();
+    const slackApp = connection?.isActive ? this.apps.get(connection.teamId) : undefined;
+    if (!connection || !slackApp) {
+      throw new SendRefusedError('Slack is not connected, so nothing can be sent there.', 'not_connected');
+    }
+    if (thread !== undefined && !SLACK_TS.test(thread)) {
+      throw new SendRefusedError(
+        `"${thread}" is not a Slack thread id. A thread id is the ts of the thread's first message, for example 1712345678.123456.`,
+        'bad_thread',
+      );
+    }
+
+    const outbound = await this.checkMentions(slackApp, target, text);
+    const formatted = formatSlackMessage(outbound);
+    const response = await slackApp.app.client.chat.postMessage({
+      channel: target.conversationId,
+      thread_ts: thread,
+      text: formatted.text,
+      blocks: formatted.blocks,
+    });
+    return { messageId: String(response.ts) };
+  }
+
+  /**
+   * Refuse a mention token that is not a Slack user id, or that names a person
+   * outside the target conversation, then rewrite each token to the bare
+   * `<@ID>` form that Slack turns into a notifying mention.
+   */
+  private async checkMentions(slackApp: SlackApp, target: LinkedTarget, text: string): Promise<string> {
+    const tokens = [...text.matchAll(MENTION_TOKEN)];
+    if (tokens.length === 0) return text;
+
+    for (const [token, id] of tokens) {
+      if (!SLACK_USER_ID.test(id)) {
+        throw new SendRefusedError(
+          `${token} is not a Slack user mention. Mention a person as <@USERID>, with the id from a message you have seen.`,
+          'bad_mention',
+        );
+      }
+    }
+
+    const members = await this.conversationMembers(slackApp, target);
+    for (const [, id, embeddedName] of tokens) {
+      if (members.has(id)) continue;
+      const info = await this.getUserInfo(id, slackApp.teamId);
+      const name = info?.real_name || info?.name || embeddedName || id;
+      throw new SendRefusedError(
+        `${name} (<@${id}>) is not a member of ${describeTarget(target)}, so the message was not sent. Mention only people in that conversation.`,
+        'not_member',
+      );
+    }
+
+    return text.replace(MENTION_TOKEN, (_token, id: string) => `<@${id}>`);
+  }
+
+  private async conversationMembers(slackApp: SlackApp, target: LinkedTarget): Promise<Set<string>> {
+    const members = new Set<string>();
+    let cursor: string | undefined;
+    try {
+      do {
+        const page = await slackApp.app.client.conversations.members({
+          channel: target.conversationId,
+          limit: 1000,
+          cursor,
+        });
+        for (const id of page.members ?? []) members.add(id);
+        cursor = page.response_metadata?.next_cursor || undefined;
+      } while (cursor);
+    } catch (error: unknown) {
+      if ((error as { data?: { error?: string } }).data?.error === 'missing_scope') {
+        throw new SendRefusedError(
+          `The Slack app cannot read who is in ${describeTarget(target)}: it needs the channels:read scope, groups:read for a private channel, and im:read for a DM. Ask the operator to add the scope.`,
+          'missing_scope',
+        );
+      }
+      throw error;
+    }
+    return members;
   }
 
   /**
@@ -2063,9 +2193,9 @@ class SlackAdapterService implements ChannelAdapter {
    *
    * Pairs {@link rewriteOutboundMentions} with {@link formatSlackMessage} so
    * every delivery path normalizes `<@USERID:Name>` tokens back to Slack's
-   * native mention syntax before Block Kit rendering. Callers must route
-   * outbound text through this helper rather than calling the two steps
-   * directly — otherwise mentions silently degrade to plain text.
+   * native mention syntax before Block Kit rendering. Reply delivery routes
+   * outbound text through this helper; `postToTarget` runs its own stricter
+   * mention check instead.
    */
   private async prepareOutboundMessage(
     content: string,
