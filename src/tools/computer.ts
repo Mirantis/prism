@@ -220,10 +220,10 @@ export function getComputerTools(
             message:
               'No active chat invocation is using the computer. Use the computer tools when it is available.',
           };
-        const { conversationService } = await import('../services/conversation.service');
+        const { messageDeliveryService } = await import('../services/message-delivery.service');
         const { conversationEngineService } =
           await import('../services/conversation-engine.service');
-        const context = await conversationService.getChannelContext(
+        const context = await messageDeliveryService.threadContext(
           owner.threadId,
           owner.originChannel,
           owner.originChannelId,
@@ -237,7 +237,8 @@ export function getComputerTools(
           metadata: {
             channel: context.channel,
             channelId: context.channelId,
-            slackThreadTs: context.threadTs,
+            channelThreadId: context.channelThreadId,
+            channelLabel: context.channelLabel,
           },
         });
         return {

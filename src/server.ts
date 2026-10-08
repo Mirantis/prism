@@ -31,6 +31,7 @@ import { logger } from './logger';
 import { managementRouter } from './routes/management';
 import { threadsRouter } from './routes/threads';
 import { messagesRouter } from './routes/messages';
+import { slackRouter } from './routes/slack';
 import { teamsRouter } from './routes/teams';
 import { lockedInRouter } from './routes/locked-in';
 import { agentGuideRouter } from './routes/agent-guide';
@@ -55,6 +56,7 @@ export function createApp() {
 
   // Management routes (heartbeat, cron lifecycle)
   app.use('/agents', managementRouter);
+  app.use('/agents', slackRouter);
   app.use('/agents', teamsRouter);
   app.use('/agents', computerRouter);
 

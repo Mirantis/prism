@@ -5,7 +5,7 @@
  * - Chat message processing
  * - Direct LLM invocation via invoke()
  * - Multi-step response delivery
- * - Sender name prepending for Slack messages
+ * - Sender name prepending for channel messages
  * - Channel context routing
  */
 
@@ -27,6 +27,7 @@ const {
   mockGetMetaByIds,
   mockShowInConversation,
   mockGetMetaByMessageIds,
+  mockGetAdapter,
 } = vi.hoisted(() => ({
   mockGetOrCreateLatestThread: vi.fn(),
   mockGetThreadWorkspaceRoot: vi.fn(),
@@ -43,6 +44,9 @@ const {
   mockGetMetaByIds: vi.fn(),
   mockShowInConversation: vi.fn(),
   mockGetMetaByMessageIds: vi.fn(),
+  // The chat socket shows the whole conversation; a team chat channel posts
+  // only the agent's replies.
+  mockGetAdapter: vi.fn((name: string) => ({ name, showsWholeConversation: name === 'websocket' })),
 }));
 
 /**
@@ -75,6 +79,7 @@ vi.mock('../message-delivery.service', () => ({
   messageDeliveryService: {
     publish: mockPublish,
     showInConversation: mockShowInConversation,
+    getAdapter: mockGetAdapter,
   },
 }));
 
@@ -575,15 +580,15 @@ describe('Requirement: Conversation Engine', () => {
   });
 
   describe('Scenario: Channel context includes threadId', () => {
-    it('should include threadId in channelContext when metadata has slack channel info', async () => {
+    it('should include threadId in channelContext when metadata has channel info', async () => {
       await conversationEngineService.chat({
         userId: 'user-123',
         agentId: 'agent-123',
-        message: 'hello from slack',
+        message: 'hello from the channel',
         metadata: {
           channel: 'slack',
           channelId: 'C123',
-          slackThreadTs: '1000.2000',
+          channelThreadId: '1000.2000',
           senderName: 'Alice',
           senderExternalId: 'U123',
         },
@@ -598,7 +603,7 @@ describe('Requirement: Conversation Engine', () => {
           channelContext: expect.objectContaining({
             channel: 'slack',
             channelId: 'C123',
-            threadTs: '1000.2000',
+            channelThreadId: '1000.2000',
             threadId: 'thread-123',
           }),
         }),
@@ -619,6 +624,23 @@ describe('Requirement: Conversation Engine', () => {
         'USER_INPUT',
         expect.objectContaining({
           channelContext: undefined,
+        }),
+      );
+    });
+
+    it('hands the turn the channel label and origin the adapter gave', async () => {
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'hello from the channel',
+        metadata: { channel: 'slack', channelId: 'C123', channelLabel: 'the channel **#alerts**' },
+      });
+
+      expect(mockInvokeStream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channelLabel: 'the channel **#alerts**',
+          originChannel: 'slack',
+          originChannelId: 'C123',
         }),
       );
     });
@@ -677,10 +699,10 @@ describe('Requirement: Conversation Engine', () => {
 
   describe('Scenario: Feedback button gating (channelContext.includeFeedback)', () => {
     const AGENT_TEXT = 'Here is a substantive answer.';
-    const slackChannelMeta = {
-      channel: 'slack' as const,
+    const channelMeta = {
+      channel: 'slack',
       channelId: 'C123',
-      slackThreadTs: '1000.2000',
+      channelThreadId: '1000.2000',
       senderName: 'Alice',
       senderExternalId: 'U123',
     };
@@ -697,7 +719,7 @@ describe('Requirement: Conversation Engine', () => {
         userId: 'user-123',
         agentId: 'agent-123',
         message: 'Explain x in detail',
-        metadata: slackChannelMeta,
+        metadata: channelMeta,
       });
 
       expect(mockGenerateText).toHaveBeenCalledTimes(1);
@@ -710,7 +732,7 @@ describe('Requirement: Conversation Engine', () => {
           channelContext: expect.objectContaining({
             channel: 'slack',
             channelId: 'C123',
-            threadTs: '1000.2000',
+            channelThreadId: '1000.2000',
             threadId: 'thread-123',
             includeFeedback: true,
           }),
@@ -718,7 +740,7 @@ describe('Requirement: Conversation Engine', () => {
       );
     });
 
-    it('builds a slack channelContext for DMs too (no channelId) and carries includeFeedback', async () => {
+    it('builds a channelContext for DMs too (no channelId) and carries includeFeedback', async () => {
       mockIsTelemetryEnabled.mockReturnValue(true);
       mockGenerateText.mockResolvedValue({ text: 'WORTHY' });
       mockCountAgentMessages.mockResolvedValue(1);
@@ -730,7 +752,7 @@ describe('Requirement: Conversation Engine', () => {
         userId: 'user-123',
         agentId: 'agent-123',
         message: 'DM substantive',
-        metadata: { channel: 'slack' }, // DM — no channelId, no slackThreadTs
+        metadata: { channel: 'slack' }, // DM — no channelId, no channelThreadId
       });
 
       expect(mockPublish).toHaveBeenCalledWith(
@@ -742,7 +764,7 @@ describe('Requirement: Conversation Engine', () => {
           channelContext: {
             channel: 'slack',
             channelId: undefined,
-            threadTs: undefined,
+            channelThreadId: undefined,
             threadId: 'thread-123',
             includeFeedback: true,
           },
@@ -761,7 +783,7 @@ describe('Requirement: Conversation Engine', () => {
         userId: 'user-123',
         agentId: 'agent-123',
         message: 'Explain x in detail',
-        metadata: slackChannelMeta,
+        metadata: channelMeta,
       });
 
       expect(mockGenerateText).not.toHaveBeenCalled();
@@ -788,7 +810,7 @@ describe('Requirement: Conversation Engine', () => {
         userId: 'user-123',
         agentId: 'agent-123',
         message: 'Ack?',
-        metadata: slackChannelMeta,
+        metadata: channelMeta,
       });
 
       expect(mockGenerateText).toHaveBeenCalledTimes(1);
@@ -815,7 +837,7 @@ describe('Requirement: Conversation Engine', () => {
         userId: 'user-123',
         agentId: 'agent-123',
         message: 'Explain x in detail',
-        metadata: slackChannelMeta,
+        metadata: channelMeta,
       });
 
       expect(mockPublish).toHaveBeenCalledWith(
@@ -879,7 +901,7 @@ describe('Requirement: Conversation Engine', () => {
           userId: 'user-123',
           agentId: 'agent-123',
           message: 'Explain x in detail',
-          metadata: slackChannelMeta,
+          metadata: channelMeta,
         });
 
         expect(mockPublish, `userCount=${userCount}`).toHaveBeenCalledWith(
@@ -911,7 +933,7 @@ describe('Requirement: Conversation Engine', () => {
         userId: 'user-123',
         agentId: 'agent-123',
         message: 'Multi step',
-        metadata: slackChannelMeta,
+        metadata: channelMeta,
       });
 
       expect(mockGenerateText).toHaveBeenCalledTimes(1);
@@ -973,7 +995,7 @@ describe('Requirement: Conversation Engine', () => {
       expect(mockOnFirstUserMessage).not.toHaveBeenCalled();
     });
 
-    it('does not generate a title for a Slack thread (never shown in Recents/resume)', async () => {
+    it('does not generate a title for a channel that posts only replies (never shown in Recents/resume)', async () => {
       mockAddMessage.mockResolvedValueOnce({
         message: { id: 'msg-123', threadId: 'thread-123' },
         titleSet: 'some placeholder',
@@ -982,7 +1004,7 @@ describe('Requirement: Conversation Engine', () => {
       await conversationEngineService.chat({
         userId: 'user-123',
         agentId: 'agent-123',
-        message: 'hello from slack',
+        message: 'hello from the channel',
         threadId: 'thread-123',
         metadata: { channel: 'slack', channelId: 'C123' },
       });

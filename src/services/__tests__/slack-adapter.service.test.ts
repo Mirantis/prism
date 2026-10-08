@@ -24,6 +24,7 @@ const {
     },
     slackMapping: {
       findMany: vi.fn(),
+      findFirst: vi.fn(),
     },
     $transaction: vi.fn(),
   },
@@ -34,6 +35,8 @@ const {
     getActiveUserMappingsWithDmChannel: vi.fn(),
     upsertUserMapping: vi.fn(),
     findByChannelId: vi.fn(),
+    getMainChannel: vi.fn(),
+    listChannelIds: vi.fn(),
   },
   mockSlackHeartbeatTriggerService: {
     deleteByConnectionId: vi.fn(),
@@ -89,6 +92,7 @@ vi.mock('../../config', () => ({ config: {} }));
 import { slackAdapterService } from '../slack-adapter.service';
 import { attachmentService } from '../attachment.service';
 import { conversationService } from '../conversation.service';
+import { logger } from '../../logger';
 
 describe('Requirement: disconnectAndDeactivate cleans up connection rows', () => {
   beforeEach(() => {
@@ -273,8 +277,8 @@ describe('Requirement: Slack file download failures are surfaced to the agent', 
   });
 
   it('reports an access/permission failure instead of dropping the file', async () => {
-    vi.spyOn(attachmentService, 'existsBySlackFileId').mockResolvedValue(false);
-    const createSpy = vi.spyOn(attachmentService, 'createSlackAttachment');
+    vi.spyOn(attachmentService, 'existsByExternalFileId').mockResolvedValue(false);
+    const createSpy = vi.spyOn(attachmentService, 'createOnce');
     // Slack serves an HTML login page (HTTP 200) when the bot can't read the file.
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response('<html>login</html>', { status: 200, headers: { 'content-type': 'text/html' } }),
@@ -676,5 +680,121 @@ describe('setAssistantStatus — rejects when the status cannot be set', () => {
     await expect(
       adapter.setAssistantStatus('T999', 'C001', '123.000', 'is thinking…'),
     ).rejects.toThrow('no Slack app for team T999');
+  });
+});
+
+describe('Requirement: Slack routes messages nobody replied to', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe('threadDestination', () => {
+    it('recovers the thread_ts and channel for a channel-bound thread, labelled by its id', async () => {
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({
+        externalThreadId: '1700000000.000100',
+        externalChannelId: 'C123',
+        threadSource: 'SLACK',
+        userId: 'user-123',
+        agentId: 'agent-123',
+      });
+
+      expect(await slackAdapterService.threadDestination('thread-1', 'C123')).toEqual({
+        channelId: 'C123',
+        channelThreadId: '1700000000.000100',
+        channelLabel: 'the team Slack channel **#C123**',
+      });
+      // A known channel id means no DM fallback lookup is needed.
+      expect(mockPrisma.slackMapping.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the user DM channel for a DM-originated thread with no channel id', async () => {
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({
+        externalThreadId: null,
+        externalChannelId: null,
+        userId: 'user-123',
+        agentId: 'agent-123',
+      });
+      mockPrisma.slackMapping.findFirst.mockResolvedValue({ dmChannelId: 'D999' });
+
+      // Scoped to the DM channel, so delivery does not broadcast to every mapping.
+      expect(await slackAdapterService.threadDestination('thread-1')).toEqual({
+        channelId: 'D999',
+        channelThreadId: undefined,
+        channelLabel: 'the team Slack channel **#D999**',
+      });
+      expect(mockPrisma.slackMapping.findFirst).toHaveBeenCalledWith({
+        where: { lensUserId: 'user-123', agentId: 'agent-123', dmChannelId: { not: null } },
+        select: { dmChannelId: true },
+      });
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    it('does NOT treat a top-level DM thread externalThreadId as a thread_ts', async () => {
+      // Top-level DMs are threadSource=DATABASE and store the dmChannelId in
+      // externalThreadId. A continuation posts top-level into the DM channel,
+      // NOT with thread_ts=dmChannelId (an invalid Slack ts).
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({
+        externalThreadId: 'D07ERBJA69M',
+        externalChannelId: null,
+        threadSource: 'DATABASE',
+        userId: 'user-123',
+        agentId: 'agent-123',
+      });
+      mockPrisma.slackMapping.findFirst.mockResolvedValue({ dmChannelId: 'D07ERBJA69M' });
+
+      expect(await slackAdapterService.threadDestination('thread-1')).toEqual({
+        channelId: 'D07ERBJA69M',
+        channelThreadId: undefined,
+        channelLabel: 'the team Slack channel **#D07ERBJA69M**',
+      });
+    });
+
+    it('warns when no channel can be resolved (undeliverable resume)', async () => {
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({
+        externalThreadId: null,
+        externalChannelId: null,
+        userId: 'user-123',
+        agentId: 'agent-123',
+      });
+      mockPrisma.slackMapping.findFirst.mockResolvedValue(null);
+
+      const destination = await slackAdapterService.threadDestination('thread-1');
+
+      // Not rerouted to the main channel: logged and left undelivered.
+      expect(destination.channelId).toBeUndefined();
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('No Slack channel resolved'), 'thread-1');
+    });
+  });
+
+  describe('defaultDestination', () => {
+    it('picks the DM channel first', async () => {
+      mockPrisma.slackMapping.findFirst.mockResolvedValue({ dmChannelId: 'D123' });
+
+      expect(await slackAdapterService.defaultDestination('agent-1', 'user-1')).toEqual({ threadKey: 'D123' });
+      expect(mockSlackMappingService.getMainChannel).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the main channel, with no channel id so delivery uses the mapping', async () => {
+      mockPrisma.slackMapping.findFirst.mockResolvedValue(null);
+      mockSlackMappingService.getMainChannel.mockResolvedValue('C_MAIN');
+
+      expect(await slackAdapterService.defaultDestination('agent-1', 'user-1')).toEqual({ threadKey: 'C_MAIN' });
+    });
+
+    it('has none when Slack is not linked', async () => {
+      mockPrisma.slackMapping.findFirst.mockResolvedValue(null);
+      mockSlackMappingService.getMainChannel.mockResolvedValue(null);
+
+      expect(await slackAdapterService.defaultDestination('agent-1', 'user-1')).toBeNull();
+    });
+  });
+
+  describe('linkedChannelIds', () => {
+    it("lists the agent's linked channels", async () => {
+      mockSlackMappingService.listChannelIds.mockResolvedValue(['C_MAIN', 'C_REL']);
+
+      expect(await slackAdapterService.linkedChannelIds('agent-1')).toEqual(['C_MAIN', 'C_REL']);
+      expect(mockSlackMappingService.listChannelIds).toHaveBeenCalledWith('agent-1');
+    });
   });
 });

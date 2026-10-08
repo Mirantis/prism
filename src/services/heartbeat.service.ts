@@ -19,12 +19,12 @@ import { AgentWorkspace } from '@prisma/client';
 import { messageDeliveryService } from './message-delivery.service';
 import { runClassificationGate, isRecentDuplicate } from '../lib/classification-gate';
 import { agentStatusService } from './agent-status.service';
-import { slackMessageQueueService } from './slack-message-queue.service';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { formatTimeAgo } from '../prompts/context-builder';
-import { InvokeStep, SlackTriggerMessage } from '../types';
+import { ChannelTriggerMessage, HeartbeatTrigger, InvokeStep } from '../types';
 import { heartbeatDelayMs, heartbeatDueAt } from './heartbeat-schedule';
+import type { ChatPlatform } from './channel-adapter.interface';
 
 // ============================================================================
 // Types
@@ -59,6 +59,19 @@ interface HeartbeatResult {
   text: string;
 }
 
+/**
+ * A channel that queues messages to start the heartbeat. A timer heartbeat
+ * drains every registered source, so nothing queued waits for a trigger.
+ */
+export interface HeartbeatTriggerSource {
+  /** The channel's adapter name; reported as the heartbeat's trigger. */
+  readonly channel: ChatPlatform;
+  /** How the prompt names the channel's platform. */
+  readonly platform: string;
+  /** Hand over every message queued for `agentId`, and forget them. */
+  drain(agentId: string): Promise<ChannelTriggerMessage[]>;
+}
+
 /** A delay for the log line: seconds under a minute, whole minutes above it. */
 function formatDelay(delayMs: number): string {
   if (delayMs < 60_000) return `${Math.round(delayMs / 1000)}s`;
@@ -71,6 +84,11 @@ function formatDelay(delayMs: number): string {
 
 class HeartbeatService {
   private heartbeatState: HeartbeatState | null = null;
+  private triggerSources: HeartbeatTriggerSource[] = [];
+
+  registerTriggerSource(source: HeartbeatTriggerSource): void {
+    this.triggerSources.push(source);
+  }
 
   startHeartbeat(agent: AgentWorkspace, schedule: HeartbeatSchedule): void {
     // Heartbeat enablement is persisted in the backend DB.
@@ -255,24 +273,25 @@ class HeartbeatService {
     try {
       logger.info(`[Heartbeat] Executing`);
 
-      // Drain any pending Slack messages from DB so they aren't orphaned
-      const pendingSlackMessages = await slackMessageQueueService.drain(state.agentId);
-      const hasSlackMessages = pendingSlackMessages.length > 0;
-      if (hasSlackMessages) {
-        logger.info(`[Heartbeat] Picked up ${pendingSlackMessages.length} pending Slack message(s) during timer heartbeat`);
+      // Drain every channel's pending trigger messages so they aren't orphaned
+      const triggers: HeartbeatTrigger[] = [];
+      for (const source of this.triggerSources) {
+        const messages = await source.drain(state.agentId);
+        if (messages.length === 0) continue;
+        logger.info(`[Heartbeat] Picked up ${messages.length} pending ${source.platform} message(s) during timer heartbeat`);
+        triggers.push({ platform: source.platform, messages });
       }
+      const triggered = triggers.length > 0;
 
       // Invoke LLM directly (in-process, no HTTP)
       const invokeResult = await invoke({
         userId,
         agentId: state.agentId,
         mode: 'heartbeat',
-        prompt: hasSlackMessages
-          ? this.buildSlackTriggeredHeartbeatPrompt(pendingSlackMessages)
-          : this.buildHeartbeatPrompt(),
+        prompt: triggered ? this.buildTriggeredHeartbeatPrompt(triggers) : this.buildHeartbeatPrompt(),
         lastHeartbeatAlert: state.lastAlertText ?? undefined,
         lastHeartbeatAlertAt: state.lastAlertAt ?? undefined,
-        slackMessages: hasSlackMessages ? pendingSlackMessages : undefined,
+        heartbeatTriggers: triggered ? triggers : undefined,
       });
 
       // Budget exceeded — skip and reset error streak so the timer keeps running.
@@ -359,44 +378,44 @@ class HeartbeatService {
   }
 
   // ============================================================================
-  // Slack-Triggered Heartbeat
+  // Channel-Triggered Heartbeat
   // ============================================================================
 
   /**
-   * Notify that new Slack messages are queued in the DB.
+   * Notify that `source` has new messages queued in the DB.
    * Fires a heartbeat if not already running. If already running, the
-   * throttle queue will schedule another trigger after the cooldown.
+   * messages stay queued for the next run.
    */
-  triggerFromSlack(): 'queued' | 'ignored' {
+  triggerFrom(source: HeartbeatTriggerSource): 'queued' | 'ignored' {
     const state = this.heartbeatState;
 
     if (!state) {
-      logger.warn(`[Heartbeat] No heartbeat state — ignoring Slack trigger`);
+      logger.warn(`[Heartbeat] No heartbeat state — ignoring ${source.platform} trigger`);
       return 'ignored';
     }
 
-    logger.info(`[Heartbeat] Slack trigger notification`);
+    logger.info(`[Heartbeat] ${source.platform} trigger notification`);
 
     if (state.isRunning) {
-      logger.info(`[Heartbeat] Heartbeat already running, throttle queue will handle next trigger`);
+      logger.info(`[Heartbeat] Heartbeat already running, the messages wait for the next run`);
       return 'ignored';
     }
 
     // Fire-and-forget — errors are handled inside
-    this.executeSlackTriggeredHeartbeat().catch((err) => {
-      logger.error(`[Heartbeat] Slack-triggered heartbeat failed:`, err);
+    this.executeChannelTriggeredHeartbeat(source).catch((err) => {
+      logger.error(`[Heartbeat] ${source.platform}-triggered heartbeat failed:`, err);
     });
 
     return 'queued';
   }
 
   /**
-   * Execute a single Slack-triggered heartbeat by draining pending messages.
-   * New messages that arrive during execution will be handled by the
-   * throttle queue scheduling another trigger after the cooldown.
+   * Execute a single channel-triggered heartbeat by draining pending messages.
+   * Messages that arrive during execution wait for the next run.
    */
-  private async executeSlackTriggeredHeartbeat(): Promise<void> {
-    logger.info(`[Heartbeat] Starting Slack-triggered heartbeat`);
+  private async executeChannelTriggeredHeartbeat(source: HeartbeatTriggerSource): Promise<void> {
+    const label = `${source.platform}-triggered`;
+    logger.info(`[Heartbeat] Starting ${label} heartbeat`);
     const startedAt = Date.now();
     const state = this.heartbeatState;
 
@@ -409,32 +428,33 @@ class HeartbeatService {
     state.isRunning = true;
 
     try {
-      const messages = await slackMessageQueueService.drain(state.agentId);
+      const messages = await source.drain(state.agentId);
 
       if (messages.length === 0) {
-        logger.info(`[Heartbeat] No Slack messages to process`);
+        logger.info(`[Heartbeat] No ${source.platform} messages to process`);
         return;
       }
 
-      logger.info(`[Heartbeat] Executing Slack-triggered heartbeat with ${messages.length} message(s)`);
+      logger.info(`[Heartbeat] Executing ${label} heartbeat with ${messages.length} message(s)`);
 
       const startTime = Date.now();
+      const triggers: HeartbeatTrigger[] = [{ platform: source.platform, messages }];
 
       const invokeResult = await invoke({
         userId: state.userId,
         agentId: state.agentId,
         mode: 'heartbeat',
-        prompt: this.buildSlackTriggeredHeartbeatPrompt(messages),
+        prompt: this.buildTriggeredHeartbeatPrompt(triggers),
         lastHeartbeatAlert: state.lastAlertText ?? undefined,
         lastHeartbeatAlertAt: state.lastAlertAt ?? undefined,
-        slackMessages: messages,
+        heartbeatTriggers: triggers,
       });
 
       // Budget exceeded — skip gracefully
       if (invokeResult.error?.type === 'budget_exceeded') {
         state.consecutiveErrors = 0;
-        logger.info(`[Heartbeat] Slack-triggered heartbeat skipped — budget exceeded`);
-        this.trackHeartbeat(state, 'slack', 'budget_exceeded', startedAt);
+        logger.info(`[Heartbeat] ${label} heartbeat skipped — budget exceeded`);
+        this.trackHeartbeat(state, source.channel, 'budget_exceeded', startedAt);
         return;
       }
 
@@ -456,11 +476,11 @@ class HeartbeatService {
         );
       }
 
-      this.logSteps(responseText, invokeResult.steps, 'slack-triggered');
+      this.logSteps(responseText, invokeResult.steps, `${source.channel}-triggered`);
 
       await this.recordCycle(state);
 
-      logger.info(`[Heartbeat] Slack-triggered heartbeat shouldDeliver=${shouldDeliver}`);
+      logger.info(`[Heartbeat] ${label} heartbeat shouldDeliver=${shouldDeliver}`);
 
       if (shouldDeliver) {
         await messageDeliveryService.publishToLatestThread(
@@ -475,19 +495,19 @@ class HeartbeatService {
         );
 
         this.recordAlert(state, responseText);
-        logger.info(`[Heartbeat] Slack-triggered alert: ${responseText.substring(0, 100)}`);
+        logger.info(`[Heartbeat] ${label} alert: ${responseText.substring(0, 100)}`);
       }
 
       state.consecutiveErrors = 0;
 
-      logger.info(`[Heartbeat] Slack-triggered heartbeat completed in ${Date.now() - startTime}ms`);
-      this.trackHeartbeat(state, 'slack', shouldDeliver ? 'delivered' : 'suppressed', startedAt);
+      logger.info(`[Heartbeat] ${label} heartbeat completed in ${Date.now() - startTime}ms`);
+      this.trackHeartbeat(state, source.channel, shouldDeliver ? 'delivered' : 'suppressed', startedAt);
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : 'Unknown error';
-      logger.error(`[Heartbeat] Slack-triggered heartbeat failed: ${errMsg}`);
+      logger.error(`[Heartbeat] ${label} heartbeat failed: ${errMsg}`);
 
       if (state) {
-        this.trackHeartbeat(state, 'slack', 'error', startedAt);
+        this.trackHeartbeat(state, source.channel, 'error', startedAt);
         state.consecutiveErrors++;
       }
     } finally {
@@ -504,7 +524,8 @@ class HeartbeatService {
   /** Emit a product-telemetry event for a finished heartbeat run. */
   private trackHeartbeat(
     state: HeartbeatState,
-    trigger: 'timer' | 'slack',
+    /** `timer`, or the channel whose messages started the run. */
+    trigger: 'timer' | ChatPlatform,
     result: 'delivered' | 'suppressed' | 'budget_exceeded' | 'error',
     startTime: number,
   ): void {
@@ -536,8 +557,10 @@ class HeartbeatService {
     return 'Perform your heartbeat check now.';
   }
 
-  private buildSlackTriggeredHeartbeatPrompt(_messages: SlackTriggerMessage[]): string {
-    return 'Perform your heartbeat check now. This heartbeat was triggered by new messages in the monitored Slack channel.';
+  private buildTriggeredHeartbeatPrompt(triggers: HeartbeatTrigger[]): string {
+    const platforms = triggers.map((trigger) => trigger.platform).join(' and ');
+    const channels = triggers.length > 1 ? 'channels' : 'channel';
+    return `Perform your heartbeat check now. This heartbeat was triggered by new messages in the monitored ${platforms} ${channels}.`;
   }
 
   private async shouldDeliverAlert(

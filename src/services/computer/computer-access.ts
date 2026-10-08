@@ -5,13 +5,14 @@ import { agentProcesses } from '../../lib/agent-processes';
 import { inferenceGate } from '../../lib/inference-gate';
 import { logger } from '../../logger';
 import { trackEvent } from '../../lib/telemetry';
+import type { ChannelName } from '../channel-adapter.interface';
 
 export interface ComputerCaller {
   userId: string;
   agentId: string;
   threadId?: string;
   mode: string;
-  originChannel?: 'slack' | 'websocket' | 'teams';
+  originChannel?: ChannelName;
   originChannelId?: string;
 }
 

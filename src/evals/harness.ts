@@ -28,7 +28,10 @@ import { buildTurnRequest } from '../invoke';
 import type { ConversationMessage } from '../prompts/context-builder';
 import { CRON_TASK_GATE_PROMPT, buildCronGateUserMessage } from '../prompts/cron-prompt';
 import { WEBHOOK_GATE_PROMPT, buildWebhookGateUserMessage } from '../prompts/webhook-gate-prompt';
-import type { AgentContext, ChannelOrigin, InvokeRequest } from '../types';
+import type { AgentContext, InvokeRequest } from '../types';
+import type { ChatPlatform } from '../services/channel-adapter.interface';
+import { slackChannelLabel } from '../utils/slack-formatter';
+import { teamsChannelLabel } from '../utils/teams-formatter';
 
 export const EVAL_USER_ID = 'eval-user';
 /** The agent every scenario runs as: the one `AGENT_ID` names, which `run.ts` sets. */
@@ -37,6 +40,12 @@ export const EVAL_AGENT_ID = config.agentId as string;
 const PARENT_AGENT_ID = '0e7a1000-0000-4000-8000-000000000002';
 const SUBAGENT_ID = '0e7a1000-0000-4000-8000-000000000003';
 export const SUBAGENT_NAME = 'investigator';
+
+/** How each chat platform's adapter names a channel in the system prompt. */
+const CHANNEL_LABEL: Record<ChatPlatform, (channelName: string) => string> = {
+  slack: slackChannelLabel,
+  teams: teamsChannelLabel,
+};
 
 /** Create the agents the scenarios run as: default templates, onboarding finished. */
 export async function createEvalAgents(): Promise<void> {
@@ -149,7 +158,7 @@ interface TurnInput {
   /** The prompt of a heartbeat or cron run, appended as `invokeStream` appends it. */
   prompt?: string;
   /** A channel turn instead of a direct message. */
-  channel?: { name: string; platform: 'slack' | 'teams' };
+  channel?: { name: string; platform: ChatPlatform };
   /** Run as the agent that has a subagent, so the Task tool and its block are sent. */
   withSubagent?: boolean;
   /** Results for named tools. Any other tool returns a plain success. */
@@ -203,10 +212,13 @@ export async function runTurn(input: TurnInput): Promise<TurnTrace> {
     lockedIn: context.lockedIn,
   });
 
-  const channel: ChannelOrigin = input.channel
-    ? { isChannelMessage: true, channelName: input.channel.name, channelPlatform: input.channel.platform }
-    : {};
-  const request: InvokeRequest = { userId: EVAL_USER_ID, agentId, mode: input.mode, prompt: input.prompt ?? '', ...channel };
+  const request: InvokeRequest = {
+    userId: EVAL_USER_ID,
+    agentId,
+    mode: input.mode,
+    prompt: input.prompt ?? '',
+    ...(input.channel ? { channelLabel: CHANNEL_LABEL[input.channel.platform](input.channel.name) } : {}),
+  };
   const { systemParts, messages } = await buildTurnRequest(context, request, subagents);
 
   const result = await callModel(

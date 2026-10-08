@@ -14,7 +14,7 @@ import type { InvokeRequest } from '../types';
 export interface ThreadActivityChange {
   threadId: string;
   working: boolean;
-  /** Whose conversation it is. A Slack turn runs as the Lens user who wrote it. */
+  /** Whose conversation it is. A channel turn runs as the Lens user who wrote it. */
   userId: string;
 }
 

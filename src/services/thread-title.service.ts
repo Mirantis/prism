@@ -9,7 +9,7 @@
  * `onFirstUserMessage` owns the placeholder → upgrade lifecycle and announces
  * each title via the `events` emitter. It is triggered from the conversation
  * engine (the one path every channel goes through), so nothing here knows
- * about WebSockets/Slack; transports subscribe to `events` to push updates.
+ * about a transport; transports subscribe to `events` to push updates.
  * Fail-open: a generation failure just leaves the placeholder in place.
  */
 

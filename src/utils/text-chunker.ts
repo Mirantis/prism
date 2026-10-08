@@ -1,9 +1,9 @@
 /**
  * Channel-agnostic text chunking.
  *
- * Extracted from slack-formatter.ts so every channel formatter (Slack blocks,
- * Teams activities) splits long output the same way: paragraph boundaries
- * first, then sentences / newlines / spaces, hard split as the last resort.
+ * Every channel formatter splits long output the same way: paragraph
+ * boundaries first, then sentences / newlines / spaces, hard split as the last
+ * resort.
  */
 
 /**

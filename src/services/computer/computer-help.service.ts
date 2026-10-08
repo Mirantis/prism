@@ -8,6 +8,7 @@ import { trackEvent } from '../../lib/telemetry';
 import type { MessageTrigger } from '../message-delivery.service';
 import { computerService } from './computer.service';
 import type { ComputerUse } from './computer-access';
+import type { ChannelName } from '../channel-adapter.interface';
 
 export interface ComputerHelp {
   type: 'computer_help';
@@ -22,7 +23,7 @@ export interface ComputerHelp {
   /** Where those go: the origin of the tab that asked, as it read when it asked. */
   site?: string;
   threadId?: string;
-  originChannel?: 'slack' | 'websocket' | 'teams';
+  originChannel?: ChannelName;
   originChannelId?: string;
   /** Asked by a background run with no conversation, so every channel got it and any turn answers it. */
   broadcast?: true;
@@ -146,10 +147,10 @@ class ComputerHelpService {
       help.threadId ??= (
         await conversationService.getOrCreateLatestThread(use.agentId, use.userId)
       ).id;
-      // No context is a broadcast: the web UI, the Slack DM and the agent's main channel.
+      // No context is a broadcast: every channel the user is reachable on.
       const channelContext = broadcast
         ? undefined
-        : await conversationService.getChannelContext(
+        : await messageDeliveryService.threadContext(
             help.threadId,
             use.originChannel,
             use.originChannelId,
@@ -353,9 +354,9 @@ class ComputerHelpService {
       return;
     }
     if (await this.resumeGoal(agentId, userId, help)) return;
-    const { conversationService } = await import('../conversation.service');
+    const { messageDeliveryService } = await import('../message-delivery.service');
     const { conversationEngineService } = await import('../conversation-engine.service');
-    const context = await conversationService.getChannelContext(
+    const context = await messageDeliveryService.threadContext(
       help.threadId,
       help.originChannel,
       help.originChannelId,
@@ -369,7 +370,8 @@ class ComputerHelpService {
         metadata: {
           channel: context.channel,
           channelId: context.channelId,
-          slackThreadTs: context.threadTs,
+          channelThreadId: context.channelThreadId,
+          channelLabel: context.channelLabel,
         },
       })
       .catch((error) => logger.error({ err: error }, '[Computer] Continuation failed'));

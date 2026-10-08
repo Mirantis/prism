@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../../../config';
 import prisma from '../../../lib/prisma';
 import { trackEvent } from '../../../lib/telemetry';
-import { conversationService } from '../../conversation.service';
 import { messageDeliveryService } from '../../message-delivery.service';
 import { computerService } from '../computer.service';
 import { computerHelpService, HELP_ANSWER_WAIT_MS } from '../computer-help.service';
@@ -37,11 +36,17 @@ vi.mock('../computer.service', async () => {
 vi.mock('../../conversation.service', () => ({
   conversationService: {
     getOrCreateLatestThread: vi.fn(async () => ({ id: 'thread' })),
-    getChannelContext: vi.fn(async (threadId: string) => ({ channel: 'websocket', threadId })),
   },
 }));
 vi.mock('../../message-delivery.service', () => ({
-  messageDeliveryService: { publish: vi.fn(), showInConversation: vi.fn() },
+  messageDeliveryService: {
+    publish: vi.fn(),
+    showInConversation: vi.fn(),
+    threadContext: vi.fn(async (threadId: string) => ({ channel: 'websocket', threadId })),
+  },
+}));
+vi.mock('../../goal.service', () => ({
+  goalService: { getGoalForThread: vi.fn(async () => null), resumeGoal: vi.fn() },
 }));
 vi.mock('../../voice/voice-chat.service', () => ({
   voiceChatService: { continueComputer: vi.fn() },
@@ -127,6 +132,36 @@ describe.each(['viewer', 'chat'] as const)('%s computer continuation', (source) 
     expect(computerService.access.paused).toBe(false);
     expect(computerService.access.human).toBeNull();
   });
+});
+
+it("continues a channel thread's request in that thread, with the channel's guidelines", async () => {
+  const context = {
+    channel: 'slack',
+    channelId: 'C1',
+    channelThreadId: 'root-1',
+    channelLabel: 'the channel **#ops**',
+    threadId: 'thread',
+  };
+  vi.mocked(prisma.conversationMessage.findFirst).mockResolvedValue({
+    id: 'message',
+    blocks: [{ ...help, threadId: 'thread', originChannel: 'slack', originChannelId: 'C1' }],
+  } as never);
+  vi.mocked(messageDeliveryService.threadContext).mockResolvedValueOnce(context);
+
+  await computerHelpService.continueRequest('agent', 'user', help.id, 'continue', 'viewer');
+
+  expect(messageDeliveryService.threadContext).toHaveBeenCalledWith('thread', 'slack', 'C1');
+  expect(conversationEngineService.chat).toHaveBeenCalledWith(
+    expect.objectContaining({
+      threadId: 'thread',
+      metadata: {
+        channel: 'slack',
+        channelId: 'C1',
+        channelThreadId: 'root-1',
+        channelLabel: 'the channel **#ops**',
+      },
+    }),
+  );
 });
 
 it('rejects another viewer before resolving the help request', async () => {
@@ -235,9 +270,9 @@ describe('where a help request is asked', () => {
     expect(triggeredBy).toBe(trigger);
     expect(options?.channelContext).toBeUndefined();
     expect(options?.blocks).toEqual([expect.objectContaining({ id: help.id, broadcast: true })]);
-    // Slack is one of the channels, and a relative link is nothing there.
+    // A channel that posts only replies is among them, and a relative link is nothing there.
     expect(content).toContain('Open Computer in the Prism Web UI.');
-    expect(conversationService.getChannelContext).not.toHaveBeenCalled();
+    expect(messageDeliveryService.threadContext).not.toHaveBeenCalled();
     expect(trackEvent).toHaveBeenCalledWith(
       'computer help requested',
       'user',
@@ -260,13 +295,13 @@ describe('where a help request is asked', () => {
     ['a conversation a scheduled task is bound to', { mode: 'cron' }],
     ['a chat turn that names no channel', { mode: 'chat' }],
   ] as const)('keeps a request from %s in its own channel', async (_, run) => {
-    const slack = { channel: 'slack' as const, channelId: 'C0123', threadId: 'thread' };
+    const slack = { channel: 'slack', channelId: 'C0123', channelThreadId: '1700.1', threadId: 'thread' };
     if (run.originChannel === 'slack')
-      vi.mocked(conversationService.getChannelContext).mockResolvedValueOnce(slack);
+      vi.mocked(messageDeliveryService.threadContext).mockResolvedValueOnce(slack);
 
     const { help } = await ask({ ...run, threadId: 'thread' });
 
-    expect(conversationService.getChannelContext).toHaveBeenCalledWith(
+    expect(messageDeliveryService.threadContext).toHaveBeenCalledWith(
       'thread',
       run.originChannel,
       'originChannelId' in run ? run.originChannelId : undefined,
@@ -411,7 +446,7 @@ describe('a background run that asks for help', () => {
 
   it('tells the turn that answers that the waiting run does the work', async () => {
     const { result, helpId } = await askAndWait('heartbeat');
-    const { computer_continue } = getComputerTools(createUse({ mode: 'chat', threadId: 'slack-thread' }));
+    const { computer_continue } = getComputerTools(createUse({ mode: 'chat', threadId: 'channel-thread' }));
 
     expect(await computer_continue.execute!({ helpId, dismiss: false }, options)).toEqual({
       success: true,

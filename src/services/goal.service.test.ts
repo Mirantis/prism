@@ -48,7 +48,10 @@ const {
 vi.mock('../invoke', () => ({ invoke: mockInvoke }));
 
 vi.mock('./message-delivery.service', () => ({
-  messageDeliveryService: { publish: mockPublish, publishToLatestThread: mockPublishLatest },
+  messageDeliveryService: {
+    publish: mockPublish,
+    publishToLatestThread: mockPublishLatest,
+  },
 }));
 
 vi.mock('ai', () => ({ generateText: mockGenerateText }));
@@ -323,6 +326,21 @@ describe('GoalService', () => {
       expect(mockInvoke).toHaveBeenCalledWith(
         expect.objectContaining({ mode: 'goal', originChannel: 'slack', originChannelId: 'C0123' }),
       );
+    });
+
+    it('runs the turns of a goal from a channel no adapter serves in the web chat', async () => {
+      mockGenerateText.mockResolvedValue({ text: 'COMPLETE' });
+
+      await goalService.startGoal({
+        userId: 'user-1',
+        agentId: 'agent-1',
+        threadId: 'thread-1',
+        objective: 'do the thing',
+        originChannel: 'retired-channel',
+      });
+      await waitForTerminal();
+
+      expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ originChannel: 'websocket' }));
     });
 
     it('stops at the turn cap without invoking when maxTurns is reached', async () => {

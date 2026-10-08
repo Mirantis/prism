@@ -15,7 +15,7 @@ const {
   mockInvoke,
   mockDeliverMessage,
   mockPublish,
-  mockGetChannelContext,
+  mockThreadContext,
   mockThreadFindUnique,
   mockCronTaskUpdate,
   mockCronTaskDelete,
@@ -29,7 +29,7 @@ const {
   mockInvoke: vi.fn(),
   mockDeliverMessage: vi.fn(),
   mockPublish: vi.fn(),
-  mockGetChannelContext: vi.fn(),
+  mockThreadContext: vi.fn(),
   mockThreadFindUnique: vi.fn(),
   mockCronTaskUpdate: vi.fn(),
   mockCronTaskDelete: vi.fn(),
@@ -49,12 +49,7 @@ vi.mock('./message-delivery.service', () => ({
   messageDeliveryService: {
     publishToLatestThread: mockDeliverMessage,
     publish: mockPublish,
-  },
-}));
-
-vi.mock('./conversation.service', () => ({
-  conversationService: {
-    getChannelContext: mockGetChannelContext,
+    threadContext: mockThreadContext,
   },
 }));
 
@@ -146,7 +141,7 @@ describe('CronSchedulerService', () => {
     });
     mockDeliverMessage.mockResolvedValue({ messageId: 'msg-1', threadId: 'thr-1' });
     mockPublish.mockResolvedValue({ id: 'msg-1', threadId: 'thr-1' });
-    mockGetChannelContext.mockResolvedValue({ channel: 'websocket', threadId: 'thread-bound' });
+    mockThreadContext.mockResolvedValue({ channel: 'websocket', threadId: 'thread-bound' });
     mockThreadFindUnique.mockResolvedValue({ id: 'thread-bound' });
     mockCronTaskUpdate.mockResolvedValue({});
     mockCronTaskDelete.mockResolvedValue({});
@@ -431,10 +426,10 @@ describe('CronSchedulerService', () => {
 
     it('resumes in the originating thread: invokes with that thread + scoped channel delivery', async () => {
       mockCronValidate.mockReturnValue(false);
-      mockGetChannelContext.mockResolvedValue({
+      mockThreadContext.mockResolvedValue({
         channel: 'slack',
         channelId: 'C999',
-        threadTs: '1700000000.000100',
+        channelThreadId: '1700000000.000100',
         threadId: 'thread-bound',
       });
 
@@ -461,7 +456,7 @@ describe('CronSchedulerService', () => {
 
       // Delivered into the SAME thread via scoped publish (not the latest-thread
       // broadcast), as a plain continuation with no "Scheduled Task" header.
-      expect(mockGetChannelContext).toHaveBeenCalledWith('thread-bound', 'slack', 'C999');
+      expect(mockThreadContext).toHaveBeenCalledWith('thread-bound', 'slack', 'C999');
       expect(mockDeliverMessage).not.toHaveBeenCalled();
       expect(mockPublish).toHaveBeenCalledWith(
         'user-abc-123',
@@ -469,7 +464,7 @@ describe('CronSchedulerService', () => {
         'Task completed.',
         'CRON_TASK',
         expect.objectContaining({
-          channelContext: expect.objectContaining({ threadTs: '1700000000.000100', threadId: 'thread-bound' }),
+          channelContext: expect.objectContaining({ channelThreadId: '1700000000.000100', threadId: 'thread-bound' }),
         }),
       );
       const [, , body] = mockPublish.mock.calls[0];

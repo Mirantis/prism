@@ -6,8 +6,8 @@
  *   channelId option, so threadSource stays DATABASE); do NOT fall through to
  *   getOrCreateLatestThread (that's webchat's ACTIVE-thread path).
  * - Threaded DM: resolve a ConversationThread keyed by thread_ts and pass
- *   { channelId: dmChannelId } so threadSource flips to SLACK.
- * - chat(...) receives the resolved threadId and slackThreadTs metadata.
+ *   { source: SLACK, channelId: dmChannelId } so threadSource flips to SLACK.
+ * - chat(...) receives the resolved threadId and channelThreadId metadata.
  * - Unlinked Slack user: no thread resolved, no chat, link-account prompt.
  */
 
@@ -156,7 +156,7 @@ describe('Slack DM handler (DM isolation + threading)', () => {
     expect(mockConversationService.getOrCreateLatestThread).not.toHaveBeenCalled();
   });
 
-  it('top-level DM forwards threadId to chat() and leaves slackThreadTs undefined', async () => {
+  it('top-level DM forwards threadId to chat() and leaves channelThreadId undefined', async () => {
     await handleDmMessage(undefined);
 
     expect(mockConversationEngineService.chat).toHaveBeenCalledWith(
@@ -164,26 +164,26 @@ describe('Slack DM handler (DM isolation + threading)', () => {
         userId: LENS_USER,
         agentId: AGENT_ID,
         threadId: `thread-for-${DM_CHANNEL}`,
-        metadata: { channel: 'slack', slackThreadTs: undefined },
+        metadata: { channel: 'slack', channelThreadId: undefined },
       }),
     );
   });
 
-  it('threaded DM resolves a thread keyed by thread_ts and passes { channelId: dmChannelId } so threadSource flips to SLACK', async () => {
+  it('threaded DM resolves a thread keyed by thread_ts and passes { source: SLACK, channelId: dmChannelId } so threadSource flips to SLACK', async () => {
     await handleDmMessage(THREAD_TS);
 
     expect(mockConversationService.getOrCreateThreadByExternalId).toHaveBeenCalledWith(
       LENS_USER,
       AGENT_ID,
       THREAD_TS,
-      { channelId: DM_CHANNEL },
+      { source: 'SLACK', channelId: DM_CHANNEL },
     );
     expect(mockConversationService.getOrCreateLatestThread).not.toHaveBeenCalled();
 
     expect(mockConversationEngineService.chat).toHaveBeenCalledWith(
       expect.objectContaining({
         threadId: `thread-for-${THREAD_TS}`,
-        metadata: { channel: 'slack', slackThreadTs: THREAD_TS },
+        metadata: { channel: 'slack', channelThreadId: THREAD_TS },
       }),
     );
   });

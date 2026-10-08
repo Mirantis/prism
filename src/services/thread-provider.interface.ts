@@ -5,9 +5,11 @@
  * Write operations (addMessage, compaction) remain DB-only.
  * Thread metadata (CRUD, listing) remains DB-only.
  *
- * Two implementations:
- * - DatabaseThreadProvider: reads from PostgreSQL (web chat, default)
- * - SlackThreadProvider: reads from Slack conversations.replies API (channel threads)
+ * DatabaseThreadProvider reads the database and serves every thread by default.
+ * A channel that keeps a thread's history in the channel itself registers a
+ * live-read provider for its `ThreadSource` with
+ * `conversationService.registerThreadProvider`. A live-read provider's message
+ * ids (`externalMessageId`) sort as numbers, oldest first.
  */
 
 import { ConversationMessage } from '@prisma/client';
@@ -25,10 +27,10 @@ import { ConversationMessage } from '@prisma/client';
  * The mechanics differ per provider for the same semantic:
  * - DatabaseThreadProvider: WHERE-clause filters on `isCompacted` (model view)
  *   vs `internalStep` (client view).
- * - SlackThreadProvider: the model view fetches only replies after the
- *   thread's `compactedThroughTs` watermark (row flags can't hide live-read
- *   Slack messages); the client view does NOT merge the persisted internal
- *   rows into the Slack-derived replay (they were never posted to Slack).
+ * - A live-read provider: the model view fetches only replies after the
+ *   thread's `compactedThroughTs` watermark (row flags can't hide messages read
+ *   live); the client view does NOT merge the persisted internal rows into the
+ *   replay (they were never posted to the channel).
  */
 export type MessageView = 'model' | 'client';
 

@@ -8,13 +8,14 @@
 
 import { callModel } from '../lib/model-call';
 import { messageDeliveryService, PublishOptions } from './message-delivery.service';
+import type { ChannelName } from './channel-adapter.interface';
 import { conversationService } from './conversation.service';
 import { threadTurnService, type PendingMessage } from './thread-turn.service';
 import { threadTitleService } from './thread-title.service';
 import { conversationThreadActivityService } from './conversation-thread-activity.service';
 import { attachmentService } from './attachment.service';
 import { invokeStream } from '../invoke';
-import { ToolCallRecord, InvokeStep, UIBlock, ChannelOrigin } from '../types';
+import { ToolCallRecord, InvokeStep, UIBlock } from '../types';
 import type { SteeringMessage } from '../prompts/context-builder';
 import type { ToolLifecycleListener } from '../lib/tool-lifecycle';
 import { logger } from '../logger';
@@ -79,14 +80,17 @@ export interface ChatInput {
    */
   stored?: { titleSet: string | null };
   metadata?: {
-    channel?: 'websocket' | 'slack' | 'teams';
+    /** The `name` of the adapter the message came through; the reply goes back there. */
+    channel?: ChannelName;
     channelId?: string;
-    /** Human-readable channel name (Slack: no `#`), surfaced to the model. */
-    channelName?: string;
-    slackThreadTs?: string;
-    /** Teams thread-root activity id — becomes the delivery `threadTs`. */
-    teamsThreadId?: string;
-    /** The sender's id in the originating channel (Slack: `U…`, Teams: AAD object id), stored as-is. */
+    /** The channel's own thread the message was posted in, where the reply goes. */
+    channelThreadId?: string;
+    /**
+     * The shared channel the message was posted in, as the system prompt names
+     * it. Set only for a message in a channel that several people read.
+     */
+    channelLabel?: string;
+    /** The sender's id in the originating channel, stored as-is. */
     senderExternalId?: string;
     senderName?: string;
   };
@@ -349,43 +353,17 @@ Answer with one word: WORTHY or SKIP.`;
       };
     }
 
-    // A Slack/Teams channel turn carries its channel's display name so the
-    // system prompt can name it; the two travel together as a discriminated
-    // union (channelName is guaranteed present wherever isChannelMessage is
-    // true). Fall back to the channel id when no name is stored on the mapping.
-    const platformChannelId =
-      metadata?.channel === 'slack' || metadata?.channel === 'teams'
-        ? metadata.channelId
-        : undefined;
-    const channelOrigin: ChannelOrigin = platformChannelId
+    // Build channel context for delivery — scopes response to the originating
+    // channel. channelId and channelThreadId may be undefined (a direct
+    // message), and the adapter then routes to the user's own conversation.
+    const channelContext: PublishOptions['channelContext'] = metadata?.channel
       ? {
-          isChannelMessage: true,
-          channelName: metadata?.channelName ?? platformChannelId,
-          channelPlatform: metadata?.channel === 'teams' ? 'teams' : 'slack',
-        }
-      : { isChannelMessage: false };
-
-    // Build channel context for delivery — scopes response to the originating channel.
-    // For Slack/Teams, channelId/threadTs may be undefined (DM case — routing
-    // falls back to the adapter's own mapping lookup: SlackMapping.dmChannelId
-    // or TeamsMapping.dmConversationId).
-    const channelContext = metadata?.channel === 'slack'
-      ? {
-          channel: 'slack' as const,
+          channel: metadata.channel,
           channelId: metadata.channelId,
-          threadTs: metadata.slackThreadTs,
+          channelThreadId: metadata.channelThreadId,
           threadId,
         }
-      : metadata?.channel === 'teams'
-        ? {
-            channel: 'teams' as const,
-            channelId: metadata.channelId,
-            threadTs: metadata.teamsThreadId,
-            threadId,
-          }
-        : metadata?.channel === 'websocket'
-          ? { channel: 'websocket' as const, threadId }
-          : undefined;
+      : undefined;
 
     const responseTexts: string[] = [];
     const allBlocks: UIBlock[] = [];
@@ -436,7 +414,6 @@ Answer with one word: WORTHY or SKIP.`;
             prompt,
             appendPrompt,
             verbose,
-            channelOrigin,
             channelContext,
             metadata,
             runtimeNotices,
@@ -526,8 +503,8 @@ Answer with one word: WORTHY or SKIP.`;
     const { agentId, userId, message, metadata } = input;
 
     // The message text arrives already prefixed with the sender's mention
-    // marker when the caller (e.g. the Slack adapter) wants the agent to see it
-    // in conversation history — see `slackAdapterService.buildSenderTaggedContent`.
+    // marker when the channel adapter wants the agent to see it in conversation
+    // history.
     const { message: userMessage, titleSet } = await conversationService.addMessage(threadId, {
       ...(id ? { id } : {}),
       content: message,
@@ -541,25 +518,26 @@ Answer with one word: WORTHY or SKIP.`;
     // kick off the cheap-model upgrade (fire-and-forget, never blocks the
     // turn). Channel-agnostic — transports subscribe to threadTitleService.
     //
-    // Gated to web/CLI turns: Slack and Teams messages live in threads keyed by
-    // an externalThreadId, which the web Recents and CLI resume picker never
-    // show — so a generated title for them would cost a Haiku call + DB write
-    // nobody ever sees.
-    if (titleSet && metadata?.channel !== 'slack' && metadata?.channel !== 'teams') {
+    // Skipped for a channel that posts only the agent's replies: its threads are
+    // keyed by an externalThreadId, which the web Recents and CLI resume picker
+    // never show, so a generated title would cost a model call and a DB write
+    // nobody sees.
+    const origin = metadata?.channel ? messageDeliveryService.getAdapter(metadata.channel) : undefined;
+    if (titleSet && (!origin || origin.showsWholeConversation)) {
       threadTitleService.onFirstUserMessage(agentId, userId, threadId, message, titleSet);
     }
 
-    // Link any uploaded files (web pre-send uploads / Slack downloads) to the
-    // message that carries them so the context builder can expose them.
+    // Link any uploaded files (pre-send uploads, files a channel downloaded) to
+    // the message that carries them so the context builder can expose them.
     if (input.attachmentIds?.length) {
       await attachmentService.linkToMessage(input.attachmentIds, userMessage.id, threadId);
     }
 
-    // Every client of the chat socket shows the whole conversation, so the
-    // person's own words reach the other devices — and the sender, which reads
-    // the copy as the confirmation that it was stored. Slack shows a message
+    // A channel that shows the whole conversation gets the person's own words
+    // on every device — the sender's included, which reads the copy as the
+    // confirmation that it was stored. Any other channel shows the message
     // itself.
-    if (metadata?.channel === 'websocket') {
+    if (origin?.showsWholeConversation) {
       await messageDeliveryService.showInConversation(userId, userMessage);
     }
 
@@ -610,7 +588,6 @@ Answer with one word: WORTHY or SKIP.`;
     appendPrompt: boolean;
     /** Snapshot taken once inside the lock; gates intermediate delivery. */
     verbose: boolean;
-    channelOrigin: ChannelOrigin;
     channelContext: PublishOptions['channelContext'];
     metadata: ChatInput['metadata'];
     runtimeNotices?: string[];
@@ -640,7 +617,7 @@ Answer with one word: WORTHY or SKIP.`;
       threadId,
       workspaceRoot: params.workspaceRoot,
       verbose: params.verbose,
-      ...params.channelOrigin,
+      channelLabel: metadata?.channelLabel,
       originChannel: metadata?.channel,
       originChannelId: metadata?.channelId,
       runtimeNotices: params.runtimeNotices,

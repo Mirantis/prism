@@ -43,6 +43,18 @@ to clear.
   `messageDeliveryService`. Behavior that every channel needs belongs in a
   service; the WebSocket gateway and the Slack adapter subscribe to it and own
   none of it.
+- **Shared code names no channel.** Only a channel's own modules name it: its
+  adapter, mapping service, thread provider, formatter and router. No other
+  module compares a channel name, declares a field for one channel or imports
+  from a channel's modules, and no comment there describes one channel. Shared
+  code that needs a per-channel answer asks through an optional `ChannelAdapter`
+  member or a registry the channel joins in `index.ts`, and a channel passes its
+  data in generic fields. Channel names stay typed: `ChannelName` and
+  `CHAT_PLATFORMS` in `services/channel-adapter.interface.ts` are the one list,
+  and a value read from storage goes through `isChatPlatform`. The code that
+  wires the channels (`index.ts`, `server.ts`) and reads their environment
+  variables names each one, and a column or API field keeps the name the schema
+  or its clients give it.
 - **Coding agents stay generic.** The `coding_agent` tools hand a task to a
   `CodingAgent` (`lib/coding-agents/`, chosen by `get-coding-agent.ts` from
   `CODING_AGENT` or the task's `agent` parameter), and the adapter runs it end to end:
@@ -83,8 +95,8 @@ to clear.
   container alone. The database, the media store and the browser profiles stay
   on the host and out of the container entirely. The container's config holds no
   credential: a command's env is passed on each `docker exec`, and
-  `docker-env.ts` keeps the runtime's own secret families (Slack, the meeting
-  account, Langfuse, OTel, `NEXUS_*`) and every host path out of it. The
+  `docker-env.ts` keeps the runtime's own secret families (each chat platform,
+  the meeting account, Langfuse, OTel, `NEXUS_*`) and every host path out of it. The
   container is created once, so one that disappears mid-run is reported once
   (`container-lost.ts`) and comes back on the next restart. A command
   is one `docker exec` under `setsid --wait`, recording its process group into a
@@ -133,8 +145,7 @@ to clear.
   `src/routes/`, mounted in `src/server.ts`, as `locked-in.ts`,
   `agent-guide.ts`, `threads.ts` and `messages.ts` each are. Add no new route to
   `src/routes/management.ts`, which already holds most of the runtime's REST
-  surface: heartbeat and cron control, the Slack heartbeat trigger, agent
-  identity, and the Web UI's CRUD.
+  surface: heartbeat and cron control, agent identity, and the Web UI's CRUD.
 - **SQLite holds runtime state.** Caches, queues, registries, indexes, cursors,
   checkpoints and plugin scratch data live in the embedded database — never in a
   JSON, JSONL, TXT or sidecar file. A file holds a named product artifact only: an
@@ -824,7 +835,7 @@ tools block.
 | **MessageDeliveryService** | `services/message-delivery.service.ts` | Unified message publish: stores via `conversationService`, delivers via channel adapters (channel-scoped for user messages, broadcast for autonomous) |
 | **ThreadTurnService** | `services/thread-turn.service.ts` | The one per-thread primitive: every model invocation on a thread serializes on its mutex (FIFO — chat turns and goal turns alike), and a chat turn *claims* the thread, so a message arriving from the claim until the exchange ends is handed to that turn instead of starting a second one. Channel-agnostic — transports go through the engine, never here directly |
 | **ContextService** | `services/context.service.ts` | Builds agent context from local database: agent data via `agentWorkspaceService.getAgentById()` and conversation history via Prisma |
-| **ConversationService** | `services/conversation.service.ts` | Thread and message CRUD via Prisma, pluggable thread providers (database + Slack) |
+| **ConversationService** | `services/conversation.service.ts` | Thread and message CRUD via Prisma, pluggable thread providers (the database by default, a live-read provider per `ThreadSource` that a channel registers in `index.ts`) |
 | **AgentWorkspaceService** | `services/agent-workspace.service.ts` | Agent CRUD, ownership validation, platform token management, subagent relationships. `writeWorkspaceDoc` is the one write path for an identity document — column plus revision in one transaction — and `rollbackWorkspaceDoc` the restore |
 | **DocumentRevisionService** | `services/document-revision.service.ts` | Identity-document revisions: append one per accepted write, the history of one document (with the drift verdict), one revision's content, and the seed rows a new agent gets. Bounded at `MAX_REVISIONS_PER_DOCUMENT` (500) per document, trimmed in the insert's transaction |
 | **AgentStatusService** | `services/agent-status.service.ts` | Direct Prisma writes for agent fields (heartbeat schedule, heartbeat status) |
@@ -1022,7 +1033,7 @@ src/
 │   └── schema.prisma           # Prisma schema for runtime PostgreSQL database
 └── prompts/
     ├── context-builder.ts      # System prompt and message construction
-    ├── channel-prompt.ts       # Channel-specific behavior instructions
+    ├── channel-prompt.ts       # Team-channel behavior instructions, naming the channel as its adapter words it
     ├── cron-prompt.ts          # Scheduled-task DELIVER/SUPPRESS gate prompt (instruction-aware) + gate user-message builder
     ├── webhook-gate-prompt.ts  # Webhook agent-reply DELIVER/SUPPRESS gate prompt (reads the subscription prompt as the instruction)
     └── early-stopping-prompt.ts # Prompt for summarizing when step limit is reached
@@ -1347,22 +1358,12 @@ interface HeartbeatState {
 
 An alert is considered a duplicate if the trimmed text exactly matches `lastAlertText` and was delivered within the last 24 hours. This replaced the earlier hash-based `recentAlerts: Map` approach for simplicity.
 
-### Slack-Triggered Heartbeats
+### Channel-Triggered Heartbeats
 
-When a Slack message arrives in a heartbeat trigger channel, the agent-runtime's Slack adapter enqueues it in the `PendingSlackMessage` DB table and calls `triggerFromSlack(agentId)` directly (in-process). The agent-runtime then:
+A channel that starts the heartbeat with its own messages is a `HeartbeatTriggerSource`, registered with `heartbeatService.registerTriggerSource` in `index.ts`. Slack's is `slackMessageQueueService`. When a Slack message arrives in a heartbeat trigger channel, the Slack adapter enqueues it in the `PendingSlackMessage` table, claims the trigger's throttle and calls `heartbeatService.triggerFrom(slackMessageQueueService)`. The heartbeat drains the source atomically, runs once with those messages in its prompt, and reports the source's channel as `heartbeat.trigger`.
 
-1. Sets `slackTriggerPending = true` on the heartbeat state
-2. If not already running, calls `executeSlackTriggeredHeartbeat(agentId)`
-3. Drains messages atomically from DB via `slackMessageQueueService.drain(agentId)` (direct Prisma access)
-4. Processes messages in a loop: drain -> invoke LLM -> check for more messages
-5. After completion, if `slackTriggerPending` was set again during execution, re-triggers
-
-**Timer-based heartbeats also drain**: Regular timer heartbeats call `slackMessageQueueService.drain()` before invoking the LLM, so pending Slack messages are never orphaned even without an explicit Slack trigger.
-
-**Key methods**:
-
-- `triggerFromSlack(agentId)` — returns `'queued'` (fired immediately), `'buffered'` (will re-trigger after current run), or `'ignored'` (no heartbeat state)
-- `executeSlackTriggeredHeartbeat(agentId)` — drain-and-execute loop with re-trigger on pending flag
+- `triggerFrom(source)` returns `'queued'` when it started a run, or `'ignored'` when no heartbeat is registered or one is already running. Ignored messages stay queued for the next run.
+- **Timer-based heartbeats also drain**: a timer heartbeat drains every registered source before it invokes the LLM, so queued messages are never orphaned.
 
 ### Classification Gate
 

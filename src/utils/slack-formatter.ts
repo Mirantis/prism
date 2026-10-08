@@ -282,3 +282,8 @@ export function formatNotification(
     blocks,
   };
 }
+
+/** How the system prompt names a Slack channel, `#` included once. */
+export function slackChannelLabel(channelName: string): string {
+  return `the team Slack channel **#${channelName.replace(/^#/, '')}**`;
+}

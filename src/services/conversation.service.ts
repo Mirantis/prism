@@ -21,7 +21,6 @@ import { logger } from '../logger';
 import { deriveThreadTitle } from '../utils/thread-title';
 import { ThreadMessageProvider } from './thread-provider.interface';
 import { DatabaseThreadProvider } from './providers/database-thread.provider';
-import { SlackThreadProvider } from './providers/slack-thread.provider';
 import { attachmentService, type AttachmentMeta } from './attachment.service';
 // The pure derivation, not contextUsageService — that service imports this
 // module, so depending on it here would be a cycle.
@@ -44,14 +43,14 @@ export interface MessageInput {
   toolCalls?: unknown[];
   blocks?: unknown[];
   // Multi-user context (for channel messages)
-  senderExternalId?: string; // External user ID (Slack: U..., Discord: snowflake, etc.)
+  senderExternalId?: string; // The sender's id in the channel the message came from
   senderName?: string; // Human-readable display name
   /**
    * Marks a row the runtime wrote for the model, never for the reader.
    *
    * **An internal row is never shown to the end user.** Every client history read
    * asks for `view: 'client'`, and both thread providers answer that with
-   * `internalStep: false` in the WHERE clause — so the web SPA, the TUI and Slack all
+   * `internalStep: false` in the WHERE clause — so every client and channel
    * omit it, while the model-context read replays it. It also never names a thread,
    * and it is reported separately in `message added` telemetry so it cannot be
    * counted as something a user sent.
@@ -102,7 +101,16 @@ class ConversationService {
   /** Emits `'thread'` ({@link ThreadCreated}) when a web thread is created. */
   readonly events = new EventEmitter();
   private databaseProvider = new DatabaseThreadProvider();
-  private slackProvider = new SlackThreadProvider();
+  private liveProviders = new Map<ThreadSource, ThreadMessageProvider>();
+
+  /** Serve every thread of `source` from `provider`, which reads the channel live. */
+  registerThreadProvider(source: ThreadSource, provider: ThreadMessageProvider): void {
+    this.liveProviders.set(source, provider);
+  }
+
+  private providerFor(source: ThreadSource | undefined): ThreadMessageProvider {
+    return (source && this.liveProviders.get(source)) || this.databaseProvider;
+  }
 
   /**
    * Resolve the message provider for a thread based on its threadSource.
@@ -112,21 +120,16 @@ class ConversationService {
       where: { id: threadId },
       select: { threadSource: true },
     });
-
-    if (thread?.threadSource === ThreadSource.SLACK) {
-      return this.slackProvider;
-    }
-
-    return this.databaseProvider;
+    return this.providerFor(thread?.threadSource);
   }
 
   /**
    * Get or create the latest database conversation thread for a user.
    *
    * There is no "active" flag — the runtime uses the most recently created
-   * non-Slack thread. Slack channel threads (externalThreadId set) are excluded;
-   * those are resolved via getOrCreateThreadByExternalId. Creates a fresh thread
-   * when the user has none yet.
+   * web thread. Channel threads (externalThreadId set) are excluded; those are
+   * resolved via getOrCreateThreadByExternalId. Creates a fresh thread when the
+   * user has none yet.
    */
   async getOrCreateLatestThread(agentId: string, userId: string): Promise<ConversationThread> {
     let thread = await this.findLatestWebThread(agentId, userId);
@@ -252,128 +255,25 @@ class ConversationService {
   }
 
   /**
-   * Build the channel-neutral delivery context for an autonomous message that
-   * must land in a *specific* thread — e.g. a thread-bound scheduled task that
-   * "continues" the conversation in the same place it was scheduled from.
-   *
-   * Mirrors the `channelContext` the conversation engine builds for a live turn,
-   * but reconstructed from the stored origin channel plus the thread row, so a
-   * Slack channel reply nests under the original `thread_ts` and a WebSocket
-   * reply routes to the same session. Channel-specific knowledge stays here; the
-   * scheduler just forwards the result to `publish()`.
-   */
-  async getChannelContext(
-    threadId: string,
-    originChannel?: string | null,
-    originChannelId?: string | null,
-  ): Promise<{ channel: 'slack' | 'websocket' | 'teams'; channelId?: string; threadTs?: string; threadId: string }> {
-    if (originChannel === 'teams') {
-      const thread = await prisma.conversationThread.findUnique({
-        where: { id: threadId },
-        select: { userId: true, agentId: true, externalThreadId: true },
-      });
-      // A channel thread stores `${channelConversationId};messageid=${rootMessageId}`,
-      // so a continuation posts into the original reply chain, as Slack does.
-      const [channelConversationId, channelThreadTs] = (thread?.externalThreadId ?? '').split(';messageid=');
-      if (channelConversationId && channelThreadTs) {
-        return { channel: 'teams', channelId: channelConversationId, threadTs: channelThreadTs, threadId };
-      }
-      let channelId = originChannelId ?? undefined;
-      // A DM-originated Teams thread carries no channel id. Resolve the user's
-      // personal conversation so the continuation stays scoped to the DM
-      // instead of falling back to the adapter's mapping broadcast.
-      if (!channelId && thread) {
-        const dm = await prisma.teamsMapping.findFirst({
-          where: { lensUserId: thread.userId, agentId: thread.agentId, dmConversationId: { not: null } },
-          select: { dmConversationId: true },
-        });
-        channelId = dm?.dmConversationId ?? undefined;
-      }
-      if (!channelId) {
-        logger.warn(
-          'No Teams conversation resolved for thread %s (no origin channel id and no DM mapping) — a "continue in thread" resume will not be delivered',
-          threadId,
-        );
-      }
-      // A DM thread stores no external thread id; personal chats have no reply
-      // chains, so the continuation posts top-level in the resolved DM.
-      return { channel: 'teams', channelId, threadId };
-    }
-    if (originChannel === 'slack') {
-      const thread = await prisma.conversationThread.findUnique({
-        where: { id: threadId },
-        select: { externalThreadId: true, externalChannelId: true, threadSource: true, userId: true, agentId: true },
-      });
-      let channelId = originChannelId ?? thread?.externalChannelId ?? undefined;
-      // A DM-originated thread carries no channel id (the Slack DM path doesn't
-      // capture one, and DM threads have no externalChannelId). Without an
-      // explicit channel id the Slack adapter falls back to its mapping
-      // broadcast, which can also post into the user's linked channels — so
-      // resolve the user's DM channel to keep the continuation scoped to the DM.
-      if (!channelId && thread) {
-        const dm = await prisma.slackMapping.findFirst({
-          where: { lensUserId: thread.userId, agentId: thread.agentId, dmChannelId: { not: null } },
-          select: { dmChannelId: true },
-        });
-        channelId = dm?.dmChannelId ?? undefined;
-      }
-      // With no channel id, the Slack adapter has nowhere to post: the resume is
-      // dropped silently. Warn so an undeliverable "continue in thread" run is at
-      // least diagnosable rather than vanishing without a trace. We intentionally
-      // do NOT fall back to the main channel here — a thread-bound task resumes in
-      // its own thread or not at all; redirecting it elsewhere would surprise the
-      // user with output in an unrelated channel.
-      if (!channelId) {
-        logger.warn(
-          'No Slack channel resolved for thread %s (no origin/external channel id and no DM mapping) — a "continue in thread" resume will not be delivered',
-          threadId,
-        );
-      }
-      return {
-        channel: 'slack',
-        channelId,
-        // Only SLACK-sourced threads carry a real Slack thread_ts in
-        // externalThreadId. Top-level DM threads are threadSource=DATABASE and
-        // store the dmChannelId (a `D…` id) there — using that as a thread_ts
-        // would post with an invalid thread_ts and break the continuation, so
-        // resume them top-level (channelId scopes delivery to the DM).
-        threadTs: thread?.threadSource === ThreadSource.SLACK ? (thread.externalThreadId ?? undefined) : undefined,
-        threadId,
-      };
-    }
-    return { channel: 'websocket', threadId };
-  }
-
-  /**
-   * Get or create a conversation thread bound to a specific external thread ID.
-   * Used for Slack channel threads where each Slack thread maps to its own conversation.
+   * Get or create a conversation thread bound to a specific external thread ID,
+   * for a channel where each of its threads maps to its own conversation.
+   * `live` marks a thread whose history the channel keeps: it is read through
+   * the provider registered for `live.source`.
    */
   async getOrCreateThreadByExternalId(
     userId: string,
     agentId: string,
     externalThreadId: string,
-    options?: { channelId?: string },
+    live?: { source: ThreadSource; channelId: string },
   ): Promise<ConversationThread> {
+    const liveFields = live && { threadSource: live.source, externalChannelId: live.channelId };
     const thread = await prisma.conversationThread.upsert({
       where: {
         agentId_userId_externalThreadId: { agentId, userId, externalThreadId },
       },
-      create: {
-        agentId,
-        userId,
-        externalThreadId,
-        ...(options?.channelId && {
-          threadSource: 'SLACK' as ThreadSource,
-          externalChannelId: options.channelId,
-        }),
-      },
-      update: {
-        // Update channelId if provided (in case it was missing before)
-        ...(options?.channelId && {
-          threadSource: 'SLACK' as ThreadSource,
-          externalChannelId: options.channelId,
-        }),
-      },
+      create: { agentId, userId, externalThreadId, ...liveFields },
+      // Update the channel id if provided (in case it was missing before)
+      update: { ...liveFields },
     });
 
     // Upsert can't report create-vs-update; on create both timestamps carry
@@ -386,10 +286,7 @@ class ConversationService {
       trackEvent('thread created', userId, {
         'agent.id': agentId,
         'thread.id': thread.id,
-        // Mirror the actual threadSource: with a channelId this is a SLACK
-        // thread (channel or threaded DM); without one it's a top-level DM,
-        // which stays DATABASE — don't mislabel those as Slack.
-        'thread.source': options?.channelId ? 'slack' : 'database',
+        'thread.source': (live?.source ?? ThreadSource.DATABASE).toLowerCase(),
       });
     }
 
@@ -423,9 +320,7 @@ class ConversationService {
 
     if (!thread) return null;
 
-    const provider = thread.threadSource === ThreadSource.SLACK
-      ? this.slackProvider
-      : this.databaseProvider;
+    const provider = this.providerFor(thread.threadSource);
 
     // CLIENT history (web SPA): hide concise-mode internal steps. The model path
     // (getThreadContext) reads without this option so it still replays them.
@@ -472,10 +367,10 @@ class ConversationService {
         userId,
         // The DATABASE set is the web/CLI-resumable one. Genuine web/CLI threads
         // are always created with externalThreadId: null (getOrCreateLatestThread
-        // / startNewThread); externalId-keyed DATABASE threads (top-level Slack
-        // DMs keyed by dmChannelId) are conversation records, not resumable
-        // threads — exclude them so they don't surface in Recents or the resume
-        // picker. The SLACK listing path is untouched.
+        // / startNewThread); externalId-keyed DATABASE threads (a channel's
+        // top-level DM, keyed by its conversation id) are conversation records,
+        // not resumable threads — exclude them so they don't surface in Recents
+        // or the resume picker. Listing another source is untouched.
         ...(options?.threadSource === ThreadSource.DATABASE
           ? { threadSource: ThreadSource.DATABASE, externalThreadId: null }
           : options?.threadSource
@@ -555,8 +450,9 @@ class ConversationService {
   }
 
   /**
-   * Store the external message ID (e.g. Slack ts) on a persisted message.
-   * Used to link DB records back to Slack messages for tool call enrichment.
+   * Store the external message ID on a persisted message: the id the channel
+   * gave the posted copy. Links DB records back to channel messages for tool
+   * call enrichment.
    */
   async setExternalMessageId(messageId: string, externalMessageId: string): Promise<void> {
     await prisma.conversationMessage.update({
@@ -687,11 +583,7 @@ class ConversationService {
     });
 
     const threadSource = thread?.threadSource ?? ThreadSource.DATABASE;
-    const provider = threadSource === ThreadSource.SLACK
-      ? this.slackProvider
-      : this.databaseProvider;
-
-    const messages = await provider.getMessages(threadId);
+    const messages = await this.providerFor(threadSource).getMessages(threadId);
 
     return {
       compactionSummary: thread?.compactionSummary ?? null,
@@ -702,8 +594,8 @@ class ConversationService {
 
   /**
    * Set the external thread ID on an existing thread.
-   * Used to link an internal thread to an external channel thread (e.g. Slack thread_ts).
-   * Always overwrites any existing external ID — the latest Slack thread wins.
+   * Used to link an internal thread to an external channel thread.
+   * Always overwrites any existing external ID — the latest channel thread wins.
    */
   async setExternalId(threadId: string, externalThreadId: string): Promise<void> {
     await prisma.conversationThread.updateMany({
@@ -718,7 +610,7 @@ class ConversationService {
 
   /**
    * Get the latest database thread for a user without creating one.
-   * Used by heartbeat to include conversation context. Slack threads
+   * Used by heartbeat to include conversation context. Channel threads
    * (externalThreadId set) are excluded.
    */
   async getLatestThread(userId: string): Promise<ConversationThread | null> {

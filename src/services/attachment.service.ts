@@ -2,7 +2,7 @@
  * Attachment Service
  *
  * Owns all `MessageAttachment` DB access plus the media-type detection and
- * classification used by both the upload route (web) and the Slack ingest
+ * classification used by the upload route (web) and every channel's ingest
  * path. Content lives as files under `<dataDir>/media` (`lib/media-store.ts`);
  * the DB row keeps metadata plus the file's basename (`storagePath`). Legacy
  * rows may still carry a `data` BLOB until the boot-time backfill moves them —
@@ -24,6 +24,7 @@ import { listMediaFiles, readMediaFile, removeMediaFile, writeMediaFile } from '
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { MAX_ATTACHMENTS_PER_MESSAGE } from '../constants';
+import type { ChatPlatform } from './channel-adapter.interface';
 
 export type AttachmentCategory = 'image' | 'pdf' | 'text' | 'unreadable';
 
@@ -51,12 +52,13 @@ export interface CreateAttachmentInput {
   sizeBytes: number;
   data: Buffer;
   category: AttachmentCategory;
-  // 'web'/'slack'/'teams' = inbound user uploads; 'agent' = a file the agent
+  // 'web' or a chat platform = inbound user uploads; 'agent' = a file the agent
   // shared outbound via the share_file tool.
-  source: 'web' | 'slack' | 'teams' | 'agent';
+  source: 'web' | ChatPlatform | 'agent';
   threadId?: string;
   messageId?: string;
-  slackFileId?: string;
+  /** The channel's own id for the file, unique across stored attachments. */
+  externalFileId?: string;
   externalTs?: string;
 }
 
@@ -281,12 +283,12 @@ class AttachmentService {
           source: input.source,
           threadId: input.threadId,
           messageId: input.messageId,
-          slackFileId: input.slackFileId,
+          slackFileId: input.externalFileId,
           externalTs: input.externalTs,
         },
       });
     } catch (err) {
-      // Row never landed (e.g. a Slack redelivery losing the slackFileId
+      // Row never landed (e.g. a channel redelivery losing the externalFileId
       // unique race) — the content file is unreachable, remove it now rather
       // than leaving it to the stray-file reaper.
       await removeMediaFile(storagePath);
@@ -305,13 +307,13 @@ class AttachmentService {
   }
 
   /**
-   * Like `create()`, but idempotent on `slackFileId`: returns `null` when the
-   * file is already stored. The unique index on `slackFileId` is the real
-   * de-dupe guarantee — this swallows the unique-violation (P2002) that a
-   * concurrent at-least-once Slack redelivery races into past the
-   * `existsBySlackFileId` pre-check.
+   * Like `create()`, but idempotent on `externalFileId`: returns `null` when the
+   * file is already stored. The unique index on the column is the real de-dupe
+   * guarantee — this swallows the unique-violation (P2002) that a concurrent
+   * at-least-once channel redelivery races into past the
+   * `existsByExternalFileId` pre-check.
    */
-  async createSlackAttachment(input: CreateAttachmentInput): Promise<MessageAttachment | null> {
+  async createOnce(input: CreateAttachmentInput): Promise<MessageAttachment | null> {
     try {
       return await this.create(input);
     } catch (err) {
@@ -395,7 +397,7 @@ class AttachmentService {
     });
   }
 
-  /** Metadata only (no bytes) keyed by Slack message ts — for live Slack reads. */
+  /** Metadata only (no bytes) keyed by the carrying message's external id — for live-read threads. */
   async getMetaByExternalTs(threadId: string, tsList: string[]): Promise<Map<string, AttachmentMeta[]>> {
     const map = new Map<string, AttachmentMeta[]>();
     if (tsList.length === 0) return map;
@@ -436,7 +438,7 @@ class AttachmentService {
   /** Link pre-uploaded (web) attachments to the message that carries them. */
   async linkToMessage(attachmentIds: string[], messageId: string, threadId: string): Promise<void> {
     if (attachmentIds.length === 0) return;
-    // Authoritative count cap (both web and Slack funnel through here). Bounds
+    // Authoritative count cap (every upload path funnels through here). Bounds
     // the per-message stub count in the LLM context and the media-dir write
     // volume a single message can cause. Excess ids stay unlinked and the
     // orphan janitor reaps them. attachmentIds is client-controlled, so this
@@ -463,10 +465,10 @@ class AttachmentService {
     });
   }
 
-  /** True when a Slack file id was already stored (at-least-once redelivery). */
-  async existsBySlackFileId(slackFileId: string): Promise<boolean> {
+  /** True when a channel's file id was already stored (at-least-once redelivery). */
+  async existsByExternalFileId(externalFileId: string): Promise<boolean> {
     const row = await prisma.messageAttachment.findFirst({
-      where: { slackFileId },
+      where: { slackFileId: externalFileId },
       select: { id: true },
     });
     return row !== null;

@@ -11,6 +11,7 @@ import * as cron from 'node-cron';
 import prisma from '../lib/prisma';
 import { cronSchedulerService } from '../services/cron-scheduler.service';
 import { logger } from '../logger';
+import type { ChannelName } from '../services/channel-adapter.interface';
 
 /**
  * Parse human-readable schedule into a cron expression.
@@ -98,7 +99,7 @@ export function getCronTools(
   userId: string,
   agentId: string,
   threadId?: string,
-  originChannel: 'slack' | 'websocket' | 'teams' = 'websocket',
+  originChannel: ChannelName = 'websocket',
   originChannelId?: string,
 ): Record<string, Tool> {
   return {

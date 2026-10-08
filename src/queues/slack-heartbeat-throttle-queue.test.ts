@@ -15,7 +15,10 @@ vi.mock('../services/slack-heartbeat-trigger.service', () => ({
   slackHeartbeatTriggerService: { tryClaimTrigger: mockTryClaim },
 }));
 vi.mock('../services/heartbeat.service', () => ({
-  heartbeatService: { triggerFromSlack: mockTrigger },
+  heartbeatService: { triggerFrom: mockTrigger },
+}));
+vi.mock('../services/slack-message-queue.service', () => ({
+  slackMessageQueueService: { channel: 'slack' },
 }));
 
 import {
@@ -48,7 +51,7 @@ describe('SlackHeartbeatThrottleQueue', () => {
     await vi.advanceTimersByTimeAsync(5 * 1000);
 
     expect(mockTryClaim).toHaveBeenCalledExactlyOnceWith();
-    expect(mockTrigger).toHaveBeenCalledExactlyOnceWith();
+    expect(mockTrigger).toHaveBeenCalledExactlyOnceWith({ channel: 'slack' });
   });
 
   it('does not trigger the heartbeat when the claim is still throttled', async () => {
