@@ -47,11 +47,14 @@ const TEAMS_RELEASE: LinkedTarget = {
 
 const slack = {
   name: 'slack',
+  displayName: 'Slack',
   listLinkedTargets: vi.fn(),
   postToTarget: vi.fn(),
 };
 const teams = {
   name: 'teams',
+  displayName: 'Microsoft Teams',
+  displayName: 'Microsoft Teams',
   listLinkedTargets: vi.fn(),
   postToTarget: vi.fn(),
 };

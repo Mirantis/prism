@@ -2,7 +2,7 @@
  * Outbound Message Service
  *
  * A message the agent posts on its own initiative into a conversation linked
- * to it: a linked Slack or Teams channel, a thread in one, or a linked DM. It
+ * to it: a linked channel, a thread in one, or a linked DM. It
  * owns the policy the `send_message` tool relies on: which target is allowed,
  * which text is refused, and the `agent message sent` event. Each adapter owns
  * its platform's mention rules and the post itself.
@@ -10,18 +10,18 @@
 
 import { messageDeliveryService, MessageTrigger } from './message-delivery.service';
 import { conversationService } from './conversation.service';
-import { ChannelAdapter, LinkedTarget, SendRefusedError } from './channel-adapter.interface';
+import { ChannelAdapter, describeTarget, LinkedTarget, SendRefusedError } from './channel-adapter.interface';
 import { trackEvent } from '../lib/telemetry';
 import type { ToolCallRecord } from '../types';
 
 /** The tool that posts through this service. */
 export const SEND_MESSAGE_TOOL_NAME = 'send_message';
 
-/** A post is a message to people, not a report: one Slack or Teams message. */
+/** A post is a message to people, not a report: one chat message. */
 export const MAX_SENT_MESSAGE_LENGTH = 4000;
 
 /**
- * Slack's special-mention syntax (`<!channel>`, `<!here|here>`,
+ * The special-mention token syntax (`<!channel>`, `<!here|here>`,
  * `<!subteam^…>`) and the plain broadcast words. Each one notifies a whole
  * conversation or a group.
  */
@@ -90,7 +90,9 @@ class OutboundMessageService {
   private async linked(agentId: string): Promise<Array<{ target: LinkedTarget; adapter: PostingAdapter }>> {
     const adapters = messageDeliveryService
       .getAdapters()
-      .filter((adapter): adapter is PostingAdapter => Boolean(adapter.listLinkedTargets && adapter.postToTarget));
+      .filter((adapter): adapter is PostingAdapter =>
+        Boolean(adapter.displayName && adapter.listLinkedTargets && adapter.postToTarget),
+      );
     const lists = await Promise.all(
       adapters.map(async (adapter) => (await adapter.listLinkedTargets(agentId)).map((target) => ({ target, adapter }))),
     );
@@ -109,7 +111,7 @@ class OutboundMessageService {
       if (error instanceof SendRefusedError) throw error;
       this.track(input, 'failed', target);
       const reason = error instanceof Error ? error.message : String(error);
-      throw new Error(`${PLATFORM_LABEL[target.platform]} did not accept the message: ${reason}`);
+      throw new Error(`${adapter.displayName} did not accept the message: ${reason}`);
     }
   }
 

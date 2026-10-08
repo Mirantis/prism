@@ -130,6 +130,7 @@ function listen(server: http.Server, port: number, host: string): Promise<void> 
 
 class TeamsAdapterService implements ChannelAdapter {
   readonly name = 'teams';
+  readonly displayName = 'Microsoft Teams';
 
   private app?: App;
   private server?: http.Server;

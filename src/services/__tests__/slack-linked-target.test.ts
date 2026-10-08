@@ -171,6 +171,18 @@ describe('Requirement: the agent posts only to its linked Slack targets', () => 
     });
   });
 
+  describe('Scenario: reply delivery shares the mention pattern', () => {
+    it('rewrites a Slack user mention and leaves a token with another id as written', async () => {
+      mockSlackMappingService.findByChannelId.mockResolvedValue({ connection: { teamId: 'T1' } });
+      client.users.info.mockResolvedValue({ user: { real_name: 'Alice Example' } });
+
+      await slackAdapterService.deliverToChannel('C0RELEASE', 'Hi <@U0ALICE:Alice>, see <@ the docs> later', 'thread-1');
+
+      expect(client.chat.postMessage.mock.calls[0][0].text).toBe('Hi <@U0ALICE>, see <@ the docs> later');
+      expect(client.users.info).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('Scenario: refusals', () => {
     it('refuses a mention of a person outside the channel and names the person', async () => {
       const send = slackAdapterService.postToTarget(RELEASE, 'Ping <@U0BOB>');
