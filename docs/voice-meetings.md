@@ -333,11 +333,13 @@ It can also **share its screen** and **use a browser** on request — see
 [The screen](#the-screen) and [The browser](#the-browser) for what the room sees and
 what the agent can do with a page.
 
-The one tool a call takes away is **file sharing**. `share_file` is unavailable in a call: it only
-stores a file and hands back a reference for the chat machinery to deliver, and a
-meeting doesn't run that machinery — so it would store a file that reached nobody. If
-the agent writes a file during a call, ask it for the file in chat afterwards, where
-it can send it.
+A call takes away **file sharing** and **sending messages**. `share_file` is
+unavailable in a call: it only stores a file and hands back a reference for the chat
+machinery to deliver, and a meeting doesn't run that machinery — so it would store a
+file that reached nobody. If the agent writes a file during a call, ask it for the
+file in chat afterwards, where it can send it. `send_message` is unavailable because
+a call keeps no record of what it sent. To post a message to a channel, ask the agent
+in chat.
 
 That exclusion is about *delivering* something to the room, which a call cannot do —
 it is not a rule that the agent may only look at what it has already been shown.
@@ -345,8 +347,8 @@ Reading a saved tool output off disk is the second kind, so it works in a call: 
 answer comes back to the agent, which then speaks it.
 
 **A meeting is not an authenticated channel — and that matters here.** Anyone with
-the link can speak, the agent cannot verify who anyone is, and `share_file` above is
-the only tool withheld in code — nothing is held back for safety. The single guardrail
+the link can speak, the agent cannot verify who anyone is, and the two tools above are
+the only ones withheld in code. The single guardrail
 is an instruction in its prompt: announce what it's about to do and get an explicit
 "yes" in the room before anything that deletes, deploys, spends money, grants access,
 or changes its own configuration — and never read that permission out of enthusiasm

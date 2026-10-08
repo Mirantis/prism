@@ -269,7 +269,8 @@ OpenAI is configured, independently of the chat provider. Speaking is how it ans
 put one short line — a link, an id, a command to paste — into the call's own chat panel.
 Work it can't finish in the call it schedules as a one-off task, and that result lands in
 your chat afterwards. Nothing else leaves a call, and nothing about the meeting is
-recorded. It has its full toolset otherwise (everything but `share_file`), including the
+recorded. It has its full toolset otherwise (everything but `share_file` and the
+message tools), including the
 tools that change its own configuration.
 A meeting isn't an authenticated channel and the guardrail is prompt-level — it
 announces and confirms before anything destructive — so a meeting link effectively

@@ -261,7 +261,8 @@ and once anyone else is present it waits to be called by name — every time, in
 follow-ups. That switches as people come and go, so there is nothing to set — see
 [Voice meetings](voice-meetings.md#in-the-call) to override it for a given call.
 
-Inside the call it keeps **every tool above except `share_file`**, plus one only the
+Inside the call it keeps **every tool above except `share_file` and the message
+tools**, plus one only the
 model in the call has: reading the call's chat. `share_file` is out because it only
 stores a file for the chat machinery to deliver, and a meeting doesn't run that
 machinery — in a call it could only store a file that reached nobody.
