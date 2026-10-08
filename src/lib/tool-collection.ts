@@ -25,6 +25,8 @@ import { getAgentConfigTools } from '../tools/agent-config';
 import { getShellTools } from '../tools/shell/index';
 import { ensureCodingAgentsDetected } from './coding-agents/availability';
 import { getShareFileTools, SHARE_FILE_TOOL_NAME } from '../tools/share-file';
+import { getSendMessageTools } from '../tools/send-message';
+import { SEND_MESSAGE_TOOL_NAME } from '../services/outbound-message.service';
 import { getAttachmentTools } from '../tools/attachments';
 import { getWebFetchTools } from '../tools/web/web-fetch';
 import { getSkillTools } from '../tools/skills/index';
@@ -132,6 +134,7 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
     // Same workspaceRoot as the shell tools: write-then-share has to agree on what
     // a relative path means, and the write/read sequencing compares resolved paths.
     ...getShareFileTools(input.workspaceRoot, input.pendingFileWrites),
+    ...getSendMessageTools(input.userId, input.agentId, input.threadId, originChannel, input.originChannelId),
     ...getAttachmentTools(
       input.userId,
       input.agentId,
@@ -311,7 +314,7 @@ function omitLockedTools(tools: Record<string, Tool>): Record<string, Tool> {
  *
  * - chat: All tools except `read_meeting_chat`
  * - heartbeat, cron, webhook: minus the goal tools; the schedule tools stay
- * - subagent: minus share_file (no user channel) AND goal tools (no user thread)
+ * - subagent: minus share_file (no user channel), goal tools and the message tools (no user thread)
  * - goal: minus create_goal (no nested goals) and the schedule tools; get_goal stays
  * - meeting: chat's set minus share_file, plus read_meeting_chat (see the function body)
  * - any other mode: everything except the two tools that join or leave a call, and the
@@ -378,13 +381,16 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
   // Subagents return their result as text to the parent invocation (via the
   // Task tool) — they have no direct channel to the user, so a file they
   // "shared" would never be delivered. Drop share_file. They also don't own a
-  // user thread, so drop goal tools and attachment tools.
+  // user thread, so drop goal tools and attachment tools, and the message
+  // tools, whose sends have to be stored in the history of the run that sent them.
   if (mode === 'subagent') {
     return omit(
       new Set([
         SHARE_FILE_TOOL_NAME,
         'hydrate_attachment',
         'view_attachment',
+        SEND_MESSAGE_TOOL_NAME,
+        'list_message_targets',
         ...goalToolNames,
         ...membershipToolNames,
       ]),
