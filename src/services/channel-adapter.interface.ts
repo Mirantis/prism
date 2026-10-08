@@ -70,6 +70,8 @@ export interface LinkedTarget {
   conversationId: string;
   name: string | null;
   isMain: boolean;
+  /** For a DM, the user it is linked to. */
+  dmUserId?: string;
 }
 
 /**

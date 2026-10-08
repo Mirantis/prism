@@ -457,6 +457,7 @@ class TeamsAdapterService implements ChannelAdapter {
           conversationId: mapping.dmConversationId,
           name: mapping.teamsUserId ? `<@${mapping.teamsUserId}>` : null,
           isMain: false,
+          dmUserId: mapping.lensUserId ?? undefined,
         });
       }
     }

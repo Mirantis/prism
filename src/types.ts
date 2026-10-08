@@ -99,6 +99,11 @@ export interface InvokeRequest {
    * the prompt gets the channel participation guidelines.
    */
   channelLabel?: string;
+  /**
+   * The run's final message goes to the main channel and the user's DMs, so
+   * `send_message` refuses those as targets.
+   */
+  broadcastsOutput?: boolean;
   lastHeartbeatAlert?: string;
   lastHeartbeatAlertAt?: number;
   /** Messages that channels queued for this heartbeat, one entry per channel. */

@@ -45,6 +45,17 @@ const TEAMS_RELEASE: LinkedTarget = {
   isMain: true,
 };
 
+const OWN_DM: LinkedTarget = {
+  key: 'slack:D0OWNER',
+  platform: 'slack',
+  kind: 'dm',
+  conversationId: 'D0OWNER',
+  name: '<@U0OWNER>',
+  isMain: false,
+  dmUserId: 'user-1',
+};
+const OTHER_DM: LinkedTarget = { ...OWN_DM, key: 'slack:D0OTHER', conversationId: 'D0OTHER', name: '<@U0OTHER>', dmUserId: 'user-2' };
+
 const slack = {
   name: 'slack',
   displayName: 'Slack',
@@ -53,7 +64,6 @@ const slack = {
 };
 const teams = {
   name: 'teams',
-  displayName: 'Microsoft Teams',
   displayName: 'Microsoft Teams',
   listLinkedTargets: vi.fn(),
   postToTarget: vi.fn(),
@@ -187,6 +197,50 @@ describe('Requirement: the agent sends only to a linked target, and never a broa
 
       await expect(result).rejects.toThrow('Your reply already goes to this conversation');
       expect(slack.postToTarget).not.toHaveBeenCalled();
+    });
+
+    describe('a run without a thread, whose output goes to the main channel and the user DM', () => {
+      beforeEach(() => {
+        slack.listLinkedTargets.mockResolvedValue([GENERAL, RELEASE, OWN_DM, OTHER_DM]);
+      });
+
+      it('refuses the main channel', async () => {
+        const result = send({ target: 'slack:C0GENERAL', origin: 'broadcast' });
+
+        await expect(result).rejects.toThrow('Your final message already goes to #general');
+        expect(slack.postToTarget).not.toHaveBeenCalled();
+        expect(mockTrackEvent).toHaveBeenCalledWith(
+          'agent message sent',
+          'user-1',
+          expect.objectContaining({ 'send.outcome': 'refused', 'send.reason': 'own_conversation' }),
+        );
+      });
+
+      it('refuses the main channel on another platform too', async () => {
+        await expect(send({ target: 'teams:19:release@thread.tacv2', origin: 'broadcast' })).rejects.toThrow(
+          'Your final message already goes to #Release',
+        );
+      });
+
+      it("refuses the user's own DM", async () => {
+        await expect(send({ target: 'slack:D0OWNER', origin: 'broadcast' })).rejects.toThrow(
+          'Your final message already goes to the DM with <@U0OWNER>',
+        );
+        expect(slack.postToTarget).not.toHaveBeenCalled();
+      });
+
+      it("allows a channel that is not main, and another user's DM", async () => {
+        await send({ target: 'slack:C0RELEASE', origin: 'broadcast' });
+        await send({ target: 'slack:D0OTHER', origin: 'broadcast' });
+
+        expect(slack.postToTarget.mock.calls.map(([target]) => target.key)).toEqual(['slack:C0RELEASE', 'slack:D0OTHER']);
+      });
+    });
+
+    it('allows the main channel from a web turn, whose reply goes to the web chat only', async () => {
+      await send({ target: 'slack:C0GENERAL' });
+
+      expect(slack.postToTarget).toHaveBeenCalledWith(GENERAL, expect.any(String), undefined);
     });
 
     it('passes a refusal from the adapter on unchanged', async () => {

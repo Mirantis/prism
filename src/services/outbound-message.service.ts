@@ -34,13 +34,16 @@ export interface SendInput {
   target: string;
   thread?: string;
   text: string;
-  /** Where the run's own reply goes. The service refuses it as a target. */
-  origin?: { platform: string; conversationId?: string; thread?: string };
+  /**
+   * Where the run's own final message goes, which the service refuses as a
+   * target: one conversation and thread, or `broadcast` for a run without a
+   * thread, whose output goes to the main channel and the user's own DM.
+   */
+  origin?: { platform: string; conversationId?: string; thread?: string } | 'broadcast';
 }
 
-const PLATFORM_LABEL: Record<LinkedTarget['platform'], string> = { slack: 'Slack', teams: 'Microsoft Teams' };
-
-type PostingAdapter = ChannelAdapter & Required<Pick<ChannelAdapter, 'listLinkedTargets' | 'postToTarget'>>;
+type PostingAdapter = ChannelAdapter &
+  Required<Pick<ChannelAdapter, 'displayName' | 'listLinkedTargets' | 'postToTarget'>>;
 
 class OutboundMessageService {
   async listTargets(agentId: string): Promise<LinkedTarget[]> {
@@ -160,6 +163,13 @@ class OutboundMessageService {
 
   private checkOrigin(target: LinkedTarget, input: SendInput): void {
     const origin = input.origin;
+    if (origin === 'broadcast') {
+      if (!target.isMain && !(target.kind === 'dm' && target.dmUserId === input.userId)) return;
+      throw new SendRefusedError(
+        `Your final message already goes to ${describeTarget(target)}: the output of a run without a conversation goes to the main channel and to your user's DM. Write the message as your final message instead.`,
+        'own_conversation',
+      );
+    }
     if (!origin || origin.platform !== target.platform || origin.conversationId !== target.conversationId) return;
     if ((origin.thread ?? undefined) !== (input.thread ?? undefined)) return;
     throw new SendRefusedError(

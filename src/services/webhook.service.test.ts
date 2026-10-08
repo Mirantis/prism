@@ -1117,6 +1117,22 @@ describe('handleInbound agent mode', () => {
     expect(mockPublishToLatestThread).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['all', true],
+    ['slack', true],
+    ['teams', true],
+    ['chat', false],
+    ['none', false],
+  ])("tells the run whether its output is broadcast for deliverTo '%s'", async (deliverTo, broadcastsOutput) => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo }));
+    mockInvoke.mockResolvedValue(invokeResult('Done.'));
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalled());
+
+    expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ mode: 'webhook', broadcastsOutput }));
+  });
+
   it('keeps nothing extra for a delivered run', async () => {
     mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ prompt: null }));
     mockInvoke.mockResolvedValue(invokeResult('Alert resolved.'));

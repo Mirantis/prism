@@ -52,6 +52,7 @@ export interface CollectToolsInput {
   mode: string;
   originChannel?: Parameters<typeof getCronTools>[4];
   originChannelId?: string;
+  broadcastsOutput?: boolean;
   workspaceRoot?: string;
   /** Runs a subagent Task; injected so this module never imports invoke.ts. */
   taskInvoker: Invoker;
@@ -137,7 +138,14 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
     // Same workspaceRoot as the shell tools: write-then-share has to agree on what
     // a relative path means, and the write/read sequencing compares resolved paths.
     ...getShareFileTools(input.workspaceRoot, input.pendingFileWrites),
-    ...getSendMessageTools(input.userId, input.agentId, input.threadId, originChannel, input.originChannelId),
+    ...getSendMessageTools(
+      input.userId,
+      input.agentId,
+      input.threadId,
+      originChannel,
+      input.originChannelId,
+      input.broadcastsOutput,
+    ),
     ...getAttachmentTools(
       input.userId,
       input.agentId,

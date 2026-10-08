@@ -87,7 +87,7 @@ describe('Requirement: the agent posts only to its linked Teams targets', () => 
       mockPrisma.teamsMapping.findMany.mockResolvedValue([
         { channelConversationId: '19:general@thread.tacv2', channelName: 'General', isMainChannel: false },
         { channelConversationId: '19:release@thread.tacv2', channelName: 'Release', isMainChannel: true },
-        { dmConversationId: 'a:personal-chat', teamsUserId: ALICE, isMainChannel: false },
+        { dmConversationId: 'a:personal-chat', teamsUserId: ALICE, lensUserId: 'user-1', isMainChannel: false },
       ]);
 
       const targets = await teamsAdapterService.listLinkedTargets('agent-1');
@@ -98,7 +98,7 @@ describe('Requirement: the agent posts only to its linked Teams targets', () => 
       expect(targets).toEqual([
         { key: 'teams:19:general@thread.tacv2', platform: 'teams', kind: 'channel', conversationId: '19:general@thread.tacv2', name: 'General', isMain: false },
         { key: 'teams:19:release@thread.tacv2', platform: 'teams', kind: 'channel', conversationId: '19:release@thread.tacv2', name: 'Release', isMain: true },
-        { key: 'teams:a:personal-chat', platform: 'teams', kind: 'dm', conversationId: 'a:personal-chat', name: `<@${ALICE}>`, isMain: false },
+        { key: 'teams:a:personal-chat', platform: 'teams', kind: 'dm', conversationId: 'a:personal-chat', name: `<@${ALICE}>`, isMain: false, dmUserId: 'user-1' },
       ]);
     });
   });

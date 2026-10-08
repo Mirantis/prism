@@ -26,6 +26,7 @@ export function getSendMessageTools(
   threadId?: string,
   originChannel?: 'slack' | 'websocket' | 'teams',
   originChannelId?: string,
+  broadcastsOutput?: boolean,
 ): Record<string, Tool> {
   return {
     list_message_targets: tool({
@@ -58,7 +59,7 @@ export function getSendMessageTools(
         text: z.string().describe('The message, in markdown'),
       }),
       execute: async ({ target, thread, text }) => {
-        const origin = await replyDestination(threadId, originChannel, originChannelId);
+        const origin = await replyDestination(threadId, originChannel, originChannelId, broadcastsOutput);
         const sent = await outboundMessageService.send({ agentId, userId, target, thread, text, origin });
         return { sent: true, target: sent.target.key, name: sent.target.name, messageId: sent.messageId };
       },
@@ -66,13 +67,20 @@ export function getSendMessageTools(
   };
 }
 
-/** The Slack or Teams conversation and thread the run's own reply goes to. */
+/**
+ * Where the run's own reply goes: the broadcast, a chat conversation and
+ * thread, or nowhere a send can reach (a web turn, a run delivered to the web
+ * chat or not at all).
+ */
 async function replyDestination(
   threadId: string | undefined,
   originChannel: 'slack' | 'websocket' | 'teams' | undefined,
   originChannelId: string | undefined,
+  broadcastsOutput: boolean | undefined,
 ): Promise<SendInput['origin']> {
-  if (!threadId || (originChannel !== 'slack' && originChannel !== 'teams')) return undefined;
+  if (broadcastsOutput) return 'broadcast';
+  if (!threadId) return undefined;
+  if (originChannel !== 'slack' && originChannel !== 'teams') return undefined;
   const context = await conversationService.getChannelContext(threadId, originChannel, originChannelId);
   return { platform: context.channel, conversationId: context.channelId, thread: context.threadTs };
 }
