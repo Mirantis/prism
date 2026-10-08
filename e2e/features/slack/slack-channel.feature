@@ -44,3 +44,19 @@ Feature: Slack Channel Integration
     When I reload the Channels page
     Then the linked channel is still listed
     And I can unlink the channel from the UI
+
+  # The send_message tool: from a turn in one linked channel, the agent posts a
+  # new message in another linked channel and mentions the person who asked.
+  # The mention is asserted on the message Slack stored, after it translated
+  # the markdown block, so the assertion holds only for a mention Slack parsed.
+  Scenario: The agent posts to another linked channel and mentions a person
+    Given a test Slack channel exists
+    And the bot is invited to the channel
+    And I link the channel to the agent via the UI
+    And a second test Slack channel exists
+    And the bot is invited to the second channel
+    And I link the second channel to the agent via the UI
+    When I ask the bot to post a message that mentions me in the second channel
+    Then the bot should reply in the thread within 120 seconds
+    And the second channel has the bot's message mentioning me within 60 seconds
+    And the run's stored reply records the sent message

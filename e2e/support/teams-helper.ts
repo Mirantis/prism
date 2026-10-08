@@ -51,6 +51,39 @@ interface GraphMessage {
   createdDateTime: string;
   body?: { content?: string };
   from?: { application?: { id?: string } | null; user?: { id?: string } | null };
+  mentions?: Array<{ mentioned?: { user?: { id?: string } | null } }>;
+}
+
+/** The AAD object id of the person who posted a top-level channel message. */
+export async function getChannelMessageSenderId(messageId: string): Promise<string> {
+  const teamId = requireEnv('TEAMS_E2E_TEAM_ID');
+  const channelId = requireEnv('TEAMS_E2E_CHANNEL_ID');
+  const message = await graphFetch<GraphMessage>(`/teams/${teamId}/channels/${channelId}/messages/${messageId}`);
+  return message.from!.user!.id!;
+}
+
+/**
+ * Poll the channel's top-level messages until a bot (application-sent) message
+ * whose body contains `marker` appears. Returns the message with its mentions.
+ */
+export async function waitForBotChannelMessage(
+  marker: string,
+  timeoutMs = 90_000,
+  intervalMs = 3_000
+): Promise<GraphMessage> {
+  const teamId = requireEnv('TEAMS_E2E_TEAM_ID');
+  const channelId = requireEnv('TEAMS_E2E_CHANNEL_ID');
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const { value } = await graphFetch<{ value: GraphMessage[] }>(
+      `/teams/${teamId}/channels/${channelId}/messages?$top=20`
+    );
+    const message = value.find((m) => m.from?.application && m.body?.content?.includes(marker));
+    if (message) return message;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  throw new Error(`Bot did not post a channel message containing ${marker} within ${timeoutMs}ms`);
 }
 
 /**

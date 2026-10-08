@@ -12,6 +12,7 @@ import { createBdd } from 'playwright-bdd';
 import { expect, test } from '@playwright/test';
 import { getPrisma } from '../support/db-helper';
 import {
+  getChannelMessageSenderId,
   postChannelMention,
   postChatHtml,
   postChatImage,
@@ -19,6 +20,7 @@ import {
   postThreadReply,
   RED_SQUARE_PNG_BASE64,
   waitForBotChatReply,
+  waitForBotChannelMessage,
   waitForBotThreadReply,
 } from '../support/teams-helper';
 import { TeamsChannelsPage } from '../pages/teams-channels.page';
@@ -32,6 +34,7 @@ const state = {
   chatMessageSentAt: '',
   threadRootId: '',
   threadReplySentAt: '',
+  sendMarker: '',
 };
 
 // ============================================================================
@@ -62,6 +65,7 @@ Before({ tags: '@teams' }, async () => {
   state.chatMessageSentAt = '';
   state.threadRootId = '';
   state.threadReplySentAt = '';
+  state.sendMarker = '';
 });
 
 After({ tags: '@teams' }, async () => {
@@ -200,4 +204,22 @@ Then('the bot should answer that reply within 90 seconds', async () => {
     state.threadReplySentAt
   );
   expect(reply.trim().length).toBeGreaterThan(0);
+});
+
+// ============================================================================
+// send_message
+// ============================================================================
+
+When('I ask the bot in the Teams channel to post a new message that mentions me', async () => {
+  state.sendMarker = `E2E-SEND-${Date.now()}`;
+  state.threadRootId = await postChannelMention(
+    `Use send_message to post a new top-level message in this channel. ` +
+      `It must contain the exact text ${state.sendMarker} and mention me. Then reply here with the word done.`
+  );
+});
+
+Then("the channel has the bot's new message mentioning me within 90 seconds", async () => {
+  const message = await waitForBotChannelMessage(state.sendMarker, 90_000);
+  const myId = await getChannelMessageSenderId(state.threadRootId);
+  expect(message.mentions?.map((m) => m.mentioned?.user?.id)).toContain(myId);
 });

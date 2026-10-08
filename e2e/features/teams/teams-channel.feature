@@ -43,3 +43,13 @@ Feature: Microsoft Teams integration
     When I send the link code in the Teams personal chat
     And I paste an image of a red square in the Teams personal chat asking "What color is this image? Answer with one word."
     Then the bot should reply in the personal chat with "red" within 90 seconds
+
+  # The send_message tool: the agent posts a new top-level message in the
+  # linked channel and mentions the person who asked. Graph reports the
+  # mention only when the message has a mention entity Teams accepted.
+  Scenario: The agent posts a new channel message that mentions a person
+    Given I generate a Teams channel link code via the UI
+    When I mention the bot in the Teams channel with the link code
+    And I ask the bot in the Teams channel to post a new message that mentions me
+    Then the bot should reply in that thread within 90 seconds
+    And the channel has the bot's new message mentioning me within 90 seconds
