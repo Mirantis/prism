@@ -22,6 +22,7 @@ import type { PublishOptions } from './message-delivery.service';
 import { deliveryTargetService, parseCommaList, type Delivery } from './delivery-target.service';
 import { webhookRunService, WebhookRunResult, type AcceptedEvent } from './webhook-run.service';
 import { pendingWorkService, type PendingWorkItem } from './pending-work.service';
+import { outboundMessageService } from './outbound-message.service';
 import { agentWorkspaceService } from './agent-workspace.service';
 import { prisma } from '../lib/prisma';
 import { trackEvent } from '../lib/telemetry';
@@ -476,11 +477,18 @@ export class WebhookService {
     const body = responseText || result.response;
 
     // 'none' delivers nothing, so it skips the gate's model call too.
-    if (
+    const delivered =
       subscription.deliverTo !== 'none' &&
-      !(await this.passesDeliveryGate(subscription, body, result.error !== undefined, agent))
-    ) {
-      return { status: 'suppressed' };
+      (await this.passesDeliveryGate(subscription, body, result.error !== undefined, agent));
+    if (!delivered) {
+      await outboundMessageService.keepWithheldRun({
+        agentId: agent.id,
+        userId: agent.userId,
+        content: `**Webhook: ${subscription.name}**\n\n${body}`,
+        triggeredBy: 'WEBHOOK',
+        toolCalls: result.toolCalls,
+      });
+      if (subscription.deliverTo !== 'none') return { status: 'suppressed' };
     }
 
     const { message, chosenChannels } = await this.deliver(

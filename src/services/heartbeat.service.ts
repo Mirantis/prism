@@ -17,6 +17,7 @@ import { invoke } from '../invoke';
 import { lastResponseText } from '../lib/last-response-text';
 import { AgentWorkspace } from '@prisma/client';
 import { messageDeliveryService } from './message-delivery.service';
+import { outboundMessageService } from './outbound-message.service';
 import { runClassificationGate, isRecentDuplicate } from '../lib/classification-gate';
 import { agentStatusService } from './agent-status.service';
 import { MAX_RESUME_ATTEMPTS, pendingWorkService, type PendingWorkItem } from './pending-work.service';
@@ -420,6 +421,13 @@ class HeartbeatService {
       if (invokeResult.error?.type === 'budget_exceeded') {
         state.consecutiveErrors = 0;
         await this.endCycle(state, read);
+        await outboundMessageService.keepWithheldRun({
+          agentId: state.agentId,
+          userId,
+          content: '',
+          triggeredBy: 'HEARTBEAT',
+          toolCalls: invokeResult.toolCalls,
+        });
         logger.info(`[Heartbeat] Skipping — budget exceeded`);
         this.trackHeartbeat(state, 'timer', 'budget_exceeded', startTime);
         return { shouldSkip: true, text: 'Budget exceeded' };
@@ -462,6 +470,14 @@ class HeartbeatService {
 
         this.recordAlert(state, responseText);
         logger.info(`[Heartbeat] Alert for agent: ${responseText.substring(0, 100)}`);
+      } else {
+        await outboundMessageService.keepWithheldRun({
+          agentId: state.agentId,
+          userId,
+          content: responseText,
+          triggeredBy: 'HEARTBEAT',
+          toolCalls: invokeResult.toolCalls,
+        });
       }
 
       await this.endCycle(state, read);
@@ -585,6 +601,13 @@ class HeartbeatService {
       if (invokeResult.error?.type === 'budget_exceeded') {
         state.consecutiveErrors = 0;
         await this.endRun(state, read);
+        await outboundMessageService.keepWithheldRun({
+          agentId: state.agentId,
+          userId: state.userId,
+          content: '',
+          triggeredBy: 'HEARTBEAT',
+          toolCalls: invokeResult.toolCalls,
+        });
         logger.info(`[Heartbeat] ${label} heartbeat skipped — budget exceeded`);
         this.trackHeartbeat(state, source.channel, 'budget_exceeded', startedAt);
         return;
@@ -626,6 +649,14 @@ class HeartbeatService {
 
         this.recordAlert(state, responseText);
         logger.info(`[Heartbeat] ${label} alert: ${responseText.substring(0, 100)}`);
+      } else {
+        await outboundMessageService.keepWithheldRun({
+          agentId: state.agentId,
+          userId: state.userId,
+          content: responseText,
+          triggeredBy: 'HEARTBEAT',
+          toolCalls: invokeResult.toolCalls,
+        });
       }
 
       await this.endCycle(state, read);
