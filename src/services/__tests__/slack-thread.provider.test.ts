@@ -850,6 +850,17 @@ describe('Requirement: Slack Thread Provider', () => {
       expect(messages.some((m) => m.content === 'Let me check that.')).toBe(false);
     });
 
+    it('keeps the trigger of a reply we stored, so a scheduled task\'s reply is not read as an answer', async () => {
+      mockDbRows({
+        agent: [{ externalMessageId: '1710000003.000000', content: 'Done.', toolCalls: null, createdAt: new Date(1710000003 * 1000), triggeredBy: 'CRON_TASK' }],
+        internal: [],
+      });
+
+      const messages = await provider.getMessages(threadId, { view: 'client' });
+
+      expect(messages.map((m) => m.triggeredBy)).toEqual(['USER_INPUT', 'CRON_TASK']);
+    });
+
     it('orders by our DB clock for the bot reply, so an internal step stays before its final even when the Slack ts is earlier (skew)', async () => {
       // Simulate skew: the final's Slack ts (…001) is EARLIER than the internal
       // step's DB createdAt (…004). Because the bot reply's createdAt is taken
