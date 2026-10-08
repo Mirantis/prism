@@ -1767,7 +1767,33 @@ describe('HeartbeatService', () => {
       expect(mockKeepWithheldRun).toHaveBeenCalledWith({
         agentId: 'agent-1',
         userId: 'user-abc-123',
-        content: '',
+        content: "This heartbeat check stopped: your organization's AI spending limit has been reached.",
+        triggeredBy: 'HEARTBEAT',
+        toolCalls,
+      });
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+    });
+
+    it('keeps a Slack-triggered run that hit the spending limit in history, with the budget notice as its text', async () => {
+      const toolCalls = [{ tool: 'send_message', input: '{}', output: '{}', success: true, timestamp: '2025-01-15T12:00:00Z' }];
+      mockDrainSlackMessages.mockResolvedValueOnce([
+        { sender: 'Alice', text: 'deploy failed', timestamp: '2025-01-15T12:00:00Z' },
+      ]);
+      mockInvoke.mockResolvedValue({
+        response: '',
+        toolCalls,
+        steps: [],
+        error: { type: 'budget_exceeded', detail: null },
+      });
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      heartbeatService.triggerFromSlack();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith({
+        agentId: 'agent-1',
+        userId: 'user-abc-123',
+        content: "This heartbeat check stopped: your organization's AI spending limit has been reached.",
         triggeredBy: 'HEARTBEAT',
         toolCalls,
       });
