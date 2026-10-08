@@ -56,6 +56,10 @@ import {
   ChannelContext,
   ChannelDestination,
   DeliverableMessage,
+  describeTarget,
+  LinkedTarget,
+  MENTION_TOKEN,
+  SendRefusedError,
 } from '../channel-adapter.interface';
 import { AttachmentMeta } from '../attachment.service';
 
@@ -67,6 +71,12 @@ const FILE_DOWNLOAD_TIMEOUT_MS = 30_000;
 
 /** Proactive-send retries on 429 (Retry-After honored when present). */
 const SEND_RETRIES = 2;
+
+/** An AAD object id, the id a Teams mention token names. */
+const AAD_OBJECT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A Teams channel message id, which is also a reply-chain root. */
+const TEAMS_MESSAGE_ID = /^\d+$/;
 
 /**
  * Telemetry-safe description of a thrown value (name + HTTP status only —
@@ -415,6 +425,111 @@ class TeamsAdapterService implements ChannelAdapter {
         'teams.mappings': String(delivered),
       });
     }
+  }
+
+  async listLinkedTargets(agentId: string): Promise<LinkedTarget[]> {
+    const mappings = await prisma.teamsMapping.findMany({
+      where: { agentId },
+      orderBy: { createdAt: 'asc' },
+    });
+    const channels = mappings.filter((m) => m.channelConversationId);
+    const mainChannelId =
+      (channels.find((m) => m.isMainChannel) ?? channels[0])?.channelConversationId ?? null;
+
+    const targets: LinkedTarget[] = [];
+    for (const mapping of mappings) {
+      if (mapping.channelConversationId) {
+        targets.push({
+          key: `teams:${mapping.channelConversationId}`,
+          platform: 'teams',
+          kind: 'channel',
+          conversationId: mapping.channelConversationId,
+          name: mapping.channelName,
+          isMain: mapping.channelConversationId === mainChannelId,
+        });
+      }
+      if (mapping.dmConversationId) {
+        targets.push({
+          key: `teams:${mapping.dmConversationId}`,
+          platform: 'teams',
+          kind: 'dm',
+          conversationId: mapping.dmConversationId,
+          name: mapping.teamsUserId ? `<@${mapping.teamsUserId}>` : null,
+          isMain: false,
+        });
+      }
+    }
+    return targets;
+  }
+
+  /**
+   * One proactive send, threaded under `thread` when given. Each mention token
+   * becomes an `<at>` tag with a matching mention entity, which is what makes
+   * Teams notify the person. Errors reach the caller, a tool that reports the
+   * outcome to the agent.
+   */
+  async postToTarget(target: LinkedTarget, text: string, thread?: string): Promise<{ messageId: string }> {
+    const app = this.app;
+    if (!app) {
+      throw new SendRefusedError('Microsoft Teams is not connected, so nothing can be sent there.', 'not_connected');
+    }
+    if (thread !== undefined && !TEAMS_MESSAGE_ID.test(thread)) {
+      throw new SendRefusedError(
+        `"${thread}" is not a Teams thread id. A thread id is the id of the thread's first message, a number.`,
+        'bad_thread',
+      );
+    }
+    if (thread !== undefined && target.kind === 'dm') {
+      throw new SendRefusedError('A Teams personal chat has no threads. Send without a thread id.', 'bad_thread');
+    }
+
+    const activity = await this.withCheckedMentions(app, target, text);
+    const sent = await this.sendWithRetry(() =>
+      thread ? app.reply(target.conversationId, thread, activity) : app.send(target.conversationId, activity)
+    );
+    return { messageId: String(sent.id) };
+  }
+
+  /**
+   * Refuse a mention token that is not an AAD object id, or that names a person
+   * the conversation does not have as a member. The member lookup also gives
+   * the display name the `<at>` tag needs.
+   */
+  private async withCheckedMentions(app: App, target: LinkedTarget, text: string): Promise<MessageActivityInput> {
+    const tokens = [...text.matchAll(MENTION_TOKEN)];
+    for (const [token, id] of tokens) {
+      if (!AAD_OBJECT_ID.test(id)) {
+        throw new SendRefusedError(
+          `${token} is not a Teams user mention. Mention a person as <@AAD-OBJECT-ID>, with the id from a message you have seen.`,
+          'bad_mention',
+        );
+      }
+    }
+
+    const members = new Map<string, { id: string; name: string }>();
+    for (const [, id, embeddedName] of tokens) {
+      if (members.has(id)) continue;
+      try {
+        const member = await app.api.conversations.getMemberById(target.conversationId, id);
+        members.set(id, { id: member.id, name: member.name.replace(/[<>]/g, '') });
+      } catch (error: unknown) {
+        if (errorStatus(error) !== 404) throw error;
+        throw new SendRefusedError(
+          `${embeddedName || id} (<@${id}>) is not a member of ${describeTarget(target)}, so the message was not sent. Mention only people in that conversation.`,
+          'not_member',
+        );
+      }
+    }
+
+    // An `<at>` tag the agent wrote has no entity behind it, so it is removed.
+    const body = text
+      .replace(/<\/?at\b[^>]*>/gi, '')
+      .replace(MENTION_TOKEN, (_token, id: string) => `<at>${members.get(id)?.name}</at>`);
+    const activity = new MessageActivityInput(body);
+    for (const member of members.values()) {
+      activity.addMention({ id: member.id, name: member.name, role: 'user' }, { addText: false, text: member.name });
+    }
+    return activity;
   }
 
   // ============================================================================
@@ -1069,11 +1184,10 @@ class TeamsAdapterService implements ChannelAdapter {
     return true;
   }
 
-  private async sendWithRetry(send: () => Promise<unknown>): Promise<void> {
+  private async sendWithRetry<T>(send: () => Promise<T>): Promise<T> {
     for (let attempt = 0; ; attempt++) {
       try {
-        await send();
-        return;
+        return await send();
       } catch (error: unknown) {
         if (errorStatus(error) !== 429 || attempt >= SEND_RETRIES) throw error;
         const delay = retryAfterMs(error) ?? 1000 * (attempt + 1);
