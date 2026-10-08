@@ -592,8 +592,9 @@ class ConversationService {
    * replays each call once, from its own step. Live delivery and history read
    * the same rows, so a reload shows what the live reply showed.
    *
-   * A hidden step is shown on the first visible message at or after it. When
-   * that is a person's message, the step is shown nowhere. That keeps a
+   * A hidden step is shown on the first message at or after it that answers a
+   * person, passing over one nobody asked for, such as a heartbeat's. When the
+   * person's own message comes first, the step is shown nowhere: that keeps a
    * cancelled turn's calls off the next answer. A message sent to steer a running
    * turn is a person's message too, so the steps before it are not shown either:
    * the rarer case, traded for not telling the two apart.
@@ -627,7 +628,9 @@ class ConversationService {
     const hidden = new Map<string, Prisma.JsonArray>();
     for (const step of steps) {
       if (!Array.isArray(step.toolCalls) || step.toolCalls.length === 0) continue;
-      const shownOn = visible.find((message) => message.createdAt.getTime() >= step.createdAt.getTime());
+      const shownOn = visible.find(
+        (message) => message.triggeredBy === MessageTrigger.USER_INPUT && message.createdAt.getTime() >= step.createdAt.getTime(),
+      );
       if (shownOn?.role !== MessageRole.AGENT) continue;
       hidden.set(shownOn.id, [...(hidden.get(shownOn.id) ?? []), ...step.toolCalls]);
     }

@@ -11,8 +11,10 @@ Feature: Verbose / concise delivery mode
     Then only one agent message is delivered via the channel
     And the database contains multiple AGENT rows for the thread
     And the intermediate steps are flagged internal in the database
+    And the agent message shows the tool calls of the hidden steps
     When I reload the chat page
     Then only one agent message is shown
+    And the agent message shows the tool calls of the hidden steps
 
   Scenario: Verbose mode streams every intermediate step
     Given the agent is in verbose mode
