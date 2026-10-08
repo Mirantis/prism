@@ -372,6 +372,7 @@ describe('CronSchedulerService', () => {
         mode: 'cron',
         prompt: 'Check system health',
         abortSignal: expect.any(AbortSignal),
+        broadcastsOutput: true,
       });
       expect(mockCronTaskUpdateMany).toHaveBeenCalledWith({
         where: { id: 'task-1' },
@@ -650,6 +651,7 @@ describe('CronSchedulerService', () => {
         prompt: 'Generate the daily report.',
         afterRestart: false,
         abortSignal: expect.any(AbortSignal),
+        broadcastsOutput: true,
       });
       expect(mockCronTaskDeleteMany).toHaveBeenCalledWith({ where: { id: 'oneshot-2' } });
     });
@@ -704,6 +706,7 @@ describe('CronSchedulerService', () => {
         prompt: 'Generate the daily report.',
         afterRestart: false,
         abortSignal: expect.any(AbortSignal),
+        broadcastsOutput: true,
       });
     });
   });
@@ -1230,6 +1233,16 @@ describe('CronSchedulerService', () => {
         triggeredBy: 'CRON_TASK',
         toolCalls: [expect.objectContaining({ tool: 'memory_write' })],
       });
+    });
+
+    it('tells an unbound run that its output is broadcast, and a thread-bound run that it is not', async () => {
+      mockThreadFindUnique.mockResolvedValue({ id: 'thread-bound' });
+
+      await scheduleAndCapture()();
+      await scheduleAndCapture({ id: 'task-2', threadId: 'thread-bound' })();
+
+      expect(mockInvoke.mock.calls[0][0].broadcastsOutput).toBe(true);
+      expect(mockInvoke.mock.calls[1][0].broadcastsOutput).toBeUndefined();
     });
 
     it('keeps a suppressed run of a thread-bound task in its own thread', async () => {

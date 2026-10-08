@@ -95,7 +95,7 @@ describe('Requirement: the agent posts only to its linked Slack targets', () => 
       mockPrisma.slackMapping.findMany.mockResolvedValue([
         mapping({ slackChannelId: 'C0GENERAL', slackChannelName: 'general' }),
         mapping({ slackChannelId: 'C0RELEASE', slackChannelName: 'release' }),
-        mapping({ dmChannelId: 'D0OWNER', slackUserId: 'U0OWNER' }),
+        mapping({ dmChannelId: 'D0OWNER', slackUserId: 'U0OWNER', lensUserId: 'user-1' }),
       ]);
 
       const targets = await slackAdapterService.listLinkedTargets('agent-1');
@@ -106,7 +106,7 @@ describe('Requirement: the agent posts only to its linked Slack targets', () => 
       expect(targets).toEqual([
         { key: 'slack:C0GENERAL', platform: 'slack', kind: 'channel', conversationId: 'C0GENERAL', name: 'general', isMain: true },
         { key: 'slack:C0RELEASE', platform: 'slack', kind: 'channel', conversationId: 'C0RELEASE', name: 'release', isMain: false },
-        { key: 'slack:D0OWNER', platform: 'slack', kind: 'dm', conversationId: 'D0OWNER', name: '<@U0OWNER>', isMain: false },
+        { key: 'slack:D0OWNER', platform: 'slack', kind: 'dm', conversationId: 'D0OWNER', name: '<@U0OWNER>', isMain: false, dmUserId: 'user-1' },
       ]);
     });
 

@@ -456,6 +456,8 @@ export class WebhookService {
       prompt,
       afterRestart,
       abortSignal: pendingWorkService.shutdownSignal,
+      // 'chat' and 'none' deliver no final message to a chat platform.
+      broadcastsOutput: subscription.deliverTo !== 'chat' && subscription.deliverTo !== 'none',
     });
     if (pendingWorkService.shutdownSignal.aborted) return null;
 

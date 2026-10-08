@@ -479,6 +479,7 @@ class SlackAdapterService implements ChannelAdapter {
           conversationId: mapping.dmChannelId,
           name: mapping.slackUserId ? `<@${mapping.slackUserId}>` : null,
           isMain: false,
+          dmUserId: mapping.lensUserId ?? undefined,
         });
       }
     }

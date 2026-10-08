@@ -76,15 +76,28 @@ describe('Requirement: the message tools act for the run that calls them', () =>
     expect(result).toEqual({ sent: true, target: 'slack:C0RELEASE', name: 'release', messageId: '1712345678.000100' });
   });
 
-  it('sends with no reply destination from a web turn or a run with no thread', async () => {
+  it('sends with no reply destination from a web turn', async () => {
     await run(getSendMessageTools('user-1', 'agent-1', 'thread-1', 'websocket').send_message, {
       target: 'slack:C0RELEASE',
       text: 'Hi',
     });
-    await run(getSendMessageTools('user-1', 'agent-1').send_message, { target: 'slack:C0RELEASE', text: 'Hi' });
 
     expect(mockGetChannelContext).not.toHaveBeenCalled();
-    expect(mockOutbound.send.mock.calls.map(([input]) => input.origin)).toEqual([undefined, undefined]);
+    expect(mockOutbound.send.mock.calls[0][0].origin).toBeUndefined();
+  });
+
+  it('sends with the broadcast as the reply destination from a run whose output is broadcast', async () => {
+    const tools = getSendMessageTools('user-1', 'agent-1', undefined, undefined, undefined, true);
+    await run(tools.send_message, { target: 'slack:C0RELEASE', text: 'Hi' });
+
+    expect(mockGetChannelContext).not.toHaveBeenCalled();
+    expect(mockOutbound.send.mock.calls[0][0].origin).toBe('broadcast');
+  });
+
+  it('sends with no reply destination from a run with no thread whose output is not broadcast', async () => {
+    await run(getSendMessageTools('user-1', 'agent-1').send_message, { target: 'slack:C0RELEASE', text: 'Hi' });
+
+    expect(mockOutbound.send.mock.calls[0][0].origin).toBeUndefined();
   });
 
   it('lets a refusal reach the agent as the tool error', async () => {

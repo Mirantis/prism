@@ -319,6 +319,20 @@ describe('system prompt text', () => {
     expect(prompt).not.toContain('# Scheduled Task Mode');
   });
 
+  it('heartbeat mode tells the agent its result is delivered for it, and to send only to another target itself', async () => {
+    const prompt = await promptText(createTestAgentContext(), 'heartbeat');
+    expect(prompt).toContain(
+      "- Your final message is delivered to the user's conversation, their DM and the main channel when it is worth reporting, so do not also post it there with send_message or another messaging tool; that sends it twice. When a check asks for a message in another linked channel, thread or DM, send it with send_message and end with one line that says what you sent where.",
+    );
+  });
+
+  it('webhook mode tells the agent its result is delivered for it, and to send only to another target itself', async () => {
+    const prompt = await promptText(createTestAgentContext(), 'webhook');
+    expect(prompt).toContain(
+      'When this webhook delivers its result, your final message goes to its destination, so do not also post it there with send_message or another messaging tool; that sends it twice. When the event calls for a message in another linked channel, thread or DM, send it with send_message and end with one line that says what you sent where.',
+    );
+  });
+
   it('states the claims-and-evidence rule', async () => {
     const prompt = await promptText(createTestAgentContext(), 'chat');
     expect(prompt).toContain('# Claims and Evidence');

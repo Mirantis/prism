@@ -429,6 +429,7 @@ describe('HeartbeatService', () => {
       await heartbeatService.triggerHeartbeat();
 
       expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ mode: 'heartbeat', broadcastsOutput: true }));
       expect(mockKeepWithheldRun).toHaveBeenCalledWith({
         agentId: 'agent-1',
         userId: 'user-abc-123',
