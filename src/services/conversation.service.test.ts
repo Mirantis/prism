@@ -739,6 +739,19 @@ describe('ConversationService', () => {
         expect(callIds(messages.find((m) => m.id === 'answer'))).toEqual(['a']);
       });
 
+      it('shows them on a Slack thread\'s answer too, so a reload matches the live reply', async () => {
+        mockPrisma.conversationThread.findUnique.mockResolvedValue({ threadSource: 'SLACK', compactionSummary: null });
+        const slack = (conversationService as unknown as { slackProvider: { getRecentMessages: (...args: unknown[]) => unknown } }).slackProvider;
+        const read = vi.spyOn(slack, 'getRecentMessages').mockResolvedValue([row('slack-question', 'USER', 1), row('slack-answer', 'AGENT', 3)]);
+        mockPrisma.conversationMessage.findMany.mockResolvedValue([row('step', 'AGENT', 2, [call('a')], true)]);
+        mockPrisma.conversationMessage.findFirst.mockResolvedValue(null);
+
+        const messages = await conversationService.getRecentMessages('thread-db', 10);
+
+        expect(callIds(messages.find((m) => m.id === 'slack-answer'))).toEqual(['a']);
+        read.mockRestore();
+      });
+
       it('leaves the model\'s read as stored, so each call is replayed once', async () => {
         mockPrisma.conversationMessage.findMany.mockResolvedValueOnce([
           row('question', 'USER', 1),

@@ -429,12 +429,7 @@ class ConversationService {
 
     // CLIENT history (web SPA): hide concise-mode internal steps. The model path
     // (getThreadContext) reads without this option so it still replays them.
-    const stored = await provider.getMessages(threadId, { view: 'client' });
-    // A Slack thread's messages are Slack's, given tool calls from the rows that
-    // match their Slack ts. A hidden step has no ts, so none is added there.
-    const messages = thread.threadSource === ThreadSource.SLACK
-      ? stored
-      : await this.withHiddenStepToolCalls(threadId, stored);
+    const messages = await this.withHiddenStepToolCalls(threadId, await provider.getMessages(threadId, { view: 'client' }));
 
     // Attach file metadata (no bytes) so the web UI renders chips on history.
     const withAttachments: MessageWithAttachments[] =
@@ -580,8 +575,7 @@ class ConversationService {
   ): Promise<ConversationMessage[]> {
     const provider = await this.resolveProvider(threadId);
     const messages = await provider.getRecentMessages(threadId, limit, { view: 'client' });
-    const shown = provider === this.databaseProvider ? await this.withHiddenStepToolCalls(threadId, messages) : messages;
-    return shown.map(withSenderId);
+    return (await this.withHiddenStepToolCalls(threadId, messages)).map(withSenderId);
   }
 
   /**

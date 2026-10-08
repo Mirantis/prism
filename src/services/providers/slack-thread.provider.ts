@@ -9,7 +9,7 @@
  * Accesses the Slack Bolt apps directly (no backend proxy).
  */
 
-import { ConversationMessage, Prisma } from '@prisma/client';
+import { ConversationMessage, MessageTrigger, Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
 import prisma from '../../lib/prisma';
 import { getSlackConnection } from '../../lib/slack-source';
@@ -157,7 +157,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
     const clientView = opts?.view === 'client';
     const compactedThroughTs = clientView ? null : thread.compactedThroughTs;
 
-    const [rawMessages, { contentByTs, toolCallsByTs, createdAtByTs }] = await Promise.all([
+    const [rawMessages, { contentByTs, toolCallsByTs, createdAtByTs, triggeredByTs }] = await Promise.all([
       this.fetchAllReplies(channelId, threadTs, teamId, compactedThroughTs ?? undefined),
       this.getAgentMessageMaps(threadId),
     ]);
@@ -169,6 +169,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
       contentByTs,
       toolCallsByTs,
       createdAtByTs,
+      triggeredByTs,
     );
 
     if (clientView) return slackDerived;
@@ -318,6 +319,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
     dbContentByTs: Map<string, string>,
     toolCallsByTs: Map<string, Prisma.JsonValue>,
     createdAtByTs: Map<string, Date>,
+    triggeredByTs: Map<string, MessageTrigger>,
   ): Promise<ConversationMessage[]> {
     // Choose the authoritative body for a message. For the agent's own
     // replies, prefer the lossless stored DB content (which preserves
@@ -386,7 +388,9 @@ export class SlackThreadProvider implements ThreadMessageProvider {
         threadId,
         role: isOurAgent ? 'AGENT' as const : 'USER' as const,
         content,
-        triggeredBy: 'USER_INPUT' as const,
+        // A reply we stored keeps its trigger, so a scheduled task's reply is not
+        // read as an answer to the person.
+        triggeredBy: (isOurAgent && triggeredByTs.get(msg.ts)) || MessageTrigger.USER_INPUT,
         toolCalls: (isOurAgent && toolCallsByTs.get(msg.ts)) || null,
         blocks: null,
         senderExternalId: msg.user || null,
@@ -417,6 +421,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
     contentByTs: Map<string, string>;
     toolCallsByTs: Map<string, Prisma.JsonValue>;
     createdAtByTs: Map<string, Date>;
+    triggeredByTs: Map<string, MessageTrigger>;
   }> {
     // Only delivered agent replies carry a ts (`externalMessageId`). This set is
     // disjoint from the concise internal steps merged in fetchSlackMessages
@@ -433,21 +438,24 @@ export class SlackThreadProvider implements ThreadMessageProvider {
         content: true,
         toolCalls: true,
         createdAt: true,
+        triggeredBy: true,
       },
     });
 
     const contentByTs = new Map<string, string>();
     const toolCallsByTs = new Map<string, Prisma.JsonValue>();
     const createdAtByTs = new Map<string, Date>();
+    const triggeredByTs = new Map<string, MessageTrigger>();
     for (const msg of dbMessages) {
       if (!msg.externalMessageId) continue;
       contentByTs.set(msg.externalMessageId, msg.content);
       createdAtByTs.set(msg.externalMessageId, msg.createdAt);
+      triggeredByTs.set(msg.externalMessageId, msg.triggeredBy);
       if (msg.toolCalls != null) {
         toolCallsByTs.set(msg.externalMessageId, msg.toolCalls);
       }
     }
-    return { contentByTs, toolCallsByTs, createdAtByTs };
+    return { contentByTs, toolCallsByTs, createdAtByTs, triggeredByTs };
   }
 
   /**
