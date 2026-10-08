@@ -27,6 +27,7 @@ import {
   type DeliverTo,
 } from './delivery-target.service';
 import { conversationService } from './conversation.service';
+import { outboundMessageService } from './outbound-message.service';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { isTimezone } from '../lib/timezone';
@@ -643,10 +644,27 @@ class CronSchedulerService {
       // Budget exceeded — notify user and record the attempt
       if (result.error?.type === 'budget_exceeded') {
         const budgetMessage = `**Scheduled Task: ${task.name}**\n\nThis task could not run — your organization's AI spending limit has been reached${result.error.detail ? `: ${result.error.detail}` : ''}. Please contact your administrator to increase the budget.`;
+        // The tool calls of the steps before the limit go with the notice, so a
+        // message the run already sent stays in its history.
+        const toolCalls = result.toolCalls.length > 0 ? result.toolCalls : undefined;
         if (boundThreadId) {
-          await messageDeliveryService.publish(task.userId, boundThreadId, budgetMessage, 'CRON_TASK', { channelContext });
+          await messageDeliveryService.publish(task.userId, boundThreadId, budgetMessage, 'CRON_TASK', {
+            toolCalls,
+            channelContext,
+          });
         } else {
-          await deliveryTargetService.deliver(task.agentId, task.userId, target, budgetMessage, 'CRON_TASK');
+          const { message } = await deliveryTargetService.deliver(task.agentId, task.userId, target, budgetMessage, 'CRON_TASK', {
+            toolCalls,
+          });
+          if (!message) {
+            await outboundMessageService.keepWithheldRun({
+              agentId: task.agentId,
+              userId: task.userId,
+              content: budgetMessage,
+              triggeredBy: 'CRON_TASK',
+              toolCalls: result.toolCalls,
+            });
+          }
         }
         trackRun('budget_exceeded');
         return true;
@@ -660,6 +678,13 @@ class CronSchedulerService {
       // A task that delivers nowhere skips the gate's model call too. A bound
       // task always delivers 'all' (readTaskDelivery), so it never gets here.
       if (task.deliverTo === 'none') {
+        await outboundMessageService.keepWithheldRun({
+          agentId: task.agentId,
+          userId: task.userId,
+          content: `**Scheduled Task: ${task.name}**\n\n${body}`,
+          triggeredBy: 'CRON_TASK',
+          toolCalls: result.toolCalls,
+        });
         logger.info(`[CronScheduler] "${task.name}" completed in ${Date.now() - startTime}ms, delivering nowhere`);
         trackRun('completed');
         return true;
@@ -706,6 +731,14 @@ class CronSchedulerService {
         if (prior && !verdict.startsWith('REPEAT') && body.trim() !== prior.text) {
           this.lastDelivered.delete(task.id);
         }
+        await outboundMessageService.keepWithheldRun({
+          agentId: task.agentId,
+          userId: task.userId,
+          threadId: boundThreadId ?? undefined,
+          content: boundThreadId ? body : `**Scheduled Task: ${task.name}**\n\n${body}`,
+          triggeredBy: 'CRON_TASK',
+          toolCalls: result.toolCalls,
+        });
         logger.info(`[CronScheduler] "${task.name}" suppressed — nothing new to report`);
         trackRun('suppressed');
         return true;

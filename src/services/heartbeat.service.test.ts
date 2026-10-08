@@ -87,6 +87,11 @@ vi.mock('../lib/classification', () => ({
 }));
 
 const { mockTrackEvent } = vi.hoisted(() => ({ mockTrackEvent: vi.fn() }));
+const { mockKeepWithheldRun } = vi.hoisted(() => ({ mockKeepWithheldRun: vi.fn() }));
+
+vi.mock('./outbound-message.service', () => ({
+  outboundMessageService: { keepWithheldRun: mockKeepWithheldRun },
+}));
 
 vi.mock('../lib/telemetry', () => ({
   langfuseTelemetry: () => ({}),
@@ -409,6 +414,48 @@ describe('HeartbeatService', () => {
       expect(result.shouldSkip).toBe(true);
       expect(result.text).toBe('');
       expect(mockDeliverMessage).not.toHaveBeenCalled();
+    });
+
+    it('gate returns SUPPRESS → the run is kept in history, so a message it sent is stored', async () => {
+      const toolCalls = [{ tool: 'send_message', input: '{}', output: '{}', success: true, timestamp: '2025-01-15T12:00:00Z' }];
+      mockInvoke.mockResolvedValue({
+        response: 'Posted the outage note to #ops.',
+        toolCalls,
+        steps: [{ text: 'Posted the outage note to #ops.', toolCalls }],
+      });
+      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith({
+        agentId: 'agent-1',
+        userId: 'user-abc-123',
+        content: 'Posted the outage note to #ops.',
+        triggeredBy: 'HEARTBEAT',
+        toolCalls,
+      });
+    });
+
+    it('a suppressed Slack-triggered run is kept in history too', async () => {
+      mockDrainSlackMessages.mockResolvedValueOnce([
+        { sender: 'Alice', text: 'deploy failed', timestamp: '2025-01-15T12:00:00Z' },
+      ]);
+      mockInvoke.mockResolvedValue({
+        response: 'Posted to #ops.',
+        toolCalls: [],
+        steps: [{ text: 'Posted to #ops.', toolCalls: [] }],
+      });
+      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      heartbeatService.triggerFromSlack();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith(
+        expect.objectContaining({ content: 'Posted to #ops.', triggeredBy: 'HEARTBEAT' }),
+      );
     });
 
     it('gate returns DELIVER → message delivered', async () => {
@@ -1702,6 +1749,27 @@ describe('HeartbeatService', () => {
         'user-abc-123',
         expect.objectContaining({ 'heartbeat.result': 'budget_exceeded' }),
       );
+    });
+
+    it('keeps a run that hit the spending limit in history, so a message it sent is stored', async () => {
+      const toolCalls = [{ tool: 'send_message', input: '{}', output: '{}', success: true, timestamp: '2025-01-15T12:00:00Z' }];
+      mockInvoke.mockResolvedValue({
+        response: '',
+        toolCalls,
+        steps: [],
+        error: { type: 'budget_exceeded', detail: null },
+      });
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith({
+        agentId: 'agent-1',
+        userId: 'user-abc-123',
+        content: '',
+        triggeredBy: 'HEARTBEAT',
+        toolCalls,
+      });
     });
 
     it('emits "heartbeat completed" with result=error when invoke throws', async () => {

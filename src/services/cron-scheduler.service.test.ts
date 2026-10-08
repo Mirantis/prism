@@ -117,6 +117,11 @@ vi.mock('../lib/classification', () => ({
 }));
 
 const { mockTrackEvent } = vi.hoisted(() => ({ mockTrackEvent: vi.fn() }));
+const { mockKeepWithheldRun } = vi.hoisted(() => ({ mockKeepWithheldRun: vi.fn() }));
+
+vi.mock('./outbound-message.service', () => ({
+  outboundMessageService: { keepWithheldRun: mockKeepWithheldRun },
+}));
 
 vi.mock('../lib/telemetry', () => ({
   langfuseTelemetry: () => ({}),
@@ -1211,6 +1216,41 @@ describe('CronSchedulerService', () => {
       );
     });
 
+    it('keeps a suppressed run in history, so a message it sent is stored', async () => {
+      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+
+      const run = scheduleAndCapture();
+      await run();
+
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith({
+        agentId: 'agent-1',
+        userId: 'user-abc-123',
+        threadId: undefined,
+        content: '**Scheduled Task: Daily Report**\n\nTask completed.',
+        triggeredBy: 'CRON_TASK',
+        toolCalls: [expect.objectContaining({ tool: 'memory_write' })],
+      });
+    });
+
+    it('keeps a suppressed run of a thread-bound task in its own thread', async () => {
+      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+      mockThreadFindUnique.mockResolvedValue({ id: 'thread-bound' });
+
+      const run = scheduleAndCapture({ threadId: 'thread-bound' });
+      await run();
+
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith(expect.objectContaining({ threadId: 'thread-bound' }));
+    });
+
+    it('keeps nothing extra for a delivered run, whose message holds its tool calls', async () => {
+      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
+
+      const run = scheduleAndCapture();
+      await run();
+
+      expect(mockKeepWithheldRun).not.toHaveBeenCalled();
+    });
+
     it('runs a task saved without an instruction on its name', async () => {
       // The row a user saves from the page with the whole task typed into Name.
       const name = 'Fetch the top 5 news items and summarize them';
@@ -1589,6 +1629,27 @@ describe('CronSchedulerService', () => {
         'cron task executed',
         'user-abc-123',
         expect.objectContaining({ 'cron.result': 'budget_exceeded' }),
+      );
+    });
+
+    it('stores the tool calls made before the spending limit with the budget notice', async () => {
+      const toolCalls = [{ tool: 'send_message', input: '{}', output: '{}', success: true, timestamp: '2025-01-15T12:00:00Z' }];
+      mockInvoke.mockResolvedValue({
+        response: '',
+        toolCalls,
+        steps: [],
+        error: { type: 'budget_exceeded', detail: null },
+      });
+
+      const run = scheduleAndCapture();
+      await run();
+
+      expect(mockDeliverMessage).toHaveBeenCalledWith(
+        'agent-1',
+        'user-abc-123',
+        expect.stringContaining('spending limit'),
+        'CRON_TASK',
+        { toolCalls },
       );
     });
 
