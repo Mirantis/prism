@@ -13,6 +13,7 @@ import { MessageDeliveryService } from '../message-delivery.service';
 // Mock conversation service
 const mockAddMessage = vi.fn();
 const mockGetOrCreateLatestThread = vi.fn();
+const mockWithHiddenStepToolCalls = vi.fn();
 
 // Mock attachment service (publish links + loads shared-file metadata)
 const mockLinkToMessage = vi.fn();
@@ -35,6 +36,7 @@ vi.mock('../conversation.service', () => ({
   conversationService: {
     addMessage: (...args: unknown[]) => mockAddMessage(...args),
     getOrCreateLatestThread: (...args: unknown[]) => mockGetOrCreateLatestThread(...args),
+    withHiddenStepToolCalls: (...args: unknown[]) => mockWithHiddenStepToolCalls(...args),
   },
 }));
 
@@ -87,6 +89,7 @@ describe('MessageDeliveryService', () => {
     mockGetOrCreateLatestThread.mockResolvedValue({ id: 'thread-456' });
     mockLinkToMessage.mockResolvedValue(undefined);
     mockGetMetaByMessageIds.mockResolvedValue(new Map());
+    mockWithHiddenStepToolCalls.mockImplementation(async (_threadId: string, messages: unknown[]) => messages);
   });
 
   afterEach(() => {
@@ -286,6 +289,35 @@ describe('MessageDeliveryService', () => {
       );
     });
 
+    it('delivers the calls of the steps a concise turn hid, and stores and returns the message without them', async () => {
+      const websocket = createMockAdapter('websocket');
+      service.register(websocket);
+      const hidden = { id: 'call-1', tool: 'service__ask_person', output: '{"intent":"x"}' };
+      const own = { id: 'call-2', tool: 'computer_screen', output: 'ok' };
+      mockAddMessage.mockResolvedValue({ message: { ...sampleMessage, toolCalls: [own] }, titleSet: null });
+      mockWithHiddenStepToolCalls.mockImplementation(async (_threadId: string, messages: ConversationMessage[]) =>
+        messages.map((m) => ({ ...m, toolCalls: [hidden, own] })));
+      const attachments = [
+        { id: 'a1', filename: 'report.csv', mediaType: 'text/csv', sizeBytes: 12, category: 'text' as const },
+      ];
+      mockGetMetaByMessageIds.mockResolvedValue(new Map([['msg-123', attachments]]));
+
+      const result = await service.publish('user-123', 'thread-456', 'Done', 'USER_INPUT', {
+        toolCalls: [own as never],
+        attachmentIds: ['a1'],
+        channelContext: { channel: 'websocket', threadId: 'thread-456' },
+      });
+
+      expect(mockAddMessage).toHaveBeenCalledWith('thread-456', expect.objectContaining({ toolCalls: [own] }));
+      expect(mockWithHiddenStepToolCalls).toHaveBeenCalledWith('thread-456', [expect.objectContaining({ id: 'msg-123' })]);
+      expect(websocket.deliver).toHaveBeenCalledWith(
+        'user-123',
+        expect.objectContaining({ id: 'msg-123', toolCalls: [hidden, own], attachments }),
+        expect.objectContaining({ channel: 'websocket' }),
+      );
+      expect(result.toolCalls).toEqual([own]);
+    });
+
     it('does not touch the attachment service when no files are shared', async () => {
       const adapter = createMockAdapter('test');
       service.register(adapter);
@@ -452,6 +484,24 @@ describe('MessageDeliveryService', () => {
       const result = await service.isUserConnectedToAny('user-123');
 
       expect(result).toBe(true);
+    });
+  });
+
+  describe('showInConversation', () => {
+    it('shows a changed message with the calls of the steps its turn hid', async () => {
+      const websocket = { ...createMockAdapter('websocket'), showsWholeConversation: true };
+      const slack = createMockAdapter('slack');
+      service.register(websocket);
+      service.register(slack);
+      const hidden = { id: 'call-1', tool: 'service__ask_person', output: '{"intent":"x"}' };
+      mockWithHiddenStepToolCalls.mockImplementation(async (_threadId: string, messages: ConversationMessage[]) =>
+        messages.map((m) => ({ ...m, toolCalls: [hidden] })));
+
+      await service.showInConversation('user-123', sampleMessage);
+
+      expect(mockWithHiddenStepToolCalls).toHaveBeenCalledWith('thread-456', [sampleMessage]);
+      expect(websocket.deliver).toHaveBeenCalledWith('user-123', expect.objectContaining({ id: 'msg-123', toolCalls: [hidden] }));
+      expect(slack.deliver).not.toHaveBeenCalled();
     });
   });
 });

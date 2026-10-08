@@ -429,7 +429,12 @@ class ConversationService {
 
     // CLIENT history (web SPA): hide concise-mode internal steps. The model path
     // (getThreadContext) reads without this option so it still replays them.
-    const messages = await provider.getMessages(threadId, { view: 'client' });
+    const stored = await provider.getMessages(threadId, { view: 'client' });
+    // A Slack thread's messages are Slack's, given tool calls from the rows that
+    // match their Slack ts. A hidden step has no ts, so none is added there.
+    const messages = thread.threadSource === ThreadSource.SLACK
+      ? stored
+      : await this.withHiddenStepToolCalls(threadId, stored);
 
     // Attach file metadata (no bytes) so the web UI renders chips on history.
     const withAttachments: MessageWithAttachments[] =
@@ -574,7 +579,64 @@ class ConversationService {
     limit: number = 20
   ): Promise<ConversationMessage[]> {
     const provider = await this.resolveProvider(threadId);
-    return (await provider.getRecentMessages(threadId, limit, { view: 'client' })).map(withSenderId);
+    const messages = await provider.getRecentMessages(threadId, limit, { view: 'client' });
+    const shown = provider === this.databaseProvider ? await this.withHiddenStepToolCalls(threadId, messages) : messages;
+    return shown.map(withSenderId);
+  }
+
+  /**
+   * The messages a client is shown, each agent message with the tool calls of
+   * the concise-mode steps its turn hid, ahead of its own. A client acts on some
+   * results, such as an MCP tool that asks the person for something, and a
+   * concise turn shows it the answer alone. Only the copies change: the model
+   * replays each call once, from its own step. Live delivery and history read
+   * the same rows, so a reload shows what the live reply showed.
+   *
+   * A hidden step is shown on the first visible message at or after it. When
+   * that is a person's message, the step is shown nowhere. That keeps a
+   * cancelled turn's calls off the next answer. A message sent to steer a running
+   * turn is a person's message too, so the steps before it are not shown either:
+   * the rarer case, traded for not telling the two apart.
+   */
+  async withHiddenStepToolCalls<T extends ConversationMessage>(threadId: string, messages: T[]): Promise<T[]> {
+    const visible = [...messages].sort(
+      (a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    );
+    const first = visible[0];
+    const last = visible.at(-1);
+    if (!first || !last || !visible.some((message) => message.role === MessageRole.AGENT)) return messages;
+
+    // The window starts at the visible row before the first message, so the
+    // steps that came before that message are counted too.
+    const before = await prisma.conversationMessage.findFirst({
+      where: { threadId, internalStep: false, createdAt: { lt: first.createdAt } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      select: { createdAt: true },
+    });
+    const steps = await prisma.conversationMessage.findMany({
+      where: {
+        threadId,
+        role: MessageRole.AGENT,
+        internalStep: true,
+        createdAt: { ...(before ? { gt: before.createdAt } : {}), lte: last.createdAt },
+      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: { createdAt: true, toolCalls: true },
+    });
+
+    const hidden = new Map<string, Prisma.JsonArray>();
+    for (const step of steps) {
+      if (!Array.isArray(step.toolCalls) || step.toolCalls.length === 0) continue;
+      const shownOn = visible.find((message) => message.createdAt.getTime() >= step.createdAt.getTime());
+      if (shownOn?.role !== MessageRole.AGENT) continue;
+      hidden.set(shownOn.id, [...(hidden.get(shownOn.id) ?? []), ...step.toolCalls]);
+    }
+    if (hidden.size === 0) return messages;
+    return messages.map((message) => {
+      const calls = hidden.get(message.id);
+      if (!calls) return message;
+      return { ...message, toolCalls: [...calls, ...(Array.isArray(message.toolCalls) ? message.toolCalls : [])] };
+    });
   }
 
   /**
