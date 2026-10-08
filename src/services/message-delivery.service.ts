@@ -117,14 +117,15 @@ export class MessageDeliveryService {
     // 2. Link any agent-shared files to this message and load their metadata
     // (no bytes) so adapters can render/upload them. linkToMessage only claims
     // unlinked rows and caps the count, so forged/duplicate ids are safe.
-    // Deliver a shallow copy carrying the metadata — the persisted message we
-    // return stays a clean ConversationMessage (no extra fields leak out).
-    let deliverable: DeliverableMessage = message;
+    // Deliver a shallow copy with the metadata, and with the tool calls of the
+    // steps a concise turn hid — the persisted message we return stays a clean
+    // ConversationMessage (no extra fields leak out).
+    let deliverable: DeliverableMessage = (await conversationService.withHiddenStepToolCalls(threadId, [message]))[0];
     if (options?.attachmentIds?.length) {
       await attachmentService.linkToMessage(options.attachmentIds, message.id, threadId);
       const metaMap = await attachmentService.getMetaByMessageIds([message.id]);
       const attachments = metaMap.get(message.id);
-      if (attachments?.length) deliverable = { ...message, attachments };
+      if (attachments?.length) deliverable = { ...deliverable, attachments };
     }
 
     // 3. Deliver to all connected channels.
@@ -173,7 +174,8 @@ export class MessageDeliveryService {
     const channels = this.adapters.filter((adapter) => adapter.showsWholeConversation);
     if (channels.length === 0) return;
     const attachments = (await attachmentService.getMetaByMessageIds([message.id])).get(message.id);
-    const deliverable: DeliverableMessage = attachments?.length ? { ...message, attachments } : message;
+    const [shown] = await conversationService.withHiddenStepToolCalls(message.threadId, [message]);
+    const deliverable: DeliverableMessage = attachments?.length ? { ...shown, attachments } : shown;
     await Promise.all(
       channels.map(async (adapter) => {
         try {

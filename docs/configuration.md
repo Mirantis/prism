@@ -300,7 +300,7 @@ The `verbose` setting controls how multi-step chat turns are delivered:
 
 | Mode | Behavior |
 |------|----------|
-| **Concise** (default, `verbose=false`) | Only the final text step of a turn is delivered to the channel. Intermediate steps are still saved, but marked internal so they stay hidden from the conversation — both live and when the thread is reloaded. The model's final message must be self-contained. |
+| **Concise** (default, `verbose=false`) | Only the final text step of a turn is delivered to the channel. Intermediate steps are still saved, but marked internal so they stay hidden from the conversation — both live and when the thread is reloaded. The tool calls they made are shown on the turn's final message. The model's final message must be self-contained. |
 | **Verbose** (`verbose=true`) | Every text step is delivered as it arrives — the existing streaming behavior. |
 
 This is a per-agent database setting (not an environment variable). Set it via:

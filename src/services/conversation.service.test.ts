@@ -30,6 +30,7 @@ const { mockPrisma } = vi.hoisted(() => ({
     },
     conversationMessage: {
       findMany: vi.fn(),
+      findFirst: vi.fn(),
       create: vi.fn(),
       aggregate: vi.fn(),
       updateMany: vi.fn(),
@@ -37,6 +38,9 @@ const { mockPrisma } = vi.hoisted(() => ({
     },
     slackMapping: {
       findFirst: vi.fn(),
+    },
+    messageAttachment: {
+      findMany: vi.fn(),
     },
   },
 }));
@@ -540,8 +544,8 @@ describe('ConversationService', () => {
       mockPrisma.conversationThread.findUnique.mockResolvedValue({ threadSource: 'DATABASE' });
       // Newest first, as the query reads them.
       mockPrisma.conversationMessage.findMany.mockResolvedValue([
-        { id: 'm-2', role: 'AGENT', senderExternalId: null, senderName: null },
-        { id: 'm-1', role: 'USER', senderExternalId: 'grace@example.com', senderName: 'grace@example.com' },
+        { id: 'm-2', role: 'AGENT', senderExternalId: null, senderName: null, createdAt: new Date('2026-10-08T08:00:02.000Z') },
+        { id: 'm-1', role: 'USER', senderExternalId: 'grace@example.com', senderName: 'grace@example.com', createdAt: new Date('2026-10-08T08:00:01.000Z') },
       ]);
 
       const messages = await conversationService.getRecentMessages('thread-db', 10);
@@ -607,6 +611,138 @@ describe('ConversationService', () => {
       // Explicitly assert the model read does NOT filter internal steps.
       const call = mockPrisma.conversationMessage.findMany.mock.calls[0][0];
       expect(call.where).not.toHaveProperty('internalStep');
+    });
+
+    describe('a concise turn\'s hidden tool calls', () => {
+      const at = (second: number) => new Date(Date.UTC(2026, 9, 8, 8, 0, second));
+      const callIds = (message?: { toolCalls: unknown }) =>
+        ((message?.toolCalls ?? []) as Array<{ id: string }>).map((c) => c.id);
+      const call = (id: string) => ({ id, tool: `tool-${id}`, input: '{}', output: 'ok', success: true });
+      const row = (id: string, role: 'USER' | 'AGENT', second: number, toolCalls: unknown[] | null = null, internalStep = false) => ({
+        id, threadId: 'thread-db', role, content: id, triggeredBy: 'USER_INPUT', toolCalls, blocks: null,
+        senderExternalId: null, senderName: null, isCompacted: false, internalStep, createdAt: at(second),
+      });
+
+      beforeEach(() => {
+        mockPrisma.conversationThread.findUnique.mockResolvedValue({ threadSource: 'DATABASE', compactionSummary: null });
+      });
+
+      it('shows them on the answer, ahead of its own calls', async () => {
+        // Newest first, as the client read returns them.
+        mockPrisma.conversationMessage.findMany
+          .mockResolvedValueOnce([row('answer', 'AGENT', 4, [call('own')]), row('question', 'USER', 1)])
+          .mockResolvedValueOnce([row('step-1', 'AGENT', 2, [call('a')], true), row('step-2', 'AGENT', 3, [call('b')], true)]);
+        mockPrisma.conversationMessage.findFirst.mockResolvedValue(null);
+
+        const messages = await conversationService.getRecentMessages('thread-db', 10);
+
+        const answer = messages.find((m) => m.id === 'answer');
+        expect(callIds(answer)).toEqual(['a', 'b', 'own']);
+        expect(mockPrisma.conversationMessage.findMany).toHaveBeenLastCalledWith(expect.objectContaining({
+          where: { threadId: 'thread-db', role: 'AGENT', internalStep: true, createdAt: { lte: at(4) } },
+        }));
+      });
+
+      it('bounds the window at the visible message before the first one shown', async () => {
+        mockPrisma.conversationMessage.findMany
+          .mockResolvedValueOnce([row('answer', 'AGENT', 4)])
+          .mockResolvedValueOnce([]);
+        mockPrisma.conversationMessage.findFirst.mockResolvedValue({ createdAt: at(1) });
+
+        await conversationService.getRecentMessages('thread-db', 1);
+
+        expect(mockPrisma.conversationMessage.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+          where: { threadId: 'thread-db', internalStep: false, createdAt: { lt: at(4) } },
+        }));
+        expect(mockPrisma.conversationMessage.findMany).toHaveBeenLastCalledWith(expect.objectContaining({
+          where: expect.objectContaining({ createdAt: { gt: at(1), lte: at(4) } }),
+        }));
+      });
+
+      it('shows a live reply as a reload shows it', async () => {
+        const question = row('question', 'USER', 1);
+        const answer = row('answer', 'AGENT', 4, [call('own')]);
+        const steps = [row('step', 'AGENT', 2, [call('a')], true)];
+        mockPrisma.conversationMessage.findMany.mockResolvedValue(steps);
+
+        mockPrisma.conversationMessage.findFirst.mockResolvedValueOnce({ createdAt: question.createdAt });
+        const [live] = await conversationService.withHiddenStepToolCalls('thread-db', [answer]);
+        mockPrisma.conversationMessage.findFirst.mockResolvedValueOnce(null);
+        const reload = await conversationService.withHiddenStepToolCalls('thread-db', [question, answer]);
+
+        expect(callIds(live)).toEqual(['a', 'own']);
+        expect(callIds(reload.find((m) => m.id === 'answer'))).toEqual(callIds(live));
+      });
+
+      it('makes no query for a person\'s message alone', async () => {
+        const messages = [row('question', 'USER', 1)];
+
+        expect(await conversationService.withHiddenStepToolCalls('thread-db', messages)).toBe(messages);
+        expect(mockPrisma.conversationMessage.findFirst).not.toHaveBeenCalled();
+        expect(mockPrisma.conversationMessage.findMany).not.toHaveBeenCalled();
+      });
+
+      it('skips a step that made no call, and keeps one written in the same millisecond as the answer', async () => {
+        mockPrisma.conversationMessage.findMany.mockResolvedValue([
+          row('narration', 'AGENT', 2, null, true),
+          row('last-step', 'AGENT', 4, [call('a')], true),
+        ]);
+        mockPrisma.conversationMessage.findFirst.mockResolvedValue({ createdAt: at(1) });
+
+        const [answer] = await conversationService.withHiddenStepToolCalls('thread-db', [row('answer', 'AGENT', 4)]);
+
+        expect(callIds(answer)).toEqual(['a']);
+      });
+
+      it('shows a cancelled turn\'s calls nowhere, not on the next answer', async () => {
+        mockPrisma.conversationMessage.findMany
+          .mockResolvedValueOnce([
+            row('answer', 'AGENT', 5, [call('own')]),
+            row('next-question', 'USER', 3),
+            row('question', 'USER', 1),
+          ])
+          .mockResolvedValueOnce([
+            row('cancelled-step', 'AGENT', 2, [call('stale')], true),
+            row('step', 'AGENT', 4, [call('fresh')], true),
+          ]);
+        mockPrisma.conversationMessage.findFirst.mockResolvedValue(null);
+
+        const messages = await conversationService.getRecentMessages('thread-db', 10);
+
+        const answer = messages.find((m) => m.id === 'answer');
+        expect(callIds(answer)).toEqual(['fresh', 'own']);
+        expect(messages.find((m) => m.id === 'next-question')?.toolCalls).toBeNull();
+      });
+
+      it('leaves the model\'s read as stored, so each call is replayed once', async () => {
+        mockPrisma.conversationMessage.findMany.mockResolvedValueOnce([
+          row('question', 'USER', 1),
+          row('step', 'AGENT', 2, [call('a')], true),
+          row('answer', 'AGENT', 3, [call('own')]),
+        ]);
+
+        const { messages } = await conversationService.getThreadContext('thread-db');
+
+        const replayed = messages.flatMap((m) => (m.toolCalls as Array<{ id: string }> | null) ?? []).map((c) => c.id);
+        expect(replayed).toEqual(['a', 'own']);
+        expect(mockPrisma.conversationMessage.findFirst).not.toHaveBeenCalled();
+      });
+
+      it('shows them in the web history too', async () => {
+        mockPrisma.conversationThread.findFirst.mockResolvedValue({
+          id: 'thread-db', agentId: 'agent-1', userId: 'user-1', threadSource: 'DATABASE', contextModel: null, contextTokens: null,
+        });
+        mockPrisma.conversationMessage.findMany
+          .mockResolvedValueOnce([row('question', 'USER', 1), row('answer', 'AGENT', 3)])
+          .mockResolvedValueOnce([row('step', 'AGENT', 2, [call('a')], true)]);
+        mockPrisma.conversationMessage.findFirst.mockResolvedValue(null);
+        mockPrisma.messageAttachment.findMany.mockResolvedValue([]);
+
+        const thread = await conversationService.getThread('user-1', 'agent-1', 'thread-db');
+
+        const answer = thread?.messages.find((m) => m.id === 'answer');
+        expect(callIds(answer)).toEqual(['a']);
+      });
     });
   });
 
