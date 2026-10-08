@@ -1,6 +1,6 @@
 /**
  * send_message and list_message_targets — the agent posts a message on its own
- * initiative into a Slack or Teams conversation linked to it.
+ * initiative into a conversation linked to it.
  *
  * The policy lives in `outboundMessageService`; these tools only pass the
  * run's identity and the conversation its reply goes to. A refusal throws, so
@@ -13,11 +13,11 @@ import { outboundMessageService, SEND_MESSAGE_TOOL_NAME, SendInput } from '../se
 import { conversationService } from '../services/conversation.service';
 
 const SEND_MESSAGE_DESCRIPTION =
-  'Post a message into a Slack or Microsoft Teams channel, a thread in one, or a DM that is linked to you. ' +
+  'Post a message into a channel, a thread in one, or a DM that is linked to you. ' +
   'Use it to reach a conversation other than the one you are replying in: your reply already goes there. ' +
   'Only linked targets are allowed; list_message_targets shows them. ' +
-  'To mention a person so they are notified, write <@ID> with the id from a message you have seen: ' +
-  'a Slack user id (U…) on Slack, an AAD object id on Teams. The person must be a member of the target. ' +
+  'To mention a person so they are notified, write <@ID> with the id from a <@ID:Name> tag in a message you have seen. ' +
+  'The person must be a member of the target. ' +
   '@channel, @here, @everyone and group mentions are refused. A refusal says why; fix the cause before you try again.';
 
 export function getSendMessageTools(
@@ -30,7 +30,7 @@ export function getSendMessageTools(
   return {
     list_message_targets: tool({
       description:
-        'List the Slack and Microsoft Teams channels and DMs linked to you, which send_message can post to.',
+        'List the channels and DMs linked to you, which send_message can post to.',
       inputSchema: z.object({}),
       execute: async () => {
         const targets = await outboundMessageService.listTargets(agentId);
@@ -54,7 +54,7 @@ export function getSendMessageTools(
         thread: z
           .string()
           .optional()
-          .describe("Post into this thread of the target: the Slack ts, or the Teams message id, of the thread's first message"),
+          .describe("Post into this thread of the target: the id of the thread's first message, such as a messageId send_message returned"),
         text: z.string().describe('The message, in markdown'),
       }),
       execute: async ({ target, thread, text }) => {

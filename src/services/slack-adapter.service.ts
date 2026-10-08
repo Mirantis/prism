@@ -146,6 +146,7 @@ function describeSharedFiles(files: SlackFileMeta[]): string {
 
 class SlackAdapterService implements ChannelAdapter {
   readonly name = 'slack';
+  readonly displayName = 'Slack';
 
   /** Active Slack Bolt apps by teamId */
   private apps: Map<string, SlackApp> = new Map();
@@ -485,8 +486,8 @@ class SlackAdapterService implements ChannelAdapter {
   }
 
   /**
-   * Posts with `chat.postMessage` alone. It binds no conversation thread and
-   * swallows no error, unlike reply delivery, because the caller is a tool that
+   * Posts one message with `chat.postMessage`, threaded under `thread` when
+   * given, and returns its ts. A Slack error reaches the caller, a tool that
    * reports the outcome to the agent.
    */
   async postToTarget(target: LinkedTarget, text: string, thread?: string): Promise<{ messageId: string }> {
@@ -2191,11 +2192,9 @@ class SlackAdapterService implements ChannelAdapter {
   /**
    * Prepare agent output for a Slack `chat.postMessage`.
    *
-   * Pairs {@link rewriteOutboundMentions} with {@link formatSlackMessage} so
-   * every delivery path normalizes `<@USERID:Name>` tokens back to Slack's
-   * native mention syntax before Block Kit rendering. Reply delivery routes
-   * outbound text through this helper; `postToTarget` runs its own stricter
-   * mention check instead.
+   * Pairs {@link rewriteOutboundMentions} with {@link formatSlackMessage}, so
+   * a `<@USERID:Name>` token is in Slack's native mention syntax before Block
+   * Kit rendering.
    */
   private async prepareOutboundMessage(
     content: string,
@@ -2221,8 +2220,8 @@ class SlackAdapterService implements ChannelAdapter {
    * one, the unknown bare token is dropped.
    */
   private async rewriteOutboundMentions(text: string, teamId: string): Promise<string> {
-    const mentionPattern = /<@([A-Z0-9]+)(?::([^>]+))?>/g;
-    const matches = [...text.matchAll(mentionPattern)];
+    // A token whose id is not a Slack user id is left as written.
+    const matches = [...text.matchAll(MENTION_TOKEN)].filter((m) => /^[A-Z0-9]+$/.test(m[1]));
     if (matches.length === 0) return text;
 
     const uniqueUserIds = [...new Set(matches.map((m) => m[1]))];

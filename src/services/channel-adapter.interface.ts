@@ -64,7 +64,8 @@ export type ChannelDestination = Pick<ChannelContext, 'channelId' | 'channelThre
 export interface LinkedTarget {
   /** `<platform>:<conversation id>`, the name the agent sends to. */
   key: string;
-  platform: 'slack' | 'teams';
+  /** The `name` of the adapter that lists and posts to it. */
+  platform: string;
   kind: 'channel' | 'dm';
   conversationId: string;
   name: string | null;
@@ -171,6 +172,12 @@ export interface ChannelAdapter {
    * @returns true if user can receive messages on this channel
    */
   isUserConnected(userId: string): Promise<boolean>;
+
+  /**
+   * The platform's name as the agent reads it in a message, for example in a
+   * failed send. An adapter that posts to targets sets it.
+   */
+  readonly displayName?: string;
 
   /** The agent's linked channels and DMs on this platform. */
   listLinkedTargets?(agentId: string): Promise<LinkedTarget[]>;
