@@ -90,6 +90,13 @@ describe('collectTools name precedence', () => {
     expect(tools.kubectl_get.description).toBe('from-platform');
   });
 
+  it('registers the message tools', async () => {
+    const tools = await collect();
+
+    expect(tools.send_message).toBeDefined();
+    expect(tools.list_message_targets).toBeDefined();
+  });
+
   it('still registers a platform tool whose name nothing else claims', async () => {
     mockGetMCPTools.mockResolvedValue({ kubectl_get: foreignTool('from-platform') });
 
