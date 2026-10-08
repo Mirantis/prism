@@ -377,37 +377,38 @@ describe('isMeetingSupported', () => {
 });
 
 describe('meeting tool mode', () => {
+  const NOT_IN_A_CALL = ['share_file', 'send_message', 'list_message_targets'];
   const EVERYTHING = [
     'memory_search', 'memory_write', 'memory_delete',
     'shell_exec', 'shell_write_file', 'coding_agent', 'shell_spawn',
     'schedule_task', 'list_scheduled_tasks', 'update_scheduled_task', 'delete_scheduled_task',
-    'create_goal', 'get_goal', 'share_file', 'skill', 'web_fetch',
+    'create_goal', 'get_goal', 'share_file', 'send_message', 'list_message_targets', 'skill', 'web_fetch',
     'leave_meeting', 'join_meeting', 'set_microphone', 'meeting_status', 'meeting_speaker',
     'send_meeting_chat', 'read_meeting_chat',
     'rename_self', 'update_soul', 'update_memory', 'update_user_profile',
     'update_heartbeat_config', 'update_settings', 'update_vision', 'clear_bootstrap',
   ];
 
-  it('withholds share_file, and only share_file', () => {
+  it('withholds share_file and the message tools, and only those', () => {
     // Deliberately unrestricted apart from share_file: an agent that can only read
     // is little use in a working meeting, so `prompts/meeting-prompt.ts` is the
     // only guard on the destructive tools — asserted in meeting-prompt.test.ts.
-    // share_file is different in kind: it is not withheld for safety but because
-    // nothing in a meeting delivers what it stores, so it could only lie.
+    // share_file and the message tools are different in kind: they are not withheld
+    // for safety but because nothing in a meeting delivers or stores what they produce.
     const everything = Object.fromEntries(EVERYTHING.map((n) => [n, stub()]));
 
     const filtered = filterToolsByMode(everything, 'meeting');
 
     expect(Object.keys(filtered).sort()).toEqual(
-      EVERYTHING.filter((n) => n !== 'share_file').sort(),
+      EVERYTHING.filter((n) => !NOT_IN_A_CALL.includes(n)).sort(),
     );
   });
 
-  it('is chat minus share_file plus the chat read, so the two cannot drift apart', () => {
+  it('is chat minus the tools a call cannot use plus the chat read, so the two cannot drift apart', () => {
     const all = Object.fromEntries(EVERYTHING.map((n) => [n, stub()]));
 
     const expected = [
-      ...Object.keys(filterToolsByMode(all, 'chat')).filter((n) => n !== 'share_file'),
+      ...Object.keys(filterToolsByMode(all, 'chat')).filter((n) => !NOT_IN_A_CALL.includes(n)),
       'read_meeting_chat',
     ].sort();
 

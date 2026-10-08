@@ -41,6 +41,9 @@ import { agentWorkspaceService } from '../services/agent-workspace.service';
 import { pluginMcpService } from '../services/plugin-mcp.service';
 import type { PendingFileWrites } from './pending-file-writes';
 
+/** The tools that post a message, and list where it may go. */
+const MESSAGE_TOOL_NAMES = [SEND_MESSAGE_TOOL_NAME, 'list_message_targets'];
+
 export interface CollectToolsInput {
   computerUse?: ComputerUse;
   userId: string;
@@ -316,7 +319,7 @@ function omitLockedTools(tools: Record<string, Tool>): Record<string, Tool> {
  * - heartbeat, cron, webhook: minus the goal tools; the schedule tools stay
  * - subagent: minus share_file (no user channel), goal tools and the message tools (no user thread)
  * - goal: minus create_goal (no nested goals) and the schedule tools; get_goal stays
- * - meeting: chat's set minus share_file, plus read_meeting_chat (see the function body)
+ * - meeting: chat's set minus share_file and the message tools, plus read_meeting_chat (see the function body)
  * - any other mode: everything except the two tools that join or leave a call, and the
  *   chat read
  */
@@ -342,13 +345,16 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
     return omit(new Set([MEETING_READ_TOOL_NAME]));
   }
 
-  // A live voice meeting gets chat's surface except `share_file`, and the chat read on top.
+  // A live voice meeting gets chat's surface except `share_file` and the message tools,
+  // and the chat read on top.
   //
   // `share_file` is dropped for the same reason `subagent` drops it: the tool only
   // stores the file and hands back an id, and it is the *invoke loop* that carries
   // that id onto the step and the conversation engine that links it to a delivered
   // message. A meeting runs neither, so a shared file would be stored and then
   // reach nobody — while the tool's own description promises the user a download.
+  // The message tools go for a like reason: a sent message has to be stored in the
+  // history of the run that sent it, and nothing about a call is stored.
   //
   // Nothing else is withheld. Meeting mode used to also drop the tools whose
   // effects outlive the call (cron, self-configuration, memory writes), because
@@ -362,7 +368,7 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
   // conferring the agent's authority over itself and keep it private.
   // `docs/voice-meetings.md` says so plainly.
   if (mode === 'meeting') {
-    return omit(new Set([SHARE_FILE_TOOL_NAME]));
+    return omit(new Set([SHARE_FILE_TOOL_NAME, ...MESSAGE_TOOL_NAMES]));
   }
 
   // Only a person in a conversation asks the agent into a call or out of one, so every
@@ -389,8 +395,7 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
         SHARE_FILE_TOOL_NAME,
         'hydrate_attachment',
         'view_attachment',
-        SEND_MESSAGE_TOOL_NAME,
-        'list_message_targets',
+        ...MESSAGE_TOOL_NAMES,
         ...goalToolNames,
         ...membershipToolNames,
       ]),

@@ -5,8 +5,9 @@
  * the tools an ordinary chat turn gets — memory, cron, goals, shell, skills, plus
  * everything the Lens Agents MCP endpoint serves — are offered to the Realtime session as
  * function tools and executed in this process when called. `filterToolsByMode` makes two
- * changes for `meeting`: it drops `share_file`, because a meeting runs neither the invoke
- * loop nor the conversation engine that deliver what it stores, and it adds
+ * changes for `meeting`: it drops `share_file` and the message tools, because a meeting
+ * runs neither the invoke loop nor the conversation engine that deliver and store what
+ * they produce, and it adds
  * `read_meeting_chat`, which reads what people have typed in the call and which no other
  * mode gets, since every other mode stores its tool results.
  *

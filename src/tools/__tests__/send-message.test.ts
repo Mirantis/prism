@@ -99,7 +99,7 @@ describe('Requirement: the message tools act for the run that calls them', () =>
 describe('Requirement: every mode that stores its tool calls has the message tools', () => {
   const tools = getSendMessageTools('user-1', 'agent-1');
 
-  it.each(['chat', 'heartbeat', 'cron', 'webhook', 'goal', 'meeting'])('%s mode keeps them', (mode) => {
+  it.each(['chat', 'heartbeat', 'cron', 'webhook', 'goal'])('%s mode keeps them', (mode) => {
     const filtered = filterToolsByMode(tools, mode);
 
     expect(Object.keys(filtered).sort()).toEqual(['list_message_targets', 'send_message']);
@@ -108,4 +108,5 @@ describe('Requirement: every mode that stores its tool calls has the message too
   it('subagent mode drops them, because the parent run stores only the subagent text', () => {
     expect(filterToolsByMode(tools, 'subagent')).toEqual({});
   });
+
 });

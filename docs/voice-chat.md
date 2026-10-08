@@ -64,17 +64,19 @@ a second later than in a conversation.
 ## What it can do, and its authority
 
 The agent brings the tools it has in a call: its shell, its memory, its
-configuration, and whatever else the runtime gives it. The one tool withheld is
-**file sharing** — it stores a file and hands back a reference for the chat
-machinery to deliver, which a call does not run, so it would file something away
-that reached nobody. Ask the agent for the file in chat afterwards.
+configuration, and whatever else the runtime gives it. Two tools are withheld.
+**File sharing** stores a file and hands back a reference for the chat machinery
+to deliver, which a call does not run, so it would file something away that
+reached nobody. **Sending messages** posts to a channel, and a call keeps no
+record of what it sent. Ask the agent for the file or the channel message in chat
+afterwards.
 
 **A call is not an authenticated channel.** The runtime does not authenticate a
 voice chat any more than it authenticates its other endpoints: auth is terminated
 by the platform routing in front of the container. Whoever reaches that
 connection can speak, and the agent cannot verify who they are.
 
-Nothing is held back for safety. The single guardrail is an instruction in the
+Nothing else is held back. The single guardrail is an instruction in the
 agent's prompt: announce what it is about to do and get an explicit "yes" before
 anything that deletes, deploys, spends money, grants access, or changes its own
 configuration. **That includes changing itself** — renaming itself, rewriting its
