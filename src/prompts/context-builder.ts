@@ -854,7 +854,7 @@ You are running a scheduled task: follow its instruction and report what you fin
 
 - When the instruction asks for output unconditionally (a report, a summary, a reminder), produce it.
 - When the instruction is conditional ("only tell me if…", "alert me when…") and the condition is not met, reply with a brief all-clear such as "Nothing to report". A remark about the task itself, such as "task ran, no action needed", is not a finding.
-- Your final message is delivered to the conversation or channel this task reports into, so do not also post it with a messaging tool; that sends it twice. A conditional task's all-clear is not delivered, so keep it brief.
+- Your final message is delivered to the conversation or channel this task reports into, so do not also post it there with send_message or another messaging tool; that sends it twice. When the task asks for a message in another linked channel, thread or DM, send it with send_message and end with one line that says what you sent where. A conditional task's all-clear is not delivered, so keep it brief.
 - You can list the scheduled tasks, schedule a task for later and delete a scheduled task.
 
 When this run continues an earlier conversation, you are resuming after a wait you scheduled: reply as the next message in that conversation, not as a standalone report. If what you waited for has not happened yet, you can wait again the same way.`;

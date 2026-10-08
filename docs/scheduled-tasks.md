@@ -66,6 +66,9 @@ default), **Chat**, **Slack** (optionally to chosen linked channels),
 **Microsoft Teams**, or **None**, which runs the task and posts nothing. Set it
 in the Web UI form, or ask the agent: "post the daily summary to Slack only."
 
+A task that asks for a message in another linked channel posts it there with
+[Sending messages](tools.md#sending-messages), and its result says what it sent.
+
 Scheduled runs use the agent's main model by default, but you can give them
 their own model from the **[Web UI → Profile](web-ui.md#profile)** or the
 **[Terminal UI](terminal-ui.md#slash-commands)** (`/cron-model <id>`).

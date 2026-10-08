@@ -196,6 +196,14 @@ opening a browser. It opens a page that needs a sign-in or JavaScript in
 [its computer](computer.md). For a page on a private network, it uses its computer
 or the shell.
 
+## Sending messages
+
+The agent can post a message to a Slack or Microsoft Teams channel, a thread in
+one, or a DM that is linked to it, and to nowhere else. Ask it in a conversation
+or in a scheduled task's instruction, for example "post the release notes to
+`#release`". It mentions a person to notify them, and that person has to be in
+the channel. It refuses `@channel`, `@here`, `@everyone` and group mentions.
+
 ## Sharing files
 
 The agent can deliver a file from its workspace to you as a **downloadable

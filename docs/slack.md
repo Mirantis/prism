@@ -25,7 +25,11 @@ reactions, and showing its working status. A working set of bot scopes:
 app_mentions:read   chat:write        im:history        im:read
 channels:history    groups:history    files:read        files:write
 users:read          reactions:write   assistant:write   conversations.connections:write
+channels:read       groups:read
 ```
+
+`channels:read` and `groups:read` let the agent check that a person it mentions
+in a [sent message](tools.md#sending-messages) is in the channel.
 
 `assistant:write` powers the "is thinking…" status line while the agent works
 (see below); rendering it also requires the Slack app's **Agents & AI Apps**

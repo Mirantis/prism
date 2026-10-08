@@ -302,10 +302,12 @@ describe('system prompt text', () => {
     expect(prompt).toContain('A remark about the task itself');
   });
 
-  it('cron mode tells the agent its response is delivered for it, not to post to Slack itself', async () => {
+  it('cron mode tells the agent its response is delivered for it, and to send only to another target itself', async () => {
     const context = createTestAgentContext();
     const prompt = await promptText(context, 'cron');
-    expect(prompt).toContain('do not also post it with a messaging tool');
+    expect(prompt).toContain(
+      '- Your final message is delivered to the conversation or channel this task reports into, so do not also post it there with send_message or another messaging tool; that sends it twice. When the task asks for a message in another linked channel, thread or DM, send it with send_message and end with one line that says what you sent where. A conditional task\'s all-clear is not delivered, so keep it brief.',
+    );
   });
 
   it('webhook mode includes webhook instructions and no chat/bootstrap sections', async () => {
