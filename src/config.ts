@@ -287,7 +287,7 @@ const bedrockEmbeddingModelId = process.env.BEDROCK_EMBEDDING_MODEL_ID || 'amazo
 // embedding fails open (the SDK call errors and is swallowed → no vector);
 // set AZURE_EMBEDDING_MODEL_ID='' to skip embedding entirely.
 const azureModelId = process.env.AZURE_MODEL_ID || 'claude-opus-5';
-const azureClassificationModelId = process.env.AZURE_CLASSIFICATION_MODEL_ID || 'claude-haiku-4-5';
+const azureClassificationModelId = process.env.AZURE_CLASSIFICATION_MODEL_ID || 'claude-haiku-5-5';
 const azureEmbeddingModelId = process.env.AZURE_EMBEDDING_MODEL_ID ?? 'text-embedding-3-small';
 // Bedrock Mantle model IDs are plain Bedrock IDs, but *bare*: mantle does not
 // support cross-region inference profiles, so a `us.`/`eu.`/`global.` prefix is
@@ -364,7 +364,7 @@ const openaiApiKey = process.env.OPENAI_API_KEY;
 // disabled — see EMBEDDING_PROVIDER_DEFAULTS below).
 const anthropicModelId = process.env.ANTHROPIC_MODEL_ID || 'claude-opus-5';
 const anthropicClassificationModelId =
-  process.env.ANTHROPIC_CLASSIFICATION_MODEL_ID || 'claude-haiku-4-5';
+  process.env.ANTHROPIC_CLASSIFICATION_MODEL_ID || 'claude-haiku-5-5';
 // The Anthropic API key, sent as the `x-api-key` header. Required — this
 // vendor is direct-only (no Nexus mount serves api.anthropic.com), so there is
 // no gateway to hold the credential. May be a `__nexus_cred:<uuid>__` sentinel
@@ -382,7 +382,7 @@ const anthropicBaseUrl = process.env.ANTHROPIC_BASE_URL || undefined;
 // it does not serve one.
 const litellmModelId = process.env.LITELLM_MODEL_ID || 'claude-opus-5-5';
 const litellmClassificationModelId =
-  process.env.LITELLM_CLASSIFICATION_MODEL_ID || 'claude-haiku-4-5';
+  process.env.LITELLM_CLASSIFICATION_MODEL_ID || 'claude-haiku-5-5';
 // The LiteLLM key, sent as the `x-api-key` header, for direct mode. Not needed
 // through the gateway, which holds its own. May be a `__nexus_cred:<uuid>__`
 // sentinel, since it only rides a header.

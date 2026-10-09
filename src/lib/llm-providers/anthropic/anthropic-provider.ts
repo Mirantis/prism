@@ -20,11 +20,10 @@
  * `missingAnthropicSettings()` always requires the key. The key is sent as the
  * `x-api-key` header, with `anthropic-version` added by the SDK.
  *
- * The optional vendor declarations all stay unset: api.anthropic.com accepts
- * the SDK's native structured-output path (unlike Foundry and mantle, which
- * declare `structuredOutputOptions`), and first-party Claude classification
- * models accept `temperature: 0` and any positive token cap, so the gate
- * defaults apply unchanged.
+ * api.anthropic.com accepts the SDK's native structured-output path (unlike
+ * Foundry and mantle, which declare `structuredOutputOptions`) and any positive
+ * token cap, so those declarations stay unset. The gates send no temperature,
+ * because the default classification model, Haiku 5.5, rejects it.
  */
 
 import { createAnthropic } from '@ai-sdk/anthropic';
@@ -81,6 +80,7 @@ export function createAnthropicProvider(): LlmProvider {
   const dispatcher = (modelId: string) => anthropic(toFirstPartyModelId(modelId));
   return Object.assign(dispatcher, {
     cachePoint: () => ANTHROPIC_CACHE_POINT,
+    classificationSamplingParams: {},
   });
 }
 

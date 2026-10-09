@@ -57,6 +57,8 @@ export function createAzureProvider(baseURL?: string): LlmProvider {
     // Anthropic's native `output_config.format`.
     structuredOutputOptions: { anthropic: { structuredOutputMode: 'jsonTool' } },
     cachePoint: () => ANTHROPIC_CACHE_POINT,
+    // The default classification model, Haiku 5.5, rejects an explicit temperature.
+    classificationSamplingParams: {},
   });
 }
 

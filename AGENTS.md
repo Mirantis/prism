@@ -504,7 +504,7 @@ speak the Anthropic Messages API at
 `https://{AZURE_RESOURCE_NAME}.services.ai.azure.com/anthropic/v1/messages`
 with `AZURE_API_KEY` sent as `x-api-key` (may be a `__nexus_cred:<uuid>__`
 sentinel); model IDs are Foundry deployment names (defaults
-`claude-opus-5` / `claude-haiku-4-5`). Azure embeddings come from an
+`claude-opus-5` / `claude-haiku-5-5`). Azure embeddings come from an
 Azure OpenAI `text-embedding-3` deployment on the same resource
 (default `text-embedding-3-small`; fails open if the deployment is
 absent, or set `AZURE_EMBEDDING_MODEL_ID=''` to skip).
@@ -550,7 +550,7 @@ their caching needs explicit markers the OpenAI SDK cannot send.
 Messages API direct to `api.anthropic.com` (or `ANTHROPIC_BASE_URL`) with
 `ANTHROPIC_API_KEY` sent as `x-api-key` (may be a `__nexus_cred:<uuid>__`
 sentinel); model IDs are bare first-party names (defaults `claude-opus-5` /
-`claude-haiku-4-5`). It is the one **direct-only** vendor — no gateway mount
+`claude-haiku-5-5`). It is the one **direct-only** vendor — no gateway mount
 serves api.anthropic.com, so the key is always required and `nexusChatBaseUrl`
 resolves to null even with `NEXUS_API_URL` set. Anthropic serves no embedding
 models; under it the embedding provider defaults to `openai` when
@@ -562,7 +562,7 @@ Messages format: direct at `LITELLM_BASE_URL` with `LITELLM_API_KEY` as
 cost LiteLLM reports. Lens Agents' Prism template passes the project's backend
 id through as `LLM_PROVIDER`, so this name matches the gateway's. Model ids are
 the operator's aliases, defaulting to the first-party names of the default
-models (`claude-opus-5-5` / `claude-haiku-4-5`), and the provider's
+models (`claude-opus-5-5` / `claude-haiku-5-5`), and the provider's
 `startupCheck` logs the proxy's model list when either alias is not served. An alias can route to a
 non-Anthropic upstream, so structured output uses `jsonTool` and the gates send
 no temperature. Embeddings default to `none`.
@@ -1064,7 +1064,7 @@ What the operator sets on `docker run`:
 | `BEDROCK_MODEL_ID` | AWS Bedrock model ID | `global.anthropic.claude-opus-5-5` |
 | `BEDROCK_CLASSIFICATION_MODEL_ID` | Bedrock model for classification gate (heartbeat & scheduled-task DELIVER/SUPPRESS) | `global.anthropic.claude-haiku-5-5` |
 | `AZURE_RESOURCE_NAME` / `AZURE_API_KEY` | Foundry resource + key (Claude via Microsoft Foundry; used when `LLM_PROVIDER=azure`) | — |
-| `AZURE_MODEL_ID` / `AZURE_CLASSIFICATION_MODEL_ID` | Foundry Claude deployment names (chat / classification gate) | `claude-opus-5` / `claude-haiku-4-5` |
+| `AZURE_MODEL_ID` / `AZURE_CLASSIFICATION_MODEL_ID` | Foundry Claude deployment names (chat / classification gate) | `claude-opus-5` / `claude-haiku-5-5` |
 | `AZURE_EMBEDDING_MODEL_ID` | Azure OpenAI `text-embedding-3` deployment for memory embeddings (fail-open if absent; `''` to skip) | `text-embedding-3-small` |
 | `AZURE_FOUNDRY_BASE_URL` | Override the Foundry chat endpoint; outranks the gateway mount | derived from resource |
 | `AZURE_API_VERSION` | Azure OpenAI API version (embeddings only) | SDK default (`preview`) |
@@ -1079,11 +1079,11 @@ What the operator sets on `docker run`:
 | `OPENROUTER_BASE_URL` | Override the OpenRouter chat/embeddings endpoint (must serve the Responses API); outranks the gateway mount | `https://openrouter.ai/api/v1` |
 | `OPENAI_BASE_URL` | Override the chat/embeddings endpoint (must serve the Responses API; does not move the Realtime socket — `OPENAI_REALTIME_URL` does); outranks the gateway mount | SDK default (`https://api.openai.com/v1`) |
 | `ANTHROPIC_API_KEY` | First-party Anthropic API key, sent as `x-api-key`; **always required** under `LLM_PROVIDER=anthropic` (direct-only — no Nexus mount). May be a `__nexus_cred:<uuid>__` sentinel | — |
-| `ANTHROPIC_MODEL_ID` / `ANTHROPIC_CLASSIFICATION_MODEL_ID` | Bare first-party model IDs (chat / classification gate) | `claude-opus-5` / `claude-haiku-4-5` |
+| `ANTHROPIC_MODEL_ID` / `ANTHROPIC_CLASSIFICATION_MODEL_ID` | Bare first-party model IDs (chat / classification gate) | `claude-opus-5` / `claude-haiku-5-5` |
 | `ANTHROPIC_BASE_URL` | Override the direct chat endpoint (must end at `/v1`) | SDK default (`https://api.anthropic.com/v1`) |
 | `LITELLM_BASE_URL` | The operator's LiteLLM proxy, normalised to end at `/v1`; outranks the gateway mount. Direct mode needs it, since a proxy has no public host | — |
 | `LITELLM_API_KEY` | LiteLLM key, sent as `x-api-key`. Required direct, where a model call without it fails before any request; not needed through the gateway. May be a `__nexus_cred:<uuid>__` sentinel | — |
-| `LITELLM_MODEL_ID` / `LITELLM_CLASSIFICATION_MODEL_ID` | The proxy's aliases (chat / classification gate). Classification should be Claude or non-reasoning, since the gates allow a few output tokens | `claude-opus-5-5` / `claude-haiku-4-5` |
+| `LITELLM_MODEL_ID` / `LITELLM_CLASSIFICATION_MODEL_ID` | The proxy's aliases (chat / classification gate). Classification should be Claude or non-reasoning, since the gates allow a few output tokens | `claude-opus-5-5` / `claude-haiku-5-5` |
 | `CONTEXT_WINDOW_TOKENS` | Input-context window assumed for the context-usage indicator; only needed for a model the catalog doesn't know | derived from the model ID |
 | `MODELS_DEV_URL` | Opt in to refreshing the model-window catalog from a registry once at startup (e.g. `https://models.dev/api.json`); unset = no outbound call, bundled catalog only | — (disabled) |
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-compact a thread when context occupancy reaches this percent of the model's window; `0` disables | `90` |
@@ -1243,7 +1243,7 @@ When the step limit is reached, a follow-up `generateText()` call is made **with
 | `STEP_LIMIT` | `100` | Maximum number of tool-use steps before stopping |
 | `MAX_OUTPUT_TOKENS` | `16000` | Max tokens per `generateText()` call |
 
-The main `invokeStream()`/`invoke()` calls send no sampling params (`temperature`, `top_p`, `top_k`) at all — Opus 4.7 and later reject them (per Anthropic's Bedrock migration guide), so the invoke path omits them entirely rather than tracking which model version accepts what. The classification gates apply the same rule through the provider seam: `getGateRequest().samplingParams` is `{ temperature: 0 }` on the Azure, Mantle and Anthropic vendors (Haiku 4.5 accepts it) and `{}` on bedrock (Haiku 5.5 rejects it), openai, openrouter and litellm (GPT-5.x models reject or strip it).
+The main `invokeStream()`/`invoke()` calls send no sampling params (`temperature`, `top_p`, `top_k`) at all — Opus 4.7 and later reject them (per Anthropic's Bedrock migration guide), so the invoke path omits them entirely rather than tracking which model version accepts what. The classification gates apply the same rule through the provider seam: `getGateRequest().samplingParams` is `{ temperature: 0 }` on Mantle only, whose Haiku 4.5 default accepts it. It is `{}` on bedrock, azure, anthropic and litellm, whose Haiku 5.5 default rejects it, and on openai and openrouter, whose GPT-5.x models reject or strip it.
 
 ## LLM Error Handling
 
@@ -1357,7 +1357,7 @@ After the main LLM call produces a heartbeat response, a second cheap LLM call a
 
 - **Model**: the fast classification model via `getGateRequest()` (from `lib/classification.ts`, which goes through `createProvider()` and also carries the vendor's `classificationProviderOptions`), configured by `BEDROCK_CLASSIFICATION_MODEL_ID` (or `AZURE_CLASSIFICATION_MODEL_ID` on Azure, `BEDROCK_MANTLE_CLASSIFICATION_MODEL_ID` on bedrock-mantle, `OPENAI_CLASSIFICATION_MODEL_ID` on openai).
 - **Input**: The heartbeat response text and the last alert context (text + how long ago it was sent, formatted via `formatTimeAgo`).
-- **Output**: A single word -- `DELIVER` or `SUPPRESS`. Uses `maxOutputTokens: 16` (the OpenAI Responses API minimum — a cap, so free on the Claude vendors) and the provider's gate sampling params: `temperature: 0` on the Azure, Mantle and Anthropic vendors for determinism, omitted entirely on bedrock (Haiku 5.5 rejects it) and openai (GPT-5.x rejects or strips it), with `reasoningEffort: 'none'` pinned there so reasoning tokens can't eat the budget.
+- **Output**: A single word -- `DELIVER` or `SUPPRESS`. Uses `maxOutputTokens: 16` (the OpenAI Responses API minimum — a cap, so free on the Claude vendors) and the provider's gate sampling params: `temperature: 0` on Mantle for determinism, omitted entirely on every other vendor (Haiku 5.5 and GPT-5.x reject or strip it), with `reasoningEffort: 'none'` pinned on openai so reasoning tokens can't eat the budget.
 - **Meta-commentary**: The gate prompt explicitly suppresses reports that are meta-commentary about the heartbeat itself (e.g. "no checks configured", "heartbeat config is empty") rather than real findings.
 - **Fail-open**: If the gate call throws an error, the message is delivered (safe default).
 - **Ordering**: Programmatic checks (empty response, exact-match 24h duplicate suppression) run first. The gate LLM call is only made when those checks pass.

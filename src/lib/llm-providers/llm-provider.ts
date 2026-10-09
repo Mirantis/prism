@@ -141,9 +141,9 @@ export type LlmProvider = ((modelId: string) => LanguageModel) & {
   classificationMinOutputTokens?: number;
   /**
    * Sampling params for classification/gate calls. Undefined means the
-   * default, `{ temperature: 0 }` — deterministic verdicts, which first-party
-   * Claude Haiku 4.5 accepts. A vendor whose models reject or strip an explicit
-   * temperature (Bedrock's Haiku 5.5, GPT-5.x reasoning models; whether the SDK even forwards it
+   * default, `{ temperature: 0 }` — deterministic verdicts, which Haiku 4.5
+   * accepts. A vendor whose models reject or strip an explicit temperature
+   * (Haiku 5.5, GPT-5.x reasoning models; whether the SDK even forwards it
    * depends on its per-model support matrix) declares `{}` so the gates omit
    * the param entirely — the same omit-rather-than-track rule the main
    * invoke path applies to sampling params.

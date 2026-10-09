@@ -78,7 +78,7 @@ disabled — see [Memory embeddings](#memory-embeddings).
 `litellm` runs the agent on your own [LiteLLM](https://docs.litellm.ai) proxy.
 Set `LITELLM_BASE_URL` to the proxy's address and `LITELLM_API_KEY` to a
 LiteLLM key. On Lens Agents, choose LiteLLM as the project's inference backend
-instead. The agent asks the proxy for `claude-opus-5-5` and `claude-haiku-4-5`.
+instead. The agent asks the proxy for `claude-opus-5-5` and `claude-haiku-5-5`.
 If your proxy names its models differently, the startup log lists the names it
 serves: set `LITELLM_MODEL_ID` and `LITELLM_CLASSIFICATION_MODEL_ID` to them.
 Memory embeddings are off until you turn them on in
@@ -393,7 +393,7 @@ defines**.
 | `BEDROCK_EMBEDDING_MODEL_ID` | **(Bedrock)** Embedding model for [searchable memory](memory.md) | `amazon.titan-embed-text-v2:0` |
 | `AWS_REGION` | **(Bedrock)** AWS region for Bedrock | `us-east-1` |
 | `AZURE_MODEL_ID` | **(Azure)** Main model — a Claude chat deployment name | `claude-opus-5` |
-| `AZURE_CLASSIFICATION_MODEL_ID` | **(Azure)** Fast Claude deployment for classification gates | `claude-haiku-4-5` |
+| `AZURE_CLASSIFICATION_MODEL_ID` | **(Azure)** Fast Claude deployment for classification gates | `claude-haiku-5-5` |
 | `AZURE_EMBEDDING_MODEL_ID` | **(Azure)** Azure OpenAI embedding deployment (a `text-embedding-3` model; truncated to 1024 dims to match the memory index). The deployment must exist on the resource, else memory embedding fails open (no vector). Set to `''` to skip embeddings entirely. | `text-embedding-3-small` |
 | `AZURE_API_VERSION` | **(Azure)** Azure OpenAI API version (embeddings only) | SDK default (`preview`) |
 | `BEDROCK_MANTLE_MODEL_ID` | **(Mantle)** Main model — a **bare** Bedrock ID | `anthropic.claude-opus-5` |
@@ -407,9 +407,9 @@ defines**.
 | `OPENROUTER_CLASSIFICATION_MODEL_ID` | **(OpenRouter)** Fast `vendor/model` for the heartbeat gate, under the same parameter caveat as the OpenAI one. | `openai/gpt-5.6-luna` |
 | `OPENROUTER_EMBEDDING_MODEL_ID` | **(OpenRouter)** Embedding model, as `vendor/model`. **Off by default**, unlike the other platforms: OpenRouter routes embedding models from several vendors whose native dimensionalities differ, and the memory index is fixed at 1024 dims — so there is no id that is right by default. Name one that can deliver 1024 (`openai/text-embedding-3-small` truncates to it) to switch memory embeddings on. | `''` (disabled) |
 | `ANTHROPIC_MODEL_ID` | **(Anthropic)** Main model (the agent's reasoning loop) | `claude-opus-5` |
-| `ANTHROPIC_CLASSIFICATION_MODEL_ID` | **(Anthropic)** Fast model for the heartbeat gate | `claude-haiku-4-5` |
+| `ANTHROPIC_CLASSIFICATION_MODEL_ID` | **(Anthropic)** Fast model for the heartbeat gate | `claude-haiku-5-5` |
 | `LITELLM_MODEL_ID` | **(LiteLLM)** Main model, as your proxy names it | `claude-opus-5-5` |
-| `LITELLM_CLASSIFICATION_MODEL_ID` | **(LiteLLM)** Fast model for classification gates, as your proxy names it. Name a Claude or other non-reasoning model: the gates allow a few output tokens, and a reasoning model can use them up before it answers. | `claude-haiku-4-5` |
+| `LITELLM_CLASSIFICATION_MODEL_ID` | **(LiteLLM)** Fast model for classification gates, as your proxy names it. Name a Claude or other non-reasoning model: the gates allow a few output tokens, and a reasoning model can use them up before it answers. | `claude-haiku-5-5` |
 | `CONTEXT_WINDOW_TOKENS` | Input-context window (tokens) to assume for the agent's model. Only needed when the catalog doesn't recognize it. Ignored unless a positive integer. | derived from the model ID |
 | `MODELS_DEV_URL` | Refresh the model-window catalog from a registry once at startup. Unset means no outbound call, bundled catalog only. | — (disabled) |
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-[compact](compaction.md) a conversation when its context occupancy reaches this percent of the model's window. `0` disables auto-compaction; out-of-range values fall back to the default. | `90` |

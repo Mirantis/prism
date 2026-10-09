@@ -31,6 +31,10 @@ describe('createAzureProvider', () => {
     vi.clearAllMocks();
   });
 
+  it('sends the gates no temperature, which Haiku 5.5 rejects', () => {
+    expect(createAzureProvider(FOUNDRY).classificationSamplingParams).toEqual({});
+  });
+
   it('sends requests to the endpoint it is given', () => {
     createAzureProvider(FOUNDRY);
 

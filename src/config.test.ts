@@ -507,7 +507,7 @@ describe('config', () => {
       const cfg = await loadConfig();
       expect(cfg.llmProvider).toBe('azure');
       expect(cfg.chatModelId).toBe('claude-opus-5');
-      expect(cfg.classificationModelId).toBe('claude-haiku-4-5');
+      expect(cfg.classificationModelId).toBe('claude-haiku-5-5');
       expect(cfg.embeddingModelId).toBe('text-embedding-3-small');
     });
 
@@ -621,7 +621,7 @@ describe('config', () => {
       const cfg = await loadConfig();
       expect(cfg.llmProvider).toBe('anthropic');
       expect(cfg.chatModelId).toBe('claude-opus-5');
-      expect(cfg.classificationModelId).toBe('claude-haiku-4-5');
+      expect(cfg.classificationModelId).toBe('claude-haiku-5-5');
     });
 
     it('anthropic without an OpenAI key or gateway runs without embeddings', async () => {
@@ -675,7 +675,7 @@ describe('config', () => {
       const cfg = await loadConfig();
       expect(cfg.llmProvider).toBe('litellm');
       expect(cfg.chatModelId).toBe('claude-opus-5-5');
-      expect(cfg.classificationModelId).toBe('claude-haiku-4-5');
+      expect(cfg.classificationModelId).toBe('claude-haiku-5-5');
     });
 
     it('reads the proxy\'s own aliases from LITELLM_MODEL_ID and LITELLM_CLASSIFICATION_MODEL_ID', async () => {
