@@ -80,9 +80,11 @@ describe('createAnthropicProvider', () => {
     expect(createAnthropicProvider().structuredOutputOptions).toBeUndefined();
   });
 
-  it('declares no classification options or token floor, and sends the gates no temperature', () => {
+  it('turns gate thinking off, sends no temperature and declares no token floor', () => {
     const provider = createAnthropicProvider();
-    expect(provider.classificationProviderOptions).toBeUndefined();
+    expect(provider.classificationProviderOptions).toEqual({
+      anthropic: { thinking: { type: 'disabled' } },
+    });
     expect(provider.classificationMinOutputTokens).toBeUndefined();
     expect(provider.classificationSamplingParams).toEqual({});
   });

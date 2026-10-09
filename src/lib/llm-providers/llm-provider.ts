@@ -27,7 +27,19 @@ import type { LanguageModel } from 'ai';
  * above). The value union stays inside `JSONValue`, so this is assignable
  * wherever the SDK asks for `providerOptions`.
  */
-export type ProviderOptionsFragment = Record<string, Record<string, string | number | boolean>>;
+export type ProviderOptionsFragment = Record<
+  string,
+  Record<string, string | number | boolean | { [key: string]: string | number | boolean }>
+>;
+
+/**
+ * Turns extended thinking off on an Anthropic Messages request. Thinking tokens
+ * count against the gates' 16-token output cap, and a gate whose cap runs out
+ * before the verdict returns empty text.
+ */
+export const ANTHROPIC_THINKING_OFF: ProviderOptionsFragment = {
+  anthropic: { thinking: { type: 'disabled' } },
+};
 
 /** Anthropic's ephemeral prompt-cache breakpoint fragment. */
 export type AnthropicCachePoint = { anthropic: { cacheControl: { type: 'ephemeral' } } };
@@ -126,7 +138,8 @@ export type LlmProvider = ((modelId: string) => LanguageModel) & {
    * The gates run a small model with `temperature: 0` and tiny output-token
    * budgets — assumptions a reasoning model breaks (GPT-5.x rejects
    * non-default temperature outside `reasoningEffort: 'none'`, and reasoning
-   * tokens would eat the budget before the verdict). The vendor knows what
+   * tokens would eat the budget before the verdict; Haiku 5.5 can think
+   * unasked). The vendor knows what
    * its classification model needs; the gate call sites don't.
    */
   classificationProviderOptions?: ProviderOptionsFragment;
