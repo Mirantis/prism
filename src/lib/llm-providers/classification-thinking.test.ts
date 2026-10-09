@@ -40,9 +40,17 @@ async function gateBody(provider: LlmProvider, modelId: string) {
 
 describe('gate request body', () => {
   beforeEach(() => {
+    // Everything the three providers read, set here so the result does not
+    // depend on the machine's environment. Bedrock signs with explicit keys.
+    vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', '');
     config.anthropicApiKey = 'test-key';
+    config.anthropicBaseUrl = undefined;
     config.azureApiKey = 'test-key';
     config.bedrockApiKey = 'test-key';
+    config.awsRegion = 'us-east-1';
+    config.awsAccessKeyId = 'test-access-key';
+    config.awsSecretAccessKey = 'test-secret-key';
+    config.awsSessionToken = undefined;
     bodies = [];
     vi.stubGlobal(
       'fetch',
@@ -58,6 +66,7 @@ describe('gate request body', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it('turns thinking off and sends no temperature on Anthropic', async () => {
@@ -77,7 +86,7 @@ describe('gate request body', () => {
 
   it('turns thinking off and sends no temperature on Bedrock', async () => {
     const body = await gateBody(
-      createBedrockProvider('https://gateway.example.com/llm/bedrock/us-east-1'),
+      createBedrockProvider(),
       'global.anthropic.claude-haiku-5-5',
     );
     expect(body.thinking).toEqual({ type: 'disabled' });
