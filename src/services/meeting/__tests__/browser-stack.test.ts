@@ -19,7 +19,6 @@ const {
   isBrowserAvailable,
   bypassProxyForLoopback,
   buildBrowserArgs,
-  disablePasswordStorage,
   BrowserStack,
 } = await import('../browser-stack');
 
@@ -421,41 +420,5 @@ describe('stop', () => {
 
     expect(browser.send).toHaveBeenCalledTimes(1);
     expect(proc.kill).not.toHaveBeenCalled();
-  });
-});
-
-describe('the profile’s password manager', () => {
-  const preferences = () => path.join(tmp, 'Default', 'Preferences');
-
-  it('is turned off without disturbing what the profile already holds', async () => {
-    await fs.mkdir(path.dirname(preferences()), { recursive: true });
-    await fs.writeFile(
-      preferences(),
-      JSON.stringify({
-        profile: { name: 'Person 1', exit_type: 'Normal' },
-        browser: { window_placement: { maximized: true } },
-        credentials_enable_service: true,
-      }),
-    );
-
-    await disablePasswordStorage(tmp);
-
-    const prefs = JSON.parse(await fs.readFile(preferences(), 'utf8'));
-    expect(prefs.credentials_enable_service).toBe(false);
-    expect(prefs.credentials_enable_autosignin).toBe(false);
-    expect(prefs.profile.password_manager_enabled).toBe(false);
-    expect(prefs.profile.name).toBe('Person 1');
-    expect(prefs.profile.exit_type).toBe('Normal');
-    expect(prefs.browser).toEqual({ window_placement: { maximized: true } });
-  });
-
-  it('is turned off on a profile that has never run', async () => {
-    await disablePasswordStorage(tmp);
-
-    expect(JSON.parse(await fs.readFile(preferences(), 'utf8'))).toEqual({
-      credentials_enable_service: false,
-      credentials_enable_autosignin: false,
-      profile: { password_manager_enabled: false },
-    });
   });
 });

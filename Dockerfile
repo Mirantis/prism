@@ -347,6 +347,12 @@ ENV PRISM_DATA_DIR=/data
 RUN mkdir -p /etc/chromium/policies/managed /etc/opt/chrome/policies/managed \
  && chown node:node /etc/chromium/policies/managed /etc/opt/chrome/policies/managed
 
+# Managed policy for every Chromium the image runs. A person on the Computer page cannot
+# open DevTools, local files or page source in the browser that holds the signed-in
+# sessions, and the browser saves no password that the person types.
+COPY --chmod=0444 docker/chromium-hardening.json /etc/chromium/policies/managed/prism-hardening.json
+COPY --chmod=0444 docker/chromium-hardening.json /etc/opt/chrome/policies/managed/prism-hardening.json
+
 # The Orchis theme (https://github.com/vinceliuice/Orchis-theme), which is what the
 # desktop, its window frames and its dock are drawn with. Pinned to a commit and checked
 # against its digest, since it is a third-party archive fetched at build time. Only the
