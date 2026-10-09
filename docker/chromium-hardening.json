@@ -1,0 +1,4 @@
+{
+  "PasswordManagerEnabled": false,
+  "URLBlocklist": ["file://*", "view-source:*", "devtools://*"]
+}
