@@ -63,6 +63,8 @@ export function createBedrockProvider(baseURL?: string): LlmProvider {
     isAnthropicModelId(modelId) ? anthropic(modelId) : generic(modelId);
   return Object.assign(dispatcher, {
     cachePoint: promptCacheFragment,
+    // Haiku 5.5, the classification default, rejects an explicit temperature.
+    classificationSamplingParams: {},
     // Derived from the fragment rather than repeating the rule, so the startup
     // line cannot disagree with what the request carries.
     promptCacheState: (modelId: string): 'on' | 'off' =>

@@ -130,6 +130,10 @@ describe('createBedrockProvider', () => {
     expect(createBedrockProvider().structuredOutputOptions).toBeUndefined();
   });
 
+  it('sends the gates no temperature, which Haiku 5.5 rejects', () => {
+    expect(createBedrockProvider().classificationSamplingParams).toEqual({});
+  });
+
   it('gives Anthropic models the Anthropic cacheControl fragment', () => {
     expect(createBedrockProvider().cachePoint('global.anthropic.claude-opus-5-5')).toEqual({
       anthropic: { cacheControl: { type: 'ephemeral' } },

@@ -1062,7 +1062,7 @@ What the operator sets on `docker run`:
 | `AWS_ACCESS_KEY_ID` | AWS SigV4 credentials | — |
 | `AWS_SECRET_ACCESS_KEY` | AWS SigV4 credentials | — |
 | `BEDROCK_MODEL_ID` | AWS Bedrock model ID | `global.anthropic.claude-opus-5-5` |
-| `BEDROCK_CLASSIFICATION_MODEL_ID` | Bedrock model for classification gate (heartbeat & scheduled-task DELIVER/SUPPRESS) | `global.anthropic.claude-haiku-4-5-20251001-v1:0` |
+| `BEDROCK_CLASSIFICATION_MODEL_ID` | Bedrock model for classification gate (heartbeat & scheduled-task DELIVER/SUPPRESS) | `global.anthropic.claude-haiku-5-5` |
 | `AZURE_RESOURCE_NAME` / `AZURE_API_KEY` | Foundry resource + key (Claude via Microsoft Foundry; used when `LLM_PROVIDER=azure`) | — |
 | `AZURE_MODEL_ID` / `AZURE_CLASSIFICATION_MODEL_ID` | Foundry Claude deployment names (chat / classification gate) | `claude-opus-5` / `claude-haiku-4-5` |
 | `AZURE_EMBEDDING_MODEL_ID` | Azure OpenAI `text-embedding-3` deployment for memory embeddings (fail-open if absent; `''` to skip) | `text-embedding-3-small` |
@@ -1243,7 +1243,7 @@ When the step limit is reached, a follow-up `generateText()` call is made **with
 | `STEP_LIMIT` | `100` | Maximum number of tool-use steps before stopping |
 | `MAX_OUTPUT_TOKENS` | `16000` | Max tokens per `generateText()` call |
 
-The main `invokeStream()`/`invoke()` calls send no sampling params (`temperature`, `top_p`, `top_k`) at all — Opus 4.7 and later reject them (per Anthropic's Bedrock migration guide), so the invoke path omits them entirely rather than tracking which model version accepts what. The classification gates apply the same rule through the provider seam: `getGateRequest().samplingParams` is `{ temperature: 0 }` on the Claude vendors (Haiku continues to accept it) and `{}` on openai, whose GPT-5.x models reject or strip an explicit temperature.
+The main `invokeStream()`/`invoke()` calls send no sampling params (`temperature`, `top_p`, `top_k`) at all — Opus 4.7 and later reject them (per Anthropic's Bedrock migration guide), so the invoke path omits them entirely rather than tracking which model version accepts what. The classification gates apply the same rule through the provider seam: `getGateRequest().samplingParams` is `{ temperature: 0 }` on the Azure, Mantle and Anthropic vendors (Haiku 4.5 accepts it) and `{}` on bedrock (Haiku 5.5 rejects it), openai, openrouter and litellm (GPT-5.x models reject or strip it).
 
 ## LLM Error Handling
 
@@ -1357,7 +1357,7 @@ After the main LLM call produces a heartbeat response, a second cheap LLM call a
 
 - **Model**: the fast classification model via `getGateRequest()` (from `lib/classification.ts`, which goes through `createProvider()` and also carries the vendor's `classificationProviderOptions`), configured by `BEDROCK_CLASSIFICATION_MODEL_ID` (or `AZURE_CLASSIFICATION_MODEL_ID` on Azure, `BEDROCK_MANTLE_CLASSIFICATION_MODEL_ID` on bedrock-mantle, `OPENAI_CLASSIFICATION_MODEL_ID` on openai).
 - **Input**: The heartbeat response text and the last alert context (text + how long ago it was sent, formatted via `formatTimeAgo`).
-- **Output**: A single word -- `DELIVER` or `SUPPRESS`. Uses `maxOutputTokens: 16` (the OpenAI Responses API minimum — a cap, so free on the Claude vendors) and the provider's gate sampling params: `temperature: 0` on the Claude vendors for determinism, omitted entirely on openai (GPT-5.x rejects or strips it), with `reasoningEffort: 'none'` pinned there so reasoning tokens can't eat the budget.
+- **Output**: A single word -- `DELIVER` or `SUPPRESS`. Uses `maxOutputTokens: 16` (the OpenAI Responses API minimum — a cap, so free on the Claude vendors) and the provider's gate sampling params: `temperature: 0` on the Azure, Mantle and Anthropic vendors for determinism, omitted entirely on bedrock (Haiku 5.5 rejects it) and openai (GPT-5.x rejects or strips it), with `reasoningEffort: 'none'` pinned there so reasoning tokens can't eat the budget.
 - **Meta-commentary**: The gate prompt explicitly suppresses reports that are meta-commentary about the heartbeat itself (e.g. "no checks configured", "heartbeat config is empty") rather than real findings.
 - **Fail-open**: If the gate call throws an error, the message is delivered (safe default).
 - **Ordering**: Programmatic checks (empty response, exact-match 24h duplicate suppression) run first. The gate LLM call is only made when those checks pass.
