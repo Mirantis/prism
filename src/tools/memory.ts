@@ -13,6 +13,41 @@ import {
 } from '../services/memory-manager.service';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
 import { refuseLockedWrite } from '../lib/locked-in';
+import { trackEvent } from '../lib/telemetry';
+
+const BOUND_FORMAT =
+  'Give a UTC date (2026-10-06, the whole day) or a date-time with an offset (2026-10-06T14:30:00Z).';
+
+const isoDate = z.iso.date();
+const isoDateTime = z.iso.datetime({ offset: true });
+
+/**
+ * One bound of the search window. A bare date covers that whole day in UTC, the zone the
+ * agent's prompt gives the date in, so a `since` and an `until` of one date search that day.
+ */
+function parseBound(bound: 'since' | 'until', value: string): Date | null {
+  if (isoDate.safeParse(value).success) {
+    return new Date(`${value}T${bound === 'since' ? '00:00:00.000' : '23:59:59.999'}Z`);
+  }
+  return isoDateTime.safeParse(value).success ? new Date(value) : null;
+}
+
+function parseWindow(
+  input: { since?: string; until?: string },
+): { since?: Date; until?: Date } | { error: string } {
+  const window: { since?: Date; until?: Date } = {};
+  for (const bound of ['since', 'until'] as const) {
+    const value = input[bound];
+    if (value === undefined) continue;
+    const date = parseBound(bound, value);
+    if (!date) return { error: `${bound} is not a date or a date-time: "${value}". ${BOUND_FORMAT}` };
+    window[bound] = date;
+  }
+  if (window.since && window.until && window.since > window.until) {
+    return { error: `since (${input.since}) is after until (${input.until}).` };
+  }
+  return window;
+}
 
 export function getMemoryTools(
   userId: string,
@@ -20,19 +55,52 @@ export function getMemoryTools(
 ): Record<string, Tool> {
   return {
     memory_search: tool({
-      description: 'Search your memory for relevant information.',
+      description:
+        'Search your memory for relevant information. Without a query, lists the most recent entries.',
       inputSchema: z.object({
-        query: z.string().describe('What to search for in memory'),
+        query: z.string().optional().describe('What to search for in memory, by meaning'),
         categories: z.array(z.string()).optional().describe('Filter by categories'),
         limit: z.number().int().min(1).max(100).optional().describe('Maximum results (default: 25)'),
-        daysBack: z.number().int().min(1).max(3650).optional().describe('How many days back to search (default: 365)'),
+        since: z
+          .string()
+          .optional()
+          .describe(`Only entries recorded at or after this time. ${BOUND_FORMAT}`),
+        until: z
+          .string()
+          .optional()
+          .describe(`Only entries recorded at or before this time. ${BOUND_FORMAT}`),
+        sort: z
+          .enum(['relevance', 'newest'])
+          .optional()
+          .describe('relevance (default) puts the closest matches first, newest the most recent'),
       }),
-      execute: async ({ query, categories, limit, daysBack }) => {
+      execute: async ({ query, categories, limit, since, until, sort }) => {
+        const searched = {
+          'agent.id': agentId,
+          'memory.search.has_query': String(Boolean(query?.trim())),
+          'memory.search.has_window': String(since !== undefined || until !== undefined),
+          'memory.search.sort': sort ?? 'relevance',
+        };
+        const window = parseWindow({ since, until });
+        if ('error' in window) {
+          trackEvent('memory searched', userId, {
+            ...searched,
+            'memory.search.status': 'invalid_window',
+          });
+          return { success: false, error: window.error };
+        }
         const results = await memoryManagerService.search(userId, query, {
           categories,
           limit: limit ?? 25,
-          daysBack: daysBack ?? 365,
+          since: window.since,
+          until: window.until,
+          sort,
           agentId,
+        });
+        trackEvent('memory searched', userId, {
+          ...searched,
+          'memory.search.status': 'ok',
+          'memory.search.result_count': String(results.length),
         });
         return { success: true, count: results.length, results };
       },

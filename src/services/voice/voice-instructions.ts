@@ -5,14 +5,20 @@
  * Same pipeline `invoke()` uses, so Soul, User, Agent Guide, Memory and Skills all carry
  * over — that is what makes the voice the agent rather than a generic assistant wearing
  * its name. Conversation history is left out: a call is its own context, and a whole
- * thread would bloat a session that pays per audio token.
+ * thread would bloat a session that pays per audio token. What the agent recorded in
+ * the hours before the call opens the session, so a call picks up where the last
+ * conversation stopped.
  *
  * Every session owner builds its instructions here, so a meeting and a voice chat differ
  * in what they pass and nowhere else.
  */
 
 import { contextService } from '../context.service';
-import { buildSystemPromptParts } from '../../prompts/context-builder';
+import {
+  buildRecentMemories,
+  buildSystemPromptParts,
+  recentMemoryContent,
+} from '../../prompts/context-builder';
 import { getMeetingInstructions } from '../../prompts/meeting-prompt';
 import { getVoiceChatInstructions } from '../../prompts/voice-chat-prompt';
 import type { ResponseMode } from '../meeting/response-policy';
@@ -50,6 +56,12 @@ export interface VoiceInstructions {
   agentName: string;
   /** From the same context, so the tool set matches the prompt built beside it. */
   lockedIn: boolean;
+  /**
+   * What the agent recorded shortly before the call, in the fenced form a chat turn
+   * gets, or null when nothing is recent. It holds text the agent stored from whatever
+   * it read, so the session receives it as a user item and never as instructions.
+   */
+  openingContext: string | null;
 }
 
 export async function buildVoiceInstructions(input: VoiceInstructionsInput): Promise<VoiceInstructions> {
@@ -58,6 +70,8 @@ export async function buildVoiceInstructions(input: VoiceInstructionsInput): Pro
     includeConversation: false,
   });
   const parts = await buildSystemPromptParts(context, 'meeting');
+  // A session reads no history, so it always opens a conversation.
+  const recent = await buildRecentMemories(context);
   const call =
     input.call.kind === 'meeting'
       ? getMeetingInstructions({
@@ -77,5 +91,6 @@ export async function buildVoiceInstructions(input: VoiceInstructionsInput): Pro
     instructions: [parts.map((p) => p.text).join('\n\n---\n\n'), call].join('\n\n---\n\n'),
     agentName: context.agentName,
     lockedIn: context.lockedIn,
+    openingContext: recent ? recentMemoryContent(recent.text) : null,
   };
 }

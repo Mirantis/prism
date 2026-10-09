@@ -51,6 +51,8 @@ const state = {
   recordingAudioMs: 0,
   /** Dictation buffers committed and answered with a transcript. */
   dictationsTranscribed: 0,
+  /** The text-only items the newest session was given, joined by newlines. */
+  contextText: '',
 };
 
 const server = http.createServer((req, res) => {
@@ -77,6 +79,7 @@ const wss = new WebSocketServer({
 wss.on('connection', (ws: WebSocket) => {
   state.sessions += 1;
   state.managedHandshakes += 1;
+  state.contextText = '';
   log(`session opened (${state.sessions} open)`);
   let turns = 0;
   // Both counted for this socket only. The turn boundary is a property of one
@@ -118,6 +121,7 @@ wss.on('connection', (ws: WebSocket) => {
 
     if (event.type === 'conversation.item.create') {
       countRecordingSegment(event.item);
+      recordContext(event.item);
       return;
     }
 
@@ -166,6 +170,15 @@ function countRecordingSegment(item: unknown): void {
     state.recordingAudioMs += (Buffer.from(part.audio ?? '', 'base64').length / 2 / SAMPLE_RATE) * 1000;
   }
   log(`recording window ${state.recordingSegments}: ${content.length} parts`);
+}
+
+/** Keep the text of an item the runtime wrote, as opposed to a recording or a spoken turn. */
+function recordContext(item: unknown): void {
+  const content = (item as { content?: { type?: string; text?: string }[] } | undefined)?.content;
+  if (!Array.isArray(content) || content.length === 0) return;
+  if (!content.every((part) => part.type === 'input_text')) return;
+  const text = content.map((part) => part.text ?? '').join('\n');
+  state.contextText = state.contextText ? `${state.contextText}\n${text}` : text;
 }
 
 /** How much of a pcm16 buffer is loud enough to count as somebody speaking. */

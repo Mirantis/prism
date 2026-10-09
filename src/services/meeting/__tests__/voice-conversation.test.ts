@@ -10,7 +10,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
-import { VoiceConversation } from '../voice-conversation';
+import { VoiceConversation, type VoiceConversationOptions } from '../voice-conversation';
 import { MEETING_SAMPLE_RATE, REALTIME_SAMPLE_RATE } from '../resampler';
 
 vi.mock('../../../logger', () => ({
@@ -96,7 +96,10 @@ async function harness(): Promise<Harness> {
  * client sends back — `response.create` being the one that puts the agent's voice
  * in the room.
  */
-async function speakingHarness(sampleRate: number = MEETING_SAMPLE_RATE): Promise<{
+async function speakingHarness(
+  sampleRate: number = MEETING_SAMPLE_RATE,
+  options: Partial<VoiceConversationOptions> = {},
+): Promise<{
   h: Harness;
   send: (event: Record<string, unknown>) => void;
   sent: Record<string, unknown>[];
@@ -130,6 +133,7 @@ async function speakingHarness(sampleRate: number = MEETING_SAMPLE_RATE): Promis
     responseMode: 'addressed',
     sampleRate,
     endpointOverride: { url: `ws://127.0.0.1:${port}`, headers: {} },
+    ...options,
   });
   await conversation.start();
   await connected;
@@ -156,6 +160,32 @@ let active: Harness | null = null;
 afterEach(async () => {
   await active?.dispose();
   active = null;
+});
+
+describe('opening the session', () => {
+  const OPENING = '\n\nContext:\n<recent-memories>\n- Paused the deploy (decision)\n</recent-memories>';
+
+  it('sends the opening context once, as a user item after the configuration', async () => {
+    const { h, sent } = await speakingHarness(MEETING_SAMPLE_RATE, { openingContext: OPENING });
+    active = h;
+    await settle();
+
+    const types = sent.map((event) => event.type);
+    expect(types.filter((type) => type === 'conversation.item.create')).toHaveLength(1);
+    expect(types.indexOf('conversation.item.create')).toBeGreaterThan(types.indexOf('session.update'));
+    expect(sent.find((event) => event.type === 'conversation.item.create')).toEqual({
+      type: 'conversation.item.create',
+      item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: OPENING }] },
+    });
+  });
+
+  it('sends no item when there is nothing to open with', async () => {
+    const { h, sent } = await speakingHarness(MEETING_SAMPLE_RATE, { openingContext: null });
+    active = h;
+    await settle();
+
+    expect(sent.some((event) => event.type === 'conversation.item.create')).toBe(false);
+  });
 });
 
 describe('losing the Realtime session', () => {

@@ -16,6 +16,7 @@ const {
   mockGetPluginTools,
   mockBuildSystemPromptParts,
   mockBuildRecalledMemories,
+  mockBuildRecentMemories,
   mockAddMessage,
   mockBuildConversationMessages,
   mockGetChannelBehaviorInstructions,
@@ -40,6 +41,7 @@ const {
   mockGetPluginTools: vi.fn(),
   mockBuildSystemPromptParts: vi.fn(),
   mockBuildRecalledMemories: vi.fn(),
+  mockBuildRecentMemories: vi.fn(),
   mockAddMessage: vi.fn(),
   mockBuildConversationMessages: vi.fn(),
   mockGetChannelBehaviorInstructions: vi.fn(),
@@ -142,12 +144,11 @@ vi.mock('./services/conversation.service', () => ({
 vi.mock('./prompts/context-builder', () => ({
   buildSystemPromptParts: mockBuildSystemPromptParts,
   buildRecalledMemories: mockBuildRecalledMemories,
-  recalledMemoriesMessage: (recalled: string) => ({
-    role: 'user',
-    content: `\n\nContext:\n<recalled-memories>\n${recalled}\n</recalled-memories>`,
-  }),
   recalledMemoryContent: (recalled: string) =>
     `\n\nContext:\n<recalled-memories>\n${recalled}\n</recalled-memories>`,
+  buildRecentMemories: mockBuildRecentMemories,
+  recentMemoryContent: (recent: string) =>
+    `\n\nContext:\n<recent-memories>\n${recent}\n</recent-memories>`,
   buildConversationHistory: mockBuildConversationHistory,
   // Text-only stand-in for the real shaping (content parts for attachments are
   // covered in context-builder.test.ts); these specs only care that a steering
@@ -305,6 +306,7 @@ describe('invoke', () => {
       { text: 'dynamic system prompt', cacheable: false },
     ]);
     mockBuildRecalledMemories.mockResolvedValue(null);
+    mockBuildRecentMemories.mockResolvedValue(null);
     mockAddMessage.mockResolvedValue({ message: { id: 'recall-row' }, titleSet: null });
     mockBuildConversationMessages.mockReturnValue([]);
     mockGetChannelBehaviorInstructions.mockReturnValue('channel instructions');
@@ -2191,9 +2193,72 @@ describe('invoke', () => {
       await invoke(createTestInvokeRequest({ mode: 'chat', prompt: 'q' }));
 
       const call = mockGenerateText.mock.calls[0][0];
-      expect(mockBuildRecalledMemories).toHaveBeenCalledWith(expect.anything(), 'q');
+      expect(mockBuildRecalledMemories).toHaveBeenCalledWith(expect.anything(), 'q', undefined);
       expect(call.messages).toEqual([{ role: 'user', content: 'q' }]);
       expect(call.system).toHaveLength(2);
+    });
+  });
+
+  describe('recent memories', () => {
+    const RECENT = {
+      role: 'user',
+      content: '\n\nContext:\n<recent-memories>\n- Paused the deploy (decision)\n</recent-memories>',
+    };
+    const RECALL = {
+      role: 'user',
+      content: '\n\nContext:\n<recalled-memories>\n- Mario likes chocolate\n</recalled-memories>',
+    };
+
+    beforeEach(() => {
+      mockBuildRecentMemories.mockResolvedValue({
+        text: '- Paused the deploy (decision)',
+        entryIds: ['recent-1'],
+      });
+      mockBuildRecalledMemories.mockResolvedValue('- Mario likes chocolate');
+      mockBuildConversationMessages.mockReturnValue([{ role: 'user', content: 'q' }]);
+    });
+
+    // The order the rows are stored in, so a replayed thread rebuilds the same prompt.
+    it('sends the block after the question and ahead of the recall', async () => {
+      await invoke(createTestInvokeRequest({ mode: 'chat', threadId: 'thread-1', prompt: 'q' }));
+
+      expect(mockGenerateText.mock.calls[0][0].messages).toEqual([
+        { role: 'user', content: 'q' },
+        RECENT,
+        RECALL,
+      ]);
+    });
+
+    it('records each block as the bytes it sends, hidden from clients, in send order', async () => {
+      await invoke(createTestInvokeRequest({ mode: 'chat', threadId: 'thread-1', prompt: 'q' }));
+
+      expect(mockAddMessage.mock.calls.map((c) => c[1])).toEqual([
+        { content: RECENT.content, role: 'USER', triggeredBy: 'USER_INPUT', internalStep: true },
+        { content: RECALL.content, role: 'USER', triggeredBy: 'USER_INPUT', internalStep: true },
+      ]);
+    });
+
+    // An entry the recent block shows must not come back in the recall of the same turn.
+    it('leaves the entries the block shows out of the recall', async () => {
+      await invoke(createTestInvokeRequest({ mode: 'chat', threadId: 'thread-1', prompt: 'q' }));
+
+      expect(mockBuildRecalledMemories).toHaveBeenCalledWith(expect.anything(), 'q', ['recent-1']);
+    });
+
+    // A heartbeat, a scheduled task, a goal, a webhook and a sub-agent have no principal
+    // opening a conversation, and a threadless turn has no conversation to open.
+    it.each([
+      ['heartbeat', 'thread-1'],
+      ['cron', 'thread-1'],
+      ['goal', 'thread-1'],
+      ['webhook', 'thread-1'],
+      ['subagent', 'thread-1'],
+      ['chat', undefined],
+    ] as const)('asks for no block on a %s turn (thread %s)', async (mode, threadId) => {
+      await invoke(createTestInvokeRequest({ mode, threadId, prompt: 'q' }));
+
+      expect(mockBuildRecentMemories).not.toHaveBeenCalled();
+      expect(mockGenerateText.mock.calls[0][0].messages).not.toContainEqual(RECENT);
     });
   });
 

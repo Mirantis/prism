@@ -7,7 +7,7 @@
  * - Category filtering and importance scoring
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createTestAgentWorkspace, createTestMemoryEntry } from '../../test-utils/factories';
 
 // Use vi.hoisted to create mocks that are available before vi.mock hoisting
@@ -85,15 +85,45 @@ describe('Memory Manager Service', () => {
     });
   });
 
-  describe('Scenario: Memory search — empty query', () => {
-    it('should return empty results for empty query', async () => {
-      const userId = 'user-123';
-      const agent = createTestAgentWorkspace({ userId });
+  describe('Scenario: Memory search — no search words', () => {
+    // A read of the table, so it answers with embeddings switched off too.
+    it.each([undefined, '', '   '])('lists the newest entries for the query %j, with no embedding', async (query) => {
+      const agent = createTestAgentWorkspace({ userId: 'user-123' });
+      const newest = [createTestMemoryEntry({ id: 'e2', agentId: agent.id }), createTestMemoryEntry({ id: 'e1', agentId: agent.id })];
+      mockPrisma.memoryEntry.findMany.mockResolvedValue(newest);
 
-      const results = await memoryManagerService.search(userId, '', { agentId: agent.id });
+      const results = await memoryManagerService.search('user-123', query, { agentId: agent.id, limit: 2 });
 
-      expect(results).toEqual([]);
+      expect(results).toBe(newest);
       expect(mockEmbeddingService.generateEmbedding).not.toHaveBeenCalled();
+      expect(mockPrisma.memoryEntry.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { agentId: agent.id, createdAt: { gte: undefined, lte: undefined } },
+          orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+          take: 2,
+        }),
+      );
+    });
+
+    it('keeps the window and the categories', async () => {
+      const agent = createTestAgentWorkspace({ userId: 'user-123' });
+      const since = new Date('2026-10-06T00:00:00Z');
+      const until = new Date('2026-10-06T23:59:59.999Z');
+      mockPrisma.memoryEntry.findMany.mockResolvedValue([]);
+
+      await memoryManagerService.search('user-123', undefined, {
+        agentId: agent.id,
+        categories: ['decision'],
+        since,
+        until,
+      });
+
+      expect(mockPrisma.memoryEntry.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { agentId: agent.id, createdAt: { gte: since, lte: until }, category: { in: ['decision'] } },
+          take: 25,
+        }),
+      );
     });
   });
 
@@ -133,6 +163,23 @@ describe('Memory Manager Service', () => {
         [0.1],
         expect.objectContaining({ limit: 5 }),
       );
+    });
+
+    it('passes the window and the order to vector search, and no window by default', async () => {
+      const agent = createTestAgentWorkspace({ userId: 'user-123' });
+      const since = new Date('2026-10-01T00:00:00Z');
+      mockEmbeddingService.generateEmbedding.mockResolvedValue([0.1]);
+      mockEmbeddingService.searchByEmbedding.mockResolvedValue([]);
+
+      await memoryManagerService.search('user-123', 'test', { agentId: agent.id });
+      await memoryManagerService.search('user-123', 'test', { agentId: agent.id, since, sort: 'newest' });
+
+      expect(mockEmbeddingService.searchByEmbedding.mock.calls[0][2]).toMatchObject({
+        since: undefined,
+        until: undefined,
+        sort: undefined,
+      });
+      expect(mockEmbeddingService.searchByEmbedding.mock.calls[1][2]).toMatchObject({ since, sort: 'newest' });
     });
   });
 
@@ -444,6 +491,112 @@ describe('Memory Manager Service', () => {
       expect(result.length).toBeLessThanOrEqual(2000);
       expect(result.split('\n- ').length).toBe(3);
       expect(result).toContain('entry 0');
+    });
+
+    // The memory tool searches the whole store by default; the automatic recall stays
+    // on the last year.
+    it('searches the last year', async () => {
+      vi.useFakeTimers({ now: new Date('2026-10-09T12:00:00Z') });
+      try {
+        const agent = createTestAgentWorkspace({ userId: 'user-123' });
+        mockEmbeddingService.generateEmbedding.mockResolvedValue([0.1]);
+        mockEmbeddingService.searchByEmbedding.mockResolvedValue([]);
+
+        await memoryManagerService.buildRelevantMemories('user-123', agent.id, 'q');
+
+        expect(mockEmbeddingService.searchByEmbedding.mock.calls[0][2].since).toEqual(
+          new Date('2025-10-09T12:00:00Z'),
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('leaves out the entries another block of the turn shows', async () => {
+      const agent = createTestAgentWorkspace({ userId: 'user-123' });
+      mockEmbeddingService.generateEmbedding.mockResolvedValue([0.1]);
+      mockEmbeddingService.searchByEmbedding.mockResolvedValue([
+        { id: 'recent-1', content: 'Shown as recent', category: 'decision', importance: 5, createdAt: new Date() },
+        { id: 'plain', content: 'Just relevant', category: 'observation', importance: 4, createdAt: new Date() },
+      ]);
+
+      const result = await memoryManagerService.buildRelevantMemories('user-123', agent.id, 'q', ['recent-1']);
+
+      expect(result).not.toContain('Shown as recent');
+      expect(result).toContain('Just relevant');
+    });
+  });
+
+  describe('Scenario: Recent memories', () => {
+    const NOW = new Date('2026-10-09T12:00:00Z');
+
+    beforeEach(() => {
+      vi.useFakeTimers({ now: NOW });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /** The pinned read comes first, the recent read second. */
+    function stubReads(pinned: ReturnType<typeof createTestMemoryEntry>[], recent: ReturnType<typeof createTestMemoryEntry>[]) {
+      mockPrisma.memoryEntry.findMany.mockResolvedValueOnce(pinned).mockResolvedValueOnce(recent);
+    }
+
+    it('reads the last four hours, newest first, without the pinned entries', async () => {
+      const agent = createTestAgentWorkspace({ userId: 'user-123' });
+      stubReads([createTestMemoryEntry({ id: 'pinned', agentId: agent.id, importance: 9 })], []);
+
+      await memoryManagerService.buildRecentMemories(agent.id);
+
+      expect(mockPrisma.memoryEntry.findMany).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          where: {
+            agentId: agent.id,
+            createdAt: { gte: new Date('2026-10-09T08:00:00Z'), lte: undefined },
+            id: { notIn: ['pinned'] },
+          },
+          orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+          take: 8,
+        }),
+      );
+      expect(mockEmbeddingService.generateEmbedding).not.toHaveBeenCalled();
+    });
+
+    it('renders each entry as its content and category, and names the entries it shows', async () => {
+      const agent = createTestAgentWorkspace({ userId: 'user-123' });
+      stubReads([], [
+        createTestMemoryEntry({ id: 'e2', agentId: agent.id, content: 'Paused the deploy', category: 'decision' }),
+        createTestMemoryEntry({ id: 'e1', agentId: agent.id, content: 'Disk at 91%\non node-3', category: 'observation' }),
+      ]);
+
+      expect(await memoryManagerService.buildRecentMemories(agent.id)).toEqual({
+        text: '- Paused the deploy (decision)\n- Disk at 91% on node-3 (observation)',
+        entryIds: ['e2', 'e1'],
+      });
+    });
+
+    it('is empty when nothing was recorded in the window', async () => {
+      const agent = createTestAgentWorkspace({ userId: 'user-123' });
+      stubReads([], []);
+
+      expect(await memoryManagerService.buildRecentMemories(agent.id)).toEqual({ text: '', entryIds: [] });
+    });
+
+    // A line that does not fit is left out whole, and so is every older one after it.
+    it('respects its character budget', async () => {
+      const agent = createTestAgentWorkspace({ userId: 'user-123' });
+      stubReads(
+        [],
+        Array.from({ length: 8 }, (_, i) =>
+          createTestMemoryEntry({ id: `e${i}`, agentId: agent.id, content: `${'A'.repeat(600)} ${i}`, category: 'event' }),
+        ),
+      );
+
+      const block = await memoryManagerService.buildRecentMemories(agent.id);
+
+      expect(block.text.length).toBeLessThanOrEqual(2000);
+      expect(block.entryIds).toEqual(['e0', 'e1', 'e2']);
     });
   });
 

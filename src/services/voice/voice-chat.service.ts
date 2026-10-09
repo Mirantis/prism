@@ -325,7 +325,7 @@ class VoiceChatService {
         stage = 'session';
       }
 
-      const { instructions, agentName, lockedIn } = await buildVoiceInstructions({
+      const { instructions, agentName, lockedIn, openingContext } = await buildVoiceInstructions({
         userId: input.userId,
         agentId: input.agentId,
         responseMode: mode,
@@ -368,6 +368,7 @@ class VoiceChatService {
 
       conversation = new VoiceConversation({
         instructions,
+        openingContext,
         tools,
         sink: transport.sink,
         sampleRate,
