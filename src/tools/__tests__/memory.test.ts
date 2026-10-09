@@ -100,6 +100,95 @@ describe('getMemoryTools', () => {
     expect(mockMemoryManagerService.deleteMany).toHaveBeenCalledWith(userId, ['a', 'b'], { agentId });
   });
 
+  describe('memory_search', () => {
+    const searchOptions = () => mockMemoryManagerService.search.mock.calls[0][2];
+
+    it('searches the whole store when no window is given', async () => {
+      await tools.memory_search.execute({ query: 'staging region' });
+
+      expect(searchOptions()).toMatchObject({ since: undefined, until: undefined });
+    });
+
+    // "What did you record last Tuesday" is one date on both bounds.
+    it('reads a bare date as that whole day in UTC', async () => {
+      await tools.memory_search.execute({ query: 'deploys', since: '2026-10-06', until: '2026-10-06' });
+
+      expect(searchOptions()).toMatchObject({
+        since: new Date('2026-10-06T00:00:00.000Z'),
+        until: new Date('2026-10-06T23:59:59.999Z'),
+      });
+    });
+
+    it('takes a date-time with an offset as that instant', async () => {
+      await tools.memory_search.execute({ since: '2026-10-06T14:30:00+03:00' });
+
+      expect(searchOptions().since).toEqual(new Date('2026-10-06T11:30:00Z'));
+    });
+
+    it('lists the newest entries when there is no query', async () => {
+      await tools.memory_search.execute({ limit: 5 });
+
+      expect(mockMemoryManagerService.search).toHaveBeenCalledWith(userId, undefined, expect.objectContaining({ limit: 5 }));
+    });
+
+    it('passes the order on', async () => {
+      await tools.memory_search.execute({ query: 'deploys', sort: 'newest' });
+
+      expect(searchOptions().sort).toBe('newest');
+    });
+
+    // A date the parser would roll over (February 30th) or read in the host's zone
+    // (no offset) is refused rather than searched.
+    it.each([
+      ['since', 'last tuesday'],
+      ['since', '2026-02-30'],
+      ['until', '2026-10-06T14:30:00'],
+      ['until', 'Oct 6'],
+    ])('refuses a malformed %s of %j and names it', async (bound, value) => {
+      const result = (await tools.memory_search.execute({ query: 'x', [bound]: value })) as MemoryResult;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain(`${bound} is not a date or a date-time: "${value}"`);
+      expect(mockMemoryManagerService.search).not.toHaveBeenCalled();
+    });
+
+    it('refuses a window that starts after it ends', async () => {
+      const result = (await tools.memory_search.execute({
+        query: 'x',
+        since: '2026-10-07',
+        until: '2026-10-06',
+      })) as MemoryResult;
+
+      expect(result).toEqual({ success: false, error: 'since (2026-10-07) is after until (2026-10-06).' });
+      expect(mockMemoryManagerService.search).not.toHaveBeenCalled();
+    });
+
+    it('reports the search shape and the result count, without the query', async () => {
+      await tools.memory_search.execute({ query: 'deploys', until: '2026-10-06', sort: 'newest' });
+
+      expect(mockTrackEvent).toHaveBeenCalledExactlyOnceWith('memory searched', userId, {
+        'agent.id': agentId,
+        'memory.search.has_query': 'true',
+        'memory.search.has_window': 'true',
+        'memory.search.sort': 'newest',
+        'memory.search.status': 'ok',
+        'memory.search.result_count': '1',
+      });
+    });
+
+    it('reports a refused window', async () => {
+      await tools.memory_search.execute({ since: 'last tuesday' });
+
+      expect(mockTrackEvent).toHaveBeenCalledExactlyOnceWith('memory searched', userId, {
+        'agent.id': agentId,
+        'memory.search.has_query': 'false',
+        'memory.search.has_window': 'true',
+        'memory.search.sort': 'relevance',
+        'memory.search.status': 'invalid_window',
+      });
+    });
+  });
+
   // ==========================================================================
   // Locked-in mode
   // ==========================================================================
@@ -156,7 +245,9 @@ describe('getMemoryTools', () => {
       expect(mockMemoryManagerService.search).toHaveBeenCalledWith(userId, 'staging region', {
         categories: undefined,
         limit: 25,
-        daysBack: 365,
+        since: undefined,
+        until: undefined,
+        sort: undefined,
         agentId,
       });
     });

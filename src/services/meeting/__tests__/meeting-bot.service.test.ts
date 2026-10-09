@@ -175,6 +175,7 @@ vi.mock('../../context.service', () => ({
 const buildSystemPromptParts = vi.fn();
 vi.mock('../../../prompts/context-builder', () => ({
   buildSystemPromptParts: (...a: unknown[]) => buildSystemPromptParts(...a),
+  buildRecentMemories: async () => null,
 }));
 
 /**

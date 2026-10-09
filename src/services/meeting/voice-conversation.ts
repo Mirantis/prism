@@ -79,6 +79,12 @@ import type { PreparedTools } from '../voice/realtime-tools';
 export interface VoiceConversationOptions {
   onResponseFinished?: () => void;
   instructions: string;
+  /**
+   * What the session opens knowing, sent once as a user item after the configuration.
+   * An item and not the instructions, because it holds text the agent stored from
+   * whatever it read.
+   */
+  openingContext?: string | null;
   tools: PreparedTools;
   /** Written with pcm16 at `sampleRate` — `pacat`'s stdin in production. */
   sink: PlaybackSink;
@@ -495,6 +501,7 @@ export class VoiceConversation {
   /** Open the Realtime session. Throws if the connection or auth fails. */
   async start(): Promise<void> {
     await this.session.connect();
+    if (this.options.openingContext) this.session.sendContext(this.options.openingContext);
   }
 
   /** Feed captured audio (pcm16 mono, at the configured rate) to the model. */

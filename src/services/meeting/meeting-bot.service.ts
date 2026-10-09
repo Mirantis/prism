@@ -804,7 +804,7 @@ export class MeetingBotService {
     try {
       // Instructions and tools first: they need the database and the model
       // catalog, and failing here should cost nothing but a message.
-      const { instructions, agentName, lockedIn } = await this.buildInstructions(input);
+      const { instructions, agentName, lockedIn, openingContext } = await this.buildInstructions(input);
       const tools = await prepareMeetingTools({
         userId: input.userId,
         agentId: input.agentId,
@@ -821,6 +821,7 @@ export class MeetingBotService {
 
       conversation = new VoiceConversation({
         instructions,
+        openingContext,
         tools,
         sink: handles.playbackSink,
         // The virtual audio devices run at the meeting rate, so both resamplers are in

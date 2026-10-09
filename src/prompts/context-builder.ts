@@ -10,7 +10,7 @@ import type { AnchoredToolChange } from '../services/tool-ledger.service';
 import { COMPUTER_INSTRUCTIONS } from './computer-prompt';
 import { hasComputerForMode } from '../services/computer/supported';
 import { config } from '../config';
-import { memoryManagerService } from '../services/memory-manager.service';
+import { memoryManagerService, type MemoryBlock } from '../services/memory-manager.service';
 import type { AttachmentMeta } from '../services/attachment.service';
 import { humanFileSize } from '../services/attachment.service';
 import { HeartbeatTrigger } from '../types';
@@ -283,7 +283,8 @@ export async function buildSystemPromptParts(
 /**
  * What this turn's message matches in `memory_entries`, by meaning. Pinned entries
  * are not here — `buildImportantMemories` carries those from the system prompt, where
- * they cost nothing per turn. Returns the text, not a placement.
+ * they cost nothing per turn — and neither are `shownIds`, which another block of the
+ * same turn shows. Returns the text, not a placement.
  *
  * It was a `# Recalled Memories` section of the dynamic system part, the last
  * per-turn value sitting in front of the cached prefix. A search
@@ -295,41 +296,64 @@ export async function buildSystemPromptParts(
 export async function buildRecalledMemories(
   context: AgentContext,
   query?: string,
+  shownIds?: string[],
 ): Promise<string | null> {
   const recalled = await memoryManagerService.buildRelevantMemories(
     context.userId,
     context.agentId,
     query,
+    shownIds,
   );
   return recalled || null;
 }
 
 /**
- * The turn's recalled memories, as a message of its own that follows the user's turn.
+ * What the agent recorded shortly before this conversation, when this context opens
+ * one. Returns the block and its entries, so the turn's recall can leave them out.
  *
- * The header is bare on purpose: a block that argues for its own credibility is read
- * as one that needs to, and an agent asked to use such a block refuses it. What it
- * accepts is the entries and a recorded date on each.
- *
- * A user turn, so a run of them merges into one provider turn and the model sees the
- * block and the question as one message. The block opens on a blank line, because the
- * adapter emits each text of that run as its own block with nothing between them, and
- * a model reads two such blocks as one piece of prose — the question's last word joins
- * the block's first word. Its own message rather than an edit to the user's, so what is
- * stored is what was sent — the row is written with `internalStep`, which replays into
- * model context and reaches no client transcript.
+ * A context opens a conversation while nothing of one is there yet: no summary, no
+ * reply, and no recent block from an earlier try at the first turn. The last rule keeps
+ * a first turn that is sent again to one block.
  */
-export function recalledMemoriesMessage(recalled: string): ModelMessage {
-  return { role: 'user', content: recalledMemoryContent(recalled) };
+export async function buildRecentMemories(context: AgentContext): Promise<MemoryBlock | null> {
+  const opening = memoryBlockOpening(RECENT_TAG);
+  const started =
+    context.conversationSummary !== null ||
+    context.recentMessages.some(
+      (m) => m.role === 'AGENT' || (m.internalStep && m.content.startsWith(opening)),
+    );
+  if (started) return null;
+
+  const block = await memoryManagerService.buildRecentMemories(context.agentId);
+  return block.text ? block : null;
+}
+
+const RECALLED_TAG = 'recalled-memories';
+const RECENT_TAG = 'recent-memories';
+
+function memoryBlockOpening(tag: string): string {
+  return `\n\nContext:\n<${tag}>\n`;
 }
 
 /**
- * The stored and sent form of a recall block — one string, so the two cannot drift.
+ * The stored and sent form of a memory block — one string, so the two cannot drift.
+ *
+ * The header is bare on purpose: a block that argues for its own credibility is read
+ * as one that needs to, and an agent asked to use such a block refuses it. What it
+ * accepts is the entries and the provenance on each line.
+ *
+ * It is sent as a user turn, so a run of them merges into one provider turn and the
+ * model sees the block and the question as one message. The block opens on a blank
+ * line, because the adapter emits each text of that run as its own block with nothing
+ * between them, and a model reads two such blocks as one piece of prose — the
+ * question's last word joins the block's first word. Its own message rather than an
+ * edit to the user's, so what is stored is what was sent — the row is written with
+ * `internalStep`, which replays into model context and reaches no client transcript.
  *
  * A tag inside an entry is broken before wrapping. Entries are the agent's own
  * writing, but what it writes can come from anywhere it read — a chat channel, a web
- * page, a tool result — so an entry can be made to carry `</recalled-memories>` and
- * put the rest of itself outside the block, where it reads as ordinary user text.
+ * page, a tool result — so an entry can be made to carry the closing tag and put the
+ * rest of itself outside the block, where it reads as ordinary user text.
  *
  * Case-insensitive, and it takes the opening form and internal whitespace too: a
  * model reads tag case and spacing loosely, so `</RECALLED-MEMORIES>` and
@@ -340,9 +364,19 @@ export function recalledMemoriesMessage(recalled: string): ModelMessage {
  * permanent in that thread's replay. That is the point: the two have to be the same
  * bytes. The leading blank line is part of the string for the same reason.
  */
+function memoryBlockContent(tag: string, entries: string): string {
+  const payload = entries.replace(new RegExp(`<(\\s*\\/?\\s*)${tag}`, 'gi'), `<\u200b$1${tag}`);
+  return `${memoryBlockOpening(tag)}${payload}\n</${tag}>`;
+}
+
+/** The turn's recalled memories, as the block sent after the user's message. */
 export function recalledMemoryContent(recalled: string): string {
-  const payload = recalled.replace(/<(\s*\/?\s*)recalled-memories/gi, '<\u200b$1recalled-memories');
-  return `\n\nContext:\n<recalled-memories>\n${payload}\n</recalled-memories>`;
+  return memoryBlockContent(RECALLED_TAG, recalled);
+}
+
+/** What the agent recorded shortly before the conversation, sent after its first message. */
+export function recentMemoryContent(recent: string): string {
+  return memoryBlockContent(RECENT_TAG, recent);
 }
 
 /** Max skills listed inline before we summarize the overflow (a guardrail —

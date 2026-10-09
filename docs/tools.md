@@ -33,8 +33,9 @@ rule in the guide can override.
 
 Manage long-term memory. See **[Memory](memory.md)** for the full picture.
 
-- **Search** — recall past entries by meaning, optionally filtered by category
-  and recency.
+- **Search** — recall past entries by meaning, or list the newest ones. A search
+  can be limited to a category and a time window, and ordered by relevance or
+  newest first.
 - **Write** — record something worth keeping, with a category (observation /
   action / decision / event) and an importance score.
 - **Delete** — remove entries that are no longer accurate.

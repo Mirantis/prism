@@ -28,6 +28,25 @@ export interface MemorySearchResult {
   createdAt: Date;
 }
 
+/** `relevance` keeps the closest matches first; `newest` the most recently recorded. */
+export type MemorySort = 'relevance' | 'newest';
+
+export interface MemorySearchOptions {
+  agentId: string;
+  categories?: string[];
+  limit?: number;
+  /** Inclusive bounds on when an entry was recorded. Either may be left out. */
+  since?: Date;
+  until?: Date;
+  sort?: MemorySort;
+}
+
+/** A rendered block and the entries it shows, so another block of the same turn can leave them out. */
+export interface MemoryBlock {
+  text: string;
+  entryIds: string[];
+}
+
 export interface MemoryWriteInput {
   content: string;
   category: string;
@@ -59,27 +78,28 @@ const MAX_RELEVANT = 10;
 const IMPORTANT_CHAR_BUDGET = 4000;
 /** Half the important budget: this half is billed per turn, the other is cached. */
 const RELEVANT_CHAR_BUDGET = 2000;
+/** How far back a new conversation looks for what the agent recorded before it. */
+const RECENT_WINDOW_MS = 4 * 60 * 60 * 1000;
+const MAX_RECENT = 8;
+const RECENT_CHAR_BUDGET = 2000;
+/** The automatic per-turn recall looks back a year. */
+const RELEVANT_WINDOW_MS = 365 * 24 * 60 * 60 * 1000;
 
 class MemoryManagerService {
   /**
-   * Search memory entries using pgvector cosine similarity.
+   * Search memory entries by meaning, inside an optional time window.
+   *
+   * With no search words it lists the newest entries in the window instead. That read
+   * needs no embedding, so it also works with embeddings switched off.
    */
   async search(
     userId: string,
-    query: string,
-    options: {
-      categories?: string[];
-      limit?: number;
-      daysBack?: number;
-      agentId: string;
-    }
+    query: string | undefined,
+    options: MemorySearchOptions,
   ): Promise<MemorySearchResult[]> {
-    if (!query) return [];
-
-    const agentId = options.agentId;
+    const { agentId, categories, since, until } = options;
     const limit = options.limit ?? 25;
-    const daysBack = options.daysBack ?? 365;
-    const cutoffDate = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000);
+    if (!query?.trim()) return this.listRecent(agentId, { categories, since, until, limit });
 
     const queryEmbedding = await embeddingService.generateEmbedding(agentId, query);
     if (!queryEmbedding) {
@@ -87,10 +107,36 @@ class MemoryManagerService {
     }
 
     return embeddingService.searchByEmbedding(agentId, queryEmbedding, {
-      categories: options.categories,
+      categories,
       limit,
-      cutoffDate,
+      since,
+      until,
+      sort: options.sort,
       similarityThreshold: 0.3,
+    });
+  }
+
+  /** The newest entries in a time window. `id` breaks a tie, so the order is stable. */
+  private async listRecent(
+    agentId: string,
+    options: {
+      categories?: string[];
+      since?: Date;
+      until?: Date;
+      excludeIds?: string[];
+      limit: number;
+    },
+  ): Promise<MemorySearchResult[]> {
+    return prisma.memoryEntry.findMany({
+      where: {
+        agentId,
+        createdAt: { gte: options.since, lte: options.until },
+        ...(options.categories?.length ? { category: { in: options.categories } } : {}),
+        ...(options.excludeIds?.length ? { id: { notIn: options.excludeIds } } : {}),
+      },
+      select: { id: true, content: true, category: true, importance: true, createdAt: true },
+      orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+      take: options.limit,
     });
   }
 
@@ -231,10 +277,41 @@ class MemoryManagerService {
   }
 
   /**
+   * What the agent recorded in the hours before a conversation, newest first, for the
+   * conversation to open with.
+   *
+   * Pinned entries are left out, since the system prompt already carries them. A line
+   * names the category and not the date, since every entry is from the last four hours.
+   *
+   * The text is empty when nothing recent is left (caller sends no block).
+   */
+  async buildRecentMemories(agentId: string): Promise<MemoryBlock> {
+    const importantIds = (await this.selectImportantEntries(agentId)).map((e) => e.id);
+    const entries = await this.listRecent(agentId, {
+      since: new Date(Date.now() - RECENT_WINDOW_MS),
+      excludeIds: importantIds,
+      limit: MAX_RECENT,
+    });
+
+    const lines: string[] = [];
+    const entryIds: string[] = [];
+    let charCount = 0;
+    for (const entry of entries) {
+      const line = `- ${oneLine(entry.content)} (${entry.category})`;
+      if (charCount + line.length + 1 > RECENT_CHAR_BUDGET) break;
+      lines.push(line);
+      entryIds.push(entry.id);
+      charCount += line.length + 1;
+    }
+    return { text: lines.join('\n'), entryIds };
+  }
+
+  /**
    * What this turn's message matches, by meaning.
    *
    * Pinned entries are left out: `buildImportantMemories` already carries them from the
-   * system prompt, where they cost nothing per turn.
+   * system prompt, where they cost nothing per turn. So is every entry in `shownIds`,
+   * which another block of the same turn shows.
    *
    * Its budget is smaller than the pinned one because this half is billed on every
    * turn that matches something, while the pinned half is billed once and then read
@@ -242,16 +319,23 @@ class MemoryManagerService {
    *
    * Returns an empty string when nothing matches (caller sends no block).
    */
-  async buildRelevantMemories(userId: string, agentId: string, query?: string): Promise<string> {
+  async buildRelevantMemories(
+    userId: string,
+    agentId: string,
+    query?: string,
+    shownIds: string[] = [],
+  ): Promise<string> {
     if (!query) return '';
 
     // Dropped by id, not by importance: only the entries the pinned section actually
     // emits are already in front of the agent. Anything the pinned caps left out is
     // still reachable here, which is what the threshold check got wrong.
-    const importantIds = new Set((await this.selectImportantEntries(agentId)).map((e) => e.id));
+    const importantIds = (await this.selectImportantEntries(agentId)).map((e) => e.id);
+    const excluded = new Set([...importantIds, ...shownIds]);
+    const since = new Date(Date.now() - RELEVANT_WINDOW_MS);
     const matches = (
-      await this.search(userId, query, { limit: MAX_RELEVANT, daysBack: 365, agentId })
-    ).filter((entry) => !importantIds.has(entry.id));
+      await this.search(userId, query, { limit: MAX_RELEVANT, since, agentId })
+    ).filter((entry) => !excluded.has(entry.id));
     if (matches.length === 0) return '';
 
     // Each line carries when it was recorded and what kind of entry it is. Asked to

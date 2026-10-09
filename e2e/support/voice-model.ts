@@ -36,6 +36,8 @@ export interface MockState {
   recordingImages: number;
   recordingAudioMs: number;
   dictationsTranscribed: number;
+  /** The text-only items the newest session was given, joined by newlines. */
+  contextText: string;
 }
 
 /** What the page showed and complained about, for the same failure message. */
@@ -51,6 +53,7 @@ let baseline: MockState = {
   recordingImages: 0,
   recordingAudioMs: 0,
   dictationsTranscribed: 0,
+  contextText: '',
 };
 
 export async function readState(): Promise<MockState> {

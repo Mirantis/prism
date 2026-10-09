@@ -29,12 +29,20 @@ retrieved only when needed.
   Titan v2 on Bedrock by default; see
   [Memory embeddings](configuration.md#memory-embeddings) — and stored
   alongside each entry. With embeddings off (`EMBEDDING_PROVIDER=none`),
-  entries still persist but vector search returns nothing.
+  entries still persist and recent ones still open a new conversation, but
+  search by meaning returns nothing.
 - **Search** runs as vector similarity over the embedded SQLite database
-  (using `sqlite-vec`), filtered to the agent and a recency window, ranked by
-  semantic closeness. Every message you send is searched automatically, so the
-  agent starts each turn holding whatever that message matched; it can also
-  search again itself when a task needs more.
+  (using `sqlite-vec`), ranked by semantic closeness. Every message you send is
+  searched automatically over a recency window, so the agent starts each turn
+  holding whatever that message matched; it can also search all of its memory
+  itself when a task needs more.
+- **A new conversation picks up where the last one stopped.** It opens with the
+  entries the agent recorded in the last four hours, newest first, up to a few.
+  This works on every surface, voice chat and meetings included, and the entries
+  are not shown in the conversation. A new channel thread or call where other
+  people are present opens with these entries too, so the agent can mention there
+  what it recorded in a private conversation. For anything older, ask the agent
+  to search its memory, or to keep the fact in its curated memory.
 - Each entry has a **category** (observation, action, decision, or event) and an
   **importance** score, so recall can be scoped and weighted.
 - **A high enough importance keeps an entry always in view.** Those entries are in
@@ -55,8 +63,9 @@ You don't manage memory directly — the agent does, through three
 - **Write** — record something worth keeping (with a category and importance).
   The embedding is computed in the background, so writes don't slow the
   conversation.
-- **Search** — pull back relevant past entries by meaning, optionally filtered
-  by category and how far back to look.
+- **Search** — pull back past entries by meaning, or the newest ones. A search
+  can be limited to a category and a time window, such as last Tuesday, and
+  ordered by relevance or newest first.
 - **Delete** — remove entries that are no longer accurate.
 
 In practice this is invisible: you tell the agent something, and it decides

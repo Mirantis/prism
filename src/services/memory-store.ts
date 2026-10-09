@@ -11,15 +11,21 @@
 import prisma from '../lib/prisma';
 import { logger } from '../logger';
 import { initSqliteVec, EMBEDDING_DIMENSION } from '../lib/sqlite-bootstrap';
-import type { MemorySearchResult } from './memory-manager.service';
+import type { MemorySearchResult, MemorySort } from './memory-manager.service';
 
 const DEFAULT_SIMILARITY_THRESHOLD = 0.3;
 const MAX_SEARCH_LIMIT = 100;
+/** The largest k a vec0 KNN query takes. */
+const VEC0_K_MAX = 4096;
 
 export interface SearchOptions {
   categories?: string[];
   limit: number;
-  cutoffDate: Date;
+  /** Inclusive bounds on when an entry was recorded. Either may be left out. */
+  since?: Date;
+  until?: Date;
+  /** Distance order (the default), or the newest matches first. */
+  sort?: MemorySort;
   similarityThreshold?: number;
 }
 
@@ -97,57 +103,60 @@ const sqliteStore: MemoryEmbeddingStore = {
     // sqlite-vec returns cosine distance (1 - similarity). Convert threshold.
     const maxDistance = 1 - threshold;
 
-    // Fetch k nearest by distance. Over-fetch slightly and then filter by
-    // agentId + cutoffDate + optional categories via the metadata table,
-    // because vec0 doesn't store those attributes.
-    const overFetch = Math.min(clampedLimit * 4, MAX_SEARCH_LIMIT * 4);
-    const hits = db
-      .prepare(
-        `SELECT memory_entry_id AS id, distance
-         FROM memory_entry_vec
-         WHERE embedding MATCH ? AND distance <= ?
-         ORDER BY distance
-         LIMIT ?`,
-      )
-      .all(packEmbedding(queryEmbedding), maxDistance, overFetch) as Array<{
+    const nearest = db.prepare(
+      `SELECT memory_entry_id AS id, distance
+       FROM memory_entry_vec
+       WHERE embedding MATCH ? AND distance <= ?
+       ORDER BY distance
+       LIMIT ?`,
+    );
+    const where = (ids: string[]) => ({
+      id: { in: ids },
+      agentId,
+      createdAt: { gte: options.since, lte: options.until },
+      ...(options.categories?.length ? { category: { in: options.categories } } : {}),
+    });
+    const select = {
+      id: true,
+      content: true,
+      category: true,
+      importance: true,
+      createdAt: true,
+    } as const;
+
+    // vec0 stores no agent, time or category, so those filters run on the k nearest
+    // hits. Newest-first has to see every match, so it asks for the most vec0 gives:
+    // past 4096 matches it orders the closest 4096. Distance order needs only the
+    // closest `limit` that pass, so k grows until they do or the matches run out.
+    // The trade: a filter that drops most hits costs up to six rounds, each a KNN query
+    // and a Prisma `in` list of up to 4096 ids, and newest-first costs one round at 4096.
+    let k = options.sort === 'newest' ? VEC0_K_MAX : clampedLimit * 4;
+    for (;;) {
+      const hits = nearest.all(packEmbedding(queryEmbedding), maxDistance, k) as Array<{
         id: string;
         distance: number;
       }>;
+      if (hits.length === 0) return [];
 
-    if (hits.length === 0) return [];
-
-    const ids = hits.map((h) => h.id);
-    const filter: Record<string, unknown> = {
-      id: { in: ids },
-      agentId,
-      createdAt: { gte: options.cutoffDate },
-    };
-    if (options.categories?.length) {
-      filter.category = { in: options.categories };
-    }
-
-    const rows = await prisma.memoryEntry.findMany({
-      where: filter,
-      select: { id: true, content: true, category: true, importance: true, createdAt: true },
-    });
-
-    // Preserve distance order returned by vec0.
-    const byId = new Map(rows.map((r) => [r.id, r]));
-    const ordered: MemorySearchResult[] = [];
-    for (const hit of hits) {
-      const row = byId.get(hit.id);
-      if (row) {
-        ordered.push({
-          id: row.id,
-          content: row.content,
-          category: row.category,
-          importance: row.importance,
-          createdAt: row.createdAt,
+      const ids = hits.map((h) => h.id);
+      if (options.sort === 'newest') {
+        return prisma.memoryEntry.findMany({
+          where: where(ids),
+          select,
+          orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+          take: clampedLimit,
         });
-        if (ordered.length >= clampedLimit) break;
       }
+
+      const rows = await prisma.memoryEntry.findMany({ where: where(ids), select });
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      const matches = hits
+        .map((hit) => byId.get(hit.id))
+        .filter((row): row is MemorySearchResult => row !== undefined);
+      const exhausted = hits.length < k || k === VEC0_K_MAX;
+      if (matches.length >= clampedLimit || exhausted) return matches.slice(0, clampedLimit);
+      k = Math.min(k * 4, VEC0_K_MAX);
     }
-    return ordered;
   },
 };
 

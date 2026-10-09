@@ -34,8 +34,9 @@ import {
   type SystemPromptPart,
   buildSystemPromptParts,
   buildRecalledMemories,
-  recalledMemoriesMessage,
   recalledMemoryContent,
+  buildRecentMemories,
+  recentMemoryContent,
   buildConversationHistory,
   buildSteeringMessage,
 } from './prompts/context-builder';
@@ -317,34 +318,41 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     // silent fix-up this function exists to refuse.
     warnOnTrailingAssistant(messages, { ...guardContext, stage: 'initial' });
 
-    // What this turn's message matched in the memory store, sent as a user turn that
-    // follows the question. A run of user messages merges into one provider turn, so
-    // the model sees the block and the question together.
+    // A new conversation opens with what the agent recorded in the hours before it,
+    // then every turn gets what its message matched in the memory store. Each block is
+    // a user turn that follows the question. A run of user messages merges into one
+    // provider turn, so the model sees the blocks and the question together.
     //
-    // It goes after the question rather than before it, because that is where the
-    // stored row sorts: the engine writes the user's message before the turn runs.
+    // They go after the question rather than before it, because that is where the
+    // stored rows sort: the engine writes the user's message before the turn runs.
     // Matching that order is what lets a replayed thread rebuild the prompt that ran.
-    const recalled = await buildRecalledMemories(context, request.prompt);
-    if (recalled) {
-      messages.push(recalledMemoriesMessage(recalled));
-      // Recorded on chat turns only. The row lets a replayed thread rebuild the prompt
-      // that produced its stored answers, which needs the question stored too — and
-      // only chat stores it. A goal or a thread-bound cron task appends its prompt at
-      // invoke time and never writes it down, so a row there is an orphan block with
-      // no question, once per run: one a goal turn, around 288 a day for a
-      // five-minute cron task, each replaying into every later chat turn.
-      if (request.mode === 'chat' && request.threadId) {
-        // Best effort: a turn must not fail because a recall could not be recorded.
-        // The block is in this request either way; only the replay is lost.
-        await conversationService
-          .addMessage(request.threadId, {
-            content: recalledMemoryContent(recalled),
-            role: 'USER',
-            triggeredBy: 'USER_INPUT',
-            internalStep: true,
-          })
-          .catch((err) => logger.warn({ err }, 'Failed to record the turn\'s recalled memories'));
-      }
+    //
+    // Recorded on chat turns only. The row lets a replayed thread rebuild the prompt
+    // that produced its stored answers, which needs the question stored too — and
+    // only chat stores it. A goal or a thread-bound cron task appends its prompt at
+    // invoke time and never writes it down, so a row there is an orphan block with
+    // no question, once per run: one a goal turn, around 288 a day for a
+    // five-minute cron task, each replaying into every later chat turn.
+    const recordingThreadId = request.mode === 'chat' ? request.threadId : undefined;
+    const recent = recordingThreadId ? await buildRecentMemories(context) : null;
+    const recalled = await buildRecalledMemories(context, request.prompt, recent?.entryIds);
+    const memoryBlocks = [
+      ...(recent ? [recentMemoryContent(recent.text)] : []),
+      ...(recalled ? [recalledMemoryContent(recalled)] : []),
+    ];
+    for (const content of memoryBlocks) {
+      messages.push({ role: 'user', content });
+      if (!recordingThreadId) continue;
+      // Best effort: a turn must not fail because a block could not be recorded.
+      // The block is in this request either way; only the replay is lost.
+      await conversationService
+        .addMessage(recordingThreadId, {
+          content,
+          role: 'USER',
+          triggeredBy: 'USER_INPUT',
+          internalStep: true,
+        })
+        .catch((err) => logger.warn({ err }, 'Failed to record a memory block of the turn'));
     }
 
     // Prompt caching: system prompt parts marked cacheable get cache breakpoints.
