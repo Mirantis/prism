@@ -36,6 +36,10 @@ describe('createBedrockMantleProvider', () => {
     vi.clearAllMocks();
   });
 
+  it('keeps the gate default of temperature 0, which Haiku 4.5 accepts', () => {
+    expect(createBedrockMantleProvider(MANTLE).classificationSamplingParams).toBeUndefined();
+  });
+
   it('sends requests to the endpoint it is given', () => {
     createBedrockMantleProvider(MANTLE);
 

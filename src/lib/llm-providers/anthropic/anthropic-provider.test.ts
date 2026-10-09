@@ -80,11 +80,11 @@ describe('createAnthropicProvider', () => {
     expect(createAnthropicProvider().structuredOutputOptions).toBeUndefined();
   });
 
-  it('declares no classification overrides — first-party Claude takes the gate defaults', () => {
+  it('declares no classification options or token floor, and sends the gates no temperature', () => {
     const provider = createAnthropicProvider();
     expect(provider.classificationProviderOptions).toBeUndefined();
     expect(provider.classificationMinOutputTokens).toBeUndefined();
-    expect(provider.classificationSamplingParams).toBeUndefined();
+    expect(provider.classificationSamplingParams).toEqual({});
   });
 });
 

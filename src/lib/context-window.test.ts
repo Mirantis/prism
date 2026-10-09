@@ -18,11 +18,9 @@ import { contextWindowFor } from './context-window';
 // deployment — so assert them explicitly rather than trusting the generator.
 const BEDROCK_CHAT_DEFAULT = 'global.anthropic.claude-opus-5-5';
 const AZURE_CHAT_DEFAULT = 'claude-opus-5';
-const AZURE_CLASSIFICATION_DEFAULT = 'claude-haiku-4-5';
 const OPENAI_CHAT_DEFAULT = 'gpt-5.6-sol';
 const OPENAI_CLASSIFICATION_DEFAULT = 'gpt-5.6-luna';
 const ANTHROPIC_CHAT_DEFAULT = 'claude-opus-5';
-const ANTHROPIC_CLASSIFICATION_DEFAULT = 'claude-haiku-4-5';
 
 describe('contextWindowFor', () => {
   beforeEach(() => {
@@ -40,11 +38,6 @@ describe('contextWindowFor', () => {
       expect(contextWindowFor(AZURE_CHAT_DEFAULT)).toEqual({ tokens: 1_000_000 });
     });
 
-    it('resolves the Azure classification default', () => {
-      config.llmProvider = 'azure';
-      expect(contextWindowFor(AZURE_CLASSIFICATION_DEFAULT)).toEqual({ tokens: 200_000 });
-    });
-
     it('resolves the OpenAI chat default', () => {
       config.llmProvider = 'openai';
       expect(contextWindowFor(OPENAI_CHAT_DEFAULT)).toEqual({ tokens: 1_050_000 });
@@ -58,11 +51,6 @@ describe('contextWindowFor', () => {
     it('resolves the Anthropic chat default', () => {
       config.llmProvider = 'anthropic';
       expect(contextWindowFor(ANTHROPIC_CHAT_DEFAULT)).toEqual({ tokens: 1_000_000 });
-    });
-
-    it('resolves the Anthropic classification default', () => {
-      config.llmProvider = 'anthropic';
-      expect(contextWindowFor(ANTHROPIC_CLASSIFICATION_DEFAULT)).toEqual({ tokens: 200_000 });
     });
   });
 
