@@ -35,6 +35,7 @@ import { logger } from '../../../logger';
 import { createSharedBedrockOptions, isAnthropicModelId } from '../bedrock-shared';
 import {
   ANTHROPIC_CACHE_POINT,
+  ANTHROPIC_THINKING_OFF,
   BEDROCK_CACHE_POINT,
   NO_CACHE_POINT,
   type CachePointFragment,
@@ -63,7 +64,9 @@ export function createBedrockProvider(baseURL?: string): LlmProvider {
     isAnthropicModelId(modelId) ? anthropic(modelId) : generic(modelId);
   return Object.assign(dispatcher, {
     cachePoint: promptCacheFragment,
-    // Haiku 5.5, the classification default, rejects an explicit temperature.
+    // Haiku 5.5, the classification default, rejects an explicit temperature
+    // and can think unasked. The Anthropic SDK reads `anthropic.thinking` for Bedrock models too.
+    classificationProviderOptions: ANTHROPIC_THINKING_OFF,
     classificationSamplingParams: {},
     // Derived from the fragment rather than repeating the rule, so the startup
     // line cannot disagree with what the request carries.

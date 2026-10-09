@@ -22,14 +22,15 @@
  *
  * api.anthropic.com accepts the SDK's native structured-output path (unlike
  * Foundry and mantle, which declare `structuredOutputOptions`) and any positive
- * token cap, so those declarations stay unset. The gates send no temperature,
- * because the default classification model, Haiku 5.5, rejects it.
+ * token cap, so those declarations stay unset. The gates send no temperature
+ * and turn thinking off, because the default classification model, Haiku 5.5,
+ * rejects the first and can do the second unasked.
  */
 
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
-import { ANTHROPIC_CACHE_POINT, type LlmProvider } from '../llm-provider';
+import { ANTHROPIC_CACHE_POINT, ANTHROPIC_THINKING_OFF, type LlmProvider } from '../llm-provider';
 
 /**
  * A Bedrock spelling of a Claude id: an optional cross-region
@@ -80,6 +81,7 @@ export function createAnthropicProvider(): LlmProvider {
   const dispatcher = (modelId: string) => anthropic(toFirstPartyModelId(modelId));
   return Object.assign(dispatcher, {
     cachePoint: () => ANTHROPIC_CACHE_POINT,
+    classificationProviderOptions: ANTHROPIC_THINKING_OFF,
     classificationSamplingParams: {},
   });
 }
