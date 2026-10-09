@@ -94,8 +94,8 @@ to clear.
   container alone. The database, the media store and the browser profiles stay
   on the host and out of the container entirely. The container's config holds no
   credential: a command's env is passed on each `docker exec`, and
-  `docker-env.ts` keeps the runtime's own secret families (Slack, the meeting
-  account, Langfuse, OTel, `NEXUS_*`) and every host path out of it. The
+  `docker-env.ts` keeps the runtime's own secret families (each chat platform,
+  the meeting account, Langfuse, OTel, `NEXUS_*`) and every host path out of it. The
   container is created once, so one that disappears mid-run is reported once
   (`container-lost.ts`) and comes back on the next restart. A command
   is one `docker exec` under `setsid --wait`, recording its process group into a
