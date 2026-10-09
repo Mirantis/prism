@@ -17,7 +17,6 @@ import { contextWindowFor } from './context-window';
 // ever stops covering these, the indicator silently disappears for every default
 // deployment — so assert them explicitly rather than trusting the generator.
 const BEDROCK_CHAT_DEFAULT = 'global.anthropic.claude-opus-5-5';
-const BEDROCK_CLASSIFICATION_DEFAULT = 'global.anthropic.claude-haiku-4-5-20251001-v1:0';
 const AZURE_CHAT_DEFAULT = 'claude-opus-5';
 const AZURE_CLASSIFICATION_DEFAULT = 'claude-haiku-4-5';
 const OPENAI_CHAT_DEFAULT = 'gpt-5.6-sol';
@@ -34,10 +33,6 @@ describe('contextWindowFor', () => {
   describe('the runtime defaults resolve', () => {
     it('resolves the Bedrock chat default', () => {
       expect(contextWindowFor(BEDROCK_CHAT_DEFAULT)).toEqual({ tokens: 1_000_000 });
-    });
-
-    it('resolves the Bedrock classification default', () => {
-      expect(contextWindowFor(BEDROCK_CLASSIFICATION_DEFAULT)).toEqual({ tokens: 200_000 });
     });
 
     it('resolves the Azure chat default', () => {

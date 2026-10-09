@@ -27,7 +27,7 @@ missing or malformed config falls back silently to the bundled defaults.
 {
   "agentName": "Prism",
   "modelId": "global.anthropic.claude-opus-5",
-  "heartbeatModelId": "global.anthropic.claude-haiku-4-5",
+  "heartbeatModelId": "global.anthropic.claude-haiku-5-5",
   "cronModelId": "global.anthropic.claude-sonnet-4-6",
   "hideCursor": false,
   "hideStatusBar": false,

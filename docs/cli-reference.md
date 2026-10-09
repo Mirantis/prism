@@ -131,7 +131,7 @@ fall back to defaults, and a malformed file is ignored.
 {
   "agentName": "Prism",
   "modelId": "global.anthropic.claude-opus-5-5",
-  "heartbeatModelId": "global.anthropic.claude-haiku-4-5",
+  "heartbeatModelId": "global.anthropic.claude-haiku-5-5",
   "cronModelId": "global.anthropic.claude-sonnet-4-6",
   "httpUrl": "http://localhost:3003",
   "hideCursor": false,

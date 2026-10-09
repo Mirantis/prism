@@ -309,7 +309,7 @@ describe('config', () => {
   it('reads BEDROCK_CLASSIFICATION_MODEL_ID with default', async () => {
     delete process.env.BEDROCK_CLASSIFICATION_MODEL_ID;
     const cfg = await loadConfig();
-    expect(cfg.bedrockClassificationModelId).toBe('global.anthropic.claude-haiku-4-5-20251001-v1:0');
+    expect(cfg.bedrockClassificationModelId).toBe('global.anthropic.claude-haiku-5-5');
   });
 
   it('reads AWS_REGION with default us-east-1', async () => {
