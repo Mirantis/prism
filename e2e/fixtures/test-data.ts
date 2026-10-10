@@ -35,4 +35,7 @@ export const DEFAULT_AGENT_SEED = {
  */
 export const E2E_WORKSPACE = path.join(os.tmpdir(), 'prism-e2e-workspace');
 
+/** The runtime's PRISM_DATA_DIR, which holds the coding agents' homes. */
+export const E2E_DATA_DIR = path.join(os.tmpdir(), 'prism-e2e-data');
+
 export const SLACK_COMPUTER_PUBLIC_URL = 'http://localhost:5173';

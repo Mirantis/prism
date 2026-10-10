@@ -3,7 +3,12 @@ import { config } from '../../../config';
 import { trackEvent } from '../../telemetry';
 import { runCli } from '../cli-run';
 import type { ExecutionEnvironment } from '../../execution-environments/execution-environment';
-import type { CodingAgent, CodingAgentEvent, CodingAgentTask } from '../coding-agent';
+import {
+  PLAN_ONLY_INSTRUCTION,
+  type CodingAgent,
+  type CodingAgentEvent,
+  type CodingAgentTask,
+} from '../coding-agent';
 import { codexApiKey, codexAuthMethod, hasSavedCodexLogin } from './credentials';
 import { getExecutionEnvironment } from '../../execution-environments/get-execution-environment';
 import { prepareSharedSkillsHome } from '../shared-skills-home';
@@ -77,13 +82,13 @@ export function createCodexAgent(environment?: ExecutionEnvironment): CodingAgen
 }
 
 function buildArgs(task: CodingAgentTask, authMethod: ReturnType<typeof codexAuthMethod>): string[] {
-  const sandbox = task.mode === 'plan'
-    ? 'read-only'
-    : task.gateMode === 'enforce' ? 'workspace-write' : 'danger-full-access';
+  // Every task runs without Codex's sandbox: in an unprivileged container, the
+  // deployed shape, the sandbox cannot start and every command in it fails.
+  // Nothing can answer an approval request, so none is asked.
   const args = [
     'exec', '--json', '--skip-git-repo-check',
     '-c', 'approval_policy="never"',
-    '-c', `sandbox_mode="${sandbox}"`,
+    '-c', 'sandbox_mode="danger-full-access"',
   ];
   const useBedrock = authMethod === 'bedrock';
   if (useBedrock) {
@@ -109,8 +114,9 @@ function buildArgs(task: CodingAgentTask, authMethod: ReturnType<typeof codexAut
   }
   if (task.sessionId) args.push('resume', task.sessionId);
   // Mode is a per-turn instruction; developer instructions persist across resume.
+  // With no sandbox, the instruction is all that keeps a plan task read-only.
   const mode = task.mode === 'plan'
-    ? 'Analyze and plan only. Do not change files or run commands that change state.'
+    ? PLAN_ONLY_INSTRUCTION
     : 'Implement the requested changes and verify the result.';
   args.push('--', `${mode}\n\n${task.prompt}`);
   return args;

@@ -19,3 +19,14 @@ Feature: Coding sub-agent
     And the stored tool calls include "coding_agent" and "coding_agent_status"
     When I navigate to the activity page
     Then the activity shows a "Coding Agent" tool call
+
+  # @slow: two model turns plus a real Claude Code run on Bedrock.
+  @slow
+  Scenario: A delegated task reports the action its permission checks refused
+    Given the coding agent's settings deny writing "refused-by-policy.txt"
+    When I navigate to the agent chat page
+    And I type "Use the coding_agent tool exactly once, with agent claude-code in edit mode, giving it this prompt: Create the file refused-by-policy.txt in the current directory containing the word nope. Use only the Write tool. If the write is refused, stop and report it. Then call coding_agent_status with waitMs 30000 until completed is true. Reply with one line only: STOP=<the stopReason>" in the chat input
+    And I send the message
+    Then the agent reply contains "STOP=refused"
+    And the coding task reports a refused "Write" of "refused-by-policy.txt"
+    And the workspace has no file "refused-by-policy.txt"

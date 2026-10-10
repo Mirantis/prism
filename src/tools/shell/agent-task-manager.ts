@@ -15,9 +15,11 @@
 import { randomUUID } from 'crypto';
 import { config, type CodingAgentName } from '../../config';
 import { logger } from '../../logger';
+import { trackEvent } from '../../lib/telemetry';
 import { getCodingAgent } from '../../lib/coding-agents/get-coding-agent';
 import type {
   CodingAgent,
+  CodingAgentRefusal,
   CodingAgentRun,
   CodingAgentStopReason,
   CodingAgentTask,
@@ -55,9 +57,11 @@ export interface AgentTaskStatus {
   turns?: number;
   stopReason?: string;
   sessionId?: string;
+  refusals?: CodingAgentRefusal[];
 }
 
-type TaskStopReason = CodingAgentStopReason | 'stopped';
+/** `refused`: the agent finished, but its permission checks refused part of the work. */
+type TaskStopReason = CodingAgentStopReason | 'stopped' | 'refused';
 
 interface TaskState {
   agent: CodingAgentName;
@@ -67,10 +71,12 @@ interface TaskState {
   turns?: number;
   stopReason?: TaskStopReason;
   sessionId?: string;
+  refusals?: CodingAgentRefusal[];
 }
 
 interface TaskEntry {
   agent: CodingAgent;
+  mode: CodingAgentTask['mode'];
   state: TaskState;
   waiters: Array<() => void>;
   reading: boolean;
@@ -118,12 +124,11 @@ export class AgentTaskManager {
       appendSystemPrompt: params.appendSystemPrompt,
       sessionId: params.sessionId,
       debug: params.debug,
-      gateMode: config.toolRiskGateMode,
     };
 
     const state: TaskState = { agent: agent.id, outputBuffer: '', completed: false };
     const run = agent.run(task);
-    const entry: TaskEntry = { agent, state, waiters: [], reading: false, run };
+    const entry: TaskEntry = { agent, mode: task.mode, state, waiters: [], reading: false, run };
     this.tasks.set(taskId, entry);
 
     logger.info(
@@ -297,8 +302,12 @@ export class AgentTaskManager {
   private async drive(taskId: string, entry: TaskEntry): Promise<void> {
     const state = entry.state;
     const texts: string[] = [];
-    let outcome: { stopReason: CodingAgentStopReason; turns: number; message: string } | null =
-      null;
+    let outcome: {
+      stopReason: CodingAgentStopReason;
+      turns: number;
+      message: string;
+      refusals?: CodingAgentRefusal[];
+    } | null = null;
 
     for await (const event of entry.run.events) {
       if (event.type === 'text') {
@@ -340,6 +349,22 @@ export class AgentTaskManager {
         : `Error (${outcome.stopReason}): ${outcome.message}`;
     }
 
+    const refusals = outcome.refusals ?? [];
+    if (refusals.length > 0) {
+      // A refused action is work the task did not do, so a run that otherwise
+      // ended cleanly is not reported as a success.
+      if (stopReason === 'end_turn') stopReason = 'refused';
+      result += `\n\n${describeRefusals(entry.agent.displayName, refusals)}`;
+      state.refusals = refusals;
+      trackEvent('coding task refused', config.ownerUserId, {
+        'task.id': taskId,
+        'task.agent': entry.agent.id,
+        'task.mode': entry.mode,
+        'task.stop_reason': outcome.stopReason,
+        'task.refusals': String(refusals.length),
+      });
+    }
+
     state.completed = true;
     state.result = result;
     state.turns = outcome.turns;
@@ -348,6 +373,11 @@ export class AgentTaskManager {
     this.notify(entry);
     logger.info({ taskId, stopReason, turns: outcome.turns }, '[AgentTask] completed');
   }
+}
+
+function describeRefusals(displayName: string, refusals: CodingAgentRefusal[]): string {
+  const lines = refusals.map(({ action, target }) => `- ${action}: ${target}`);
+  return `[refused]: ${displayName} did not run these actions, because its permission checks refused them:\n${lines.join('\n')}`;
 }
 
 function appendBuffer(state: TaskState, text: string): void {
@@ -369,6 +399,7 @@ function drainTask(state: TaskState): AgentTaskStatus {
     turns: state.completed ? state.turns : undefined,
     stopReason: state.completed ? state.stopReason : undefined,
     sessionId: state.completed ? state.sessionId : undefined,
+    refusals: state.completed ? state.refusals : undefined,
   };
 }
 

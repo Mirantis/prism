@@ -767,13 +767,22 @@ const codingAgentModelOverrides = {
 };
 
 const codingAgentModels = {
-  // On Bedrock the `sonnet` alias resolves to an older Sonnet release.
+  // Keyed by the backend Claude Code itself runs on, which its own credentials
+  // decide. On Bedrock the `haiku` and `sonnet` aliases resolve to older releases,
+  // which cannot run Claude Code's auto permission mode and so refuse every edit.
   'claude-code': {
-    small: codingAgentModelOverrides['claude-code'].small ?? 'haiku',
-    medium:
-      codingAgentModelOverrides['claude-code'].medium ??
-      (llmProvider === 'bedrock' ? 'global.anthropic.claude-sonnet-5-5' : 'sonnet'),
-    large: codingAgentModelOverrides['claude-code'].large ?? 'opus',
+    small: {
+      default: codingAgentModelOverrides['claude-code'].small ?? 'haiku',
+      bedrock: codingAgentModelOverrides['claude-code'].small ?? 'global.anthropic.claude-haiku-5-5',
+    },
+    medium: {
+      default: codingAgentModelOverrides['claude-code'].medium ?? 'sonnet',
+      bedrock: codingAgentModelOverrides['claude-code'].medium ?? 'global.anthropic.claude-sonnet-5-5',
+    },
+    large: {
+      default: codingAgentModelOverrides['claude-code'].large ?? 'opus',
+      bedrock: codingAgentModelOverrides['claude-code'].large ?? 'opus',
+    },
   },
   // Reuse the repository's model choices: luna is the fast classification model,
   // sol is the main model, and terra is the Codex adapter's existing Bedrock default.

@@ -7,6 +7,7 @@ import { execSync } from 'child_process';
 import { config } from 'dotenv';
 import {
   DEFAULT_AGENT_ID,
+  E2E_DATA_DIR,
   E2E_WORKSPACE,
   TEST_USER,
   SLACK_COMPUTER_PUBLIC_URL,
@@ -42,7 +43,6 @@ fs.mkdirSync(E2E_WORKSPACE, { recursive: true });
 // the catalog from the first request. The `echo-marker` skill instructs the
 // agent to reply with a fixed sentinel, which the web-skills run scenario
 // asserts end-to-end.
-const E2E_DATA_DIR = path.join(os.tmpdir(), 'prism-e2e-data');
 const E2E_ECHO_SKILL_DIR = path.join(E2E_DATA_DIR, 'skills', 'echo-marker');
 fs.mkdirSync(E2E_ECHO_SKILL_DIR, { recursive: true });
 fs.writeFileSync(

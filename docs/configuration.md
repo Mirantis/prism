@@ -169,8 +169,8 @@ Omitted parameters keep the deployment's model and effort behavior.
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| `CLAUDE_CODE_MODEL_SMALL` | Model for the Claude Code small tier | `haiku` |
-| `CLAUDE_CODE_MODEL_MEDIUM` | Model for the Claude Code medium tier | `sonnet` |
+| `CLAUDE_CODE_MODEL_SMALL` | Model for the Claude Code small tier | `haiku` (Bedrock: `global.anthropic.claude-haiku-5-5`) |
+| `CLAUDE_CODE_MODEL_MEDIUM` | Model for the Claude Code medium tier | `sonnet` (Bedrock: `global.anthropic.claude-sonnet-5-5`) |
 | `CLAUDE_CODE_MODEL_LARGE` | Model for the Claude Code large tier | `opus` |
 | `CODEX_MODEL_SMALL` | Model for the Codex small tier | `gpt-5.6-luna` (Bedrock: `openai.gpt-5.6-luna`) |
 | `CODEX_MODEL_MEDIUM` | Model for the Codex medium tier | `gpt-5.6-terra` (Bedrock: `openai.gpt-5.6-terra`) |
@@ -181,6 +181,27 @@ out of every tier. Blank overrides log a warning and use the default.
 
 `AGENT_NAME`, `TEAM_NAME`, and `OWNER_USER_ID` only matter on the **first** boot
 with an empty database; later boots reuse the stored workspace.
+
+### What a coding task may do
+
+Claude Code runs an edit task in its
+[auto permission mode](https://code.claude.com/docs/en/permission-modes) and a plan
+task in plan mode. When Claude Code refuses an action, the task result names each
+refused action and its target.
+
+Auto mode needs a model that
+[supports it](https://code.claude.com/docs/en/permission-modes#eliminate-prompts-with-auto-mode),
+and on Bedrock with Haiku 5.5 it needs Claude Code 2.1.293 or later. A tier set to any
+other model has every edit refused, and the runtime logs a warning that names the
+model. Auto mode checks an edit task's shell commands before they run, which can add
+model calls and time. The checks use Claude Sonnet 5 where the account can call it, and
+the task's model otherwise.
+
+A Codex task runs without Codex's sandbox and can write anywhere its user can. A Codex
+plan task is read-only by instruction only.
+
+To refuse more, add `permissions.deny` rules to Claude Code's
+[managed settings](https://code.claude.com/docs/en/managed-settings) where the task runs.
 
 ### Who can reach the runtime
 
@@ -230,7 +251,7 @@ call, apart from a few low-risk helpers that bypass it.
 |------|----------|
 | `off` | No risk evaluation. This is the default and preserves existing behavior and latency. |
 | `observe` | Evaluate calls and emit decision telemetry, but execute them regardless of the verdict. Evaluator failures also fail open. |
-| `enforce` | Block calls classified as unsafe. If the evaluator errors or times out, the evaluated call is blocked rather than executed. Claude Code edit sub-agents use `--permission-mode auto` instead of bypassing permissions. |
+| `enforce` | Block calls classified as unsafe. If the evaluator errors or times out, the evaluated call is blocked rather than executed. A Codex task that the gate lets start runs without Codex's sandbox and can write anywhere its user can. |
 
 ### Writing your own policy
 
@@ -281,14 +302,9 @@ returned to the agent as a failed tool call, so it can explain the refusal or
 choose a safer approach. Tool arguments and user text are not included in
 product telemetry.
 
-The outer gate can evaluate the initial coding sub-agent delegation, but not every
-shell command or file edit the resulting process proposes. With Claude Code, `enforce` mode removes
-`--dangerously-skip-permissions` and launches edit tasks with its
-[auto permission mode](https://code.claude.com/docs/en/permission-modes).
-Plan tasks remain in `plan` mode without bypass permissions. Auto mode has its
-own Claude Code model and platform requirements; if it is unavailable, the task
-fails rather than falling back to bypass mode. `off` and `observe` retain the
-existing bypass behavior so observe-only rollout does not change execution.
+The gate checks the `coding_agent` call that starts a coding task.
+[What a coding task may do](#what-a-coding-task-may-do) describes what the task can
+do after that.
 
 This gate is defense in depth, not a sandbox: both the main agent and the risk
 classifier are language models and can make mistakes. Keep OS permissions and

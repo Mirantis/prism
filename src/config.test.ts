@@ -54,7 +54,11 @@ describe('config', () => {
       const name = prefix + '_MODEL_' + tier.toUpperCase();
       process.env.LLM_PROVIDER = 'anthropic';
       const defaults = agent === 'claude-code'
-        ? { small: 'haiku', medium: 'sonnet', large: 'opus' }[tier]
+        ? {
+          small: { default: 'haiku', bedrock: 'global.anthropic.claude-haiku-5-5' },
+          medium: { default: 'sonnet', bedrock: 'global.anthropic.claude-sonnet-5-5' },
+          large: { default: 'opus', bedrock: 'opus' },
+        }[tier]
         : {
           small: { openai: 'gpt-5.6-luna', bedrock: 'openai.gpt-5.6-luna' },
           medium: { openai: 'gpt-5.6-terra', bedrock: 'openai.gpt-5.6-terra' },
@@ -65,7 +69,9 @@ describe('config', () => {
       process.env[name] = '  custom-model  ';
       vi.resetModules();
       expect((await loadConfig()).codingAgentModels[agent][tier]).toEqual(
-        agent === 'claude-code' ? 'custom-model' : { openai: 'custom-model', bedrock: 'custom-model' },
+        agent === 'claude-code'
+          ? { default: 'custom-model', bedrock: 'custom-model' }
+          : { openai: 'custom-model', bedrock: 'custom-model' },
       );
       process.env[name] = '   ';
       vi.resetModules();
@@ -75,42 +81,6 @@ describe('config', () => {
       );
     });
   }
-
-  describe('claude-code model defaults per LLM provider', () => {
-    beforeEach(() => {
-      delete process.env.CLAUDE_CODE_MODEL_SMALL;
-      delete process.env.CLAUDE_CODE_MODEL_MEDIUM;
-      delete process.env.CLAUDE_CODE_MODEL_LARGE;
-    });
-
-    it.each([undefined, 'bedrock'])('defaults medium to Sonnet 5.5 on Bedrock (LLM_PROVIDER=%s)', async (provider) => {
-      if (provider === undefined) delete process.env.LLM_PROVIDER;
-      else process.env.LLM_PROVIDER = provider;
-      expect((await loadConfig()).codingAgentModels['claude-code']).toEqual({
-        small: 'haiku',
-        medium: 'global.anthropic.claude-sonnet-5-5',
-        large: 'opus',
-      });
-    });
-
-    it.each(['azure', 'bedrock-mantle', 'openai', 'openrouter', 'anthropic'])(
-      'defaults medium to the sonnet alias on %s',
-      async (provider) => {
-        process.env.LLM_PROVIDER = provider;
-        expect((await loadConfig()).codingAgentModels['claude-code']).toEqual({
-          small: 'haiku',
-          medium: 'sonnet',
-          large: 'opus',
-        });
-      },
-    );
-
-    it('uses the medium override on Bedrock', async () => {
-      process.env.LLM_PROVIDER = 'bedrock';
-      process.env.CLAUDE_CODE_MODEL_MEDIUM = 'custom-model';
-      expect((await loadConfig()).codingAgentModels['claude-code'].medium).toBe('custom-model');
-    });
-  });
 
   describe('public Web UI address', () => {
     beforeEach(() => {

@@ -50,6 +50,8 @@ afterEach(() => {
 });
 
 describe('runCli', () => {
+  // With no terminal and no input, a CLI that would ask for an approval refuses
+  // the action and goes on: a delegated task never waits for an answer.
   it('closes stdin after passing the prompt in argv', async () => {
     const child = Object.assign(new FakeChild(), { stdin: new PassThrough() });
     const { run } = start(child);

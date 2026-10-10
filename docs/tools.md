@@ -173,12 +173,10 @@ This lets the agent delegate a self-contained engineering job — "refactor this
 module," "investigate this failing test" — and check back on the result, rather
 than doing everything in its own turn-by-turn loop.
 
-When the [risk gate](#risk-gate) is in `enforce` mode, Claude Code edit sub-agents
-run with its `auto` permission mode and without the permissions-bypass flag.
-Plan sub-agents stay in `plan` mode without bypass. This gives nested shell and
-file actions their own Claude Code policy check after Prism Agent approves the initial
-delegation. Codex plan tasks are read-only; with `enforce`, edit tasks can write
-inside their workspace and commands that need additional permission fail.
+A Claude Code task runs under Claude Code's own permission checks, and its result
+names each action they refused. A Codex task runs without Codex's sandbox and can
+write anywhere its user can; a Codex plan task is read-only by instruction only. See
+[Configuration](configuration.md#what-a-coding-task-may-do).
 
 ## Sharing files
 
