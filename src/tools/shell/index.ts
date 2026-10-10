@@ -5,7 +5,6 @@
 import { Tool, tool } from 'ai';
 import { z } from 'zod';
 import { runShellExec, shellExecInput } from './exec';
-import { DEFAULT_EXEC_OUTPUT_LIMIT_BYTES, MAX_EXEC_OUTPUT_LIMIT } from './config';
 import { resolveWorkspace } from '../../lib/execution-environments/workspace';
 import {
   runReadFile,
@@ -91,7 +90,15 @@ export function getShellTools(
 
   return {
     shell_exec: tool({
-      description: `Run a single shell command. Returns { stdout, stderr, exitCode }. Each stream is capped (default ${DEFAULT_EXEC_OUTPUT_LIMIT_BYTES} bytes per stream; pass \`limit\` up to ${MAX_EXEC_OUTPUT_LIMIT} to read more). Truncated output ends with "... (truncated; exceeded N bytes)". For multi-step workflows or interactive tasks use coding_agent instead.`,
+      description:
+        'Run a single shell command. Returns { stdout, stderr, exitCode }. Each stream is capped; ' +
+        'pass `limit` to read more. Truncated output ends with "... (truncated; exceeded N bytes)". ' +
+        'Credentials and config files for any integrations connected to this project are injected ' +
+        'into your sandbox automatically. When a user asks you to interact with external resources, ' +
+        "run the appropriate CLI with this tool — don't refuse based on assumed lack of access. If " +
+        "the CLI isn't on `$PATH`, try installing it via `mise install <tool>@latest` and then " +
+        "re-run. If an integration isn't wired up for a task, the CLI will return a clear error you " +
+        'can relay back. For multi-step workflows or interactive tasks use coding_agent instead.',
       inputSchema: shellExecInput,
       // Forward the per-turn AbortSignal so a canceled turn kills the child
       // process instead of leaving it to run on to its own timeout.
@@ -102,7 +109,7 @@ export function getShellTools(
 
     shell_read_file: tool({
       description:
-        'Read a file. Default returns up to 2000 lines. Output is line-numbered. Use offset/limit to read specific sections.',
+        'Read a file. Output is line-numbered. Use offset/limit to read specific sections.',
       inputSchema: readFileInput,
       execute: async (input) => runReadFile(input, workspace),
     }),
@@ -120,7 +127,7 @@ export function getShellTools(
 
     shell_edit_file: tool({
       description:
-        'Perform exact string replacement in a file. Must call shell_read_file first. Fails if old_string is not found, or matches multiple times without replace_all. Falls back to whitespace-tolerant matching if the exact match fails.',
+        'Perform exact string replacement in a file. Read the file with shell_read_file first. Fails if old_string is not found, or matches multiple times without replace_all. Falls back to whitespace-tolerant matching if the exact match fails; replace_all needs an exact match.',
       inputSchema: editFileInput,
       ...tracked(
         'shell_edit_file',
@@ -157,28 +164,28 @@ Available agent values: ${availableAgents}. Default agent: ${config.codingAgent}
 
     shell_spawn: tool({
       description:
-        'Start a long-running shell command as a background process. Returns { processId } immediately. Use for builds, watchers, test loops, anything that takes more than a few seconds OR that you want to interact with via stdin. Use shell_stdout to drain output and check status; shell_stdin to feed input; shell_kill to terminate. Max 10 concurrent processes. For one-shot commands use shell_exec instead.',
+        'Start a long-running shell command as a background process. Returns { processId } immediately. Use for builds, watchers, test loops, anything that takes more than a few seconds or that you want to interact with via stdin. Use shell_stdout to drain output and check status; shell_stdin to feed input; shell_kill to terminate. Max 10 concurrent processes. For one-shot commands use shell_exec instead.',
       inputSchema: shellSpawnInput,
       execute: async (input) => runShellSpawn(input, workspace),
     }),
 
     shell_stdin: tool({
       description:
-        'Write data to a running process\'s stdin. Pass the exact bytes (include newlines explicitly). Returns { ok: true } or { error }.',
+        'Write data to a running process\'s stdin. Returns { ok: true } or { error }.',
       inputSchema: shellStdinInput,
       execute: async (input) => runShellStdin(input),
     }),
 
     shell_stdout: tool({
       description:
-        'Drain accumulated output from a running process. Returns { stdout, stderr, exitCode, signal, running, truncated }. Output is drained-on-read — subsequent calls return only new bytes. Pass drainStderr:true to drain stderr instead of stdout (call once per stream). exitCode is null while running.',
+        'Drain accumulated output from a running process. Returns { stdout, stderr, exitCode, signal, running, truncated }. Output is drained-on-read — subsequent calls return only new bytes. exitCode is null while running.',
       inputSchema: shellStdoutInput,
       execute: async (input) => runShellStdout(input),
     }),
 
     shell_kill: tool({
       description:
-        'Send a signal to a running process and forget it. Default SIGTERM; pass SIGKILL for force-kill, SIGINT for Ctrl-C semantics, SIGHUP for hangup. Returns { ok: true } if the signal was delivered to a running process, { ok: false } if the process was already gone.',
+        'Send a signal to a running process. Default SIGTERM; pass SIGKILL for force-kill, SIGINT for Ctrl-C semantics, SIGHUP for hangup. Returns { ok: true } if the signal was delivered to a running process, { ok: false } if the process was already gone.',
       inputSchema: shellKillInput,
       execute: async (input) => runShellKill(input),
     }),

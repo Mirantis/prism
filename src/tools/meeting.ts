@@ -135,9 +135,9 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
           .optional()
           .describe(
             'How much you speak up. "auto" (the default, and almost always right) reads the ' +
-            'room: with one other person you answer everything, with more you wait to be ' +
-            'addressed by name. "open" always answers every utterance — only for a call you ' +
-            'know stays one-to-one. "addressed" always waits to be named.',
+            'room: with one other person you answer everything, with more you answer only what ' +
+            'is said to you. "open" always answers every utterance — only for a call you know ' +
+            'stays one-to-one. "addressed" always answers only what is said to you.',
           ),
       }),
       execute: async ({ url, responseMode }) => {

@@ -42,7 +42,12 @@ export function createTaskTool(
   invoker: Invoker,
 ): Tool {
   return {
-    description: 'Launch a new agent to handle complex, multi-step tasks autonomously.',
+    description:
+      'Launch a new agent to handle complex, multi-step tasks autonomously. Use a subagent ' +
+      "whenever the task matches its description. Each invocation begins with a clean slate: the " +
+      'agent does not see this conversation, so give it clear and detailed instructions with all ' +
+      'the context it needs, and say whether it should change anything or only research. Its ' +
+      'output is not shown to the user, so tell the user the outcome.',
     inputSchema: taskToolSchema,
     execute: async (input) => {
       logger.info(`[TaskTool] Received task with input: ${JSON.stringify(input)}`);

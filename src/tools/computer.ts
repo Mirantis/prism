@@ -108,7 +108,7 @@ export function getComputerTools(
   const screenOutput = result.computer_screen.toModelOutput;
   result.computer_screen = tool({
     description:
-      'Inspect your current desktop and browser. During human takeover, set userRequested only when the user explicitly asks you to inspect the screen. Automatic inspection waits for hand-back. While the user completes a help request, every inspection waits for hand-back.',
+      'Inspect your current desktop and browser. Inspect it again after navigation or user help. During human takeover, set userRequested only when the user explicitly asks you to inspect the screen. Automatic inspection waits for hand-back. While the user completes a help request, every inspection waits for hand-back.',
     inputSchema: z.object({ userRequested: z.boolean().default(false) }),
     execute: async ({ userRequested }) => {
       if (!use) throw new Error('Screen inspection requires an active invocation.');
@@ -137,7 +137,7 @@ export function getComputerTools(
   });
   result.computer_help = tool({
     description:
-      'When computer work is blocked by a step only the user can complete, ask them for help, such as signing in, solving a CAPTCHA, or approving a device. Set credentials for any sign-in screen — one asking for a username and a password, for the username alone, or for the password alone — and the user is asked for their username and password where they are, and the runtime types both in, screen by screen. Never ask for either in chat and never offer to try one. A CAPTCHA, a device approval, or a second factor leaves credentials false. Preserves this help request and releases the computer for independent work. Explain what the user needs to do. ' +
+      'When computer work is blocked by a step only the user can complete, ask them for help, such as signing in, solving a CAPTCHA, or approving a device. Call it immediately; do not wait for the user to ask you to request help, and pass tab for the tab that needs help. Set credentials for any sign-in screen — one asking for a username and a password, for the username alone, or for the password alone — and the user is asked for their username and password where they are, and the runtime types both in, screen by screen. Never ask for either in chat, never offer to try one, and never report the sign-in and stop for instructions: make the call. A CAPTCHA, a device approval, or a second factor leaves credentials false. Preserves this help request and releases the computer for independent work. Explain what the user needs to do. ' +
       (use && waitsForAnswer(use.mode)
         ? `This call waits up to ${WAIT_MINUTES} minutes for the user's answer, so do independent work first.`
         : 'Continue independent tasks; when only blocked work remains, end this turn and wait for the user.'),
@@ -177,7 +177,7 @@ export function getComputerTools(
   });
   result.computer_continue = tool({
     description:
-      'Resolve a computer help request after the user explicitly says they finished helping, or dismiss it at their request. Then inspect the screen before continuing. Use the help ID from computer_help.',
+      'Resolve a computer help request after the user explicitly says they finished helping, or dismiss it at their request. Then inspect the screen before continuing. The commands you started are paused while the user takes over the computer to help, so also check whatever you left running. Use the help ID from computer_help.',
     inputSchema: z.object({ helpId: z.string(), dismiss: z.boolean().default(false) }),
     execute: async ({ helpId, dismiss }) => {
       if (!use) throw new Error('Computer help requires an active invocation.');

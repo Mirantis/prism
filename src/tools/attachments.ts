@@ -388,7 +388,7 @@ export function getAttachmentTools(
     hydrate_attachment: tool({
       description:
         'Make a message attachment available on the workspace filesystem. ' +
-        'Attachment bytes are NOT on disk until you call this: the filename in the attachment ' +
+        'Attachment bytes are not on disk until you call this: the filename in the attachment ' +
         "stub is not a path, so shell tools (`cat`, `grep`, `jq`, `unzip`, `python`) will fail with 'no such file' " +
         'until the file is hydrated. ' +
         'Returns the absolute path to the hydrated file — use that path in shell commands. ' +

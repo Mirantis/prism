@@ -15,7 +15,8 @@ import type { ChannelName } from '../services/channel-adapter.interface';
 
 /**
  * Parse human-readable schedule into a cron expression.
- * Supports: "in X minutes", "at 3pm", "every 2 hours", "every day at 9am", raw cron.
+ * Supports: "in X minutes", "at 3pm", "every 2 hours", "every hour", "every day",
+ * "every day at 9am", raw cron.
  */
 export function parseSchedule(schedule: string): {
   cronExpression: string;
@@ -65,9 +66,9 @@ export function parseSchedule(schedule: string): {
     };
   }
 
-  const everyMatch = normalized.match(/^every\s+(\d+)\s+(second|seconds|sec|secs|minute|minutes|hour|hours|min|mins|hr|hrs)$/);
+  const everyMatch = normalized.match(/^every\s+(?:(\d+)\s+)?(second|seconds|sec|secs|minute|minutes|hour|hours|min|mins|hr|hrs)$/);
   if (everyMatch) {
-    const value = parseInt(everyMatch[1]);
+    const value = everyMatch[1] ? parseInt(everyMatch[1]) : 1;
     const unit = everyMatch[2];
 
     if (unit.startsWith('sec')) {
@@ -78,6 +79,10 @@ export function parseSchedule(schedule: string): {
       return { cronExpression: `0 */${value} * * *`, isOneShot: false, nextRunAt: null };
     }
     return { cronExpression: `*/${value} * * * *`, isOneShot: false, nextRunAt: null };
+  }
+
+  if (normalized === 'every day') {
+    return { cronExpression: '0 0 * * *', isOneShot: false, nextRunAt: null };
   }
 
   const dailyMatch = normalized.match(/^every\s+day\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
@@ -107,9 +112,11 @@ export function getCronTools(
   return {
     schedule_task: tool({
       description:
-        'Schedule a task to run at a specific time or interval. Set continueInThread to ' +
-        'resume in THIS conversation thread instead of starting a new one — this is how you ' +
-        '"wait" for something and pick the conversation back up here.',
+        'Schedule a task to run at a specific time or interval. When the user asks to be ' +
+        'reminded or alerted, set it up at once; use it also to check again later on something ' +
+        'that is not ready yet. Set continueInThread to resume in this conversation thread ' +
+        'instead of reporting as a scheduled task — this is how you "wait" for something and ' +
+        'pick the conversation back up here.',
       inputSchema: z.object({
         name: z.string().describe('Short name for the task'),
         schedule: z.string().describe('When to run: "in 30 seconds", "in 2 minutes", "every hour", "at 3pm", cron expression'),
@@ -118,9 +125,9 @@ export function getCronTools(
           .boolean()
           .optional()
           .describe(
-            'Continue in THIS conversation/thread when the task runs, instead of posting to a new ' +
-            'thread. Use this to "wait" and resume the conversation here. Only valid for one-off ' +
-            'schedules like "in 10 minutes".',
+            'Continue in this conversation/thread when the task runs, instead of reporting as a ' +
+            'scheduled task in the latest conversation. Use this to "wait" and resume the ' +
+            'conversation here. Only valid for one-off schedules like "in 10 minutes".',
           ),
       }),
       execute: async ({ name, schedule, instruction, continueInThread }) => {

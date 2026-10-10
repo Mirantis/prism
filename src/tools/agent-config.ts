@@ -134,25 +134,25 @@ export function getAgentConfigTools(): Record<string, Tool> {
     }),
 
     update_soul: tool({
-      description: 'Update your soul (personality, values, boundaries). Supports full replacement (newContent) or targeted edits.',
+      description: 'Update your soul (personality, values, boundaries).',
       inputSchema: workspaceFileInputSchema,
       execute: async (input) => resolveWorkspaceFileUpdate(agentId, 'soulMd', input),
     }),
 
     update_memory: tool({
-      description: 'Update your curated memory summary (always in context). Supports full replacement (newContent) or targeted edits.',
+      description: 'Update your curated memory summary (always in context). Critical facts go here.',
       inputSchema: workspaceFileInputSchema,
       execute: async (input) => resolveWorkspaceFileUpdate(agentId, 'memoryMd', input),
     }),
 
     update_user_profile: tool({
-      description: 'Update the user profile with information learned from conversation. Supports full replacement (newContent) or targeted edits (preferred for small changes).',
+      description: 'Update the user profile with information learned from conversation.',
       inputSchema: workspaceFileInputSchema,
       execute: async (input) => resolveWorkspaceFileUpdate(agentId, 'userMd', input),
     }),
 
     update_heartbeat_config: tool({
-      description: 'Update heartbeat configuration. Supports full replacement (newContent) or targeted edits.',
+      description: 'Update heartbeat configuration.',
       inputSchema: workspaceFileInputSchema,
       // The schedule stays as it is. Every cycle loads the checks fresh, so the
       // timer reads no part of this document.
@@ -241,7 +241,7 @@ export function getAgentConfigTools(): Record<string, Tool> {
     }),
 
     update_vision: tool({
-      description: "Update the user's vision document. Supports full replacement (newContent) or targeted edits.",
+      description: "Update the user's vision document.",
       inputSchema: workspaceFileInputSchema,
       execute: async (input) => resolveWorkspaceFileUpdate(agentId, 'visionMd', input),
     }),

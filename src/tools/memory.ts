@@ -39,7 +39,9 @@ export function getMemoryTools(
     }),
 
     memory_write: tool({
-      description: 'Store important information to your memory.',
+      description:
+        'Store important information to your memory. User preferences go here, with the ' +
+        'category observation.',
       inputSchema: z.object({
         content: z.string().describe('What to remember'),
         category: z.enum(['observation', 'action', 'decision', 'event']).describe('Category of information'),
