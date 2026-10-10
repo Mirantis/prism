@@ -149,8 +149,9 @@ tools.
 
 ## Coding sub-agent
 
-For larger coding tasks, the agent can hand work to a **coding agent** running as
-an autonomous sub-agent in the workspace. The tool lists available agents;
+For a task of many steps, such as research, a report, a document or code, the
+agent can hand the work to a **coding agent** running as an autonomous
+sub-agent in the workspace. The tool lists available agents;
 pass `agent: "claude-code"` or `agent: "codex"` to choose one for a task, or omit
 `agent` to use the `CODING_AGENT` default. Use the same `agent` with a returned
 `sessionId` to resume a task.
@@ -162,16 +163,16 @@ it untouched; link its `skills` directory to your Prism skills directory to shar
 installed skills. When commands run in a container, each CLI keeps its login
 with the agent's other storage and that setting does not apply.
 
-- **Start** a coding task with a prompt, in `edit` or `plan` mode, with a
-  turn budget for Claude Code.
+- **Start** a task with a prompt, in `edit` or `plan` mode, with a turn
+  budget for Claude Code.
 - **Poll** the running task for output and completion.
 - **Stop** a task that is heading the wrong way, looping, or no longer needed.
   The agent gets back whatever output the task produced before it was
   terminated, and can resume that work later instead of starting over.
 
-This lets the agent delegate a self-contained engineering job — "refactor this
-module," "investigate this failing test" — and check back on the result, rather
-than doing everything in its own turn-by-turn loop.
+This lets the agent delegate a self-contained job — "research this topic and
+write a report," "investigate this failing test" — and check back on the
+result, rather than doing everything in its own turn-by-turn loop.
 
 A Claude Code task runs under Claude Code's own permission checks, and its result
 names each action they refused. A Codex task runs without Codex's sandbox and can
