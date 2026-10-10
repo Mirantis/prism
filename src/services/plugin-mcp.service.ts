@@ -150,6 +150,17 @@ class PluginMcpService {
     });
   }
 
+  /**
+   * Every server the installed plugins declare, as the last refresh read them:
+   * the servers the agent's current tools come from. Ordered by plugin id, then
+   * server name.
+   */
+  configuredServers(): Array<{ pluginId: string; server: ResolvedServer }> {
+    return [...this.configs.entries()]
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .flatMap(([pluginId, { servers }]) => servers.map((server) => ({ pluginId, server })));
+  }
+
   /** Close every live client. Bounded, and safe to call more than once. */
   async shutdownAll(): Promise<void> {
     // Mark first: a connect still in flight must not re-insert its client after

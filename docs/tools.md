@@ -156,6 +156,12 @@ sub-agent in the workspace. The tool lists available agents;
 pass `agent: "claude-code"` or `agent: "codex"` to choose one for a task, or omit
 `agent` to use the `CODING_AGENT` default. Use the same `agent` with a returned
 `sessionId` to resume a task.
+A Claude Code task has the agent's [MCP tools](#external-tools-mcp), plugin
+tools included, and no others: a repository's `.mcp.json` and servers added
+with `claude mcp add` add none. In a conversation you start with `prism` inside
+a repository while commands [run in a container](#where-commands-run), the task
+leaves out plugin servers that start a command, because those run in the
+container.
 The Docker image includes both CLIs; for a local installation, run
 `npm install -g @anthropic-ai/claude-code @openai/codex`.
 

@@ -8,14 +8,23 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { FakeChild } from '../../../test-utils/fake-child';
+import { FailedSpawnChild, FakeChild } from '../../../test-utils/fake-child';
 import { logger } from '../../../logger';
 import { fakeExecutionEnvironment } from '../../../test-utils/fake-execution-environment';
 import { localFiles } from '../../execution-environments/local/local-files';
-import type { RunOptions } from '../../execution-environments/execution-environment';
-import type { CodingAgentEvent, CodingAgentTask } from '../coding-agent';
+import type {
+  ExecutionFiles,
+  RunOptions,
+} from '../../execution-environments/execution-environment';
+import type {
+  CodingAgentEvent,
+  CodingAgentMcpServer,
+  CodingAgentRun,
+  CodingAgentTask,
+} from '../coding-agent';
 import { PLAN_ONLY_INSTRUCTION } from '../coding-agent';
 import { createClaudeCodeAgent } from './claude-code-agent';
+import { claudeMcpConfig } from './mcp-config';
 
 const baseTask: CodingAgentTask = {
   taskId: 't1',
@@ -23,6 +32,7 @@ const baseTask: CodingAgentTask = {
   env: { PATH: '/bin' },
   mode: 'edit',
   maxTurns: 100,
+  mcpServers: [],
 };
 
 /** Start a task in an environment that records the launch instead of running anything. */
@@ -121,6 +131,166 @@ describe('run: the spawn', () => {
     expect(args.filter((a) => a === '--permission-mode')).toHaveLength(1);
     expect(args).not.toContain('--dangerously-skip-permissions');
     expect(args).not.toContain('--allow-dangerously-skip-permissions');
+  });
+});
+
+/** The runtime's servers as a task gets them: the platform endpoint and two from a plugin. */
+const SERVERS: CodingAgentMcpServer[] = [
+  { kind: 'http', name: 'nexus', url: 'https://nexus.example.test/mcp', headers: {} },
+  {
+    kind: 'stdio',
+    name: 'demo__probe',
+    command: 'node',
+    args: ['server.js'],
+    env: { PROBE_TOKEN: 'stdio-secret-value' },
+    cwd: '/plugins/demo',
+  },
+  {
+    kind: 'http',
+    name: 'demo__remote',
+    url: 'https://remote.example.test/mcp',
+    headers: { 'X-Api-Key': 'header-secret-value' },
+  },
+];
+
+/**
+ * An environment over the real filesystem that records each launch and each
+ * temp dir, so a test can read the config file and see it go.
+ */
+function mcpHarness(
+  options: { child?: () => FakeChild; files?: Partial<ExecutionFiles> } = {},
+) {
+  const launches: Array<{ args: readonly string[]; child: FakeChild }> = [];
+  const dirs: string[] = [];
+  const environment = fakeExecutionEnvironment({
+    runProgram: (_command, args) => {
+      const child = options.child?.() ?? new FakeChild();
+      launches.push({ args, child });
+      return child.asExecProcess();
+    },
+    files: {
+      ...localFiles,
+      makeTempDir: async (prefix) => {
+        const dir = await localFiles.makeTempDir(prefix);
+        dirs.push(dir);
+        return dir;
+      },
+      ...options.files,
+    },
+  });
+  const start = (): CodingAgentRun =>
+    createClaudeCodeAgent(environment).run({ ...baseTask, mcpServers: SERVERS });
+  /** The launch, once the config is written. */
+  const launched = async () => {
+    await vi.waitFor(() => expect(launches).toHaveLength(1));
+    return launches[0];
+  };
+  return { start, launched, launches, dirs };
+}
+
+describe('run: MCP servers', () => {
+  it('gives the CLI no MCP server at all when the runtime connects none', () => {
+    const { args } = capture({});
+    expect(args).not.toContain('--mcp-config');
+    // Strict with no config file: no server, an `.mcp.json` in the workdir included.
+    expect(args).toContain('--strict-mcp-config');
+  });
+
+  it('points the CLI at a private config file, strictly', async () => {
+    const { start, launched } = mcpHarness();
+    const run = start();
+    const { args, child } = await launched();
+
+    const configPath = valueOf(args, '--mcp-config');
+    if (!configPath) throw new Error('no --mcp-config');
+    // Next to it, so the variadic `--mcp-config` takes the one path only.
+    expect(args[args.indexOf('--mcp-config') + 2]).toBe('--strict-mcp-config');
+    expect(fs.readFileSync(configPath, 'utf8')).toBe(claudeMcpConfig(SERVERS, true).document);
+    expect(fs.statSync(configPath).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(path.dirname(configPath)).mode & 0o777).toBe(0o700);
+
+    child.finish(0);
+    await Array.fromAsync(run.events);
+  });
+
+  it('keeps every env value and header out of the process arguments', async () => {
+    const { start, launched } = mcpHarness();
+    const run = start();
+    const { args, child } = await launched();
+
+    const argv = args.join('\n');
+    expect(argv).not.toContain('stdio-secret-value');
+    expect(argv).not.toContain('header-secret-value');
+
+    child.finish(0);
+    await Array.fromAsync(run.events);
+  });
+
+  it.each([
+    [
+      'reports its result',
+      (child: FakeChild) => {
+        child.emitLine(JSON.stringify({ type: 'result', subtype: 'success', result: 'ok', num_turns: 1 }));
+        child.finish(0);
+      },
+    ],
+    ['exits without a result', (child: FakeChild) => child.finish(1)],
+    ['is stopped', (_child: FakeChild, run: CodingAgentRun) => run.stop()],
+  ])('removes the config when the CLI %s', async (_label, end) => {
+    const { start, launched, dirs } = mcpHarness();
+    const run = start();
+    const { child } = await launched();
+
+    end(child, run);
+    const events = await Array.fromAsync(run.events);
+
+    expect(events.at(-1)?.type).toBe('result');
+    expect(dirs).toHaveLength(1);
+    expect(fs.existsSync(dirs[0])).toBe(false);
+    expect(run.exited).toBe(true);
+  });
+
+  it('removes the config when the CLI fails to launch', async () => {
+    const { start, launched, dirs } = mcpHarness({ child: () => new FailedSpawnChild() });
+    const run = start();
+    const { child } = await launched();
+
+    (child as FailedSpawnChild).fail('spawn claude ENOENT');
+    const events = await Array.fromAsync(run.events);
+
+    expect(events).toEqual([
+      { type: 'result', stopReason: 'error', turns: 0, message: 'Claude Code failed to start: spawn claude ENOENT' },
+    ]);
+    expect(fs.existsSync(dirs[0])).toBe(false);
+  });
+
+  it('starts nothing and removes the config when stopped before the CLI starts', async () => {
+    const { start, launches, dirs } = mcpHarness();
+    const run = start();
+    expect(run.exited).toBe(false);
+
+    run.stop();
+    const events = await Array.fromAsync(run.events);
+
+    expect(events).toEqual([
+      { type: 'result', stopReason: 'error', turns: 0, message: 'Claude Code was stopped before it started' },
+    ]);
+    expect(launches).toHaveLength(0);
+    expect(fs.existsSync(dirs[0])).toBe(false);
+    expect(run.exited).toBe(true);
+  });
+
+  it('reports a config that cannot be written as a failed start, and removes its directory', async () => {
+    const { start, launches, dirs } = mcpHarness({
+      files: { writeText: () => Promise.reject(new Error('No space left on device')) },
+    });
+    const events = await Array.fromAsync(start().events);
+
+    expect(events).toEqual([
+      { type: 'result', stopReason: 'error', turns: 0, message: 'Claude Code failed to start: No space left on device' },
+    ]);
+    expect(launches).toHaveLength(0);
+    expect(fs.existsSync(dirs[0])).toBe(false);
   });
 });
 

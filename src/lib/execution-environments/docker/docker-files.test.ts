@@ -4,7 +4,11 @@
  * The engine is never run: a fake stands in for the `docker` client, so these
  * cases say the same thing on a machine with an engine and one without.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { execFileSync } from 'child_process';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { FakeChild } from '../../../test-utils/fake-child';
 import type { RunOptions } from '../execution-environment';
 
@@ -84,6 +88,49 @@ describe('writing', () => {
     // `-i` is what connects our stdin to the container's.
     expect(launches[0].args).toContain('-i');
     expect(launches[0].options.stdin).toBe('pipe');
+  });
+
+  describe('the scripts, run by a real shell', () => {
+    let tmp: string;
+    beforeEach(() => {
+      tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'prism-docker-files-'));
+    });
+    afterEach(() => {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    });
+
+    /** Run what the container would have been asked to run, here. */
+    const runHere = (input?: string, env: NodeJS.ProcessEnv = process.env): string => {
+      const call = callOf();
+      return execFileSync('sh', ['-c', call.script, call.argv0, ...call.args], { input, env })
+        .toString('utf8');
+    };
+
+    it('creates a file with the requested mode', async () => {
+      const file = path.join(tmp, 'mcp.json');
+      await files().writeText(file, '{}', { mode: 0o600 });
+      expect(launches[0].args).toContain('-i');
+
+      runHere('{"a":1}');
+      expect(fs.readFileSync(file, 'utf8')).toBe('{"a":1}');
+      expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    });
+
+    it('makes a new directory only its user can open, and answers its path', async () => {
+      await files().makeTempDir('prism-claude-code-');
+
+      const dir = runHere(undefined, { ...process.env, TMPDIR: tmp }).trim();
+      expect(path.dirname(dir)).toBe(tmp);
+      expect(path.basename(dir)).toMatch(/^prism-claude-code-/);
+      expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+    });
+
+    it('trims the path the container answers', async () => {
+      stdout = '/tmp/prism-claude-code-Ab12Cd34\n';
+      expect(await files().makeTempDir('prism-claude-code-')).toBe(
+        '/tmp/prism-claude-code-Ab12Cd34',
+      );
+    });
   });
 
   it('replaces a link and refuses to follow one to a directory', async () => {

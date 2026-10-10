@@ -40,11 +40,18 @@ export function createDockerFiles(container: string): ExecutionFiles {
 
     readBytes: (path) => run('cat -- "$1"', [path]),
 
-    writeText: (path, content) => writeFile(run, path, Buffer.from(content, 'utf8')),
+    writeText: (path, content, options) =>
+      writeFile(run, path, Buffer.from(content, 'utf8'), options?.mode),
     writeBytes: (path, content) => writeFile(run, path, content),
 
     async mkdir(path) {
       await run('mkdir -p -- "$1"', [path]);
+    },
+
+    // `mktemp -d` creates the directory 0700.
+    async makeTempDir(prefix) {
+      const out = await run('mktemp -d "${TMPDIR:-/tmp}/${1}XXXXXXXX"', [prefix]);
+      return out.toString('utf8').trim();
     },
 
     async rename(from, to) {
@@ -93,8 +100,14 @@ async function writeFile(
   run: (script: string, args: string[], stdin?: Buffer) => Promise<Buffer>,
   path: string,
   content: Buffer,
+  mode?: number,
 ): Promise<void> {
-  await run('cat > "$1"', [path], content);
+  if (mode === undefined) {
+    await run('cat > "$1"', [path], content);
+    return;
+  }
+  // `cat` creates the file 0666 less the umask, so the umask gives it `mode`.
+  await run('umask "$2" && cat > "$1"', [path, (0o666 & ~mode).toString(8)], content);
 }
 
 /**

@@ -108,3 +108,7 @@ Then(
     expect(names).toContain(second);
   },
 );
+
+Then('the stored tool calls do not include {string}', async ({}, name: string) => {
+  expect(await storedToolNames()).not.toContain(name);
+});

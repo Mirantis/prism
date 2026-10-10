@@ -10,16 +10,21 @@
  * `CLAUDE_CONFIG_DIR`, so the CLI's own state (sessions, `.claude.json`) stays
  * out of the data-dir root and the user's real `~/.claude` is never touched.
  * The CLI discovers skills under `$CLAUDE_CONFIG_DIR/skills`, a symlink to the
- * environment's skills dir: both read the same bytes.
+ * environment's skills dir: both read the same bytes. Its MCP servers are the
+ * runtime's own, given in a config file written for each task (`mcp-config.ts`).
  */
 
 import { claudeCodeEnvironment, hasClaudeCodeCredentials } from './credentials';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
 import { runCli } from '../cli-run';
-import { getExecutionEnvironment } from '../../execution-environments/get-execution-environment';
+import {
+  getExecutionEnvironment,
+  getExecutionEnvironmentFor,
+} from '../../execution-environments/get-execution-environment';
 import type { ExecutionEnvironment } from '../../execution-environments/execution-environment';
 import { prepareSharedSkillsHome } from '../shared-skills-home';
+import { runWithMcpConfig } from './mcp-config';
 import {
   PLAN_ONLY_INSTRUCTION,
   type CodingAgent,
@@ -72,28 +77,35 @@ export function createClaudeCodeAgent(environment?: ExecutionEnvironment): Codin
     isAvailable: hasClaudeCodeCredentials,
     run: (task: CodingAgentTask): CodingAgentRun => {
       const env = claudeCodeEnvironment(task.env);
-      return runCli(
-        {
-          taskId: task.taskId,
-          displayName: DISPLAY_NAME,
-          command: COMMAND,
-          args: buildArgs(task, env.CLAUDE_CODE_USE_BEDROCK === '1'),
-          cwd: task.workdir,
-          env: {
-            ...env,
-            // Stated on the task's env rather than inherited from this
-            // process: the CLI runs in the execution environment.
-            CLAUDE_CONFIG_DIR: (environment ?? getExecutionEnvironment()).paths().claudeHome,
+      // The environment the CLI runs in, which is also where its MCP config
+      // has to be.
+      const target = environment ?? getExecutionEnvironmentFor(task.workdir);
+      const launch = (mcpConfigPath?: string): CodingAgentRun =>
+        runCli(
+          {
+            taskId: task.taskId,
+            displayName: DISPLAY_NAME,
+            command: COMMAND,
+            args: buildArgs(task, env.CLAUDE_CODE_USE_BEDROCK === '1', mcpConfigPath),
+            cwd: task.workdir,
+            env: {
+              ...env,
+              // Stated on the task's env rather than inherited from this
+              // process: the CLI runs in the execution environment.
+              CLAUDE_CONFIG_DIR: (environment ?? getExecutionEnvironment()).paths().claudeHome,
+            },
+            parseLine: (line) => parseLine(line, task),
           },
-          parseLine: (line) => parseLine(line, task),
-        },
-        environment,
-      );
+          target,
+        );
+      return task.mcpServers.length === 0
+        ? launch()
+        : runWithMcpConfig(task, target, DISPLAY_NAME, launch);
     },
   };
 }
 
-function buildArgs(task: CodingAgentTask, onBedrock: boolean): string[] {
+function buildArgs(task: CodingAgentTask, onBedrock: boolean, mcpConfigPath?: string): string[] {
   const args: string[] = [
     '-p',
     task.prompt,
@@ -133,6 +145,10 @@ function buildArgs(task: CodingAgentTask, onBedrock: boolean): string[] {
     args.push('--resume', task.sessionId);
   }
   args.push('--disallowed-tools', 'AskUserQuestion');
+  // Strict, so the CLI's MCP servers are the runtime's alone: an `.mcp.json` in
+  // the working directory adds none, also when the runtime has none to give.
+  if (mcpConfigPath) args.push('--mcp-config', mcpConfigPath);
+  args.push('--strict-mcp-config');
   if (task.debug) args.push('--debug');
 
   return args;

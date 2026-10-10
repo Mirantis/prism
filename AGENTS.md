@@ -1018,6 +1018,7 @@ src/
 │   │       ├── authenticated-home.ts # Saved CLI login detection, by running the CLI in the execution environment
 │   │       ├── credentials.ts # Claude CLI authentication settings
 │   │       ├── home.ts        # Where the CLI keeps its state, resolved off the env the CLI will run with
+│   │       ├── mcp-config.ts  # The task's MCP servers as a `--mcp-config` file: written 0600 in a temp dir of its own, removed before the run's stream ends
 │   │       └── claude-code-agent.ts # The Claude Code adapter: `claude -p --output-format stream-json …` argv (task mode → permission mode, plan-only instruction), the stream-json parser with the result line's `permission_denials`, and the `<DATA>/.claude` home with `CLAUDE_CONFIG_DIR` and the skills symlink
 │   ├── execution-environments/ # Where a command runs and what filesystem it sees, plus the shared contract and the selector
 │   │   ├── execution-environment.ts # The contract: `runShell` / `runProgram` returning an `ExecProcess` (`ended` for exit accounting, `closed` once the pipes drain), `ExecutionFiles`, and `paths()` — the agent's directories in this environment
@@ -1050,6 +1051,7 @@ src/
 │   ├── llm-errors.ts           # Single owner of LLM/runtime error → user-facing text (`buildErrorStep`, budget detection)
 │   ├── log-redaction.ts        # The global pino `err` serializer: an allow-list, so no SDK request/response body is ever logged
 │   ├── mcp-client.ts           # MCP tool fetching from MCP servers
+│   ├── agent-mcp-servers.ts    # The MCP servers the runtime connects for the agent, as the neutral list a coding task gets
 │   ├── model-call.ts           # The only module calling `generateText`/`generateObject`; records every call's usage
 │   ├── step-usage.ts           # Token usage: SDK usage → the recorded shape, and folding a turn's steps for the invocation total
 │   ├── media-store.ts          # Attachment bytes as files under `<data dir>/media`: write/read/remove, filename sanitizing, stray-file reaper
@@ -1537,7 +1539,7 @@ longer claims otherwise.** `routes/agent-guide.ts` takes no credential from
 inside the container and `tools/shell/workspace.ts` is explicit that its check is
 not a security boundary, so `shell_exec` reaches both `PATCH
 localhost:3003/agents/documents/agentMd` and `/data/agent.db`, and a `coding_agent`
-sub-agent's own commands never reach this gate at all. Withholding the ordinary
+sub-agent's own commands and MCP tool calls never reach this gate at all. Withholding the ordinary
 path — a tool the model reaches for while working — is what this buys, and with
 allow-authority on a writable document that makes the control a one-way ratchet:
 one landed guide write removes a refusal for every later turn on every channel.

@@ -30,3 +30,16 @@ Feature: Coding sub-agent
     Then the agent reply contains "STOP=refused"
     And the coding task reports a refused "Write" of "refused-by-policy.txt"
     And the workspace has no file "refused-by-policy.txt"
+
+  # @slow: two model turns plus a real Claude Code run on Bedrock. The demo
+  # plugin's MCP tool answers a marker the agent can only learn by calling it,
+  # and the agent never calls it itself, so the marker came from the sub-agent.
+  @slow
+  Scenario: The coding sub-agent calls an MCP tool the agent has
+    When I navigate to the agent chat page
+    And I type "Use the coding_agent tool exactly once, with maxTurns 5, giving it this prompt: Call the MCP tool mcp__demo__probe__plugin_mcp_probe and reply with exactly what it returns and nothing else. Then call coding_agent_status with waitMs 30000 until completed is true. Call no other tool. Reply with one line only: RESULT=<the result>." in the chat input
+    And I send the message
+    Then the agent reply contains "PLUGIN_MCP_TOOL_OK"
+    And no reply is an error
+    And the stored tool calls include "coding_agent" and "coding_agent_status"
+    And the stored tool calls do not include "demo__probe__plugin_mcp_probe"

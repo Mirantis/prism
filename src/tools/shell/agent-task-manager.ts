@@ -16,6 +16,7 @@ import { randomUUID } from 'crypto';
 import { config, type CodingAgentName } from '../../config';
 import { logger } from '../../logger';
 import { trackEvent } from '../../lib/telemetry';
+import { agentMcpServers } from '../../lib/agent-mcp-servers';
 import { getCodingAgent } from '../../lib/coding-agents/get-coding-agent';
 import type {
   CodingAgent,
@@ -124,6 +125,7 @@ export class AgentTaskManager {
       appendSystemPrompt: params.appendSystemPrompt,
       sessionId: params.sessionId,
       debug: params.debug,
+      mcpServers: agentMcpServers(params.workdir),
     };
 
     const state: TaskState = { agent: agent.id, outputBuffer: '', completed: false };
@@ -138,6 +140,7 @@ export class AgentTaskManager {
         promptLen: task.prompt.length,
         maxTurns: task.maxTurns,
         mode: task.mode,
+        mcpServers: task.mcpServers.length,
       },
       '[AgentTask] starting task',
     );

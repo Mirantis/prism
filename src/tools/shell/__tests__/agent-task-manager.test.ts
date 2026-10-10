@@ -274,6 +274,19 @@ describe('AgentTaskManager', () => {
     expect(getTask()).toMatchObject({ mode: 'edit', maxTurns: DEFAULT_MAX_TURNS });
   });
 
+  it("gives the task the agent's MCP servers", () => {
+    const saved = config.nexusMcpUrl;
+    config.nexusMcpUrl = 'https://gateway.example.test/projects/p/mcp';
+    try {
+      manager.startTask(sampleParams);
+    } finally {
+      config.nexusMcpUrl = saved;
+    }
+    expect(getTask().mcpServers).toEqual([
+      { kind: 'http', name: 'nexus', url: 'https://gateway.example.test/projects/p/mcp', headers: {} },
+    ]);
+  });
+
   it('buffers text and delivers it on readStatus (drain-on-read)', async () => {
     const { taskId } = manager.startTask(sampleParams);
     const run = getRun();

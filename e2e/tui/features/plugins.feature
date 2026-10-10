@@ -2,10 +2,10 @@ Feature: Plugins
   Installed Agent Plugins (the agent-plugins.org standard) contribute skills and
   MCP tool servers. `e2e/features/web/plugins.feature` asserts a healthy
   plugin's name and version and runs its skill. What is left here is the
-  contribution lines `/plugins` prints, plus two cases needing fixtures the web
-  suite does not install: a malformed plugin, which the runtime skips with an
-  attributable reason instead of stopping the agent, and a real stdio MCP
-  server.
+  contribution lines `/plugins` prints, a malformed plugin, which the web suite
+  does not install and the runtime skips with an attributable reason instead
+  of stopping the agent, and the agent's own call of a tool from a real stdio
+  MCP server.
 
   Scenario: /plugins reports what the plugin contributes
     When I run "/plugins"

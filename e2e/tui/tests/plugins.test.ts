@@ -1,10 +1,10 @@
 /**
  * Plugins slash command e2e for what the web suite does not assert: the
  * contribution lines `/plugins` prints for a healthy plugin, the diagnostics a
- * malformed plugin produces, and a real stdio MCP server. The web suite checks
- * the plugin's name and version and runs its skill
- * (`e2e/features/web/plugins.feature`); it installs neither a broken plugin nor
- * an MCP server.
+ * malformed plugin produces, and the agent's own call of a tool from a real
+ * stdio MCP server. The web suite checks the plugin's name and version and runs
+ * its skill (`e2e/features/web/plugins.feature`), and has the coding sub-agent
+ * call its MCP tool; it installs no broken plugin.
  *
  * The runtime boots with PRISM_DATA_DIR pointed at a hermetic temp dir seeded
  * before boot with three plugins: a healthy one contributing a skill, one whose
