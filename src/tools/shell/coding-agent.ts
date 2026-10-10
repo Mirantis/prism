@@ -25,11 +25,11 @@ import { AgentTaskParams, getAgentTaskManager } from './agent-task-manager';
  */
 export const buildCodingAgentInput = () => z.object({
   agent: z.enum(CODING_AGENTS).optional().describe(
-    `Coding agent to use. Available values: ${config.availableCodingAgents.join(', ') || 'none detected'}. Default: ${config.codingAgent}. Use the same agent when resuming a session.`,
+    `Sub-agent to use. Available values: ${config.availableCodingAgents.join(', ') || 'none detected'}. Default: ${config.codingAgent}. Use the same agent when resuming a session.`,
   ),
   prompt: z.string().describe('The task for the sub-agent to perform'),
   model: z.enum(['small', 'medium', 'large']).optional().describe(
-    'Model tier for this task. Small is for mechanical edits and focused reads. Medium is for routine implementation and debugging. Large is for cross-file analysis and design changes. Omit to keep the deployment model.',
+    'Model tier for this task. Small is for mechanical work and focused reads. Medium is for routine work and investigation. Large is for cross-cutting analysis and design. Omit to keep the deployment model.',
   ),
   effort: z.enum(['low', 'medium', 'high']).optional().describe(
     'Reasoning effort for this task. Low is for straightforward tasks with clear steps. Medium is for tasks that need some investigation. High is for difficult reasoning and complex tradeoffs. Omit to keep the deployment effort.',
@@ -50,7 +50,7 @@ export const buildCodingAgentInput = () => z.object({
     .enum(['edit', 'plan'])
     .optional()
     .describe(
-      '"edit" (default) allows code changes, "plan" only analyzes. Pass sessionId from plan to edit to preserve context.',
+      '"edit" (default) can create and change files. "plan" tells the sub-agent to analyze and report without changing anything. Pass sessionId from plan to edit to preserve context.',
     ),
   maxTurns: z
     .number()
