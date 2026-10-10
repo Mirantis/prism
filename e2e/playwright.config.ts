@@ -72,6 +72,18 @@ fs.writeFileSync(
     'When this skill is invoked, reply with exactly the following text and nothing else:\n\n' +
     'PLUGIN_SKILL_RAN_OK\n',
 );
+// Its stdio MCP server, which the coding sub-agent scenario has the sub-agent call.
+fs.copyFileSync(
+  path.join(__dirname, 'fixtures', 'plugin-mcp-probe.mjs'),
+  path.join(E2E_PLUGIN_DIR, 'server.mjs'),
+);
+fs.writeFileSync(
+  path.join(E2E_PLUGIN_DIR, 'mcp.json'),
+  JSON.stringify({
+    $schema: 'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json',
+    mcpServers: { probe: { type: 'stdio', command: 'node', args: ['server.mjs'] } },
+  }),
+);
 
 // Provision the SQLite e2e DB *at config load* so it exists before
 // Playwright spawns the runtime webServer (the WebServerPlugin runs in

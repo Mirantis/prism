@@ -3,6 +3,8 @@
  */
 import * as fs from 'fs/promises';
 import type { Stats } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import type { DirEntry, ExecutionFiles, FileStat } from '../execution-environment';
 
 export const localFiles: ExecutionFiles = {
@@ -23,8 +25,8 @@ export const localFiles: ExecutionFiles = {
     return fs.readFile(path);
   },
 
-  async writeText(path, content) {
-    await fs.writeFile(path, content, 'utf8');
+  async writeText(path, content, options) {
+    await fs.writeFile(path, content, { encoding: 'utf8', mode: options?.mode });
   },
 
   async writeBytes(path, content) {
@@ -34,6 +36,9 @@ export const localFiles: ExecutionFiles = {
   async mkdir(path) {
     await fs.mkdir(path, { recursive: true });
   },
+
+  // `mkdtemp` creates the directory 0700.
+  makeTempDir: (prefix) => fs.mkdtemp(join(tmpdir(), prefix)),
 
   rename(from, to) {
     return fs.rename(from, to);

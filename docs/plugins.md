@@ -135,7 +135,10 @@ Two variables are available in `args`, in `env` values, and in `cwd`:
 - `${PLUGIN_ROOT}` — the plugin's own folder.
 - `${PLUGIN_DATA}` — its persistent data folder, created before the server starts.
 
-Both are also set in the server's environment. The rules worth knowing:
+Both are also set in the server's environment. Other `${NAME}` text reaches the
+server as written, and a [Claude Code task](tools.md#coding-sub-agent) leaves
+out a server whose values hold it, because Claude Code would fill it in from its
+own environment. The rules worth knowing:
 
 - `command` is a single executable: a bare name found on `PATH`, or a `./` path
   inside the plugin. Put arguments in `args`, not in `command`, and note that

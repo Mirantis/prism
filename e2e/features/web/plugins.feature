@@ -1,8 +1,8 @@
 Feature: Plugins slash command (web)
   As a user I want to see which Agent Plugins are installed and what each one
   contributes, from the web chat. The CLI suite keeps the malformed-plugin
-  cases and the MCP servers, which need fixtures the web suite does not
-  install.
+  cases, which need fixtures the web suite does not install, and the agent's
+  own call of a plugin's MCP tool.
 
   Background:
     Given I am logged in

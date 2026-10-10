@@ -120,10 +120,13 @@ export interface ExecutionFiles {
   /** `maxBytes` reads a prefix — a skill's frontmatter, not its whole body. */
   readText(path: string, options?: { maxBytes?: number }): Promise<string>;
   readBytes(path: string): Promise<Buffer>;
-  writeText(path: string, content: string): Promise<void>;
+  /** `mode` sets the read and write bits of a file this call creates. */
+  writeText(path: string, content: string, options?: { mode?: number }): Promise<void>;
   writeBytes(path: string, content: Buffer): Promise<void>;
   /** Creates parents too. */
   mkdir(path: string): Promise<void>;
+  /** A new, empty directory under the environment's temp dir that only this user can open. */
+  makeTempDir(prefix: string): Promise<string>;
   rename(from: string, to: string): Promise<void>;
   /** Follows symlinks. */
   stat(path: string): Promise<FileStat>;

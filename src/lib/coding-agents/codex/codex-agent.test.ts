@@ -15,6 +15,7 @@ vi.mock('../../telemetry', () => ({ trackEvent: vi.fn() }));
 const task: CodingAgentTask = {
   taskId: 'task-1', prompt: 'Inspect the project', workdir: '/work',
   env: { OPENAI_API_KEY: 'test-key' }, mode: 'edit', maxTurns: 100,
+  mcpServers: [],
 };
 
 let authHome: string;

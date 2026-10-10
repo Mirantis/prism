@@ -370,6 +370,46 @@ describe('PluginMcpService.getTools', () => {
   });
 });
 
+describe('PluginMcpService.configuredServers', () => {
+  it('lists every declared server of the last refresh, by plugin then server', async () => {
+    const zeta = writePlugin('zeta', { srv: { type: 'stdio', command: 'node', env: { K: 'v' } } });
+    writePlugin('alpha', {
+      web: { type: 'streamable-http', url: 'https://x.dev/mcp' },
+      cli: { type: 'stdio', command: 'node' },
+    });
+    pluginCatalogService.invalidate();
+    // A server that failed to start is still one the plugin declares.
+    mockCreateMCPClient.mockRejectedValue(new Error('boom'));
+
+    expect(pluginMcpService.configuredServers()).toEqual([]);
+    await pluginMcpService.getTools();
+
+    const servers = pluginMcpService.configuredServers();
+    expect(servers.map(({ pluginId, server }) => `${pluginId}/${server.name}`)).toEqual([
+      'alpha/cli',
+      'alpha/web',
+      'zeta/srv',
+    ]);
+    expect(servers[2].server).toMatchObject({
+      kind: 'stdio',
+      cwd: zeta,
+      env: { K: 'v', PLUGIN_ROOT: zeta },
+    });
+  });
+
+  it('drops a plugin removed from disk on the next refresh', async () => {
+    writePlugin('demo', { probe: { type: 'stdio', command: 'node' } });
+    pluginCatalogService.invalidate();
+    await pluginMcpService.getTools();
+
+    fs.rmSync(path.join(pluginsDir, 'demo'), { recursive: true, force: true });
+    pluginCatalogService.invalidate();
+    await pluginMcpService.getTools();
+
+    expect(pluginMcpService.configuredServers()).toEqual([]);
+  });
+});
+
 describe('PluginMcpService server crash handling', () => {
   /** The onUncaughtError callback the service handed to the SDK. */
   function crashHandler(): (error: unknown) => void {

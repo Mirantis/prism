@@ -61,7 +61,22 @@ export interface CodingAgentTask {
   /** A session id an earlier run reported, to resume its context. */
   sessionId?: string;
   debug?: boolean;
+  /** The MCP servers the runtime connects for the agent, for the adapter to give its agent. */
+  mcpServers: CodingAgentMcpServer[];
 }
+
+/** One MCP server, with its values as the runtime uses them. */
+export type CodingAgentMcpServer =
+  | {
+      kind: 'stdio';
+      name: string;
+      command: string;
+      args: string[];
+      env: Record<string, string>;
+      /** The directory the server starts in. */
+      cwd: string;
+    }
+  | { kind: 'http' | 'sse'; name: string; url: string; headers: Record<string, string> };
 
 export interface CodingAgentRun {
   /**
