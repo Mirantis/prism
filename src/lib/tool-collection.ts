@@ -9,7 +9,7 @@
  */
 
 import type { ModelMessage, Tool } from 'ai';
-import type { CachePointFragment } from './llm-providers/llm-provider';
+import { mergeProviderOptions, type CachePointFragment } from './llm-providers/llm-provider';
 import { config } from '../config';
 import { logger } from '../logger';
 import { getMCPTools } from './mcp-client';
@@ -234,6 +234,10 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
  * Mark the last tool with the provider's cache breakpoint. Tools are stable per
  * agent, so a checkpoint here is the cheapest one to keep warm.
  *
+ * A `deferred` tool is skipped: the API refuses a breakpoint on a tool that
+ * loads only when a tool change names it. The breakpoint merges into the tool's
+ * own `providerOptions`.
+ *
  * It reaches the wire on the Anthropic Messages path only. Bedrock's Converse
  * conversion builds each `toolSpec` from the tool's name, description and
  * schema and never reads its `providerOptions`, so on that path this is a
@@ -247,16 +251,15 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
 export function withToolsCacheControl(
   tools: Record<string, Tool>,
   cachePoint: CachePointFragment,
+  deferred: ReadonlySet<string> = new Set(),
 ): Record<string, Tool> {
-  const keys = Object.keys(tools);
-  if (keys.length === 0) return tools;
+  const lastKey = Object.keys(tools).filter((name) => !deferred.has(name)).at(-1);
+  if (lastKey === undefined) return tools;
 
-  const lastKey = keys[keys.length - 1];
   const result: Record<string, Tool> = {};
-
   for (const [name, tool] of Object.entries(tools)) {
     result[name] = name === lastKey
-      ? { ...tool, providerOptions: cachePoint }
+      ? { ...tool, providerOptions: mergeProviderOptions(tool.providerOptions, cachePoint) }
       : tool;
   }
   return result;

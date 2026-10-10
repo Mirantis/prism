@@ -58,6 +58,17 @@ const {
   mockWithToolRiskGate: vi.fn(),
 }));
 
+// The history knob stays a plain message list; every announcement comes back
+// as trailing. Where each one lands is context-builder.test.ts's business.
+const { mockBuildConversationHistory } = vi.hoisted(() => ({
+  mockBuildConversationHistory: vi.fn(
+    (context: unknown, toolChanges: Array<{ message: unknown }> = []) => ({
+      messages: mockBuildConversationMessages(context),
+      trailingToolChanges: toolChanges.map((change) => change.message),
+    }),
+  ),
+}));
+
 /**
  * Wrap mockGenerateText to simulate the SDK behavior: call onStepFinish for each step.
  */
@@ -77,7 +88,9 @@ function simulatingGenerateText(opts: Record<string, unknown>) {
   return result;
 }
 
-vi.mock('ai', () => ({
+vi.mock('ai', async (importOriginal) => ({
+  // The tool ledger compares definitions by their JSON schema.
+  asSchema: (await importOriginal<typeof import('ai')>()).asSchema,
   generateText: (opts: Record<string, unknown>) => simulatingGenerateText(opts),
   stepCountIs: (limit: number) => ({ type: 'step-count', limit }),
   tool: <T,>(spec: T) => spec,
@@ -135,7 +148,7 @@ vi.mock('./prompts/context-builder', () => ({
   }),
   recalledMemoryContent: (recalled: string) =>
     `\n\nContext:\n<recalled-memories>\n${recalled}\n</recalled-memories>`,
-  buildConversationMessages: mockBuildConversationMessages,
+  buildConversationHistory: mockBuildConversationHistory,
   // Text-only stand-in for the real shaping (content parts for attachments are
   // covered in context-builder.test.ts); these specs only care that a steering
   // message becomes a user turn at the right position.
@@ -223,6 +236,7 @@ vi.mock('./services/compaction.service', () => ({
 
 
 import { invoke, invokeStream, extractAttachmentIds } from './invoke';
+import { ANTHROPIC_TOOL_CHANGES } from './lib/llm-providers/tool-changes';
 import { withToolOutputCapture } from './lib/tool-output-limiter';
 import { withToolsCacheControl } from './lib/tool-collection';
 import { config } from './config';
@@ -407,13 +421,13 @@ describe('invoke', () => {
           { id: 'm2', externalMessageId: null, internalStep: false, contentChars: 2 },
         ],
       });
-      // The fork carries the turn's own request ingredients — the same references the
-      // turn's generateText call used — so the summarize call hits the cache. The
+      // The fork has the turn's own request ingredients — what the turn's
+      // generateText call sent — so the summarize call hits the cache. The
       // recall pair rides along: it is a thread row like any other, so a summary that
       // folds it in is consistent with what the next turn would replay anyway.
       const turnRequest = mockGenerateText.mock.calls[0][0];
       expect(fork.system).toBe(turnRequest.system);
-      expect(fork.messages).toBe(turnRequest.messages);
+      expect(fork.messages).toEqual(turnRequest.messages);
     });
 
     it('does not fire without a threadId', async () => {
@@ -2457,6 +2471,217 @@ describe('invoke', () => {
       expect(reports).toHaveLength(1);
     });
   });
+
+  describe("the conversation's declared tool list", () => {
+    const CACHE_POINT = { anthropic: { cacheControl: { type: 'ephemeral' } } };
+    const removal = (toolName: string) => ({
+      role: 'system',
+      content: '',
+      providerOptions: { anthropic: { toolChanges: [{ type: 'tool_removal', toolName }] } },
+    });
+    const addition = (toolName: string) => ({
+      role: 'system',
+      content: '',
+      providerOptions: { anthropic: { toolChanges: [{ type: 'tool_addition', toolName }] } },
+    });
+
+    // The ledger is a process-wide singleton, so each test gets a thread of its own.
+    let threadCount = 0;
+    let threadId: string;
+    let writeExecute: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      threadId = `declared-${++threadCount}`;
+      writeExecute = vi.fn(async () => 'written');
+      mockCreateBedrockProvider.mockReturnValue(Object.assign(() => 'model-instance', {
+        cachePoint: () => CACHE_POINT,
+        toolChanges: () => ANTHROPIC_TOOL_CHANGES,
+      }));
+      mockGetMemoryTools.mockReturnValue({
+        memory_search: { description: 'search', execute: async () => 'found' },
+        memory_write: { description: 'write', execute: writeExecute },
+      });
+      mockGetCronTools.mockReturnValue({
+        schedule_task: { description: 'schedule' },
+        list_scheduled_tasks: { description: 'list' },
+      });
+    });
+
+    /** One turn on the thread, with history rows of these ids; returns its request. */
+    async function turn(
+      rowIds: string[],
+      options: { lockedIn?: boolean; request?: Parameters<typeof createTestInvokeRequest>[0] } = {},
+    ) {
+      mockGetAgentContext.mockResolvedValue(createTestAgentContext({
+        lockedIn: options.lockedIn ?? false,
+        recentMessages: rowIds.map((id, i) => ({
+          id,
+          role: i % 2 === 0 ? 'USER' : 'AGENT',
+          content: id,
+          externalMessageId: null,
+          internalStep: false,
+        })),
+      }));
+      mockGenerateText.mockClear();
+      await invoke(createTestInvokeRequest({ threadId, ...options.request }));
+      return mockGenerateText.mock.calls[0][0];
+    }
+
+    it("declares the first turn's tools and lets the request hold system messages", async () => {
+      const request = await turn(['u1']);
+
+      expect(Object.keys(request.tools)).toEqual(expect.arrayContaining(['memory_search', 'memory_write']));
+      expect(request.allowSystemInMessages).toBe(true);
+      expect(request.messages.some((m: StepMessage) => m.role === 'system')).toBe(false);
+    });
+
+    it('sends the same list and no announcement when the tools do not change', async () => {
+      const first = await turn(['u1']);
+      const second = await turn(['u1', 'r1', 'u2']);
+
+      expect(Object.keys(second.tools)).toEqual(Object.keys(first.tools));
+      expect(second.messages.some((m: StepMessage) => m.role === 'system')).toBe(false);
+    });
+
+    it('keeps a withheld tool declared, announces its removal last, and refuses its calls', async () => {
+      const first = await turn(['u1']);
+      const second = await turn(['u1', 'r1', 'u2'], { lockedIn: true });
+
+      expect(Object.keys(second.tools)).toEqual(Object.keys(first.tools));
+      expect(second.messages.at(-1)).toEqual(removal('memory_write'));
+      await expect(
+        second.tools.memory_write.execute({}, { toolCallId: 't1', messages: [] }),
+      ).rejects.toThrow('not available');
+      expect(writeExecute).not.toHaveBeenCalled();
+    });
+
+    it('announces a tool that becomes available, declared deferred past the tools breakpoint', async () => {
+      await turn(['u1'], { lockedIn: true });
+      const second = await turn(['u1', 'r1', 'u2']);
+
+      const names = Object.keys(second.tools);
+      expect(names.at(-1)).toBe('memory_write');
+      expect(second.tools.memory_write.providerOptions).toEqual({ anthropic: { deferLoading: true } });
+      expect(second.tools[names.at(-2)!].providerOptions).toEqual(CACHE_POINT);
+      expect(second.messages.at(-1)).toEqual(addition('memory_write'));
+    });
+
+    it('replays an earlier announcement after its row on a later turn', async () => {
+      await turn(['u1']);
+      await turn(['u1', 'r1', 'u2'], { lockedIn: true });
+      mockBuildConversationHistory.mockClear();
+      const third = await turn(['u1', 'r1', 'u2', 'r2', 'u3'], { lockedIn: true });
+
+      expect(mockBuildConversationHistory).toHaveBeenCalledWith(expect.anything(), [
+        { afterRowId: 'u2', message: removal('memory_write') },
+      ]);
+      expect(third.messages.filter((m: StepMessage) => m.role === 'system')).toEqual([removal('memory_write')]);
+    });
+
+    it('starts a new list for a thread it has no record of, as after a restart', async () => {
+      const request = await turn(['u1', 'r1', 'u2', 'r2', 'u3'], { lockedIn: true });
+
+      expect(Object.keys(request.tools)).not.toContain('memory_write');
+      expect(request.messages.some((m: StepMessage) => m.role === 'system')).toBe(false);
+    });
+
+    it("announces a thread-bound cron turn's tools against the same list", async () => {
+      const chat = await turn(['u1']);
+      const cron = await turn(['u1', 'r1'], { request: { mode: 'cron', prompt: 'check the build' } });
+
+      expect(Object.keys(cron.tools)).toEqual(Object.keys(chat.tools));
+      expect(cron.messages.at(-2)).toEqual({ role: 'user', content: 'check the build' });
+      // Cron mode withholds the schedule listing and the goal tools.
+      expect(cron.messages.at(-1)).toEqual({
+        role: 'system',
+        content: '',
+        providerOptions: {
+          anthropic: {
+            toolChanges: ['list_scheduled_tasks', 'create_goal', 'get_goal']
+              .map((toolName) => ({ type: 'tool_removal', toolName })),
+          },
+        },
+      });
+    });
+
+    it('leaves a goal turn, which replays no conversation, on its own tool set', async () => {
+      await turn(['u1']);
+      const goal = await turn([], { request: { mode: 'goal', prompt: 'keep going' } });
+
+      expect('allowSystemInMessages' in goal).toBe(false);
+      expect(goal.messages.some((m: StepMessage) => m.role === 'system')).toBe(false);
+    });
+
+    it('puts the message breakpoint and a steering message before the announcement', async () => {
+      await turn(['u1']);
+      const steering = vi.fn().mockResolvedValueOnce([{ text: 'also check the logs' }]);
+      const second = await turn(['u1', 'r1', 'u2'], { lockedIn: true, request: { steering } });
+
+      const step = await second.prepareStep(firstStep(second.messages));
+
+      expect(step.messages.slice(-2)).toEqual([
+        { role: 'user', content: 'also check the logs', providerOptions: CACHE_POINT },
+        removal('memory_write'),
+      ]);
+    });
+
+    it('gives the early-stop summary the declared list and refuses every call to it', async () => {
+      await turn(['u1']);
+      const steps = Array.from({ length: 100 }, (_, i) => ({
+        text: '',
+        toolCalls: [{ toolCallId: `tc-${i}`, toolName: 'memory_search', input: {} }],
+        toolResults: [{ toolCallId: `tc-${i}`, output: 'ok' }],
+      }));
+      mockGenerateText
+        .mockResolvedValueOnce({ text: '', steps })
+        .mockResolvedValueOnce({ text: 'Summary.', steps: [{ text: 'Summary.', toolCalls: [], toolResults: [] }] });
+
+      const turnRequest = await turn(['u1', 'r1', 'u2'], { lockedIn: true });
+      const summary = mockGenerateText.mock.calls[1][0];
+
+      // Under 'none' the provider SDK sends no tools block, which the replayed
+      // announcements need.
+      expect(Object.keys(summary.tools)).toEqual(Object.keys(turnRequest.tools));
+      expect(summary.toolChoice).toBe('auto');
+      expect(summary.allowSystemInMessages).toBe(true);
+      expect(summary.stopWhen).toEqual({ type: 'step-count', limit: 2 });
+      await expect(
+        summary.tools.memory_search.execute({}, { toolCallId: 't1', messages: [] }),
+      ).rejects.toThrow('not available');
+      expect(summary.messages.at(-1).content).toContain('maximum number of iterations');
+    });
+
+    it('hands the compaction fork the history without the trailing announcement', async () => {
+      mockContextUsageRecord.mockReturnValue({
+        threadId: 'any',
+        modelId: 'model-x',
+        usedTokens: 190_000,
+        windowTokens: 200_000,
+        usedPercent: 95,
+      });
+      await turn(['u1']);
+      const second = await turn(['u1', 'r1', 'u2'], { lockedIn: true });
+
+      const fork = mockMaybeAutoCompact.mock.calls.at(-1)![0];
+      expect(fork.declaredTools).toBe(true);
+      expect(fork.tools).toBe(second.tools);
+      expect(fork.messages).toEqual(second.messages.slice(0, -1));
+    });
+
+    it("sends today's request on a model that takes no tool changes", async () => {
+      mockCreateBedrockProvider.mockReturnValue(Object.assign(() => 'model-instance', {
+        cachePoint: () => CACHE_POINT,
+      }));
+      await turn(['u1']);
+      const second = await turn(['u1', 'r1', 'u2'], { lockedIn: true });
+
+      const names = Object.keys(second.tools);
+      expect(names).not.toContain('memory_write');
+      expect(second.tools[names.at(-1)!].providerOptions).toEqual(CACHE_POINT);
+      expect('allowSystemInMessages' in second).toBe(false);
+      expect(second.messages.some((m: StepMessage) => m.role === 'system')).toBe(false);
+    });
+  });
 });
 
 describe('withToolsCacheControl', () => {
@@ -2498,6 +2723,24 @@ describe('withToolsCacheControl', () => {
     expect((result.myTool as Record<string, unknown>).description).toBe('test');
     expect((result.myTool as Record<string, unknown>).execute).toBe(execute);
     expect((result.myTool as Record<string, unknown>).providerOptions).toEqual(cachePoint);
+  });
+
+  it('merges the breakpoint into the tool\'s own providerOptions', () => {
+    const tools = { a: { description: 'a', providerOptions: { anthropic: { eagerInputStreaming: true } } } };
+    const result = withToolsCacheControl(tools as any as Record<string, Tool>, cachePoint);
+
+    expect((result.a as Record<string, unknown>).providerOptions).toEqual({
+      anthropic: { eagerInputStreaming: true, cacheControl: { type: 'ephemeral' } },
+    });
+  });
+
+  it('puts the breakpoint on the last tool that is not deferred', () => {
+    // The API refuses a breakpoint on a tool that loads only when a change names it.
+    const tools = { a: { description: 'a' }, b: { description: 'b' }, c: { description: 'c' } };
+    const result = withToolsCacheControl(tools as any as Record<string, Tool>, cachePoint, new Set(['c']));
+
+    expect((result.b as Record<string, unknown>).providerOptions).toEqual(cachePoint);
+    expect((result.c as Record<string, unknown>).providerOptions).toBeUndefined();
   });
 
   it('does not mutate the original tools object', () => {

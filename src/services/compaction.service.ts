@@ -60,10 +60,11 @@ import { collectTools, withToolsCacheControl } from '../lib/tool-collection';
 import { withToolOutputCapture } from '../lib/tool-output-limiter';
 import { removeToolOutputs } from '../lib/tool-output-store';
 import type { Invoker } from '../lib/task-tool';
-import { buildSystemPromptParts, buildConversationMessages } from '../prompts/context-builder';
+import { buildSystemPromptParts, buildConversationHistory } from '../prompts/context-builder';
 import { getTaskToolInstructions } from '../prompts/task-tool-prompt';
 import { isContextOverflowError } from '../lib/llm-errors';
-import { resolveEffectiveModel } from './agent-workspace.service';
+import { agentWorkspaceService, resolveEffectiveModel } from './agent-workspace.service';
+import { summaryToolOptions, toolLedgerService } from './tool-ledger.service';
 import { contextService } from './context.service';
 import { contextUsageService, type ContextUsageSnapshot } from './context-usage.service';
 import { threadTurnService } from './thread-turn.service';
@@ -98,9 +99,11 @@ export interface CompactionFork {
   cachePoint: CachePointFragment;
   /** cachedSystem — cache breakpoints included. */
   system: SystemModelMessage[];
-  /** cachedTools — sent with toolChoice 'none' to keep the tools cache segment. */
+  /** cachedTools — what the summarize call declares (see `declaredTools`). */
   tools: Record<string, Tool>;
-  /** History as sent, summary pair included. */
+  /** Whether `tools` is the conversation's declared list (tool-ledger.service.ts). */
+  declaredTools: boolean;
+  /** History as sent, summary pair included, without the turn's trailing tool-change announcements. */
   messages: ModelMessage[];
   /** Mid-turn steering messages, in arrival order. */
   injections: ModelMessage[];
@@ -270,25 +273,34 @@ class CompactionService {
         const model = provider(modelId);
         const cachePoint = provider.cachePoint(modelId);
 
+        // A conversation with a declared tool list sends that list: its cached
+        // prefix starts with it, and its tool-change announcements name it.
+        const protocol = provider.toolChanges?.(modelId);
+        const declared = protocol ? toolLedgerService.peek({ threadId, modelId, protocol }) : undefined;
+
         // Same tool set as a chat turn, sent with toolChoice 'none': the tools
         // block must match byte-for-byte or the request misses the
         // tools+stable-system cache prefix chat turns keep warm. The Task
         // invoker can never run under toolChoice 'none'.
-        const { tools, subagents } = await collectTools({
-          userId,
-          agentId,
-          threadId,
-          mode: 'chat',
-          workspaceRoot: thread?.workspaceRoot ?? undefined,
-          taskInvoker: neverInvoke,
-          lockedIn: context.lockedIn,
-        });
+        const { tools, subagents } = declared
+          ? { tools: declared.tools, subagents: await agentWorkspaceService.getSubagents(agentId) }
+          : await collectTools({
+              userId,
+              agentId,
+              threadId,
+              mode: 'chat',
+              workspaceRoot: thread?.workspaceRoot ?? undefined,
+              taskInvoker: neverInvoke,
+              lockedIn: context.lockedIn,
+            });
         // Nothing executes here (`toolChoice: 'none'`), so saving is off — the
         // wrap exists only so this request's tools block is built exactly like a
         // chat turn's, which is what the provider's cache prefix is keyed on.
+        // A declared list is already the tools block the chat turns send.
         const cachedTools = withToolsCacheControl(
-          withToolOutputCapture(tools, { spill: false }),
+          declared ? tools : withToolOutputCapture(tools, { spill: false }),
           cachePoint,
+          declared?.deferred,
         );
 
         const systemParts = await buildSystemPromptParts(
@@ -311,18 +323,22 @@ class CompactionService {
           content: part.text,
           ...(part.cacheable ? { providerOptions: cachePoint } : {}),
         }));
+        const history = buildConversationHistory(context, declared?.toolChanges);
         const messages: ModelMessage[] = [
-          ...buildConversationMessages(context),
+          ...history.messages,
           { role: 'user' as const, content: COMPACTION_PROMPT, providerOptions: cachePoint },
+          ...history.trailingToolChanges,
         ];
 
         const result = await callModel({ purpose: 'compaction', threadId }, {
           model,
           system,
           messages,
-          ...(Object.keys(cachedTools).length > 0
-            ? { tools: cachedTools, toolChoice: 'none' as const }
-            : {}),
+          ...(declared
+            ? summaryToolOptions(cachedTools)
+            : Object.keys(cachedTools).length > 0
+              ? { tools: cachedTools, toolChoice: 'none' as const }
+              : {}),
           maxOutputTokens: MAX_OUTPUT_TOKENS,
           ...langfuseTelemetry('compaction', { userId, sessionId: threadId }),
         });
@@ -403,10 +419,14 @@ class CompactionService {
         model: fork.model,
         system: fork.system,
         messages,
-        tools: Object.keys(fork.tools).length > 0 ? fork.tools : undefined,
-        // Keeps the tools segment of the cached prefix byte-identical to the
-        // turn's own request while forbidding tool use in the summary call.
-        toolChoice: 'none',
+        ...(fork.declaredTools
+          ? summaryToolOptions(fork.tools)
+          : {
+              tools: Object.keys(fork.tools).length > 0 ? fork.tools : undefined,
+              // Forbids tool use in the summary call. Where the SDK still sends
+              // the tools block under 'none', it keeps the turn's tools segment.
+              toolChoice: 'none' as const,
+            }),
         maxOutputTokens: MAX_OUTPUT_TOKENS,
         ...langfuseTelemetry('compaction', { userId, sessionId: threadId }),
       });
@@ -474,8 +494,12 @@ class CompactionService {
               ...history,
               { role: 'user' as const, content: COMPACTION_PROMPT, providerOptions: fork.cachePoint },
             ],
-            tools: Object.keys(fork.tools).length > 0 ? fork.tools : undefined,
-            toolChoice: 'none',
+            ...(fork.declaredTools
+              ? summaryToolOptions(fork.tools)
+              : {
+                  tools: Object.keys(fork.tools).length > 0 ? fork.tools : undefined,
+                  toolChoice: 'none' as const,
+                }),
             maxOutputTokens: MAX_OUTPUT_TOKENS,
             ...langfuseTelemetry('compaction', { userId, sessionId: threadId }),
           });

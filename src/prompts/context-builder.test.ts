@@ -21,7 +21,7 @@ import {
   buildRecalledMemories,
   recalledMemoriesMessage,
   recalledMemoryContent,
-  buildConversationMessages,
+  buildConversationHistory,
   buildSteeringMessage,
 } from './context-builder';
 vi.mock('../lib/has-binary', () => ({ missingBinary: vi.fn(async () => null) }));
@@ -691,13 +691,13 @@ describe('recalled memories', () => {
 
 });
 
-describe('buildConversationMessages', () => {
+describe('buildConversationHistory', () => {
   it('returns empty array when context has no messages and no summary', () => {
     const context = createTestAgentContext({
       conversationSummary: null,
       recentMessages: [],
     });
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
     expect(messages).toEqual([]);
   });
 
@@ -706,7 +706,7 @@ describe('buildConversationMessages', () => {
       conversationSummary: 'Discussed pod scaling.',
       recentMessages: [],
     });
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
     expect(messages).toHaveLength(2);
     expect(messages[0].role).toBe('user');
     expect(messages[0].content).toContain('Discussed pod scaling.');
@@ -721,7 +721,7 @@ describe('buildConversationMessages', () => {
         { id: '3', role: 'AGENT', content: 'hi there' },
       ],
     });
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
     expect(messages).toHaveLength(2);
     expect(messages.find((m) => m.content === 'system msg')).toBeUndefined();
   });
@@ -733,7 +733,7 @@ describe('buildConversationMessages', () => {
         { id: '2', role: 'AGENT', content: 'hi' },
       ],
     });
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
     expect(messages[0]).toEqual({ role: 'user', content: 'hello' });
     expect(messages[1]).toEqual({ role: 'assistant', content: 'hi' });
   });
@@ -752,7 +752,7 @@ describe('buildConversationMessages', () => {
         },
       ],
     });
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
 
     // user + assistant (with tool-call) + tool (with tool-result) = 3 messages
     expect(messages).toHaveLength(3);
@@ -802,7 +802,7 @@ describe('buildConversationMessages', () => {
         },
       ],
     });
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
 
     const shortened = 't_75166a14-fd0b-4bbb-b6d6-ddbd008bb95b__atlassian__addCo_b897e9d';
     const assistantContent = messages[0].content as Array<{ toolName: string }>;
@@ -838,7 +838,7 @@ describe('buildConversationMessages', () => {
       ],
     });
 
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
     const toolContent = messages[1].content as unknown[];
     expect(toolContent[0]).toEqual({
       type: 'tool-result',
@@ -872,7 +872,7 @@ describe('buildConversationMessages', () => {
       ],
     });
 
-    const toolContent = buildConversationMessages(context)[1].content as Array<{
+    const toolContent = buildConversationHistory(context).messages[1].content as Array<{
       output: { value: string };
     }>;
     expect(toolContent[0].output.value.length).toBeLessThan(31_000);
@@ -885,7 +885,7 @@ describe('buildConversationMessages', () => {
     // would be parsed and re-stringified into different bytes.
     const build = (rendered?: true) =>
       (
-        buildConversationMessages(
+        buildConversationHistory(
           createTestAgentContext({
             recentMessages: [
               {
@@ -905,7 +905,7 @@ describe('buildConversationMessages', () => {
               },
             ],
           })
-        )[1].content as Array<{ output: { value: string } }>
+        ).messages[1].content as Array<{ output: { value: string } }>
       )[0].output.value;
 
     expect(build(true)).toBe('"ok"');
@@ -934,7 +934,7 @@ describe('buildConversationMessages', () => {
       ],
     });
 
-    expect(buildConversationMessages(context)).toEqual(buildConversationMessages(context));
+    expect(buildConversationHistory(context).messages).toEqual(buildConversationHistory(context).messages);
   });
 
   it('emits tool-call without text when AGENT content is empty', () => {
@@ -950,7 +950,7 @@ describe('buildConversationMessages', () => {
         },
       ],
     });
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
 
     expect(messages).toHaveLength(2);
     // Assistant content should only have the tool-call, no text part
@@ -973,7 +973,7 @@ describe('buildConversationMessages', () => {
         },
       ],
     });
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
 
     expect(messages).toHaveLength(2);
 
@@ -994,7 +994,7 @@ describe('buildConversationMessages', () => {
         { id: '1', role: 'AGENT', content: 'just text', toolCalls: null },
       ],
     });
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
     expect(messages).toHaveLength(1);
     expect(messages[0]).toEqual({ role: 'assistant', content: 'just text' });
   });
@@ -1005,7 +1005,7 @@ describe('buildConversationMessages', () => {
         { id: '1', role: 'AGENT', content: 'just text', toolCalls: [] },
       ],
     });
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
     expect(messages).toHaveLength(1);
     expect(messages[0]).toEqual({ role: 'assistant', content: 'just text' });
   });
@@ -1023,7 +1023,7 @@ describe('buildConversationMessages', () => {
         },
       ],
     });
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
 
     expect(messages).toHaveLength(2);
     const assistantContent = messages[0].content as unknown[];
@@ -1050,7 +1050,7 @@ describe('buildConversationMessages', () => {
         },
       ],
     });
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
 
     // Should still emit tool-call message (1 valid tool call)
     expect(messages).toHaveLength(2);
@@ -1073,7 +1073,7 @@ describe('buildConversationMessages', () => {
         },
       ],
     });
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
 
     const toolContent = messages[1].content as unknown[];
     expect(toolContent[0]).toEqual(expect.objectContaining({
@@ -1099,7 +1099,7 @@ describe('buildConversationMessages', () => {
         { id: '6', role: 'AGENT', content: 'You are welcome!' },
       ],
     });
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
 
     // user, assistant, user, assistant(tool-call), tool(result), user, assistant
     expect(messages).toHaveLength(7);
@@ -1119,12 +1119,90 @@ describe('buildConversationMessages', () => {
         { id: '1', role: 'AGENT', content: '   ', toolCalls: null },
       ],
     });
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
     expect(messages).toHaveLength(0);
   });
 });
 
-describe('buildConversationMessages with attachments (metadata stubs)', () => {
+describe('buildConversationHistory with tool-change announcements', () => {
+  const announcement = (name: string) => ({
+    role: 'system' as const,
+    content: '',
+    providerOptions: { anthropic: { toolChanges: [{ type: 'tool_removal', toolName: name }] } },
+  });
+
+  it('places an announcement after its row, before the reply, behind the user rows between them', () => {
+    const context = createTestAgentContext({
+      recentMessages: [
+        { id: 'u1', role: 'USER', content: 'question' },
+        { id: 'recall', role: 'USER', content: 'recalled memories' },
+        { id: 'r1', role: 'AGENT', content: 'answer' },
+        { id: 'u2', role: 'USER', content: 'next' },
+      ],
+    });
+
+    const history = buildConversationHistory(context, [{ afterRowId: 'u1', message: announcement('a') }]);
+
+    expect(history.messages.map((m) => m.role)).toEqual(['user', 'user', 'system', 'assistant', 'user']);
+    expect(history.messages[2]).toEqual(announcement('a'));
+    expect(history.trailingToolChanges).toEqual([]);
+  });
+
+  it('returns an announcement with no reply after its row as trailing', () => {
+    // A thread-bound cron turn: its prompt is not stored, so its reply follows the
+    // previous reply, and no system message may follow an assistant turn.
+    const context = createTestAgentContext({
+      recentMessages: [
+        { id: 'u1', role: 'USER', content: 'question' },
+        { id: 'r1', role: 'AGENT', content: 'answer' },
+        { id: 'cron', role: 'AGENT', content: 'scheduled result' },
+        { id: 'u2', role: 'USER', content: 'next' },
+      ],
+    });
+
+    const history = buildConversationHistory(context, [
+      { afterRowId: 'r1', message: announcement('a') },
+      { afterRowId: 'u2', message: announcement('b') },
+    ]);
+
+    expect(history.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant', 'user']);
+    expect(history.trailingToolChanges).toEqual([announcement('a'), announcement('b')]);
+  });
+
+  it('places an announcement after a tool result, before the next assistant turn', () => {
+    const context = createTestAgentContext({
+      recentMessages: [
+        { id: 'u1', role: 'USER', content: 'list pods' },
+        {
+          id: 'r1',
+          role: 'AGENT',
+          content: '',
+          toolCalls: [
+            { tool: 'list_pods', input: '{}', output: '[]', success: true, timestamp: '2026-01-01T00:00:00Z' },
+          ],
+        },
+        { id: 'cron', role: 'AGENT', content: 'scheduled result' },
+      ],
+    });
+
+    const history = buildConversationHistory(context, [{ afterRowId: 'r1', message: announcement('a') }]);
+
+    expect(history.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'system', 'assistant']);
+  });
+
+  it('places one that counts from the start between the summary and its reply', () => {
+    const context = createTestAgentContext({
+      conversationSummary: 'Earlier work.',
+      recentMessages: [{ id: 'u1', role: 'USER', content: 'next' }],
+    });
+
+    const history = buildConversationHistory(context, [{ afterRowId: null, message: announcement('a') }]);
+
+    expect(history.messages.map((m) => m.role)).toEqual(['user', 'system', 'assistant', 'user']);
+  });
+});
+
+describe('buildConversationHistory with attachments (metadata stubs)', () => {
   const textOf = (content: unknown): string =>
     typeof content === 'string'
       ? content
@@ -1136,7 +1214,7 @@ describe('buildConversationMessages with attachments (metadata stubs)', () => {
     const context = createTestAgentContext({
       recentMessages: [{ id: '1', role: 'USER', content: 'hi' }],
     });
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
     expect(messages[0]).toEqual({ role: 'user', content: 'hi' });
   });
 
@@ -1151,7 +1229,7 @@ describe('buildConversationMessages with attachments (metadata stubs)', () => {
         },
       ],
     });
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
     const content = messages[0].content as unknown[];
     expect(content).toHaveLength(2);
     expect(content[0]).toEqual({ type: 'text', text: 'what is this?' });
@@ -1178,7 +1256,7 @@ describe('buildConversationMessages with attachments (metadata stubs)', () => {
         },
       ],
     });
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
     const text = textOf(messages[0].content);
     expect(text).toContain('doc.pdf');
     expect(text).toContain('id=a');
@@ -1203,7 +1281,7 @@ describe('buildConversationMessages with attachments (metadata stubs)', () => {
         },
       ],
     });
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
     const text = textOf(messages[0].content);
     expect(text).toContain('old.pdf');
     expect(text).toContain('content expired');
@@ -1224,7 +1302,7 @@ describe('buildConversationMessages with attachments (metadata stubs)', () => {
         },
       ],
     });
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
     const text = textOf(messages[0].content);
     expect(text).toContain('notes.txt');
     expect(text).toContain('id=a');
@@ -1243,7 +1321,7 @@ describe('buildConversationMessages with attachments (metadata stubs)', () => {
         },
       ],
     });
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
     const text = textOf(messages[0].content);
     expect(text).toContain('archive.zip');
     expect(text).toContain('id=a');
@@ -1261,7 +1339,7 @@ describe('buildConversationMessages with attachments (metadata stubs)', () => {
         },
       ],
     });
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
     expect(messages).toHaveLength(1);
     // With only text parts and a single stub, it collapses to plain string.
     const text = textOf(messages[0].content);
@@ -1280,7 +1358,7 @@ describe('buildConversationMessages with attachments (metadata stubs)', () => {
         },
       ],
     });
-    const messages = buildConversationMessages(context);
+    const messages = buildConversationHistory(context).messages;
     const text = textOf(messages[0].content);
     expect(text).toContain('1.5 KB');
   });

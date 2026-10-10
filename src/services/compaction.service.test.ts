@@ -14,7 +14,10 @@ import type { ModelMessage } from 'ai';
 const { mockGenerateText } = vi.hoisted(() => ({
   mockGenerateText: vi.fn(),
 }));
-vi.mock('ai', () => ({ generateText: mockGenerateText }));
+vi.mock('ai', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('ai')>()),
+  generateText: mockGenerateText,
+}));
 
 const { mockPrisma } = vi.hoisted(() => ({
   mockPrisma: {
@@ -88,9 +91,19 @@ const { mockCreateProvider, mockBuildSystemPromptParts, mockBuildConversationMes
   mockBuildConversationMessages: vi.fn(),
 }));
 vi.mock('../lib/llm-providers/create-provider', () => ({ createProvider: mockCreateProvider }));
+// Every announcement comes back as trailing; where each one lands is
+// context-builder.test.ts's business.
+const { mockBuildConversationHistory } = vi.hoisted(() => ({
+  mockBuildConversationHistory: vi.fn(
+    (context: unknown, toolChanges: Array<{ message: unknown }> = []) => ({
+      messages: mockBuildConversationMessages(context),
+      trailingToolChanges: toolChanges.map((change) => change.message),
+    }),
+  ),
+}));
 vi.mock('../prompts/context-builder', () => ({
   buildSystemPromptParts: mockBuildSystemPromptParts,
-  buildConversationMessages: mockBuildConversationMessages,
+  buildConversationHistory: mockBuildConversationHistory,
 }));
 vi.mock('../prompts/task-tool-prompt', () => ({
   getTaskToolInstructions: (subs: { name: string }[]) => `TASK TOOLS: ${subs.map((s) => s.name).join(',')}`,
@@ -112,6 +125,7 @@ vi.mock('../lib/tool-output-store', () => ({
   removeToolOutputs: (...args: unknown[]) => mockRemoveToolOutputs(...args),
 }));
 vi.mock('./agent-workspace.service', () => ({
+  agentWorkspaceService: { getSubagents: vi.fn(async () => []) },
   resolveEffectiveModel: (stored: string | null | undefined) => stored ?? 'default-model',
 }));
 
@@ -121,6 +135,8 @@ const { mockLogger } = vi.hoisted(() => ({
 vi.mock('../logger', () => ({ logger: mockLogger }));
 
 import { COMPACTION_PROMPT } from '../prompts/compaction-prompt';
+import { ANTHROPIC_TOOL_CHANGES } from '../lib/llm-providers/tool-changes';
+import { toolLedgerService } from './tool-ledger.service';
 import {
   compactionService,
   type AutoCompactFork,
@@ -151,6 +167,7 @@ function makeFork(overrides: Partial<AutoCompactFork> = {}): AutoCompactFork {
     cachePoint: { anthropic: { cacheControl: { type: 'ephemeral' as const } } },
     system: [{ role: 'system', content: 'system prompt' }] as never,
     tools: { shell: {} as never },
+    declaredTools: false,
     messages: [
       { role: 'user', content: 'first' },
       { role: 'assistant', content: 'reply' },
@@ -291,6 +308,29 @@ describe('the forked summarize request', () => {
         providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
       },
     ]);
+  });
+
+  it('sends a declared tool list under auto, refusing every call', async () => {
+    // Under 'none' the provider SDK sends no tools block, which the replayed
+    // announcements need.
+    const execute = vi.fn();
+    compactionService.maybeAutoCompact(makeFork({ declaredTools: true, tools: { shell: { execute } as never } }));
+    await flushAuto();
+
+    const request = mockGenerateText.mock.calls[0][0];
+    expect(request.toolChoice).toBe('auto');
+    expect(request.allowSystemInMessages).toBe(true);
+    // A model that calls a tool anyway answers after the refusal.
+    expect(request.stopWhen).toBeDefined();
+    await expect(request.tools.shell.execute({}, {})).rejects.toThrow('not available');
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('sends the turn\'s own tools under none when it had no declared list', async () => {
+    compactionService.maybeAutoCompact(makeFork());
+    await flushAuto();
+    expect(mockGenerateText.mock.calls[0][0].toolChoice).toBe('none');
+    expect('allowSystemInMessages' in mockGenerateText.mock.calls[0][0]).toBe(false);
   });
 
   it('omits the tools field when the turn had none', async () => {
@@ -691,6 +731,50 @@ describe('compactNow (manual)', () => {
 
     const request = mockGenerateText.mock.calls[0][0];
     expect(request.system[0].content).toBe('system prompt\n\nTASK TOOLS: helper');
+  });
+
+  it('sends the declared list of a conversation that has one, with its announcements', async () => {
+    mockGetAgentContext.mockResolvedValue(makeContext(8));
+    mockCreateProvider.mockReturnValueOnce(
+      Object.assign((modelId: string) => ({ modelId }), {
+        cachePoint: vi.fn(() => ({ anthropic: { cacheControl: { type: 'ephemeral' } } })),
+        toolChanges: () => ANTHROPIC_TOOL_CHANGES,
+      }),
+    );
+    const declare = async (available: Record<string, unknown>, rowIds: string[]) =>
+      toolLedgerService.declare({
+        threadId: THREAD,
+        modelId: 'stored-model',
+        protocol: ANTHROPIC_TOOL_CHANGES,
+        available: available as never,
+        rowIds,
+      });
+    await declare({ shell: { description: 'sh' }, browse: { description: 'web' } }, ['m0']);
+    await declare({ shell: { description: 'sh' } }, ['m0', 'm1']);
+    const removal = {
+      role: 'system',
+      content: '',
+      providerOptions: { anthropic: { toolChanges: [{ type: 'tool_removal', toolName: 'browse' }] } },
+    };
+
+    await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD });
+
+    const request = mockGenerateText.mock.calls[0][0];
+    expect(mockCollectTools).not.toHaveBeenCalled();
+    expect(Object.keys(request.tools)).toEqual(['shell', 'browse']);
+    expect(request.toolChoice).toBe('auto');
+    expect(request.allowSystemInMessages).toBe(true);
+    expect(mockBuildConversationHistory).toHaveBeenCalledWith(expect.anything(), [
+      { afterRowId: 'm1', message: removal },
+    ]);
+    expect(request.messages.slice(-2)).toEqual([
+      {
+        role: 'user',
+        content: COMPACTION_PROMPT,
+        providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+      },
+      removal,
+    ]);
   });
 
   it('omits tools and toolChoice when the chat tool set is empty', async () => {

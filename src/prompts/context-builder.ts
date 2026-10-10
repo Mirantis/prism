@@ -6,6 +6,7 @@
  */
 
 import { AssistantModelMessage, ModelMessage, ToolModelMessage } from 'ai';
+import type { AnchoredToolChange } from '../services/tool-ledger.service';
 import { COMPUTER_INSTRUCTIONS } from './computer-prompt';
 import { hasComputerForMode } from '../services/computer/supported';
 import { config } from '../config';
@@ -493,17 +494,45 @@ async function buildPluginsSection(): Promise<string> {
  *
  * Returns AI SDK ModelMessage[] so tool call history is preserved as structured
  * assistant (tool-call) + tool (tool-result) message pairs.
+ *
+ * Each tool-change announcement goes where the API accepts a system message:
+ * after a user turn or a tool result, and before an assistant turn, at the
+ * first such place after its row. The ones that find none come back in
+ * `trailingToolChanges`, and the caller sends them last, after the turn's own
+ * user messages.
  */
-export function buildConversationMessages(context: AgentContext): ModelMessage[] {
+export function buildConversationHistory(
+  context: AgentContext,
+  toolChanges: AnchoredToolChange[] = [],
+): { messages: ModelMessage[]; trailingToolChanges: ModelMessage[] } {
   const messages: ModelMessage[] = [];
+  const rowIds = new Set(context.recentMessages.map((msg) => msg.id));
+  const afterRow = new Map<string, ModelMessage[]>();
+  let pending: ModelMessage[] = [];
+  for (const { afterRowId, message } of toolChanges) {
+    if (afterRowId !== null && rowIds.has(afterRowId)) {
+      afterRow.set(afterRowId, [...(afterRow.get(afterRowId) ?? []), message]);
+    } else {
+      pending.push(message);
+    }
+  }
+  const push = (message: ModelMessage): void => {
+    const previous = messages.at(-1)?.role;
+    const fits = message.role === 'assistant' && (previous === 'user' || previous === 'tool');
+    if (pending.length > 0 && fits) {
+      messages.push(...pending);
+      pending = [];
+    }
+    messages.push(message);
+  };
 
   // Add compaction summary as a user message with context marker
   if (context.conversationSummary) {
-    messages.push({
+    push({
       role: 'user',
       content: `[Previous conversation summary for context]\n${context.conversationSummary}`,
     });
-    messages.push({
+    push({
       role: 'assistant',
       content: 'I understand the previous conversation context. How can I help you now?',
     });
@@ -514,13 +543,14 @@ export function buildConversationMessages(context: AgentContext): ModelMessage[]
     if (msg.role === 'USER') {
       const parts = buildUserContentParts(msg);
       // Skip only when there's neither text nor any attachment.
-      if (parts.length === 0) continue;
-      // Keep the plain-string form when there's just text, rather than wrapping
-      // every turn in a content array of one part.
-      if (parts.length === 1 && parts[0].type === 'text') {
-        messages.push({ role: 'user', content: parts[0].text });
-      } else {
-        messages.push({ role: 'user', content: parts });
+      if (parts.length > 0) {
+        // Keep the plain-string form when there's just text, rather than wrapping
+        // every turn in a content array of one part.
+        if (parts.length === 1 && parts[0].type === 'text') {
+          push({ role: 'user', content: parts[0].text });
+        } else {
+          push({ role: 'user', content: parts });
+        }
       }
     } else if (msg.role === 'AGENT') {
       const toolCalls = parseToolCalls(msg);
@@ -539,7 +569,7 @@ export function buildConversationMessages(context: AgentContext): ModelMessage[]
             input: tc.parsedInput,
           });
         }
-        messages.push({ role: 'assistant', content: assistantParts } satisfies AssistantModelMessage);
+        push({ role: 'assistant', content: assistantParts } satisfies AssistantModelMessage);
 
         // Build tool message with tool-result content blocks.
         //
@@ -555,15 +585,16 @@ export function buildConversationMessages(context: AgentContext): ModelMessage[]
           toolName: tc.tool,
           output: { type: 'text' as const, value: tc.output },
         }));
-        messages.push({ role: 'tool', content: toolResultParts } satisfies ToolModelMessage);
+        push({ role: 'tool', content: toolResultParts } satisfies ToolModelMessage);
       } else if (msg.content?.trim()) {
         // Plain text assistant message (no tool calls)
-        messages.push({ role: 'assistant', content: msg.content });
+        push({ role: 'assistant', content: msg.content });
       }
     }
+    pending.push(...(afterRow.get(msg.id) ?? []));
   }
 
-  return messages;
+  return { messages, trailingToolChanges: pending };
 }
 
 /**

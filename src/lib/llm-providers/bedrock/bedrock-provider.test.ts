@@ -40,6 +40,7 @@ vi.mock('@aws-sdk/credential-provider-node', () => ({
 }));
 
 import { createBedrockProvider } from './bedrock-provider';
+import { ANTHROPIC_TOOL_CHANGES } from '../tool-changes';
 
 describe('createBedrockProvider', () => {
   beforeEach(() => {
@@ -163,5 +164,29 @@ describe('createBedrockProvider', () => {
     expect(provider.promptCacheState?.('global.anthropic.claude-opus-5-5')).toBe('on');
     expect(provider.promptCacheState?.('us.xai.grok-4.6')).toBe('off');
     expect(provider.promptCacheState?.('us.amazon.nova-2-lite-v1:0')).toBe('off');
+  });
+
+  it.each([
+    'global.anthropic.claude-opus-5-5',
+    'us.anthropic.claude-opus-5-5',
+    'anthropic.claude-opus-5-5',
+    'global.anthropic.claude-opus-4-8',
+    'us.anthropic.claude-sonnet-5-5',
+    'arn:aws:bedrock:us-east-1:123456789012:inference-profile/global.anthropic.claude-opus-5-5',
+  ])('takes mid-conversation tool changes on %s', (modelId) => {
+    expect(createBedrockProvider().toolChanges?.(modelId)).toBe(ANTHROPIC_TOOL_CHANGES);
+  });
+
+  it.each([
+    // Answers a turn that has a change with a refusal.
+    'global.anthropic.claude-opus-5',
+    // Rejects the change: "tool_addition/tool_removal is not supported on this model".
+    'global.anthropic.claude-sonnet-5',
+    'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+    'us.xai.grok-4.6',
+    // An application inference profile does not name its model.
+    'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/a1b2c3d4e5f6',
+  ])('sends no tool change to %s', (modelId) => {
+    expect(createBedrockProvider().toolChanges?.(modelId)).toBeUndefined();
   });
 });

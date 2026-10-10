@@ -15,7 +15,9 @@ import { callModel } from './lib/model-call';
 import { config } from './config';
 import { logger } from './logger';
 import { createProvider, missingProviderSettings } from './lib/llm-providers/create-provider';
+import { mergeProviderOptions } from './lib/llm-providers/llm-provider';
 import { collectTools, withToolsCacheControl } from './lib/tool-collection';
+import { summaryToolOptions, toolLedgerService, type AnchoredToolChange } from './services/tool-ledger.service';
 import { createPendingFileWrites } from './lib/pending-file-writes';
 import { SHARE_FILE_TOOL_NAME } from './tools/share-file';
 import { contextService } from './services/context.service';
@@ -34,7 +36,7 @@ import {
   buildRecalledMemories,
   recalledMemoriesMessage,
   recalledMemoryContent,
-  buildConversationMessages,
+  buildConversationHistory,
   buildSteeringMessage,
 } from './prompts/context-builder';
 import { getChannelBehaviorInstructions } from './prompts/channel-prompt';
@@ -68,12 +70,16 @@ import { AsyncChannel } from './utils/async-channel';
  * The system prompt parts and the opening messages of a turn: the context's
  * parts, with the channel and Task-tool blocks appended to the cached part, and
  * the thread, with the prompt appended where the thread does not hold it.
+ * `toolChangeMessages` are the tool-change announcements that go last on the
+ * turn's first step: the API takes one only after a user turn and before an
+ * assistant turn.
  */
 export async function buildTurnRequest(
   context: AgentContext,
   request: InvokeRequest,
   subagents: ReadonlyArray<{ name: string; description: string }>,
-): Promise<{ systemParts: SystemPromptPart[]; messages: ModelMessage[] }> {
+  toolChanges?: AnchoredToolChange[],
+): Promise<{ systemParts: SystemPromptPart[]; messages: ModelMessage[]; toolChangeMessages: ModelMessage[] }> {
   // Stable vs dynamic parts, for granular caching
   const systemParts = await buildSystemPromptParts(
     context,
@@ -98,7 +104,8 @@ export async function buildTurnRequest(
   }
 
   // Messages are already ModelMessage[] with structured tool call/result pairs
-  const messages: ModelMessage[] = buildConversationMessages(context);
+  const history = buildConversationHistory(context, toolChanges);
+  const messages: ModelMessage[] = history.messages;
 
   // Chat: prompt is already in history (conversation engine stores it before invoke).
   // Heartbeat/cron: prompt is NOT in history — always append it.
@@ -108,7 +115,7 @@ export async function buildTurnRequest(
     messages.push({ role: 'user' as const, content: request.prompt });
   }
 
-  return { systemParts, messages };
+  return { systemParts, messages, toolChangeMessages: history.trailingToolChanges };
 }
 
 /**
@@ -156,16 +163,19 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
   const computerUse = computerService.access.create(request, request.abortSignal);
   request = { ...request, abortSignal: computerUse.signal };
 
+  // Chat always sees history. A thread-bound cron run ("continue in this
+  // conversation") also needs it so the resumed agent remembers what it was
+  // waiting for; plain cron/heartbeat/goal stay history-less by design (goal
+  // turns intentionally restate their objective rather than replay history).
+  const includeConversation =
+    request.mode === 'chat' || (request.mode === 'cron' && Boolean(request.threadId));
+
   // Fetch context. Failures become friendly error steps.
   let context;
   try {
     context = await contextService.getAgentContext(request.userId, {
       threadId: request.threadId,
-      // Chat always sees history. A thread-bound cron run ("continue in this
-      // conversation") also needs it so the resumed agent remembers what it was
-      // waiting for; plain cron/heartbeat/goal stay history-less by design (goal
-      // turns intentionally restate their objective rather than replay history).
-      includeConversation: request.mode === 'chat' || (request.mode === 'cron' && Boolean(request.threadId)),
+      includeConversation,
       agentId: request.agentId,
       verbose: request.verbose,
     });
@@ -215,6 +225,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     const provider = createProvider();
     const model = provider(modelId);
     const cachePoint = provider.cachePoint(modelId);
+    const toolChangeProtocol = provider.toolChanges?.(modelId);
 
     // Queue for messages a tool asks to append to the running conversation,
     // for content a tool result cannot carry and that must arrive as a user
@@ -270,10 +281,31 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       userId: request.userId,
       agentId: request.agentId,
     });
-    const cachedTools = withToolsCacheControl(gatedTools, cachePoint);
+    // A request that replays the conversation sends the conversation's declared
+    // tool list, so the tools block stays the same when the tool set changes
+    // (see tool-ledger.service.ts).
+    const declared = toolChangeProtocol && request.threadId && includeConversation
+      ? await toolLedgerService.declare({
+          threadId: request.threadId,
+          modelId,
+          protocol: toolChangeProtocol,
+          available: gatedTools,
+          rowIds: context.recentMessages.map((row) => row.id),
+        })
+      : undefined;
+    const cachedTools = withToolsCacheControl(
+      declared?.tools ?? gatedTools,
+      cachePoint,
+      declared?.deferred,
+    );
 
     // 6-7. Build the system prompt parts and the messages
-    const { systemParts, messages } = await buildTurnRequest(context, request, subagents);
+    const { systemParts, messages, toolChangeMessages } = await buildTurnRequest(
+      context,
+      request,
+      subagents,
+      declared?.toolChanges,
+    );
 
     // `guard` is shared by every `warnOnTrailingAssistant` call in this invocation, and
     // the function sets it once it has reported. A 100-step turn checks the array at
@@ -375,6 +407,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       cachePoint,
       system: cachedSystem,
       tools: cachedTools,
+      declaredTools: Boolean(declared),
       messages,
       injections: injections.map((i) => i.message),
       contextRows: context.recentMessages.map((m) => ({
@@ -389,7 +422,9 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     callModel({ purpose: request.mode, threadId: request.threadId, agentId: request.agentId }, {
       model,
       system: cachedSystem,
-      messages,
+      messages: [...messages, ...toolChangeMessages],
+      // The SDK refuses a system message inside `messages` without this.
+      ...(declared ? { allowSystemInMessages: true } : {}),
       tools: Object.keys(cachedTools).length > 0 ? cachedTools : undefined,
       toolChoice: 'auto',
       maxOutputTokens: MAX_OUTPUT_TOKENS,
@@ -407,6 +442,11 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         // and cache breakpoint. Splicing onto it duplicates each injection per
         // remaining step and spends a cache block per step.
         const base: ModelMessage[] = [...initialMessages, ...responseMessages];
+        // On the first step the turn's tool-change announcements close the
+        // array, and no user turn may follow one, so an injection goes before them.
+        const insertAt = responseMessages.length === 0
+          ? base.length - toolChangeMessages.length
+          : base.length;
 
         // Async so the steering source can load a mid-turn message's files
         // before shaping it — the SDK awaits this hook.
@@ -416,7 +456,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
             `Steering the in-flight turn with a mid-turn message (${pending.text.length} chars${files})`,
           );
           injections.push({
-            at: base.length,
+            at: insertAt,
             message: buildSteeringMessage(pending),
           });
         }
@@ -426,7 +466,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
         // result that attached it, then re-spliced every later step like any
         // other injection.
         for (const message of pendingAttachmentInjections.splice(0)) {
-          injections.push({ at: base.length, message });
+          injections.push({ at: insertAt, message });
         }
 
         // A step boundary is the exact scope: the previous step's tools have all
@@ -441,11 +481,15 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
           merged.splice(injections[i].at, 0, injections[i].message);
         }
 
-        if (merged.length > 0) {
-          const lastIdx = merged.length - 1;
-          merged[lastIdx] = {
-            ...merged[lastIdx],
-            providerOptions: cachePoint,
+        // The breakpoint goes on the last message that is not a tool-change
+        // announcement: the provider sends an announcement without the text
+        // block a breakpoint would sit on.
+        let stampIdx = merged.length - 1;
+        while (stampIdx >= 0 && merged[stampIdx].role === 'system') stampIdx--;
+        if (stampIdx >= 0) {
+          merged[stampIdx] = {
+            ...merged[stampIdx],
+            providerOptions: mergeProviderOptions(merged[stampIdx].providerOptions, cachePoint),
           } as ModelMessage;
         }
 
@@ -583,6 +627,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
           model,
           system: cachedSystem,
           messages: summaryMessages,
+          ...(declared ? summaryToolOptions(cachedTools) : {}),
           maxOutputTokens: MAX_OUTPUT_TOKENS,
           abortSignal: request.abortSignal,
           ...turnTelemetry('invoke-early-stopping'),
