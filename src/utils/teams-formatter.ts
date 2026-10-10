@@ -57,7 +57,15 @@ export function formatTeamsMessage(
   return chunks;
 }
 
-/** How the system prompt names a Teams channel. */
+/**
+ * How the system prompt names a Teams channel, with what the agent sees of a thread there and how
+ * it addresses someone: the adapter keeps a thread from the message that first mentioned the
+ * agent, and Teams shows a token in a reply as text.
+ */
 export function teamsChannelLabel(channelName: string): string {
-  return `the Microsoft Teams channel **${channelName}**`;
+  return (
+    `the Microsoft Teams channel **${channelName}**, where you see this thread from the message ` +
+    'that first mentioned you, and where you address people by name, because Teams shows a ' +
+    'token as text'
+  );
 }

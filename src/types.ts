@@ -92,7 +92,8 @@ export interface InvokeRequest {
   originChannelId?: string;
   /**
    * The shared channel this turn's message was posted in, as the system prompt
-   * names it. Set, the prompt gets the channel participation guidelines.
+   * names it, with what the agent sees and how it addresses people there. Set,
+   * the prompt gets the channel participation guidelines.
    */
   channelLabel?: string;
   lastHeartbeatAlert?: string;

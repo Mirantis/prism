@@ -283,7 +283,15 @@ export function formatNotification(
   };
 }
 
-/** How the system prompt names a Slack channel, `#` included once. */
+/**
+ * How the system prompt names a Slack channel, `#` included once, with what the agent sees of a
+ * thread there and how it mentions someone: the adapter reads the whole thread, and turns a
+ * person's token in a reply into a mention.
+ */
 export function slackChannelLabel(channelName: string): string {
-  return `the team Slack channel **#${channelName.replace(/^#/, '')}**`;
+  return (
+    `the team Slack channel **#${channelName.replace(/^#/, '')}**, where you see the messages of ` +
+    'the thread you reply in, and where you mention someone by writing their token as it ' +
+    'appears, so Slack notifies them'
+  );
 }

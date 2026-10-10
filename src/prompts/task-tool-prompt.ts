@@ -32,8 +32,6 @@ Usage notes:
 - If the agent description indicates proactive use, you should make every reasonable effort to utilize it without waiting for the user to explicitly request it. Apply sound judgment.
 - Supply clear and detailed instructions so the agent can operate independently and return precisely the information you require.
 - Explicitly inform the agent whether you want it to generate code or only perform research (searching, reading files, retrieving web data, etc.), since it does not inherently know the user's intent.
-- Agents with “access to current context” are able to review the entire conversation history prior to the tool call. When using these agents, you may provide shorter prompts that refer to earlier context (e.g., “analyze the issue mentioned earlier”) instead of restating details. The agent will receive all previous messages and understand the background.
-- In general, the agent's responses should be considered reliable.
-- Each invocation begins with a clean slate, so include a thorough task explanation with all required context.
+- Each invocation begins with a clean slate: the agent does not see this conversation, so include a thorough task explanation with all required context.
 `.trim();
 }

@@ -146,6 +146,7 @@ vi.mock('../../../config', () => ({
 
 import { teamsAdapterService, TEAMS_MESSAGING_PATH } from '../teams-adapter.service';
 import { config } from '../../../config';
+import { teamsChannelLabel } from '../../../utils/teams-formatter';
 
 const CONNECTION = {
   id: 'tenant-1',
@@ -496,7 +497,7 @@ describe('TeamsAdapterService', () => {
           channel: 'teams',
           channelId: '19:chan@thread.tacv2',
           channelThreadId: '1755000000000',
-          channelLabel: 'the Microsoft Teams channel **General**',
+          channelLabel: teamsChannelLabel('General'),
           senderExternalId: 'aad-user-1',
           senderName: 'Jane Doe',
         },
@@ -748,7 +749,7 @@ describe('TeamsAdapterService', () => {
           threadId: 'thread-1',
           message: '<@aad-user-1:Jane Doe>: what time is it?',
           metadata: expect.objectContaining({
-            channelLabel: 'the Microsoft Teams channel **Incidents**',
+            channelLabel: teamsChannelLabel('Incidents'),
             channelThreadId: '1755000000000',
           }),
         })
@@ -1027,7 +1028,7 @@ describe('Teams routing for messages nobody replied to', () => {
       expect(await teamsAdapterService.threadDestination('thread-1')).toEqual({
         channelId: '19:chan@thread.tacv2',
         channelThreadId: '1755000000000',
-        channelLabel: 'the Microsoft Teams channel **19:chan@thread.tacv2**',
+        channelLabel: teamsChannelLabel('19:chan@thread.tacv2'),
       });
       expect(mockPrisma.teamsMapping.findFirst).not.toHaveBeenCalled();
     });
@@ -1042,7 +1043,7 @@ describe('Teams routing for messages nobody replied to', () => {
 
       expect(await teamsAdapterService.threadDestination('thread-1')).toEqual({
         channelId: 'a:dm-1',
-        channelLabel: 'the Microsoft Teams channel **a:dm-1**',
+        channelLabel: teamsChannelLabel('a:dm-1'),
       });
       expect(mockPrisma.teamsMapping.findFirst).toHaveBeenCalledWith({
         where: { lensUserId: 'lens-1', agentId: 'agent-1', dmConversationId: { not: null } },

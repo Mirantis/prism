@@ -87,6 +87,7 @@ vi.mock('@slack/bolt', () => ({
 
 // Import after all mocks
 import { slackAdapterService } from '../slack-adapter.service';
+import { slackChannelLabel } from '../../utils/slack-formatter';
 import { SlackThreadProvider } from '../providers/slack-thread.provider';
 
 // ============================================================================
@@ -415,7 +416,7 @@ describe('Requirement: Channel message mention detection', () => {
           // The channel name is forwarded so the engine can surface it to the LLM.
           metadata: expect.objectContaining({
             channel: 'slack',
-            channelLabel: 'the team Slack channel **#general**',
+            channelLabel: slackChannelLabel('general'),
           }),
         })
       );

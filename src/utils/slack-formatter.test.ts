@@ -334,7 +334,12 @@ describe('feedback actions block', () => {
 
 describe('slackChannelLabel', () => {
   it('names the channel with one #', () => {
-    expect(slackChannelLabel('alerts')).toBe('the team Slack channel **#alerts**');
-    expect(slackChannelLabel('#general')).toBe('the team Slack channel **#general**');
+    expect(slackChannelLabel('alerts')).toContain('the team Slack channel **#alerts**,');
+    expect(slackChannelLabel('#general')).toContain('the team Slack channel **#general**,');
+  });
+
+  // Slack turns a token in a reply into a mention, so the agent writes the token.
+  it('tells the agent to mention someone with their token', () => {
+    expect(slackChannelLabel('alerts')).toContain('writing their token');
   });
 });

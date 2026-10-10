@@ -77,7 +77,8 @@ The main conversation surface.
   (filename, type, size) and inspects the contents on demand using its
   [attachment tools](tools.md#attachments). Images can be viewed visually;
   other files are hydrated to disk and read with shell tools. File content is
-  kept for 7 days; after that the chip shows **Expired** and the file can no
+  kept for 7 days unless [`ATTACHMENT_TTL_HOURS`](configuration.md#core) sets
+  another time; after that the chip shows **Expired** and the file can no
   longer be downloaded — share it again if needed.
 - **Stopping.** While the agent is responding, a stop button appears next to
   send. It cancels the in-flight turn.
