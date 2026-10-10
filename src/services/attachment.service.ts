@@ -216,6 +216,17 @@ export function classifyMediaType(mediaType: string): AttachmentCategory {
 }
 
 /**
+ * How long attachment content is kept, in words: "7 days", "36 hours". The value
+ * comes from `ATTACHMENT_TTL_HOURS`, read once at startup, so the text is the same
+ * on every turn and can sit in the cached system prompt.
+ */
+export function attachmentRetention(): string {
+  const hours = config.attachmentContentTtlMs / 3_600_000;
+  const [count, unit] = hours % 24 === 0 ? [hours / 24, 'day'] : [hours, 'hour'];
+  return `${count} ${unit}${count === 1 ? '' : 's'}`;
+}
+
+/**
  * Human-readable byte size, e.g. "1.2 MB".
  *
  * Kept in sync with `cli/src/attachments.ts#formatFileSize` and

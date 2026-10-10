@@ -90,6 +90,7 @@ vi.mock('../../logger', () => ({
 vi.mock('../../config', () => ({ config: {} }));
 
 import { slackAdapterService } from '../slack-adapter.service';
+import { slackChannelLabel } from '../../utils/slack-formatter';
 import { attachmentService } from '../attachment.service';
 import { conversationService } from '../conversation.service';
 import { logger } from '../../logger';
@@ -701,7 +702,7 @@ describe('Requirement: Slack routes messages nobody replied to', () => {
       expect(await slackAdapterService.threadDestination('thread-1', 'C123')).toEqual({
         channelId: 'C123',
         channelThreadId: '1700000000.000100',
-        channelLabel: 'the team Slack channel **#C123**',
+        channelLabel: slackChannelLabel('C123'),
       });
       // A known channel id means no DM fallback lookup is needed.
       expect(mockPrisma.slackMapping.findFirst).not.toHaveBeenCalled();
@@ -720,7 +721,7 @@ describe('Requirement: Slack routes messages nobody replied to', () => {
       expect(await slackAdapterService.threadDestination('thread-1')).toEqual({
         channelId: 'D999',
         channelThreadId: undefined,
-        channelLabel: 'the team Slack channel **#D999**',
+        channelLabel: slackChannelLabel('D999'),
       });
       expect(mockPrisma.slackMapping.findFirst).toHaveBeenCalledWith({
         where: { lensUserId: 'user-123', agentId: 'agent-123', dmChannelId: { not: null } },
@@ -745,7 +746,7 @@ describe('Requirement: Slack routes messages nobody replied to', () => {
       expect(await slackAdapterService.threadDestination('thread-1')).toEqual({
         channelId: 'D07ERBJA69M',
         channelThreadId: undefined,
-        channelLabel: 'the team Slack channel **#D07ERBJA69M**',
+        channelLabel: slackChannelLabel('D07ERBJA69M'),
       });
     });
 

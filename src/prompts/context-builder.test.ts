@@ -39,6 +39,7 @@ beforeAll(async () => {
 
 import { createTestAgentContext } from '../test-utils/factories';
 import type { AttachmentMeta } from '../services/attachment.service';
+import { config } from '../config';
 
 /**
  * The joined prompt text. `buildSystemPrompt` used to be a production export that
@@ -191,6 +192,16 @@ describe('system prompt text', () => {
     const context = createTestAgentContext();
     const prompt = await promptText(context, 'chat');
     expect(prompt).toContain('# Chat Mode');
+  });
+
+  // Only a chat turn has a live user to answer a question. A goal or subagent turn that
+  // asks one ends without progress.
+  it('tells only a chat turn to ask first', async () => {
+    const context = createTestAgentContext();
+    expect(await promptText(context, 'chat')).toContain('Ask first');
+    for (const mode of ['goal', 'subagent'] as const) {
+      expect(await promptText(context, mode), `mode ${mode}`).not.toContain('Ask first');
+    }
   });
 
   it('heartbeat mode includes minimal heartbeat instructions (no HEARTBEAT_OK)', async () => {
@@ -410,6 +421,17 @@ describe('buildSystemPromptParts', () => {
     expect(stable).toContain('view_attachment');
     expect(stable).toContain('untrusted DATA');
     expect(stable).toContain('# Claims and Evidence');
+  });
+
+  it('states the attachment retention that ATTACHMENT_TTL_HOURS configures', async () => {
+    const configured = config.attachmentContentTtlMs;
+    config.attachmentContentTtlMs = 36 * 3_600_000;
+    try {
+      const [stable] = await buildSystemPromptParts(createTestAgentContext(), 'chat');
+      expect(stable.text).toContain('retention period of 36 hours');
+    } finally {
+      config.attachmentContentTtlMs = configured;
+    }
   });
 
   it('gives the date and where to get the time, not a clock', async () => {

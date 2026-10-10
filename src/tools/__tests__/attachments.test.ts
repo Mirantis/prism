@@ -5,6 +5,7 @@ import * as path from 'path';
 import { runHydrateAttachment, runViewAttachment, reapScratchDirs, getAttachmentTools } from '../attachments';
 import { attachmentService } from '../../services/attachment.service';
 import { trackEvent } from '../../lib/telemetry';
+import { config } from '../../config';
 
 vi.mock('../../lib/telemetry', () => ({
   trackEvent: vi.fn(),
@@ -101,6 +102,23 @@ describe('runHydrateAttachment', () => {
       'agent.id': AGENT_ID,
       'attachment.id': 'nonexistent',
     });
+  });
+
+  it('names the retention that ATTACHMENT_TTL_HOURS configures in the expired error', async () => {
+    const configured = config.attachmentContentTtlMs;
+    config.attachmentContentTtlMs = 36 * 3_600_000;
+    getByIdSpy.mockResolvedValue(makeRow({ data: null }));
+    try {
+      const result = await runHydrateAttachment(
+        { attachmentId: ATTACHMENT_ID },
+        USER_ID, AGENT_ID, THREAD_ID, workspace,
+      );
+      expect(result.success).toBe(false);
+      if (result.success) return;
+      expect(result.error).toContain('kept for 36 hours');
+    } finally {
+      config.attachmentContentTtlMs = configured;
+    }
   });
 
   it('returns an expired error when the content is gone (row without file or BLOB)', async () => {

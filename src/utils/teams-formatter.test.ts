@@ -59,6 +59,12 @@ describe('formatTeamsMessage', () => {
 
 describe('teamsChannelLabel', () => {
   it('names the channel as Teams shows it', () => {
-    expect(teamsChannelLabel('General')).toBe('the Microsoft Teams channel **General**');
+    expect(teamsChannelLabel('General')).toContain('the Microsoft Teams channel **General**,');
+  });
+
+  // Teams shows a token in a reply as text, so the agent writes the name.
+  it('tells the agent to address people by name, not by token', () => {
+    expect(teamsChannelLabel('General')).toContain('address people by name');
+    expect(teamsChannelLabel('General')).not.toContain('writing their token');
   });
 });

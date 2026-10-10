@@ -12,7 +12,12 @@ import { filesFor } from '../lib/execution-environments/get-execution-environmen
 import * as path from 'path';
 import { ModelMessage, Tool, tool } from 'ai';
 import { z } from 'zod';
-import { attachmentService, classifyMediaType, isBedrockImageType } from '../services/attachment.service';
+import {
+  attachmentRetention,
+  attachmentService,
+  classifyMediaType,
+  isBedrockImageType,
+} from '../services/attachment.service';
 import { sanitizeFilename } from '../lib/media-store';
 import { MAX_FILE_SIZE_BYTES } from '../constants';
 import { resolveWorkspace } from '../lib/execution-environments/workspace';
@@ -72,7 +77,7 @@ export async function runHydrateAttachment(
     });
     return {
       success: false,
-      error: `The content of "${row.filename}" has expired (attachments are kept for 7 days). Ask the user to share the file again if you need it.`,
+      error: `The content of "${row.filename}" has expired (attachments are kept for ${attachmentRetention()}). Ask the user to share the file again if you need it.`,
     };
   }
 
@@ -367,7 +372,7 @@ function viewExpiredFailure(
   });
   return {
     success: false,
-    error: `The content of "${filename}" has expired (attachments are kept for 7 days). Ask the user to share the file again if you need it.`,
+    error: `The content of "${filename}" has expired (attachments are kept for ${attachmentRetention()}). Ask the user to share the file again if you need it.`,
   };
 }
 
