@@ -44,7 +44,7 @@ export interface CollectToolsInput {
   agentId: string;
   threadId?: string;
   mode: string;
-  originChannel?: Parameters<typeof getCronTools>[3];
+  originChannel?: Parameters<typeof getCronTools>[4];
   originChannelId?: string;
   workspaceRoot?: string;
   /** Runs a subagent Task; injected so this module never imports invoke.ts. */
@@ -124,7 +124,7 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
   const builtInTools: Record<string, Tool> = {
     ...getMemoryTools(input.userId, input.agentId),
     ...(hasComputerForMode(input.mode) ? getComputerTools(input.computerUse) : {}),
-    ...getCronTools(input.userId, input.agentId, input.threadId, originChannel, input.originChannelId),
+    ...getCronTools(input.userId, input.agentId, input.mode, input.threadId, originChannel, input.originChannelId),
     ...getGoalTools(input.userId, input.agentId, input.threadId, originChannel, input.originChannelId),
     ...getAgentConfigTools(),
     ...getShellTools(input.workspaceRoot, input.pendingFileWrites),
@@ -308,13 +308,9 @@ function omitLockedTools(tools: Record<string, Tool>): Record<string, Tool> {
  * Reading the call's chat goes the other way: only the model in the call gets it.
  *
  * - chat: All tools except `read_meeting_chat`
- * - heartbeat: minus cron-management AND goal tools (no schedule/goal reshaping)
- * - cron: minus list/delete-task AND goal tools, but KEEPS schedule_task so a
- *   thread-bound "continue in this conversation" run can re-`wait` (poll in-thread)
- * - webhook: same as cron — an event-triggered run keeps schedule_task for
- *   "check again later" follow-ups
+ * - heartbeat, cron, webhook: minus the goal tools; the schedule tools stay
  * - subagent: minus share_file (no user channel) AND goal tools (no user thread)
- * - goal: minus create_goal (no nested goals) and cron-management; get_goal stays
+ * - goal: minus create_goal (no nested goals) and the schedule tools; get_goal stays
  * - meeting: chat's set minus share_file, plus read_meeting_chat (see the function body)
  * - any other mode: everything except the two tools that join or leave a call, and the
  *   chat read
@@ -393,24 +389,12 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
     );
   }
 
-  // Heartbeat is an autonomous run: full tool access, minus the cron-management
-  // and goal tools so it can't reshape the schedule or spawn goals.
-  if (mode === 'heartbeat') {
-    return omit(new Set([...cronToolNames, ...goalToolNames, ...membershipToolNames]));
-  }
-
-  // Cron keeps `schedule_task` so a thread-bound "continue in this conversation"
-  // run can re-`wait` (schedule a follow-up) and keep polling in-thread, but
-  // still can't enumerate/delete the whole schedule or create/nest goals.
-  if (mode === 'cron' || mode === 'webhook') {
-    return omit(
-      new Set([
-        'list_scheduled_tasks',
-        'delete_scheduled_task',
-        ...goalToolNames,
-        ...membershipToolNames,
-      ]),
-    );
+  // An autonomous run reads, adds to and removes from the schedule as a chat turn does,
+  // so it can retract a follow-up it scheduled itself. A webhook payload or a Slack trigger
+  // message can therefore ask it to delete any of the owner's tasks; `shell_exec`, which
+  // these modes hold, can already call the same REST route. Goals stay chat-only.
+  if (mode === 'heartbeat' || mode === 'cron' || mode === 'webhook') {
+    return omit(new Set([...goalToolNames, ...membershipToolNames]));
   }
 
   // A goal turn does real work but must not create/nest a goal or reshape the

@@ -144,9 +144,10 @@ class CronSchedulerService {
    *
    * Single owner of the 'cron task scheduled' telemetry event — callers must
    * not emit it themselves. Boot re-registrations are not new schedules, so
-   * they don't emit.
+   * they don't emit. `invokeMode` is the mode of the agent run that made the
+   * change; the management route acts for the user and passes none.
    */
-  scheduleTask(task: BackendCronTask, opts: { source?: 'create' | 'boot' } = {}): void {
+  scheduleTask(task: BackendCronTask, opts: { source?: 'create' | 'boot'; invokeMode?: string } = {}): void {
     if (!task.userId) {
       logger.error(`[CronScheduler] Refusing to schedule "${task.name}" — missing userId`);
       return;
@@ -168,6 +169,7 @@ class CronSchedulerService {
         'cron.schedule': task.schedule,
         'cron.one_shot': String(isOneShot),
         'cron.continue_in_thread': String(Boolean(task.threadId)),
+        ...(opts.invokeMode ? { 'invoke.mode': opts.invokeMode } : {}),
       });
     }
 
@@ -223,13 +225,14 @@ class CronSchedulerService {
    *
    * Single owner of the 'cron task deleted' telemetry event — callers must
    * not emit it themselves. Internal re-registration uses `stopJob` directly
-   * so it never emits.
+   * so it never emits. `invokeMode` is as for `scheduleTask`.
    */
-  unscheduleTask(taskId: string, userId?: string): void {
+  unscheduleTask(taskId: string, userId?: string, invokeMode?: string): void {
     this.stopJob(taskId);
     trackEvent('cron task deleted', userId ?? null, {
       ...(config.agentId ? { 'agent.id': config.agentId } : {}),
       'cron.task.id': taskId,
+      ...(invokeMode ? { 'invoke.mode': invokeMode } : {}),
     });
   }
 
@@ -258,15 +261,17 @@ class CronSchedulerService {
     this.lastDelivered.delete(taskId);
   }
 
+  // A run can delete its own task, so these two writes use the `*Many` forms, which accept a
+  // missing row.
   private async updateCronTaskRun(taskId: string, lastRunAt: string): Promise<void> {
-    await prisma.cronTask.update({
+    await prisma.cronTask.updateMany({
       where: { id: taskId },
       data: { lastRunAt: lastRunAt ? new Date(lastRunAt) : new Date() },
     });
   }
 
   private async deleteCronTask(taskId: string): Promise<void> {
-    await prisma.cronTask.delete({ where: { id: taskId } });
+    await prisma.cronTask.deleteMany({ where: { id: taskId } });
   }
 
   private async executeTask(task: BackendCronTask): Promise<void> {
@@ -423,8 +428,12 @@ class CronSchedulerService {
 
       // Advance the delivery baseline only on an actual delivery (heartbeat
       // recordAlert parity), keyed on the un-headered body so the unbound
-      // "**Scheduled Task: …**" header can't defeat the comparison.
-      this.lastDelivered.set(task.id, { text: body.trim(), at: Date.now() });
+      // "**Scheduled Task: …**" header can't defeat the comparison. A task that is
+      // no longer scheduled, such as one its own run deleted, has no next run to
+      // compare, so it keeps no baseline.
+      if (this.scheduledJobs.has(task.id)) {
+        this.lastDelivered.set(task.id, { text: body.trim(), at: Date.now() });
+      }
 
       logger.info(`[CronScheduler] "${task.name}" completed in ${Date.now() - startTime}ms`);
       trackRun('completed');

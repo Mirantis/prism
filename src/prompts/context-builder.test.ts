@@ -207,6 +207,14 @@ describe('system prompt text', () => {
     expect(prompt).toContain('Check for new items every 5 minutes.');
   });
 
+  it.each(['heartbeat', 'cron', 'webhook'] as const)(
+    '%s mode tells the agent it can list and delete scheduled tasks',
+    async (mode) => {
+      const prompt = await promptText(createTestAgentContext(), mode);
+      expect(prompt).toMatch(/You can (also )?list the scheduled tasks.* delete a scheduled task\./);
+    },
+  );
+
   it('heartbeat mode forbids commenting on the heartbeat configuration itself', async () => {
     const context = createTestAgentContext();
     const prompt = await promptText(context, 'heartbeat');

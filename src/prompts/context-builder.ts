@@ -765,6 +765,7 @@ function getHeartbeatBaseInstructions(heartbeatMd?: string): string {
     `### Rules`,
     `- Perform the configured checks and report your findings.`,
     `- Be productive. Use the heartbeat to advance the user's vision.`,
+    `- You can list the scheduled tasks, schedule a task for later and delete a scheduled task.`,
     `- Focus on NEW issues, CHANGES in status, and ACTIONABLE information.`,
     `- If everything looks normal, say so briefly (e.g. "All systems healthy").`,
     `- If no checks are configured, reply with a brief all-clear (e.g. "All systems healthy"). Never comment on the heartbeat configuration itself (e.g. "no checks configured") — that is not a finding.`,
@@ -835,6 +836,7 @@ You are executing a scheduled task. Follow the task instruction, report findings
 - If the instruction asks for output unconditionally (a report, summary, or reminder), always produce the requested output.
 - If the instruction is conditional ("only tell me if...", "alert me when...") and the condition is not met, reply with a brief all-clear (e.g. "Nothing to report"). Never comment on the task or its configuration itself (e.g. "task ran, no action needed") — that is not a finding.
 - Your final message is delivered automatically to the conversation or Slack channel this task reports into. Do NOT also post it yourself with Slack (or any other messaging) tools — that duplicates the message. A conditional task's brief all-clear is withheld rather than posted, so there is no need to pad it.
+- You can list the scheduled tasks, schedule a task for later and delete a scheduled task.
 
 If this run is continuing an earlier conversation (its prior messages appear above), you are resuming after a wait you scheduled — respond as a natural continuation of that conversation, not as a standalone report. If what you were waiting for still hasn't happened, you may schedule another one-off task with continueInThread to check again later.`;
 }
@@ -842,7 +844,7 @@ If this run is continuing an earlier conversation (its prior messages appear abo
 function getWebhookInstructions(): string {
   return `# Webhook Mode
 
-You received an event pushed by an external system (e.g. Alertmanager, PagerDuty, GitHub) via an inbound webhook. The event payload and any subscription instructions are in the user message. Assess the event, take appropriate action with your tools per your configured guidance, and report your findings concisely. Store important observations in memory. If follow-up is needed later, you may schedule a one-off task to check again.`;
+You received an event pushed by an external system (e.g. Alertmanager, PagerDuty, GitHub) via an inbound webhook. The event payload and any subscription instructions are in the user message. Assess the event, take appropriate action with your tools per your configured guidance, and report your findings concisely. Store important observations in memory. If follow-up is needed later, you may schedule a one-off task to check again. You can also list the scheduled tasks and delete a scheduled task.`;
 }
 
 function getGoalInstructions(): string {
