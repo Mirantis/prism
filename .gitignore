@@ -15,6 +15,9 @@ prism-*.zip
 .DS_Store
 coverage
 
+# Result files of `npm run eval:prompts`
+eval-results/
+
 # Claude Code local settings
 .claude/settings.local.json
 .claude/worktrees/

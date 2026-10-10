@@ -277,6 +277,11 @@ as Slack, whose API calls no other suite makes.
 Both suites need Node 24+ and AWS/Bedrock credentials in the shell (see
 `e2e/README.md`).
 
+Before and after a change to prompt text, run the prompt eval set
+(`src/evals/`): `npm run eval:prompts` runs each scenario three times against the
+configured model and prints a pass rate per scenario, and `--baseline <file>`
+prints an earlier run's rates beside this run's. Run it by hand.
+
 A test may assert on an observed example — a real transcript line, a captured
 provider response, a payload the runtime actually produced. Recorded output is
 stronger evidence than an invented fixture.
@@ -1005,6 +1010,7 @@ src/
 │   ├── tool-output-store.ts    # The saved whole copy of an oversized tool result under `<data dir>/tool-outputs`: write/read/remove, TTL reaper. The notice hands the agent the path and it reads the file with the shell. No DB row, so mtime is the whole lifecycle
 │   ├── prisma.ts               # Prisma client singleton (runtime database)
 │   └── tool-names.ts           # Single owner of what a tool may be *called* for a model: charset, no leading digit, 64-char cap (`toModelToolName`, `capToolNames`)
+├── evals/                      # Prompt eval set (`npm run eval:prompts`): scenarios graded on the real prompt, tools and gates
 ├── prisma/
 │   └── schema.prisma           # Prisma schema for runtime PostgreSQL database
 └── prompts/
