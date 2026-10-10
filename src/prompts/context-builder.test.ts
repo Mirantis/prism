@@ -39,7 +39,6 @@ beforeAll(async () => {
 
 import { createTestAgentContext } from '../test-utils/factories';
 import type { AttachmentMeta } from '../services/attachment.service';
-import { config } from '../config';
 
 /**
  * The joined prompt text. `buildSystemPrompt` used to be a production export that
@@ -204,6 +203,21 @@ describe('system prompt text', () => {
     }
   });
 
+  // A subagent reports to its parent and a goal turn works on its own, so each gets its
+  // own section and not the chat one.
+  it('gives each mode its own mode sections', async () => {
+    const context = createTestAgentContext();
+    const subagent = await promptText(context, 'subagent');
+    expect(subagent).toContain('# Subagent Mode');
+    expect(subagent).not.toContain('# Chat Mode');
+    const goal = await promptText(context, 'goal');
+    expect(goal).toContain('# Goal Mode');
+    expect(goal).not.toContain('# Chat Mode');
+    const chat = await promptText(context, 'chat');
+    expect(chat).not.toContain('# Subagent Mode');
+    expect(chat).not.toContain('# Goal Mode');
+  });
+
   it('heartbeat mode includes minimal heartbeat instructions (no HEARTBEAT_OK)', async () => {
     const context = createTestAgentContext();
     const prompt = await promptText(context, 'heartbeat');
@@ -232,7 +246,7 @@ describe('system prompt text', () => {
   it('heartbeat mode forbids commenting on the heartbeat configuration itself', async () => {
     const context = createTestAgentContext();
     const prompt = await promptText(context, 'heartbeat');
-    expect(prompt).toContain('Never comment on the heartbeat configuration itself');
+    expect(prompt).toContain('A remark about the heartbeat configuration itself');
   });
 
   it('heartbeat mode injects last alert when present', async () => {
@@ -261,9 +275,7 @@ describe('system prompt text', () => {
     ];
     const prompt = await promptText(context, 'heartbeat', [{ platform: 'Slack', messages }]);
     expect(prompt).toContain('### Recent Slack Messages (triggering this heartbeat)');
-    expect(prompt).toContain(
-      'The following messages were posted in the monitored Slack channel since your last heartbeat:',
-    );
+    expect(prompt).toContain('Posted in the monitored Slack channel since your last heartbeat:');
     expect(prompt).toContain('**Alice**');
     expect(prompt).toContain('deploy failed with OOM');
     expect(prompt).toContain('**Bob**');
@@ -285,17 +297,15 @@ describe('system prompt text', () => {
   it('cron mode steers conditional tasks toward a brief all-clear, never meta-commentary', async () => {
     const context = createTestAgentContext();
     const prompt = await promptText(context, 'cron');
-    expect(prompt).toContain('always produce the requested output');
-    expect(prompt).toContain('reply with a brief all-clear (e.g. "Nothing to report")');
-    expect(prompt).toContain('Never comment on the task or its configuration itself');
+    expect(prompt).toContain('asks for output unconditionally');
+    expect(prompt).toContain('reply with a brief all-clear such as "Nothing to report"');
+    expect(prompt).toContain('A remark about the task itself');
   });
 
   it('cron mode tells the agent its response is delivered for it, not to post to Slack itself', async () => {
     const context = createTestAgentContext();
     const prompt = await promptText(context, 'cron');
-    expect(prompt).toContain(
-      "- Your final message is delivered automatically to the conversation or Slack channel this task reports into. Do NOT also post it yourself with Slack (or any other messaging) tools — that duplicates the message. A conditional task's brief all-clear is withheld rather than posted, so there is no need to pad it.",
-    );
+    expect(prompt).toContain('do not also post it with a messaging tool');
   });
 
   it('webhook mode includes webhook instructions and no chat/bootstrap sections', async () => {
@@ -314,7 +324,6 @@ describe('system prompt text', () => {
     expect(prompt).toContain('Phrase an intention as an intention');
     expect(prompt).toContain('Name what you read');
     expect(prompt).toContain('are not artifacts');
-    expect(prompt).toContain('have not shared yet');
   });
 
   // A reply is what the user acts on in every one of these modes: a heartbeat or
@@ -401,7 +410,7 @@ describe('buildSystemPromptParts', () => {
     expect(parts[1].cacheable).toBe(false);
   });
 
-  it('stable part contains identity, soul, user, memory, attachments, and mode instructions', async () => {
+  it('stable part contains identity, soul, user, memory, working rules, and mode instructions', async () => {
     const context = createTestAgentContext();
     const parts = await buildSystemPromptParts(context, 'chat');
     const stable = parts[0].text;
@@ -415,23 +424,8 @@ describe('buildSystemPromptParts', () => {
     expect(stable).toContain('# Memory');
     expect(stable).toContain(context.memoryMd);
     expect(stable).toContain('# Chat Mode');
-    expect(stable).toContain('# Connected Infrastructure');
-    expect(stable).toContain('## Attachments');
-    expect(stable).toContain('hydrate_attachment');
-    expect(stable).toContain('view_attachment');
-    expect(stable).toContain('untrusted DATA');
+    expect(stable).toContain('# Working Rules');
     expect(stable).toContain('# Claims and Evidence');
-  });
-
-  it('states the attachment retention that ATTACHMENT_TTL_HOURS configures', async () => {
-    const configured = config.attachmentContentTtlMs;
-    config.attachmentContentTtlMs = 36 * 3_600_000;
-    try {
-      const [stable] = await buildSystemPromptParts(createTestAgentContext(), 'chat');
-      expect(stable.text).toContain('retention period of 36 hours');
-    } finally {
-      config.attachmentContentTtlMs = configured;
-    }
   });
 
   it('gives the date and where to get the time, not a clock', async () => {

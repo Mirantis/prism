@@ -10,7 +10,7 @@
  * by `context-builder.ts`, and the fold-in rule below merges it into the new,
  * complete summary that replaces it.
  */
-export const COMPACTION_PROMPT = `Summarize this conversation so the summary can replace the full history for a future assistant that has seen none of it. Produce ONLY the summary, structured exactly as follows:
+export const COMPACTION_PROMPT = `Summarize this conversation so the summary can replace the full history for a future assistant that has seen none of it. Produce only the summary, structured exactly as follows:
 
 ## Goal
 - What the user asked for, in their own words where possible (1–2 sentences). If the goal shifted mid-conversation, state the current one and note what changed.
