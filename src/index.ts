@@ -184,6 +184,7 @@ const initialize = async () => {
         ...(provider.promptCacheState
           ? { promptCache: provider.promptCacheState(config.chatModelId) }
           : {}),
+        toolChanges: provider.toolChanges?.(config.chatModelId) ? 'on' : 'off',
       },
       '[Startup] LLM provider',
     );

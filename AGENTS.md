@@ -814,6 +814,23 @@ the name the *server* gave it and the call still goes out under that name.
 same deterministic, idempotent function, so replayed history agrees with the
 tools block.
 
+#### Declared tools
+
+On a model whose provider declares `toolChanges` (the allowlist in
+`lib/llm-providers/tool-changes.ts`; each entry is measured live, and the PR
+that adds an entry shows the measurement), a conversation declares one tool list
+per model for its life (`services/tool-ledger.service.ts`), so the tools block
+stays the same when the tool set changes. A tool joins on first sight, with
+`deferLoading` when it joins after the first request, and stays; one not
+available this turn refuses its calls, and a changed definition replaces the
+declared one, at one cache miss. Each change is a `toolChanges` system message
+that `buildConversationHistory` replays after the row it followed; the API takes
+one only after a user turn or a tool result and before an assistant turn, so one
+with no such place goes last in the request. The tools breakpoint skips deferred
+tools, because the API refuses a breakpoint on one. A summary request (a
+compaction, the early-stop summary) declares the list under tool choice `auto`
+and refuses every call, because under `none` the SDK sends no tools block.
+
 ## Key Services
 
 | Service | File | Purpose |
@@ -838,6 +855,7 @@ tools block.
 | **SlackMessageQueueService** | `services/slack-message-queue.service.ts` | Direct Prisma drain of pending Slack messages for heartbeat triggers |
 | **SlackHeartbeatTriggerService** | `services/slack-heartbeat-trigger.service.ts` | CRUD for per-agent Slack heartbeat trigger config, atomic claim logic |
 | **SessionManagerService** | `services/session-manager.service.ts` | Daily session resets, idle timeout management |
+| **ToolLedgerService** | `services/tool-ledger.service.ts` | Each conversation's declared tool list and its tool-change announcements, in memory per thread and model (see **Declared tools**) |
 | **MemoryManagerService** | `services/memory-manager.service.ts` | Two-layer memory: daily append-only logs + curated long-term key-value store |
 | **MeetingBotService** | `services/meeting/meeting-bot.service.ts` | Live voice meetings, one call at a time: a Chromium signed into a Google account on a virtual display with PulseAudio devices, joined to an OpenAI Realtime session that runs as the agent with its system prompt and its `meeting`-mode tools (`tool-bridge.ts`). Everything platform-specific, from sign-in and admission to the participants panel and the call's chat, sits behind `MeetingProvider` in `providers/google-meet/`, so a new platform is one folder. In a group call `addressed-audio-gate.ts` asks the same Realtime session whether each utterance was said to the agent, and fails closed. Nothing about a call is stored in a conversation thread, and speech reaches the log only when `MEETING_TRANSCRIPT_LOGGING` is `full` |
 | **VoiceChatService** | `services/voice/voice-chat.service.ts` | A voice conversation with one client and no meeting: the same `VoiceConversation` core, with pcm16 audio as binary frames on the chat WebSocket (`socket-audio.ts`), so a call works wherever chat works, the installed binary included. The client picks `open` (answer every utterance) or `addressed` (the meeting gate) on `voice_start`, and the gateway refuses any other mode. `voice-session-lock.ts` allows one voice session at a time across this service and `MeetingBotService`, and nothing about a session is persisted. Dictation (`dictation-session.ts`) shares the socket but not the lock: a transcription-only Realtime session that turns speech into a message |
@@ -889,6 +907,7 @@ src/
 │   ├── slack-message-queue.service.ts # Direct Prisma drain of pending Slack messages
 │   ├── slack-heartbeat-trigger.service.ts # CRUD for per-agent Slack heartbeat trigger config, atomic claim logic
 │   ├── session-manager.service.ts # Daily session resets, idle timeout management
+│   ├── tool-ledger.service.ts  # Each conversation's declared tool list and its tool-change announcements
 │   ├── memory-manager.service.ts  # Two-layer memory system (daily logs + curated key-value store)
 │   ├── meeting/                # Live voice meetings (OpenAI Realtime API)
 │   │   ├── meeting-bot.service.ts    # Lifecycle owner: one call at a time, teardown, telemetry
@@ -958,6 +977,7 @@ src/
 │   │   │   └── azure-provider.ts   # Azure provider factory (Claude via MS Foundry, Anthropic Messages API): `createAzureProvider(baseURL?)`
 │   │   ├── bedrock-mantle/
 │   │   │   └── bedrock-mantle-provider.ts # Bedrock Mantle factory (Anthropic Messages surface only; bare model IDs): `createBedrockMantleProvider(baseURL?)`
+│   │   ├── tool-changes.ts     # The models that take mid-conversation tool changes, and the Anthropic fragments for one
 │   │   ├── openai-compatible.ts # The OpenAI-shaped provider object both OpenAI-surface vendors are built from: Responses dispatcher, empty cache point, the three GPT-5.x gate declarations
 │   │   ├── openai/
 │   │   │   └── openai-provider.ts # OpenAI factory (Responses API; pins gate calls to reasoningEffort 'none'): `createOpenAiProvider(baseURL?)`

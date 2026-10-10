@@ -13,24 +13,7 @@
 import type { LanguageModel } from 'ai';
 import { config } from '../config';
 import { createProvider } from './llm-providers/create-provider';
-import type { ProviderOptionsFragment } from './llm-providers/llm-provider';
-
-/**
- * Merge `providerOptions` fragments one namespace deep, so two fragments
- * declared for the same vendor namespace combine instead of the later one
- * silently clobbering the earlier.
- */
-function mergeProviderOptions(
-  ...fragments: Array<ProviderOptionsFragment | undefined>
-): ProviderOptionsFragment {
-  const merged: ProviderOptionsFragment = {};
-  for (const fragment of fragments) {
-    for (const [namespace, options] of Object.entries(fragment ?? {})) {
-      merged[namespace] = { ...merged[namespace], ...options };
-    }
-  }
-  return merged;
-}
+import { mergeProviderOptions, type ProviderOptionsFragment } from './llm-providers/llm-provider';
 
 /**
  * Everything a plain-text (`generateText`) gate call needs: the model, and

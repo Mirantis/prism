@@ -46,6 +46,7 @@ import {
   type LlmProvider,
 } from '../llm-provider';
 import { converseToolImages } from './converse-tool-images';
+import { ANTHROPIC_TOOL_CHANGES, supportsToolChanges } from '../tool-changes';
 
 /**
  * Create an Amazon Bedrock provider that dispatches on model family.
@@ -79,6 +80,10 @@ export function createBedrockProvider(baseURL?: string): LlmProvider {
     // line cannot disagree with what the request carries.
     promptCacheState: (modelId: string): 'on' | 'off' =>
       Object.keys(promptCacheFragment(modelId)).length > 0 ? 'on' : 'off',
+    // Every model on the list is a Claude id, so it runs on the Anthropic
+    // Messages branch; Converse never gets one.
+    toolChanges: (modelId: string) =>
+      supportsToolChanges(modelId) ? ANTHROPIC_TOOL_CHANGES : undefined,
   });
 }
 

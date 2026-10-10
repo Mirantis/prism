@@ -16,7 +16,7 @@
  * `generateText()` accepts, which is all any consumer here needs.
  */
 
-import type { LanguageModel } from 'ai';
+import type { LanguageModel, SystemModelMessage } from 'ai';
 
 /**
  * A `providerOptions` fragment — vendor namespace → option bag.
@@ -31,6 +31,40 @@ export type ProviderOptionsFragment = Record<
   string,
   Record<string, string | number | boolean | { [key: string]: string | number | boolean }>
 >;
+
+/**
+ * Merge `providerOptions` fragments one namespace deep, so two fragments
+ * declared for the same vendor namespace combine instead of the later one
+ * silently clobbering the earlier.
+ */
+export function mergeProviderOptions<T extends Record<string, object>>(
+  ...fragments: Array<T | undefined>
+): T {
+  const merged: Record<string, object> = {};
+  for (const fragment of fragments) {
+    for (const [namespace, options] of Object.entries(fragment ?? {})) {
+      merged[namespace] = { ...merged[namespace], ...options };
+    }
+  }
+  return merged as T;
+}
+
+/** One tool that became available, or stopped being available, between two turns. */
+export type ToolChange = {
+  type: 'tool_addition' | 'tool_removal';
+  toolName: string;
+};
+
+/**
+ * How one model is told that the tools of a conversation changed: the tool
+ * stays declared, and a system message in the history names the change.
+ */
+export interface ToolChangeProtocol {
+  /** `providerOptions` for a declared tool that loads only when an addition names it. */
+  deferredTool: ProviderOptionsFragment;
+  /** The system message that announces `changes`. */
+  announce: (changes: ToolChange[]) => SystemModelMessage;
+}
 
 /**
  * Turns extended thinking off on an Anthropic Messages request. Thinking tokens
@@ -112,6 +146,15 @@ export type LlmProvider = ((modelId: string) => LanguageModel) & {
    * here" (OpenAI) and "this model takes no breakpoint".
    */
   promptCacheState?: (modelId: string) => 'on' | 'off';
+  /**
+   * How one model takes a mid-conversation tool change, or undefined when it
+   * takes none. A model that does keeps one declared tool list for the life of
+   * a conversation, so a change of tools keeps the prompt cache.
+   *
+   * Keyed on the model, and an allowlist: the SDK sends the change to any
+   * model, and a model without support rejects the whole request.
+   */
+  toolChanges?: (modelId: string) => ToolChangeProtocol | undefined;
   /**
    * A check the vendor runs once at startup, logging what the operator has to
    * fix; undefined when the vendor has nothing to verify. It never rejects.

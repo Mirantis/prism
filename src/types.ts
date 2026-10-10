@@ -172,7 +172,7 @@ export interface ToolCallRecord {
   input: string;
   /**
    * The model-facing text for this result — the cut view when it was cut, not the
-   * raw `execute()` return. `buildConversationMessages` replays it verbatim.
+   * raw `execute()` return. `buildConversationHistory` replays it verbatim.
    */
   output: string;
   success: boolean;
