@@ -97,6 +97,8 @@ export function parseSchedule(schedule: string): {
 export function getCronTools(
   userId: string,
   agentId: string,
+  /** The invocation mode, for the scheduler's telemetry. */
+  mode: string,
   threadId?: string,
   originChannel: 'slack' | 'websocket' | 'teams' = 'websocket',
   originChannelId?: string,
@@ -173,7 +175,7 @@ export function getCronTools(
             threadId: task.threadId,
             originChannel: task.originChannel,
             originChannelId: task.originChannelId,
-          });
+          }, { invokeMode: mode });
         } catch (err) {
           logger.error({ err }, '[CronTool] Failed to schedule task in-process');
         }
@@ -232,7 +234,7 @@ export function getCronTools(
         // actually removed — deleting a nonexistent task is not an event.
         if (result.count > 0) {
           try {
-            cronSchedulerService.unscheduleTask(taskId, userId);
+            cronSchedulerService.unscheduleTask(taskId, userId, mode);
           } catch (err) {
             logger.error({ err }, '[CronTool] Failed to unschedule task in-process');
           }

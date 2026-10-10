@@ -17,8 +17,8 @@ const {
   mockPublish,
   mockGetChannelContext,
   mockThreadFindUnique,
-  mockCronTaskUpdate,
-  mockCronTaskDelete,
+  mockCronTaskUpdateMany,
+  mockCronTaskDeleteMany,
   mockCronTaskFindMany,
   mockCronSchedule,
   mockCronValidate,
@@ -31,8 +31,8 @@ const {
   mockPublish: vi.fn(),
   mockGetChannelContext: vi.fn(),
   mockThreadFindUnique: vi.fn(),
-  mockCronTaskUpdate: vi.fn(),
-  mockCronTaskDelete: vi.fn(),
+  mockCronTaskUpdateMany: vi.fn(),
+  mockCronTaskDeleteMany: vi.fn(),
   mockCronTaskFindMany: vi.fn(),
   mockCronSchedule: vi.fn(),
   mockCronValidate: vi.fn(),
@@ -62,8 +62,8 @@ vi.mock('../lib/prisma', () => ({
   prisma: {
     cronTask: {
       findMany: mockCronTaskFindMany,
-      update: mockCronTaskUpdate,
-      delete: mockCronTaskDelete,
+      updateMany: mockCronTaskUpdateMany,
+      deleteMany: mockCronTaskDeleteMany,
     },
     conversationThread: {
       findUnique: mockThreadFindUnique,
@@ -148,8 +148,8 @@ describe('CronSchedulerService', () => {
     mockPublish.mockResolvedValue({ id: 'msg-1', threadId: 'thr-1' });
     mockGetChannelContext.mockResolvedValue({ channel: 'websocket', threadId: 'thread-bound' });
     mockThreadFindUnique.mockResolvedValue({ id: 'thread-bound' });
-    mockCronTaskUpdate.mockResolvedValue({});
-    mockCronTaskDelete.mockResolvedValue({});
+    mockCronTaskUpdateMany.mockResolvedValue({ count: 1 });
+    mockCronTaskDeleteMany.mockResolvedValue({ count: 1 });
     // Default: gate delivers (the suppression suite overrides this)
     mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
     mockGetGateRequest.mockReturnValue({
@@ -330,7 +330,7 @@ describe('CronSchedulerService', () => {
         mode: 'cron',
         prompt: 'Check system health',
       });
-      expect(mockCronTaskUpdate).toHaveBeenCalledWith({
+      expect(mockCronTaskUpdateMany).toHaveBeenCalledWith({
         where: { id: 'task-1' },
         data: { lastRunAt: expect.any(Date) },
       });
@@ -386,7 +386,36 @@ describe('CronSchedulerService', () => {
         mode: 'cron',
         prompt: 'Generate the daily report.',
       });
-      expect(mockCronTaskDelete).toHaveBeenCalledWith({ where: { id: 'oneshot-2' } });
+      expect(mockCronTaskDeleteMany).toHaveBeenCalledWith({ where: { id: 'oneshot-2' } });
+    });
+
+    it('delivers and logs no error when the run deleted its own task', async () => {
+      mockCronValidate.mockReturnValue(false);
+      const task = createCronTask({
+        id: 'oneshot-self',
+        schedule: 'in 1 minute',
+        nextRunAt: new Date(Date.now() + 60_000).toISOString(),
+      });
+      // What `delete_scheduled_task` does inside the run: the row goes, then the job.
+      mockInvoke.mockImplementation(async () => {
+        mockCronTaskUpdateMany.mockResolvedValue({ count: 0 });
+        mockCronTaskDeleteMany.mockResolvedValue({ count: 0 });
+        cronSchedulerService.unscheduleTask(task.id, task.userId);
+        return { response: 'Done.', toolCalls: [], steps: [{ text: 'Done.', toolCalls: [] }] };
+      });
+
+      cronSchedulerService.scheduleTask(task);
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(mockDeliverMessage).toHaveBeenCalledWith(
+        'agent-1',
+        'user-abc-123',
+        '**Scheduled Task: Daily Report**\n\nDone.',
+        'CRON_TASK',
+        expect.anything(),
+      );
+      expect(mockCronTaskDeleteMany).toHaveBeenCalledWith({ where: { id: 'oneshot-self' } });
+      expect(mockLoggerError).not.toHaveBeenCalled();
     });
 
     it('executes past-due one-shot task immediately via setImmediate', async () => {
@@ -564,7 +593,7 @@ describe('CronSchedulerService', () => {
 
     it('handles delete failure for one-shot tasks gracefully', async () => {
       mockCronValidate.mockReturnValue(false);
-      mockCronTaskDelete.mockRejectedValue(new Error('Delete failed'));
+      mockCronTaskDeleteMany.mockRejectedValue(new Error('Delete failed'));
 
       const futureDate = new Date(Date.now() + 60_000).toISOString();
       const task = createCronTask({
@@ -579,7 +608,7 @@ describe('CronSchedulerService', () => {
       await vi.advanceTimersByTimeAsync(60_000);
 
       expect(mockInvoke).toHaveBeenCalled();
-      expect(mockCronTaskDelete).toHaveBeenCalledWith({ where: { id: 'oneshot-del-fail' } });
+      expect(mockCronTaskDeleteMany).toHaveBeenCalledWith({ where: { id: 'oneshot-del-fail' } });
     });
   });
 
@@ -609,7 +638,7 @@ describe('CronSchedulerService', () => {
       expect(mockDeliverMessage).not.toHaveBeenCalled();
       expect(mockPublish).not.toHaveBeenCalled();
       // Bookkeeping is unaffected by suppression
-      expect(mockCronTaskUpdate).toHaveBeenCalledWith({
+      expect(mockCronTaskUpdateMany).toHaveBeenCalledWith({
         where: { id: 'task-1' },
         data: { lastRunAt: expect.any(Date) },
       });
@@ -860,7 +889,21 @@ describe('CronSchedulerService', () => {
       await vi.advanceTimersByTimeAsync(60_000);
 
       expect(mockDeliverMessage).not.toHaveBeenCalled();
-      expect(mockCronTaskDelete).toHaveBeenCalledWith({ where: { id: 'oneshot-quiet' } });
+      expect(mockCronTaskDeleteMany).toHaveBeenCalledWith({ where: { id: 'oneshot-quiet' } });
+    });
+
+    it('keeps no baseline for a recurring task whose run deleted it', async () => {
+      const run = scheduleAndCapture();
+      mockInvoke.mockImplementation(async () => {
+        cronSchedulerService.unscheduleTask('task-1', 'user-abc-123');
+        return { response: 'Done.', toolCalls: [], steps: [{ text: 'Done.', toolCalls: [] }] };
+      });
+
+      await run();
+
+      expect(mockDeliverMessage).toHaveBeenCalled();
+      const baselines = (cronSchedulerService as unknown as { lastDelivered: Map<string, unknown> }).lastDelivered;
+      expect(baselines.has('task-1')).toBe(false);
     });
   });
 
@@ -967,6 +1010,25 @@ describe('CronSchedulerService', () => {
         'cron task deleted',
         'user-abc-123',
         expect.objectContaining({ 'cron.task.id': 'task-1' }),
+      );
+    });
+
+    it('names the mode of the agent run that scheduled or deleted a task', () => {
+      mockCronValidate.mockReturnValue(true);
+      mockCronSchedule.mockReturnValue({ stop: vi.fn() });
+
+      cronSchedulerService.scheduleTask(createCronTask(), { invokeMode: 'webhook' });
+      cronSchedulerService.unscheduleTask('task-1', 'user-abc-123', 'heartbeat');
+
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'cron task scheduled',
+        'user-abc-123',
+        expect.objectContaining({ 'invoke.mode': 'webhook' }),
+      );
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'cron task deleted',
+        'user-abc-123',
+        expect.objectContaining({ 'invoke.mode': 'heartbeat' }),
       );
     });
   });

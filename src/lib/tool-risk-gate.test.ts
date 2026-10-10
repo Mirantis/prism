@@ -117,6 +117,37 @@ describe('withToolRiskGate', () => {
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['chat', 'heartbeat', 'cron', 'webhook'])(
+    'passes the schedule read and evaluates the schedule writes in %s mode',
+    async (invocationMode) => {
+      const evaluate = vi.fn<ToolRiskEvaluator>(async () => ALLOW);
+      const tools = withToolRiskGate(
+        {
+          list_scheduled_tasks: makeTool(),
+          schedule_task: makeTool(),
+          delete_scheduled_task: makeTool(),
+        },
+        {
+          mode: 'enforce',
+          invocationMode,
+          initialPrompt: 'Perform your heartbeat check now.',
+          userId: 'user-1',
+          agentId: 'agent-1',
+          evaluate,
+        },
+      );
+
+      await tools.list_scheduled_tasks.execute!({} as never, executionOptions() as never);
+      await tools.schedule_task.execute!({ name: 'Recheck' } as never, executionOptions() as never);
+      await tools.delete_scheduled_task.execute!({ taskId: 'task-1' } as never, executionOptions() as never);
+
+      expect(evaluate.mock.calls.map(([input]) => input.toolName)).toEqual([
+        'schedule_task',
+        'delete_scheduled_task',
+      ]);
+    },
+  );
+
   it('allows an approved call in enforce mode', async () => {
     const execute = vi.fn(async () => 'done');
     const evaluate = vi.fn(async () => ALLOW);

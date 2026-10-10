@@ -700,42 +700,28 @@ describe('invoke', () => {
       expect(toolNames).toContain('shell_exec');
     });
 
-    it('heartbeat mode excludes cron tools', async () => {
-      await invoke(createTestInvokeRequest({ mode: 'heartbeat' }));
+    it.each(['heartbeat', 'cron', 'webhook'] as const)(
+      '%s mode manages the schedule with the owner\'s tools but drops the goal tools',
+      async (mode) => {
+        await invoke(createTestInvokeRequest({ mode, userId: 'owner-1', agentId: 'agent-7' }));
 
-      const callArgs = mockGenerateText.mock.calls[0][0];
-      const toolNames = Object.keys(callArgs.tools);
-      expect(toolNames).not.toContain('schedule_task');
-      expect(toolNames).not.toContain('list_scheduled_tasks');
-      expect(toolNames).not.toContain('delete_scheduled_task');
-      expect(toolNames).not.toContain('create_goal');
-      expect(toolNames).not.toContain('get_goal');
-      expect(toolNames).toContain('memory_search');
-      expect(toolNames).toContain('update_soul');
-      expect(toolNames).toContain('shell_exec');
-    });
+        const callArgs = mockGenerateText.mock.calls[0][0];
+        const toolNames = Object.keys(callArgs.tools);
+        expect(toolNames).toContain('schedule_task');
+        expect(toolNames).toContain('list_scheduled_tasks');
+        expect(toolNames).toContain('delete_scheduled_task');
+        expect(mockGetCronTools).toHaveBeenCalledWith('owner-1', 'agent-7', mode, undefined, 'websocket', undefined);
+        expect(toolNames).not.toContain('create_goal');
+        expect(toolNames).not.toContain('get_goal');
+        expect(toolNames).toContain('memory_search');
+        expect(toolNames).toContain('update_soul');
+        // The original regression: cron runs lost the built-in shell tools
+        // (shell_exec etc.), so a scheduled task could not run shell commands.
+        expect(toolNames).toContain('shell_exec');
+      },
+    );
 
-    it('cron mode keeps schedule_task (so it can re-wait) but drops list/delete + goal tools', async () => {
-      await invoke(createTestInvokeRequest({ mode: 'cron' }));
-
-      const callArgs = mockGenerateText.mock.calls[0][0];
-      const toolNames = Object.keys(callArgs.tools);
-      // schedule_task stays so a thread-bound "continue in this conversation" run
-      // can schedule another wait and keep polling in-thread.
-      expect(toolNames).toContain('schedule_task');
-      // ...but a cron run still can't enumerate/delete the whole schedule.
-      expect(toolNames).not.toContain('list_scheduled_tasks');
-      expect(toolNames).not.toContain('delete_scheduled_task');
-      expect(toolNames).not.toContain('create_goal');
-      expect(toolNames).not.toContain('get_goal');
-      expect(toolNames).toContain('memory_search');
-      expect(toolNames).toContain('update_soul');
-      // The original regression: cron runs lost the built-in shell tools
-      // (shell_exec etc.), so a scheduled task could not run shell commands.
-      expect(toolNames).toContain('shell_exec');
-    });
-
-    it('goal mode drops create_goal (no nesting) but keeps get_goal + working tools', async () => {
+    it('goal mode drops create_goal (no nesting) and the schedule tools but keeps get_goal + working tools', async () => {
       await invoke(createTestInvokeRequest({ mode: 'goal' }));
 
       const callArgs = mockGenerateText.mock.calls[0][0];
@@ -744,6 +730,8 @@ describe('invoke', () => {
       expect(toolNames).toContain('get_goal');
       expect(toolNames).toContain('shell_exec');
       expect(toolNames).not.toContain('schedule_task');
+      expect(toolNames).not.toContain('list_scheduled_tasks');
+      expect(toolNames).not.toContain('delete_scheduled_task');
     });
   });
 
@@ -845,12 +833,12 @@ describe('invoke', () => {
   it('applies mode filtering to MCP tools, not just built-ins', async () => {
     // A remote tool that shares a name with a built-in the mode removes must go
     // too — otherwise it answers to the name the gating just took away.
-    mockGetMCPTools.mockResolvedValue({ schedule_task: {}, kubectl: {} });
+    mockGetMCPTools.mockResolvedValue({ join_meeting: {}, kubectl: {} });
 
     await invoke(createTestInvokeRequest({ mode: 'heartbeat' }));
 
     const toolNames = Object.keys(mockGenerateText.mock.calls[0][0].tools);
-    expect(toolNames).not.toContain('schedule_task');
+    expect(toolNames).not.toContain('join_meeting');
     // Everything else the endpoint serves is still available.
     expect(toolNames).toContain('kubectl');
   });
@@ -923,12 +911,12 @@ describe('invoke', () => {
   });
 
   it('applies mode filtering to plugin tools too', async () => {
-    mockGetPluginTools.mockResolvedValue({ schedule_task: {}, demo__probe__search: {} });
+    mockGetPluginTools.mockResolvedValue({ join_meeting: {}, demo__probe__search: {} });
 
     await invoke(createTestInvokeRequest({ mode: 'heartbeat' }));
 
     const toolNames = Object.keys(mockGenerateText.mock.calls[0][0].tools);
-    expect(toolNames).not.toContain('schedule_task');
+    expect(toolNames).not.toContain('join_meeting');
     expect(toolNames).toContain('demo__probe__search');
   });
 

@@ -46,7 +46,7 @@ describe('cron tools', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    tools = getCronTools('user-1', 'agent-1') as unknown as Record<string, { execute: ToolExecute }>;
+    tools = getCronTools('user-1', 'agent-1', 'heartbeat') as unknown as Record<string, { execute: ToolExecute }>;
   });
 
   it('schedule_task delegates to cronSchedulerService.scheduleTask and emits no telemetry itself', async () => {
@@ -68,8 +68,10 @@ describe('cron tools', () => {
       instruction: 'report',
     });
 
+    // The mode goes to the scheduler, so its event tells an agent run's schedule from the user's.
     expect(mockScheduler.scheduleTask).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'task-1', agentId: 'agent-1', userId: 'user-1' }),
+      { invokeMode: 'heartbeat' },
     );
     // The scheduler owns the 'cron task scheduled' event — the tool must not
     // emit it too, or every schedule would be counted twice.
@@ -94,8 +96,38 @@ describe('cron tools', () => {
 
     await tools.delete_scheduled_task.execute({ taskId: 'task-1' });
 
-    expect(mockScheduler.unscheduleTask).toHaveBeenCalledWith('task-1', 'user-1');
+    expect(mockScheduler.unscheduleTask).toHaveBeenCalledWith('task-1', 'user-1', 'heartbeat');
     expect(mockTrackEvent).not.toHaveBeenCalled();
+  });
+
+  it('keeps every schedule tool to the owning user and agent', async () => {
+    mockPrisma.cronTask.create.mockResolvedValue({
+      id: 'task-2',
+      name: 'Recheck',
+      schedule: 'in 5 minutes',
+      instruction: 'x',
+      isActive: true,
+      nextRunAt: new Date(),
+      lastRunAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    mockPrisma.cronTask.findMany.mockResolvedValue([]);
+    mockPrisma.cronTask.deleteMany.mockResolvedValue({ count: 0 });
+
+    await tools.schedule_task.execute({ name: 'Recheck', schedule: 'in 5 minutes', instruction: 'x' });
+    await tools.list_scheduled_tasks.execute({});
+    await tools.delete_scheduled_task.execute({ taskId: 'task-of-someone-else' });
+
+    expect(mockPrisma.cronTask.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ userId: 'user-1', agentId: 'agent-1' }),
+    });
+    expect(mockPrisma.cronTask.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 'user-1', agentId: 'agent-1' } }),
+    );
+    expect(mockPrisma.cronTask.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'task-of-someone-else', userId: 'user-1', agentId: 'agent-1' },
+    });
   });
 
   it('delete_scheduled_task does not unschedule (or emit) when no row was deleted', async () => {
@@ -114,7 +146,7 @@ describe('cron tools', () => {
   describe('continueInThread', () => {
     /** Tools pre-bound to a Slack thread, as a chat turn from a channel would be. */
     function boundTools() {
-      return getCronTools('user-1', 'agent-1', 'thread-9', 'slack', 'C123') as unknown as Record<
+      return getCronTools('user-1', 'agent-1', 'chat', 'thread-9', 'slack', 'C123') as unknown as Record<
         string,
         { execute: ToolExecute }
       >;
@@ -156,6 +188,7 @@ describe('cron tools', () => {
       });
       expect(mockScheduler.scheduleTask).toHaveBeenCalledWith(
         expect.objectContaining({ threadId: 'thread-9', originChannel: 'slack', originChannelId: 'C123' }),
+        { invokeMode: 'chat' },
       );
     });
 

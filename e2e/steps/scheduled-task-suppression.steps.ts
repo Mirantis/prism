@@ -69,7 +69,8 @@ Then('a scheduled-task message containing {string} is delivered', async ({}, mar
         },
       }),
     (m) => m.length > 0,
-    150_000,
+    // A run that makes several model calls can take more than two minutes after its delay.
+    240_000,
   );
   expect(messages.length).toBeGreaterThan(0);
 });
