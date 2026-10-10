@@ -1736,8 +1736,7 @@ describe('invoke', () => {
       const secondCall = mockGenerateText.mock.calls[1][0];
       const lastMessage = secondCall.messages[secondCall.messages.length - 1];
       expect(lastMessage.role).toBe('user');
-      expect(lastMessage.content).toContain('maximum number of iterations (100)');
-      expect(lastMessage.content).toContain('Do not attempt to use any more tools');
+      expect(lastMessage.content).toContain('all 100 steps');
 
       // Assistant message should summarize steps including tool calls
       const assistantMessage = secondCall.messages[secondCall.messages.length - 2];
@@ -2701,7 +2700,7 @@ describe('invoke', () => {
       await expect(
         summary.tools.memory_search.execute({}, { toolCallId: 't1', messages: [] }),
       ).rejects.toThrow('not available');
-      expect(summary.messages.at(-1).content).toContain('maximum number of iterations');
+      expect(summary.messages.at(-1).content).toContain('all 100 steps');
     });
 
     it('hands the compaction fork the history without the trailing announcement', async () => {

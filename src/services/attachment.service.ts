@@ -217,8 +217,7 @@ export function classifyMediaType(mediaType: string): AttachmentCategory {
 
 /**
  * How long attachment content is kept, in words: "7 days", "36 hours". The value
- * comes from `ATTACHMENT_TTL_HOURS`, read once at startup, so the text is the same
- * on every turn and can sit in the cached system prompt.
+ * comes from `ATTACHMENT_TTL_HOURS`, read once at startup.
  */
 export function attachmentRetention(): string {
   const hours = config.attachmentContentTtlMs / 3_600_000;
