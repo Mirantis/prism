@@ -137,7 +137,7 @@ export function getShellTools(
 
     coding_agent_status: tool({
       description:
-        'Poll a running coding_agent task. Returns { agent, output, completed, result, turns, stopReason, sessionId } — output is drained on read, so subsequent calls return only new output. When completed is true, result/turns/stopReason/sessionId are populated.',
+        'Poll a running coding_agent task. Returns { agent, output, completed, result, turns, stopReason, sessionId, refusals } — output is drained on read, so subsequent calls return only new output. When completed is true, result/turns/stopReason/sessionId are populated. refusals lists each action the sub-agent\'s permission checks refused; a task that otherwise finished then has stopReason "refused".',
       inputSchema: codingAgentStatusInput,
       execute: async (input) => runCodingAgentStatus(input),
     }),

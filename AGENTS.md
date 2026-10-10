@@ -60,6 +60,15 @@ to clear.
   `CODING_AGENT` or the task's `agent` parameter), and the adapter runs it end to end:
   how the agent is launched, read and given a home is its business alone. A new agent is one
   folder plus one entry in the selector.
+- **A delegated coding task runs under its CLI's own checks.** Claude Code runs an
+  edit task in `--permission-mode auto` and a plan task in `plan`, never with the
+  permissions bypass. Codex runs every task with `sandbox_mode="danger-full-access"`
+  and `approval_policy="never"`, since its sandbox cannot start in an unprivileged
+  container; a Codex plan task is read-only by `PLAN_ONLY_INSTRUCTION` alone.
+  A refusal the CLI reports reaches the task result as `refusals`, and a task that
+  otherwise finished reports `stopReason: "refused"`. `TOOL_RISK_GATE_MODE` checks
+  the `coding_agent` call alone; an operator refuses more with deny rules in Claude
+  Code's managed settings.
 - **Execution environments stay generic.** Where a command runs and what
   filesystem it sees is an `ExecutionEnvironment` (`lib/execution-environments/`,
   chosen by `get-execution-environment.ts`, which derives it rather than reading
@@ -999,7 +1008,7 @@ src/
 │   │   └── litellm/
 │   │       └── litellm-provider.ts # An operator's LiteLLM proxy (Anthropic Messages surface; aliases pass through; startup model check): `createLiteLlmProvider(baseURL?)`
 │   ├── coding-agents/          # One folder per coding agent, plus the shared contract and the selector (`CODING_AGENT` and per-task `agent`)
-│   │   ├── coding-agent.ts     # The `CodingAgent` contract: `id`, `displayName`, `prepareHome()` and `run(task)`, which returns a `CodingAgentRun` (an event stream of `text` / `session` / `result`, `exited`, `stop()`). States what the runtime needs and nothing about how an agent is launched
+│   │   ├── coding-agent.ts     # The `CodingAgent` contract: `id`, `displayName`, `prepareHome()` and `run(task)`, which returns a `CodingAgentRun` (an event stream of `text` / `session` / `result` with the actions the agent's checks refused, `exited`, `stop()`). States what the runtime needs and nothing about how an agent is launched
 │   │   ├── cli-run.ts          # `runCli()`: the process plumbing a CLI-shaped adapter calls — spawn, stdout lines through the adapter's parser, exit wait, the closing `result` when the agent reported none, SIGTERM→SIGKILL stop
 │   │   ├── get-coding-agent.ts # Selector: `config.codingAgent` → adapter, one instance per agent so the adapter that prepared the home runs every task; a `Record` so a config name without an adapter fails to compile
 │   │   ├── bedrock-credentials.ts # Shared AWS credential detection
@@ -1009,7 +1018,7 @@ src/
 │   │       ├── authenticated-home.ts # Saved CLI login detection, by running the CLI in the execution environment
 │   │       ├── credentials.ts # Claude CLI authentication settings
 │   │       ├── home.ts        # Where the CLI keeps its state, resolved off the env the CLI will run with
-│   │       └── claude-code-agent.ts # The Claude Code adapter: `claude -p --output-format stream-json …` argv (gate mode → permission flags, plan-only instruction), the stream-json parser, and the `<DATA>/.claude` home with `CLAUDE_CONFIG_DIR` and the skills symlink
+│   │       └── claude-code-agent.ts # The Claude Code adapter: `claude -p --output-format stream-json …` argv (task mode → permission mode, plan-only instruction), the stream-json parser with the result line's `permission_denials`, and the `<DATA>/.claude` home with `CLAUDE_CONFIG_DIR` and the skills symlink
 │   ├── execution-environments/ # Where a command runs and what filesystem it sees, plus the shared contract and the selector
 │   │   ├── execution-environment.ts # The contract: `runShell` / `runProgram` returning an `ExecProcess` (`ended` for exit accounting, `closed` once the pipes drain), `ExecutionFiles`, and `paths()` — the agent's directories in this environment
 │   │   ├── exec-stdio-transport.ts # MCP stdio over `runProgram`, so a plugin's server runs where its files are
@@ -1094,8 +1103,8 @@ What the operator sets on `docker run`:
 | `TEAMS_PORT` | Port of the Teams bot endpoint's own listener, which serves `POST /agents/teams/messages` and nothing else — the port to publish | `3979` |
 | `LLM_PROVIDER` | LLM vendor: `bedrock`, `azure`, `bedrock-mantle`, `openai`, `openrouter`, `anthropic`, or `litellm` (one per container). Any other value runs `bedrock` and logs a startup warning | `bedrock` |
 | `CODING_AGENT` | Default coding agent: `claude-code` or `codex`. Each task may override it with `agent`. | Claude credentials first, then an OpenAI key, else `claude-code` |
-| `CLAUDE_CODE_MODEL_SMALL` | Model for the Claude Code small tier | `haiku` |
-| `CLAUDE_CODE_MODEL_MEDIUM` | Model for the Claude Code medium tier | `sonnet` |
+| `CLAUDE_CODE_MODEL_SMALL` | Model for the Claude Code small tier | `haiku` (Bedrock: `global.anthropic.claude-haiku-5-5`) |
+| `CLAUDE_CODE_MODEL_MEDIUM` | Model for the Claude Code medium tier | `sonnet` (Bedrock: `global.anthropic.claude-sonnet-5-5`) |
 | `CLAUDE_CODE_MODEL_LARGE` | Model for the Claude Code large tier | `opus` |
 | `CODEX_MODEL_SMALL` | Model for the Codex small tier | `gpt-5.6-luna` (Bedrock: `openai.gpt-5.6-luna`) |
 | `CODEX_MODEL_MEDIUM` | Model for the Codex medium tier | `gpt-5.6-terra` (Bedrock: `openai.gpt-5.6-terra`) |

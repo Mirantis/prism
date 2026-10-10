@@ -10,7 +10,7 @@
  * polls, so a new agent is one adapter and no change to the tools.
  */
 
-import type { CodingAgentName, ToolRiskGateMode } from '../../config';
+import type { CodingAgentName } from '../../config';
 
 export interface CodingAgent {
   /** The adapter identifier. */
@@ -37,6 +37,13 @@ export interface CodingAgent {
   run(task: CodingAgentTask): CodingAgentRun;
 }
 
+/**
+ * Plan mode's read-only promise, stated to the agent's model. Where the CLI does
+ * not enforce plan mode, it is the whole promise.
+ */
+export const PLAN_ONLY_INSTRUCTION =
+  'You are in plan mode: analyze and plan only. Do not create, modify or delete any files, do not run commands that change state (installs, commits, pushes, deployments), and do not call tools that create, change or delete anything in another system (tickets, comments, pages, pull requests).';
+
 export interface CodingAgentTask {
   /** The manager's id for the task, for log correlation. */
   taskId: string;
@@ -54,8 +61,6 @@ export interface CodingAgentTask {
   /** A session id an earlier run reported, to resume its context. */
   sessionId?: string;
   debug?: boolean;
-  /** The runtime's tool-risk gate mode; the adapter maps it onto the agent's own permission model. */
-  gateMode: ToolRiskGateMode;
 }
 
 export interface CodingAgentRun {
@@ -72,13 +77,30 @@ export interface CodingAgentRun {
 
 export type CodingAgentStopReason = 'end_turn' | 'max_turns' | 'error';
 
+/** An action the agent's own permission checks refused during a run. */
+export interface CodingAgentRefusal {
+  /** The tool or operation, in the agent's own name for it. */
+  action: string;
+  /** What the action was aimed at: a path, a command, or its input. */
+  target: string;
+}
+
 export type CodingAgentEvent =
   /** Output for the caller, streamed as it is produced. */
   | { type: 'text'; text: string }
   /** The id a later task passes as `sessionId` to resume this one's context. */
   | { type: 'session'; sessionId: string }
-  /** The outcome. `message` is the agent's own closing text: its answer, or what went wrong. */
-  | { type: 'result'; stopReason: CodingAgentStopReason; turns: number; message: string };
+  /**
+   * The outcome. `message` is the agent's own closing text: its answer, or what
+   * went wrong. `refusals` lists the actions the agent's permission checks refused.
+   */
+  | {
+    type: 'result';
+    stopReason: CodingAgentStopReason;
+    turns: number;
+    message: string;
+    refusals?: CodingAgentRefusal[];
+  };
 
 export interface CodingAgentHome {
   configDir: string;

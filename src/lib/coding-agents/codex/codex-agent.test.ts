@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { FakeChild } from '../../../test-utils/fake-child';
-import type { CodingAgentEvent, CodingAgentTask } from '../coding-agent';
+import { PLAN_ONLY_INSTRUCTION, type CodingAgentEvent, type CodingAgentTask } from '../coding-agent';
 import { createCodexAgent } from './codex-agent';
 import { fakeExecutionEnvironment, type FakeRun } from '../../../test-utils/fake-execution-environment';
 import { localFiles } from '../../execution-environments/local/local-files';
@@ -14,7 +14,7 @@ vi.mock('../../telemetry', () => ({ trackEvent: vi.fn() }));
 
 const task: CodingAgentTask = {
   taskId: 'task-1', prompt: 'Inspect the project', workdir: '/work',
-  env: { OPENAI_API_KEY: 'test-key' }, mode: 'edit', maxTurns: 100, gateMode: 'off',
+  env: { OPENAI_API_KEY: 'test-key' }, mode: 'edit', maxTurns: 100,
 };
 
 let authHome: string;
@@ -36,19 +36,28 @@ async function collect(lines: object[]) {
 }
 
 describe('Codex adapter', () => {
-  it.each([
-    ['plan', 'off', 'read-only'], ['plan', 'enforce', 'read-only'],
-    ['edit', 'off', 'danger-full-access'], ['edit', 'observe', 'danger-full-access'],
-    ['edit', 'enforce', 'workspace-write'],
-  ] as const)('uses %s mode with the %s gate', async (mode, gateMode, sandbox) => {
-    const child = new FakeChild();
-    const spawner = vi.fn<FakeRun>(() => child.asExecProcess());
-    const run = createCodexAgent(fakeExecutionEnvironment({ runProgram: spawner, paths: { codexHome: authHome }, files: localFiles })).run({ ...task, mode, gateMode });
-    expect(spawner).toHaveBeenCalledWith('codex', expect.arrayContaining([
-      'exec', '--json', 'approval_policy="never"', `sandbox_mode="${sandbox}"`,
-    ]), { cwd: '/work', env: { OPENAI_API_KEY: 'test-key', CODEX_API_KEY: 'test-key', CODEX_HOME: authHome }, stdin: 'pipe' });
-    child.finish(1);
-    await Array.fromAsync(run.events);
+  describe.each(['off', 'observe', 'enforce'] as const)('with the %s gate', (gateMode) => {
+    const original = config.toolRiskGateMode;
+    beforeEach(() => { config.toolRiskGateMode = gateMode; });
+    afterEach(() => { config.toolRiskGateMode = original; });
+
+    it.each([
+      ['edit', 'Implement the requested changes and verify the result.'],
+      ['plan', PLAN_ONLY_INSTRUCTION],
+    ] as const)('runs a %s task without the sandbox and with its instruction', async (mode, instruction) => {
+      const child = new FakeChild();
+      const spawner = vi.fn<FakeRun>(() => child.asExecProcess());
+      const run = createCodexAgent(fakeExecutionEnvironment({ runProgram: spawner, paths: { codexHome: authHome }, files: localFiles })).run({ ...task, mode });
+      expect(spawner).toHaveBeenCalledWith('codex', expect.arrayContaining([
+        'exec', '--json', 'approval_policy="never"', 'sandbox_mode="danger-full-access"',
+      ]), { cwd: '/work', env: { OPENAI_API_KEY: 'test-key', CODEX_API_KEY: 'test-key', CODEX_HOME: authHome }, stdin: 'pipe' });
+      const args = spawner.mock.calls[0][1] as string[];
+      expect(args.filter(arg => /^(approval_policy|sandbox_mode)=/.test(arg)))
+        .toEqual(['approval_policy="never"', 'sandbox_mode="danger-full-access"']);
+      expect(args.at(-1)).toBe(`${instruction}\n\n${task.prompt}`);
+      child.finish(1);
+      await Array.fromAsync(run.events);
+    });
   });
 
   it.each([

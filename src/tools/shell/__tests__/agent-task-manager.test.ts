@@ -5,6 +5,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { config } from '../../../config';
+import { trackEvent } from '../../../lib/telemetry';
 import { buildCodingAgentInput, runCodingAgent } from '../coding-agent';
 
 import { AsyncChannel } from '../../../utils/async-channel';
@@ -22,6 +23,8 @@ import {
   MAX_BUFFER_SIZE,
   MAX_CONCURRENT,
 } from '../agent-task-manager';
+
+vi.mock('../../../lib/telemetry', () => ({ trackEvent: vi.fn() }));
 
 type ResultEvent = Extract<CodingAgentEvent, { type: 'result' }>;
 
@@ -259,7 +262,6 @@ describe('AgentTaskManager', () => {
       appendSystemPrompt: 'framing',
       sessionId: 'sess-prev',
       debug: true,
-      gateMode: config.toolRiskGateMode,
     });
     // Server-only vars are stripped; everything else passes through.
     expect(task.env.NODE_ENV).toBeUndefined();
@@ -298,6 +300,8 @@ describe('AgentTaskManager', () => {
     expect(status.turns).toBe(7);
     expect(status.sessionId).toBe('sess-42');
     expect(status.result).toBe('final answer');
+    expect(status.refusals).toBeUndefined();
+    expect(trackEvent).not.toHaveBeenCalledWith('coding task refused', expect.anything(), expect.anything());
 
     // After completion is delivered once + the next empty read, the task is
     // reaped and subsequent lookups error.
@@ -320,6 +324,51 @@ describe('AgentTaskManager', () => {
     const { status } = await pollUntilComplete(manager, taskId);
     expect(status.stopReason).toBe('max_turns');
     expect(status.result).toBe('partial\n\n[max_turns]: hit max');
+  });
+
+  it('reports a run its permission checks refused part of as refused, naming each action', async () => {
+    const { taskId } = manager.startTask(sampleParams);
+    const run = getRun();
+    run.emit({ type: 'text', text: 'Steps 1 and 2 are done.' });
+    run.finish({
+      stopReason: 'end_turn', turns: 5, message: 'Steps 1 and 2 are done.',
+      refusals: [
+        { action: 'Bash', target: 'git push --force origin main' },
+        { action: 'Write', target: '/work/forbidden.txt' },
+      ],
+    });
+
+    const { status } = await pollUntilComplete(manager, taskId);
+    expect(status.stopReason).toBe('refused');
+    expect(status.refusals).toEqual([
+      { action: 'Bash', target: 'git push --force origin main' },
+      { action: 'Write', target: '/work/forbidden.txt' },
+    ]);
+    expect(status.result).toBe(
+      'Steps 1 and 2 are done.\n\n[refused]: Fake Agent did not run these actions, because its permission checks refused them:\n' +
+      '- Bash: git push --force origin main\n- Write: /work/forbidden.txt',
+    );
+    expect(trackEvent).toHaveBeenCalledWith('coding task refused', 'test-owner-id', {
+      'task.id': taskId, 'task.agent': 'claude-code', 'task.mode': 'edit', 'task.stop_reason': 'end_turn', 'task.refusals': '2',
+    });
+  });
+
+  it('keeps a failed outcome as it is and lists its refusals after it', async () => {
+    const { taskId } = manager.startTask({ ...sampleParams, mode: 'plan' });
+    getRun().finish({
+      stopReason: 'max_turns', turns: 3, message: 'hit max',
+      refusals: [{ action: 'Bash', target: 'touch marker.txt' }],
+    });
+
+    const { status } = await pollUntilComplete(manager, taskId);
+    expect(status.stopReason).toBe('max_turns');
+    expect(status.result).toBe(
+      'Error (max_turns): hit max\n\n[refused]: Fake Agent did not run these actions, because its permission checks refused them:\n' +
+      '- Bash: touch marker.txt',
+    );
+    expect(trackEvent).toHaveBeenCalledWith('coding task refused', 'test-owner-id', {
+      'task.id': taskId, 'task.agent': 'claude-code', 'task.mode': 'plan', 'task.stop_reason': 'max_turns', 'task.refusals': '1',
+    });
   });
 
   it('reports a non-success outcome with no text as an error', async () => {

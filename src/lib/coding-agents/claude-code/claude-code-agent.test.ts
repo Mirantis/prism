@@ -1,19 +1,21 @@
 import { config } from '../../../config';
 /**
  * The Claude Code adapter against a fake `claude`: the argv it builds for each
- * mode and gate setting, the events it reads out of the stream-json output, and
- * the home it prepares at boot.
+ * mode, the events it reads out of the stream-json output, and the home it
+ * prepares at boot.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { FakeChild } from '../../../test-utils/fake-child';
+import { logger } from '../../../logger';
 import { fakeExecutionEnvironment } from '../../../test-utils/fake-execution-environment';
 import { localFiles } from '../../execution-environments/local/local-files';
 import type { RunOptions } from '../../execution-environments/execution-environment';
 import type { CodingAgentEvent, CodingAgentTask } from '../coding-agent';
-import { createClaudeCodeAgent, PLAN_ONLY_INSTRUCTION } from './claude-code-agent';
+import { PLAN_ONLY_INSTRUCTION } from '../coding-agent';
+import { createClaudeCodeAgent } from './claude-code-agent';
 
 const baseTask: CodingAgentTask = {
   taskId: 't1',
@@ -21,7 +23,6 @@ const baseTask: CodingAgentTask = {
   env: { PATH: '/bin' },
   mode: 'edit',
   maxTurns: 100,
-  gateMode: 'off',
 };
 
 /** Start a task in an environment that records the launch instead of running anything. */
@@ -49,11 +50,11 @@ function valueOf(args: readonly string[], flag: string): string | undefined {
 }
 
 /** Feed stream-json lines to a fake `claude` and collect what the adapter reads. */
-async function eventsFor(lines: object[]): Promise<CodingAgentEvent[]> {
+async function eventsFor(lines: object[], task: CodingAgentTask = baseTask): Promise<CodingAgentEvent[]> {
   const child = new FakeChild();
   const run = createClaudeCodeAgent(
     fakeExecutionEnvironment({ runProgram: () => child.asExecProcess() }),
-  ).run(baseTask);
+  ).run(task);
   for (const line of lines) child.emitLine(JSON.stringify(line));
   child.finish(0);
   const events: CodingAgentEvent[] = [];
@@ -111,23 +112,15 @@ describe('run: the spawn', () => {
     expect(args).not.toContain('--debug');
   });
 
-  it.each(['off', 'observe'] as const)('preserves bypass permissions in %s gate mode', (gateMode) => {
-    const { args } = capture({ gateMode });
-    expect(args).toContain('--dangerously-skip-permissions');
-    expect(args).not.toContain('auto');
-  });
-
-  it('uses auto permission mode without bypass when the gate enforces', () => {
-    const { args } = capture({ gateMode: 'enforce' });
+  it.each([
+    ['edit', 'auto'],
+    ['plan', 'plan'],
+  ] as const)('runs a %s task in the %s permission mode, never with the bypass', (mode, permissionMode) => {
+    const { args } = capture({ mode });
+    expect(valueOf(args, '--permission-mode')).toBe(permissionMode);
+    expect(args.filter((a) => a === '--permission-mode')).toHaveLength(1);
     expect(args).not.toContain('--dangerously-skip-permissions');
-    expect(args).toEqual(expect.arrayContaining(['--permission-mode', 'auto']));
-  });
-
-  it('keeps plan mode without bypass when the gate enforces', () => {
-    const { args } = capture({ gateMode: 'enforce', mode: 'plan' });
-    expect(args).not.toContain('--dangerously-skip-permissions');
-    expect(args).toEqual(expect.arrayContaining(['--permission-mode', 'plan']));
-    expect(args).not.toContain('auto');
+    expect(args).not.toContain('--allow-dangerously-skip-permissions');
   });
 });
 
@@ -147,9 +140,7 @@ describe('run: system prompt args', () => {
     }
   });
 
-  it('constrains plan mode by instruction, since the permission mode does not', () => {
-    // The off/observe branch passes bypass permissions, under which Claude Code
-    // auto-approves writes even in plan mode — so the instruction is the real guard.
+  it('states plan mode to the model as well as to the CLI', () => {
     const { args } = capture({ mode: 'plan' });
     expect(valueOf(args, '--append-system-prompt')).toBe(PLAN_ONLY_INSTRUCTION);
     expect(args).toEqual(expect.arrayContaining(['--permission-mode', 'plan']));
@@ -174,15 +165,6 @@ describe('run: system prompt args', () => {
     expect(args).not.toContain('--append-system-prompt');
   });
 
-  it('keeps the plan constraint under the enforcing tool-risk gate too', () => {
-    // Enforce mode withholds bypass, so plan really is read-only there; the
-    // instruction still rides along, since `claude` on PATH is not version-pinned.
-    const { args } = capture({ gateMode: 'enforce', mode: 'plan', appendSystemPrompt: 'custom' });
-    expect(args).not.toContain('--dangerously-skip-permissions');
-    const value = valueOf(args, '--append-system-prompt');
-    expect(value).toContain(PLAN_ONLY_INSTRUCTION);
-    expect(value).toContain('custom');
-  });
 });
 
 describe('run: reading the stream', () => {
@@ -214,6 +196,90 @@ describe('run: reading the stream', () => {
   ] as const)('maps the %s subtype to %s', async (subtype, stopReason) => {
     const events = await eventsFor([{ type: 'result', subtype, result: 'text', num_turns: 3 }]);
     expect(events).toEqual([{ type: 'result', stopReason, turns: 3, message: 'text' }]);
+  });
+
+  it('reports a failed model call as an error, though its subtype reads success', async () => {
+    // A result line captured from Claude Code 2.1.296 when Bedrock answered 503.
+    const events = await eventsFor([{
+      type: 'result', subtype: 'success', is_error: true, terminal_reason: 'api_error',
+      num_turns: 1, permission_denials: [],
+      result: 'API Error: 503 Bedrock is unable to process your request.',
+    }]);
+    expect(events).toEqual([{
+      type: 'result', stopReason: 'error', turns: 1,
+      message: 'API Error: 503 Bedrock is unable to process your request.',
+    }]);
+  });
+
+  it('carries each refused action and its target on the result', async () => {
+    // Shapes captured from Claude Code 2.1.296: the auto-mode classifier
+    // refusing a force push, and a deny rule refusing a write.
+    const events = await eventsFor([{
+      type: 'result', subtype: 'success', is_error: false, num_turns: 5, result: 'Steps 1 and 2 are done.',
+      permission_denials: [
+        {
+          tool_name: 'Bash', tool_use_id: 'toolu_1',
+          tool_input: { command: 'git push --force origin main' },
+        },
+        {
+          tool_name: 'Write', tool_use_id: 'toolu_2',
+          tool_input: { file_path: '/work/forbidden.txt', content: 'nope\n' },
+        },
+      ],
+    }]);
+    expect(events).toEqual([{
+      type: 'result', stopReason: 'end_turn', turns: 5, message: 'Steps 1 and 2 are done.',
+      refusals: [
+        { action: 'Bash', target: 'git push --force origin main' },
+        { action: 'Write', target: '/work/forbidden.txt' },
+      ],
+    }]);
+  });
+
+  it('names a refused call without a known target field by its input, cut short', async () => {
+    const events = await eventsFor([{
+      type: 'result', subtype: 'success', num_turns: 1, result: 'ok',
+      permission_denials: [
+        { tool_name: 'mcp__deploy__run', tool_input: { service: 'api' } },
+        { tool_name: 'Bash', tool_input: { command: 'x'.repeat(300) } },
+      ],
+    }]);
+    expect(events).toEqual([expect.objectContaining({
+      refusals: [
+        { action: 'mcp__deploy__run', target: '{"service":"api"}' },
+        { action: 'Bash', target: `${'x'.repeat(200)}…` },
+      ],
+    })]);
+  });
+
+  it('folds a multi-line refused command onto one line', async () => {
+    const events = await eventsFor([{
+      type: 'result', subtype: 'success', num_turns: 1, result: 'ok',
+      permission_denials: [{ tool_name: 'Bash', tool_input: { command: "python3 - <<'PY'\nprint(1)\nPY" } }],
+    }]);
+    expect(events).toEqual([expect.objectContaining({
+      refusals: [{ action: 'Bash', target: "python3 - <<'PY' print(1) PY" }],
+    })]);
+  });
+
+  it.each([
+    ['edit', 'default', true],
+    ['edit', 'auto', false],
+    ['plan', 'plan', false],
+  ] as const)('warns when a %s task starts in %s mode: %s', async (mode, permissionMode, warns) => {
+    const warn = vi.spyOn(logger, 'warn');
+    // The opening line of Claude Code 2.1.296 on Bedrock with `--model haiku`.
+    await eventsFor([{
+      type: 'system', subtype: 'init', session_id: 's1', permissionMode,
+      model: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+    }], { ...baseTask, mode });
+    expect(warn.mock.calls.length > 0).toBe(warns);
+    if (warns) {
+      expect(warn).toHaveBeenCalledWith(
+        { taskId: 't1', model: 'us.anthropic.claude-haiku-4-5-20251001-v1:0', permissionMode },
+        expect.stringContaining('did not start in auto mode'),
+      );
+    }
   });
 
   it('falls back to the subtype as the message when the result line has no text', async () => {
@@ -368,10 +434,30 @@ describe('model tier and effort', () => {
     });
   }
 
+  it.each([
+    ['small', 'global.anthropic.claude-haiku-5-5'],
+    ['medium', 'global.anthropic.claude-sonnet-5-5'],
+    ['large', 'opus'],
+  ] as const)('maps %s to the Bedrock model when Claude Code runs on Bedrock', async (modelTier, model) => {
+    const child = new FakeChild();
+    let args: readonly string[] = [];
+    const run = createClaudeCodeAgent(
+      fakeExecutionEnvironment({
+        runProgram: (_command, argv) => {
+          args = argv;
+          return child.asExecProcess();
+        },
+      }),
+    ).run({ ...baseTask, env: { AWS_BEARER_TOKEN_BEDROCK: 'test-token' }, modelTier });
+    expect(args[args.indexOf('--model') + 1]).toBe(model);
+    child.finish(0);
+    await Array.fromAsync(run.events);
+  });
+
   it.each(tiers)('uses the override for %s', async (modelTier) => {
     const overrides = config.codingAgentModels['claude-code'];
     const previous = overrides[modelTier];
-    overrides[modelTier] = 'custom-model';
+    overrides[modelTier] = { default: 'custom-model', bedrock: 'custom-model' };
     try {
       const child = new FakeChild();
       let args: readonly string[] = [];
