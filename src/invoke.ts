@@ -29,6 +29,7 @@ import {
 } from './services/agent-workspace.service';
 
 import {
+  type SystemPromptPart,
   buildSystemPromptParts,
   buildRecalledMemories,
   recalledMemoriesMessage,
@@ -50,7 +51,7 @@ import {
   isToolRiskGateError,
   withToolRiskGate,
 } from './lib/tool-risk-gate';
-import { InvokeError, InvokeRequest, InvokeResponse, InvokeStep, ToolCallRecord, UIBlock } from './types';
+import { AgentContext, InvokeError, InvokeRequest, InvokeResponse, InvokeStep, ToolCallRecord, UIBlock } from './types';
 import { foldStepUsage, toStepUsage } from './lib/step-usage';
 import { STEP_LIMIT, MAX_OUTPUT_TOKENS, COMPACTION_FALLBACK_WINDOW_TOKENS } from './constants';
 import { EARLY_STOPPING_PROMPT } from './prompts/early-stopping-prompt';
@@ -62,6 +63,53 @@ import {
 } from './services/conversation-thread-activity.service';
 import { trackEvent, langfuseTelemetry } from './lib/telemetry';
 import { AsyncChannel } from './utils/async-channel';
+
+/**
+ * The system prompt parts and the opening messages of a turn: the context's
+ * parts, with the channel and Task-tool blocks appended to the cached part, and
+ * the thread, with the prompt appended where the thread does not hold it.
+ */
+export async function buildTurnRequest(
+  context: AgentContext,
+  request: InvokeRequest,
+  subagents: ReadonlyArray<{ name: string; description: string }>,
+): Promise<{ systemParts: SystemPromptPart[]; messages: ModelMessage[] }> {
+  // Stable vs dynamic parts, for granular caching
+  const systemParts = await buildSystemPromptParts(
+    context,
+    request.mode,
+    request.slackMessages,
+    request.workspaceRoot,
+  );
+
+  // Append channel/task instructions to the stable (cacheable) part
+  const stablePart = systemParts.find((p) => p.cacheable);
+  if (request.isChannelMessage && request.mode !== 'subagent' && stablePart) {
+    stablePart.text +=
+      '\n\n' +
+      getChannelBehaviorInstructions(request.channelName, request.channelPlatform ?? 'slack');
+  }
+
+  if (subagents.length > 0 && request.mode !== 'subagent' && stablePart) {
+    logger.info(`Adding task tool instructions for ${subagents.length} subagent(s)`);
+    stablePart.text += '\n\n' + getTaskToolInstructions(
+      subagents.map((s) => ({ name: s.name, description: s.description }))
+    );
+  }
+
+  // Messages are already ModelMessage[] with structured tool call/result pairs
+  const messages: ModelMessage[] = buildConversationMessages(context);
+
+  // Chat: prompt is already in history (conversation engine stores it before invoke).
+  // Heartbeat/cron: prompt is NOT in history — always append it.
+  // A coalesced steering follow-up sets `appendPrompt` because its prompt sits
+  // earlier in history than the previous turn's replies (see InvokeRequest).
+  if (request.mode !== 'chat' || request.appendPrompt || messages.length === 0) {
+    messages.push({ role: 'user' as const, content: request.prompt });
+  }
+
+  return { systemParts, messages };
+}
 
 /**
  * Stream agent execution as a sequence of InvokeSteps.
@@ -224,39 +272,8 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     });
     const cachedTools = withToolsCacheControl(gatedTools, cachePoint);
 
-    // 6. Build system prompt parts (stable vs dynamic for granular caching)
-    const systemParts = await buildSystemPromptParts(
-      context,
-      request.mode,
-      request.slackMessages,
-      request.workspaceRoot,
-    );
-
-    // Append channel/task instructions to the stable (cacheable) part
-    const stablePart = systemParts.find((p) => p.cacheable);
-    if (request.isChannelMessage && request.mode !== 'subagent' && stablePart) {
-      stablePart.text +=
-        '\n\n' +
-        getChannelBehaviorInstructions(request.channelName, request.channelPlatform ?? 'slack');
-    }
-
-    if (subagents.length > 0 && request.mode !== 'subagent' && stablePart) {
-      logger.info(`Adding task tool instructions for ${subagents.length} subagent(s)`);
-      stablePart.text += '\n\n' + getTaskToolInstructions(
-        subagents.map((s) => ({ name: s.name, description: s.description }))
-      );
-    }
-
-    // 7. Build messages (already ModelMessage[] with structured tool call/result pairs)
-    let messages: ModelMessage[] = buildConversationMessages(context);
-
-    // Chat: prompt is already in history (conversation engine stores it before invoke).
-    // Heartbeat/cron: prompt is NOT in history — always append it.
-    // A coalesced steering follow-up sets `appendPrompt` because its prompt sits
-    // earlier in history than the previous turn's replies (see InvokeRequest).
-    if (request.mode !== 'chat' || request.appendPrompt || messages.length === 0) {
-      messages.push({ role: 'user' as const, content: request.prompt });
-    }
+    // 6-7. Build the system prompt parts and the messages
+    const { systemParts, messages } = await buildTurnRequest(context, request, subagents);
 
     // `guard` is shared by every `warnOnTrailingAssistant` call in this invocation, and
     // the function sets it once it has reported. A 100-step turn checks the array at

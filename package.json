@@ -31,6 +31,7 @@
     "postinstall": "npm run prisma:generate",
     "prisma:generate": "prisma generate --schema=prisma/sqlite/schema.prisma",
     "generate:model-limits": "tsx src/scripts/generate-model-limits.ts",
+    "eval:prompts": "tsx src/evals/run.ts",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
