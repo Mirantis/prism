@@ -7,6 +7,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { asSchema } from 'ai';
+import * as nodeCron from 'node-cron';
 
 const { mockPrisma, mockScheduler, mockTrackEvent } = vi.hoisted(() => ({
   mockPrisma: {
@@ -269,5 +271,34 @@ describe('parseSchedule', () => {
   it('still parses minutes one-shot / recurring', () => {
     expect(parseSchedule('in 5 minutes').isOneShot).toBe(true);
     expect(parseSchedule('every 2 hours').isOneShot).toBe(false);
+  });
+
+  // docs/scheduled-tasks.md tells users they can say "every hour".
+  it('parses a bare unit as an interval of one', () => {
+    for (const [phrase, expression] of [
+      ['every hour', '0 */1 * * *'],
+      ['every minute', '*/1 * * * *'],
+      ['every second', '*/1 * * * * *'],
+      ['every day', '0 0 * * *'],
+    ]) {
+      const { isOneShot, cronExpression } = parseSchedule(phrase);
+      expect(isOneShot, phrase).toBe(false);
+      expect(cronExpression, phrase).toBe(expression);
+      expect(nodeCron.validate(cronExpression), phrase).toBe(true);
+    }
+  });
+
+  // The model copies the schedule examples from the parameter description, so every one
+  // of them has to be a schedule the tool accepts. "every hour" was offered and rejected.
+  it('accepts every schedule that the schedule_task description offers as an example', async () => {
+    const schema = (await asSchema(getCronTools('user-1', 'agent-1').schedule_task.inputSchema)
+      .jsonSchema) as { properties: { schedule: { description: string } } };
+    const examples = [...schema.properties.schedule.description.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+
+    expect(examples).toContain('every hour');
+    for (const example of examples) {
+      const { isOneShot, cronExpression, nextRunAt } = parseSchedule(example);
+      expect(isOneShot ? nextRunAt !== null : nodeCron.validate(cronExpression), example).toBe(true);
+    }
   });
 });

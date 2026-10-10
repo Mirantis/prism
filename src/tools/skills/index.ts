@@ -27,9 +27,8 @@ export async function getSkillTools(workspaceRoot?: string): Promise<Record<stri
       description:
         'Load the full instructions for an available Agent Skill by name, then follow them. ' +
         'The available skills (name + one-line description) are listed in the "# Skills" section ' +
-        'of your system prompt. Call this only when a skill is relevant to the current task. The ' +
-        'returned instructions may reference bundled files under the skill directory (scripts/, ' +
-        'references/, assets/) — read or run them with the shell tools using the provided absolute path.',
+        'of your system prompt. Call this only when a skill is relevant to the current task. ' +
+        "Don't guess a skill's contents from its description.",
       inputSchema: z.object({
         name: z.string().describe('The skill name, exactly as shown in the # Skills list'),
       }),

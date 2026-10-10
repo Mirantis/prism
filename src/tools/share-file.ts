@@ -304,8 +304,9 @@ export function getShareFileTools(
         'Share a file from your workspace with the user as a downloadable attachment. ' +
         'Use this whenever the user asks for a file, report, export, document, image, or generated artifact — ' +
         'first create it on disk (e.g. with shell_write_file or shell_exec), then call share_file with its path. ' +
+        'Announcing a file you have not shared yet leaves the user with nothing to open. ' +
         'The file is delivered as a download in the web/CLI chat and uploaded natively to Slack. ' +
-        'Max 10 MB per file. Do NOT paste large file contents into your reply or invent download links — use this tool.',
+        'Max 10 MB per file. Do not paste large file contents into your reply or invent download links — use this tool.',
       inputSchema: shareFileInput,
       // Announce this call so it can tell "no pending writes" from "the hook that
       // records them never ran". See `awaitPendingWrites`.

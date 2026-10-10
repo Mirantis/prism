@@ -27,10 +27,10 @@ export function getGoalTools(
   return {
     create_goal: tool({
       description:
-        'Start a durable GOAL: an objective you will pursue autonomously across many turns, ' +
-        'unattended, until it is achieved or stopped. Create a goal ONLY when the user explicitly ' +
+        'Start a durable goal: an objective you will pursue autonomously across many turns, ' +
+        'unattended, until it is achieved or stopped. Create a goal only when the user explicitly ' +
         'asks for ongoing, multi-turn, self-driven work toward an objective (e.g. "keep working ' +
-        'until the tests pass", "make this a goal", "keep going until X"). Do NOT create a goal for ' +
+        'until the tests pass", "make this a goal", "keep going until X"). Do not create a goal for ' +
         'an ordinary one-off task you can just do now. Only one active goal per conversation — ' +
         'creating a new one replaces the existing one.',
       inputSchema: z.object({

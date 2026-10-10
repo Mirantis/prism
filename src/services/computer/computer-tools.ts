@@ -89,7 +89,8 @@ export function createComputerTools(
         'Use your web browser: open a page, click things, type, scroll, and work in ' +
         'several tabs. Every command answers with where the page is, what it says, the ' +
         'names of the links, buttons and fields on it, and the list of open tabs. Click ' +
-        'and type by those names, and switch tabs by those numbers. One command per call.',
+        'and type by those names, and switch tabs by those numbers. Use it for labeled page ' +
+        'controls in a web page. One command per call.',
       inputSchema: z.object({
         action: z
           .enum([
