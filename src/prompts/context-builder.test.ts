@@ -354,6 +354,16 @@ describe('system prompt text', () => {
     const prompt = await promptText(context, 'chat');
     expect(prompt).not.toContain('# Agent Guide');
   });
+
+  it('forbids direct access to the internal database in every mode', async () => {
+    for (const mode of ['chat', 'heartbeat', 'cron', 'webhook', 'goal', 'subagent', 'meeting'] as const) {
+      const prompt = await promptText(createTestAgentContext({ agentMd: '' }), mode);
+      expect(prompt, `mode ${mode}`).toContain('# Internal Database');
+      expect(prompt, `mode ${mode}`).toContain(
+        'Never access, read or modify your own runtime database directly',
+      );
+    }
+  });
 });
 
 describe('buildSystemPromptParts', () => {

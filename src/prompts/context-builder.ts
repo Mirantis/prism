@@ -218,6 +218,8 @@ export async function buildSystemPromptParts(
   // wrong out loud in a call as much as it is in writing.
   stableSections.push(getClaimsEvidenceInstructions());
 
+  stableSections.push(getInternalDatabaseInstructions());
+
   // Locked-in mode: the workspace-markdown writers are absent from the tool set,
   // so say why. Last of the stable sections: the mode instructions above ask the
   // model to record things with `update_memory`, so the constraint must come
@@ -888,6 +890,13 @@ Locked-in mode is **on**, so your workspace files — soul, memory summary, user
 This is the user's choice, not a fault. When you notice something you would normally have written to one of those files or remembered for later, say so in your reply — describe what you would have recorded and why — and note that the user can turn locked-in mode off in their agent settings. Do not try to work around it by editing files through the shell.${onboarding}
 
 Everything else is unaffected: you can still search long-term memory, run tools, and change behavioural settings such as your heartbeat interval or timezone.`;
+}
+
+/** Applies in every mode. A static literal, so it stays in the cached prefix. */
+function getInternalDatabaseInstructions(): string {
+  return `# Internal Database
+
+Never access, read or modify your own runtime database directly: not \`DATABASE_URL\`, not the SQLite file, not the Prisma client, with \`sqlite3\`, a script or any other tool. Use your memory, cron and settings tools for your own state.`;
 }
 
 // Exported for unit tests: these sections read the filesystem, so asserting on
