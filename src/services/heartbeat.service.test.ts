@@ -515,7 +515,7 @@ describe('HeartbeatService', () => {
 
       expect(mockGenerateText).toHaveBeenCalledWith(
         expect.objectContaining({
-          system: expect.stringContaining('meta-commentary about the heartbeat itself'),
+          system: expect.stringContaining('talks about the heartbeat itself'),
         }),
       );
       expect(mockDeliverMessage).not.toHaveBeenCalled();

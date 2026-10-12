@@ -49,12 +49,12 @@ export function buildGoalContinuationPrompt(input: GoalPromptInput): string {
 }
 
 /**
- * System prompt for the goal completion gate — a cheap classifier (Haiku) that
- * decides, after each goal turn, whether the objective is fully achieved. The
- * caller fails safe to CONTINUE, so this only defines the COMPLETE/CONTINUE call.
+ * System prompt for the goal completion gate — the classification model decides,
+ * after each goal turn, whether the objective is fully achieved. The caller fails
+ * safe to CONTINUE, so this only defines the COMPLETE/CONTINUE call.
  */
-export const GOAL_COMPLETION_GATE_PROMPT = `You are a completion checker for an autonomous agent pursuing an objective. Given the objective and the agent's latest progress update, decide whether the objective is now FULLY achieved.
+export const GOAL_COMPLETION_GATE_PROMPT = `You decide whether an agent has finished a goal. You get the goal's objective and the agent's latest update.
 
-Respond COMPLETE only if the objective is unambiguously and fully satisfied based on the agent's update. If any work remains, the outcome is uncertain, or the agent is still in progress, respond CONTINUE.
+Answer COMPLETE only when the update shows that the whole objective is done. Answer CONTINUE when any work remains, the agent is blocked or waits for someone, or the outcome is uncertain, because the agent stops working on the goal once you answer COMPLETE.
 
-Respond with exactly one word: COMPLETE or CONTINUE`;
+Answer with one word: COMPLETE or CONTINUE.`;

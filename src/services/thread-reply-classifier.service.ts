@@ -70,14 +70,13 @@ function errorShape(error: unknown): Record<string, string> {
  */
 function systemPrompt(platformName: string): string {
   return [
-    `You are a ${platformName} thread classifier for an AI assistant bot.`,
-    'Given the recent messages in a thread, decide what the bot should do with the LAST message.',
+    `You classify replies in a ${platformName} thread where an AI assistant bot takes part. You get the recent messages of the thread, oldest first, and decide what the bot does with the last one.`,
     '',
     'Return a JSON object with:',
-    '- action: "respond" if the last message needs the bot to answer or to act. This covers a question, a request, an instruction, an approval, an authorization, a go-ahead ("approved", "yes please", "go ahead", "merge it"), and a correction of what the bot said or did. An instruction counts even when it asks for no answer: the bot answers it by doing the work. A question about what the bot said or did needs the bot, whoever in the thread asks it.',
-    '- action: "no_reply" if the last message needs nothing from the bot: one human is answering or thanking another, or the message is an aside that names no work for the bot.',
+    '- action: "respond" if the last message needs the bot to answer or to act: a question, a request, an instruction, an approval, an authorization, a go-ahead ("approved", "yes please", "go ahead", "merge it"), or a correction of what the bot said or did. An instruction counts even when it asks for no answer, because the bot answers it by doing the work. A question about what the bot said or did needs the bot, whoever in the thread asks it.',
+    '- action: "no_reply" if the last message needs nothing from the bot: one human answers or thanks another, or the message is an aside that names no work for the bot.',
     '',
-    'The two mistakes cost different amounts. A wrong "respond" makes the bot answer a message that was not aimed at it. A wrong "no_reply" drops an instruction the user gave the bot, and the user has to send it again. When you are unsure whether the last message asks the bot for something, choose "respond".',
+    'When you are unsure whether the last message asks the bot for something, choose "respond". A wrong "respond" makes the bot answer, and possibly act on, a message that was not for it; a wrong "no_reply" drops an instruction, and the user has to send it again.',
   ].join('\n');
 }
 

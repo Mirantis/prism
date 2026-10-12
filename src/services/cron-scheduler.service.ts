@@ -18,7 +18,7 @@ import { conversationService } from './conversation.service';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { isTimezone } from '../lib/timezone';
-import { runClassificationGate } from '../lib/classification-gate';
+import { runVerdictGate } from '../lib/classification-gate';
 import { CRON_TASK_GATE_PROMPT, buildCronGateUserMessage } from '../prompts/cron-prompt';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
@@ -366,13 +366,13 @@ class CronSchedulerService {
       // it would silence unconditional tasks whose output is legitimately
       // identical run after run, e.g. an hourly fixed-text reminder.
       const prior = this.lastDelivered.get(task.id) ?? null;
-      let shouldDeliver: boolean;
+      let verdict: string;
       if (!body.trim()) {
-        shouldDeliver = false;
+        verdict = 'SUPPRESS';
       } else if (result.error) {
-        shouldDeliver = true;
+        verdict = 'DELIVER';
       } else {
-        shouldDeliver = await runClassificationGate({
+        verdict = await runVerdictGate({
           system: CRON_TASK_GATE_PROMPT,
           user: buildCronGateUserMessage({
             instruction,
@@ -387,12 +387,12 @@ class CronSchedulerService {
         });
       }
 
-      if (!shouldDeliver) {
-        // A suppressed run whose text no longer matches the delivered baseline
-        // means the situation changed while we stayed quiet (e.g. the incident
-        // resolved into an all-clear). Drop the baseline so a later recurrence
-        // reads as a new finding, not as a repeat of the stale one.
-        if (prior && body.trim() !== prior.text) {
+      if (!verdict.startsWith('DELIVER')) {
+        // A suppressed run that is neither a repeat nor the delivered text means
+        // the situation changed while we stayed quiet (e.g. the incident resolved
+        // into an all-clear). Drop the baseline so a later recurrence reads as a
+        // new finding, not as a repeat of the stale one.
+        if (prior && !verdict.startsWith('REPEAT') && body.trim() !== prior.text) {
           this.lastDelivered.delete(task.id);
         }
         logger.info(`[CronScheduler] "${task.name}" suppressed — nothing new to report`);

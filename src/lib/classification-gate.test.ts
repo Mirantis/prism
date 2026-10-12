@@ -1,8 +1,8 @@
 /**
  * Classification Gate Tests
  *
- * Tests for runClassificationGate (verdict parsing, call shape, error
- * default) and isRecentDuplicate (window, trimming, missing baseline).
+ * Tests for runClassificationGate and runVerdictGate (verdict parsing, call
+ * shape, error default) and isRecentDuplicate (window, trimming, missing baseline).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -37,7 +37,7 @@ vi.mock('../logger', () => ({
 // Import under test (after mocks are registered)
 // ---------------------------------------------------------------------------
 
-import { runClassificationGate, isRecentDuplicate } from './classification-gate';
+import { runClassificationGate, runVerdictGate, isRecentDuplicate } from './classification-gate';
 
 const baseInput = {
   system: 'Respond with exactly one word: DELIVER or SUPPRESS',
@@ -111,6 +111,30 @@ describe('runClassificationGate', () => {
     expect(mockGenerateText.mock.calls[0][0]).not.toHaveProperty('temperature');
     // Langfuse disabled in tests → no tracing options on the call
     expect(mockGenerateText.mock.calls[0][0]).not.toHaveProperty('experimental_telemetry');
+  });
+});
+
+describe('runVerdictGate', () => {
+  beforeEach(() => {
+    mockGetGateRequest.mockReturnValue({
+      model: 'classification-model',
+      providerOptions: {},
+      samplingParams: {},
+    });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns the verdict upper-cased and trimmed', async () => {
+    mockGenerateText.mockResolvedValue({ text: ' repeat\n' });
+    await expect(runVerdictGate(baseInput)).resolves.toBe('REPEAT');
+  });
+
+  it('fails open to DELIVER when the call throws', async () => {
+    mockGenerateText.mockRejectedValue(new Error('model unavailable'));
+    await expect(runVerdictGate(baseInput)).resolves.toBe('DELIVER');
   });
 });
 
