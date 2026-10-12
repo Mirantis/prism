@@ -1465,10 +1465,10 @@ The agent-runtime owns the chat socket, `/api/ws`, which the web UI, the TUI and
 ## Agent Guide (agentMd)
 
 The `agentMd` workspace file is the agent's operating manual. It appears in the
-system prompt as `# Agent Guide` and contains guidance on heartbeat behavior,
-memory usage, safety, and Slack channel etiquette. It is included in the
-`AgentContext` type and built into the system prompt by `context-builder.ts`
-(between Soul and User sections).
+system prompt as `# Agent Guide`. The seeded guide contains guidance on when the
+agent asks first and when it uses the heartbeat or a scheduled task; an agent keeps
+the guide it was created with. It is included in the `AgentContext` type and built
+into the system prompt by `context-builder.ts` (between Soul and User sections).
 
 **No tool writes it.** It is the one workspace document outside
 `tools/agent-config.ts`, so the document that tells the agent how to work cannot
@@ -1525,11 +1525,15 @@ weighed and declined.
 
 `resolvePolicy` is the one owner of what the classifier reads. `gate.policy` on
 both gate telemetry events reports its verdict — `none`, `default` or `custom` —
-and `default` **sends no policy at all**: every agent is created holding
-`DEFAULT_AGENT_MD`, whose `## Safety` section reads "read-only by default", which
+and `default` **sends no policy at all**: every agent is created holding a seeded
+guide and keeps it. `isDefaultAgentGuide` (`templates/default-workspace.ts`)
+recognises by digest the current template and the one seeded from v2026.6.18060952
+until this template, whose `## Safety` section reads "read-only by default", which
 as a rule outranking the ordinary-work list refuses the file edits and builds the
-agent needs. The template is unchanged for the agent's own reading. Editing any
-part of it makes the whole document policy.
+agent needs. `getDefaultWorkspaceFiles()` returns only the current template, so a
+comparison with it misses the earlier default. The guide seeded before
+v2026.6.18060952 reads as `custom`. Editing any part of a guide makes the whole
+document policy.
 
 One precedence paragraph, selected rather than duplicated: `classifierRules()`
 takes `PRECEDENCE_WITHOUT_POLICY` or `PRECEDENCE_WITH_POLICY`. Two opposed
