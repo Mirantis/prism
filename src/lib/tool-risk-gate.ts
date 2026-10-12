@@ -14,7 +14,8 @@
  */
 
 import { createHash } from 'node:crypto';
-import { type ModelMessage, type Tool } from 'ai';
+import { APICallError, NoObjectGeneratedError, type ModelMessage, type Tool } from 'ai';
+import { inferenceGate } from './inference-gate';
 import { callModelForObject } from './model-call';
 import { z } from 'zod';
 import type { ToolRiskGateMode } from '../config';
@@ -23,7 +24,14 @@ import { DEFAULT_AGENT_MD } from '../templates/default-workspace';
 import { getClassificationRequest } from './classification';
 import { langfuseTelemetry, trackEvent } from './telemetry';
 
-const RISK_EVALUATION_TIMEOUT_MS = 10_000;
+// A classification request is sometimes held for a minute or more before it
+// answers, while a fresh request sent in that time answers in a few seconds. So
+// the gate sends the request again after each hedge interval without an answer,
+// and the first answer decides. The budget leaves the last request the time a
+// usual answer takes.
+const RISK_EVALUATION_HEDGE_MS = 3_000;
+const RISK_EVALUATION_MAX_REQUESTS = 4;
+const RISK_EVALUATION_TIMEOUT_MS = 13_000;
 // Structured output routes through a tool call on the Anthropic surfaces, so the
 // four decision fields cost more than their own text. Too tight a cap truncates
 // the JSON mid-object, which surfaces as AI_NoObjectGeneratedError rather than as
@@ -109,6 +117,8 @@ export interface ToolRiskEvaluationInput {
   userId: string;
   agentId: string;
   abortSignal?: AbortSignal;
+  /** Called once for each classifier request the evaluator sends. */
+  onRequest?: () => void;
 }
 
 /**
@@ -273,6 +283,7 @@ export function withToolRiskGate(
       ...tool,
       execute: async (input: unknown, executionOptions: ToolExecutionContext) => {
         let decision: ToolRiskDecision;
+        let requests = 0;
         const startedAt = Date.now();
 
         try {
@@ -287,6 +298,9 @@ export function withToolRiskGate(
             userId: options.userId,
             agentId: options.agentId,
             abortSignal: executionOptions.abortSignal,
+            onRequest: () => {
+              requests++;
+            },
           });
         } catch (error) {
           // Cancellation belongs to the invocation, not the policy fallback.
@@ -310,6 +324,7 @@ export function withToolRiskGate(
             'gate.action': action,
             'gate.error_type': errorType,
             'gate.duration_ms': String(Date.now() - startedAt),
+            'gate.requests': String(requests),
           });
 
           if (options.mode === 'enforce') {
@@ -346,6 +361,7 @@ export function withToolRiskGate(
           'gate.risk': decision.risk,
           'gate.category': decision.category,
           'gate.duration_ms': String(Date.now() - startedAt),
+          'gate.requests': String(requests),
         });
 
         if (shouldBlock && options.mode === 'enforce') {
@@ -524,32 +540,84 @@ export async function evaluateToolRisk(
     },
   };
 
-  const { object } = await callModelForObject({ purpose: 'risk-gate', agentId: input.agentId }, {
-    model,
-    schema: toolRiskDecisionSchema,
-    schemaName: 'tool_risk_decision',
-    providerOptions,
-    // Spread, never hardcode: a sampling param a vendor rejects 400s every
-    // call, and under `enforce` that fails closed and takes every gated tool
-    // down with it. Each provider declares what its models accept.
-    ...samplingParams,
-    maxOutputTokens: RISK_EVALUATION_MAX_OUTPUT_TOKENS,
-    // No maxRetries override: `abortSignal` already bounds the wall clock, so a
-    // retry inside that window is free, and under `enforce` a single transient
-    // 429 would otherwise block legitimate work.
-    abortSignal,
-    system: buildClassifierSystem(resolvePolicy(input.agentGuide)),
-    prompt: JSON.stringify(evidence),
-    // recordContent: false — the evidence carries the user's prompt and the
-    // tool's arguments, which the log deliberately does not record either.
-    ...langfuseTelemetry(
-      'tool-risk-gate',
-      { userId: input.userId, agentId: input.agentId, toolName: input.toolName },
-      { recordContent: false },
-    ),
-  });
+  const system = buildClassifierSystem(resolvePolicy(input.agentGuide));
+  // A secure takeover holds every model call. Wait it out here, so the hedge
+  // interval measures time at the provider and not time in that queue.
+  await inferenceGate.wait(abortSignal);
+  const { object } = await firstAnswer(abortSignal, input.onRequest, (requestSignal) =>
+    callModelForObject({ purpose: 'risk-gate', agentId: input.agentId }, {
+      model,
+      schema: toolRiskDecisionSchema,
+      schemaName: 'tool_risk_decision',
+      providerOptions,
+      // Spread, never hardcode: a sampling param a vendor rejects 400s every
+      // call, and under `enforce` that fails closed and takes every gated tool
+      // down with it. Each provider declares what its models accept.
+      ...samplingParams,
+      maxOutputTokens: RISK_EVALUATION_MAX_OUTPUT_TOKENS,
+      // The hedge schedule resends a request that fails, so retries inside the
+      // SDK would only multiply the requests sent.
+      maxRetries: 0,
+      abortSignal: requestSignal,
+      system,
+      prompt: JSON.stringify(evidence),
+      // recordContent: false — the evidence carries the user's prompt and the
+      // tool's arguments, which the log deliberately does not record either.
+      ...langfuseTelemetry(
+        'tool-risk-gate',
+        { userId: input.userId, agentId: input.agentId, toolName: input.toolName },
+        { recordContent: false },
+      ),
+    }),
+  );
 
   return object;
+}
+
+/**
+ * Send `request` at each hedge interval, up to the request limit, and return the
+ * first answer; the requests still open are then aborted. A transient failure
+ * leaves the open requests running, because a held request can still answer in
+ * the budget. Any other failure fails the evaluation at once, since sending the
+ * same request again gets the same result.
+ */
+async function firstAnswer<T>(
+  signal: AbortSignal,
+  onRequest: (() => void) | undefined,
+  request: (requestSignal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const answered = new AbortController();
+  const requestSignal = AbortSignal.any([signal, answered.signal]);
+  let hedge: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    return await new Promise<T>((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      let sent = 0;
+      let failed = 0;
+      const send = () => {
+        sent++;
+        onRequest?.();
+        request(requestSignal).then(resolve, (error: unknown) => {
+          failed++;
+          if (!isTransient(error) || failed === RISK_EVALUATION_MAX_REQUESTS) reject(error);
+        });
+        if (sent < RISK_EVALUATION_MAX_REQUESTS) hedge = setTimeout(send, RISK_EVALUATION_HEDGE_MS);
+      };
+      send();
+    });
+  } finally {
+    clearTimeout(hedge);
+    answered.abort();
+  }
+}
+
+/** A failure the SDK itself would retry, or an answer that did not fit the schema. */
+function isTransient(error: unknown): boolean {
+  return (
+    (APICallError.isInstance(error) && error.isRetryable) ||
+    NoObjectGeneratedError.isInstance(error)
+  );
 }
 
 /**

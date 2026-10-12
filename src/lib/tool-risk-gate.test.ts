@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ModelMessage, Tool } from 'ai';
 
 const {
@@ -16,7 +16,10 @@ const {
   mockLogger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock('ai', () => ({ generateObject: mockGenerateObject }));
+vi.mock('ai', async (importOriginal) => {
+  const { APICallError, NoObjectGeneratedError } = await importOriginal<typeof import('ai')>();
+  return { APICallError, NoObjectGeneratedError, generateObject: mockGenerateObject };
+});
 vi.mock('./classification', () => ({ getClassificationRequest: mockGetClassificationRequest }));
 vi.mock('./telemetry', () => ({
   trackEvent: mockTrackEvent,
@@ -24,11 +27,14 @@ vi.mock('./telemetry', () => ({
 }));
 vi.mock('../logger', () => ({ logger: mockLogger }));
 
+import { APICallError } from 'ai';
+import { inferenceGate } from './inference-gate';
 import {
   evaluateToolRisk,
   ToolRiskGateError,
   withToolRiskGate,
   type ToolRiskDecision,
+  type ToolRiskEvaluationInput,
   type ToolRiskEvaluator,
 } from './tool-risk-gate';
 import { DEFAULT_AGENT_MD } from '../templates/default-workspace';
@@ -293,6 +299,34 @@ describe('withToolRiskGate', () => {
       'tool risk evaluation failed',
       'user-1',
       expect.objectContaining({ 'gate.policy': 'custom' }),
+    );
+  });
+
+  it('reports how many classifier requests each outcome took', async () => {
+    const answered: ToolRiskEvaluator = async ({ onRequest }) => {
+      onRequest?.();
+      onRequest?.();
+      return ALLOW;
+    };
+    const failed: ToolRiskEvaluator = async ({ onRequest }) => {
+      for (let i = 0; i < 4; i++) onRequest?.();
+      throw new Error('classifier unavailable');
+    };
+
+    await wrap('shell_exec', makeTool(), 'enforce', answered)
+      .execute!({ command: 'npm test' } as never, executionOptions() as never);
+    await wrap('shell_exec', makeTool(), 'observe', failed)
+      .execute!({ command: 'npm test' } as never, executionOptions() as never);
+
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'tool risk decision',
+      'user-1',
+      expect.objectContaining({ 'gate.requests': '2' }),
+    );
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'tool risk evaluation failed',
+      'user-1',
+      expect.objectContaining({ 'gate.requests': '4' }),
     );
   });
 
@@ -705,5 +739,147 @@ describe('evaluateToolRisk', () => {
     });
 
     expect(mockGenerateObject.mock.calls[0][0]).not.toHaveProperty('temperature');
+  });
+
+  describe('when a classifier request is held', () => {
+    const GATED_CALL: ToolRiskEvaluationInput = {
+      toolName: 'shell_write_file',
+      toolDescription: 'Write a file.',
+      input: { path: 'status-note.txt', content: 'all clear' },
+      invocationMode: 'chat',
+      initialPrompt: 'Write the status note.',
+      messages: [{ role: 'user', content: 'Write the status note.' }],
+      userId: 'user-1',
+      agentId: 'agent-1',
+    };
+
+    /** What a throttled request ends in once the SDK retries nothing. */
+    const THROTTLED = new APICallError({
+      message: 'Too many requests',
+      url: 'https://bedrock-runtime.example.com',
+      requestBodyValues: {},
+      statusCode: 429,
+      isRetryable: true,
+    });
+
+    /** A request that has no answer until it is aborted. */
+    function held({ abortSignal }: { abortSignal: AbortSignal }): Promise<never> {
+      return new Promise((_, reject) => {
+        abortSignal.addEventListener('abort', () => reject(abortSignal.reason), { once: true });
+      });
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      // AbortSignal.timeout runs on Node's own timers, which the fake clock does not move.
+      vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(new DOMException('timed out', 'TimeoutError')), ms);
+        return controller.signal;
+      });
+      mockGetClassificationRequest.mockReturnValue({
+        model: 'classification-model',
+        providerOptions: {},
+        samplingParams: {},
+      });
+    });
+
+    afterEach(() => {
+      inferenceGate.free();
+      vi.useRealTimers();
+    });
+
+    it('takes the answer of a second request sent after the hedge interval', async () => {
+      mockGenerateObject.mockImplementationOnce(held).mockResolvedValueOnce({ object: BLOCK });
+
+      const decision = evaluateToolRisk(GATED_CALL);
+      await vi.advanceTimersByTimeAsync(2_999);
+      expect(mockGenerateObject).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+
+      await expect(decision).resolves.toEqual(BLOCK);
+      const [first, second] = mockGenerateObject.mock.calls.map(
+        ([request]) => request as { abortSignal: AbortSignal; system: string; prompt: string },
+      );
+      expect(second.system).toBe(first.system);
+      expect(second.prompt).toBe(first.prompt);
+      expect(first.abortSignal.aborted).toBe(true);
+    });
+
+    it('sends one request when the first answers within the hedge interval', async () => {
+      mockGenerateObject.mockResolvedValue({ object: ALLOW });
+
+      await expect(evaluateToolRisk(GATED_CALL)).resolves.toEqual(ALLOW);
+      await vi.advanceTimersByTimeAsync(13_000);
+
+      expect(mockGenerateObject).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends a throttled request again at the next hedge interval, not inside the SDK', async () => {
+      mockGenerateObject.mockRejectedValueOnce(THROTTLED).mockResolvedValueOnce({ object: ALLOW });
+
+      const decision = evaluateToolRisk(GATED_CALL);
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      await expect(decision).resolves.toEqual(ALLOW);
+      expect(mockGenerateObject).toHaveBeenCalledTimes(2);
+      for (const [request] of mockGenerateObject.mock.calls) {
+        expect(request).toMatchObject({ maxRetries: 0 });
+      }
+    });
+
+    it('waits for a held request when a later one fails', async () => {
+      mockGenerateObject
+        .mockImplementationOnce(
+          () => new Promise((resolve) => setTimeout(() => resolve({ object: BLOCK }), 4_000)),
+        )
+        .mockRejectedValueOnce(THROTTLED);
+
+      const decision = evaluateToolRisk(GATED_CALL);
+      await vi.advanceTimersByTimeAsync(4_000);
+
+      await expect(decision).resolves.toEqual(BLOCK);
+    });
+
+    it('fails at once on an error that sending the request again cannot fix', async () => {
+      const rejected = new APICallError({
+        message: 'temperature is not supported',
+        url: 'https://bedrock-runtime.example.com',
+        requestBodyValues: {},
+        statusCode: 400,
+        isRetryable: false,
+      });
+      mockGenerateObject.mockRejectedValue(rejected);
+
+      await expect(evaluateToolRisk(GATED_CALL)).rejects.toBe(rejected);
+      await vi.advanceTimersByTimeAsync(13_000);
+
+      expect(mockGenerateObject).toHaveBeenCalledTimes(1);
+    });
+
+    it('starts the hedge interval when a secure takeover lets model calls through', async () => {
+      inferenceGate.hold();
+      mockGenerateObject.mockResolvedValue({ object: ALLOW });
+
+      const decision = evaluateToolRisk(GATED_CALL);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(mockGenerateObject).not.toHaveBeenCalled();
+      inferenceGate.free();
+
+      await expect(decision).resolves.toEqual(ALLOW);
+      expect(mockGenerateObject).toHaveBeenCalledTimes(1);
+    });
+
+    it('times out after four held requests', async () => {
+      mockGenerateObject.mockImplementation(held);
+
+      const decision = expect(evaluateToolRisk(GATED_CALL)).rejects.toMatchObject({
+        name: 'TimeoutError',
+      });
+      await vi.advanceTimersByTimeAsync(13_000);
+
+      await decision;
+      expect(mockGenerateObject).toHaveBeenCalledTimes(4);
+    });
   });
 });
