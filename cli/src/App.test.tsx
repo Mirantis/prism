@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render } from 'ink-testing-library';
 
 // Mock the singleton adapter before importing App. `vi.mock` is hoisted to
@@ -899,5 +899,175 @@ describe('App', () => {
     expect(adapterStub.resumeThread).not.toHaveBeenCalled();
     expect(lastFrame() ?? '').not.toContain('Resume session');
     unmount();
+  });
+
+  describe('terminal status', () => {
+    const isTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    let written: string[];
+
+    beforeEach(() => {
+      written = [];
+      Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+      vi.spyOn(process.stdout, 'write').mockImplementation((chunk: string | Uint8Array) => {
+        written.push(String(chunk));
+        return true;
+      });
+    });
+
+    afterEach(() => {
+      vi.mocked(process.stdout.write).mockRestore();
+      if (isTTY) Object.defineProperty(process.stdout, 'isTTY', isTTY);
+      else delete (process.stdout as { isTTY?: boolean }).isTTY;
+    });
+
+    /** Every OSC 7501 report written so far, with `msg` decoded. */
+    const reports = () =>
+      written.flatMap((chunk) => {
+        if (!chunk.startsWith('\x1b]7501;') || !chunk.endsWith('\x1b\\')) return [];
+        const body = chunk.slice('\x1b]7501;'.length, -2);
+        const pairs = Object.fromEntries(
+          body.split(':').map((pair) => [pair.slice(0, pair.indexOf('=')), pair.slice(pair.indexOf('=') + 1)]),
+        );
+        if (pairs.msg !== undefined) pairs.msg = Buffer.from(pairs.msg, 'base64').toString('utf8');
+        return [pairs];
+      });
+
+    it('reports each change of the session state once, and clears it on exit', async () => {
+      const { unmount } = render(<App {...baseProps} />);
+      await settle();
+      turn('running');
+      await settle();
+      turn('running');
+      await settle();
+      turn('idle', { outcome: 'completed' });
+      await settle();
+      unmount();
+
+      expect(reports()).toEqual([
+        { state: 'idle', app: 'prism' },
+        { state: 'working', app: 'prism', msg: 'Thinking' },
+        { state: 'done', app: 'prism', msg: 'Reply ready' },
+        { state: 'clear' },
+      ]);
+    });
+
+    it('keeps a done report when a reconnect restates the idle conversation', async () => {
+      const { unmount } = render(<App {...baseProps} />);
+      try {
+        turn('running');
+        turn('idle', { outcome: 'completed' });
+        await settle();
+        turn('idle');
+        await settle();
+        expect(reports().at(-1)).toEqual({ state: 'done', app: 'prism', msg: 'Reply ready' });
+      } finally {
+        unmount();
+      }
+    });
+
+    it('reports a sign-in as blocked after its panel is closed, until the request ends', async () => {
+      const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
+      try {
+        turn('running');
+        adapterStub.events.emit('signIn', { id: 'sign-in-1', reason: 'The dashboard asks for a sign-in.' });
+        await settle();
+        expect(reports().at(-1)).toEqual({
+          state: 'blocked',
+          kind: 'auth',
+          app: 'prism',
+          msg: 'The dashboard asks for a sign-in.',
+        });
+
+        await pressEscape(stdin);
+        await settle();
+        expect(lastFrame()).not.toContain('Prism needs a sign-in');
+        expect(reports().at(-1)).toMatchObject({ state: 'blocked', kind: 'auth' });
+
+        // A reload restates the request that still waits. The panel stays closed.
+        adapterStub.events.emit('signIn', { id: 'sign-in-1', reason: 'The dashboard asks for a sign-in.' });
+        await settle();
+        expect(lastFrame()).not.toContain('Prism needs a sign-in');
+
+        stdin.write('typed after closing');
+        await settle();
+        expect(lastFrame()).toContain('typed after closing');
+
+        adapterStub.events.emit('signInEnded', 'sign-in-1');
+        await settle();
+        expect(reports().at(-1)).toEqual({ state: 'working', app: 'prism', msg: 'Thinking' });
+      } finally {
+        unmount();
+      }
+    });
+
+    it('ends the blocked report when the sign-in is answered in another client', async () => {
+      const { lastFrame, unmount } = render(<App {...baseProps} />);
+      try {
+        turn('running');
+        adapterStub.events.emit('signIn', { id: 'sign-in-1', reason: 'The dashboard asks for a sign-in.' });
+        turn('idle', { outcome: 'completed' });
+        await settle();
+        expect(reports().at(-1)).toMatchObject({ state: 'blocked', kind: 'auth' });
+
+        adapterStub.events.emit('signInEnded', 'sign-in-1');
+        await settle();
+        expect(lastFrame()).not.toContain('Prism needs a sign-in');
+        expect(reports().at(-1)).toEqual({ state: 'done', app: 'prism', msg: 'Reply ready' });
+      } finally {
+        unmount();
+      }
+    });
+
+    it('reports a failed turn as an error and a cancelled one as idle', async () => {
+      const { unmount } = render(<App {...baseProps} />);
+      try {
+        turn('running');
+        turn('idle', { outcome: 'failed', error: 'The agent could not answer. Try again.' });
+        await settle();
+        expect(reports().at(-1)).toEqual({
+          state: 'error',
+          app: 'prism',
+          msg: 'The agent could not answer. Try again.',
+        });
+
+        turn('running');
+        await settle();
+        turn('idle', { outcome: 'cancelled' });
+        await settle();
+        expect(reports().at(-1)).toEqual({ state: 'idle', app: 'prism' });
+      } finally {
+        unmount();
+      }
+    });
+
+    it('reports a compaction and a queued message as work', async () => {
+      const { unmount } = render(<App {...baseProps} />);
+      try {
+        adapterStub.events.emit('compaction', { threadId: 'thread-mine', status: 'started', trigger: 'manual' });
+        await settle();
+        expect(reports().at(-1)).toEqual({ state: 'working', app: 'prism', msg: 'Compacting the conversation' });
+
+        adapterStub.events.emit('compaction', { threadId: 'thread-mine', status: 'completed', trigger: 'manual' });
+        turn('queued');
+        await settle();
+        expect(reports().at(-1)).toEqual({
+          state: 'working',
+          app: 'prism',
+          msg: 'Waiting for another conversation to finish',
+        });
+      } finally {
+        unmount();
+      }
+    });
+
+    it('writes nothing when stdout is not a terminal', async () => {
+      Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true });
+      const { unmount } = render(<App {...baseProps} />);
+      turn('running');
+      await settle();
+      unmount();
+
+      expect(reports()).toEqual([]);
+    });
   });
 });

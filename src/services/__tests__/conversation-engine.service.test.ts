@@ -135,7 +135,7 @@ vi.mock('../agent-workspace.service', () => ({
 
 // Import after mocking. `threadTurnService` is the real per-thread primitive —
 // turn ordering is part of what the steering scenarios assert.
-import { conversationEngineService } from '../conversation-engine.service';
+import { conversationEngineService, type ChatTurnEnd } from '../conversation-engine.service';
 import { threadTurnService } from '../thread-turn.service';
 import {
   conversationThreadActivityService,
@@ -677,13 +677,22 @@ describe('Requirement: Conversation Engine', () => {
   });
 
   describe('Scenario: Error handling', () => {
-    it('should publish a friendly error step when invokeStream yields one', async () => {
+    function recordEnds(): { ends: ChatTurnEnd[]; off: () => void } {
+      const ends: ChatTurnEnd[] = [];
+      const listener = (ended: ChatTurnEnd) => void ends.push(ended);
+      conversationEngineService.events.on('turnEnded', listener);
+      return { ends, off: () => void conversationEngineService.events.off('turnEnded', listener) };
+    }
+
+    it('publishes a friendly error step when invokeStream yields one, and reports the error', async () => {
+      const { ends, off } = recordEnds();
       // invokeStream catches errors internally (via buildErrorStep) and
       // yields a friendly text step rather than throwing.
       mockInvokeStream.mockReturnValue(streamFromSteps([
         {
           text: 'I encountered an error while processing your request: Connection refused',
           toolCalls: [],
+          error: { type: 'generic', detail: 'Connection refused' },
         },
       ]));
 
@@ -692,8 +701,49 @@ describe('Requirement: Conversation Engine', () => {
         agentId: 'agent-123',
         message: 'Hello',
       });
+      off();
 
       expect(response.content).toContain('error');
+      expect(ends).toEqual([
+        { threadId: 'thread-123', cancelled: false, error: { type: 'generic', detail: 'Connection refused' } },
+      ]);
+    });
+
+    it('reports no error for an ordinary reply', async () => {
+      const { ends, off } = recordEnds();
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'Hello',
+      });
+      off();
+
+      expect(ends).toEqual([{ threadId: 'thread-123', cancelled: false, error: undefined }]);
+    });
+
+    it('reports a cancelled exchange as cancelled', async () => {
+      const { ends, off } = recordEnds();
+      let finish!: () => void;
+      let started = false;
+      mockInvokeStream.mockImplementationOnce(async function* () {
+        started = true;
+        await new Promise<void>((resolve) => { finish = resolve; });
+      });
+
+      const turn = conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        threadId: 'thread-123',
+        message: 'a long job',
+      });
+      await vi.waitFor(() => expect(started).toBe(true));
+      conversationEngineService.cancel('thread-123');
+      finish();
+      await turn;
+      off();
+
+      expect(ends).toEqual([{ threadId: 'thread-123', cancelled: true, error: undefined }]);
     });
   });
 
@@ -1360,6 +1410,20 @@ describe('Requirement: Conversation Engine', () => {
         { threadId: 'thread-123', working: true, userId: 'user-123' },
         { threadId: 'thread-123', working: false, userId: 'user-123' },
       ]);
+    });
+
+    it('says how the exchange ended before the thread stops working', async () => {
+      const order: string[] = [];
+      const onChange = (event: ThreadActivityChange) => void order.push(event.working ? 'working' : 'stopped');
+      const onEnd = () => void order.push('turnEnded');
+      conversationThreadActivityService.events.on('change', onChange);
+      conversationEngineService.events.on('turnEnded', onEnd);
+
+      await conversationEngineService.chat({ userId: 'user-123', agentId: 'agent-123', message: 'Hello' });
+      conversationThreadActivityService.events.off('change', onChange);
+      conversationEngineService.events.off('turnEnded', onEnd);
+
+      expect(order).toEqual(['working', 'turnEnded', 'stopped']);
     });
 
     it('ends once, after the last exchange on the thread', async () => {

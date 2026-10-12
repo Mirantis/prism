@@ -48,6 +48,11 @@ finish. A message the agent could not accept is marked "not sent". If the agent
 has been updated past this version of `prism`, it says so and stops; update
 `prism` to keep chatting.
 
+**Status in the terminal tab.** `prism` reports its state with the
+[OSC 7501](https://www.superlogical.com/rex/docs/build/program-status) program
+status sequence. A terminal that supports it shows, in the tab or window, when
+the agent is working, waits for your sign-in, has replied, or has failed.
+
 Use **Up / Down** arrows from an empty input to walk back through your message
 history.
 

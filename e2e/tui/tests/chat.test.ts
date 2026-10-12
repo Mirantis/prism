@@ -41,24 +41,50 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     await session.stop();
   });
 
-  Scenario('Sends a prompt and renders the agent reply', ({ When, Then, And }) => {
-    When('I send the prompt {string}', async (_ctx, prompt: string) => {
-      session.send(prompt);
-      // Let ink-text-input commit the appended chars before Enter — without
-      // this the keystrokes can race and Enter submits with a stale value.
-      await sleep(200);
-      session.send(KEYS.ENTER);
-    });
-    Then('my message appears in the chat', async () => {
-      // User line renders optimistically in App.tsx.
-      await session.waitForFrame(/▌ You/, 5_000);
-    });
-    And('the agent reply contains {string}', async (_ctx, sentinel: string) => {
-      // The agent prefix proves the round-trip through real Bedrock completed.
-      await session.waitForFrame(/▌\s+Prism\b/, 120_000);
-      await session.waitForFrame(new RegExp(sentinel), 5_000);
-    });
-  });
+  Scenario(
+    'Sends a prompt, renders the agent reply, and tells the terminal the session state',
+    ({ When, Then, And }) => {
+      // The states of the OSC 7501 reports in the raw PTY stream, in the order written.
+      const reportedStates = () =>
+        session
+          .rawOutput()
+          .split('\x1b]7501;state=')
+          .slice(1)
+          .map((report) => /^[a-z]+/.exec(report)?.[0]);
+      // Reports the earlier steps matched, so each step finds its state after theirs.
+      let matched = 0;
+      const waitForState = async (state: string, timeoutMs: number) => {
+        await expect
+          .poll(() => reportedStates().indexOf(state, matched), { timeout: timeoutMs })
+          .toBeGreaterThanOrEqual(0);
+        matched = reportedStates().indexOf(state, matched) + 1;
+      };
+
+      Then('the terminal is told the session is idle', () => waitForState('idle', 5_000));
+      When('I send the prompt {string}', async (_ctx, prompt: string) => {
+        session.send(prompt);
+        // Let ink-text-input commit the appended chars before Enter — without
+        // this the keystrokes can race and Enter submits with a stale value.
+        await sleep(200);
+        session.send(KEYS.ENTER);
+      });
+      Then('my message appears in the chat', async () => {
+        // User line renders optimistically in App.tsx.
+        await session.waitForFrame(/▌ You/, 5_000);
+      });
+      And('the terminal is told the session is working', () => waitForState('working', 15_000));
+      And('the agent reply contains {string}', async (_ctx, sentinel: string) => {
+        // The agent prefix proves the round-trip through real Bedrock completed.
+        await session.waitForFrame(/▌\s+Prism\b/, 120_000);
+        await session.waitForFrame(new RegExp(sentinel), 5_000);
+      });
+      And('the terminal is told the reply is done', () => waitForState('done', 15_000));
+      When('I press Ctrl+C', () => {
+        session.send(KEYS.CTRL_C);
+      });
+      Then('the terminal is told to clear the session status', () => waitForState('clear', 20_000));
+    },
+  );
 
   Scenario('Cancels an in-flight turn when Escape is pressed', ({ When, And, Then }) => {
     When('I send a prompt that keeps the agent busy', async () => {

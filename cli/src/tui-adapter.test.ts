@@ -44,7 +44,7 @@ vi.mock('./ws-client.js', async () => {
   return { WsClient: FakeWsClient };
 });
 
-import { signInRequestIn, tuiAdapterService, TuiMessage } from './tui-adapter.js';
+import { endedSignInIn, signInRequestIn, tuiAdapterService, TuiMessage } from './tui-adapter.js';
 
 const MINE = 'thread-mine';
 const OTHER = 'thread-other';
@@ -327,7 +327,7 @@ describe('TuiAdapter inbound events', () => {
 
   it('ignores every event of another conversation', () => {
     const seen: string[] = [];
-    for (const name of ['message', 'turn', 'contextUsage', 'compaction', 'signIn'] as const) {
+    for (const name of ['message', 'turn', 'contextUsage', 'compaction', 'signIn', 'signInEnded'] as const) {
       tuiAdapterService.events.on(name, () => seen.push(name));
     }
 
@@ -338,6 +338,10 @@ describe('TuiAdapter inbound events', () => {
     emitEvent('message', storedMessage({
       threadId: OTHER,
       blocks: [{ type: 'computer_help', id: 'h', reason: 'r', credentials: true, status: 'waiting' }],
+    }));
+    emitEvent('message', storedMessage({
+      threadId: OTHER,
+      blocks: [{ type: 'computer_help', id: 'h', reason: 'r', credentials: true, status: 'continued' }],
     }));
 
     expect(seen).toEqual([]);
@@ -532,5 +536,41 @@ describe('the sign-in in a message', () => {
     expect(signInRequestIn([{ ...help, status: 'continued' }])).toBeNull();
     expect(signInRequestIn(null)).toBeNull();
     expect(signInRequestIn([null, 'text'])).toBeNull();
+  });
+
+  it('ends when the request comes back answered or dismissed, wherever that happened', async () => {
+    stubRuntime();
+    await tuiAdapterService.startNewSession();
+    const ended: string[] = [];
+    tuiAdapterService.events.on('signInEnded', (id) => void ended.push(id));
+
+    emitEvent('message', storedMessage({ content: 'Sign in to the mail', blocks: [help] }));
+    emitEvent('message', storedMessage({ content: 'Sign in to the mail', blocks: [{ ...help, status: 'continued' }] }));
+
+    expect(ended).toEqual(['help-1']);
+    expect(endedSignInIn([{ ...help, status: 'dismissed' }])).toBe('help-1');
+    expect(endedSignInIn([{ ...help, credentials: undefined, status: 'dismissed' }])).toBeNull();
+    expect(endedSignInIn([help])).toBeNull();
+  });
+
+  it('is asked for or ended by a reloaded history, as by a live message', async () => {
+    const fetchMock = stubRuntime();
+    await tuiAdapterService.startNewSession();
+    const seen: string[] = [];
+    tuiAdapterService.events.on('signIn', (request) => void seen.push(`signIn ${request.id}`));
+    tuiAdapterService.events.on('signInEnded', (id) => void seen.push(`signInEnded ${id}`));
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => [
+        storedMessage({ id: 'm1', blocks: [{ ...help, status: 'continued' }] }),
+        storedMessage({ id: 'm2', blocks: [{ ...help, id: 'help-2' }] }),
+      ],
+    });
+
+    lastClient.current!.events.emit('welcome', welcome({ resumed: false }));
+    await flush();
+
+    expect(seen).toEqual(['signInEnded help-1', 'signIn help-2']);
   });
 });
