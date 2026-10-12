@@ -3,8 +3,8 @@
  *
  * The synchronous title (conversation.service.addMessage) is just the first 3
  * words of the user's message, truncated. This upgrades it to a proper short
- * title via a cheap model (Haiku) — a direct LLM inference call, no tools and
- * no `invoke`, mirroring the heartbeat classification gate.
+ * title via the classification model — a direct LLM inference call, no tools
+ * and no `invoke`, mirroring the heartbeat classification gate.
  *
  * `onFirstUserMessage` owns the placeholder → upgrade lifecycle and announces
  * each title via the `events` emitter. It is triggered from the conversation
@@ -20,8 +20,10 @@ import { langfuseTelemetry } from '../lib/telemetry';
 import { conversationService } from './conversation.service';
 import { logger } from '../logger';
 
-const SYSTEM_PROMPT = `You write a very short title for a chat conversation based on the user's first message.
-Reply with ONLY the title — at most 3 words, no quotes, no punctuation, no preamble.`;
+/** The length of the title the model is asked for. */
+const TITLE_WORDS = 3;
+
+const SYSTEM_PROMPT = `You name chat conversations. You get the first message of a conversation and write a short title that names its topic. You do not answer or carry out the message. Write only the title on one line, with no quotes, label or formatting.`;
 
 /** A thread's title was (re)set — emitted as `'change'` on the service. */
 export interface ThreadTitleChange {
@@ -30,20 +32,20 @@ export interface ThreadTitleChange {
   title: string;
 }
 
-/** Trim, strip wrapping quotes/trailing punctuation, keep the first 3 words. */
+/** Trim, strip wrapping quotes/trailing punctuation, keep the first `TITLE_WORDS` words. */
 function clampTitle(raw: string): string | null {
   const cleaned = raw
     .trim()
     .replace(/^["'`]+/, '')
     .replace(/["'`.!?]+$/, '')
     .trim();
-  const title = cleaned.split(/\s+/).filter(Boolean).slice(0, 3).join(' ');
+  const title = cleaned.split(/\s+/).filter(Boolean).slice(0, TITLE_WORDS).join(' ');
   return title || null;
 }
 
 /**
- * Ask the cheap model for a short title for `message`. Returns the clamped
- * title, or null when the message is empty or the call fails.
+ * Ask the classification model for a short title for `message`. Returns the
+ * clamped title, or null when the message is empty or the call fails.
  */
 async function generateThreadTitle(threadId: string, message: string): Promise<string | null> {
   const text = message.trim();
@@ -54,7 +56,15 @@ async function generateThreadTitle(threadId: string, message: string): Promise<s
       model,
       providerOptions,
       system: SYSTEM_PROMPT,
-      messages: [{ role: 'user' as const, content: text }],
+      // The task follows the message: sent alone, the message reads as a request
+      // to the model, which then answers it instead of naming it. A message that
+      // contains `</message>` ends the tag early; at worst its title is odd.
+      messages: [
+        {
+          role: 'user' as const,
+          content: `<message>\n${text}\n</message>\n\nWrite a title of at most ${TITLE_WORDS} words for this message.`,
+        },
+      ],
       maxOutputTokens: 24,
       ...samplingParams,
       ...langfuseTelemetry('thread-title'),
