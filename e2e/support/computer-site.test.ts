@@ -5,6 +5,7 @@
  * the form cannot stand in for what the person typed.
  */
 
+import { request } from 'node:http';
 import { describe, it, expect, afterEach } from 'vitest';
 import { SIGN_IN_PASSWORD, startComputerSite } from './computer-site';
 
@@ -29,6 +30,30 @@ async function signIn(password: string): Promise<{ cookie: string | null }> {
   });
   return { cookie: response.headers.get('set-cookie') };
 }
+
+/** The status the site answers a page with, asked for under `host`. */
+function statusUnder(host: string, path: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    request({ host: '127.0.0.1', port: new URL(site!.url).port, path, headers: { host } }, (res) => {
+      res.resume();
+      resolve(res.statusCode ?? 0);
+    })
+      .on('error', reject)
+      .end();
+  });
+}
+
+describe('the address', () => {
+  it('serves its own host, and no other name under localhost', async () => {
+    site = await startComputerSite();
+    const own = new URL(site.url).host;
+    // One character wrong, as a mistyped address.
+    const mistyped = `${own[0] === 'a' ? 'b' : 'a'}${own.slice(1)}`;
+
+    expect(await statusUnder(own, '/notes')).toBe(200);
+    expect(await statusUnder(mistyped, '/notes')).toBe(404);
+  });
+});
 
 describe('the sign-in approved on another device', () => {
   it('waits for the approval, reloading itself, and then shows the report', async () => {

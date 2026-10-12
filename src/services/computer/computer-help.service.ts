@@ -27,6 +27,8 @@ export interface ComputerHelp {
   originChannelId?: string;
   /** Asked by a background run with no conversation, so every channel got it and any turn answers it. */
   broadcast?: true;
+  /** Asked by a run that waits for the answer, so that run continues the work itself. */
+  requesterWaits?: true;
   status: 'waiting' | 'continued' | 'dismissed';
 }
 
@@ -109,7 +111,13 @@ class ComputerHelpService {
     // one broadcast request waits, it stands for them all, including an unrelated block
     // another background run meets at the same time. That run waits for the same answer
     // and is told what the waiting request asks, so it can name or ask for its own block.
-    const [waiting] = broadcast ? await this.waitingBroadcasts(use.agentId, use.userId) : [];
+    // A run in a conversation that waits for its answer joins the first waiting request
+    // its turn was told of: its conversation's own, or a broadcast one.
+    const [waiting] = broadcast
+      ? await this.waitingBroadcasts(use.agentId, use.userId)
+      : waitsForAnswer(use.mode)
+        ? (await this.forTurn(use)).filter((item) => item.status === 'waiting')
+        : [];
     if (waiting) {
       const answer = this.expectAnswer(use, waiting);
       computerService.access.yield(use);
@@ -143,6 +151,7 @@ class ComputerHelpService {
       originChannel: use.originChannel,
       originChannelId: use.originChannelId,
       ...(broadcast ? { broadcast: true as const } : {}),
+      ...(waitsForAnswer(use.mode) ? { requesterWaits: true as const } : {}),
     };
     const answer = this.expectAnswer(use, help);
     if (use.mode === 'voice') {
@@ -366,8 +375,9 @@ class ComputerHelpService {
       if (!clientId) throw new Error('Hand control back in Computer first.');
       await computerService.handBack(clientId);
     }
-    // A run that waited for this answer continues the work itself.
-    if (resolved.answeredRuns) return;
+    // The run that asked waits for this answer and continues the work itself. A run
+    // that only joined the request does not continue the requester's work.
+    if (resolved.answeredRuns && resolved.help.requesterWaits) return;
     const { help } = resolved;
     if (!help.threadId) {
       const { voiceChatService } = await import('../voice/voice-chat.service');

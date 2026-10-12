@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { RESUMED_RUN_NOTICE } from './prompts/resume-prompt';
 import { createTestInvokeRequest, createTestAgentContext } from './test-utils/factories';
 import { attachmentService } from './services/attachment.service';
 
@@ -2125,6 +2126,26 @@ describe('invoke', () => {
         role: 'user',
         content: 'no need to run tests',
       });
+    });
+
+    it('closes a run after a restart with the notice, behind the history and the prompt', async () => {
+      // The history and the system prompt in front of it stay the bytes the last
+      // run sent, so the cached prefix holds.
+      mockBuildConversationMessages.mockReturnValue([
+        { role: 'user', content: 'keep the build green' },
+        { role: 'assistant', content: 'Watching it.' },
+      ]);
+
+      await invoke(createTestInvokeRequest({ mode: 'goal', prompt: 'Continue the goal.', afterRestart: true }));
+
+      const callArgs = mockGenerateText.mock.calls[0][0];
+      expect(callArgs.messages).toMatchObject([
+        { role: 'user', content: 'keep the build green' },
+        { role: 'assistant', content: 'Watching it.' },
+        { role: 'user', content: 'Continue the goal.' },
+        { role: 'user', content: RESUMED_RUN_NOTICE },
+      ]);
+      expect(JSON.stringify(callArgs.system)).not.toContain('runtime restarted');
     });
   });
 

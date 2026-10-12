@@ -50,6 +50,8 @@ import { logger } from '../logger';
  * and whoever takes the message loads the bytes on its own side.
  */
 export interface PendingMessage {
+  /** The stored message's id, so the turn that answers it can say so. */
+  id: string;
   text: string;
   /** Ids of already-uploaded attachments the message carried. */
   attachmentIds: string[];
@@ -68,6 +70,8 @@ interface ThreadState {
   claimed: boolean;
   /** Messages handed to the claiming turn, oldest first. */
   pending: PendingMessage[];
+  /** Callers of `claimWhenFree`, each given the claim in turn when the one before releases it. */
+  queued: Array<(claim: ThreadClaim) => void>;
 }
 
 /**
@@ -93,6 +97,12 @@ export interface ThreadClaim {
    * free again, and the next message starts a turn of its own.
    */
   drainOrRelease(): PendingMessage[];
+  /**
+   * Release the claim now and hand back what no turn took, for an exchange that
+   * ends by a cancel or a throw. The messages stay in history, unanswered.
+   * Returns nothing once the claim has ended.
+   */
+  end(): PendingMessage[];
 }
 
 /** Log a warning past this many pending messages — a sign of a stuck turn. */
@@ -123,6 +133,20 @@ class ThreadTurnService {
 
     state.claimed = true;
     return this.claimFor(threadId, state);
+  }
+
+  /**
+   * Take the thread once no turn owns it. A releasing claim passes straight to
+   * the first caller waiting here, so no message can take the thread between
+   * them. For an exchange that must not be handed to another turn.
+   */
+  claimWhenFree(threadId: string): Promise<ThreadClaim> {
+    const state = this.stateFor(threadId);
+    if (!state.claimed) {
+      state.claimed = true;
+      return Promise.resolve(this.claimFor(threadId, state));
+    }
+    return new Promise((resolve) => state.queued.push(resolve));
   }
 
   /**
@@ -225,8 +249,8 @@ class ThreadTurnService {
   private claimFor(threadId: string, state: ThreadState): ThreadClaim {
     let open = true;
 
-    const release = () => {
-      if (!open) return;
+    const release = (): PendingMessage[] => {
+      if (!open) return [];
       open = false;
       state.claimed = false;
       // Nothing pending outlives the turn that could have answered it. A turn
@@ -235,16 +259,22 @@ class ThreadTurnService {
       // way: a cancel, or a throw. The messages are stored either way, so they
       // stay in history for the next turn to read; keeping the pending copy
       // would instead hand that turn text it has already seen.
-      const abandoned = state.pending.length;
-      state.pending = [];
-      if (abandoned > 0) {
+      const abandoned = this.take(state);
+      if (abandoned.length > 0) {
         logger.info(
           'Thread %s released with %d message(s) no turn took; they stay in history',
           threadId,
-          abandoned,
+          abandoned.length,
         );
       }
-      this.forget(threadId, state);
+      const next = state.queued.shift();
+      if (next) {
+        state.claimed = true;
+        next(this.claimFor(threadId, state));
+      } else {
+        this.forget(threadId, state);
+      }
+      return abandoned;
     };
 
     const check = (method: string) => {
@@ -258,7 +288,9 @@ class ThreadTurnService {
       // two, rather than as a rejected promise.
       run: (fn) => {
         check('run');
-        return this.withMutex(threadId, fn).finally(release);
+        return this.withMutex(threadId, fn).finally(() => {
+          release();
+        });
       },
       drain: () => {
         check('drain');
@@ -272,6 +304,7 @@ class ThreadTurnService {
         }
         return this.take(state);
       },
+      end: release,
     };
   }
 
@@ -296,7 +329,7 @@ class ThreadTurnService {
   private stateFor(threadId: string): ThreadState {
     let state = this.threads.get(threadId);
     if (!state) {
-      state = { tail: Promise.resolve(), refs: 0, claimed: false, pending: [] };
+      state = { tail: Promise.resolve(), refs: 0, claimed: false, pending: [], queued: [] };
       this.threads.set(threadId, state);
     }
     return state;

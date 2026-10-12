@@ -88,6 +88,15 @@ describe('local processes', () => {
     await expect(proc.closed).resolves.toMatchObject({ exitCode: 0 });
   });
 
+  it('marks a process so a later boot can stop the group a crash left running', async () => {
+    const before = Date.now();
+    const proc = run('exit 0');
+    await proc.ended;
+
+    expect(proc.mark).toEqual({ pid: expect.any(Number), startedAt: expect.any(Number) });
+    expect(proc.mark!.startedAt).toBeGreaterThanOrEqual(before);
+  });
+
   it('writes to a process that asked for stdin', async () => {
     const proc = environment.runShell('cat', {
       cwd: dir,

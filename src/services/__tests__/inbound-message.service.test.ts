@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 
-const { mockPrisma, mockEngine, mockConfig } = vi.hoisted(() => ({
+const { mockPrisma, mockEngine, mockConfig, mockEndWork } = vi.hoisted(() => ({
   mockPrisma: {
     conversationThread: { findUnique: vi.fn() },
     conversationMessage: { findUnique: vi.fn(), findFirst: vi.fn() },
@@ -13,6 +13,7 @@ const { mockPrisma, mockEngine, mockConfig } = vi.hoisted(() => ({
     events: null as unknown as import('node:events').EventEmitter,
   },
   mockConfig: { agentId: 'agent-1' as string | undefined, ownerUserId: 'owner-1' },
+  mockEndWork: vi.fn(),
 }));
 
 vi.mock('../../lib/prisma', () => ({ default: mockPrisma }));
@@ -25,6 +26,7 @@ vi.mock('../../config', () => ({ config: mockConfig }));
 vi.mock('../../lib/telemetry', () => ({ trackEvent: vi.fn() }));
 vi.mock('../conversation.service', () => ({ conversationService: {} }));
 vi.mock('../message-delivery.service', () => ({ messageDeliveryService: { showInConversation: vi.fn() } }));
+vi.mock('../pending-work.service', () => ({ pendingWorkService: { end: mockEndWork } }));
 
 import { inboundMessageService } from '../inbound-message.service';
 import { eventStreamService } from '../event-stream.service';
@@ -117,7 +119,7 @@ describe('InboundMessageService', () => {
       );
       await settle();
       expect(mockEngine.chat).toHaveBeenCalledWith(
-        expect.objectContaining({ threadId: THREAD_A, stored: { titleSet: null } }),
+        expect.objectContaining({ threadId: THREAD_A, stored: { id: 'm-1', titleSet: null } }),
       );
       expect(mockEngine.acceptUserMessage.mock.invocationCallOrder[0]).toBeLessThan(
         mockEngine.chat.mock.invocationCallOrder[0]!,
@@ -422,6 +424,42 @@ describe('InboundMessageService', () => {
         ([input]) => input.threadId === THREAD_B && !input.steerOnly,
       );
       expect(turnsForB).toHaveLength(0);
+      // Stopped, so nothing owes it an answer after a restart either.
+      expect(mockEndWork).toHaveBeenCalledWith('chat', ['m-2']);
+    });
+  });
+
+  describe('Scenario: a reply a restart interrupted', () => {
+    it('continues it in its turn, for every message it owes', async () => {
+      const first = heldTurn();
+      mockEngine.chat.mockImplementationOnce(first.run);
+      inboundMessageService.resume(row('m-2', THREAD_A, 'and the tests?') as never, {
+        messageIds: ['m-1', 'm-2'],
+        unsaved: [],
+        unsentAttachmentIds: [],
+      });
+      await settle();
+      inboundMessageService.resume(row('m-4', THREAD_B) as never, { messageIds: ['m-4'], unsaved: [], unsentAttachmentIds: [] });
+      await settle();
+
+      expect(mockEngine.chat).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId: THREAD_A,
+          message: 'and the tests?',
+          stored: { id: 'm-2', titleSet: null },
+          resumed: { messageIds: ['m-1', 'm-2'], unsaved: [], unsentAttachmentIds: [] },
+        }),
+      );
+      expect(inboundMessageService.turns()).toEqual(
+        expect.arrayContaining([{ threadId: THREAD_B, state: 'queued' }]),
+      );
+
+      first.finish();
+      await vi.waitFor(() =>
+        expect(mockEngine.chat).toHaveBeenLastCalledWith(
+          expect.objectContaining({ threadId: THREAD_B, resumed: { messageIds: ['m-4'], unsaved: [], unsentAttachmentIds: [] } }),
+        ),
+      );
     });
   });
 

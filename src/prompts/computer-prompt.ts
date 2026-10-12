@@ -8,15 +8,21 @@ When an available, authorized connector can do the requested operation, use it, 
 
 One invocation uses the computer at a time, and subagents have none, so keep computer work in this invocation. Another invocation that needs the computer waits until your turn ends or you ask for help. When a website blocks you, finish the work that does not depend on it. Computer use itself creates no goal or schedule.`;
 
-/** Current help state overrides historical requests in the conversation. */
-export function computerHelpNotices(help: ComputerHelp[]): string[] {
+/**
+ * Current help state overrides historical requests in the conversation. A run that
+ * waits for help (`waitsForAnswer`) is told to join a waiting request, and a
+ * conversation is told how to answer one.
+ */
+export function computerHelpNotices(help: ComputerHelp[], runWaitsForAnswer: boolean): string[] {
   if (!help.length) return [];
   return [
     'Current computer help status follows. These statuses supersede earlier chat messages and tool results. A dismissed request is closed by the user; proceed with their current request without asking them to dismiss it again. Waiting help only blocks the work that depends on it.',
     ...help.map((item) => {
       const instruction =
         item.status === 'waiting'
-          ? `${item.broadcast ? 'A background run asked for it in every channel, so the user can answer it here. ' : ''}If the user says they finished helping, resolve it with computer_continue and inspect the screen.`
+          ? runWaitsForAnswer
+            ? 'If the step it asks for blocks this run too, call computer_help now: the call joins this request, sends nothing new and waits for its answer, so this run continues once the user answers.'
+            : `${item.broadcast ? 'A background run asked for it in every channel, so the user can answer it here. ' : ''}If the user says they finished helping, resolve it with computer_continue and inspect the screen.`
           : item.status === 'continued'
             ? 'The user has already continued this request.'
             : 'The user has dismissed this request.';

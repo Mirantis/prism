@@ -84,10 +84,19 @@ export async function startComputerSite(): Promise<{
   let mailCredentials: { username: string; password: string } | null = null;
   let filesUser: string | null = null;
   let filesCredentials: { username: string; password: string } | null = null;
+  const url = `http://${randomUUID()}.localhost:${PORT}`;
+  const host = new URL(url).host;
   const server: Server = createServer((req, res) => {
     // Each site in turn listens on the same port, so a client must not keep a connection to a
     // site that has closed.
     res.setHeader('connection', 'close');
+    // Every name under localhost reaches this port, so a mistyped host, or a tab an earlier
+    // scenario left open, would load this site under another origin. A real address would not.
+    if (req.headers.host !== host && req.headers.host?.endsWith(`.localhost:${PORT}`)) {
+      res.writeHead(404, { 'content-type': 'text/html; charset=utf-8' });
+      res.end('<!doctype html><title>Not found</title><h1>No site at this address</h1>');
+      return;
+    }
     if (req.method === 'POST' && req.url?.startsWith('/typed')) {
       passwordLength = Number(new URL(req.url, 'http://site').searchParams.get('length')) || 0;
       req.resume();
@@ -212,7 +221,7 @@ export async function startComputerSite(): Promise<{
     approve: () => {
       approved = true;
     },
-    url: `http://${randomUUID()}.localhost:${PORT}`,
+    url,
     close: () =>
       new Promise((resolve, reject) => {
         server.closeAllConnections();

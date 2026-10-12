@@ -792,3 +792,26 @@ model RuntimeState {
 
   @@map("runtime_state")
 }
+
+/// Work the agent has accepted and not finished: a reply it owes, a webhook
+/// run, a coding task. The owner writes the row before the work starts and
+/// deletes it when the work ends, so a row the boot finds is work a restart
+/// interrupted. `pendingWorkService` gives it back to its owner, which
+/// continues it.
+model PendingWork {
+  /// The owner, e.g. `chat`.
+  kind     String
+  /// The owner's id for the work, unique within its kind.
+  key      String
+  /// What the owner needs to continue the work.
+  payload  Json
+  /// How many boots have given this work back. Work that stops its own process
+  /// every time is dropped after `MAX_RESUME_ATTEMPTS`.
+  attempts Int    @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@id([kind, key])
+  @@map("pending_work")
+}

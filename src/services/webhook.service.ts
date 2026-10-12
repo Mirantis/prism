@@ -17,7 +17,8 @@
 import { ConversationMessage, WebhookSubscription } from '@prisma/client';
 import { invoke } from '../invoke';
 import { messageDeliveryService, PublishOptions } from './message-delivery.service';
-import { webhookRunService, WebhookRunResult } from './webhook-run.service';
+import { webhookRunService, WebhookRunResult, type AcceptedEvent } from './webhook-run.service';
+import { pendingWorkService, type PendingWorkItem } from './pending-work.service';
 import { conversationService } from './conversation.service';
 import { agentWorkspaceService } from './agent-workspace.service';
 import { prisma } from '../lib/prisma';
@@ -191,6 +192,15 @@ export function renderWebhookPrompt(
   });
 }
 
+/** An agent run, as `pending_work` holds it until the run ends. */
+interface WebhookWork {
+  subscriptionId: string;
+  /** The rendered prompt, so a template edited later does not change an accepted event. */
+  prompt: string;
+  /** The run's record, which the boot writes when a restart came before it was. */
+  run: AcceptedEvent;
+}
+
 // ============================================================================
 // Webhook Service
 // ============================================================================
@@ -307,20 +317,58 @@ export class WebhookService {
       return { status: 'busy' };
     }
     // The slot is taken in the same tick as the check above, so concurrent
-    // deliveries cannot overfill the queue. The run waits for its row and is
-    // skipped without one; the rejection below reports that failure.
-    const accepted = webhookRunService.accept(run, 'queued');
+    // deliveries cannot overfill the queue. The run waits for its rows and is
+    // skipped without them; the rejection below reports that failure. The event
+    // is pending work from here, so a restart before the run ends runs it again,
+    // and records the run first when the restart came before its row.
+    const work: WebhookWork = { subscriptionId: subscription.id, prompt, run };
+    const accepted = pendingWorkService
+      .begin('webhook', runId, work)
+      .then(() => webhookRunService.accept(run, 'queued'));
     const recorded = accepted.then(
       () => true,
       () => false,
     );
-    queue.push(async () => {
+    this.enqueue(subscription.id, async () => {
       if (await recorded) await this.runAgent(subscription, prompt, runId, startTime);
     });
-    this.pending.set(subscription.id, queue);
-    this.drainQueue(subscription.id);
     await accepted;
     return { status: 'accepted', event: eventType };
+  }
+
+  /**
+   * Run again the agent runs a restart interrupted, each in its subscription's
+   * queue, then fail every unfinished run left: a deliver-only publish, whose
+   * sender got no answer, and a run whose subscription is gone.
+   */
+  async resume(items: PendingWorkItem[]): Promise<void> {
+    const agent = await agentWorkspaceService.getAgent();
+    const resumed: string[] = [];
+    for (const item of items) {
+      const { subscriptionId, prompt, run } = item.payload as unknown as WebhookWork;
+      const subscription = await prisma.webhookSubscription.findUnique({ where: { id: subscriptionId } });
+      if (!subscription || !(await webhookRunService.requeue(run))) {
+        pendingWorkService.end('webhook', item.key);
+        continue;
+      }
+      resumed.push(item.key);
+      this.enqueue(subscription.id, () =>
+        this.runAgent(subscription, prompt, item.key, Date.now(), true),
+      );
+    }
+
+    const failed = await webhookRunService.failInterrupted(agent.id, resumed);
+    if (failed > 0) {
+      logger.warn('[Webhook] %d run(s) did not finish before the restart and cannot run again', failed);
+    }
+  }
+
+  /** Queue an agent run behind its subscription's earlier runs. */
+  private enqueue(subscriptionId: string, run: () => Promise<void>): void {
+    const queue = this.pending.get(subscriptionId) ?? [];
+    queue.push(run);
+    this.pending.set(subscriptionId, queue);
+    this.drainQueue(subscriptionId);
   }
 
   /** Run the next queued delivery for a subscription, if none is in flight. */
@@ -342,20 +390,26 @@ export class WebhookService {
       });
   }
 
-  /** Run the agent over the rendered prompt and record how the run ended. */
+  /**
+   * Run the agent over the rendered prompt and record how the run ended. A run a
+   * shutdown stops records nothing, and the next boot runs it again.
+   */
   private async runAgent(
     subscription: WebhookSubscription,
     prompt: string,
     runId: string,
     startTime: number,
+    afterRestart = false,
   ): Promise<void> {
+    if (pendingWorkService.shutdownSignal.aborted) return;
     const agent = await agentWorkspaceService.getAgent();
     await webhookRunService.start(runId);
 
-    let result: RunOutcome;
+    let result: RunOutcome | null;
     try {
-      result = await this.invokeAndDeliver(agent, subscription, prompt);
+      result = await this.invokeAndDeliver(agent, subscription, prompt, afterRestart);
     } catch (error: unknown) {
+      if (pendingWorkService.shutdownSignal.aborted) return;
       const msg = error instanceof Error ? error.message : 'Unknown error';
       logger.error({ err: error }, `[Webhook] '${subscription.name}' failed`);
       const notice = await this.deliverFailureNotice(agent, subscription, msg);
@@ -367,7 +421,10 @@ export class WebhookService {
       };
     }
 
+    if (!result) return;
+
     await webhookRunService.finish(runId, result);
+    pendingWorkService.finish('webhook', runId);
     const elapsed = Date.now() - startTime;
     if (result.status === 'failed' || result.status === 'budget_exceeded') {
       logger.warn(`[Webhook] '${subscription.name}' ended ${result.status} after ${elapsed}ms: ${result.error ?? 'no detail'}`);
@@ -384,18 +441,25 @@ export class WebhookService {
     });
   }
 
-  /** Invoke the agent and deliver its final response, or the spending-limit notice. */
+  /**
+   * Invoke the agent and deliver its final response, or the spending-limit
+   * notice. Null when a shutdown stopped the run before it delivered anything.
+   */
   private async invokeAndDeliver(
     agent: { id: string; userId: string },
     subscription: WebhookSubscription,
     prompt: string,
-  ): Promise<RunOutcome> {
+    afterRestart: boolean,
+  ): Promise<RunOutcome | null> {
     const result = await invoke({
       userId: agent.userId,
       agentId: agent.id,
       mode: 'webhook',
       prompt,
+      afterRestart,
+      abortSignal: pendingWorkService.shutdownSignal,
     });
+    if (pendingWorkService.shutdownSignal.aborted) return null;
 
     // The message stores the run's tool calls and shared files whatever the result.
     const stored = {

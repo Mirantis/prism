@@ -10,6 +10,7 @@
 
 import { ConversationMessage } from '@prisma/client';
 import { AttachmentMeta } from './attachment.service';
+import type { ResumedReply } from '../types';
 
 /** The chat platforms the runtime joins through their own apps. */
 export const CHAT_PLATFORMS = ['slack', 'teams'] as const;
@@ -97,6 +98,13 @@ export interface ChannelAdapter {
     agentId: string,
     userId: string,
   ): Promise<(ChannelDestination & { threadKey: string }) | null>;
+
+  /**
+   * Continue a reply a restart interrupted, for a channel that answers its
+   * messages in a queue of its own. `message` is the newest message the reply
+   * owes an answer. A channel without it starts the reply's turn at once.
+   */
+  continueReply?(message: ConversationMessage, resumed: ResumedReply): void;
 
   /** The ids of the agent's linked shared channels, which a webhook can choose to post to. */
   linkedChannelIds?(agentId: string): Promise<string[]>;

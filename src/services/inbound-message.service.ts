@@ -31,6 +31,7 @@ import {
 } from './conversation-thread-activity.service';
 import { messageDeliveryService } from './message-delivery.service';
 import { eventStreamService } from './event-stream.service';
+import { pendingWorkService } from './pending-work.service';
 import {
   TURN_FAILED,
   turnError,
@@ -39,6 +40,7 @@ import {
   type TurnOutcome,
   type TurnState,
 } from '../protocol/chat-protocol';
+import type { ResumedReply } from '../types';
 
 export interface InboundMessage {
   /** The client's id for the message, which becomes the row's. */
@@ -87,6 +89,8 @@ function senderMetadata(message: InboundMessage) {
 interface Waiting {
   message: InboundMessage;
   titleSet: string | null;
+  /** Set when the turn continues one a restart interrupted. */
+  resumed?: ResumedReply;
 }
 
 class InboundMessageService {
@@ -144,14 +148,33 @@ class InboundMessageService {
     }
     // The same bar as a send: a client stops only this agent's web conversations.
     await this.checkThread(threadId, agentId);
-    const before = this.waiting.length;
+    const dropped: Waiting[] = [];
     for (let i = this.waiting.length - 1; i >= 0; i--) {
-      if (this.waiting[i].message.threadId === threadId) this.waiting.splice(i, 1);
+      if (this.waiting[i].message.threadId === threadId) dropped.push(...this.waiting.splice(i, 1));
     }
-    const dropped = this.waiting.length !== before;
+    // Stopped, so no longer owed an answer.
+    pendingWorkService.end('chat', dropped.flatMap((w) => w.resumed?.messageIds ?? [w.message.id]));
     const stopped = conversationEngineService.cancel(threadId);
-    if (dropped) this.announce(threadId);
-    return stopped || dropped;
+    if (dropped.length > 0) this.announce(threadId);
+    return stopped || dropped.length > 0;
+  }
+
+  /**
+   * Continue a reply a restart interrupted, in its turn: it waits like any
+   * message, behind the ones accepted before it.
+   */
+  resume(message: ConversationMessage, resumed: ResumedReply): void {
+    void this.scheduleStored({
+      message: {
+        id: message.id,
+        threadId: message.threadId,
+        content: message.content,
+        attachmentIds: [],
+        sender: null,
+      },
+      titleSet: null,
+      resumed,
+    });
   }
 
   /** Every conversation with work queued or running, for a client that just connected. */
@@ -350,7 +373,8 @@ class InboundMessageService {
       message: message.content,
       threadId: message.threadId,
       attachmentIds: message.attachmentIds,
-      stored: { titleSet: waiting.titleSet },
+      stored: { id: message.id, titleSet: waiting.titleSet },
+      ...(waiting.resumed ? { resumed: waiting.resumed } : {}),
       metadata: senderMetadata(message),
     };
   }

@@ -107,7 +107,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
     externalTs: string,
     teamId: string,
   ): Promise<boolean> {
-    const app = slackAdapterService.getAppForTeam(teamId);
+    const app = await slackAdapterService.getAppForTeam(teamId);
     if (!app) {
       throw new Error(`No Slack app found for team ${teamId}`);
     }
@@ -276,7 +276,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
     teamId: string,
     oldest?: string
   ): Promise<SlackMessage[]> {
-    const app = slackAdapterService.getAppForTeam(teamId);
+    const app = await slackAdapterService.getAppForTeam(teamId);
     if (!app) {
       throw new Error(`No Slack app found for team ${teamId}`);
     }
@@ -486,7 +486,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
 
     if (uncachedIds.length === 0) return names;
 
-    const app = slackAdapterService.getAppForTeam(teamId);
+    const app = await slackAdapterService.getAppForTeam(teamId);
     if (!app) return names;
 
     await Promise.all(

@@ -37,6 +37,16 @@ async function collect(lines: object[]) {
 }
 
 describe('Codex adapter', () => {
+  it('names its process to the next boot', async () => {
+    const child = new FakeChild();
+    child.mark = { pid: 4242, startedAt: 1_000 };
+    const run = createCodexAgent(fakeExecutionEnvironment({ runProgram: () => child.asExecProcess() })).run(task);
+
+    expect(run.mark).toEqual({ pid: 4242, startedAt: 1_000 });
+    child.finish(0);
+    await Array.fromAsync(run.events);
+  });
+
   describe.each(['off', 'observe', 'enforce'] as const)('with the %s gate', (gateMode) => {
     const original = config.toolRiskGateMode;
     beforeEach(() => { config.toolRiskGateMode = gateMode; });

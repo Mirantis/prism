@@ -85,7 +85,10 @@ tasks, and Slack mappings — lives in the single SQLite database at
 `/data/agent.db`. Shared file content (chat uploads, Slack attachments) lives
 next to it as plain files under `/data/media`, kept for 7 days (see
 **[Tools](tools.md#attachments)**). Mount a volume at `/data` (named volume or
-host bind mount) so both survive container restarts and image upgrades. Back up
+host bind mount) so both survive container restarts and image upgrades. You can
+stop the container at any time: when it starts again, the agent continues the
+work it was doing. A call in progress ends, and so does a command the agent left
+running in the background. Back up
 the agent by backing up that volume, or export a `.prism` snapshot from the
 **[Web UI](web-ui.md)** (the snapshot carries the database, not the media
 files).

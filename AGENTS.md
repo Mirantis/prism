@@ -160,6 +160,18 @@ to clear.
   JSON, JSONL, TXT or sidecar file. A file holds a named product artifact only: an
   import or export, a user attachment, a log, a backup, or a format an external
   tool reads.
+- **A restart is safe at any moment, and the work continues after it.** A
+  deploy, an update, a crash or `SIGKILL` can stop the process at any line.
+  Keep the work the agent accepts in a `pending_work` row from before it starts
+  until it ends, with what its owner needs to accept the work again
+  (`pendingWorkService`). A scheduled run keeps a row too. At boot, give each
+  row back to the service that owns its kind, and let that service close the
+  work the attempt bound gives up. Move a schedule's due time only when a run
+  completes or is given up. On shutdown,
+  stop the work in flight and record no outcome for it, unless its result
+  already reached the user. Never keep work only in a queue, a timer or a map
+  in memory. Let a live call end with the process, and leave a command the
+  agent started to the turn that started it.
 - **Never advance the SQLite schema on your own.** A change that needs a new
   migration in `prisma/sqlite/migrations/` waits for an explicit yes from the
   user. Every existing install has to run that migration, and there is no way
@@ -773,7 +785,7 @@ Vite-proxy-shaped that would mask a real bug.
 - **Owns scheduling** - Heartbeat timers and cron jobs run in-process (not in the backend).
 - **Owns Slack connections** - Runs Bolt apps with Socket Mode, receives and routes messages, handles verification codes, calls Slack APIs directly. The one connection is synthesized from `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` env vars (validated via `auth.test` on boot; see `lib/slack-config.ts`). Bot token in env may be a platform credential sentinel that the MITM proxy rewrites on the wire; a `SlackWebClient` subclass (`lib/slack-web-client.ts`) strips the body `token` field so auth flows only via the `Authorization` header.
 - **Owns agent data** - Agent CRUD, ownership validation, platform token management, and subagent relationships via `agentWorkspaceService` (direct Prisma access). `CreateAgentInput` requires a pre-generated `id` field -- the backend generates the UUID and passes it when creating the `AgentWorkspace`. Note: `orgId` and `teamId` are NOT in `AgentWorkspace` -- they live exclusively in the backend-only `Agent` table.
-- **Direct database access** - Has its own Prisma client (SQLite) for agent data (CRUD, ownership, subagents), conversation data (threads, messages, active thread resolution), agent field updates (heartbeat timestamp, heartbeat status), cron task state (list, update run timestamps, delete one-shot tasks), Slack message queue drain (pending heartbeat trigger messages), and Slack mapping CRUD. Vector search over `memory_entries.embedding` goes through a sibling `better-sqlite3` handle that loads the `sqlite-vec` extension (see `lib/sqlite-bootstrap.ts`).
+- **Direct database access** - Has its own Prisma client (SQLite) for agent data (CRUD, ownership, subagents), conversation data (threads, messages, active thread resolution), agent field updates (heartbeat timestamp, heartbeat status), cron task state (list, update run timestamps, delete one-shot tasks), the pending Slack messages a heartbeat trigger answers, and Slack mapping CRUD. Vector search over `memory_entries.embedding` goes through a sibling `better-sqlite3` handle that loads the `sqlite-vec` extension (see `lib/sqlite-bootstrap.ts`).
 - **No direct imports from backend** - Communicates via HTTP and MCP only.
 - **SOLID** - Each service (heartbeat, cron, invoke, conversation engine, message delivery) has a single responsibility.
 
@@ -871,7 +883,8 @@ and refuses every call, because under `none` the SDK sends no tools block.
 | **ThreadReplyClassifierService** | `services/thread-reply-classifier.service.ts` | Respond or ignore for a reply without a mention, in a chat thread the bot takes part in. Each adapter owns its own participation rule and transcript, then asks here. One structured-output call on the classification model, tracing off, fail-open to `respond`; owns each platform's `<platform> thread classification failed` event and `<platform>-thread-gate` purpose |
 | **TeamsAdapterService** | `services/teams/teams-adapter.service.ts` | Microsoft Teams channel adapter on the Teams SDK (`@microsoft/teams.apps`). Inbound: Azure Bot Service POSTs activities to `/agents/teams/messages` on a listener of its own (`TEAMS_PORT`, default 3979, bound to `PRISM_HOST`) that serves that route alone, so it is the one port a deployment publishes — a Lens Agents `public` port has no path filter. The adapter hands an `http.Server` to `ExpressAdapter` and listens on it itself, since `app.start()` binds every interface; the SDK validates the Bot Framework JWT before the handler runs. The handler acks fast (fire-and-forget; the typing cue goes out once the adapter knows it answers) because a Prism turn runs minutes against Bot Framework's ~15s window; every reply is a **proactive send** addressed by a stored conversation id (`app.send`/`app.reply` — never a persisted serviceUrl, which is attacker-suppliable). Channel activities carry the thread root as a `;messageid=` suffix on `conversation.id`: stripped for mapping storage/lookup, kept as the reply thread root. The manifest's `ChannelMessage.Read.Group` permission makes Teams deliver every channel message: one that @mentions the bot (a mention entity naming `recipient.id`) runs a turn, a reply in a reply chain that already has a thread row goes to `threadReplyClassifierService` (stored in the thread when it is not answered, so the next turn and the next classification read it), and every other message is ignored. Broadcast = all DM mappings + the one main channel (flagged-else-oldest). Inbound files go through `teams-attachments.ts`, one credential per source: a personal-chat file's pre-authenticated SharePoint `downloadUrl` gets none, a pasted image gets the bot token (Bot Framework attachment hosts only) or the Graph token (`hostedContents` only), and a channel file goes through Graph `/shares`, which needs an admin-granted `Files.Read.All`; every failed read becomes a runtime notice and the turn runs anyway. Outbound files are download links to `/agents/attachments/:id` at `config.publicUrl`, else `localhost:PORT`. v1 defers Adaptive Cards/feedback, file uploads into Teams, reactions, group chats, and a live thread provider (threads stay `ThreadSource.DATABASE` — Teams pushes every activity, so no Slack-style read-consistency wait) |
 | **TeamsMappingService** | `services/teams/teams-mapping.service.ts` | TeamsMapping CRUD for user and channel mappings via Prisma (mirror of SlackMappingService; both mapping kinds persist the conversation id proactive sends are addressed to) |
-| **SlackMessageQueueService** | `services/slack-message-queue.service.ts` | Direct Prisma drain of pending Slack messages for heartbeat triggers |
+| **SlackMessageQueueService** | `services/slack-message-queue.service.ts` | Pending Slack messages for heartbeat triggers: read by the heartbeat that answers them, removed when that heartbeat ends |
+| **PendingWorkService** | `services/pending-work.service.ts` | `pending_work`: the work the agent accepted and has not finished (`coding-task`, `chat`, `webhook`, `cron`, `heartbeat`). `begin` before the work starts, `end` when it ends, `finish` when its result reached the user. At boot `interrupted` reads the rows before the channels connect, and `resumeAll` gives each owner its rows back, at most `MAX_RESUME_ATTEMPTS` (3) boots per row, and the rows past that bound, which the owner closes. `shutdown()` aborts `shutdownSignal` and freezes `update`, `settle` and `end`, so the work a shutdown stops is continued as it stood |
 | **SlackHeartbeatTriggerService** | `services/slack-heartbeat-trigger.service.ts` | CRUD for per-agent Slack heartbeat trigger config, atomic claim logic |
 | **SessionManagerService** | `services/session-manager.service.ts` | Daily session resets, idle timeout management |
 | **ToolLedgerService** | `services/tool-ledger.service.ts` | Each conversation's declared tool list and its tool-change announcements, in memory per thread and model (see **Declared tools**) |
@@ -925,7 +938,9 @@ src/
 │   │   ├── teams-adapter.service.ts # SDK webhook mounted on our Express app, proactive sends
 │   │   ├── teams-attachments.ts # Inbound files: which URL, which credential, what a failed read becomes
 │   │   └── teams-mapping.service.ts # TeamsMapping CRUD for user & channel mappings via Prisma
-│   ├── slack-message-queue.service.ts # Direct Prisma drain of pending Slack messages
+│   ├── slack-message-queue.service.ts # Pending Slack messages, removed once the heartbeat that read them ends
+│   ├── pending-work.service.ts # Accepted, unfinished work that a restart continues: begin, end, resume at boot
+│   ├── resume-replies.ts       # The `chat` owner's boot step: one resumed exchange per thread that was owed a reply
 │   ├── slack-heartbeat-trigger.service.ts # CRUD for per-agent Slack heartbeat trigger config, atomic claim logic
 │   ├── session-manager.service.ts # Daily session resets, idle timeout management
 │   ├── tool-ledger.service.ts  # Each conversation's declared tool list and its tool-change announcements
@@ -1028,6 +1043,7 @@ src/
 │   │   ├── exec-stdio-transport.ts # MCP stdio over `runProgram`, so a plugin's server runs where its files are
 │   │   ├── get-execution-environment.ts # Selector: derives the environment (no setting), one instance per process
 │   │   ├── capture.ts         # The one bounded, timed, cancellable run — `shell_exec` and every probe format their own result out of it
+│   │   ├── leftover-process.ts # Stops a host process group a crashed runtime left running, by its `ProcessMark`
 │   │   ├── storage-migration.ts # Moves the agent's files when the deployment changes environment, either way
 │   │   ├── workspace.ts       # `resolveWorkspace`: the single owner of the per-thread-vs-default fallback
 │   │   ├── local/             # Commands as children of this process, on the filesystem it sees
@@ -1072,22 +1088,26 @@ src/
     ├── channel-prompt.ts       # Team-channel behavior instructions, naming the channel as its adapter words it
     ├── cron-prompt.ts          # Scheduled-task DELIVER/SUPPRESS gate prompt (instruction-aware) + gate user-message builder
     ├── webhook-gate-prompt.ts  # Webhook agent-reply DELIVER/SUPPRESS gate prompt (reads the subscription prompt as the instruction)
-    └── early-stopping-prompt.ts # Prompt for summarizing when step limit is reached
+    ├── early-stopping-prompt.ts # Prompt for summarizing when step limit is reached
+    └── resume-prompt.ts        # What a model continuing interrupted work is told: the chat notice, the run notice, the coding-task prompt
 ```
 
 ## Startup Sequence
 
 1. Create HTTP server and initialize WebSocket gateway on `/api/ws`
 2. Register channel adapters with `messageDeliveryService` (WebSocket adapter, Slack adapter)
-3. Start listening on port 3003
-4. Assert `AGENT_ID` is set (or auto-bootstrap one on first boot).
-5. Load the one agent identified by `AGENT_ID`.
-6. Initialize Slack adapter — `lib/slack-config.ts` synthesizes one connection from env (`SLACK_BOT_TOKEN`) via `auth.test`.
-7. Start heartbeat timers for each agent
-8. Fetch all active cron tasks directly from the database via `cronSchedulerService.listActiveCronTasks()`
-9. Schedule all cron jobs
+3. Assert `AGENT_ID` is set (or auto-bootstrap one on first boot).
+4. Load the one agent identified by `AGENT_ID`.
+5. Read the work a restart interrupted: `pendingWorkService.interrupted()`.
+6. Initialize the channel adapters — `lib/slack-config.ts` synthesizes one Slack connection from env (`SLACK_BOT_TOKEN`) via `auth.test`.
+7. Continue the interrupted work: `pendingWorkService.resumeAll()` gives each owner its `pending_work` rows.
+8. Start the heartbeat timer (a check already due runs about a minute later), then answer the trigger messages still pending
+9. Fetch all active cron tasks directly from the database via `cronSchedulerService.listActiveCronTasks()`
+10. Schedule all cron jobs (a task whose stored next run is due runs once at once)
+11. Restore the active goals
+12. Open the webhook receiver, then start listening on port 3003
 
-On shutdown, the Slack adapter is gracefully shut down (disconnects all Socket Mode connections).
+On shutdown, `pendingWorkService.shutdown()` runs first: the work in flight stops and stays pending. The Slack adapter is then gracefully shut down (disconnects all Socket Mode connections), and the last `pending_work` writes land before the exit.
 
 ## Environment Variables
 
@@ -1393,14 +1413,15 @@ interface HeartbeatState {
 }
 ```
 
-An alert is considered a duplicate if the trimmed text exactly matches `lastAlertText` and was delivered within the last 24 hours. This replaced the earlier hash-based `recentAlerts: Map` approach for simplicity.
+An alert is considered a duplicate if the trimmed text exactly matches `lastAlertText` and was delivered within the last 24 hours. A boot reads `lastAlertText` and `lastAlertAt` from the newest delivered heartbeat message, so a restart keeps them.
 
 ### Channel-Triggered Heartbeats
 
-A channel that starts the heartbeat with its own messages is a `HeartbeatTriggerSource`, registered with `heartbeatService.registerTriggerSource` in `index.ts`. Slack's is `slackMessageQueueService`. When a Slack message arrives in a heartbeat trigger channel, the Slack adapter enqueues it in the `PendingSlackMessage` table, claims the trigger's throttle and calls `heartbeatService.triggerFrom(slackMessageQueueService)`. The heartbeat drains the source atomically, runs once with those messages in its prompt, and reports the source's channel as `heartbeat.trigger`.
+A channel that starts the heartbeat with its own messages is a `HeartbeatTriggerSource`, registered with `heartbeatService.registerTriggerSource` in `index.ts`. Slack's is `slackMessageQueueService`. When a Slack message arrives in a heartbeat trigger channel, the Slack adapter enqueues it in the `PendingSlackMessage` table, claims the trigger's throttle and calls `heartbeatService.triggerFrom(slackMessageQueueService)`. The heartbeat reads the source's pending messages, runs once with them in its prompt, removes them once the run ends, and reports the source's channel as `heartbeat.trigger`.
 
 - `triggerFrom(source)` returns `'queued'` when it started a run, or `'ignored'` when no heartbeat is registered or one is already running. Ignored messages stay queued for the next run.
-- **Timer-based heartbeats also drain**: a timer heartbeat drains every registered source before it invokes the LLM, so queued messages are never orphaned.
+- **Timer-based heartbeats also read them**: a timer heartbeat reads every registered source before it invokes the LLM, so queued messages are never orphaned.
+- A run removes the messages it read only once it ends, so a restart before then leaves them for the next run, and the boot starts that run (`answerPendingTriggers`).
 
 ### Classification Gate
 

@@ -112,7 +112,8 @@ still deletes itself; only the message is withheld.
 
 - Tasks are stored in the embedded database, so they **persist across
   restarts** — on boot, the runtime reloads all active tasks and reschedules
-  them.
+  them. A run that a restart interrupted, or that was due while the runtime was
+  down, runs once at boot.
 - One-shot tasks are removed once they run.
 - A run that is still executing when the task's next tick fires is not
   overlapped: the new tick is skipped (and logged), never queued or run

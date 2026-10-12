@@ -4,8 +4,40 @@
  * machine on the neutral events every adapter emits, without a child process.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+const { mockBeginWork, mockUpdateWork, mockSettleWork, mockEndWork, mockStopLeftover } = vi.hoisted(() => ({
+  mockBeginWork: vi.fn(),
+  mockUpdateWork: vi.fn(),
+  mockSettleWork: vi.fn(),
+  mockEndWork: vi.fn(),
+  mockStopLeftover: vi.fn(),
+}));
+
+vi.mock('../../../services/pending-work.service', () => ({
+  pendingWorkService: {
+    begin: mockBeginWork,
+    update: mockUpdateWork,
+    settle: mockSettleWork,
+    end: mockEndWork,
+  },
+}));
+
+const { mockReadPluginConfigs, mockConfiguredServers } = vi.hoisted(() => ({
+  mockReadPluginConfigs: vi.fn(async () => undefined),
+  mockConfiguredServers: vi.fn(() => [] as unknown[]),
+}));
+
+vi.mock('../../../services/plugin-mcp.service', () => ({
+  pluginMcpService: { readConfigs: mockReadPluginConfigs, configuredServers: mockConfiguredServers },
+}));
+
+vi.mock('../../../lib/execution-environments/leftover-process', () => ({
+  stopLeftoverProcess: mockStopLeftover,
+}));
+
 import { config } from '../../../config';
 import { trackEvent } from '../../../lib/telemetry';
+import { RESUMED_CODING_TASK_PROMPT } from '../../../prompts/resume-prompt';
 import { buildCodingAgentInput, runCodingAgent } from '../coding-agent';
 
 import { AsyncChannel } from '../../../utils/async-channel';
@@ -38,6 +70,7 @@ class FakeRun implements CodingAgentRun {
   readonly events: AsyncIterable<CodingAgentEvent> = this.channel;
   exited = false;
   stopped = false;
+  readonly mark = { pid: 4242, startedAt: 1_000 };
 
   constructor(private readonly stubborn = false) {}
 
@@ -138,6 +171,8 @@ describe('AgentTaskManager', () => {
     manager = m.manager;
     getRun = m.getRun;
     getTask = m.getTask;
+    mockBeginWork.mockResolvedValue(undefined);
+    mockStopLeftover.mockResolvedValue(false);
   });
 
   it('routes mixed agents through one task manager and one concurrency limit', async () => {
@@ -150,13 +185,12 @@ describe('AgentTaskManager', () => {
     const original = config.codingAgent;
     config.codingAgent = 'codex';
     try {
-      const defaultTask = tasks.startTask(sampleParams);
-      const explicitTask = tasks.startTask({ ...sampleParams, agent: 'claude-code' });
-      const thirdTask = tasks.startTask({ ...sampleParams, agent: 'codex' });
+      const defaultTask = await tasks.startTask(sampleParams);
+      const explicitTask = await tasks.startTask({ ...sampleParams, agent: 'claude-code' });
+      const thirdTask = await tasks.startTask({ ...sampleParams, agent: 'codex' });
       expect([defaultTask.agent, explicitTask.agent, thirdTask.agent]).toEqual(['codex', 'claude-code', 'codex']);
       expect(resolve.mock.calls.map(([id]) => id)).toEqual(['codex', 'claude-code', 'codex']);
-      expect(() => tasks.startTask({ ...sampleParams, agent: 'claude-code' }))
-        .toThrow('Max concurrent agent tasks');
+      await expect(tasks.startTask({ ...sampleParams, agent: 'claude-code' })).rejects.toThrow('Max concurrent agent tasks');
       runs[0].finish({ stopReason: 'end_turn', turns: 1, message: 'Codex finished' });
       await flush();
       expect(await tasks.readStatus(defaultTask.taskId, 0)).toMatchObject({ agent: 'codex', result: 'Codex finished' });
@@ -224,20 +258,20 @@ describe('AgentTaskManager', () => {
     }
   });
 
-  it('startTask returns a taskId and tracks the task', () => {
-    const { taskId } = manager.startTask(sampleParams);
+  it('startTask returns a taskId and tracks the task', async () => {
+    const { taskId } = await manager.startTask(sampleParams);
     expect(typeof taskId).toBe('string');
     expect(taskId.length).toBeGreaterThan(0);
     expect(manager.runningCount()).toBe(1);
   });
 
-  it('hands the agent the task inputs and the sandbox environment', () => {
+  it('hands the agent the task inputs and the sandbox environment', async () => {
     const saved = { NODE_ENV: process.env.NODE_ENV, HUSKY: process.env.HUSKY };
     process.env.NODE_ENV = 'production';
     process.env.HUSKY = '0';
     let taskId: string;
     try {
-      ({ taskId } = manager.startTask({
+      ({ taskId } = await manager.startTask({
         ...sampleParams,
         workdir: '/work',
         mode: 'plan',
@@ -269,16 +303,16 @@ describe('AgentTaskManager', () => {
     expect(task.env.PATH).toBe(process.env.PATH);
   });
 
-  it('defaults to edit mode and the standard turn budget', () => {
-    manager.startTask(sampleParams);
+  it('defaults to edit mode and the standard turn budget', async () => {
+    await manager.startTask(sampleParams);
     expect(getTask()).toMatchObject({ mode: 'edit', maxTurns: DEFAULT_MAX_TURNS });
   });
 
-  it("gives the task the agent's MCP servers", () => {
+  it("gives the task the agent's MCP servers", async () => {
     const saved = config.nexusMcpUrl;
     config.nexusMcpUrl = 'https://gateway.example.test/projects/p/mcp';
     try {
-      manager.startTask(sampleParams);
+      await manager.startTask(sampleParams);
     } finally {
       config.nexusMcpUrl = saved;
     }
@@ -288,7 +322,7 @@ describe('AgentTaskManager', () => {
   });
 
   it('buffers text and delivers it on readStatus (drain-on-read)', async () => {
-    const { taskId } = manager.startTask(sampleParams);
+    const { taskId } = await manager.startTask(sampleParams);
     const run = getRun();
     run.emit({ type: 'text', text: 'hello ' });
     run.emit({ type: 'text', text: 'world' });
@@ -300,7 +334,7 @@ describe('AgentTaskManager', () => {
   });
 
   it('reports completion + result fields once the run ends', async () => {
-    const { taskId } = manager.startTask(sampleParams);
+    const { taskId } = await manager.startTask(sampleParams);
     const run = getRun();
     run.emit({ type: 'text', text: 'final answer' });
     run.emit({ type: 'session', sessionId: 'sess-42' });
@@ -322,14 +356,14 @@ describe('AgentTaskManager', () => {
   });
 
   it("uses the agent's message as the result when it produced no text", async () => {
-    const { taskId } = manager.startTask(sampleParams);
+    const { taskId } = await manager.startTask(sampleParams);
     getRun().finish({ stopReason: 'end_turn', turns: 2, message: 'summary' });
     const { status } = await pollUntilComplete(manager, taskId);
     expect(status.result).toBe('summary');
   });
 
   it('appends a non-success outcome to the text it produced', async () => {
-    const { taskId } = manager.startTask(sampleParams);
+    const { taskId } = await manager.startTask(sampleParams);
     const run = getRun();
     run.emit({ type: 'text', text: 'partial' });
     run.finish({ stopReason: 'max_turns', turns: 100, message: 'hit max' });
@@ -340,7 +374,7 @@ describe('AgentTaskManager', () => {
   });
 
   it('reports a run its permission checks refused part of as refused, naming each action', async () => {
-    const { taskId } = manager.startTask(sampleParams);
+    const { taskId } = await manager.startTask(sampleParams);
     const run = getRun();
     run.emit({ type: 'text', text: 'Steps 1 and 2 are done.' });
     run.finish({
@@ -367,7 +401,7 @@ describe('AgentTaskManager', () => {
   });
 
   it('keeps a failed outcome as it is and lists its refusals after it', async () => {
-    const { taskId } = manager.startTask({ ...sampleParams, mode: 'plan' });
+    const { taskId } = await manager.startTask({ ...sampleParams, mode: 'plan' });
     getRun().finish({
       stopReason: 'max_turns', turns: 3, message: 'hit max',
       refusals: [{ action: 'Bash', target: 'touch marker.txt' }],
@@ -385,7 +419,7 @@ describe('AgentTaskManager', () => {
   });
 
   it('reports a non-success outcome with no text as an error', async () => {
-    const { taskId } = manager.startTask(sampleParams);
+    const { taskId } = await manager.startTask(sampleParams);
     getRun().finish({ stopReason: 'error', turns: 0, message: 'boom' });
 
     const { status } = await pollUntilComplete(manager, taskId);
@@ -394,7 +428,7 @@ describe('AgentTaskManager', () => {
   });
 
   it('fails a task whose run ends without reporting a result', async () => {
-    const { taskId } = manager.startTask(sampleParams);
+    const { taskId } = await manager.startTask(sampleParams);
     getRun().end();
 
     const { status } = await pollUntilComplete(manager, taskId);
@@ -403,7 +437,7 @@ describe('AgentTaskManager', () => {
   });
 
   it('truncates the output buffer when it exceeds MAX_BUFFER_SIZE', async () => {
-    const { taskId } = manager.startTask(sampleParams);
+    const { taskId } = await manager.startTask(sampleParams);
     const run = getRun();
     run.emit({ type: 'text', text: 'x'.repeat(MAX_BUFFER_SIZE + 1000) });
     run.finish(SUCCESS);
@@ -414,9 +448,9 @@ describe('AgentTaskManager', () => {
     expect(output.length).toBeLessThanOrEqual(MAX_BUFFER_SIZE + 64);
   });
 
-  it('enforces MAX_CONCURRENT on startTask', () => {
-    for (let i = 0; i < MAX_CONCURRENT; i++) manager.startTask(sampleParams);
-    expect(() => manager.startTask(sampleParams)).toThrow(/Max concurrent/);
+  it('enforces MAX_CONCURRENT on startTask', async () => {
+    for (let i = 0; i < MAX_CONCURRENT; i++) await manager.startTask(sampleParams);
+    await expect(manager.startTask(sampleParams)).rejects.toThrow(/Max concurrent/);
   });
 
   it('readStatus on an unknown taskId throws', async () => {
@@ -424,7 +458,7 @@ describe('AgentTaskManager', () => {
   });
 
   it('stopTask terminates a running task and returns the output so far', async () => {
-    const { taskId } = manager.startTask(sampleParams);
+    const { taskId } = await manager.startTask(sampleParams);
     const run = getRun();
     run.emit({ type: 'text', text: 'partial work' });
 
@@ -438,7 +472,7 @@ describe('AgentTaskManager', () => {
   });
 
   it('stopTask reports the session id so the abandoned work can be resumed', async () => {
-    const { taskId } = manager.startTask(sampleParams);
+    const { taskId } = await manager.startTask(sampleParams);
     // The agent announces its session early — the only place a killed task's
     // session id appears, since it never reaches a final result.
     getRun().emit({ type: 'session', sessionId: 'sess-init' });
@@ -450,24 +484,24 @@ describe('AgentTaskManager', () => {
 
   it('stopTask frees the concurrency slot', async () => {
     const ids: string[] = [];
-    for (let i = 0; i < MAX_CONCURRENT; i++) ids.push(manager.startTask(sampleParams).taskId);
-    expect(() => manager.startTask(sampleParams)).toThrow(/Max concurrent/);
+    for (let i = 0; i < MAX_CONCURRENT; i++) ids.push((await manager.startTask(sampleParams)).taskId);
+    await expect(manager.startTask(sampleParams)).rejects.toThrow(/Max concurrent/);
 
     await manager.stopTask(ids[0]);
-    expect(() => manager.startTask(sampleParams)).not.toThrow();
+    await expect(manager.startTask(sampleParams)).resolves.toBeDefined();
   });
 
   it('stopTask rejects an unknown or already-stopped taskId', async () => {
     await expect(manager.stopTask('no-such-id')).rejects.toThrow(/Unknown task/);
 
-    const { taskId } = manager.startTask(sampleParams);
+    const { taskId } = await manager.startTask(sampleParams);
     await manager.stopTask(taskId);
     await expect(manager.stopTask(taskId)).rejects.toThrow(/cleaned up/);
     await expect(manager.readStatus(taskId)).rejects.toThrow(/cleaned up/);
   });
 
   it('stopTask on a task that already finished keeps its real outcome', async () => {
-    const { taskId } = manager.startTask(sampleParams);
+    const { taskId } = await manager.startTask(sampleParams);
     const run = getRun();
     run.emit({ type: 'text', text: 'done text' });
     run.finish({ stopReason: 'end_turn', turns: 3, message: 'done' });
@@ -481,7 +515,7 @@ describe('AgentTaskManager', () => {
   });
 
   it('stopTask does not relabel a run that ended just before the stop', async () => {
-    const { taskId } = manager.startTask(sampleParams);
+    const { taskId } = await manager.startTask(sampleParams);
     const run = getRun();
     run.emit({ type: 'session', sessionId: 'sess-real' });
     // Ends, but stop *before* drive() gets to its finalize — the window between
@@ -498,7 +532,7 @@ describe('AgentTaskManager', () => {
 
   it('stopTask still reports output and a session id when the run never ends', async () => {
     const { manager: m, getRun: get } = makeManager({ stubborn: true });
-    const { taskId } = m.startTask(sampleParams);
+    const { taskId } = await m.startTask(sampleParams);
     const run = get();
     run.emit({ type: 'session', sessionId: 'sess-stubborn' });
     run.emit({ type: 'text', text: 'half-done work' });
@@ -515,7 +549,7 @@ describe('AgentTaskManager', () => {
 
   it('stopTask wakes a parked poll instead of leaving it to time out', async () => {
     const { manager: m, getRun: get } = makeManager({ stubborn: true });
-    const { taskId } = m.startTask(sampleParams);
+    const { taskId } = await m.startTask(sampleParams);
     // Only the session, so there is nothing to drain and the poll really parks.
     get().emit({ type: 'session', sessionId: 'sess-stubborn' });
 
@@ -531,10 +565,254 @@ describe('AgentTaskManager', () => {
   }, 15_000);
 
   it('killAll stops running tasks and forgets them', async () => {
-    const { taskId } = manager.startTask(sampleParams);
+    const { taskId } = await manager.startTask(sampleParams);
     manager.killAll();
     expect(getRun().stopped).toBe(true);
     // The task has been reaped, so the next readStatus should error.
     await expect(manager.readStatus(taskId)).rejects.toThrow();
+  });
+
+  describe('a restart at any moment', () => {
+    /** The pending-work payload the manager last recorded for a task. */
+    const recorded = () => mockUpdateWork.mock.calls.at(-1)?.[2];
+
+    it('keeps a task as pending work from its start until its end has been read', async () => {
+      const { taskId } = await manager.startTask({ prompt: 'fix the build', mode: 'plan' });
+      expect(mockBeginWork).toHaveBeenCalledWith('coding-task', taskId, {
+        params: { prompt: 'fix the build', mode: 'plan', agent: 'claude-code' },
+      });
+
+      getRun().emit({ type: 'session', sessionId: 'session-1' });
+      await flush();
+      expect(recorded()).toEqual({
+        params: { prompt: 'fix the build', mode: 'plan', agent: 'claude-code' },
+        sessionId: 'session-1',
+        process: { pid: 4242, startedAt: 1_000 },
+      });
+
+      getRun().finish(SUCCESS);
+      await flush();
+      // Kept for its reader with no resume attempt against it, so the bound never drops it.
+      expect(mockSettleWork).toHaveBeenCalledWith('coding-task', taskId, {
+        params: { prompt: 'fix the build', mode: 'plan', agent: 'claude-code' },
+        sessionId: 'session-1',
+        finished: { stopReason: 'end_turn', turns: 1, result: 'ok' },
+      });
+      expect(mockEndWork).not.toHaveBeenCalled();
+
+      await pollUntilComplete(manager, taskId);
+      await manager.readStatus(taskId).catch(() => undefined);
+      expect(mockEndWork).toHaveBeenCalledWith('coding-task', taskId);
+    });
+
+    it('refuses a task it cannot record, and launches nothing', async () => {
+      mockBeginWork.mockRejectedValueOnce(new Error('disk full'));
+
+      await expect(manager.startTask(sampleParams)).rejects.toThrow('disk full');
+
+      expect(() => getRun()).toThrow('run not started yet');
+      expect(manager.runningCount()).toBe(0);
+    });
+
+    it('refuses a task for an agent that is not available, and records nothing', async () => {
+      const tasks = new AgentTaskManager(() => {
+        throw new Error('Coding agent "codex" is unavailable.');
+      });
+
+      await expect(tasks.startTask({ ...sampleParams, agent: 'codex' })).rejects.toThrow('is unavailable');
+
+      expect(mockBeginWork).not.toHaveBeenCalled();
+      expect(tasks.runningCount()).toBe(0);
+    });
+
+    it('holds a slot for a start that waits for its record', async () => {
+      let recordedRow!: () => void;
+      mockBeginWork.mockImplementationOnce(() => new Promise<void>((resolve) => { recordedRow = resolve; }));
+
+      const first = manager.startTask(sampleParams);
+      for (let i = 1; i < MAX_CONCURRENT; i++) await manager.startTask(sampleParams);
+      await expect(manager.startTask(sampleParams)).rejects.toThrow(/Max concurrent/);
+
+      recordedRow();
+      await first;
+      expect(manager.runningCount()).toBe(MAX_CONCURRENT);
+    });
+
+    it('stops owing a task once a read hands out how it ended, also with its last output', async () => {
+      const { taskId } = await manager.startTask(sampleParams);
+      getRun().emit({ type: 'text', text: 'all done' });
+      getRun().finish(SUCCESS);
+      await flush();
+
+      const status = await manager.readStatus(taskId, 0);
+
+      expect(status).toMatchObject({ completed: true, output: 'all done' });
+      expect(mockEndWork).toHaveBeenCalledWith('coding-task', taskId);
+    });
+
+    it('stops owing a task the agent stopped', async () => {
+      const { taskId } = await manager.startTask(sampleParams);
+      await manager.stopTask(taskId);
+
+      expect(mockEndWork).toHaveBeenCalledWith('coding-task', taskId);
+    });
+
+    it('resumes the session of a task a restart stopped, under the same id', async () => {
+      await manager.resume([
+        {
+          key: 'task-7',
+          payload: { params: { prompt: 'fix the build', mode: 'edit', agent: 'claude-code' }, sessionId: 'session-1' },
+          attempts: 1,
+          createdAt: new Date(),
+        },
+      ]);
+
+      expect(getTask()).toMatchObject({
+        taskId: 'task-7',
+        sessionId: 'session-1',
+        prompt: RESUMED_CODING_TASK_PROMPT,
+        mode: 'edit',
+      });
+      // Until the agent reports a session, the one it resumes stays on the row.
+      expect(recorded()).toMatchObject({ sessionId: 'session-1' });
+      getRun().emit({ type: 'text', text: 'continuing' });
+      getRun().finish(SUCCESS);
+      const { output, status } = await pollUntilComplete(manager, 'task-7');
+      expect(output).toBe('continuing');
+      expect(status.completed).toBe(true);
+      // The row keeps what the task was started with, not the resume prompt.
+      expect(recorded()).toMatchObject({ params: { prompt: 'fix the build' } });
+    });
+
+    it('stops the run a crash left running before it relaunches the task', async () => {
+      const mark = { pid: 777, startedAt: 2_000 };
+      mockStopLeftover.mockImplementationOnce(async () => {
+        expect(() => getRun()).toThrow('run not started yet');
+        return true;
+      });
+
+      await manager.resume([
+        {
+          key: 'task-7',
+          payload: { params: { prompt: 'fix the build', agent: 'claude-code' }, sessionId: 'session-1', process: mark },
+          attempts: 1,
+          createdAt: new Date(),
+        },
+      ]);
+
+      expect(mockStopLeftover).toHaveBeenCalledWith(mark);
+      expect(getTask()).toMatchObject({ taskId: 'task-7', sessionId: 'session-1' });
+    });
+
+    it("gives a relaunched task the plugins' MCP servers, read before the relaunch", async () => {
+      const server = { kind: 'stdio', name: 'search', command: 'search-mcp', args: [], env: {} };
+      mockReadPluginConfigs.mockImplementationOnce(async () => {
+        mockConfiguredServers.mockReturnValue([{ pluginId: 'docs', server }]);
+      });
+
+      await manager.resume([
+        { key: 'task-8', payload: { params: { prompt: 'fix the build', agent: 'claude-code' } }, attempts: 1, createdAt: new Date() },
+      ]);
+
+      expect(getTask().mcpServers).toContainEqual({ ...server, name: 'docs__search' });
+    });
+
+    it('starts a task again when the restart came before it reported a session', async () => {
+      await manager.resume([
+        {
+          key: 'task-8',
+          payload: { params: { prompt: 'fix the build', agent: 'claude-code' } },
+          attempts: 1,
+          createdAt: new Date(),
+        },
+      ]);
+
+      expect(getTask()).toMatchObject({ taskId: 'task-8', prompt: 'fix the build' });
+      expect(getTask().sessionId).toBeUndefined();
+    });
+
+    it('continues the other tasks when one cannot continue, and stops owing that one', async () => {
+      const runs: string[] = [];
+      const tasks = new AgentTaskManager((id) => {
+        if (id === 'codex') throw new Error('Coding agent "codex" is unavailable.');
+        return {
+          id, displayName: id, prepareHome: () => ({ configDir: '', skillsLinked: true }),
+          run: (task) => { runs.push(task.taskId); return new FakeRun(); },
+        };
+      });
+
+      await tasks.resume([
+        { key: 'task-codex', payload: { params: { prompt: 'a', agent: 'codex' } }, attempts: 1, createdAt: new Date() },
+        { key: 'task-claude', payload: { params: { prompt: 'b', agent: 'claude-code' } }, attempts: 1, createdAt: new Date() },
+      ]);
+
+      expect(runs).toEqual(['task-claude']);
+      expect(mockEndWork).toHaveBeenCalledWith('coding-task', 'task-codex');
+      tasks.killAll();
+    });
+
+    it('stops the run of a task the restarts gave up, and relaunches nothing', async () => {
+      const mark = { pid: 778, startedAt: 3_000 };
+
+      await manager.resume([], [
+        { key: 'task-loop', payload: { params: { prompt: 'fix the build', agent: 'claude-code' }, process: mark }, attempts: 4, createdAt: new Date() },
+      ]);
+
+      expect(mockStopLeftover).toHaveBeenCalledWith(mark);
+      expect(() => getRun()).toThrow('run not started yet');
+    });
+
+    it('reports a finished result after its agent became unavailable', async () => {
+      const tasks = new AgentTaskManager(() => {
+        throw new Error('Coding agent "codex" is unavailable.');
+      });
+
+      await tasks.resume([
+        {
+          key: 'task-done',
+          payload: { params: { prompt: 'fix it', agent: 'codex' }, finished: { result: 'Fixed.', turns: 2, stopReason: 'end_turn' } },
+          attempts: 1,
+          createdAt: new Date(),
+        },
+      ]);
+
+      await expect(tasks.readStatus('task-done')).resolves.toMatchObject({ completed: true, result: 'Fixed.', agent: 'codex' });
+    });
+
+    it('keeps the refusals of a finished task for its reader', async () => {
+      const refusals = [{ action: 'Write', target: '/work/forbidden.txt' }];
+      const { taskId } = await manager.startTask(sampleParams);
+      getRun().finish({ stopReason: 'end_turn', turns: 2, message: 'done', refusals });
+      await flush();
+
+      expect(mockSettleWork).toHaveBeenCalledWith('coding-task', taskId, expect.objectContaining({
+        finished: expect.objectContaining({ stopReason: 'refused', refusals }),
+      }));
+    });
+
+    it('reports the result of a task that ended unread before the restart', async () => {
+      await manager.resume([
+        {
+          key: 'task-9',
+          payload: {
+            params: { prompt: 'fix the build', agent: 'claude-code' },
+            sessionId: 'session-9',
+            finished: { result: 'Build fixed.', turns: 4, stopReason: 'end_turn' },
+          },
+          attempts: 1,
+          createdAt: new Date(),
+        },
+      ]);
+
+      // A result nobody reads counts as an attempt, so the bound drops it.
+      expect(mockSettleWork).not.toHaveBeenCalled();
+      await expect(manager.readStatus('task-9')).resolves.toMatchObject({
+        completed: true,
+        result: 'Build fixed.',
+        turns: 4,
+        sessionId: 'session-9',
+      });
+      expect(() => getRun()).toThrow('run not started yet');
+    });
   });
 });

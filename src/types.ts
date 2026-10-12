@@ -138,6 +138,11 @@ export interface InvokeRequest {
    * Bedrock/Anthropic reject.
    */
   appendPrompt?: boolean;
+  /**
+   * The run starts work that a restart may have stopped part-way. The model is
+   * told in a message after the prompt, so the cached prefix before it holds.
+   */
+  afterRestart?: boolean;
 }
 
 // ============================================================================
@@ -168,6 +173,17 @@ export interface ToolOutputTruncation {
    * read back.
    */
   spillId?: string;
+}
+
+/**
+ * An exchange that continues one a restart interrupted. `messageIds` names every
+ * stored message it owes an answer; `unsaved` is what the interrupted turn did
+ * that history does not hold.
+ */
+export interface ResumedReply {
+  messageIds: string[];
+  unsaved: ToolCallRecord[];
+  unsentAttachmentIds: string[];
 }
 
 export interface ToolCallRecord {

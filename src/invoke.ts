@@ -1,5 +1,5 @@
 import { computerHelpNotices } from './prompts/computer-prompt';
-import { computerHelpService } from './services/computer/computer-help.service';
+import { computerHelpService, waitsForAnswer } from './services/computer/computer-help.service';
 import { hasComputerForMode } from './services/computer/supported';
 import { computerService } from './services/computer/computer.service';
 /**
@@ -68,6 +68,7 @@ import {
 } from './services/conversation-thread-activity.service';
 import { trackEvent, langfuseTelemetry } from './lib/telemetry';
 import { AsyncChannel } from './utils/async-channel';
+import { RESUMED_RUN_NOTICE } from './prompts/resume-prompt';
 
 /**
  * The system prompt parts and the opening messages of a turn: the context's
@@ -115,6 +116,7 @@ export async function buildTurnRequest(
   if (request.mode !== 'chat' || request.appendPrompt || messages.length === 0) {
     messages.push({ role: 'user' as const, content: request.prompt });
   }
+  if (request.afterRestart) messages.push({ role: 'user' as const, content: RESUMED_RUN_NOTICE });
 
   return { systemParts, messages, toolChangeMessages: history.trailingToolChanges };
 }
@@ -229,7 +231,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       const help = await computerHelpService.forTurn(request);
       context.runtimeNotices = [
         ...(request.runtimeNotices ?? []),
-        ...computerHelpNotices(help),
+        ...computerHelpNotices(help, waitsForAnswer(request.mode)),
       ];
     }
 

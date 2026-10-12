@@ -7,6 +7,7 @@
  */
 
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import { callModel } from '../lib/model-call';
 import { messageDeliveryService, PublishOptions } from './message-delivery.service';
 import type { ChannelName } from './channel-adapter.interface';
@@ -15,8 +16,10 @@ import { threadTurnService, type PendingMessage } from './thread-turn.service';
 import { threadTitleService } from './thread-title.service';
 import { conversationThreadActivityService } from './conversation-thread-activity.service';
 import { attachmentService } from './attachment.service';
+import { pendingWorkService } from './pending-work.service';
+import { RESUMED_REPLY_NOTICE } from '../prompts/resume-prompt';
 import { invokeStream } from '../invoke';
-import { ToolCallRecord, InvokeStep, InvokeError, UIBlock } from '../types';
+import { ToolCallRecord, InvokeStep, InvokeError, ResumedReply, UIBlock } from '../types';
 import type { SteeringMessage } from '../prompts/context-builder';
 import type { ToolLifecycleListener } from '../lib/tool-lifecycle';
 import { logger } from '../logger';
@@ -50,6 +53,8 @@ interface StreamedTurn {
   agentMessage: Awaited<ReturnType<typeof messageDeliveryService.publish>> | undefined;
   /** Set when the turn ended on an error step, whose text is the published reply. */
   error?: InvokeError;
+  /** The model's stream ended on its own, not by an abort, so the reply is the whole answer. */
+  completed: boolean;
 }
 
 // ============================================================================
@@ -81,7 +86,9 @@ export interface ChatInput {
    * moment it is safe — before any turn, and whatever happens to the turn — stores
    * first and hands the row over here.
    */
-  stored?: { titleSet: string | null };
+  stored?: { id: string; titleSet: string | null };
+  /** The exchange continues one a restart interrupted. `message` is the newest message it owes an answer. */
+  resumed?: ResumedReply;
   metadata?: {
     /** The `name` of the adapter the message came through; the reply goes back there. */
     channel?: ChannelName;
@@ -128,6 +135,67 @@ export interface ChatTurnEnd {
   cancelled: boolean;
   /** Set when the agent could not answer: the exchange ended on an error reply, or threw. */
   error?: InvokeError;
+}
+
+/**
+ * A message owed an answer, as `pending_work` holds it: where its thread is and
+ * how its reply is delivered.
+ */
+export interface ChatWork {
+  threadId: string;
+  agentId: string;
+  userId: string;
+  metadata?: ChatInput['metadata'];
+  /**
+   * The message itself until its row is stored, so the boot stores it when a
+   * restart came first. `acceptUserMessage` writes it.
+   */
+  message?: Pick<ChatInput, 'message' | 'attachmentIds'>;
+  /**
+   * The tool calls the turn has made that no stored message holds yet: a step's
+   * calls are stored with the next text step. A resumed exchange stores them
+   * before its first turn, so that turn reads them as its own tool results.
+   */
+  unsaved?: ToolCallRecord[];
+  /**
+   * The files the turn shared that no delivered reply holds yet: they go out with
+   * the turn's last reply. A resumed exchange's first reply delivers them.
+   */
+  unsentAttachmentIds?: string[];
+}
+
+/**
+ * The attachments that chat work holds: the uploads of a message not linked yet,
+ * and the files a turn shared that no reply delivered. The orphan sweep keeps them.
+ */
+export async function attachmentsHeldByChatWork(): Promise<string[]> {
+  const rows = await pendingWorkService.rows('chat');
+  return rows.flatMap(({ payload }) => {
+    const work = payload as unknown as ChatWork;
+    return [...(work.message?.attachmentIds ?? []), ...(work.unsentAttachmentIds ?? [])];
+  });
+}
+
+/** How much of an unsaved tool call the pending-work row keeps: the newest calls, each cut. */
+const UNSAVED_MAX_CALLS = 20;
+const UNSAVED_MAX_CHARS = 4_000;
+
+function cut(text: string): string {
+  return text.length <= UNSAVED_MAX_CHARS ? text : `${text.slice(0, UNSAVED_MAX_CHARS)}…`;
+}
+
+/** A call's input with each long string in it cut, so it stays JSON and replays with its arguments. */
+function cutInput(input: string): string {
+  return input.length <= UNSAVED_MAX_CHARS ? input : JSON.stringify(cutStrings(JSON.parse(input)));
+}
+
+function cutStrings(value: unknown): unknown {
+  if (typeof value === 'string') return cut(value);
+  if (Array.isArray(value)) return value.map(cutStrings);
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, field]) => [key, cutStrings(field)]));
+  }
+  return value;
 }
 
 // ============================================================================
@@ -308,11 +376,23 @@ Answer with one word: WORTHY or SKIP.`;
     // to a turn that owns the thread, but never take the thread themselves. When
     // nothing owns it, nothing is stored and nothing is invoked, so they queue the
     // message exactly as before.
-    // Held as one object so a failed store can name it again and withdraw it.
-    const pending: PendingMessage = { text: message, attachmentIds: input.attachmentIds ?? [] };
-    const claim = input.steerOnly ? null : threadTurnService.claimOrOffer(threadId, pending);
+    // Held as one object so a failed store can name it again and withdraw it. The
+    // id is chosen now, before the store, because a hand-over happens first.
+    const messageId = input.stored?.id ?? randomUUID();
+    const pending: PendingMessage = {
+      id: messageId,
+      text: message,
+      attachmentIds: input.attachmentIds ?? [],
+    };
+    // A reply a restart interrupted is never handed over: what its exchange stores
+    // and delivers first belongs to that exchange alone, so it waits for the thread.
+    const claim = input.steerOnly
+      ? null
+      : input.resumed
+        ? await threadTurnService.claimWhenFree(threadId)
+        : threadTurnService.claimOrOffer(threadId, pending);
 
-    if (input.steerOnly && !threadTurnService.offer(threadId, pending)) {
+    if (input.steerOnly && (input.resumed || !threadTurnService.offer(threadId, pending))) {
       return {
         threadId,
         content: '',
@@ -331,7 +411,7 @@ Answer with one word: WORTHY or SKIP.`;
     // unhandled rejection. A message the caller already stored is not written again.
     const stored: Promise<{ titleSet: string | null }> = input.stored
       ? Promise.resolve(input.stored)
-      : this.acceptUserMessage(input, threadId);
+      : this.acceptUserMessage(input, threadId, messageId);
     stored.catch(() => {});
 
     if (!claim) {
@@ -385,6 +465,34 @@ Answer with one word: WORTHY or SKIP.`;
     let turnError: InvokeError | undefined;
     let verbose = false;
     let titleSet: string | null = null;
+    // Every message this exchange answers. Each is owed an answer until the
+    // exchange ends, and a restart before then continues the exchange.
+    const owed = input.resumed ? [...input.resumed.messageIds] : [messageId];
+    // The messages a turn answered in full: its stream ended on its own, so its
+    // reply goes out even when a shutdown starts during the delivery.
+    const answered: string[] = [];
+    let turnIds = [...owed];
+    const take = (handed: PendingMessage[]) => {
+      const ids = handed.map((p) => p.id);
+      owed.push(...ids);
+      turnIds.push(...ids);
+      return handed;
+    };
+    const work: ChatWork = { threadId, agentId, userId, ...(metadata ? { metadata } : {}) };
+    // Kept as a turn goes on the row of the first message it answers, which stays
+    // until the turn's reply is out. A restart stores what the turn did before the
+    // resumed turn reads its history, and delivers the files it shared.
+    const recordUnsaved = (key: string) => (calls: ToolCallRecord[], attachmentIds: string[]) => {
+      const unsaved = calls
+        .slice(-UNSAVED_MAX_CALLS)
+        .map((call) => ({ ...call, input: cutInput(call.input), output: cut(call.output) }));
+      pendingWorkService.update('chat', key, {
+        ...work,
+        ...(unsaved.length > 0 ? { unsaved } : {}),
+        ...(attachmentIds.length > 0 ? { unsentAttachmentIds: attachmentIds } : {}),
+      });
+    };
+    let unsentAttachmentIds = input.resumed?.unsentAttachmentIds ?? [];
 
     // Hold the thread for the whole exchange — the first turn and any coalesced
     // follow-ups — so a background goal turn can't interleave between them.
@@ -397,74 +505,116 @@ Answer with one word: WORTHY or SKIP.`;
     const endActivity = conversationThreadActivityService.beginThread(threadId, userId);
     const controller = new AbortController();
     const abort = () => controller.abort();
-    if (input.abortSignal?.aborted) controller.abort();
-    else input.abortSignal?.addEventListener('abort', abort, { once: true });
+    // A shutdown stops the exchange too. Its messages stay owed, so the next boot
+    // continues it.
+    const stoppers = [input.abortSignal, pendingWorkService.shutdownSignal];
+    if (stoppers.some((signal) => signal?.aborted)) controller.abort();
+    else for (const signal of stoppers) signal?.addEventListener('abort', abort, { once: true });
     const unregister = this.registerCanceller(threadId, controller);
     const abortSignal = controller.signal;
     try {
       await claim.run(async () => {
-        titleSet = (await stored).titleSet;
+        try {
+          titleSet = (await stored).titleSet;
 
-        // Snapshot the verbose flag once inside the lock and thread it through the
-        // whole exchange (InvokeRequest → context → delivery gating in streamTurn),
-        // so prompt construction and delivery never diverge if it is toggled
-        // mid-turn — including across any coalesced follow-up.
-        const agent = await agentWorkspaceService.getAgent();
-        verbose = agent.verbose;
+          if (input.resumed) {
+            // The tool calls the interrupted turn made after its last stored step
+            // become history, then leave the rows. A restart between the two
+            // stores them twice, and the model reads each call twice. The files it
+            // shared stay owed on the row the first turn keeps.
+            if (input.resumed.unsaved.length > 0) {
+              await conversationService.addMessage(threadId, {
+                content: '',
+                role: 'AGENT',
+                triggeredBy: 'USER_INPUT',
+                toolCalls: input.resumed.unsaved,
+                internalStep: true,
+              });
+            }
+            // The first row takes every owed file before the others give theirs up.
+            recordUnsaved(owed[0])([], unsentAttachmentIds);
+            await pendingWorkService.flush();
+            for (const key of owed.slice(1)) pendingWorkService.update('chat', key, work);
+            // The notice is the history's last message, stored like the recalled
+            // memories: every later turn replays it, so the cached prefix holds.
+            await conversationService.addMessage(threadId, {
+              content: RESUMED_REPLY_NOTICE,
+              role: 'USER',
+              triggeredBy: 'USER_INPUT',
+              internalStep: true,
+            });
+          }
 
-        let prompt = message;
-        let appendPrompt = false;
-        // Notices describe events from preparing *this* message (e.g. an
-        // attachment that failed to download), so they belong to the first turn
-        // only — repeating them in a follow-up would re-report stale events.
-        let runtimeNotices = input.runtimeNotices;
+          // Snapshot the verbose flag once inside the lock and thread it through the
+          // whole exchange (InvokeRequest → context → delivery gating in streamTurn),
+          // so prompt construction and delivery never diverge if it is toggled
+          // mid-turn — including across any coalesced follow-up.
+          const agent = await agentWorkspaceService.getAgent();
+          verbose = agent.verbose;
 
-        for (;;) {
-          const streamed = await this.streamTurn({
-            userId,
-            agentId,
-            threadId,
-            workspaceRoot,
-            prompt,
-            appendPrompt,
-            verbose,
-            channelContext,
-            metadata,
-            runtimeNotices,
-            abortSignal,
-            onToolEvent: input.onToolEvent,
-            // Drained at every step boundary, so a message handed to us — even one
-            // that arrived while we were still storing or waiting for the mutex —
-            // reaches the model on the next step.
-            steering: () => this.loadSteering(claim.drain()),
-          });
+          let prompt = message;
+          let appendPrompt = false;
+          // Notices describe events from preparing *this* message (e.g. an
+          // attachment that failed to download), so they belong to the first turn
+          // only — repeating them in a follow-up would re-report stale events.
+          let runtimeNotices = input.runtimeNotices;
 
-          if (streamed.text) responseTexts.push(streamed.text);
-          allToolCalls.push(...streamed.toolCalls);
-          allBlocks.push(...streamed.blocks);
-          if (streamed.agentMessage) agentMessage = streamed.agentMessage;
-          turnError = streamed.error;
+          for (;;) {
+            const streamed = await this.streamTurn({
+              userId,
+              agentId,
+              threadId,
+              workspaceRoot,
+              prompt,
+              appendPrompt,
+              verbose,
+              channelContext,
+              metadata,
+              runtimeNotices,
+              abortSignal,
+              onToolEvent: input.onToolEvent,
+              onUnsaved: recordUnsaved(turnIds[0]),
+              unsentAttachmentIds,
+              // Drained at every step boundary, so a message handed to us — even one
+              // that arrived while we were still storing or waiting for the mutex —
+              // reaches the model on the next step.
+              steering: () => this.loadSteering(take(claim.drain())),
+            });
 
-          // A canceled turn must not auto-start another one — the user asked to
-          // stop. Anything still pending is cleared when the claim releases, and
-          // stays in history for the next turn (see thread-turn.service.ts).
-          if (abortSignal.aborted) break;
+            if (streamed.text) responseTexts.push(streamed.text);
+            allToolCalls.push(...streamed.toolCalls);
+            allBlocks.push(...streamed.blocks);
+            if (streamed.agentMessage) agentMessage = streamed.agentMessage;
+            turnError = streamed.error;
+            if (streamed.completed) answered.push(...turnIds);
+            turnIds = [];
+            unsentAttachmentIds = [];
 
-          // Messages that landed after the last step boundary never reached the
-          // model. Answer them in ONE coalesced follow-up rather than a turn each,
-          // restating them as the trailing user message (see `appendPrompt`).
-          //
-          // An empty inbox ends the exchange and releases the thread in the same
-          // synchronous act, so no message can be handed to a claim that is about
-          // to end — the next one starts a turn of its own.
-          const leftover = claim.drainOrRelease();
-          if (leftover.length === 0) break;
+            // A canceled turn must not auto-start another one — the user asked to
+            // stop. Anything still pending is cleared when the claim releases, and
+            // stays in history for the next turn (see thread-turn.service.ts).
+            if (abortSignal.aborted) break;
 
-          // Text only: any files these carried are already linked to their stored
-          // message rows, so the follow-up's context build picks them up.
-          prompt = leftover.map((p) => p.text).join('\n\n');
-          appendPrompt = true;
-          runtimeNotices = undefined;
+            // Messages that landed after the last step boundary never reached the
+            // model. Answer them in ONE coalesced follow-up rather than a turn each,
+            // restating them as the trailing user message (see `appendPrompt`).
+            //
+            // An empty inbox ends the exchange and releases the thread in the same
+            // synchronous act, so no message can be handed to a claim that is about
+            // to end — the next one starts a turn of its own.
+            const leftover = take(claim.drainOrRelease());
+            if (leftover.length === 0) break;
+
+            // Text only: any files these carried are already linked to their stored
+            // message rows, so the follow-up's context build picks them up.
+            prompt = leftover.map((p) => p.text).join('\n\n');
+            appendPrompt = true;
+            runtimeNotices = undefined;
+          }
+        } finally {
+          // A cancel or a throw ends the exchange with messages no turn took. They
+          // stay in history unanswered, as after any cancel, and are owed nothing.
+          take(claim.end());
         }
       });
       const ended: ChatTurnEnd = { threadId, cancelled: abortSignal.aborted, error: turnError };
@@ -475,8 +625,11 @@ Answer with one word: WORTHY or SKIP.`;
       this.events.emit('turnEnded', ended);
       throw error;
     } finally {
+      // A shutdown leaves owed what no turn answered in full, so the next boot
+      // answers it. Any other end, a cancel or a throw included, owes nothing.
+      pendingWorkService.finish('chat', pendingWorkService.shutdownSignal.aborted ? answered : owed);
       unregister();
-      input.abortSignal?.removeEventListener('abort', abort);
+      for (const signal of stoppers) signal?.removeEventListener('abort', abort);
       endActivity();
     }
 
@@ -523,12 +676,25 @@ Answer with one word: WORTHY or SKIP.`;
     id?: string,
   ): Promise<{ message: ConversationMessage; titleSet: string | null }> {
     const { agentId, userId, message, metadata } = input;
+    const messageId = id ?? randomUUID();
+
+    // Owed an answer from before it is stored until the exchange that answers it
+    // ends, so no restart in between loses it. The row holds the message until
+    // then, so a restart before the insert lands stores it at boot.
+    const work: ChatWork = {
+      threadId,
+      agentId,
+      userId,
+      ...(metadata ? { metadata } : {}),
+      message: { message, attachmentIds: input.attachmentIds },
+    };
+    await pendingWorkService.begin('chat', messageId, work);
 
     // The message text arrives already prefixed with the sender's mention
     // marker when the channel adapter wants the agent to see it in conversation
     // history.
     const { message: userMessage, titleSet } = await conversationService.addMessage(threadId, {
-      ...(id ? { id } : {}),
+      id: messageId,
       content: message,
       role: 'USER',
       triggeredBy: 'USER_INPUT',
@@ -615,6 +781,10 @@ Answer with one word: WORTHY or SKIP.`;
     runtimeNotices?: string[];
     abortSignal?: AbortSignal;
     onToolEvent?: ToolLifecycleListener;
+    /** After each step: the tool calls no stored message holds yet, and the files no delivered reply holds yet. */
+    onUnsaved: (calls: ToolCallRecord[], attachmentIds: string[]) => void;
+    /** Files an interrupted turn shared, which this turn's reply delivers. */
+    unsentAttachmentIds?: string[];
     steering: () => Promise<SteeringMessage[]>;
   }): Promise<StreamedTurn> {
     const { userId, agentId, threadId, prompt, channelContext, metadata } = params;
@@ -628,8 +798,10 @@ Answer with one word: WORTHY or SKIP.`;
     const allToolCalls: ToolCallRecord[] = [];
     // Files the agent shared (share_file) accrue across steps and ride out on
     // the final delivered message, so they appear alongside the answer.
-    const allAttachmentIds: string[] = [];
+    const allAttachmentIds: string[] = [...(params.unsentAttachmentIds ?? [])];
     let error: InvokeError | undefined;
+    // Whether the row holds calls or files that this turn's reply takes over.
+    let owes = allAttachmentIds.length > 0;
 
     for await (const step of invokeStream({
       userId,
@@ -692,6 +864,21 @@ Answer with one word: WORTHY or SKIP.`;
         bufferedToolCalls = pendingToolCalls;
         pendingToolCalls = [];
       }
+      if (step.toolCalls.length > 0 || step.text) {
+        const unsaved = [...bufferedToolCalls, ...pendingToolCalls];
+        params.onUnsaved(unsaved, [...allAttachmentIds]);
+        owes = unsaved.length > 0 || allAttachmentIds.length > 0;
+      }
+    }
+
+    // Read before the delivery: an abort that lands during it stops no answer.
+    const completed = !params.abortSignal?.aborted;
+    const response = responseTexts.join('\n\n');
+
+    // A turn a shutdown stopped delivers nothing. Its row keeps what the turn did,
+    // and the next boot continues the turn from there.
+    if (!completed && pendingWorkService.shutdownSignal.aborted) {
+      return { text: response, toolCalls: allToolCalls, blocks: allBlocks, agentMessage, completed, error };
     }
 
     // Stream is done. The buffered step (if any) is the LAST text step:
@@ -714,14 +901,12 @@ Answer with one word: WORTHY or SKIP.`;
       );
     }
 
-    const response = responseTexts.join('\n\n');
-
     // Fallback: the stream produced no text step. Publish only if there's still
-    // something to show (tool calls or UI blocks) — e.g. a tool-only turn. When
+    // something to show (tool calls, UI blocks or files) — e.g. a tool-only turn. When
     // a turn is canceled before producing anything, skip it rather than render
     // an empty agent bubble. (In this branch `response` is always '' because any
     // text step would have set `agentMessage` via the buffered-step publish.)
-    if (!agentMessage && (allToolCalls.length > 0 || allBlocks.length > 0)) {
+    if (!agentMessage && (allToolCalls.length > 0 || allBlocks.length > 0 || allAttachmentIds.length > 0)) {
       agentMessage = await messageDeliveryService.publish(
         userId,
         threadId,
@@ -735,8 +920,10 @@ Answer with one word: WORTHY or SKIP.`;
         }
       );
     }
+    // The reply holds the turn's calls and files now.
+    if (owes) params.onUnsaved([], []);
 
-    return { text: response, toolCalls: allToolCalls, blocks: allBlocks, agentMessage, error };
+    return { text: response, toolCalls: allToolCalls, blocks: allBlocks, agentMessage, completed, error };
   }
 }
 

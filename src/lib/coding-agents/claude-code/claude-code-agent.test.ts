@@ -213,6 +213,20 @@ describe('run: MCP servers', () => {
     await Array.fromAsync(run.events);
   });
 
+  it('names the CLI it starts to the next boot', async () => {
+    const { start, launched } = mcpHarness({
+      child: () => Object.assign(new FakeChild(), { mark: { pid: 4343, startedAt: 2_000 } }),
+    });
+    const run = start();
+    // The config is written first, so there is no process to name yet.
+    expect(run.mark).toBeUndefined();
+    const { child } = await launched();
+
+    expect(run.mark).toEqual({ pid: 4343, startedAt: 2_000 });
+    child.finish(0);
+    await Array.fromAsync(run.events);
+  });
+
   it('keeps every env value and header out of the process arguments', async () => {
     const { start, launched } = mcpHarness();
     const run = start();

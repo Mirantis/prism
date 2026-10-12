@@ -27,6 +27,9 @@ const {
   mockGenerateText,
   mockGetGateRequest,
   mockLoggerError,
+  mockBeginWork,
+  mockFinishWork,
+  shutdown,
 } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
   mockDeliverMessage: vi.fn(),
@@ -43,6 +46,9 @@ const {
   mockGenerateText: vi.fn(),
   mockGetGateRequest: vi.fn(),
   mockLoggerError: vi.fn(),
+  mockBeginWork: vi.fn(async () => undefined),
+  mockFinishWork: vi.fn(),
+  shutdown: { controller: new AbortController() },
 }));
 
 vi.mock('../invoke', () => ({
@@ -69,6 +75,17 @@ vi.mock('../lib/prisma', () => ({
     conversationThread: {
       findUnique: mockThreadFindUnique,
     },
+  },
+}));
+
+vi.mock('./pending-work.service', () => ({
+  MAX_RESUME_ATTEMPTS: 3,
+  pendingWorkService: {
+    get shutdownSignal() {
+      return shutdown.controller.signal;
+    },
+    begin: mockBeginWork,
+    finish: mockFinishWork,
   },
 }));
 
@@ -152,6 +169,7 @@ describe('CronSchedulerService', () => {
     mockThreadFindUnique.mockResolvedValue({ id: 'thread-bound' });
     mockCronTaskUpdateMany.mockResolvedValue({ count: 1 });
     mockCronTaskDeleteMany.mockResolvedValue({ count: 1 });
+    shutdown.controller = new AbortController();
     // Default: gate delivers (the suppression suite overrides this)
     mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
     mockGetGateRequest.mockReturnValue({
@@ -331,10 +349,11 @@ describe('CronSchedulerService', () => {
         agentId: 'agent-1',
         mode: 'cron',
         prompt: 'Check system health',
+        abortSignal: expect.any(AbortSignal),
       });
       expect(mockCronTaskUpdateMany).toHaveBeenCalledWith({
         where: { id: 'task-1' },
-        data: { lastRunAt: expect.any(Date) },
+        data: { nextRunAt: null, lastRunAt: expect.any(Date) },
       });
       expect(mockDeliverMessage).toHaveBeenCalledWith(
         'agent-1',
@@ -343,6 +362,226 @@ describe('CronSchedulerService', () => {
         'CRON_TASK',
         expect.objectContaining({ toolCalls: expect.any(Array) }),
       );
+    });
+  });
+
+  // ==========================================================================
+  // A restart at any moment
+  // ==========================================================================
+
+  describe('a restart at any moment', () => {
+    const tomorrow = new Date('2025-01-16T09:00:00Z');
+
+    it('stores when a recurring task next runs', async () => {
+      mockCronValidate.mockReturnValue(true);
+      mockCronSchedule.mockReturnValue({ stop: vi.fn(), getNextRun: () => tomorrow });
+
+      cronSchedulerService.scheduleTask(createCronTask());
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mockCronTaskUpdateMany).toHaveBeenCalledWith({
+        where: { id: 'task-1' },
+        data: { nextRunAt: tomorrow },
+      });
+    });
+
+    it('runs a recurring task at boot once when its stored run is due', async () => {
+      // Its last run was interrupted, or its tick fell while the runtime was down.
+      mockCronValidate.mockReturnValue(true);
+      mockCronSchedule.mockReturnValue({ stop: vi.fn(), getNextRun: () => tomorrow });
+
+      cronSchedulerService.scheduleTask(
+        createCronTask({ nextRunAt: '2025-01-15T09:00:00.000Z' }),
+        { source: 'boot' },
+      );
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+      // A run of the task may have stopped part-way at the restart, and the model is told.
+      expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ afterRestart: true }));
+      // The completed run, and nothing earlier, moves the stored time on.
+      expect(mockCronTaskUpdateMany).toHaveBeenCalledTimes(1);
+      expect(mockCronTaskUpdateMany).toHaveBeenCalledWith({
+        where: { id: 'task-1' },
+        data: { nextRunAt: tomorrow, lastRunAt: expect.any(Date) },
+      });
+    });
+
+    it('runs a task with no stored next run at boot when a tick fell after its last run', async () => {
+      // Stored before next runs were stored: the last run was yesterday's 09:00,
+      // and today's 09:00 fell while the runtime was down for the upgrade.
+      const atNine = (date: Date) => date.getUTCHours() === 9 && date.getUTCMinutes() === 0;
+      mockCronValidate.mockReturnValue(true);
+      mockCronSchedule.mockReturnValue({ stop: vi.fn(), getNextRun: () => tomorrow, match: atNine });
+
+      cronSchedulerService.scheduleTask(
+        createCronTask({ lastRunAt: '2025-01-14T09:00:00.000Z' }),
+        { source: 'boot' },
+      );
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+      expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ afterRestart: true }));
+    });
+
+    it('waits at boot for a task with no stored next run when no tick fell after its last run', async () => {
+      const atNine = (date: Date) => date.getUTCHours() === 9 && date.getUTCMinutes() === 0;
+      mockCronValidate.mockReturnValue(true);
+      mockCronSchedule.mockReturnValue({ stop: vi.fn(), getNextRun: () => tomorrow, match: atNine });
+
+      cronSchedulerService.scheduleTask(
+        createCronTask({ lastRunAt: '2025-01-15T09:00:00.000Z' }),
+        { source: 'boot' },
+      );
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mockInvoke).not.toHaveBeenCalled();
+      // The boot stores the next run, so the next restart compares against it.
+      expect(mockCronTaskUpdateMany).toHaveBeenCalledWith({ where: { id: 'task-1' }, data: { nextRunAt: tomorrow } });
+    });
+
+    it('waits for the tick at boot when the stored run is still ahead', async () => {
+      mockCronValidate.mockReturnValue(true);
+      mockCronSchedule.mockReturnValue({ stop: vi.fn(), getNextRun: () => tomorrow });
+
+      cronSchedulerService.scheduleTask(
+        createCronTask({ nextRunAt: tomorrow.toISOString() }),
+        { source: 'boot' },
+      );
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mockInvoke).not.toHaveBeenCalled();
+    });
+
+    it('leaves a run a shutdown stopped due, and delivers nothing', async () => {
+      let cronCallback: (() => Promise<void>) | undefined;
+      mockCronValidate.mockReturnValue(true);
+      mockCronSchedule.mockImplementation((_schedule: string, cb: () => Promise<void>) => {
+        cronCallback = cb;
+        return { stop: vi.fn(), getNextRun: () => tomorrow };
+      });
+      mockInvoke.mockImplementation(async () => {
+        shutdown.controller.abort();
+        return { response: 'half done', toolCalls: [], steps: [{ text: 'half done', toolCalls: [] }] };
+      });
+      cronSchedulerService.scheduleTask(createCronTask());
+      await vi.advanceTimersByTimeAsync(0);
+      mockCronTaskUpdateMany.mockClear();
+
+      await cronCallback!();
+
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockCronTaskUpdateMany).not.toHaveBeenCalled();
+      // The row stays, so the next boot counts the run it starts again.
+      expect(mockBeginWork).toHaveBeenCalledWith('cron', 'task-1', {});
+      expect(mockFinishWork).not.toHaveBeenCalled();
+    });
+
+    it('keeps a run as pending work from before the model call until it is recorded', async () => {
+      let cronCallback: (() => Promise<void>) | undefined;
+      mockCronValidate.mockReturnValue(true);
+      mockCronSchedule.mockImplementation((_schedule: string, cb: () => Promise<void>) => {
+        cronCallback = cb;
+        return { stop: vi.fn(), getNextRun: () => tomorrow };
+      });
+      cronSchedulerService.scheduleTask(createCronTask());
+      await vi.advanceTimersByTimeAsync(0);
+      mockCronTaskUpdateMany.mockClear();
+
+      await cronCallback!();
+
+      expect(mockBeginWork).toHaveBeenCalledWith('cron', 'task-1', {});
+      expect(mockBeginWork.mock.invocationCallOrder[0]).toBeLessThan(mockInvoke.mock.invocationCallOrder[0]);
+      expect(mockFinishWork).toHaveBeenCalledWith('cron', 'task-1');
+      expect(mockCronTaskUpdateMany.mock.invocationCallOrder[0]).toBeLessThan(mockFinishWork.mock.invocationCallOrder[0]);
+    });
+
+    it('skips a missed run at boot that stopped the runtime on every boot, and stores the next one', async () => {
+      mockCronValidate.mockReturnValue(true);
+      mockCronSchedule.mockReturnValue({ stop: vi.fn(), getNextRun: () => tomorrow });
+      await cronSchedulerService.resume([], [
+        { key: 'task-1', payload: {}, attempts: 4, createdAt: new Date() },
+      ]);
+
+      cronSchedulerService.scheduleTask(
+        createCronTask({ nextRunAt: '2025-01-15T09:00:00.000Z' }),
+        { source: 'boot' },
+      );
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mockInvoke).not.toHaveBeenCalled();
+      expect(mockCronTaskUpdateMany).toHaveBeenCalledWith({ where: { id: 'task-1' }, data: { nextRunAt: tomorrow } });
+    });
+
+    it('deletes a past-due one-shot at boot that stopped the runtime on every boot', async () => {
+      mockCronValidate.mockReturnValue(false);
+      await cronSchedulerService.resume([], [
+        { key: 'oneshot-loop', payload: {}, attempts: 4, createdAt: new Date() },
+      ]);
+
+      cronSchedulerService.scheduleTask(
+        createCronTask({ id: 'oneshot-loop', schedule: 'in 1 minute', nextRunAt: new Date(Date.now() - 60_000).toISOString() }),
+        { source: 'boot' },
+      );
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mockInvoke).not.toHaveBeenCalled();
+      expect(mockCronTaskDeleteMany).toHaveBeenCalledWith({ where: { id: 'oneshot-loop' } });
+    });
+
+    it('records a run whose result went out while the process shut down', async () => {
+      // The model finished; the shutdown lands during the delivery, which the
+      // result still reaches. The next boot must not run and deliver it again.
+      let cronCallback: (() => Promise<void>) | undefined;
+      mockCronValidate.mockReturnValue(true);
+      mockCronSchedule.mockImplementation((_schedule: string, cb: () => Promise<void>) => {
+        cronCallback = cb;
+        return { stop: vi.fn(), getNextRun: () => tomorrow };
+      });
+      mockDeliverMessage.mockImplementationOnce(async () => {
+        shutdown.controller.abort();
+      });
+      cronSchedulerService.scheduleTask(createCronTask());
+      await vi.advanceTimersByTimeAsync(0);
+      mockCronTaskUpdateMany.mockClear();
+
+      await cronCallback!();
+
+      expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ afterRestart: undefined }));
+      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
+      expect(mockCronTaskUpdateMany).toHaveBeenCalledWith({
+        where: { id: 'task-1' },
+        data: { nextRunAt: tomorrow, lastRunAt: expect.any(Date) },
+      });
+    });
+
+    it('runs a one-shot that fell due during the downtime at boot, then deletes it', async () => {
+      mockCronValidate.mockReturnValue(false);
+
+      cronSchedulerService.scheduleTask(
+        createCronTask({ id: 'oneshot-due', schedule: 'in 1 minute', nextRunAt: new Date(Date.now() - 60_000).toISOString() }),
+        { source: 'boot' },
+      );
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ afterRestart: true }));
+      expect(mockCronTaskDeleteMany).toHaveBeenCalledWith({ where: { id: 'oneshot-due' } });
+    });
+
+    it('keeps a one-shot a shutdown stopped, for the next boot to run', async () => {
+      mockCronValidate.mockReturnValue(false);
+      mockInvoke.mockImplementation(async () => {
+        shutdown.controller.abort();
+        return { response: '', toolCalls: [], steps: [] };
+      });
+
+      cronSchedulerService.scheduleTask(
+        createCronTask({ id: 'oneshot-cut', schedule: 'in 1 minute', nextRunAt: new Date(Date.now() + 60_000).toISOString() }),
+      );
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+      expect(mockCronTaskDeleteMany).not.toHaveBeenCalled();
     });
   });
 
@@ -387,6 +626,8 @@ describe('CronSchedulerService', () => {
         agentId: 'agent-1',
         mode: 'cron',
         prompt: 'Generate the daily report.',
+        afterRestart: false,
+        abortSignal: expect.any(AbortSignal),
       });
       expect(mockCronTaskDeleteMany).toHaveBeenCalledWith({ where: { id: 'oneshot-2' } });
     });
@@ -439,6 +680,8 @@ describe('CronSchedulerService', () => {
         agentId: 'agent-1',
         mode: 'cron',
         prompt: 'Generate the daily report.',
+        afterRestart: false,
+        abortSignal: expect.any(AbortSignal),
       });
     });
   });
@@ -818,7 +1061,7 @@ describe('CronSchedulerService', () => {
       // Bookkeeping is unaffected by suppression
       expect(mockCronTaskUpdateMany).toHaveBeenCalledWith({
         where: { id: 'task-1' },
-        data: { lastRunAt: expect.any(Date) },
+        data: { nextRunAt: null, lastRunAt: expect.any(Date) },
       });
       expect(mockTrackEvent).toHaveBeenCalledWith(
         'cron task executed',
@@ -1177,7 +1420,7 @@ describe('CronSchedulerService', () => {
 
     it('does not emit "cron task scheduled" for boot re-registrations', () => {
       mockCronValidate.mockReturnValue(true);
-      mockCronSchedule.mockReturnValue({ stop: vi.fn() });
+      mockCronSchedule.mockReturnValue({ stop: vi.fn(), match: () => false });
 
       cronSchedulerService.scheduleTask(createCronTask(), { source: 'boot' });
 
@@ -1186,7 +1429,7 @@ describe('CronSchedulerService', () => {
 
     it('emits "cron task deleted" on unscheduleTask, but not on internal re-registration', () => {
       mockCronValidate.mockReturnValue(true);
-      mockCronSchedule.mockReturnValue({ stop: vi.fn() });
+      mockCronSchedule.mockReturnValue({ stop: vi.fn(), match: () => false });
 
       // Re-registering the same task replaces the job via the private
       // stopJob path — no delete event.

@@ -14,6 +14,7 @@ const { mockPrisma } = vi.hoisted(() => {
     updateMany: vi.fn(),
     findMany: vi.fn(),
     findFirst: vi.fn(),
+    findUnique: vi.fn(),
     deleteMany: vi.fn(),
   };
   return {
@@ -146,16 +147,38 @@ describe('webhookRunService writes', () => {
     );
   });
 
-  it('fails the runs a restart cut off', async () => {
+  it('fails the runs a restart cut off, except the ones that run again', async () => {
     mockPrisma.webhookRun.updateMany.mockResolvedValue({ count: 2 });
 
-    const count = await webhookRunService.failInterrupted('agent-1');
+    const count = await webhookRunService.failInterrupted('agent-1', ['run-3']);
 
     expect(count).toBe(2);
     expect(mockPrisma.webhookRun.updateMany).toHaveBeenCalledWith({
-      where: { agentId: 'agent-1', status: { in: ['queued', 'running'] } },
+      where: { agentId: 'agent-1', status: { in: ['queued', 'running'] }, id: { notIn: ['run-3'] } },
       data: { status: 'failed', error: INTERRUPTED_ERROR, finishedAt: expect.any(Date) },
     });
+  });
+
+  it('queues a run a restart cut off again, while it is unfinished', async () => {
+    mockPrisma.webhookRun.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+    mockPrisma.webhookRun.findUnique.mockResolvedValueOnce({ id: 'run-done' });
+
+    await expect(webhookRunService.requeue({ ...EVENT, id: 'run-3' })).resolves.toBe(true);
+    await expect(webhookRunService.requeue({ ...EVENT, id: 'run-done' })).resolves.toBe(false);
+    expect(mockPrisma.webhookRun.updateMany).toHaveBeenCalledWith({
+      where: { id: 'run-3', status: { in: ['queued', 'running'] } },
+      data: { status: 'queued' },
+    });
+    expect(mockPrisma.webhookRun.create).not.toHaveBeenCalled();
+  });
+
+  it('records a run the restart cut off before its row was written, and queues it', async () => {
+    mockPrisma.webhookRun.updateMany.mockResolvedValueOnce({ count: 0 });
+    mockPrisma.webhookRun.findUnique.mockResolvedValueOnce(null);
+
+    await expect(webhookRunService.requeue(EVENT)).resolves.toBe(true);
+
+    expect(mockPrisma.webhookRun.create).toHaveBeenCalledWith({ data: { ...EVENT, status: 'queued' } });
   });
 });
 

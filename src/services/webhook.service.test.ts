@@ -31,6 +31,12 @@ const {
   mockRunFinish,
   mockWebhookRunUpdate,
   mockRunClassificationGate,
+  mockRunRequeue,
+  mockRunFailInterrupted,
+  mockBeginWork,
+  mockFinishWork,
+  mockEndWork,
+  shutdown,
 } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
   mockPublishToLatestThread: vi.fn(),
@@ -47,6 +53,12 @@ const {
   mockRunFinish: vi.fn(),
   mockWebhookRunUpdate: vi.fn(),
   mockRunClassificationGate: vi.fn(),
+  mockRunRequeue: vi.fn(),
+  mockRunFailInterrupted: vi.fn(),
+  mockBeginWork: vi.fn(),
+  mockFinishWork: vi.fn(),
+  mockEndWork: vi.fn(),
+  shutdown: { controller: new AbortController() },
 }));
 
 vi.mock('../invoke', () => ({
@@ -73,6 +85,19 @@ vi.mock('./webhook-run.service', () => ({
     accept: mockRunAccept,
     start: mockRunStart,
     finish: mockRunFinish,
+    requeue: mockRunRequeue,
+    failInterrupted: mockRunFailInterrupted,
+  },
+}));
+
+vi.mock('./pending-work.service', () => ({
+  pendingWorkService: {
+    begin: mockBeginWork,
+    finish: mockFinishWork,
+    end: mockEndWork,
+    get shutdownSignal() {
+      return shutdown.controller.signal;
+    },
   },
 }));
 
@@ -183,6 +208,10 @@ beforeEach(() => {
   mockPublishToLatestThread.mockResolvedValue({ id: 'msg-1' });
   mockPublish.mockResolvedValue({ id: 'msg-1' });
   mockRunAccept.mockResolvedValue(undefined);
+  mockRunRequeue.mockResolvedValue(true);
+  mockRunFailInterrupted.mockResolvedValue(0);
+  mockBeginWork.mockResolvedValue(undefined);
+  shutdown.controller = new AbortController();
   // Default: no channel destination and no linked channel. Scoped tests override these.
   mockDefaultDestination.mockResolvedValue(null);
   mockListChannelIds.mockResolvedValue([]);
@@ -1155,5 +1184,84 @@ describe('handleInbound agent mode', () => {
     await vi.waitFor(() =>
       expect(mockPublishToLatestThread).toHaveBeenCalledTimes(WEBHOOK_MAX_PENDING + 1),
     );
+  });
+});
+
+describe('a restart at any moment', () => {
+  it('records an agent run as pending work, with its rendered prompt and its record, before accepting it', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ prompt: 'Deploy {status}' }));
+    mockInvoke.mockResolvedValue(invokeResult('done'));
+
+    await webhookService.handleInbound('alerts', { status: 'failed' }, {}, 'run-1');
+
+    expect(mockBeginWork).toHaveBeenCalledWith('webhook', 'run-1', {
+      subscriptionId: 'sub-1',
+      prompt: 'Deploy failed',
+      run: expect.objectContaining({ id: 'run-1', agentId: 'agent-1', name: 'alerts' }),
+    });
+    expect(mockBeginWork.mock.invocationCallOrder[0]).toBeLessThan(mockRunAccept.mock.invocationCallOrder[0]);
+    expect(mockRunAccept).toHaveBeenCalledWith(expect.objectContaining({ id: 'run-1' }), 'queued');
+    await vi.waitFor(() => expect(mockFinishWork).toHaveBeenCalledWith('webhook', 'run-1'));
+  });
+
+  it('stops owing a run whose result went out while the process shut down', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
+    mockInvoke.mockResolvedValue(invokeResult('done'));
+    mockPublishToLatestThread.mockImplementationOnce(async () => {
+      shutdown.controller.abort();
+      return { id: 'msg-1' };
+    });
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+
+    await vi.waitFor(() => expect(mockFinishWork).toHaveBeenCalledWith('webhook', 'run-1'));
+    expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status: 'completed', messageId: 'msg-1' });
+  });
+
+  it('records no result for a run a shutdown stops, so the next boot runs it again', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
+    mockInvoke.mockImplementation(async () => {
+      shutdown.controller.abort();
+      return invokeResult('half done');
+    });
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    await vi.waitFor(() => expect(mockInvoke).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(mockRunFinish).not.toHaveBeenCalled();
+    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
+    expect(mockFinishWork).not.toHaveBeenCalled();
+  });
+
+  it('runs an interrupted run again at boot and fails only the runs it cannot', async () => {
+    mockSubscriptionFindUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+      where.id === 'sub-1' ? createSubscription() : null,
+    );
+    mockInvoke.mockResolvedValue(invokeResult('done'));
+
+    const run1 = { id: 'run-1', agentId: 'agent-1', name: 'alerts', event: 'push' };
+    const run2 = { id: 'run-2', agentId: 'agent-1', name: 'gone', event: 'push' };
+    await webhookService.resume([
+      { key: 'run-1', payload: { subscriptionId: 'sub-1', prompt: 'Deploy failed', run: run1 }, attempts: 1, createdAt: new Date() },
+      { key: 'run-2', payload: { subscriptionId: 'sub-gone', prompt: 'x', run: run2 }, attempts: 1, createdAt: new Date() },
+    ]);
+
+    expect(mockRunRequeue).toHaveBeenCalledWith(run1);
+    expect(mockEndWork).toHaveBeenCalledWith('webhook', 'run-2');
+    expect(mockRunFailInterrupted).toHaveBeenCalledWith('agent-1', ['run-1']);
+    await vi.waitFor(() =>
+      expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status: 'completed', messageId: 'msg-1' }),
+    );
+    // The model is told an earlier run may have acted, so it checks before it repeats a step.
+    expect(mockInvoke).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: 'Deploy failed', afterRestart: true }),
+    );
+  });
+
+  it('fails every unfinished run at boot when none is pending', async () => {
+    await webhookService.resume([]);
+
+    expect(mockRunFailInterrupted).toHaveBeenCalledWith('agent-1', []);
   });
 });

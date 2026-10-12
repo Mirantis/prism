@@ -26,14 +26,16 @@ import { parseSchedule } from '../services/cron-schedule';
 const router = Router();
 
 /**
- * A task as the list shows it. A recurring task stores no next run; its running job knows it.
- * A one-shot's schedule is the wording it was asked in, which node-cron does not read.
+ * A task as the list shows it. A recurring task's running job knows its next run; the stored
+ * one is what the boot reads. A one-shot's schedule is the wording it was asked in, which
+ * node-cron does not read.
  */
 function toListedTask(task: CronTask) {
+  const recurring = cron.validate(task.schedule);
   return {
     ...task,
-    recurring: cron.validate(task.schedule),
-    nextRunAt: task.nextRunAt ?? cronSchedulerService.nextRunFor(task.id),
+    recurring,
+    nextRunAt: recurring ? cronSchedulerService.nextRunFor(task.id) : task.nextRunAt,
   };
 }
 

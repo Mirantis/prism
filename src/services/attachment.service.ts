@@ -586,11 +586,11 @@ class AttachmentService {
     return new Set(rows.map((r) => r.storagePath).filter((p): p is string => p !== null));
   }
 
-  /** Reap abandoned pre-send uploads that never got linked to a message. */
-  async deleteOrphans(olderThanMs: number): Promise<number> {
+  /** Reap abandoned pre-send uploads that never got linked to a message, except the ids in `keep`. */
+  async deleteOrphans(olderThanMs: number, keep: string[] = []): Promise<number> {
     const cutoff = new Date(Date.now() - olderThanMs);
     const victims = await prisma.messageAttachment.findMany({
-      where: { messageId: null, createdAt: { lt: cutoff } },
+      where: { messageId: null, createdAt: { lt: cutoff }, id: { notIn: keep } },
       select: { id: true, storagePath: true },
     });
     let deleted = 0;

@@ -19,6 +19,8 @@ import { AgentWorkspace } from '@prisma/client';
 import { messageDeliveryService } from './message-delivery.service';
 import { runClassificationGate, isRecentDuplicate } from '../lib/classification-gate';
 import { agentStatusService } from './agent-status.service';
+import { MAX_RESUME_ATTEMPTS, pendingWorkService, type PendingWorkItem } from './pending-work.service';
+import prisma from '../lib/prisma';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { formatTimeAgo } from '../prompts/context-builder';
@@ -59,17 +61,35 @@ interface HeartbeatResult {
   text: string;
 }
 
+/** The messages a source holds for a heartbeat, oldest first, and the ids that name them. */
+export interface PendingTriggerMessages {
+  messages: ChannelTriggerMessage[];
+  ids: string[];
+}
+
 /**
  * A channel that queues messages to start the heartbeat. A timer heartbeat
- * drains every registered source, so nothing queued waits for a trigger.
+ * reads every registered source, so nothing queued waits for a trigger. A run
+ * removes the messages it read once it ends, so a restart before then leaves
+ * them for the next run.
  */
 export interface HeartbeatTriggerSource {
   /** The channel's adapter name; reported as the heartbeat's trigger. */
   readonly channel: ChatPlatform;
   /** How the prompt names the channel's platform. */
   readonly platform: string;
-  /** Hand over every message queued for `agentId`, and forget them. */
-  drain(agentId: string): Promise<ChannelTriggerMessage[]>;
+  /** Every message queued for `agentId`. They stay queued until `remove`. */
+  pending(agentId: string): Promise<PendingTriggerMessages>;
+  /** Forget the messages a run answered. */
+  remove(ids: string[]): Promise<void>;
+}
+
+/** The messages one run read, by the source that holds them. */
+type ReadMessages = Array<{ source: HeartbeatTriggerSource; ids: string[] }>;
+
+/** A run, as `pending_work` holds it until the run ends: the messages it read, by channel. */
+interface HeartbeatWork {
+  read: Partial<Record<ChatPlatform, string[]>>;
 }
 
 /** A delay for the log line: seconds under a minute, whole minutes above it. */
@@ -85,9 +105,28 @@ function formatDelay(delayMs: number): string {
 class HeartbeatService {
   private heartbeatState: HeartbeatState | null = null;
   private triggerSources: HeartbeatTriggerSource[] = [];
+  /** A run stopped the process on `MAX_RESUME_ATTEMPTS` boots in a row, so the boot does not start the check at once. */
+  private givenUp = false;
 
   registerTriggerSource(source: HeartbeatTriggerSource): void {
     this.triggerSources.push(source);
+  }
+
+  /**
+   * The boot step for runs a restart stopped. A check that is still due, and the
+   * messages a run read, start a run again. A run the attempt bound gave up
+   * answers its messages, and the next check is an interval away.
+   */
+  async resume(_items: PendingWorkItem[], givenUp: PendingWorkItem[]): Promise<void> {
+    if (givenUp.length === 0) return;
+    logger.warn(`[Heartbeat] A run stopped the runtime on ${MAX_RESUME_ATTEMPTS} boots in a row; skipping it`);
+    this.givenUp = true;
+    for (const item of givenUp) {
+      const { read } = item.payload as unknown as HeartbeatWork;
+      for (const source of this.triggerSources) {
+        await source.remove(read[source.channel] ?? []);
+      }
+    }
   }
 
   startHeartbeat(agent: AgentWorkspace, schedule: HeartbeatSchedule): void {
@@ -134,7 +173,7 @@ class HeartbeatService {
       agentId: agent.id,
       timeoutId: null,
       intervalMs,
-      dueAt: heartbeatDueAt(agent.nextHeartbeatAt, agent.lastHeartbeat, intervalMs, now),
+      dueAt: this.givenUp ? now + intervalMs : heartbeatDueAt(agent.nextHeartbeatAt, agent.lastHeartbeat, intervalMs, now),
       lastRun: agent.lastHeartbeat,
       isRunning: false,
       consecutiveErrors: 0,
@@ -143,7 +182,45 @@ class HeartbeatService {
     };
 
     this.heartbeatState = state;
+    if (this.givenUp) {
+      this.givenUp = false;
+      this.persistSchedule(state);
+    }
+    void this.restoreLastAlert(state);
     return state;
+  }
+
+  /**
+   * The last alert is the newest heartbeat message delivered, so a restart keeps
+   * what the duplicate check and the gate compare against. Read before the first
+   * run, which the delay floor holds at least a minute away.
+   */
+  private async restoreLastAlert(state: HeartbeatState): Promise<void> {
+    try {
+      const last = await prisma.conversationMessage.findFirst({
+        where: { role: 'AGENT', triggeredBy: 'HEARTBEAT', thread: { agentId: state.agentId } },
+        orderBy: { createdAt: 'desc' },
+        select: { content: true, createdAt: true },
+      });
+      if (!last || state.lastAlertAt !== null) return;
+      state.lastAlertText = last.content;
+      state.lastAlertAt = last.createdAt.getTime();
+    } catch (err) {
+      logger.warn({ err }, '[Heartbeat] Could not read the last alert');
+    }
+  }
+
+  /**
+   * Trigger messages a restart left unanswered get their heartbeat now, rather
+   * than at the next timer run.
+   */
+  async answerPendingTriggers(): Promise<void> {
+    const state = this.heartbeatState;
+    if (!state) return;
+    for (const source of this.triggerSources) {
+      const { ids } = await source.pending(state.agentId);
+      if (ids.length > 0 && this.triggerFrom(source) === 'queued') return;
+    }
   }
 
   /** Arm the one timer this state may hold, and answer the delay it waits. */
@@ -199,6 +276,37 @@ class HeartbeatService {
     state.dueAt = ranAt.getTime() + state.intervalMs;
 
     await this.writeSchedule(state, ranAt);
+  }
+
+  /**
+   * A run ended: the next check is an interval away, and the trigger messages it
+   * read are answered. Called after the delivery, so a restart before it runs
+   * the check again rather than losing its alert.
+   */
+  private async endCycle(state: HeartbeatState, read: ReadMessages): Promise<void> {
+    await this.recordCycle(state);
+    await this.endRun(state, read);
+  }
+
+  /**
+   * Kept as pending work from before the model call until the run ends, so the
+   * attempt bound gives up a run that stops the process on every boot.
+   */
+  private async beginRun(state: HeartbeatState, read: ReadMessages): Promise<void> {
+    const work: HeartbeatWork = { read: Object.fromEntries(read.map(({ source, ids }) => [source.channel, ids])) };
+    await pendingWorkService.begin('heartbeat', state.agentId, work).catch((err) => {
+      logger.warn({ err }, '[Heartbeat] Could not record the run');
+    });
+  }
+
+  /** The run ended: the messages it read are answered. */
+  private async endRun(state: HeartbeatState, read: ReadMessages): Promise<void> {
+    for (const { source, ids } of read) {
+      await source.remove(ids).catch((err) => {
+        logger.warn({ err }, `[Heartbeat] Could not remove the ${source.platform} messages this run answered`);
+      });
+    }
+    pendingWorkService.finish('heartbeat', state.agentId);
   }
 
   /**
@@ -269,19 +377,24 @@ class HeartbeatService {
 
     state.isRunning = true;
     const userId = state.userId;
+    const read: ReadMessages = [];
+    let delivering = false;
 
     try {
       logger.info(`[Heartbeat] Executing`);
 
-      // Drain every channel's pending trigger messages so they aren't orphaned
+      // Every channel's pending trigger messages ride along so none waits for its
+      // trigger. They are removed when this run ends, so a restart before then keeps them.
       const triggers: HeartbeatTrigger[] = [];
       for (const source of this.triggerSources) {
-        const messages = await source.drain(state.agentId);
+        const { messages, ids } = await source.pending(state.agentId);
         if (messages.length === 0) continue;
         logger.info(`[Heartbeat] Picked up ${messages.length} pending ${source.platform} message(s) during timer heartbeat`);
         triggers.push({ platform: source.platform, messages });
+        read.push({ source, ids });
       }
       const triggered = triggers.length > 0;
+      await this.beginRun(state, read);
 
       // Invoke LLM directly (in-process, no HTTP)
       const invokeResult = await invoke({
@@ -292,13 +405,21 @@ class HeartbeatService {
         lastHeartbeatAlert: state.lastAlertText ?? undefined,
         lastHeartbeatAlertAt: state.lastAlertAt ?? undefined,
         heartbeatTriggers: triggered ? triggers : undefined,
+        abortSignal: pendingWorkService.shutdownSignal,
       });
+      // A shutdown stopped the run. The check stays due and the messages stay
+      // queued, so the next boot runs it. From here the run delivers, so a
+      // shutdown that starts later lets it end.
+      if (pendingWorkService.shutdownSignal.aborted) {
+        return { shouldSkip: true, text: 'Stopped by shutdown' };
+      }
+      delivering = true;
 
       // Budget exceeded — skip and reset error streak so the timer keeps running.
       // The cycle still happened, so the next one is a full interval away.
       if (invokeResult.error?.type === 'budget_exceeded') {
         state.consecutiveErrors = 0;
-        await this.recordCycle(state);
+        await this.endCycle(state, read);
         logger.info(`[Heartbeat] Skipping — budget exceeded`);
         this.trackHeartbeat(state, 'timer', 'budget_exceeded', startTime);
         return { shouldSkip: true, text: 'Budget exceeded' };
@@ -327,8 +448,6 @@ class HeartbeatService {
 
       this.logSteps(responseText, invokeResult.steps);
 
-      await this.recordCycle(state);
-
       if (shouldDeliver) {
         await messageDeliveryService.publishToLatestThread(
           state.agentId,
@@ -345,6 +464,8 @@ class HeartbeatService {
         logger.info(`[Heartbeat] Alert for agent: ${responseText.substring(0, 100)}`);
       }
 
+      await this.endCycle(state, read);
+
       state.consecutiveErrors = 0;
 
       const result: HeartbeatResult = {
@@ -358,10 +479,11 @@ class HeartbeatService {
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : 'Unknown error';
       logger.error(`[Heartbeat] Failed: ${errMsg}`);
+      if (pendingWorkService.shutdownSignal.aborted && !delivering) return { shouldSkip: true, text: errMsg };
 
       // A failed run is still a cycle. It spaces the error streak one interval
       // apart, which is what the auto-stop below is counting.
-      await this.recordCycle(state);
+      await this.endCycle(state, read);
 
       this.trackHeartbeat(state, 'timer', 'error', startTime);
       state.consecutiveErrors++;
@@ -410,8 +532,9 @@ class HeartbeatService {
   }
 
   /**
-   * Execute a single channel-triggered heartbeat by draining pending messages.
-   * Messages that arrive during execution wait for the next run.
+   * Execute a single channel-triggered heartbeat over the pending messages, and
+   * remove them once it ends. Messages that arrive during execution wait for the
+   * next run.
    */
   private async executeChannelTriggeredHeartbeat(source: HeartbeatTriggerSource): Promise<void> {
     const label = `${source.platform}-triggered`;
@@ -426,9 +549,12 @@ class HeartbeatService {
     }
 
     state.isRunning = true;
+    let read: ReadMessages = [];
+    let delivering = false;
 
     try {
-      const messages = await source.drain(state.agentId);
+      const { messages, ids } = await source.pending(state.agentId);
+      read = [{ source, ids }];
 
       if (messages.length === 0) {
         logger.info(`[Heartbeat] No ${source.platform} messages to process`);
@@ -439,6 +565,7 @@ class HeartbeatService {
 
       const startTime = Date.now();
       const triggers: HeartbeatTrigger[] = [{ platform: source.platform, messages }];
+      await this.beginRun(state, read);
 
       const invokeResult = await invoke({
         userId: state.userId,
@@ -448,11 +575,16 @@ class HeartbeatService {
         lastHeartbeatAlert: state.lastAlertText ?? undefined,
         lastHeartbeatAlertAt: state.lastAlertAt ?? undefined,
         heartbeatTriggers: triggers,
+        abortSignal: pendingWorkService.shutdownSignal,
       });
+      // A shutdown stopped the run. The messages stay queued for the next boot.
+      if (pendingWorkService.shutdownSignal.aborted) return;
+      delivering = true;
 
       // Budget exceeded — skip gracefully
       if (invokeResult.error?.type === 'budget_exceeded') {
         state.consecutiveErrors = 0;
+        await this.endRun(state, read);
         logger.info(`[Heartbeat] ${label} heartbeat skipped — budget exceeded`);
         this.trackHeartbeat(state, source.channel, 'budget_exceeded', startedAt);
         return;
@@ -478,8 +610,6 @@ class HeartbeatService {
 
       this.logSteps(responseText, invokeResult.steps, `${source.channel}-triggered`);
 
-      await this.recordCycle(state);
-
       logger.info(`[Heartbeat] ${label} heartbeat shouldDeliver=${shouldDeliver}`);
 
       if (shouldDeliver) {
@@ -498,6 +628,8 @@ class HeartbeatService {
         logger.info(`[Heartbeat] ${label} alert: ${responseText.substring(0, 100)}`);
       }
 
+      await this.endCycle(state, read);
+
       state.consecutiveErrors = 0;
 
       logger.info(`[Heartbeat] ${label} heartbeat completed in ${Date.now() - startTime}ms`);
@@ -505,8 +637,11 @@ class HeartbeatService {
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : 'Unknown error';
       logger.error(`[Heartbeat] ${label} heartbeat failed: ${errMsg}`);
+      if (pendingWorkService.shutdownSignal.aborted && !delivering) return;
 
+      // A failed run answered its messages too; kept, they would fail every run after it.
       if (state) {
+        await this.endRun(state, read);
         this.trackHeartbeat(state, source.channel, 'error', startedAt);
         state.consecutiveErrors++;
       }

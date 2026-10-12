@@ -6,9 +6,12 @@
  * that was away is sent again when it resumes.
  */
 
+import type { ConversationMessage } from '@prisma/client';
 import { ChannelAdapter, ChannelContext, DeliverableMessage } from './channel-adapter.interface';
 import { eventStreamService } from './event-stream.service';
+import { inboundMessageService } from './inbound-message.service';
 import type { MessageEventPayload } from '../protocol/chat-protocol';
+import type { ResumedReply } from '../types';
 import { logger } from '../logger';
 
 /** The wire form of a stored message, for any role. */
@@ -55,6 +58,11 @@ class WebSocketAdapterService implements ChannelAdapter {
    */
   async isUserConnected(_userId: string): Promise<boolean> {
     return true;
+  }
+
+  /** The socket answers one message at a time, so a resumed reply waits its turn there. */
+  continueReply(message: ConversationMessage, resumed: ResumedReply): void {
+    inboundMessageService.resume(message, resumed);
   }
 
   async initialize(): Promise<void> {
