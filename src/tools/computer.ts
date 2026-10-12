@@ -197,7 +197,7 @@ export function getComputerTools(
       );
       if (!resolved) return { success: false, message: 'This help request is already closed.' };
       if (!dismiss && computerService.access.paused) await computerService.continueFromChat();
-      if (resolved.answeredRuns)
+      if (resolved.answeredRuns && resolved.help.requesterWaits)
         return {
           success: true,
           message:

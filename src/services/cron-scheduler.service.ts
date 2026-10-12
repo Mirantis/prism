@@ -9,6 +9,10 @@
  * - "at" / "in" — one-shot: "in 20 minutes", "at 3pm"
  * - "every" — interval: "every 2 hours"
  * - cron expression: "0 9 * * *" (9am daily)
+ *
+ * A task's `nextRunAt` moves past a run only when that run completes, so a run
+ * a restart interrupted, or a tick that fell while the runtime was down, is
+ * still due at the next boot, which runs it once.
  */
 
 import * as cron from 'node-cron';
@@ -24,6 +28,7 @@ import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { parseSchedule } from './cron-schedule';
 import type { ChannelName } from './channel-adapter.interface';
+import { MAX_RESUME_ATTEMPTS, pendingWorkService, type PendingWorkItem } from './pending-work.service';
 
 // ============================================================================
 // Types
@@ -83,6 +88,28 @@ interface ScheduledJob {
   isOneShot: boolean;
 }
 
+/** How far back the boot looks for a tick of a task that has no stored next run. */
+const MISSED_TICK_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * A recurring task missed a run when its last run was interrupted, or its tick
+ * fell while the runtime was down: its stored next run has passed. A task stored
+ * before next runs were stored has none. It missed a run when a tick of its
+ * schedule fell after its last run, within the last day, which covers the
+ * downtime of the upgrade that added the column.
+ */
+function missedRun(task: BackendCronTask, job: { match(date: Date): boolean }): boolean {
+  const now = Date.now();
+  if (task.nextRunAt) return new Date(task.nextRunAt).getTime() <= now;
+  const since = Math.max(new Date(task.lastRunAt ?? task.createdAt).getTime(), now - MISSED_TICK_WINDOW_MS);
+  // A six-field expression names the second, a five-field one the minute.
+  const step = task.schedule.trim().split(/\s+/).length === 6 ? 1000 : 60_000;
+  for (let tick = Math.floor(now / step) * step; tick > since; tick -= step) {
+    if (job.match(new Date(tick))) return true;
+  }
+  return false;
+}
+
 // ============================================================================
 // Cron Scheduler Service
 // ============================================================================
@@ -106,7 +133,10 @@ class CronSchedulerService {
    * overlap itself — double-delivering and racing the delivery baseline. An overlapping tick
    * is skipped, not queued.
    */
-  private runningTasks: Map<string, Promise<void>> = new Map();
+  private runningTasks: Map<string, Promise<boolean>> = new Map();
+
+  /** Tasks whose runs stopped the process on `MAX_RESUME_ATTEMPTS` boots in a row. The boot runs them no more. */
+  private givenUp: Set<string> = new Set();
 
   /** One-shots that have started. Each runs, then deletes its row, so an edit is refused. */
   private firedOneShots: Set<string> = new Set();
@@ -166,8 +196,29 @@ class CronSchedulerService {
     }
   }
 
-  /** Start the node-cron job for a recurring task in the current zone and hold it. */
-  private registerRecurring(task: BackendCronTask): void {
+  /**
+   * The boot step for runs a restart stopped. A run that is still due runs again
+   * when its task is scheduled. A run the attempt bound gave up does not.
+   */
+  async resume(_items: PendingWorkItem[], givenUp: PendingWorkItem[]): Promise<void> {
+    for (const item of givenUp) this.givenUp.add(item.key);
+  }
+
+  /** Whether the boot gives up `task`'s missed run, logging it when it does. */
+  private givesUp(task: BackendCronTask): boolean {
+    if (!this.givenUp.delete(task.id)) return false;
+    logger.warn(
+      `[CronScheduler] "${task.name}" stopped the runtime on ${MAX_RESUME_ATTEMPTS} boots in a row - skipping its missed run`,
+    );
+    return true;
+  }
+
+  /**
+   * Start the node-cron job for a recurring task in the current zone and hold it,
+   * and store when it next runs. A run in flight stores that itself when it ends.
+   * At boot, a task that missed a run runs once now, before its next run is stored.
+   */
+  private registerRecurring(task: BackendCronTask, opts: { atBoot?: boolean } = {}): void {
     const job = cron.schedule(
       task.schedule,
       async () => {
@@ -176,6 +227,11 @@ class CronSchedulerService {
       { timezone: this.timezone },
     );
     this.scheduledJobs.set(task.id, { task, job, isOneShot: false });
+    if (opts.atBoot && missedRun(task, job) && !this.givesUp(task)) {
+      logger.info(`[CronScheduler] Recurring "${task.name}" missed a run - executing now`);
+      void this.executeTask(task, { afterRestart: true });
+    }
+    if (!this.runningTasks.has(task.id)) void this.recordRun(task.id);
   }
 
   /**
@@ -218,7 +274,15 @@ class CronSchedulerService {
 
     if (isOneShot) {
       const delay = new Date(task.nextRunAt as string).getTime() - Date.now();
-      this.registerOneShot(task, delay);
+      const atBoot = opts.source === 'boot';
+      if (delay <= 0 && atBoot && this.givesUp(task)) {
+        void this.deleteCronTask(task.id).catch((err) => {
+          logger.error({ err }, `[CronScheduler] Failed to delete one-shot task ${task.id}`);
+        });
+        return;
+      }
+      // A one-shot due at boot may have been running when the runtime stopped.
+      this.registerOneShot(task, delay, atBoot && delay <= 0);
       if (delay > 0) {
         logger.info(`[CronScheduler] Scheduled one-shot "${task.name}" in ${Math.round(delay / 1000)}s`);
       } else {
@@ -230,23 +294,27 @@ class CronSchedulerService {
         return;
       }
 
-      this.registerRecurring(task);
+      this.registerRecurring(task, { atBoot: opts.source === 'boot' });
       logger.info(`[CronScheduler] Scheduled recurring "${task.name}": ${task.schedule}`);
     }
   }
 
-  /** Arm the timer of a one-shot and hold it. A past-due one runs at once. */
-  private registerOneShot(task: BackendCronTask, delay: number): void {
+  /**
+   * Arm the timer of a one-shot and hold it. A past-due one runs at once. `afterRestart` tells
+   * the model that a run of the task may have stopped part-way at a restart.
+   */
+  private registerOneShot(task: BackendCronTask, delay: number, afterRestart = false): void {
     const scheduled: ScheduledJob = { task, job: { stop: () => clearTimeout(timer) }, isOneShot: true };
-    const timer = setTimeout(() => void this.runOneShot(scheduled), Math.max(0, delay));
+    const timer = setTimeout(() => void this.runOneShot(scheduled, afterRestart), Math.max(0, delay));
     this.scheduledJobs.set(task.id, scheduled);
   }
 
   /**
    * Run a one-shot, then delete it. A run of the task's earlier schedule ends first. An edit or a
-   * delete that replaced or removed this job before the start leaves this one nothing to do.
+   * delete that replaced or removed this job before the start leaves this one nothing to do. One a
+   * shutdown interrupts stays, and the next boot runs it.
    */
-  private async runOneShot(scheduled: ScheduledJob): Promise<void> {
+  private async runOneShot(scheduled: ScheduledJob, afterRestart: boolean): Promise<void> {
     const { task } = scheduled;
     await this.runningTasks.get(task.id);
     const started = await this.withTaskLock(task.id, async () => {
@@ -258,7 +326,7 @@ class CronSchedulerService {
     if (!started) return;
 
     try {
-      await this.executeTask(task);
+      if (!(await this.executeTask(task, { afterRestart }))) return;
       try {
         await this.deleteCronTask(task.id);
       } catch (err) {
@@ -369,30 +437,53 @@ class CronSchedulerService {
     }
   }
 
-  // A run can delete its own task, so these two writes use the `*Many` forms, which accept a
-  // missing row.
-  private async updateCronTaskRun(taskId: string, lastRunAt: string): Promise<void> {
-    await prisma.cronTask.updateMany({
-      where: { id: taskId },
-      data: { lastRunAt: lastRunAt ? new Date(lastRunAt) : new Date() },
-    });
+  /**
+   * A run ended: store when, and when the task next runs. Without a run, stores
+   * the next run alone. A one-shot is deleted instead, so this is for a
+   * recurring task. A run can delete its own task, so the write uses
+   * `updateMany`, which accepts a missing row. A failed write is logged; the
+   * stored time then reads as due, and the next boot runs the task once more.
+   */
+  private async recordRun(taskId: string, ranAt?: Date): Promise<void> {
+    const scheduled = this.scheduledJobs.get(taskId);
+    if (!scheduled || scheduled.isOneShot) return;
+    try {
+      await prisma.cronTask.updateMany({
+        where: { id: taskId },
+        data: {
+          nextRunAt: scheduled.job.getNextRun?.() ?? null,
+          ...(ranAt ? { lastRunAt: ranAt } : {}),
+        },
+      });
+    } catch (err) {
+      logger.error({ err }, `[CronScheduler] Failed to record the run of task ${taskId}`);
+    }
   }
 
   private async deleteCronTask(taskId: string): Promise<void> {
     await prisma.cronTask.deleteMany({ where: { id: taskId } });
   }
 
-  private async executeTask(task: BackendCronTask): Promise<void> {
+  /**
+   * Run a task once. False when a shutdown stopped the run before it delivered,
+   * which leaves the run due. `afterRestart` tells the model that a run of the
+   * task may have stopped part-way at a restart.
+   */
+  private async executeTask(task: BackendCronTask, opts: { afterRestart?: boolean } = {}): Promise<boolean> {
     if (this.runningTasks.has(task.id)) {
       logger.warn(`[CronScheduler] "${task.name}" is still running — skipping overlapping run`);
-      return;
+      return true;
     }
-    const run = this.runTask(task).finally(() => this.runningTasks.delete(task.id));
+    const run = this.runTask(task, opts).finally(() => this.runningTasks.delete(task.id));
     this.runningTasks.set(task.id, run);
-    await run;
+    return run;
   }
 
-  private async runTask(task: BackendCronTask): Promise<void> {
+  private async runTask(task: BackendCronTask, opts: { afterRestart?: boolean }): Promise<boolean> {
+    // A run that stops the process leaves its row, so the bound counts the boots that run it again.
+    await pendingWorkService.begin('cron', task.id, {}).catch((err) => {
+      logger.error({ err }, `[CronScheduler] Could not record the run of "${task.name}"`);
+    });
     const startTime = Date.now();
     const boundThreadId = task.threadId;
     // A task saved without an instruction runs on its name, the only text its author gave.
@@ -409,6 +500,7 @@ class CronSchedulerService {
         'cron.duration_ms': String(Date.now() - startTime),
       });
 
+    let stopped = false;
     try {
       // A thread-bound ("continue in this conversation") task resumes in its
       // originating thread; make sure that thread still exists before invoking —
@@ -421,7 +513,7 @@ class CronSchedulerService {
         });
         if (!thread) {
           logger.warn(`[CronScheduler] "${task.name}" thread ${boundThreadId} is gone — skipping`);
-          return;
+          return true;
         }
       }
 
@@ -433,6 +525,8 @@ class CronSchedulerService {
         agentId: task.agentId,
         mode: 'cron',
         prompt: instruction,
+        afterRestart: opts.afterRestart,
+        abortSignal: pendingWorkService.shutdownSignal,
         ...(boundThreadId
           ? {
               threadId: boundThreadId,
@@ -441,6 +535,12 @@ class CronSchedulerService {
             }
           : {}),
       });
+      // A shutdown stopped the run. It delivers nothing and stays due. From here
+      // the run delivers, so a shutdown that starts later lets it end.
+      if (pendingWorkService.shutdownSignal.aborted) {
+        stopped = true;
+        return false;
+      }
 
       // Build channel-neutral routing for a bound task once (the origin
       // channel's own thread, recovered from the thread row); undefined for unbound.
@@ -450,7 +550,6 @@ class CronSchedulerService {
 
       // Budget exceeded — notify user and record the attempt
       if (result.error?.type === 'budget_exceeded') {
-        await this.updateCronTaskRun(task.id, new Date().toISOString());
         const budgetMessage = `**Scheduled Task: ${task.name}**\n\nThis task could not run — your organization's AI spending limit has been reached${result.error.detail ? `: ${result.error.detail}` : ''}. Please contact your administrator to increase the budget.`;
         if (boundThreadId) {
           await messageDeliveryService.publish(task.userId, boundThreadId, budgetMessage, 'CRON_TASK', { channelContext });
@@ -458,14 +557,8 @@ class CronSchedulerService {
           await messageDeliveryService.publishToLatestThread(task.agentId, task.userId, budgetMessage, 'CRON_TASK');
         }
         trackRun('budget_exceeded');
-        return;
+        return true;
       }
-
-      // Update run timestamp
-      await this.updateCronTaskRun(
-        task.id,
-        new Date().toISOString(),
-      );
 
       // Use only the last step's text (the final summary), not intermediate step texts
       const lastStep = result.steps[result.steps.length - 1];
@@ -513,7 +606,7 @@ class CronSchedulerService {
         }
         logger.info(`[CronScheduler] "${task.name}" suppressed — nothing new to report`);
         trackRun('suppressed');
-        return;
+        return true;
       }
 
       if (boundThreadId) {
@@ -553,7 +646,15 @@ class CronSchedulerService {
       const errMsg = error instanceof Error ? error.message : 'Unknown error';
       logger.error(`[CronScheduler] "${task.name}" failed: ${errMsg}`);
       trackRun('error');
+    } finally {
+      // Every way out of the run, a failure included, is a run that ended,
+      // except a shutdown before the delivery, which leaves the run due.
+      if (!stopped) {
+        await this.recordRun(task.id, new Date());
+        pendingWorkService.finish('cron', task.id);
+      }
     }
+    return true;
   }
 
   stopAll(): void {

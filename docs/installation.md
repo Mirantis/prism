@@ -98,6 +98,10 @@ systemctl --user restart prism-server.service
 Restart-ScheduledTask -TaskName PrismServer
 ```
 
+You can restart at any time. The agent continues the work it was doing when it
+stopped. A call in progress ends, and so does a command the agent left running in
+the background.
+
 ### Configuring credentials
 
 The `.env` file is where you set credentials and options. At minimum, set your

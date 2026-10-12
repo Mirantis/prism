@@ -18,6 +18,7 @@
 import { config } from '../config';
 import { logger } from '../logger';
 import { attachmentService } from '../services/attachment.service';
+import { attachmentsHeldByChatWork } from '../services/conversation-engine.service';
 import { reapScratchDirs } from '../tools/attachments';
 import { reapStrayMediaFiles } from './media-store';
 import { reapExpiredToolOutputs } from './tool-output-store';
@@ -32,7 +33,8 @@ const STRAY_MEDIA_GRACE_MS = 60 * 60 * 1000;
 /** One full sweep. Never rejects. */
 export async function sweepFiles(): Promise<void> {
   try {
-    const deleted = await attachmentService.deleteOrphans(ORPHAN_TTL_MS);
+    // A reply a restart interrupted still owes its files, however long the runtime was down.
+    const deleted = await attachmentService.deleteOrphans(ORPHAN_TTL_MS, await attachmentsHeldByChatWork());
     if (deleted > 0) logger.info(`[Attachments] reaped ${deleted} orphaned upload(s)`);
   } catch (err) {
     logger.error({ err }, '[Attachments] orphan cleanup failed');

@@ -28,6 +28,12 @@ const {
   mockShowInConversation,
   mockGetMetaByMessageIds,
   mockGetAdapter,
+  mockBeginWork,
+  mockUpdateWork,
+  mockWorkRows,
+  mockFlushWork,
+  mockFinishWork,
+  shutdown,
 } = vi.hoisted(() => ({
   mockGetOrCreateLatestThread: vi.fn(),
   mockGetThreadWorkspaceRoot: vi.fn(),
@@ -47,6 +53,12 @@ const {
   // The chat socket shows the whole conversation; a team chat channel posts
   // only the agent's replies.
   mockGetAdapter: vi.fn((name: string) => ({ name, showsWholeConversation: name === 'websocket' })),
+  mockBeginWork: vi.fn(),
+  mockUpdateWork: vi.fn(),
+  mockWorkRows: vi.fn(),
+  mockFlushWork: vi.fn(async () => undefined),
+  mockFinishWork: vi.fn(),
+  shutdown: { controller: new AbortController() },
 }));
 
 /**
@@ -55,7 +67,7 @@ const {
  * result to mockInvokeStream.mockReturnValue().
  */
 function streamFromSteps(
-  steps: Array<{ text: string; toolCalls: unknown[]; blocks?: unknown[] }>,
+  steps: Array<{ text: string; toolCalls: unknown[]; blocks?: unknown[]; attachmentIds?: string[] }>,
   /** Held open until this settles, for a test that needs two turns at once. */
   hold?: Promise<void>,
 ): AsyncIterable<unknown> {
@@ -133,10 +145,24 @@ vi.mock('../agent-workspace.service', () => ({
   },
 }));
 
+vi.mock('../pending-work.service', () => ({
+  pendingWorkService: {
+    begin: mockBeginWork,
+    update: mockUpdateWork,
+    finish: mockFinishWork,
+    rows: mockWorkRows,
+    flush: mockFlushWork,
+    get shutdownSignal() {
+      return shutdown.controller.signal;
+    },
+  },
+}));
+
 // Import after mocking. `threadTurnService` is the real per-thread primitive —
 // turn ordering is part of what the steering scenarios assert.
-import { conversationEngineService, type ChatTurnEnd } from '../conversation-engine.service';
+import { attachmentsHeldByChatWork, conversationEngineService, type ChatTurnEnd } from '../conversation-engine.service';
 import { threadTurnService } from '../thread-turn.service';
+import { RESUMED_REPLY_NOTICE } from '../../prompts/resume-prompt';
 import {
   conversationThreadActivityService,
   type ThreadActivityChange,
@@ -174,6 +200,8 @@ describe('Requirement: Conversation Engine', () => {
     // Default: telemetry off so unrelated scenarios don't exercise the classifier.
     mockIsTelemetryEnabled.mockReturnValue(false);
     mockGenerateText.mockResolvedValue({ text: 'WORTHY' });
+    mockBeginWork.mockResolvedValue(undefined);
+    shutdown.controller = new AbortController();
   });
 
   describe('Scenario: Chat message processing', () => {
@@ -351,7 +379,7 @@ describe('Requirement: Conversation Engine', () => {
         attachmentIds: ['att-1', 'att-2'],
       });
 
-      expect(mockLinkToMessage).toHaveBeenCalledWith(['att-1', 'att-2'], 'msg-123', 'thread-123');
+      expect(mockLinkToMessage).toHaveBeenCalledWith(['att-1', 'att-2'], mockAddMessage.mock.calls[0][1].id, 'thread-123');
     });
 
     it('does not link when no attachmentIds are provided', async () => {
@@ -375,7 +403,7 @@ describe('Requirement: Conversation Engine', () => {
       // The engine never rejects empty text (the gateway guards that); it stores
       // the user message and links the file.
       expect(mockAddMessage).toHaveBeenCalledWith('thread-123', expect.objectContaining({ role: 'USER' }));
-      expect(mockLinkToMessage).toHaveBeenCalledWith(['att-9'], 'msg-123', 'thread-123');
+      expect(mockLinkToMessage).toHaveBeenCalledWith(['att-9'], mockAddMessage.mock.calls[0][1].id, 'thread-123');
       expect(mockInvokeStream).toHaveBeenCalled();
     });
   });
@@ -657,7 +685,7 @@ describe('Requirement: Conversation Engine', () => {
 
       expect(mockShowInConversation).toHaveBeenCalledWith(
         'user-123',
-        expect.objectContaining({ id: 'msg-123', role: 'USER', content: 'hello from web' }),
+        expect.objectContaining({ id: mockAddMessage.mock.calls[0][1].id, role: 'USER', content: 'hello from web' }),
       );
       // The broadcast goes out before the agent's first message.
       expect(mockShowInConversation.mock.invocationCallOrder[0]).toBeLessThan(
@@ -1389,6 +1417,308 @@ describe('Requirement: Conversation Engine', () => {
       expect(followUp.prompt).toBe('no need to run tests');
       expect(followUp.appendPrompt).toBe(true);
       expect(threadTurnService.pendingCount(steerThread)).toBe(0);
+    });
+
+    describe('A restart at any moment', () => {
+      /** The id each stored message was owed under, in the order they arrived. */
+      const owedIds = () => mockBeginWork.mock.calls.map((call) => call[1] as string);
+
+      it('owes a message an answer from before it is stored, and keeps the message until then', async () => {
+        mockInvokeStream.mockImplementation(instantTurn);
+
+        await conversationEngineService.chat(steerInput('review the PR'));
+
+        expect(mockBeginWork).toHaveBeenCalledWith('chat', expect.any(String), {
+          threadId: steerThread,
+          agentId: 'agent-123',
+          userId: 'user-123',
+          metadata: { channel: 'websocket' },
+          message: { message: 'review the PR', attachmentIds: undefined },
+        });
+        expect(mockAddMessage).toHaveBeenCalledWith(
+          steerThread,
+          expect.objectContaining({ id: owedIds()[0], role: 'USER' }),
+        );
+        expect(mockBeginWork.mock.invocationCallOrder[0]).toBeLessThan(mockAddMessage.mock.invocationCallOrder[0]);
+      });
+
+      it('stops owing every message the exchange answered, a handed-over one too', async () => {
+        const held = heldTurn();
+        mockInvokeStream.mockImplementation(held.generator);
+
+        const first = conversationEngineService.chat(steerInput('review the PR'));
+        await held.running;
+        await conversationEngineService.chat(steerInput('skip the tests'));
+        await held.requests[0].steering?.();
+        expect(mockFinishWork).not.toHaveBeenCalled();
+
+        held.release();
+        await first;
+
+        expect(mockFinishWork).toHaveBeenCalledWith('chat', owedIds());
+      });
+
+      it('stops owing a message a cancel left unanswered', async () => {
+        const held = heldTurn();
+        mockInvokeStream.mockImplementation(held.generator);
+        const controller = new AbortController();
+
+        const first = conversationEngineService.chat(
+          steerInput('review the PR', { abortSignal: controller.signal }),
+        );
+        await held.running;
+        await conversationEngineService.chat(steerInput('never mind'));
+        controller.abort();
+        held.release();
+        await first;
+
+        expect(mockFinishWork).toHaveBeenCalledWith('chat', owedIds());
+      });
+
+      it('stops the exchange when the process shuts down, and keeps owing its message', async () => {
+        let forwarded: AbortSignal | undefined;
+        let finish!: () => void;
+        mockInvokeStream.mockImplementationOnce(async function* (request: { abortSignal: AbortSignal }) {
+          forwarded = request.abortSignal;
+          await new Promise<void>((resolve) => { finish = resolve; });
+        });
+
+        const turn = conversationEngineService.chat(steerInput('review the PR'));
+        await vi.waitFor(() => expect(forwarded).toBeDefined());
+        shutdown.controller.abort();
+
+        expect(forwarded?.aborted).toBe(true);
+        finish();
+        await turn;
+        expect(mockFinishWork).toHaveBeenCalledWith('chat', []);
+      });
+
+      it('stops owing a message whose whole answer went out while the process shut down', async () => {
+        // The model finished; the shutdown lands during the delivery, which the
+        // reply still reaches. A restart must not answer the message again.
+        mockInvokeStream.mockReturnValueOnce(streamFromSteps([{ text: 'All green.', toolCalls: [] }]));
+        mockPublish.mockImplementationOnce(async () => {
+          shutdown.controller.abort();
+          return { id: 'reply-1' };
+        });
+
+        await conversationEngineService.chat(steerInput('check the build'));
+
+        expect(mockPublish).toHaveBeenCalledWith(
+          'user-123', steerThread, 'All green.', 'USER_INPUT', expect.any(Object),
+        );
+        expect(mockFinishWork).toHaveBeenCalledWith('chat', owedIds());
+      });
+
+      it('continues a resumed exchange for every message it owes, and says why', async () => {
+        mockInvokeStream.mockImplementation(instantTurn);
+
+        await conversationEngineService.chat(
+          steerInput('and the tests?', {
+            stored: { id: 'msg-2', titleSet: null },
+            resumed: { messageIds: ['msg-1', 'msg-2'], unsaved: [], unsentAttachmentIds: [] },
+          }),
+        );
+
+        expect(mockBeginWork).not.toHaveBeenCalled();
+        // The notice closes the history, stored so every later turn replays it.
+        expect(mockAddMessage).toHaveBeenCalledTimes(1);
+        expect(mockAddMessage).toHaveBeenCalledWith(steerThread, {
+          content: RESUMED_REPLY_NOTICE,
+          role: 'USER',
+          triggeredBy: 'USER_INPUT',
+          internalStep: true,
+        });
+        expect(mockAddMessage.mock.invocationCallOrder[0]).toBeLessThan(mockInvokeStream.mock.invocationCallOrder[0]);
+        expect(mockInvokeStream).toHaveBeenCalledWith(
+          expect.objectContaining({ prompt: 'and the tests?', runtimeNotices: undefined }),
+        );
+        expect(mockFinishWork).toHaveBeenCalledWith('chat', ['msg-1', 'msg-2']);
+      });
+
+      it('waits for a turn that owns the thread, then continues the interrupted reply with its state', async () => {
+        // A new message on the thread reached the runtime first and took the thread.
+        const held = heldTurn();
+        mockInvokeStream.mockImplementationOnce(held.generator).mockImplementation(instantTurn);
+        const owner = conversationEngineService.chat(steerInput('anything new?'));
+        await held.running;
+
+        const resumed = conversationEngineService.chat(
+          steerInput('send me the report', {
+            stored: { id: 'msg-1', titleSet: null },
+            resumed: { messageIds: ['msg-1'], unsaved: [], unsentAttachmentIds: ['att-1'] },
+          }),
+        );
+        await Promise.resolve();
+        expect(threadTurnService.pendingCount(steerThread)).toBe(0);
+
+        held.release();
+        await owner;
+        const result = await resumed;
+
+        expect(result.steered).toBeUndefined();
+        expect(mockInvokeStream).toHaveBeenCalledTimes(2);
+        expect(mockPublish).toHaveBeenLastCalledWith(
+          'user-123', steerThread, 'ok', 'USER_INPUT',
+          expect.objectContaining({ attachmentIds: ['att-1'] }),
+        );
+        expect(mockFinishWork).toHaveBeenLastCalledWith('chat', ['msg-1']);
+      });
+
+      it('keeps a long tool-call input as JSON with its long fields cut', async () => {
+        const script = 'x'.repeat(5_000);
+        const call = { tool: 'shell_exec', input: JSON.stringify({ command: script, timeoutMs: 60_000 }), output: 'ok', success: true, timestamp: 't' };
+        mockInvokeStream.mockReturnValueOnce(streamFromSteps([{ text: '', toolCalls: [call] }]));
+
+        await conversationEngineService.chat(steerInput('run the script'));
+
+        const kept = (mockUpdateWork.mock.calls[0][2] as { unsaved: Array<{ input: string }> }).unsaved[0].input;
+        expect(JSON.parse(kept)).toEqual({ command: `${'x'.repeat(4_000)}…`, timeoutMs: 60_000 });
+      });
+
+      it('stores the tool calls the interrupted turn made as history before the resumed turn', async () => {
+        // The resumed turn reads them as its own tool calls and results, and the
+        // rows give them up, so a second resume does not store them again.
+        mockInvokeStream.mockImplementation(instantTurn);
+        const unsaved = [{
+          tool: 'coding_agent', input: '{"prompt":"fix it"}', output: '{"taskId":"task-7"}',
+          success: true, timestamp: 't', rendered: true as const,
+        }];
+
+        await conversationEngineService.chat(
+          steerInput('and the tests?', {
+            stored: { id: 'msg-2', titleSet: null },
+            resumed: { messageIds: ['msg-1', 'msg-2'], unsaved, unsentAttachmentIds: [] },
+          }),
+        );
+
+        const work = { threadId: steerThread, agentId: 'agent-123', userId: 'user-123', metadata: { channel: 'websocket' } };
+        // The calls, then the notice after them, closing the history.
+        expect(mockAddMessage.mock.calls).toEqual([
+          [steerThread, { content: '', role: 'AGENT', triggeredBy: 'USER_INPUT', toolCalls: unsaved, internalStep: true }],
+          [steerThread, { content: RESUMED_REPLY_NOTICE, role: 'USER', triggeredBy: 'USER_INPUT', internalStep: true }],
+        ]);
+        expect(mockUpdateWork).toHaveBeenCalledWith('chat', 'msg-1', work);
+        expect(mockUpdateWork).toHaveBeenCalledWith('chat', 'msg-2', work);
+        expect(mockAddMessage.mock.invocationCallOrder[0]).toBeLessThan(mockUpdateWork.mock.invocationCallOrder[0]);
+        expect(mockAddMessage.mock.invocationCallOrder[1]).toBeLessThan(mockInvokeStream.mock.invocationCallOrder[0]);
+      });
+
+      it('keeps the tool calls no stored message holds yet on the row, for a resumed turn', async () => {
+        // A step's tool calls are stored with the next text step, so a restart
+        // before it would lose them from history: a coding task's id, say.
+        const call = (tool: string) => ({ tool, input: '{}', output: `${tool} done`, success: false, timestamp: 't' });
+        mockInvokeStream.mockReturnValueOnce(streamFromSteps([
+          { text: 'Starting the task.', toolCalls: [call('coding_agent')] },
+          { text: '', toolCalls: [call('coding_agent_status')] },
+          { text: 'Done.', toolCalls: [] },
+        ]));
+
+        await conversationEngineService.chat(steerInput('fix the build'));
+
+        const owedId = owedIds()[0];
+        const unsaved = mockUpdateWork.mock.calls.map((c) => {
+          expect(c.slice(0, 2)).toEqual(['chat', owedId]);
+          return ((c[2] as { unsaved?: Array<{ tool: string }> }).unsaved ?? []).map((u) => u.tool);
+        });
+        expect(unsaved).toEqual([
+          ['coding_agent'],
+          ['coding_agent', 'coding_agent_status'],
+          // The first step is stored now; its calls went with it.
+          ['coding_agent_status'],
+          // The reply is out, with the rest.
+          [],
+        ]);
+        // Kept whole, so a failed call reads as failed after the restart.
+        expect((mockUpdateWork.mock.calls[0][2] as { unsaved: unknown[] }).unsaved[0]).toEqual(call('coding_agent'));
+      });
+
+      it('keeps the files a turn shared on its row until its reply delivers them', async () => {
+        const share = { tool: 'share_file', input: '{}', output: 'shared', success: true, timestamp: 't' };
+        mockInvokeStream.mockReturnValueOnce(streamFromSteps([
+          { text: '', toolCalls: [share], attachmentIds: ['att-1'] },
+          { text: 'Here is the report.', toolCalls: [] },
+        ]));
+
+        await conversationEngineService.chat(steerInput('send me the report'));
+
+        const rows = mockUpdateWork.mock.calls.map((c) => (c[2] as { unsentAttachmentIds?: string[] }).unsentAttachmentIds);
+        expect(rows).toEqual([['att-1'], ['att-1'], undefined]);
+        expect(mockPublish).toHaveBeenCalledWith(
+          'user-123', steerThread, 'Here is the report.', 'USER_INPUT',
+          expect.objectContaining({ attachmentIds: ['att-1'] }),
+        );
+        expect(mockPublish.mock.invocationCallOrder[0]).toBeLessThan(mockUpdateWork.mock.invocationCallOrder[2]);
+      });
+
+      it('moves every owed file to the first row before the other rows give theirs up', async () => {
+        mockInvokeStream.mockImplementation(instantTurn);
+        const work = { threadId: steerThread, agentId: 'agent-123', userId: 'user-123', metadata: { channel: 'websocket' } };
+
+        await conversationEngineService.chat(
+          steerInput('and the report?', {
+            stored: { id: 'msg-2', titleSet: null },
+            resumed: { messageIds: ['msg-1', 'msg-2'], unsaved: [], unsentAttachmentIds: ['att-1', 'att-2'] },
+          }),
+        );
+
+        const first = mockUpdateWork.mock.calls.findIndex(([, key]) => key === 'msg-1');
+        const second = mockUpdateWork.mock.calls.findIndex(([, key]) => key === 'msg-2');
+        expect(mockUpdateWork.mock.calls[first][2]).toEqual({ ...work, unsentAttachmentIds: ['att-1', 'att-2'] });
+        expect(mockUpdateWork.mock.calls[second][2]).toEqual(work);
+        expect(mockUpdateWork.mock.invocationCallOrder[first]).toBeLessThan(mockFlushWork.mock.invocationCallOrder[0]);
+        expect(mockFlushWork.mock.invocationCallOrder[0]).toBeLessThan(mockUpdateWork.mock.invocationCallOrder[second]);
+      });
+
+      it('delivers the files an interrupted turn shared with the resumed reply', async () => {
+        mockInvokeStream.mockImplementation(instantTurn);
+
+        await conversationEngineService.chat(
+          steerInput('send me the report', {
+            stored: { id: 'msg-1', titleSet: null },
+            resumed: { messageIds: ['msg-1'], unsaved: [], unsentAttachmentIds: ['att-1'] },
+          }),
+        );
+
+        // Owed on the row until the reply is out, so a second restart still delivers them.
+        expect(mockUpdateWork).toHaveBeenCalledWith('chat', 'msg-1', expect.objectContaining({
+          unsentAttachmentIds: ['att-1'],
+        }));
+        expect(mockPublish).toHaveBeenCalledWith(
+          'user-123', steerThread, 'ok', 'USER_INPUT',
+          expect.objectContaining({ attachmentIds: ['att-1'] }),
+        );
+      });
+
+      it('delivers nothing from a turn a shutdown stopped, and keeps what it did on the row', async () => {
+        const call = (tool: string) => ({ tool, input: '{}', output: `${tool} done`, success: true, timestamp: 't' });
+        mockInvokeStream.mockImplementationOnce(async function* () {
+          yield { text: 'Starting the task.', toolCalls: [call('coding_agent')] };
+          yield { text: '', toolCalls: [call('coding_agent_status')] };
+          shutdown.controller.abort();
+        });
+
+        await conversationEngineService.chat(steerInput('fix the build'));
+
+        expect(mockPublish).not.toHaveBeenCalled();
+        const last = mockUpdateWork.mock.calls.at(-1)?.[2] as { unsaved: Array<{ tool: string }> };
+        expect(last.unsaved.map((u) => u.tool)).toEqual(['coding_agent', 'coding_agent_status']);
+        expect(mockFinishWork).toHaveBeenCalledWith('chat', []);
+      });
+    });
+  });
+
+  describe('Scenario: Files a pending reply owes', () => {
+    it('names the uploads of messages not linked yet and the files no reply delivered', async () => {
+      const row = (payload: object) => ({ key: 'k', payload, attempts: 1, createdAt: new Date() });
+      mockWorkRows.mockResolvedValue([
+        row({ threadId: 't-1', message: { message: 'see the log', attachmentIds: ['att-upload'] } }),
+        row({ threadId: 't-2', unsentAttachmentIds: ['att-shared'] }),
+        row({ threadId: 't-3' }),
+      ]);
+
+      await expect(attachmentsHeldByChatWork()).resolves.toEqual(['att-upload', 'att-shared']);
+      expect(mockWorkRows).toHaveBeenCalledWith('chat');
     });
   });
 

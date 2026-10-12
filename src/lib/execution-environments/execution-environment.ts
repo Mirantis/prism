@@ -84,7 +84,22 @@ export interface RunOptions {
   stdin: 'ignore' | 'pipe';
 }
 
+/**
+ * Names a host process to a later boot of the runtime: its pid, and when it
+ * started, which tells it apart from a later process given the same pid.
+ */
+export interface ProcessMark {
+  pid: number;
+  startedAt: number;
+}
+
 export interface ExecProcess {
+  /**
+   * Set when the process can outlive a runtime that a crash stops: it leads a
+   * process group on this host. A container's processes end with the container,
+   * which the next boot replaces.
+   */
+  readonly mark?: ProcessMark;
   readonly stdin: Writable | null;
   readonly stdout: Readable | null;
   readonly stderr: Readable | null;

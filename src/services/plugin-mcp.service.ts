@@ -150,8 +150,13 @@ class PluginMcpService {
     });
   }
 
+  /** Read what the installed plugins declare, without connecting a server. */
+  async readConfigs(): Promise<void> {
+    await this.scanDesired();
+  }
+
   /**
-   * Every server the installed plugins declare, as the last refresh read them:
+   * Every server the installed plugins declare, as the last read found them:
    * the servers the agent's current tools come from. Ordered by plugin id, then
    * server name.
    */

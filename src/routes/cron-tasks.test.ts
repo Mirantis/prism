@@ -75,7 +75,9 @@ describe('Scheduled task routes', () => {
   // ==========================================================================
 
   describe('GET /cron-tasks', () => {
-    it('fills a recurring task’s next run from the scheduler and keeps a one-shot’s stored one', async () => {
+    it('reads a recurring task’s next run from the scheduler and keeps a one-shot’s stored one', async () => {
+      // The stored next run of a recurring task is what a boot reads. While a run
+      // is in flight past its tick it lags behind the job.
       const recurring = {
         id: 'ct-rec',
         agentId: 'agent-1',
@@ -84,7 +86,7 @@ describe('Scheduled task routes', () => {
         schedule: '0 9 * * 1-5',
         instruction: 'Brief me.',
         isActive: true,
-        nextRunAt: null,
+        nextRunAt: new Date('2025-01-15T09:00:00Z'),
         lastRunAt: null,
         createdAt: new Date('2025-01-01T00:00:00Z'),
         updatedAt: new Date('2025-01-01T00:00:00Z'),
@@ -116,7 +118,7 @@ describe('Scheduled task routes', () => {
           schedule: '0 * * * *',
           instruction: 'Warm the cache.',
           isActive: false,
-          nextRunAt: null,
+          nextRunAt: new Date('2025-01-15T09:00:00Z'),
           lastRunAt: null,
           createdAt: new Date('2025-01-01T00:00:00Z'),
           updatedAt: new Date('2025-01-01T00:00:00Z'),

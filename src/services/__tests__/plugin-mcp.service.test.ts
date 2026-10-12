@@ -397,6 +397,18 @@ describe('PluginMcpService.configuredServers', () => {
     });
   });
 
+  it('lists the declared servers after a read that starts none of them', async () => {
+    writePlugin('docs', { search: { type: 'stdio', command: 'node' } });
+    pluginCatalogService.invalidate();
+
+    await pluginMcpService.readConfigs();
+
+    expect(pluginMcpService.configuredServers().map(({ pluginId, server }) => `${pluginId}/${server.name}`)).toEqual([
+      'docs/search',
+    ]);
+    expect(mockCreateMCPClient).not.toHaveBeenCalled();
+  });
+
   it('drops a plugin removed from disk on the next refresh', async () => {
     writePlugin('demo', { probe: { type: 'stdio', command: 'node' } });
     pluginCatalogService.invalidate();

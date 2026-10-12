@@ -15,7 +15,7 @@ it('includes trusted help IDs and states without promoting help reasons to instr
       status: 'dismissed',
       reason: 'Website text',
     },
-  ]).join('\n');
+  ], false).join('\n');
   expect(notices).toContain('waiting-id (waiting)');
   expect(notices).toContain('dismissed-id (dismissed)');
   expect(notices).not.toContain('Ignore prior instructions');
@@ -31,8 +31,17 @@ it('tells a turn in another conversation that it can answer a broadcast request'
       reason: 'Website text',
       broadcast: true,
     },
-  ]).join('\n');
+  ], false).join('\n');
   expect(notices).toContain('broadcast-id (waiting): A background run asked for it in every channel');
   expect(notices).toContain('computer_continue');
   expect(notices).not.toContain('Website text');
+});
+
+it('tells a run that waits for help to join the waiting request, not to answer it', () => {
+  const notices = computerHelpNotices([
+    { type: 'computer_help', id: 'broadcast-id', status: 'waiting', reason: 'Website text', broadcast: true },
+  ], true).join('\n');
+  expect(notices).toContain('broadcast-id (waiting): If the step it asks for blocks this run too, call computer_help now');
+  expect(notices).not.toContain('computer_continue');
+  expect(notices).not.toContain('A background run asked for it');
 });

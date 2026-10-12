@@ -66,14 +66,16 @@ vi.mock('../../utils/slack-formatter', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../utils/slack-formatter')>()),
   formatSlackMessage: (s: string) => s,
 }));
-const { mockAppStart } = vi.hoisted(() => ({
+const { mockAppStart, mockPostMessage } = vi.hoisted(() => ({
   mockAppStart: vi.fn().mockResolvedValue(undefined),
+  mockPostMessage: vi.fn(),
 }));
 
 vi.mock('@slack/bolt', () => ({
   App: class {
     error = vi.fn();
     start = mockAppStart;
+    client = { chat: { postMessage: mockPostMessage } };
     message = vi.fn();
     action = vi.fn();
     event = vi.fn();
@@ -270,6 +272,25 @@ describe('Requirement: boot does not wait for the Slack socket', () => {
         expect.objectContaining({ 'slack.workspaces': '1' }),
       ),
     );
+  });
+
+  it('posts a reply made while the socket connects once the socket is up', async () => {
+    // A reply the boot continues can be ready before the socket is.
+    let connect!: () => void;
+    mockAppStart.mockReturnValue(new Promise<void>((resolve) => (connect = resolve)));
+    mockPostMessage.mockResolvedValue({ ts: '1700000000.000100' });
+    mockSlackMappingService.findByChannelId.mockResolvedValue(null);
+    vi.spyOn(adapter, 'prepareOutboundMessage').mockResolvedValue({ text: 'Deployed.', blocks: undefined });
+
+    await slackAdapterService.initialize();
+    const delivered = adapter.deliverToChannel('C001', 'Deployed.', 'thread-1');
+    await vi.waitFor(() => expect(mockAppStart).toHaveBeenCalledOnce());
+    expect(mockPostMessage).not.toHaveBeenCalled();
+
+    connect();
+    await delivered;
+
+    expect(mockPostMessage).toHaveBeenCalledWith(expect.objectContaining({ channel: 'C001', text: 'Deployed.' }));
   });
 });
 

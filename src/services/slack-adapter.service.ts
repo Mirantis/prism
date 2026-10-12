@@ -132,6 +132,8 @@ class SlackAdapterService implements ChannelAdapter {
 
   /** Active Slack Bolt apps by teamId */
   private apps: Map<string, SlackApp> = new Map();
+  /** The boot's Socket Mode starts, settled whether or not they connected. */
+  private started: Promise<void> = Promise.resolve();
 
   // Reads the live Slack thread; used here to await read-consistency. Created
   // lazily (not in a field initializer) because SlackThreadProvider imports
@@ -157,10 +159,12 @@ class SlackAdapterService implements ChannelAdapter {
   }
 
   /**
-   * Get the Slack Bolt app for a team.
-   * Used by SlackThreadProvider to access the Slack API client.
+   * Get the Slack Bolt app for a team, once the boot's Socket Mode starts have
+   * settled. Work the boot continues reads and delivers before the socket is up,
+   * and waits here.
    */
-  getAppForTeam(teamId: string): SlackApp | undefined {
+  async getAppForTeam(teamId: string): Promise<SlackApp | undefined> {
+    await this.started;
     return this.apps.get(teamId);
   }
 
@@ -246,7 +250,7 @@ class SlackAdapterService implements ChannelAdapter {
       }
       return;
     }
-    const slackApp = this.apps.get(connection.teamId);
+    const slackApp = await this.getAppForTeam(connection.teamId);
 
     for (const mapping of mappings) {
       // Deliver to DM channel (personal mode)
@@ -365,7 +369,7 @@ class SlackAdapterService implements ChannelAdapter {
       return;
     }
 
-    const slackApp = this.apps.get(teamId);
+    const slackApp = await this.getAppForTeam(teamId);
 
     if (!slackApp) {
       logger.warn('Slack app not found for team %s', teamId);
@@ -577,7 +581,8 @@ class SlackAdapterService implements ChannelAdapter {
       // Build user connection cache
       await this.rebuildUserCache();
 
-      void Promise.all(started).then(() => {
+      this.started = Promise.all(started).then(() => undefined);
+      void this.started.then(() => {
         logger.info('Slack adapter initialized: %d workspace(s)', this.apps.size);
         trackEvent('slack adapter initialized', null, {
           ...(config.agentId ? { 'agent.id': config.agentId } : {}),

@@ -226,11 +226,11 @@ class UpdateService {
       // Named trade: this narrows the window, it does not close it. A message
       // landing between this check and the exit — the swap, the 500 ms flush
       // delay, then a graceful shutdown, so roughly one to six seconds — still
-      // starts a turn the restart kills mid-stream, and the user sees neither
-      // a reply nor a reason. Closing it needs the thread service to refuse
-      // new claims for the rest of the process's life, which is a lock with
-      // its own failure mode (an update that then fails leaves the agent
-      // mute). A seconds-wide window on an hourly check is the cheaper side.
+      // starts a turn the restart interrupts. The next boot continues that
+      // turn, so the window costs the work done before the restart, and the
+      // reply still arrives. Closing it needs the thread service to refuse new
+      // claims for the rest of the process's life, which is a lock with its own
+      // failure mode (an update that then fails leaves the agent mute).
       if (trigger === 'AUTO' && !(await this.isIdle())) {
         // Not an attempt that failed — one that never activated. Drop the
         // row, keep the verified stage, and let the next tick retry.

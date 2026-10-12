@@ -3,13 +3,14 @@
  *
  * Persists pending Slack messages for heartbeat triggers in the database.
  * Messages are enqueued when a Slack message arrives in a heartbeat trigger channel,
- * and drained atomically by the heartbeat, which this queue is a trigger source of.
+ * read by the heartbeat, which this queue is a trigger source of, and removed when
+ * that heartbeat ends.
  */
 
 import prisma from '../lib/prisma';
 import { logger } from '../logger';
 import { ChannelTriggerMessage } from '../types';
-import type { HeartbeatTriggerSource } from './heartbeat.service';
+import type { HeartbeatTriggerSource, PendingTriggerMessages } from './heartbeat.service';
 
 class SlackMessageQueueService implements HeartbeatTriggerSource {
   readonly channel = 'slack';
@@ -27,26 +28,23 @@ class SlackMessageQueueService implements HeartbeatTriggerSource {
     });
   }
 
-  async drain(agentId: string): Promise<ChannelTriggerMessage[]> {
-    logger.info(`[SlackMessageQueue] Draining messages for agent ${agentId.substring(0, 8)}`);
-    return prisma.$transaction(async (tx) => {
-      const rows = await tx.pendingSlackMessage.findMany({
-        where: { agentId },
-        orderBy: { createdAt: 'asc' },
-      });
-
-      if (rows.length === 0) return [];
-
-      await tx.pendingSlackMessage.deleteMany({
-        where: { agentId },
-      });
-
-      return rows.map((row) => ({
-        sender: row.sender,
-        text: row.text,
-        timestamp: row.timestamp,
-      }));
+  async pending(agentId: string): Promise<PendingTriggerMessages> {
+    const rows = await prisma.pendingSlackMessage.findMany({
+      where: { agentId },
+      orderBy: { createdAt: 'asc' },
     });
+    if (rows.length > 0) {
+      logger.info(`[SlackMessageQueue] ${rows.length} message(s) pending for agent ${agentId.substring(0, 8)}`);
+    }
+    return {
+      ids: rows.map((row) => row.id),
+      messages: rows.map((row) => ({ sender: row.sender, text: row.text, timestamp: row.timestamp })),
+    };
+  }
+
+  async remove(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    await prisma.pendingSlackMessage.deleteMany({ where: { id: { in: ids } } });
   }
 }
 

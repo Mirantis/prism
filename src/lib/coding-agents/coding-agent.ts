@@ -11,6 +11,7 @@
  */
 
 import type { CodingAgentName } from '../../config';
+import type { ProcessMark } from '../execution-environments/execution-environment';
 
 export interface CodingAgent {
   /** The adapter identifier. */
@@ -86,6 +87,11 @@ export interface CodingAgentRun {
   readonly events: AsyncIterable<CodingAgentEvent>;
   /** True once the agent has exited. */
   readonly exited: boolean;
+  /**
+   * Names the agent's process to the next boot, which stops it when a crash left it running.
+   * Undefined until the process starts, and where the environment names none.
+   */
+  readonly mark: ProcessMark | undefined;
   /** Ask the run to end, gracefully first and then forced. The stream still ends with a `result`. */
   stop(): void;
 }

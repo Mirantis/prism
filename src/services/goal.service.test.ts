@@ -577,5 +577,38 @@ describe('GoalService', () => {
       expect(mockInvoke).toHaveBeenCalled();
       expect(goalRow!.status).toBe('complete');
     });
+
+    it('tells the first turn of a restored goal that the restart may have stopped a turn part-way', async () => {
+      setActiveGoal({ status: 'active' });
+      mockGenerateText.mockResolvedValueOnce({ text: 'CONTINUE' }).mockResolvedValue({ text: 'COMPLETE' });
+
+      await goalService.restoreActiveGoals('agent-1');
+      await waitForTerminal();
+
+      expect(mockInvoke).toHaveBeenCalledTimes(2);
+      expect(mockInvoke.mock.calls[0][0]).toMatchObject({ afterRestart: true });
+      expect(mockInvoke.mock.calls[1][0].afterRestart).toBe(false);
+    });
+
+    it('delivers and counts nothing for a turn a shutdown stopped, so the restored loop runs it again', async () => {
+      setActiveGoal({ status: 'active' });
+      let finishTurn!: () => void;
+      mockInvoke.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishTurn = () => resolve({ response: 'half done', toolCalls: [], steps: [{ text: 'half done' }] });
+          }),
+      );
+
+      await goalService.restoreActiveGoals('agent-1');
+      await vi.waitFor(() => expect(mockInvoke).toHaveBeenCalled());
+      goalService.stopAll();
+      finishTurn();
+      await flush();
+
+      expect(mockPublish).not.toHaveBeenCalled();
+      expect(goalRow!.status).toBe('active');
+      expect(goalRow!.turnCount).toBe(0);
+    });
   });
 });

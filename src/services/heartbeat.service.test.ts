@@ -17,23 +17,33 @@ const {
   mockDeliverMessage,
   mockUpdateHeartbeatSchedule,
   mockUpdateAgentHeartbeatStatus,
-  mockDrainTriggerMessages,
+  mockPendingTriggerMessages,
   mockGenerateText,
   mockGetGateRequest,
   mockLoggerInfo,
   mockLoggerDebug,
   mockLoggerError,
+  mockRemoveTriggerMessages,
+  mockFindLastAlert,
+  mockBeginWork,
+  mockFinishWork,
+  shutdown,
 } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
   mockDeliverMessage: vi.fn(),
   mockUpdateHeartbeatSchedule: vi.fn(),
   mockUpdateAgentHeartbeatStatus: vi.fn(),
-  mockDrainTriggerMessages: vi.fn(),
+  mockPendingTriggerMessages: vi.fn(),
   mockGenerateText: vi.fn(),
   mockGetGateRequest: vi.fn(),
   mockLoggerInfo: vi.fn(),
   mockLoggerDebug: vi.fn(),
   mockLoggerError: vi.fn(),
+  mockRemoveTriggerMessages: vi.fn(),
+  mockFindLastAlert: vi.fn(),
+  mockBeginWork: vi.fn(async () => undefined),
+  mockFinishWork: vi.fn(),
+  shutdown: { controller: new AbortController() },
 }));
 
 vi.mock('../invoke', () => ({
@@ -44,6 +54,21 @@ vi.mock('./message-delivery.service', () => ({
   messageDeliveryService: {
     publishToLatestThread: mockDeliverMessage,
   },
+}));
+
+vi.mock('./pending-work.service', () => ({
+  MAX_RESUME_ATTEMPTS: 3,
+  pendingWorkService: {
+    get shutdownSignal() {
+      return shutdown.controller.signal;
+    },
+    begin: mockBeginWork,
+    finish: mockFinishWork,
+  },
+}));
+
+vi.mock('../lib/prisma', () => ({
+  default: { conversationMessage: { findFirst: mockFindLastAlert } },
 }));
 
 vi.mock('./agent-status.service', () => ({
@@ -83,8 +108,19 @@ vi.mock('../logger', () => ({
 
 import { heartbeatService } from './heartbeat.service';
 
-/** A channel that queues messages for the heartbeat. */
-const triggerSource = { channel: 'slack', platform: 'Slack', drain: mockDrainTriggerMessages };
+/**
+ * A channel that queues messages for the heartbeat. Each test lists the messages;
+ * the ids are the rows a finished run removes.
+ */
+const triggerSource = {
+  channel: 'slack',
+  platform: 'Slack',
+  pending: async (agentId: string) => {
+    const messages = (await mockPendingTriggerMessages(agentId)) as unknown[];
+    return { ids: messages.map((_, i) => `pending-${i}`), messages };
+  },
+  remove: mockRemoveTriggerMessages,
+};
 heartbeatService.registerTriggerSource(triggerSource);
 import { AgentWorkspace } from '@prisma/client';
 
@@ -164,7 +200,10 @@ describe('HeartbeatService', () => {
     mockUpdateHeartbeatSchedule.mockResolvedValue(undefined);
     mockUpdateAgentHeartbeatStatus.mockResolvedValue(undefined);
     mockDeliverMessage.mockResolvedValue({ messageId: 'msg-1', threadId: 'thr-1' });
-    mockDrainTriggerMessages.mockResolvedValue([]);
+    mockPendingTriggerMessages.mockResolvedValue([]);
+    mockRemoveTriggerMessages.mockResolvedValue(undefined);
+    mockFindLastAlert.mockResolvedValue(null);
+    shutdown.controller = new AbortController();
   });
 
   afterEach(() => {
@@ -578,7 +617,7 @@ describe('HeartbeatService', () => {
       heartbeatService.startHeartbeat(createAgent());
 
       if (trigger === 'channel') {
-        mockDrainTriggerMessages.mockResolvedValueOnce([{
+        mockPendingTriggerMessages.mockResolvedValueOnce([{
           sender: 'Test Operator', text: 'deployment failed', timestamp: '2025-01-15T12:00:00Z',
         }]);
         heartbeatService.triggerFrom(triggerSource);
@@ -691,7 +730,7 @@ describe('HeartbeatService', () => {
     });
 
     it('logs each step for a channel-triggered heartbeat', async () => {
-      mockDrainTriggerMessages.mockResolvedValueOnce([{
+      mockPendingTriggerMessages.mockResolvedValueOnce([{
         sender: 'Alice',
         text: 'deploy failed',
         timestamp: '2025-01-15T12:00:00Z',
@@ -803,6 +842,79 @@ describe('HeartbeatService', () => {
       await heartbeatService.triggerHeartbeat();
 
       expect(mockDeliverMessage).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('a check a restart interrupts', () => {
+    beforeEach(() => {
+      vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
+      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
+    });
+
+    it('moves the schedule only after the alert is delivered', async () => {
+      mockInvoke.mockResolvedValue({ response: 'Disk full', toolCalls: [], steps: [{ text: 'Disk full', toolCalls: [] }] });
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await heartbeatService.triggerHeartbeat();
+
+      const ran = mockUpdateHeartbeatSchedule.mock.calls.findIndex(
+        (call) => (call[0] as ScheduleWrite).lastHeartbeat,
+      );
+      expect(mockDeliverMessage.mock.invocationCallOrder[0]).toBeLessThan(
+        mockUpdateHeartbeatSchedule.mock.invocationCallOrder[ran],
+      );
+    });
+
+    it('stays due when a shutdown stops it, and delivers nothing', async () => {
+      mockInvoke.mockImplementation(async () => {
+        shutdown.controller.abort();
+        return { response: 'Disk full', toolCalls: [], steps: [{ text: 'Disk full', toolCalls: [] }] };
+      });
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockUpdateHeartbeatSchedule).not.toHaveBeenCalledWith(
+        expect.objectContaining({ lastHeartbeat: expect.any(Date) }),
+      );
+    });
+
+    it('ends the cycle when a shutdown starts once the delivery is under way', async () => {
+      // The delivery may have reached a channel, so the next boot must not run
+      // the check again and send the alert twice.
+      mockInvoke.mockResolvedValue({ response: 'Disk full', toolCalls: [], steps: [{ text: 'Disk full', toolCalls: [] }] });
+      mockDeliverMessage.mockImplementationOnce(async () => {
+        shutdown.controller.abort();
+        throw new Error('socket closed');
+      });
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockUpdateHeartbeatSchedule).toHaveBeenCalledWith(
+        expect.objectContaining({ lastHeartbeat: expect.any(Date) }),
+      );
+    });
+
+    it('suppresses the alert the last process delivered, after a restart', async () => {
+      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+      mockFindLastAlert.mockResolvedValue({
+        content: 'Pod crashing!',
+        createdAt: new Date('2025-01-15T11:58:00Z'),
+      });
+      mockInvoke.mockResolvedValue({
+        response: 'Pod crashing!',
+        toolCalls: [],
+        steps: [{ text: 'Pod crashing!', toolCalls: [] }],
+      });
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await vi.advanceTimersByTimeAsync(0);
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockGenerateText).not.toHaveBeenCalled();
     });
   });
 
@@ -1292,8 +1404,8 @@ describe('HeartbeatService', () => {
       expect(mockInvoke).not.toHaveBeenCalled();
     });
 
-    it('a timer heartbeat drains every source so nothing queued waits', async () => {
-      mockDrainTriggerMessages.mockResolvedValueOnce([channelMsg('disk at 95%')]);
+    it('a timer heartbeat reads every source so nothing queued waits', async () => {
+      mockPendingTriggerMessages.mockResolvedValueOnce([channelMsg('disk at 95%')]);
       mockInvoke.mockResolvedValue({
         response: 'Disk alert',
         toolCalls: [],
@@ -1303,7 +1415,7 @@ describe('HeartbeatService', () => {
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await heartbeatService.triggerHeartbeat();
 
-      expect(mockDrainTriggerMessages).toHaveBeenCalledWith('agent-1');
+      expect(mockPendingTriggerMessages).toHaveBeenCalledWith('agent-1');
       expect(mockInvoke).toHaveBeenCalledWith(
         expect.objectContaining({
           heartbeatTriggers: [{ platform: 'Slack', messages: [channelMsg('disk at 95%')] }],
@@ -1311,8 +1423,8 @@ describe('HeartbeatService', () => {
       );
     });
 
-    it('drains messages from DB and passes them into invoke', async () => {
-      mockDrainTriggerMessages.mockResolvedValueOnce([channelMsg('deploy failed')]);
+    it('reads messages from DB and passes them into invoke', async () => {
+      mockPendingTriggerMessages.mockResolvedValueOnce([channelMsg('deploy failed')]);
       mockInvoke.mockResolvedValue({
         response: 'Incident detected!',
         toolCalls: [],
@@ -1325,7 +1437,7 @@ describe('HeartbeatService', () => {
       // Let the fire-and-forget promise resolve
       await vi.advanceTimersByTimeAsync(0);
 
-      expect(mockDrainTriggerMessages).toHaveBeenCalledWith('agent-1');
+      expect(mockPendingTriggerMessages).toHaveBeenCalledWith('agent-1');
       expect(mockInvoke).toHaveBeenCalledWith(
         expect.objectContaining({
           userId: 'user-abc-123',
@@ -1339,7 +1451,7 @@ describe('HeartbeatService', () => {
     it('returns ignored when heartbeat is already running (throttle queue handles next trigger)', async () => {
       let resolveFirst!: (v: unknown) => void;
       mockInvoke.mockReturnValueOnce(new Promise(r => { resolveFirst = r; }));
-      mockDrainTriggerMessages.mockResolvedValueOnce([channelMsg('msg-1')]);
+      mockPendingTriggerMessages.mockResolvedValueOnce([channelMsg('msg-1')]);
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
 
@@ -1365,8 +1477,102 @@ describe('HeartbeatService', () => {
       expect(mockInvoke).toHaveBeenCalledTimes(1);
     });
 
+    describe('a restart at any moment', () => {
+      it('removes the messages a run read once the run has ended, after its delivery', async () => {
+        mockPendingTriggerMessages.mockResolvedValueOnce([channelMsg('prod is down')]);
+        mockInvoke.mockResolvedValue({
+          response: 'Incident in prod!',
+          toolCalls: [],
+          steps: [{ text: 'Incident in prod!', toolCalls: [] }],
+        });
+
+        heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+        heartbeatService.triggerFrom(triggerSource);
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(mockRemoveTriggerMessages).toHaveBeenCalledWith(['pending-0']);
+        expect(mockDeliverMessage.mock.invocationCallOrder[0]).toBeLessThan(
+          mockRemoveTriggerMessages.mock.invocationCallOrder[0],
+        );
+      });
+
+      it('keeps the messages when a shutdown stops the run, and delivers nothing', async () => {
+        mockPendingTriggerMessages.mockResolvedValueOnce([channelMsg('prod is down')]);
+        mockInvoke.mockImplementation(async () => {
+          shutdown.controller.abort();
+          return { response: 'Incident', toolCalls: [], steps: [{ text: 'Incident', toolCalls: [] }] };
+        });
+
+        heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+        heartbeatService.triggerFrom(triggerSource);
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(mockDeliverMessage).not.toHaveBeenCalled();
+        expect(mockRemoveTriggerMessages).not.toHaveBeenCalled();
+        // The row stays, so the next boot counts the run it starts again.
+        expect(mockFinishWork).not.toHaveBeenCalled();
+      });
+
+      it('keeps a run as pending work from before the model call until its messages are removed', async () => {
+        mockPendingTriggerMessages.mockResolvedValueOnce([channelMsg('prod is down')]);
+        mockInvoke.mockResolvedValue({ response: 'On it.', toolCalls: [], steps: [{ text: 'On it.', toolCalls: [] }] });
+
+        heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+        heartbeatService.triggerFrom(triggerSource);
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(mockBeginWork).toHaveBeenCalledWith('heartbeat', 'agent-1', { read: { slack: ['pending-0'] } });
+        expect(mockBeginWork.mock.invocationCallOrder[0]).toBeLessThan(mockInvoke.mock.invocationCallOrder[0]);
+        expect(mockFinishWork).toHaveBeenCalledWith('heartbeat', 'agent-1');
+        expect(mockRemoveTriggerMessages.mock.invocationCallOrder[0]).toBeLessThan(
+          mockFinishWork.mock.invocationCallOrder[0],
+        );
+      });
+
+      it('gives up a run that stopped the runtime on every boot: its messages go, and the check waits an interval', async () => {
+        vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
+        await heartbeatService.resume([], [
+          { key: 'agent-1', payload: { read: { slack: ['pending-0'] } }, attempts: 4, createdAt: new Date() },
+        ]);
+        expect(mockRemoveTriggerMessages).toHaveBeenCalledWith(['pending-0']);
+
+        // Overdue by an hour, which would run a minute after the boot.
+        heartbeatService.startHeartbeat(
+          createAgent({ lastHeartbeat: new Date('2025-01-15T03:00:00Z') }),
+          'keep-schedule',
+        );
+        await vi.advanceTimersByTimeAsync(60_000);
+
+        expect(mockInvoke).not.toHaveBeenCalled();
+        expect(mockUpdateHeartbeatSchedule).toHaveBeenCalledWith({ nextHeartbeatAt: new Date('2025-01-15T20:00:00Z') });
+      });
+
+      it('answers the messages a restart left behind, at boot', async () => {
+        mockPendingTriggerMessages.mockResolvedValue([channelMsg('still waiting')]);
+        mockInvoke.mockResolvedValue({ response: 'On it.', toolCalls: [], steps: [{ text: 'On it.', toolCalls: [] }] });
+
+        heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+        await heartbeatService.answerPendingTriggers();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(mockInvoke).toHaveBeenCalledWith(
+          expect.objectContaining({
+            heartbeatTriggers: [{ platform: 'Slack', messages: [channelMsg('still waiting')] }],
+          }),
+        );
+      });
+
+      it('starts no run at boot when no message waits', async () => {
+        heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+        await heartbeatService.answerPendingTriggers();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(mockInvoke).not.toHaveBeenCalled();
+      });
+    });
+
     it('delivers the response when gate says DELIVER', async () => {
-      mockDrainTriggerMessages.mockResolvedValueOnce([channelMsg('prod is down')]);
+      mockPendingTriggerMessages.mockResolvedValueOnce([channelMsg('prod is down')]);
       mockInvoke.mockResolvedValue({
         response: 'Incident in prod!',
         toolCalls: [],
@@ -1387,7 +1593,7 @@ describe('HeartbeatService', () => {
     });
 
     it('resets isRunning after completion', async () => {
-      mockDrainTriggerMessages.mockResolvedValueOnce([channelMsg('check')]);
+      mockPendingTriggerMessages.mockResolvedValueOnce([channelMsg('check')]);
       mockInvoke.mockResolvedValue({
         response: 'All good',
         toolCalls: [],
@@ -1512,7 +1718,7 @@ describe('HeartbeatService', () => {
     });
 
     it('tags channel-triggered runs with the channel as the trigger', async () => {
-      mockDrainTriggerMessages.mockResolvedValueOnce([
+      mockPendingTriggerMessages.mockResolvedValueOnce([
         { sender: 'Alice', text: 'deploy failed', timestamp: '2025-01-15T12:00:00Z' },
       ]);
       mockInvoke.mockResolvedValue({

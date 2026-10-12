@@ -75,7 +75,7 @@ export interface WebhookRunPage {
   nextCursor: string | null;
 }
 
-interface AcceptedEvent {
+export interface AcceptedEvent {
   /** The runId the receiver answered with. */
   id: string;
   agentId: string;
@@ -181,12 +181,29 @@ class WebhookRunService {
   }
 
   /**
-   * Runs live in this process's queue, so a run still queued or running at boot
-   * was cut off by the restart. Returns how many were.
+   * Put a run a restart interrupted back in the queue, and record one the restart
+   * cut off before its row was written. False when the run already finished, so
+   * there is nothing to run again.
    */
-  async failInterrupted(agentId: string): Promise<number> {
+  async requeue(event: AcceptedEvent): Promise<boolean> {
     const { count } = await prisma.webhookRun.updateMany({
-      where: { agentId, status: { in: UNFINISHED } },
+      where: { id: event.id, status: { in: UNFINISHED } },
+      data: { status: 'queued' },
+    });
+    if (count > 0) return true;
+    const finished = await prisma.webhookRun.findUnique({ where: { id: event.id }, select: { id: true } });
+    if (finished) return false;
+    await this.insert({ ...event, status: 'queued' });
+    return true;
+  }
+
+  /**
+   * A run still queued or running at boot was cut off by the restart. Fails every
+   * such run except the ones `resumed` names. Returns how many it failed.
+   */
+  async failInterrupted(agentId: string, resumed: string[]): Promise<number> {
+    const { count } = await prisma.webhookRun.updateMany({
+      where: { agentId, status: { in: UNFINISHED }, id: { notIn: resumed } },
       data: { status: 'failed', error: INTERRUPTED_ERROR, finishedAt: new Date() },
     });
     return count;

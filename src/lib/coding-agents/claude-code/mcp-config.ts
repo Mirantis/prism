@@ -134,6 +134,9 @@ export function runWithMcpConfig(
     get exited(): boolean {
       return run ? run.exited : ended;
     },
+    get mark() {
+      return run?.mark;
+    },
     stop: () => {
       stopped = true;
       run?.stop();

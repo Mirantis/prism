@@ -13,8 +13,8 @@ The schemas in `src/protocol/chat-protocol.ts` are the authority. The frames in
 - A client that loses its connection gets back everything it missed. If the
   runtime can no longer replay the gap, it says so, and the client reloads
   history. A client is never silently out of date.
-- A message is confirmed only once it is stored. A confirmed message is answered,
-  unless the runtime restarts before its turn begins.
+- A message is confirmed only once it is stored. A confirmed message is answered.
+  When the runtime restarts first, it answers the message after the restart.
 - Sending a message again with the same id never creates a second copy. A client
   can therefore always retry a message that was not confirmed.
 

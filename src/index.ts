@@ -26,7 +26,9 @@ if (dotenvLoadInfo.error) {
 }
 import { createApp, listenOn } from './server';
 import { webhookReceiverService } from './services/webhook-receiver.service';
-import { webhookRunService } from './services/webhook-run.service';
+import { webhookService } from './services/webhook.service';
+import { pendingWorkService } from './services/pending-work.service';
+import { resumeReplies } from './services/resume-replies';
 import { initLangfuse, shutdownLangfuse } from './lib/langfuse';
 import { initTelemetry, shutdownTelemetry } from './lib/telemetry';
 import { trackAgentStarted } from './lib/startup-telemetry';
@@ -254,18 +256,55 @@ const initialize = async () => {
       data: { status: 'IDLE' },
     });
 
-    // Before the heartbeat, cron tasks and goals start, so their first turns are reported.
+    // Before any work starts, resumed work included, so its first turns are reported.
     programStatusService.start(agent.id, agent.userId);
 
-    const interruptedWebhookRuns = await webhookRunService.failInterrupted(agent.id);
-    if (interruptedWebhookRuns > 0) {
-      logger.warn('[Startup] %d webhook run(s) did not finish before the restart', interruptedWebhookRuns);
+    // Probe for the voice-meeting toolchain once, here rather than per turn, and
+    // before any work can start: the tools block must stay byte-identical across
+    // requests for the provider's prompt cache to hit, a resumed turn's included.
+    if (config.realtimeUnavailableReason) {
+      logger.info({ reason: config.realtimeUnavailableReason }, 'Voice is not configured');
     }
+    const meetingsAvailable = await initMeetingToolAvailability();
+    logger.info(
+      meetingsAvailable
+        ? 'Voice meetings available (browser + audio toolchain and Realtime credential present)'
+        : 'Voice meetings unavailable — meeting tools not registered',
+    );
+
+    // The same question for the agent's own computer, which needs a desktop on top of
+    // that toolchain. The Web UI reads the answer and leaves its Computer page out
+    // where it is no.
+    const computerAvailable = await initComputerAvailability();
+    logger.info(
+      computerAvailable
+        ? "The agent's computer is available (desktop packages present)"
+        : "The agent's computer is unavailable — the Computer page is not offered",
+    );
+
+    // Read before the channels connect, so a message that arrives during the boot
+    // is new work and never also resumed.
+    const interrupted = await pendingWorkService.interrupted();
+
+    // The channels connect before any work starts, so work that delivers at once
+    // — a resumed reply, an overdue check — finds them ready.
+    await messageDeliveryService.initializeAll();
+
+    // Continue the work a restart interrupted. Each kind's owner gets its rows
+    // back and schedules the work; none of it holds up the boot.
+    await pendingWorkService.resumeAll(interrupted, {
+      chat: resumeReplies,
+      webhook: (items) => webhookService.resume(items),
+      'coding-task': (items, givenUp) => getAgentTaskManager().resume(items, givenUp),
+      cron: (items, givenUp) => cronSchedulerService.resume(items, givenUp),
+      heartbeat: (items, givenUp) => heartbeatService.resume(items, givenUp),
+    });
 
     // Boot keeps the schedule the last run set, so a restart cannot defer a
     // check, and an overdue one runs promptly.
     heartbeatService.startHeartbeat(agent, 'keep-schedule');
     logger.info('Heartbeat started');
+    await heartbeatService.answerPendingTriggers();
 
     // Recurring schedules are read in the agent's time zone.
     cronSchedulerService.useTimezone(agent.timezone);
@@ -293,36 +332,11 @@ const initialize = async () => {
     // self-update (SEA binary with a release version, DISABLE_UPDATER unset).
     await updateService.start();
 
-    await messageDeliveryService.initializeAll();
-
     await getSlackHeartbeatThrottleQueue().start();
 
     // Sweep abandoned uploads, scratch dirs, expired content, stray media files
     // and expired saved tool outputs now, then hourly (see lib/file-janitor.ts).
     fileJanitorTimer = await startFileJanitor();
-
-    // Probe for the voice-meeting toolchain once, here rather than per turn: the
-    // tools block must stay byte-identical across requests for the provider's
-    // prompt cache to hit.
-    if (config.realtimeUnavailableReason) {
-      logger.info({ reason: config.realtimeUnavailableReason }, 'Voice is not configured');
-    }
-    const meetingsAvailable = await initMeetingToolAvailability();
-    logger.info(
-      meetingsAvailable
-        ? 'Voice meetings available (browser + audio toolchain and Realtime credential present)'
-        : 'Voice meetings unavailable — meeting tools not registered',
-    );
-
-    // The same question for the agent's own computer, which needs a desktop on top of
-    // that toolchain. The Web UI reads the answer and leaves its Computer page out
-    // where it is no.
-    const computerAvailable = await initComputerAvailability();
-    logger.info(
-      computerAvailable
-        ? "The agent's computer is available (desktop packages present)"
-        : "The agent's computer is unavailable — the Computer page is not offered",
-    );
 
     // Embed the memory entries that have no vector yet. In-process and
     // best-effort: it never blocks startup, and a failure costs a log line.
@@ -362,6 +376,9 @@ const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResp
   }, 30_000);
   hardExit.unref();
 
+  // First: the work in flight stops and stays pending, so the teardown below
+  // cannot end it half done, and the next boot continues it.
+  pendingWorkService.shutdown();
   heartbeatService.stopAll();
   cronSchedulerService.stopAll();
   goalService.stopAll();
@@ -401,6 +418,8 @@ const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResp
   // a bare SIGTERM to the runtime doesn't orphan them.
   await pluginMcpService.shutdownAll();
   await getSlackHeartbeatThrottleQueue().stop();
+  // Work whose result was delivered during the teardown records that before the exit.
+  await pendingWorkService.flush();
   await shutdownLangfuse();
   await shutdownTelemetry().catch(() => {});
 

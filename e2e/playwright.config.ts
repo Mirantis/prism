@@ -206,8 +206,9 @@ export default defineConfig({
     {
       // Run the runtime via tsx directly (not `npm run dev`) so it inherits
       // DATABASE_URL=file:./e2e.db from this config instead of the dev
-      // script's hard-coded `file:./agent.db` prefix.
-      command: 'npx tsx e2e/support/runtime-entry.ts',
+      // script's hard-coded `file:./agent.db` prefix. The supervisor starts it
+      // again after a SIGKILL, which the restart scenario sends.
+      command: 'npx tsx e2e/support/runtime-supervisor.ts',
       cwd: REPO_ROOT,
       // `url` rather than `port`: a bare port is satisfied by anything holding
       // the socket, and this runtime binds *after* `initialize()` — Slack

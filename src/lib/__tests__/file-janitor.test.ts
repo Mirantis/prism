@@ -26,6 +26,11 @@ vi.mock('../../services/attachment.service', () => ({
   },
 }));
 
+const attachmentsHeldByChatWork = vi.fn();
+vi.mock('../../services/conversation-engine.service', () => ({
+  attachmentsHeldByChatWork: (...a: unknown[]) => attachmentsHeldByChatWork(...a),
+}));
+
 const reapScratchDirs = vi.fn();
 vi.mock('../../tools/attachments', () => ({
   reapScratchDirs: (...a: unknown[]) => reapScratchDirs(...a),
@@ -50,6 +55,7 @@ import { sweepFiles } from '../file-janitor';
 beforeEach(() => {
   vi.clearAllMocks();
   deleteOrphans.mockResolvedValue(0);
+  attachmentsHeldByChatWork.mockResolvedValue([]);
   expireContent.mockResolvedValue(0);
   listLiveStoragePaths.mockResolvedValue(new Set());
   reapScratchDirs.mockResolvedValue(0);
@@ -58,6 +64,14 @@ beforeEach(() => {
 });
 
 describe('sweepFiles', () => {
+  it('keeps the uploads and shared files that a pending reply still owes', async () => {
+    attachmentsHeldByChatWork.mockResolvedValue(['att-upload', 'att-shared']);
+
+    await sweepFiles();
+
+    expect(deleteOrphans).toHaveBeenCalledWith(24 * 60 * 60 * 1000, ['att-upload', 'att-shared']);
+  });
+
   it('sweeps saved tool outputs against their own TTL', async () => {
     await sweepFiles();
 

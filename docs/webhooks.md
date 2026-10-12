@@ -89,7 +89,8 @@ distinct events are never dropped, even from senders that don't retry on
 non-2xx (GitHub never redelivers automatically). The queue is capped
 (10 pending); beyond that, deliveries answer `429` as a backstop against
 pathological floods. Deliver-only requests are not queued or limited — they
-cost no LLM tokens.
+cost no LLM tokens. A queued or running event survives a restart, and runs when
+the runtime is back.
 
 ## Authentication
 

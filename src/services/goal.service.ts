@@ -51,6 +51,8 @@ interface GoalRuntime {
   aborted: boolean;
   /** Aborts the in-flight goal turn so stop/pause take effect immediately. */
   abort: AbortController;
+  /** The boot restored the goal, and the restart may have stopped its last turn part-way. */
+  afterRestart: boolean;
 }
 
 export interface StartGoalInput {
@@ -123,7 +125,7 @@ class GoalService {
     const goals = await prisma.goal.findMany({ where: { agentId, status: 'active' } });
     for (const goal of goals) {
       await prisma.goal.update({ where: { id: goal.id }, data: { stallCount: 0 } });
-      this.startLoop(goal.id);
+      this.startLoop(goal.id, true);
     }
     logger.info(`[Goal] Restored ${goals.length} active goal(s)`);
   }
@@ -259,13 +261,13 @@ class GoalService {
     });
   }
 
-  private startLoop(goalId: string): void {
-    this.runGoalLoop(goalId).catch((err) => {
+  private startLoop(goalId: string, afterRestart = false): void {
+    this.runGoalLoop(goalId, afterRestart).catch((err) => {
       logger.error({ err }, `[Goal] Loop crashed for ${goalId}`);
     });
   }
 
-  private async runGoalLoop(goalId: string): Promise<void> {
+  private async runGoalLoop(goalId: string, afterRestart: boolean): Promise<void> {
     const existing = this.runtimes.get(goalId);
     // Bail only for a genuinely live loop. A still-running but *aborted* runtime
     // is mid-teardown (a pause/stop landed during an in-flight invoke that hasn't
@@ -279,7 +281,7 @@ class GoalService {
       return;
     }
 
-    const runtime: GoalRuntime = { isRunning: true, aborted: false, abort: new AbortController() };
+    const runtime: GoalRuntime = { isRunning: true, aborted: false, abort: new AbortController(), afterRestart };
     this.runtimes.set(goalId, runtime);
     // The thread works for the loop's whole life, the gate between two turns included.
     let endActivity: (() => void) | undefined;
@@ -427,8 +429,13 @@ class GoalService {
           tokensUsed: goal.tokensUsed,
           tokenBudget: goal.tokenBudget,
         }),
+        afterRestart: runtime.afterRestart,
         abortSignal: runtime.abort.signal,
       });
+      runtime.afterRestart = false;
+      // A stop or a shutdown ended the turn. It delivers nothing and is not counted,
+      // so a goal a shutdown interrupted runs the turn again after the restart.
+      if (runtime.aborted) return null;
 
       const budgetExceeded = result.error?.type === 'budget_exceeded';
       const lastStep = result.steps[result.steps.length - 1];

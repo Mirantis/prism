@@ -22,6 +22,7 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 
 /** A pending message, the shape the primitive now takes and can withdraw. */
 const msg = (text: string, attachmentIds: string[] = []): PendingMessage => ({
+  id: `msg-${text}`,
   text,
   attachmentIds,
 });
@@ -139,7 +140,7 @@ describe('threadTurnService', () => {
       const taken = claim(thread, 'review the PR');
 
       expect(threadTurnService.claimOrOffer(thread, msg('no need to run tests'))).toBeNull();
-      expect(taken.drain()).toEqual([{ text: 'no need to run tests', attachmentIds: [] }]);
+      expect(taken.drain()).toEqual([msg('no need to run tests')]);
 
       expect(taken.drainOrRelease()).toEqual([]);
     });
@@ -152,7 +153,7 @@ describe('threadTurnService', () => {
       threadTurnService.claimOrOffer(thread, msg('look at this log', ['att-1', 'att-2']));
 
       expect(taken.drain()).toEqual([
-        { text: 'look at this log', attachmentIds: ['att-1', 'att-2'] },
+        msg('look at this log', ['att-1', 'att-2']),
       ]);
       expect(taken.drainOrRelease()).toEqual([]);
     });
@@ -182,7 +183,37 @@ describe('threadTurnService', () => {
 
       goal.resolve();
       await Promise.all([goalTurn, chatTurn]);
-      expect(seen).toEqual([{ text: 'while queued', attachmentIds: [] }]);
+      expect(seen).toEqual([msg('while queued')]);
+    });
+  });
+
+  describe('claimWhenFree', () => {
+    it('takes a free thread at once', async () => {
+      const thread = nextThread();
+
+      const taken = await threadTurnService.claimWhenFree(thread);
+
+      expect(threadTurnService.isClaimed(thread)).toBe(true);
+      taken.end();
+      expect(threadTurnService.isTracked(thread)).toBe(false);
+    });
+
+    it('waits for the turn that owns the thread, and takes it as that turn releases', async () => {
+      const thread = nextThread();
+      const owner = claim(thread);
+      let waited: Awaited<ReturnType<typeof threadTurnService.claimWhenFree>> | undefined;
+      void threadTurnService.claimWhenFree(thread).then((claimed) => (waited = claimed));
+      await Promise.resolve();
+      expect(waited).toBeUndefined();
+
+      expect(owner.drainOrRelease()).toEqual([]);
+      // No message can take the thread between the two claims.
+      expect(threadTurnService.claimOrOffer(thread, msg('a new message'))).toBeNull();
+      await Promise.resolve();
+
+      expect(waited?.drain()).toEqual([msg('a new message')]);
+      waited?.end();
+      expect(threadTurnService.isTracked(thread)).toBe(false);
     });
   });
 
@@ -212,7 +243,7 @@ describe('threadTurnService', () => {
       expect(threadTurnService.pendingCount(thread)).toBe(1);
 
       expect(taken.drainOrRelease()).toEqual([
-        { text: 'skip the tests', attachmentIds: [] },
+        msg('skip the tests'),
       ]);
     });
 
@@ -284,8 +315,8 @@ describe('threadTurnService', () => {
       threadTurnService.offer(thread, msg('second'));
 
       expect(taken.drain()).toEqual([
-        { text: 'first', attachmentIds: [] },
-        { text: 'second', attachmentIds: [] },
+        msg('first'),
+        msg('second'),
       ]);
       expect(threadTurnService.pendingCount(thread)).toBe(0);
 
@@ -303,7 +334,7 @@ describe('threadTurnService', () => {
       expect(threadTurnService.isClaimed(thread)).toBe(true);
       expect(threadTurnService.offer(thread, msg('and another'))).toBe(true);
 
-      expect(taken.drainOrRelease()).toEqual([{ text: 'and another', attachmentIds: [] }]);
+      expect(taken.drainOrRelease()).toEqual([msg('and another')]);
     });
   });
 
@@ -316,7 +347,7 @@ describe('threadTurnService', () => {
       // Retrievable after the last step, so the coalesced follow-up answers it
       // rather than the message being dropped.
       expect(taken.drainOrRelease()).toEqual([
-        { text: 'landed at the very end', attachmentIds: [] },
+        msg('landed at the very end'),
       ]);
       expect(threadTurnService.isClaimed(thread)).toBe(true);
 
@@ -380,6 +411,22 @@ describe('threadTurnService', () => {
 
       expect(threadTurnService.isClaimed(thread)).toBe(false);
       expect(threadTurnService.pendingCount(thread)).toBe(0);
+    });
+
+    it('hands back what no turn took to an exchange that ends early, and releases', async () => {
+      const thread = nextThread();
+      const taken = claim(thread);
+      let abandoned: PendingMessage[] = [];
+
+      await taken.run(async () => {
+        threadTurnService.offer(thread, msg('never mind'));
+        abandoned = taken.end();
+        expect(threadTurnService.offer(thread, msg('too late'))).toBe(false);
+      });
+
+      expect(abandoned).toEqual([msg('never mind')]);
+      expect(taken.end()).toEqual([]);
+      expect(threadTurnService.isTracked(thread)).toBe(false);
     });
 
     it('does not hand one turn\'s leftovers to the next turn', async () => {

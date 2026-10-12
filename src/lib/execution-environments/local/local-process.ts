@@ -71,8 +71,10 @@ function wrap(child: ChildProcess, processGroup: boolean): ExecProcess {
 
   const ended = settle('exit');
   const closed = settle('close');
+  const mark = processGroup && child.pid !== undefined ? { pid: child.pid, startedAt: Date.now() } : undefined;
 
   return {
+    mark,
     get stdin() {
       return child.stdin;
     },

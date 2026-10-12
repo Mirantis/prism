@@ -310,7 +310,31 @@ describe('where a help request is asked', () => {
       run.originChannel === 'slack' ? slack : { channel: 'websocket', threadId: 'thread' },
     );
     expect(help.broadcast).toBeUndefined();
-    expect(prisma.conversationMessage.findMany).not.toHaveBeenCalled();
+  });
+
+  it('posts nothing for a scheduled run while a request waits in its own conversation', async () => {
+    const waiting = { ...help, id: 'waiting-id', threadId: 'thread' };
+    vi.mocked(prisma.conversationMessage.findMany).mockResolvedValue([{ blocks: [waiting] }] as never);
+    const use = createUse({ mode: 'cron', threadId: 'thread' });
+    await computerService.access.acquire(use);
+
+    expect(await computerHelpService.request(use, 'Sign in again')).toEqual({
+      help: waiting,
+      repeated: true,
+      answer: expect.any(Promise),
+    });
+    expect(messageDeliveryService.publish).not.toHaveBeenCalled();
+  });
+
+  it('posts a new request from a chat turn, which does not wait for its answer', async () => {
+    vi.mocked(prisma.conversationMessage.findMany).mockResolvedValue([
+      { blocks: [{ ...help, id: 'waiting-id', threadId: 'thread' }] },
+    ] as never);
+
+    const { help: asked, repeated } = await ask({ mode: 'chat', threadId: 'thread' });
+
+    expect(repeated).toBe(false);
+    expect(asked.id).not.toBe('waiting-id');
   });
 
   it('posts nothing while a broadcast request is still waiting', async () => {
@@ -367,6 +391,9 @@ describe('a background run that asks for help', () => {
       options,
     ) as Promise<{ helpId: string; answer: string; message: string }>;
     await vi.waitFor(() => expect(computerHelpService.awaiting()).toHaveLength(1));
+    // The answer reads back the card the run posted.
+    const posted = vi.mocked(messageDeliveryService.publish).mock.calls.at(-1)?.[4]?.blocks;
+    vi.mocked(prisma.conversationMessage.findFirst).mockResolvedValue({ id: 'message', blocks: posted } as never);
     return { use, result, helpId: computerHelpService.awaiting()[0].helpId };
   }
 
@@ -442,6 +469,23 @@ describe('a background run that asks for help', () => {
     await result;
 
     expect(phases).toEqual(['idle', 'working']);
+  });
+
+  it("continues the requester's work when a waiting run only joined its request", async () => {
+    // A chat turn asked, so nothing waits for the answer but the scheduled run that joined.
+    const asked = { ...help, threadId: 'thread' };
+    vi.mocked(prisma.conversationMessage.findFirst).mockResolvedValue({ id: 'message', blocks: [asked] } as never);
+    vi.mocked(prisma.conversationMessage.findMany).mockResolvedValue([{ blocks: [asked] }] as never);
+    const joined = getComputerTools(createUse({ mode: 'cron', threadId: 'thread' })).computer_help.execute!(
+      { reason: 'Sign in again', credentials: false },
+      options,
+    ) as Promise<{ answer: string }>;
+    await vi.waitFor(() => expect(computerHelpService.awaiting()).toHaveLength(1));
+
+    await computerHelpService.continueRequest('agent', 'user', asked.id, 'continue');
+
+    expect(await joined).toMatchObject({ answer: 'continued' });
+    expect(conversationEngineService.chat).toHaveBeenCalledWith(expect.objectContaining({ threadId: 'thread' }));
   });
 
   it('tells the turn that answers that the waiting run does the work', async () => {

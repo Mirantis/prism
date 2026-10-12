@@ -6,7 +6,7 @@
  */
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
-import type { ExecEnd, ExecProcess } from '../lib/execution-environments/execution-environment';
+import type { ExecEnd, ExecProcess, ProcessMark } from '../lib/execution-environments/execution-environment';
 
 export class FakeChild extends EventEmitter {
   stdin = new PassThrough();
@@ -19,6 +19,8 @@ export class FakeChild extends EventEmitter {
   signalCode: NodeJS.Signals | null = null;
   killed = false;
   signals: string[] = [];
+  /** What the process names itself as to the next boot. */
+  mark: ProcessMark | undefined;
   kill(signal?: string): boolean {
     this.killed = true;
     this.signals.push(signal ?? 'SIGTERM');
@@ -69,6 +71,7 @@ export class FakeChild extends EventEmitter {
       },
       ended,
       closed,
+      mark: this.mark,
       kill: (sig) => this.kill(sig),
     };
   }

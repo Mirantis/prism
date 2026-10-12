@@ -122,6 +122,9 @@ export function runCli(
     get exited(): boolean {
       return proc.exitCode !== null || proc.signal !== null;
     },
+    get mark() {
+      return proc.mark;
+    },
     stop: () => terminate(proc, taskId),
   };
 }

@@ -106,6 +106,9 @@ class AgentProcesses extends EventEmitter {
     this.deferred.add(held);
 
     return {
+      get mark() {
+        return real?.mark;
+      },
       stdin,
       stdout,
       stderr,

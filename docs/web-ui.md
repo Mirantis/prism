@@ -293,7 +293,9 @@ What the agent has spent, and what it has done.
   with the webhook's name, the time and the result: **Completed**, **Failed**,
   **Spending limit reached**, **Nothing to report** when the reply was held back,
   or **Delivered** for a deliver-only webhook. A run that has not finished reads
-  **Queued** or **Running**, and one cut off by a restart reads **Failed**.
+  **Queued** or **Running**. A run a restart interrupts runs again after the
+  restart, and reads **Failed** when it cannot: a deliver-only event, or a
+  webhook deleted in the meantime.
   Expand a run to see the message it delivered and the tool calls it made. When
   it delivered to web chat, **Open conversation** opens that chat. The 1,000
   newest finished runs are kept.
