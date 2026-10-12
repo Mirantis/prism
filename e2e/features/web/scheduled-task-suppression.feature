@@ -21,3 +21,9 @@ Feature: Scheduled tasks stay silent when there is nothing to report
     And the scheduled task named "quiet-check" runs to completion
     And the quiet task has written "QUIET_CHECK_RAN" to memory
     And no scheduled-task message is delivered after the quiet task was created
+
+  Scenario: A conditional task reports a finding once, not on every run
+    # Each run reads the clock, so the same finding comes back in other words.
+    Given a recurring scheduled task "repeat-check" every 30 seconds with the instruction "Run the shell command date -u +%T. Then check whether 7 is a prime number. Only send me a message if it is: start it with REPEAT_CHECK_FOUND, then give the time the command printed."
+    When the recurring task has run 3 times
+    Then exactly 1 scheduled-task message is delivered after the recurring task was created

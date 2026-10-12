@@ -30,6 +30,14 @@ export interface ClassificationGateInput {
 }
 
 export async function runClassificationGate(input: ClassificationGateInput): Promise<boolean> {
+  return (await runVerdictGate(input)).startsWith('DELIVER');
+}
+
+/**
+ * The gate's answer, upper-cased, for a gate with more verdicts than deliver or
+ * not. A failed call answers `DELIVER`.
+ */
+export async function runVerdictGate(input: ClassificationGateInput): Promise<string> {
   try {
     const { model, providerOptions, samplingParams } = getGateRequest();
     const result = await callModel({ purpose: 'delivery-gate', agentId: input.agentId }, {
@@ -44,12 +52,12 @@ export async function runClassificationGate(input: ClassificationGateInput): Pro
       ...samplingParams,
       ...langfuseTelemetry(input.functionId, input.userId ? { userId: input.userId } : undefined),
     });
-    const shouldDeliver = result.text.trim().toUpperCase().startsWith('DELIVER');
-    logger.info(`[${input.logLabel}] Decision: ${result.text.trim()} (deliver=${shouldDeliver})`);
-    return shouldDeliver;
+    const verdict = result.text.trim().toUpperCase();
+    logger.info(`[${input.logLabel}] Decision: ${verdict}`);
+    return verdict;
   } catch (error) {
     logger.error({ err: error }, `[${input.logLabel}] Gate call failed, defaulting to deliver`);
-    return true; // fail-open
+    return 'DELIVER'; // fail-open
   }
 }
 

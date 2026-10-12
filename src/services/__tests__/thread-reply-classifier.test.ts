@@ -135,7 +135,7 @@ describe('threadReplyClassifierService', () => {
       await classify(TRANSCRIPT, 'teams');
 
       const { system } = mockGenerateObject.mock.calls[0][0];
-      expect(system).toContain('You are a Microsoft Teams thread classifier');
+      expect(system).toContain('You classify replies in a Microsoft Teams thread');
     });
 
     it('names an approval a respond and tells the model to prefer respond when unsure', async () => {

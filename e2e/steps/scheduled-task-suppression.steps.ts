@@ -1,10 +1,11 @@
 /**
  * Scheduled-task suppression step definitions (web)
  *
- * Exercises the DELIVER/SUPPRESS gate on cron runs: an unconditional task
- * ("reply with exactly X") always delivers, while a conditional check whose
- * condition is not met ("only tell me if the year is 1999") runs, records its
- * execution, and posts nothing.
+ * Exercises the delivery gate on cron runs: an unconditional task ("reply with
+ * exactly X") always delivers, a conditional check whose condition is not met
+ * ("only tell me if the year is 1999") runs, records its execution, and posts
+ * nothing, and a conditional check whose condition holds on every run posts
+ * once.
  *
  * The auth/navigation/chat steps are reused from the other suites. We assert
  * on the database (the `cron_tasks` and `conversation_messages` tables)
@@ -14,14 +15,17 @@
  */
 
 import { createBdd } from 'playwright-bdd';
-import { expect } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import * as dbHelper from '../support/db-helper';
 import { getCurrentAgentId } from './common.steps';
 
-const { Then } = createBdd();
+const { Given, When, Then } = createBdd();
 
 /** Set when the quiet task's row is first observed; bounds the absence query. */
 let quietTaskCreatedAt: Date | null = null;
+
+/** The recurring task a scenario created through the API. */
+let recurringTask: { id: string; createdAt: Date } | null = null;
 
 /** Poll `fn` until `ok` holds or the timeout elapses; returns the last value. */
 async function pollUntil<T>(
@@ -68,6 +72,73 @@ Then('a scheduled-task message containing {string} is delivered', async ({}, mar
     150_000,
   );
   expect(messages.length).toBeGreaterThan(0);
+});
+
+Given(
+  'a recurring scheduled task {string} every {int} seconds with the instruction {string}',
+  async ({}, name: string, seconds: number, instruction: string) => {
+    // Several runs, each an agent turn, then a quiet period: longer than the default test timeout.
+    test.setTimeout(600_000);
+    const res = await fetch(`${process.env.AGENT_RUNTIME_URL}/agents/cron-tasks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name, schedule: `*/${seconds} * * * * *`, instruction }),
+    });
+    expect(res.ok).toBe(true);
+    const task = (await res.json()) as { id: string; createdAt: string };
+    recurringTask = { id: task.id, createdAt: new Date(task.createdAt) };
+  },
+);
+
+When('the recurring task has run {int} times', async ({}, runs: number) => {
+  expect(recurringTask).toBeTruthy();
+  const { id } = recurringTask as { id: string };
+  // `lastRunAt` moves once per run, after the agent's turn and before the gate
+  // and the delivery. A tick that would overlap a running execution is skipped.
+  const seen = new Set<number>();
+  await pollUntil(
+    async () => {
+      const row = await dbHelper.getPrisma().cronTask.findUnique({ where: { id } });
+      if (row?.lastRunAt) seen.add(row.lastRunAt.getTime());
+      return seen.size;
+    },
+    (count) => count >= runs,
+    360_000,
+    1000,
+  );
+  expect(seen.size).toBeGreaterThanOrEqual(runs);
+  // Stop further ticks. The last run can still be at its gate or its delivery.
+  const res = await fetch(`${process.env.AGENT_RUNTIME_URL}/agents/cron-tasks/${id}`, { method: 'DELETE' });
+  expect(res.ok).toBe(true);
+});
+
+Then('exactly {int} scheduled-task message is delivered after the recurring task was created', async ({}, count: number) => {
+  expect(recurringTask).toBeTruthy();
+  const since = (recurringTask as { createdAt: Date }).createdAt;
+  const delivered = () =>
+    dbHelper.getPrisma().conversationMessage.count({
+      where: {
+        role: 'AGENT',
+        triggeredBy: 'CRON_TASK',
+        createdAt: { gte: since },
+        thread: { agentId: getCurrentAgentId() },
+      },
+    });
+  // Count once the number has held for a quiet period, so a delivery that the
+  // last run makes late is still counted.
+  const quietMs = 30_000;
+  const start = Date.now();
+  let last = await delivered();
+  let changedAt = Date.now();
+  while (Date.now() - changedAt < quietMs && Date.now() - start < 180_000) {
+    await new Promise((r) => setTimeout(r, 1000));
+    const now = await delivered();
+    if (now !== last) {
+      last = now;
+      changedAt = Date.now();
+    }
+  }
+  expect(last).toBe(count);
 });
 
 Then('the scheduled task named {string} runs to completion', async ({}, name: string) => {

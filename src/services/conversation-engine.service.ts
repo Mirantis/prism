@@ -222,20 +222,13 @@ class ConversationEngineService {
     agentId: string,
     abortSignal?: AbortSignal,
   ): Promise<boolean> {
-    const systemPrompt = `You are a gate deciding whether to ask a user to rate an agent's reply with thumbs-up/down.
+    const systemPrompt = `You decide whether to ask the user to rate an agent's reply with thumbs up or down. A rating is useful only when the user can judge the substance of the reply.
 
-Reply WORTHY when the agent's response is a substantive answer where a rating carries useful signal:
-- analysis, explanation, plan, code, investigation summary, recommendation
-- anything the user might judge as helpful or not
+Answer WORTHY for a substantive reply: an analysis, explanation, plan, code, investigation summary or recommendation, or anything else the user can find helpful or not.
 
-Reply SKIP when a rating would be noise:
-- short acknowledgement ("Got it!", "Done.", "OK, on it.")
-- clarifying question back to the user
-- error or refusal ("I can't help with that", "I don't have access to …")
-- trivial lookup or confirmation with no judgement involved
-- progress update with no new conclusion
+Answer SKIP when a rating would be noise: a short acknowledgement ("Done.", "On it."), a question back to the user, an error or a refusal, a trivial lookup or confirmation, or a progress update with no new conclusion.
 
-Respond with exactly one word: WORTHY or SKIP`;
+Answer with one word: WORTHY or SKIP.`;
 
     try {
       const { model, providerOptions, samplingParams } = getGateRequest();

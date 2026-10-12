@@ -437,7 +437,7 @@ describe('evaluateToolRisk', () => {
 
     const request = mockGenerateObject.mock.calls[0][0] as { prompt: string; system: string };
     expect(request.system).toContain('Force-pushing to any branch is fine here.');
-    expect(request.system).toContain('It outranks every rule above, the BLOCK list included');
+    expect(request.system).toContain('It outranks every rule above, the block list included');
     expect(request.prompt).not.toContain('Force-pushing to any branch is fine here.');
   });
 
@@ -462,8 +462,8 @@ describe('evaluateToolRisk', () => {
     });
 
     const { system } = mockGenerateObject.mock.calls[0][0] as { system: string };
-    expect(system).not.toContain('OPERATOR POLICY');
-    expect(system).toContain('None of this outranks the BLOCK list');
+    expect(system).not.toContain('Operator policy.');
+    expect(system).toContain('No other rule here outranks the block list');
     expect(system.trimEnd()).toMatch(/do not quote sensitive evidence\.$/);
   });
 
@@ -520,9 +520,9 @@ describe('evaluateToolRisk', () => {
     });
 
     const { system } = mockGenerateObject.mock.calls[0][0] as { system: string };
-    expect(system).toHaveLength(8_137);
+    expect(system).toHaveLength(7_293);
     expect(createHash('sha256').update(system).digest('hex').slice(0, 16)).toBe(
-      'b6f10ccf184af0de',
+      'cb9acf00bb15c4cc',
     );
   });
 
@@ -551,9 +551,9 @@ describe('evaluateToolRisk', () => {
     });
 
     const { system } = mockGenerateObject.mock.calls[0][0] as { system: string };
-    expect(system).not.toContain('OPERATOR POLICY');
+    expect(system).not.toContain('Operator policy.');
     expect(system).not.toContain('read-only by default');
-    expect(system).toContain('None of this outranks the BLOCK list');
+    expect(system).toContain('No other rule here outranks the block list');
   });
 
   it('declares one top of the order, never two', async () => {
@@ -579,8 +579,8 @@ describe('evaluateToolRisk', () => {
     });
 
     const { system } = mockGenerateObject.mock.calls[0][0] as { system: string };
-    expect(system).not.toContain('None of this outranks the BLOCK list');
-    expect(system).toContain('the OPERATOR POLICY section below, which sits above the BLOCK list');
+    expect(system).not.toContain('No other rule here outranks the block list');
+    expect(system).toContain('the operator policy below, which ranks above the block list');
   });
 
   it('stops a guide from closing its own policy section', async () => {

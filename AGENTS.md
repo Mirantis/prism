@@ -1498,7 +1498,7 @@ the user editing a document is not the agent rewriting itself.
 guide in the classifier's **system** prompt, not in the evidence JSON — the rules
 at the top of that prompt declare the evidence untrusted, so guide text there
 would be correctly ignored. On any point the guide addresses it **outranks the
-built-in rules, the BLOCK list included**: it can permit what those rules refuse,
+built-in rules, the block list included**: it can permit what those rules refuse,
 and refuse what they permit. That authority is the operator's, since they run the
 container and hold the credentials.
 
@@ -1527,7 +1527,7 @@ weighed and declined.
 both gate telemetry events reports its verdict — `none`, `default` or `custom` —
 and `default` **sends no policy at all**: every agent is created holding
 `DEFAULT_AGENT_MD`, whose `## Safety` section reads "read-only by default", which
-as a rule outranking the ALLOW EXCEPTIONS refuses the file edits and builds the
+as a rule outranking the ordinary-work list refuses the file edits and builds the
 agent needs. The template is unchanged for the agent's own reading. Editing any
 part of it makes the whole document policy.
 

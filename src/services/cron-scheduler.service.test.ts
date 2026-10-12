@@ -740,6 +740,31 @@ describe('CronSchedulerService', () => {
       expect(thirdCall.messages[0].content).toContain('Database is down.');
     });
 
+    it('keeps the baseline when the gate reads a reworded result as a repeat', async () => {
+      const outage = { response: 'Database is down.', toolCalls: [], steps: [{ text: 'Database is down.', toolCalls: [] }] };
+      const stillDown = {
+        response: 'Database is still down.',
+        toolCalls: [],
+        steps: [{ text: 'Database is still down.', toolCalls: [] }],
+      };
+      const run = scheduleAndCapture({ instruction: 'Only tell me if the database is down.' });
+
+      mockInvoke.mockResolvedValue(outage);
+      await run(); // incident delivered → baseline = outage
+
+      mockInvoke.mockResolvedValue(stillDown);
+      mockGenerateText.mockResolvedValue({ text: 'REPEAT' });
+      await run(); // ongoing incident in other words — suppressed, baseline stays
+
+      await run();
+      // The third run is still compared with what the user saw, so the ongoing
+      // incident cannot read as a new finding and alert again.
+      const thirdCall = mockGenerateText.mock.calls[2][0];
+      expect(thirdCall.messages[0].content).toContain('## Last Delivered Result');
+      expect(thirdCall.messages[0].content).toContain('Database is down.');
+      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
+    });
+
     it('skips a tick that overlaps a still-running execution of the same task', async () => {
       let resolveInvoke!: (value: unknown) => void;
       mockInvoke.mockImplementationOnce(() => new Promise((resolve) => { resolveInvoke = resolve; }));
@@ -781,9 +806,9 @@ describe('CronSchedulerService', () => {
       await run();
 
       const firstCall = mockGenerateText.mock.calls[0][0];
-      expect(firstCall.system).toContain('Respond with exactly one word: DELIVER or SUPPRESS');
-      expect(firstCall.system).toContain('UNCONDITIONAL: the user asked to receive a message on every run');
-      expect(firstCall.system).toContain("Only a CONDITIONAL task's result may be suppressed");
+      expect(firstCall.system).toContain('Answer with one word: DELIVER, REPEAT or SUPPRESS.');
+      expect(firstCall.system).toContain('Unconditional: a message on every run');
+      expect(firstCall.system).toContain('For a conditional task, answer REPEAT');
       expect(firstCall.messages[0].content).toContain('## Task Instruction\nOnly tell me if the build breaks.');
       expect(firstCall.messages[0].content).toContain('No previous result has been delivered for this task.');
       expect(firstCall.messages[0].content).toContain('## New Task Result\nTask completed.');

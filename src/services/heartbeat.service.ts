@@ -553,20 +553,13 @@ class HeartbeatService {
       ? `## Last Alert Sent to User (${lastAlertAt ? formatTimeAgo(lastAlertAt) : 'recently'})\n${lastAlertText}`
       : 'No previous alert has been sent.';
 
-    const systemPrompt = `You are a message gate for an agent's heartbeat system. Decide whether a heartbeat report should be delivered to the user or suppressed.
+    const systemPrompt = `You decide whether an agent's heartbeat report goes to the user. The agent writes a report on every periodic check, and the user wants a message only when there is something new.
 
-DELIVER if it contains:
-- A NEW issue or finding not covered by the last alert
-- A SIGNIFICANT CHANGE in status (resolved, worsened, new items affected)
-- Actionable information the user hasn't seen
+Answer DELIVER when the report has a new issue or finding, a status change since the last alert (resolved, worse, or more items affected), or information the user can act on and has not seen.
 
-SUPPRESS if it:
-- Repeats the same information from the last alert with no meaningful change
-- Only shows minor variations with no new insight
-- Is a generic "all clear" or "nothing to report" message
-- Is meta-commentary about the heartbeat itself (e.g. "no checks configured", "heartbeat config is empty", "nothing to check", "staying quiet") rather than a real finding
+Answer SUPPRESS when the report is an all-clear, repeats the last alert, differs from it only in small details, or talks about the heartbeat itself ("no checks are configured", "the heartbeat config is empty", "nothing to check", "staying quiet") instead of reporting a finding.
 
-Respond with exactly one word: DELIVER or SUPPRESS`;
+Answer with one word: DELIVER or SUPPRESS.`;
 
     return runClassificationGate({
       system: systemPrompt,
