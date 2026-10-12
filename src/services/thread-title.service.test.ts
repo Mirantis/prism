@@ -38,6 +38,11 @@ describe('threadTitleService.generateAndSave', () => {
     const call = mockGenerateText.mock.calls[0][0];
     expect(call.model).toBe('haiku-model');
     expect(call.tools).toBeUndefined();
+    // The message is data inside <message> tags, and the title task comes after
+    // it: sent alone, the message reads as a request that the model answers.
+    const content: string = call.messages[0].content;
+    expect(content.startsWith('<message>\nmigrate the authentication layer\n</message>\n\n')).toBe(true);
+    expect(content.split('\n').at(-1)).toMatch(/title/i);
   });
 
   it('strips wrapping quotes and trailing punctuation', async () => {
