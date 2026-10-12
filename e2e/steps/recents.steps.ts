@@ -91,6 +91,14 @@ Then('the {string} conversation is not highlighted', async ({ page }, name: stri
   await expect(home.recentThreads.filter({ hasText: name })).not.toHaveAttribute('data-active', 'true');
 });
 
+Then('the Recents title of the conversation mentions {string}', async ({ page }, word: string) => {
+  // The generated title is not fixed text, so the check is that it names the
+  // topic. The placeholder (the message's first three words) and an answer to
+  // the message, such as a label or a cut-off sentence, do not.
+  const home = new HomePage(page);
+  await expect(home.recentThreads.first()).toContainText(new RegExp(word, 'i'), { timeout: 60_000 });
+});
+
 Then('the Recents list has {int} conversation(s)', async ({ page }, count: number) => {
   const home = new HomePage(page);
   await expect(home.recentThreads).toHaveCount(count);

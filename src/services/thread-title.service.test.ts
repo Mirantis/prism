@@ -27,13 +27,13 @@ describe('threadTitleService.generateAndSave', () => {
     mockUpdateThreadTitle.mockResolvedValue(undefined);
   });
 
-  it('generates a short title (clamped to 3 words) and saves it', async () => {
-    mockGenerateText.mockResolvedValue({ text: 'Database Schema Migration Plan' });
+  it('generates a short title (clamped to 4 words) and saves it', async () => {
+    mockGenerateText.mockResolvedValue({ text: 'Database Schema Migration Plan Draft' });
 
     const title = await threadTitleService.generateAndSave('a1', 'u1', 't1', 'migrate the authentication layer');
 
-    expect(title).toBe('Database Schema Migration');
-    expect(mockUpdateThreadTitle).toHaveBeenCalledWith('a1', 'u1', 't1', 'Database Schema Migration');
+    expect(title).toBe('Database Schema Migration Plan');
+    expect(mockUpdateThreadTitle).toHaveBeenCalledWith('a1', 'u1', 't1', 'Database Schema Migration Plan');
     // Direct inference on the cheap model — no tools, no invoke.
     const call = mockGenerateText.mock.calls[0][0];
     expect(call.model).toBe('haiku-model');
@@ -43,6 +43,18 @@ describe('threadTitleService.generateAndSave', () => {
     const content: string = call.messages[0].content;
     expect(content.startsWith('<message>\nmigrate the authentication layer\n</message>\n\n')).toBe(true);
     expect(content.split('\n').at(-1)).toMatch(/title/i);
+  });
+
+  it('keeps only the first line when the model goes on to answer the message', async () => {
+    // A recorded answer shape: the title, then the start of the postmortem the
+    // message asked for.
+    mockGenerateText.mockResolvedValue({
+      text: 'Incident Postmortem\n\n**Incident Summary**\nFire alert triggered at 01:12, followed by',
+    });
+
+    const title = await threadTitleService.generateAndSave('a1', 'u1', 't1', 'turn this into a postmortem draft');
+
+    expect(title).toBe('Incident Postmortem');
   });
 
   it('strips wrapping quotes and trailing punctuation', async () => {
@@ -72,7 +84,7 @@ describe('threadTitleService.generateAndSave', () => {
 
   it('returns null when the title model declines the message', async () => {
     // The refusal shape that caused the defect: a 200 whose text is the refusal
-    // sentence, which `clampTitle` happily cut to three words. The guard keys on
+    // sentence, which `clampTitle` happily cut to a few words. The guard keys on
     // the finish reason, so the text here is the realistic case, not the trigger.
     mockGenerateText.mockResolvedValue({ text: "I can't help with that.", finishReason: 'content-filter' });
 
@@ -115,8 +127,8 @@ describe('threadTitleService.onFirstUserMessage', () => {
     // Let the fire-and-forget upgrade resolve, then assert the second announce.
     await flush();
     await flush();
-    expect(changes).toContainEqual({ userId: 'u1', threadId: 't1', title: 'Database Schema Migration' });
-    expect(mockUpdateThreadTitle).toHaveBeenCalledWith('a1', 'u1', 't1', 'Database Schema Migration');
+    expect(changes).toContainEqual({ userId: 'u1', threadId: 't1', title: 'Database Schema Migration Plan' });
+    expect(mockUpdateThreadTitle).toHaveBeenCalledWith('a1', 'u1', 't1', 'Database Schema Migration Plan');
   });
 
   it('announces only the placeholder when the upgrade yields nothing (fail-open)', async () => {
