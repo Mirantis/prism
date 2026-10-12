@@ -35,6 +35,9 @@ export interface TurnEventPayload {
   error?: string;
 }
 
+/** What the terminal UI shows for a failed turn whose event has no `error`. */
+export const TURN_FAILED_TEXT = 'The response failed.';
+
 export interface WelcomePayload {
   protocol: number;
   streamId: string;

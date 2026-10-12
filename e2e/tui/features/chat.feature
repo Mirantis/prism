@@ -2,10 +2,15 @@ Feature: CLI chat round-trip
   As a user I want to chat with the agent through prism-cli over WebSocket
   and see its reply rendered in the terminal
 
-  Scenario: Sends a prompt and renders the agent reply
+  Scenario: Sends a prompt, renders the agent reply, and tells the terminal the session state
+    Then the terminal is told the session is idle
     When I send the prompt "Reply with exactly one word: PRISMACK7. No other text."
     Then my message appears in the chat
+    And the terminal is told the session is working
     And the agent reply contains "PRISMACK7"
+    And the terminal is told the reply is done
+    When I press Ctrl+C
+    Then the terminal is told to clear the session status
 
   Scenario: Cancels an in-flight turn when Escape is pressed
     When I send a prompt that keeps the agent busy

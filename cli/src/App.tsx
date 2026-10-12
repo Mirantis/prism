@@ -11,10 +11,11 @@ import {
   TuiStatus,
   TurnEventPayload,
 } from './tui-adapter.js';
-import { MAX_MESSAGE_CHARS, TurnState, type Viewer } from './chat-protocol.js';
+import { MAX_MESSAGE_CHARS, TURN_FAILED_TEXT, TurnState, type Viewer } from './chat-protocol.js';
 import { appendLocal, ChatEntry, markFailed, upsertMessage, withHistory } from './transcript.js';
 import { useCompaction } from './hooks/use-compaction.js';
 import { useUpdateNotice } from './hooks/use-update-notice.js';
+import { useProgramStatus } from './hooks/use-program-status.js';
 import { Header } from './components/Header.js';
 import { MessageList } from './components/MessageList.js';
 import { Input } from './components/Input.js';
@@ -76,8 +77,10 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   // The connection, for the status bar.
   const [status, setStatus] = useState<TuiStatus>('idle');
   const [statusDetail, setStatusDetail] = useState<string | undefined>(undefined);
-  // What this conversation is doing, as every client of the agent sees it.
-  const [turnState, setTurnState] = useState<TurnState>('idle');
+  // What this conversation is doing, as every client of the agent sees it, and how
+  // its last turn ended.
+  const [lastTurn, setLastTurn] = useState<TurnEventPayload | null>(null);
+  const turnState = lastTurn?.state ?? 'idle';
   // The name the runtime gave this connection. A USER message by anyone else shows their name.
   const [self, setSelf] = useState<Viewer | undefined>(undefined);
   // Context-window occupancy for the active thread, pushed by the runtime.
@@ -97,9 +100,11 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   // Input + popup). Panel commands set this via openPanel; the panels call
   // closePanel (wired to onClose) to return to chat.
   const [activePanel, setActivePanel] = useState<PanelId | null>(null);
-  // The sign-in the agent is blocked on, while this session is answering it. Its own
+  // The sign-in the agent waits for, until a client answers or dismisses it. Its own
   // state rather than a `PanelId`: no slash command opens it, the request opens it.
   const [signInRequest, setSignInRequest] = useState<SignInRequest | null>(null);
+  // The request whose panel this session closed. The agent still waits for it.
+  const [closedSignInId, setClosedSignInId] = useState<string | null>(null);
   // Files staged by /attach, sent with (and cleared by) the next chat message.
   const [staged, setStaged] = useState<AttachmentMeta[]>([]);
   // Submitted-input history for Up/Down recall (oldest → newest). historyIndex
@@ -166,9 +171,13 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
     const onHistory = (messages: TuiMessage[]) => setEntries((prev) => withHistory(prev, messages));
     const onMessage = (msg: TuiMessage) => setEntries((prev) => upsertMessage(prev, msg));
     const onTurn = (turn: TurnEventPayload) => {
-      setTurnState(turn.state);
+      // Each reconnect restates an idle conversation without an outcome, which keeps
+      // how its last turn ended.
+      setLastTurn((prev) =>
+        turn.state === 'idle' && !turn.outcome && prev?.state === 'idle' ? prev : turn,
+      );
       if (turn.outcome === 'cancelled') appendSystemMessage('⏹ Response stopped');
-      if (turn.outcome === 'failed') appendSystemMessage(`⚠ ${turn.error ?? 'The response failed.'}`);
+      if (turn.outcome === 'failed') appendSystemMessage(`⚠ ${turn.error ?? TURN_FAILED_TEXT}`);
     };
     const onSendFailed = (failure: SendFailure) => {
       setEntries((prev) => markFailed(prev, failure.messageId, failure.message));
@@ -177,6 +186,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
     // The newest request wins: the agent asks for one sign-in at a time, and a
     // second means the first is no longer what it is waiting for.
     const onSignIn = (request: SignInRequest) => setSignInRequest(request);
+    const onSignInEnded = (id: string) => setSignInRequest((open) => (open?.id === id ? null : open));
     const onUnsupported = (notice: string) => appendSystemMessage(notice);
     const bus = tuiAdapterService.events;
     bus.on('status', onStatus);
@@ -187,6 +197,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
     bus.on('sendFailed', onSendFailed);
     bus.on('contextUsage', onContextUsage);
     bus.on('signIn', onSignIn);
+    bus.on('signInEnded', onSignInEnded);
     bus.on('unsupported', onUnsupported);
     return () => {
       bus.off('status', onStatus);
@@ -197,6 +208,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       bus.off('sendFailed', onSendFailed);
       bus.off('contextUsage', onContextUsage);
       bus.off('signIn', onSignIn);
+      bus.off('signInEnded', onSignInEnded);
       bus.off('unsupported', onUnsupported);
     };
   }, [appendSystemMessage]);
@@ -256,6 +268,9 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   // Shown as the spinner-row label — compaction runs outside a chat turn, so
   // the ordinary thinking spinner is idle while it works.
   const compacting = useCompaction(appendSystemMessage);
+
+  useProgramStatus({ turn: lastTurn, compacting, signIn: signInRequest });
+  const signInOpen = signInRequest !== null && signInRequest.id !== closedSignInId;
 
   // A newer release the runtime announced (status-bar hint), plus SYSTEM lines
   // when the backend restarts to apply one or a manual update fails.
@@ -485,7 +500,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       setInputResetKey((k) => k + 1);
     }
   }, {
-    isActive: !suspended && activePanel === null && signInRequest === null && resumePhase === 'chat',
+    isActive: !suspended && activePanel === null && !signInOpen && resumePhase === 'chat',
   });
 
   const onSubmit = useCallback(
@@ -607,7 +622,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   // A sign-in waits until the editor returns the terminal, because its input
   // hook would put the tty back in raw mode under the editor. It then covers an
   // open panel, which stays mounted with its input off and keeps its form.
-  const showSignIn = signInRequest !== null && !suspended;
+  const showSignIn = signInOpen && !suspended;
 
   // The key makes React mount a new root Box for the shutdown frame instead of
   // updating this one: Ink hides a Box whose update drops its `display` prop.
@@ -618,7 +633,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
         <SignInPanel
           api={apiClient}
           request={signInRequest}
-          onClose={() => setSignInRequest(null)}
+          onClose={() => setClosedSignInId(signInRequest.id)}
         />
       )}
       {activePanel !== null ? (

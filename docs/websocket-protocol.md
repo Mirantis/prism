@@ -84,6 +84,8 @@ see a gap, reconnect and resume from the last `seq` you applied.
   - `state` is `queued`, `running` or `idle`.
   - `outcome` appears when a running conversation becomes idle: `completed`,
     `cancelled` or `failed`. A failure also has `error`, written for a person.
+    A turn whose model call fails is `failed`, and its reply message describes
+    the error.
   - A conversation's work ends only at `turn` `idle`. A `message` event does not
     end it: the agent can post several messages in one turn.
 - **`thread`** `{ threadId, title, createdAt? }`: a conversation was created, or

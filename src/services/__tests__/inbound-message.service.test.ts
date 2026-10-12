@@ -6,12 +6,21 @@ const { mockPrisma, mockEngine, mockConfig } = vi.hoisted(() => ({
     conversationThread: { findUnique: vi.fn() },
     conversationMessage: { findUnique: vi.fn(), findFirst: vi.fn() },
   },
-  mockEngine: { acceptUserMessage: vi.fn(), chat: vi.fn(), cancel: vi.fn() },
+  mockEngine: {
+    acceptUserMessage: vi.fn(),
+    chat: vi.fn(),
+    cancel: vi.fn(),
+    events: null as unknown as import('node:events').EventEmitter,
+  },
   mockConfig: { agentId: 'agent-1' as string | undefined, ownerUserId: 'owner-1' },
 }));
 
 vi.mock('../../lib/prisma', () => ({ default: mockPrisma }));
-vi.mock('../conversation-engine.service', () => ({ conversationEngineService: mockEngine }));
+vi.mock('../conversation-engine.service', async () => {
+  const { EventEmitter } = await import('node:events');
+  mockEngine.events = new EventEmitter();
+  return { conversationEngineService: mockEngine };
+});
 vi.mock('../../config', () => ({ config: mockConfig }));
 vi.mock('../../lib/telemetry', () => ({ trackEvent: vi.fn() }));
 vi.mock('../conversation.service', () => ({ conversationService: {} }));
@@ -20,6 +29,7 @@ vi.mock('../message-delivery.service', () => ({ messageDeliveryService: { showIn
 import { inboundMessageService } from '../inbound-message.service';
 import { eventStreamService } from '../event-stream.service';
 import { conversationThreadActivityService } from '../conversation-thread-activity.service';
+import type { ChatTurnEnd } from '../conversation-engine.service';
 
 const THREAD_A = 'thread-a';
 const THREAD_B = 'thread-b';
@@ -40,11 +50,24 @@ const row = (id: string, threadId = THREAD_A, content = 'hello') => ({
   createdAt: new Date('2026-09-27T10:00:00.000Z'),
 });
 
+type ChatCall = { threadId: string; message: string; steerOnly?: boolean };
+
+/**
+ * An exchange as the engine runs one: it says how it ended, then resolves. An offer to
+ * a running turn that nobody takes runs nothing.
+ */
+function exchange(ended: Partial<ChatTurnEnd> = {}) {
+  return async ({ threadId, steerOnly }: ChatCall) => {
+    if (!steerOnly) mockEngine.events.emit('turnEnded', { threadId, cancelled: false, ...ended });
+    return { steered: false };
+  };
+}
+
 /** A turn the test ends when it chooses, as a real one ends when the model is done. */
-function heldTurn() {
+function heldTurn(ended: Partial<ChatTurnEnd> = {}) {
   let finish!: () => void;
   const done = new Promise<void>((resolve) => { finish = resolve; });
-  return { finish, run: () => done.then(() => ({ steered: false })) };
+  return { finish, run: (input: ChatCall) => done.then(() => exchange(ended)(input)) };
 }
 
 function turnEvents() {
@@ -74,7 +97,7 @@ describe('InboundMessageService', () => {
       message: row(id, threadId),
       titleSet: null,
     }));
-    mockEngine.chat.mockResolvedValue({ steered: false });
+    mockEngine.chat.mockImplementation(exchange());
     mockEngine.cancel.mockReturnValue(false);
   });
 
@@ -279,12 +302,69 @@ describe('InboundMessageService', () => {
       );
       stop();
     });
+
+    it('reports a turn whose reply is an error report as failed', async () => {
+      const { events, stop } = turnEvents();
+      mockEngine.chat.mockImplementationOnce(exchange({ error: { type: 'generic', detail: 'Authentication failed' } }));
+
+      await inboundMessageService.accept(inbound('m-1'));
+      await vi.waitFor(() =>
+        expect(events).toContainEqual({
+          threadId: THREAD_A,
+          state: 'idle',
+          outcome: 'failed',
+          error: 'The agent could not answer. Try again.',
+        }),
+      );
+      stop();
+    });
+
+    it('reports a turn stopped by the spending limit without asking to try again', async () => {
+      const { events, stop } = turnEvents();
+      mockEngine.chat.mockImplementationOnce(exchange({ error: { type: 'budget_exceeded', detail: null } }));
+
+      await inboundMessageService.accept(inbound('m-1'));
+      await vi.waitFor(() =>
+        expect(events).toContainEqual({
+          threadId: THREAD_A,
+          state: 'idle',
+          outcome: 'failed',
+          error: 'The AI spending limit is reached.',
+        }),
+      );
+      stop();
+    });
+
+    it('reports how the last of two queued turns on one conversation ended', async () => {
+      const { events, stop } = turnEvents();
+      const first = heldTurn();
+      mockEngine.chat.mockImplementation((input: ChatCall) => {
+        if (input.threadId === THREAD_A) return first.run(input);
+        return exchange(input.message === 'second' ? { error: { type: 'generic' } } : {})(input);
+      });
+
+      await inboundMessageService.accept(inbound('m-1', THREAD_A));
+      await settle();
+      await inboundMessageService.accept(inbound('m-2', THREAD_B, 'first'));
+      await inboundMessageService.accept(inbound('m-3', THREAD_B, 'second'));
+      first.finish();
+
+      await vi.waitFor(() =>
+        expect(events.filter((event) => event.threadId === THREAD_B).at(-1)).toEqual({
+          threadId: THREAD_B,
+          state: 'idle',
+          outcome: 'failed',
+          error: 'The agent could not answer. Try again.',
+        }),
+      );
+      stop();
+    });
   });
 
   describe('Scenario: cancel', () => {
     it('stops the conversation’s turn and reports it cancelled', async () => {
       const { events, stop } = turnEvents();
-      const turn = heldTurn();
+      const turn = heldTurn({ cancelled: true });
       mockEngine.chat.mockImplementationOnce(turn.run);
       mockEngine.cancel.mockReturnValue(true);
 
@@ -404,6 +484,20 @@ describe('InboundMessageService', () => {
         { threadId: THREAD_A, state: 'running' },
         { threadId: THREAD_A, state: 'idle', outcome: 'completed' },
       ]);
+      stop();
+    });
+
+    it('reports an exchange it did not start, such as a skill run, as failed when its reply is an error', () => {
+      const { events, stop } = turnEvents();
+      const end = conversationThreadActivityService.beginThread(THREAD_A, 'owner-1');
+      mockEngine.events.emit('turnEnded', { threadId: THREAD_A, cancelled: false, error: { type: 'generic' } });
+      end();
+      expect(events.at(-1)).toEqual({
+        threadId: THREAD_A,
+        state: 'idle',
+        outcome: 'failed',
+        error: 'The agent could not answer. Try again.',
+      });
       stop();
     });
   });

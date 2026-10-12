@@ -6,6 +6,7 @@
  * responses via the local MessageDeliveryService.
  */
 
+import { EventEmitter } from 'node:events';
 import { callModel } from '../lib/model-call';
 import { messageDeliveryService, PublishOptions } from './message-delivery.service';
 import type { ChannelName } from './channel-adapter.interface';
@@ -15,7 +16,7 @@ import { threadTitleService } from './thread-title.service';
 import { conversationThreadActivityService } from './conversation-thread-activity.service';
 import { attachmentService } from './attachment.service';
 import { invokeStream } from '../invoke';
-import { ToolCallRecord, InvokeStep, UIBlock } from '../types';
+import { ToolCallRecord, InvokeStep, InvokeError, UIBlock } from '../types';
 import type { SteeringMessage } from '../prompts/context-builder';
 import type { ToolLifecycleListener } from '../lib/tool-lifecycle';
 import { logger } from '../logger';
@@ -47,6 +48,8 @@ interface StreamedTurn {
   toolCalls: ToolCallRecord[];
   blocks: UIBlock[];
   agentMessage: Awaited<ReturnType<typeof messageDeliveryService.publish>> | undefined;
+  /** Set when the turn ended on an error step, whose text is the published reply. */
+  error?: InvokeError;
 }
 
 // ============================================================================
@@ -119,11 +122,21 @@ export interface ChatResponse {
   steered?: boolean;
 }
 
+/** How an exchange on a thread ended, emitted as `turnEnded` before the thread stops working. */
+export interface ChatTurnEnd {
+  threadId: string;
+  cancelled: boolean;
+  /** Set when the exchange ended on an error reply: the agent could not answer. */
+  error?: InvokeError;
+}
+
 // ============================================================================
 // Conversation Engine Service
 // ============================================================================
 
 class ConversationEngineService {
+  readonly events = new EventEmitter();
+
   /**
    * How to stop each exchange running on a thread, whoever started it. A person
    * can stop the agent from any client, and a turn the runtime began itself — the
@@ -369,6 +382,7 @@ Answer with one word: WORTHY or SKIP.`;
     const allBlocks: UIBlock[] = [];
     const allToolCalls: ToolCallRecord[] = [];
     let agentMessage: StreamedTurn['agentMessage'];
+    let turnError: InvokeError | undefined;
     let verbose = false;
     let titleSet: string | null = null;
 
@@ -429,6 +443,7 @@ Answer with one word: WORTHY or SKIP.`;
           allToolCalls.push(...streamed.toolCalls);
           allBlocks.push(...streamed.blocks);
           if (streamed.agentMessage) agentMessage = streamed.agentMessage;
+          turnError = streamed.error;
 
           // A canceled turn must not auto-start another one — the user asked to
           // stop. Anything still pending is cleared when the claim releases, and
@@ -452,6 +467,8 @@ Answer with one word: WORTHY or SKIP.`;
           runtimeNotices = undefined;
         }
       });
+      const ended: ChatTurnEnd = { threadId, cancelled: abortSignal.aborted, error: turnError };
+      this.events.emit('turnEnded', ended);
     } finally {
       unregister();
       input.abortSignal?.removeEventListener('abort', abort);
@@ -607,6 +624,7 @@ Answer with one word: WORTHY or SKIP.`;
     // Files the agent shared (share_file) accrue across steps and ride out on
     // the final delivered message, so they appear alongside the answer.
     const allAttachmentIds: string[] = [];
+    let error: InvokeError | undefined;
 
     for await (const step of invokeStream({
       userId,
@@ -629,6 +647,7 @@ Answer with one word: WORTHY or SKIP.`;
       if (step.blocks) allBlocks.push(...step.blocks);
       if (step.attachmentIds) allAttachmentIds.push(...step.attachmentIds);
       pendingToolCalls.push(...step.toolCalls);
+      error = step.error;
 
       if (step.text) {
         responseTexts.push(step.text);
@@ -712,7 +731,7 @@ Answer with one word: WORTHY or SKIP.`;
       );
     }
 
-    return { text: response, toolCalls: allToolCalls, blocks: allBlocks, agentMessage };
+    return { text: response, toolCalls: allToolCalls, blocks: allBlocks, agentMessage, error };
   }
 }
 

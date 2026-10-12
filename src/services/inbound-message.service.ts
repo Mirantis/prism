@@ -24,7 +24,7 @@ import prisma from '../lib/prisma';
 import { config } from '../config';
 import { logger } from '../logger';
 import { trackEvent } from '../lib/telemetry';
-import { conversationEngineService } from './conversation-engine.service';
+import { conversationEngineService, type ChatTurnEnd } from './conversation-engine.service';
 import {
   conversationThreadActivityService,
   type ThreadActivityChange,
@@ -64,6 +64,18 @@ export class InboundMessageError extends Error {
 
 /** What every client is told when a turn fails. The details go to the log. */
 const TURN_FAILED = 'The agent could not answer. Try again.';
+/** What every client is told when a turn fails on the spending limit, which a retry does not lift. */
+const SPENDING_LIMIT_REACHED = 'The AI spending limit is reached.';
+
+/** How a turn ended, as every client is told it. */
+function outcomeOf({ cancelled, error }: ChatTurnEnd): { outcome: TurnOutcome; error?: string } {
+  if (cancelled) return { outcome: 'cancelled' };
+  if (!error) return { outcome: 'completed' };
+  return {
+    outcome: 'failed',
+    error: error.type === 'budget_exceeded' ? SPENDING_LIMIT_REACHED : TURN_FAILED,
+  };
+}
 
 /** How a message's sender is stored: the id as the external id, the name for display. */
 function senderMetadata(message: InboundMessage) {
@@ -94,6 +106,10 @@ class InboundMessageService {
   constructor() {
     conversationThreadActivityService.events.on('change', ({ threadId }: ThreadActivityChange) => {
       this.announce(threadId);
+    });
+    // Every exchange the engine runs, whoever started it, so the `idle` after it says how it ended.
+    conversationEngineService.events.on('turnEnded', (ended: ChatTurnEnd) => {
+      this.outcomes.set(ended.threadId, outcomeOf(ended));
     });
   }
 
@@ -135,7 +151,6 @@ class InboundMessageService {
     }
     const dropped = this.waiting.length !== before;
     const stopped = conversationEngineService.cancel(threadId);
-    if (stopped) this.outcomes.set(threadId, { outcome: 'cancelled' });
     if (dropped) this.announce(threadId);
     return stopped || dropped;
   }
@@ -312,14 +327,11 @@ class InboundMessageService {
     const endHold = conversationThreadActivityService.beginThread(threadId, config.ownerUserId);
     try {
       await conversationEngineService.chat(this.chatInput(waiting));
-      if (!this.outcomes.has(threadId)) this.outcomes.set(threadId, { outcome: 'completed' });
     } catch (error) {
       // Through the serializer, which redacts; every client gets a sentence
       // instead, since an exception can carry request content or internals.
       logger.error({ err: error, threadId }, 'Turn failed');
-      if (this.outcomes.get(threadId)?.outcome !== 'cancelled') {
-        this.outcomes.set(threadId, { outcome: 'failed', error: TURN_FAILED });
-      }
+      this.outcomes.set(threadId, { outcome: 'failed', error: TURN_FAILED });
     } finally {
       this.runningThreadId = null;
       endHold();

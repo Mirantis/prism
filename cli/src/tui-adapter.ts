@@ -134,6 +134,18 @@ export function signInRequestIn(blocks: unknown): SignInRequest | null {
   return null;
 }
 
+/** The id of a sign-in in a message's blocks that is no longer waiting: answered or dismissed. */
+export function endedSignInIn(blocks: unknown): string | null {
+  if (!Array.isArray(blocks)) return null;
+  for (const block of blocks) {
+    if (!block || typeof block !== 'object') continue;
+    const help = block as { type?: unknown; id?: unknown; credentials?: unknown; status?: unknown };
+    if (help.type !== 'computer_help' || help.credentials !== true) continue;
+    if (help.status !== 'waiting' && typeof help.id === 'string') return help.id;
+  }
+  return null;
+}
+
 export interface TuiAdapterEvents {
   status: (status: TuiStatus, detail?: string) => void;
   /** The runtime answered `hello`, and said who the sign-in says this connection is. */
@@ -151,6 +163,8 @@ export interface TuiAdapterEvents {
   update: (event: UpdateEvent) => void;
   /** The agent is blocked on a sign-in this session can answer. */
   signIn: (request: SignInRequest) => void;
+  /** The sign-in with this id is answered or dismissed, in this client or another. */
+  signInEnded: (id: string) => void;
   /** The runtime speaks a newer protocol. The client does not reconnect. */
   unsupported: (notice: string) => void;
 }
@@ -467,8 +481,7 @@ class TuiAdapter {
         const msg = coerceMessage(event.payload);
         if (!msg || msg.threadId !== this.threadId) return;
         this.events.emit('message', msg);
-        const signIn = signInRequestIn(msg.blocks);
-        if (signIn) this.events.emit('signIn', { ...signIn, threadId: msg.threadId });
+        this.emitSignIn(msg);
         return;
       }
       case 'turn': {
@@ -515,9 +528,22 @@ class TuiAdapter {
     if (generation !== this.syncGeneration) return;
     const held = this.held;
     this.held = null;
-    if (messages) this.events.emit('history', messages);
-    else this.events.emit('status', 'error', 'could not reload the conversation');
+    if (messages) {
+      this.events.emit('history', messages);
+      // A sign-in can be asked for or answered while the stream was away.
+      for (const msg of messages) this.emitSignIn(msg);
+    } else {
+      this.events.emit('status', 'error', 'could not reload the conversation');
+    }
     for (const event of held) this.apply(event);
+  }
+
+  /** The sign-in this message asks for or ends. */
+  private emitSignIn(msg: TuiMessage): void {
+    const signIn = signInRequestIn(msg.blocks);
+    if (signIn) this.events.emit('signIn', { ...signIn, threadId: msg.threadId });
+    const ended = endedSignInIn(msg.blocks);
+    if (ended) this.events.emit('signInEnded', ended);
   }
 
   /** The thread's newest messages, oldest first, from `GET /messages`. Null when the runtime did not answer. */
