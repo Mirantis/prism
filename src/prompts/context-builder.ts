@@ -896,7 +896,7 @@ Everything else is unaffected: you can still search long-term memory, run tools,
 function getInternalDatabaseInstructions(): string {
   return `# Internal Database
 
-Never access, read or modify your own runtime database directly: not \`DATABASE_URL\`, not the SQLite file, not the Prisma client, with \`sqlite3\`, a script or any other tool. Use your memory, cron and settings tools for your own state.`;
+Never access, read or modify your own runtime database directly: not \`DATABASE_URL\`, not the SQLite file, not the Prisma client, with \`sqlite3\`, a script or any other tool. Read and change your own state only through your tools.`;
 }
 
 // Exported for unit tests: these sections read the filesystem, so asserting on
