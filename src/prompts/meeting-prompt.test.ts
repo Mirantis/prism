@@ -1,13 +1,16 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import * as cron from 'node-cron';
+
+// `parseSchedule` lives beside the tool, which reaches the database and the scheduler.
+vi.mock('../lib/prisma', () => ({ default: {}, prisma: {} }));
+vi.mock('../services/cron-scheduler.service', () => ({ cronSchedulerService: {} }));
+
 import { getMeetingInstructions } from './meeting-prompt';
+import { parseSchedule } from '../tools/cron';
 
 const base = { agentName: 'Prism', platform: 'Google Meet', responseMode: 'auto' as const };
 
-/**
- * The prompt is hard-wrapped, so a phrase longer than a few words straddles a line
- * break. Matching the single-line form keeps an assertion about wording from turning
- * red when the wording moves to another column.
- */
+/** Single-spaced text, so an assertion about wording does not depend on where a line breaks. */
 const flat = (text: string): string => text.replace(/\s+/g, ' ');
 
 describe('getMeetingInstructions', () => {
@@ -54,61 +57,40 @@ describe('getMeetingInstructions', () => {
     // `meeting` mode withholds no destructive tool, so the prompt must not imply
     // otherwise — a model that thinks a tool is unavailable refuses instead of
     // confirming.
-    const text = getMeetingInstructions(base);
-    expect(text).toMatch(/everything else in your toolset works here/i);
-    expect(text).toMatch(/including the destructive parts/i);
+    expect(getMeetingInstructions(base)).toMatch(/all your other tools work here, including the destructive ones/i);
   });
 
-  it('tells the model it can hand one line to the call chat, and what for', () => {
+  it('keeps answers in speech and the call chat for one line', () => {
     // The one channel out of a call other than speech. It has to be named with its
     // purpose, or the model uses it as a second conversation and posts an answer where
-    // the room is not listening.
-    const text = getMeetingInstructions(base);
+    // the room is not listening. How to post, and what to do when a post fails, is the
+    // tool's description.
+    const text = flat(getMeetingInstructions(base));
     expect(text).toMatch(/`send_meeting_chat`/);
     expect(text).toMatch(/a link, an identifier, a command to paste/i);
-    expect(text).toMatch(/never post the answer you should be\s+speaking/i);
-    // And what to do when a send fails, since speech always works.
-    expect(text).toMatch(/say the content out\s+loud instead/i);
+    expect(text).toMatch(/never post an answer you should be speaking/i);
   });
 
-  it('tells the model it can read the chat, and that somebody has to ask', () => {
-    // The read is a pull with nothing behind it: no notification exists, so a model that
-    // is not told this either never looks or asks the room to wait while it checks.
-    const text = getMeetingInstructions(base);
-    expect(text).toMatch(/`read_meeting_chat`/);
-    expect(text).toMatch(/nothing tells you a message\s+has arrived/i);
+  it('tells the model the chat reaches it only when it reads it, and what to do then', () => {
+    // The read is a pull with nothing behind it, and speech is where the room hears
+    // what it found.
+    const text = flat(getMeetingInstructions(base));
+    expect(text).toMatch(/reaches you only when you call `read_meeting_chat`/);
     expect(text).toMatch(/asks you to look/i);
-    // And that a reading names its senders, so the model can answer "who asked that?".
-    expect(text).toMatch(/who typed it/i);
-    // And what to do with what it read: speech is where the room hears the answer.
     expect(text).toMatch(/say what you found out loud/i);
   });
 
-  it('tells the model what its screen can do, and what drives it', () => {
-    // The screen reaches the room, and the two things about it a room finds out the
-    // hard way are that it shares a whole screen and that a tool stops it.
-    const text = getMeetingInstructions(base);
-    expect(text).toMatch(/share_screen/);
-    expect(text).toMatch(/whole\s+screen your browser is on/i);
-    expect(text).toMatch(/stop_screen_share/);
-    // What goes on that screen: the browser tab, worked by name off the reading each
-    // command answers with, plus the picture that says what is really up there.
-    expect(text).toMatch(/browse/);
-    expect(text).toMatch(/one command at a time/i);
-    expect(text).toMatch(/see_screen/);
-  });
-
   it('tells the model nothing else leaves the call', () => {
-    // Everything past that one line: a meeting runs neither the invoke loop nor the
-    // conversation engine, and `share_file` is filtered out of `meeting` mode. Saying so
-    // is the whole guard against a promise it can't keep.
-    const text = getMeetingInstructions(base);
-    expect(text).toMatch(/nothing else reaches anyone from here/i);
+    // A meeting runs neither the invoke loop nor the conversation engine, and
+    // `share_file` is filtered out of `meeting` mode. Saying so is the whole guard
+    // against a promise it can't keep.
+    const text = flat(getMeetingInstructions(base));
+    expect(text).toMatch(/nothing else leaves the call/i);
     expect(text).toMatch(/never offer to/i);
     expect(text).toMatch(/not to Slack, not to a chat session/i);
     // Including that the chat line itself is not kept, so it is never offered as a
     // record of anything.
-    expect(text).toMatch(/neither is a line you post in its chat/i);
+    expect(text).toMatch(/a line you post in its chat is not stored/i);
   });
 
   it('never offers to hand anything over to a chat elsewhere', () => {
@@ -127,8 +109,8 @@ describe('getMeetingInstructions', () => {
       const text = getMeetingInstructions({ ...base, responseMode });
       for (const promise of promises) expect(text).not.toMatch(promise);
       // ...and the prohibition itself is present, in the model's own words. `afterwards`
-      // is doing real work now: the call's own chat is reachable, and a later one is not.
-      expect(text).toMatch(/No "I'll drop that in the chat afterwards"/i);
+      // is doing real work: the call's own chat is reachable, and a later one is not.
+      expect(text).toMatch(/no "I'll drop that in the chat afterwards"/i);
       expect(text).toMatch(/a promise you cannot keep/i);
     }
   });
@@ -145,36 +127,40 @@ describe('getMeetingInstructions', () => {
     // for changes, and a model reading only "work" defers one and improvises the other.
     expect(text).toMatch(/a question that needs digging or a change that needs writing/i);
     expect(text).toMatch(/the run reports what it found/i);
-    expect(text).toMatch(/counts as nothing to report and stays unsent/i);
-    expect(text).toMatch(/the answer arrives in their chat/i);
+    expect(text).toMatch(/a run with nothing to report is not delivered/i);
     // Where the run's own answer lands, which is the user's chat. The room's chat panel
     // is not named as unreachable: `cron` mode keeps `send_meeting_chat`, so a run that
     // finds the call still live can post a line into it.
+    expect(text).toMatch(/the answer arrives in their chat/i);
     expect(text).toMatch(/not in this room/i);
-    expect(text).toMatch(/by the time it runs, the call is usually over/i);
     expect(text).toMatch(/as arranged, never as done/i);
-    expect(text).toMatch(/only for work you were asked to do/i);
   });
 
-  it('asks for the two schedule forms the runtime reads as a single run', () => {
-    // `parseSchedule` treats only "in X <unit>" and "at H[:MM]" as one-shot; anything
-    // else it hands to cron as a repeating expression. A model told "run it once" but
-    // left to invent the wording says "once" out loud and creates a daily job.
+  it('gives schedule examples that the scheduler reads the way the prompt says', () => {
+    // `parseSchedule` reads digits only. An example it cannot read as one-shot becomes a
+    // repeating cron expression, or an error, when the model copies it.
     const text = flat(getMeetingInstructions(base));
-    expect(text).toMatch(/"in twenty minutes" or "at four"/i);
-    expect(text).toMatch(/a cadence like "every morning" reports over and over/i);
+    const examples = text.match(
+      /Write the schedule as "([^"]+)" or "([^"]+)"; a cadence such as "([^"]+)" reports over and over/,
+    );
+    expect(examples).not.toBeNull();
+    const [, first, second, cadence] = examples!;
+    for (const oneShot of [first, second]) expect(parseSchedule(oneShot).isOneShot).toBe(true);
+    const repeating = parseSchedule(cadence);
+    expect(repeating.isOneShot).toBe(false);
+    expect(cron.validate(repeating.cronExpression)).toBe(true);
   });
 
   it('needs no second yes to schedule, but one for destructive deferred work', () => {
     // The request for the work is the consent to schedule it. The work itself is not
     // covered by that: nobody is in the room when the run happens, so a destructive
-    // job is agreed before it goes on the calendar. Rule 16 carries the same carve-out,
-    // because a model resolves two opposed rules by recency and 17 is read last.
+    // job is agreed before it goes on the calendar.
     const text = flat(getMeetingInstructions(base));
-    expect(text).toMatch(/separate "yes" for that: the request is the agreement/i);
-    expect(text).toMatch(/If the work itself is destructive/i);
-    expect(text).toMatch(/Scheduling a follow-up \(15\) is outside this list/i);
-    expect(text).toMatch(/before you schedule anything on that list/i);
+    expect(text).toMatch(/the request is the agreement/i);
+    // The schedule bullet comes after the confirmation section, and the later of two
+    // rules wins, so it names the exception too.
+    expect(text).toMatch(/no separate "yes", unless the work is on the confirmation list/i);
+    expect(text).toMatch(/work from this list does, before you schedule it/i);
   });
 
   it('names one scheduler, and no thread option', () => {
@@ -188,22 +174,12 @@ describe('getMeetingInstructions', () => {
     expect(text).not.toMatch(/continueInThread/i);
   });
 
-  it('keeps the three rule numbers its own cross-references cite', () => {
-    // Rule 3 points at 13 for the chat line, 14 points at 15 for the schedule, and the
-    // confirmation rule points back at 15. A renumber that misses one leaves the model
-    // chasing the wrong rule.
-    const text = getMeetingInstructions(base);
-    expect(text).toMatch(/^13\. \*\*Speech is how you talk to the room/m);
-    expect(text).toMatch(/^14\. \*\*Nothing else reaches anyone from here/m);
-    expect(text).toMatch(/^15\. \*\*Schedule work you were asked for/m);
-    // The screen rules sit after the schedule rule, so main's cross-references hold.
-    expect(text).toMatch(/^16\. \*\*You can show the room your screen/m);
-  });
-
   it('requires explicit in-room consent before anything irreversible', () => {
-    // With the code-level filter gone, this instruction IS the boundary.
-    const text = getMeetingInstructions(base);
+    // With the code-level filter gone, this instruction IS the boundary. It also
+    // narrows chat's "the request is your approval" for a call.
+    const text = flat(getMeetingInstructions(base));
     expect(text).toMatch(/not an authenticated channel/i);
+    expect(text).toMatch(/even an explicit request is not approval/i);
     expect(text).toMatch(/deletes, deploys, spends money, grants access/i);
     // Spoken, since the chat panel is in the room too and each line it returns is named.
     expect(text).toMatch(/explicit spoken "yes" in the room/i);
@@ -216,10 +192,10 @@ describe('getMeetingInstructions', () => {
     // asking in a call. It now does them, so the confirmation rule above is the only
     // guard — and it has to name self-configuration explicitly, or a model reading
     // "anything irreversible" won't reliably count renaming itself as irreversible.
-    const text = getMeetingInstructions(base);
-    expect(text).toMatch(/changes your own configuration/i);
-    expect(text).toMatch(/renaming yourself, rewriting your Soul/i);
-    expect(text).toMatch(/things you can do from here/i);
+    const text = flat(getMeetingInstructions(base));
+    expect(text).toMatch(/changes your own configuration \(your name, your Soul/i);
+    // Asked for one, the model answers with the question, not with the tool call.
+    expect(text).toMatch(/do not call the tool yet/i);
   });
 
   it('no longer tells the model to refuse or defer a self-configuration request', () => {
@@ -234,38 +210,36 @@ describe('getMeetingInstructions', () => {
     expect(text).not.toMatch(/\b(refuse|refuses|decline|declines)\b/i);
   });
 
-  it('tells the model the microphone is its own to open and close', () => {
-    const text = getMeetingInstructions(base);
-
+  it('tells the model what a muted microphone means for what it says', () => {
+    const text = flat(getMeetingInstructions(base));
     expect(text).toMatch(/`set_microphone`/);
-    expect(text).toMatch(/You can open or close your microphone/i);
     // The half a model cannot observe: a muted turn is answered into nothing, and it will
     // carry on as though the room had heard it.
     expect(text).toMatch(/nothing you say reaches the room/i);
     // A mute the room asked for is left alone; one the call imposed is the agent's to undo.
     expect(text).toMatch(/nobody in the room asked for quiet, turn it back on/i);
-    expect(text).toMatch(/`isMicLive`/);
   });
 
   it('tells it to actually call leave_meeting rather than just announce leaving', () => {
     expect(getMeetingInstructions(base)).toMatch(/call `leave_meeting`/);
   });
 
-  it('warns that the audio has no speaker labels', () => {
+  it('warns that the audio has no speaker labels and may be misheard', () => {
     const text = getMeetingInstructions(base);
-    expect(text).toMatch(/single mixed channel/i);
-    expect(text).toMatch(/may mishear/i);
+    expect(text).toMatch(/no speaker labels/i);
+    expect(text).toMatch(/never guess a name/i);
+    expect(text).toMatch(/live audio garbles/i);
   });
 
   it('tells a one-to-one call to take everything as its own', () => {
     const text = getMeetingInstructions({ ...base, responseMode: 'open' });
     expect(text).toMatch(/only one other person/i);
-    expect(text).not.toMatch(/not prompted to speak for every utterance/i);
+    expect(text).not.toMatch(/prompted to speak only when someone calls you by name/i);
   });
 
   it('warns a gated call not to explain its own silence', () => {
-    const text = getMeetingInstructions({ ...base, responseMode: 'addressed' });
-    expect(text).toMatch(/not prompted to speak for every utterance/i);
+    const text = flat(getMeetingInstructions({ ...base, responseMode: 'addressed' }));
+    expect(text).toMatch(/prompted to speak only when someone calls you by name/i);
     // A model that doesn't know it is being filtered re-introduces itself every
     // time it is let through, or asks whether the follow-up was meant for it.
     expect(text).toMatch(/don't re-introduce yourself/i);
@@ -276,9 +250,9 @@ describe('getMeetingInstructions', () => {
   });
 
   it('covers both cases under auto, since the room decides which applies', () => {
-    const text = getMeetingInstructions(base);
-    expect(text).toMatch(/depends on who else is in it/i);
-    expect(text).toMatch(/not prompted to speak for every utterance/i);
+    const text = flat(getMeetingInstructions(base));
+    expect(text).toMatch(/while only one other person is in the call/i);
+    expect(text).toMatch(/prompted to speak only when someone calls you by name/i);
   });
 
   it('adapts to another platform without code changes', () => {
@@ -304,9 +278,6 @@ describe('who the agent is in a call', () => {
     // The meeting instructions are appended *after* Soul, Agent Guide and User, so
     // anything they assert about identity competes with the real thing. They should
     // defer to it instead.
-    const text = getMeetingInstructions(base);
-
-    expect(text).toMatch(/Soul/);
-    expect(text).toMatch(/Nothing above this line tells you who\s+you are/i);
+    expect(flat(getMeetingInstructions(base))).toMatch(/your Soul, Agent Guide and User sections describe/);
   });
 });
