@@ -17,7 +17,7 @@ All seven live in the embedded database. You edit them in the
 | **User** | What the agent knows about the person/team it works for. | The agent, as it learns |
 | **Memory** | A curated long-term summary the agent always keeps in context. | The agent |
 | **Vision** | The user's longer-term goals for the agent to advance proactively. | You |
-| **Agent Guide** | The operating manual — how the agent should behave, when to reach out, safety norms, Slack etiquette, coding workflow. It is also the policy for the optional [tool risk gate](configuration.md#tool-risk-gate). | You — the agent has no tool for it |
+| **Agent Guide** | The operating manual — how the agent should work and when it asks first. It is also the policy for the optional [tool risk gate](configuration.md#tool-risk-gate). | You — the agent has no tool for it |
 | **Heartbeat** | The checks the agent runs on its [heartbeat](heartbeat.md) schedule. | You |
 | **Bootstrap** | First-run onboarding instructions; cleared once setup is done. | The agent (clears it) |
 

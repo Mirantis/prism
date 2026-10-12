@@ -40,7 +40,7 @@
  *
  * Both scenarios clear the agent guide, because the guide IS the policy the gate
  * applies. A scenario added without that step inherits whatever the last one
- * left, and a bootstrapped agent holds `DEFAULT_AGENT_MD`, so inheriting it
+ * left, and a bootstrapped agent holds the seeded guide, so inheriting it
  * would make these scenarios a test of the default template. The verdict is the
  * same either way — a live run with the default guide still allowed the note the
  * control scenario writes — so clearing it pins these scenarios to the built-in

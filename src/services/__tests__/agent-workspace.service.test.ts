@@ -49,6 +49,7 @@ vi.mock('../../lib/telemetry', () => ({
 import { agentWorkspaceService } from '../agent-workspace.service';
 import { WORKSPACE_DOC_FIELDS } from '../../lib/workspace-docs';
 import { config } from '../../config';
+import { getDefaultWorkspaceFiles } from '../../templates/default-workspace';
 
 // config.agentId is mocked globally to 'test-agent-id' (test-utils/setup.ts).
 const agentId = 'test-agent-id';
@@ -147,6 +148,25 @@ describe('AgentWorkspaceService telemetry', () => {
         data: expect.objectContaining({ model: null, heartbeatModel: null, cronModel: null }),
       }),
     );
+  });
+
+  it('creates the agent holding the seeded documents', async () => {
+    // A template reaches an agent only here, at creation; an existing row keeps what
+    // it holds.
+    mockPrisma.agentWorkspace.create.mockResolvedValue(createAgentRow({ id: 'agent-new' }));
+    await agentWorkspaceService.createAgent({
+      id: 'agent-new',
+      userId: 'user-1',
+      name: 'Helper',
+      agentType: 'AGENT',
+      teamName: 'Team',
+    });
+
+    const { data } = mockPrisma.agentWorkspace.create.mock.calls[0][0];
+    const { bootstrapMd: _bootstrap, ...seeded } = getDefaultWorkspaceFiles();
+    expect(data).toMatchObject(seeded);
+    expect(data.bootstrapMd).toContain('Helper');
+    expect(data.bootstrapMd).not.toContain('{{');
   });
 
   it('emits "agent deleted" on successful deleteAgent', async () => {

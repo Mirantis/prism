@@ -282,11 +282,11 @@ than a rule about what is allowed. The check reads it for the rules and takes
 the rest as background.
 
 A guide you have never edited is not used as policy, so a new agent runs on the
-built-in rules alone. The stock guide says "read-only by default" under
-`## Safety`, which as policy would refuse the file edits and builds the agent
-needs to work. Edit any part of the guide and the whole document becomes your
-policy, stock sentences included — so read it through before you switch from
-`observe` to `enforce`. Run `observe` first either way: it shows every rule that
+built-in rules alone. Edit any part of the guide and the whole document becomes
+your policy, stock sentences included — so read it through before you switch from
+`observe` to `enforce`. If it says "read-only by default" under `## Safety`,
+remove that line: as policy it refuses the file edits and builds the agent needs
+to work. Run `observe` first either way: it shows every rule that
 would block work, before any work is blocked.
 
 The guide is read as one block up to about 8,000 characters, cut on whole lines.

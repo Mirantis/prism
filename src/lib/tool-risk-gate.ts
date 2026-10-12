@@ -19,7 +19,7 @@ import { callModelForObject } from './model-call';
 import { z } from 'zod';
 import type { ToolRiskGateMode } from '../config';
 import { logger } from '../logger';
-import { DEFAULT_AGENT_MD } from '../templates/default-workspace';
+import { isDefaultAgentGuide } from '../templates/default-workspace';
 import { getClassificationRequest } from './classification';
 import { langfuseTelemetry, trackEvent } from './telemetry';
 
@@ -170,17 +170,18 @@ export function isToolRiskGateError(value: unknown): value is ToolRiskGateError 
 /**
  * What policy the classifier reads, resolved once from the agent guide.
  *
- * Three sources, not two, because every agent is created holding
- * `DEFAULT_AGENT_MD` — so "the guide is non-blank" is true fleet-wide and cannot
- * answer the question the telemetry exists for: did somebody write this policy?
+ * Three sources, not two, because every agent is created holding a default guide
+ * — so "the guide is non-blank" is true fleet-wide and cannot answer the question
+ * the telemetry exists for: did somebody write this policy?
  *
- * `default` sends NO policy. That template's `## Safety` section reads
- * "read-only by default — never mutate external state without approval", which
- * as a rule outranking the ordinary-work list refuses the file edits, builds and
- * dependency installs the agent needs to work. The built-in rules are written to
- * allow ordinary work, so a stock agent runs on those alone, and the template
- * stays as it is for the agent's own reading. An edited or older default reads as
- * `custom` and is sent, which overstates operator intent rather than hiding it.
+ * `default` sends NO policy (`isDefaultAgentGuide`: the current template, and the
+ * one before it, which agents created from v2026.6.18060952 still hold). That
+ * earlier template's `## Safety` section reads "read-only by default — never
+ * mutate external state without approval", which as a rule outranking the
+ * ordinary-work list refuses the file edits, builds and dependency installs the
+ * agent needs to work. The built-in rules are written to allow ordinary work, so a
+ * stock agent runs on those alone. An edited or older default reads as `custom`
+ * and is sent, which overstates operator intent rather than hiding it.
  *
  * The digest goes with it. It keys the section's end marker, and it goes to
  * telemetry as `gate.policy_hash`: a guide the agent rewrote through the shell
@@ -200,7 +201,7 @@ function resolvePolicy(agentGuide?: string): ResolvedPolicy {
   if (!guide) return { source: 'none' };
 
   const digest = createHash('sha256').update(guide).digest('hex').slice(0, 12);
-  if (guide === DEFAULT_AGENT_MD.trim()) return { source: 'default', digest };
+  if (isDefaultAgentGuide(guide)) return { source: 'default', digest };
 
   return { source: 'custom', text: truncateGuide(guide), digest };
 }

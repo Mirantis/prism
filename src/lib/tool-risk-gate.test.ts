@@ -31,7 +31,14 @@ import {
   type ToolRiskDecision,
   type ToolRiskEvaluator,
 } from './tool-risk-gate';
-import { DEFAULT_AGENT_MD } from '../templates/default-workspace';
+import { getDefaultWorkspaceFiles } from '../templates/default-workspace';
+import { GUIDE_SEEDED_UNTIL_JUNE, GUIDE_SEEDED_SINCE_JUNE } from '../test-utils/seeded-agent-guides';
+
+/** The seeded guides that read as default: the current one, and the one agents created before it hold. */
+const DEFAULT_GUIDES = [
+  ['the current template', getDefaultWorkspaceFiles().agentMd],
+  ['the guide seeded since June', GUIDE_SEEDED_SINCE_JUNE],
+];
 
 const ALLOW: ToolRiskDecision = {
   decision: 'allow',
@@ -285,10 +292,10 @@ describe('withToolRiskGate', () => {
     );
   });
 
-  it('separates the stock guide from one somebody wrote', async () => {
-    // Every agent is created holding the default, so without this the dimension
-    // reads 'custom' fleet-wide and answers nothing.
-    const wrapped = wrap('shell_exec', makeTool(), 'enforce', vi.fn(async () => ALLOW), DEFAULT_AGENT_MD);
+  it.each(DEFAULT_GUIDES)('separates the stock guide from one somebody wrote (%s)', async (_name, guide) => {
+    // Every agent is created holding the default, and keeps the one it was created
+    // with, so without this the dimension reads 'custom' fleet-wide and answers nothing.
+    const wrapped = wrap('shell_exec', makeTool(), 'enforce', vi.fn(async () => ALLOW), guide);
 
     await wrapped.execute!({ command: 'npm test' } as never, executionOptions() as never);
 
@@ -296,6 +303,26 @@ describe('withToolRiskGate', () => {
       'tool risk decision',
       'user-1',
       expect.objectContaining({ 'gate.policy': 'default' }),
+    );
+  });
+
+  it('keeps reading the guide seeded until June as one somebody wrote', async () => {
+    // An older default reads as `custom`, which overstates operator intent rather
+    // than hiding it; a later template must not move those agents to `default`.
+    const wrapped = wrap(
+      'shell_exec',
+      makeTool(),
+      'enforce',
+      vi.fn(async () => ALLOW),
+      GUIDE_SEEDED_UNTIL_JUNE,
+    );
+
+    await wrapped.execute!({ command: 'npm test' } as never, executionOptions() as never);
+
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'tool risk decision',
+      'user-1',
+      expect.objectContaining({ 'gate.policy': 'custom' }),
     );
   });
 
@@ -557,11 +584,40 @@ describe('evaluateToolRisk', () => {
     );
   });
 
-  it('sends no policy for the stock guide every agent is created with', async () => {
-    // `DEFAULT_AGENT_MD` says "read-only by default — never mutate external
-    // state without approval" under `## Safety`. As a rule outranking the ALLOW
-    // EXCEPTIONS that refuses the file edits and builds the agent works with, so
-    // a stock agent runs on the built-in rules alone.
+  it.each(DEFAULT_GUIDES)(
+    'sends no policy for a stock guide an agent was created with (%s)',
+    async (_name, guide) => {
+      // The guide seeded since June says "read-only by default — never mutate
+      // external state without approval" under `## Safety`. As a rule outranking the
+      // ordinary-work list that refuses the file edits and builds the agent works with,
+      // so a stock agent runs on the built-in rules alone.
+      mockGetClassificationRequest.mockReturnValue({
+        model: 'classification-model',
+        providerOptions: {},
+        samplingParams: {},
+      });
+      mockGenerateObject.mockResolvedValue({ object: ALLOW });
+
+      await evaluateToolRisk({
+        toolName: 'shell_write_file',
+        toolDescription: '',
+        input: { path: 'notes.txt' },
+        invocationMode: 'chat',
+        initialPrompt: 'Write a note.',
+        messages: [{ role: 'user', content: 'Write a note.' }],
+        agentGuide: guide,
+        userId: 'user-1',
+        agentId: 'agent-1',
+      });
+
+      const { system } = mockGenerateObject.mock.calls[0][0] as { system: string };
+      expect(system).not.toContain('Operator policy.');
+      expect(system).not.toContain('read-only by default');
+      expect(system).toContain('No other rule here outranks the block list');
+    },
+  );
+
+  it('sends a seeded guide that somebody edited', async () => {
     mockGetClassificationRequest.mockReturnValue({
       model: 'classification-model',
       providerOptions: {},
@@ -576,15 +632,14 @@ describe('evaluateToolRisk', () => {
       invocationMode: 'chat',
       initialPrompt: 'Write a note.',
       messages: [{ role: 'user', content: 'Write a note.' }],
-      agentGuide: DEFAULT_AGENT_MD,
+      agentGuide: `${GUIDE_SEEDED_SINCE_JUNE}\n- Never touch the prod-eu cluster.`,
       userId: 'user-1',
       agentId: 'agent-1',
     });
 
     const { system } = mockGenerateObject.mock.calls[0][0] as { system: string };
-    expect(system).not.toContain('Operator policy.');
-    expect(system).not.toContain('read-only by default');
-    expect(system).toContain('No other rule here outranks the block list');
+    expect(system).toContain('Operator policy.');
+    expect(system).toContain('Never touch the prod-eu cluster.');
   });
 
   it('declares one top of the order, never two', async () => {
