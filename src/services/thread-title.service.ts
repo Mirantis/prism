@@ -22,6 +22,11 @@ import { logger } from '../logger';
 
 /** The length of the title the model is asked for. */
 const TITLE_WORDS = 3;
+/**
+ * The longest title kept. The model often writes one word more than it is asked
+ * for, and cutting that word leaves a fragment such as "Billing API Test".
+ */
+const MAX_TITLE_WORDS = TITLE_WORDS + 1;
 
 const SYSTEM_PROMPT = `You name chat conversations. You get the first message of a conversation and write a short title that names its topic. You do not answer or carry out the message. Write only the title on one line, with no quotes, label or formatting.`;
 
@@ -32,14 +37,19 @@ export interface ThreadTitleChange {
   title: string;
 }
 
-/** Trim, strip wrapping quotes/trailing punctuation, keep the first `TITLE_WORDS` words. */
+/**
+ * Keep the first non-empty line, strip wrapping quotes and trailing punctuation,
+ * and keep at most `MAX_TITLE_WORDS` words. A title is one line, so a second line
+ * is the start of an answer and never part of the title.
+ */
 function clampTitle(raw: string): string | null {
-  const cleaned = raw
+  const firstLine = raw.split('\n').find((line) => line.trim()) ?? '';
+  const cleaned = firstLine
     .trim()
     .replace(/^["'`]+/, '')
     .replace(/["'`.!?]+$/, '')
     .trim();
-  const title = cleaned.split(/\s+/).filter(Boolean).slice(0, TITLE_WORDS).join(' ');
+  const title = cleaned.split(/\s+/).filter(Boolean).slice(0, MAX_TITLE_WORDS).join(' ');
   return title || null;
 }
 
@@ -71,8 +81,8 @@ async function generateThreadTitle(threadId: string, message: string): Promise<s
     });
     // The title model can decline the message it was asked to summarize. The
     // finish reason is what says so: the text may be empty or may be the
-    // refusal sentence, and only the second shape produced a title — cut to
-    // three words and saved, a thread ended up named "I can't help".
+    // refusal sentence, and only the second shape produced a title — cut to a
+    // few words and saved, a thread ended up named "I can't help".
     if (result.finishReason === 'content-filter') return null;
     return clampTitle(result.text);
   } catch (error) {
