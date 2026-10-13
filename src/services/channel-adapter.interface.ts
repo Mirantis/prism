@@ -65,7 +65,7 @@ export interface LinkedTarget {
   /** `<platform>:<conversation id>`, the name the agent sends to. */
   key: string;
   /** The `name` of the adapter that lists and posts to it. */
-  platform: string;
+  platform: ChatPlatform;
   kind: 'channel' | 'dm';
   conversationId: string;
   name: string | null;

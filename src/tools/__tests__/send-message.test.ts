@@ -6,17 +6,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Tool } from 'ai';
 
-const { mockOutbound, mockGetChannelContext } = vi.hoisted(() => ({
+const { mockOutbound, mockThreadContext } = vi.hoisted(() => ({
   mockOutbound: { listTargets: vi.fn(), send: vi.fn() },
-  mockGetChannelContext: vi.fn(),
+  mockThreadContext: vi.fn(),
 }));
 
 vi.mock('../../services/outbound-message.service', () => ({
   outboundMessageService: mockOutbound,
   SEND_MESSAGE_TOOL_NAME: 'send_message',
 }));
-vi.mock('../../services/conversation.service', () => ({
-  conversationService: { getChannelContext: mockGetChannelContext },
+vi.mock('../../services/message-delivery.service', () => ({
+  messageDeliveryService: { threadContext: mockThreadContext },
 }));
 
 import { getSendMessageTools } from '../send-message';
@@ -54,17 +54,17 @@ describe('Requirement: the message tools act for the run that calls them', () =>
   });
 
   it('sends with the conversation the reply of a Slack turn goes to', async () => {
-    mockGetChannelContext.mockResolvedValue({
+    mockThreadContext.mockResolvedValue({
       channel: 'slack',
       channelId: 'C0GENERAL',
-      threadTs: '1712345678.000001',
+      channelThreadId: '1712345678.000001',
       threadId: 'thread-1',
     });
     const tools = getSendMessageTools('user-1', 'agent-1', 'thread-1', 'slack', 'C0GENERAL');
 
     const result = await run(tools.send_message, { target: '#release', text: 'Release v2 is out.' });
 
-    expect(mockGetChannelContext).toHaveBeenCalledWith('thread-1', 'slack', 'C0GENERAL');
+    expect(mockThreadContext).toHaveBeenCalledWith('thread-1', 'slack', 'C0GENERAL');
     expect(mockOutbound.send).toHaveBeenCalledWith({
       agentId: 'agent-1',
       userId: 'user-1',
@@ -82,7 +82,7 @@ describe('Requirement: the message tools act for the run that calls them', () =>
       text: 'Hi',
     });
 
-    expect(mockGetChannelContext).not.toHaveBeenCalled();
+    expect(mockThreadContext).not.toHaveBeenCalled();
     expect(mockOutbound.send.mock.calls[0][0].origin).toBeUndefined();
   });
 
@@ -90,7 +90,7 @@ describe('Requirement: the message tools act for the run that calls them', () =>
     const tools = getSendMessageTools('user-1', 'agent-1', undefined, undefined, undefined, true);
     await run(tools.send_message, { target: 'slack:C0RELEASE', text: 'Hi' });
 
-    expect(mockGetChannelContext).not.toHaveBeenCalled();
+    expect(mockThreadContext).not.toHaveBeenCalled();
     expect(mockOutbound.send.mock.calls[0][0].origin).toBe('broadcast');
   });
 
