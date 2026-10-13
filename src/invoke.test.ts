@@ -2579,13 +2579,13 @@ describe('invoke', () => {
 
       expect(Object.keys(cron.tools)).toEqual(Object.keys(chat.tools));
       expect(cron.messages.at(-2)).toEqual({ role: 'user', content: 'check the build' });
-      // Cron mode withholds the schedule listing and the goal tools.
+      // Cron mode withholds the goal tools.
       expect(cron.messages.at(-1)).toEqual({
         role: 'system',
         content: '',
         providerOptions: {
           anthropic: {
-            toolChanges: ['list_scheduled_tasks', 'create_goal', 'get_goal']
+            toolChanges: ['create_goal', 'get_goal']
               .map((toolName) => ({ type: 'tool_removal', toolName })),
           },
         },
