@@ -6,7 +6,7 @@
  * across SlackMapping, SlackVerificationCode, and SlackHeartbeatTrigger.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const {
   mockPrisma,
@@ -66,10 +66,14 @@ vi.mock('../../utils/slack-formatter', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../utils/slack-formatter')>()),
   formatSlackMessage: (s: string) => s,
 }));
+const { mockAppStart } = vi.hoisted(() => ({
+  mockAppStart: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('@slack/bolt', () => ({
   App: class {
     error = vi.fn();
-    start = vi.fn().mockResolvedValue(undefined);
+    start = mockAppStart;
     message = vi.fn();
     action = vi.fn();
     event = vi.fn();
@@ -216,6 +220,59 @@ describe('Requirement: disconnectAndDeactivate cleans up connection rows', () =>
   });
 });
 
+describe('Requirement: boot does not wait for the Slack socket', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const adapter = slackAdapterService as any;
+  const connection = {
+    id: 'conn-001',
+    teamId: 'T001',
+    teamName: 'Test Workspace',
+    isActive: true,
+    botToken: 'xoxb-test',
+    botUserId: 'U_BOT',
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    adapter.apps = new Map();
+    mockSlackMappingService.getActiveUserMappingsWithDmChannel.mockResolvedValue([]);
+    mockGetActiveSlackConnections.mockResolvedValue([connection]);
+    mockGetSlackConnection.mockResolvedValue(connection);
+    process.env.SLACK_APP_TOKEN = 'xapp-test';
+  });
+
+  afterEach(() => {
+    delete process.env.SLACK_APP_TOKEN;
+    mockAppStart.mockResolvedValue(undefined);
+  });
+
+  it('initialize resolves while the Socket Mode start is still pending', async () => {
+    let connect!: () => void;
+    mockAppStart.mockReturnValue(new Promise<void>((resolve) => (connect = resolve)));
+
+    await slackAdapterService.initialize();
+    await vi.waitFor(() => expect(mockAppStart).toHaveBeenCalledOnce());
+
+    expect(slackAdapterService.listConnectedWorkspaces()).toEqual([]);
+    expect(mockTrackEvent).not.toHaveBeenCalledWith('slack adapter initialized', null, expect.anything());
+
+    connect();
+
+    await vi.waitFor(() =>
+      expect(slackAdapterService.listConnectedWorkspaces()).toEqual([
+        { teamId: 'T001', teamName: 'Test Workspace', botUserId: 'U_BOT' },
+      ]),
+    );
+    await vi.waitFor(() =>
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'slack adapter initialized',
+        null,
+        expect.objectContaining({ 'slack.workspaces': '1' }),
+      ),
+    );
+  });
+});
+
 describe('Requirement: buildSenderTaggedContent prepares inbound text for the agent', () => {
   // The helper takes a sender's Slack ID + display name and prepends a
   // `<@USERID:Name>: ` marker so the agent's conversation history carries
@@ -347,13 +404,15 @@ describe('Requirement: Adapter telemetry', () => {
       .mockResolvedValue(undefined);
 
     await slackAdapterService.initialize();
-    initSpy.mockRestore();
 
-    expect(mockTrackEvent).toHaveBeenCalledWith(
-      'slack adapter initialized',
-      null,
-      expect.objectContaining({ 'slack.workspaces': '0' }),
+    await vi.waitFor(() =>
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'slack adapter initialized',
+        null,
+        expect.objectContaining({ 'slack.workspaces': '0' }),
+      ),
     );
+    initSpy.mockRestore();
   });
 
   it('does not emit "slack adapter initialized" when no connections are configured', async () => {
