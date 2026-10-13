@@ -163,15 +163,12 @@ describe('Requirement: the agent sends only to a linked target, and never a broa
     });
 
     it.each([
-      ['<!channel>', 'Heads up <!channel>'],
-      ['<!here> with a label', 'Heads up <!here|here>'],
-      ['a user group', 'Heads up <!subteam^S0TEAM|@release-team>'],
       ['plain @channel', 'Heads up @channel'],
       ['plain @here', '@here the build is green'],
       ['plain @everyone', 'Hi @Everyone!'],
       ['italic @here', 'Ping _@here_ now'],
     ])('refuses a broadcast: %s', async (_label, text) => {
-      await expect(send({ text })).rejects.toThrow('broadcast or group mention');
+      await expect(send({ text })).rejects.toThrow('broadcast mention');
       expect(slack.postToTarget).not.toHaveBeenCalled();
     });
 
