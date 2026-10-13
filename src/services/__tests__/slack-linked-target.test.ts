@@ -212,6 +212,20 @@ describe('Requirement: the agent posts only to its linked Slack targets', () => 
       expect(client.chat.postMessage).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ['<!channel>', 'Heads up <!channel>'],
+      ['<!here> with a label', 'Heads up <!here|here>'],
+      ['<!everyone>', 'Hi <!everyone>'],
+      ['a user group', 'Heads up <!subteam^S0TEAM|@release-team>'],
+    ])('refuses a special mention: %s', async (_label, text) => {
+      const send = slackAdapterService.postToTarget(RELEASE, text);
+
+      await expect(send).rejects.toBeInstanceOf(SendRefusedError);
+      await expect(send).rejects.toThrow('notifies a whole channel or a user group');
+      expect(client.chat.postMessage).not.toHaveBeenCalled();
+      expect(client.conversations.members).not.toHaveBeenCalled();
+    });
+
     it('refuses a thread id that is not a Slack ts', async () => {
       await expect(slackAdapterService.postToTarget(RELEASE, 'Hi', 'not-a-ts')).rejects.toThrow(
         'is not a Slack thread id',

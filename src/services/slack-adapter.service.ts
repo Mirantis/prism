@@ -79,6 +79,9 @@ export const FEEDBACK_ACK_LINGER_MS = 3000;
 /** A Slack user id: `U…`, or `W…` on an Enterprise Grid org. */
 const SLACK_USER_ID = /^[UW][A-Z0-9]{2,}$/;
 
+/** Slack's special-mention syntax. Each such token notifies a channel or a group. */
+const SLACK_SPECIAL_MENTION = /<!/;
+
 /** A Slack message ts, which is also a thread id. */
 const SLACK_TS = /^\d+\.\d+$/;
 
@@ -501,6 +504,12 @@ class SlackAdapterService implements ChannelAdapter {
       throw new SendRefusedError(
         `"${thread}" is not a Slack thread id. A thread id is the ts of the thread's first message, for example 1712345678.123456.`,
         'bad_thread',
+      );
+    }
+    if (SLACK_SPECIAL_MENTION.test(text)) {
+      throw new SendRefusedError(
+        'The message has a <!…> token, which notifies a whole channel or a user group, so nothing was sent. Mention people one at a time as <@ID>.',
+        'broadcast',
       );
     }
 

@@ -20,12 +20,8 @@ export const SEND_MESSAGE_TOOL_NAME = 'send_message';
 /** A post is a message to people, not a report: one chat message. */
 export const MAX_SENT_MESSAGE_LENGTH = 4000;
 
-/**
- * The special-mention token syntax (`<!channel>`, `<!here|here>`,
- * `<!subteam^…>`) and the plain broadcast words. Each one notifies a whole
- * conversation or a group.
- */
-const BROADCAST = /<!|(?:^|[^A-Za-z0-9])@(?:channel|here|everyone)(?![A-Za-z0-9])/i;
+/** The plain broadcast words, each of which notifies a whole conversation. */
+const BROADCAST = /(?:^|[^A-Za-z0-9])@(?:channel|here|everyone)(?![A-Za-z0-9])/i;
 
 export interface SendInput {
   agentId: string;
@@ -154,7 +150,7 @@ class OutboundMessageService {
     }
     if (BROADCAST.test(text)) {
       throw new SendRefusedError(
-        'The message has a broadcast or group mention (@channel, @here, @everyone, or a <!…> token), so nothing was sent. Mention people one at a time as <@ID>.',
+        'The message has a broadcast mention (@channel, @here or @everyone), so nothing was sent. Mention people one at a time as <@ID>.',
         'broadcast',
       );
     }
