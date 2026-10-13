@@ -564,22 +564,25 @@ class SlackAdapterService implements ChannelAdapter {
         return;
       }
 
-      for (const connection of connections) {
-        try {
-          await this.initializeConnection(connection.id);
-        } catch (error: unknown) {
+      // Boot does not wait for the sockets: `app.start()` can wait on
+      // `apps.connections.open` with no time limit, and the HTTP port opens after
+      // this returns. A workspace is listed once its socket is up.
+      const started = connections.map((connection) =>
+        this.initializeConnection(connection.id).catch((error: unknown) => {
           const message = error instanceof Error ? error.message : String(error);
           logger.error('Failed to initialize Slack connection for %s: %s', connection.teamName, message);
-        }
-      }
+        }),
+      );
 
       // Build user connection cache
       await this.rebuildUserCache();
 
-      logger.info('Slack adapter initialized: %d workspace(s)', this.apps.size);
-      trackEvent('slack adapter initialized', null, {
-        ...(config.agentId ? { 'agent.id': config.agentId } : {}),
-        'slack.workspaces': String(this.apps.size),
+      void Promise.all(started).then(() => {
+        logger.info('Slack adapter initialized: %d workspace(s)', this.apps.size);
+        trackEvent('slack adapter initialized', null, {
+          ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+          'slack.workspaces': String(this.apps.size),
+        });
       });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -654,12 +657,10 @@ class SlackAdapterService implements ChannelAdapter {
     //     platform `__nexus_cred:<uuid>__` sentinel (header-only rewrite).
     //   - `BOUNDED_SLACK_CLIENT_OPTIONS`: a request deadline and a few
     //     seconds-scale retries instead of the SDK's `timeout: 0` +
-    //     ~30 minutes of them. This client is not only used for posting:
-    //     `app.start()` runs its own `auth.test` through it, and boot awaits
-    //     that, so an unbounded call here holds the whole runtime — and every
-    //     client waiting for its port — behind one hanging Slack request. Note
-    //     it does not make boot bounded: `app.start()` below still waits on
-    //     `apps.connections.open` under the SDK's own `timeout: 0`.
+    //     ~30 minutes of them, for every post and for the `auth.test` that
+    //     `app.start()` runs. `app.start()` still waits on
+    //     `apps.connections.open` under the SDK's own `timeout: 0`, which is
+    //     why `initialize()` does not wait for it.
     //
     // `installerOptions.clientOptions` is deliberately *not* those bounds. Bolt
     // defaults that field to `clientOptions` (App.js: `{ clientOptions: this.clientOptions,
