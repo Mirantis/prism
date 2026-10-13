@@ -21,6 +21,8 @@ register({
   variables: {
     // The system prompt's date line.
     date: /(?<=Today's date \(UTC\): )\d{4}-\d{2}-\d{2} \(\w+\)/,
+    // A point in time in a tool result, as `toISOString()` and `toLocaleString()` print it.
+    time: /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z|\d{1,2}\/\d{1,2}\/\d{4}, \d{1,2}:\d{2}:\d{2}(?:\s[AP]M)?/,
     // Directories under the temp dir: its path differs per machine, and the TUI suite's
     // directories end in a random suffix.
     tmp: new RegExp(`${escapeRegExp(os.tmpdir())}/[\\w.-]+`),
