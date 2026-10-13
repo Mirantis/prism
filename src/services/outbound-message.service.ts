@@ -10,7 +10,7 @@
 
 import { messageDeliveryService, MessageTrigger } from './message-delivery.service';
 import { conversationService } from './conversation.service';
-import { ChannelAdapter, describeTarget, LinkedTarget, SendRefusedError } from './channel-adapter.interface';
+import { ChannelAdapter, ChannelName, describeTarget, LinkedTarget, SendRefusedError } from './channel-adapter.interface';
 import { trackEvent } from '../lib/telemetry';
 import type { ToolCallRecord } from '../types';
 
@@ -39,7 +39,7 @@ export interface SendInput {
    * target: one conversation and thread, or `broadcast` for a run without a
    * thread, whose output goes to the main channel and the user's own DM.
    */
-  origin?: { platform: string; conversationId?: string; thread?: string } | 'broadcast';
+  origin?: { platform: ChannelName; conversationId?: string; thread?: string } | 'broadcast';
 }
 
 type PostingAdapter = ChannelAdapter &

@@ -10,7 +10,8 @@
 import { Tool, tool } from 'ai';
 import { z } from 'zod';
 import { outboundMessageService, SEND_MESSAGE_TOOL_NAME, SendInput } from '../services/outbound-message.service';
-import { conversationService } from '../services/conversation.service';
+import { messageDeliveryService } from '../services/message-delivery.service';
+import { ChannelName, isChatPlatform } from '../services/channel-adapter.interface';
 
 const SEND_MESSAGE_DESCRIPTION =
   'Post a message into a channel, a thread in one, or a DM that is linked to you. ' +
@@ -24,7 +25,7 @@ export function getSendMessageTools(
   userId: string,
   agentId: string,
   threadId?: string,
-  originChannel?: 'slack' | 'websocket' | 'teams',
+  originChannel?: ChannelName,
   originChannelId?: string,
   broadcastsOutput?: boolean,
 ): Record<string, Tool> {
@@ -74,13 +75,13 @@ export function getSendMessageTools(
  */
 async function replyDestination(
   threadId: string | undefined,
-  originChannel: 'slack' | 'websocket' | 'teams' | undefined,
+  originChannel: ChannelName | undefined,
   originChannelId: string | undefined,
   broadcastsOutput: boolean | undefined,
 ): Promise<SendInput['origin']> {
   if (broadcastsOutput) return 'broadcast';
   if (!threadId) return undefined;
-  if (originChannel !== 'slack' && originChannel !== 'teams') return undefined;
-  const context = await conversationService.getChannelContext(threadId, originChannel, originChannelId);
-  return { platform: context.channel, conversationId: context.channelId, thread: context.threadTs };
+  if (!isChatPlatform(originChannel)) return undefined;
+  const context = await messageDeliveryService.threadContext(threadId, originChannel, originChannelId);
+  return { platform: context.channel, conversationId: context.channelId, thread: context.channelThreadId };
 }
