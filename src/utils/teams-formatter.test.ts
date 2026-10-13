@@ -25,6 +25,10 @@ describe('formatTeamsMessage', () => {
     expect(formatTeamsMessage('hi', { triggeredBy: 'USER_INPUT' })).toEqual(['hi']);
   });
 
+  it('adds no banner for WEBHOOK', () => {
+    expect(formatTeamsMessage('hi', { triggeredBy: 'WEBHOOK' })).toEqual(['hi']);
+  });
+
   it('appends a de-duplicated tool footer', () => {
     const [chunk] = formatTeamsMessage('done', {
       toolCalls: [{ tool: 'shell_exec' }, { tool: 'shell_exec' }, { tool: 'memory_search' }],

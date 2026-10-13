@@ -148,7 +148,12 @@ async function expectGateCall(run: () => Promise<boolean>): Promise<Verdict> {
 /** One stored message of the thread a scenario starts from. */
 type HistoryEntry =
   | { user: string; attachments?: AttachmentMeta[] }
-  | { agent: string; toolCalls?: { tool: string; input: unknown; output: unknown }[] };
+  | {
+      agent: string;
+      toolCalls?: { tool: string; input: unknown; output: unknown }[];
+      /** The webhook subscription that delivered the message. */
+      webhook?: string;
+    };
 
 /** What a tool call returns in the eval. Gets the call's input. */
 type ToolStub = (input: Record<string, unknown>) => unknown;
@@ -302,6 +307,7 @@ function toStoredMessage(entry: HistoryEntry, index: number): ConversationMessag
     id,
     role: 'AGENT',
     content: entry.agent,
+    triggerName: entry.webhook ?? null,
     toolCalls: entry.toolCalls?.map((call) => ({
       tool: call.tool,
       input: call.input,

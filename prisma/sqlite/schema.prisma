@@ -249,6 +249,9 @@ model ConversationMessage {
   role        MessageRole
   content     String
   triggeredBy MessageTrigger
+  // The webhook subscription that produced a WEBHOOK message. The model's
+  // history names it; clients show the content alone.
+  triggerName String?
   toolCalls   Json?
   blocks      Json?
 

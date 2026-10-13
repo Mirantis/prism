@@ -156,6 +156,17 @@ describe('MessageDeliveryService', () => {
       });
     });
 
+    it('stores the webhook subscription that produced a message', async () => {
+      service.register(createMockAdapter('test'));
+
+      await service.publish('user-123', 'thread-456', 'Disk at 91%.', 'WEBHOOK', { triggerName: 'alerts' });
+
+      expect(mockAddMessage).toHaveBeenCalledWith(
+        'thread-456',
+        expect.objectContaining({ content: 'Disk at 91%.', triggeredBy: 'WEBHOOK', triggerName: 'alerts' }),
+      );
+    });
+
     it('broadcasts autonomous HEARTBEAT messages to connected adapters (no channelContext)', async () => {
       const adapter = createMockAdapter('test');
       adapter.isUserConnected.mockResolvedValue(true);

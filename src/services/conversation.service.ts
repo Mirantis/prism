@@ -40,6 +40,8 @@ export interface MessageInput {
   content: string;
   role: MessageRole;
   triggeredBy: MessageTrigger;
+  /** The webhook subscription that produced a WEBHOOK message, for the model's history. */
+  triggerName?: string;
   toolCalls?: unknown[];
   blocks?: unknown[];
   // Multi-user context (for channel messages)
@@ -401,6 +403,7 @@ class ConversationService {
         role: input.role,
         content: input.content,
         triggeredBy: input.triggeredBy,
+        triggerName: input.triggerName,
         toolCalls: input.toolCalls as Prisma.InputJsonValue | undefined,
         blocks: input.blocks as Prisma.InputJsonValue | undefined,
         senderExternalId: input.senderExternalId,

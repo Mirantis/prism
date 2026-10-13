@@ -62,6 +62,9 @@ interface Delivery {
 /** A run's result, with the channel counts its delivery reported. */
 type RunOutcome = WebhookRunResult & Pick<Delivery, 'chosenChannels'>;
 
+/** What a webhook message is published with. */
+type WebhookPublishOptions = Pick<PublishOptions, 'triggerName' | 'toolCalls' | 'attachmentIds'>;
+
 /** The `webhook processed` props for a delivery to chosen channels, named for the channel. */
 function chosenChannelProps(chosen: Delivery['chosenChannels']): Record<string, string> {
   if (!chosen) return {};
@@ -401,7 +404,7 @@ export class WebhookService {
     };
 
     if (result.error?.type === 'budget_exceeded') {
-      const budgetMessage = `**Webhook: ${subscription.name}**\n\nThis event could not be processed — your organization's AI spending limit has been reached${result.error.detail ? `: ${result.error.detail}` : ''}. Please contact your administrator to increase the budget.`;
+      const budgetMessage = `This event could not be processed — your organization's AI spending limit has been reached${result.error.detail ? `: ${result.error.detail}` : ''}. Please contact your administrator to increase the budget.`;
       const { message, chosenChannels } = await this.deliver(agent.id, agent.userId, subscription, budgetMessage, stored);
       return { status: 'budget_exceeded', error: result.error.detail, messageId: message?.id, chosenChannels };
     }
@@ -423,7 +426,7 @@ export class WebhookService {
       agent.id,
       agent.userId,
       subscription,
-      `**Webhook: ${subscription.name}**\n\n${body}`,
+      body,
       stored,
     );
 
@@ -471,7 +474,7 @@ export class WebhookService {
         agent.id,
         agent.userId,
         subscription,
-        `**Webhook: ${subscription.name}**\n\nThis event could not be processed — the run failed with: ${msg}`,
+        `This event could not be processed — the run failed with: ${msg}`,
       );
     } catch (deliverError: unknown) {
       logger.error({ err: deliverError }, `[Webhook] '${subscription.name}' failure notice could not be delivered`);
@@ -482,22 +485,23 @@ export class WebhookService {
   /**
    * Deliver a webhook message: to the chosen channels of a subscription that
    * has them, when its target links channels, else per the subscription's
-   * target.
+   * target. Each stored message names the subscription for the model.
    */
   private async deliver(
     agentId: string,
     userId: string,
-    target: Pick<WebhookSubscription, 'deliverTo' | 'slackChannelIds'>,
+    target: Pick<WebhookSubscription, 'name' | 'deliverTo' | 'slackChannelIds'>,
     content: string,
     options?: Pick<PublishOptions, 'toolCalls' | 'attachmentIds'>,
   ): Promise<Delivery> {
+    const published = { ...options, triggerName: target.name };
     const chosen = parseCommaList(target.slackChannelIds);
     const channel = messageDeliveryService.getAdapter(target.deliverTo);
     if (chosen.length > 0 && channel?.linkedChannelIds) {
       const linked = new Set(await channel.linkedChannelIds(agentId));
-      return this.deliverToChosenChannels(agentId, userId, channel.name, linked, chosen, content, options);
+      return this.deliverToChosenChannels(agentId, userId, channel.name, linked, chosen, content, published);
     }
-    return { message: await this.deliverToTarget(agentId, userId, target.deliverTo, content, options) };
+    return { message: await this.deliverToTarget(agentId, userId, target.deliverTo, content, published) };
   }
 
   /**
@@ -517,7 +521,7 @@ export class WebhookService {
     userId: string,
     deliverTo: string,
     content: string,
-    options?: Pick<PublishOptions, 'toolCalls' | 'attachmentIds'>,
+    options: WebhookPublishOptions,
   ): Promise<ConversationMessage | null> {
     if (deliverTo === 'none') return null;
 
@@ -556,7 +560,7 @@ export class WebhookService {
     agentId: string,
     userId: string,
     content: string,
-    options?: Pick<PublishOptions, 'toolCalls' | 'attachmentIds'>,
+    options: WebhookPublishOptions,
   ): Promise<ConversationMessage> {
     const thread = await conversationService.getOrCreateLatestThread(agentId, userId);
     return messageDeliveryService.publish(userId, thread.id, content, 'WEBHOOK', {
@@ -580,7 +584,7 @@ export class WebhookService {
     linked: Set<string>,
     chosen: string[],
     content: string,
-    options?: Pick<PublishOptions, 'toolCalls' | 'attachmentIds'>,
+    options: WebhookPublishOptions,
   ): Promise<Delivery> {
     const reachable = chosen.filter((id) => linked.has(id));
     const chosenChannels = { channel, posted: reachable.length, skipped: chosen.length - reachable.length };

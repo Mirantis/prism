@@ -234,7 +234,7 @@ describe('webhookRunService.get', () => {
           id: 'msg-1',
           threadId: 'thread-1',
           thread: { title: 'Alerts', externalThreadId: null },
-          content: '**Webhook: alerts**\n\nAll clear.',
+          content: 'All clear.',
           toolCalls: [
             { tool: 'first', input: '{}', output: 'a', success: true, timestamp: 't1' },
             { tool: 'second', input: '{}', output: 'b', success: false, timestamp: 't2' },
@@ -248,7 +248,7 @@ describe('webhookRunService.get', () => {
     expect(mockPrisma.webhookRun.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 'run-1', agentId: 'agent-1' } }),
     );
-    expect(run?.delivered?.content).toBe('**Webhook: alerts**\n\nAll clear.');
+    expect(run?.delivered?.content).toBe('All clear.');
     expect(run?.delivered?.toolCalls.map((c) => c.tool)).toEqual(['first', 'second']);
   });
 
