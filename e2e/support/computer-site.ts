@@ -56,6 +56,9 @@ function approvalPage(approved: boolean): string {
  */
 export const SIGN_IN_PASSWORD = 'a-password-prism-never-sees';
 
+/** Fixed, so the address in the agent's prompt is the same on every run and the LLM cache matches it. */
+const PORT = 3105;
+
 /**
  * A real website with a sign-in step and an independent public page.
  *
@@ -82,6 +85,9 @@ export async function startComputerSite(): Promise<{
   let filesUser: string | null = null;
   let filesCredentials: { username: string; password: string } | null = null;
   const server: Server = createServer((req, res) => {
+    // Each site in turn listens on the same port, so a client must not keep a connection to a
+    // site that has closed.
+    res.setHeader('connection', 'close');
     if (req.method === 'POST' && req.url?.startsWith('/typed')) {
       passwordLength = Number(new URL(req.url, 'http://site').searchParams.get('length')) || 0;
       req.resume();
@@ -193,8 +199,10 @@ export async function startComputerSite(): Promise<{
       `<!doctype html><title>Computer test</title><body style="font:20px system-ui;padding:64px;background:#f4f4f5;color:#18181b">${content}</body>`,
     );
   });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address() as { port: number };
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(PORT, '127.0.0.1', resolve);
+  });
   return {
     isSignedIn: () => signedIn,
     passwordLength: () => passwordLength,
@@ -204,7 +212,7 @@ export async function startComputerSite(): Promise<{
     approve: () => {
       approved = true;
     },
-    url: `http://${randomUUID()}.localhost:${address.port}`,
+    url: `http://${randomUUID()}.localhost:${PORT}`,
     close: () =>
       new Promise((resolve, reject) => {
         server.closeAllConnections();

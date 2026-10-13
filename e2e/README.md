@@ -83,6 +83,8 @@ The durations are in `support/web-shard-timings.json`. To refresh them, download
 
 Both suites answer a chat or classification call from `e2e/llm-cache/` when an earlier run made the same call, and record every other one there. CI keeps the directory between green runs. Set `AGENTIC_EVALS_CACHE_MODE=off` to send every call to the model, and delete the directory to start over. A recording holds the model's output and its tool-call arguments, so keep secrets out of test inputs.
 
+A call matches a recording only when everything the model receives is the same, apart from uuids, the date line in the system prompt, times as `toISOString()` and `toLocaleString()` print them, and paths under the temp directory. Give every other test input a fixed value: a fixed port, and a uuid where a name must be unique.
+
 ## TUI (CLI) tests
 
 The `prism-cli` end-to-end tests live in `tui/` and are **separate** from the

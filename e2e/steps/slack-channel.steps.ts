@@ -7,6 +7,7 @@
  * the UI (verification code flow) for a true e2e test.
  */
 
+import { randomUUID } from 'node:crypto';
 import { createBdd } from 'playwright-bdd';
 import { expect, test, type Page } from '@playwright/test';
 import { getPrisma } from '../support/db-helper';
@@ -92,7 +93,8 @@ After({ tags: '@slack' }, async () => {
 
 Given('a test Slack channel exists', async () => {
   const slack = getSlackState();
-  slack.channelName = `lens-agents-test-${Date.now()}`;
+  // A uuid keeps the name unique in Slack, and the LLM cache treats it as an id.
+  slack.channelName = `lens-agents-test-${randomUUID()}`;
   const result = await slack.userClient!.conversations.create({
     name: slack.channelName,
   });
@@ -163,7 +165,7 @@ Given('I link the channel to the agent via the UI', async ({ page }) => {
 
 Given('a second test Slack channel exists', async () => {
   const slack = getSlackState();
-  slack.secondChannelName = `lens-agents-test2-${Date.now()}`;
+  slack.secondChannelName = `lens-agents-test2-${randomUUID()}`;
   const result = await slack.userClient!.conversations.create({
     name: slack.secondChannelName,
   });

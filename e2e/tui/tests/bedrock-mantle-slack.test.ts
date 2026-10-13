@@ -15,6 +15,7 @@
  * Skips itself when the Slack e2e credentials are absent.
  */
 
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect } from 'vitest';
@@ -109,7 +110,8 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, Scenario }) =
     ({ Given, And, When, Then }) => {
       Given('a Slack channel linked to the mantle agent', async () => {
         if (skip()) return;
-        const name = `mantle-e2e-${Date.now().toString(36)}`;
+        // A uuid keeps the name unique in Slack, and the LLM cache treats it as an id.
+        const name = `mantle-e2e-${randomUUID()}`;
         const created = await user.conversations.create({ name });
         const channelId = created.channel?.id;
         if (!channelId) throw new Error(`could not create channel ${name}`);
