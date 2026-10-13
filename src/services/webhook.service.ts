@@ -456,8 +456,14 @@ export class WebhookService {
       prompt,
       afterRestart,
       abortSignal: pendingWorkService.shutdownSignal,
-      // 'chat' and 'none' deliver no final message to a chat platform.
-      broadcastsOutput: subscription.deliverTo !== 'chat' && subscription.deliverTo !== 'none',
+      // The final message goes to the main channel and the user's DM, unless the
+      // subscription delivers to the web chat, to chosen channels, or nowhere. A
+      // send into a chosen channel is not refused: the webhook prompt rule asks
+      // the agent not to post its final message there.
+      broadcastsOutput:
+        subscription.deliverTo !== 'chat' &&
+        subscription.deliverTo !== 'none' &&
+        parseCommaList(subscription.slackChannelIds).length === 0,
     });
     if (pendingWorkService.shutdownSignal.aborted) return null;
 
