@@ -1,21 +1,17 @@
 /**
- * Self-update, in one of two modes.
+ * Self-update for standalone (SEA) installs.
  *
- * Both check the GHCR tag list for a newer release (hourly, first check one
- * minute after boot) and act only while the agent is idle. `install` (a SEA
- * binary) announces the release and applies it: stage + verify the release
- * archive, record a PENDING attempt, swap the install and restart. `exit`
- * (a container with EXIT_ON_UPDATE) waits a random delay, records a
- * PENDING attempt and stops, and the platform starts the new image. The next
- * boot resolves the pending attempt by comparing its own version to the
- * target — the record survives the process the update kills.
+ * Checks the GHCR tag list for a newer release (hourly, first check one
+ * minute after boot), announces it, and applies it: stage + verify the
+ * release archive, record a PENDING attempt, swap the install and restart.
+ * The next boot resolves the pending attempt by comparing its own version to
+ * the target — the record survives the process the update kills.
  *
- * The updater runs only where the baked version is release-shaped (a dev
- * build has nothing to compare), DISABLE_UPDATER is not set, and the process
- * is a SEA binary or a container with EXIT_ON_UPDATE. Clients see only
- * the `install` mode: in `exit` mode the status reports the updater off
- * and nothing is broadcast. Check failures are logged at debug and never
- * surface in any UI.
+ * The updater runs only where all three hold: the process is a SEA binary
+ * (a container or dev run updates by other means — pulling the image, git),
+ * its baked version is release-shaped (a dev build has nothing to compare),
+ * and DISABLE_UPDATER is not set. Check failures are logged at debug and
+ * never surface in any UI.
  *
  * Nothing here knows about WebSockets — progress is announced on the
  * `events` emitter (`'update'`, an {@link UpdateEvent}); the gateway
@@ -30,7 +26,6 @@ import {
   RELEASE_VERSION_RE,
   UPDATE_CHECK_INTERVAL_MS,
   UPDATE_FIRST_CHECK_DELAY_MS,
-  UPDATE_RESTART_JITTER_MAX_MS,
   WINDOWS_HANDOFF_TIMEOUT_MS,
 } from '../../constants';
 import { logger } from '../../logger';
@@ -53,9 +48,6 @@ import {
 } from './apply';
 
 export type UpdateDisabledReason = 'disabled_by_env' | 'not_sea_install' | 'dev_build';
-
-/** How this process takes a newer release: swap the SEA install, or stop for the platform. */
-export type UpdateMode = 'install' | 'exit';
 
 /** A second apply was requested while one is running — the route maps it to 409. */
 export class UpdateInProgressError extends Error {
@@ -101,16 +93,12 @@ class UpdateService {
   private announced = new Set<string>();
   private firstCheckTimer: NodeJS.Timeout | null = null;
   private checkInterval: NodeJS.Timeout | null = null;
-  /** `exit` mode: the random delay between finding a release and stopping. */
-  private exitTimer: NodeJS.Timeout | null = null;
-  /** Set by `stop()`: a shutdown has started, so a restart past its delay ends. */
-  private stopped = false;
 
-  get gate(): { mode: UpdateMode | null; reason: UpdateDisabledReason | null } {
-    if (config.disableUpdater) return { mode: null, reason: 'disabled_by_env' };
-    if (!sea.isSea() && !config.exitOnUpdate) return { mode: null, reason: 'not_sea_install' };
-    if (!RELEASE_VERSION_RE.test(config.appVersion)) return { mode: null, reason: 'dev_build' };
-    return { mode: sea.isSea() ? 'install' : 'exit', reason: null };
+  get gate(): { enabled: boolean; reason: UpdateDisabledReason | null } {
+    if (config.disableUpdater) return { enabled: false, reason: 'disabled_by_env' };
+    if (!sea.isSea()) return { enabled: false, reason: 'not_sea_install' };
+    if (!RELEASE_VERSION_RE.test(config.appVersion)) return { enabled: false, reason: 'dev_build' };
+    return { enabled: true, reason: null };
   }
 
   /**
@@ -122,55 +110,42 @@ class UpdateService {
     // happens to open the database. A source run shares ~/.prism/agent.db with
     // an install, and resolving there would mark that install's in-flight
     // attempt `restart_version_mismatch` while it is still mid-restart —
-    // sweeping there would delete its staged release. A release container that
-    // opted into EXIT_ON_UPDATE owns its /data, so it resolves too, and
-    // never sweeps. Deliberately gated on the install shape rather than the
-    // full gate: the process that comes back after an update is the one that
-    // must resolve the sentinel, even if the user set DISABLE_UPDATER in between.
-    const exitInstall = config.exitOnUpdate && RELEASE_VERSION_RE.test(config.appVersion);
-    if (sea.isSea() || exitInstall) await this.resolvePendingAttempts();
-    if (sea.isSea()) sweepUpdateDirs();
+    // sweeping there would delete its staged release. Deliberately gated on
+    // `sea.isSea()` alone rather than the full gate: the process that comes
+    // back after an update is the one that must resolve the sentinel, even if
+    // the user set DISABLE_UPDATER in between.
+    if (sea.isSea()) {
+      await this.resolvePendingAttempts();
+      sweepUpdateDirs();
+    }
 
-    const { mode, reason } = this.gate;
-    if (mode === null) {
+    const { enabled, reason } = this.gate;
+    if (!enabled) {
       logger.info(`[Update] updater off (${reason})`);
       return;
     }
 
     this.firstCheckTimer = setTimeout(() => void this.checkTick(), UPDATE_FIRST_CHECK_DELAY_MS);
     this.checkInterval = setInterval(() => void this.checkTick(), UPDATE_CHECK_INTERVAL_MS);
-    logger.info(
-      mode === 'install'
-        ? `[Update] updater on — running ${config.appVersion}, checking hourly`
-        : `[Update] EXIT_ON_UPDATE set — running ${config.appVersion}, checking hourly`,
-    );
+    logger.info(`[Update] updater on — running ${config.appVersion}, checking hourly`);
   }
 
   stop(): void {
-    this.stopped = true;
     if (this.firstCheckTimer) clearTimeout(this.firstCheckTimer);
     if (this.checkInterval) clearInterval(this.checkInterval);
-    if (this.exitTimer) clearTimeout(this.exitTimer);
     this.firstCheckTimer = null;
     this.checkInterval = null;
-    this.exitTimer = null;
   }
 
-  /**
-   * A container reports the same off state with or without EXIT_ON_UPDATE:
-   * the platform, not a client, applies the release, so no client offers an
-   * update and the manual route refuses one.
-   */
   async getStatus(): Promise<UpdateStatusReport> {
-    const { mode, reason } = this.gate;
-    const enabled = mode === 'install';
+    const { enabled, reason } = this.gate;
     const last = await prisma.updateAttempt.findFirst({ orderBy: { startedAt: 'desc' } });
     return {
       enabled,
-      reason: sea.isSea() || config.disableUpdater ? reason : 'not_sea_install',
+      reason,
       currentVersion: config.appVersion,
       latestVersion: this.latestVersion,
-      updateAvailable: enabled && this.hasNewerVersion(),
+      updateAvailable: this.hasNewerVersion(),
       checkedAt: this.checkedAt?.toISOString() ?? null,
       applying: this.applying,
       lastAttempt: last ? toAttemptReport(last) : null,
@@ -309,9 +284,8 @@ class UpdateService {
 
   /**
    * End this process so the supervisor (launchd KeepAlive / systemd
-   * Restart=always) respawns the swapped-in binary, or the container platform
-   * starts the new image. The delay lets the WS broadcast and any HTTP
-   * response flush first.
+   * Restart=always) respawns the swapped-in binary. The delay lets the WS
+   * broadcast and any HTTP response flush first.
    *
    * Raises SIGTERM rather than exiting outright, so the restart runs the same
    * graceful shutdown a `docker stop` gets: plugin MCP child processes closed
@@ -325,32 +299,28 @@ class UpdateService {
 
   private hasNewerVersion(): boolean {
     return (
-      this.gate.mode !== null &&
+      this.gate.enabled &&
       this.latestVersion !== null &&
       compareReleaseVersions(this.latestVersion, config.appVersion) > 0
     );
   }
 
   /**
-   * The hourly tick: check, announce once per version, and auto-apply (or,
-   * in `restart` mode, arm the delayed stop) when nothing is mid-flight. A
-   * busy agent (LLM turn, running cron task, live goal loop, live meeting)
-   * defers to the next tick rather than being restarted under a turn.
+   * The hourly tick: check, announce once per version, and auto-apply when
+   * nothing is mid-flight. A busy agent (LLM turn, running cron task, live
+   * goal loop, live meeting) defers to the next tick rather than being
+   * restarted under a turn.
    */
   private async checkTick(): Promise<void> {
     if (this.applying) return;
     const latest = await this.checkNow();
     if (latest === null || !this.hasNewerVersion()) return;
-    const mode = this.gate.mode;
 
     // Announced on every tick, not once: a client that connects after the
     // first announce (the TUI has no status fetch) still learns about it on
     // the next tick, and both consumers render the frame idempotently. Only
-    // the telemetry event is once-per-version. `restart` mode sends no frame,
-    // since every client would offer an update this install cannot install.
-    if (mode === 'install') {
-      this.events.emit('update', { status: 'available', version: latest } satisfies UpdateEvent);
-    }
+    // the telemetry event is once-per-version.
+    this.events.emit('update', { status: 'available', version: latest } satisfies UpdateEvent);
     if (!this.announced.has(latest)) {
       this.announced.add(latest);
       logger.info(`[Update] ${latest} is available (running ${config.appVersion})`);
@@ -364,10 +334,6 @@ class UpdateService {
       logger.info(`[Update] ${latest} not applied — agent busy, retrying next tick`);
       return;
     }
-    if (mode === 'exit') {
-      await this.armExit(latest);
-      return;
-    }
     try {
       const { willExit, deferred } = await this.applyUpdate(latest, 'AUTO');
       if (deferred) return;
@@ -377,57 +343,6 @@ class UpdateService {
         `[Update] automatic update to ${latest} failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-  }
-
-  /**
-   * `restart` mode: stop after a random delay of up to
-   * {@link UPDATE_RESTART_JITTER_MAX_MS}, so a fleet that finds a release in
-   * the same minute does not stop in the same minute.
-   *
-   * Skipped for a version whose earlier restart came back on the old version
-   * (`restart_version_mismatch`): that platform restarts the same image, and
-   * a stop on every boot would loop without end. The next release tries again.
-   */
-  private async armExit(version: string): Promise<void> {
-    const failed = await prisma.updateAttempt.findFirst({
-      where: { versionTo: version, outcome: 'FAILURE', errorCode: 'restart_version_mismatch' },
-    });
-    if (failed) {
-      logger.debug(`[Update] ${version} not applied — an earlier restart came back on ${failed.versionFrom}`);
-      return;
-    }
-
-    const delayMs = Math.floor(Math.random() * UPDATE_RESTART_JITTER_MAX_MS);
-    logger.info(`[Update] stopping for ${version} in ${Math.round(delayMs / 1000)} s if the agent is idle then`);
-    this.exitTimer = setTimeout(() => void this.exitForRelease(version), delayMs);
-  }
-
-  /**
-   * The end of the delay: re-check the idle gate, since work can start during
-   * the delay, then record the attempt and stop. A busy agent waits for the
-   * next tick, which draws a new delay.
-   */
-  private async exitForRelease(version: string): Promise<void> {
-    this.exitTimer = null;
-    const idle = await this.isIdle();
-    if (this.stopped) return;
-    if (!idle) {
-      logger.info(`[Update] ${version} not applied — agent busy after the delay, retrying next tick`);
-      return;
-    }
-    try {
-      await prisma.updateAttempt.create({
-        data: { versionFrom: config.appVersion, versionTo: version, trigger: 'AUTO' },
-      });
-    } catch (error: unknown) {
-      logger.warn({ err: error }, `[Update] could not record the restart for ${version} — retrying next tick`);
-      return;
-    }
-    if (this.stopped) return;
-    // Stays true: this process is over.
-    this.applying = true;
-    logger.info(`[Update] stopping for ${version} (running ${config.appVersion})`);
-    this.scheduleRestartExit();
   }
 
   /**
@@ -512,8 +427,7 @@ class UpdateService {
   private async resolvePendingAttempts(): Promise<void> {
     const pending = await prisma.updateAttempt.findMany({ where: { outcome: 'PENDING' } });
     for (const row of pending) {
-      // A container restart runs whatever `latest` is at pull time, which can
-      // be newer than the release the attempt recorded.
+      // A boot on the target release or on any newer release counts as success.
       const success =
         RELEASE_VERSION_RE.test(config.appVersion) && compareReleaseVersions(config.appVersion, row.versionTo) >= 0;
       await this.finishAttempt(row, success ? 'SUCCESS' : 'FAILURE', success ? null : 'restart_version_mismatch', null);
