@@ -28,6 +28,9 @@ export const SEND_MESSAGE_TOOL_NAME = 'send_message';
 /** A post is a message to people, not a report: one chat message. */
 export const MAX_SENT_MESSAGE_LENGTH = 4000;
 
+/** The stored text of a withheld run that sent a message and ended with no text of its own. */
+export const WITHHELD_RUN_TEXT = 'This run sent a message and ended with no reply.';
+
 /** The plain broadcast words, each of which notifies a whole conversation. */
 const BROADCAST = /(?:^|[^A-Za-z0-9])@(?:channel|here|everyone)(?![A-Za-z0-9])/i;
 
@@ -90,7 +93,7 @@ class OutboundMessageService {
     if (!run.toolCalls.some((call) => call.tool === SEND_MESSAGE_TOOL_NAME && call.success)) return;
     const threadId = run.threadId ?? (await conversationService.getOrCreateLatestThread(run.agentId, run.userId)).id;
     await conversationService.addMessage(threadId, {
-      content: run.content,
+      content: run.content.trim() ? run.content : WITHHELD_RUN_TEXT,
       role: 'AGENT',
       triggeredBy: run.triggeredBy,
       toolCalls: run.toolCalls,

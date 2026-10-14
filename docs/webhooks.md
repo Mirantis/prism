@@ -170,6 +170,9 @@ sent and where it's recorded:
 - **None** — the agent runs and posts no message, even when the run fails. Use
   it when the agent's work lands somewhere else, such as a review on GitHub.
 
+When the agent sends a message to a channel or DM during a run whose reply is
+not posted, web chat keeps a record of that run.
+
 An agent reply is posted only when it has something to report. Put the
 condition in the prompt, for example "Review the PR. Message me only if the
 review finds a blocking problem." A prompt that asks for a message on every

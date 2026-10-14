@@ -28,7 +28,12 @@ vi.mock('../../logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: mockLoggerError, debug: vi.fn() },
 }));
 
-import { outboundMessageService, MAX_SENT_MESSAGE_LENGTH, SEND_MESSAGE_TOOL_NAME } from '../outbound-message.service';
+import {
+  outboundMessageService,
+  MAX_SENT_MESSAGE_LENGTH,
+  SEND_MESSAGE_TOOL_NAME,
+  WITHHELD_RUN_TEXT,
+} from '../outbound-message.service';
 import { LinkedTarget, SendRefusedError } from '../channel-adapter.interface';
 import type { ToolCallRecord } from '../../types';
 
@@ -335,6 +340,15 @@ describe('Requirement: a withheld run that sent a message stays in history', () 
 
     expect(mockConversationService.getOrCreateLatestThread).not.toHaveBeenCalled();
     expect(mockConversationService.addMessage).toHaveBeenCalledWith('thread-bound', expect.anything());
+  });
+
+  it('stores a fixed text for a run that ended with no text, never an empty message', async () => {
+    await outboundMessageService.keepWithheldRun({ ...run, content: '', toolCalls: [toolCall({})] });
+
+    expect(mockConversationService.addMessage).toHaveBeenCalledWith(
+      'thread-latest',
+      expect.objectContaining({ content: WITHHELD_RUN_TEXT }),
+    );
   });
 
   it('stores nothing for a run whose sends all failed, or that sent nothing', async () => {

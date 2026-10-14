@@ -974,6 +974,24 @@ describe('handleInbound agent mode', () => {
       error: 'monthly cap',
       messageId: 'msg-1',
     });
+    expect(mockKeepWithheldRun).not.toHaveBeenCalled();
+  });
+
+  it("keeps a 'none' run that hit the spending limit in history, with its tool calls", async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'none' }));
+    const toolCalls = [{ tool: 'send_message', input: '{}', output: '{}', success: true }];
+    mockInvoke.mockResolvedValue(
+      invokeResult('', { toolCalls, error: { type: 'budget_exceeded', detail: 'monthly cap' } }),
+    );
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalled());
+
+    expect(mockKeepWithheldRun).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('spending limit'), triggeredBy: 'WEBHOOK', toolCalls }),
+    );
+    expect(mockPublish).not.toHaveBeenCalled();
+    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
   });
 
   it('stores the tool calls a run made before it hit the spending limit', async () => {

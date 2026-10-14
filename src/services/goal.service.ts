@@ -26,6 +26,7 @@ import { invoke } from '../invoke';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { messageDeliveryService } from './message-delivery.service';
+import { outboundMessageService } from './outbound-message.service';
 import { ChannelName, isChatPlatform } from './channel-adapter.interface';
 import { threadTurnService } from './thread-turn.service';
 import { conversationThreadActivityService } from './conversation-thread-activity.service';
@@ -452,6 +453,15 @@ class GoalService {
       // Deliver inside the lock so goal output and user messages stay ordered.
       if (!budgetExceeded && text) {
         await this.deliver(goal, text, result.toolCalls, result.attachmentIds);
+      } else if (budgetExceeded) {
+        await outboundMessageService.keepWithheldRun({
+          agentId: goal.agentId,
+          userId: goal.userId,
+          threadId: goal.threadId,
+          content: text,
+          triggeredBy: 'GOAL',
+          toolCalls: result.toolCalls,
+        });
       }
 
       return {
