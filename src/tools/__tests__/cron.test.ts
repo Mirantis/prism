@@ -1,7 +1,7 @@
 /**
- * Cron tools tests — schedule/delete delegation to cronSchedulerService.
+ * Cron tools tests — schedule/update/delete delegation to cronSchedulerService.
  *
- * The 'cron task scheduled' / 'cron task deleted' telemetry events are owned
+ * The 'cron task scheduled' / 'cron task updated' / 'cron task deleted' telemetry events are owned
  * by cronSchedulerService (see cron-scheduler.service.test.ts); the tools
  * must delegate and never emit them directly, or events would double up.
  */
@@ -20,6 +20,7 @@ const { mockPrisma, mockScheduler, mockTrackEvent } = vi.hoisted(() => ({
   },
   mockScheduler: {
     scheduleTask: vi.fn(),
+    updateTask: vi.fn(),
     unscheduleTask: vi.fn(),
   },
   mockTrackEvent: vi.fn(),
@@ -30,16 +31,24 @@ vi.mock('../../lib/prisma', () => ({
   prisma: mockPrisma,
 }));
 
-vi.mock('../../services/cron-scheduler.service', () => ({
-  cronSchedulerService: mockScheduler,
-}));
+// The scheduler imports `invoke`, which loads the tools and with them this module. Cut that chain
+// so the module under test gets the mocked scheduler whatever loads first.
+vi.mock('../../invoke', () => ({ invoke: vi.fn() }));
+
+vi.mock('../../services/cron-scheduler.service', async () => {
+  const actual = await vi.importActual<typeof import('../../services/cron-scheduler.service')>(
+    '../../services/cron-scheduler.service',
+  );
+  return { toBackendCronTask: actual.toBackendCronTask, cronSchedulerService: mockScheduler };
+});
 
 vi.mock('../../lib/telemetry', () => ({
   langfuseTelemetry: () => ({}),
   trackEvent: mockTrackEvent,
 }));
 
-import { getCronTools, parseSchedule } from '../cron';
+import { getCronTools } from '../cron';
+import { parseSchedule } from '../../services/cron-schedule';
 
 type ToolExecute = (input: Record<string, unknown>) => Promise<unknown>;
 
@@ -54,6 +63,8 @@ describe('cron tools', () => {
   it('schedule_task delegates to cronSchedulerService.scheduleTask and emits no telemetry itself', async () => {
     mockPrisma.cronTask.create.mockResolvedValue({
       id: 'task-1',
+      agentId: 'agent-1',
+      userId: 'user-1',
       name: 'Daily Report',
       schedule: '0 */2 * * *',
       instruction: 'report',
@@ -100,6 +111,32 @@ describe('cron tools', () => {
 
     expect(mockScheduler.unscheduleTask).toHaveBeenCalledWith('task-1', 'user-1', 'heartbeat');
     expect(mockTrackEvent).not.toHaveBeenCalled();
+  });
+
+  it('update_scheduled_task edits the owner\'s task in the run\'s mode', async () => {
+    mockScheduler.updateTask.mockResolvedValue({
+      status: 'updated',
+      task: { id: 'task-1', name: 'Daily Report', schedule: '0 9 * * *', nextRunAt: null },
+    });
+
+    const result = await tools.update_scheduled_task.execute({ taskId: 'task-1', schedule: 'every day at 9am' });
+
+    expect(mockScheduler.updateTask).toHaveBeenCalledWith(
+      'task-1',
+      { schedule: 'every day at 9am' },
+      { owner: { userId: 'user-1', agentId: 'agent-1' }, invokeMode: 'heartbeat' },
+    );
+    expect(result).toMatchObject({ success: true, taskId: 'task-1', schedule: '0 9 * * *', nextRunAt: null });
+    // The scheduler owns the 'cron task updated' event.
+    expect(mockTrackEvent).not.toHaveBeenCalled();
+  });
+
+  it('update_scheduled_task returns a refused edit as an error', async () => {
+    mockScheduler.updateTask.mockResolvedValue({ status: 'not_found', error: 'Cron task not found' });
+
+    const result = await tools.update_scheduled_task.execute({ taskId: 'task-of-someone-else', name: 'Mine now' });
+
+    expect(result).toEqual({ success: false, error: 'Cron task not found' });
   });
 
   it('keeps every schedule tool to the owning user and agent', async () => {
@@ -254,51 +291,23 @@ describe('cron tools', () => {
   });
 });
 
-describe('parseSchedule', () => {
-  it('parses "in N seconds" as a one-shot', () => {
-    const { isOneShot, nextRunAt } = parseSchedule('in 30 seconds');
-    expect(isOneShot).toBe(true);
-    expect(nextRunAt).toBeInstanceOf(Date);
-  });
-
-  it('parses "every N seconds" as a recurring 6-field cron expression', () => {
-    const { isOneShot, cronExpression, nextRunAt } = parseSchedule('every 15 seconds');
-    expect(isOneShot).toBe(false);
-    expect(cronExpression).toBe('*/15 * * * * *');
-    expect(nextRunAt).toBeNull();
-  });
-
-  it('still parses minutes one-shot / recurring', () => {
-    expect(parseSchedule('in 5 minutes').isOneShot).toBe(true);
-    expect(parseSchedule('every 2 hours').isOneShot).toBe(false);
-  });
-
-  // docs/scheduled-tasks.md tells users they can say "every hour".
-  it('parses a bare unit as an interval of one', () => {
-    for (const [phrase, expression] of [
-      ['every hour', '0 */1 * * *'],
-      ['every minute', '*/1 * * * *'],
-      ['every second', '*/1 * * * * *'],
-      ['every day', '0 0 * * *'],
-    ]) {
-      const { isOneShot, cronExpression } = parseSchedule(phrase);
-      expect(isOneShot, phrase).toBe(false);
-      expect(cronExpression, phrase).toBe(expression);
-      expect(nodeCron.validate(cronExpression), phrase).toBe(true);
-    }
-  });
-
+describe('schedule examples', () => {
   // The model copies the schedule examples from the parameter description, so every one
   // of them has to be a schedule the tool accepts. "every hour" was offered and rejected.
-  it('accepts every schedule that the schedule_task description offers as an example', async () => {
-    const schema = (await asSchema(getCronTools('user-1', 'agent-1').schedule_task.inputSchema)
-      .jsonSchema) as { properties: { schedule: { description: string } } };
-    const examples = [...schema.properties.schedule.description.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  it.each(['schedule_task', 'update_scheduled_task'])(
+    'accepts every schedule that the %s description offers as an example',
+    async (name) => {
+      const tools = getCronTools('user-1', 'agent-1', 'chat') as Record<string, { inputSchema: Parameters<typeof asSchema>[0] }>;
+      const schema = (await asSchema(tools[name].inputSchema).jsonSchema) as {
+        properties: { schedule: { description: string } };
+      };
+      const examples = [...schema.properties.schedule.description.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
 
-    expect(examples).toContain('every hour');
-    for (const example of examples) {
-      const { isOneShot, cronExpression, nextRunAt } = parseSchedule(example);
-      expect(isOneShot ? nextRunAt !== null : nodeCron.validate(cronExpression), example).toBe(true);
-    }
-  });
+      expect(examples).toContain('every hour');
+      for (const example of examples) {
+        const { isOneShot, cronExpression, nextRunAt } = parseSchedule(example);
+        expect(isOneShot ? nextRunAt !== null : nodeCron.validate(cronExpression), example).toBe(true);
+      }
+    },
+  );
 });

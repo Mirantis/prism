@@ -39,6 +39,7 @@ import { documentRevisionsRouter } from './routes/document-revisions';
 import { updateRouter } from './routes/update';
 import { originGuard } from './lib/origin-guard';
 import { activityRouter } from './routes/activity';
+import { cronTasksRouter } from './routes/cron-tasks';
 
 export function createApp() {
   const app = express();
@@ -74,6 +75,9 @@ export function createApp() {
 
   // GET /agents/activity/*
   app.use('/agents', activityRouter);
+
+  // Scheduled tasks (/agents/cron-tasks)
+  app.use('/agents', cronTasksRouter);
 
   // Thread and message routes: /threads, /latest-thread and /messages.
   // Mounted at the root and registered before the SPA fallback so these

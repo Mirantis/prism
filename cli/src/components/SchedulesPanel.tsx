@@ -4,7 +4,7 @@ import { TextInput } from './TextInput.js';
 import { ApiClient, ApiError, CronTask } from '../api-client.js';
 import { Spinner } from './Spinner.js';
 
-type Mode = 'list' | 'create' | 'confirmDelete';
+type Mode = 'list' | 'form' | 'confirmDelete';
 type LoadState = 'loading' | 'ready' | 'error';
 
 // Fixed-width columns for the list view. Widths include a trailing gap so
@@ -45,14 +45,15 @@ export const SchedulesPanel: React.FC<Props> = ({ api, onClose, inputActive = tr
   const [tasks, setTasks] = useState<CronTask[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  // Create-form fields.
+  // Form fields, for a new task or the one being edited.
+  const [editing, setEditing] = useState<CronTask | null>(null);
   const [formName, setFormName] = useState('');
   const [formSchedule, setFormSchedule] = useState('');
   const [formInstruction, setFormInstruction] = useState('');
   const [focusedField, setFocusedField] = useState<0 | 1 | 2>(0);
   const [submitting, setSubmitting] = useState(false);
 
-  // Shared loader — used on mount, after create/delete, and on retry. The
+  // Shared loader — used on mount, after a save or delete, and on retry. The
   // optional `cancelled` ref guards the mount fetch against an unmount race;
   // post-mount callers pass nothing.
   const reload = useCallback(
@@ -89,6 +90,7 @@ export const SchedulesPanel: React.FC<Props> = ({ api, onClose, inputActive = tr
   }, [reload]);
 
   const resetForm = useCallback(() => {
+    setEditing(null);
     setFormName('');
     setFormSchedule('');
     setFormInstruction('');
@@ -96,7 +98,18 @@ export const SchedulesPanel: React.FC<Props> = ({ api, onClose, inputActive = tr
     setSubmitting(false);
   }, []);
 
-  const submitCreate = useCallback(async () => {
+  const startEdit = useCallback((task: CronTask) => {
+    setEditing(task);
+    setFormName(task.name);
+    setFormSchedule(task.schedule);
+    setFormInstruction(task.instruction ?? '');
+    setFocusedField(0);
+    setSubmitting(false);
+    setErrorMsg(null);
+    setMode('form');
+  }, []);
+
+  const submitForm = useCallback(async () => {
     const name = formName.trim();
     const schedule = formSchedule.trim();
     const instruction = formInstruction.trim();
@@ -104,11 +117,16 @@ export const SchedulesPanel: React.FC<Props> = ({ api, onClose, inputActive = tr
     setSubmitting(true);
     setErrorMsg(null);
     try {
-      await api.createCronTask({
-        name,
-        schedule,
-        instruction,
-      });
+      if (editing) {
+        // An edit sends only the fields that changed: a schedule that is sent is read again from now.
+        const changes: { name?: string; schedule?: string; instruction?: string } = {};
+        if (name !== editing.name.trim()) changes.name = name;
+        if (schedule !== editing.schedule.trim()) changes.schedule = schedule;
+        if (instruction !== (editing.instruction ?? '').trim()) changes.instruction = instruction;
+        if (Object.keys(changes).length > 0) await api.updateCronTask(editing.id, changes);
+      } else {
+        await api.createCronTask({ name, schedule, instruction });
+      }
       resetForm();
       setMode('list');
       await reload();
@@ -118,11 +136,11 @@ export const SchedulesPanel: React.FC<Props> = ({ api, onClose, inputActive = tr
           ? err.detail ?? err.message
           : err instanceof Error
             ? err.message
-            : 'Failed to create schedule';
+            : 'Failed to save schedule';
       setErrorMsg(message);
       setSubmitting(false);
     }
-  }, [api, formName, formSchedule, formInstruction, submitting, reload, resetForm]);
+  }, [api, editing, formName, formSchedule, formInstruction, submitting, reload, resetForm]);
 
   const confirmDelete = useCallback(async () => {
     const task = tasks[selectedIndex];
@@ -147,7 +165,7 @@ export const SchedulesPanel: React.FC<Props> = ({ api, onClose, inputActive = tr
     }
   }, [api, tasks, selectedIndex, reload]);
 
-  // Single useInput for the whole panel, branching by mode. The create-form
+  // Single useInput for the whole panel, branching by mode. The form's
   // TextInputs receive focus via their `focus` prop (not useInput), so they
   // coexist with this handler.
   useInput((input, key) => {
@@ -182,7 +200,11 @@ export const SchedulesPanel: React.FC<Props> = ({ api, onClose, inputActive = tr
       if (input === 'n') {
         resetForm();
         setErrorMsg(null);
-        setMode('create');
+        setMode('form');
+        return;
+      }
+      if (input === 'e' && tasks[selectedIndex]) {
+        startEdit(tasks[selectedIndex]);
         return;
       }
       if (input === 'd' && tasks.length > 0) {
@@ -192,7 +214,7 @@ export const SchedulesPanel: React.FC<Props> = ({ api, onClose, inputActive = tr
       return;
     }
 
-    if (mode === 'create') {
+    if (mode === 'form') {
       if (key.escape) {
         resetForm();
         setErrorMsg(null);
@@ -200,7 +222,7 @@ export const SchedulesPanel: React.FC<Props> = ({ api, onClose, inputActive = tr
         return;
       }
       if (key.return) {
-        void submitCreate();
+        void submitForm();
         return;
       }
       if (key.tab && key.shift) {
@@ -249,10 +271,13 @@ export const SchedulesPanel: React.FC<Props> = ({ api, onClose, inputActive = tr
     );
   }
 
-  if (mode === 'create') {
+  if (mode === 'form') {
+    // An unchanged schedule is not sent, so a one-off task keeps its time.
+    const runsOnceAt =
+      editing && !editing.recurring && formSchedule.trim() === editing.schedule.trim() ? editing.nextRunAt : null;
     return (
       <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1}>
-        <Text bold color="cyan">New schedule</Text>
+        <Text bold color="cyan">{editing ? 'Edit schedule' : 'New schedule'}</Text>
         <Box marginTop={1}>
           <Box width={14}>
             <Text color={focusedField === 0 ? 'cyan' : undefined} bold={focusedField === 0}>
@@ -294,6 +319,7 @@ export const SchedulesPanel: React.FC<Props> = ({ api, onClose, inputActive = tr
         </Box>
         <Box marginTop={1} flexDirection="column">
           <Text dimColor>All three fields are required.</Text>
+          {runsOnceAt && <Text dimColor>Runs once, at {formatNextRun(runsOnceAt)}.</Text>}
           <Text dimColor>
             Schedule accepts cron or natural language ('every day at 9am', 'in 2 minutes').
           </Text>
@@ -303,10 +329,10 @@ export const SchedulesPanel: React.FC<Props> = ({ api, onClose, inputActive = tr
           {submitting ? (
             <Box>
               <Spinner />
-              <Text dimColor> creating…</Text>
+              <Text dimColor>{editing ? ' saving…' : ' creating…'}</Text>
             </Box>
           ) : (
-            <Text dimColor>tab/↑↓ move · enter create · esc cancel</Text>
+            <Text dimColor>tab/↑↓ move · enter {editing ? 'save' : 'create'} · esc cancel</Text>
           )}
         </Box>
       </Box>
@@ -374,7 +400,7 @@ export const SchedulesPanel: React.FC<Props> = ({ api, onClose, inputActive = tr
         })
       )}
       <Box marginTop={1}>
-        <Text dimColor>↑↓ select · n new · d delete · esc close</Text>
+        <Text dimColor>↑↓ select · n new · e edit · d delete · esc close</Text>
       </Box>
     </Box>
   );

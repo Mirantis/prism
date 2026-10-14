@@ -96,8 +96,9 @@ or **Enter** to complete the selection, then **Enter** to run.
 |-----|--------|
 | `Up` / `Down` | Navigate the list. |
 | `n` | Create a new schedule. |
+| `e` | Edit the selected schedule. |
 | `d` | Delete the selected schedule (`y` to confirm). |
-| `Tab` / arrows | Move between fields in the create form. |
+| `Tab` / arrows | Move between fields in the form. |
 | `Enter` | Submit the form. |
 | `Esc` | Close the panel / cancel. |
 

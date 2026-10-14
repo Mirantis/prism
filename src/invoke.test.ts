@@ -674,6 +674,7 @@ describe('invoke', () => {
       mockGetCronTools.mockReturnValue({
         schedule_task: { description: 'schedule' },
         list_scheduled_tasks: { description: 'list' },
+        update_scheduled_task: { description: 'update sched' },
         delete_scheduled_task: { description: 'del sched' },
       });
       mockGetAgentConfigTools.mockReturnValue({
@@ -694,9 +695,9 @@ describe('invoke', () => {
       await invoke(createTestInvokeRequest({ mode: 'chat' }));
 
       const callArgs = mockGenerateText.mock.calls[0][0];
-      // 3 memory + 3 cron + 1 agent-config + 1 shell + 1 share_file + 2 goal + 1 skill
+      // 3 memory + 4 cron + 1 agent-config + 1 shell + 1 share_file + 2 goal + 1 skill
       // + 2 attachment (hydrate_attachment, view_attachment)
-      expect(Object.keys(callArgs.tools)).toHaveLength(14);
+      expect(Object.keys(callArgs.tools)).toHaveLength(15);
       expect(Object.keys(callArgs.tools)).toContain('share_file');
       expect(Object.keys(callArgs.tools)).toContain('create_goal');
       expect(Object.keys(callArgs.tools)).toContain('get_goal');
@@ -725,6 +726,7 @@ describe('invoke', () => {
         const toolNames = Object.keys(callArgs.tools);
         expect(toolNames).toContain('schedule_task');
         expect(toolNames).toContain('list_scheduled_tasks');
+        expect(toolNames).toContain('update_scheduled_task');
         expect(toolNames).toContain('delete_scheduled_task');
         expect(mockGetCronTools).toHaveBeenCalledWith('owner-1', 'agent-7', mode, undefined, 'websocket', undefined);
         expect(toolNames).not.toContain('create_goal');
@@ -747,6 +749,7 @@ describe('invoke', () => {
       expect(toolNames).toContain('shell_exec');
       expect(toolNames).not.toContain('schedule_task');
       expect(toolNames).not.toContain('list_scheduled_tasks');
+      expect(toolNames).not.toContain('update_scheduled_task');
       expect(toolNames).not.toContain('delete_scheduled_task');
     });
   });

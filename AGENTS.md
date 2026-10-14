@@ -866,7 +866,7 @@ and refuses every call, because under `none` the SDK sends no tools block.
 | **DocumentRevisionService** | `services/document-revision.service.ts` | Identity-document revisions: append one per accepted write, the history of one document (with the drift verdict), one revision's content, and the seed rows a new agent gets. Bounded at `MAX_REVISIONS_PER_DOCUMENT` (500) per document, trimmed in the insert's transaction |
 | **AgentStatusService** | `services/agent-status.service.ts` | Direct Prisma writes for agent fields (heartbeat schedule, heartbeat status) |
 | **HeartbeatService** | `services/heartbeat.service.ts` | Always-on monitoring loop with in-process timers, full-text duplicate suppression, Slack-triggered heartbeats. The interval is measured from the last run (see **Heartbeat Design → Schedule**) |
-| **CronSchedulerService** | `services/cron-scheduler.service.ts` | Scheduled task execution using node-cron and setTimeout; reads every recurring schedule in the agent's time zone (`useTimezone`, set at boot and by the settings tool, which re-registers the running jobs); manages cron task state directly via Prisma (list, update run timestamps, delete); skips a tick that would overlap a still-running execution of the same task; runs each result through the instruction-aware DELIVER/SUPPRESS gate before delivering (empty results suppressed, error results bypass the gate and always deliver, in-memory per-task last-delivered baseline fed to the gate as context — cleared when a suppressed run observes a different situation so a recurrence re-alerts — fail-open) |
+| **CronSchedulerService** | `services/cron-scheduler.service.ts` | Scheduled task execution using node-cron and setTimeout; reads every recurring schedule in the agent's time zone (`useTimezone`, set at boot and by the settings tool, which re-registers the running jobs); manages cron task state directly via Prisma (list, edit, update run timestamps, delete); an edit and a one-shot's start take the same per-task lock, and an edit of a one-shot that has started is refused; skips a tick that would overlap a still-running execution of the same task; runs each result through the instruction-aware DELIVER/SUPPRESS gate before delivering (empty results suppressed, error results bypass the gate and always deliver, in-memory per-task last-delivered baseline fed to the gate as context — cleared when a suppressed run observes a different situation so a recurrence re-alerts — fail-open) |
 | **SlackAdapterService** | `services/slack-adapter.service.ts` | Full Slack implementation: Bolt apps, Socket Mode, message handling, verification codes |
 | **SlackMappingService** | `services/slack-mapping.service.ts` | SlackMapping CRUD for user and channel mappings via Prisma |
 | **ThreadReplyClassifierService** | `services/thread-reply-classifier.service.ts` | Respond or ignore for a reply without a mention, in a chat thread the bot takes part in. Each adapter owns its own participation rule and transcript, then asks here. One structured-output call on the classification model, tracing off, fail-open to `respond`; owns each platform's `<platform> thread classification failed` event and `<platform>-thread-gate` purpose |
@@ -916,7 +916,8 @@ src/
 │   ├── attachment.service.ts   # All MessageAttachment DB access + media-type detection; content as files (lib/media-store.ts), metadata stubs to the model
 │   ├── heartbeat.service.ts    # Heartbeat timer management, execution, and Slack-triggered heartbeats
 │   ├── heartbeat-schedule.ts   # When the next heartbeat is due and how long to sleep for it (pure)
-│   ├── cron-scheduler.service.ts # Cron job scheduling and execution
+│   ├── cron-scheduler.service.ts # Cron job scheduling and execution, and `updateTask`, the one task edit
+│   ├── cron-schedule.ts        # Schedule text to a cron expression or a one-shot time (pure)
 │   ├── slack-adapter.service.ts   # Full Slack implementation: Bolt apps, Socket Mode, message handling
 │   ├── slack-mapping.service.ts   # SlackMapping CRUD for user & channel mappings via Prisma
 │   ├── thread-reply-classifier.service.ts # Respond or ignore for an unmentioned thread reply (Slack and Teams)
@@ -967,7 +968,7 @@ src/
 ├── tools/                      # Built-in AI SDK tools (no MCP round trip)
 │   ├── memory.ts               # Memory tools (search, write, delete)
 │   ├── agent-config.ts         # Agent config tools (soul, user, memory, heartbeat, vision, settings)
-│   ├── cron.ts                 # Cron task tools (schedule, list, delete)
+│   ├── cron.ts                 # Cron task tools (schedule, list, edit, delete)
 │   ├── goals.ts                # Goal tools (create, get)
 │   ├── attachments.ts          # hydrate_attachment (stored bytes → workspace file) + view_attachment (image/PDF into the turn) + `reapScratchDirs`
 │   ├── share-file.ts           # Deliver a workspace file to the user as an attachment
@@ -975,8 +976,9 @@ src/
 │   ├── shell/                  # shell_exec/read/write/edit, spawn+stdio, coding_agent (+ the task manager behind it)
 │   └── skills/                 # The `skill` tool (loads a SKILL.md body on demand)
 ├── routes/
-│   ├── management.ts           # Management API for backend to push heartbeat/cron/slack-heartbeat-trigger events
+│   ├── management.ts           # Management API for backend to push heartbeat/slack-heartbeat-trigger events
 │   ├── activity.ts             # Activity page reads: token totals, paged tool calls, paged webhook runs
+│   ├── cron-tasks.ts           # Scheduled tasks: list, create, edit, delete; each write re-registers the task
 │   └── document-revisions.ts   # Per identity document: the write, the history, one revision with its content, and the restore
 ├── utils/
 │   ├── async-channel.ts        # Bridges SDK push-based onStepFinish into async iteration (used by invokeStream)

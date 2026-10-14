@@ -127,6 +127,7 @@ schedule, next run, and active state. From the list:
 
 - **n** — create a new schedule (a form with Name, Schedule, and Instruction
   fields; Tab/arrows to move between fields, Enter to submit)
+- **e** — edit the selected schedule in the same form
 - **d** — delete the selected schedule (confirm with **y**)
 - arrow keys to navigate
 

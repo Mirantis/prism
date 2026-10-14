@@ -2,7 +2,7 @@
  * Management Routes Tests
  *
  * Tests for all route handlers: heartbeat start/stop/trigger/status,
- * cron schedule/unschedule, auth validation, and error responses.
+ * auth validation, and error responses.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -19,9 +19,6 @@ const {
   mockStopHeartbeat,
   mockTriggerHeartbeat,
   mockGetStatus,
-  mockScheduleTask,
-  mockUnscheduleTask,
-  mockNextRunFor,
   mockGetAgent,
   mockGetThread,
   mockListThreads,
@@ -44,9 +41,6 @@ const {
   mockStopHeartbeat: vi.fn(),
   mockTriggerHeartbeat: vi.fn(),
   mockGetStatus: vi.fn(),
-  mockScheduleTask: vi.fn(),
-  mockUnscheduleTask: vi.fn(),
-  mockNextRunFor: vi.fn(),
   mockGetAgent: vi.fn(),
   mockGetThread: vi.fn(),
   mockListThreads: vi.fn(),
@@ -99,11 +93,6 @@ const {
       create: vi.fn(),
       deleteMany: vi.fn(),
     },
-    cronTask: {
-      create: vi.fn(),
-      delete: vi.fn(),
-      findMany: vi.fn(),
-    },
     webhookSubscription: {
       create: vi.fn(),
       update: vi.fn(),
@@ -129,14 +118,6 @@ vi.mock('../services/heartbeat.service', () => ({
     stopHeartbeat: mockStopHeartbeat,
     triggerHeartbeat: mockTriggerHeartbeat,
     getStatus: mockGetStatus,
-  },
-}));
-
-vi.mock('../services/cron-scheduler.service', () => ({
-  cronSchedulerService: {
-    scheduleTask: mockScheduleTask,
-    unscheduleTask: mockUnscheduleTask,
-    nextRunFor: mockNextRunFor,
   },
 }));
 
@@ -766,69 +747,7 @@ describe('Management Routes', () => {
   });
 
   // ==========================================================================
-  // GET /cron-tasks
-  // ==========================================================================
-
-  describe('GET /cron-tasks', () => {
-    it('fills a recurring task’s next run from the scheduler and keeps a one-shot’s stored one', async () => {
-      const recurring = {
-        id: 'ct-rec',
-        agentId: 'agent-1',
-        userId: 'user-1',
-        name: 'Morning brief',
-        schedule: '0 9 * * 1-5',
-        instruction: 'Brief me.',
-        isActive: true,
-        nextRunAt: null,
-        lastRunAt: null,
-        createdAt: new Date('2025-01-01T00:00:00Z'),
-        updatedAt: new Date('2025-01-01T00:00:00Z'),
-      };
-      const once = { ...recurring, id: 'ct-once', schedule: 'in 10 minutes', nextRunAt: new Date('2025-01-15T12:10:00Z') };
-      mockPrisma.cronTask.findMany.mockResolvedValue([recurring, once]);
-      mockNextRunFor.mockImplementation((id: string) =>
-        id === 'ct-rec' ? new Date('2025-01-16T09:00:00Z') : null,
-      );
-
-      const res = await authedRequest(app).get('/agents/cron-tasks');
-
-      expect(res.status).toBe(200);
-      expect(res.body[0].recurring).toBe(true);
-      expect(res.body[0].nextRunAt).toBe('2025-01-16T09:00:00.000Z');
-      expect(res.body[1].recurring).toBe(false);
-      expect(res.body[1].nextRunAt).toBe('2025-01-15T12:10:00.000Z');
-      expect(mockNextRunFor).toHaveBeenCalledWith('ct-rec');
-      expect(mockNextRunFor).not.toHaveBeenCalledWith('ct-once');
-    });
-
-    it('reports no next run for a recurring task the scheduler does not hold', async () => {
-      mockPrisma.cronTask.findMany.mockResolvedValue([
-        {
-          id: 'ct-paused',
-          agentId: 'agent-1',
-          userId: 'user-1',
-          name: 'Paused',
-          schedule: '0 * * * *',
-          instruction: 'Warm the cache.',
-          isActive: false,
-          nextRunAt: null,
-          lastRunAt: null,
-          createdAt: new Date('2025-01-01T00:00:00Z'),
-          updatedAt: new Date('2025-01-01T00:00:00Z'),
-        },
-      ]);
-      mockNextRunFor.mockReturnValue(null);
-
-      const res = await authedRequest(app).get('/agents/cron-tasks');
-
-      expect(res.status).toBe(200);
-      expect(res.body[0].recurring).toBe(true);
-      expect(res.body[0].nextRunAt).toBeNull();
-    });
-  });
-
-  // ==========================================================================
-  // POST /cron-tasks
+  // POST /goals
   // ==========================================================================
 
   describe('POST /goals validation', () => {
@@ -846,172 +765,6 @@ describe('Management Routes', () => {
         expect(res.status).toBe(400);
         expect(res.body.error).toContain('tokenBudget');
       }
-    });
-  });
-
-  describe('POST /cron-tasks', () => {
-    const persistedTask = {
-      id: 'ct-1',
-      agentId: 'agent-1',
-      userId: 'user-1',
-      name: 'Daily Report',
-      schedule: '0 9 * * *',
-      instruction: 'Generate report',
-      isActive: true,
-      nextRunAt: null,
-      lastRunAt: null,
-      createdAt: new Date('2025-01-01T00:00:00Z'),
-      updatedAt: new Date('2025-01-01T00:00:00Z'),
-    };
-
-    it('creates a cron task, persists it, schedules it, and returns the row', async () => {
-      mockGetAgent.mockResolvedValue({ id: 'agent-1', userId: 'user-1', name: 'Agent' });
-      mockPrisma.cronTask.create.mockResolvedValue(persistedTask);
-
-      const res = await authedRequest(app)
-        .post('/agents/cron-tasks')
-        .send({ name: 'Daily Report', schedule: '0 9 * * *', instruction: 'Generate report' });
-
-      expect(res.status).toBe(201);
-      expect(res.body.id).toBe('ct-1');
-      expect(res.body.name).toBe('Daily Report');
-      expect(mockPrisma.cronTask.create).toHaveBeenCalledWith({
-        data: {
-          agentId: 'agent-1',
-          userId: 'user-1',
-          name: 'Daily Report',
-          schedule: '0 9 * * *',
-          instruction: 'Generate report',
-          nextRunAt: null,
-        },
-      });
-      expect(mockScheduleTask).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'ct-1', agentId: 'agent-1', userId: 'user-1' }),
-      );
-    });
-
-    it('returns 400 when name is missing', async () => {
-      const res = await authedRequest(app)
-        .post('/agents/cron-tasks')
-        .send({ schedule: '0 9 * * *', instruction: 'x' });
-
-      expect(res.status).toBe(400);
-      expect(res.body.error).toContain('Missing required fields');
-      expect(mockPrisma.cronTask.create).not.toHaveBeenCalled();
-    });
-
-    it('returns 400 when the name is only whitespace', async () => {
-      const res = await authedRequest(app)
-        .post('/agents/cron-tasks')
-        .send({ name: '   ', schedule: '0 9 * * *' });
-
-      expect(res.status).toBe(400);
-      expect(res.body.error).toContain('Missing required fields');
-      expect(mockPrisma.cronTask.create).not.toHaveBeenCalled();
-    });
-
-    it('stores the fields trimmed, and an omitted instruction as empty', async () => {
-      mockGetAgent.mockResolvedValue({ id: 'agent-1', userId: 'user-1', name: 'Agent' });
-      mockPrisma.cronTask.create.mockResolvedValue(persistedTask);
-
-      await authedRequest(app)
-        .post('/agents/cron-tasks')
-        .send({ name: '  Daily Report  ', schedule: ' 0 9 * * * ' });
-
-      expect(mockPrisma.cronTask.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({ name: 'Daily Report', schedule: '0 9 * * *', instruction: '' }),
-      });
-    });
-
-    it('returns 400 when schedule is missing', async () => {
-      const res = await authedRequest(app)
-        .post('/agents/cron-tasks')
-        .send({ name: 'x', instruction: 'x' });
-
-      expect(res.status).toBe(400);
-      expect(res.body.error).toContain('Missing required fields');
-    });
-
-    it('returns 500 when agent is missing', async () => {
-      mockGetAgent.mockRejectedValue(new Error('Agent not found'));
-
-      const res = await authedRequest(app)
-        .post('/agents/cron-tasks')
-        .send({ name: 'x', schedule: '0 9 * * *', instruction: 'x' });
-
-      expect(res.status).toBe(500);
-      expect(res.body.error).toBe('Agent not found');
-      expect(mockPrisma.cronTask.create).not.toHaveBeenCalled();
-    });
-
-    it('returns 400 when the schedule is not a valid cron expression', async () => {
-      mockGetAgent.mockResolvedValue({ id: 'agent-1', userId: 'user-1', name: 'Agent' });
-
-      const res = await authedRequest(app)
-        .post('/agents/cron-tasks')
-        .send({ name: 'x', schedule: 'definitely not a cron', instruction: 'x' });
-
-      expect(res.status).toBe(400);
-      expect(res.body.error).toContain('Invalid cron expression');
-      expect(mockPrisma.cronTask.create).not.toHaveBeenCalled();
-    });
-
-    it('returns 500 when Prisma create throws', async () => {
-      mockGetAgent.mockResolvedValue({ id: 'agent-1', userId: 'user-1', name: 'Agent' });
-      mockPrisma.cronTask.create.mockRejectedValue(new Error('DB error'));
-
-      const res = await authedRequest(app)
-        .post('/agents/cron-tasks')
-        .send({ name: 'x', schedule: '0 9 * * *', instruction: 'x' });
-
-      expect(res.status).toBe(500);
-      expect(res.body.error).toBe('DB error');
-    });
-  });
-
-  // ==========================================================================
-  // DELETE /cron-tasks/:taskId
-  // ==========================================================================
-
-  describe('DELETE /cron-tasks/:taskId', () => {
-    it('unschedules and deletes the task', async () => {
-      mockPrisma.cronTask.delete.mockResolvedValue({ id: 'ct-1' });
-
-      const res = await authedRequest(app)
-        .delete('/agents/cron-tasks/ct-1');
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(mockUnscheduleTask).toHaveBeenCalledWith('ct-1');
-      expect(mockPrisma.cronTask.delete).toHaveBeenCalledWith({ where: { id: 'ct-1' } });
-    });
-
-    it('returns 404 when the task does not exist (Prisma P2025)', async () => {
-      mockPrisma.cronTask.delete.mockRejectedValue(
-        new Prisma.PrismaClientKnownRequestError('Not found', {
-          code: 'P2025',
-          clientVersion: 'test',
-        }),
-      );
-
-      const res = await authedRequest(app)
-        .delete('/agents/cron-tasks/ct-missing');
-
-      expect(res.status).toBe(404);
-      expect(res.body.error).toBe('Cron task not found');
-      // No unschedule (and therefore no 'cron task deleted' event) for a
-      // task that never existed.
-      expect(mockUnscheduleTask).not.toHaveBeenCalled();
-    });
-
-    it('returns 500 when Prisma delete throws an unexpected error', async () => {
-      mockPrisma.cronTask.delete.mockRejectedValue(new Error('Delete error'));
-
-      const res = await authedRequest(app)
-        .delete('/agents/cron-tasks/ct-1');
-
-      expect(res.status).toBe(500);
-      expect(res.body.error).toBe('Delete error');
     });
   });
 

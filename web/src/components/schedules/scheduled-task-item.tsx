@@ -1,4 +1,4 @@
-import { Clock, Trash2 } from 'lucide-react';
+import { Clock, Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { IconTile } from '@/components/shared/icon-tile';
 import { describeSchedule } from '@/lib/cron-presets';
@@ -7,7 +7,15 @@ import { cn } from '@/lib/utils';
 import type { CronTask } from '@/types';
 
 /** One scheduled task: what it does, when it runs, and whether it is running at all. */
-export function ScheduledTaskItem({ task, onDelete }: { task: CronTask; onDelete: () => void }) {
+export function ScheduledTaskItem({
+  task,
+  onEdit,
+  onDelete,
+}: {
+  task: CronTask;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
   const described = describeSchedule(task.schedule);
   return (
     <li
@@ -42,15 +50,27 @@ export function ScheduledTaskItem({ task, onDelete }: { task: CronTask; onDelete
           </span>
         </div>
       </div>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        aria-label={`Delete ${task.name}`}
-        className="shrink-0 text-muted-foreground hover:text-destructive"
-        onClick={onDelete}
-      >
-        <Trash2 className="size-4" />
-      </Button>
+      <div className="flex shrink-0 items-start gap-1">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          title="Edit"
+          aria-label={`Edit ${task.name}`}
+          className="text-muted-foreground"
+          onClick={onEdit}
+        >
+          <Pencil className="size-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={`Delete ${task.name}`}
+          className="text-muted-foreground hover:text-destructive"
+          onClick={onDelete}
+        >
+          <Trash2 className="size-4" />
+        </Button>
+      </div>
     </li>
   );
 }

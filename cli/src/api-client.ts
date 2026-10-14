@@ -68,6 +68,8 @@ export interface CronTask {
   id: string;
   name: string;
   schedule: string;
+  /** A cron schedule, as opposed to one run at a set time. */
+  recurring: boolean;
   instruction: string | null;
   isActive: boolean;
   lastRunAt: string | null;
@@ -201,6 +203,11 @@ export interface ApiClient {
     schedule: string;
     instruction?: string;
   }): Promise<CronTask>;
+  /** Edit a task; a field left out keeps its value. */
+  updateCronTask(
+    taskId: string,
+    update: { name?: string; schedule?: string; instruction?: string },
+  ): Promise<CronTask>;
   deleteCronTask(taskId: string): Promise<{ success: boolean }>;
   listWebhookSubscriptions(): Promise<WebhookSubscription[]>;
   updateWebhookSubscription(id: string, update: WebhookSubscriptionUpdate): Promise<WebhookSubscription>;
@@ -336,6 +343,13 @@ export class HttpApiClient implements ApiClient {
     instruction?: string;
   }): Promise<CronTask> {
     return this.request('POST', '/agents/cron-tasks', input);
+  }
+
+  updateCronTask(
+    taskId: string,
+    update: { name?: string; schedule?: string; instruction?: string },
+  ): Promise<CronTask> {
+    return this.request('PATCH', `/agents/cron-tasks/${taskId}`, update);
   }
 
   deleteCronTask(taskId: string): Promise<{ success: boolean }> {

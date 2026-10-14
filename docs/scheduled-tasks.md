@@ -2,7 +2,7 @@
 
 The agent can put work on its own calendar. A scheduled task is an instruction
 plus a time — run once at a moment, or repeatedly on a cadence. Tasks survive
-restarts, and the agent can create, list, run, and cancel them itself.
+restarts, and the agent can create, list, edit, run, and cancel them itself.
 
 Where the [heartbeat](heartbeat.md) is a single recurring monitoring loop,
 scheduled tasks are arbitrary one-off or recurring jobs: "summarize the
@@ -20,7 +20,7 @@ check the deploy queue."
 
 You can describe the timing in natural language or with a raw cron expression.
 The agent (and the Terminal UI) accept both; the **[Web UI](web-ui.md#scheduled-tasks)**
-create form takes cron expressions.
+form takes cron expressions.
 
 **Natural language** (handled when you ask the agent to schedule something):
 
@@ -48,9 +48,9 @@ Schedules run in the agent's configured **timezone** (see
 
 | Where | How |
 |-------|-----|
-| Conversation | "Schedule a daily 9am summary of failing pods." The agent creates the task. |
-| Web UI | **Scheduled Tasks** page — create (name + cron + instruction), list, delete. |
-| Terminal UI | `/schedules` panel — list, **n** to create, **d** to delete. |
+| Conversation | "Schedule a daily 9am summary of failing pods." or "Move that summary to 8am." The agent creates or changes the task. |
+| Web UI | **Scheduled Tasks** page — create (name + cron + instruction), list, edit, delete. |
+| Terminal UI | `/schedules` panel — list, **n** to create, **e** to edit, **d** to delete. |
 | Voice meeting | "Look into that and get back to me." The agent schedules a one-off task and says when it runs — see [Voice meetings](voice-meetings.md). |
 
 Each task has a **name**, a **schedule**, and an **instruction** — the prompt the

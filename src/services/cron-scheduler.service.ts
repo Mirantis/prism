@@ -12,6 +12,7 @@
  */
 
 import * as cron from 'node-cron';
+import { Prisma, type CronTask } from '@prisma/client';
 import { invoke } from '../invoke';
 import { messageDeliveryService } from './message-delivery.service';
 import { prisma } from '../lib/prisma';
@@ -21,6 +22,7 @@ import { runVerdictGate } from '../lib/classification-gate';
 import { CRON_TASK_GATE_PROMPT, buildCronGateUserMessage } from '../prompts/cron-prompt';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
+import { parseSchedule } from './cron-schedule';
 import type { ChannelName } from './channel-adapter.interface';
 
 // ============================================================================
@@ -50,6 +52,30 @@ export interface BackendCronTask {
   originChannelId: string | null;
 }
 
+/** A stored task in the scheduler's shape, its dates as ISO strings. */
+export function toBackendCronTask(row: CronTask): BackendCronTask {
+  return {
+    ...row,
+    nextRunAt: row.nextRunAt?.toISOString() ?? null,
+    lastRunAt: row.lastRunAt?.toISOString() ?? null,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+/** The fields an edit may change. A field left undefined keeps its value. */
+export interface CronTaskChanges {
+  name?: string;
+  schedule?: string;
+  instruction?: string;
+}
+
+export type CronTaskEdit =
+  | { status: 'updated'; task: CronTask }
+  | { status: 'not_found'; error: string }
+  | { status: 'running'; error: string }
+  | { status: 'invalid'; field: 'name' | 'schedule'; error: string };
+
 interface ScheduledJob {
   task: BackendCronTask;
   /** A node-cron task for a recurring schedule, or the timer of a one-shot. */
@@ -75,12 +101,22 @@ class CronSchedulerService {
   private lastDelivered: Map<string, { text: string; at: number }> = new Map();
 
   /**
-   * Tasks with a run currently in flight. node-cron fires ticks regardless of
-   * whether the previous run finished, so a run outlasting its interval would
-   * otherwise overlap itself — double-delivering and racing the delivery
-   * baseline. An overlapping tick is skipped, not queued.
+   * Tasks with a run currently in flight, each with the run. node-cron fires ticks regardless
+   * of whether the previous run finished, so a run outlasting its interval would otherwise
+   * overlap itself — double-delivering and racing the delivery baseline. An overlapping tick
+   * is skipped, not queued.
    */
-  private runningTasks: Set<string> = new Set();
+  private runningTasks: Map<string, Promise<void>> = new Map();
+
+  /** One-shots that have started. Each runs, then deletes its row, so an edit is refused. */
+  private firedOneShots: Set<string> = new Set();
+
+  /**
+   * Per task, the edit or one-shot start in progress. An edit reads, writes and re-registers
+   * the task, and a one-shot starts only on the job it was armed with, so neither sees the
+   * other halfway.
+   */
+  private taskLocks: Map<string, Promise<unknown>> = new Map();
 
   /** Whether any cron task run is currently in flight. */
   hasRunningTask(): boolean {
@@ -97,13 +133,7 @@ class CronSchedulerService {
     const rows = await prisma.cronTask.findMany({
       where: agentId ? { isActive: true, agentId } : { isActive: true },
     });
-    return rows.map((row) => ({
-      ...row,
-      nextRunAt: row.nextRunAt?.toISOString() ?? null,
-      lastRunAt: row.lastRunAt?.toISOString() ?? null,
-      createdAt: row.createdAt.toISOString(),
-      updatedAt: row.updatedAt.toISOString(),
-    }));
+    return rows.map(toBackendCronTask);
   }
 
   /**
@@ -125,6 +155,17 @@ class CronSchedulerService {
     }
   }
 
+  private async withTaskLock<T>(taskId: string, fn: () => Promise<T>): Promise<T> {
+    const result = (this.taskLocks.get(taskId) ?? Promise.resolve()).then(fn);
+    const settled = result.catch(() => undefined);
+    this.taskLocks.set(taskId, settled);
+    try {
+      return await result;
+    } finally {
+      if (this.taskLocks.get(taskId) === settled) this.taskLocks.delete(taskId);
+    }
+  }
+
   /** Start the node-cron job for a recurring task in the current zone and hold it. */
   private registerRecurring(task: BackendCronTask): void {
     const job = cron.schedule(
@@ -138,22 +179,25 @@ class CronSchedulerService {
   }
 
   /**
-   * Schedule a task from a BackendCronTask record.
-   * Called on fresh creations (agent tool, management route) and during
-   * startup re-registration (`source: 'boot'`).
-   *
-   * Single owner of the 'cron task scheduled' telemetry event — callers must
-   * not emit it themselves. Boot re-registrations are not new schedules, so
-   * they don't emit. `invokeMode` is the mode of the agent run that made the
-   * change; the management route acts for the user and passes none.
+   * Schedule a task, replacing any job it already has. `source` decides the telemetry event:
+   * `cron task scheduled` for a new task, `cron task updated` for an edit, none for `boot`.
+   * The scheduler owns both events. `invokeMode` is the mode of the agent run that made the
+   * change. A task keeps its delivery baseline while its instruction is the same.
    */
-  scheduleTask(task: BackendCronTask, opts: { source?: 'create' | 'boot'; invokeMode?: string } = {}): void {
+  scheduleTask(
+    task: BackendCronTask,
+    opts: { source?: 'create' | 'update' | 'boot'; invokeMode?: string } = {},
+  ): void {
     if (!task.userId) {
       logger.error(`[CronScheduler] Refusing to schedule "${task.name}" — missing userId`);
       return;
     }
 
+    const previous = this.scheduledJobs.get(task.id);
     this.stopJob(task.id);
+    if (previous?.task.instruction !== task.instruction) {
+      this.lastDelivered.delete(task.id);
+    }
 
     if (!task.isActive) {
       return;
@@ -162,10 +206,9 @@ class CronSchedulerService {
     const isOneShot = Boolean(task.nextRunAt && !cron.validate(task.schedule));
 
     if (opts.source !== 'boot') {
-      trackEvent('cron task scheduled', task.userId, {
+      trackEvent(opts.source === 'update' ? 'cron task updated' : 'cron task scheduled', task.userId, {
         'agent.id': task.agentId,
         'cron.task.id': task.id,
-        'cron.task.name': task.name,
         'cron.schedule': task.schedule,
         'cron.one_shot': String(isOneShot),
         'cron.continue_in_thread': String(Boolean(task.threadId)),
@@ -174,40 +217,12 @@ class CronSchedulerService {
     }
 
     if (isOneShot) {
-      const nextRunAt = task.nextRunAt ? new Date(task.nextRunAt).getTime() : 0;
-      const delay = nextRunAt - Date.now();
-
+      const delay = new Date(task.nextRunAt as string).getTime() - Date.now();
+      this.registerOneShot(task, delay);
       if (delay > 0) {
-        const timeoutId = setTimeout(async () => {
-          await this.executeTask(task);
-          // Auto-delete one-shot tasks
-          try {
-            await this.deleteCronTask(task.id);
-          } catch (err) {
-            logger.error({ err }, `[CronScheduler] Failed to delete one-shot task ${task.id}`);
-          }
-          this.scheduledJobs.delete(task.id);
-          this.lastDelivered.delete(task.id);
-        }, delay);
-
-        this.scheduledJobs.set(task.id, {
-          task,
-          job: { stop: () => clearTimeout(timeoutId) },
-          isOneShot: true,
-        });
-
         logger.info(`[CronScheduler] Scheduled one-shot "${task.name}" in ${Math.round(delay / 1000)}s`);
-      } else if (task.nextRunAt) {
+      } else {
         logger.info(`[CronScheduler] One-shot "${task.name}" was past due - executing now`);
-        setImmediate(async () => {
-          await this.executeTask(task);
-          try {
-            await this.deleteCronTask(task.id);
-          } catch (err) {
-            logger.error({ err }, `[CronScheduler] Failed to delete one-shot task ${task.id}`);
-          }
-          this.lastDelivered.delete(task.id);
-        });
       }
     } else {
       if (!cron.validate(task.schedule)) {
@@ -220,15 +235,111 @@ class CronSchedulerService {
     }
   }
 
+  /** Arm the timer of a one-shot and hold it. A past-due one runs at once. */
+  private registerOneShot(task: BackendCronTask, delay: number): void {
+    const scheduled: ScheduledJob = { task, job: { stop: () => clearTimeout(timer) }, isOneShot: true };
+    const timer = setTimeout(() => void this.runOneShot(scheduled), Math.max(0, delay));
+    this.scheduledJobs.set(task.id, scheduled);
+  }
+
   /**
-   * Remove a task on user deletion (agent tool, management route).
-   *
-   * Single owner of the 'cron task deleted' telemetry event — callers must
-   * not emit it themselves. Internal re-registration uses `stopJob` directly
-   * so it never emits. `invokeMode` is as for `scheduleTask`.
+   * Run a one-shot, then delete it. A run of the task's earlier schedule ends first. An edit or a
+   * delete that replaced or removed this job before the start leaves this one nothing to do.
+   */
+  private async runOneShot(scheduled: ScheduledJob): Promise<void> {
+    const { task } = scheduled;
+    await this.runningTasks.get(task.id);
+    const started = await this.withTaskLock(task.id, async () => {
+      if (this.scheduledJobs.get(task.id) !== scheduled) return false;
+      this.scheduledJobs.delete(task.id);
+      this.firedOneShots.add(task.id);
+      return true;
+    });
+    if (!started) return;
+
+    try {
+      await this.executeTask(task);
+      try {
+        await this.deleteCronTask(task.id);
+      } catch (err) {
+        logger.error({ err }, `[CronScheduler] Failed to delete one-shot task ${task.id}`);
+      }
+    } finally {
+      this.firedOneShots.delete(task.id);
+      this.lastDelivered.delete(task.id);
+    }
+  }
+
+  /**
+   * Edit a stored task and re-register it. Values are trimmed, and a schedule is read again from
+   * now. `owner` limits the edit to that user's and agent's tasks, and `invokeMode` is as for
+   * `scheduleTask`. An edit that changes nothing writes nothing.
+   */
+  async updateTask(
+    taskId: string,
+    changes: CronTaskChanges,
+    opts: { owner?: { userId: string; agentId: string }; invokeMode?: string } = {},
+  ): Promise<CronTaskEdit> {
+    const name = changes.name?.trim();
+    const schedule = changes.schedule?.trim();
+    const instruction = changes.instruction?.trim();
+    if (name === '') return { status: 'invalid', field: 'name', error: 'Name is required' };
+    if (schedule === '') return { status: 'invalid', field: 'schedule', error: 'Schedule is required' };
+
+    return this.withTaskLock(taskId, async (): Promise<CronTaskEdit> => {
+      const task = await prisma.cronTask.findFirst({ where: { id: taskId, ...opts.owner } });
+      if (!task) return { status: 'not_found', error: 'Cron task not found' };
+      if (this.firedOneShots.has(taskId)) {
+        return { status: 'running', error: 'This task is running now, and it is removed when the run ends' };
+      }
+
+      let timing = { schedule: task.schedule, nextRunAt: task.nextRunAt };
+      if (schedule !== undefined) {
+        const { cronExpression, isOneShot, nextRunAt } = parseSchedule(schedule);
+        if (!isOneShot && !cron.validate(cronExpression)) {
+          return { status: 'invalid', field: 'schedule', error: `Invalid cron expression: ${cronExpression}` };
+        }
+        // As in `schedule_task`, only a one-off task continues a conversation.
+        if (!isOneShot && task.threadId) {
+          return {
+            status: 'invalid',
+            field: 'schedule',
+            error: 'This task continues a conversation, so it can only run once, such as "in 10 minutes"',
+          };
+        }
+        timing = { schedule: cronExpression, nextRunAt };
+      }
+
+      const data = { name: name ?? task.name, instruction: instruction ?? task.instruction, ...timing };
+      const unchanged =
+        data.name === task.name &&
+        data.instruction === task.instruction &&
+        data.schedule === task.schedule &&
+        data.nextRunAt?.getTime() === task.nextRunAt?.getTime();
+      if (unchanged) return { status: 'updated', task };
+
+      let updated: CronTask;
+      try {
+        updated = await prisma.cronTask.update({ where: { id: taskId }, data });
+      } catch (err) {
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
+          return { status: 'not_found', error: 'Cron task not found' };
+        }
+        throw err;
+      }
+
+      this.scheduleTask(toBackendCronTask(updated), { source: 'update', invokeMode: opts.invokeMode });
+      return { status: 'updated', task: updated };
+    });
+  }
+
+  /**
+   * Remove the job of a deleted task. The scheduler owns the 'cron task deleted' event, and
+   * `invokeMode` is as for `scheduleTask`.
    */
   unscheduleTask(taskId: string, userId?: string, invokeMode?: string): void {
     this.stopJob(taskId);
+    this.lastDelivered.delete(taskId);
     trackEvent('cron task deleted', userId ?? null, {
       ...(config.agentId ? { 'agent.id': config.agentId } : {}),
       'cron.task.id': taskId,
@@ -256,9 +367,6 @@ class CronSchedulerService {
       scheduled.job.stop();
       this.scheduledJobs.delete(taskId);
     }
-    // Re-scheduling may change the instruction, so the delivery baseline
-    // must not carry over.
-    this.lastDelivered.delete(taskId);
   }
 
   // A run can delete its own task, so these two writes use the `*Many` forms, which accept a
@@ -279,8 +387,12 @@ class CronSchedulerService {
       logger.warn(`[CronScheduler] "${task.name}" is still running — skipping overlapping run`);
       return;
     }
-    this.runningTasks.add(task.id);
+    const run = this.runTask(task).finally(() => this.runningTasks.delete(task.id));
+    this.runningTasks.set(task.id, run);
+    await run;
+  }
 
+  private async runTask(task: BackendCronTask): Promise<void> {
     const startTime = Date.now();
     const boundThreadId = task.threadId;
     // A task saved without an instruction runs on its name, the only text its author gave.
@@ -292,7 +404,6 @@ class CronSchedulerService {
       trackEvent('cron task executed', task.userId, {
         'agent.id': task.agentId,
         'cron.task.id': task.id,
-        'cron.task.name': task.name,
         'cron.result': result,
         'cron.continue_in_thread': String(Boolean(boundThreadId)),
         'cron.duration_ms': String(Date.now() - startTime),
@@ -430,8 +541,9 @@ class CronSchedulerService {
       // recordAlert parity), keyed on the un-headered body so the unbound
       // "**Scheduled Task: …**" header can't defeat the comparison. A task that is
       // no longer scheduled, such as one its own run deleted, has no next run to
-      // compare, so it keeps no baseline.
-      if (this.scheduledJobs.has(task.id)) {
+      // compare, so it keeps no baseline, and one edited to a new instruction during
+      // the run starts without one.
+      if (this.scheduledJobs.get(task.id)?.task.instruction === task.instruction) {
         this.lastDelivered.set(task.id, { text: body.trim(), at: Date.now() });
       }
 
@@ -441,8 +553,6 @@ class CronSchedulerService {
       const errMsg = error instanceof Error ? error.message : 'Unknown error';
       logger.error(`[CronScheduler] "${task.name}" failed: ${errMsg}`);
       trackRun('error');
-    } finally {
-      this.runningTasks.delete(task.id);
     }
   }
 

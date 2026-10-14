@@ -32,11 +32,6 @@
  *   GET    /agents/heartbeat/status       - Get heartbeat state (incl. intervalMs)
  *   PATCH  /agents/heartbeat/interval     - Update interval + re-register timer
  *
- * Cron management:
- *   GET    /agents/cron-tasks             - List cron tasks
- *   POST   /agents/cron-tasks             - Create + register
- *   DELETE /agents/cron-tasks/:taskId     - Unschedule + delete
- *
  * Webhook subscriptions (inbound ingestion lives in routes/webhook.ts):
  *   GET    /agents/webhooks/receiver              - Receiver enabled state
  *   PATCH  /agents/webhooks/receiver              - Enable/disable the receiver
@@ -80,7 +75,6 @@ import { config } from '../config';
 import { trackEvent } from '../lib/telemetry';
 import { prisma } from '../lib/prisma';
 import { heartbeatService } from '../services/heartbeat.service';
-import { cronSchedulerService } from '../services/cron-scheduler.service';
 import { conversationService, type MessageInput } from '../services/conversation.service';
 import { MESSAGE_TRIGGERS, messageDeliveryService } from '../services/message-delivery.service';
 import { isChatPlatform } from '../services/channel-adapter.interface';
@@ -108,8 +102,6 @@ import {
   importAgent as importAgentArchive,
   ArchiveValidationError,
 } from '../services/agent-archive.service';
-import { parseSchedule } from '../tools/cron';
-import cron from 'node-cron';
 import {
   WEBHOOK_NAME_RE,
   isValidDeliverTo,
@@ -714,126 +706,6 @@ router.patch('/heartbeat/interval', async (req: Request, res: Response) => {
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[Management] Failed to update heartbeat interval for agent: ${msg}`);
-    res.status(500).json({ error: msg });
-  }
-});
-
-// ============================================================================
-// Cron Management
-// ============================================================================
-
-/**
- * GET /agents/cron-tasks
- * List cron tasks for an agent.
- */
-router.get('/cron-tasks', async (_req: Request, res: Response) => {
-  try {
-    const tasks = await prisma.cronTask.findMany({
-      orderBy: { createdAt: 'desc' },
-    });
-    // A recurring task stores no next run; its running job knows it. A one-shot's schedule is
-    // the wording it was asked in, which node-cron does not read.
-    res.json(
-      tasks.map((task) => ({
-        ...task,
-        recurring: cron.validate(task.schedule),
-        nextRunAt: task.nextRunAt ?? cronSchedulerService.nextRunFor(task.id),
-      })),
-    );
-  } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to list cron tasks for agent: ${msg}`);
-    res.status(500).json({ error: msg });
-  }
-});
-
-/**
- * POST /agents/cron-tasks
- * Create + register a cron task. Mirrors the agent's own `schedule_task`
- * tool: persists to Prisma first, then registers in-memory via the
- * scheduler service.
- * Body: { name, schedule, instruction }
- */
-router.post('/cron-tasks', async (req: Request, res: Response) => {
-  try {
-    // Trimmed before the check: a task without an instruction runs on its name, so a name of
-    // only whitespace would be an empty prompt.
-    const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
-    const name = text(req.body.name);
-    const schedule = text(req.body.schedule);
-    const instruction = text(req.body.instruction);
-    if (!name || !schedule) {
-      res.status(400).json({ error: 'Missing required fields: name, schedule' });
-      return;
-    }
-
-    const agent = await agentWorkspaceService.getAgent();
-
-    const { cronExpression, isOneShot, nextRunAt } = parseSchedule(schedule);
-    if (!isOneShot && !cron.validate(cronExpression)) {
-      res.status(400).json({ error: `Invalid cron expression: ${cronExpression}` });
-      return;
-    }
-
-    const task = await prisma.cronTask.create({
-      data: {
-        agentId: agent.id,
-        userId: agent.userId,
-        name,
-        schedule: cronExpression,
-        instruction,
-        nextRunAt,
-      },
-    });
-
-    cronSchedulerService.scheduleTask({
-      id: task.id,
-      agentId: agent.id,
-      userId: agent.userId,
-      name: task.name,
-      schedule: task.schedule,
-      instruction: task.instruction,
-      isActive: task.isActive,
-      nextRunAt: task.nextRunAt?.toISOString() ?? null,
-      lastRunAt: task.lastRunAt?.toISOString() ?? null,
-      createdAt: task.createdAt.toISOString(),
-      updatedAt: task.updatedAt.toISOString(),
-      threadId: task.threadId,
-      originChannel: task.originChannel,
-      originChannelId: task.originChannelId,
-    });
-
-    res.status(201).json(task);
-  } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to create cron task for agent: ${msg}`);
-    res.status(500).json({ error: msg });
-  }
-});
-
-/**
- * DELETE /agents/cron-tasks/:taskId
- * Unschedule + delete a cron task.
- */
-router.delete('/cron-tasks/:taskId', async (req: Request<{ taskId: string }>, res: Response) => {
-  try {
-    const { taskId } = req.params;
-    try {
-      await prisma.cronTask.delete({ where: { id: taskId } });
-    } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
-        res.status(404).json({ error: 'Cron task not found' });
-        return;
-      }
-      throw err;
-    }
-    // After the confirmed delete so the 'cron task deleted' event (owned by
-    // unscheduleTask) never fires for nonexistent tasks.
-    cronSchedulerService.unscheduleTask(taskId);
-    res.json({ success: true });
-  } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`[Management] Failed to delete cron task ${req.params.taskId}: ${msg}`);
     res.status(500).json({ error: msg });
   }
 });

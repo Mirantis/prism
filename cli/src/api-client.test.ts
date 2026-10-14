@@ -174,6 +174,15 @@ describe('HttpApiClient', () => {
     expect(init?.body).toBe(JSON.stringify({ agent }));
   });
 
+  it('updateCronTask PATCHes the task-scoped URL with the edited fields', async () => {
+    fetchMock.mockResolvedValue(ok({ id: 'task-42' }));
+    await client.updateCronTask('task-42', { schedule: '0 10 * * *' });
+    const { url, init } = lastCall(fetchMock);
+    expect(url).toBe(`${BASE}/agents/cron-tasks/task-42`);
+    expect(init?.method).toBe('PATCH');
+    expect(init?.body).toBe(JSON.stringify({ schedule: '0 10 * * *' }));
+  });
+
   it('deleteCronTask DELETEs the task-scoped URL', async () => {
     fetchMock.mockResolvedValue(ok({ success: true }));
     await client.deleteCronTask('task-42');

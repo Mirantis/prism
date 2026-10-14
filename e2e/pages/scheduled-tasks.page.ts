@@ -1,9 +1,9 @@
 /**
  * Scheduled Tasks Page Object — /cron.
  *
- * Covers the New-task dialog with its schedule presets, and each task's card in
- * the list. Selectors mirror web/src/routes/cron.tsx and
- * web/src/components/schedules/scheduled-task-item.tsx.
+ * Covers the New-task and Edit dialogs with their schedule presets, and each
+ * task's card in the list. Selectors mirror web/src/routes/cron.tsx and
+ * web/src/components/schedules/.
  */
 
 import { Page, Locator } from '@playwright/test';
@@ -54,6 +54,21 @@ export class ScheduledTasksPage extends BasePage {
     await this.fillInstruction(instruction);
     await this.scheduleButton.click();
     await this.taskRow(name).waitFor({ timeout: 10_000 });
+  }
+
+  /** Open a task's Edit dialog from its card. */
+  async openEdit(name: string) {
+    await this.taskRow(name).getByRole('button', { name: `Edit ${name}` }).click();
+    await this.dialog.waitFor();
+  }
+
+  /** Rename the task in the open Edit dialog, pick a preset, replace the instruction, and save. */
+  async saveEdit(name: string, preset: string, instruction: string) {
+    await this.page.locator('#cron-name').fill(name);
+    await this.dialog.getByRole('button', { name: preset, exact: true }).click();
+    await this.fillInstruction(instruction);
+    await this.dialog.getByRole('button', { name: 'Save', exact: true }).click();
+    await this.dialog.waitFor({ state: 'hidden', timeout: 10_000 });
   }
 
   /** Delete a task from its card and confirm; waits for the dialog to close. */
