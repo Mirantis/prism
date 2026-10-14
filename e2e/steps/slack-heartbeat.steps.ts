@@ -14,7 +14,7 @@ import { expect } from '@playwright/test';
 import { getCurrentAgentId } from './common.steps';
 import { getPrisma } from '../support/db-helper';
 import { getSlackState } from '../support/slack-state';
-import { waitForBotMessageInChannel } from '../support/slack-helper';
+import { pollUntil, waitForBotMessageInChannel } from '../support/slack-helper';
 import { TEST_USER } from '../fixtures/test-data';
 
 const { Given, When, Then } = createBdd();
@@ -97,14 +97,20 @@ Then(
 
 Then('a HEARTBEAT-triggered agent message exists for the agent', async () => {
   const agentId = getCurrentAgentId();
-  const message = await getPrisma().conversationMessage.findFirst({
-    where: {
-      role: 'AGENT',
-      triggeredBy: 'HEARTBEAT',
-      thread: { agentId },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
-  expect(message).toBeTruthy();
-  expect(message!.externalMessageId).toBeTruthy();
+  // The adapter records the Slack message id once Slack has accepted the post, so the
+  // reply can be in the channel a moment before its row holds the id.
+  const message = await pollUntil(
+    () =>
+      getPrisma().conversationMessage.findFirst({
+        where: {
+          role: 'AGENT',
+          triggeredBy: 'HEARTBEAT',
+          thread: { agentId },
+          externalMessageId: { not: null },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+    { timeoutMs: 10_000, intervalMs: 250, label: 'the heartbeat reply recording its Slack message id' },
+  );
+  expect(message, 'no HEARTBEAT-triggered agent message has a Slack message id').toBeTruthy();
 });

@@ -26,6 +26,7 @@ import { getShellTools } from '../tools/shell/index';
 import { ensureCodingAgentsDetected } from './coding-agents/availability';
 import { getShareFileTools, SHARE_FILE_TOOL_NAME } from '../tools/share-file';
 import { getAttachmentTools } from '../tools/attachments';
+import { getWebFetchTools } from '../tools/web/web-fetch';
 import { getSkillTools } from '../tools/skills/index';
 import {
   getMeetingTools,
@@ -138,6 +139,7 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
       input.workspaceRoot,
       input.registerAttachmentInjection,
     ),
+    ...getWebFetchTools(input.userId, input.agentId),
     // Progressive disclosure: the `skill` tool loads a skill's full SKILL.md
     // body on demand. workspaceRoot merges the repo's skills with the global
     // ones. Empty (and omitted) when no skills are available.

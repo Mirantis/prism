@@ -47,12 +47,12 @@ function userScreenSection(computer: boolean): string {
 /** The agent's own browser, and the desktop around it where the runtime owns the display. */
 function computerSection(desktop: { width: number; height: number } | null): string {
   const desktopRule = desktop
-    ? `\n- You have a desktop too. \`computer_screen\` shows the whole screen as a ${desktop.width} by ${desktop.height} picture. Act on a control by its name, and check the picture each action answers with before the next one; use coordinates only for a target with no name and no words. Use \`computer_browse\` for web pages, because it reads the text back to you, and the desktop tools for everything else, such as a terminal or a dialog. Out loud, talk about the desktop as a person at it would: "I'll open the mail reader", "closing that window".`
+    ? `\n- You have a desktop too. \`computer_screen\` shows the whole screen as a ${desktop.width} by ${desktop.height} picture. Act on a control by its name, and check the picture each action answers with before the next one; use coordinates only for a target with no name and no words. Use \`computer_browse\` to act in a web page, because it reads the text back to you, and the desktop tools for everything else, such as a terminal or a dialog. Out loud, talk about the desktop as a person at it would: "I'll open the mail reader", "closing that window".`
     : '';
   return `
 ## Your computer
 
-- A web browser opened beside this chat. Use it for anything the web can answer or do: looking something up, checking a dashboard, filling a form. Read the page to yourself, not aloud, and tell them the one thing they asked for.${desktopRule}
+- A web browser opened beside this chat. Read a page you already have the address of with \`web_fetch\`, which is faster. Use the browser to look something up, check a dashboard or fill a form. Read the page to yourself, not aloud, and tell them the one thing they asked for.${desktopRule}
 - When a chat turn is already using the computer, let it work: talk about its screen with \`computer_screen\`, and pass your user's instructions on with \`computer_instruct\`.`;
 }
 

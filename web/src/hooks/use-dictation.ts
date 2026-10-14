@@ -237,8 +237,15 @@ export function useDictation(options: UseDictationOptions): Dictation {
     setError('The connection dropped, so the dictation ended.');
   }, [isConnected, release, setDictationStatus]);
 
-  // A page that navigates away releases the microphone too.
-  useEffect(() => release, [release]);
+  // A page that navigates away releases the microphone too, and a microphone prompt
+  // answered after that opens nothing.
+  useEffect(
+    () => () => {
+      attemptRef.current += 1;
+      release();
+    },
+    [release],
+  );
 
   return { status, levels, startedAt, error, start, send, cancel, handleEvent };
 }

@@ -90,7 +90,8 @@ export function createComputerTools(
         'several tabs. Every command answers with where the page is, what it says, the ' +
         'names of the links, buttons and fields on it, and the list of open tabs. Click ' +
         'and type by those names, and switch tabs by those numbers. Use it for labeled page ' +
-        'controls in a web page. One command per call.',
+        'controls in a web page. To only read a page, use web_fetch, which is faster. One ' +
+        'command per call.',
       inputSchema: z.object({
         action: z
           .enum([
