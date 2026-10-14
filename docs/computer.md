@@ -33,6 +33,8 @@ When Prism needs help, the live desktop opens in a resizable panel on the right 
 
 From Slack, **Open Computer** opens the Computer page with the request beside the screen.
 
+When Prism asks for help in a conversation and has a notification tool, such as one its host provides, it sends you a notification.
+
 A request from a conversation, or from a goal started in one, appears in that conversation. A request from a heartbeat, a webhook, or a scheduled task that is not tied to a conversation goes to the chat and to Slack, and you can answer it in either. Later runs use the same request while it waits. A heartbeat, a webhook or a scheduled task waits up to 30 minutes for your answer and then continues where it stopped; without an answer, it finishes without that step.
 
 While you are completing a help request, Prism's inference is paused, so it cannot see what you type. After the help request ends, any password fields are cleared. Type the password on the desktop, never in a chat message, and submit the sign-in before you press Esc or **I’m done**. The browser never offers to save a password.

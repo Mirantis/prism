@@ -8,7 +8,7 @@ import { computerHelpService, HELP_ANSWER_WAIT_MS } from '../computer-help.servi
 import type { ComputerCaller, ComputerUse } from '../computer-access';
 import { conversationEngineService } from '../../conversation-engine.service';
 import { voiceChatService } from '../../voice/voice-chat.service';
-import { getComputerTools } from '../../../tools/computer';
+import { ALERT_THE_USER, getComputerTools } from '../../../tools/computer';
 
 vi.mock('../../../lib/prisma', () => ({
   default: {
@@ -475,18 +475,16 @@ describe('a background run that asks for help', () => {
   });
 
   it.each([
-    ['a web chat', { mode: 'chat' }, true],
-    ['a web chat that gets the desktop', { mode: 'chat', desktop: true }, true],
-    ['a chat channel, which notifies the user itself', { mode: 'chat', originChannel: 'slack' as const }, false],
-    ['a voice call, where the user is listening', { mode: 'voice' }, false],
-  ])('in %s, says whether to alert the user', async (_name, { desktop, ...fields }, alerts) => {
-    const result = (await getComputerTools(createUse({ ...fields, threadId: 'thread' })).computer_help.execute!(
-      { reason: 'Sign in', credentials: Boolean(desktop) },
+    ['a sign-in', false],
+    ['the desktop, when the tab holds no sign-in form', true],
+  ])('tells a new request for %s to alert the user', async (_name, desktop) => {
+    const result = (await getComputerTools(createUse({ threadId: 'thread' })).computer_help.execute!(
+      { reason: 'Sign in', credentials: desktop },
       options,
     )) as { message: string };
 
     if (desktop) expect(result.message).toMatch(/take over the desktop/);
-    expect(result.message.includes('If you have a notification tool for alerting them, call it now')).toBe(alerts);
+    expect(result.message).toContain(ALERT_THE_USER);
   });
 });
 
