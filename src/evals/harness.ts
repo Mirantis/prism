@@ -25,6 +25,8 @@ import { contextService } from '../services/context.service';
 import { heartbeatService } from '../services/heartbeat.service';
 import { llmCallService } from '../services/llm-call.service';
 import { buildTurnRequest } from '../invoke';
+import { COMPUTER_INSTRUCTIONS } from '../prompts/computer-prompt';
+import { getComputerTools } from '../tools/computer';
 import type { ConversationMessage } from '../prompts/context-builder';
 import { CRON_TASK_GATE_PROMPT, buildCronGateUserMessage } from '../prompts/cron-prompt';
 import { WEBHOOK_GATE_PROMPT, buildWebhookGateUserMessage } from '../prompts/webhook-gate-prompt';
@@ -165,6 +167,10 @@ interface TurnInput {
   stubs?: Record<string, ToolStub>;
   /** Model steps before the turn stops. One step answers "what does the model do first". */
   maxSteps?: number;
+  /** Give the agent its computer, tools and instructions, also on a host without a desktop. */
+  computer?: boolean;
+  /** Tools a host adds beside the built-ins, such as a connector's. Stubbed like the rest. */
+  extraTools?: Record<string, Tool>;
 }
 
 export interface ToolCallRecord {
@@ -219,7 +225,12 @@ export async function runTurn(input: TurnInput): Promise<TurnTrace> {
     prompt: input.prompt ?? '',
     ...(input.channel ? { channelLabel: CHANNEL_LABEL[input.channel.platform](input.channel.name) } : {}),
   };
-  const { systemParts, messages } = await buildTurnRequest(context, request, subagents);
+  const { systemParts: parts, messages } = await buildTurnRequest(context, request, subagents);
+  const systemParts =
+    input.computer && !parts.some((part) => part.text.includes(COMPUTER_INSTRUCTIONS))
+      ? [{ text: COMPUTER_INSTRUCTIONS, cacheable: false }, ...parts]
+      : parts;
+  const turnTools = { ...tools, ...(input.computer ? getComputerTools() : {}), ...input.extraTools };
 
   const result = await callModel(
     { purpose: input.mode, agentId },
@@ -231,7 +242,7 @@ export async function runTurn(input: TurnInput): Promise<TurnTrace> {
         ...(part.cacheable ? { providerOptions: cachePoint } : {}),
       })),
       messages,
-      tools: withToolsCacheControl(withToolOutputCapture(stubTools(tools, input.stubs ?? {})), cachePoint),
+      tools: withToolsCacheControl(withToolOutputCapture(stubTools(turnTools, input.stubs ?? {})), cachePoint),
       toolChoice: 'auto',
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       stopWhen: stepCountIs(input.maxSteps ?? 1),
