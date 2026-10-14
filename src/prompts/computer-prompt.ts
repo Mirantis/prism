@@ -8,19 +8,31 @@ When an available, authorized connector can do the requested operation, use it, 
 
 One invocation uses the computer at a time, and subagents have none, so keep computer work in this invocation. Another invocation that needs the computer waits until your turn ends or you ask for help. When a website blocks you, finish the work that does not depend on it. Computer use itself creates no goal or schedule.`;
 
-/** Current help state overrides historical requests in the conversation. */
-export function computerHelpNotices(help: ComputerHelp[]): string[] {
+/**
+ * Current help state overrides historical requests in the conversation.
+ *
+ * @param backgroundRun the turn is a run that asks every channel, whose `computer_help`
+ * joins a waiting request and waits for its answer.
+ */
+export function computerHelpNotices(help: ComputerHelp[], backgroundRun: boolean): string[] {
   if (!help.length) return [];
   return [
     'Current computer help status follows. These statuses supersede earlier chat messages and tool results. A dismissed request is closed by the user; proceed with their current request without asking them to dismiss it again. Waiting help only blocks the work that depends on it.',
     ...help.map((item) => {
       const instruction =
         item.status === 'waiting'
-          ? `${item.broadcast ? 'A background run asked for it in every channel, so the user can answer it here. ' : ''}If the user says they finished helping, resolve it with computer_continue and inspect the screen.`
+          ? waitingInstruction(item, backgroundRun)
           : item.status === 'continued'
             ? 'The user has already continued this request.'
             : 'The user has dismissed this request.';
       return `Computer help ${item.id} (${item.status}): ${instruction}`;
     }),
   ];
+}
+
+function waitingInstruction(item: ComputerHelp, backgroundRun: boolean): string {
+  if (backgroundRun) {
+    return 'A background run asked for it in every channel. When a step only the user can complete blocks this run, call computer_help: the call sends nothing new and waits for the answer to this request.';
+  }
+  return `${item.broadcast ? 'A background run asked for it in every channel, so the user can answer it here. ' : ''}If the user says they finished helping, resolve it with computer_continue and inspect the screen.`;
 }

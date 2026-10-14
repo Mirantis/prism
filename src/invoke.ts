@@ -1,5 +1,5 @@
 import { computerHelpNotices } from './prompts/computer-prompt';
-import { computerHelpService } from './services/computer/computer-help.service';
+import { asksEveryChannel, computerHelpService } from './services/computer/computer-help.service';
 import { hasComputerForMode } from './services/computer/supported';
 import { computerService } from './services/computer/computer.service';
 /**
@@ -204,7 +204,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       const help = await computerHelpService.forTurn(request.agentId, request.userId, request.threadId);
       context.runtimeNotices = [
         ...(request.runtimeNotices ?? []),
-        ...computerHelpNotices(help),
+        ...computerHelpNotices(help, asksEveryChannel(request)),
       ];
     }
 

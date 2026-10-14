@@ -7,7 +7,7 @@ import { trackEvent } from '../../lib/telemetry';
 
 import type { MessageTrigger } from '../message-delivery.service';
 import { computerService } from './computer.service';
-import type { ComputerUse } from './computer-access';
+import type { ComputerCaller, ComputerUse } from './computer-access';
 import type { ChannelName } from '../channel-adapter.interface';
 
 export interface ComputerHelp {
@@ -68,6 +68,14 @@ function messageTrigger(mode: string): MessageTrigger {
   return 'USER_INPUT';
 }
 
+/**
+ * A background run with no conversation of its own asks wherever its output goes,
+ * which is every channel. A chat turn stays in its own channel, as every reply does.
+ */
+export function asksEveryChannel(caller: Pick<ComputerCaller, 'mode' | 'threadId'>): boolean {
+  return messageTrigger(caller.mode) !== 'USER_INPUT' && !caller.threadId;
+}
+
 export function computerLink(helpId?: string): string {
   const suffix = `computer${helpId ? `?help=${encodeURIComponent(helpId)}` : ''}`;
   return config.publicUrl ? `${config.publicUrl.replace(/\/$/, '')}/${suffix}` : `/${suffix}`;
@@ -96,9 +104,7 @@ class ComputerHelpService {
     credentials = false,
   ): Promise<ComputerHelpRequest> {
     const trigger = messageTrigger(use.mode);
-    // A background run with no conversation of its own asks wherever its output goes,
-    // which is every channel. A chat turn stays in its own channel, as every reply does.
-    const broadcast = trigger !== 'USER_INPUT' && !use.threadId;
+    const broadcast = asksEveryChannel(use);
     // A heartbeat asks again on every run, and each ask posts to every channel. So while
     // one broadcast request waits, it stands for them all, including an unrelated block
     // another background run meets at the same time. That run waits for the same answer

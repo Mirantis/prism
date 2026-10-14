@@ -22,6 +22,7 @@ import { jsonSchema, tool } from 'ai';
 import { heartbeatService } from '../services/heartbeat.service';
 import { ALERT_THE_USER } from '../tools/computer';
 import type { AttachmentMeta } from '../services/attachment.service';
+import type { ComputerHelp } from '../services/computer/computer-help.service';
 
 export interface Grade {
   pass: boolean;
@@ -148,6 +149,23 @@ const helpRequested = () => ({
   credentials: true,
   message: `Help requested. ${ALERT_THE_USER} Continue independent work or finish this turn while waiting for the user.`,
 });
+
+/** A page that waits for the user to approve the sign-in on their phone. */
+const APPROVAL_PAGE = {
+  success: true,
+  message:
+    'Tab 1: https://reports.example.com/approval — "Approve this sign-in". The page reads: ' +
+    '"Open the app on your phone and approve the sign-in. This page updates by itself."',
+};
+
+/** The request another scheduled task asked for the same page, still waiting for the user. */
+const WAITING_APPROVAL: ComputerHelp = {
+  type: 'computer_help',
+  id: 'help-eval-waiting',
+  reason: 'Approve the sign-in on your phone so the report page can load.',
+  status: 'waiting',
+  broadcast: true,
+};
 
 /** A notification tool a host gives the agent through its own connector. */
 const HOST_NOTIFY = 'host__notify_user';
@@ -823,6 +841,33 @@ export const SCENARIOS: Scenario[] = [
         throw new Error('The agent never asked for help, so the scenario tested nothing.');
       }
       return { pass: !trace.calls.some((c) => c.tool === SLACK_POST), detail: describeTrace(trace) };
+    },
+  },
+  {
+    id: 'computer.background-run-waits-for-help',
+    expect: 'A scheduled task blocked by a step another run already asked the user for calls computer_help to wait for it.',
+    grader: 'tool call',
+    run: async () => {
+      const trace = await runTurn({
+        mode: 'cron',
+        computer: true,
+        computerHelp: [WAITING_APPROVAL],
+        prompt:
+          'Use your computer to open https://reports.example.com/approval and report the line that starts with ' +
+          'REPORT-READY. If the page asks for the sign-in to be approved, call computer_help so I can approve it on my phone.',
+        maxSteps: 4,
+        stubs: {
+          computer_browse: () => APPROVAL_PAGE,
+          computer_screen: () => APPROVAL_PAGE,
+          computer_help: () => ({
+            success: true,
+            helpId: WAITING_APPROVAL.id,
+            answer: 'continued',
+            message: 'The user finished helping. Inspect the screen before you continue.',
+          }),
+        },
+      });
+      return { pass: trace.calls.some((c) => c.tool === 'computer_help'), detail: describeTrace(trace) };
     },
   },
 ];

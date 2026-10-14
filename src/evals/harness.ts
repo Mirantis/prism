@@ -21,11 +21,13 @@ import { withToolOutputCapture } from '../lib/tool-output-limiter';
 import { evaluateToolRisk } from '../lib/tool-risk-gate';
 import { agentWorkspaceService, resolveEffectiveModel } from '../services/agent-workspace.service';
 import type { AttachmentMeta } from '../services/attachment.service';
+import { asksEveryChannel, type ComputerHelp } from '../services/computer/computer-help.service';
+import type { ComputerUse } from '../services/computer/computer-access';
 import { contextService } from '../services/context.service';
 import { heartbeatService } from '../services/heartbeat.service';
 import { llmCallService } from '../services/llm-call.service';
 import { buildTurnRequest } from '../invoke';
-import { COMPUTER_INSTRUCTIONS } from '../prompts/computer-prompt';
+import { COMPUTER_INSTRUCTIONS, computerHelpNotices } from '../prompts/computer-prompt';
 import { getComputerTools } from '../tools/computer';
 import type { ConversationMessage } from '../prompts/context-builder';
 import { CRON_TASK_GATE_PROMPT, buildCronGateUserMessage } from '../prompts/cron-prompt';
@@ -171,6 +173,8 @@ interface TurnInput {
   computer?: boolean;
   /** Tools a host adds beside the built-ins, such as a connector's. Stubbed like the rest. */
   extraTools?: Record<string, Tool>;
+  /** Help requests the turn is shown in its runtime notices, as `invokeStream` shows them. */
+  computerHelp?: ComputerHelp[];
 }
 
 export interface ToolCallRecord {
@@ -225,12 +229,19 @@ export async function runTurn(input: TurnInput): Promise<TurnTrace> {
     prompt: input.prompt ?? '',
     ...(input.channel ? { channelLabel: CHANNEL_LABEL[input.channel.platform](input.channel.name) } : {}),
   };
+  if (input.computerHelp) {
+    context.runtimeNotices = computerHelpNotices(input.computerHelp, asksEveryChannel(request));
+  }
   const { systemParts: parts, messages } = await buildTurnRequest(context, request, subagents);
   const systemParts =
     input.computer && !parts.some((part) => part.text.includes(COMPUTER_INSTRUCTIONS))
       ? [{ text: COMPUTER_INSTRUCTIONS, cacheable: false }, ...parts]
       : parts;
-  const turnTools = { ...tools, ...(input.computer ? getComputerTools() : {}), ...input.extraTools };
+  const turnTools = {
+    ...tools,
+    ...(input.computer ? getComputerTools(computerUse(request)) : {}),
+    ...input.extraTools,
+  };
 
   const result = await callModel(
     { purpose: input.mode, agentId },
@@ -259,6 +270,21 @@ export async function runTurn(input: TurnInput): Promise<TurnTrace> {
     ),
     text: result.text,
     finished: result.finishReason !== 'tool-calls',
+  };
+}
+
+/** The invocation the computer tools describe themselves for. Their execution is stubbed. */
+function computerUse(request: InvokeRequest): ComputerUse {
+  const controller = new AbortController();
+  return {
+    id: 'eval-computer-use',
+    userId: request.userId,
+    agentId: request.agentId,
+    mode: request.mode,
+    controller,
+    signal: controller.signal,
+    failed: false,
+    closed: false,
   };
 }
 
