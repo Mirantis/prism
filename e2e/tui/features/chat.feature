@@ -9,6 +9,7 @@ Feature: CLI chat round-trip
     And the terminal is told the session is working
     And the agent reply contains "PRISMACK7"
     And the terminal is told the reply is done
+    And the runtime reports the agent working and then done, under the agent's name
     When I press Ctrl+C
     Then the terminal is told to clear the session status
 

@@ -12,6 +12,7 @@
 
 import { z } from 'zod';
 import { MAX_ATTACHMENTS_PER_MESSAGE } from '../constants';
+import type { InvokeError } from '../types';
 
 /** The version a client names in `hello`. There is one; an older client is told to update. */
 export const PROTOCOL_VERSION = 2;
@@ -157,6 +158,17 @@ export interface TurnEventPayload {
   outcome?: TurnOutcome;
   /** What went wrong, when `outcome` is `failed`. Written for a person. */
   error?: string;
+}
+
+/** The `error` of a failed turn. The details go to the log. */
+export const TURN_FAILED = 'The agent could not answer. Try again.';
+
+/** The `error` of a turn that failed on the spending limit, which a retry does not lift. */
+export const SPENDING_LIMIT_REACHED = 'The AI spending limit is reached.';
+
+/** The `error` of a turn whose reply is an error report. */
+export function turnError(error: InvokeError): string {
+  return error.type === 'budget_exceeded' ? SPENDING_LIMIT_REACHED : TURN_FAILED;
 }
 
 export interface AttachmentPayload {

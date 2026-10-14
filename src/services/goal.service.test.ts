@@ -29,6 +29,7 @@ const {
   mockGoalUpdate,
   mockGoalUpdateMany,
   mockTrackEvent,
+  mockEndLoopStatus,
   mockConfig,
 } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
@@ -42,6 +43,7 @@ const {
   mockGoalUpdate: vi.fn(),
   mockGoalUpdateMany: vi.fn(),
   mockTrackEvent: vi.fn(),
+  mockEndLoopStatus: vi.fn(),
   mockConfig: { goalMaxTurns: 100, goalDefaultTokenBudget: null as number | null },
 }));
 
@@ -55,6 +57,10 @@ vi.mock('./message-delivery.service', () => ({
 }));
 
 vi.mock('ai', () => ({ generateText: mockGenerateText }));
+
+vi.mock('./program-status.service', () => ({
+  programStatusService: { beginTurn: () => ({ end: mockEndLoopStatus }) },
+}));
 
 vi.mock('../lib/prisma', () => ({
   prisma: {
@@ -307,6 +313,7 @@ describe('GoalService', () => {
       );
       const finishedCall = mockTrackEvent.mock.calls.find((c) => c[0] === 'goal finished');
       expect(JSON.stringify(finishedCall)).not.toContain('do the thing'); // no objective (PII)
+      await vi.waitFor(() => expect(mockEndLoopStatus).toHaveBeenCalledWith({ cancelled: false }));
     });
 
     it('runs each turn in the channel the goal was started in', async () => {
@@ -476,6 +483,28 @@ describe('GoalService', () => {
       );
       await waitForTerminal(); // the restarted loop runs to completion
       expect(mockInvoke).toHaveBeenCalled();
+    });
+
+    it('reports the loop as cancelled when the goal stops between two turns', async () => {
+      let releaseGate!: () => void;
+      mockGenerateText.mockImplementationOnce(
+        () => new Promise((resolve) => (releaseGate = () => resolve({ text: 'CONTINUE' }))),
+      );
+
+      await goalService.startGoal({
+        userId: 'user-1',
+        agentId: 'agent-1',
+        threadId: 'thread-1',
+        objective: 'stop me',
+        originChannel: 'websocket',
+      });
+      await vi.waitFor(() => expect(releaseGate).toBeDefined());
+      await goalService.stopGoal('goal-1');
+      releaseGate();
+
+      await vi.waitFor(() => expect(mockEndLoopStatus).toHaveBeenCalledWith({ cancelled: true }));
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+      expect(mockPublish).toHaveBeenCalledWith('user-1', 'thread-1', 'working on it', 'GOAL', expect.anything());
     });
 
     it('restarts the loop on resume even while the prior turn is still unwinding', async () => {

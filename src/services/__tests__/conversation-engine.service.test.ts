@@ -722,6 +722,18 @@ describe('Requirement: Conversation Engine', () => {
       expect(ends).toEqual([{ threadId: 'thread-123', cancelled: false, error: undefined }]);
     });
 
+    it('reports an exchange whose reply cannot be stored as failed', async () => {
+      const { ends, off } = recordEnds();
+      mockPublish.mockRejectedValueOnce(new Error('database is locked'));
+
+      await expect(
+        conversationEngineService.chat({ userId: 'user-123', agentId: 'agent-123', message: 'Hello' }),
+      ).rejects.toThrow('database is locked');
+      off();
+
+      expect(ends).toEqual([{ threadId: 'thread-123', cancelled: false, error: { type: 'generic' } }]);
+    });
+
     it('reports a cancelled exchange as cancelled', async () => {
       const { ends, off } = recordEnds();
       let finish!: () => void;

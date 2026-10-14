@@ -49,6 +49,19 @@ the agent does can open a network connection you haven't approved. See the
 [Lens Sandbox docs](https://github.com/lensapp/lens-sandbox) for the full policy
 and approval model.
 
+## The agent's state in LNS
+
+LNS shows when the agent waits for you, has finished or has failed. To see that
+for all of the agent's work, run the image without a command:
+
+```bash
+lns run --cpus 2 --mem 2048 \
+  -p 3003:3003 -v prism-data:/data \
+  ghcr.io/lensapp/prism-agent:latest
+```
+
+With the command above, LNS shows the state of the `prism` conversation instead.
+
 ## After it's running
 
 Everything else behaves like any other Prism Agent deployment — open the

@@ -361,6 +361,30 @@ describe('InboundMessageService', () => {
     });
   });
 
+  describe('Scenario: a goal holds the conversation busy between turns', () => {
+    it('reports how the last turn ended when the goal ends', async () => {
+      const { events, stop } = turnEvents();
+      const endGoal = conversationThreadActivityService.beginThread(THREAD_A, 'owner-1');
+      mockEngine.chat
+        .mockImplementationOnce(exchange())
+        .mockImplementationOnce(exchange({ error: { type: 'generic', detail: 'Model unavailable' } }));
+
+      await inboundMessageService.accept(inbound('m-1'));
+      await settle();
+      await inboundMessageService.accept(inbound('m-2'));
+      await settle();
+      endGoal();
+
+      expect(events.at(-1)).toEqual({
+        threadId: THREAD_A,
+        state: 'idle',
+        outcome: 'failed',
+        error: 'The agent could not answer. Try again.',
+      });
+      stop();
+    });
+  });
+
   describe('Scenario: cancel', () => {
     it('stops the conversation’s turn and reports it cancelled', async () => {
       const { events, stop } = turnEvents();

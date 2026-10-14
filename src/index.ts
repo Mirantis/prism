@@ -38,6 +38,7 @@ import { initMeetingToolAvailability } from './lib/tool-collection';
 import { initComputerAvailability } from './services/computer/supported';
 import { cronSchedulerService } from './services/cron-scheduler.service';
 import { goalService } from './services/goal.service';
+import { programStatusService } from './services/program-status.service';
 import { sessionManagerService } from './services/session-manager.service';
 import { slackAdapterService } from './services/slack-adapter.service';
 import { teamsAdapterService } from './services/teams/teams-adapter.service';
@@ -252,6 +253,9 @@ const initialize = async () => {
       where: { id: agent.id, status: 'RUNNING' },
       data: { status: 'IDLE' },
     });
+
+    // Before the heartbeat, cron tasks and goals start, so their first turns are reported.
+    programStatusService.start(agent.id, agent.userId);
 
     const interruptedWebhookRuns = await webhookRunService.failInterrupted(agent.id);
     if (interruptedWebhookRuns > 0) {

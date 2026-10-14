@@ -883,6 +883,7 @@ and refuses every call, because under `none` the SDK sends no tools block.
 | **WebSocketGatewayService** | `services/websocket-gateway.service.ts` | The chat socket, protocol v2 (`protocol/chat-protocol.ts`, `docs/websocket-protocol.md`): the `hello`/`welcome` handshake and resume, validated requests answered `ack`/`nack`, connection limits, and voice and dictation on the same socket |
 | **EventStreamService** | `services/event-stream.service.ts` | The numbered stream every chat client reads, and the bounded window a reconnecting client is replayed from |
 | **InboundMessageService** | `services/inbound-message.service.ts` | A chat message from the socket: stored under the client's id first, confirmed, then answered one turn at a time for the agent; and each conversation's `queued`/`running`/`idle` state |
+| **ProgramStatusService** | `services/program-status.service.ts` | The agent's state as OSC 7501 reports on stdout, for LNS and terminals, and `clear` at process exit |
 | **WebSocketAdapterService** | `services/websocket-adapter.service.ts` | ChannelAdapter for WebSocket delivery, calls local gateway directly |
 | **BackendClient** | `lib/backend-client.ts` | Typed HTTP client for backend internal REST API: access control (`canAccessAgent()`) + SlackConnection read-only access (`getActiveSlackConnections()`, `getSlackConnection()`) |
 
@@ -928,6 +929,7 @@ src/
 │   ├── slack-heartbeat-trigger.service.ts # CRUD for per-agent Slack heartbeat trigger config, atomic claim logic
 │   ├── session-manager.service.ts # Daily session resets, idle timeout management
 │   ├── tool-ledger.service.ts  # Each conversation's declared tool list and its tool-change announcements
+│   ├── program-status.service.ts # The agent's state as OSC 7501 reports on stdout
 │   ├── memory-manager.service.ts  # Two-layer memory system (daily logs + curated key-value store)
 │   ├── meeting/                # Live voice meetings (OpenAI Realtime API)
 │   │   ├── meeting-bot.service.ts    # Lifecycle owner: one call at a time, teardown, telemetry
@@ -1058,6 +1060,7 @@ src/
 │   ├── media-store.ts          # Attachment bytes as files under `<data dir>/media`: write/read/remove, filename sanitizing, stray-file reaper
 │   ├── teams-config.ts         # Env-sourced Teams connection singleton (no network validation — the SDK validates on initialize)
 │   ├── tool-output-store.ts    # The saved whole copy of an oversized tool result under `<data dir>/tool-outputs`: write/read/remove, TTL reaper. The notice hands the agent the path and it reads the file with the shell. No DB row, so mtime is the whole lifecycle
+│   ├── program-status.ts       # OSC 7501 report encoding: base64 `msg`/`title` cut to the specification's limits
 │   ├── prisma.ts               # Prisma client singleton (runtime database)
 │   ├── prisma-adapter.ts       # The SQLite driver adapter every Prisma client opens the database with
 │   └── tool-names.ts           # Single owner of what a tool may be *called* for a model: charset, no leading digit, 64-char cap (`toModelToolName`, `capToolNames`)
@@ -1096,6 +1099,7 @@ What the operator sets on `docker run`:
 | `WEBHOOK_PORT` | Port of the webhook listener (`createWebhookApp`), which serves `POST /agents/webhooks/:name` alone, on the `PRISM_HOST` interface. A literal default, not derived from `PORT`. The receiver service opens the port only while enabled; disabling closes connections and the listener. A taken port reports an error and preserves the saved setting for the next restart | `3004` |
 | `PRISM_HOST` | Interface the HTTP server binds. Loopback by default, and `lib/origin-guard.ts` then requires a loopback `Host` plus a loopback or absent `Origin` on every request — the guard is app-wide, `/health` included, and covers the `/api/ws` handshake — which is what closes DNS rebinding. A request stating `X-Forwarded-Host` is exempt from the loopback-`Host` rule (that is a proxy in front, a header no browser can state) and is held to the origin rules alone. A non-loopback bind relaxes that to an `Origin` matching the request's own `Host` or its first `X-Forwarded-Host` value, since the exposed address is the operator's to choose. The image sets `0.0.0.0`, which a published port needs | `127.0.0.1` (`0.0.0.0` in the image) |
 | `PRISM_ALLOWED_ORIGINS` | Origin patterns (`lib/origin-patterns.ts`: `scheme://host[:port]` or `scheme://host:*`) that `lib/origin-guard.ts` admits after the loopback-`Host` rule and ahead of its same-host, `X-Forwarded-Host` and loopback-`Origin` checks, on the HTTP routes and both WebSocket handshakes. A listed origin gets `Access-Control-Allow-Origin` (its canonical `URL.origin`) on every response, and its preflight a 204 allowing `GET, HEAD, POST, PUT, PATCH, DELETE` (mirrored by the Nexus sandbox ingress); with any list set, every response has `Vary: Origin`. The loopback decision normalizes `PRISM_HOST` through the URL parser (`127.1`, `::ffff:127.0.0.1`, `localhost.` count), while `listen` gets the value as written. An invalid entry, or any entry on a loopback `PRISM_HOST`, stops startup in `config.ts`: the list is for a runtime behind an authenticating proxy | empty |
+| `PRISM_PROGRAM_STATUS` | `on` or `off`: whether the runtime writes the agent's state to stdout as OSC 7501 reports (`services/program-status.service.ts`). Any other value reports when stdout is a TTY | `on` when stdout is a TTY |
 | `AGENT_ID` | UUID of the one `AgentWorkspace` this container owns | bootstrapped on first boot |
 | `DATABASE_URL` | SQLite URL for the runtime DB | `file:/data/agent.db` |
 | `NEXUS_API_URL` | Lens Agents server URL (LLM proxy + MCP tools) | — |

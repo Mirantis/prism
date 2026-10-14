@@ -81,6 +81,8 @@ export async function trackAgentStarted(
       'nexus.enabled': String(Boolean(config.nexusApiUrl)),
       'nexus.mcp_enabled': String(Boolean(config.nexusMcpUrl)),
       'langfuse.enabled': String(Boolean(config.langfuseSecretKey && config.langfusePublicKey)),
+      // Whether the runtime reports the agent's state on stdout (OSC 7501).
+      'program_status.enabled': String(config.programStatusReports),
       // The packaged `prism-server` binary vs a container/source run.
       'runtime.sea': String(sea.isSea()),
       'runtime.node_version': process.version,

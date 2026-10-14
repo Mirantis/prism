@@ -11,6 +11,7 @@
  * - Consistent logging and error handling across all channels
  */
 
+import { EventEmitter } from 'node:events';
 import { ConversationMessage } from '@prisma/client';
 import {
   ChannelAdapter,
@@ -80,6 +81,8 @@ interface DeliveryResult {
 // ============================================================================
 
 export class MessageDeliveryService {
+  /** Emits `published` with each agent message once it is stored and delivered. */
+  readonly events = new EventEmitter();
   private adapters: ChannelAdapter[] = [];
 
   /**
@@ -159,6 +162,7 @@ export class MessageDeliveryService {
     // channelContext is the single source of routing + rendering hints; we
     // forward it as-is and let the adapter decide what to do with it.
     await this.deliverToAll(userId, deliverable, options?.channelContext);
+    this.events.emit('published', message);
 
     return message;
   }

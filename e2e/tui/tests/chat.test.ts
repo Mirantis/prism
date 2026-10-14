@@ -17,6 +17,7 @@ import {
   waitForMessageCount,
   type RuntimeTestEnv,
 } from '../setup';
+import { programStatusReports } from '../program-status-reports';
 
 const feature = loadFeatureFromText(
   readFileSync(join(import.meta.dirname, '../features/chat.feature'), 'utf8'),
@@ -27,7 +28,7 @@ let session: TuiSession;
 
 describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachScenario, AfterEachScenario, Scenario }) => {
   BeforeAllScenarios(async () => {
-    env = await setupRuntime();
+    env = await setupRuntime({ runtimeEnvOverrides: { PRISM_PROGRAM_STATUS: 'on' } });
   });
   AfterAllScenarios(async () => {
     await env.cleanup();
@@ -45,12 +46,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     'Sends a prompt, renders the agent reply, and tells the terminal the session state',
     ({ When, Then, And }) => {
       // The states of the OSC 7501 reports in the raw PTY stream, in the order written.
-      const reportedStates = () =>
-        session
-          .rawOutput()
-          .split('\x1b]7501;state=')
-          .slice(1)
-          .map((report) => /^[a-z]+/.exec(report)?.[0]);
+      const reportedStates = () => programStatusReports(session.rawOutput()).map((report) => report.state);
       // Reports the earlier steps matched, so each step finds its state after theirs.
       let matched = 0;
       const waitForState = async (state: string, timeoutMs: number) => {
@@ -79,6 +75,22 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
         await session.waitForFrame(new RegExp(sentinel), 5_000);
       });
       And('the terminal is told the reply is done', () => waitForState('done', 15_000));
+      And("the runtime reports the agent working and then done, under the agent's name", async () => {
+        const reports = () => programStatusReports(env.runtime.stdout());
+        await expect
+          .poll(() => {
+            const states = reports().map((report) => report.state);
+            const working = states.indexOf('working');
+            return working >= 0 && states.indexOf('done', working) > working;
+          }, { timeout: 15_000 })
+          .toBe(true);
+        expect(reports().find((report) => report.state === 'done')).toEqual({
+          state: 'done',
+          app: 'prism',
+          title: 'Prism',
+          msg: 'Reply ready',
+        });
+      });
       When('I press Ctrl+C', () => {
         session.send(KEYS.CTRL_C);
       });
