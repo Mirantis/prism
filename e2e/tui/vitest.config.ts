@@ -29,11 +29,8 @@ export default defineConfig({
     // Order matters for exactly one file — see slack-last-sequencer.ts. With
     // `fileParallelism: false` the sequencer's order is the run order.
     sequence: { sequencer: SlackLastSequencer },
-    // Specs wire their own beforeAll/beforeEach; these only harden Vitest's
-    // source-map symbolication so a malformed inline map can't fail an
-    // otherwise-green run. The setup file patches each worker fork; globalSetup
-    // patches the MAIN process where the reporter symbolicates the final stack
-    // trace (setupFiles never run there). See harden-source-map.ts.
+    // Specs wire their own beforeAll/beforeEach; these only keep the e2e LLM
+    // cache in step with each scenario and report its hit rate.
     setupFiles: ['tui/vitest.setup.ts'],
     globalSetup: ['tui/vitest.global-setup.ts'],
     globals: false,

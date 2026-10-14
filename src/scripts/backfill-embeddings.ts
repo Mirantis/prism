@@ -42,19 +42,12 @@ export async function runBackfill(): Promise<BackfillResult> {
 
   while (true) {
     // Paginate with cursor to avoid loading all rows into memory
-    let entries: BackfillEntry[];
-    if (lastId === null) {
-      entries = await prisma.$queryRawUnsafe<BackfillEntry[]>(
-        `SELECT "id", "agentId", "content" FROM "memory_entries" WHERE "embedding" IS NULL ORDER BY "id" ASC LIMIT $1`,
-        PAGE_SIZE,
-      );
-    } else {
-      entries = await prisma.$queryRawUnsafe<BackfillEntry[]>(
-        `SELECT "id", "agentId", "content" FROM "memory_entries" WHERE "embedding" IS NULL AND "id" > $1 ORDER BY "id" ASC LIMIT $2`,
-        lastId,
-        PAGE_SIZE,
-      );
-    }
+    const entries: BackfillEntry[] = await prisma.memoryEntry.findMany({
+      where: { embedding: null, ...(lastId === null ? {} : { id: { gt: lastId } }) },
+      select: { id: true, agentId: true, content: true },
+      orderBy: { id: 'asc' },
+      take: PAGE_SIZE,
+    });
 
     if (entries.length === 0) {
       if (scanned === 0) {

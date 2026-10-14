@@ -124,7 +124,7 @@ done < <(find "$REPO_ROOT" -name "node_modules" -maxdepth 4 -type d -not -path "
 # the shim physically sits, so a symlinked `@prisma/client` resolves straight back
 # to the source repo and the private `.prisma` is ignored. Both have to be real.
 # Sharing them means one worktree's `prisma generate` — run directly, or by
-# `predev` or `prisma migrate dev` — leaves every other worktree's runtime
+# `predev` — leaves every other worktree's runtime
 # querying a column its database lacks ("The column ... does not exist in the
 # current database").
 #

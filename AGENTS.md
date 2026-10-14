@@ -671,9 +671,8 @@ launching tsx-watch + Vite concurrently. You never run migrate manually.
 The SQLite `DATABASE_URL` comes from `.env`, which the runtime auto-loads
 via dotenv.
 
-Every Prisma command needs `--schema=prisma/sqlite/schema.prisma` — the
-schema is not in a default location, so a bare `prisma …` fails with
-"Could not find Prisma Schema".
+`prisma.config.ts` points every Prisma command at
+`prisma/sqlite/schema.prisma` and at the database file the runtime opens.
 
 **`prisma migrate dev` does not work against a dev database that has
 already run.** It describes the whole database, and once
@@ -689,7 +688,7 @@ shares **one** generated Prisma client at `node_modules/.prisma/client`
 (`@prisma/client` is a shim that re-exports it). The client is generated
 code with the column list baked in, so `prisma generate` in a worktree
 whose schema has an extra column — run directly, or implicitly by
-`npm run dev` (`predev`) or `prisma migrate dev` — makes every *other*
+`npm run dev` (`predev`) — makes every *other*
 worktree's runtime query a column its database lacks: "The column X does
 not exist in the current database".
 
@@ -1058,6 +1057,7 @@ src/
 │   ├── teams-config.ts         # Env-sourced Teams connection singleton (no network validation — the SDK validates on initialize)
 │   ├── tool-output-store.ts    # The saved whole copy of an oversized tool result under `<data dir>/tool-outputs`: write/read/remove, TTL reaper. The notice hands the agent the path and it reads the file with the shell. No DB row, so mtime is the whole lifecycle
 │   ├── prisma.ts               # Prisma client singleton (runtime database)
+│   ├── prisma-adapter.ts       # The SQLite driver adapter every Prisma client opens the database with
 │   └── tool-names.ts           # Single owner of what a tool may be *called* for a model: charset, no leading digit, 64-char cap (`toModelToolName`, `capToolNames`)
 ├── evals/                      # Prompt eval set (`npm run eval:prompts`): scenarios graded on the real prompt, tools and gates
 ├── prisma/
@@ -1421,7 +1421,7 @@ The agent-runtime owns the full Slack adapter implementation. It manages Bolt ap
 
 ### Slack Architecture
 
-- **Bolt apps**: One `App` instance per Slack workspace connection, using Socket Mode for real-time events. `clientOptions` on the `App` constructor passes a `requestInterceptor` to the underlying WebClient that strips the body `token` field so auth flows only via the `Authorization` header — necessary when the bot token is a platform credential sentinel that only the MITM proxy can rewrite.
+- **Bolt apps**: One `App` instance per Slack workspace connection, using Socket Mode for real-time events. `clientOptions` on the `App` constructor passes a `fetch` to the underlying WebClient that strips the body `token` field so auth flows only via the `Authorization` header — necessary when the bot token is a platform credential sentinel that only the MITM proxy can rewrite.
 - **Connection data**: source depends on mode.
   - **Multi-tenant**: SlackConnection records (tokens, workspace info) are fetched from the backend via `backendClient.getActiveSlackConnections()` at startup and `backendClient.getSlackConnection()` at runtime. Agent-runtime does NOT directly access the backend's `SlackConnection` table; the backend exclusively owns it. Connection CRUD (create, update, deactivate) is handled by the backend's org-scoped endpoints.
   - **Single-agent**: one synthetic connection is built by `lib/slack-config.ts` from the `SLACK_BOT_TOKEN` env var (validated via `auth.test` on boot). No backend, no decrypt, no encryption key. `SlackWebClient` (in `lib/slack-web-client.ts`) is the subclass that strips the body `token`.

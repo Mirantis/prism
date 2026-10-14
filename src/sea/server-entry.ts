@@ -8,7 +8,7 @@
  *   4. Kick off the embedding backfill in the background (best-effort).
  *   5. Boot the runtime (src/index.ts: HTTP + WS + heartbeats + cron + channels).
  *
- * Native deps (better-sqlite3, @prisma/client, sqlite-vec) are NOT bundled —
+ * better-sqlite3, sqlite-vec and the generated Prisma client are NOT bundled —
  * they load from the `node_modules/` sidecar next to this executable.
  */
 import path from 'node:path';

@@ -13,7 +13,7 @@ const {
   mockGetCatalog: vi.fn(),
   mockGetSubagents: vi.fn(),
   mockLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
-  mockConfig: {} as Record<string, unknown>,
+  mockConfig: { databaseUrl: 'file::memory:' } as Record<string, unknown>,
 }));
 
 vi.mock('./telemetry', () => ({

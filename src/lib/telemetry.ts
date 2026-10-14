@@ -61,7 +61,7 @@ export function initTelemetry(): void {
 
   provider = new LoggerProvider({
     resource,
-    processors: [new BatchLogRecordProcessor(exporter)],
+    processors: [new BatchLogRecordProcessor({ exporter })],
   });
 
   otelLogger = provider.getLogger('product-telemetry');

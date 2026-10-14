@@ -336,14 +336,16 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       // Let that render commit — the hooks unsubscribe and the frame clears —
       // before the child takes the screen.
       await new Promise((resolve) => setTimeout(resolve, 0));
-      const wasRaw = stdin.isRaw === true;
-      if (wasRaw) stdin.setRawMode(false);
-      stdin.pause();
+      // Ink reports raw mode as supported only for a TTY stdin.
+      const tty = stdin as NodeJS.ReadStream;
+      const wasRaw = tty.isRaw === true;
+      if (wasRaw) tty.setRawMode(false);
+      tty.pause();
       try {
         return await fn();
       } finally {
-        stdin.resume();
-        if (wasRaw) stdin.setRawMode(true);
+        tty.resume();
+        if (wasRaw) tty.setRawMode(true);
         setSuspended(false);
       }
     },

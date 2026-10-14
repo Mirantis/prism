@@ -15,7 +15,12 @@ vi.mock('../../../logger', () => ({
 }));
 
 vi.mock('../../../config', () => ({
-  config: { openaiRealtimeVoice: 'marin', realtimeProvider: 'azure', realtimeSource: 'managed' },
+  config: {
+    openaiRealtimeVoice: 'marin',
+    realtimeProvider: 'azure',
+    realtimeSource: 'managed',
+    databaseUrl: 'file::memory:',
+  },
 }));
 
 vi.mock('../voice-instructions', () => ({

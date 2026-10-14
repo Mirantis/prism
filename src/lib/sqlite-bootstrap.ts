@@ -1,11 +1,11 @@
 /**
  * SQLite bootstrap.
  *
- * Prisma's bundled SQLite engine refuses `SELECT load_extension(...)` ("not
- * authorized"), so we keep a sibling `better-sqlite3` connection open
- * against the same DB file for the vector operations. Prisma owns the
- * regular tables; `better-sqlite3` + sqlite-vec owns the `memory_entry_vec`
- * virtual table. WAL mode allows both to coexist safely.
+ * Prisma's driver adapter keeps its `better-sqlite3` connection private, so
+ * we keep a sibling `better-sqlite3` connection open against the same DB
+ * file for the vector operations. Prisma owns the regular tables; this
+ * connection + sqlite-vec owns the `memory_entry_vec` virtual table. WAL
+ * mode allows both to coexist safely.
  *
  * This module:
  *   - opens the better-sqlite3 handle against DATABASE_URL (expected

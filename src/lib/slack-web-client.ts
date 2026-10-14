@@ -11,41 +11,37 @@
  *     (slackapi/node-slack-sdk#1132: "POST body params" still supported
  *     but optional — header is preferred.)
  *   - `@slack/web-api` sets `headers.Authorization = Bearer <token>` from
- *     the constructor token (WebClient.js:153-154), independent of the
- *     body.
+ *     the constructor token and from a call's own `token` option,
+ *     independent of the body.
  *
- * Mechanism: the SDK exposes a `requestInterceptor` option on the
- * `WebClient` constructor. Axios interceptors execute in reverse
- * registration order, so by the time our interceptor fires, the SDK's
- * own `serializeApiCallData` has already run and `config.data` is the
- * serialized form-urlencoded string. We drop `token` from it.
- *
- * Known gap: multipart/form-data requests (file uploads) keep the token
- * in a binary FormData body. Not exercised by the agent today; fix when
- * we add Slack file uploads.
+ * Mechanism: the SDK sends every request through the `fetch` option on the
+ * `WebClient` constructor, after it has serialized the body into a
+ * form-urlencoded string, or a `FormData` for a file upload. We drop `token`
+ * from either. Bolt's `respond()` sends a JSON body through the same `fetch`,
+ * and that passes unchanged.
  */
-import { WebClient, WebClientOptions } from '@slack/web-api';
-import type { InternalAxiosRequestConfig } from 'axios';
-import { logger } from '../logger';
+import { type FetchFunction, WebClient, WebClientOptions } from '@slack/web-api';
 
-export function stripBodyToken(config: InternalAxiosRequestConfig): InternalAxiosRequestConfig {
-  const data = config.data;
-  if (typeof data === 'string') {
-    const params = new URLSearchParams(data);
+function isFormEncoded(headers: Record<string, string> | undefined): boolean {
+  return Object.entries(headers ?? {}).some(
+    ([name, value]) =>
+      name.toLowerCase() === 'content-type' && value.startsWith('application/x-www-form-urlencoded'),
+  );
+}
+
+export const stripBodyToken: FetchFunction = (url, init) => {
+  const body = init?.body;
+  if (typeof body === 'string' && isFormEncoded(init?.headers)) {
+    const params = new URLSearchParams(body);
     if (params.has('token')) {
       params.delete('token');
-      config.data = params.toString();
+      return fetch(url, { ...init, body: params.toString() });
     }
-    return config;
+  } else if (body instanceof FormData) {
+    body.delete('token');
   }
-  // FormData path (file uploads) — token lives inside the multipart body
-  // as an appended field. The `form-data` package has no delete(), and
-  // no agent flow currently uploads files, so log once and move on.
-  if (data && typeof data === 'object' && typeof (data as { getBoundary?: unknown }).getBoundary === 'function') {
-    logger.warn('[SlackWebClient] multipart body seen; token may leak in body. File-upload path not supported by body-token stripper.');
-  }
-  return config;
-}
+  return fetch(url, init);
+};
 
 /**
  * Bounded request policy for every Slack call this runtime makes.
@@ -64,7 +60,7 @@ export function stripBodyToken(config: InternalAxiosRequestConfig): InternalAxio
  * ignoring Slack's own backoff would be worse than waiting it out.)
  *
  * The deadline is sized for the largest thing this client sends, not the
- * smallest: `files.uploadV2` POSTs the file bytes on this same axios instance,
+ * smallest: `files.uploadV2` POSTs the file bytes through this same client,
  * so `timeout` has to cover a multi-MB upload. Callers that only ever exchange
  * JSON — the boot `auth.test`, which the port waits behind — pass a tighter one.
  *
@@ -91,6 +87,6 @@ export const BOUNDED_SLACK_CLIENT_OPTIONS: WebClientOptions = {
 
 export class SlackWebClient extends WebClient {
   constructor(token?: string, opts?: WebClientOptions) {
-    super(token, { ...BOUNDED_SLACK_CLIENT_OPTIONS, ...opts, requestInterceptor: stripBodyToken });
+    super(token, { ...BOUNDED_SLACK_CLIENT_OPTIONS, ...opts, fetch: stripBodyToken });
   }
 }

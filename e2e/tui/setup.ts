@@ -58,7 +58,7 @@ export async function setupRuntime(opts: SetupOptions = {}): Promise<RuntimeTest
   // Apply the SQLite schema to the fresh DB. `db push` is the right tool for
   // a one-shot dev/test DB — no migration history needed.
   execSync(
-    `npx prisma db push --schema=${SQLITE_SCHEMA} --skip-generate --accept-data-loss`,
+    `npx prisma db push --schema=${SQLITE_SCHEMA} --accept-data-loss`,
     {
       cwd: AGENT_RUNTIME_DIR,
       env: { ...process.env, DATABASE_URL: `file:${dbPath}` },

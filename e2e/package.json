@@ -17,21 +17,21 @@
     "test:run": "vitest run -c vitest.unit.config.ts"
   },
   "devDependencies": {
-    "@amiceli/vitest-cucumber": "^6.5.0",
-    "@aws-sdk/client-s3": "^3.1029.0",
-    "@playwright/test": "^1.52.0",
-    "@prisma/client": "^6.6.0",
-    "@slack/web-api": "^7.14.1",
-    "@types/better-sqlite3": "^7.6.13",
+    "@amiceli/vitest-cucumber": "^8.0.0",
+    "@aws-sdk/client-s3": "^3.1149.0",
+    "@playwright/test": "^1.64.0",
+    "@prisma/client": "^7.10.0",
+    "@slack/web-api": "^8.2.0",
+    "@types/better-sqlite3": "^9.6.0",
     "agentic-evals": "2.1.0",
-    "better-sqlite3": "^12.9.0",
-    "express": "^5.1.0",
-    "jose": "^6.0.11",
+    "better-sqlite3": "^13.0.3",
+    "express": "^5.3.0",
+    "jose": "^6.2.12",
     "node-pty": "^1.1.0",
-    "playwright-bdd": "^8.5.0",
-    "prisma": "^6.6.0",
-    "strip-ansi": "^7.1.0",
-    "vitest": "^4.1.11"
+    "playwright-bdd": "^9.2.1",
+    "prisma": "^7.10.0",
+    "strip-ansi": "^7.2.0",
+    "vitest": "^5.0.3"
   },
   "devDependenciesNotes": {
     "@types/express": "provided by root overrides"

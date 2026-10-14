@@ -10,7 +10,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Hash, MessagesSquare, ScrollText, Plus, Trash2, Slack, Star } from 'lucide-react';
+import { Hash, MessagesSquare, ScrollText, Plus, Trash2, Star } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Page } from '@/components/layout/page';
 import { PageHeader } from '@/components/layout/page-header';
@@ -87,7 +87,7 @@ function ChannelsPage() {
       {!isConfigured && !isTeamsConfigured ? (
         <Card>
           <EmptyState
-            icon={Slack}
+            icon={MessagesSquare}
             title="No messaging channel configured"
             description={
               <>
@@ -105,7 +105,7 @@ function ChannelsPage() {
             <div className="space-y-4">
               <div className="flex items-center justify-between gap-3 rounded-xl bg-card p-4 ring-1 ring-foreground/10">
                 <div className="flex items-center gap-3">
-                  <IconTile icon={Slack} tone="primary" size="md" />
+                  <IconTile icon={Hash} tone="primary" size="md" />
                   <div>
                     <h3 className="text-base font-semibold">Slack</h3>
                     <p className="text-xs text-muted-foreground">Connected workspace</p>
