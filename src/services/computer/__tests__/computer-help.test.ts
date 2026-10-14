@@ -492,13 +492,14 @@ describe('the help a turn is told about', () => {
   const inThread = { ...help, id: 'own', threadId: 'thread' };
   const broadcast = { ...help, id: 'broadcast', threadId: 'latest', broadcast: true as const };
   const rows = (...items: object[]) => items.map((item) => ({ blocks: [item] })) as never;
+  const turn = { agentId: 'agent', userId: 'user', mode: 'chat' };
 
   it("is the conversation's own help and every broadcast request still waiting", async () => {
     vi.mocked(prisma.conversationMessage.findMany)
       .mockResolvedValueOnce(rows(inThread))
       .mockResolvedValueOnce(rows(broadcast));
 
-    expect(await computerHelpService.forTurn('agent', 'user', 'thread')).toEqual([
+    expect(await computerHelpService.forTurn({ ...turn, threadId: 'thread' })).toEqual([
       inThread,
       broadcast,
     ]);
@@ -509,13 +510,14 @@ describe('the help a turn is told about', () => {
       .mockResolvedValueOnce(rows(broadcast))
       .mockResolvedValueOnce(rows(broadcast));
 
-    expect(await computerHelpService.forTurn('agent', 'user', 'latest')).toEqual([broadcast]);
+    expect(await computerHelpService.forTurn({ ...turn, threadId: 'latest' })).toEqual([broadcast]);
   });
 
-  it('is the waiting broadcast requests for a run with no conversation', async () => {
-    vi.mocked(prisma.conversationMessage.findMany).mockResolvedValueOnce(rows(broadcast));
-
-    expect(await computerHelpService.forTurn('agent', 'user')).toEqual([broadcast]);
-    expect(prisma.conversationMessage.findMany).toHaveBeenCalledTimes(1);
-  });
+  it.each(['cron', 'heartbeat', 'webhook'])(
+    'is nothing for a %s run with no conversation, whose computer_help joins a waiting request',
+    async (mode) => {
+      expect(await computerHelpService.forTurn({ ...turn, mode })).toEqual([]);
+      expect(prisma.conversationMessage.findMany).not.toHaveBeenCalled();
+    },
+  );
 });
