@@ -333,6 +333,13 @@ describe('system prompt text', () => {
     );
   });
 
+  it('goal mode tells the agent its turn is posted in the goal conversation, so it does not send it there too', async () => {
+    const prompt = await promptText(createTestAgentContext(), 'goal');
+    expect(prompt).toContain(
+      "Each turn's final message is posted top-level in the conversation or channel this goal reports into, so do not also post it there with send_message or another messaging tool; that sends it twice.",
+    );
+  });
+
   it('states the claims-and-evidence rule', async () => {
     const prompt = await promptText(createTestAgentContext(), 'chat');
     expect(prompt).toContain('# Claims and Evidence');
