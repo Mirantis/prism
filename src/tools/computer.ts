@@ -19,6 +19,19 @@ const pictures = new WeakMap<object, string[]>();
 
 const WAIT_MINUTES = HELP_ANSWER_WAIT_MS / 60_000;
 
+/**
+ * Added to a new help request's result in a web chat, where the model decides whether to end its
+ * turn, so a notification tool the runtime has gets called. A chat channel already notifies the
+ * user, and a voice user is on the call.
+ */
+const ALERT_THE_USER =
+  'The user may not be watching this conversation. If you have a notification tool for alerting them, call it now; do not message them through another service.';
+
+/** The help result's nudge to alert the user, for the turns that need it. */
+function alertTheUser(use: ComputerUse): string {
+  return use.mode !== 'voice' && (use.originChannel ?? 'websocket') === 'websocket' ? ` ${ALERT_THE_USER}` : '';
+}
+
 /** What a run that waited for its help request is told, by answer. */
 const HELP_ANSWERS: Record<HelpAnswer, string> = {
   continued:
@@ -170,8 +183,8 @@ export function getComputerTools(
         message: repeated
           ? `A help request is already waiting for the user, so nothing new was sent. It asks: ${JSON.stringify(help.reason)}. If something else blocks this run, say what in your reply. Continue independent work or finish this turn while waiting for the user.`
           : desktop
-            ? 'No sign-in form was found, so the user is asked to take over the desktop instead. Continue independent work or finish this turn while waiting for the user.'
-            : 'Help requested. Continue independent work or finish this turn while waiting for the user.',
+            ? `No sign-in form was found, so the user is asked to take over the desktop instead.${alertTheUser(use)} Continue independent work or finish this turn while waiting for the user.`
+            : `Help requested.${alertTheUser(use)} Continue independent work or finish this turn while waiting for the user.`,
       };
     },
   });
