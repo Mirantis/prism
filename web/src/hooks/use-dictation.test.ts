@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { renderHook, act, waitFor, cleanup } from '@testing-library/react';
 
 const startVoiceAudio = vi.fn();
 
@@ -43,6 +43,7 @@ describe('useDictation', () => {
   });
 
   afterEach(() => {
+    cleanup();
     vi.useRealTimers();
   });
 
@@ -245,5 +246,18 @@ describe('useDictation', () => {
 
     expect(result.current.status).toBe('recording');
     expect(result.current.error).toBeNull();
+  });
+
+  it('opens nothing when the page closes while the microphone prompt is open', async () => {
+    let grant: (value: typeof audio) => void = () => {};
+    startVoiceAudio.mockImplementationOnce(() => new Promise((resolve) => (grant = resolve)));
+    const { result, unmount } = render();
+
+    act(() => result.current.start());
+    unmount();
+    await act(async () => grant(audio));
+
+    expect(audio.stop).toHaveBeenCalled();
+    expect(sendDictationStart).not.toHaveBeenCalled();
   });
 });

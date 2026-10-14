@@ -1,6 +1,6 @@
 # The agent's computer
 
-Prism has its own desktop and browser. Ask it to use websites or desktop apps in chat, goals, or scheduled tasks. Open **Computer** in the [Web UI](web-ui.md) at any time to watch it work.
+Prism has its own desktop and browser. Ask it to use websites or desktop apps in chat, goals, or scheduled tasks. Open **Computer** in the [Web UI](web-ui.md) at any time to watch it work. Prism [reads a public page](tools.md#reading-web-pages) without the browser, so ask it to use its computer when you want to watch it read.
 
 ## What you need
 

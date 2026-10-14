@@ -226,7 +226,8 @@ export function getMeetingTools(input: MeetingToolsInput): Record<string, Tool> 
         'Use a web browser: open a page, click things, type, scroll, and work in several ' +
         'tabs. It runs beside the meeting, on the same screen `share_screen` presents — ' +
         'so this is how you put something in front of the room, and how you look ' +
-        'something up on the web in a call. Every command answers with where the page is, ' +
+        'something up on the web in a call. To only read a page you have the address of, ' +
+        'web_fetch is faster. Every command answers with where the page is, ' +
         'what it says, the names of the links, buttons and fields on it, and the list of ' +
         'open tabs. Click and type by those names, and switch tabs by those numbers. ' +
         'One command per call, and only while you are in a meeting.',

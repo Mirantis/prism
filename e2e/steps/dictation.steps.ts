@@ -20,7 +20,20 @@ import {
   waitForScreen,
 } from '../support/voice-model';
 
-const { When, Then } = createBdd();
+const { Given, When, Then } = createBdd();
+
+/** The microphone the page asked for, held back until a step opens it. */
+interface SlowMicrophone {
+  requested: boolean;
+  open: () => void;
+  tracks: MediaStreamTrack[];
+}
+
+declare global {
+  interface Window {
+    slowMicrophone: SlowMicrophone;
+  }
+}
 
 /** The mock's transcript, whatever the fake device happened to play. */
 const TRANSCRIPT = /^Mock dictation of \d+ ms\.$/;
@@ -47,6 +60,53 @@ When('I record a voice message from the composer', async ({ page }) => {
     (state) => state.inboundMs - getBaseline().inboundMs >= MICROPHONE_MS,
     describeComposer(page),
   );
+});
+
+Given('the browser is slow to open the microphone', async ({ page }) => {
+  // The chat is already loaded, so the live page gets the delay.
+  await page.evaluate(() => {
+    const devices = navigator.mediaDevices;
+    const getUserMedia = devices.getUserMedia.bind(devices);
+    const slow: SlowMicrophone = { requested: false, open: () => {}, tracks: [] };
+    window.slowMicrophone = slow;
+    devices.getUserMedia = (constraints) =>
+      new Promise((resolve, reject) => {
+        slow.requested = true;
+        slow.open = () =>
+          void getUserMedia(constraints).then((stream) => {
+            slow.tracks.push(...stream.getTracks());
+            resolve(stream);
+          }, reject);
+      });
+  });
+});
+
+When('I start a voice message from the composer', async ({ page }) => {
+  await page.getByTestId('dictation-button').click();
+  await page.waitForFunction(() => window.slowMicrophone.requested);
+});
+
+When('I open Scheduled Tasks from the sidebar', async ({ page }) => {
+  await page.getByRole('link', { name: 'Scheduled Tasks', exact: true }).click();
+  await expect(page).toHaveURL(/\/cron$/);
+  await expect(page.getByTestId('dictation-button')).toHaveCount(0);
+});
+
+When('the browser opens the microphone', async ({ page }) => {
+  await page.evaluate(() => window.slowMicrophone.open());
+  await page.waitForFunction(() => window.slowMicrophone.tracks.length > 0);
+});
+
+Then("the browser's microphone is off", async ({ page }) => {
+  await page.waitForFunction(() =>
+    window.slowMicrophone.tracks.every((track) => track.readyState === 'ended'),
+  );
+});
+
+Then('the voice model opened no session', async () => {
+  const state = await readState();
+  expect(state.managedHandshakes - getBaseline().managedHandshakes, describeExchange(state)).toBe(0);
+  expect(state.sessions, describeExchange(state)).toBe(0);
 });
 
 When('I send the voice message', async ({ page }) => {

@@ -805,7 +805,7 @@ locally.
 ### Tools
 
 1. **Built-ins** — direct AI SDK tools in `src/tools/` (memory, agent config, cron,
-   goals, shell, the coding sub-agent, share-file, skills, meetings), assembled by
+   goals, shell, the coding sub-agent, share-file, web pages, skills, meetings), assembled by
    `lib/tool-collection.ts#collectTools` and filtered per invocation mode. There is
    **no internal MCP server** — these are in-process closures, not an HTTP surface.
 2. **Lens Agents MCP** — kubectl, GitHub, AWS tools (external, via `NEXUS_MCP_URL`).
@@ -973,7 +973,8 @@ src/
 │   ├── share-file.ts           # Deliver a workspace file to the user as an attachment
 │   ├── meeting.ts              # Voice meetings (join, leave, set the microphone, status, speaker, read and send chat)
 │   ├── shell/                  # shell_exec/read/write/edit, spawn+stdio, coding_agent (+ the task manager behind it)
-│   └── skills/                 # The `skill` tool (loads a SKILL.md body on demand)
+│   ├── skills/                 # The `skill` tool (loads a SKILL.md body on demand)
+│   └── web/                    # web_fetch: one GET of a public page from the runtime process, HTML as markdown
 ├── routes/
 │   ├── management.ts           # Management API for backend to push heartbeat/slack-heartbeat-trigger events
 │   ├── activity.ts             # Activity page reads: token totals, paged tool calls, paged webhook runs
@@ -1056,6 +1057,8 @@ src/
 │   ├── model-call.ts           # The only module calling `generateText`/`generateObject`; records every call's usage
 │   ├── step-usage.ts           # Token usage: SDK usage → the recorded shape, and folding a turn's steps for the invocation total
 │   ├── media-store.ts          # Attachment bytes as files under `<data dir>/media`: write/read/remove, filename sanitizing, stray-file reaper
+│   ├── public-url.ts           # Which addresses an outbound read may reach: the public internet only, every DNS answer checked when the connection resolves it
+│   ├── html-to-markdown.ts     # A page's main text as markdown (domino builds the tree, Readability on linkedom, then turndown), else its whole body
 │   ├── teams-config.ts         # Env-sourced Teams connection singleton (no network validation — the SDK validates on initialize)
 │   ├── tool-output-store.ts    # The saved whole copy of an oversized tool result under `<data dir>/tool-outputs`: write/read/remove, TTL reaper. The notice hands the agent the path and it reads the file with the shell. No DB row, so mtime is the whole lifecycle
 │   ├── prisma.ts               # Prisma client singleton (runtime database)

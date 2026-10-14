@@ -23,3 +23,13 @@ Feature: Voice messages in the browser
     Then the composer offers the text field again
     And the voice model opened a session and transcribed nothing
     And the voice model has no session open
+
+  Scenario: A microphone that opens after I leave the chat records nothing
+    Given I open a fresh chat
+    And the voice model has heard nothing yet
+    And the browser is slow to open the microphone
+    When I start a voice message from the composer
+    And I open Scheduled Tasks from the sidebar
+    And the browser opens the microphone
+    Then the browser's microphone is off
+    And the voice model opened no session

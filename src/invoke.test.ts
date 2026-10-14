@@ -696,9 +696,10 @@ describe('invoke', () => {
 
       const callArgs = mockGenerateText.mock.calls[0][0];
       // 3 memory + 4 cron + 1 agent-config + 1 shell + 1 share_file + 2 goal + 1 skill
-      // + 2 attachment (hydrate_attachment, view_attachment)
-      expect(Object.keys(callArgs.tools)).toHaveLength(15);
+      // + 2 attachment (hydrate_attachment, view_attachment) + 1 web_fetch
+      expect(Object.keys(callArgs.tools)).toHaveLength(16);
       expect(Object.keys(callArgs.tools)).toContain('share_file');
+      expect(Object.keys(callArgs.tools)).toContain('web_fetch');
       expect(Object.keys(callArgs.tools)).toContain('create_goal');
       expect(Object.keys(callArgs.tools)).toContain('get_goal');
       expect(Object.keys(callArgs.tools)).toContain('skill');
@@ -715,6 +716,8 @@ describe('invoke', () => {
       expect(toolNames).not.toContain('create_goal');
       expect(toolNames).not.toContain('get_goal');
       expect(toolNames).toContain('shell_exec');
+      // A subagent has no computer, so this is how it reads a page.
+      expect(toolNames).toContain('web_fetch');
     });
 
     it.each(['heartbeat', 'cron', 'webhook'] as const)(

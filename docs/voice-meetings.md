@@ -559,7 +559,8 @@ In a call the agent can **use a web browser**: open a page, click a link or a bu
 type into a field, scroll. It runs in a tab beside the meeting, and that tab is what a
 screen share shows — so "open the dashboard and share your screen" is one request the
 agent can carry out end to end. Ask it to open the page first: the room does not need to
-watch it find one.
+watch it find one. To answer from a page the room does not need to see, it reads the page
+without the browser.
 
 Each step comes back to the agent as the page's address, its text and the names of the
 links, buttons and fields on it, and it works from those names — so tell it what the

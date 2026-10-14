@@ -168,6 +168,7 @@ Out of the box, the agent has tools for:
   cron expressions.
 - **Shell** — run commands, read/write/edit files, spawn long-running
   processes, manage their I/O, and delegate coding tasks to Claude Code or Codex.
+- **Web pages** — read a public page's text without opening a browser.
 
 ### Memory
 

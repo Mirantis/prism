@@ -186,6 +186,13 @@ names each action they refused. A Codex task runs without Codex's sandbox and ca
 write anywhere its user can; a Codex plan task is read-only by instruction only. See
 [Configuration](configuration.md#what-a-coding-task-may-do).
 
+## Reading web pages
+
+Give the agent the address of a public page and it reads the page's text without
+opening a browser. It opens a page that needs a sign-in or JavaScript in
+[its computer](computer.md). For a page on a private network, it uses its computer
+or the shell.
+
 ## Sharing files
 
 The agent can deliver a file from its workspace to you as a **downloadable
