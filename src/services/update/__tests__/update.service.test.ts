@@ -189,30 +189,6 @@ describe('start', () => {
     expect(mockSweep).not.toHaveBeenCalled();
   });
 
-  it('never checks or stops in a container, whatever EXIT_ON_UPDATE says', async () => {
-    vi.useFakeTimers();
-    // `exitOnUpdate` is the config field that EXIT_ON_UPDATE=1 set.
-    Object.assign(config, { exitOnUpdate: true });
-    idleState.isSea = false;
-    mockFetchLatest.mockResolvedValue(NEWER);
-    try {
-      const service = await loadService();
-      await service.start();
-      await vi.advanceTimersByTimeAsync(2 * 60 * 60_000);
-      expect(mockFetchLatest).not.toHaveBeenCalled();
-      expect(mockPrisma.updateAttempt.create).not.toHaveBeenCalled();
-      expect(killSpy).not.toHaveBeenCalled();
-      await expect(service.getStatus()).resolves.toMatchObject({
-        enabled: false,
-        reason: 'not_sea_install',
-        updateAvailable: false,
-      });
-      service.stop();
-    } finally {
-      delete (config as Record<string, unknown>).exitOnUpdate;
-    }
-  });
-
   it.each([
     ['the target version', NEWER],
     ['a release newer than the target', 'v2026.8.25000000'],

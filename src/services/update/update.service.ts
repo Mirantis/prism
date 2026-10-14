@@ -421,13 +421,14 @@ class UpdateService {
 
   /**
    * The boot half of the restart sentinel: every attempt still PENDING was
-   * interrupted by its own handoff. It succeeded exactly when this process
-   * runs the version it targeted.
+   * interrupted by its own handoff. It succeeded when this process runs the
+   * version it targeted or a newer release.
    */
   private async resolvePendingAttempts(): Promise<void> {
     const pending = await prisma.updateAttempt.findMany({ where: { outcome: 'PENDING' } });
     for (const row of pending) {
-      // A boot on the target release or on any newer release counts as success.
+      // This process can run a release newer than the target: the user can run
+      // the installer by hand while the update is pending.
       const success =
         RELEASE_VERSION_RE.test(config.appVersion) && compareReleaseVersions(config.appVersion, row.versionTo) >= 0;
       await this.finishAttempt(row, success ? 'SUCCESS' : 'FAILURE', success ? null : 'restart_version_mismatch', null);
