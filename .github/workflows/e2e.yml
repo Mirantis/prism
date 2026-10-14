@@ -6,6 +6,7 @@ on:
     paths:
       - 'src/**'
       - 'prisma/**'
+      - 'prisma.config.ts'
       - 'e2e/**'
       - 'web/**'
       - 'cli/**'
@@ -18,6 +19,7 @@ on:
     paths:
       - 'src/**'
       - 'prisma/**'
+      - 'prisma.config.ts'
       - 'e2e/**'
       - 'web/**'
       - 'cli/**'

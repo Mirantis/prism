@@ -1,17 +1,13 @@
 /**
- * Resolve the on-disk path for the SQLite database the way Prisma does
- * it, so every non-Prisma consumer (sqlite-vec bootstrap, backup/restore
- * service) ends up opening the same file Prisma reads and writes.
+ * Resolve the on-disk path for the SQLite database, so every connection the
+ * runtime opens (the Prisma client, the sqlite-vec bootstrap, backup/restore)
+ * reads and writes the same file.
  *
- * Prisma's rule for SQLite (per the official docs): relative paths in
- * `DATABASE_URL=file:...` are resolved relative to the **directory
- * containing the schema file**, not the process cwd. With our schema at
- * `prisma/sqlite/schema.prisma`, `file:./agent-local.db` resolves to
- * `<agent-runtime>/prisma/sqlite/agent-local.db`. better-sqlite3 with a
- * bare relative path would resolve against `process.cwd()` instead, which
- * is a different file — that mismatch silently broke vec0 in dev (the
- * memory_entries table lived in Prisma's file, vec0 in cwd's) and was
- * about to bite the backup feature the same way.
+ * Relative paths in `DATABASE_URL=file:...` resolve against the **directory
+ * containing the schema file**, not the process cwd: `file:./agent-local.db`
+ * is `<agent-runtime>/prisma/sqlite/agent-local.db`. `prisma.config.ts`
+ * applies the same rule for the Prisma CLI, so migrations land in that file
+ * too.
  *
  * Absolute paths (the production `file:/data/agent.db` shape) pass through
  * unchanged.

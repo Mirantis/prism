@@ -651,7 +651,7 @@ class SlackAdapterService implements ChannelAdapter {
     const isSocketMode = Boolean(appToken);
 
     // Create Bolt app. clientOptions forwards to the internal WebClient:
-    //   - `requestInterceptor: stripBodyToken`: drops the `token` field
+    //   - `fetch: stripBodyToken`: drops the `token` field
     //     from outbound bodies so bot-token auth flows only via
     //     `Authorization` header — required when the bot token is a
     //     platform `__nexus_cred:<uuid>__` sentinel (header-only rewrite).
@@ -672,7 +672,7 @@ class SlackAdapterService implements ChannelAdapter {
     // that client would trade a rare 30-minute boot stall for a bot that silently
     // stops receiving after any blip, so the socket keeps the SDK's policy and
     // only inherits the body-token strip. Consequences of it being a separate
-    // literal: anything the socket leg also needs — `agent` for a proxy, say —
+    // literal: anything the socket leg also needs — a proxying `fetch`, say —
     // has to be added to *both*, and its WebClient logs through a plain
     // level-matched logger rather than Bolt's named one.
     const app = new App({
@@ -681,8 +681,8 @@ class SlackAdapterService implements ChannelAdapter {
         appToken,
         socketMode: true,
       }),
-      clientOptions: { ...BOUNDED_SLACK_CLIENT_OPTIONS, requestInterceptor: stripBodyToken },
-      installerOptions: { clientOptions: { requestInterceptor: stripBodyToken } },
+      clientOptions: { ...BOUNDED_SLACK_CLIENT_OPTIONS, fetch: stripBodyToken },
+      installerOptions: { clientOptions: { fetch: stripBodyToken } },
       logLevel: process.env.NODE_ENV === 'production' ? LogLevel.WARN : LogLevel.INFO,
     });
 

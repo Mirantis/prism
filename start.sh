@@ -4,9 +4,8 @@
 # Responsibilities:
 #   1. Default DATABASE_URL BEFORE the prisma CLI runs. Node's
 #      `src/config.ts` has the same default but it loads after
-#      `prisma migrate deploy`, so we'd get a confusing
-#      `Environment variable not found: DATABASE_URL` from prisma if
-#      the operator doesn't pre-set it. Mirrors the runtime default so
+#      `prisma migrate deploy`, which finds no database URL when the
+#      operator doesn't pre-set it. Mirrors the runtime default so
 #      an unconfigured `docker run` still works.
 #   2. Hand the sandbox's TLS-interception CAs to Chromium as managed
 #      enterprise policy — the browser cannot see them any other way.

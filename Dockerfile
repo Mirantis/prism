@@ -20,7 +20,7 @@ ENV HUSKY=0
 # Opt out of Prisma CLI telemetry (checkpoint pings on generate/migrate).
 ENV CHECKPOINT_DISABLE=1
 
-# openssl is needed by Prisma's query engine on Debian slim (not shipped by default).
+# openssl is needed by Prisma's engines on Debian slim (not shipped by default).
 RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
 
 RUN npm ci --ignore-scripts
@@ -28,6 +28,7 @@ RUN npm ci --ignore-scripts
 # Copy source for the runtime
 COPY src ./src
 COPY prisma ./prisma
+COPY prisma.config.ts ./
 COPY tsconfig.json ./
 
 # Generate the Prisma client. Skipped by --ignore-scripts above, so do it explicitly.
@@ -147,11 +148,6 @@ COPY cli/package.json ./cli/
 
 RUN npm ci --workspace=prism-cli --include-workspace-root --omit=dev --ignore-scripts
 
-# `npm ci --ignore-scripts` skipped better-sqlite3's prebuild-install step
-# (which downloads the platform-specific native binding). Rebuild just that
-# package so the SQLite + sqlite-vec path works.
-RUN npm rebuild better-sqlite3
-
 # Coding-agent CLIs inherit credentials from the runtime environment.
 RUN npm install -g @anthropic-ai/claude-code @openai/codex
 
@@ -253,6 +249,7 @@ USER root
 
 # Copy the Prisma schema and generate the client for runtime
 COPY prisma ./prisma
+COPY prisma.config.ts ./
 RUN npx prisma generate --schema=prisma/sqlite/schema.prisma
 
 # Copy built application

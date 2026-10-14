@@ -2,8 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockPrisma, mockEmbeddingService } = vi.hoisted(() => ({
   mockPrisma: {
-    $queryRawUnsafe: vi.fn(),
-    $executeRawUnsafe: vi.fn(),
+    memoryEntry: { findMany: vi.fn() },
     $disconnect: vi.fn(),
   },
   mockEmbeddingService: {
@@ -20,8 +19,7 @@ import { runBackfill } from './backfill-embeddings';
 describe('backfill-embeddings', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    mockPrisma.$queryRawUnsafe.mockReset();
-    mockPrisma.$executeRawUnsafe.mockReset();
+    mockPrisma.memoryEntry.findMany.mockReset();
     mockEmbeddingService.generateEmbeddings.mockReset();
     mockEmbeddingService.storeEmbedding.mockReset();
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -40,7 +38,7 @@ describe('backfill-embeddings', () => {
     ];
     const e1 = Array.from({ length: 1024 }, () => 0.1);
     const e2 = Array.from({ length: 1024 }, () => 0.2);
-    mockPrisma.$queryRawUnsafe.mockResolvedValueOnce(entries).mockResolvedValueOnce([]);
+    mockPrisma.memoryEntry.findMany.mockResolvedValueOnce(entries).mockResolvedValueOnce([]);
     // BATCH_SIZE=1 — backfill calls generateEmbeddings once per entry (the
     // rate-limit safety from main: serial single-entry calls + 1s pause).
     mockEmbeddingService.generateEmbeddings
@@ -56,12 +54,29 @@ describe('backfill-embeddings', () => {
     expect(mockEmbeddingService.generateEmbeddings).toHaveBeenNthCalledWith(2, 'agent-1', ['second memory']);
     expect(mockEmbeddingService.storeEmbedding).toHaveBeenNthCalledWith(1, 'entry-1', e1);
     expect(mockEmbeddingService.storeEmbedding).toHaveBeenNthCalledWith(2, 'entry-2', e2);
-    expect(mockPrisma.$executeRawUnsafe).not.toHaveBeenCalled();
+  });
+
+  it('reads the next page after the last id of the previous one', async () => {
+    const entries = [
+      { id: 'entry-1', agentId: 'agent-1', content: 'first memory' },
+      { id: 'entry-2', agentId: 'agent-1', content: 'second memory' },
+    ];
+    mockPrisma.memoryEntry.findMany.mockResolvedValueOnce(entries).mockResolvedValueOnce([]);
+    mockEmbeddingService.generateEmbeddings.mockResolvedValue(null);
+
+    await runBackfill();
+
+    expect(mockPrisma.memoryEntry.findMany).toHaveBeenCalledTimes(2);
+    expect(mockPrisma.memoryEntry.findMany.mock.calls[0][0].where).toEqual({ embedding: null });
+    expect(mockPrisma.memoryEntry.findMany.mock.calls[1][0].where).toEqual({
+      embedding: null,
+      id: { gt: 'entry-2' },
+    });
   });
 
   it('counts generation failure for a batch and continues without throwing', async () => {
     const entries = [{ id: 'entry-1', agentId: 'agent-1', content: 'first memory' }];
-    mockPrisma.$queryRawUnsafe.mockResolvedValueOnce(entries).mockResolvedValueOnce([]);
+    mockPrisma.memoryEntry.findMany.mockResolvedValueOnce(entries).mockResolvedValueOnce([]);
     mockEmbeddingService.generateEmbeddings.mockResolvedValue(null);
 
     const result = await runBackfill();
@@ -77,7 +92,7 @@ describe('backfill-embeddings', () => {
     ];
     const e1 = Array.from({ length: 1024 }, () => 0.1);
     const e2 = Array.from({ length: 1024 }, () => 0.2);
-    mockPrisma.$queryRawUnsafe.mockResolvedValueOnce(entries).mockResolvedValueOnce([]);
+    mockPrisma.memoryEntry.findMany.mockResolvedValueOnce(entries).mockResolvedValueOnce([]);
     mockEmbeddingService.generateEmbeddings
       .mockResolvedValueOnce([e1])
       .mockResolvedValueOnce([e2]);
@@ -95,7 +110,7 @@ describe('backfill-embeddings', () => {
     // With BATCH_SIZE=1, "count mismatch" means the model returned ≠ 1
     // embedding for a single-text batch. Simulate by returning an empty array.
     const entries = [{ id: 'entry-1', agentId: 'agent-1', content: 'first memory' }];
-    mockPrisma.$queryRawUnsafe.mockResolvedValueOnce(entries).mockResolvedValueOnce([]);
+    mockPrisma.memoryEntry.findMany.mockResolvedValueOnce(entries).mockResolvedValueOnce([]);
     mockEmbeddingService.generateEmbeddings.mockResolvedValue([]);
 
     const result = await runBackfill();

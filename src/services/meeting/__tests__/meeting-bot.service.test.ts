@@ -316,6 +316,7 @@ vi.mock('../../../config', () => ({
     openaiRealtimeVoice: undefined,
     realtimeProvider: 'azure',
     realtimeSource: 'managed',
+    databaseUrl: 'file::memory:',
   },
 }));
 

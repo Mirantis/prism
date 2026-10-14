@@ -8,12 +8,10 @@
  * nothing staged.
  *
  * Why Node instead of pure shell: the live DB path is encoded in
- * `DATABASE_URL` as a `file:…` URL that Prisma resolves *relative to the
- * schema directory*, not the current working directory. That convention
- * lives in `lib/sqlite-path.ts` and would be brittle to mirror in shell.
- * Loading `dotenv/config` first lets dev pick the URL up from `.env`
- * before prisma's own dotenv hook runs (which would be too late — it
- * happens inside `prisma migrate deploy` further down the boot order).
+ * `DATABASE_URL` as a `file:…` URL that resolves *relative to the schema
+ * directory*, not the current working directory. That convention lives in
+ * `lib/sqlite-path.ts` and would be brittle to mirror in shell. Loading
+ * `dotenv/config` first lets dev pick the URL up from `.env`.
  */
 
 import 'dotenv/config';

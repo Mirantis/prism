@@ -5,7 +5,7 @@
  * The prism-server SEA bundle keeps its native deps external; at runtime the
  * extracted bundle resolves them from a `node_modules/` that sits next to the
  * binary. This copies that closure — better-sqlite3, @prisma/client (+ the
- * generated .prisma/client engine), sqlite-vec (+ the platform subpkg) and
+ * generated .prisma/client), sqlite-vec (+ the platform subpkg) and
  * their transitive deps — into `dist-sea/<os-arch>/node_modules`, and the
  * built SPA into `dist-sea/<os-arch>/web`.
  *
@@ -82,12 +82,12 @@ for (const [name, dir] of pkgs) {
   console.log(`[collect-natives] ${name}`);
 }
 
-// 2. The generated Prisma client + query engine (a sibling dir, not a package
-//    dependency, so the closure walk misses it).
+// 2. The generated Prisma client (a sibling dir, not a package dependency, so
+//    the closure walk misses it).
 const prismaGen = path.join(ROOT_MODULES, '.prisma');
 if (existsSync(prismaGen)) {
   cpSync(prismaGen, path.join(OUT_MODULES, '.prisma'), { recursive: true, dereference: true });
-  console.log('[collect-natives] .prisma/client (generated + engine)');
+  console.log('[collect-natives] .prisma/client (generated)');
 } else {
   const message = '[collect-natives] ERROR: node_modules/.prisma not found — run `npm run prisma:generate`';
   console.error(message);
