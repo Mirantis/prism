@@ -473,6 +473,21 @@ describe('a background run that asks for help', () => {
     expect(result).toMatchObject({ success: true, message: /^Help requested\./ });
     expect(computerHelpService.awaiting()).toEqual([]);
   });
+
+  it.each([
+    ['a web chat', { mode: 'chat' }, true],
+    ['a web chat that gets the desktop', { mode: 'chat', desktop: true }, true],
+    ['a chat channel, which notifies the user itself', { mode: 'chat', originChannel: 'slack' as const }, false],
+    ['a voice call, where the user is listening', { mode: 'voice' }, false],
+  ])('in %s, says whether to alert the user', async (_name, { desktop, ...fields }, alerts) => {
+    const result = (await getComputerTools(createUse({ ...fields, threadId: 'thread' })).computer_help.execute!(
+      { reason: 'Sign in', credentials: Boolean(desktop) },
+      options,
+    )) as { message: string };
+
+    if (desktop) expect(result.message).toMatch(/take over the desktop/);
+    expect(result.message.includes('If you have a notification tool for alerting them, call it now')).toBe(alerts);
+  });
 });
 
 describe('the help a turn is told about', () => {
