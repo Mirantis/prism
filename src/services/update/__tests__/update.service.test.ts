@@ -1,7 +1,7 @@
 /**
  * Update orchestrator tests: the gate matrix, the check loop (announce once,
- * defer while busy, auto-apply when idle), the restart sentinel, the failure
- * paths of applyUpdate, and the container restart on a new release.
+ * defer while busy, auto-apply when idle), the restart sentinel, and the
+ * failure paths of applyUpdate.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -133,7 +133,6 @@ beforeEach(() => {
   });
   config.appVersion = CURRENT;
   config.disableUpdater = false;
-  config.exitOnUpdate = false;
   mockPrisma.updateAttempt.findMany.mockResolvedValue([]);
   mockPrisma.updateAttempt.findFirst.mockResolvedValue(null);
   mockPrisma.updateAttempt.create.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
@@ -147,9 +146,7 @@ beforeEach(() => {
 afterEach(() => {
   config.appVersion = '';
   config.disableUpdater = false;
-  config.exitOnUpdate = false;
   vi.useRealTimers();
-  vi.restoreAllMocks();
 });
 
 describe('gate', () => {
@@ -192,8 +189,35 @@ describe('start', () => {
     expect(mockSweep).not.toHaveBeenCalled();
   });
 
-  it('marks a pending attempt SUCCESS when running the target version', async () => {
-    config.appVersion = NEWER;
+  it('never checks or stops in a container, whatever EXIT_ON_UPDATE says', async () => {
+    vi.useFakeTimers();
+    // `exitOnUpdate` is the config field that EXIT_ON_UPDATE=1 set.
+    Object.assign(config, { exitOnUpdate: true });
+    idleState.isSea = false;
+    mockFetchLatest.mockResolvedValue(NEWER);
+    try {
+      const service = await loadService();
+      await service.start();
+      await vi.advanceTimersByTimeAsync(2 * 60 * 60_000);
+      expect(mockFetchLatest).not.toHaveBeenCalled();
+      expect(mockPrisma.updateAttempt.create).not.toHaveBeenCalled();
+      expect(killSpy).not.toHaveBeenCalled();
+      await expect(service.getStatus()).resolves.toMatchObject({
+        enabled: false,
+        reason: 'not_sea_install',
+        updateAvailable: false,
+      });
+      service.stop();
+    } finally {
+      delete (config as Record<string, unknown>).exitOnUpdate;
+    }
+  });
+
+  it.each([
+    ['the target version', NEWER],
+    ['a release newer than the target', 'v2026.8.25000000'],
+  ])('marks a pending attempt SUCCESS when running %s', async (_name, bootVersion) => {
+    config.appVersion = bootVersion;
     mockPrisma.updateAttempt.findMany.mockResolvedValue([
       { id: 'a1', versionFrom: CURRENT, versionTo: NEWER, trigger: 'AUTO', outcome: 'PENDING' },
     ]);
@@ -465,225 +489,5 @@ describe('applyUpdate', () => {
     });
     await expect(service.getStatus()).resolves.toMatchObject({ applying: true });
     await expect(service.applyUpdate(NEWER, 'MANUAL')).rejects.toThrow('already in progress');
-  });
-});
-
-describe('exit on update', () => {
-  const HOUR = 60 * 60_000;
-
-  beforeEach(() => {
-    idleState.isSea = false;
-    config.exitOnUpdate = true;
-    mockFetchLatest.mockResolvedValue(NEWER);
-  });
-
-  it('reports the updater off to clients', async () => {
-    vi.useFakeTimers();
-    const service = await loadService();
-    await service.start();
-    await vi.advanceTimersByTimeAsync(60_000);
-    // The platform applies the release, so no client offers an update and the
-    // manual route refuses one.
-    await expect(service.getStatus()).resolves.toMatchObject({
-      enabled: false,
-      reason: 'not_sea_install',
-      latestVersion: NEWER,
-      updateAvailable: false,
-    });
-    service.stop();
-  });
-
-  it.each([
-    ['the setting is off', () => (config.exitOnUpdate = false)],
-    ['the image is a canary build', () => (config.appVersion = 'canary-abc123')],
-    ['the image is a pull-request build', () => (config.appVersion = 'pr-42-some-branch')],
-    ['DISABLE_UPDATER is set', () => (config.disableUpdater = true)],
-  ])('never checks when %s', async (_name, apply) => {
-    vi.useFakeTimers();
-    apply();
-    const service = await loadService();
-    await service.start();
-    await vi.advanceTimersByTimeAsync(2 * HOUR);
-    expect(mockFetchLatest).not.toHaveBeenCalled();
-    expect(killSpy).not.toHaveBeenCalled();
-    service.stop();
-  });
-
-  it('leaves a SEA binary on the install path', async () => {
-    vi.useFakeTimers();
-    idleState.isSea = true;
-    const service = await loadService();
-    await service.start();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(mockStage).toHaveBeenCalledWith(NEWER);
-    expect(mockSwap).toHaveBeenCalledWith('/tmp/staged/dist');
-    service.stop();
-  });
-
-  it('stops after the random delay, with no download and no frame', async () => {
-    vi.useFakeTimers();
-    vi.spyOn(Math, 'random').mockReturnValue(0.5);
-    const service = await loadService();
-    const events: unknown[] = [];
-    service.events.on('update', (e: unknown) => events.push(e));
-    await service.start();
-
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(mockTrackEvent).toHaveBeenCalledWith('update available', config.ownerUserId, {
-      version_from: CURRENT,
-      version_to: NEWER,
-    });
-    expect(mockPrisma.updateAttempt.create).not.toHaveBeenCalled();
-    expect(killSpy).not.toHaveBeenCalled();
-
-    // Half of the 30-minute bound, then the 500 ms exit delay.
-    await vi.advanceTimersByTimeAsync(15 * 60_000 + 500);
-    expect(mockPrisma.updateAttempt.create).toHaveBeenCalledWith({
-      data: { versionFrom: CURRENT, versionTo: NEWER, trigger: 'AUTO' },
-    });
-    expect(killSpy).toHaveBeenCalledWith(process.pid, 'SIGTERM');
-    expect(mockStage).not.toHaveBeenCalled();
-    expect(mockSwap).not.toHaveBeenCalled();
-    expect(events).toEqual([]);
-    service.stop();
-  });
-
-  it('stops before the next check at the largest delay', async () => {
-    vi.useFakeTimers();
-    vi.spyOn(Math, 'random').mockReturnValue(0.9999);
-    const service = await loadService();
-    await service.start();
-    await vi.advanceTimersByTimeAsync(60_000 + 30 * 60_000 + 500);
-    expect(killSpy).toHaveBeenCalledWith(process.pid, 'SIGTERM');
-    expect(mockFetchLatest).toHaveBeenCalledTimes(1);
-    service.stop();
-  });
-
-  it('waits for the next check when work starts during the delay', async () => {
-    vi.useFakeTimers();
-    vi.spyOn(Math, 'random').mockReturnValue(0.5);
-    const service = await loadService();
-    await service.start();
-
-    // Idle at the check, so the delay starts; busy when it ends.
-    await vi.advanceTimersByTimeAsync(60_000);
-    idleState.voiceChat = true;
-    await vi.advanceTimersByTimeAsync(15 * 60_000 + 500);
-    expect(mockPrisma.updateAttempt.create).not.toHaveBeenCalled();
-    expect(killSpy).not.toHaveBeenCalled();
-
-    idleState.voiceChat = false;
-    await vi.advanceTimersByTimeAsync(HOUR);
-    expect(mockPrisma.updateAttempt.create).toHaveBeenCalledTimes(1);
-    expect(killSpy).toHaveBeenCalledWith(process.pid, 'SIGTERM');
-    service.stop();
-  });
-
-  it('waits for the next check when the agent is busy at the check', async () => {
-    vi.useFakeTimers();
-    vi.spyOn(Math, 'random').mockReturnValue(0);
-    idleState.busy = true;
-    const service = await loadService();
-    await service.start();
-    await vi.advanceTimersByTimeAsync(60_000 + 30 * 60_000);
-    expect(killSpy).not.toHaveBeenCalled();
-
-    idleState.busy = false;
-    await vi.advanceTimersByTimeAsync(HOUR);
-    expect(killSpy).toHaveBeenCalledWith(process.pid, 'SIGTERM');
-    service.stop();
-  });
-
-  it('cancels the pending stop on stop()', async () => {
-    vi.useFakeTimers();
-    vi.spyOn(Math, 'random').mockReturnValue(0.5);
-    const service = await loadService();
-    await service.start();
-    await vi.advanceTimersByTimeAsync(60_000);
-    service.stop();
-    await vi.advanceTimersByTimeAsync(2 * HOUR);
-    expect(mockPrisma.updateAttempt.create).not.toHaveBeenCalled();
-    expect(killSpy).not.toHaveBeenCalled();
-  });
-
-  it('records nothing when a shutdown starts while the delay ends', async () => {
-    vi.useFakeTimers();
-    vi.spyOn(Math, 'random').mockReturnValue(0);
-    const service = await loadService();
-    // The second idle check is the re-check after the delay: stop() lands
-    // while it is in flight, as a SIGTERM from the platform would.
-    let reads = 0;
-    Object.defineProperty(idleState, 'voiceChat', {
-      configurable: true,
-      get: () => {
-        if (++reads === 2) service.stop();
-        return false;
-      },
-    });
-    try {
-      await service.start();
-      await vi.advanceTimersByTimeAsync(60_000 + 1_000);
-      expect(reads).toBe(2);
-      expect(mockPrisma.updateAttempt.create).not.toHaveBeenCalled();
-      expect(killSpy).not.toHaveBeenCalled();
-    } finally {
-      Object.defineProperty(idleState, 'voiceChat', { configurable: true, writable: true, value: false });
-    }
-  });
-
-  it.each([
-    ['blocks', NEWER, false],
-    ['ignores a failure for another version', 'v2026.8.21000000', true],
-  ])('%s a restart that came back on the old version', async (_name, failedVersion, restarts) => {
-    vi.useFakeTimers();
-    vi.spyOn(Math, 'random').mockReturnValue(0);
-    mockPrisma.updateAttempt.findFirst.mockImplementation(
-      (args: { where?: { versionTo: string; outcome: string; errorCode: string } }) => {
-        const w = args.where;
-        const match =
-          w?.versionTo === failedVersion &&
-          w.outcome === 'FAILURE' &&
-          w.errorCode === 'restart_version_mismatch';
-        return Promise.resolve(match ? { id: 'a0', versionFrom: CURRENT, versionTo: failedVersion } : null);
-      },
-    );
-    const service = await loadService();
-    await service.start();
-    await vi.advanceTimersByTimeAsync(60_000 + 1_000);
-    expect(killSpy.mock.calls.length > 0).toBe(restarts);
-    service.stop();
-  });
-
-  it('does not stop when the attempt row cannot be written, and retries', async () => {
-    vi.useFakeTimers();
-    vi.spyOn(Math, 'random').mockReturnValue(0);
-    mockPrisma.updateAttempt.create.mockRejectedValueOnce(new Error('database is locked'));
-    const service = await loadService();
-    await service.start();
-    await vi.advanceTimersByTimeAsync(60_000 + 500);
-    expect(killSpy).not.toHaveBeenCalled();
-
-    await vi.advanceTimersByTimeAsync(HOUR);
-    expect(mockPrisma.updateAttempt.create).toHaveBeenCalledTimes(2);
-    expect(killSpy).toHaveBeenCalledWith(process.pid, 'SIGTERM');
-    service.stop();
-  });
-
-  it.each([
-    ['SUCCESS on the target version', NEWER, { outcome: 'SUCCESS', errorCode: null }],
-    ['SUCCESS on a release newer than the target', 'v2026.8.25000000', { outcome: 'SUCCESS', errorCode: null }],
-    ['FAILURE on the old version', CURRENT, { outcome: 'FAILURE', errorCode: 'restart_version_mismatch' }],
-  ])('resolves the pending attempt at boot: %s', async (_name, bootVersion, expected) => {
-    config.appVersion = bootVersion;
-    mockPrisma.updateAttempt.findMany.mockResolvedValue([
-      { id: 'a1', versionFrom: CURRENT, versionTo: NEWER, trigger: 'AUTO', outcome: 'PENDING' },
-    ]);
-    const service = await loadService();
-    await service.start();
-    service.stop();
-    expect(mockPrisma.updateAttempt.update).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 'a1' }, data: expect.objectContaining(expected) }),
-    );
-    expect(mockSweep).not.toHaveBeenCalled();
   });
 });

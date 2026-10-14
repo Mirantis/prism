@@ -103,13 +103,6 @@ export const UPDATE_FIRST_CHECK_DELAY_MS = 60 * 1000;
 export const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 /**
- * EXIT_ON_UPDATE: the upper bound of the random delay between finding a
- * newer release and stopping, so a fleet does not stop together. Below the
- * check interval, so a delay ends before the next check starts.
- */
-export const UPDATE_RESTART_JITTER_MAX_MS = 30 * 60 * 1000;
-
-/**
  * Windows only: how long the staged installer gets to stop this process
  * before the update is recorded as failed. Generous — it has to stop a
  * scheduled task, swap the install and start the task again — but bounded,
