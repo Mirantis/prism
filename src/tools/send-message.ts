@@ -10,7 +10,7 @@
 import { Tool, tool } from 'ai';
 import { z } from 'zod';
 import { outboundMessageService, SEND_MESSAGE_TOOL_NAME, SendInput } from '../services/outbound-message.service';
-import { messageDeliveryService } from '../services/message-delivery.service';
+import { messageDeliveryService, MessageTrigger } from '../services/message-delivery.service';
 import { ChannelName, isChatPlatform } from '../services/channel-adapter.interface';
 
 const SEND_MESSAGE_DESCRIPTION =
@@ -21,9 +21,19 @@ const SEND_MESSAGE_DESCRIPTION =
   'The person must be a member of the target. ' +
   '@channel, @here, @everyone and group mentions are refused. A refusal says why; fix the cause before you try again.';
 
+/** The trigger each invocation mode stores its messages under. */
+const MODE_TRIGGER: Record<string, MessageTrigger> = {
+  heartbeat: 'HEARTBEAT',
+  cron: 'CRON_TASK',
+  webhook: 'WEBHOOK',
+  goal: 'GOAL',
+};
+
 export function getSendMessageTools(
   userId: string,
   agentId: string,
+  /** The invocation mode, which sets the trigger of the message stored in the target's history. */
+  mode: string,
   threadId?: string,
   originChannel?: ChannelName,
   originChannelId?: string,
@@ -61,7 +71,8 @@ export function getSendMessageTools(
       }),
       execute: async ({ target, thread, text }) => {
         const origin = await replyDestination(threadId, originChannel, originChannelId, broadcastsOutput);
-        const sent = await outboundMessageService.send({ agentId, userId, target, thread, text, origin });
+        const trigger = MODE_TRIGGER[mode] ?? 'USER_INPUT';
+        const sent = await outboundMessageService.send({ agentId, userId, target, thread, text, origin, trigger });
         return { sent: true, target: sent.target.key, name: sent.target.name, messageId: sent.messageId };
       },
     }),

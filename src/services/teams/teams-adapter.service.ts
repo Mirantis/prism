@@ -59,6 +59,7 @@ import {
   describeTarget,
   LinkedTarget,
   MENTION_TOKEN,
+  PostedMessage,
   SendRefusedError,
 } from '../channel-adapter.interface';
 import { AttachmentMeta } from '../attachment.service';
@@ -468,9 +469,11 @@ class TeamsAdapterService implements ChannelAdapter {
    * One proactive send, threaded under `thread` when given. Each mention token
    * becomes an `<at>` tag with a matching mention entity, which is what makes
    * Teams notify the person. Errors reach the caller, a tool that reports the
-   * outcome to the agent.
+   * outcome to the agent. Teams history is stored, so the result names the
+   * thread the inbound path keys a reply into: the personal chat, or the
+   * channel's reply chain under the thread root or the new message.
    */
-  async postToTarget(target: LinkedTarget, text: string, thread?: string): Promise<{ messageId: string }> {
+  async postToTarget(target: LinkedTarget, text: string, thread?: string): Promise<PostedMessage> {
     const app = this.app;
     if (!app) {
       throw new SendRefusedError('Microsoft Teams is not connected, so nothing can be sent there.', 'not_connected');
@@ -489,7 +492,23 @@ class TeamsAdapterService implements ChannelAdapter {
     const sent = await this.sendWithRetry(() =>
       thread ? app.reply(target.conversationId, thread, activity) : app.send(target.conversationId, activity)
     );
-    return { messageId: String(sent.id) };
+    const messageId = String(sent.id);
+    return { messageId, ...(await this.historyOf(target, thread ?? messageId)) };
+  }
+
+  /** Runs after the post, so a failed lookup is logged: the message is sent either way. */
+  private async historyOf(target: LinkedTarget, rootMessageId: string): Promise<Pick<PostedMessage, 'history'>> {
+    if (target.kind === 'dm') {
+      return target.dmUserId ? { history: { userId: target.dmUserId, threadKey: target.conversationId } } : {};
+    }
+    const mapping = await teamsMappingService.findByConversationId(target.conversationId).catch((err: unknown) => {
+      logger.error({ err }, '[TeamsAdapter] posted, but the channel mapping could not be read for its history');
+      return null;
+    });
+    if (!mapping?.lensUserId) return {};
+    return {
+      history: { userId: mapping.lensUserId, threadKey: `${target.conversationId};messageid=${rootMessageId}` },
+    };
   }
 
   /**
@@ -675,9 +694,10 @@ class TeamsAdapterService implements ChannelAdapter {
    * reply in a linked channel's reply chain the bot has answered in, and the
    * thread classifier finds it asks the bot for something. A reply in such a
    * chain that gets no answer is stored in the thread, so the next turn and
-   * the next classification read it. Replies under the bot's own top-level
-   * posts (heartbeat and scheduled-task output) have no thread to find, so
-   * they need a mention.
+   * the next classification read it. A message the agent sent to the channel
+   * has a thread, so a reply under it is classified too. Replies under
+   * heartbeat and scheduled-task output have no thread to find, so they need a
+   * mention.
    */
   private async handleUnmentionedReply(
     activity: IMessageActivity,

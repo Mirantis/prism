@@ -8,13 +8,15 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockAdapters, mockConversationService, mockTrackEvent } = vi.hoisted(() => ({
+const { mockAdapters, mockConversationService, mockTrackEvent, mockLoggerError } = vi.hoisted(() => ({
   mockAdapters: [] as Array<Record<string, unknown>>,
   mockConversationService: {
     getOrCreateLatestThread: vi.fn(),
+    getOrCreateThreadByExternalId: vi.fn(),
     addMessage: vi.fn(),
   },
   mockTrackEvent: vi.fn(),
+  mockLoggerError: vi.fn(),
 }));
 
 vi.mock('../message-delivery.service', () => ({
@@ -22,6 +24,9 @@ vi.mock('../message-delivery.service', () => ({
 }));
 vi.mock('../conversation.service', () => ({ conversationService: mockConversationService }));
 vi.mock('../../lib/telemetry', () => ({ trackEvent: mockTrackEvent }));
+vi.mock('../../logger', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: mockLoggerError, debug: vi.fn() },
+}));
 
 import { outboundMessageService, MAX_SENT_MESSAGE_LENGTH, SEND_MESSAGE_TOOL_NAME } from '../outbound-message.service';
 import { LinkedTarget, SendRefusedError } from '../channel-adapter.interface';
@@ -76,6 +81,7 @@ function send(fields: Partial<Parameters<typeof outboundMessageService.send>[0]>
     userId: 'user-1',
     target: 'slack:C0RELEASE',
     text: 'Release v2 is out.',
+    trigger: 'CRON_TASK',
     ...fields,
   });
 }
@@ -133,6 +139,40 @@ describe('Requirement: the agent sends only to a linked target, and never a broa
       await send({ origin: { platform: 'slack', conversationId: 'C0RELEASE', thread: '1712345678.000001' } });
 
       expect(slack.postToTarget).toHaveBeenCalled();
+    });
+  });
+
+  describe('Scenario: the target conversation keeps the sent message', () => {
+    it("stores the text as an agent message in the thread the adapter names, under the run's trigger", async () => {
+      slack.postToTarget.mockResolvedValue({
+        messageId: '1712345678.000100',
+        history: { userId: 'user-2', threadKey: 'D0OTHER' },
+      });
+      mockConversationService.getOrCreateThreadByExternalId.mockResolvedValue({ id: 'thread-dm-b' });
+
+      await send({ target: 'slack:C0RELEASE', text: 'The deploy failed. Shall I roll back?' });
+
+      expect(mockConversationService.getOrCreateThreadByExternalId).toHaveBeenCalledWith('user-2', 'agent-1', 'D0OTHER');
+      expect(mockConversationService.addMessage).toHaveBeenCalledWith('thread-dm-b', {
+        content: 'The deploy failed. Shall I roll back?',
+        role: 'AGENT',
+        triggeredBy: 'CRON_TASK',
+      });
+    });
+
+    it('stores nothing when the adapter names no stored thread', async () => {
+      await send();
+
+      expect(mockConversationService.getOrCreateThreadByExternalId).not.toHaveBeenCalled();
+      expect(mockConversationService.addMessage).not.toHaveBeenCalled();
+    });
+
+    it('reports the send as sent when the store fails, so the agent does not send it again', async () => {
+      slack.postToTarget.mockResolvedValue({ messageId: 'm-1', history: { userId: 'user-2', threadKey: 'D0OTHER' } });
+      mockConversationService.getOrCreateThreadByExternalId.mockRejectedValue(new Error('database is locked'));
+
+      await expect(send()).resolves.toEqual({ target: RELEASE, messageId: 'm-1' });
+      expect(mockLoggerError).toHaveBeenCalled();
     });
   });
 

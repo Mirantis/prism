@@ -125,6 +125,31 @@ describe('Requirement: the agent posts only to its linked Slack targets', () => 
     });
   });
 
+  describe('Scenario: the posted message in the stored history', () => {
+    const DM: LinkedTarget = {
+      key: 'slack:D0OWNER',
+      platform: 'slack',
+      kind: 'dm',
+      conversationId: 'D0OWNER',
+      name: '<@U0OWNER>',
+      isMain: false,
+      dmUserId: 'user-1',
+    };
+
+    it('names the DM thread for a top-level DM post, keyed as the inbound DM path keys it', async () => {
+      const result = await slackAdapterService.postToTarget(DM, 'The deploy failed. Shall I roll back?');
+
+      expect(result).toEqual({ messageId: '1712345678.000100', history: { userId: 'user-1', threadKey: 'D0OWNER' } });
+    });
+
+    it('names no stored thread for a channel post or a DM thread post, which Slack holds', async () => {
+      expect(await slackAdapterService.postToTarget(RELEASE, 'Hi')).toEqual({ messageId: '1712345678.000100' });
+      expect(await slackAdapterService.postToTarget(DM, 'Hi', '1712345678.000001')).toEqual({
+        messageId: '1712345678.000100',
+      });
+    });
+  });
+
   describe('Scenario: posting a message with a mention', () => {
     it('posts into the channel with the mention rewritten to the bare form, and returns the ts', async () => {
       const result = await slackAdapterService.postToTarget(

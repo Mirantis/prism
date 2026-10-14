@@ -24,6 +24,7 @@ import {
   describeTarget,
   LinkedTarget,
   MENTION_TOKEN,
+  PostedMessage,
   SendRefusedError,
 } from './channel-adapter.interface';
 import { AttachmentMeta } from './attachment.service';
@@ -492,9 +493,11 @@ class SlackAdapterService implements ChannelAdapter {
   /**
    * Posts one message with `chat.postMessage`, threaded under `thread` when
    * given, and returns its ts. A Slack error reaches the caller, a tool that
-   * reports the outcome to the agent.
+   * reports the outcome to the agent. A top-level DM is the one conversation
+   * whose history is stored rather than read from Slack, keyed by the DM
+   * channel as the inbound DM path keys it.
    */
-  async postToTarget(target: LinkedTarget, text: string, thread?: string): Promise<{ messageId: string }> {
+  async postToTarget(target: LinkedTarget, text: string, thread?: string): Promise<PostedMessage> {
     const connection = await getSlackConnection();
     const slackApp = connection?.isActive ? this.apps.get(connection.teamId) : undefined;
     if (!connection || !slackApp) {
@@ -521,7 +524,11 @@ class SlackAdapterService implements ChannelAdapter {
       text: formatted.text,
       blocks: formatted.blocks,
     });
-    return { messageId: String(response.ts) };
+    const history =
+      target.kind === 'dm' && thread === undefined && target.dmUserId
+        ? { userId: target.dmUserId, threadKey: target.conversationId }
+        : undefined;
+    return { messageId: String(response.ts), ...(history ? { history } : {}) };
   }
 
   /**

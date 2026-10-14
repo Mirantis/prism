@@ -10,8 +10,16 @@
 
 import { messageDeliveryService, MessageTrigger } from './message-delivery.service';
 import { conversationService } from './conversation.service';
-import { ChannelAdapter, ChannelName, describeTarget, LinkedTarget, SendRefusedError } from './channel-adapter.interface';
+import {
+  ChannelAdapter,
+  ChannelName,
+  describeTarget,
+  LinkedTarget,
+  PostedMessage,
+  SendRefusedError,
+} from './channel-adapter.interface';
 import { trackEvent } from '../lib/telemetry';
+import { logger } from '../logger';
 import type { ToolCallRecord } from '../types';
 
 /** The tool that posts through this service. */
@@ -30,6 +38,8 @@ export interface SendInput {
   target: string;
   thread?: string;
   text: string;
+  /** What started the sending run, recorded on the message stored in the target's history. */
+  trigger: MessageTrigger;
   /**
    * Where the run's own final message goes, which the service refuses as a
    * target: one conversation and thread, or `broadcast` for a run without a
@@ -54,8 +64,9 @@ class OutboundMessageService {
       target = resolved.target;
       const text = this.checkText(input.text);
       this.checkOrigin(target, input);
-      const { messageId } = await this.post(resolved, text, input);
+      const { messageId, history } = await this.post(resolved, text, input);
       this.track(input, 'sent', target);
+      if (history) await this.storeInTargetHistory(input, history, text);
       return { target, messageId };
     } catch (error: unknown) {
       if (error instanceof SendRefusedError) this.track(input, 'refused', target, error.code);
@@ -86,6 +97,29 @@ class OutboundMessageService {
     });
   }
 
+  /**
+   * A reply in the target conversation reads its history from the stored
+   * thread, so the sent text is stored there, as an agent message nobody
+   * delivers. The message is already posted, so a failed write is logged and
+   * the send still succeeds: an error would make the agent send it again.
+   */
+  private async storeInTargetHistory(
+    input: SendInput,
+    history: { userId: string; threadKey: string },
+    text: string,
+  ): Promise<void> {
+    try {
+      const thread = await conversationService.getOrCreateThreadByExternalId(
+        history.userId,
+        input.agentId,
+        history.threadKey,
+      );
+      await conversationService.addMessage(thread.id, { content: text, role: 'AGENT', triggeredBy: input.trigger });
+    } catch (err: unknown) {
+      logger.error({ err }, '[OutboundMessage] posted, but the message could not be stored in the target history');
+    }
+  }
+
   private async linked(agentId: string): Promise<Array<{ target: LinkedTarget; adapter: PostingAdapter }>> {
     const adapters = messageDeliveryService
       .getAdapters()
@@ -103,7 +137,7 @@ class OutboundMessageService {
     { target, adapter }: { target: LinkedTarget; adapter: PostingAdapter },
     text: string,
     input: SendInput,
-  ): Promise<{ messageId: string }> {
+  ): Promise<PostedMessage> {
     try {
       return await adapter.postToTarget(target, text, input.thread);
     } catch (error: unknown) {
