@@ -60,6 +60,8 @@ import { STEP_LIMIT, MAX_OUTPUT_TOKENS, COMPACTION_FALLBACK_WINDOW_TOKENS } from
 import { EARLY_STOPPING_PROMPT } from './prompts/early-stopping-prompt';
 import { buildErrorStep, buildRefusalStep, isContextOverflowError } from './lib/llm-errors';
 import { agentStatusService } from './services/agent-status.service';
+import { programStatusService, type TurnEnding } from './services/program-status.service';
+import { TURN_FAILED, turnError } from './protocol/chat-protocol';
 import {
   conversationThreadActivityService,
   type ThreadActivity,
@@ -132,6 +134,29 @@ export async function buildTurnRequest(
  * 6. On step-limit, make a follow-up summary call and yield its result
  */
 export async function* invokeStream(request: InvokeRequest): AsyncGenerator<InvokeStep> {
+  // A subagent runs inside its parent's turn, which reports for both.
+  if (request.mode === 'subagent') {
+    yield* streamInvocation(request);
+    return;
+  }
+  // Report how every turn ended to the agent's state, whichever exit the turn took.
+  const turn = programStatusService.beginTurn();
+  const ending: TurnEnding = {};
+  try {
+    for await (const step of streamInvocation(request, ending)) {
+      if (step.error) ending.error = turnError(step.error);
+      yield step;
+    }
+  } catch (error) {
+    ending.error = TURN_FAILED;
+    throw error;
+  } finally {
+    turn.end(ending);
+  }
+}
+
+/** `ending.cancelled` is set when a stop ends the turn: the caller's, or the computer's. */
+async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}): AsyncGenerator<InvokeStep> {
   const startTime = Date.now();
 
   // Preflight: short-circuit before any DB call.
@@ -695,6 +720,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
       // `aborted` is the robust discriminator (no error-shape sniffing).
       if (request.abortSignal?.aborted) {
         wasCanceled = true;
+        ending.cancelled = true;
         channel.close();
         return;
       }

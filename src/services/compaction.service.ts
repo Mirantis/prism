@@ -171,6 +171,12 @@ class CompactionService {
     return this.inFlight.size > 0;
   }
 
+  /** Ends a thread's queued or running compaction, and emits `settled`. */
+  private settle(threadId: string): void {
+    this.inFlight.delete(threadId);
+    this.events.emit('settled', threadId);
+  }
+
   /**
    * Auto path. Synchronous and never throws — invokeStream calls it on the hot
    * path right before closing the step stream. All trigger policy lives here so
@@ -200,9 +206,9 @@ class CompactionService {
           logger.error({ err, threadId: fork.threadId }, '[Compaction] auto-compaction failed');
           this.fail(fork.userId, fork.agentId, fork.threadId, 'auto', errorText(err));
         })
-        .finally(() => this.inFlight.delete(fork.threadId));
+        .finally(() => this.settle(fork.threadId));
     } catch (err) {
-      this.inFlight.delete(fork.threadId);
+      this.settle(fork.threadId);
       logger.error({ err, threadId: fork.threadId }, '[Compaction] auto-compaction enqueue failed');
     }
   }
@@ -231,9 +237,9 @@ class CompactionService {
           logger.error({ err, threadId: fork.threadId }, '[Compaction] overflow compaction failed');
           this.fail(fork.userId, fork.agentId, fork.threadId, 'auto', errorText(err));
         })
-        .finally(() => this.inFlight.delete(fork.threadId));
+        .finally(() => this.settle(fork.threadId));
     } catch (err) {
-      this.inFlight.delete(fork.threadId);
+      this.settle(fork.threadId);
       logger.error({ err, threadId: fork.threadId }, '[Compaction] overflow compaction enqueue failed');
     }
   }
@@ -368,7 +374,7 @@ class CompactionService {
       logger.error({ err, threadId }, '[Compaction] manual compaction failed');
       this.fail(userId, agentId, threadId, 'manual', errorText(err));
     } finally {
-      this.inFlight.delete(threadId);
+      this.settle(threadId);
     }
   }
 

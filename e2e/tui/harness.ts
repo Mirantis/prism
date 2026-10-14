@@ -78,10 +78,12 @@ export interface RuntimeHandle {
   port: number;
   /** Resolve when `/health` returns 200, or throw on timeout. */
   waitForReady(timeoutMs?: number): Promise<void>;
-  /** SIGTERM → 5s grace → SIGKILL. */
+  /** SIGTERM → 5s grace → SIGKILL. A runtime that exits on the SIGTERM has written all of `stdout()`. */
   kill(): Promise<void>;
   /** Last N chars of the runtime's combined stdout + stderr. */
   logTail(max?: number): string;
+  /** The runtime's whole stdout so far, as written. */
+  stdout(): string;
 }
 
 export function startRuntime(opts: StartRuntimeOptions): RuntimeHandle {
@@ -104,11 +106,15 @@ export function startRuntime(opts: StartRuntimeOptions): RuntimeHandle {
 
   const verbose = opts.verbose ?? Boolean(process.env.CI);
   let buffer = '';
+  let stdout = '';
   const sink = (chunk: Buffer) => {
     const s = chunk.toString();
     buffer += s;
     if (verbose) process.stderr.write(s.replace(/^/gm, '[runtime] '));
   };
+  child.stdout?.on('data', (chunk: Buffer) => {
+    stdout += chunk.toString();
+  });
   child.stdout?.on('data', sink);
   child.stderr?.on('data', sink);
 
@@ -121,12 +127,14 @@ export function startRuntime(opts: StartRuntimeOptions): RuntimeHandle {
       resolve(code ?? -1);
     });
   });
+  const closed = new Promise<void>((resolve) => child.on('close', () => resolve()));
 
   const logTail = (max = 8_000) => tailString(buffer, max);
 
   return {
     port,
     logTail,
+    stdout: () => stdout,
     async waitForReady(timeoutMs = 30_000) {
       const start = Date.now();
       while (Date.now() - start < timeoutMs) {
@@ -160,7 +168,10 @@ export function startRuntime(opts: StartRuntimeOptions): RuntimeHandle {
           // already gone
         }
         await exitPromise;
+        return;
       }
+      // `exit` can fire before the last stdout chunk arrives, and `close` fires after it.
+      await closed;
     },
   };
 }

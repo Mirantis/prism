@@ -31,7 +31,14 @@ import {
 } from './conversation-thread-activity.service';
 import { messageDeliveryService } from './message-delivery.service';
 import { eventStreamService } from './event-stream.service';
-import type { NackCode, TurnEventPayload, TurnOutcome, TurnState } from '../protocol/chat-protocol';
+import {
+  TURN_FAILED,
+  turnError,
+  type NackCode,
+  type TurnEventPayload,
+  type TurnOutcome,
+  type TurnState,
+} from '../protocol/chat-protocol';
 
 export interface InboundMessage {
   /** The client's id for the message, which becomes the row's. */
@@ -62,19 +69,11 @@ export class InboundMessageError extends Error {
   }
 }
 
-/** What every client is told when a turn fails. The details go to the log. */
-const TURN_FAILED = 'The agent could not answer. Try again.';
-/** What every client is told when a turn fails on the spending limit, which a retry does not lift. */
-const SPENDING_LIMIT_REACHED = 'The AI spending limit is reached.';
-
 /** How a turn ended, as every client is told it. */
 function outcomeOf({ cancelled, error }: ChatTurnEnd): { outcome: TurnOutcome; error?: string } {
   if (cancelled) return { outcome: 'cancelled' };
   if (!error) return { outcome: 'completed' };
-  return {
-    outcome: 'failed',
-    error: error.type === 'budget_exceeded' ? SPENDING_LIMIT_REACHED : TURN_FAILED,
-  };
+  return { outcome: 'failed', error: turnError(error) };
 }
 
 /** How a message's sender is stored: the id as the external id, the name for display. */

@@ -646,6 +646,16 @@ const meetingTranscriptLogging = ((): 'off' | 'full' => {
   return raw === 'full' ? 'full' : 'off';
 })();
 
+// PRISM_PROGRAM_STATUS: `on` or `off` sets whether the runtime reports the agent's
+// state on its stdout with OSC 7501. Any other value reports when stdout is a
+// terminal, as in a sandbox.
+const programStatusReports = ((): boolean => {
+  const raw = (process.env.PRISM_PROGRAM_STATUS ?? '').trim().toLowerCase();
+  if (raw === 'on') return true;
+  if (raw === 'off') return false;
+  return Boolean(process.stdout.isTTY);
+})();
+
 // Google account the meeting bot signs in as.
 //
 // Not optional in practice for Google Meet: Google auto-denies automated
@@ -1028,6 +1038,8 @@ export const config = {
   // isn't a released SEA binary (containers, dev runs), so this is the kill
   // switch for standalone installs.
   disableUpdater: ['1', 'true'].includes((process.env.DISABLE_UPDATER || '').trim().toLowerCase()),
+
+  programStatusReports,
 
   // Goals — autonomous multi-turn objectives. `goalMaxTurns` overrides the
   // GOAL_MAX_TURNS hard cap. `goalDefaultTokenBudget` is the per-goal token

@@ -126,7 +126,7 @@ export interface ChatResponse {
 export interface ChatTurnEnd {
   threadId: string;
   cancelled: boolean;
-  /** Set when the exchange ended on an error reply: the agent could not answer. */
+  /** Set when the agent could not answer: the exchange ended on an error reply, or threw. */
   error?: InvokeError;
 }
 
@@ -469,6 +469,11 @@ Answer with one word: WORTHY or SKIP.`;
       });
       const ended: ChatTurnEnd = { threadId, cancelled: abortSignal.aborted, error: turnError };
       this.events.emit('turnEnded', ended);
+    } catch (error) {
+      // A throw, such as a reply that cannot be stored, leaves the user without an answer.
+      const ended: ChatTurnEnd = { threadId, cancelled: abortSignal.aborted, error: turnError ?? { type: 'generic' } };
+      this.events.emit('turnEnded', ended);
+      throw error;
     } finally {
       unregister();
       input.abortSignal?.removeEventListener('abort', abort);

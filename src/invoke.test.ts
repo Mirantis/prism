@@ -235,6 +235,14 @@ vi.mock('./services/compaction.service', () => ({
   },
 }));
 
+const { mockBeginTurn, mockEndTurn } = vi.hoisted(() => ({
+  mockBeginTurn: vi.fn(),
+  mockEndTurn: vi.fn(),
+}));
+vi.mock('./services/program-status.service', () => ({
+  programStatusService: { beginTurn: mockBeginTurn },
+}));
+
 
 import { invoke, invokeStream, extractAttachmentIds } from './invoke';
 import { ANTHROPIC_TOOL_CHANGES } from './lib/llm-providers/tool-changes';
@@ -298,6 +306,7 @@ describe('invoke', () => {
     mockWithToolRiskGate.mockImplementation((tools) => tools);
 
     mockMissingProviderSettings.mockReturnValue([]);
+    mockBeginTurn.mockReturnValue({ end: mockEndTurn });
     mockCreateBedrockProvider.mockReturnValue(Object.assign(() => 'model-instance', { cachePoint: () => ({ anthropic: { cacheControl: { type: 'ephemeral' } } }) }));
     mockGetMCPTools.mockResolvedValue({});
     mockGetPluginTools.mockResolvedValue({});
@@ -1939,6 +1948,76 @@ describe('invoke', () => {
 
       expect(mockSetProcessing).not.toHaveBeenCalled();
       expect(mockSetDoneProcessing).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("the agent's state", () => {
+    beforeEach(() => {
+      mockBeginTurn.mockClear();
+      mockEndTurn.mockClear();
+    });
+
+    it('reports a turn that answered as completed', async () => {
+      await invoke(createTestInvokeRequest());
+
+      expect(mockBeginTurn).toHaveBeenCalledOnce();
+      expect(mockEndTurn).toHaveBeenCalledExactlyOnceWith({});
+    });
+
+    it('reports a turn that ended on an error step as failed', async () => {
+      mockGenerateText.mockRejectedValue(new Error('Model timeout'));
+
+      await invoke(createTestInvokeRequest());
+
+      expect(mockEndTurn).toHaveBeenCalledExactlyOnceWith({ error: 'The agent could not answer. Try again.' });
+    });
+
+    it('reports a turn the spending limit stopped with its own error', async () => {
+      mockGenerateText.mockRejectedValue(
+        Object.assign(new Error('429'), { status: 429, responseBody: JSON.stringify({ type: 'budget-exceeded' }) }),
+      );
+
+      await invoke(createTestInvokeRequest());
+
+      expect(mockEndTurn).toHaveBeenCalledExactlyOnceWith({
+        error: 'The AI spending limit is reached.',
+      });
+    });
+
+    it('reports an aborted turn as cancelled', async () => {
+      const controller = new AbortController();
+      controller.abort();
+      mockGenerateText.mockRejectedValue(
+        Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }),
+      );
+
+      await invoke(createTestInvokeRequest({ abortSignal: controller.signal }));
+
+      expect(mockEndTurn).toHaveBeenCalledExactlyOnceWith({ cancelled: true });
+    });
+
+    it('reports a turn the computer stop ended as cancelled', async () => {
+      const { computerService } = await import('./services/computer/computer.service');
+      const create = vi.spyOn(computerService.access, 'create');
+      mockGenerateText.mockImplementationOnce(async () => {
+        // What a stop from the Computer page does to the turn that holds the computer.
+        create.mock.results[0]!.value.controller.abort();
+        throw Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
+      });
+
+      try {
+        await invoke(createTestInvokeRequest());
+      } finally {
+        create.mockRestore();
+      }
+
+      expect(mockEndTurn).toHaveBeenCalledExactlyOnceWith({ cancelled: true });
+    });
+
+    it('reports no turn for a subagent, whose parent turn reports for it', async () => {
+      await invoke(createTestInvokeRequest({ mode: 'subagent' }));
+
+      expect(mockBeginTurn).not.toHaveBeenCalled();
     });
   });
 

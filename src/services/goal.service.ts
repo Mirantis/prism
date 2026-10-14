@@ -28,6 +28,8 @@ import { config } from '../config';
 import { messageDeliveryService } from './message-delivery.service';
 import { ChannelName, isChatPlatform } from './channel-adapter.interface';
 import { threadTurnService } from './thread-turn.service';
+import { conversationThreadActivityService } from './conversation-thread-activity.service';
+import { programStatusService } from './program-status.service';
 import { getGateRequest } from '../lib/classification';
 
 import { trackEvent, langfuseTelemetry } from '../lib/telemetry';
@@ -279,6 +281,9 @@ class GoalService {
 
     const runtime: GoalRuntime = { isRunning: true, aborted: false, abort: new AbortController() };
     this.runtimes.set(goalId, runtime);
+    // The thread works for the loop's whole life, the gate between two turns included.
+    let endActivity: (() => void) | undefined;
+    let loopStatus: ReturnType<typeof programStatusService.beginTurn> | undefined;
 
     try {
       while (!runtime.aborted) {
@@ -288,6 +293,8 @@ class GoalService {
           logger.info(`[Goal] ${goalId} not active (${goal?.status ?? 'deleted'}) — stopping loop`);
           return;
         }
+        endActivity ??= conversationThreadActivityService.beginThread(goal.threadId, goal.userId);
+        loopStatus ??= programStatusService.beginTurn();
 
         // Hard caps, checked before spending another turn.
         if (goal.turnCount >= goal.maxTurns) {
@@ -383,6 +390,9 @@ class GoalService {
         }
       }
     } finally {
+      endActivity?.();
+      // A stop or a pause between two turns aborts no invoke, so the loop reports it.
+      loopStatus?.end({ cancelled: runtime.aborted });
       runtime.isRunning = false;
       // Drop our entry so the map doesn't grow unbounded — but only if it's
       // still ours (a resume/replace may have installed a newer runtime).

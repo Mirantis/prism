@@ -278,20 +278,27 @@ class ComputerHelpService {
     return [...own, ...broadcast];
   }
 
-  private async waitingBroadcasts(agentId: string, userId: string): Promise<ComputerHelp[]> {
+  /** The requests still waiting for the user's answer: the stored ones oldest first, then a call's. */
+  async waiting(agentId: string, userId: string): Promise<ComputerHelp[]> {
     const messages = await prisma.conversationMessage.findMany({
       where: {
         thread: { agentId, userId },
         AND: [
           { blocks: { path: '$[0].type', equals: 'computer_help' } },
-          { blocks: { path: '$[0].broadcast', equals: true } },
           { blocks: { path: '$[0].status', equals: 'waiting' } },
         ],
       },
       select: { blocks: true },
       orderBy: { createdAt: 'asc' },
     });
-    return messages.flatMap((row) => row.blocks as unknown as ComputerHelp[]);
+    return [
+      ...messages.flatMap((row) => row.blocks as unknown as ComputerHelp[]),
+      ...[...this.voice.values()].filter((help) => help.status === 'waiting'),
+    ];
+  }
+
+  private async waitingBroadcasts(agentId: string, userId: string): Promise<ComputerHelp[]> {
+    return (await this.waiting(agentId, userId)).filter((help) => help.broadcast);
   }
 
   async resolve(
