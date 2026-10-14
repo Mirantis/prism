@@ -45,7 +45,7 @@ describe('Requirement: the message tools act for the run that calls them', () =>
   });
 
   it("lists the agent's linked targets", async () => {
-    const tools = getSendMessageTools('user-1', 'agent-1');
+    const tools = getSendMessageTools('user-1', 'agent-1', 'chat');
 
     expect(await run(tools.list_message_targets, {})).toEqual({
       targets: [{ target: 'slack:C0RELEASE', platform: 'slack', kind: 'channel', name: 'release', main: false }],
@@ -60,7 +60,7 @@ describe('Requirement: the message tools act for the run that calls them', () =>
       channelThreadId: '1712345678.000001',
       threadId: 'thread-1',
     });
-    const tools = getSendMessageTools('user-1', 'agent-1', 'thread-1', 'slack', 'C0GENERAL');
+    const tools = getSendMessageTools('user-1', 'agent-1', 'chat', 'thread-1', 'slack', 'C0GENERAL');
 
     const result = await run(tools.send_message, { target: '#release', text: 'Release v2 is out.' });
 
@@ -72,12 +72,13 @@ describe('Requirement: the message tools act for the run that calls them', () =>
       thread: undefined,
       text: 'Release v2 is out.',
       origin: { platform: 'slack', conversationId: 'C0GENERAL', thread: '1712345678.000001' },
+      trigger: 'USER_INPUT',
     });
     expect(result).toEqual({ sent: true, target: 'slack:C0RELEASE', name: 'release', messageId: '1712345678.000100' });
   });
 
   it('sends with no reply destination from a web turn', async () => {
-    await run(getSendMessageTools('user-1', 'agent-1', 'thread-1', 'websocket').send_message, {
+    await run(getSendMessageTools('user-1', 'agent-1', 'chat', 'thread-1', 'websocket').send_message, {
       target: 'slack:C0RELEASE',
       text: 'Hi',
     });
@@ -87,7 +88,7 @@ describe('Requirement: the message tools act for the run that calls them', () =>
   });
 
   it('sends with the broadcast as the reply destination from a run whose output is broadcast', async () => {
-    const tools = getSendMessageTools('user-1', 'agent-1', undefined, undefined, undefined, true);
+    const tools = getSendMessageTools('user-1', 'agent-1', 'heartbeat', undefined, undefined, undefined, true);
     await run(tools.send_message, { target: 'slack:C0RELEASE', text: 'Hi' });
 
     expect(mockThreadContext).not.toHaveBeenCalled();
@@ -95,22 +96,34 @@ describe('Requirement: the message tools act for the run that calls them', () =>
   });
 
   it('sends with no reply destination from a run with no thread whose output is not broadcast', async () => {
-    await run(getSendMessageTools('user-1', 'agent-1').send_message, { target: 'slack:C0RELEASE', text: 'Hi' });
+    await run(getSendMessageTools('user-1', 'agent-1', 'chat').send_message, { target: 'slack:C0RELEASE', text: 'Hi' });
 
     expect(mockOutbound.send.mock.calls[0][0].origin).toBeUndefined();
+  });
+
+  it.each([
+    ['chat', 'USER_INPUT'],
+    ['heartbeat', 'HEARTBEAT'],
+    ['cron', 'CRON_TASK'],
+    ['webhook', 'WEBHOOK'],
+    ['goal', 'GOAL'],
+  ])('sends from %s mode with the trigger %s', async (mode, trigger) => {
+    await run(getSendMessageTools('user-1', 'agent-1', mode).send_message, { target: 'slack:C0RELEASE', text: 'Hi' });
+
+    expect(mockOutbound.send.mock.calls[0][0].trigger).toBe(trigger);
   });
 
   it('lets a refusal reach the agent as the tool error', async () => {
     mockOutbound.send.mockRejectedValue(new Error('"slack:C0RANDOM" is not a channel or DM linked to this agent'));
 
     await expect(
-      run(getSendMessageTools('user-1', 'agent-1').send_message, { target: 'slack:C0RANDOM', text: 'Hi' }),
+      run(getSendMessageTools('user-1', 'agent-1', 'chat').send_message, { target: 'slack:C0RANDOM', text: 'Hi' }),
     ).rejects.toThrow('is not a channel or DM linked to this agent');
   });
 });
 
 describe('Requirement: every mode that stores its tool calls has the message tools', () => {
-  const tools = getSendMessageTools('user-1', 'agent-1');
+  const tools = getSendMessageTools('user-1', 'agent-1', 'chat');
 
   it.each(['chat', 'heartbeat', 'cron', 'webhook', 'goal'])('%s mode keeps them', (mode) => {
     const filtered = filterToolsByMode(tools, mode);

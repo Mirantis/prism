@@ -9,8 +9,9 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockPrisma, mockGetTeamsConfig, mockApp } = vi.hoisted(() => ({
+const { mockPrisma, mockGetTeamsConfig, mockApp, mockFindByConversationId } = vi.hoisted(() => ({
   mockPrisma: { teamsMapping: { findMany: vi.fn() } },
+  mockFindByConversationId: vi.fn(),
   mockGetTeamsConfig: vi.fn(),
   mockApp: {
     send: vi.fn(),
@@ -37,7 +38,9 @@ vi.mock('@microsoft/teams.api', () => ({
 vi.mock('../../../lib/prisma', () => ({ default: mockPrisma, prisma: mockPrisma }));
 vi.mock('../../../lib/telemetry', () => ({ trackEvent: vi.fn() }));
 vi.mock('../../../lib/teams-config', () => ({ getTeamsConfig: mockGetTeamsConfig }));
-vi.mock('../teams-mapping.service', () => ({ teamsMappingService: {} }));
+vi.mock('../teams-mapping.service', () => ({
+  teamsMappingService: { findByConversationId: mockFindByConversationId },
+}));
 vi.mock('../../conversation.service', () => ({ conversationService: {} }));
 vi.mock('../../conversation-engine.service', () => ({ conversationEngineService: {} }));
 vi.mock('../../thread-reply-classifier.service', () => ({
@@ -76,6 +79,7 @@ describe('Requirement: the agent posts only to its linked Teams targets', () => 
     (teamsAdapterService as any).app = mockApp;
     mockApp.send.mockResolvedValue({ id: '1712345678901' });
     mockApp.reply.mockResolvedValue({ id: '1712345678999' });
+    mockFindByConversationId.mockResolvedValue({ lensUserId: 'user-1', agentId: 'agent-1' });
     mockApp.api.conversations.getMemberById.mockImplementation(async (_conversationId: string, id: string) => {
       if (id === ALICE) return { id: '29:alice', name: 'Alice Example', aadObjectId: ALICE };
       throw notFound();
@@ -110,7 +114,10 @@ describe('Requirement: the agent posts only to its linked Teams targets', () => 
         `Release v2 is out. <@${ALICE}:Alice> please announce it.`,
       );
 
-      expect(result).toEqual({ messageId: '1712345678901' });
+      expect(result).toEqual({
+        messageId: '1712345678901',
+        history: { userId: 'user-1', threadKey: '19:release@thread.tacv2;messageid=1712345678901' },
+      });
       expect(mockApp.api.conversations.getMemberById).toHaveBeenCalledWith('19:release@thread.tacv2', ALICE);
       const [conversationId, activity] = mockApp.send.mock.calls[0];
       expect(conversationId).toBe('19:release@thread.tacv2');
@@ -137,7 +144,39 @@ describe('Requirement: the agent posts only to its linked Teams targets', () => 
 
       expect(mockApp.reply).toHaveBeenCalledWith('19:release@thread.tacv2', '1712345678901', expect.anything());
       expect(mockApp.send).not.toHaveBeenCalled();
-      expect(result).toEqual({ messageId: '1712345678999' });
+      // The reply chain is keyed by its root, which a reply in the chain continues.
+      expect(result).toEqual({
+        messageId: '1712345678999',
+        history: { userId: 'user-1', threadKey: '19:release@thread.tacv2;messageid=1712345678901' },
+      });
+    });
+
+    it("names the personal chat's thread for a DM post, keyed by the conversation id", async () => {
+      const dm: LinkedTarget = {
+        ...RELEASE,
+        key: 'teams:a:personal-chat',
+        kind: 'dm',
+        conversationId: 'a:personal-chat',
+        dmUserId: 'user-2',
+      };
+
+      const result = await teamsAdapterService.postToTarget(dm, 'The deploy failed. Shall I roll back?');
+
+      expect(result).toEqual({ messageId: '1712345678901', history: { userId: 'user-2', threadKey: 'a:personal-chat' } });
+      expect(mockFindByConversationId).not.toHaveBeenCalled();
+    });
+
+    it('reports the send when the mapping read fails after the post, so the agent does not send again', async () => {
+      mockFindByConversationId.mockRejectedValue(new Error('database is locked'));
+
+      expect(await teamsAdapterService.postToTarget(RELEASE, 'Hi')).toEqual({ messageId: '1712345678901' });
+      expect(mockApp.send).toHaveBeenCalledTimes(1);
+    });
+
+    it('names no stored thread for a channel whose mapping has no user', async () => {
+      mockFindByConversationId.mockResolvedValue(null);
+
+      expect(await teamsAdapterService.postToTarget(RELEASE, 'Hi')).toEqual({ messageId: '1712345678901' });
     });
 
     it('removes an <at> tag the agent wrote, which has no entity behind it', async () => {

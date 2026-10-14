@@ -141,6 +141,7 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
     ...getSendMessageTools(
       input.userId,
       input.agentId,
+      input.mode,
       input.threadId,
       originChannel,
       input.originChannelId,

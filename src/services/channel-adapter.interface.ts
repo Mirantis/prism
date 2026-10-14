@@ -74,6 +74,17 @@ export interface LinkedTarget {
   dmUserId?: string;
 }
 
+/** A message `postToTarget` posted. */
+export interface PostedMessage {
+  messageId: string;
+  /**
+   * The stored thread a reply to the message continues: the user it belongs
+   * to and the key the channel's inbound path gives it. Set when that thread is
+   * read from the database, so the message has to be stored there to be seen.
+   */
+  history?: { userId: string; threadKey: string };
+}
+
 /**
  * A send the runtime refuses. The message is the reason the agent reads, so it
  * names the rule and, for a mention, the person.
@@ -189,9 +200,10 @@ export interface ChannelAdapter {
    * `thread` when given. Every `<@ID>` token must name a member of the target,
    * and becomes a mention that notifies. Throws `SendRefusedError` for a send
    * the platform rules refuse, and the platform's error when the post fails.
-   * Returns the id of the posted message.
+   * Returns the id of the posted message, and `history` when the conversation's
+   * history is read from the database rather than from the platform.
    */
-  postToTarget?(target: LinkedTarget, text: string, thread?: string): Promise<{ messageId: string }>;
+  postToTarget?(target: LinkedTarget, text: string, thread?: string): Promise<PostedMessage>;
 
   /**
    * Initialize the channel adapter
