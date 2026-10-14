@@ -32,7 +32,10 @@ const MODE_TRIGGER: Record<string, MessageTrigger> = {
 export function getSendMessageTools(
   userId: string,
   agentId: string,
-  /** The invocation mode, which sets the trigger of the message stored in the target's history. */
+  /**
+   * The invocation mode. It sets the trigger of the message stored in the
+   * target's history, and where a goal turn's own reply goes.
+   */
   mode: string,
   threadId?: string,
   originChannel?: ChannelName,
@@ -70,7 +73,7 @@ export function getSendMessageTools(
         text: z.string().describe('The message, in markdown'),
       }),
       execute: async ({ target, thread, text }) => {
-        const origin = await replyDestination(threadId, originChannel, originChannelId, broadcastsOutput);
+        const origin = await replyDestination(mode, threadId, originChannel, originChannelId, broadcastsOutput);
         const trigger = MODE_TRIGGER[mode] ?? 'USER_INPUT';
         const sent = await outboundMessageService.send({ agentId, userId, target, thread, text, origin, trigger });
         return { sent: true, target: sent.target.key, name: sent.target.name, messageId: sent.messageId };
@@ -82,9 +85,10 @@ export function getSendMessageTools(
 /**
  * Where the run's own reply goes: the broadcast, a chat conversation and
  * thread, or nowhere a send can reach (a web turn, a run delivered to the web
- * chat or not at all).
+ * chat or not at all). A goal turn posts its reply top-level, never in a thread.
  */
 async function replyDestination(
+  mode: string,
   threadId: string | undefined,
   originChannel: ChannelName | undefined,
   originChannelId: string | undefined,
@@ -94,5 +98,6 @@ async function replyDestination(
   if (!threadId) return undefined;
   if (!isChatPlatform(originChannel)) return undefined;
   const context = await messageDeliveryService.threadContext(threadId, originChannel, originChannelId);
-  return { platform: context.channel, conversationId: context.channelId, thread: context.channelThreadId };
+  const thread = mode === 'goal' ? undefined : context.channelThreadId;
+  return { platform: context.channel, conversationId: context.channelId, thread };
 }

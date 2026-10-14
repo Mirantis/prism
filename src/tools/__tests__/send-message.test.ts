@@ -77,6 +77,24 @@ describe('Requirement: the message tools act for the run that calls them', () =>
     expect(result).toEqual({ sent: true, target: 'slack:C0RELEASE', name: 'release', messageId: '1712345678.000100' });
   });
 
+  it('sends with the top level of the channel as the reply destination of a goal turn', async () => {
+    mockThreadContext.mockResolvedValue({
+      channel: 'slack',
+      channelId: 'C0GENERAL',
+      channelThreadId: '1712345678.000001',
+      threadId: 'thread-1',
+    });
+    const tools = getSendMessageTools('user-1', 'agent-1', 'goal', 'thread-1', 'slack', 'C0GENERAL');
+
+    await run(tools.send_message, { target: 'slack:C0GENERAL', text: 'Step 2 is done.' });
+
+    expect(mockOutbound.send.mock.calls[0][0].origin).toEqual({
+      platform: 'slack',
+      conversationId: 'C0GENERAL',
+      thread: undefined,
+    });
+  });
+
   it('sends with no reply destination from a web turn', async () => {
     await run(getSendMessageTools('user-1', 'agent-1', 'chat', 'thread-1', 'websocket').send_message, {
       target: 'slack:C0RELEASE',

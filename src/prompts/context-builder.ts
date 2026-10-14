@@ -877,7 +877,9 @@ turn's objective and progress are in the user message. Each turn, make concrete,
 verifiable progress using your tools rather than narrating or re-doing prior work. A
 separate checker decides after each turn whether the objective is complete — you do not
 need to declare completion with any tool; just do the work and state clearly when the
-objective is fully met. If you become blocked, explain precisely what is blocking you.`;
+objective is fully met. If you become blocked, explain precisely what is blocking you.
+
+Each turn's final message is posted top-level in the conversation or channel this goal reports into, so do not also post it there with send_message or another messaging tool; that sends it twice.`;
 }
 
 function getSubagentInstructions(): string {
