@@ -476,6 +476,15 @@ export class WebhookService {
     if (result.error?.type === 'budget_exceeded') {
       const budgetMessage = `This event could not be processed — your organization's AI spending limit has been reached${result.error.detail ? `: ${result.error.detail}` : ''}. Please contact your administrator to increase the budget.`;
       const { message, chosenChannels } = await this.deliver(agent.id, agent.userId, subscription, budgetMessage, stored);
+      if (!message) {
+        await outboundMessageService.keepWithheldRun({
+          agentId: agent.id,
+          userId: agent.userId,
+          content: budgetMessage,
+          triggeredBy: 'WEBHOOK',
+          toolCalls: result.toolCalls,
+        });
+      }
       return { status: 'budget_exceeded', error: result.error.detail, messageId: message?.id, chosenChannels };
     }
 

@@ -32,6 +32,7 @@ const {
   mockEndLoopStatus,
   mockConfig,
   mockWritableThreadId,
+  mockKeepWithheldRun,
 } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
   mockPublish: vi.fn(),
@@ -47,9 +48,14 @@ const {
   mockEndLoopStatus: vi.fn(),
   mockConfig: { goalMaxTurns: 100, goalDefaultTokenBudget: null as number | null },
   mockWritableThreadId: vi.fn(),
+  mockKeepWithheldRun: vi.fn(),
 }));
 
 vi.mock('../invoke', () => ({ invoke: mockInvoke }));
+
+vi.mock('./outbound-message.service', () => ({
+  outboundMessageService: { keepWithheldRun: mockKeepWithheldRun },
+}));
 
 vi.mock('./message-delivery.service', () => ({
   messageDeliveryService: {
@@ -455,6 +461,35 @@ describe('GoalService', () => {
 
       expect(mockInvoke).toHaveBeenCalledTimes(1);
       expect(goalRow!.status).toBe('budget_limited');
+    });
+
+    it('keeps the tool calls of a turn that hit the spending limit in the goal thread', async () => {
+      const toolCalls = [{ tool: 'send_message', input: '{}', output: '{}', success: true, timestamp: '2026-10-14T00:00:00Z' }];
+      mockInvoke.mockResolvedValue({
+        response: '',
+        toolCalls,
+        steps: [],
+        usage: { totalTokens: 0 },
+        error: { type: 'budget_exceeded', detail: null },
+      });
+
+      await goalService.startGoal({
+        userId: 'user-1',
+        agentId: 'agent-1',
+        threadId: 'thread-1',
+        objective: 'too pricey',
+        originChannel: 'websocket',
+      });
+      await waitForTerminal();
+
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith({
+        agentId: 'agent-1',
+        userId: 'user-1',
+        threadId: 'thread-1',
+        content: '',
+        triggeredBy: 'GOAL',
+        toolCalls,
+      });
     });
   });
 
