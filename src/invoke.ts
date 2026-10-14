@@ -201,7 +201,7 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
     // section (e.g. an attachment that failed to download).
     context.runtimeNotices = request.runtimeNotices;
     if (hasComputerForMode(request.mode)) {
-      const help = await computerHelpService.forTurn(request.agentId, request.userId, request.threadId);
+      const help = await computerHelpService.forTurn(request);
       context.runtimeNotices = [
         ...(request.runtimeNotices ?? []),
         ...computerHelpNotices(help),
