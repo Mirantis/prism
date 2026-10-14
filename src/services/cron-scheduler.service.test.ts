@@ -20,6 +20,8 @@ const {
   mockCronTaskUpdateMany,
   mockCronTaskDeleteMany,
   mockCronTaskFindMany,
+  mockCronTaskFindFirst,
+  mockCronTaskUpdate,
   mockCronSchedule,
   mockCronValidate,
   mockGenerateText,
@@ -34,6 +36,8 @@ const {
   mockCronTaskUpdateMany: vi.fn(),
   mockCronTaskDeleteMany: vi.fn(),
   mockCronTaskFindMany: vi.fn(),
+  mockCronTaskFindFirst: vi.fn(),
+  mockCronTaskUpdate: vi.fn(),
   mockCronSchedule: vi.fn(),
   mockCronValidate: vi.fn(),
   mockGenerateText: vi.fn(),
@@ -57,6 +61,8 @@ vi.mock('../lib/prisma', () => ({
   prisma: {
     cronTask: {
       findMany: mockCronTaskFindMany,
+      findFirst: mockCronTaskFindFirst,
+      update: mockCronTaskUpdate,
       updateMany: mockCronTaskUpdateMany,
       deleteMany: mockCronTaskDeleteMany,
     },
@@ -98,8 +104,9 @@ vi.mock('../logger', () => ({
 // Import under test (after mocks are registered)
 // ---------------------------------------------------------------------------
 
-import { cronSchedulerService } from './cron-scheduler.service';
+import { cronSchedulerService, toBackendCronTask } from './cron-scheduler.service';
 import type { BackendCronTask } from './cron-scheduler.service';
+import type { CronTask } from '@prisma/client';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -413,7 +420,7 @@ describe('CronSchedulerService', () => {
       expect(mockLoggerError).not.toHaveBeenCalled();
     });
 
-    it('executes past-due one-shot task immediately via setImmediate', async () => {
+    it('executes a past-due one-shot task at once', async () => {
       mockCronValidate.mockReturnValue(false);
 
       const pastDate = new Date(Date.now() - 60_000).toISOString(); // 1 minute ago
@@ -425,7 +432,6 @@ describe('CronSchedulerService', () => {
 
       cronSchedulerService.scheduleTask(task);
 
-      // setImmediate schedules for next tick - advance timers to process it
       await vi.advanceTimersByTimeAsync(0);
 
       expect(mockInvoke).toHaveBeenCalledWith({
@@ -434,6 +440,183 @@ describe('CronSchedulerService', () => {
         mode: 'cron',
         prompt: 'Generate the daily report.',
       });
+    });
+  });
+
+  // ==========================================================================
+  // updateTask — an edit against the task's running job
+  // ==========================================================================
+
+  describe('updateTask', () => {
+    /** A stored row, as Prisma returns it. */
+    function storedRow(overrides: Partial<CronTask> = {}): CronTask {
+      return {
+        id: 'task-1',
+        agentId: 'agent-1',
+        userId: 'user-abc-123',
+        name: 'Daily Report',
+        schedule: '0 9 * * *',
+        instruction: 'Generate the daily report.',
+        isActive: true,
+        nextRunAt: null,
+        lastRunAt: null,
+        threadId: null,
+        originChannel: null,
+        originChannelId: null,
+        createdAt: new Date('2025-01-01T00:00:00Z'),
+        updatedAt: new Date('2025-01-01T00:00:00Z'),
+        ...overrides,
+      };
+    }
+
+    const done = { response: 'Done.', toolCalls: [], steps: [{ text: 'Done.', toolCalls: [] }] };
+
+    beforeEach(() => {
+      // A one-shot keeps the words it was asked in, which are no cron expression.
+      mockCronValidate.mockImplementation((schedule: string) => !schedule.startsWith('in '));
+      mockCronSchedule.mockReturnValue({ stop: vi.fn(), getNextRun: () => null });
+      mockCronTaskUpdate.mockImplementation(({ where, data }: { where: { id: string }; data: Partial<CronTask> }) =>
+        Promise.resolve(storedRow({ id: where.id, ...data })),
+      );
+    });
+
+    it('runs the edited one-shot, and not the old one, when its time comes during the edit', async () => {
+      const row = storedRow({ id: 'once', schedule: 'in 1 minutes', nextRunAt: new Date(Date.now() + 100) });
+      cronSchedulerService.scheduleTask(toBackendCronTask(row));
+      mockCronTaskFindFirst.mockResolvedValue(row);
+      let finishWrite!: () => void;
+      mockCronTaskUpdate.mockImplementationOnce(
+        ({ data }: { data: Partial<CronTask> }) =>
+          new Promise((resolve) => {
+            finishWrite = () => resolve({ ...row, ...data });
+          }),
+      );
+
+      const edit = cronSchedulerService.updateTask('once', { instruction: 'The new instruction.' });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockCronTaskUpdate).toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(100); // the old timer fires while the write is in flight
+      finishWrite();
+      await expect(edit).resolves.toMatchObject({ status: 'updated' });
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+      expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'The new instruction.' }));
+      expect(mockCronTaskDeleteMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses an edit while a one-shot runs, and deletes the task when the run ends', async () => {
+      const row = storedRow({ id: 'once', schedule: 'in 1 minutes', nextRunAt: new Date(Date.now() + 60_000) });
+      cronSchedulerService.scheduleTask(toBackendCronTask(row));
+      let finishRun!: (result: unknown) => void;
+      mockInvoke.mockImplementationOnce(() => new Promise((resolve) => (finishRun = resolve)));
+      await vi.advanceTimersByTimeAsync(60_000);
+      mockCronTaskFindFirst.mockResolvedValue(row);
+
+      const edit = await cronSchedulerService.updateTask('once', { instruction: 'Too late.' });
+
+      expect(edit).toEqual({ status: 'running', error: expect.stringContaining('running now') });
+      expect(mockCronTaskUpdate).not.toHaveBeenCalled();
+      finishRun(done);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockCronTaskDeleteMany).toHaveBeenCalledWith({ where: { id: 'once' } });
+    });
+
+    it('runs a task edited into a one-shot during a run of its old schedule once that run ends', async () => {
+      let tick!: () => Promise<void>;
+      mockCronSchedule.mockImplementation((_schedule: string, cb: () => Promise<void>) => {
+        tick = cb;
+        return { stop: vi.fn(), getNextRun: () => null };
+      });
+      const row = storedRow();
+      cronSchedulerService.scheduleTask(toBackendCronTask(row));
+      let finishRun!: (result: unknown) => void;
+      mockInvoke.mockImplementationOnce(() => new Promise((resolve) => (finishRun = resolve)));
+      const recurringRun = tick();
+      mockCronTaskFindFirst.mockResolvedValue(row);
+
+      await cronSchedulerService.updateTask('task-1', { schedule: 'in 1 minutes', instruction: 'Check once more.' });
+      await vi.advanceTimersByTimeAsync(60_000); // the one-shot's time comes during the old run
+
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+      expect(mockCronTaskDeleteMany).not.toHaveBeenCalled();
+      finishRun(done);
+      await recurringRun;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockInvoke).toHaveBeenCalledTimes(2);
+      expect(mockInvoke).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: 'Check once more.' }));
+      expect(mockCronTaskDeleteMany).toHaveBeenCalledWith({ where: { id: 'task-1' } });
+    });
+
+    /** Start a run of a recurring task, then edit the task into a one-shot whose time comes during that run. */
+    async function oneShotWaitingForRun(): Promise<{ finishRun: (result: unknown) => void; recurringRun: Promise<void> }> {
+      let tick!: () => Promise<void>;
+      mockCronSchedule.mockImplementation((_schedule: string, cb: () => Promise<void>) => {
+        tick = cb;
+        return { stop: vi.fn(), getNextRun: () => null };
+      });
+      const row = storedRow();
+      cronSchedulerService.scheduleTask(toBackendCronTask(row));
+      let finishRun!: (result: unknown) => void;
+      mockInvoke.mockImplementationOnce(() => new Promise((resolve) => (finishRun = resolve)));
+      const recurringRun = tick();
+      mockCronTaskFindFirst.mockResolvedValue(row);
+      const edit = await cronSchedulerService.updateTask('task-1', {
+        schedule: 'in 1 minutes',
+        instruction: 'Check once more.',
+      });
+      if (edit.status !== 'updated') throw new Error(`edit refused: ${edit.status}`);
+      mockCronTaskFindFirst.mockResolvedValue(edit.task);
+      await vi.advanceTimersByTimeAsync(60_000);
+      return { finishRun, recurringRun };
+    }
+
+    it('drops a one-shot deleted while it waits for a run of its old schedule', async () => {
+      const { finishRun, recurringRun } = await oneShotWaitingForRun();
+
+      cronSchedulerService.unscheduleTask('task-1', 'user-abc-123');
+      finishRun(done);
+      await recurringRun;
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+      expect(mockCronTaskDeleteMany).not.toHaveBeenCalled();
+    });
+
+    it('takes an edit while a one-shot waits for a run of its old schedule', async () => {
+      const { finishRun, recurringRun } = await oneShotWaitingForRun();
+
+      const edit = await cronSchedulerService.updateTask('task-1', { instruction: 'Check twice.' });
+      finishRun(done);
+      await recurringRun;
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(edit.status).toBe('updated');
+      expect(mockInvoke).toHaveBeenCalledTimes(2);
+      expect(mockInvoke).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: 'Check twice.' }));
+      expect(mockCronTaskDeleteMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the delivery baseline for an edit that leaves the instruction as it was', async () => {
+      let tick!: () => Promise<void>;
+      mockCronSchedule.mockImplementation((_schedule: string, cb: () => Promise<void>) => {
+        tick = cb;
+        return { stop: vi.fn(), getNextRun: () => null };
+      });
+      const row = storedRow();
+      cronSchedulerService.scheduleTask(toBackendCronTask(row));
+      await tick(); // delivers, which sets the baseline
+      mockCronTaskFindFirst.mockResolvedValue(row);
+
+      await cronSchedulerService.updateTask('task-1', { name: 'Half-hourly report', schedule: '*/30 * * * *' });
+      await tick();
+      mockCronTaskFindFirst.mockResolvedValue(storedRow({ schedule: '*/30 * * * *' }));
+      await cronSchedulerService.updateTask('task-1', { instruction: 'Only tell me if the build breaks.' });
+      await tick();
+
+      const gateInputs = mockGenerateText.mock.calls.map(([call]) => call.messages[0].content as string);
+      expect(gateInputs[1]).toContain('## Last Delivered Result');
+      expect(gateInputs[2]).toContain('No previous result has been delivered');
     });
   });
 
@@ -926,7 +1109,6 @@ describe('CronSchedulerService', () => {
       expect(mockTrackEvent).toHaveBeenCalledWith('cron task executed', 'user-abc-123', {
         'agent.id': 'agent-1',
         'cron.task.id': 'task-1',
-        'cron.task.name': 'Daily Report',
         'cron.result': 'completed',
         'cron.continue_in_thread': 'false',
         'cron.duration_ms': expect.any(String),
@@ -973,11 +1155,24 @@ describe('CronSchedulerService', () => {
       expect(mockTrackEvent).toHaveBeenCalledWith('cron task scheduled', 'user-abc-123', {
         'agent.id': 'agent-1',
         'cron.task.id': 'task-1',
-        'cron.task.name': 'Daily Report',
         'cron.schedule': '0 9 * * *',
         'cron.one_shot': 'false',
         'cron.continue_in_thread': 'false',
       });
+    });
+
+    it('emits "cron task updated", not "cron task scheduled", when an edit re-registers a task', () => {
+      mockCronValidate.mockReturnValue(true);
+      mockCronSchedule.mockReturnValue({ stop: vi.fn() });
+
+      cronSchedulerService.scheduleTask(createCronTask(), { source: 'update' });
+
+      expect(mockTrackEvent).toHaveBeenCalledTimes(1);
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'cron task updated',
+        'user-abc-123',
+        expect.objectContaining({ 'cron.task.id': 'task-1', 'cron.schedule': '0 9 * * *' }),
+      );
     });
 
     it('does not emit "cron task scheduled" for boot re-registrations', () => {

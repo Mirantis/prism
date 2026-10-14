@@ -43,6 +43,7 @@ function stubApi(): { [K in keyof ApiClient]: ReturnType<typeof vi.fn> } {
     setHeartbeatInterval: vi.fn(),
     listCronTasks: vi.fn(),
     createCronTask: vi.fn(),
+    updateCronTask: vi.fn(),
     deleteCronTask: vi.fn(),
     listWebhookSubscriptions: vi.fn(),
     updateWebhookSubscription: vi.fn(),

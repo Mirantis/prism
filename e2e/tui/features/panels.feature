@@ -15,6 +15,14 @@ Feature: CLI interactive panels
     Then I see "No scheduled tasks"
     And no cron tasks remain
 
+  Scenario: /schedules edits the selected task
+    Given a cron task "E2E Daily Report" exists
+    When I open the schedules panel
+    Then I see "E2E Daily Report"
+    When I edit the selected task and add " edited" to its instruction
+    Then I see "Schedules"
+    And the task "E2E Daily Report" is saved with the instruction "noop edited"
+
   Scenario: /schedules opens the create form
     When I open the schedules panel
     Then I see "No scheduled tasks"

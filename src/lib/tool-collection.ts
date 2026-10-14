@@ -319,7 +319,7 @@ export function filterToolsByMode(tools: Record<string, Tool>, mode: string): Re
   // Goal-management tools are chat-only entry points; a goal turn keeps only
   // get_goal so it can introspect its own progress.
   const goalToolNames = new Set(['create_goal', 'get_goal']);
-  const cronToolNames = new Set(['schedule_task', 'list_scheduled_tasks', 'delete_scheduled_task']);
+  const cronToolNames = new Set(['schedule_task', 'list_scheduled_tasks', 'update_scheduled_task', 'delete_scheduled_task']);
 
   const omit = (names: Set<string>): Record<string, Tool> => {
     const result: Record<string, Tool> = {};

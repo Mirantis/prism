@@ -65,6 +65,14 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     Step('I open the config panel', async () => {
       await dispatch('/config');
     });
+    Step('a cron task {string} exists', async (_ctx, name: string) => {
+      await runtimeRequest(env.port, 'POST', '/agents/cron-tasks', {
+        name,
+        // Daily at 05:00 — a valid cron that won't fire during the test window.
+        schedule: '0 5 * * *',
+        instruction: 'noop',
+      });
+    });
     Step('no cron tasks remain', async () => {
       const tasks = await runtimeRequest<unknown[]>(env.port, 'GET', '/agents/cron-tasks');
       expect(tasks).toEqual([]);
@@ -75,15 +83,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     // Covered by the shared "open" + "I see" steps.
   });
 
-  Scenario('/schedules lists a seeded task and deletes it via the UI', ({ Given, When }) => {
-    Given('a cron task {string} exists', async (_ctx, name: string) => {
-      await runtimeRequest(env.port, 'POST', '/agents/cron-tasks', {
-        name,
-        // Daily at 05:00 — a valid cron that won't fire during the test window.
-        schedule: '0 5 * * *',
-        instruction: 'noop',
-      });
-    });
+  Scenario('/schedules lists a seeded task and deletes it via the UI', ({ When }) => {
     When('I delete the selected task and confirm', async () => {
       // One seeded row → it's selected (index 0); delete needs no navigation.
       session.send('d');
@@ -91,6 +91,36 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       session.send('y');
     });
     // "Then I see …" and "And no cron tasks remain" come from the shared steps.
+  });
+
+  Scenario('/schedules edits the selected task', ({ When, And }) => {
+    When('I edit the selected task and add {string} to its instruction', async (_ctx, suffix: string) => {
+      // One seeded row → it's selected; the form opens on its stored fields.
+      session.send('e');
+      await session.waitForFrame(new RegExp(`Edit schedule[\\s\\S]*Name\\s+${SEEDED_TASK}`), 5_000);
+      session.send(KEYS.DOWN);
+      await sleep(300);
+      session.send(KEYS.DOWN);
+      await sleep(300);
+      // The cursor starts at the end of the stored text.
+      session.send(suffix);
+      await session.waitForFrame(new RegExp(`Instruction\\s+noop${suffix}`), 5_000);
+      session.send(KEYS.ENTER);
+    });
+    And(
+      'the task {string} is saved with the instruction {string}',
+      async (_ctx, name: string, instruction: string) => {
+        await expect
+          .poll(
+            async () =>
+              (await runtimeRequest<Array<{ name: string; instruction: string }>>(env.port, 'GET', '/agents/cron-tasks')).map(
+                (task) => ({ name: task.name, instruction: task.instruction }),
+              ),
+            { timeout: 10_000 },
+          )
+          .toEqual([{ name, instruction }]);
+      },
+    );
   });
 
   Scenario('/schedules opens the create form', ({ When }) => {

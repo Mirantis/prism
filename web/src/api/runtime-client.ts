@@ -6,6 +6,7 @@ import type {
   ConversationMessage,
   ConversationThread,
   CronTask,
+  CronTaskInput,
   DocumentField,
   DocumentRevision,
   DocumentRevisionHistory,
@@ -285,9 +286,14 @@ export const runtimeApi = {
   // Cron tasks
   listCronTasks: () =>
     request<CronTask[]>('/agents/cron-tasks'),
-  createCronTask: (body: { name: string; schedule: string; instruction: string }) =>
+  createCronTask: (body: CronTaskInput) =>
     request<CronTask>('/agents/cron-tasks', {
       method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  updateCronTask: (taskId: string, body: Partial<CronTaskInput>) =>
+    request<CronTask>(`/agents/cron-tasks/${taskId}`, {
+      method: 'PATCH',
       body: JSON.stringify(body),
     }),
   deleteCronTask: (taskId: string) =>

@@ -308,8 +308,17 @@ export interface CronTask {
   isActive: boolean;
   lastRunAt: string | null;
   nextRunAt: string | null;
+  /** The conversation a one-off task continues in, if it continues one. */
+  threadId: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** The fields a person writes when they create or edit a scheduled task. */
+export interface CronTaskInput {
+  name: string;
+  schedule: string;
+  instruction: string;
 }
 
 export type WebhookDeliverTo = 'all' | 'chat' | 'slack' | 'teams' | 'none';

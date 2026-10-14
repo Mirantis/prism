@@ -9,96 +9,10 @@ import { Tool, tool } from 'ai';
 import { z } from 'zod';
 import * as cron from 'node-cron';
 import prisma from '../lib/prisma';
-import { cronSchedulerService } from '../services/cron-scheduler.service';
+import { cronSchedulerService, toBackendCronTask } from '../services/cron-scheduler.service';
+import { parseSchedule } from '../services/cron-schedule';
 import { logger } from '../logger';
 import type { ChannelName } from '../services/channel-adapter.interface';
-
-/**
- * Parse human-readable schedule into a cron expression.
- * Supports: "in X minutes", "at 3pm", "every 2 hours", "every hour", "every day",
- * "every day at 9am", raw cron.
- */
-export function parseSchedule(schedule: string): {
-  cronExpression: string;
-  isOneShot: boolean;
-  nextRunAt: Date | null;
-} {
-  const normalized = schedule.toLowerCase().trim();
-
-  const inMatch = normalized.match(/^in\s+(\d+)\s+(second|seconds|sec|secs|minute|minutes|hour|hours|min|mins|hr|hrs)$/);
-  if (inMatch) {
-    const value = parseInt(inMatch[1]);
-    const unit = inMatch[2];
-    const ms = unit.startsWith('hour') || unit.startsWith('hr')
-      ? value * 60 * 60 * 1000
-      : unit.startsWith('sec')
-        ? value * 1000
-        : value * 60 * 1000;
-
-    return {
-      cronExpression: schedule,
-      isOneShot: true,
-      nextRunAt: new Date(Date.now() + ms),
-    };
-  }
-
-  const atMatch = normalized.match(/^at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
-  if (atMatch) {
-    let hour = parseInt(atMatch[1]);
-    const minute = atMatch[2] ? parseInt(atMatch[2]) : 0;
-    const ampm = atMatch[3];
-
-    if (ampm === 'pm' && hour !== 12) hour += 12;
-    if (ampm === 'am' && hour === 12) hour = 0;
-
-    const now = new Date();
-    const target = new Date(now);
-    target.setHours(hour, minute, 0, 0);
-
-    if (target <= now) {
-      target.setDate(target.getDate() + 1);
-    }
-
-    return {
-      cronExpression: schedule,
-      isOneShot: true,
-      nextRunAt: target,
-    };
-  }
-
-  const everyMatch = normalized.match(/^every\s+(?:(\d+)\s+)?(second|seconds|sec|secs|minute|minutes|hour|hours|min|mins|hr|hrs)$/);
-  if (everyMatch) {
-    const value = everyMatch[1] ? parseInt(everyMatch[1]) : 1;
-    const unit = everyMatch[2];
-
-    if (unit.startsWith('sec')) {
-      // node-cron supports a leading seconds field (6-field expression).
-      return { cronExpression: `*/${value} * * * * *`, isOneShot: false, nextRunAt: null };
-    }
-    if (unit.startsWith('hour') || unit.startsWith('hr')) {
-      return { cronExpression: `0 */${value} * * *`, isOneShot: false, nextRunAt: null };
-    }
-    return { cronExpression: `*/${value} * * * *`, isOneShot: false, nextRunAt: null };
-  }
-
-  if (normalized === 'every day') {
-    return { cronExpression: '0 0 * * *', isOneShot: false, nextRunAt: null };
-  }
-
-  const dailyMatch = normalized.match(/^every\s+day\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
-  if (dailyMatch) {
-    let hour = parseInt(dailyMatch[1]);
-    const minute = dailyMatch[2] ? parseInt(dailyMatch[2]) : 0;
-    const ampm = dailyMatch[3];
-
-    if (ampm === 'pm' && hour !== 12) hour += 12;
-    if (ampm === 'am' && hour === 12) hour = 0;
-
-    return { cronExpression: `${minute} ${hour} * * *`, isOneShot: false, nextRunAt: null };
-  }
-
-  return { cronExpression: schedule, isOneShot: false, nextRunAt: null };
-}
 
 export function getCronTools(
   userId: string,
@@ -168,22 +82,7 @@ export function getCronTools(
         });
 
         try {
-          cronSchedulerService.scheduleTask({
-            id: task.id,
-            agentId,
-            userId,
-            name: task.name,
-            schedule: task.schedule,
-            instruction: task.instruction,
-            isActive: task.isActive,
-            nextRunAt: task.nextRunAt?.toISOString() ?? null,
-            lastRunAt: task.lastRunAt?.toISOString() ?? null,
-            createdAt: task.createdAt.toISOString(),
-            updatedAt: task.updatedAt.toISOString(),
-            threadId: task.threadId,
-            originChannel: task.originChannel,
-            originChannelId: task.originChannelId,
-          }, { invokeMode: mode });
+          cronSchedulerService.scheduleTask(toBackendCronTask(task), { invokeMode: mode });
         } catch (err) {
           logger.error({ err }, '[CronTool] Failed to schedule task in-process');
         }
@@ -224,6 +123,35 @@ export function getCronTools(
             nextRunAt: t.nextRunAt?.toISOString() ?? null,
             lastRunAt: t.lastRunAt?.toISOString() ?? null,
           })),
+        };
+      },
+    }),
+
+    update_scheduled_task: tool({
+      description: 'Change the name, schedule or instruction of a scheduled task. A field you leave out keeps its value.',
+      inputSchema: z.object({
+        taskId: z.string().describe('The task ID to change'),
+        name: z.string().optional().describe('New short name for the task'),
+        schedule: z.string().optional().describe('New time to run: "in 30 seconds", "in 2 minutes", "every hour", "at 3pm", cron expression'),
+        instruction: z.string().optional().describe('New instruction: what to do when the task runs'),
+      }),
+      execute: async ({ taskId, ...changes }) => {
+        const result = await cronSchedulerService.updateTask(taskId, changes, {
+          owner: { userId, agentId },
+          invokeMode: mode,
+        });
+        if (result.status !== 'updated') return { success: false, error: result.error };
+
+        const { task } = result;
+        const when = task.nextRunAt
+          ? `to run at ${task.nextRunAt.toLocaleString()}`
+          : `with schedule: ${task.schedule}`;
+        return {
+          success: true,
+          taskId: task.id,
+          message: `Updated "${task.name}" ${when}`,
+          nextRunAt: task.nextRunAt?.toISOString() ?? null,
+          schedule: task.schedule,
         };
       },
     }),

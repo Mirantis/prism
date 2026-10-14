@@ -1,12 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import * as cron from 'node-cron';
-
-// `parseSchedule` lives beside the tool, which reaches the database and the scheduler.
-vi.mock('../lib/prisma', () => ({ default: {}, prisma: {} }));
-vi.mock('../services/cron-scheduler.service', () => ({ cronSchedulerService: {} }));
-
 import { getMeetingInstructions } from './meeting-prompt';
-import { parseSchedule } from '../tools/cron';
+import { parseSchedule } from '../services/cron-schedule';
 
 const base = { agentName: 'Prism', platform: 'Google Meet', responseMode: 'auto' as const };
 
