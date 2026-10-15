@@ -689,10 +689,10 @@ class SlackAdapterService implements ChannelAdapter {
   }
 
   /**
-   * The user's DM channel, else the agent's main linked channel. No channel id
-   * goes with it: `deliver`'s mapping fallback posts to the DM or the main
-   * channel, while a channel id routes to `deliverToChannel`, which cannot post
-   * to a DM.
+   * The user's DM channel, else the agent's main linked channel. The channel id
+   * routes the message to that one conversation through `deliverToChannel`;
+   * without it, `deliver`'s mapping fallback posts to the DM and the main
+   * channel both.
    */
   async defaultDestination(
     agentId: string,
@@ -703,7 +703,7 @@ class SlackAdapterService implements ChannelAdapter {
       select: { dmChannelId: true },
     });
     const conversation = dm?.dmChannelId ?? (await slackMappingService.getMainChannel(agentId));
-    return conversation ? { threadKey: conversation } : null;
+    return conversation ? { threadKey: conversation, channelId: conversation } : null;
   }
 
   async linkedChannelIds(agentId: string): Promise<string[]> {

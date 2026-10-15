@@ -1196,15 +1196,21 @@ describe('Requirement: Slack routes messages nobody replied to', () => {
     it('picks the DM channel first', async () => {
       mockPrisma.slackMapping.findFirst.mockResolvedValue({ dmChannelId: 'D123' });
 
-      expect(await slackAdapterService.defaultDestination('agent-1', 'user-1')).toEqual({ threadKey: 'D123' });
+      expect(await slackAdapterService.defaultDestination('agent-1', 'user-1')).toEqual({
+        threadKey: 'D123',
+        channelId: 'D123',
+      });
       expect(mockSlackMappingService.getMainChannel).not.toHaveBeenCalled();
     });
 
-    it('falls back to the main channel, with no channel id so delivery uses the mapping', async () => {
+    it('falls back to the main channel', async () => {
       mockPrisma.slackMapping.findFirst.mockResolvedValue(null);
       mockSlackMappingService.getMainChannel.mockResolvedValue('C_MAIN');
 
-      expect(await slackAdapterService.defaultDestination('agent-1', 'user-1')).toEqual({ threadKey: 'C_MAIN' });
+      expect(await slackAdapterService.defaultDestination('agent-1', 'user-1')).toEqual({
+        threadKey: 'C_MAIN',
+        channelId: 'C_MAIN',
+      });
     });
 
     it('has none when Slack is not linked', async () => {
