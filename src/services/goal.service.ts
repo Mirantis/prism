@@ -453,7 +453,7 @@ class GoalService {
       // Deliver inside the lock so goal output and user messages stay ordered.
       if (!budgetExceeded && text) {
         await this.deliver(goal, text, result.toolCalls, result.attachmentIds);
-      } else if (budgetExceeded) {
+      } else {
         await outboundMessageService.keepWithheldRun({
           agentId: goal.agentId,
           userId: goal.userId,

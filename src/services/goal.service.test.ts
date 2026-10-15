@@ -491,6 +491,47 @@ describe('GoalService', () => {
         toolCalls,
       });
     });
+
+    it('keeps the tool calls of a turn that sent a message and ended with no text', async () => {
+      mockGenerateText.mockResolvedValue({ text: 'COMPLETE' });
+      const toolCalls = [{ tool: 'send_message', input: '{}', output: '{}', success: true, timestamp: '2026-10-14T00:00:00Z' }];
+      mockInvoke.mockResolvedValue({ response: '', toolCalls, steps: [{ text: '' }], usage: { totalTokens: 3 } });
+
+      await goalService.startGoal({
+        userId: 'user-1',
+        agentId: 'agent-1',
+        threadId: 'thread-1',
+        objective: 'post the release note',
+        originChannel: 'websocket',
+      });
+      await waitForTerminal();
+
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith(
+        expect.objectContaining({ threadId: 'thread-1', content: '', triggeredBy: 'GOAL', toolCalls }),
+      );
+    });
+
+    it('records nothing beside a delivered turn', async () => {
+      mockGenerateText.mockResolvedValue({ text: 'COMPLETE' });
+      mockInvoke.mockResolvedValue({
+        response: 'Posted the release note.',
+        toolCalls: [],
+        steps: [{ text: 'Posted the release note.' }],
+        usage: { totalTokens: 3 },
+      });
+
+      await goalService.startGoal({
+        userId: 'user-1',
+        agentId: 'agent-1',
+        threadId: 'thread-1',
+        objective: 'post the release note',
+        originChannel: 'websocket',
+      });
+      await waitForTerminal();
+
+      expect(mockPublish).toHaveBeenCalledWith('user-1', 'thread-1', 'Posted the release note.', 'GOAL', expect.anything());
+      expect(mockKeepWithheldRun).not.toHaveBeenCalled();
+    });
   });
 
   // ==========================================================================
