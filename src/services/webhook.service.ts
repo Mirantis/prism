@@ -31,6 +31,7 @@ import { verifyWebhookAuth } from '../lib/webhook-signature';
 import { runClassificationGate } from '../lib/classification-gate';
 import { WEBHOOK_GATE_PROMPT, buildWebhookGateUserMessage } from '../prompts/webhook-gate-prompt';
 import { logger } from '../logger';
+import type { InvokeRequest } from '../types';
 
 // ============================================================================
 // Types
@@ -457,12 +458,7 @@ export class WebhookService {
       prompt,
       afterRestart,
       abortSignal: pendingWorkService.shutdownSignal,
-      // 'all' broadcasts the final message to the main channel and the user's
-      // DM. A single platform delivers it to one conversation. A send into a
-      // chosen channel is not refused: the webhook prompt rule asks the agent
-      // not to post its final message there.
-      broadcastsOutput: subscription.deliverTo === 'all',
-      outputDestination: await this.outputDestination(agent.id, agent.userId, subscription),
+      ...(await this.outputTarget(agent.id, agent.userId, subscription)),
     });
     if (pendingWorkService.shutdownSignal.aborted) return null;
 
@@ -568,19 +564,24 @@ export class WebhookService {
   }
 
   /**
-   * The one conversation `deliver` posts the final message to, for a
-   * subscription that delivers to a single platform without chosen channels.
+   * Where `deliver` posts the final message, so `send_message` refuses it as a
+   * target: the broadcast for 'all', and for a single platform its one
+   * conversation, or the broadcast of the web-thread fallback when the platform
+   * has none. A send into a chosen channel is not refused: the webhook prompt
+   * rule asks the agent not to post its final message there.
    */
-  private async outputDestination(
+  private async outputTarget(
     agentId: string,
     userId: string,
     target: Pick<WebhookSubscription, 'deliverTo' | 'slackChannelIds'>,
-  ): Promise<{ platform: ChannelName; conversationId: string } | undefined> {
+  ): Promise<Pick<InvokeRequest, 'broadcastsOutput' | 'outputDestination'>> {
+    if (target.deliverTo === 'all') return { broadcastsOutput: true };
     const channel = messageDeliveryService.getAdapter(target.deliverTo);
-    if (!channel?.defaultDestination) return undefined;
-    if (parseCommaList(target.slackChannelIds).length > 0 && channel.linkedChannelIds) return undefined;
+    if (!channel?.defaultDestination) return {};
+    if (parseCommaList(target.slackChannelIds).length > 0 && channel.linkedChannelIds) return {};
     const destination = await channel.defaultDestination(agentId, userId);
-    return destination ? { platform: channel.name, conversationId: destination.threadKey } : undefined;
+    if (!destination) return { broadcastsOutput: true };
+    return { outputDestination: { platform: channel.name, conversationId: destination.threadKey } };
   }
 
   /** Deliver a webhook message per the subscription's target, naming the subscription for the model. */
