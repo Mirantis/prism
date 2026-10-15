@@ -1,12 +1,10 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { describe, it, expect } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import type { ToolCallRecord } from '@/types';
 
 import ToolCallCard from './tool-call-card';
-
-afterEach(cleanup);
 
 function call(over: Partial<ToolCallRecord> = {}): ToolCallRecord {
   return {

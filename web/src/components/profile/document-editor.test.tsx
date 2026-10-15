@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '@testing-library/jest-dom/vitest';
 import type { AgentDetails, DocumentField } from '@/types';
@@ -14,8 +14,6 @@ vi.mock('@/lib/agent-context', () => ({
 }));
 
 import { DocumentEditor } from './document-editor';
-
-afterEach(cleanup);
 
 function details(field: DocumentField, content: string): AgentDetails {
   return { [field]: content, lockedIn: false, verbose: false } as unknown as AgentDetails;

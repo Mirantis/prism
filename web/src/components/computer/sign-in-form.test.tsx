@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ComputerHelp } from '@/types';
 import { SignInForm } from './sign-in-form';
 
@@ -20,7 +20,6 @@ const help: ComputerHelp = {
 beforeEach(() => {
   computerRequest.mockReset();
 });
-afterEach(cleanup);
 
 function renderForm() {
   render(

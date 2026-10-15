@@ -14,6 +14,7 @@ import { getPrisma } from '../support/db-helper';
 import {
   createSlackUserClient,
   getBotUserId,
+  pollUntil,
   waitForBotReply,
 } from '../support/slack-helper';
 import { getSlackState, resetSlackState } from '../support/slack-state';
@@ -261,6 +262,38 @@ Then("the bot's reply should not be empty", async () => {
   expect(botReplyText).toBeTruthy();
   expect(botReplyText!.trim().length).toBeGreaterThan(0);
 });
+
+/** A task of a `plan` block, as `conversations.replies` returns it. */
+interface PlanTask {
+  title?: string;
+  status?: string;
+  output?: unknown;
+}
+
+Then(
+  "the bot's reply lists a {string} call whose output contains {string}",
+  async ({}, tool: string, marker: string) => {
+    const slack = getSlackState();
+    const task = await pollUntil(
+      async () => {
+        const replies = await slack.userClient!.conversations.replies({
+          channel: slack.channelId,
+          ts: slack.messageTs,
+          limit: 50,
+        });
+        return (replies.messages ?? [])
+          .filter((message) => message.user === slack.botUserId)
+          .flatMap((message) => (message.blocks ?? []) as Array<{ type?: string; tasks?: PlanTask[] }>)
+          .filter((block) => block.type === 'plan')
+          .flatMap((block) => block.tasks ?? [])
+          .find((t) => t.title === tool && JSON.stringify(t.output ?? '').includes(marker));
+      },
+      { timeoutMs: 60_000, label: `${tool} call in the reply's plan` },
+    );
+    expect(task, `No ${tool} call with "${marker}" in its output arrived in the thread`).toBeTruthy();
+    expect(task!.status).toBe('complete');
+  },
+);
 
 Then('the linked channel is still listed', async ({ page }) => {
   const slack = getSlackState();

@@ -1,11 +1,9 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { describe, it, expect } from 'vitest';
+import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { WebhookSubscriptionCard } from './webhook-subscription-card';
 import type { WebhookSubscription } from '@/types';
-
-afterEach(cleanup);
 
 const SUBSCRIPTION: WebhookSubscription = {
   id: 'wh-1',
