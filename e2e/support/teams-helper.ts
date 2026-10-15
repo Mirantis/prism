@@ -139,6 +139,20 @@ export async function postChatMessage(text: string): Promise<string> {
   return message.createdDateTime;
 }
 
+/**
+ * Post a rich-text (HTML) message into the personal chat, the way pasting
+ * formatted text does — the body rides a `text/html` attachment with `text`
+ * empty. Returns the message's creation time.
+ */
+export async function postChatHtml(html: string): Promise<string> {
+  const chatId = requireEnv('TEAMS_E2E_CHAT_ID');
+  const message = await graphFetch<GraphMessage>(`/chats/${chatId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ body: { contentType: 'html', content: html } }),
+  });
+  return message.createdDateTime;
+}
+
 /** A 16x16 solid red PNG. */
 export const RED_SQUARE_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAF0lEQVR4nGP4z8BAEiJN9aiGUQ1DSgMAkPn/Afnh+ngAAAAASUVORK5CYII=';

@@ -859,14 +859,78 @@ class TeamsAdapterService implements ChannelAdapter {
   // ============================================================================
 
   /**
-   * Inbound text: remove the bot's own `<at>…</at>` mention entirely, keep
-   * other participants' names as plain text (their tags stripped).
+   * Inbound text. From `text` when present: the bot's own `<at>…</at>` mention
+   * removed entirely, other participants' names kept as plain text. When `text`
+   * is empty — a pasted or formatted message, whose body Teams puts only in a
+   * `text/html` attachment — from that attachment instead, so a pasted
+   * verification code is read like a typed one.
    */
   private extractText(activity: IMessageActivity): string {
     const withoutBotMention = this.botAccountId
       ? stripMentionsText(activity, { accountId: this.botAccountId })
       : activity.text;
-    return (withoutBotMention ?? '').replace(/<\/?at[^>]*>/g, '').trim();
+    const text = (withoutBotMention ?? '').replace(/<\/?at[^>]*>/g, '').trim();
+    if (text) return text;
+    // A pasted or formatted message can arrive with an empty `text` and its body
+    // only in a text/html attachment (`<p>…</p>`). Read it so a pasted
+    // verification code is recognised the same as a typed one.
+    return this.htmlAttachmentText(activity);
+  }
+
+  /**
+   * The text of a message's `text/html` attachment; empty when there is none.
+   * A pasted message carries its body here with `text` empty. The bot's own
+   * mention is removed whole (found through the mention entities that name it),
+   * so it does not prepend the bot's name and break a pasted code; other
+   * participants' mention tags are stripped but their names kept, as the `text`
+   * path does. Inline formatting is removed with no separator, so a code split
+   * across it (`a1<strong>b2</strong>c3`) rejoins; `<br>` and closing block tags
+   * become newlines, and only spaces and tabs are collapsed, so a multi-line
+   * paste keeps its lines.
+   */
+  private htmlAttachmentText(activity: IMessageActivity): string {
+    const html = activity.attachments?.find(
+      (a) => a.contentType === 'text/html' && typeof a.content === 'string'
+    )?.content;
+    if (!html) return '';
+    return this.dropBotMentions(html, activity)
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(?:p|div|li|tr|h[1-6]|pre|blockquote)\s*>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#(\d+);/g, (m: string, d: string) => {
+        const n = Number(d);
+        return n <= 0x10ffff ? String.fromCodePoint(n) : m;
+      })
+      .replace(/&#x([0-9a-f]+);/gi, (m: string, h: string) => {
+        const n = parseInt(h, 16);
+        return n <= 0x10ffff ? String.fromCodePoint(n) : m;
+      })
+      .replace(/&amp;/gi, '&')
+      .replace(/[ \t]+/g, ' ')
+      .trim();
+  }
+
+  /**
+   * Remove the bot's own `<at>…</at>` mention elements from HTML, found through
+   * the mention entities whose account is the bot. Other mentions are left for
+   * the general tag strip, which keeps their names.
+   */
+  private dropBotMentions(html: string, activity: IMessageActivity): string {
+    if (!this.botAccountId) return html;
+    let out = html;
+    for (const entity of activity.entities ?? []) {
+      const mention = entity as { type?: string; mentioned?: { id?: string; name?: string } };
+      if (mention.type !== 'mention' || mention.mentioned?.id !== this.botAccountId) continue;
+      const name = mention.mentioned.name;
+      if (!name) continue;
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      out = out.replace(new RegExp(`<at\\b[^>]*>\\s*${escaped}\\s*</at>`, 'gi'), '');
+    }
+    return out;
   }
 
   /** Read the message's files; a read that fails becomes a failure, never a throw. */
