@@ -170,8 +170,8 @@ export function formatSlackMessage(
 ): { text: string; blocks: SlackBlock[] } {
   const blocks: SlackBlock[] = [];
 
-  // Add context block for triggered by info
-  if (triggeredBy && triggeredBy !== 'USER_INPUT') {
+  // Add context block for triggered by info. A webhook message is its body alone.
+  if (triggeredBy && triggeredBy !== 'USER_INPUT' && triggeredBy !== 'WEBHOOK') {
     const contextText = triggeredBy === 'HEARTBEAT'
       ? '💓 Heartbeat Alert'
       : triggeredBy === 'CRON_TASK'

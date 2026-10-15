@@ -48,7 +48,7 @@ function detail(summary: WebhookRunSummary, over: Partial<WebhookRunDetail> = {}
   return {
     ...summary,
     delivered: {
-      content: '**Webhook: alerts**\n\nAll clear.',
+      content: 'All clear.',
       toolCalls: [{ tool: 'shell_exec', input: '{"command":"uptime"}', output: '"up"', success: true }],
     },
     ...over,

@@ -65,11 +65,17 @@ describe('formatSlackMessage', () => {
     });
 
     it('adds custom trigger context block', () => {
-      const result = formatSlackMessage('msg', 'WEBHOOK');
+      const result = formatSlackMessage('msg', 'GOAL');
       expect(result.blocks[0]).toEqual({
         type: 'context',
-        elements: [{ type: 'mrkdwn', text: '📬 WEBHOOK' }],
+        elements: [{ type: 'mrkdwn', text: '📬 GOAL' }],
       });
+    });
+
+    it('does not add context block for WEBHOOK', () => {
+      const result = formatSlackMessage('msg', 'WEBHOOK');
+      expect(result.blocks).toHaveLength(1);
+      expect(result.blocks[0].type).toBe('markdown');
     });
 
     it('does not add context block for USER_INPUT', () => {

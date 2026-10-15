@@ -861,6 +861,17 @@ describe('Requirement: Slack Thread Provider', () => {
       expect(messages.map((m) => m.triggeredBy)).toEqual(['USER_INPUT', 'CRON_TASK']);
     });
 
+    it('keeps the subscription name of a webhook message we stored', async () => {
+      mockDbRows({
+        agent: [{ externalMessageId: '1710000003.000000', content: 'Disk at 91%.', toolCalls: null, createdAt: new Date(1710000003 * 1000), triggeredBy: 'WEBHOOK', triggerName: 'alerts' }],
+        internal: [],
+      });
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages.map((m) => [m.triggeredBy, m.triggerName])).toEqual([['USER_INPUT', null], ['WEBHOOK', 'alerts']]);
+    });
+
     it('orders by our DB clock for the bot reply, so an internal step stays before its final even when the Slack ts is earlier (skew)', async () => {
       // Simulate skew: the final's Slack ts (…001) is EARLIER than the internal
       // step's DB createdAt (…004). Because the bot reply's createdAt is taken

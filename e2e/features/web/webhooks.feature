@@ -46,18 +46,24 @@ Feature: Inbound webhooks
     When I navigate to the activity page
     Then the webhook run "notify" is listed as "Delivered"
 
+  # The user sees the reply alone, and the agent can name the subscription that sent it.
   Scenario: An agent-mode subscription runs the agent and delivers its response
     When I navigate to the webhooks page
     And I enable the webhook receiver
-    And I create a webhook subscription named "alerts" with prompt "Ignore the payload. Reply with exactly WEBHOOK_RAN_OK and nothing else. Do not use any tools."
-    When I POST the payload '{"status":"firing"}' to webhook "alerts"
+    And I create a webhook subscription named "lunar-relay" with prompt "Ignore the payload. Reply with exactly WEBHOOK_RAN_OK and nothing else. Do not use any tools."
+    When I POST the payload '{"status":"firing"}' to webhook "lunar-relay"
     Then the webhook response status is 202
-    And a webhook-triggered message containing "WEBHOOK_RAN_OK" is stored in the conversation
+    And a webhook-triggered message reading exactly "WEBHOOK_RAN_OK" is stored in the conversation
     When I navigate to the activity page
-    Then the webhook run "alerts" is listed as "Completed"
-    When I expand the webhook run "alerts"
+    Then the webhook run "lunar-relay" is listed as "Completed"
+    When I expand the webhook run "lunar-relay"
     Then its delivered message contains "WEBHOOK_RAN_OK"
     And the webhook run lists 0 tool calls
+    When I navigate to the agent chat page
+    Then I should see the message "WEBHOOK_RAN_OK" in the conversation
+    When I type "Which webhook subscription sent your last message? Reply with its name only. Do not use any tools." in the chat input
+    And I send the message
+    Then the agent reply contains "lunar-relay"
 
   Scenario: An agent-mode reply with nothing to report is not delivered
     When I navigate to the webhooks page

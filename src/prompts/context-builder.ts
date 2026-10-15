@@ -34,6 +34,8 @@ export interface ConversationMessage {
   // context service always do.
   externalMessageId?: string | null;
   internalStep?: boolean;
+  /** The webhook subscription that produced a webhook message. */
+  triggerName?: string | null;
   // Attachment metadata (no bytes) — the agent pulls content on demand via
   // hydrate_attachment / view_attachment tools.
   attachments?: AttachmentMeta[];
@@ -555,6 +557,7 @@ export function buildConversationHistory(
         }
       }
     } else if (msg.role === 'AGENT') {
+      if (msg.triggerName) push(webhookEventTurn(msg.triggerName));
       const toolCalls = parseToolCalls(msg);
 
       if (toolCalls.length > 0) {
@@ -597,6 +600,21 @@ export function buildConversationHistory(
   }
 
   return { messages, trailingToolChanges: pending };
+}
+
+/**
+ * The turn the model reads before a webhook message. The message answers an event
+ * from outside the conversation, so the model's history names that event first,
+ * and clients show the message alone.
+ */
+function webhookEventTurn(subscription: string): ModelMessage {
+  return {
+    role: 'user',
+    content:
+      `<webhook-event>\nThe "${subscription}" webhook subscription received an event. ` +
+      `The next message was written from that event's data in a separate run, so the data ` +
+      `itself is not in this conversation.\n</webhook-event>`,
+  };
 }
 
 /**

@@ -825,6 +825,45 @@ describe('buildConversationHistory', () => {
     expect(messages[1]).toEqual({ role: 'assistant', content: 'hi' });
   });
 
+  it('puts a webhook-event turn that names the subscription before each webhook message', () => {
+    const context = createTestAgentContext({
+      recentMessages: [
+        { id: '1', role: 'AGENT', content: 'Disk at 91% on db-1.', triggerName: 'alerts' },
+        {
+          id: '2',
+          role: 'AGENT',
+          content: 'Restarted the pod.',
+          triggerName: 'deploys',
+          toolCalls: [
+            { tool: 'shell_exec', input: '{}', output: 'ok', success: true, timestamp: '2026-01-01T00:00:00Z' },
+          ],
+        },
+        { id: '3', role: 'USER', content: 'why did you say that?' },
+      ],
+    });
+    const messages = buildConversationHistory(context).messages;
+    expect(messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant', 'tool', 'user']);
+    expect(messages[0]).toEqual({
+      role: 'user',
+      content:
+        '<webhook-event>\nThe "alerts" webhook subscription received an event. ' +
+        "The next message was written from that event's data in a separate run, so the data " +
+        'itself is not in this conversation.\n</webhook-event>',
+    });
+    expect(messages[1]).toEqual({ role: 'assistant', content: 'Disk at 91% on db-1.' });
+    expect(messages[2].content).toContain('The "deploys" webhook subscription received an event.');
+    expect((messages[3].content as unknown[])[0]).toEqual({ type: 'text', text: 'Restarted the pod.' });
+  });
+
+  it('replays a message stored without a trigger name as it is', () => {
+    const context = createTestAgentContext({
+      recentMessages: [{ id: '1', role: 'AGENT', content: '**Webhook: alerts**\n\nDisk at 91%.', triggerName: null }],
+    });
+    expect(buildConversationHistory(context).messages).toEqual([
+      { role: 'assistant', content: '**Webhook: alerts**\n\nDisk at 91%.' },
+    ]);
+  });
+
   it('emits assistant tool-call + tool result messages for AGENT with toolCalls', () => {
     const context = createTestAgentContext({
       recentMessages: [

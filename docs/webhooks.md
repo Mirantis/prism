@@ -78,10 +78,10 @@ see [Event filtering](#event-filtering)):
 Agent runs are asynchronous by design — webhook senders like Alertmanager time
 out quickly and retry on non-2xx, so the endpoint never holds the connection
 open while the agent works. The agent's response arrives in the conversation
-(prefixed `**Webhook: <name>**`) on the subscription's delivery target. If the
-run fails outright, a brief failure notice is delivered there instead, so a
-triggered event never disappears silently. Every accepted event is also listed on
-the [Activity page](web-ui.md#activity) with its result.
+on the subscription's delivery target. If the run fails outright, a brief
+failure notice is delivered there instead, so a triggered event never
+disappears silently. Every accepted event is also listed on the
+[Activity page](web-ui.md#activity) with its result.
 
 **Runs are serialized per subscription**: concurrent deliveries are accepted
 (`202`) and queued, then executed one at a time in arrival order — so rapid

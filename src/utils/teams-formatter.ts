@@ -31,8 +31,9 @@ export function formatTeamsMessage(
 ): string[] {
   const { triggeredBy, toolCalls } = options ?? {};
 
+  // A webhook message is its body alone.
   let banner = '';
-  if (triggeredBy && triggeredBy !== 'USER_INPUT') {
+  if (triggeredBy && triggeredBy !== 'USER_INPUT' && triggeredBy !== 'WEBHOOK') {
     banner =
       triggeredBy === 'HEARTBEAT'
         ? '💓 **Heartbeat Alert**'

@@ -44,6 +44,8 @@ export type MessageTrigger = (typeof MESSAGE_TRIGGERS)[number];
  * Options for publishing a message
  */
 export interface PublishOptions {
+  /** The webhook subscription that produced a WEBHOOK message, for the model's history. */
+  triggerName?: string;
   /** Tool calls made during message generation */
   toolCalls?: ToolCallRecord[];
   /** UI blocks for rich rendering */
@@ -134,6 +136,7 @@ export class MessageDeliveryService {
       content,
       role: 'AGENT',
       triggeredBy,
+      triggerName: options?.triggerName,
       toolCalls: options?.toolCalls,
       blocks: options?.blocks,
     });

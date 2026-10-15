@@ -67,7 +67,7 @@ Given('the agent has a completed, a failed and a spending-limit webhook run', as
     data: {
       threadId,
       role: 'AGENT',
-      content: '**Webhook: deploy-hook**\n\nDeploy finished.',
+      content: 'Deploy finished.',
       triggeredBy: 'WEBHOOK',
       toolCalls: seededCalls('deploy', 2),
     },
@@ -76,7 +76,7 @@ Given('the agent has a completed, a failed and a spending-limit webhook run', as
     data: {
       threadId,
       role: 'AGENT',
-      content: "**Webhook: budget-hook**\n\nThis event could not be processed — your organization's AI spending limit has been reached.",
+      content: "This event could not be processed — your organization's AI spending limit has been reached.",
       triggeredBy: 'WEBHOOK',
     },
   });

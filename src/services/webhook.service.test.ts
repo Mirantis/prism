@@ -509,7 +509,7 @@ describe('handleInbound deliver-only', () => {
       'user-1',
       'Alert: HighMemory',
       'WEBHOOK',
-      undefined,
+      { triggerName: 'alerts' },
     );
     expect(mockTrackEvent).toHaveBeenCalledWith(
       'webhook processed',
@@ -613,9 +613,9 @@ describe('handleInbound agent mode', () => {
     expect(mockPublishToLatestThread).toHaveBeenCalledWith(
       'agent-1',
       'user-1',
-      '**Webhook: alerts**\n\nAll clear — noise alert.',
+      'All clear — noise alert.',
       'WEBHOOK',
-      expect.objectContaining({}),
+      expect.objectContaining({ triggerName: 'alerts' }),
     );
     expect(mockTrackEvent).toHaveBeenCalledWith(
       'webhook processed',
@@ -701,7 +701,7 @@ describe('handleInbound agent mode', () => {
       }),
     );
     expect(mockPublishToLatestThread.mock.calls[0][2]).toBe(
-      '**Webhook: alerts**\n\nI encountered an error.',
+      'I encountered an error.',
     );
     expect(mockTrackEvent).toHaveBeenCalledWith(
       'webhook processed',
@@ -726,7 +726,7 @@ describe('handleInbound agent mode', () => {
     expect(mockPublish).toHaveBeenCalledWith(
       'user-1',
       'thread-for-D123',
-      '**Webhook: alerts**\n\nhandled',
+      'handled',
       'WEBHOOK',
       expect.objectContaining({
         channelContext: { channel: 'slack', threadId: 'thread-for-D123' },
@@ -746,7 +746,7 @@ describe('handleInbound agent mode', () => {
     expect(mockPublish).toHaveBeenCalledWith(
       'user-1',
       'thread-for-C_MAIN',
-      '**Webhook: alerts**\n\nhandled',
+      'handled',
       'WEBHOOK',
       expect.objectContaining({
         channelContext: { channel: 'slack', channelId: 'C_MAIN', threadId: 'thread-for-C_MAIN' },
@@ -765,7 +765,7 @@ describe('handleInbound agent mode', () => {
     expect(mockPublishToLatestThread).toHaveBeenCalledWith(
       'agent-1',
       'user-1',
-      '**Webhook: alerts**\n\nhandled',
+      'handled',
       'WEBHOOK',
       expect.objectContaining({}),
     );
@@ -813,6 +813,7 @@ describe('handleInbound agent mode', () => {
 
     expect(mockPublish).toHaveBeenCalledTimes(1);
     expect(mockPublish).toHaveBeenCalledWith('user-1', 'thread-for-C_REL', 'Release 1.2', 'WEBHOOK', {
+      triggerName: 'alerts',
       channelContext: { channel: 'slack', channelId: 'C_REL', threadId: 'thread-for-C_REL' },
     });
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('C_GONE'));
@@ -835,6 +836,7 @@ describe('handleInbound agent mode', () => {
     // Scoped to the web socket: a broadcast would reach the main channel.
     expect(mockPublish).toHaveBeenCalledTimes(1);
     expect(mockPublish).toHaveBeenCalledWith('user-1', 'thread-1', 'ping', 'WEBHOOK', {
+      triggerName: 'alerts',
       channelContext: { channel: 'websocket', threadId: 'thread-1' },
     });
     expect(mockPublishToLatestThread).not.toHaveBeenCalled();
@@ -854,7 +856,9 @@ describe('handleInbound agent mode', () => {
     await webhookService.handleInbound('alerts', {}, {}, 'run-1');
 
     expect(mockListChannelIds).not.toHaveBeenCalled();
-    expect(mockPublishToLatestThread).toHaveBeenCalledWith('agent-1', 'user-1', 'ping', 'WEBHOOK', undefined);
+    expect(mockPublishToLatestThread).toHaveBeenCalledWith('agent-1', 'user-1', 'ping', 'WEBHOOK', {
+      triggerName: 'alerts',
+    });
     expect(mockTrackEvent).toHaveBeenCalledWith(
       'webhook processed',
       'user-1',
@@ -871,9 +875,11 @@ describe('handleInbound agent mode', () => {
     await webhookService.handleInbound('alerts', {}, {}, 'run-1');
     await vi.waitFor(() => expect(mockPublishToLatestThread).toHaveBeenCalled());
 
-    const [, , content] = mockPublishToLatestThread.mock.calls[0];
-    expect(content).toContain('spending limit');
-    expect(content).toContain('monthly cap');
+    const [, , content, , options] = mockPublishToLatestThread.mock.calls[0];
+    expect(content).toBe(
+      "This event could not be processed — your organization's AI spending limit has been reached: monthly cap. Please contact your administrator to increase the budget.",
+    );
+    expect(options).toEqual(expect.objectContaining({ triggerName: 'alerts' }));
     expect(mockRunClassificationGate).not.toHaveBeenCalled();
     expect(mockTrackEvent).toHaveBeenCalledWith(
       'webhook processed',
@@ -913,9 +919,9 @@ describe('handleInbound agent mode', () => {
       ),
     );
     await vi.waitFor(() => expect(mockPublishToLatestThread).toHaveBeenCalled());
-    const [, , content] = mockPublishToLatestThread.mock.calls[0];
-    expect(content).toContain('**Webhook: alerts**');
-    expect(content).toContain('bedrock down');
+    const [, , content, , options] = mockPublishToLatestThread.mock.calls[0];
+    expect(content).toBe('This event could not be processed — the run failed with: bedrock down');
+    expect(options).toEqual({ triggerName: 'alerts' });
     expect(mockRunFinish).toHaveBeenCalledWith('run-1', {
       status: 'failed',
       error: 'bedrock down',
@@ -1120,8 +1126,8 @@ describe('handleInbound agent mode', () => {
     // Both events produced a delivered message — nothing was dropped.
     await vi.waitFor(() => expect(mockPublishToLatestThread).toHaveBeenCalledTimes(2));
     const contents = mockPublishToLatestThread.mock.calls.map((c) => c[2]);
-    expect(contents).toContain('**Webhook: alerts**\n\nfirst done');
-    expect(contents).toContain('**Webhook: alerts**\n\nsecond done');
+    expect(contents).toContain('first done');
+    expect(contents).toContain('second done');
   });
 
   it('rejects deliveries once the per-subscription queue is full', async () => {

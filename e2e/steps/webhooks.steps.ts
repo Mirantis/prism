@@ -320,6 +320,22 @@ Then(
 );
 
 Then(
+  'a webhook-triggered message reading exactly {string} is stored in the conversation',
+  async ({}, text: string) => {
+    const agentId = getCurrentAgentId();
+    const messages = await pollUntil(
+      () =>
+        dbHelper.getPrisma().conversationMessage.findMany({
+          where: { triggeredBy: 'WEBHOOK', thread: { agentId } },
+        }),
+      (rows) => rows.length > 0,
+      120_000,
+    );
+    expect(messages.map((m) => m.content)).toEqual([text]);
+  },
+);
+
+Then(
   'no webhook-triggered message containing {string} is stored in the conversation',
   async ({}, text: string) => {
     const agentId = getCurrentAgentId();
