@@ -235,6 +235,7 @@ class SlackAdapterService implements ChannelAdapter {
         message.id,
         includeFeedback,
         attachments,
+        message.triggeredBy || undefined,
       );
       trackEvent('slack message delivered', userId, {
         ...(config.agentId ? { 'agent.id': config.agentId } : {}),
@@ -382,6 +383,7 @@ class SlackAdapterService implements ChannelAdapter {
     messageId?: string,
     includeFeedback: boolean = false,
     attachments: AttachmentMeta[] = [],
+    triggeredBy?: string,
   ): Promise<void> {
     // Find the mapping for this channel. DM channels are keyed by dmChannelId
     // (not slackChannelId), so findByChannelId misses them — fall back to the
@@ -407,7 +409,7 @@ class SlackAdapterService implements ChannelAdapter {
       const formatted = await this.prepareOutboundMessage(
         content,
         teamId,
-        undefined,
+        triggeredBy,
         toolCalls,
         includeFeedback && messageId ? { feedbackMessageId: messageId } : undefined,
       );
@@ -417,6 +419,10 @@ class SlackAdapterService implements ChannelAdapter {
         thread_ts: threadTs, // Reply in thread if specified
         text: formatted.text,
         blocks: formatted.blocks,
+        metadata: {
+          event_type: 'lens_platform_message',
+          event_payload: { threadId, ...(messageId && { messageId }), ...(triggeredBy && { triggeredBy }) },
+        },
       });
 
       // Only set external ID when responding in an existing Slack thread.

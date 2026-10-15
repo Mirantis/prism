@@ -1008,6 +1008,51 @@ describe('deliverToChannel — DM channel fallback', () => {
   });
 });
 
+describe('deliver — a message scoped to one conversation keeps its trigger label', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const adapter = slackAdapterService as any;
+  const postMessage = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    postMessage.mockResolvedValue({ ts: '1700000000.000300' });
+    adapter.apps = new Map([['T001', { app: { client: { chat: { postMessage } } }, teamId: 'T001' }]]);
+    adapter.uploadAttachmentsToSlack = vi.fn().mockResolvedValue(undefined);
+    // The formatter adds the label from the trigger it is given.
+    adapter.prepareOutboundMessage = vi.fn().mockResolvedValue({ text: 'formatted', blocks: [] });
+    mockSlackMappingService.findByChannelId.mockResolvedValue(null);
+    mockGetSlackConnection.mockResolvedValue({ id: 'conn-001', teamId: 'T001', isActive: true });
+  });
+
+  it('labels a webhook message posted to the DM, as the DM fallback does', async () => {
+    await slackAdapterService.deliver(
+      'lens-user-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { id: 'msg-1', threadId: 'thr-1', content: 'Build failed.', toolCalls: null, triggeredBy: 'WEBHOOK' } as any,
+      { channel: 'slack', channelId: 'D123', threadId: 'thr-1' },
+    );
+
+    expect(adapter.prepareOutboundMessage).toHaveBeenCalledWith('Build failed.', 'T001', 'WEBHOOK', undefined, undefined);
+    const call = postMessage.mock.calls[0][0];
+    expect(call.channel).toBe('D123');
+    expect(call.metadata).toEqual({
+      event_type: 'lens_platform_message',
+      event_payload: { threadId: 'thr-1', messageId: 'msg-1', triggeredBy: 'WEBHOOK' },
+    });
+  });
+
+  it('passes a reply to a person with its own trigger, which the formatter does not label', async () => {
+    await slackAdapterService.deliver(
+      'lens-user-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { id: 'msg-2', threadId: 'thr-1', content: 'Done.', toolCalls: null, triggeredBy: 'USER_INPUT' } as any,
+      { channel: 'slack', channelId: 'C_CHAN', threadId: 'thr-1', channelThreadId: '123.000' },
+    );
+
+    expect(adapter.prepareOutboundMessage).toHaveBeenCalledWith('Done.', 'T001', 'USER_INPUT', undefined, undefined);
+  });
+});
+
 describe('deliverToChannel — working status after posting', () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const adapter = slackAdapterService as any;
