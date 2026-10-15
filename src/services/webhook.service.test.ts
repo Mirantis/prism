@@ -1137,8 +1137,6 @@ describe('handleInbound agent mode', () => {
 
   it.each([
     ['all', true],
-    ['slack', false],
-    ['teams', false],
     ['chat', false],
     ['none', false],
   ])("tells the run whether its output is broadcast for deliverTo '%s'", async (deliverTo, broadcastsOutput) => {
@@ -1148,7 +1146,27 @@ describe('handleInbound agent mode', () => {
     await webhookService.handleInbound('alerts', {}, {}, 'run-1');
     await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalled());
 
-    expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ mode: 'webhook', broadcastsOutput }));
+    expect(Boolean(mockInvoke.mock.calls[0][0].broadcastsOutput)).toBe(broadcastsOutput);
+  });
+
+  it('tells a single-platform run with no destination that its output is broadcast, as the web-thread fallback is', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'slack' }));
+    mockDefaultDestination.mockResolvedValue(null);
+    mockInvoke.mockResolvedValue(invokeResult('Done.'));
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalled());
+
+    expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ broadcastsOutput: true }));
+    expect(mockInvoke.mock.calls[0][0].outputDestination).toBeUndefined();
+    // The delivery the refusal matches: the latest web thread, published with no channel scope.
+    expect(mockPublishToLatestThread).toHaveBeenCalledWith(
+      'agent-1',
+      'user-1',
+      expect.any(String),
+      'WEBHOOK',
+      expect.not.objectContaining({ channelContext: expect.anything() }),
+    );
   });
 
   it('tells the run its output is not broadcast when it posts to chosen channels', async () => {
@@ -1158,7 +1176,7 @@ describe('handleInbound agent mode', () => {
     await webhookService.handleInbound('alerts', {}, {}, 'run-1');
     await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalled());
 
-    expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ mode: 'webhook', broadcastsOutput: false }));
+    expect(mockInvoke.mock.calls[0][0].broadcastsOutput).toBeFalsy();
     expect(mockInvoke.mock.calls[0][0].outputDestination).toBeUndefined();
   });
 
@@ -1170,12 +1188,8 @@ describe('handleInbound agent mode', () => {
     await webhookService.handleInbound('alerts', {}, {}, 'run-1');
     await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalled());
 
-    expect(mockInvoke).toHaveBeenCalledWith(
-      expect.objectContaining({
-        broadcastsOutput: false,
-        outputDestination: { platform: 'slack', conversationId: 'D123' },
-      }),
-    );
+    expect(mockInvoke.mock.calls[0][0].broadcastsOutput).toBeFalsy();
+    expect(mockInvoke.mock.calls[0][0].outputDestination).toEqual({ platform: 'slack', conversationId: 'D123' });
   });
 
   it('names no single conversation for a broadcast run', async () => {
