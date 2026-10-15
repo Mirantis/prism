@@ -41,6 +41,7 @@ export function getSendMessageTools(
   originChannel?: ChannelName,
   originChannelId?: string,
   broadcastsOutput?: boolean,
+  outputDestination?: { platform: ChannelName; conversationId: string },
 ): Record<string, Tool> {
   return {
     list_message_targets: tool({
@@ -73,7 +74,8 @@ export function getSendMessageTools(
         text: z.string().describe('The message, in markdown'),
       }),
       execute: async ({ target, thread, text }) => {
-        const origin = await replyDestination(mode, threadId, originChannel, originChannelId, broadcastsOutput);
+        const origin =
+          outputDestination ?? (await replyDestination(mode, threadId, originChannel, originChannelId, broadcastsOutput));
         const trigger = MODE_TRIGGER[mode] ?? 'USER_INPUT';
         const sent = await outboundMessageService.send({ agentId, userId, target, thread, text, origin, trigger });
         return { sent: true, target: sent.target.key, name: sent.target.name, messageId: sent.messageId };
