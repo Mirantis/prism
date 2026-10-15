@@ -314,6 +314,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       originChannel: request.originChannel,
       originChannelId: request.originChannelId,
       broadcastsOutput: request.broadcastsOutput,
+      outputDestination: request.outputDestination,
       workspaceRoot: request.workspaceRoot,
       taskInvoker: invoke,
       registerAttachmentInjection: (message) => pendingAttachmentInjections.push(message),

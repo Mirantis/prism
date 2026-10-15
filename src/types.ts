@@ -104,6 +104,8 @@ export interface InvokeRequest {
    * `send_message` refuses those as targets.
    */
   broadcastsOutput?: boolean;
+  /** The one conversation the run's final message goes to, so `send_message` refuses it as a target. */
+  outputDestination?: { platform: ChannelName; conversationId: string };
   lastHeartbeatAlert?: string;
   lastHeartbeatAlertAt?: number;
   /** Messages that channels queued for this heartbeat, one entry per channel. */

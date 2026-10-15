@@ -1137,8 +1137,8 @@ describe('handleInbound agent mode', () => {
 
   it.each([
     ['all', true],
-    ['slack', true],
-    ['teams', true],
+    ['slack', false],
+    ['teams', false],
     ['chat', false],
     ['none', false],
   ])("tells the run whether its output is broadcast for deliverTo '%s'", async (deliverTo, broadcastsOutput) => {
@@ -1159,6 +1159,33 @@ describe('handleInbound agent mode', () => {
     await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalled());
 
     expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ mode: 'webhook', broadcastsOutput: false }));
+    expect(mockInvoke.mock.calls[0][0].outputDestination).toBeUndefined();
+  });
+
+  it('tells a single-platform run the one conversation its output goes to', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'slack' }));
+    mockDefaultDestination.mockResolvedValue({ threadKey: 'D123' });
+    mockInvoke.mockResolvedValue(invokeResult('Done.'));
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalled());
+
+    expect(mockInvoke).toHaveBeenCalledWith(
+      expect.objectContaining({
+        broadcastsOutput: false,
+        outputDestination: { platform: 'slack', conversationId: 'D123' },
+      }),
+    );
+  });
+
+  it('names no single conversation for a broadcast run', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'all' }));
+    mockInvoke.mockResolvedValue(invokeResult('Done.'));
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalled());
+
+    expect(mockInvoke.mock.calls[0][0].outputDestination).toBeUndefined();
   });
 
   it('keeps nothing extra for a delivered run', async () => {

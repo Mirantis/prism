@@ -113,6 +113,17 @@ describe('Requirement: the message tools act for the run that calls them', () =>
     expect(mockOutbound.send.mock.calls[0][0].origin).toBe('broadcast');
   });
 
+  it('sends with the one conversation the output goes to as the reply destination', async () => {
+    const tools = getSendMessageTools('user-1', 'agent-1', 'webhook', undefined, undefined, undefined, false, {
+      platform: 'slack',
+      conversationId: 'D0OWNER',
+    });
+    await run(tools.send_message, { target: 'teams:19:release@thread.tacv2', text: 'Hi' });
+
+    expect(mockThreadContext).not.toHaveBeenCalled();
+    expect(mockOutbound.send.mock.calls[0][0].origin).toEqual({ platform: 'slack', conversationId: 'D0OWNER' });
+  });
+
   it('sends with no reply destination from a run with no thread whose output is not broadcast', async () => {
     await run(getSendMessageTools('user-1', 'agent-1', 'chat').send_message, { target: 'slack:C0RELEASE', text: 'Hi' });
 

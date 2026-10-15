@@ -40,6 +40,7 @@ import {
 import { agentWorkspaceService } from '../services/agent-workspace.service';
 import { pluginMcpService } from '../services/plugin-mcp.service';
 import type { PendingFileWrites } from './pending-file-writes';
+import type { InvokeRequest } from '../types';
 
 /** The tools that post a message, and list where it may go. */
 const MESSAGE_TOOL_NAMES = [SEND_MESSAGE_TOOL_NAME, 'list_message_targets'];
@@ -53,6 +54,7 @@ export interface CollectToolsInput {
   originChannel?: Parameters<typeof getCronTools>[4];
   originChannelId?: string;
   broadcastsOutput?: boolean;
+  outputDestination?: InvokeRequest['outputDestination'];
   workspaceRoot?: string;
   /** Runs a subagent Task; injected so this module never imports invoke.ts. */
   taskInvoker: Invoker;
@@ -146,6 +148,7 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
       originChannel,
       input.originChannelId,
       input.broadcastsOutput,
+      input.outputDestination,
     ),
     ...getAttachmentTools(
       input.userId,

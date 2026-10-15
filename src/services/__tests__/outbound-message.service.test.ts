@@ -280,6 +280,18 @@ describe('Requirement: the agent sends only to a linked target, and never a broa
       });
     });
 
+    it('refuses only the one conversation a single-platform run delivers to', async () => {
+      slack.listLinkedTargets.mockResolvedValue([GENERAL, RELEASE, OWN_DM]);
+      const origin = { platform: 'slack' as const, conversationId: 'D0OWNER' };
+
+      await send({ target: 'teams:19:release@thread.tacv2', origin });
+      await send({ target: 'slack:C0GENERAL', origin });
+      await expect(send({ target: 'slack:D0OWNER', origin })).rejects.toThrow('Your reply already goes to this conversation');
+
+      expect(teams.postToTarget).toHaveBeenCalledWith(TEAMS_RELEASE, expect.any(String), undefined);
+      expect(slack.postToTarget.mock.calls.map(([target]) => target.key)).toEqual(['slack:C0GENERAL']);
+    });
+
     it('allows the main channel from a web turn, whose reply goes to the web chat only', async () => {
       await send({ target: 'slack:C0GENERAL' });
 
