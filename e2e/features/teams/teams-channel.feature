@@ -18,6 +18,11 @@ Feature: Microsoft Teams integration
     When I send "What is your name?" in the Teams personal chat
     Then the bot should reply in the personal chat within 90 seconds
 
+  Scenario: Linking a personal chat with a link code pasted as rich text
+    Given I generate a Teams personal link code via the UI
+    When I paste the link code as rich text in the Teams personal chat
+    Then the Teams DM mapping exists in the database
+
   Scenario: Linking a channel and getting a threaded reply
     Given I generate a Teams channel link code via the UI
     When I mention the bot in the Teams channel with the link code

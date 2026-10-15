@@ -388,6 +388,109 @@ describe('TeamsAdapterService', () => {
       expect(mockChat).not.toHaveBeenCalled();
     });
 
+    it('links a DM via a verification code pasted as an HTML attachment', async () => {
+      await initializeConfigured();
+      mockPrisma.teamsVerificationCode.findUnique.mockResolvedValue({
+        connectionId: 'tenant-1',
+        agentId: 'agent-1',
+        lensUserId: 'lens-1',
+        agentName: 'Prism',
+        expiresAt: new Date(Date.now() + 60_000),
+      });
+      mockPrisma.teamsMapping.findFirst.mockResolvedValue(null);
+      mockPrisma.$transaction.mockResolvedValue([{}, {}]);
+
+      // Teams delivers a pasted message with empty `text` and the body only in a
+      // text/html attachment, so the code has to be read from there.
+      await receive(dmActivity({
+        text: '',
+        attachments: [{ contentType: 'text/html', content: '<p>a1b2c3</p>' }],
+      }));
+
+      expect(mockPrisma.teamsVerificationCode.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { code_type: { code: 'A1B2C3', type: 'DM' } } })
+      );
+      expect(mockPrisma.teamsMapping.create).toHaveBeenCalled();
+      expect(lastApp().send).toHaveBeenCalledWith(
+        'a:dm-conversation',
+        expect.objectContaining({ text: expect.stringContaining('✅') })
+      );
+    });
+
+    it('reads a pasted code that inline formatting split, and drops a mention', async () => {
+      await initializeConfigured();
+      mockPrisma.teamsVerificationCode.findUnique.mockResolvedValue({
+        connectionId: 'tenant-1',
+        agentId: 'agent-1',
+        lensUserId: 'lens-1',
+        agentName: 'Prism',
+        expiresAt: new Date(Date.now() + 60_000),
+      });
+      mockPrisma.teamsMapping.findFirst.mockResolvedValue(null);
+      mockPrisma.$transaction.mockResolvedValue([{}, {}]);
+
+      // A bot mention precedes the code and bold splits it mid-token; both must
+      // fall away so the six-hex code survives.
+      await receive(dmActivity({
+        text: '',
+        entities: [{ type: 'mention', mentioned: { id: '28:bot', name: 'Prism' } }],
+        attachments: [{
+          contentType: 'text/html',
+          content: '<p><at id="0">Prism</at>&nbsp;a1<strong>b2</strong>c3</p>',
+        }],
+      }));
+
+      expect(mockPrisma.teamsVerificationCode.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { code_type: { code: 'A1B2C3', type: 'DM' } } })
+      );
+      expect(mockPrisma.teamsMapping.create).toHaveBeenCalled();
+    });
+
+    it('keeps the line breaks of a pasted multi-line message for the model', async () => {
+      await initializeConfigured();
+      mockTeamsMappingService.findUserMapping.mockResolvedValue({
+        id: 'map-1',
+        lensUserId: 'lens-1',
+        agentId: 'agent-1',
+        dmConversationId: 'a:dm-conversation',
+      });
+
+      await receive(dmActivity({
+        text: '',
+        attachments: [{
+          contentType: 'text/html',
+          content: '<p>line one</p><p>line two</p>',
+        }],
+      }));
+
+      expect(mockChat).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'line one\nline two' })
+      );
+    });
+
+    it('drops the bot mention but keeps other participants names in a paste', async () => {
+      await initializeConfigured();
+      mockTeamsMappingService.findUserMapping.mockResolvedValue({
+        id: 'map-1',
+        lensUserId: 'lens-1',
+        agentId: 'agent-1',
+        dmConversationId: 'a:dm-conversation',
+      });
+
+      await receive(dmActivity({
+        text: '',
+        entities: [{ type: 'mention', mentioned: { id: '28:bot', name: 'Prism' } }],
+        attachments: [{
+          contentType: 'text/html',
+          content: '<p><at id="0">Prism</at> ask <at id="1">Casey</at> for an update</p>',
+        }],
+      }));
+
+      expect(mockChat).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'ask Casey for an update' })
+      );
+    });
+
     it('refuses a DM link when the agent already has a channel link', async () => {
       await initializeConfigured();
       mockPrisma.teamsVerificationCode.findUnique.mockResolvedValue({

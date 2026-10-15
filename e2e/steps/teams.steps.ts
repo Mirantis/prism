@@ -13,6 +13,7 @@ import { expect, test } from '@playwright/test';
 import { getPrisma } from '../support/db-helper';
 import {
   postChannelMention,
+  postChatHtml,
   postChatImage,
   postChatMessage,
   postThreadReply,
@@ -90,6 +91,14 @@ When('I send the link code in the Teams personal chat', async () => {
   state.chatMessageSentAt = await postChatMessage(state.dmLinkCode);
   // The adapter confirms the link as a bot chat message. "now linked" only
   // appears in the success reply — the failure replies say "already linked".
+  const confirmation = await waitForBotChatReply(state.chatMessageSentAt);
+  expect(confirmation).toContain('now linked');
+});
+
+When('I paste the link code as rich text in the Teams personal chat', async () => {
+  // A rich-text paste: the code wrapped in formatting, which Teams delivers with
+  // `text` empty and the body in a text/html attachment.
+  state.chatMessageSentAt = await postChatHtml(`<p><strong>${state.dmLinkCode}</strong></p>`);
   const confirmation = await waitForBotChatReply(state.chatMessageSentAt);
   expect(confirmation).toContain('now linked');
 });
