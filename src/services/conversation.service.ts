@@ -195,11 +195,16 @@ class ConversationService {
    * Resolve the message provider for a thread based on its threadSource.
    */
   private async resolveProvider(threadId: string): Promise<ThreadMessageProvider> {
+    return this.providerFor(await this.getThreadSource(threadId));
+  }
+
+  /** Where a thread's messages are read from, or undefined for a thread that does not exist. */
+  async getThreadSource(threadId: string): Promise<ThreadSource | undefined> {
     const thread = await prisma.conversationThread.findUnique({
       where: { id: threadId },
       select: { threadSource: true },
     });
-    return this.providerFor(thread?.threadSource);
+    return thread?.threadSource;
   }
 
   /**
