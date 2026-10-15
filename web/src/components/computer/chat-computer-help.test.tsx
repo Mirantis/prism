@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 import type { ComputerHelp, ComputerStatus } from '@/types';
 import { ChatComputerHelp } from './chat-computer-help';
 
@@ -33,8 +33,6 @@ function status(helpStatus: ComputerHelp['status']): ComputerStatus {
     help: [{ ...help, status: helpStatus }],
   };
 }
-
-afterEach(cleanup);
 
 describe('computer help history marker', () => {
   it.each([

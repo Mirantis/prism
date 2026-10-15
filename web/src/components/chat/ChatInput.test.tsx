@@ -1,12 +1,10 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { useState, type FormEvent } from 'react';
 import ChatInput from './ChatInput';
 import type { Dictation } from '@/hooks/use-dictation';
-
-afterEach(cleanup);
 
 const baseProps = {
   value: '',

@@ -1,10 +1,8 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import CodeBlock, { languageOf } from './code-block';
-
-afterEach(cleanup);
 
 describe('languageOf', () => {
   it('reads the whole language token, including one that ends in #', () => {

@@ -1,11 +1,9 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { describe, it, expect } from 'vitest';
+import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import ContextMeter from './context-meter';
 import type { ContextUsage } from '@/types';
-
-afterEach(cleanup);
 
 function usage(overrides: Partial<ContextUsage> = {}): ContextUsage {
   return {

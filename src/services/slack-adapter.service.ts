@@ -53,6 +53,7 @@ import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB, MAX_ATTACHMENTS_PER_MESSAGE } fr
 import { BOUNDED_SLACK_CLIENT_OPTIONS, stripBodyToken } from '../lib/slack-web-client';
 import { getProxyDispatcher } from '../lib/proxy-dispatcher';
 import { config } from '../config';
+import type { ToolCallRecord } from '../types';
 import {
   SlackWorkingIndicator,
   WorkingIndicatorHandle,
@@ -204,7 +205,7 @@ class SlackAdapterService implements ChannelAdapter {
         message.content,
         channelContext.threadId,
         channelContext.channelThreadId,
-        (message.toolCalls as Array<{ tool: string }>) ?? undefined,
+        (message.toolCalls as ToolCallRecord[] | null) ?? undefined,
         message.id,
         includeFeedback,
         attachments,
@@ -265,7 +266,7 @@ class SlackAdapterService implements ChannelAdapter {
             message.content,
             connection.teamId,
             message.triggeredBy || undefined,
-            (message.toolCalls as Array<{ tool: string }>) ?? undefined,
+            (message.toolCalls as ToolCallRecord[] | null) ?? undefined,
             includeFeedback ? { feedbackMessageId: message.id } : undefined,
           );
 
@@ -324,7 +325,7 @@ class SlackAdapterService implements ChannelAdapter {
           message.content,
           message.threadId,
           undefined,
-          (message.toolCalls as Array<{ tool: string }>) ?? undefined,
+          (message.toolCalls as ToolCallRecord[] | null) ?? undefined,
           message.id,
           includeFeedback,
           attachments,
@@ -351,7 +352,7 @@ class SlackAdapterService implements ChannelAdapter {
     content: string,
     threadId: string,
     threadTs?: string,
-    toolCalls?: Array<{ tool: string }>,
+    toolCalls?: ToolCallRecord[],
     messageId?: string,
     includeFeedback: boolean = false,
     attachments: AttachmentMeta[] = [],
@@ -1993,7 +1994,7 @@ class SlackAdapterService implements ChannelAdapter {
     content: string,
     teamId: string,
     triggeredBy: string | undefined,
-    toolCalls: Array<{ tool: string }> | undefined,
+    toolCalls: ToolCallRecord[] | undefined,
     options: FormatSlackMessageOptions | undefined,
   ): Promise<{ text: string; blocks: SlackBlock[] }> {
     const outboundText = await this.rewriteOutboundMentions(content, teamId);

@@ -1,11 +1,9 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import type { VoiceCall } from '@/hooks/use-voice-call';
 import VoiceCallBar from './voice-call-bar';
-
-afterEach(cleanup);
 
 function fakeCall(overrides: Partial<VoiceCall> = {}): VoiceCall {
   return {

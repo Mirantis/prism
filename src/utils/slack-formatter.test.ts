@@ -17,6 +17,18 @@ import {
   FEEDBACK_ACTION_UP,
   FEEDBACK_ACTION_DOWN,
 } from './slack-formatter';
+import type { ToolCallRecord } from '../types';
+
+function toolCall(overrides: Partial<ToolCallRecord> = {}): ToolCallRecord {
+  return {
+    tool: 'shell_exec',
+    input: '{"command":"ls"}',
+    output: 'README.md',
+    success: true,
+    timestamp: '2026-10-15T12:00:00.000Z',
+    ...overrides,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // formatSlackMessage — basic content
@@ -98,17 +110,64 @@ describe('formatSlackMessage', () => {
   // ---------------------------------------------------------------------------
 
   describe('toolCalls', () => {
-    it('appends tool context block with unique tool names', () => {
+    const preformatted = (text: string) => ({
+      type: 'rich_text',
+      elements: [{ type: 'rich_text_preformatted', elements: [{ type: 'text', text }] }],
+    });
+
+    it('appends one plan with a task per call, holding its input and output', () => {
       const result = formatSlackMessage('done', undefined, [
-        { tool: 'kubectl' },
-        { tool: 'github' },
-        { tool: 'kubectl' },
+        toolCall({ tool: 'kubectl', input: '{"args":"get pods"}', output: 'pod-a Running' }),
+        toolCall({ tool: 'github', input: '{"repo":"x"}', output: '', success: false }),
+        toolCall({ tool: 'kubectl', input: '{"args":"get svc"}', output: 'svc-a' }),
       ]);
       const last = result.blocks[result.blocks.length - 1];
       expect(last).toEqual({
-        type: 'context',
-        elements: [{ type: 'mrkdwn', text: '🔧 kubectl, github' }],
+        type: 'plan',
+        title: '🔧 kubectl, github',
+        tasks: [
+          {
+            task_id: 'tool_0',
+            title: 'kubectl',
+            status: 'complete',
+            details: preformatted('{"args":"get pods"}'),
+            output: preformatted('pod-a Running'),
+          },
+          {
+            task_id: 'tool_1',
+            title: 'github',
+            status: 'error',
+            details: preformatted('{"repo":"x"}'),
+            output: undefined,
+          },
+          {
+            task_id: 'tool_2',
+            title: 'kubectl',
+            status: 'complete',
+            details: preformatted('{"args":"get svc"}'),
+            output: preformatted('svc-a'),
+          },
+        ],
       });
+    });
+
+    it('cuts each input and output to its share of the plan budget', () => {
+      const calls = Array.from({ length: 10 }, () => toolCall({ output: 'x'.repeat(5_000) }));
+      const result = formatSlackMessage('done', undefined, calls);
+      const plan = result.blocks.find((b) => b.type === 'plan');
+      if (plan?.type !== 'plan') throw new Error('no plan block');
+      const text = plan.tasks[0].output!.elements[0].elements[0].text;
+      expect(text).toHaveLength(600);
+      expect(text.endsWith('…')).toBe(true);
+    });
+
+    it('lists the first 50 calls and says how many there were', () => {
+      const calls = Array.from({ length: 63 }, () => toolCall());
+      const result = formatSlackMessage('done', undefined, calls);
+      const plan = result.blocks.find((b) => b.type === 'plan');
+      if (plan?.type !== 'plan') throw new Error('no plan block');
+      expect(plan.tasks).toHaveLength(50);
+      expect(plan.title).toBe('🔧 shell_exec (first 50 of 63 calls)');
     });
 
     it('does not add tool block when toolCalls is empty', () => {
@@ -315,11 +374,11 @@ describe('feedback actions block', () => {
     });
   });
 
-  it('feedback block is always appended last (after toolCalls context block)', () => {
+  it('feedback block is always appended last (after the tool calls plan)', () => {
     const result = formatSlackMessage(
       'Substantive content.',
       undefined,
-      [{ tool: 'kubectl' }],
+      [toolCall({ tool: 'kubectl' })],
       { feedbackMessageId: 'msg-42' },
     );
     const last = result.blocks[result.blocks.length - 1];

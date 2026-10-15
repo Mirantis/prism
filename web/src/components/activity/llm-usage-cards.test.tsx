@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '@testing-library/jest-dom/vitest';
 import type { LlmUsageSummary } from '@/types';
@@ -43,8 +43,6 @@ function renderCards() {
 beforeEach(() => {
   mockLlmUsage.mockReset();
 });
-
-afterEach(cleanup);
 
 describe('LlmUsageCards', () => {
   it('abbreviates each total and shows the exact count as visible text', async () => {

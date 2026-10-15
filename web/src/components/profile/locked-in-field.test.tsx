@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, cleanup, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '@testing-library/jest-dom/vitest';
 import type { AgentDetails } from '@/types';
@@ -14,8 +14,6 @@ vi.mock('@/lib/agent-context', () => ({
 }));
 
 import { LockedInField } from './locked-in-field';
-
-afterEach(cleanup);
 
 function details(overrides: Partial<AgentDetails> = {}): AgentDetails {
   return { lockedIn: false, verbose: false, ...overrides } as AgentDetails;
