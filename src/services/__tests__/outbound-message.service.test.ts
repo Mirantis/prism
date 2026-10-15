@@ -13,6 +13,7 @@ const { mockAdapters, mockConversationService, mockTrackEvent, mockLoggerError }
   mockConversationService: {
     getOrCreateLatestThread: vi.fn(),
     getOrCreateThreadByExternalId: vi.fn(),
+    getThreadSource: vi.fn(),
     addMessage: vi.fn(),
   },
   mockTrackEvent: vi.fn(),
@@ -333,13 +334,31 @@ describe('Requirement: a withheld run that sent a message stays in history', () 
       triggeredBy: 'CRON_TASK',
       toolCalls,
     });
+    expect(mockConversationService.getThreadSource).not.toHaveBeenCalled();
   });
 
-  it("stores the run's message in its own thread", async () => {
+  it("stores the run's message in its own thread, visible in the thread's history", async () => {
+    mockConversationService.getThreadSource.mockResolvedValue('DATABASE');
+
     await outboundMessageService.keepWithheldRun({ ...run, threadId: 'thread-bound', toolCalls: [toolCall({})] });
 
     expect(mockConversationService.getOrCreateLatestThread).not.toHaveBeenCalled();
-    expect(mockConversationService.addMessage).toHaveBeenCalledWith('thread-bound', expect.anything());
+    expect(mockConversationService.addMessage).toHaveBeenCalledWith(
+      'thread-bound',
+      expect.not.objectContaining({ internalStep: expect.anything() }),
+    );
+  });
+
+  it('stores the message as an internal row in a thread read live from a channel, which replays only those', async () => {
+    mockConversationService.getThreadSource.mockResolvedValue('SLACK');
+
+    await outboundMessageService.keepWithheldRun({ ...run, threadId: 'thread-slack', toolCalls: [toolCall({})] });
+
+    expect(mockConversationService.getThreadSource).toHaveBeenCalledWith('thread-slack');
+    expect(mockConversationService.addMessage).toHaveBeenCalledWith(
+      'thread-slack',
+      expect.objectContaining({ content: 'Posted the release note to #release.', internalStep: true }),
+    );
   });
 
   it('stores a fixed text for a run that ended with no text, never an empty message', async () => {

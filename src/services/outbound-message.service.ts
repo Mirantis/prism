@@ -8,6 +8,7 @@
  * its platform's mention rules and the post itself.
  */
 
+import { ThreadSource } from '@prisma/client';
 import { messageDeliveryService, MessageTrigger } from './message-delivery.service';
 import { conversationService } from './conversation.service';
 import {
@@ -80,7 +81,9 @@ class OutboundMessageService {
   /**
    * A gate that withholds a run's output also drops the run's record. A run
    * that sent a message keeps it: its message is stored, undelivered, in its
-   * own thread, or in the latest thread for a run that has none.
+   * own thread, or in the latest thread for a run that has none. A thread read
+   * live from a channel replays only the channel's messages and internal rows,
+   * so there the record is an internal row.
    */
   async keepWithheldRun(run: {
     agentId: string;
@@ -92,11 +95,14 @@ class OutboundMessageService {
   }): Promise<void> {
     if (!run.toolCalls.some((call) => call.tool === SEND_MESSAGE_TOOL_NAME && call.success)) return;
     const threadId = run.threadId ?? (await conversationService.getOrCreateLatestThread(run.agentId, run.userId)).id;
+    const readLive =
+      run.threadId !== undefined && (await conversationService.getThreadSource(run.threadId)) !== ThreadSource.DATABASE;
     await conversationService.addMessage(threadId, {
       content: run.content.trim() ? run.content : WITHHELD_RUN_TEXT,
       role: 'AGENT',
       triggeredBy: run.triggeredBy,
       toolCalls: run.toolCalls,
+      ...(readLive && { internalStep: true }),
     });
   }
 
