@@ -3,7 +3,8 @@
  *
  * Two orthogonal choices:
  *  - Vendor: `config.llmProvider` (`bedrock` default, `azure`,
- *    `bedrock-mantle`, `openai`, `openrouter`, `anthropic`, or `litellm`).
+ *    `bedrock-mantle`, `openai`, `openrouter`, `anthropic`, `litellm`, or
+ *    `codex-subscription`).
  *  - Endpoint: each vendor's factory takes the endpoint `config.ts` resolved for
  *    it — the explicit `*_BASE_URL` override, else the Lens Agents gateway mount,
  *    else the vendor's own host. The factory receives one endpoint and chooses
@@ -42,6 +43,11 @@
  * **litellm** is an operator's own LiteLLM proxy, spoken to in the Anthropic
  * Messages format at `LITELLM_BASE_URL` or the `…/llm/litellm/anthropic/v1`
  * mount. Model IDs are the operator's aliases.
+ *
+ * **codex-subscription** runs each model call through the Codex CLI's app-server
+ * in the execution environment, signed in with a ChatGPT subscription. It takes no
+ * endpoint and no key: the Codex home holds the login, and an API-key login is
+ * refused. Model IDs are Codex's own model names; see `codex-subscription/`.
  */
 
 import { config } from '../../config';
@@ -58,6 +64,7 @@ import {
 } from './openrouter/openrouter-provider';
 import { createAnthropicProvider, missingAnthropicSettings } from './anthropic/anthropic-provider';
 import { createLiteLlmProvider, missingLiteLlmSettings } from './litellm/litellm-provider';
+import { createCodexSubscriptionProvider } from './codex-subscription/codex-subscription-provider';
 import type { LlmProvider } from './llm-provider';
 
 export function createProvider(): LlmProvider {
@@ -74,6 +81,8 @@ export function createProvider(): LlmProvider {
       return createAnthropicProvider();
     case 'litellm':
       return createLiteLlmProvider(config.litellmEndpoint);
+    case 'codex-subscription':
+      return createCodexSubscriptionProvider();
     default:
       return createBedrockProvider(config.nexusLlmBaseUrl ?? undefined);
   }
@@ -98,6 +107,9 @@ export function missingProviderSettings(): string[] {
       return missingAnthropicSettings();
     case 'litellm':
       return missingLiteLlmSettings();
+    case 'codex-subscription':
+      // The login lives in the Codex home, and the first turn names a missing one.
+      return [];
     default:
       // Bedrock finds its credentials through the AWS SDK's own chain (the task
       // role in ECS) when a request is made.

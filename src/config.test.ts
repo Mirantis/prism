@@ -464,6 +464,41 @@ describe('config', () => {
       expect(cfg.invalidLlmProvider).toBe('mantle');
     });
 
+    it('codex-subscription lets Codex choose its models, runs without the gateway, and embeds nothing', async () => {
+      process.env.LLM_PROVIDER = 'codex-subscription';
+      process.env.NEXUS_API_URL = 'https://gateway.example.com';
+      process.env.OPENAI_API_KEY = 'sk-test';
+      const cfg = await loadConfig();
+      expect(cfg.llmProvider).toBe('codex-subscription');
+      expect(cfg.invalidLlmProvider).toBeNull();
+      expect(cfg.chatModelId).toBe('default');
+      expect(cfg.classificationModelId).toBe('default');
+      expect(cfg.nexusChatBaseUrl).toBeNull();
+      expect(cfg.embeddingProvider).toBe('none');
+    });
+
+    it('codex-subscription reads its own model ids, and classification follows chat', async () => {
+      process.env.LLM_PROVIDER = 'codex-subscription';
+      process.env.CODEX_SUBSCRIPTION_MODEL_ID = 'astra';
+      process.env.OPENAI_MODEL_ID = 'gpt-api-model';
+      let cfg = await loadConfig();
+      expect(cfg.chatModelId).toBe('astra');
+      expect(cfg.classificationModelId).toBe('astra');
+      vi.resetModules();
+      process.env.CODEX_SUBSCRIPTION_CLASSIFICATION_MODEL_ID = 'astra-mini';
+      cfg = await loadConfig();
+      expect(cfg.classificationModelId).toBe('astra-mini');
+    });
+
+    it('a Codex subscription model id changes nothing for another provider', async () => {
+      process.env.LLM_PROVIDER = 'openai';
+      process.env.CODEX_SUBSCRIPTION_MODEL_ID = 'astra';
+      const cfg = await loadConfig();
+      expect(cfg.llmProvider).toBe('openai');
+      expect(cfg.chatModelId).not.toBe('astra');
+      expect(cfg.classificationModelId).not.toBe('astra');
+    });
+
     it('reports no invalid LLM_PROVIDER when it is unset or valid', async () => {
       delete process.env.LLM_PROVIDER;
       expect((await loadConfig()).invalidLlmProvider).toBeNull();

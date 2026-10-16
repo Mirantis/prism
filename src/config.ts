@@ -9,6 +9,7 @@ import {
   GOAL_MAX_TURNS,
 } from './constants';
 import { readAgentModelDefaults } from './lib/prism-settings';
+import { CODEX_DEFAULT_MODEL } from './lib/llm-providers/codex-subscription/default-model';
 import { logger } from './logger';
 import { resolveRealtimeConfiguration } from './lib/managed-realtime';
 import { isLoopbackHostname } from './lib/loopback-host';
@@ -95,6 +96,7 @@ const LLM_PROVIDERS = [
   'openrouter',
   'anthropic',
   'litellm',
+  'codex-subscription',
 ] as const;
 type LlmProviderName = (typeof LLM_PROVIDERS)[number];
 const rawLlmProvider = (process.env.LLM_PROVIDER || '').trim().toLowerCase();
@@ -210,6 +212,8 @@ const nexusChatBaseUrls: Record<LlmProviderName, string | null> = {
   // direct, even with NEXUS_API_URL set.
   anthropic: null,
   litellm: nexusLiteLlmBaseUrl,
+  // A subscription runs through its own CLI and login, never through the gateway.
+  'codex-subscription': null,
 };
 const nexusChatBaseUrl = nexusChatBaseUrls[llmProvider];
 
@@ -383,6 +387,13 @@ const anthropicBaseUrl = process.env.ANTHROPIC_BASE_URL || undefined;
 const litellmModelId = process.env.LITELLM_MODEL_ID || 'claude-opus-5-5';
 const litellmClassificationModelId =
   process.env.LITELLM_CLASSIFICATION_MODEL_ID || 'claude-haiku-5-5';
+
+// Codex subscription model ids (used when LLM_PROVIDER=codex-subscription) are the
+// names Codex gives its models. The default lets Codex choose, so a deployment keeps
+// working when the subscription's model line changes.
+const codexSubscriptionModelId = process.env.CODEX_SUBSCRIPTION_MODEL_ID || CODEX_DEFAULT_MODEL;
+const codexSubscriptionClassificationModelId =
+  process.env.CODEX_SUBSCRIPTION_CLASSIFICATION_MODEL_ID || codexSubscriptionModelId;
 // The LiteLLM key, sent as the `x-api-key` header, for direct mode. Not needed
 // through the gateway, which holds its own. May be a `__nexus_cred:<uuid>__`
 // sentinel, since it only rides a header.
@@ -427,6 +438,7 @@ const chatEndpoints: Record<LlmProviderName, { endpoint?: string; override?: str
   openrouter: { endpoint: openrouterEndpoint, override: openrouterOverride },
   anthropic: { endpoint: anthropicBaseUrl, override: anthropicBaseUrl },
   litellm: { endpoint: litellmEndpoint, override: litellmOverride },
+  'codex-subscription': {},
 };
 const chatEndpoint = chatEndpoints[llmProvider];
 
@@ -484,6 +496,10 @@ const modelIds = {
     chat: litellmModelId,
     classification: litellmClassificationModelId,
   },
+  'codex-subscription': {
+    chat: codexSubscriptionModelId,
+    classification: codexSubscriptionClassificationModelId,
+  },
 }[llmProvider];
 
 // Which vendor serves memory embeddings. Its own selection, decoupled from
@@ -511,6 +527,8 @@ const EMBEDDING_PROVIDER_DEFAULTS: Record<LlmProviderName, EmbeddingProviderName
   openrouter: 'openrouter',
   anthropic: openaiApiKey || nexusOpenAiBaseUrl ? 'openai' : 'none',
   litellm: 'none',
+  // A subscription carries no embedding entitlement, and an API key is not assumed.
+  'codex-subscription': 'none',
 };
 const rawEmbeddingProvider = (process.env.EMBEDDING_PROVIDER || '').trim().toLowerCase();
 const isValidEmbeddingProvider = (EMBEDDING_PROVIDERS as readonly string[]).includes(

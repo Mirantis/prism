@@ -1,6 +1,7 @@
 /**
  * create-provider switch tests: vendor (bedrock/azure/bedrock-mantle/openai/
- * openrouter/anthropic/litellm) x routing (direct/gateway; anthropic is direct-only).
+ * openrouter/anthropic/litellm/codex-subscription) x routing (direct/gateway; anthropic and
+ * codex-subscription take no gateway).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -20,6 +21,7 @@ const {
   mockMissingOpenRouterSettings,
   mockMissingAnthropicSettings,
   mockMissingLiteLlmSettings,
+  mockCreateCodexSubscriptionProvider,
 } = vi.hoisted(() => ({
   mockCreateBedrockProvider: vi.fn(() => 'bedrock-provider'),
   mockCreateAzureProvider: vi.fn(() => 'azure-provider'),
@@ -34,6 +36,7 @@ const {
   mockMissingOpenRouterSettings: vi.fn((): string[] => []),
   mockMissingAnthropicSettings: vi.fn((): string[] => []),
   mockMissingLiteLlmSettings: vi.fn((): string[] => []),
+  mockCreateCodexSubscriptionProvider: vi.fn(() => 'codex-subscription-provider'),
 }));
 
 vi.mock('./bedrock/bedrock-provider', () => ({
@@ -62,6 +65,10 @@ vi.mock('./anthropic/anthropic-provider', () => ({
 vi.mock('./litellm/litellm-provider', () => ({
   createLiteLlmProvider: mockCreateLiteLlmProvider,
   missingLiteLlmSettings: mockMissingLiteLlmSettings,
+}));
+
+vi.mock('./codex-subscription/codex-subscription-provider', () => ({
+  createCodexSubscriptionProvider: mockCreateCodexSubscriptionProvider,
 }));
 
 import { createProvider, missingProviderSettings } from './create-provider';
@@ -226,6 +233,23 @@ describe('createProvider', () => {
     expect(mockCreateAnthropicProvider).not.toHaveBeenCalled();
     expect(mockCreateOpenAiProvider).not.toHaveBeenCalled();
   });
+
+  it('codex-subscription → its own factory, with no endpoint even when gateway mounts are set', () => {
+    config.llmProvider = 'codex-subscription';
+    config.nexusOpenAiBaseUrl = MOUNT.openai;
+    config.openaiEndpoint = MOUNT.openai;
+    expect(createProvider()).toBe('codex-subscription-provider');
+    expect(mockCreateCodexSubscriptionProvider).toHaveBeenCalledWith();
+    expect(mockCreateOpenAiProvider).not.toHaveBeenCalled();
+  });
+
+  it('no other provider builds the Codex subscription provider', () => {
+    for (const provider of ['bedrock', 'azure', 'bedrock-mantle', 'openai', 'openrouter', 'anthropic', 'litellm'] as const) {
+      config.llmProvider = provider;
+      createProvider();
+    }
+    expect(mockCreateCodexSubscriptionProvider).not.toHaveBeenCalled();
+  });
 });
 
 describe('missingProviderSettings', () => {
@@ -238,6 +262,12 @@ describe('missingProviderSettings', () => {
     expect(missingProviderSettings()).toEqual([]);
     expect(mockMissingAzureSettings).not.toHaveBeenCalled();
     expect(mockMissingBedrockMantleSettings).not.toHaveBeenCalled();
+  });
+
+  it('codex-subscription needs nothing here: its login is checked on the first turn', () => {
+    config.llmProvider = 'codex-subscription';
+    expect(missingProviderSettings()).toEqual([]);
+    expect(mockMissingOpenAiSettings).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -31,6 +31,10 @@ To test a saved login, start with a stopped test runtime and run
 `CODEX_HOME=/path/to/codex-home OPENAI_API_KEY= CODEX_API_KEY= npm run test --workspace=prism-agent-e2e -- --grep @codex-login`.
 The Codex home must contain a valid, writable `auth.json` from `codex login`.
 
+The ChatGPT subscription scenario runs only with `LLM_PROVIDER=codex-subscription`,
+a Codex home signed in with `codex login --device-auth`, and both OpenAI API key
+variables empty: `npm run test --workspace=prism-agent-e2e -- --grep @codex-subscription`.
+
 ### The voice chat scenario
 
 It needs no OpenAI account: the runtime discovers a synthetic managed Azure
