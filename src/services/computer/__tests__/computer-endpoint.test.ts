@@ -12,9 +12,16 @@ const attach = vi.fn(async (id: string, viewer: unknown) => {
   clients.set(id, viewer);
   return () => detach(id);
 });
-vi.mock('../computer.service', () => ({ computerService: {
-  access, attach, detach, input: vi.fn(), status: () => ({ running: true }),
-} }));
+const session = { id: 'local', attach, detach, input: vi.fn(), status: () => ({ running: true }) };
+vi.mock('../computer.service', () => ({
+  LOCAL_COMPUTER_ID: 'local',
+  computerService: {
+    on: (event: string, listener: () => void) => access.on(event, listener),
+    off: (event: string, listener: () => void) => access.off(event, listener),
+    session: () => session,
+    summaries: () => [],
+  },
+}));
 
 const { computerEndpoint } = await import('../computer-endpoint');
 
@@ -44,7 +51,7 @@ function fakeSocket() {
 
 /** `serve` is the endpoint's own; a test reaches it the way the upgrade handler does. */
 const serve = (ws: unknown) =>
-  (computerEndpoint as unknown as { serve: (ws: unknown) => void }).serve(ws);
+  (computerEndpoint as unknown as { serve: (ws: unknown, session: unknown) => void }).serve(ws, session);
 
 beforeEach(() => {
   clients.clear(); access.removeAllListeners(); attach.mockClear(); detach.mockClear();

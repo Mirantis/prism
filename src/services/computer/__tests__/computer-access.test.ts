@@ -46,6 +46,20 @@ describe('computer ownership', () => {
     expect(order).toEqual([1, 1, 2, 3]);
   });
 
+  it('fails a waiting call whose invocation moved to another computer, rather than leaving it waiting', async () => {
+    const access = new ComputerAccess();
+    const holder = access.create(caller),
+      mover = access.create(caller);
+    await access.acquire(holder);
+    const waiting = access.run(mover, async () => 'ran');
+    await Promise.resolve();
+    // Another call of the same invocation took it to another computer.
+    access.yield(mover);
+    await expect(waiting).rejects.toThrow('moved to another computer');
+    access.finish(holder);
+    access.finish(mover);
+  });
+
   it('cancels a queued invocation without affecting the active one', async () => {
     const access = new ComputerAccess();
     const first = access.create(caller),
@@ -224,6 +238,8 @@ describe('secure takeover', () => {
     expect(access.paused).toBe(true);
     expect(access.secure).toBe(true);
     expect(inferenceGate.held).toBe(true);
+    // The guard is the runtime's, so a window left open here would hold it for the next test.
+    await access.handBack('second');
   });
 });
 

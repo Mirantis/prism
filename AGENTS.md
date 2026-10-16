@@ -138,6 +138,17 @@ to clear.
   a path reads and writes through `filesFor(path)`, never the deployment's
   environment directly, so a thread rooted in a host repository sees the same
   files as its shell; a saved tool output goes beside that shell too.
+- **Computers stay generic.** The computer tools, viewers and help requests act
+  on a `Computer` (`services/computer/computer.ts`): the runtime's own desktop
+  (`AgentComputer`) or a remote one that links in over `/api/computer-link`
+  (`remote/remote-computer.ts`, protocol in `docs/computer-link-protocol.md`).
+  Each computer is a `ComputerSession` with its own `ComputerAccess`, and
+  `computerService` is the set of them; an invocation owns one computer at a
+  time. A remote computer's client does what has to happen on that machine, and
+  the runtime keeps the picture size, coordinates, OCR, arbitration, help and
+  secure windows. Only `usesRemoteComputers(mode)` runs (chat, goal) see
+  remote computers; with none registered, the tools block and prompt are the
+  same as a runtime without them.
 - **Prove an option is needed before you add it.** A flag, a setting or an env
   var has to show that no existing product behavior, no provider selection and
   no better default can cover the case. Each one is a fork in the code and a
@@ -889,6 +900,9 @@ and refuses every call, because under `none` the SDK sends no tools block.
 | **SessionManagerService** | `services/session-manager.service.ts` | Daily session resets, idle timeout management |
 | **ToolLedgerService** | `services/tool-ledger.service.ts` | Each conversation's declared tool list and its tool-change announcements, in memory per thread and model (see **Declared tools**) |
 | **MemoryManagerService** | `services/memory-manager.service.ts` | Two-layer memory: daily append-only logs + curated long-term key-value store |
+| **ComputerService** | `services/computer/computer.service.ts` | Every computer the agent can use: the runtime's own desktop (`local`) and the registered remote computers, each a `ComputerSession`. Picks the computer a tool call names, or the run's default; moves an invocation's ownership when it switches computer; owns `ComputerSummary` (the REST list and the chat `computer` event) and the per-turn computers notice. Removing a computer retires its access gate, so the runs on it fail at their next step without their turns being cancelled |
+| **RemoteComputerService** | `services/computer/remote/remote-computer.service.ts` | `remote_computers` CRUD with an in-memory copy, since the tools block reads whether any exist on every turn; adding again with the same `installationId` returns the same computer. Owns `computer added` / `computer removed` |
+| **ComputerLinkEndpoint** | `services/computer/remote/computer-link-endpoint.ts` | `/api/computer-link`: the origin rule, `?computer=` lookup (404 when unknown), `initialize` with the version check, pings, the person's `local.hold` / `local.release` (secure while a help request waits on that computer), and `computer.state` to the client. Owns `computer connected` / `computer disconnected` |
 | **MeetingBotService** | `services/meeting/meeting-bot.service.ts` | Live voice meetings, one call at a time: a Chromium signed into a Google account on a virtual display with PulseAudio devices, joined to an OpenAI Realtime session that runs as the agent with its system prompt and its `meeting`-mode tools (`tool-bridge.ts`). Everything platform-specific, from sign-in and admission to the participants panel and the call's chat, sits behind `MeetingProvider` in `providers/google-meet/`, so a new platform is one folder. In a group call `addressed-audio-gate.ts` asks the same Realtime session whether each utterance was said to the agent, and fails closed. Nothing about a call is stored in a conversation thread, and speech reaches the log only when `MEETING_TRANSCRIPT_LOGGING` is `full` |
 | **VoiceChatService** | `services/voice/voice-chat.service.ts` | A voice conversation with one client and no meeting: the same `VoiceConversation` core, with pcm16 audio as binary frames on the chat WebSocket (`socket-audio.ts`), so a call works wherever chat works, the installed binary included. The client picks `open` (answer every utterance) or `addressed` (the meeting gate) on `voice_start`, and the gateway refuses any other mode. `voice-session-lock.ts` allows one voice session at a time across this service and `MeetingBotService`, and nothing about a session is persisted. Dictation (`dictation-session.ts`) shares the socket but not the lock: a transcription-only Realtime session that turns speech into a message |
 | **PluginCatalogService** | `services/plugin-catalog.service.ts` | Discovers Agent Plugins under `<DATA>/plugins`, validates each `plugin.json`, records per-plugin diagnostics |
@@ -967,6 +981,17 @@ src/
 │   │   ├── transcript-log.ts   # Whether a log line may carry an utterance at all (`MEETING_TRANSCRIPT_LOGGING`)
 │   │   ├── resampler.ts        # 48k⇄24k pcm16 with anti-alias FIR
 │   │   └── openai-endpoint.ts  # Managed or direct Realtime WebSocket transport
+│   ├── computer/               # The agent's computers: its own desktop and remote ones
+│   │   ├── computer.ts         # The `Computer` contract the tools, viewers and help act on
+│   │   ├── computer.service.ts # The set of computers, picking one per call, summaries, the turn notice
+│   │   ├── computer-session.ts # One computer: access, viewers, screen stream, takeover
+│   │   ├── agent-computer.ts   # The runtime's own desktop and browser
+│   │   └── remote/             # Computers that link in on `/api/computer-link`
+│   │       ├── link-protocol.ts      # Schemas, close codes and frame tags of the link
+│   │       ├── computer-link.ts      # JSON-RPC 2.0 over one link, with deadlines
+│   │       ├── computer-link-endpoint.ts # The upgrade, `initialize`, liveness, the person at the computer
+│   │       ├── remote-computer.ts    # `Computer` over a link: coordinates, OCR, viewer input
+│   │       └── remote-computer.service.ts # The `remote_computers` rows, cached in memory
 │   ├── voice/                  # A voice conversation with one client, on the chat socket
 │   │   ├── voice-chat.service.ts    # Lifecycle owner: one session, teardown, telemetry
 │   │   ├── socket-audio.ts     # Audio in and out as binary frames, pcm16 mono 24 kHz

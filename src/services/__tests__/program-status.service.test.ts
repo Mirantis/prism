@@ -18,7 +18,7 @@ vi.mock('../../logger', () => ({ logger: { warn: vi.fn(), info: vi.fn(), error: 
 vi.mock('../conversation.service', () => ({ conversationService: {} }));
 vi.mock('../compaction.service', () => ({ compactionService: compaction }));
 vi.mock('../message-delivery.service', () => ({ messageDeliveryService: delivery }));
-vi.mock('../computer/computer.service', () => ({ computerService: { access } }));
+vi.mock('../computer/computer.service', () => ({ computerService: access }));
 vi.mock('../computer/computer-help.service', () => ({ computerHelpService: mockHelp }));
 
 const settle = async () => {

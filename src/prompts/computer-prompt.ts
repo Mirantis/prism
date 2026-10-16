@@ -8,6 +8,15 @@ When an available, authorized connector can do the requested operation, use it. 
 
 One invocation uses the computer at a time, and subagents have none, so keep computer work in this invocation. Another invocation that needs the computer waits until your turn ends or you ask for help. When a website blocks you, finish the work that does not depend on it. Computer use itself creates no goal or schedule.`;
 
+/** The section for a runtime with no desktop of its own, whose computers are all the user's. */
+export const REMOTE_COMPUTER_INSTRUCTIONS = `# Your user's computers
+
+You can use the computers your user connected, such as their laptop, with the computer_* tools; the computers notice names them. Your user can watch one or take control on the Computer page, including while you work on a task they started elsewhere.
+
+When an available, authorized connector can do the requested operation, use it. Read a web page with web_fetch. Use a computer for a website that needs a sign-in, a form or JavaScript, for work your user wants to watch, and for desktop apps. You have no browser of your own: use a computer's browser through its desktop. If a connector's authentication fails, explain the failure before you switch to a computer. Do GUI work with the computer tools, and commands and files with the shell tools, which run where you run and not on those computers.
+
+One invocation uses each computer at a time, and subagents have none, so keep computer work in this invocation. Another invocation that needs the same computer waits until your turn ends or you ask for help. When a website blocks you, finish the work that does not depend on it. Computer use itself creates no goal or schedule.`;
+
 /**
  * Current help state overrides historical requests in the conversation. A run that
  * waits for help (`waitsForAnswer`) is told to join a waiting request, and a

@@ -265,10 +265,10 @@ class WebSocketGatewayService {
       eventStreamService.publish({ type: 'update', payload: { ...payload } });
     });
 
-    // The state of the desktop: which threads wait for it, who holds it, and the
-    // open help requests. The emitter is the access gate itself, so every caller
-    // that queues for the desktop reaches the clients, whichever turn asked.
-    computerService.access.on('change', () => {
+    // The state of the computers: which threads wait for them, who holds them, which
+    // are connected, and the open help requests. Every computer's access gate feeds
+    // this emitter, so every caller that queues for one reaches the clients.
+    computerService.on('change', () => {
       void this.publishComputer();
     });
   }
@@ -305,17 +305,18 @@ class WebSocketGatewayService {
   }
 
   /**
-   * The current state of the desktop — the body of `GET /computer` — or null while
-   * no agent is loaded. A failed build is logged and answered with null: the next
-   * change corrects every client.
+   * The runtime's own desktop as `GET /computers/local` reads it, every help request,
+   * and the list of computers; or null while no agent is loaded. A failed build is
+   * logged and answered with null: the next change corrects every client.
    */
   private async computerState(): Promise<Record<string, unknown> | null> {
     const agentId = config.agentId;
     if (!agentId) return null;
     try {
       return {
-        ...computerService.status(),
+        ...computerService.local.status(),
         help: await computerHelpService.list(agentId, config.ownerUserId),
+        computers: computerService.summaries(),
       };
     } catch (error) {
       logger.warn({ err: error }, '[Computer] Could not read the computer state');

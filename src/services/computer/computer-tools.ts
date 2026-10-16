@@ -53,10 +53,41 @@ export interface ComputerDesktop {
   scroll(input: { x: number; y: number; direction: ScrollDirection; clicks?: number }): Promise<DesktopActionResult>;
 }
 
+/** The field that picks a computer, on every tool that acts on one once remote computers exist. */
+export const COMPUTER_FIELD = {
+  computer: z
+    .string()
+    .optional()
+    .describe('The computer to use, by its name in the computers notice. Leave it out for the default the notice names.'),
+};
+
+/**
+ * The tools, with `computer` on each one that acts on a computer when `named`. The user's
+ * shared screen is not on any computer, so its tool takes none.
+ */
 export function createComputerTools(
   browser: ComputerBrowser,
   desktop: ComputerDesktop | null,
   userScreen: ComputerUserScreen | null,
+  named = false,
+): Record<string, Tool> {
+  const tools = computerTools(browser, desktop, userScreen, named);
+  if (!named) return tools;
+  return Object.fromEntries(
+    Object.entries(tools).map(([name, item]) => [
+      name,
+      name === 'computer_user_screen'
+        ? item
+        : { ...item, inputSchema: (item.inputSchema as z.ZodObject).extend(COMPUTER_FIELD) },
+    ]),
+  );
+}
+
+function computerTools(
+  browser: ComputerBrowser,
+  desktop: ComputerDesktop | null,
+  userScreen: ComputerUserScreen | null,
+  named: boolean,
 ): Record<string, Tool> {
   const screenDescription = desktop
     ? `See your whole screen right now — a ${desktop.width} by ${desktop.height} picture of the ` +
@@ -83,7 +114,7 @@ export function createComputerTools(
         }
       : {}),
 
-    ...(desktop ? createDesktopTools(desktop) : {}),
+    ...(desktop ? createDesktopTools(desktop, named) : {}),
     computer_browse: tool({
       description:
         'Use your web browser: open a page, click things, type, scroll, and work in ' +
@@ -148,9 +179,13 @@ export function createComputerTools(
   };
 }
 
-function createDesktopTools(desktop: ComputerDesktop): Record<string, Tool> {
+function createDesktopTools(desktop: ComputerDesktop, named: boolean): Record<string, Tool> {
+  // Each computer's picture has its own size, which every picture's answer states.
+  const picture = named
+    ? "the latest picture of that computer's screen, from `computer_screen` or the last action"
+    : `the ${desktop.width} by ${desktop.height} picture from \`computer_screen\``;
   const where =
-    `Pixel coordinates in the ${desktop.width} by ${desktop.height} picture from \`computer_screen\`: ` +
+    `Pixel coordinates in ${picture}: ` +
     'x from the left edge, y from the top. Aim at the middle of the button or row.';
 
   return {

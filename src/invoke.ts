@@ -186,7 +186,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
     return;
   }
   const agentId = request.agentId;
-  const computerUse = computerService.access.create(request, request.abortSignal);
+  const computerUse = computerService.createUse(request, request.abortSignal);
   request = { ...request, abortSignal: computerUse.signal };
 
   // Chat always sees history. A thread-bound cron run ("continue in this
@@ -207,7 +207,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
     });
   } catch (error) {
     computerUse.failed = true;
-    computerService.access.finish(computerUse);
+    computerService.finish(computerUse);
     yield buildErrorStep(error);
     return;
   }
@@ -229,8 +229,10 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
     context.runtimeNotices = request.runtimeNotices;
     if (hasComputerForMode(request.mode)) {
       const help = await computerHelpService.forTurn(request);
+      const computers = computerService.notice(request.mode);
       context.runtimeNotices = [
         ...(request.runtimeNotices ?? []),
+        ...(computers ? [computers] : []),
         ...computerHelpNotices(help, waitsForAnswer(request.mode)),
       ];
     }
@@ -762,7 +764,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
 
   } finally {
     activity?.end();
-    computerService.access.finish(computerUse);
+    computerService.finish(computerUse);
     // Persist the turn's final context measurement — one write per turn rather
     // than per step. Runs for canceled turns too: the prompt was still built and
     // sent, so the reading is real.

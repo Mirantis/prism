@@ -93,7 +93,7 @@ vi.mock('../meeting/openai-endpoint', () => ({
 // Stubbed rather than driven for real: `computer.service` imports the browser
 // automation the desktop runs on, which a unit test must not load.
 vi.mock('../computer/computer.service', () => ({
-  computerService: { access: mockComputerAccess, status: vi.fn() },
+  computerService: { on: mockComputerAccess.on, local: { status: vi.fn() }, summaries: vi.fn(() => []) },
 }));
 
 vi.mock('../computer/computer-help.service', () => ({

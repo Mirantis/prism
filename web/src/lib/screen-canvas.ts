@@ -94,6 +94,12 @@ export class ScreenCanvas {
     void blob
       .then((b) => createImageBitmap(b))
       .then((bitmap) => {
+        // A picture decoded after `close()` is of a screen this canvas no longer shows, and
+        // the canvas element may already show another computer's.
+        if (this.closed) {
+          bitmap.close();
+          return;
+        }
         // Decoding is asynchronous, so an older picture can land after a newer one. Only
         // the newest is kept, and the rest are released.
         this.latest?.close();

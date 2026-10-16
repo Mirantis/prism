@@ -52,6 +52,22 @@ export function pictureFor(screen: ScreenSize): ScreenSize {
   return { width: PICTURE_MAX_WIDTH, height: even(screen.height * scale) };
 }
 
+/** The most pixels a picture of a remote display has; a vision model shrinks a larger one. */
+const PICTURE_MAX_PIXELS = 1280 * 900;
+
+/**
+ * The model's picture of a remote display, which can be any shape: its long edge at most
+ * `PICTURE_MAX_WIDTH` and its area at most `PICTURE_MAX_PIXELS`, with its shape kept.
+ */
+export function boundedPictureFor(screen: ScreenSize): ScreenSize {
+  const scale = Math.min(
+    1,
+    PICTURE_MAX_WIDTH / Math.max(screen.width, screen.height),
+    Math.sqrt(PICTURE_MAX_PIXELS / (screen.width * screen.height)),
+  );
+  return { width: even(screen.width * scale), height: even(screen.height * scale) };
+}
+
 export function sizeText(size: ScreenSize): string {
   return `${size.width}x${size.height}`;
 }

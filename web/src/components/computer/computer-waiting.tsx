@@ -1,36 +1,15 @@
-import { useState } from 'react';
-import { useAgent } from '@/lib/agent-context';
-import { useComputerStatus } from '@/hooks/use-computer-status';
-import { computerRequest } from '@/api/computer';
-import { Button } from '@/components/ui/button';
+import { useComputers } from '@/hooks/use-computers';
+import { ComputerQueueNotice } from './computer-queue-notice';
 
+/** The notice for the computer a conversation waits for, when it waits for one. */
 export function ComputerWaiting({ threadId }: { threadId?: string }) {
-  const agent = useAgent();
-  const { data } = useComputerStatus(agent.hasComputer === true);
-  const [error, setError] = useState<string | null>(null);
-  if (!threadId || !data?.waiting.some((item) => item.threadId === threadId)) return null;
+  const { data: computers } = useComputers();
+  if (!threadId || !computers) return null;
   return (
-    <div
-      className="flex flex-wrap items-center gap-3 rounded-lg border p-3 text-sm"
-      role="status"
-      data-testid="computer-waiting"
-    >
-      <span>Waiting for the computer</span>
-      {data.owner?.threadId && (
-        <a className="underline" href={`/chat/${data.owner.threadId}`}>
-          Open active conversation
-        </a>
-      )}
-      {data.owner && (
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => void computerRequest('/stop', {}).catch((err) => setError(String(err)))}
-        >
-          Stop current task
-        </Button>
-      )}
-      {error && <span role="alert">{error}</span>}
-    </div>
+    <>
+      {computers.map((computer) => (
+        <ComputerQueueNotice key={computer.id} computerId={computer.id} threadId={threadId} />
+      ))}
+    </>
   );
 }

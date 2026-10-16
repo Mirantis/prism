@@ -36,6 +36,8 @@ How you talk to the agent.
   agent profile, scheduled tasks, heartbeat controls, and Slack linking.
 - **[Chat socket protocol](websocket-protocol.md)** — for writing a client of your
   own: how to connect, send messages and catch up after a dropped connection.
+- **[Computer link protocol](computer-link-protocol.md)** — for writing the client
+  that connects a computer of yours, so the agent can use it.
 - **[Terminal UI](terminal-ui.md)** — the `prism` TUI for chatting and managing
   the agent from the shell, including slash commands, the `--resume` picker, and
   the schedules/config panels.

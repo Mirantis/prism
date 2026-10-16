@@ -36,6 +36,8 @@ import { heartbeatService } from './services/heartbeat.service';
 import { meetingBotService } from './services/meeting/meeting-bot.service';
 import { voiceChatService } from './services/voice/voice-chat.service';
 import { computerEndpoint } from './services/computer/computer-endpoint';
+import { computerLinkEndpoint } from './services/computer/remote/computer-link-endpoint';
+import { remoteComputerService } from './services/computer/remote/remote-computer.service';
 import { initMeetingToolAvailability } from './lib/tool-collection';
 import { initComputerAvailability } from './services/computer/supported';
 import { cronSchedulerService } from './services/cron-scheduler.service';
@@ -103,6 +105,7 @@ heartbeatService.registerTriggerSource(slackMessageQueueService);
 // Initialize WebSocket gateway before listening
 webSocketGatewayService.initialize(httpServer);
 computerEndpoint.initialize(httpServer);
+computerLinkEndpoint.initialize(httpServer);
 
 const initialize = async () => {
   try {
@@ -249,6 +252,8 @@ const initialize = async () => {
       '[Startup] resolving agent workspace',
     );
     const agent = await resolveOrBootstrapSingleAgent();
+    // Before any turn, since the tools a turn gets depend on whether remote computers exist.
+    await remoteComputerService.load(agent.id);
 
     // Clear stale RUNNING status from previous process crashes.
     await prisma.agentWorkspace.updateMany({
@@ -403,6 +408,7 @@ const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResp
   webSocketGatewayService.closeAll();
   computerEndpoint.close();
   await computerService.close();
+  computerLinkEndpoint.close();
   // Leave any live call before the process goes: otherwise the browser and audio
   // daemon die with us and the bot lingers in the meeting as a frozen participant.
   await meetingBotService.shutdown().catch((err) => {

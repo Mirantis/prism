@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { computerWebSocketUrl } from '@/api/runtime-client';
-import type { ComputerStatus } from '@/types';
+import { LOCAL_COMPUTER_ID, type ComputerStatus } from '@/types';
 import { canDecodeVideo, ScreenCanvas } from '@/lib/screen-canvas';
 
 /** Live desktop video, sound, and user input on a dedicated socket. */
@@ -92,6 +92,8 @@ const HEADER_BYTES = 2;
 export interface UseComputerScreenOptions {
   /** Connect while the Computer page is open. */
   enabled: boolean;
+  /** The computer to show; the runtime's own when left out. */
+  computerId?: string;
   /** Playback for the desktop's sound. */
   onAudio: (pcm: ArrayBuffer) => void;
   /** Called when the runtime says it has begun recording the user's screen. */
@@ -114,7 +116,7 @@ export interface ComputerScreen {
 }
 
 export function useComputerScreen(options: UseComputerScreenOptions): ComputerScreen {
-  const { enabled, onAudio } = options;
+  const { enabled, onAudio, computerId = LOCAL_COMPUTER_ID } = options;
 
   const [clientId, setClientId] = useState<string | null>(null);
   const [state, setState] = useState<ComputerStatus | null>(null);
@@ -144,7 +146,7 @@ export function useComputerScreen(options: UseComputerScreenOptions): ComputerSc
     let disposed = false;
     let reconnect: ReturnType<typeof setTimeout> | undefined;
     setMessage(null);
-    const ws = new WebSocket(computerWebSocketUrl());
+    const ws = new WebSocket(computerWebSocketUrl(computerId));
     wsRef.current = ws;
     ws.onclose = () => {
       if (disposed) return;
@@ -159,7 +161,14 @@ export function useComputerScreen(options: UseComputerScreenOptions): ComputerSc
     ws.onmessage = (event: MessageEvent) => {
       if (typeof event.data === 'string') {
         const frame = JSON.parse(event.data) as ServerFrame | (ComputerStatus & { type: 'computer_state'; clientId: string });
-        if (frame.type === 'computer_state') { setClientId(frame.clientId); setState(frame); return; }
+        if (frame.type === 'computer_state') {
+          setClientId(frame.clientId);
+          setState(frame);
+          // A computer that went away, or stopped sending its screen, leaves its last
+          // picture on the canvas.
+          if (!frame.screen) setHasScreen(false);
+          return;
+        }
         if (frame.type === 'screen_start') {
           if (frame.encoding === 'h264' && frame.codec) {
             if (!canDecodeVideo()) {
@@ -220,7 +229,7 @@ export function useComputerScreen(options: UseComputerScreenOptions): ComputerSc
       setLastFrame(null);
       ws.close();
     };
-  }, [enabled, connection]);
+  }, [enabled, connection, computerId]);
 
   const sendInput = useCallback((frame: PageFrame) => {
     const ws = wsRef.current;

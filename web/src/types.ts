@@ -496,8 +496,35 @@ export interface ComputerHelp {
   credentialFields?: 'both' | 'password';
   /** Where those are typed. */
   site?: string;
+  /** The computer the work is blocked on; without one, the runtime's own. */
+  computerId?: string;
   threadId?: string;
   status: 'waiting' | 'continued' | 'dismissed';
+}
+
+/** The id of the runtime's own computer. */
+export const LOCAL_COMPUTER_ID = 'local';
+
+/** The computer a help request is about. */
+export function helpComputerId(help: Pick<ComputerHelp, 'computerId'>): string {
+  return help.computerId ?? LOCAL_COMPUTER_ID;
+}
+
+/** One computer as `GET /agents/computers` lists it. */
+export interface ComputerSummary {
+  id: string;
+  kind: 'local' | 'remote';
+  name: string;
+  connection: 'connected' | 'disconnected';
+  platform: string | null;
+  clientVersion: string | null;
+  display: { width: number; height: number } | null;
+  capabilities: string[];
+  problems: { capability: string; message: string }[];
+  lastConnectedAt: string | null;
+  lastSeenAt: string | null;
+  owner: { threadId?: string; mode: string } | null;
+  controller: 'viewer' | 'local' | null;
 }
 
 export function computerHelpBlocks(message: ConversationMessage): ComputerHelp[] {
@@ -511,6 +538,12 @@ export function computerHelpBlocks(message: ConversationMessage): ComputerHelp[]
 }
 
 export interface ComputerStatus {
+  /** Which computer this is. */
+  computerId?: string;
+  /** Set on a viewer socket's state, where a remote computer can be offline. */
+  connection?: 'connected' | 'disconnected';
+  /** Set on a viewer socket's state: whether the computer can send its screen now. */
+  screen?: boolean;
   available: boolean;
   running: boolean;
   starting: boolean;
@@ -521,4 +554,6 @@ export interface ComputerStatus {
   owner: { id: string; threadId?: string; mode: string } | null;
   waiting: { id: string; threadId?: string; mode: string }[];
   help?: ComputerHelp[];
+  /** On the chat socket's `computer` frame: every computer the agent has. */
+  computers?: ComputerSummary[];
 }

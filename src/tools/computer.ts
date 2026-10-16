@@ -1,8 +1,13 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { tool, type Tool } from 'ai';
 import type { ToolResultOutput } from '@ai-sdk/provider-utils';
 import { z } from 'zod';
-import { createComputerTools } from '../services/computer/computer-tools';
+import { COMPUTER_FIELD, createComputerTools } from '../services/computer/computer-tools';
 import { computerService } from '../services/computer/computer.service';
+import { ComputerSession, HELD_LOCALLY } from '../services/computer/computer-session';
+import type { Computer } from '../services/computer/computer';
+import { remoteComputerService } from '../services/computer/remote/remote-computer.service';
+import { hasComputer, usesRemoteComputers } from '../services/computer/supported';
 import {
   computerHelpService,
   computerLink,
@@ -11,7 +16,7 @@ import {
   type HelpAnswer,
 } from '../services/computer/computer-help.service';
 import type { ComputerUse } from '../services/computer/computer-access';
-import type { AgentComputer, ModelChannel } from '../services/computer/agent-computer';
+import type { ModelChannel } from '../services/computer/agent-computer';
 import { DEFAULT_SCREEN, pictureFor } from '../services/computer/screen-size';
 import { renderToolResult } from '../lib/tool-output-limiter';
 
@@ -36,11 +41,50 @@ const HELP_ANSWERS: Record<HelpAnswer, string> = {
   unanswered: `The user did not answer within ${WAIT_MINUTES} minutes, and the request stays open. Finish without the blocked work, and say in your reply what is still blocked.`,
 };
 
-/** Schemas stay fixed for a mode; the calling invocation supplies its ownership and image sink. */
+/** A voice call that finds the computer in another invocation's hands. */
+const ANOTHER_INVOCATION =
+  'Another invocation is using the computer. Use computer_screen to discuss it, or computer_instruct to relay the user’s instructions.';
+
+/**
+ * The `computer` a tool call named, for the dispatch below. It travels beside the call
+ * rather than in the computer method's arguments, which a tool need not pass on.
+ */
+const selection = new AsyncLocalStorage<string | undefined>();
+
+function computerNamed(input: unknown): string | undefined {
+  const name = (input as { computer?: unknown } | undefined)?.computer;
+  return typeof name === 'string' ? name : undefined;
+}
+
+/**
+ * The computer a call names, or a refusal the model reads. The user's shared screen
+ * arrives on the runtime's own Computer page, so that tool always asks the runtime's own.
+ */
+function sessionFor(
+  use: ComputerUse,
+  name: string | undefined,
+  property: string | symbol,
+): ComputerSession | { success: false; message: string } {
+  if (property === 'lookAtUserScreen') return computerService.local;
+  try {
+    return computerService.resolve(use, typeof name === 'string' ? name : undefined);
+  } catch (error) {
+    return { success: false, message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * Schemas stay fixed for a mode and for the set of computers; the calling invocation
+ * supplies its ownership and image sink. A run that may use a remote computer names it
+ * in each call's `computer` once one exists. `mode` is the invocation's, and a request
+ * that has none, such as a compaction, passes the mode whose tools block it repeats.
+ */
 export function getComputerTools(
   use?: ComputerUse,
   voiceChannel?: () => ModelChannel | null,
+  mode = use?.mode,
 ): Record<string, Tool> {
+  const named = mode !== undefined && usesRemoteComputers(mode) && remoteComputerService.count > 0;
   const desktop = new Proxy(
     pictureFor(DEFAULT_SCREEN),
     {
@@ -48,6 +92,11 @@ export function getComputerTools(
         if (property === 'width' || property === 'height') return target[property];
         return async (...args: unknown[]) => {
           if (!use) throw new Error('Computer tools require an active invocation.');
+          const session = sessionFor(use, selection.getStore(), property);
+          if (!(session instanceof ComputerSession)) return session;
+          if (use.mode === 'voice' && session.access.owner && session.access.owner !== use) {
+            return { success: false, message: ANOTHER_INVOCATION };
+          }
           const imageUrls: string[] = [];
           const channel: ModelChannel = {
             showImage(url, note) {
@@ -61,8 +110,9 @@ export function getComputerTools(
           };
           const output = await computerService.act(
             use,
+            session,
             async (computer) => {
-              const fn = computer[property as keyof AgentComputer] as (
+              const fn = computer[property as keyof Computer] as (
                 ...input: unknown[]
               ) => Promise<object>;
               return fn.apply(computer, args);
@@ -75,26 +125,16 @@ export function getComputerTools(
         };
       },
     },
-  ) as unknown as AgentComputer;
-  const base = createComputerTools(desktop, desktop, voiceChannel ? desktop : null);
+  ) as unknown as Computer;
+  const base = createComputerTools(desktop, desktop, voiceChannel ? desktop : null, named);
   const result: Record<string, Tool> = {};
   for (const [name, original] of Object.entries(base)) {
+    // The browser tool is the runtime's own browser. A run on a runtime that has only remote
+    // computers uses a computer's browser through its desktop.
+    if (name === 'computer_browse' && named && !hasComputer()) continue;
     result[name] = {
       ...original,
-      execute: async (input, options) => {
-        if (
-          use?.mode === 'voice' &&
-          computerService.access.owner &&
-          computerService.access.owner !== use
-        ) {
-          return {
-            success: false,
-            message:
-              'Another invocation is using the computer. Use computer_screen to discuss it, or computer_instruct to relay the user’s instructions.',
-          };
-        }
-        return original.execute!(input, options);
-      },
+      execute: (input, options) => selection.run(computerNamed(input), () => original.execute!(input, options)),
       toModelOutput: async ({ output }: { output: unknown }): Promise<ToolResultOutput> => {
         const text = renderToolResult(output);
         const images = output && typeof output === 'object' ? pictures.get(output) : undefined;
@@ -106,7 +146,8 @@ export function getComputerTools(
             ...images.map((url) => ({
               type: 'image-data' as const,
               data: url.split(',')[1],
-              mediaType: 'image/jpeg',
+              // A data URL names its own type: `data:image/png;base64,…`.
+              mediaType: url.slice('data:'.length, url.indexOf(';')),
             })),
           ],
         };
@@ -117,12 +158,18 @@ export function getComputerTools(
   result.computer_screen = tool({
     description:
       'Inspect your current desktop and browser. Inspect it again after navigation or user help. During human takeover, set userRequested only when the user explicitly asks you to inspect the screen. Automatic inspection waits for hand-back. While the user completes a help request, every inspection waits for hand-back.',
-    inputSchema: z.object({ userRequested: z.boolean().default(false) }),
-    execute: async ({ userRequested }) => {
+    inputSchema: z.object({
+      userRequested: z.boolean().default(false),
+      ...(named ? COMPUTER_FIELD : {}),
+    }),
+    execute: async (input) => {
       if (!use) throw new Error('Screen inspection requires an active invocation.');
+      const session = sessionFor(use, computerNamed(input), 'lookAtScreen');
+      if (!(session instanceof ComputerSession)) return session;
       const images: string[] = [];
       const output = await computerService.act(
         use,
+        session,
         (computer) => computer.lookAtScreen(),
         {
           showImage(url, note) {
@@ -135,8 +182,8 @@ export function getComputerTools(
         // An inspection is the one look that outruns the desktop's queue, so a
         // secure takeover withdraws it: the user's own screen is theirs alone
         // until they hand back.
-        !computerService.access.secure &&
-          (userRequested || (use.mode === 'voice' && !computerService.access.paused)),
+        !session.access.secure &&
+          (input.userRequested || (use.mode === 'voice' && !session.access.paused)),
       );
       if (images.length) pictures.set(output, images);
       return output;
@@ -156,7 +203,7 @@ export function getComputerTools(
     }),
     execute: async ({ reason, tab, credentials }) => {
       if (!use) throw new Error('Computer help requires an active invocation.');
-      const { help, repeated, answer } = await computerService.access.run(use, () =>
+      const { help, repeated, answer } = await computerService.current(use).access.run(use, () =>
         computerHelpService.request(use, reason, tab, credentials),
       );
       if (answer) {
@@ -173,7 +220,7 @@ export function getComputerTools(
       return {
         success: true,
         helpId: help.id,
-        url: computerLink(help.id),
+        url: computerLink(help.id, help.computerId),
         credentials: help.credentials ?? false,
         message: repeated
           ? `A help request is already waiting for the user, so nothing new was sent. It asks: ${JSON.stringify(help.reason)}. If something else blocks this run, say what in your reply. Continue independent work or finish this turn while waiting for the user.`
@@ -189,6 +236,12 @@ export function getComputerTools(
     inputSchema: z.object({ helpId: z.string(), dismiss: z.boolean().default(false) }),
     execute: async ({ helpId, dismiss }) => {
       if (!use) throw new Error('Computer help requires an active invocation.');
+      // Refused before the request is resolved, so a request is never closed on a computer
+      // that is still in the hands of the person at it.
+      const asked = (await computerHelpService.list(use.agentId, use.userId)).find((help) => help.id === helpId);
+      if (!dismiss && computerHelpService.sessionOf(asked).controller === 'local') {
+        return { success: false, message: HELD_LOCALLY };
+      }
       const resolved = await computerHelpService.resolve(
         use.agentId,
         use.userId,
@@ -196,7 +249,8 @@ export function getComputerTools(
         dismiss ? 'dismissed' : 'continued',
       );
       if (!resolved) return { success: false, message: 'This help request is already closed.' };
-      if (!dismiss && computerService.access.paused) await computerService.continueFromChat();
+      const session = computerHelpService.sessionOf(resolved.help);
+      if (!dismiss && session.access.paused) await session.continueFromChat();
       if (resolved.answeredRuns && resolved.help.requesterWaits)
         return {
           success: true,
@@ -221,7 +275,8 @@ export function getComputerTools(
         'Relay your user’s spoken instructions to the chat invocation currently using the computer. Use this instead of competing with it for input. The instructions appear in that conversation.',
       inputSchema: z.object({ instruction: z.string().min(1).max(4000) }),
       execute: async ({ instruction }) => {
-        const owner = computerService.access.owner;
+        // A voice call is held on the runtime's own computer, so that is the one it relays to.
+        const owner = computerService.local.access.owner;
         if (!owner?.threadId || owner.mode !== 'chat')
           return {
             success: false,

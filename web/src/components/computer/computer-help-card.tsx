@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { computerRequest } from '@/api/computer';
 import { useComputerStatus } from '@/hooks/use-computer-status';
 import { SignInForm } from './sign-in-form';
-import type { ComputerHelp } from '@/types';
+import { helpComputerId, LOCAL_COMPUTER_ID, type ComputerHelp } from '@/types';
 
 export function ComputerHelpCard({
   help,
@@ -21,7 +21,7 @@ export function ComputerHelpCard({
   disabled?: boolean;
 }) {
   const queryClient = useQueryClient();
-  const { data } = useComputerStatus();
+  const { data } = useComputerStatus(helpComputerId(help));
   const current = data?.help?.find((item) => item.id === help.id) ?? help;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,8 +60,11 @@ export function ComputerHelpCard({
       {!current.credentials && (
         <p className="text-xs leading-relaxed text-muted-foreground">
           Click the screen to complete this step. Press Esc when you’re done, or choose “I’m done”.
-          Prism is stopped while you work here and cannot see the screen. Submit a sign-in before
-          you finish: anything left in a password field is cleared.
+          Prism is stopped while you work here and cannot see the screen.{' '}
+          {/* Prism empties password fields in its own browser only, not on a computer of yours. */}
+          {helpComputerId(current) === LOCAL_COMPUTER_ID
+            ? 'Submit a sign-in before you finish: anything left in a password field is cleared.'
+            : 'Submit the sign-in or clear sensitive fields before you hand control back.'}
         </p>
       )}
       {current.status === 'waiting' && current.credentials && (

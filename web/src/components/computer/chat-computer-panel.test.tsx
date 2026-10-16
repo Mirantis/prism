@@ -6,14 +6,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ComputerHelp, ComputerStatus } from '@/types';
 import { ChatComputerPanel } from './chat-computer-panel';
 
-const { computerRequest, state } = vi.hoisted(() => ({
+const { computerRequest, computerAction, state } = vi.hoisted(() => ({
   computerRequest: vi.fn(async () => ({})),
+  computerAction: vi.fn(async () => ({})),
   state: { status: null as ComputerStatus | null },
 }));
 
-vi.mock('@/api/computer', () => ({ computerRequest }));
+vi.mock('@/api/computer', () => ({ computerRequest, computerAction }));
 vi.mock('@/hooks/use-computer-status', () => ({
   useComputerStatus: () => ({ data: state.status }),
+  useCurrentHelp: (requests: ComputerHelp[]) =>
+    requests.map((request) => state.status?.help?.find((item) => item.id === request.id) ?? request),
 }));
 vi.mock('@/hooks/use-computer-screen', () => ({
   useComputerScreen: () => ({
@@ -71,6 +74,7 @@ describe('chat computer panel', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     computerRequest.mockClear();
+    computerAction.mockClear();
     state.status = status('waiting');
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
       callback(0);
@@ -102,7 +106,7 @@ describe('chat computer panel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Take control' }));
     await act(async () => {});
-    expect(computerRequest).toHaveBeenCalledWith('/control', {
+    expect(computerAction).toHaveBeenCalledWith('local', 'control', {
       clientId: '00000000-0000-4000-8000-000000000001',
       helpId: help.id,
     });
@@ -201,7 +205,7 @@ describe('chat computer panel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Close computer panel' }));
     await act(async () => {});
-    expect(computerRequest).toHaveBeenCalledWith('/continue', {
+    expect(computerAction).toHaveBeenCalledWith('local', 'continue', {
       clientId: '00000000-0000-4000-8000-000000000001',
     });
     expect(screen.getByLabelText('Computer help panel').getAttribute('data-state')).toBe('closed');
@@ -233,7 +237,7 @@ describe('chat computer panel', () => {
         <ChatComputerPanel requests={[help]} />
       </QueryClientProvider>,
     );
-    computerRequest.mockRejectedValueOnce(new Error('Could not return control'));
+    computerAction.mockRejectedValueOnce(new Error('Could not return control'));
 
     fireEvent.click(screen.getByRole('button', { name: 'Close computer panel' }));
     await act(async () => {});
@@ -280,7 +284,7 @@ describe('chat computer panel', () => {
 
     expect(screen.getByLabelText('Computer help').textContent).toContain(older.id);
     fireEvent.click(screen.getByRole('button', { name: 'Take control' }));
-    expect(computerRequest).toHaveBeenCalledWith('/control', {
+    expect(computerAction).toHaveBeenCalledWith('local', 'control', {
       clientId: '00000000-0000-4000-8000-000000000001',
       helpId: older.id,
     });

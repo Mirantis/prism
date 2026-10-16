@@ -109,7 +109,7 @@ Given('the runtime can give the agent a computer', async ({ page }) => {
  */
 async function returnAbandonedControl(page: Page): Promise<void> {
   const paused = async () =>
-    (await (await fetch('http://localhost:3003/agents/computer')).json()).paused === true;
+    (await (await fetch('http://localhost:3003/agents/computers/local')).json()).paused === true;
   if (!(await paused())) return;
   await page.goto('/computer');
   await page.getByLabel("The agent's screen").waitFor({ timeout: 60_000 });

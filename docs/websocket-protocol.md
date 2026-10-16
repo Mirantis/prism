@@ -95,6 +95,8 @@ see a gap, reconnect and resume from the last `seq` you applied.
   runtime updates.
   - When `compaction` reports `completed`, reload the open conversation. Older
     messages have changed.
+  - `computer` lists every computer the agent can use in `computers`, as
+    `GET /agents/computers` does.
 
 ## Requests
 

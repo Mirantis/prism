@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { CircleCheck, CircleX, LockKeyhole, Monitor } from 'lucide-react';
 import { useComputerStatus } from '@/hooks/use-computer-status';
 import { SignInForm } from '@/components/computer/sign-in-form';
-import type { ComputerHelp } from '@/types';
+import { helpComputerId, type ComputerHelp } from '@/types';
 
 export function ChatComputerHelp({
   help,
@@ -11,7 +11,7 @@ export function ChatComputerHelp({
   help: ComputerHelp;
   onOpen: (id: string) => void;
 }) {
-  const { data } = useComputerStatus();
+  const { data } = useComputerStatus(helpComputerId(help));
   const current = data?.help?.find((item) => item.id === help.id) ?? help;
   const [expanded, setExpanded] = useState(true);
   const dismissed = current.status === 'dismissed';

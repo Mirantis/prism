@@ -22,11 +22,17 @@ import { useComputerAudio } from '@/hooks/use-computer-audio';
 import { useComputerVoice } from '@/hooks/use-computer-voice';
 import { useScreenRecording } from '@/hooks/use-screen-recording';
 import { useScreenShare } from '@/hooks/use-screen-share';
-import { computerRequest } from '@/api/computer';
+import { computerAction, computerRequest } from '@/api/computer';
+import type { ComputerSummary } from '@/types';
 import { ComputerHelpPanel } from './computer-help-panel';
 import { cn } from '@/lib/utils';
 
-export function ComputerView({ helpId }: { helpId?: string }) {
+/**
+ * One computer's live screen and its controls. Sound, voice and screen sharing belong to
+ * the runtime's own desktop, so a remote computer's view leaves them out.
+ */
+export function ComputerView({ computer, helpId }: { computer: ComputerSummary; helpId?: string }) {
+  const remote = computer.kind === 'remote';
   const call = useComputerVoice();
   // The call as it stands now, for a handler that reads it after an await: a closure's
   // copy is the one from the render the click happened in. See `toggleRecording`.
@@ -39,12 +45,16 @@ export function ComputerView({ helpId }: { helpId?: string }) {
   const [micOpen, setMicOpen] = useState(false);
   const screen = useComputerScreen({
     enabled: true,
+    computerId: computer.id,
     onAudio: audio.enqueue,
     onRecordingStarted: () => setMicOpen(true),
   });
-  const { data } = useComputerStatus();
+  const { data } = useComputerStatus(computer.id);
   const queryClient = useQueryClient();
   const state = screen.state ?? data;
+  const connected = !remote || (screen.state?.connection ?? computer.connection) === 'connected';
+  // A connected computer can still lack the permission to send its screen.
+  const sharing = connected && screen.state?.screen !== false;
   const share = useScreenShare(screen.sendInput);
   // The share is opened to be recorded, so it closes however the recording ends. Nothing
   // keeps capturing the user's screen once they press stop.
@@ -128,15 +138,15 @@ export function ComputerView({ helpId }: { helpId?: string }) {
     if (threadId) setLastThreadId(threadId);
   }, [threadId]);
   const conversationThreadId = threadId ?? lastThreadId;
-  const action = async (path: string, selectedHelp?: string) => {
+  const action = async (name: 'control' | 'continue' | 'stop', selectedHelp?: string) => {
     setBusy(true);
     setError(null);
     try {
-      await computerRequest(path, {
+      await computerAction(computer.id, name, {
         clientId: screen.clientId,
         ...(selectedHelp ? { helpId: selectedHelp } : {}),
       });
-      if (path === '/control') controlHelpId.current = selectedHelp;
+      if (name === 'control') controlHelpId.current = selectedHelp;
       await queryClient.invalidateQueries({ queryKey: ['computer'] });
       return true;
     } catch (err) {
@@ -149,7 +159,7 @@ export function ComputerView({ helpId }: { helpId?: string }) {
   const handBack = async () => {
     const currentHelp = waiting.find((item) => item.id === controlHelpId.current);
     if (!currentHelp) {
-      await action('/continue');
+      await action('continue');
       return;
     }
     setBusy(true);
@@ -167,21 +177,25 @@ export function ComputerView({ helpId }: { helpId?: string }) {
       setBusy(false);
     }
   };
-  const label = !screen.hasScreen
-    ? 'Preparing your computer'
-    : ownControl
-      ? state?.secure
-        ? 'You have control · Prism is stopped'
-        : 'You have control'
-      : anotherController
-        ? 'Another viewer has control'
-        : state?.paused
-          ? 'Paused · Waiting for hand-back'
-          : state?.owner
-            ? 'Prism is working'
-            : selected
-              ? 'Waiting for you'
-              : 'Ready';
+  const label = !connected
+    ? 'Not connected'
+    : !screen.hasScreen
+      ? sharing ? 'Preparing your computer' : 'Screen not shared'
+      : ownControl
+        ? state?.secure
+          ? 'You have control · Prism is stopped'
+          : 'You have control'
+        : state?.controller === 'local'
+          ? `The person at ${computer.name} has control`
+          : anotherController
+            ? 'Another viewer has control'
+            : state?.paused
+              ? 'Paused · Waiting for hand-back'
+              : state?.owner
+                ? 'Prism is working'
+                : selected
+                  ? 'Waiting for you'
+                  : 'Ready';
 
   return (
     <div className={cn('grid items-start gap-4', selected && 'xl:grid-cols-[minmax(0,1fr)_20rem]')}>
@@ -195,10 +209,27 @@ export function ComputerView({ helpId }: { helpId?: string }) {
           hasScreen={screen.hasScreen}
           controllable={ownControl && !busy}
           canTakeControl={!anotherController && !busy && Boolean(screen.clientId)}
-          onTakeControl={() => action('/control', selected?.id)}
+          onTakeControl={() => action('control', selected?.id)}
           onInput={screen.sendInput}
           onRelease={() => void handBack()}
-          connecting={!screen.message}
+          connecting={sharing && !screen.message}
+          unavailable={
+            !remote
+              ? undefined
+              : !connected
+                ? {
+                    title: 'Not connected',
+                    detail: `Start the computer client on ${computer.name}. Its screen appears here when it connects.`,
+                  }
+                : !sharing
+                  ? {
+                      title: 'Screen not shared',
+                      detail:
+                        computer.problems.find((problem) => problem.capability === 'stream')?.message ??
+                        `Allow the computer client on ${computer.name} to record the screen.`,
+                    }
+                  : undefined
+          }
         >
           {share.stream && (
             <div className="absolute left-3 top-3">
@@ -216,11 +247,13 @@ export function ComputerView({ helpId }: { helpId?: string }) {
                 <span
                   className={cn(
                     'size-2 shrink-0 rounded-full',
-                    state?.paused || (selected && !state?.owner)
-                      ? 'bg-amber-500'
-                      : screen.hasScreen
-                        ? 'bg-emerald-500'
-                        : 'bg-muted-foreground animate-pulse',
+                    !sharing
+                      ? 'bg-muted-foreground'
+                      : state?.paused || (selected && !state?.owner)
+                        ? 'bg-amber-500'
+                        : screen.hasScreen
+                          ? 'bg-emerald-500'
+                          : 'bg-muted-foreground animate-pulse',
                   )}
                 />
                 {label}
@@ -247,7 +280,7 @@ export function ComputerView({ helpId }: { helpId?: string }) {
                     variant="ghost"
                     aria-label="Stop current task"
                     disabled={busy}
-                    onClick={() => void action('/stop')}
+                    onClick={() => void action('stop')}
                   >
                     <Square className="size-3" /> Stop
                   </Button>
@@ -264,72 +297,79 @@ export function ComputerView({ helpId }: { helpId?: string }) {
               </div>
             </div>
 
-            <div className="ml-auto flex flex-wrap items-center gap-2">
-              <Button
-                variant="ghost"
-                aria-label={audio.enabled ? 'Mute sound' : 'Play sound'}
-                aria-pressed={audio.enabled}
-                onClick={() => void audio.toggle()}
-              >
-                {audio.enabled ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
-                Sound {audio.enabled ? 'on' : 'off'}
-              </Button>
-              <div className="flex flex-wrap items-center gap-2">
-                {call.isSpeaking && (
-                  <AudioLines aria-label="Speaking" className="size-4 animate-pulse text-sky-500" />
-                )}
-                {/* Both show the agent something during a call, so neither is offered
-                    while there is no call to show it to. */}
-                {call.status !== 'idle' && (
-                  <>
-                    <ShareButton
-                      sharing={share.sharing}
-                      disabled={call.status !== 'live' || recording}
-                      onToggle={() => (share.sharing ? share.stop() : void share.start())}
-                    />
-                    <RecordButton
-                      recording={recording}
-                      elapsedMs={recorder.elapsedMs}
-                      // Readiness gates starting a recording, never ending one: a socket
-                      // that goes while one runs would otherwise leave the control dead and
-                      // the microphone held until the length limit.
-                      disabled={!recording && (call.status !== 'live' || !screen.clientId)}
-                      onToggle={() => void toggleRecording()}
-                    />
-                  </>
-                )}
-                {call.status === 'idle' ? (
-                  <Button variant="outline" className="h-10" onClick={call.start}>
-                    <Mic className="size-4" /> Talk
-                  </Button>
-                ) : (
-                  <>
-                    <MuteButton
-                      muted={call.isMuted}
-                      disabled={call.status !== 'live' || recording}
-                      onToggle={call.toggleMute}
-                    />
-                    <Button variant="outline" className="h-10" onClick={call.stop}>
-                      <Pause className="size-4" /> End voice
+            {!remote && (
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                <Button
+                  variant="ghost"
+                  aria-label={audio.enabled ? 'Mute sound' : 'Play sound'}
+                  aria-pressed={audio.enabled}
+                  onClick={() => void audio.toggle()}
+                >
+                  {audio.enabled ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
+                  Sound {audio.enabled ? 'on' : 'off'}
+                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  {call.isSpeaking && (
+                    <AudioLines aria-label="Speaking" className="size-4 animate-pulse text-sky-500" />
+                  )}
+                  {/* Both show the agent something during a call, so neither is offered
+                      while there is no call to show it to. */}
+                  {call.status !== 'idle' && (
+                    <>
+                      <ShareButton
+                        sharing={share.sharing}
+                        disabled={call.status !== 'live' || recording}
+                        onToggle={() => (share.sharing ? share.stop() : void share.start())}
+                      />
+                      <RecordButton
+                        recording={recording}
+                        elapsedMs={recorder.elapsedMs}
+                        // Readiness gates starting a recording, never ending one: a socket
+                        // that goes while one runs would otherwise leave the control dead and
+                        // the microphone held until the length limit.
+                        disabled={!recording && (call.status !== 'live' || !screen.clientId)}
+                        onToggle={() => void toggleRecording()}
+                      />
+                    </>
+                  )}
+                  {call.status === 'idle' ? (
+                    <Button variant="outline" className="h-10" onClick={call.start}>
+                      <Mic className="size-4" /> Talk
                     </Button>
-                  </>
-                )}
+                  ) : (
+                    <>
+                      <MuteButton
+                        muted={call.isMuted}
+                        disabled={call.status !== 'live' || recording}
+                        onToggle={call.toggleMute}
+                      />
+                      <Button variant="outline" className="h-10" onClick={call.stop}>
+                        <Pause className="size-4" /> End voice
+                      </Button>
+                    </>
+                  )}
+                </div>
               </div>
-            </div>
-          </div>
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            {anotherController ? (
-              'You’re watching. Another viewer is using the computer.'
-            ) : ownControl ? (
-              'You have the mouse and keyboard. Press Esc to hand control back.'
-            ) : (
-              <>
-                Click the screen to take control.{' '}
-                <kbd className="rounded border bg-muted px-1 py-0.5 text-[10px]">Esc</kbd> hands it
-                back to Prism.
-              </>
             )}
-          </p>
+          </div>
+          {/* The screen itself says what to do while the computer is not connected or not sharing it. */}
+          {sharing && (
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {state?.controller === 'local' ? (
+                `You’re watching. Somebody at ${computer.name} is using it.`
+              ) : anotherController ? (
+                'You’re watching. Another viewer is using the computer.'
+              ) : ownControl ? (
+                'You have the mouse and keyboard. Press Esc to hand control back.'
+              ) : (
+                <>
+                  Click the screen to take control.{' '}
+                  <kbd className="rounded border bg-muted px-1 py-0.5 text-[10px]">Esc</kbd> hands it
+                  back to Prism.
+                </>
+              )}
+            </p>
+          )}
           {(error || screen.message || call.error || share.error || audio.error) && (
             <p role="alert" className="text-sm text-destructive">
               {error || screen.message || call.error || share.error || audio.error}

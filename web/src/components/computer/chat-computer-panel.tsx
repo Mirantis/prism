@@ -3,11 +3,11 @@ import { createPortal } from 'react-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { Monitor, X } from 'lucide-react';
 import { ScreenView } from '@/components/voice/screen-view';
-import { computerRequest } from '@/api/computer';
+import { computerAction, computerRequest } from '@/api/computer';
 import { useComputerScreen } from '@/hooks/use-computer-screen';
-import { useComputerStatus } from '@/hooks/use-computer-status';
+import { useComputerStatus, useCurrentHelp } from '@/hooks/use-computer-status';
 import { cn } from '@/lib/utils';
-import type { ComputerHelp } from '@/types';
+import { helpComputerId, LOCAL_COMPUTER_ID, type ComputerHelp } from '@/types';
 import { ComputerHelpCard } from './computer-help-card';
 
 const PANEL_TRANSITION_MS = 1200;
@@ -25,10 +25,7 @@ export function ChatComputerPanel({
   onResizingChange?: (resizing: boolean) => void;
 }) {
   const queryClient = useQueryClient();
-  const { data } = useComputerStatus();
-  const current = requests.map(
-    (request) => data?.help?.find((item) => item.id === request.id) ?? request,
-  );
+  const current = useCurrentHelp(requests);
   const currentRef = useRef(current);
   currentRef.current = current;
   const waiting = [...current].reverse().find((request) => request.status === 'waiting');
@@ -49,8 +46,18 @@ export function ChatComputerPanel({
     null,
   );
   const ignoreAudio = useCallback(() => {}, []);
-  const screen = useComputerScreen({ enabled: displayed !== null, onAudio: ignoreAudio });
+  // The panel shows the computer the displayed request is about.
+  const computerId = displayed ? helpComputerId(displayed) : LOCAL_COMPUTER_ID;
+  const { data } = useComputerStatus(computerId);
+  const screen = useComputerScreen({ enabled: displayed !== null, computerId, onAudio: ignoreAudio });
   const state = displayed ? screen.state ?? data : data;
+  // A remote computer can be offline, or connected without the permission to send its screen.
+  const noScreen =
+    screen.state?.screen !== false
+      ? undefined
+      : screen.state.connection === 'connected'
+        ? { title: 'Screen not shared', detail: 'Allow the computer client to record the screen.' }
+        : { title: 'Not connected', detail: 'Start the computer client. Its screen appears here when it connects.' };
   const ownControl = Boolean(displayed && screen.clientId) && state?.controller === screen.clientId;
   const anotherController = Boolean(state?.controller) && !ownControl;
   const waitingId = waiting?.id;
@@ -151,28 +158,25 @@ export function ChatComputerPanel({
     [onLayoutChange, onResizingChange],
   );
 
-  const request = useCallback(
-    async (path: string) => {
-      if (!displayedCurrent) return false;
-      setBusy(true);
-      setError(null);
-      try {
-        await computerRequest(path, {
-          clientId: screen.clientId,
-          helpId: displayedCurrent.id,
-        });
-        if (path === '/control') controlHelpIdRef.current = displayedCurrent.id;
-        await queryClient.invalidateQueries({ queryKey: ['computer'] });
-        return true;
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
-        return false;
-      } finally {
-        setBusy(false);
-      }
-    },
-    [displayedCurrent, queryClient, screen.clientId],
-  );
+  const takeControl = useCallback(async () => {
+    if (!displayedCurrent) return false;
+    setBusy(true);
+    setError(null);
+    try {
+      await computerAction(computerId, 'control', {
+        clientId: screen.clientId,
+        helpId: displayedCurrent.id,
+      });
+      controlHelpIdRef.current = displayedCurrent.id;
+      await queryClient.invalidateQueries({ queryKey: ['computer'] });
+      return true;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }, [computerId, displayedCurrent, queryClient, screen.clientId]);
 
   const finish = useCallback(async () => {
     const controlledId = controlHelpIdRef.current;
@@ -184,10 +188,11 @@ export function ChatComputerPanel({
     setBusy(true);
     setError(null);
     try {
-      await computerRequest(helpId ? `/help/${helpId}` : '/continue', {
-        ...(helpId ? { action: 'continue' } : {}),
-        clientId: screen.clientId,
-      });
+      if (helpId) {
+        await computerRequest(`/help/${helpId}`, { action: 'continue', clientId: screen.clientId });
+      } else {
+        await computerAction(computerId, 'continue', { clientId: screen.clientId });
+      }
       controlHelpIdRef.current = null;
       await queryClient.invalidateQueries({ queryKey: ['computer'] });
     } catch (cause) {
@@ -195,7 +200,7 @@ export function ChatComputerPanel({
     } finally {
       setBusy(false);
     }
-  }, [displayedCurrent?.id, queryClient, screen.clientId]);
+  }, [computerId, displayedCurrent?.id, queryClient, screen.clientId]);
 
   const closePanel = async () => {
     if (!displayedCurrent || busyRef.current) return;
@@ -203,7 +208,7 @@ export function ChatComputerPanel({
       setBusy(true);
       setError(null);
       try {
-        await computerRequest('/continue', { clientId: screen.clientId });
+        await computerAction(computerId, 'continue', { clientId: screen.clientId });
         controlHelpIdRef.current = null;
         await queryClient.invalidateQueries({ queryKey: ['computer'] });
       } catch (cause) {
@@ -319,10 +324,11 @@ export function ChatComputerPanel({
             canTakeControl={
               active && !anotherController && !busy && Boolean(screen.clientId)
             }
-            onTakeControl={() => request('/control')}
+            onTakeControl={takeControl}
             onInput={screen.sendInput}
             onRelease={() => void finish()}
-            connecting={!screen.message}
+            connecting={!screen.message && !noScreen}
+            unavailable={noScreen}
           />
           <ComputerHelpCard
             help={displayedCurrent}

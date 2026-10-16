@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { prepareVoiceChatTools } from '../voice-chat-tools';
+
+// A voice session's computer is the runtime's own desktop, which offers the browser tool.
+vi.mock('../../computer/supported', async (original) => ({
+  ...(await original<typeof import('../../computer/supported')>()),
+  hasComputer: () => true,
+}));
 import { getComputerTools } from '../../../tools/computer';
 import { MEETING_TOOL_NAMES } from '../../../tools/meeting';
 import type { PreparedTools } from '../realtime-tools';

@@ -13,7 +13,7 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 import { useAgent } from '@/lib/agent-context';
-import { NAV_GROUPS, visibleNavItems } from '@/lib/nav';
+import { NAV_GROUPS } from '@/lib/nav';
 import { AgentPresence } from './agent-presence';
 import { NewChatButton } from './new-chat-button';
 import { SearchButton } from './search-button';
@@ -56,7 +56,7 @@ export function AppSidebar() {
           <SidebarGroup key={group.label} className="py-1">
             <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
             <SidebarMenu>
-              {visibleNavItems(group.items, agent.hasComputer).map(({ to, label, icon: Icon }) => {
+              {group.items.map(({ to, label, icon: Icon }) => {
                 const isActive = to === '/' ? pathname === '/' : pathname.startsWith(to);
                 return (
                   <SidebarMenuItem key={to}>

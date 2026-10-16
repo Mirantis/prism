@@ -77,7 +77,7 @@ class ProgramStatusService {
     eventStreamService.subscribe(({ event }) => {
       if (event.type === 'turn') this.endExchange(event.payload);
     });
-    computerService.access.on('change', () => {
+    computerService.on('change', () => {
       this.helpChanged = true;
       this.update();
     });

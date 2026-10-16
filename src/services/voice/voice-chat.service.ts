@@ -302,7 +302,7 @@ class VoiceChatService {
       });
       if (computerUse) {
         computerHelpService.endVoice(computerUse);
-        computerService.access.finish(computerUse);
+        computerService.finish(computerUse);
       }
 
       // A recording still running has no model left to be handed to, and reporting it as
@@ -316,8 +316,8 @@ class VoiceChatService {
       // a Realtime session is opened and billed.
       if (input.computer) {
         stage = 'computer';
-        computer = await computerService.open();
-        computerUse = computerService.access.create({ userId: input.userId, agentId: input.agentId, mode: 'voice' });
+        computer = await computerService.local.open();
+        computerUse = computerService.createUse({ userId: input.userId, agentId: input.agentId, mode: 'voice' });
         if (this.epoch !== epoch) {
           await releaseLocals();
           return false;
@@ -376,7 +376,7 @@ class VoiceChatService {
         agentName,
         voice: config.openaiRealtimeVoice,
         onSessionLost: (reason) => void this.end(epoch, 'error', reason),
-        onResponseFinished: () => { if (computerUse) computerService.access.yield(computerUse); },
+        onResponseFinished: () => { if (computerUse) computerService.yield(computerUse); },
       });
       // Attached before the session opens, so the first tool call has somewhere to put its
       // picture. Nothing reaches it until the model asks for something.
@@ -618,7 +618,7 @@ class VoiceChatService {
       // desktop for every call it ever carried.
       if (computerUse) {
         computerHelpService.endVoice(computerUse);
-        computerService.access.finish(computerUse);
+        computerService.finish(computerUse);
       }
 
       // A recording still running has no model left to be handed to, and reporting it as

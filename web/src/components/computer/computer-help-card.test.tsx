@@ -4,8 +4,12 @@ import { render, screen, act, waitFor, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ComputerHelp, ComputerStatus } from '@/types';
 
+// The status fetch stands for every request the card makes: a help route or a status read.
 const { mockComputerRequest } = vi.hoisted(() => ({ mockComputerRequest: vi.fn() }));
-vi.mock('@/api/computer', () => ({ computerRequest: mockComputerRequest }));
+vi.mock('@/api/computer', () => ({
+  computerRequest: mockComputerRequest,
+  fetchComputerStatus: mockComputerRequest,
+}));
 
 import { useComputerStatusFeed } from '@/hooks/use-computer-status';
 import { ComputerHelpCard } from './computer-help-card';
@@ -64,6 +68,26 @@ describe('ComputerHelpCard', () => {
       expect(screen.getByLabelText('Computer help').textContent).toContain('Needs your help');
       expect(screen.getByRole('button', { name: 'I’m done' })).toBeTruthy();
       expect(screen.getByRole('button', { name: 'Dismiss' })).toBeTruthy();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('promises cleared password fields only on the runtime’s own computer', async () => {
+    const remote: ComputerHelp = { ...help, computerId: 'laptop' };
+    mockComputerRequest.mockResolvedValue(status({ help: [remote] }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    try {
+      render(
+        <QueryClientProvider client={client}>
+          <ComputerHelpCard help={remote} />
+          <ComputerHelpCard help={{ ...help, id: 'help-2' }} />
+        </QueryClientProvider>,
+      );
+      const [remoteCard, localCard] = await screen.findAllByLabelText('Computer help');
+      expect(remoteCard.textContent).toContain('clear sensitive fields before you hand control back');
+      expect(remoteCard.textContent).not.toContain('is cleared');
+      expect(localCard.textContent).toContain('anything left in a password field is cleared');
     } finally {
       cleanup();
     }

@@ -4,6 +4,7 @@ import { missingBinary } from '../../lib/has-binary';
 import { AUDIO_STACK_BINARIES } from '../meeting/audio-stack';
 import { isBrowserAvailable } from '../meeting/browser-stack';
 import { logger } from '../../logger';
+import { remoteComputerService } from './remote/remote-computer.service';
 
 export const COMPUTER_BINARIES = [
   'dbus-launch',
@@ -51,9 +52,19 @@ export function hasComputer(): boolean {
   return computerAvailable;
 }
 
+/**
+ * Whether a run may use a remote computer: one a person started in a conversation.
+ * Heartbeats, scheduled tasks and webhooks use only the runtime's own computer, and so
+ * does a voice call, which is held on that computer's page.
+ */
+export function usesRemoteComputers(mode: string): boolean {
+  return mode === 'chat' || mode === 'goal';
+}
+
 /** Meetings use their own browser; subagents return work to the desktop's owning invocation. */
 export function hasComputerForMode(mode: string): boolean {
-  return hasComputer() && mode !== 'meeting' && mode !== 'subagent';
+  if (mode === 'meeting' || mode === 'subagent') return false;
+  return hasComputer() || (usesRemoteComputers(mode) && remoteComputerService.count > 0);
 }
 
 /** Probe once and remember the answer. Never throws: a failed probe means "no computer". */

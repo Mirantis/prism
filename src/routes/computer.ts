@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { config } from '../config';
-import { logger } from '../logger';
-import { computerService, type SignInOutcome } from '../services/computer/computer.service';
+import type { SignInOutcome } from '../services/computer/computer.service';
 import { computerHelpService } from '../services/computer/computer-help.service';
 
+/** Help requests, answered wherever the user sees them; each computer's own routes are in `computers.ts`. */
 export const computerRouter = Router();
 computerRouter.use((_req, res, next) => {
   if (!config.agentId) {
@@ -12,68 +12,6 @@ computerRouter.use((_req, res, next) => {
     return;
   }
   next();
-});
-
-computerRouter.get('/computer', async (_req, res) => {
-  try {
-    res.json({
-      ...computerService.status(),
-      help: await computerHelpService.list(config.agentId!, config.ownerUserId),
-      awaitingHelp: computerHelpService.awaiting(),
-    });
-  } catch (error) {
-    logger.warn({ err: error }, '[Computer] Status failed');
-    res.status(500).json({ error: 'Could not load computer status.' });
-  }
-});
-
-const control = z.object({ clientId: z.string().uuid(), helpId: z.string().uuid().optional() });
-computerRouter.post('/computer/control', async (req, res) => {
-  const parsed = control.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: 'A connected Computer viewer is required.' });
-    return;
-  }
-  try {
-    const help = parsed.data.helpId
-      ? (await computerHelpService.list(config.agentId!, config.ownerUserId)).find(
-          (item) => item.id === parsed.data.helpId,
-        )
-      : undefined;
-    // A takeover naming a request is secure because of that request. One nothing
-    // matches is refused, rather than granted as an ordinary takeover with the agent
-    // still running.
-    if (parsed.data.helpId && !help) {
-      res.status(404).json({ error: 'That help request is gone. Reload Computer.' });
-      return;
-    }
-    await computerService.takeControl(
-      parsed.data.clientId,
-      help && { id: help.id, targetId: help.targetId },
-    );
-    res.json(computerService.status());
-  } catch (error) {
-    res.status(409).json({ error: String(error instanceof Error ? error.message : error) });
-  }
-});
-
-computerRouter.post('/computer/continue', async (req, res) => {
-  const parsed = control.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: 'A connected Computer viewer is required.' });
-    return;
-  }
-  try {
-    await computerService.handBack(parsed.data.clientId);
-    res.json(computerService.status());
-  } catch (error) {
-    res.status(409).json({ error: String(error instanceof Error ? error.message : error) });
-  }
-});
-
-computerRouter.post('/computer/stop', (_req, res) => {
-  computerService.access.stop();
-  res.json({ success: true });
 });
 
 /** What the user is told when a sign-in did not go in. */
@@ -116,7 +54,7 @@ computerRouter.post('/computer/help/:id/credentials', async (req, res) => {
     res.status(400).json({ error: 'A username is required.' });
     return;
   }
-  const outcome = await computerService.signIn(
+  const outcome = await computerHelpService.sessionOf(help).signIn(
     help,
     { username: body.data.username, password: body.data.password },
     config.ownerUserId,

@@ -1,5 +1,12 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { getComputerTools } from './computer';
+
+// A runtime with a desktop of its own, unless a test says otherwise.
+const desktop = vi.hoisted(() => ({ probed: true }));
+vi.mock('../services/computer/supported', async (original) => ({
+  ...(await original<typeof import('../services/computer/supported')>()),
+  hasComputer: () => desktop.probed,
+}));
 
 it('uses canonical computer names in declarations and descriptions', () => {
   const tools = getComputerTools();
@@ -9,6 +16,16 @@ it('uses canonical computer names in declarations and descriptions', () => {
   }
   expect(tools.computer_browse).toBeDefined();
   expect(tools.computer_click).toBeDefined();
+});
+
+it('offers the browser tool to a run that uses no remote computer, before the desktop probe', () => {
+  // The prompt evals build a chat turn's tools this way, with no startup probe.
+  desktop.probed = false;
+  try {
+    expect(getComputerTools(undefined, undefined, 'chat').computer_browse).toBeDefined();
+  } finally {
+    desktop.probed = true;
+  }
 });
 
 it('describes model picture coordinates independently of desktop resolution', () => {

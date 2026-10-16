@@ -20,7 +20,7 @@ After(async ({ context }) => {
   goalId = undefined;
   // Control survives closing a viewer, and every later turn waits on the computer, so a
   // scenario that fails while holding control or leaving work queued would stall the next one.
-  const status = async () => (await context.request.get('/agents/computer')).json();
+  const status = async () => (await context.request.get('/agents/computers/local')).json();
   // A background run waits for the answer to its help request, so close every open request.
   for (const help of (await status()).help as Array<{ id: string; status: string }>) {
     if (help.status !== 'waiting') continue;
@@ -38,7 +38,7 @@ After(async ({ context }) => {
     .poll(
       async () => {
         const now = await status();
-        if (now.owner) await context.request.post('/agents/computer/stop');
+        if (now.owner) await context.request.post('/agents/computers/local/stop');
         return Boolean(now.owner) || now.waiting.length > 0 || now.awaitingHelp.length > 0;
       },
       { timeout: 60_000 },
@@ -125,7 +125,7 @@ Then('the live computer opens over the chat', async ({ page, $testInfo }) => {
 });
 
 Then('the Computer page shows the same help beside the screen', async ({ page, context }) => {
-  const status = await (await page.request.get('/agents/computer')).json() as {
+  const status = await (await page.request.get('/agents/computers/local')).json() as {
     help?: { id: string; reason: string; status: string }[];
   };
   const waiting = status.help?.find((item) => item.status === 'waiting');
@@ -188,7 +188,7 @@ Then('I can close and reopen the panel after control loses focus', async ({ page
   const panel = page.getByLabel('Computer help panel');
   await page.getByLabel("The agent's screen").click();
   await expect.poll(async () => {
-    const status = await (await page.request.get('/agents/computer')).json();
+    const status = await (await page.request.get('/agents/computers/local')).json();
     return status.controller;
   }).toBeTruthy();
 
@@ -200,7 +200,7 @@ Then('I can close and reopen the panel after control loses focus', async ({ page
   await page.getByRole('button', { name: 'Close computer panel' }).click();
   await expect(panel).toHaveCount(0, { timeout: 15_000 });
   await expect.poll(async () => {
-    const status = await (await page.request.get('/agents/computer')).json();
+    const status = await (await page.request.get('/agents/computers/local')).json();
     return status.paused;
   }).toBe(false);
 
@@ -354,7 +354,7 @@ When('I sign in through the live computer', async ({ page, $testInfo }) => {
   await expect(controlStatus).toBeVisible();
   await expect
     .poll(async () => {
-      const status = await (await page.request.get('/agents/computer')).json();
+      const status = await (await page.request.get('/agents/computers/local')).json();
       return status.controller;
     }, { timeout: 30_000 })
     .toBeTruthy();
@@ -568,14 +568,14 @@ When('a goal in that Slack thread needs sign-in help', async ({ page }) => {
 });
 
 Then('an invalid help continuation keeps my control and the chat waiting', async ({ page }) => {
-  const before = await (await page.request.get('/agents/computer')).json();
+  const before = await (await page.request.get('/agents/computers/local')).json();
   expect(before.paused).toBe(true);
   expect(before.controller).toBeTruthy();
   const response = await page.request.post('/agents/computer/help/00000000-0000-4000-8000-000000000000', {
     data: { action: 'continue', clientId: before.controller },
   });
   expect(response.status()).toBe(409);
-  const after = await (await page.request.get('/agents/computer')).json();
+  const after = await (await page.request.get('/agents/computers/local')).json();
   expect(after.paused).toBe(true);
   expect(after.controller).toBe(before.controller);
   await expect(queuedChat.getByTestId('computer-waiting')).toContainText('Waiting for the computer');
@@ -625,7 +625,7 @@ Then('Prism requests computer help', async ({ page }) => {
 });
 
 When('I open the help request on the Computer page', async ({ page }) => {
-  const status = (await (await page.request.get('/agents/computer')).json()) as {
+  const status = (await (await page.request.get('/agents/computers/local')).json()) as {
     help?: { id: string; status: string }[];
   };
   const waiting = status.help?.find((item) => item.status === 'waiting');
@@ -642,7 +642,7 @@ When('I open the help request on the Computer page', async ({ page }) => {
  * Slack lands.
  */
 When('I open the Computer help request', async ({ page }) => {
-  const { help } = await (await page.request.get('/agents/computer')).json();
+  const { help } = await (await page.request.get('/agents/computers/local')).json();
   const waiting = (help as { id: string; status: string }[]).find(
     (item) => item.status === 'waiting',
   );
@@ -758,7 +758,7 @@ async function waitForQuiet(page: Page): Promise<void> {
     .poll(
       async () => {
         const answers = await countAnswers();
-        const computer = await (await page.request.get('/agents/computer')).json();
+        const computer = await (await page.request.get('/agents/computers/local')).json();
         const quiet = answers === previous && !computer.owner && computer.waiting.length === 0;
         previous = answers;
         return quiet;

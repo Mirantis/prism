@@ -4,9 +4,8 @@ import { useNavigate } from '@tanstack/react-router';
 import { MessageSquare, PanelLeft, Search, SquarePen } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { useSidebar } from '@/components/ui/sidebar';
-import { useAgent } from '@/lib/agent-context';
 import { useCommandMenu } from '@/lib/command-menu-context';
-import { NAV_GROUPS, visibleNavItems } from '@/lib/nav';
+import { NAV_GROUPS } from '@/lib/nav';
 import { MOD_KEY } from '@/lib/platform';
 import { threadDisplayName } from '@/lib/thread-name';
 import { formatRelativeTime } from '@/lib/format';
@@ -60,7 +59,6 @@ function Item({
 
 /** Jump to any page or conversation, or run an action, by typing. */
 export function CommandMenu() {
-  const agent = useAgent();
   const navigate = useNavigate();
   const { open, setOpen } = useCommandMenu();
   const { toggleSidebar } = useSidebar();
@@ -71,7 +69,7 @@ export function CommandMenu() {
     setOpen(false);
     action();
   };
-  const pages = NAV_GROUPS.flatMap((g) => visibleNavItems(g.items, agent.hasComputer));
+  const pages = NAV_GROUPS.flatMap((g) => g.items);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

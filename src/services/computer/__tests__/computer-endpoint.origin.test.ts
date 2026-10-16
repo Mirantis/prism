@@ -17,15 +17,25 @@ vi.mock('../../../logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock('../computer.service', () => ({
-  computerService: {
-    access: new EventEmitter(),
+vi.mock('../computer.service', () => {
+  const events = new EventEmitter();
+  const session = {
+    id: 'local',
     attach: async () => () => {},
     detach: () => {},
     input: () => {},
     status: () => ({ running: true }),
-  },
-}));
+  };
+  return {
+    LOCAL_COMPUTER_ID: 'local',
+    computerService: {
+      on: (event: string, listener: () => void) => events.on(event, listener),
+      off: (event: string, listener: () => void) => events.off(event, listener),
+      session: () => session,
+      summaries: () => [],
+    },
+  };
+});
 
 function handshake(url: string, headers: Record<string, string>): Promise<string> {
   return new Promise((resolve) => {
