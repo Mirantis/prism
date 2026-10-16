@@ -40,24 +40,11 @@ const { AppSidebar } = await import('./app-sidebar');
 afterEach(cleanup);
 
 describe('the Computer page in the sidebar', () => {
-  it('is offered where the runtime can give the agent a computer', () => {
-    agent = { agentId: 'a1', userId: 'u1', name: 'Prism', hasComputer: true };
-    render(<AppSidebar />);
-    expect(screen.getByText('Computer')).toBeInTheDocument();
-  });
-
-  it('is left out where it has no desktop for one', () => {
+  it('is offered on a runtime without a desktop of its own, where a remote computer can connect', () => {
     agent = { agentId: 'a1', userId: 'u1', name: 'Prism', hasComputer: false };
     render(<AppSidebar />);
-    expect(screen.queryByText('Computer')).not.toBeInTheDocument();
-    // The rest of the navigation is untouched.
+    expect(screen.getByText('Computer')).toBeInTheDocument();
     expect(screen.getByText('Chat')).toBeInTheDocument();
     expect(screen.getByText('Activity')).toBeInTheDocument();
-  });
-
-  it('is left out on a runtime too old to answer the question', () => {
-    agent = { agentId: 'a1', userId: 'u1', name: 'Prism' };
-    render(<AppSidebar />);
-    expect(screen.queryByText('Computer')).not.toBeInTheDocument();
   });
 });

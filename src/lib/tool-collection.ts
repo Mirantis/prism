@@ -124,7 +124,7 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
   await ensureCodingAgentsDetected();
   const builtInTools: Record<string, Tool> = {
     ...getMemoryTools(input.userId, input.agentId),
-    ...(hasComputerForMode(input.mode) ? getComputerTools(input.computerUse) : {}),
+    ...(hasComputerForMode(input.mode) ? getComputerTools(input.computerUse, undefined, input.mode) : {}),
     ...getCronTools(input.userId, input.agentId, input.mode, input.threadId, originChannel, input.originChannelId),
     ...getGoalTools(input.userId, input.agentId, input.threadId, originChannel, input.originChannelId),
     ...getAgentConfigTools(),

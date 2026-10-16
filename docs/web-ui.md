@@ -268,7 +268,8 @@ The agent's identity and runtime controls.
 
 Watch Prism use its desktop, take control when it needs help, or start optional
 voice chat — where you can also share your own screen or record yourself working
-through something. Work continues when you leave the page.
+through something. Work continues when you leave the page. The page also lists
+the computers of yours that Prism can use, and whether each one is connected.
 
 See **[The agent's computer](computer.md)**.
 

@@ -53,6 +53,17 @@ describe('the address', () => {
     expect(await statusUnder(own, '/notes')).toBe(200);
     expect(await statusUnder(mistyped, '/notes')).toBe(404);
   });
+
+  it("tells a page of an earlier scenario's site that its site has closed", async () => {
+    site = await startComputerSite();
+    const own = new URL(site.url).host;
+    // A page asks `/alive` under its own host; a later site answers that host 404.
+    expect(await statusUnder(own, '/alive')).toBe(204);
+    expect(await statusUnder(`a${own}`, '/alive')).toBe(404);
+    expect(await (await fetch(`${address(site.url)}/notes`, { headers: { host: own } })).text()).toContain(
+      'This site has closed',
+    );
+  });
 });
 
 describe('the sign-in approved on another device', () => {

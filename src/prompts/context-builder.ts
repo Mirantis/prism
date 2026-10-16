@@ -7,8 +7,8 @@
 
 import { AssistantModelMessage, ModelMessage, ToolModelMessage } from 'ai';
 import type { AnchoredToolChange } from '../services/tool-ledger.service';
-import { COMPUTER_INSTRUCTIONS } from './computer-prompt';
-import { hasComputerForMode } from '../services/computer/supported';
+import { COMPUTER_INSTRUCTIONS, REMOTE_COMPUTER_INSTRUCTIONS } from './computer-prompt';
+import { hasComputer, hasComputerForMode } from '../services/computer/supported';
 import { config } from '../config';
 import { memoryManagerService, type MemoryBlock } from '../services/memory-manager.service';
 import type { AttachmentMeta } from '../services/attachment.service';
@@ -100,7 +100,9 @@ export async function buildSystemPromptParts(
   workspaceRoot?: string,
 ): Promise<SystemPromptPart[]> {
   const stableSections: string[] = [];
-  if (hasComputerForMode(mode)) stableSections.push(COMPUTER_INSTRUCTIONS);
+  if (hasComputerForMode(mode)) {
+    stableSections.push(hasComputer() ? COMPUTER_INSTRUCTIONS : REMOTE_COMPUTER_INSTRUCTIONS);
+  }
   const dynamicSections: string[] = [];
 
   // Bootstrap phase — dynamic (only during onboarding, chat mode only).

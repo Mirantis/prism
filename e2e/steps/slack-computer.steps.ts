@@ -115,7 +115,7 @@ Then('the help request that is already waiting is not posted again', async ({ pa
   await expect
     .poll(
       async () => {
-        const status = (await (await page.request.get('/agents/computer')).json()) as {
+        const status = (await (await page.request.get('/agents/computers/local')).json()) as {
           awaitingHelp: Array<{ helpId: string; mode: string }>;
         };
         return status.awaitingHelp;
@@ -150,7 +150,7 @@ Then('both scheduled tasks report the approved page in the main Slack channel', 
       { timeout: 300_000, intervals: [3_000] },
     )
     .toBeGreaterThanOrEqual(2);
-  const status = (await (await page.request.get('/agents/computer')).json()) as { awaitingHelp: unknown[] };
+  const status = (await (await page.request.get('/agents/computers/local')).json()) as { awaitingHelp: unknown[] };
   expect(status.awaitingHelp).toEqual([]);
 });
 

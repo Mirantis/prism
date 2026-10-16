@@ -181,15 +181,20 @@ function altTypedCharacter(frame: Extract<InputFrame, { type: 'key' }>): boolean
  * spelled out only for a named key, where "shift+Tab" and "Tab" are different keys. Cmd on
  * a Mac goes out as Ctrl: it is the key a Mac user presses for copy, paste and select-all,
  * which the desktop's applications bind to Ctrl, while Super, its literal counterpart, is
- * bound to nothing here and Chromium types the letter under it.
+ * bound to nothing here and Chromium types the letter under it. A remote computer takes
+ * `metaAs: 'super'`, since its own system binds Command or the Windows key itself.
  */
-export function chordFor(frame: Extract<InputFrame, { type: 'key' }>): string | null {
+export function chordFor(
+  frame: Extract<InputFrame, { type: 'key' }>,
+  metaAs: 'ctrl' | 'super' = 'ctrl',
+): string | null {
   if (MODIFIER_KEYS.has(frame.key) || frame.key === 'Escape') return null;
   const keysym = keysymFor(frame.key);
   if (!keysym) return null;
   const named = Array.from(frame.key).length !== 1;
   const parts = [
-    frame.ctrl || frame.meta ? 'ctrl' : null,
+    frame.ctrl || (frame.meta && metaAs === 'ctrl') ? 'ctrl' : null,
+    frame.meta && metaAs === 'super' ? 'super' : null,
     frame.alt && !altTypedCharacter(frame) ? 'alt' : null,
     frame.shift && named ? 'shift' : null,
     keysym,

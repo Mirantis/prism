@@ -24,7 +24,6 @@ vi.mock('@/lib/voice-audio', () => ({
   },
 }));
 
-// A computer-enabled agent, which is what puts the waiting banner's query on the page.
 vi.mock('@/lib/agent-context', () => ({
   useAgent: () => ({ agentId: 'a1', userId: 'u1', name: 'Prism', hasComputer: true }),
 }));
@@ -54,7 +53,31 @@ const { mockComputerRequest } = vi.hoisted(() => ({
     help: [],
   })),
 }));
-vi.mock('@/api/computer', () => ({ computerRequest: mockComputerRequest }));
+vi.mock('@/api/computer', () => ({
+  computerRequest: mockComputerRequest,
+  fetchComputerStatus: mockComputerRequest,
+  computerAction: vi.fn(),
+  // The runtime's own computer, which the waiting banner reads the state of.
+  listComputers: async () => ({
+    computers: [
+      {
+        id: 'local',
+        kind: 'local',
+        name: 'This runtime',
+        connection: 'connected',
+        platform: 'linux',
+        clientVersion: null,
+        display: { width: 1920, height: 1080 },
+        capabilities: [],
+        problems: [],
+        lastConnectedAt: null,
+        lastSeenAt: null,
+        owner: null,
+        controller: null,
+      },
+    ],
+  }),
+}));
 
 const { mockGetThread, mockLatestThread } = vi.hoisted(() => ({
   mockGetThread: vi.fn(),

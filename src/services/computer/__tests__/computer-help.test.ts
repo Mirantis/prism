@@ -22,15 +22,26 @@ vi.mock('../../../lib/prisma', () => ({
 vi.mock('../computer.service', async () => {
   const { ComputerAccess } = await import('../computer-access');
   const access = new ComputerAccess();
+  // One computer, which is both the registry and its only session here.
+  const session = {
+    id: 'local',
+    access,
+    assertCanHandBack: (id: string) => access.assertCanHandBack(id),
+    handBack: (id: string) => access.handBack(id),
+    continueFromChat: () => access.handBack(access.human ?? 'chat'),
+    helpTarget: vi.fn(),
+    signInForm: vi.fn(),
+  };
   return {
-    computerService: {
-      access,
-      assertCanHandBack: (id: string) => access.assertCanHandBack(id),
-      handBack: (id: string) => access.handBack(id),
-      continueFromChat: () => access.handBack(access.human ?? 'chat'),
-      helpTarget: vi.fn(),
-      signInForm: vi.fn(),
-    },
+    LOCAL_COMPUTER_ID: 'local',
+    computerService: Object.assign(session, {
+      local: session,
+      session: () => session,
+      current: () => session,
+      sessions: () => [session],
+      yield: (use: ComputerUse) => access.yield(use),
+      emit: (event: string) => access.emit(event),
+    }),
   };
 });
 vi.mock('../../conversation.service', () => ({
@@ -324,6 +335,21 @@ describe('where a help request is asked', () => {
       answer: expect.any(Promise),
     });
     expect(messageDeliveryService.publish).not.toHaveBeenCalled();
+  });
+
+  it('posts a scheduled run’s own request while its conversation waits on another computer', async () => {
+    vi.mocked(prisma.conversationMessage.findMany).mockResolvedValue([
+      { blocks: [{ ...help, id: 'waiting-id', threadId: 'thread', computerId: 'laptop' }] },
+    ] as never);
+    const use = createUse({ mode: 'cron', threadId: 'thread' });
+    await computerService.access.acquire(use);
+
+    const { help: asked, repeated } = await computerHelpService.request(use, 'Sign in again');
+
+    expect(repeated).toBe(false);
+    expect(asked).toMatchObject({ computerId: 'local' });
+    expect(asked.id).not.toBe('waiting-id');
+    expect(messageDeliveryService.publish).toHaveBeenCalled();
   });
 
   it('posts a new request from a chat turn, which does not wait for its answer', async () => {

@@ -90,7 +90,7 @@ const DESKTOP_AFTER_NOTE =
   'This is a picture of your own screen right after the desktop action you just took. ' +
   'Your user did not say this.';
 /** How long the desktop gets to redraw after an action before the picture is taken. */
-const ACTION_SETTLE_MS = 400;
+export const ACTION_SETTLE_MS = 400;
 const USER_SCREEN_NOTE =
   "This is a picture of your user's own screen, which they are sharing with you, in answer " +
   'to your computer_user_screen call. Your user did not say this.';
@@ -112,7 +112,7 @@ const USER_SCREEN_MAX_CHARS = 6 * 1024 * 1024;
 const USER_SCREEN_TEXT_MAX_CHARS = 4_000;
 
 /** The past tense of each window action, for the message that comes back. */
-const WINDOW_ACTION_DONE: Record<WindowAction, string> = {
+export const WINDOW_ACTION_DONE: Record<WindowAction, string> = {
   focus: 'Brought to the front',
   close: 'Closed',
   maximize: 'Maximised',

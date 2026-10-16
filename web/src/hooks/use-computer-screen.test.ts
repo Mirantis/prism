@@ -2,9 +2,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 
-vi.mock('@/api/runtime-client', () => ({
-  computerWebSocketUrl: () => 'ws://localhost/api/computer',
+const { socketUrl } = vi.hoisted(() => ({
+  socketUrl: vi.fn((computerId: string) => `ws://localhost/api/computer?computer=${computerId}`),
 }));
+vi.mock('@/api/runtime-client', () => ({ computerWebSocketUrl: socketUrl }));
 vi.mock('@/lib/screen-canvas', () => ({
   canDecodeVideo: () => true,
   ScreenCanvas: class {
@@ -80,5 +81,48 @@ describe('computer viewing', () => {
     rerender({ enabled: false });
     expect(result.current.clientId).toBeNull();
     expect(result.current.state).toBeNull();
+  });
+
+  it('opens the socket of the computer it shows, and a new one when that changes', () => {
+    const { rerender } = renderHook(
+      ({ computerId }) => useComputerScreen({ enabled: true, computerId, onAudio: vi.fn() }),
+      { initialProps: { computerId: undefined as string | undefined } },
+    );
+    expect(socketUrl).toHaveBeenLastCalledWith('local');
+    const first = socket;
+    rerender({ computerId: 'laptop' });
+    expect(socketUrl).toHaveBeenLastCalledWith('laptop');
+    expect(first.close).toHaveBeenCalled();
+    expect(socket).not.toBe(first);
+  });
+
+  it('takes the picture down when a remote computer disconnects', () => {
+    const { result } = renderHook(() =>
+      useComputerScreen({ enabled: true, computerId: 'laptop', onAudio: vi.fn() }),
+    );
+    act(() => socket.onmessage?.({ data: JSON.stringify({ type: 'screen', data: 'AAAA' }) } as MessageEvent));
+    expect(result.current.hasScreen).toBe(true);
+    act(() => socket.onmessage?.({ data: JSON.stringify({
+      type: 'computer_state', clientId: 'viewer', connection: 'disconnected', screen: false, paused: false,
+      controller: null, owner: null, waiting: [],
+    }) } as MessageEvent));
+    expect(result.current.hasScreen).toBe(false);
+    expect(result.current.state?.connection).toBe('disconnected');
+  });
+
+  it('takes the picture down when a connected computer stops sending its screen', () => {
+    const { result } = renderHook(() =>
+      useComputerScreen({ enabled: true, computerId: 'laptop', onAudio: vi.fn() }),
+    );
+    const state = (screen: boolean) =>
+      act(() => socket.onmessage?.({ data: JSON.stringify({
+        type: 'computer_state', clientId: 'viewer', connection: 'connected', screen, paused: false,
+        controller: null, owner: null, waiting: [],
+      }) } as MessageEvent));
+    state(true);
+    act(() => socket.onmessage?.({ data: JSON.stringify({ type: 'screen', data: 'AAAA' }) } as MessageEvent));
+    expect(result.current.hasScreen).toBe(true);
+    state(false);
+    expect(result.current.hasScreen).toBe(false);
   });
 });

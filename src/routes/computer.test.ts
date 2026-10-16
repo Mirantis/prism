@@ -11,25 +11,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 
-const { mockSignIn, mockList, mockContinueRequest, mockStatus } = vi.hoisted(() => ({
+const { mockSignIn, mockList, mockContinueRequest } = vi.hoisted(() => ({
   mockSignIn: vi.fn(),
   mockList: vi.fn(),
   mockContinueRequest: vi.fn(),
-  mockStatus: vi.fn(() => ({ available: true })),
-}));
-
-vi.mock('../services/computer/computer.service', () => ({
-  computerService: {
-    signIn: mockSignIn,
-    status: mockStatus,
-    access: { stop: vi.fn() },
-    takeControl: vi.fn(),
-    handBack: vi.fn(),
-  },
 }));
 
 vi.mock('../services/computer/computer-help.service', () => ({
-  computerHelpService: { list: mockList, continueRequest: mockContinueRequest },
+  computerHelpService: {
+    list: mockList,
+    continueRequest: mockContinueRequest,
+    sessionOf: () => ({ signIn: mockSignIn }),
+  },
 }));
 
 vi.mock('../config', () => ({

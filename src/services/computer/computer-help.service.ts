@@ -6,7 +6,8 @@ import { logger } from '../../logger';
 import { trackEvent } from '../../lib/telemetry';
 
 import type { MessageTrigger } from '../message-delivery.service';
-import { computerService } from './computer.service';
+import { computerService, LOCAL_COMPUTER_ID } from './computer.service';
+import type { ComputerSession } from './computer-session';
 import type { ComputerCaller, ComputerUse } from './computer-access';
 import type { ChannelName } from '../channel-adapter.interface';
 
@@ -16,6 +17,8 @@ export interface ComputerHelp {
   reason: string;
   tab?: number;
   targetId?: string;
+  /** The computer the work is blocked on; a request without one is about the runtime's own. */
+  computerId?: string;
   /** The user answers this one with the credentials below, typed into `site`. */
   credentials?: true;
   /** What the page asks for. A second step of a sign-in asks for the password alone. */
@@ -78,8 +81,13 @@ export function asksEveryChannel(caller: Pick<ComputerCaller, 'mode' | 'threadId
   return messageTrigger(caller.mode) !== 'USER_INPUT' && !caller.threadId;
 }
 
-export function computerLink(helpId?: string): string {
-  const suffix = `computer${helpId ? `?help=${encodeURIComponent(helpId)}` : ''}`;
+/** The Computer page, with the help request and, for a remote one, its computer selected. */
+export function computerLink(helpId?: string, computerId?: string): string {
+  const params = new URLSearchParams({
+    ...(helpId ? { help: helpId } : {}),
+    ...(computerId && computerId !== LOCAL_COMPUTER_ID ? { computer: computerId } : {}),
+  }).toString();
+  const suffix = `computer${params ? `?${params}` : ''}`;
   return config.publicUrl ? `${config.publicUrl.replace(/\/$/, '')}/${suffix}` : `/${suffix}`;
 }
 
@@ -112,24 +120,27 @@ class ComputerHelpService {
     // another background run meets at the same time. That run waits for the same answer
     // and is told what the waiting request asks, so it can name or ask for its own block.
     // A run in a conversation that waits for its answer joins the first waiting request
-    // its turn was told of: its conversation's own, or a broadcast one.
-    const [waiting] = broadcast
+    // its turn was told of: its conversation's own, or a broadcast one. Either way only a
+    // request on the computer the run uses, since help on another one clears no block here.
+    const session = computerService.current(use);
+    const candidates = broadcast
       ? await this.waitingBroadcasts(use.agentId, use.userId)
       : waitsForAnswer(use.mode)
         ? (await this.forTurn(use)).filter((item) => item.status === 'waiting')
         : [];
+    const waiting = candidates.find((item) => (item.computerId ?? LOCAL_COMPUTER_ID) === session.id);
     if (waiting) {
       const answer = this.expectAnswer(use, waiting);
-      computerService.access.yield(use);
+      computerService.yield(use);
       trackEvent('computer help repeated', use.userId, {
         'agent.id': use.agentId,
         'computer.help_id': waiting.id,
         mode: use.mode,
       });
-      computerService.access.emit('change');
+      computerService.emit('change');
       return { help: waiting, repeated: true, answer };
     }
-    const form = credentials ? await computerService.signInForm(tab) : undefined;
+    const form = credentials ? await session.signInForm(tab) : undefined;
     if (credentials && !form) {
       logger.info(
         '[Computer] No sign-in form on the tab a help request named; asking for the desktop instead',
@@ -142,7 +153,8 @@ class ComputerHelpService {
       tab,
       // The tab the sign-in is really on when there is one, since that is where the
       // credentials are typed and what the user is shown.
-      targetId: form?.targetId ?? (await computerService.helpTarget(tab)),
+      targetId: form?.targetId ?? (await session.helpTarget(tab)),
+      computerId: session.id,
       ...(form
         ? { credentials: true as const, credentialFields: form.fields, site: form.origin }
         : {}),
@@ -172,7 +184,7 @@ class ComputerHelpService {
           );
       const link =
         config.publicUrl || channelContext?.channel === 'websocket'
-          ? `[Open Computer](${computerLink(help.id)})`
+          ? `[Open Computer](${computerLink(help.id, help.computerId)})`
           : 'Open Computer in the Prism Web UI.';
       await messageDeliveryService.publish(
         use.userId,
@@ -185,14 +197,14 @@ class ComputerHelpService {
         },
       );
     }
-    computerService.access.yield(use);
+    computerService.yield(use);
     trackEvent('computer help requested', use.userId, {
       'agent.id': use.agentId,
       'computer.help_id': help.id,
       'computer.delivery': broadcast ? 'all' : 'origin',
       credentials: help.credentials ? 'true' : 'false',
     });
-    computerService.access.emit('change');
+    computerService.emit('change');
     return { help, repeated: false, answer };
   }
 
@@ -224,7 +236,7 @@ class ComputerHelpService {
           outcome,
           elapsed_ms: String(Date.now() - started),
         });
-        computerService.access.emit('change');
+        computerService.emit('change');
       };
       const timer = setTimeout(() => {
         settle('unanswered');
@@ -360,9 +372,11 @@ class ComputerHelpService {
     action: 'continue' | 'dismiss',
     clientId?: string,
   ): Promise<void> {
-    if (action === 'continue' && computerService.access.paused) {
+    const asked = (await this.list(agentId, userId)).find((item) => item.id === id);
+    const session = this.sessionOf(asked);
+    if (action === 'continue' && session.access.paused) {
       if (!clientId) throw new Error('Hand control back in Computer first.');
-      computerService.assertCanHandBack(clientId);
+      session.assertCanHandBack(clientId);
     }
     const resolved = await this.resolve(
       agentId,
@@ -371,9 +385,9 @@ class ComputerHelpService {
       action === 'continue' ? 'continued' : 'dismissed',
     );
     if (!resolved || action === 'dismiss') return;
-    if (computerService.access.paused) {
+    if (session.access.paused) {
       if (!clientId) throw new Error('Hand control back in Computer first.');
-      await computerService.handBack(clientId);
+      await session.handBack(clientId);
     }
     // The run that asked waits for this answer and continues the work itself. A run
     // that only joined the request does not continue the requester's work.
@@ -425,12 +439,17 @@ class ComputerHelpService {
       'computer.help_id': help.id,
       status: help.status,
     });
-    computerService.access.emit('change');
+    computerService.emit('change');
+  }
+
+  /** The computer a request is about; a removed one's requests fall back to the runtime's own. */
+  sessionOf(help?: Pick<ComputerHelp, 'computerId'>): ComputerSession {
+    return computerService.session(help?.computerId ?? LOCAL_COMPUTER_ID) ?? computerService.local;
   }
 
   endVoice(use: ComputerUse): void {
     for (const key of this.voice.keys()) if (key.startsWith(`${use.id}/`)) this.voice.delete(key);
-    computerService.access.emit('change');
+    computerService.emit('change');
   }
 }
 

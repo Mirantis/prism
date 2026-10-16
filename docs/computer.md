@@ -47,6 +47,16 @@ Computer requests take turns. A conversation waiting for the desktop shows **Wai
 
 Voice can discuss the screen and pass instructions to an active chat task. A voice call creates no chat history of its own.
 
+## Remote computers
+
+Prism can also use a computer of yours, such as your laptop. A computer appears on the Computer page once its computer client adds it, with whether it is connected now. Select it to watch it or take control, rename it, or remove it, which disconnects it at once.
+
+Ask Prism to use a computer by its name. When Prism has no computer of its own and you have connected one, it uses that one. Only conversations and goals use your computers; heartbeats, scheduled tasks and webhooks use Prism's own computer.
+
+On your computer, Prism uses the browser through the desktop, and the help requests ask you to take control rather than for a password. Sound, voice chat, screen sharing and recording are on Prism's own computer only. When you take over at the computer itself, Prism waits until you give it back.
+
+To write a computer client of your own, see the [computer link protocol](computer-link-protocol.md).
+
 ## Links from Slack
 
 Lens-hosted deployments supply the public address automatically through `NEXUS_INGRESS_ORIGINS_WEB` (or the name of the exposed Web UI port). Set `PRISM_PUBLIC_URL` for standalone deployments or to override that address, including any path prefix.
@@ -54,6 +64,8 @@ Lens-hosted deployments supply the public address automatically through `NEXUS_I
 ## Troubleshooting
 
 - **Computer is missing.** Run the published container image with its desktop packages.
+- **Your computer shows Not connected.** Start its computer client, and check that the computer can reach Prism's address.
+- **Your computer shows Screen not shared.** Allow its computer client to record the screen in the computer's settings.
 - **The viewer reconnects.** Wait for the live stream, then take control again if needed.
 - **The tab needing help has closed.** Use the current desktop or tell Prism to reopen the website.
 - **The runtime restarted.** Ask Prism to continue the interrupted request. Browser logins stored in the data volume remain available.

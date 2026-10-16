@@ -1,226 +1,309 @@
+import { EventEmitter } from 'node:events';
 import { AgentComputer, type ModelChannel } from './agent-computer';
-import { ComputerAccess, type ComputerUse } from './computer-access';
-import type { ScreenFrame } from './picture-stream';
-import { DEFAULT_SCREEN } from './screen-size';
-import { hasComputer } from './supported';
-import type { SignInCredentials } from './sign-in-form';
-import { logger } from '../../logger';
-import { trackEvent } from '../../lib/telemetry';
+import type { Computer } from './computer';
+import type { ComputerCaller, ComputerKind, ComputerUse } from './computer-access';
+import { ComputerSession } from './computer-session';
+import { DEFAULT_SCREEN, type ScreenSize } from './screen-size';
+import { hasComputer, usesRemoteComputers } from './supported';
+import type { ComputerLink } from './remote/computer-link';
+import { CAPABILITIES, LINK_CLOSE, type CapabilityProblem } from './remote/link-protocol';
+import type { RemoteComputer } from './remote/remote-computer';
+import { remoteComputerService } from './remote/remote-computer.service';
 
-/** How a sign-in the user answered ended. */
-export type SignInOutcome =
-  | 'filled'
-  | 'no_form'
-  | 'no_password_step'
-  | 'tab_gone'
-  | 'site_changed'
-  | 'in_use'
-  | 'error';
+export type { ComputerViewer, SignInOutcome } from './computer-session';
 
-export interface ComputerViewer {
-  screen(frame: ScreenFrame): void;
-  audio(pcm: Buffer): void;
+/** The id the runtime's own desktop goes by, in the API and as a tool's `computer`. */
+export const LOCAL_COMPUTER_ID = 'local';
+
+/** One computer as the list shows it. */
+export interface ComputerSummary {
+  id: string;
+  kind: ComputerKind;
+  name: string;
+  connection: 'connected' | 'disconnected';
+  platform: string | null;
+  clientVersion: string | null;
+  display: ScreenSize | null;
+  capabilities: string[];
+  problems: CapabilityProblem[];
+  lastConnectedAt: string | null;
+  lastSeenAt: string | null;
+  owner: { threadId?: string; mode: string } | null;
+  controller: 'viewer' | 'local' | null;
 }
 
-/** The runtime's desktop, independent of calls, invocations, and viewers. */
-class ComputerService {
-  readonly access = new ComputerAccess(() => this.forgetSecureWindow());
-  private computer: AgentComputer | null = null;
-  private opening: Promise<AgentComputer> | null = null;
-  private viewers = new Map<string, ComputerViewer>();
-  private ready = new Set<string>();
+/** What the model calls each platform's Command or Windows key. */
+const SUPER_KEY: Record<string, string> = { macos: 'super is Command', windows: 'super is the Windows key' };
+const PLATFORM_NAMES: Record<string, string> = { macos: 'macOS', windows: 'Windows', linux: 'Linux' };
 
-  status() {
-    const describe = (use: ComputerUse) => ({ id: use.id, threadId: use.threadId, mode: use.mode });
-    return {
-      available: hasComputer(),
-      running: this.computer !== null,
-      starting: this.opening !== null,
-      paused: this.access.paused,
-      secure: this.access.secure,
-      controller: this.access.human,
-      owner: this.access.owner ? describe(this.access.owner) : null,
-      waiting: this.access.waiting.map(describe),
-    };
+async function openLocal(onAudio: (pcm: Buffer) => void): Promise<AgentComputer> {
+  const computer = new AgentComputer();
+  try {
+    await computer.openBrowser(DEFAULT_SCREEN);
+    computer.startBrowserAudio(onAudio);
+    return computer;
+  } catch (error) {
+    await computer.stop();
+    throw error;
+  }
+}
+
+/**
+ * Every computer the agent has: the runtime's own desktop and the remote computers, each
+ * a `ComputerSession`. An invocation owns one computer at a time. Emits `change` whenever
+ * any of them changes, which is what every status reader subscribes to.
+ */
+class ComputerService extends EventEmitter {
+  readonly local: ComputerSession<AgentComputer> = this.track(
+    new ComputerSession(LOCAL_COMPUTER_ID, 'local', () => openLocal((pcm) => this.local.broadcastAudio(pcm))),
+  );
+  private remotes = new Map<string, ComputerSession>();
+  private links = new Map<string, { computer: RemoteComputer; link: ComputerLink }>();
+
+  constructor() {
+    super();
+    // Every viewer socket and every link listens for changes, so their number has no bound here.
+    this.setMaxListeners(0);
   }
 
-  async open(): Promise<AgentComputer> {
-    if (this.computer) return this.computer;
-    if (this.opening) return this.opening;
-    this.opening = (async () => {
-      const computer = new AgentComputer();
-      try {
-        await computer.openBrowser(DEFAULT_SCREEN);
-        this.computer = computer;
-        computer.startBrowserAudio((pcm) => {
-          for (const viewer of this.viewers.values()) viewer.audio(pcm);
-        });
-        return computer;
-      } catch (error) {
-        await computer.stop();
-        throw error;
-      } finally {
-        this.opening = null;
-        this.access.emit('change');
-      }
-    })();
-    this.access.emit('change');
-    return this.opening;
+  private track<C extends Computer>(session: ComputerSession<C>): ComputerSession<C> {
+    session.access.on('change', () => this.emit('change'));
+    return session;
   }
 
-  async act<T>(
-    use: ComputerUse,
-    action: (computer: AgentComputer) => Promise<T>,
-    channel: ModelChannel,
-    inspection = false,
-  ): Promise<T> {
-    return this.access.run(
-      use,
-      async () => {
-        const computer = await this.open();
-        return computer.withModelChannel(channel, () => action(computer));
-      },
-      inspection,
-    );
-  }
-
-  async attach(id: string, viewer: ComputerViewer): Promise<() => void> {
-    this.viewers.set(id, viewer);
-    try {
-      const computer = await this.open();
-      if (this.viewers.has(id)) {
-        // Restart the encoder so every viewer receives a decoder configuration and keyframe.
-        this.ready.clear();
-        computer.startScreenStream((frame) => {
-          for (const [viewerId, client] of this.viewers) {
-            if (frame.kind === 'start') client.screen(frame);
-            else if (frame.kind !== 'h264' || frame.keyframe || this.ready.has(viewerId)) {
-              this.ready.add(viewerId);
-              client.screen(frame);
-            }
-          }
-        });
-      }
-    } catch (error) {
-      this.detach(id);
-      throw error;
+  /** The runtime's own desktop, or a registered remote computer. */
+  session(id: string): ComputerSession | undefined {
+    if (id === LOCAL_COMPUTER_ID) return this.local;
+    const row = remoteComputerService.get(id);
+    if (!row) return undefined;
+    let session = this.remotes.get(id);
+    if (!session) {
+      session = this.track(
+        new ComputerSession(id, 'remote', async () => {
+          throw new Error(
+            `${remoteComputerService.get(id)?.name ?? row.name} is not connected. Ask your user to start the computer client on it.`,
+          );
+        }),
+      );
+      this.remotes.set(id, session);
     }
-    return () => this.detach(id);
+    return session;
   }
 
-  detach(id: string): void {
-    this.viewers.delete(id);
-    this.ready.delete(id);
-    this.access.disconnected(id);
-    if (!this.viewers.size) this.computer?.stopScreenStream();
+  /** Every session, the runtime's own first. */
+  sessions(): ComputerSession[] {
+    return [this.local, ...remoteComputerService.list().flatMap((row) => this.session(row.id) ?? [])];
   }
 
-  /** A takeover answering a help request is secure: pass that request's id. */
-  async takeControl(id: string, help?: { id: string; targetId?: string }): Promise<void> {
-    if (!this.viewers.has(id)) throw new Error('Open Computer before taking control.');
-    await this.access.takeControl(id, help?.id);
-    if (help?.targetId) await this.computer?.focusTarget(help.targetId);
+  createUse(caller: ComputerCaller, signal?: AbortSignal): ComputerUse {
+    return this.local.access.create(caller, signal);
   }
 
-  /** Nothing a person typed inside a secure window reaches the agent after it. */
-  private async forgetSecureWindow(): Promise<void> {
-    await this.computer?.clearAfterSecureWindow();
+  /** The invocation ended: every computer it held or waited for is free. */
+  finish(use: ComputerUse): void {
+    for (const session of this.sessions()) {
+      if (session !== this.local && session.access.holds(use)) session.access.yield(use);
+    }
+    this.local.access.finish(use);
   }
 
-  async helpTarget(tab?: number): Promise<string | undefined> {
-    return this.computer?.tabTarget(tab);
-  }
-
-  /** The sign-in on a tab, when it holds one the user can answer. */
-  async signInForm(
-    tab?: number,
-  ): Promise<{ origin: string; fields: 'both' | 'password'; targetId?: string } | undefined> {
-    return this.computer?.signInForm(tab);
+  yield(use: ComputerUse): void {
+    for (const session of this.sessions()) if (session.access.holds(use)) session.access.yield(use);
   }
 
   /**
-   * Type a sign-in the user answered, with the agent stopped for as long as it takes.
-   *
-   * The window around it is the one a takeover opens, so nothing decides anything while
-   * a field holds a password, and the fields are cleared when it closes.
+   * The computer a tool call names, or the run's default: the runtime's own when it has
+   * one, else the only remote computer. Throws, with a message for the model, otherwise.
    */
-  async signIn(
-    help: { id: string; targetId?: string; site?: string },
-    credentials: SignInCredentials,
-    userId: string,
-    agentId?: string,
-  ): Promise<SignInOutcome> {
-    const startedAt = Date.now();
-    const outcome = await this.runSignIn(help, credentials);
-    trackEvent('computer sign-in filled', userId, {
-      ...(agentId ? { 'agent.id': agentId } : {}),
-      'computer.help_id': help.id,
-      status: outcome,
-      elapsed_ms: String(Date.now() - startedAt),
-    });
-    return outcome;
-  }
-
-  private async runSignIn(
-    help: { id: string; targetId?: string; site?: string },
-    credentials: SignInCredentials,
-  ): Promise<SignInOutcome> {
-    const computer = this.computer;
-    if (!computer || !help.targetId || !help.site) return 'tab_gone';
-    // Somebody is at the keyboard: their takeover pauses the desktop, and this one would
-    // queue behind it and type into a screen they are using.
-    if (this.access.paused) return 'in_use';
-    try {
-      return await this.access.runSecure(help.id, () =>
-        computer.signIn(help.targetId!, help.site!, credentials),
-      );
-    } catch (err) {
-      logger.error({ err }, '[Computer] A sign-in could not be typed');
-      return 'error';
+  resolve(use: ComputerUse, name?: string): ComputerSession {
+    const remote = usesRemoteComputers(use.mode);
+    const wanted = name?.trim().toLowerCase();
+    if (!wanted) {
+      if (hasComputer()) return this.local;
+      const rows = remote ? remoteComputerService.list() : [];
+      if (rows.length === 1) return this.session(rows[0].id)!;
+      if (rows.length > 1) throw new Error(`Name the computer to use: ${this.names()}.`);
+      throw new Error('There is no computer in this run.');
     }
+    if (wanted === LOCAL_COMPUTER_ID && hasComputer()) return this.local;
+    if (!remote) throw new Error(`Only your own computer is available in a ${use.mode} run.`);
+    const row = remoteComputerService
+      .list()
+      .find((item) => item.id === name!.trim() || item.name.toLowerCase() === wanted);
+    if (!row) throw new Error(`There is no computer named ${JSON.stringify(name)}. The computers are: ${this.names()}.`);
+    return this.session(row.id)!;
   }
 
-  assertCanHandBack(id: string): void {
-    if (!this.viewers.has(id)) throw new Error('Open Computer before continuing.');
-    this.access.assertCanHandBack(id);
+  /** Run `action` on the computer a tool call names, as the invocation `use`. */
+  async act<T>(
+    use: ComputerUse,
+    session: ComputerSession,
+    action: (computer: Computer) => Promise<T>,
+    channel: ModelChannel,
+    inspection = false,
+  ): Promise<T> {
+    if (use.computerId !== session.id) {
+      for (const other of this.sessions()) {
+        if (other !== session && other.access.holds(use)) other.access.yield(use);
+      }
+      use.computerId = session.id;
+    }
+    return session.act(use, action, channel, inspection);
   }
 
-  async handBack(id: string): Promise<void> {
-    this.assertCanHandBack(id);
-    this.computer?.releaseInput();
-    await this.access.handBack(id);
-  }
-
-  async continueFromChat(): Promise<void> {
-    const id = this.access.human ?? 'chat';
-    this.access.assertCanHandBack(id);
-    this.computer?.releaseInput();
-    await this.access.handBack(id);
-  }
-
-  input(id: string, text: string): void {
-    let frame: { type?: string };
+  /**
+   * The computer an invocation used last, which its help requests are about; before it
+   * has used one, the computer a call that names none would use.
+   */
+  current(use: ComputerUse): ComputerSession {
+    const used = use.computerId ? this.session(use.computerId) : undefined;
+    if (used) return used;
     try {
-      frame = JSON.parse(text);
+      return this.resolve(use);
     } catch {
-      return;
+      return this.local;
     }
-    if (frame.type === 'viewport') return;
-    if (frame.type?.startsWith('user_screen')) {
-      this.computer?.handleInput(text);
-      return;
+  }
+
+  /**
+   * A remote computer's link came up. A link already open for it is replaced, and ends
+   * the way a dropped link ends, the hold it took included.
+   */
+  linked(id: string, computer: RemoteComputer, link: ComputerLink): void {
+    const previous = this.links.get(id);
+    this.links.set(id, { computer, link });
+    if (previous) {
+      previous.link.close(LINK_CLOSE.replaced, 'replaced by a newer link');
+      this.session(id)?.lost(previous.computer);
     }
-    if (this.access.human === id && this.access.paused) this.computer?.handleInput(text);
+    this.session(id)?.connected(computer);
+    this.emit('change');
+  }
+
+  /** Whether `computer` is the one linked for `id` right now. */
+  isLinked(id: string, computer: RemoteComputer): boolean {
+    return this.links.get(id)?.computer === computer;
+  }
+
+  unlinked(id: string, computer: RemoteComputer): void {
+    if (this.links.get(id)?.computer !== computer) return;
+    this.links.delete(id);
+    this.remotes.get(id)?.lost(computer);
+    this.emit('change');
+  }
+
+  /**
+   * Remove a remote computer: its link closes, and the runs holding or waiting for it are
+   * told so at their next step. False when there was no such computer.
+   */
+  async remove(id: string, userId: string): Promise<boolean> {
+    const name = remoteComputerService.get(id)?.name;
+    if (!(await remoteComputerService.remove(id, userId))) return false;
+    const linked = this.links.get(id);
+    this.links.delete(id);
+    const session = this.remotes.get(id);
+    this.remotes.delete(id);
+    // The link's close handler finds the link gone and does nothing, so its end runs here:
+    // whatever the person at the computer held, and any secure window, end with it.
+    if (linked) session?.lost(linked.computer);
+    await session?.access.retire(new Error(`${name ?? 'That computer'} was removed.`));
+    linked?.link.close(LINK_CLOSE.removed, 'computer removed');
+    await linked?.computer.stop();
+    this.emit('change');
+    return true;
+  }
+
+  summaries(): ComputerSummary[] {
+    const list: ComputerSummary[] = [];
+    if (hasComputer()) {
+      list.push({
+        id: LOCAL_COMPUTER_ID,
+        kind: 'local',
+        name: 'This runtime',
+        connection: 'connected',
+        platform: 'linux',
+        clientVersion: null,
+        display: { ...DEFAULT_SCREEN },
+        capabilities: [...CAPABILITIES],
+        problems: [],
+        lastConnectedAt: null,
+        lastSeenAt: null,
+        ...this.useOf(this.local),
+      });
+    }
+    for (const row of remoteComputerService.list()) {
+      const session = this.session(row.id)!;
+      const info = this.links.get(row.id)?.computer.info();
+      list.push({
+        id: row.id,
+        kind: 'remote',
+        name: row.name,
+        connection: info ? 'connected' : 'disconnected',
+        platform: info?.platform ?? row.platform,
+        clientVersion: info?.clientVersion ?? row.clientVersion,
+        display: info?.display ?? null,
+        capabilities: info?.capabilities ?? [],
+        problems: info?.problems ?? [],
+        lastConnectedAt: row.lastConnectedAt?.toISOString() ?? null,
+        lastSeenAt: row.lastSeenAt?.toISOString() ?? null,
+        ...this.useOf(session),
+      });
+    }
+    return list;
+  }
+
+  /**
+   * The computers line of a turn's notices, for a run that may use a remote computer
+   * while any exists. It changes with every connection, so it never goes in the cached prompt.
+   */
+  notice(mode: string): string | null {
+    if (!usesRemoteComputers(mode) || remoteComputerService.count === 0) return null;
+    const rows = remoteComputerService.list();
+    const parts = [
+      ...(hasComputer() ? ['"local" (your own computer)'] : []),
+      ...rows.map((row) => {
+        const info = this.links.get(row.id)?.computer.info();
+        const platform = info?.platform ?? row.platform;
+        const traits = [
+          platform ? PLATFORM_NAMES[platform] ?? platform : null,
+          info ? 'connected' : 'not connected',
+          platform && SUPER_KEY[platform] ? SUPER_KEY[platform] : null,
+        ].filter(Boolean);
+        return `${JSON.stringify(row.name)} (${traits.join(', ')})`;
+      }),
+    ];
+    const fallback = hasComputer()
+      ? 'your own computer'
+      : rows.length === 1
+        ? JSON.stringify(rows[0].name)
+        : null;
+    return (
+      `Computers you can use: ${parts.join('; ')}. A remote computer is your user's own machine. ` +
+      'Pass its name as `computer` to use it; ' +
+      (fallback ? `without one, the computer tools use ${fallback}.` : 'every computer tool call needs one.')
+    );
   }
 
   async close(): Promise<void> {
-    this.access.stop();
-    for (const use of this.access.waiting) use.controller.abort();
-    await this.opening?.catch(() => {});
-    const computer = this.computer;
-    this.computer = null;
-    this.viewers.clear();
-    await computer?.stop().catch((err) => logger.warn({ err }, '[Computer] Shutdown failed'));
+    for (const { link } of this.links.values()) link.close(LINK_CLOSE.shuttingDown, 'runtime shutting down');
+    this.links.clear();
+    await Promise.all([...this.remotes.values()].map((session) => session.close()));
+    await this.local.close();
+  }
+
+  private names(): string {
+    return [
+      ...(hasComputer() ? [`"${LOCAL_COMPUTER_ID}"`] : []),
+      ...remoteComputerService.list().map((row) => JSON.stringify(row.name)),
+    ].join(', ');
+  }
+
+  private useOf(session: ComputerSession): Pick<ComputerSummary, 'owner' | 'controller'> {
+    const owner = session.access.owner;
+    return {
+      owner: owner ? { threadId: owner.threadId, mode: owner.mode } : null,
+      controller: session.controller,
+    };
   }
 }
 

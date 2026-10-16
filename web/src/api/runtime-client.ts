@@ -469,7 +469,8 @@ export function webSocketUrl(): string {
  */
 export const COMPUTER_SOCKET_PATH = '/api/computer';
 
-export function computerWebSocketUrl(): string {
+/** The socket for one computer: the runtime's own, `local`, unless another is named. */
+export function computerWebSocketUrl(computerId: string): string {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${proto}://${window.location.host}${COMPUTER_SOCKET_PATH}`;
+  return `${proto}://${window.location.host}${COMPUTER_SOCKET_PATH}?computer=${encodeURIComponent(computerId)}`;
 }

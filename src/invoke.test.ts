@@ -2005,7 +2005,7 @@ describe('invoke', () => {
 
     it('reports a turn the computer stop ended as cancelled', async () => {
       const { computerService } = await import('./services/computer/computer.service');
-      const create = vi.spyOn(computerService.access, 'create');
+      const create = vi.spyOn(computerService, 'createUse');
       mockGenerateText.mockImplementationOnce(async () => {
         // What a stop from the Computer page does to the turn that holds the computer.
         create.mock.results[0]!.value.controller.abort();

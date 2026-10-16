@@ -458,7 +458,7 @@ describe('a session with a computer', () => {
     expect(computer!.startScreenStream).not.toHaveBeenCalled();
 
     const client = { screen: vi.fn(), audio: vi.fn() };
-    const detach = await computerService.attach('viewer', client);
+    const detach = await computerService.local.attach('viewer', client);
 
     expect(detach).toBeTypeOf('function');
     expect(computer!.startScreenStream).toHaveBeenCalled();

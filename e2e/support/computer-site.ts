@@ -60,6 +60,16 @@ export const SIGN_IN_PASSWORD = 'a-password-prism-never-sees';
 const PORT = 3105;
 
 /**
+ * The agent's browser outlives a scenario, so the next one starts with this site's last
+ * page still on its screen: a signed-in inbox, say, which a model can take for the answer
+ * to a new request without opening the address it was given. Once the site that served
+ * it has closed, the page says so.
+ */
+const STALE_PAGE_SCRIPT =
+  '<script>setInterval(() => fetch("/alive").then((res) => { if (!res.ok) throw res; })' +
+  '.catch(() => { document.body.innerHTML = "<h1>This site has closed</h1>"; }), 1000);</script>';
+
+/**
  * A real website with a sign-in step and an independent public page.
  *
  * The inbox sign-in form reports how much its password field holds, so a test can see
@@ -95,6 +105,12 @@ export async function startComputerSite(): Promise<{
     if (req.headers.host !== host && req.headers.host?.endsWith(`.localhost:${PORT}`)) {
       res.writeHead(404, { 'content-type': 'text/html; charset=utf-8' });
       res.end('<!doctype html><title>Not found</title><h1>No site at this address</h1>');
+      return;
+    }
+    // What a page of this site asks to learn the site is still up; see `STALE_PAGE_SCRIPT`.
+    if (req.url === '/alive') {
+      res.writeHead(204);
+      res.end();
       return;
     }
     if (req.method === 'POST' && req.url?.startsWith('/typed')) {
@@ -205,7 +221,7 @@ export async function startComputerSite(): Promise<{
             'field.addEventListener("blur", () => setTimeout(() => field.focus(), 0));' +
             'field.focus();</script>';
     res.end(
-      `<!doctype html><title>Computer test</title><body style="font:20px system-ui;padding:64px;background:#f4f4f5;color:#18181b">${content}</body>`,
+      `<!doctype html><title>Computer test</title><body style="font:20px system-ui;padding:64px;background:#f4f4f5;color:#18181b">${content}${STALE_PAGE_SCRIPT}</body>`,
     );
   });
   await new Promise<void>((resolve, reject) => {

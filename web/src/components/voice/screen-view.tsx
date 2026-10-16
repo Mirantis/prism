@@ -26,7 +26,14 @@ interface ScreenViewProps {
   onRelease: () => void;
   /** Laid over the screen, e.g. the agent's tile. */
   children?: ReactNode;
+  /** What the screen says while there is no picture and nothing is connecting. */
+  unavailable?: { title: string; detail: string };
 }
+
+const UNAVAILABLE = {
+  title: 'Computer unavailable',
+  detail: 'Check the connection status above for details.',
+};
 
 const BUTTONS: Record<number, 'left' | 'middle' | 'right'> = { 0: 'left', 1: 'middle', 2: 'right' };
 
@@ -42,6 +49,7 @@ export function ScreenView({
   onInput,
   onRelease,
   children,
+  unavailable = UNAVAILABLE,
 }: ScreenViewProps) {
   const releaseRef = useRef(onRelease);
   releaseRef.current = onRelease;
@@ -126,8 +134,11 @@ export function ScreenView({
       window.removeEventListener('blur', onBlur);
       document.removeEventListener('pointerlockchange', onLock);
       document.removeEventListener('fullscreenchange', onFull);
-      if (document.pointerLockElement === boxRef.current) document.exitPointerLock();
-      if (document.fullscreenElement === boxRef.current) void document.exitFullscreen();
+      // On unmount the ref is null, and the browser releases what a removed element held;
+      // comparing two nulls would exit a fullscreen that nothing is in, which rejects.
+      const box = boxRef.current;
+      if (box && document.pointerLockElement === box) document.exitPointerLock();
+      if (box && document.fullscreenElement === box) void document.exitFullscreen();
     };
   }, [release]);
 
@@ -312,12 +323,10 @@ export function ScreenView({
             )}
           </div>
           <p className="text-sm font-medium text-zinc-200">
-            {connecting ? 'Preparing your computer' : 'Computer unavailable'}
+            {connecting ? 'Preparing your computer' : unavailable.title}
           </p>
           <p className="max-w-xs text-xs leading-5 text-zinc-400">
-            {connecting
-              ? 'The agent’s screen will appear here when it is ready.'
-              : 'Check the connection status above for details.'}
+            {connecting ? 'The agent’s screen will appear here when it is ready.' : unavailable.detail}
           </p>
         </div>
       )}

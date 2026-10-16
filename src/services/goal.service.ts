@@ -1,5 +1,5 @@
 import { computerHelpService } from './computer/computer-help.service';
-import { hasComputer } from './computer/supported';
+import { hasComputerForMode } from './computer/supported';
 /**
  * Goal Service (Agent-Runtime)
  *
@@ -336,7 +336,7 @@ class GoalService {
           return;
         }
 
-        if (hasComputer() && (await computerHelpService.list(goal.agentId, goal.userId, goal.threadId)).some((help) => help.status === 'waiting')) {
+        if (hasComputerForMode('goal') && (await computerHelpService.list(goal.agentId, goal.userId, goal.threadId)).some((help) => help.status === 'waiting')) {
           await prisma.goal.update({ where: { id: goal.id }, data: { tokensUsed: newTokensUsed, turnCount: newTurnCount, lastReason: 'Waiting for computer help.' } });
           await this.pauseGoal(goal.id, 'Waiting for computer help.');
           return;

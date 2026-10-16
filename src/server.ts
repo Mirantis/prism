@@ -23,6 +23,7 @@
 
 import express from 'express';
 import { computerRouter } from './routes/computer';
+import { computersRouter } from './routes/computers';
 import path from 'path';
 import fs from 'fs';
 import type { Server } from 'http';
@@ -60,6 +61,9 @@ export function createApp() {
   app.use('/agents', slackRouter);
   app.use('/agents', teamsRouter);
   app.use('/agents', computerRouter);
+
+  // The agent's computers, its own and remote ones (/agents/computers)
+  app.use('/agents', computersRouter);
 
   // Locked-in mode (PATCH /agents/locked-in)
   app.use('/agents', lockedInRouter);

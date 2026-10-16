@@ -149,6 +149,7 @@ model AgentWorkspace {
   teamsVerificationCodes TeamsVerificationCode[]
   webhookSubscriptions   WebhookSubscription[]
   webhookRuns            WebhookRun[]
+  remoteComputers        RemoteComputer[]
   subagentLinks          AgentSubagent[]         @relation("ParentAgent")
   parentAgentLinks       AgentSubagent[]         @relation("ChildAgent")
 
@@ -731,6 +732,36 @@ model WebhookRun {
 
   @@index([agentId, createdAt])
   @@map("webhook_runs")
+}
+
+// ============================================================================
+// Remote computers
+// ============================================================================
+//
+// A computer outside the runtime that the agent can use, such as the user's
+// own machine. Its client adds the row through the REST API, then holds a link
+// open on `/api/computer-link`. Whether it is connected is kept in memory; the
+// row keeps what the list shows while the computer is offline.
+
+model RemoteComputer {
+  id              String    @id @default(uuid())
+  agentId         String
+  name            String
+  // A UUID the client creates once per installation, so adding the same
+  // installation again finds its own row rather than another one's name.
+  installationId  String?
+  platform        String? // macos | windows | linux, from the last `initialize`
+  clientVersion   String?
+  lastConnectedAt DateTime?
+  lastSeenAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  agentWorkspace AgentWorkspace @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([agentId, name])
+  @@unique([agentId, installationId])
+  @@map("remote_computers")
 }
 
 // ============================================================================

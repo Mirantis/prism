@@ -6,6 +6,7 @@ import { createBdd, DataTable } from 'playwright-bdd';
 import * as dbHelper from '../support/db-helper';
 import { clearTelemetryBucket } from '../support/s3-helper';
 import { resetScheduledWork } from '../support/runtime-helper';
+import { removeRemoteComputers } from '../support/fake-computer';
 import { forgetLlmCacheEntriesSince } from '../support/llm-cache-files';
 
 const { Given, Before, After } = createBdd();
@@ -26,6 +27,8 @@ Before(async () => {
   // in-memory cron timers and goal loops alive with no rows behind them, so a
   // task one scenario scheduled fires inside a later one. See runtime-helper.
   await resetScheduledWork();
+  // The runtime keeps its remote computers in memory too, so they go through its API.
+  await removeRemoteComputers();
   // Reset DB and telemetry bucket before each scenario, then re-seed
   await dbHelper.resetAll();
   await clearTelemetryBucket();

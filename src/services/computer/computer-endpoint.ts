@@ -1,4 +1,7 @@
-/** Live desktop video, audio, and user input on a separate WebSocket. */
+/**
+ * Live desktop video, audio, and user input on a separate WebSocket. `?computer=` names
+ * the computer to watch, the runtime's own when absent.
+ */
 
 import type { Server as HttpServer } from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
@@ -6,7 +9,8 @@ import { logger } from '../../logger';
 import { isAllowedOrigin } from '../../lib/origin-guard';
 import { serveUpgrades } from '../websocket-upgrades';
 import { randomUUID } from 'node:crypto';
-import { computerService } from './computer.service';
+import { computerService, LOCAL_COMPUTER_ID } from './computer.service';
+import type { ComputerSession } from './computer-session';
 import { isRecordingFrame, voiceChatService, type RecordingFrame } from '../voice/voice-chat.service';
 import type { ScreenFrame } from './picture-stream';
 
@@ -114,11 +118,19 @@ class ComputerEndpoint {
         socket.destroy();
         return;
       }
+      const computerId =
+        new URL(req.url ?? '/', 'http://localhost').searchParams.get('computer') || LOCAL_COMPUTER_ID;
+      const session = computerService.session(computerId);
+      if (!session) {
+        socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
+        socket.destroy();
+        return;
+      }
       wss.handleUpgrade(req, socket, head, (ws) => {
         // Before anything else: `ws` emits `error` for a malformed frame, and an `error`
         // with no listener is an uncaught exception that takes the process down.
         ws.on('error', (err) => logger.warn({ err }, '[Computer] Socket error'));
-        this.serve(ws);
+        this.serve(ws, session);
       });
     });
     // A socket that does not answer a ping is gone, whatever TCP still believes.
@@ -137,14 +149,26 @@ class ComputerEndpoint {
     logger.info(`[Computer] Screen endpoint listening on ${COMPUTER_PATH}`);
   }
 
-  private serve(ws: ComputerSocket): void {
+  private serve(ws: ComputerSocket, session: ComputerSession): void {
     const id = randomUUID();
     ws.isAlive = true;
     ws.on('pong', () => { ws.isAlive = true; });
     const state = () => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'computer_state', clientId: id, ...computerService.status() }));
+      if (ws.readyState !== WebSocket.OPEN) return;
+      const summary = computerService.summaries().find((item) => item.id === session.id);
+      const connection = summary?.connection ?? 'disconnected';
+      ws.send(
+        JSON.stringify({
+          type: 'computer_state',
+          clientId: id,
+          ...session.status(),
+          connection,
+          // A connected computer can still lack the permission to send its screen.
+          screen: connection === 'connected' && (summary?.capabilities.includes('stream') ?? false),
+        }),
+      );
     };
-    computerService.access.on('change', state);
+    computerService.on('change', state);
     state();
     ws.on('message', (data, binary) => {
       if (binary) return;
@@ -163,15 +187,15 @@ class ComputerEndpoint {
         );
         return;
       }
-      computerService.input(id, text);
+      session.input(id, text);
     });
     ws.on('close', () => {
-      computerService.access.off('change', state);
-      computerService.detach(id);
+      computerService.off('change', state);
+      session.detach(id);
       // The pictures and the end of a recording were going to arrive on this socket.
       voiceChatService.releaseRecordingClient(id);
     });
-    void computerService.attach(id, this.clientFor(ws)).then((detach) => {
+    void session.attach(id, this.clientFor(ws)).then((detach) => {
       if (ws.readyState !== WebSocket.OPEN) detach();
       state();
     }).catch((error) => {

@@ -13,7 +13,6 @@ export interface NavItem {
   to: '/' | '/chat' | '/channels' | '/cron' | '/webhooks' | '/profile' | '/computer' | '/activity';
   label: string;
   icon: typeof Bot;
-  needsComputer?: boolean;
 }
 
 /** The app's pages, grouped as the sidebar shows them. */
@@ -37,17 +36,11 @@ export const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     label: 'Agent',
     items: [
       { to: '/profile', label: 'Profile', icon: Bot },
-      // Left out where the runtime has no desktop to give the agent; see `hasComputer`.
-      { to: '/computer', label: 'Computer', icon: MonitorPlay, needsComputer: true },
+      { to: '/computer', label: 'Computer', icon: MonitorPlay },
       { to: '/activity', label: 'Activity', icon: Activity },
     ],
   },
 ];
-
-/** The pages this runtime offers. */
-export function visibleNavItems(items: NavItem[], hasComputer: boolean | undefined): NavItem[] {
-  return items.filter((item) => !item.needsComputer || hasComputer);
-}
 
 /** The page a path belongs to: `/` exactly, any other page by prefix. */
 export function navItemFor(pathname: string): NavItem | undefined {

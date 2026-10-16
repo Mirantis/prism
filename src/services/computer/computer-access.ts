@@ -1,11 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { config } from '../../config';
-import { agentProcesses } from '../../lib/agent-processes';
-import { inferenceGate } from '../../lib/inference-gate';
 import { logger } from '../../logger';
 import { trackEvent } from '../../lib/telemetry';
 import type { ChannelName } from '../channel-adapter.interface';
+import { holdSecureGuard, releaseSecureGuard } from './secure-guard';
+
+/** The runtime's own desktop, or a computer that links in from outside. */
+export type ComputerKind = 'local' | 'remote';
+
+/** What a call is told when its invocation went to another computer while it waited. */
+const MOVED =
+  'This invocation moved to another computer before this call got its turn. Call it again if you still need it.';
 
 export interface ComputerCaller {
   userId: string;
@@ -21,6 +27,10 @@ export interface ComputerUse extends ComputerCaller {
   controller: AbortController;
   signal: AbortSignal;
   startedAt?: number;
+  /** The kind of the first computer this invocation waited for, for its telemetry. */
+  kind?: ComputerKind;
+  /** The computer this invocation used last, which its help requests are about. */
+  computerId?: string;
   failed: boolean;
   closed: boolean;
   /** Runs `wait` with the invocation's conversation shown idle. The invocation sets it. */
@@ -35,6 +45,8 @@ export class ComputerAccess extends EventEmitter {
   private claimant: string | null = null;
   private queue: ComputerUse[] = [];
   private tail: Promise<unknown> = Promise.resolve();
+  /** Set once the computer is gone for good; see `retire`. */
+  private retired: Error | null = null;
   /** The takeover that answers a help request, while it lasts. */
   private secureWindow: {
     clientId: string;
@@ -47,7 +59,10 @@ export class ComputerAccess extends EventEmitter {
   /**
    * @param clearSecrets what the desktop must forget before the agent runs again.
    */
-  constructor(private readonly clearSecrets?: () => Promise<void>) {
+  constructor(
+    private readonly clearSecrets?: () => Promise<void>,
+    private readonly kind: ComputerKind = 'local',
+  ) {
     super();
   }
 
@@ -101,15 +116,34 @@ export class ComputerAccess extends EventEmitter {
     });
   }
 
+  /**
+   * End this computer for good: the invocation holding it and every one waiting for it
+   * get `error` at their next step, and so does anybody who asks later. Their turns go on.
+   * A takeover ends with it, and so does its secure window, since nobody can hand back a
+   * computer that no longer exists.
+   */
+  async retire(error: Error): Promise<void> {
+    this.retired = error;
+    this.owner = null;
+    this.human = null;
+    this.claimant = null;
+    this.paused = false;
+    this.changed();
+    await this.endSecure('removed');
+  }
+
   async acquire(use: ComputerUse): Promise<void> {
     use.signal.throwIfAborted();
+    if (this.retired) throw this.retired;
     if (use.closed) throw new Error('This computer invocation has ended.');
     if (this.owner === use) return;
     if (!use.startedAt) {
       use.startedAt = Date.now();
+      use.kind = this.kind;
       trackEvent('computer use started', use.userId, {
         'agent.id': use.agentId,
         'computer.use_id': use.id,
+        'computer.kind': this.kind,
         mode: use.mode,
       });
     }
@@ -121,6 +155,10 @@ export class ComputerAccess extends EventEmitter {
       while (this.owner || this.queue[0] !== use || this.paused) {
         if (this.owner === use) return;
         await this.wait(use.signal);
+        if (this.retired) throw this.retired;
+        // Taken out of the queue while it waited: another call of the same invocation
+        // moved it to another computer, and nothing would put it back.
+        if (!this.queue.includes(use) && this.owner !== use) throw new Error(MOVED);
       }
       use.signal.throwIfAborted();
       this.queue.shift();
@@ -138,6 +176,7 @@ export class ComputerAccess extends EventEmitter {
     if (!inspection) await this.acquire(use);
     for (;;) {
       use.signal.throwIfAborted();
+      if (this.retired) throw this.retired;
       if (!inspection && this.owner !== use) await this.acquire(use);
       if (!inspection && this.paused) {
         await this.wait(use.signal);
@@ -166,7 +205,7 @@ export class ComputerAccess extends EventEmitter {
     if (this.claimant !== clientId) return;
     this.human = clientId;
     this.claimant = null;
-    // The window opens where the keyboard becomes theirs: `computerService.input`
+    // The window opens where the keyboard becomes theirs: `ComputerSession.input`
     // passes a frame on only once `human` is this client.
     if (helpId) this.beginSecure(clientId, helpId);
     this.changed();
@@ -199,8 +238,7 @@ export class ComputerAccess extends EventEmitter {
     // already in force, and the one ending will find itself superseded.
     if (this.secureWindow && !this.secureWindow.ending) return;
     this.secureWindow = { clientId, helpId, startedAt: Date.now(), ending: false };
-    inferenceGate.hold();
-    agentProcesses.suspend();
+    holdSecureGuard(this);
     trackEvent('computer secure takeover started', config.ownerUserId, {
       ...(config.agentId ? { 'agent.id': config.agentId } : {}),
       'computer.help_id': helpId,
@@ -215,7 +253,7 @@ export class ComputerAccess extends EventEmitter {
    * `secure` holds until the clearing is done. The password fields are still filled
    * while it runs, so this is the part of the window the screen tools must miss.
    */
-  async endSecure(exit: 'handed_back' | 'disconnected'): Promise<void> {
+  async endSecure(exit: 'handed_back' | 'disconnected' | 'removed'): Promise<void> {
     const open = this.secureWindow;
     if (!open || open.ending) return;
     open.ending = true;
@@ -228,8 +266,7 @@ export class ComputerAccess extends EventEmitter {
     // releasing them here would leave that window unguarded.
     if (this.secureWindow === open) {
       this.secureWindow = null;
-      agentProcesses.resume();
-      inferenceGate.free();
+      releaseSecureGuard(this);
     }
     trackEvent('computer secure takeover ended', config.ownerUserId, {
       ...(config.agentId ? { 'agent.id': config.agentId } : {}),
@@ -247,7 +284,7 @@ export class ComputerAccess extends EventEmitter {
 
   async handBack(clientId: string): Promise<void> {
     this.assertCanHandBack(clientId);
-    // Control goes first: `computerService.input` passes a frame on only while this
+    // Control goes first: `ComputerSession.input` passes a frame on only while this
     // client is `human`, so a key already on its way cannot refill a field that the
     // clearing below has just emptied. The desktop stays paused until that is done.
     this.human = null;
@@ -272,6 +309,11 @@ export class ComputerAccess extends EventEmitter {
     this.changed();
   }
 
+  /** Whether `use` holds this computer or waits for it. */
+  holds(use: ComputerUse): boolean {
+    return this.owner === use || this.queue.includes(use);
+  }
+
   yield(use: ComputerUse): void {
     if (this.owner === use) this.owner = null;
     this.queue = this.queue.filter((item) => item !== use);
@@ -288,6 +330,7 @@ export class ComputerAccess extends EventEmitter {
       trackEvent('computer use finished', use.userId, {
         'agent.id': use.agentId,
         'computer.use_id': use.id,
+        'computer.kind': use.kind ?? this.kind,
         status,
         elapsed_ms: String(Date.now() - use.startedAt),
       });
