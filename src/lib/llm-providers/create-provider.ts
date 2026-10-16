@@ -3,8 +3,8 @@
  *
  * Two orthogonal choices:
  *  - Vendor: `config.llmProvider` (`bedrock` default, `azure`,
- *    `bedrock-mantle`, `openai`, `openrouter`, `anthropic`, `litellm`, or
- *    `codex-subscription`).
+ *    `bedrock-mantle`, `openai`, `openrouter`, `anthropic`, `litellm`,
+ *    `codex-subscription`, or `claude-subscription`).
  *  - Endpoint: each vendor's factory takes the endpoint `config.ts` resolved for
  *    it — the explicit `*_BASE_URL` override, else the Lens Agents gateway mount,
  *    else the vendor's own host. The factory receives one endpoint and chooses
@@ -48,6 +48,11 @@
  * in the execution environment, signed in with a ChatGPT subscription. It takes no
  * endpoint and no key: the Codex home holds the login, and an API-key login is
  * refused. Model IDs are Codex's own model names; see `codex-subscription/`.
+ *
+ * **claude-subscription** does the same through the Claude CLI, signed in with a Claude
+ * subscription in the browser. It takes no endpoint and no key: the Claude home holds
+ * the login, and an API key, a setup token or a cloud login is refused. Model IDs are
+ * the CLI's names (`opus`, `sonnet`, `haiku`); see `claude-subscription/`.
  */
 
 import { config } from '../../config';
@@ -65,6 +70,7 @@ import {
 import { createAnthropicProvider, missingAnthropicSettings } from './anthropic/anthropic-provider';
 import { createLiteLlmProvider, missingLiteLlmSettings } from './litellm/litellm-provider';
 import { createCodexSubscriptionProvider } from './codex-subscription/codex-subscription-provider';
+import { createClaudeSubscriptionProvider } from './claude-subscription/claude-subscription-provider';
 import type { LlmProvider } from './llm-provider';
 
 export function createProvider(): LlmProvider {
@@ -83,6 +89,8 @@ export function createProvider(): LlmProvider {
       return createLiteLlmProvider(config.litellmEndpoint);
     case 'codex-subscription':
       return createCodexSubscriptionProvider();
+    case 'claude-subscription':
+      return createClaudeSubscriptionProvider();
     default:
       return createBedrockProvider(config.nexusLlmBaseUrl ?? undefined);
   }
@@ -108,7 +116,8 @@ export function missingProviderSettings(): string[] {
     case 'litellm':
       return missingLiteLlmSettings();
     case 'codex-subscription':
-      // The login lives in the Codex home, and the first turn names a missing one.
+    case 'claude-subscription':
+      // The login lives in the CLI's home, and the first turn names a missing one.
       return [];
     default:
       // Bedrock finds its credentials through the AWS SDK's own chain (the task

@@ -538,11 +538,13 @@ proxy.
 
 One LLM provider per container, selected by `LLM_PROVIDER` (`bedrock`
 default, `azure`, `bedrock-mantle`, `openai`, `openrouter`, `anthropic`,
-`litellm`, or `codex-subscription`). `bedrock`, `azure`, `bedrock-mantle` and
+`litellm`, `codex-subscription`, or `claude-subscription`). `bedrock`, `azure`, `bedrock-mantle` and
 `anthropic` serve **Claude**; `openai` serves OpenAI models, `openrouter` whatever
 vendor its `vendor/model` id names, `litellm` whatever an operator's alias routes
-to, and `codex-subscription` the models of a ChatGPT subscription, through the
-Codex CLI's app-server and its saved login, never through the gateway.
+to, `codex-subscription` the models of a ChatGPT subscription, through the
+Codex CLI's app-server and its saved login, and `claude-subscription` the models of a
+Claude subscription, through the Claude CLI and its browser login. Neither goes
+through the gateway.
 **Bedrock** via Bearer API key (`AWS_BEARER_TOKEN_BEDROCK`) — the SDK
 auto-selects Bearer over SigV4 when set. **Azure = Claude via Microsoft
 Foundry**: chat/classification
@@ -1009,7 +1011,7 @@ src/
 │   ├── workspace-docs.ts       # The seven identity-document columns, their labels, and the actor/method words a revision is described with
 │   ├── llm-providers/          # One folder per chat vendor, plus the shared contract and the selector
 │   │   ├── llm-provider.ts     # Shared `LlmProvider` type: the callable `(modelId) => LanguageModel` contract every vendor factory returns, plus each vendor's `cachePoint` fragment (the Anthropic breakpoint, Converse's own `BEDROCK_CACHE_POINT`, or the empty `NO_CACHE_POINT` — which covers both a vendor that caches without breakpoints and a model whose support is unknown) and the optional `structuredOutputOptions` / `classificationProviderOptions` it declares. The startup log reads this contract for the configured model, so no caller names a vendor to report prompt caching
-│   │   ├── create-provider.ts  # Unified LLM provider factory: picks vendor (bedrock/azure/bedrock-mantle/openai/openrouter/anthropic/litellm/codex-subscription), passes each its optional gateway baseURL (anthropic is direct-only, and codex-subscription takes no endpoint); `missingProviderSettings()`, the variables the selected vendor still needs, which the invoke preflight names to the user
+│   │   ├── create-provider.ts  # Unified LLM provider factory: picks vendor (bedrock/azure/bedrock-mantle/openai/openrouter/anthropic/litellm/codex-subscription/claude-subscription), passes each its optional gateway baseURL (anthropic is direct-only, and the subscriptions take no endpoint); `missingProviderSettings()`, the variables the selected vendor still needs, which the invoke preflight names to the user
 │   │   ├── bedrock-shared.ts   # bedrock-runtime plumbing both AWS vendors (and the bedrock embedding provider) need: AWS credential resolution, `isAnthropicModelId()`
 │   │   ├── bedrock/
 │   │   │   └── bedrock-provider.ts # AWS Bedrock provider factory: `createBedrockProvider(baseURL?)` (direct, or gateway-routed when baseURL set). Owns which model gets a prompt-cache breakpoint: Claude on the Anthropic Messages branch always, a Converse family only when it is on `CONVERSE_PROMPT_CACHE_FAMILIES` — empty, since no source the runtime can read names one, and a `cachePoint` block on a model without support fails every turn
@@ -1029,6 +1031,9 @@ src/
 │   │   │   └── litellm-provider.ts # An operator's LiteLLM proxy (Anthropic Messages surface; aliases pass through; startup model check): `createLiteLlmProvider(baseURL?)`
 │   │   ├── subscription-types.ts # The `SubscriptionSession` contract a CLI-backed vendor implements: start a turn, stream text and tool calls, take tool results back, stop
 │   │   ├── subscription-provider.ts # `createSubscriptionProvider()`: the language-model shape over a `SubscriptionSession`. A tool call ends the step and keeps the session; the step that brings its result back resumes the same CLI turn, with the messages Prism added meanwhile. A new step closes any session left open. Emits `subscription session finished` (`provider`, `outcome`, `elapsed_ms`). No cache point
+│   │   ├── claude-subscription/
+│   │   │   ├── session.ts      # One `claude -p` stream-json run per turn in the execution environment: Claude's own tools off, Prism's tools served over the SDK MCP control channel, each call's usage from its own stream events. Thirty minutes without a frame ends the turn; an open tool call pauses that clock
+│   │   │   └── authentication.ts # The browser-login check (`claude auth status` must report a claude.ai subscription) and the CLI env with every API, setup-token and cloud credential removed
 │   │   └── codex-subscription/
 │   │       ├── codex-subscription-provider.ts # `createCodexSubscriptionProvider(environment?)`: the subscription provider over a Codex app-server session
 │   │       ├── app-server.ts   # One Codex app-server per turn in the execution environment, over stdio JSON-RPC: refuses any login but ChatGPT, turns Codex's own tools off and hands it Prism's tools as dynamic tools. Thirty minutes without a frame ends the turn; an open tool call pauses that clock
@@ -1139,7 +1144,7 @@ What the operator sets on `docker run`:
 | `TEAMS_APP_PASSWORD` | Entra client secret, or on Lens Agents the `__nexus_cred:…__` sentinel of an OAuth client-credentials credential: the sandbox proxy answers the SDK's token request with a placeholder token and injects the real bot token on `smba.trafficmanager.net`. It has to be that credential type, since the grant sends the secret in the POST body and the proxy rewrites headers only | — |
 | `TEAMS_APP_TENANT_ID` | Entra tenant of the app registration | — |
 | `TEAMS_PORT` | Port of the Teams bot endpoint's own listener, which serves `POST /agents/teams/messages` and nothing else — the port to publish | `3979` |
-| `LLM_PROVIDER` | LLM vendor: `bedrock`, `azure`, `bedrock-mantle`, `openai`, `openrouter`, `anthropic`, `litellm`, or `codex-subscription` (one per container). Any other value runs `bedrock` and logs a startup warning | `bedrock` |
+| `LLM_PROVIDER` | LLM vendor: `bedrock`, `azure`, `bedrock-mantle`, `openai`, `openrouter`, `anthropic`, `litellm`, `codex-subscription`, or `claude-subscription` (one per container). Any other value runs `bedrock` and logs a startup warning | `bedrock` |
 | `CODING_AGENT` | Default coding agent: `claude-code` or `codex`. Each task may override it with `agent`. | Claude credentials first, then an OpenAI key, else `claude-code` |
 | `CLAUDE_CODE_MODEL_SMALL` | Model for the Claude Code small tier | `haiku` (Bedrock: `global.anthropic.claude-haiku-5-5`) |
 | `CLAUDE_CODE_MODEL_MEDIUM` | Model for the Claude Code medium tier | `sonnet` (Bedrock: `global.anthropic.claude-sonnet-5-5`) |
@@ -1176,6 +1181,7 @@ What the operator sets on `docker run`:
 | `LITELLM_API_KEY` | LiteLLM key, sent as `x-api-key`. Required direct, where a model call without it fails before any request; not needed through the gateway. May be a `__nexus_cred:<uuid>__` sentinel | — |
 | `LITELLM_MODEL_ID` / `LITELLM_CLASSIFICATION_MODEL_ID` | The proxy's aliases (chat / classification gate). Classification should be Claude or non-reasoning, since the gates allow a few output tokens | `claude-opus-5-5` / `claude-haiku-5-5` |
 | `CODEX_SUBSCRIPTION_MODEL_ID` / `CODEX_SUBSCRIPTION_CLASSIFICATION_MODEL_ID` | Codex model names for chat / classification gate under `codex-subscription`. `default` lets Codex choose; classification follows chat | `default` / the chat model |
+| `CLAUDE_SUBSCRIPTION_MODEL_ID` / `CLAUDE_SUBSCRIPTION_CLASSIFICATION_MODEL_ID` | Claude CLI model names for chat / classification gate under `claude-subscription` | `opus` / `haiku` |
 | `CONTEXT_WINDOW_TOKENS` | Input-context window assumed for the context-usage indicator; only needed for a model the catalog doesn't know | derived from the model ID |
 | `MODELS_DEV_URL` | Opt in to refreshing the model-window catalog from a registry once at startup (e.g. `https://models.dev/api.json`); unset = no outbound call, bundled catalog only | — (disabled) |
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-compact a thread when context occupancy reaches this percent of the model's window; `0` disables | `90` |
@@ -1335,7 +1341,7 @@ When the step limit is reached, a follow-up `generateText()` call is made **with
 | `STEP_LIMIT` | `100` | Maximum number of tool-use steps before stopping |
 | `MAX_OUTPUT_TOKENS` | `16000` | Max tokens per `generateText()` call |
 
-The main `invokeStream()`/`invoke()` calls send no sampling params (`temperature`, `top_p`, `top_k`) at all — Opus 4.7 and later reject them (per Anthropic's Bedrock migration guide), so the invoke path omits them entirely rather than tracking which model version accepts what. The classification gates apply the same rule through the provider seam: `getGateRequest().samplingParams` is `{ temperature: 0 }` on Mantle only, whose Haiku 4.5 default accepts it. It is `{}` on bedrock, azure, anthropic and litellm, whose Haiku 5.5 default rejects it, on openai and openrouter, whose GPT-5.x models reject or strip it, and on codex-subscription, whose app-server takes no sampling params.
+The main `invokeStream()`/`invoke()` calls send no sampling params (`temperature`, `top_p`, `top_k`) at all — Opus 4.7 and later reject them (per Anthropic's Bedrock migration guide), so the invoke path omits them entirely rather than tracking which model version accepts what. The classification gates apply the same rule through the provider seam: `getGateRequest().samplingParams` is `{ temperature: 0 }` on Mantle only, whose Haiku 4.5 default accepts it. It is `{}` on bedrock, azure, anthropic and litellm, whose Haiku 5.5 default rejects it, on openai and openrouter, whose GPT-5.x models reject or strip it, and on codex-subscription and claude-subscription, whose CLIs take no sampling params.
 
 ## LLM Error Handling
 

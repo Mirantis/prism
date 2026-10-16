@@ -499,6 +499,35 @@ describe('config', () => {
       expect(cfg.classificationModelId).not.toBe('astra');
     });
 
+    it('claude-subscription defaults to opus and haiku, runs without the gateway, and embeds nothing', async () => {
+      process.env.LLM_PROVIDER = 'claude-subscription';
+      process.env.NEXUS_API_URL = 'https://gateway.example.com';
+      process.env.OPENAI_API_KEY = 'sk-test';
+      process.env.ANTHROPIC_MODEL_ID = 'claude-api-model';
+      const cfg = await loadConfig();
+      expect(cfg.llmProvider).toBe('claude-subscription');
+      expect(cfg.chatModelId).toBe('opus');
+      expect(cfg.classificationModelId).toBe('haiku');
+      expect(cfg.nexusChatBaseUrl).toBeNull();
+      expect(cfg.embeddingProvider).toBe('none');
+    });
+
+    it('claude-subscription reads its own model ids', async () => {
+      process.env.LLM_PROVIDER = 'claude-subscription';
+      process.env.CLAUDE_SUBSCRIPTION_MODEL_ID = 'sonnet';
+      process.env.CLAUDE_SUBSCRIPTION_CLASSIFICATION_MODEL_ID = 'sonnet';
+      const cfg = await loadConfig();
+      expect(cfg.chatModelId).toBe('sonnet');
+      expect(cfg.classificationModelId).toBe('sonnet');
+    });
+
+    it('a Claude subscription model id changes nothing for another provider', async () => {
+      process.env.LLM_PROVIDER = 'anthropic';
+      process.env.CLAUDE_SUBSCRIPTION_MODEL_ID = 'sonnet';
+      const cfg = await loadConfig();
+      expect(cfg.chatModelId).toBe('claude-opus-5');
+    });
+
     it('reports no invalid LLM_PROVIDER when it is unset or valid', async () => {
       delete process.env.LLM_PROVIDER;
       expect((await loadConfig()).invalidLlmProvider).toBeNull();

@@ -11,7 +11,7 @@ The runtime talks to one LLM provider per container, chosen by `LLM_PROVIDER`:
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `LLM_PROVIDER` | LLM platform: `bedrock` (AWS), `azure` (Claude via Microsoft Foundry), `bedrock-mantle` (AWS's second Bedrock inference endpoint), `openai` (the official OpenAI API), `openrouter`, `anthropic` (the first-party Anthropic API), `litellm` (your own LiteLLM proxy), or `codex-subscription` (your ChatGPT subscription through the Codex CLI). Any other value falls back to `bedrock`, and the startup log warns. | `bedrock` |
+| `LLM_PROVIDER` | LLM platform: `bedrock` (AWS), `azure` (Claude via Microsoft Foundry), `bedrock-mantle` (AWS's second Bedrock inference endpoint), `openai` (the official OpenAI API), `openrouter`, `anthropic` (the first-party Anthropic API), `litellm` (your own LiteLLM proxy), `codex-subscription` (your ChatGPT subscription through the Codex CLI), or `claude-subscription` (your Claude subscription through the Claude CLI). Any other value falls back to `bedrock`, and the startup log warns. | `bedrock` |
 
 The four Claude platforms serve **Claude** through the Anthropic Messages API
 — `azure` mode runs the agent on Claude deployed in [Microsoft Foundry](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-claude)
@@ -93,7 +93,18 @@ chooses the model unless you set `CODEX_SUBSCRIPTION_MODEL_ID`. In a sandbox, al
 until you turn them on in [Memory embeddings](#memory-embeddings). The agent reads
 images, but not PDFs or other files: it says so and asks you for the text.
 
-Each platform except `anthropic` and `codex-subscription` can run **direct** or **through the Lens
+`claude-subscription` runs the agent on your Claude subscription through the Claude
+CLI. Sign in once with `claude auth login` in the agent's environment, in the same
+Claude home that coding tasks use, and choose your subscription account. An API key,
+a setup token and a cloud login are refused, so the agent never falls back to API
+billing. Chat uses `opus` and classification `haiku`; set
+`CLAUDE_SUBSCRIPTION_MODEL_ID` and `CLAUDE_SUBSCRIPTION_CLASSIFICATION_MODEL_ID` to
+choose others. In a sandbox, allow `api.anthropic.com`, `claude.ai`, `claude.com`,
+`platform.claude.com` and `console.anthropic.com`. Memory embeddings are off until
+you turn them on in [Memory embeddings](#memory-embeddings). The agent reads no
+attachments: it says so and asks you for the text.
+
+Each platform except `anthropic`, `codex-subscription` and `claude-subscription` can run **direct** or **through the Lens
 Agents LLM gateway**. Routing is automatic: set `NEXUS_API_URL` and chat and
 classification route through the gateway (`…/llm/bedrock/{region}` for
 Bedrock, `…/llm/azure/anthropic/v1` for Azure,
@@ -410,7 +421,8 @@ Bedrock identifiers** — same names, no `us.`/`eu.`/`global.` prefix; **OpenAI
 model IDs are plain OpenAI API model names**; **OpenRouter model IDs are
 `vendor/model`**; **Anthropic model IDs are bare first-party names**
 (`claude-opus-5`); **LiteLLM model IDs are the model names your proxy
-defines**; **Codex subscription model IDs are the names Codex gives its models**.
+defines**; **Codex subscription model IDs are the names Codex gives its models**; **Claude
+subscription model IDs are the Claude CLI's names** (`opus`, `sonnet`, `haiku`).
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
@@ -438,6 +450,8 @@ defines**; **Codex subscription model IDs are the names Codex gives its models**
 | `LITELLM_CLASSIFICATION_MODEL_ID` | **(LiteLLM)** Fast model for classification gates, as your proxy names it. Name a Claude or other non-reasoning model: the gates allow a few output tokens, and a reasoning model can use them up before it answers. | `claude-haiku-5-5` |
 | `CODEX_SUBSCRIPTION_MODEL_ID` | **(Codex subscription)** Main model, as Codex names it. `default` lets Codex choose. | `default` |
 | `CODEX_SUBSCRIPTION_CLASSIFICATION_MODEL_ID` | **(Codex subscription)** Model for classification gates | the main model |
+| `CLAUDE_SUBSCRIPTION_MODEL_ID` | **(Claude subscription)** Main model, as the Claude CLI names it | `opus` |
+| `CLAUDE_SUBSCRIPTION_CLASSIFICATION_MODEL_ID` | **(Claude subscription)** Model for classification gates | `haiku` |
 | `CONTEXT_WINDOW_TOKENS` | Input-context window (tokens) to assume for the agent's model. Only needed when the catalog doesn't recognize it. Ignored unless a positive integer. | derived from the model ID |
 | `MODELS_DEV_URL` | Refresh the model-window catalog from a registry once at startup. Unset means no outbound call, bundled catalog only. | — (disabled) |
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-[compact](compaction.md) a conversation when its context occupancy reaches this percent of the model's window. `0` disables auto-compaction; out-of-range values fall back to the default. | `90` |
@@ -477,7 +491,7 @@ separate from `LLM_PROVIDER`:
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `EMBEDDING_PROVIDER` | Embedding platform: `bedrock` (Titan on `bedrock-runtime`), `azure-openai` (a `text-embedding-3` deployment on the Foundry resource), `openai` (the OpenAI API), `openrouter` (openrouter.ai's OpenAI-compatible `/embeddings`), or `none` (embeddings off — memory still works, vector search returns nothing). Unset — or any other value — derives the default from `LLM_PROVIDER`: `bedrock` and `bedrock-mantle` → `bedrock`, `azure` → `azure-openai`, `openai` → `openai`, `openrouter` → `openrouter` (whose embedding model defaults to off), `anthropic` → `openai` when `OPENAI_API_KEY` or `NEXUS_API_URL` is set (the gateway holds the key) and `none` otherwise (Anthropic serves no embedding models), `litellm` → `none`, `codex-subscription` → `none`. | derived |
+| `EMBEDDING_PROVIDER` | Embedding platform: `bedrock` (Titan on `bedrock-runtime`), `azure-openai` (a `text-embedding-3` deployment on the Foundry resource), `openai` (the OpenAI API), `openrouter` (openrouter.ai's OpenAI-compatible `/embeddings`), or `none` (embeddings off — memory still works, vector search returns nothing). Unset — or any other value — derives the default from `LLM_PROVIDER`: `bedrock` and `bedrock-mantle` → `bedrock`, `azure` → `azure-openai`, `openai` → `openai`, `openrouter` → `openrouter` (whose embedding model defaults to off), `anthropic` → `openai` when `OPENAI_API_KEY` or `NEXUS_API_URL` is set (the gateway holds the key) and `none` otherwise (Anthropic serves no embedding models), `litellm` → `none`, `codex-subscription` and `claude-subscription` → `none`. | derived |
 
 The embedding model itself still comes from the selected platform's
 `*_EMBEDDING_MODEL_ID` variable above, with the same credentials. With

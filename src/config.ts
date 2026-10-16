@@ -97,6 +97,7 @@ const LLM_PROVIDERS = [
   'anthropic',
   'litellm',
   'codex-subscription',
+  'claude-subscription',
 ] as const;
 type LlmProviderName = (typeof LLM_PROVIDERS)[number];
 const rawLlmProvider = (process.env.LLM_PROVIDER || '').trim().toLowerCase();
@@ -214,6 +215,7 @@ const nexusChatBaseUrls: Record<LlmProviderName, string | null> = {
   litellm: nexusLiteLlmBaseUrl,
   // A subscription runs through its own CLI and login, never through the gateway.
   'codex-subscription': null,
+  'claude-subscription': null,
 };
 const nexusChatBaseUrl = nexusChatBaseUrls[llmProvider];
 
@@ -394,6 +396,13 @@ const litellmClassificationModelId =
 const codexSubscriptionModelId = process.env.CODEX_SUBSCRIPTION_MODEL_ID || CODEX_DEFAULT_MODEL;
 const codexSubscriptionClassificationModelId =
   process.env.CODEX_SUBSCRIPTION_CLASSIFICATION_MODEL_ID || codexSubscriptionModelId;
+
+// Claude subscription model ids (used when LLM_PROVIDER=claude-subscription) are the
+// Claude CLI's model names. Its aliases follow the newest model of each tier, so the
+// defaults stay current without a release.
+const claudeSubscriptionModelId = process.env.CLAUDE_SUBSCRIPTION_MODEL_ID || 'opus';
+const claudeSubscriptionClassificationModelId =
+  process.env.CLAUDE_SUBSCRIPTION_CLASSIFICATION_MODEL_ID || 'haiku';
 // The LiteLLM key, sent as the `x-api-key` header, for direct mode. Not needed
 // through the gateway, which holds its own. May be a `__nexus_cred:<uuid>__`
 // sentinel, since it only rides a header.
@@ -439,6 +448,7 @@ const chatEndpoints: Record<LlmProviderName, { endpoint?: string; override?: str
   anthropic: { endpoint: anthropicBaseUrl, override: anthropicBaseUrl },
   litellm: { endpoint: litellmEndpoint, override: litellmOverride },
   'codex-subscription': {},
+  'claude-subscription': {},
 };
 const chatEndpoint = chatEndpoints[llmProvider];
 
@@ -500,6 +510,10 @@ const modelIds = {
     chat: codexSubscriptionModelId,
     classification: codexSubscriptionClassificationModelId,
   },
+  'claude-subscription': {
+    chat: claudeSubscriptionModelId,
+    classification: claudeSubscriptionClassificationModelId,
+  },
 }[llmProvider];
 
 // Which vendor serves memory embeddings. Its own selection, decoupled from
@@ -529,6 +543,7 @@ const EMBEDDING_PROVIDER_DEFAULTS: Record<LlmProviderName, EmbeddingProviderName
   litellm: 'none',
   // A subscription carries no embedding entitlement, and an API key is not assumed.
   'codex-subscription': 'none',
+  'claude-subscription': 'none',
 };
 const rawEmbeddingProvider = (process.env.EMBEDDING_PROVIDER || '').trim().toLowerCase();
 const isValidEmbeddingProvider = (EMBEDDING_PROVIDERS as readonly string[]).includes(

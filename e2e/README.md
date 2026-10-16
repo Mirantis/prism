@@ -35,6 +35,10 @@ The ChatGPT subscription scenario runs only with `LLM_PROVIDER=codex-subscriptio
 a Codex home signed in with `codex login --device-auth`, and both OpenAI API key
 variables empty: `npm run test --workspace=prism-agent-e2e -- --grep @codex-subscription`.
 
+The Claude subscription scenario runs only with `LLM_PROVIDER=claude-subscription`,
+a Claude home signed in with `claude auth login`, and `ANTHROPIC_API_KEY` and
+`CLAUDE_CODE_OAUTH_TOKEN` empty: `npm run test --workspace=prism-agent-e2e -- --grep @claude-subscription`.
+
 ### The voice chat scenario
 
 It needs no OpenAI account: the runtime discovers a synthetic managed Azure
