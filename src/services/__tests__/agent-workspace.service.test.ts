@@ -133,6 +133,51 @@ describe('AgentWorkspaceService telemetry', () => {
     }
   });
 
+  it('creates the agent from the default templates, with the name filled in', async () => {
+    mockPrisma.agentWorkspace.create.mockResolvedValue(createAgentRow({ id: 'agent-new' }));
+    await agentWorkspaceService.createAgent({
+      id: 'agent-new',
+      userId: 'user-1',
+      name: 'Helper',
+      agentType: 'AGENT',
+      teamName: 'Team',
+    });
+    const defaults = getDefaultWorkspaceFiles();
+    const data = mockPrisma.agentWorkspace.create.mock.calls[0][0].data;
+    expect(data.soulMd).toBe(defaults.soulMd);
+    expect(data.agentMd).toBe(defaults.agentMd);
+    expect(data.bootstrapMd).toContain('You are Helper, a new AI agent for the Team team.');
+  });
+
+  it('creates the agent from seeded documents, keeping the defaults for the rest', async () => {
+    mockPrisma.agentWorkspace.create.mockResolvedValue(createAgentRow({ id: 'agent-new' }));
+    await agentWorkspaceService.createAgent({
+      id: 'agent-new',
+      userId: 'user-1',
+      name: 'Helper',
+      agentType: 'AGENT',
+      teamName: 'Team',
+      documents: {
+        soulMd: 'You are {{agentName}} of {{teamName}}.',
+        agentMd: '# Guide',
+        bootstrapMd: '',
+      },
+    });
+    const defaults = getDefaultWorkspaceFiles();
+    expect(mockPrisma.agentWorkspace.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          soulMd: 'You are Helper of Team.',
+          agentMd: '# Guide',
+          bootstrapMd: '',
+          userMd: defaults.userMd,
+          heartbeatMd: defaults.heartbeatMd,
+          memoryMd: defaults.memoryMd,
+        }),
+      }),
+    );
+  });
+
   it('creates the agent with null model overrides when no settings defaults are set', async () => {
     // config.agentDefaults is {} in the test config mock (setup.ts).
     mockPrisma.agentWorkspace.create.mockResolvedValue(createAgentRow({ id: 'agent-new' }));

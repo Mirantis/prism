@@ -16,6 +16,7 @@ import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { config } from '../config';
 import { DocumentWriteActor, DocumentWriteMethod, WorkspaceDocField } from '../lib/workspace-docs';
+import type { WorkspaceSeed } from '../lib/workspace-seed';
 import { documentRevisionService } from './document-revision.service';
 
 // Format-only validation for the per-agent model override. Letters/digits and
@@ -108,6 +109,8 @@ export interface CreateAgentInput {
   name: string;
   agentType: AgentWorkspace['agentType'];
   teamName: string;
+  /** Documents that replace the default templates (`PRISM_WORKSPACE_SEED_DIR`). */
+  documents?: WorkspaceSeed;
 }
 
 /**
@@ -168,12 +171,14 @@ class AgentWorkspaceService {
    * Create a new agent with org/team context.
    */
   async createAgent(input: CreateAgentInput): Promise<AgentWorkspace> {
-    const defaults = getDefaultWorkspaceFiles();
+    const docs = { ...getDefaultWorkspaceFiles(), ...input.documents };
 
-    // Template the bootstrap with agent name and team name
-    const bootstrapMd = defaults.bootstrapMd
-      .replace(/\{\{agentName\}\}/g, () => input.name)
-      .replace(/\{\{teamName\}\}/g, () => input.teamName);
+    // Every document gets the name placeholders filled, since a seeded one may
+    // use them as the default bootstrap does.
+    const fill = (text: string) =>
+      text
+        .replace(/\{\{agentName\}\}/g, () => input.name)
+        .replace(/\{\{teamName\}\}/g, () => input.teamName);
 
     // The seed revisions land with the row, so the content the agent was
     // created with is the oldest thing its history holds. Without them the
@@ -185,13 +190,13 @@ class AgentWorkspaceService {
           userId: input.userId,
           name: input.name,
           agentType: input.agentType,
-          soulMd: defaults.soulMd,
-          userMd: defaults.userMd,
-          memoryMd: defaults.memoryMd,
-          heartbeatMd: defaults.heartbeatMd,
-          bootstrapMd,
-          visionMd: defaults.visionMd,
-          agentMd: defaults.agentMd,
+          soulMd: fill(docs.soulMd),
+          userMd: fill(docs.userMd),
+          memoryMd: docs.memoryMd,
+          heartbeatMd: fill(docs.heartbeatMd),
+          bootstrapMd: fill(docs.bootstrapMd),
+          visionMd: fill(docs.visionMd),
+          agentMd: fill(docs.agentMd),
           currentSessionId: uuidv4(),
           // Seed model overrides from ~/.prism/settings.json when present; null
           // leaves the agent on the env-default model (resolveEffectiveModel).
