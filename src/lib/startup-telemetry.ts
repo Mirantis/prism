@@ -71,6 +71,7 @@ export async function trackAgentStarted(
         ? { 'llm.region': config.awsRegion }
         : {}),
       'tool_risk_gate.mode': config.toolRiskGateMode,
+      'threads.mode': config.threadMode,
       // Which coding agent the coding_agent tools delegate to.
       'coding_agent': config.codingAgent,
       'execution_environment': getExecutionEnvironment().id,

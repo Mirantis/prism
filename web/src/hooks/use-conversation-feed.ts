@@ -2,11 +2,10 @@ import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAgent } from '@/lib/agent-context';
 import type { ChatConnection } from '@/lib/chat-socket/chat-connection';
-import { upsertMessage } from '@/lib/chat-socket/transcript';
 import type { ConversationThread } from '@/types';
 import { useComputerStatusFeed } from './use-computer-status';
 import { recentThreadsQueryKey } from './use-recent-threads';
-import { threadQueryKey } from './use-thread';
+import { threadQueryKey, upsertIntoHistory, type LoadedThread } from './use-thread';
 
 /**
  * Write the chat socket's events into the caches the pages read: each message into its
@@ -22,12 +21,12 @@ export function useConversationFeed(connection: ChatConnection) {
     () =>
       connection.listen({
         message: (message) => {
-          queryClient.setQueryData<ConversationThread>(threadQueryKey(agentId, message.threadId), (thread) =>
-            thread ? { ...thread, messages: upsertMessage(thread.messages ?? [], message) } : thread,
+          queryClient.setQueryData<LoadedThread>(threadQueryKey(agentId, message.threadId), (thread) =>
+            thread ? upsertIntoHistory(thread, message) : thread,
           );
         },
         thread: ({ threadId, title, createdAt }) => {
-          queryClient.setQueryData<ConversationThread>(threadQueryKey(agentId, threadId), (thread) =>
+          queryClient.setQueryData<LoadedThread>(threadQueryKey(agentId, threadId), (thread) =>
             thread ? { ...thread, title } : thread,
           );
           queryClient.setQueryData<ConversationThread[]>(recentThreadsQueryKey(agentId), (threads) => {
@@ -51,7 +50,8 @@ export function useConversationFeed(connection: ChatConnection) {
             return [created, ...threads];
           });
         },
-        // Compaction rewrites older messages in place, and no event says which.
+        // Compaction rewrites older messages in place, and no event says which. The thread
+        // loads again from its newest page.
         compaction: ({ threadId, status }) => {
           if (status !== 'completed') return;
           void queryClient.invalidateQueries({ queryKey: threadQueryKey(agentId, threadId) });

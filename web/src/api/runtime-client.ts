@@ -183,8 +183,11 @@ export const runtimeApi = {
     if (opts?.threadSource) params.set('threadSource', opts.threadSource);
     return request<ConversationThread[]>(`/agents/threads?${params.toString()}`);
   },
-  getThread: (agentId: string, userId: string, threadId: string) => {
+  // With `page`, the thread holds `page.limit` messages: the newest, or those before `page.before`.
+  getThread: (agentId: string, userId: string, threadId: string, page?: { limit: number; before?: string }) => {
     const params = new URLSearchParams({ agentId, userId });
+    if (page) params.set('limit', String(page.limit));
+    if (page?.before) params.set('before', page.before);
     return request<ConversationThread>(`/agents/threads/${threadId}?${params.toString()}`);
   },
   addMessage: (threadId: string, body: Partial<ConversationMessage>) =>

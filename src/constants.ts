@@ -21,6 +21,9 @@ export const MAX_FILE_SIZE_MB = MAX_FILE_SIZE_BYTES / (1024 * 1024);
  */
 export const MAX_ATTACHMENTS_PER_MESSAGE = 100;
 
+/** The most messages one page of a thread's history holds. */
+export const MAX_MESSAGE_PAGE = 200;
+
 /**
  * Default retention of attachment content: 168 h (7 days). After that the
  * hourly sweep deletes the media file; the metadata row (and its stub in the

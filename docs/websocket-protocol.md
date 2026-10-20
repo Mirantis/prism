@@ -44,7 +44,7 @@ binary frames. A frame is at most 1 MB.
 3. The server answers `welcome`:
 
    ```json
-   {"type":"welcome","payload":{"protocol":2,"streamId":"…","seq":57,"resumed":true,"you":{"id":"ada@example.com","name":"ada@example.com"},"snapshot":{"turns":[{"threadId":"…","state":"running"}],"computer":{}}}}
+   {"type":"welcome","payload":{"protocol":2,"streamId":"…","seq":57,"resumed":true,"you":{"id":"ada@example.com","name":"ada@example.com"},"threadMode":"multi","snapshot":{"turns":[{"threadId":"…","state":"running"}],"computer":{}}}}
    ```
 
    - `streamId` and `seq` together are your cursor. Keep the `seq` of the last
@@ -54,6 +54,9 @@ binary frames. A frame is at most 1 MB.
    - If `resumed` is `false`, reload history for the conversation on screen with
      `GET /messages?threadId=…`. Keep any events that arrive while that request
      is running, and apply them afterwards.
+   - `threadMode` is `single` when the agent keeps one conversation. Then show no
+     way to start or switch a conversation: `GET /threads` lists that one alone, and
+     `POST /threads` returns it. A runtime that sends no `threadMode` keeps many.
    - `snapshot.turns` lists every conversation that is working (`running`) or
      waiting (`queued`). A conversation that is not listed is idle.
    - `you` is who the Lens Agents sign-in says this connection is, or nulls when
@@ -77,7 +80,9 @@ see a gap, reconnect and resume from the last `seq` you applied.
   - Your own messages arrive here too. That copy replaces the message you drew
     before it was confirmed.
   - Order a conversation by `createdAt`, then by `id`. `GET /messages` returns
-    history in the same order.
+    history in the same order: the newest `limit` messages (50 by default, at most
+    200). Add `before=<message id>` for the page before that message. A page
+    shorter than `limit` starts at the conversation's first message.
   - `senderId` and `senderName` say who wrote a `USER` message, or are `null`.
     Show `senderName`. Neither decides what anyone may do.
 - **`turn`** `{ threadId, state, outcome?, error? }`: what a conversation is doing.

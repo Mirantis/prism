@@ -136,16 +136,17 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   }, []);
 
   // Start a fresh conversation thread on every CLI open, so the TUI opens to a
-  // clean slate. Its id is known before anything is sent, so slash commands
-  // that need a thread (e.g. /goal) work at once and every message names it.
-  // A runtime that is not up yet is asked again until it answers.
-  // Skipped in resume mode, where the picked thread is shown instead.
+  // clean slate, or open the agent's one conversation in single-thread mode. Its
+  // id is known before anything is sent, so slash commands that need a thread
+  // (e.g. /goal) work at once and every message names it. A runtime that is not
+  // up yet is asked again until it answers. Skipped in resume mode, where the
+  // picked thread is shown instead.
   useEffect(() => {
     if (resume) return;
     let stopped = false;
     let retry: NodeJS.Timeout | undefined;
     const start = async () => {
-      const threadId = await tuiAdapterService.startNewSession();
+      const threadId = await tuiAdapterService.openConversation();
       if (stopped) return;
       if (threadId) {
         setActiveThreadId(threadId);

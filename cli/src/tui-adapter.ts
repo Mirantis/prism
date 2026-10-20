@@ -17,6 +17,7 @@ import { AttachmentMeta } from './attachments.js';
 import type {
   OutgoingMessage,
   StreamEvent,
+  ThreadMode,
   TurnEventPayload,
   TurnState,
   Viewer,
@@ -391,11 +392,38 @@ class TuiAdapter {
       });
       if (!res.ok) return undefined;
       const body = (await res.json()) as { threadId: string };
-      this.threadId = body.threadId;
-      for (const message of this.unthreaded.splice(0)) {
-        this.client?.send({ ...message, threadId: body.threadId });
-      }
+      this.adopt(body.threadId);
       return body.threadId;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Open this CLI session's conversation and return its id. On an agent in
+   * single-thread mode that is the agent's one conversation, shown with its
+   * history; otherwise a fresh one (`startNewSession`). Undefined when the
+   * runtime did not answer; the caller tries again.
+   */
+  async openConversation(): Promise<string | undefined> {
+    const mode = await this.threadMode();
+    if (mode === undefined) return undefined;
+    if (mode === 'multi') return this.startNewSession();
+    // `GET /threads` lists the one conversation alone, with its context reading.
+    const [conversation] = await this.listSessions();
+    if (!conversation) return undefined;
+    if (conversation.contextUsage) this.events.emit('contextUsage', conversation.contextUsage);
+    await this.resumeThread(conversation.id);
+    return conversation.id;
+  }
+
+  /** How many conversations the agent keeps (`GET /agents/me`). Undefined when the runtime did not answer. */
+  async threadMode(): Promise<ThreadMode | undefined> {
+    try {
+      const res = await fetch(`${this.httpUrl}/agents/me`, { signal: AbortSignal.timeout(15_000) });
+      if (!res.ok) return undefined;
+      const body = (await res.json()) as { threadMode?: unknown };
+      return body.threadMode === 'single' ? 'single' : 'multi';
     } catch {
       return undefined;
     }
@@ -403,9 +431,17 @@ class TuiAdapter {
 
   /** Show an existing conversation: its history now (as `history`), and its events from here on. */
   resumeThread(threadId: string): Promise<void> {
-    this.threadId = threadId;
+    this.adopt(threadId);
     this.emitTurnState(threadId);
     return this.resync();
+  }
+
+  /** Make `threadId` the one this session shows, and send what was submitted before it existed. */
+  private adopt(threadId: string): void {
+    this.threadId = threadId;
+    for (const message of this.unthreaded.splice(0)) {
+      this.client?.send({ ...message, threadId });
+    }
   }
 
   /**

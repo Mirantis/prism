@@ -47,7 +47,7 @@ class ContextService {
     // 2. Resolve thread and fetch conversation
     let resolvedThreadId = threadId;
     if (includeConversation && !resolvedThreadId) {
-      const thread = await conversationService.getLatestThread(userId);
+      const thread = await conversationService.findLatestWebThread(options.agentId, userId);
       resolvedThreadId = thread?.id;
     }
 

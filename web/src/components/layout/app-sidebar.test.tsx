@@ -1,17 +1,18 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { cleanup, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import type { AgentSummary } from '@/types';
 
 /** The router and the sidebar chrome are not what this asserts; the nav list is. */
+let pathname = '/';
 vi.mock('@tanstack/react-router', () => ({
   Link: ({ children }: { children?: React.ReactNode }) => <a>{children}</a>,
-  useRouterState: () => '/',
+  useRouterState: () => pathname,
 }));
-vi.mock('./recents-nav', () => ({ RecentsNav: () => null }));
+vi.mock('./recents-nav', () => ({ RecentsNav: () => <div>Recents</div> }));
 vi.mock('./agent-presence', () => ({ AgentPresence: () => null }));
-vi.mock('./new-chat-button', () => ({ NewChatButton: () => null }));
+vi.mock('./new-chat-button', () => ({ NewChatButton: () => <div>New chat</div> }));
 vi.mock('./search-button', () => ({ SearchButton: () => null }));
 vi.mock('@/components/ui/sidebar', () => {
   const passthrough =
@@ -33,9 +34,14 @@ vi.mock('@/components/ui/sidebar', () => {
 });
 
 let agent: AgentSummary = { agentId: 'a1', userId: 'u1', name: 'Prism' };
-vi.mock('@/lib/agent-context', () => ({ useAgent: () => agent }));
+vi.mock('@/lib/agent-context', () => ({
+  useAgent: () => agent,
+  useSingleThreadMode: () => agent.threadMode === 'single',
+}));
 
 const { AppSidebar } = await import('./app-sidebar');
+
+afterEach(cleanup);
 
 describe('the Computer page in the sidebar', () => {
   it('is offered on a runtime without a desktop of its own, where a remote computer can connect', () => {
@@ -44,5 +50,24 @@ describe('the Computer page in the sidebar', () => {
     expect(screen.getByText('Computer')).toBeInTheDocument();
     expect(screen.getByText('Chat')).toBeInTheDocument();
     expect(screen.getByText('Activity')).toBeInTheDocument();
+  });
+});
+
+describe('the conversations in the sidebar', () => {
+  it('offers a new chat and the Recents list when the agent keeps many conversations', () => {
+    pathname = '/chat';
+    agent = { agentId: 'a1', userId: 'u1', name: 'Prism', threadMode: 'multi' };
+    render(<AppSidebar />);
+    expect(screen.getByText('New chat')).toBeInTheDocument();
+    expect(screen.getByText('Recents')).toBeInTheDocument();
+  });
+
+  it('offers neither when the agent keeps one conversation', () => {
+    pathname = '/chat';
+    agent = { agentId: 'a1', userId: 'u1', name: 'Prism', threadMode: 'single' };
+    render(<AppSidebar />);
+    expect(screen.queryByText('New chat')).not.toBeInTheDocument();
+    expect(screen.queryByText('Recents')).not.toBeInTheDocument();
+    expect(screen.getByText('Chat')).toBeInTheDocument();
   });
 });

@@ -6,7 +6,7 @@ import { OverviewStats } from '@/components/overview/overview-stats';
 import { RecentConversations } from '@/components/overview/recent-conversations';
 import { SetupChecklist } from '@/components/overview/setup-checklist';
 import { runtimeApi } from '@/api/runtime-client';
-import { useAgent } from '@/lib/agent-context';
+import { useAgent, useSingleThreadMode } from '@/lib/agent-context';
 
 export const Route = createFileRoute('/')({
   component: OverviewPage,
@@ -14,6 +14,7 @@ export const Route = createFileRoute('/')({
 
 function OverviewPage() {
   const agent = useAgent();
+  const singleThread = useSingleThreadMode();
   const { data: details } = useQuery({
     queryKey: ['agent-details', agent.agentId],
     queryFn: () => runtimeApi.details(),
@@ -23,10 +24,15 @@ function OverviewPage() {
     <Page className="space-y-6">
       <AgentHero details={details} />
       <OverviewStats />
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] [&>*]:min-w-0">
-        <RecentConversations />
+      {/* One conversation has no list to pick from: Chat in the sidebar opens it. */}
+      {singleThread ? (
         <SetupChecklist />
-      </div>
+      ) : (
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] [&>*]:min-w-0">
+          <RecentConversations />
+          <SetupChecklist />
+        </div>
+      )}
     </Page>
   );
 }

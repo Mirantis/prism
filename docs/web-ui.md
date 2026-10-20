@@ -45,8 +45,8 @@ The main conversation surface.
   multi-step responses in real time rather than one block at the end. An empty
   conversation offers a few first messages; press one to send it.
 - **Reading back.** A line with the day separates messages sent on different
-  days. While you read further up, new messages do not move the view; press
-  **Jump to latest** to return to the end.
+  days. Older messages load as you scroll up. While you read further up, new
+  messages do not move the view; press **Jump to latest** to return to the end.
 - **Slash commands.** Type `/` to open a command popup, the same as the
   **[Terminal UI](terminal-ui.md#slash-commands)**: filter by typing, arrow keys
   to move the selection, **Tab** or **Enter** to complete it, then **Enter** to
@@ -140,6 +140,17 @@ The main conversation surface.
   the input, and a system note (`Conversation compacted — N older messages
   summarized.`) lands in the chat when it finishes. `/compact` triggers the same
   thing manually.
+
+### One conversation
+
+With `THREAD_MODE=single` the agent keeps one conversation. **Chat** always opens
+it, and there is no **New chat**, no **Recents** and no list of conversations on
+the Overview or in the command palette. Scheduled tasks, goals and heartbeats post
+into it, and [compaction](compaction.md) keeps it inside the model's window.
+Slack and Teams threads stay separate conversations.
+
+When you switch an agent to `single`, it keeps the conversation you wrote in last.
+The other conversations come back when you switch to `multi` again.
 
 ## Channels
 

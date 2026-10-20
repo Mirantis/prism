@@ -4,8 +4,9 @@
  * Root-mounted history replay. The runtime owns exactly one agent, so no
  * agent id appears in the path — the handler reads `config.agentId`.
  *
- *   GET /messages?limit=N&threadId — ConversationMessage[] (threadId optional;
- *                                    defaults to the latest thread)
+ *   GET /messages?limit=N&threadId&before — ConversationMessage[] (threadId
+ *       optional, defaults to the latest thread; `before` is a message id, and
+ *       the page ends just before it)
  */
 
 import { Router, Request, Response } from 'express';
@@ -13,6 +14,7 @@ import { config } from '../config';
 import { logger } from '../logger';
 import { conversationService } from '../services/conversation.service';
 import { attachmentService } from '../services/attachment.service';
+import { MAX_MESSAGE_PAGE } from '../constants';
 
 const router = Router();
 
@@ -23,7 +25,7 @@ router.get('/messages', async (req: Request, res: Response) => {
       return;
     }
     const raw = Number.parseInt(String(req.query.limit ?? ''), 10);
-    const limit = Number.isFinite(raw) && raw > 0 ? Math.min(raw, 200) : 50;
+    const limit = Number.isFinite(raw) && raw > 0 ? Math.min(raw, MAX_MESSAGE_PAGE) : 50;
 
     // Optional ?threadId: replay a specific thread (the resume flow). Cheap
     // ownership check (no message load) — 404 when it doesn't belong to this
@@ -49,7 +51,9 @@ router.get('/messages', async (req: Request, res: Response) => {
       );
       threadId = thread.id;
     }
-    const messages = await conversationService.getRecentMessages(threadId, limit);
+    // A page shorter than `limit` holds the thread's first message.
+    const before = typeof req.query.before === 'string' && req.query.before ? req.query.before : undefined;
+    const messages = await conversationService.getRecentMessages(threadId, limit, before);
     // Oldest first, a tie broken by id: the order every chat client keeps.
     const sorted = [...messages].sort(
       (a, b) =>

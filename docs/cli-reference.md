@@ -19,7 +19,7 @@ prism [command] [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--resume` | Show a picker of previous conversations to resume, instead of starting fresh. |
+| `--resume` | Show a picker of previous conversations to resume, instead of starting fresh. An agent with [one conversation](web-ui.md#one-conversation) has nothing to pick, and `prism` opens that conversation. |
 | `--version`, `-v` | Print the version and exit. |
 | `--help`, `-h` | Print help and exit. |
 

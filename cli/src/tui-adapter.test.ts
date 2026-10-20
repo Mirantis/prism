@@ -135,6 +135,56 @@ describe('TuiAdapter.startNewSession', () => {
   });
 });
 
+describe('TuiAdapter.openConversation', () => {
+  /** A runtime whose `GET /agents/me` names this thread mode, and whose `GET /threads` lists one conversation. */
+  function stubAgent(threadMode: string | undefined) {
+    const fetchMock = vi.fn(async (url: string, init?: { method?: string }) => {
+      if (url.endsWith('/agents/me')) return { ok: true, status: 200, json: async () => ({ agentId: 'a1', threadMode }) };
+      if (init?.method === 'POST') return { ok: true, status: 200, json: async () => ({ threadId: MINE }) };
+      if (url.endsWith('/threads')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [{ id: OTHER, title: 'The conversation', updatedAt: '2026-10-20T08:00:00.000Z', contextUsage: null }],
+        };
+      }
+      return { ok: true, status: 200, json: async () => [storedMessage({ threadId: OTHER, content: 'last week' })] };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  it('starts a fresh conversation when the agent keeps many', async () => {
+    const fetchMock = stubAgent('multi');
+
+    await expect(tuiAdapterService.openConversation()).resolves.toBe(MINE);
+    expect(fetchMock).toHaveBeenCalledWith('http://example.test:3003/threads', expect.objectContaining({ method: 'POST' }));
+  });
+
+  it('starts a fresh conversation on a runtime that does not say', async () => {
+    stubAgent(undefined);
+
+    await expect(tuiAdapterService.openConversation()).resolves.toBe(MINE);
+  });
+
+  it('opens the one conversation with its history when the agent keeps one', async () => {
+    const fetchMock = stubAgent('single');
+    const histories: TuiMessage[][] = [];
+    tuiAdapterService.events.on('history', (h) => histories.push(h));
+
+    await expect(tuiAdapterService.openConversation()).resolves.toBe(OTHER);
+
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ method: 'POST' }));
+    expect(histories.map((h) => h.map((m) => m.content))).toEqual([['last week']]);
+  });
+
+  it('is asked again while the runtime does not answer', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')));
+
+    await expect(tuiAdapterService.openConversation()).resolves.toBeUndefined();
+  });
+});
+
 describe('TuiAdapter sending', () => {
   it('names the session thread on every message', async () => {
     stubRuntime();

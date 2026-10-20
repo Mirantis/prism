@@ -24,7 +24,7 @@ vi.mock('../conversation-engine.service', async () => {
 });
 vi.mock('../../config', () => ({ config: mockConfig }));
 vi.mock('../../lib/telemetry', () => ({ trackEvent: vi.fn() }));
-vi.mock('../conversation.service', () => ({ conversationService: {} }));
+vi.mock('../conversation.service', () => ({ conversationService: { clientThreadFilter: async () => ({}) } }));
 vi.mock('../message-delivery.service', () => ({ messageDeliveryService: { showInConversation: vi.fn() } }));
 vi.mock('../pending-work.service', () => ({ pendingWorkService: { end: mockEndWork } }));
 

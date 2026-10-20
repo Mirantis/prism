@@ -13,6 +13,7 @@
 import { z } from 'zod';
 import { MAX_ATTACHMENTS_PER_MESSAGE } from '../constants';
 import type { InvokeError } from '../types';
+import type { ThreadMode } from '../config';
 
 /** The version a client names in `hello`. There is one; an older client is told to update. */
 export const PROTOCOL_VERSION = 2;
@@ -233,6 +234,11 @@ export interface WelcomePayload {
   resumed: boolean;
   /** Who this connection is, or nulls when the sign-in did not say. */
   you: { id: string | null; name: string | null };
+  /**
+   * `single`: the agent has one conversation, which `POST /threads` returns and
+   * `GET /threads` lists alone, so a client shows no way to start or switch one.
+   */
+  threadMode: ThreadMode;
   snapshot: {
     turns: Array<{ threadId: string; state: Exclude<TurnState, 'idle'> }>;
     computer: Record<string, unknown> | null;

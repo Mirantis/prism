@@ -63,6 +63,13 @@ export interface MessageInput {
   internalStep?: boolean;
 }
 
+/** One page of a thread's client history: `limit` messages, the newest ones or those before `before`. */
+export interface MessagePage {
+  limit: number;
+  /** A message id; the page ends just before it. */
+  before?: string;
+}
+
 /** A web thread came into being — emitted as `'thread'` on `conversationService.events`. */
 export interface ThreadCreated {
   userId: string;
@@ -105,6 +112,43 @@ class ConversationService {
   private databaseProvider = new DatabaseThreadProvider();
   private liveProviders = new Map<ThreadSource, ThreadMessageProvider>();
 
+  /**
+   * Single-thread mode's one conversation: the web thread the person wrote in last,
+   * else the newest web thread. A daily session reset in multi-thread mode leaves an
+   * empty newest thread, which must not hide the conversation the person had. Read
+   * from the database each time, so it follows the rows whoever wrote them.
+   */
+  private async singleThread(agentId: string, userId: string): Promise<ConversationThread | null> {
+    const lastWritten = await prisma.conversationMessage.findFirst({
+      where: {
+        role: MessageRole.USER,
+        internalStep: false,
+        thread: { agentId, userId, externalThreadId: null },
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      select: { thread: true },
+    });
+    return lastWritten?.thread ?? this.newestWebThread(agentId, userId);
+  }
+
+  private newestWebThread(agentId: string, userId: string): Promise<ConversationThread | null> {
+    return prisma.conversationThread.findFirst({
+      where: { agentId, userId, externalThreadId: null },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * The threads a client may list, read or write to. In single-thread mode that is
+   * the one conversation and the channel threads; every other web thread stays in
+   * the database for when the agent runs in multi-thread mode again.
+   */
+  async clientThreadFilter(agentId: string, userId: string): Promise<Prisma.ConversationThreadWhereInput> {
+    if (config.threadMode !== 'single') return {};
+    const conversation = await this.singleThread(agentId, userId);
+    return { OR: [{ externalThreadId: { not: null } }, { id: conversation?.id ?? '' }] };
+  }
+
   /** Serve every thread of `source` from `provider`, which reads the channel live. */
   registerThreadProvider(source: ThreadSource, provider: ThreadMessageProvider): void {
     this.liveProviders.set(source, provider);
@@ -129,7 +173,8 @@ class ConversationService {
    * Get or create the latest database conversation thread for a user.
    *
    * There is no "active" flag — the runtime uses the most recently created
-   * web thread. Channel threads (externalThreadId set) are excluded; those are
+   * web thread, or the one conversation in single-thread mode (see
+   * findLatestWebThread). Channel threads (externalThreadId set) are excluded; those are
    * resolved via getOrCreateThreadByExternalId. Creates a fresh thread when the
    * user has none yet.
    */
@@ -152,16 +197,13 @@ class ConversationService {
     return thread;
   }
 
-  /** The user's latest web thread, or null when there is none. Creates nothing. */
+  /**
+   * The user's latest web thread, or null when there is none. Creates nothing.
+   * In single-thread mode it is the one conversation.
+   */
   async findLatestWebThread(agentId: string, userId: string): Promise<ConversationThread | null> {
-    return prisma.conversationThread.findFirst({
-      where: {
-        agentId,
-        userId,
-        externalThreadId: null,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    if (config.threadMode === 'single') return this.singleThread(agentId, userId);
+    return this.newestWebThread(agentId, userId);
   }
 
   /**
@@ -187,12 +229,16 @@ class ConversationService {
    * conversation is rooted in (e.g. the CLI's launch cwd). It's persisted once
    * here and never changed; shell tools later use it as their cwd. Empty /
    * whitespace-only values are ignored.
+   *
+   * In single-thread mode it creates nothing and returns the one conversation,
+   * whose workspace root stays the one it was created with.
    */
   async startNewThread(
     agentId: string,
     userId: string,
     options?: { workspaceRoot?: string },
   ): Promise<ConversationThread> {
+    if (config.threadMode === 'single') return this.getOrCreateLatestThread(agentId, userId);
     const workspaceRoot = options?.workspaceRoot?.trim();
     const thread = await prisma.conversationThread.create({
       data: {
@@ -218,8 +264,11 @@ class ConversationService {
    * up empty threads. Threads rooted in a workspace are never reused — the CLI
    * creates one (with a workspaceRoot) on every launch, and handing that
    * session's thread to the web would make them share it.
+   *
+   * In single-thread mode it returns the one conversation.
    */
   async getOrCreateFreshThread(agentId: string, userId: string): Promise<ConversationThread> {
+    if (config.threadMode === 'single') return this.getOrCreateLatestThread(agentId, userId);
     const newest = await prisma.conversationThread.findFirst({
       where: {
         agentId,
@@ -309,14 +358,21 @@ class ConversationService {
   }
 
   /**
-   * Get a thread by ID (with ownership check)
+   * Get a thread by ID (with ownership check). With `page`, it holds that page of
+   * messages instead of the whole history.
    */
-  async getThread(userId: string, agentId: string, threadId: string): Promise<ThreadWithMessages | null> {
+  async getThread(
+    userId: string,
+    agentId: string,
+    threadId: string,
+    page?: MessagePage,
+  ): Promise<ThreadWithMessages | null> {
     const thread = await prisma.conversationThread.findFirst({
       where: {
         id: threadId,
         agentId,
         userId,
+        ...(await this.clientThreadFilter(agentId, userId)),
       },
     });
 
@@ -326,7 +382,10 @@ class ConversationService {
 
     // CLIENT history (web SPA): hide concise-mode internal steps. The model path
     // (getThreadContext) reads without this option so it still replays them.
-    const messages = await this.withHiddenStepToolCalls(threadId, await provider.getMessages(threadId, { view: 'client' }));
+    const read = page
+      ? await provider.getRecentMessages(threadId, page.limit, { view: 'client', before: page.before })
+      : await provider.getMessages(threadId, { view: 'client' });
+    const messages = await this.withHiddenStepToolCalls(threadId, read);
 
     // Attach file metadata (no bytes) so the web UI renders chips on history.
     const withAttachments: MessageWithAttachments[] =
@@ -349,7 +408,7 @@ class ConversationService {
    */
   async getOwnedThreadId(userId: string, agentId: string, threadId: string): Promise<string | null> {
     const thread = await prisma.conversationThread.findFirst({
-      where: { id: threadId, agentId, userId },
+      where: { id: threadId, agentId, userId, ...(await this.clientThreadFilter(agentId, userId)) },
       select: { id: true },
     });
     return thread?.id ?? null;
@@ -367,6 +426,7 @@ class ConversationService {
       where: {
         agentId,
         userId,
+        ...(await this.clientThreadFilter(agentId, userId)),
         // The DATABASE set is the web/CLI-resumable one. Genuine web/CLI threads
         // are always created with externalThreadId: null (getOrCreateLatestThread
         // / startNewThread); externalId-keyed DATABASE threads (a channel's
@@ -465,15 +525,17 @@ class ConversationService {
   }
 
   /**
-   * Get recent messages from a thread for CLIENT history (CLI `/messages`).
-   * Hides concise-mode internal steps — the model path uses getThreadContext.
+   * Get recent messages from a thread for CLIENT history (`GET /messages`): the
+   * newest `limit`, or the `limit` before the message `before`. Hides
+   * concise-mode internal steps — the model path uses getThreadContext.
    */
   async getRecentMessages(
     threadId: string,
-    limit: number = 20
+    limit: number = 20,
+    before?: string,
   ): Promise<ConversationMessage[]> {
     const provider = await this.resolveProvider(threadId);
-    const messages = await provider.getRecentMessages(threadId, limit, { view: 'client' });
+    const messages = await provider.getRecentMessages(threadId, limit, { view: 'client', before });
     return (await this.withHiddenStepToolCalls(threadId, messages)).map(withSenderId);
   }
 
@@ -608,18 +670,6 @@ class ConversationService {
     trackEvent('thread external id set', null, {
       ...(config.agentId ? { 'agent.id': config.agentId } : {}),
       'thread.id': threadId,
-    });
-  }
-
-  /**
-   * Get the latest database thread for a user without creating one.
-   * Used by heartbeat to include conversation context. Channel threads
-   * (externalThreadId set) are excluded.
-   */
-  async getLatestThread(userId: string): Promise<ConversationThread | null> {
-    return prisma.conversationThread.findFirst({
-      where: { userId, externalThreadId: null },
-      orderBy: { createdAt: 'desc' },
     });
   }
 }

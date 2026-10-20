@@ -17,6 +17,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import prisma from '../lib/prisma';
 import { conversationService } from './conversation.service';
+import { config } from '../config';
 import { logger } from '../logger';
 
 // ============================================================================
@@ -45,6 +46,13 @@ class SessionManagerService {
   async initialize(): Promise<void> {
     if (this.isInitialized) {
       logger.info('Session manager already initialized');
+      return;
+    }
+
+    // A reset's whole effect is a new conversation, and single-thread mode keeps one.
+    if (config.threadMode === 'single') {
+      logger.info('Single-thread mode: no daily or idle session resets');
+      this.isInitialized = true;
       return;
     }
 
@@ -162,7 +170,7 @@ class SessionManagerService {
     // once per launch; without this the agent would silently fall back to the
     // global SHELL_WORKSPACE_ROOT after a reset.
     try {
-      const latest = await conversationService.getLatestThread(userId);
+      const latest = await conversationService.findLatestWebThread(agent.id, userId);
       await conversationService.startNewThread(agent.id, userId, {
         workspaceRoot: latest?.workspaceRoot ?? undefined,
       });

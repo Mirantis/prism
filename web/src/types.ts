@@ -1,3 +1,5 @@
+import type { ThreadMode } from '@/lib/chat-socket/protocol';
+
 export type MessageRole = 'USER' | 'AGENT' | 'SYSTEM';
 export type MessageTrigger = 'USER_INPUT' | 'HEARTBEAT' | 'CRON_TASK' | 'GOAL' | 'WEBHOOK';
 
@@ -225,6 +227,8 @@ export interface AgentSummary {
   name: string;
   /** Whether this runtime can give the agent a computer; false leaves the page out. */
   hasComputer?: boolean;
+  /** `single` leaves out every way to start or switch a conversation. */
+  threadMode?: ThreadMode;
 }
 
 export interface HeartbeatStatus {

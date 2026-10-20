@@ -230,6 +230,13 @@ const initialize = async () => {
       );
     }
 
+    if (config.invalidThreadMode) {
+      logger.warn(
+        { configuredMode: config.invalidThreadMode, effectiveMode: config.threadMode },
+        '[Startup] invalid THREAD_MODE; using multi',
+      );
+    }
+
     if (config.invalidToolRiskGateMode) {
       logger.warn(
         { configuredMode: config.invalidToolRiskGateMode, effectiveMode: config.toolRiskGateMode },
@@ -252,6 +259,11 @@ const initialize = async () => {
       '[Startup] resolving agent workspace',
     );
     const agent = await resolveOrBootstrapSingleAgent();
+    // Created before any work or request can name a thread, so two first requests never make two.
+    if (config.threadMode === 'single') {
+      const thread = await conversationService.getOrCreateLatestThread(agent.id, agent.userId);
+      logger.info({ threadId: thread.id }, '[Startup] single-thread mode');
+    }
     // Before any turn, since the tools a turn gets depend on whether remote computers exist.
     await remoteComputerService.load(agent.id);
 

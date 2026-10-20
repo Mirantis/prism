@@ -12,6 +12,7 @@
     "test:e2e:tui": "vitest run -c tui/vitest.config.ts",
     "test:e2e:web": "npx bddgen && npx tsx support/run-web-suite.ts --grep-invert @slack",
     "test:e2e:docker": "npx bddgen && npx playwright test --grep \"Execution environment\"",
+    "test:e2e:single-thread": "npx bddgen && npx playwright test --grep @single-thread",
     "test:e2e:slack:web": "npx bddgen && npx playwright test --grep @slack",
     "test:e2e:slack:tui": "vitest run -c tui/vitest.config.ts tui/tests/bedrock-mantle-slack.test.ts",
     "test:run": "vitest run -c vitest.unit.config.ts"

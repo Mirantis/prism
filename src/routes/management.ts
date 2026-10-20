@@ -90,7 +90,7 @@ import {
 } from '../lib/execution-environments/get-execution-environment';
 import { compactionService } from '../services/compaction.service';
 import { attachmentService, detectMediaType, classifyMediaType } from '../services/attachment.service';
-import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB, GOAL_MAX_OBJECTIVE_CHARS } from '../constants';
+import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB, GOAL_MAX_OBJECTIVE_CHARS, MAX_MESSAGE_PAGE } from '../constants';
 import { goalService } from '../services/goal.service';
 import { hasComputer } from '../services/computer/supported';
 import {
@@ -167,6 +167,8 @@ router.get('/me', async (_req: Request, res: Response) => {
       name: agent.name,
       // The Web UI leaves the Computer page out where this host has no desktop for one.
       hasComputer: hasComputer(),
+      // `single`: clients offer no way to start or switch a conversation.
+      threadMode: config.threadMode,
     });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -1441,22 +1443,33 @@ router.get('/threads', async (req: Request, res: Response) => {
 
 /**
  * GET /agents/threads/:threadId
- * Fetch a thread with messages (with ownership check).
- * Query: { userId, agentId }
+ * Fetch a thread with messages (with ownership check). With `limit`, the thread
+ * holds one page of history: the newest `limit` messages, or those before the
+ * message `before`. Without it, the whole history.
+ * Query: { userId, agentId, limit?, before? }
  */
 router.get('/threads/:threadId', async (req: Request<{ threadId: string }>, res: Response) => {
   try {
     const { threadId } = req.params;
-    const { userId, agentId } = req.query;
+    const { userId, agentId, limit, before } = req.query;
     if (!userId || !agentId) {
       res.status(400).json({ error: 'Missing required query params: userId, agentId' });
       return;
     }
+    const pageLimit = Number.parseInt(String(limit ?? ''), 10);
+    const page =
+      Number.isFinite(pageLimit) && pageLimit > 0
+        ? {
+            limit: Math.min(pageLimit, MAX_MESSAGE_PAGE),
+            before: typeof before === 'string' && before ? before : undefined,
+          }
+        : undefined;
 
     const thread = await conversationService.getThread(
       userId as string,
       agentId as string,
-      threadId
+      threadId,
+      page,
     );
 
     if (!thread) {
@@ -1736,10 +1749,10 @@ router.get('/skills', async (req: Request, res: Response) => {
       if (owned) {
         workspaceRoot = (await conversationService.getThreadWorkspaceRoot(owned)) ?? undefined;
       }
-    } else {
+    } else if (config.agentId) {
       // No explicit thread → use the latest thread's workspace, read-only (never
       // creates one). The CLI's startup thread carries its launch cwd here.
-      const latest = await conversationService.getLatestThread(config.ownerUserId);
+      const latest = await conversationService.findLatestWebThread(config.agentId, config.ownerUserId);
       workspaceRoot = latest?.workspaceRoot ?? undefined;
     }
     const skills = (await skillCatalogService.getCatalog(workspaceRoot)).map((s) => ({

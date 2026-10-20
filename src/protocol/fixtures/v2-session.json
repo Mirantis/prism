@@ -50,6 +50,7 @@
             "id": "ada@example.com",
             "name": "ada@example.com"
           },
+          "threadMode": "multi",
           "snapshot": {
             "turns": [],
             "computer": {
@@ -81,6 +82,7 @@
             "id": "grace@example.com",
             "name": "grace@example.com"
           },
+          "threadMode": "multi",
           "snapshot": {
             "turns": [],
             "computer": {
@@ -627,6 +629,7 @@
             "id": "grace@example.com",
             "name": "grace@example.com"
           },
+          "threadMode": "multi",
           "snapshot": {
             "turns": [],
             "computer": {

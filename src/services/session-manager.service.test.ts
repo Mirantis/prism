@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createTestAgentWorkspace } from '../test-utils/factories';
 
 // Use vi.hoisted to create mocks that are available before vi.mock hoisting
-const { mockPrisma, mockStartNewThread, mockGetLatestThread } = vi.hoisted(() => ({
+const { mockPrisma, mockStartNewThread, mockFindLatestWebThread } = vi.hoisted(() => ({
   mockPrisma: {
     agentWorkspace: {
       findFirst: vi.fn(),
@@ -21,7 +21,7 @@ const { mockPrisma, mockStartNewThread, mockGetLatestThread } = vi.hoisted(() =>
     },
   },
   mockStartNewThread: vi.fn(),
-  mockGetLatestThread: vi.fn(),
+  mockFindLatestWebThread: vi.fn(),
 }));
 
 vi.mock('../lib/prisma', () => ({
@@ -31,12 +31,13 @@ vi.mock('../lib/prisma', () => ({
 vi.mock('./conversation.service', () => ({
   conversationService: {
     startNewThread: mockStartNewThread,
-    getLatestThread: mockGetLatestThread,
+    findLatestWebThread: mockFindLatestWebThread,
   },
 }));
 
 // Import after mocking
 import { sessionManagerService } from './session-manager.service';
+import { config } from '../config';
 
 // Access internal state for testing
 const service = sessionManagerService as any;
@@ -139,7 +140,7 @@ describe('Requirement: Session Management', () => {
       });
 
       mockPrisma.agentWorkspace.findFirst.mockResolvedValue(agent);
-      mockGetLatestThread.mockResolvedValue(null);
+      mockFindLatestWebThread.mockResolvedValue(null);
       mockStartNewThread.mockResolvedValue({ id: 'thread-new' });
       mockPrisma.agentWorkspace.update.mockResolvedValue({});
 
@@ -163,7 +164,7 @@ describe('Requirement: Session Management', () => {
       });
 
       mockPrisma.agentWorkspace.findFirst.mockResolvedValue(agent);
-      mockGetLatestThread.mockResolvedValue({ id: 'thread-old', workspaceRoot: '/home/me/project' });
+      mockFindLatestWebThread.mockResolvedValue({ id: 'thread-old', workspaceRoot: '/home/me/project' });
       mockStartNewThread.mockResolvedValue({ id: 'thread-new' });
       mockPrisma.agentWorkspace.update.mockResolvedValue({});
 
@@ -355,6 +356,19 @@ describe('Requirement: Session Management', () => {
       await service.initialize();
 
       expect(mockPrisma.agentWorkspace.findMany).not.toHaveBeenCalled();
+    });
+
+    it('schedules no reset in single-thread mode, so no new conversation starts', async () => {
+      config.threadMode = 'single';
+      try {
+        await service.initialize();
+        await vi.advanceTimersByTimeAsync(48 * 60 * 60 * 1000);
+      } finally {
+        config.threadMode = 'multi';
+      }
+
+      expect(mockPrisma.agentWorkspace.findMany).not.toHaveBeenCalled();
+      expect(mockStartNewThread).not.toHaveBeenCalled();
     });
   });
 

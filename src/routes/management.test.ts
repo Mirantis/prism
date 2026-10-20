@@ -25,7 +25,7 @@ const {
   mockAddMessage,
   mockGetOrCreateLatestThread,
   mockGetOrCreateFreshThread,
-  mockGetLatestThread,
+  mockFindLatestWebThread,
   mockGetOwnedThreadId,
   mockGetThreadWorkspaceRoot,
   mockSetExternalId,
@@ -47,7 +47,7 @@ const {
   mockAddMessage: vi.fn(),
   mockGetOrCreateLatestThread: vi.fn(),
   mockGetOrCreateFreshThread: vi.fn(),
-  mockGetLatestThread: vi.fn(),
+  mockFindLatestWebThread: vi.fn(),
   mockGetOwnedThreadId: vi.fn(),
   mockGetThreadWorkspaceRoot: vi.fn(),
   mockSetExternalId: vi.fn(),
@@ -139,7 +139,7 @@ vi.mock('../services/conversation.service', () => ({
     addMessage: mockAddMessage,
     getOrCreateLatestThread: mockGetOrCreateLatestThread,
     getOrCreateFreshThread: mockGetOrCreateFreshThread,
-    getLatestThread: mockGetLatestThread,
+    findLatestWebThread: mockFindLatestWebThread,
     getOwnedThreadId: mockGetOwnedThreadId,
     getThreadWorkspaceRoot: mockGetThreadWorkspaceRoot,
     setExternalId: mockSetExternalId,
@@ -1789,7 +1789,7 @@ describe('Management Routes', () => {
 
       expect(res.status).toBe(404);
       expect(res.body.error).toBe('Thread not found');
-      expect(mockGetThread).toHaveBeenCalledWith('user-1', 'agent-1', 'thread-1');
+      expect(mockGetThread).toHaveBeenCalledWith('user-1', 'agent-1', 'thread-1', undefined);
     });
 
     it('returns thread with messages on success', async () => {
@@ -1810,7 +1810,17 @@ describe('Management Routes', () => {
       expect(res.status).toBe(200);
       expect(res.body.id).toBe('thread-1');
       expect(res.body.messages).toHaveLength(2);
-      expect(mockGetThread).toHaveBeenCalledWith('user-1', 'agent-1', 'thread-1');
+      expect(mockGetThread).toHaveBeenCalledWith('user-1', 'agent-1', 'thread-1', undefined);
+    });
+
+    it('reads one page of history when a limit is given', async () => {
+      mockGetThread.mockResolvedValue({ id: 'thread-1', messages: [] });
+
+      const res = await authedRequest(app)
+        .get('/agents/threads/thread-1?userId=user-1&agentId=agent-1&limit=50&before=msg-9');
+
+      expect(res.status).toBe(200);
+      expect(mockGetThread).toHaveBeenCalledWith('user-1', 'agent-1', 'thread-1', { limit: 50, before: 'msg-9' });
     });
 
     it('returns 500 when getThread throws', async () => {
@@ -2138,7 +2148,7 @@ describe('Management Routes', () => {
       (config as unknown as { ownerUserId: string }).ownerUserId = 'owner-user-id';
       // Default: threads have no workspace root (global skills only).
       mockGetThreadWorkspaceRoot.mockResolvedValue(null);
-      mockGetLatestThread.mockResolvedValue(null);
+      mockFindLatestWebThread.mockResolvedValue(null);
     });
 
     it('GET /skills returns name/description/dirName/source (no bodies); no threadId → latest thread workspace', async () => {
@@ -2160,7 +2170,7 @@ describe('Management Routes', () => {
     });
 
     it('GET /skills with no threadId falls back to the latest thread\'s workspace', async () => {
-      mockGetLatestThread.mockResolvedValue({ id: 'latest', workspaceRoot: '/repo' });
+      mockFindLatestWebThread.mockResolvedValue({ id: 'latest', workspaceRoot: '/repo' });
       mockGetCatalog.mockReturnValue([
         { name: 'repo-skill', description: 'r', dirName: 'repo-skill', dir: '/repo/.claude/skills/repo-skill', skillMdPath: '/repo/.claude/skills/repo-skill/SKILL.md', source: 'workspace' },
       ]);

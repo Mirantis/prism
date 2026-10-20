@@ -12,7 +12,7 @@ import {
   SidebarRail,
   useSidebar,
 } from '@/components/ui/sidebar';
-import { useAgent } from '@/lib/agent-context';
+import { useAgent, useSingleThreadMode } from '@/lib/agent-context';
 import { NAV_GROUPS } from '@/lib/nav';
 import { AgentPresence } from './agent-presence';
 import { NewChatButton } from './new-chat-button';
@@ -21,6 +21,7 @@ import { RecentsNav } from './recents-nav';
 
 export function AppSidebar() {
   const agent = useAgent();
+  const singleThread = useSingleThreadMode();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { setOpenMobile } = useSidebar();
 
@@ -47,7 +48,7 @@ export function AppSidebar() {
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
-        <NewChatButton />
+        {!singleThread && <NewChatButton />}
         <SearchButton />
       </SidebarHeader>
 
@@ -78,8 +79,8 @@ export function AppSidebar() {
           </SidebarGroup>
         ))}
 
-        {/* Conversation threads — only on the Chat page. */}
-        {pathname.startsWith('/chat') && <RecentsNav />}
+        {/* Conversation threads — only on the Chat page, and only when there can be more than one. */}
+        {!singleThread && pathname.startsWith('/chat') && <RecentsNav />}
       </SidebarContent>
       <SidebarRail />
     </Sidebar>

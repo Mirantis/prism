@@ -525,6 +525,7 @@ class WebSocketGatewayService {
         seq: eventStreamService.seq,
         resumed: replay !== null,
         you: { id: ws.sender?.id ?? null, name: ws.sender?.name ?? null },
+        threadMode: config.threadMode,
         snapshot: { turns: inboundMessageService.turns(), computer },
       },
     });
