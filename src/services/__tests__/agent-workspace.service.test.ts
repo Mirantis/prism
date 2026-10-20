@@ -100,6 +100,7 @@ describe('AgentWorkspaceService telemetry', () => {
     expect(mockTrackEvent).toHaveBeenCalledWith('agent created', 'user-1', {
       'agent.id': 'agent-new',
       'agent.type': 'SUBAGENT',
+      'agent.seeded_documents': '0',
     });
   });
 
@@ -163,6 +164,7 @@ describe('AgentWorkspaceService telemetry', () => {
         bootstrapMd: '',
       },
     });
+    expect(mockTrackEvent).toHaveBeenCalledWith('agent created', 'user-1', expect.objectContaining({ 'agent.seeded_documents': '3' }));
     const defaults = getDefaultWorkspaceFiles();
     expect(mockPrisma.agentWorkspace.create).toHaveBeenCalledWith(
       expect.objectContaining({

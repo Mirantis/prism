@@ -338,8 +338,9 @@ curl http://localhost:3003/health
 ```
 
 On first boot with an empty database, Prism Agent auto-creates the workspace
-using `AGENT_NAME`, `TEAM_NAME`, and `OWNER_USER_ID`. Subsequent boots find
-the existing workspace and reuse it.
+using `AGENT_NAME`, `TEAM_NAME`, `OWNER_USER_ID`, and the documents in
+`PRISM_WORKSPACE_SEED_DIR`. Subsequent boots find the existing workspace and
+reuse it.
 
 ### Docker
 
@@ -382,6 +383,7 @@ restarts.
 | `AGENT_NAME` | Display name on first boot | `Prism` |
 | `TEAM_NAME` | Team name on first boot | `Local` |
 | `OWNER_USER_ID` | Owner user ID on first boot. The default is a local sentinel — Slack identity linking later overlays the real `lensUserId` per-message | `00000000-0000-0000-0000-000000000001` |
+| `PRISM_WORKSPACE_SEED_DIR` | A directory of documents (`soulMd.md`, `agentMd.md`, …) the agent starts with on first boot instead of the defaults — see [Configuration](docs/configuration.md#core) | unset |
 | `BEDROCK_MODEL_ID` | Main model | `global.anthropic.claude-opus-5-5` |
 | `BEDROCK_CLASSIFICATION_MODEL_ID` | Heartbeat gate model | `global.anthropic.claude-haiku-5-5` |
 | `BEDROCK_EMBEDDING_MODEL_ID` | Embedding model | `amazon.titan-embed-text-v2:0` |

@@ -211,6 +211,7 @@ class AgentWorkspaceService {
     trackEvent('agent created', input.userId, {
       'agent.id': agent.id,
       'agent.type': agent.agentType,
+      'agent.seeded_documents': String(Object.keys(input.documents ?? {}).length),
     });
     return agent;
   }

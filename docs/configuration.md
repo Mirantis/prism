@@ -145,7 +145,7 @@ public HTTPS (see [Microsoft Teams](teams.md#the-public-messaging-endpoint)).
 | `AGENT_NAME` | Display name on first boot | `Prism` |
 | `TEAM_NAME` | Team name on first boot | `Local` |
 | `OWNER_USER_ID` | Owner user ID on first boot | local sentinel UUID |
-| `PRISM_WORKSPACE_SEED_DIR` | A directory of documents the agent starts with on first boot instead of the defaults: `soulMd.md`, `agentMd.md`, `userMd.md`, `heartbeatMd.md`, `visionMd.md` and `bootstrapMd.md`, each optional and at most 128 KiB. `{{agentName}}` and `{{teamName}}` in them are filled in. An empty `bootstrapMd.md` skips first-run onboarding; an empty file for any other document starts it empty. A seeded Agent Guide counts as an edited one for the [risk gate](#tool-risk-gate). | unset |
+| `PRISM_WORKSPACE_SEED_DIR` | A directory of documents the agent starts with on first boot instead of the defaults: `soulMd.md`, `agentMd.md`, `userMd.md`, `heartbeatMd.md`, `visionMd.md` and `bootstrapMd.md`, each optional. `{{agentName}}` and `{{teamName}}` in them are filled in. An empty `bootstrapMd.md` skips first-run onboarding; an empty file for any other document starts it empty. A seeded Agent Guide is the [risk gate](#tool-risk-gate)'s policy unless it is the stock guide. | unset |
 | `SHELL_WORKSPACE_ROOT` | Working directory for the agent's [shell tools](tools.md#shell) when its commands run on this machine. In a container the workspace is `/prism/workspace`. | install `workspace` dir (Docker image: `/home/node`) |
 | `EXECUTION_ENVIRONMENT` | **Detected automatically — set this only to override it.** Where the agent's commands run, and where its workspace and skills are kept: `docker` (a container, with storage Docker keeps) or `local` (this machine). See [where commands run](tools.md#where-commands-run). | `docker` when a container engine answers, else `local` |
 | `PRISM_DATA_DIR` | Persistent data dir for [skills](skills.md), [plugins](plugins.md), attachment media (`<data dir>/media`) and the coding agent's config. The Docker image sets this to the `/data` volume. When the agent's commands run in a container, its skills, plugins and coding-agent config are in that container under `/prism`. | `/data` (Docker image), else `~/.prism` |
@@ -184,7 +184,7 @@ out of every tier. Blank overrides log a warning and use the default.
 `AGENT_NAME`, `TEAM_NAME`, `OWNER_USER_ID` and `PRISM_WORKSPACE_SEED_DIR` only
 matter on the **first** boot with an empty database; later boots reuse the stored
 workspace, so changes the agent or you make to its documents are kept. A seed
-document that cannot be read, or is too large, is skipped with a warning and the
+document that cannot be read is skipped with a warning and the
 default is used instead.
 
 ### What a coding task may do
@@ -288,7 +288,7 @@ the rest as background.
 
 A guide you have never edited is not used as policy, so a new agent runs on the
 built-in rules alone. A guide the agent started with from `PRISM_WORKSPACE_SEED_DIR`
-counts as edited, and is the policy from the first turn. Edit any part of the guide and the whole document becomes
+is the policy from the first turn, unless it is the stock guide. Edit any part of the guide and the whole document becomes
 your policy, stock sentences included — so read it through before you switch from
 `observe` to `enforce`. If it says "read-only by default" under `## Safety`,
 remove that line: as policy it refuses the file edits and builds the agent needs
