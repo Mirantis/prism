@@ -51,8 +51,8 @@ export interface AgentContext {
   recentMessages: ConversationMessage[];
   lastHeartbeatAlert?: string;
   lastHeartbeatAlertAt?: number;
-  /** A recurring task's note from its last run that sent a message, for a run that reads no history. */
-  lastSentNote?: { text: string; at: number };
+  /** What a recurring task's runs sent and reported since, for a run that reads no history. */
+  lastSend?: TaskLastSend;
   /** Per-turn runtime events surfaced authoritatively in the system prompt. */
   runtimeNotices?: string[];
 }
@@ -110,8 +110,8 @@ export interface InvokeRequest {
   outputDestination?: { platform: ChannelName; conversationId: string };
   lastHeartbeatAlert?: string;
   lastHeartbeatAlertAt?: number;
-  /** A recurring task's note from its last run that sent a message, for a run that reads no history. */
-  lastSentNote?: { text: string; at: number };
+  /** What a recurring task's runs sent and reported since, for a run that reads no history. */
+  lastSend?: TaskLastSend;
   /** Messages that channels queued for this heartbeat, one entry per channel. */
   heartbeatTriggers?: HeartbeatTrigger[];
   /**
@@ -217,6 +217,17 @@ export interface ResumedReply {
   messageIds: string[];
   unsaved: ToolCallRecord[];
   unsentAttachmentIds: string[];
+}
+
+/**
+ * What a recurring task's runs sent and reported since, for a run that reads no
+ * history: the messages of the last run that sent, and the newest result after it.
+ */
+export interface TaskLastSend {
+  /** One line per message: where it went, then its text. */
+  messages: string;
+  at: number;
+  latestReport?: { text: string; at: number };
 }
 
 export interface ToolCallRecord {

@@ -27,18 +27,18 @@ import {
   type DeliverTo,
 } from './delivery-target.service';
 import { conversationService } from './conversation.service';
-import { outboundMessageService, sentAMessage } from './outbound-message.service';
+import { outboundMessageService, sentMessages } from './outbound-message.service';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { isTimezone } from '../lib/timezone';
 import { runVerdictGate } from '../lib/classification-gate';
 import type { ToolRiskGateErrorCode } from '../lib/tool-risk-gate';
-import type { ToolCallRecord } from '../types';
 import { CRON_TASK_GATE_PROMPT, buildCronGateUserMessage } from '../prompts/cron-prompt';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { parseSchedule } from './cron-schedule';
 import type { ChannelName } from './channel-adapter.interface';
+import type { TaskLastSend, ToolCallRecord } from '../types';
 import { MAX_RESUME_ATTEMPTS, pendingWorkService, type PendingWorkItem } from './pending-work.service';
 
 // ============================================================================
@@ -203,11 +203,11 @@ class CronSchedulerService {
   private lastDelivered: Map<string, { text: string; at: number }> = new Map();
 
   /**
-   * Per-task note of the last unbound run that sent a message, delivered or not.
-   * An unbound run reads no history, so this note tells the next run about the
-   * send. In memory only, like the delivery baseline.
+   * Per unbound task, what its last sending run sent and what the newest run
+   * after it reported, which the next run reads in place of history. Null means
+   * none; an absent entry is read from the stored messages on the first run.
    */
-  private lastSent: Map<string, { text: string; at: number }> = new Map();
+  private lastSend: Map<string, TaskLastSend | null> = new Map();
 
   /**
    * Tasks with a run currently in flight, each with the run. node-cron fires ticks regardless
@@ -335,7 +335,9 @@ class CronSchedulerService {
     this.stopJob(task.id);
     if (!previous || !sameBaselineKey(previous.task, task)) {
       this.lastDelivered.delete(task.id);
-      this.lastSent.delete(task.id);
+    }
+    if (previous && previous.task.instruction !== task.instruction) {
+      this.lastSend.set(task.id, null);
     }
 
     if (!task.isActive) {
@@ -419,7 +421,7 @@ class CronSchedulerService {
     } finally {
       this.firedOneShots.delete(task.id);
       this.lastDelivered.delete(task.id);
-      this.lastSent.delete(task.id);
+      this.lastSend.delete(task.id);
     }
   }
 
@@ -503,7 +505,7 @@ class CronSchedulerService {
   unscheduleTask(taskId: string, userId?: string, invokeMode?: string): void {
     this.stopJob(taskId);
     this.lastDelivered.delete(taskId);
-    this.lastSent.delete(taskId);
+    this.lastSend.delete(taskId);
     trackEvent('cron task deleted', userId ?? null, {
       ...(config.agentId ? { 'agent.id': config.agentId } : {}),
       'cron.task.id': taskId,
@@ -540,6 +542,69 @@ class CronSchedulerService {
    * `updateMany`, which accepts a missing row. A failed write is logged; the
    * stored time then reads as due, and the next boot runs the task once more.
    */
+  /** What the task's runs sent and reported since, read from the stored messages once per process. */
+  private async lastSendOf(task: BackendCronTask): Promise<TaskLastSend | undefined> {
+    if (!this.lastSend.has(task.id)) this.lastSend.set(task.id, await this.readLastSend(task));
+    return this.lastSend.get(task.id) ?? undefined;
+  }
+
+  /**
+   * The newest stored run of this task that sent a message, and the newest one
+   * after it. An unbound run is stored under the task's heading, delivered or
+   * withheld, with its tool calls. A run the gate withheld that sent nothing is
+   * not stored, so a restart loses an all-clear that came after the send.
+   */
+  private async readLastSend(task: BackendCronTask): Promise<TaskLastSend | null> {
+    const heading = `**Scheduled Task: ${task.name}**`;
+    try {
+      const rows = await prisma.conversationMessage.findMany({
+        where: {
+          role: 'AGENT',
+          triggeredBy: 'CRON_TASK',
+          thread: { agentId: task.agentId },
+          content: { startsWith: heading },
+          createdAt: { gte: new Date(task.createdAt) },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+        select: { content: true, toolCalls: true, createdAt: true },
+      });
+      let latestReport: TaskLastSend['latestReport'];
+      for (const row of rows) {
+        const messages = sentMessages((row.toolCalls as ToolCallRecord[] | null) ?? []);
+        const at = row.createdAt.getTime();
+        if (messages.length > 0) return { messages: messages.join('\n'), at, ...(latestReport && { latestReport }) };
+        latestReport ??= { text: row.content.slice(heading.length).trim(), at };
+      }
+    } catch (err) {
+      logger.warn({ err }, `[CronScheduler] Could not read what "${task.name}" last sent`);
+    }
+    return null;
+  }
+
+  /**
+   * A run that sent replaces the record, unless its task changed while it ran.
+   * Answers whether the run sent.
+   */
+  private noteSends(task: BackendCronTask, toolCalls: ToolCallRecord[]): boolean {
+    const messages = sentMessages(toolCalls);
+    if (messages.length === 0) return false;
+    if (this.isCurrent(task)) this.lastSend.set(task.id, { messages: messages.join('\n'), at: Date.now() });
+    return true;
+  }
+
+  /** A later run's result, so the next run reads whether the finding still held. An empty result says nothing. */
+  private noteReport(task: BackendCronTask, body: string): void {
+    const last = this.lastSend.get(task.id);
+    if (!last || !body.trim() || !this.isCurrent(task)) return;
+    this.lastSend.set(task.id, { ...last, latestReport: { text: body.trim(), at: Date.now() } });
+  }
+
+  /** Whether the task is still scheduled with the instruction this run had. */
+  private isCurrent(task: BackendCronTask): boolean {
+    return this.scheduledJobs.get(task.id)?.task.instruction === task.instruction;
+  }
+
   private async recordRun(taskId: string, ranAt?: Date): Promise<void> {
     const scheduled = this.scheduledJobs.get(taskId);
     if (!scheduled || scheduled.isOneShot) return;
@@ -635,7 +700,7 @@ class CronSchedulerService {
               originChannel: (task.originChannel as ChannelName | null) ?? undefined,
               originChannelId: task.originChannelId ?? undefined,
             }
-          : { broadcastsOutput: true, lastSentNote: this.lastSent.get(task.id) }),
+          : { broadcastsOutput: true, lastSend: await this.lastSendOf(task) }),
       });
       // A shutdown stopped the run. It delivers nothing and stays due. From here
       // the run delivers, so a shutdown that starts later lets it end.
@@ -650,6 +715,8 @@ class CronSchedulerService {
         ? await messageDeliveryService.threadContext(boundThreadId, task.originChannel, task.originChannelId)
         : undefined;
       const target = { deliverTo: task.deliverTo, channelIds: parseCommaList(task.channelIds) };
+
+      const sent = !boundThreadId && this.noteSends(task, result.toolCalls);
 
       // Budget exceeded — notify user and record the attempt
       if (result.error?.type === 'budget_exceeded') {
@@ -684,11 +751,7 @@ class CronSchedulerService {
       const lastStep = result.steps[result.steps.length - 1];
       const responseText = (lastStep?.text ?? '').trim();
       const body = responseText || result.response;
-      const sent = sentAMessage(result.toolCalls);
-      const stillThisTask = this.scheduledJobs.get(task.id)?.task.instruction === task.instruction;
-      if (!boundThreadId && sent && body.trim() && stillThisTask) {
-        this.lastSent.set(task.id, { text: body.trim(), at: Date.now() });
-      }
+      if (!boundThreadId && !sent) this.noteReport(task, body);
 
       // A task that delivers nowhere skips the gate's model call too. A bound
       // task always delivers 'all' (readTaskDelivery), so it never gets here.
@@ -746,8 +809,6 @@ class CronSchedulerService {
         if (prior && !verdict.startsWith('REPEAT') && body.trim() !== prior.text) {
           this.lastDelivered.delete(task.id);
         }
-        // An all-clear ends what the note reported, so a recurrence is sent again.
-        if (!sent && !verdict.startsWith('REPEAT')) this.lastSent.delete(task.id);
         await outboundMessageService.keepWithheldRun({
           agentId: task.agentId,
           userId: task.userId,
@@ -819,7 +880,7 @@ class CronSchedulerService {
     }
     this.scheduledJobs.clear();
     this.lastDelivered.clear();
-    this.lastSent.clear();
+    this.lastSend.clear();
     logger.info('[CronScheduler] All cron tasks stopped');
   }
 }
