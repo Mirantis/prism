@@ -90,12 +90,14 @@ Given('Claude Code has a saved subscription login', async () => {
   // Read on this machine, where the runtime's tasks run unless they run in its container.
   test.skip(process.env.EXECUTION_ENVIRONMENT === 'docker',
     'The container keeps its own Claude home, which this process cannot read.');
-  const home = process.env.CLAUDE_CONFIG_DIR;
-  const login = home
-    ? await readSavedLogin(getExecutionEnvironment(), process.env, home).catch(() => 'none')
-    : 'none';
-  test.skip(login !== 'subscription' || process.env.CLAUDE_CODE_SUBSCRIPTION !== 'true',
-    'Subscription coverage needs CLAUDE_CODE_SUBSCRIPTION=true and CLAUDE_CONFIG_DIR signed in to a Claude subscription with claude auth login.');
+  const home = process.env.CLAUDE_CONFIG_DIR ?? '';
+  const needs = 'Subscription coverage needs CLAUDE_CODE_SUBSCRIPTION=true and CLAUDE_CONFIG_DIR signed in to a Claude subscription with claude auth login.';
+  test.skip(!home || process.env.CLAUDE_CODE_SUBSCRIPTION !== 'true', needs);
+  // This worker has no SHELL_WORKSPACE_ROOT, so its workspace root is /home/node,
+  // which a host may not have. The probe runs in the runtime's workspace instead.
+  // Opted in, a probe that gives no answer fails the scenario rather than skipping it.
+  const login = await readSavedLogin({ ...getExecutionEnvironment(), workspaceRoot: () => E2E_WORKSPACE }, process.env, home);
+  test.skip(login !== 'subscription', needs);
 });
 
 When('I ask a Claude Code task how it is signed in', async ({ page }) => {
