@@ -32,7 +32,7 @@ import { getComputerTools } from '../tools/computer';
 import type { ConversationMessage } from '../prompts/context-builder';
 import { CRON_TASK_GATE_PROMPT, buildCronGateUserMessage } from '../prompts/cron-prompt';
 import { WEBHOOK_GATE_PROMPT, buildWebhookGateUserMessage } from '../prompts/webhook-gate-prompt';
-import type { AgentContext, InvokeRequest } from '../types';
+import type { AgentContext, InvokeRequest, TaskLastSend } from '../types';
 import type { ChatPlatform } from '../services/channel-adapter.interface';
 import { slackChannelLabel } from '../utils/slack-formatter';
 import { teamsChannelLabel } from '../utils/teams-formatter';
@@ -178,6 +178,8 @@ interface TurnInput {
   computer?: boolean;
   /** Tools a host adds beside the built-ins, such as a connector's. Stubbed like the rest. */
   extraTools?: Record<string, Tool>;
+  /** What a recurring task's earlier runs sent, as the scheduler gives an unbound cron run. */
+  lastSend?: TaskLastSend;
 }
 
 export interface ToolCallRecord {
@@ -209,6 +211,7 @@ export function replyOf(trace: TurnTrace): string {
  */
 export async function runTurn(input: TurnInput): Promise<TurnTrace> {
   const context = await agentContext(input.history);
+  context.lastSend = input.lastSend;
   const agentId = input.withSubagent ? PARENT_AGENT_ID : EVAL_AGENT_ID;
   const modelId = resolveEffectiveModel(context.model);
   const provider = createProvider();

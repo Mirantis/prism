@@ -100,6 +100,35 @@ function utcNow(): string {
   return `${new Date().toISOString().slice(0, 19)}Z`;
 }
 
+const HOUR_MS = 60 * 60 * 1000;
+
+/** A recurring task's send tools, answering as a linked Slack workspace does. */
+const SEND_STUBS = {
+  list_message_targets: () => ({
+    targets: [
+      { target: 'slack:C0OPS0001', platform: 'slack', kind: 'channel', name: 'ops', main: false },
+      { target: 'slack:C0TEAM001', platform: 'slack', kind: 'channel', name: 'team', main: true },
+    ],
+  }),
+  send_message: (input: Record<string, unknown>) => ({
+    sent: true,
+    target: String(input.target),
+    name: String(input.target).replace(/^#/, ''),
+    messageId: '1760940000.000100',
+  }),
+};
+
+const NIGHTLY_CHECK = `Check the nightly build with \`ci status nightly\`. If it failed, post it to #ops and mention ${BEN}.`;
+
+/** `ci status nightly` for one finished build. */
+function nightlyStatus(build: number, result: 'FAILED' | 'PASSED'): string {
+  return `nightly #${build}: ${result}${result === 'FAILED' ? ' (integration tests)' : ''}, finished ${lastNightly()} UTC\n`;
+}
+
+function sentMessage(trace: TurnTrace): boolean {
+  return trace.calls.some((c) => c.tool === 'send_message');
+}
+
 /** The last 02:00 UTC as `ls -l` prints a time stamp, for a file a nightly job wrote. */
 function lastNightly(): string {
   const at = new Date();
@@ -654,6 +683,62 @@ export const SCENARIOS: Scenario[] = [
       });
       const verdict = await cronGate(instruction, replyOf(trace));
       return { pass: verdict === 'SUPPRESS', detail: `${verdict} | ${describeTrace(trace)}` };
+    },
+  },
+  {
+    id: 'cron.sends-every-run-message-again',
+    expect: 'A task that asks for a message on every run sends it again although an earlier run sent the same text.',
+    grader: 'tool call',
+    run: async () => {
+      const trace = await runTurn({
+        mode: 'cron',
+        prompt: `Every Monday at 09:00 UTC, post this reminder in #team: "On-call this week: ${ANA}. Please check the rota."`,
+        lastSend: {
+          messages: `- To #team: On-call this week: ${ANA}. Please check the rota.`,
+          at: Date.now() - 7 * 24 * HOUR_MS,
+        },
+        maxSteps: 4,
+        stubs: SEND_STUBS,
+      });
+      return { pass: sentMessage(trace), detail: describeTrace(trace) };
+    },
+  },
+  {
+    id: 'cron.holds-back-repeat-send',
+    expect: 'A conditional task does not send again for the failure an earlier run already sent, and says it still holds.',
+    grader: 'tool call',
+    run: async () => {
+      const trace = await runTurn({
+        mode: 'cron',
+        prompt: NIGHTLY_CHECK,
+        lastSend: {
+          messages: `- To #ops: Nightly build #812 failed in the integration tests. ${BEN} please check.`,
+          at: Date.now() - HOUR_MS,
+        },
+        maxSteps: 4,
+        stubs: { ...SEND_STUBS, shell_exec: () => ({ stdout: nightlyStatus(812, 'FAILED'), stderr: '', exitCode: 0 }) },
+      });
+      const reply = replyOf(trace);
+      return { pass: !sentMessage(trace) && /812|fail/i.test(reply), detail: describeTrace(trace) };
+    },
+  },
+  {
+    id: 'cron.sends-after-recurrence',
+    expect: 'A conditional task sends again for a failure that began after a run reported the condition had cleared.',
+    grader: 'tool call',
+    run: async () => {
+      const trace = await runTurn({
+        mode: 'cron',
+        prompt: NIGHTLY_CHECK,
+        lastSend: {
+          messages: `- To #ops: Nightly build #790 failed in the integration tests. ${BEN} please check.`,
+          at: Date.now() - 72 * HOUR_MS,
+          latestReport: { text: 'The nightly build #801 passed.', at: Date.now() - 48 * HOUR_MS },
+        },
+        maxSteps: 4,
+        stubs: { ...SEND_STUBS, shell_exec: () => ({ stdout: nightlyStatus(812, 'FAILED'), stderr: '', exitCode: 0 }) },
+      });
+      return { pass: sentMessage(trace), detail: describeTrace(trace) };
     },
   },
   {
