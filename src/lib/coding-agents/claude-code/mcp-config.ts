@@ -9,7 +9,6 @@
  */
 import path from 'path';
 import { logger } from '../../../logger';
-import { AsyncChannel } from '../../../utils/async-channel';
 import type { ExecutionEnvironment } from '../../execution-environments/execution-environment';
 import type {
   CodingAgentEvent,
@@ -71,75 +70,62 @@ function entryFor(server: CodingAgentMcpServer, viaSh: boolean): Record<string, 
 }
 
 /**
- * Write the task's config, start the CLI on it through `launch`, and remove the
- * config once that run's stream has ended. A failure to write it is the run's
- * closing `result`, as a launch failure is.
+ * Write the task's config and start the CLI on it through `launch`. The run
+ * removes the config once its stream has ended; a config that is not written,
+ * or a `signal` that fires first, removes it before anything starts.
  */
-export function runWithMcpConfig(
+export async function startWithMcpConfig(
   task: CodingAgentTask,
   environment: ExecutionEnvironment,
-  displayName: string,
+  signal: AbortSignal,
   launch: (configPath: string) => CodingAgentRun,
-): CodingAgentRun {
+): Promise<CodingAgentRun> {
   const { files } = environment;
   // Native Windows puts no `sh` on the path; the container and macOS and Linux
   // hosts do.
   const viaSh = environment.id !== 'local' || process.platform !== 'win32';
-  const events = new AsyncChannel<CodingAgentEvent>();
-  let run: CodingAgentRun | null = null;
-  let stopped = false;
-  let ended = false;
-
-  const closeWith = (message: string): void => {
-    events.push({ type: 'result', stopReason: 'error', turns: 0, message });
-  };
-
-  const pump = async (): Promise<void> => {
-    const dir = await files.makeTempDir(DIR_PREFIX);
-    try {
-      const configPath = path.posix.join(dir, FILE_NAME);
-      const { document, leftOut } = claudeMcpConfig(task.mcpServers, viaSh);
-      if (leftOut.length > 0) {
-        logger.warn(
-          { taskId: task.taskId, servers: leftOut },
-          '[AgentTask] MCP servers left out: a value holds ${…} text that Claude Code would replace',
-        );
-      }
-      await files.writeText(configPath, document, { mode: 0o600 });
-      if (stopped) {
-        closeWith(`${displayName} was stopped before it started`);
-        return;
-      }
-      run = launch(configPath);
-      for await (const event of run.events) events.push(event);
-    } finally {
-      await files.remove(dir).catch((err: unknown) => {
-        logger.warn({ err, taskId: task.taskId, dir }, '[AgentTask] could not remove the MCP config');
-      });
-    }
-  };
-
-  pump()
-    .catch((err: unknown) => {
-      logger.error({ err, taskId: task.taskId }, '[AgentTask] coding task failed to start');
-      closeWith(`${displayName} failed to start: ${err instanceof Error ? err.message : String(err)}`);
-    })
-    .finally(() => {
-      ended = true;
-      events.close();
+  const dir = await files.makeTempDir(DIR_PREFIX);
+  const remove = (): Promise<void> =>
+    files.remove(dir).catch((err: unknown) => {
+      logger.warn({ err, taskId: task.taskId, dir }, '[AgentTask] could not remove the MCP config');
     });
-
+  let run: CodingAgentRun;
+  try {
+    const configPath = path.posix.join(dir, FILE_NAME);
+    const { document, leftOut } = claudeMcpConfig(task.mcpServers, viaSh);
+    if (leftOut.length > 0) {
+      logger.warn(
+        { taskId: task.taskId, servers: leftOut },
+        '[AgentTask] MCP servers left out: a value holds ${…} text that Claude Code would replace',
+      );
+    }
+    await files.writeText(configPath, document, { mode: 0o600 });
+    signal.throwIfAborted();
+    run = launch(configPath);
+  } catch (err) {
+    await remove();
+    throw err;
+  }
   return {
-    events,
+    events: removedAfter(run.events, remove),
     get exited(): boolean {
-      return run ? run.exited : ended;
+      return run.exited;
     },
     get mark() {
-      return run?.mark;
+      return run.mark;
     },
-    stop: () => {
-      stopped = true;
-      run?.stop();
-    },
+    started: run.started,
+    stop: () => run.stop(),
   };
+}
+
+async function* removedAfter(
+  events: AsyncIterable<CodingAgentEvent>,
+  remove: () => Promise<void>,
+): AsyncIterable<CodingAgentEvent> {
+  try {
+    yield* events;
+  } finally {
+    await remove();
+  }
 }

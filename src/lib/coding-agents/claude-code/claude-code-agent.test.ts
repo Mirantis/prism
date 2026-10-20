@@ -14,6 +14,7 @@ import { fakeExecutionEnvironment } from '../../../test-utils/fake-execution-env
 import { localFiles } from '../../execution-environments/local/local-files';
 import type {
   ExecutionFiles,
+  FileStat,
   RunOptions,
 } from '../../execution-environments/execution-environment';
 import type {
@@ -35,22 +36,61 @@ const baseTask: CodingAgentTask = {
   mcpServers: [],
 };
 
-/** Start a task in an environment that records the launch instead of running anything. */
-function capture(task: Partial<CodingAgentTask>): {
+const DIR_STAT: FileStat = {
+  size: 0,
+  mtimeMs: 0,
+  isFile: false,
+  isDirectory: true,
+  isSymbolicLink: false,
+};
+
+/** `claude auth status --json` from Claude Code 2.1.304 signed in to a subscription, account fields replaced. */
+const SUBSCRIPTION_STATUS = JSON.stringify({
+  loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty',
+  email: 'user@example.com', orgId: 'org-1', orgName: 'Example', subscriptionType: 'max',
+});
+
+interface Launch {
   command: string;
   args: readonly string[];
   options: RunOptions;
-} {
-  let captured: { command: string; args: readonly string[]; options: RunOptions } | undefined;
+  child: FakeChild;
+}
+
+/**
+ * Start a task in an environment that records each launch instead of running
+ * anything. `status` is what `claude auth status` prints; without it the home
+ * is missing, so the CLI is never asked.
+ */
+function start(task: Partial<CodingAgentTask> = {}, status?: string) {
+  const launches: Launch[] = [];
+  let asked = 0;
   const environment = fakeExecutionEnvironment({
+    files: status === undefined ? {} : { stat: async () => DIR_STAT },
     runProgram: (command, args, options) => {
-      captured = { command, args, options };
-      return new FakeChild().asExecProcess();
+      const child = new FakeChild();
+      if (args[0] === 'auth' && status !== undefined) {
+        asked += 1;
+        child.emitLine(status);
+        process.nextTick(() => child.finish(0));
+      } else {
+        launches.push({ command, args, options, child });
+      }
+      return child.asExecProcess();
     },
   });
-  createClaudeCodeAgent(environment).run({ ...baseTask, ...task });
-  if (!captured) throw new Error('the environment was not asked to run anything');
-  return captured;
+  const run = createClaudeCodeAgent(environment).run({ ...baseTask, ...task });
+  /** The task's own launch, once the work before it is done. */
+  const launched = async (): Promise<Launch> => {
+    await vi.waitFor(() => expect(launches).toHaveLength(1));
+    return launches[0];
+  };
+  return { run, launched, launches, asked: () => asked };
+}
+
+/** The launch of a task, which the test never finishes. */
+function capture(task: Partial<CodingAgentTask>, status?: string): Promise<Launch> {
+  return start(task, status).launched();
 }
 
 /** The value carried by a flag, or undefined when the flag is absent. */
@@ -61,15 +101,11 @@ function valueOf(args: readonly string[], flag: string): string | undefined {
 
 /** Feed stream-json lines to a fake `claude` and collect what the adapter reads. */
 async function eventsFor(lines: object[], task: CodingAgentTask = baseTask): Promise<CodingAgentEvent[]> {
-  const child = new FakeChild();
-  const run = createClaudeCodeAgent(
-    fakeExecutionEnvironment({ runProgram: () => child.asExecProcess() }),
-  ).run(task);
+  const { run, launched } = start(task);
+  const { child } = await launched();
   for (const line of lines) child.emitLine(JSON.stringify(line));
   child.finish(0);
-  const events: CodingAgentEvent[] = [];
-  for await (const event of run.events) events.push(event);
-  return events;
+  return Array.fromAsync(run.events);
 }
 
 describe('createClaudeCodeAgent', () => {
@@ -81,8 +117,8 @@ describe('createClaudeCodeAgent', () => {
 });
 
 describe('run: the spawn', () => {
-  it('runs the claude binary in print mode with stream-json output and the turn budget', () => {
-    const { command, args } = capture({ maxTurns: 42 });
+  it('runs the claude binary in print mode with stream-json output and the turn budget', async () => {
+    const { command, args } = await capture({ maxTurns: 42 });
     expect(command).toBe('claude');
     expect(args.slice(0, 7)).toEqual([
       '-p',
@@ -96,8 +132,8 @@ describe('run: the spawn', () => {
     expect(args).toEqual(expect.arrayContaining(['--disallowed-tools', 'AskUserQuestion']));
   });
 
-  it("hands the task's cwd and env to the child", () => {
-    const { options } = capture({ workdir: '/work' });
+  it("hands the task's cwd and env to the child", async () => {
+    const { options } = await capture({ workdir: '/work' });
     expect(options.cwd).toBe('/work');
     // The home comes from the execution environment, since that is the
     // filesystem it is on — a path this process resolved could name nothing
@@ -105,19 +141,19 @@ describe('run: the spawn', () => {
     expect(options.env).toEqual({ PATH: '/bin', CLAUDE_CONFIG_DIR: '/workspace/.claude' });
   });
 
-  it('takes the home from the environment, not from the task env', () => {
-    const { options } = capture({ env: { PATH: '/bin', CLAUDE_CONFIG_DIR: '/theirs' } });
+  it('takes the home from the environment, not from the task env', async () => {
+    const { options } = await capture({ env: { PATH: '/bin', CLAUDE_CONFIG_DIR: '/theirs' } });
     expect(options.env.CLAUDE_CONFIG_DIR).toBe('/workspace/.claude');
   });
 
-  it('resumes a session and turns on debug when asked', () => {
-    const { args } = capture({ sessionId: 'sess-1', debug: true });
+  it('resumes a session and turns on debug when asked', async () => {
+    const { args } = await capture({ sessionId: 'sess-1', debug: true });
     expect(valueOf(args, '--resume')).toBe('sess-1');
     expect(args).toContain('--debug');
   });
 
-  it('passes neither by default', () => {
-    const { args } = capture({});
+  it('passes neither by default', async () => {
+    const { args } = await capture({});
     expect(args).not.toContain('--resume');
     expect(args).not.toContain('--debug');
   });
@@ -125,12 +161,111 @@ describe('run: the spawn', () => {
   it.each([
     ['edit', 'auto'],
     ['plan', 'plan'],
-  ] as const)('runs a %s task in the %s permission mode, never with the bypass', (mode, permissionMode) => {
-    const { args } = capture({ mode });
+  ] as const)('runs a %s task in the %s permission mode, never with the bypass', async (mode, permissionMode) => {
+    const { args } = await capture({ mode });
     expect(valueOf(args, '--permission-mode')).toBe(permissionMode);
     expect(args.filter((a) => a === '--permission-mode')).toHaveLength(1);
     expect(args).not.toContain('--dangerously-skip-permissions');
     expect(args).not.toContain('--allow-dangerously-skip-permissions');
+  });
+});
+
+describe('run: the Claude subscription', () => {
+  const env = {
+    PATH: '/bin',
+    ANTHROPIC_API_KEY: 'test-key',
+    AWS_BEARER_TOKEN_BEDROCK: 'test-token',
+    CLAUDE_CODE_USE_BEDROCK: '1',
+  };
+  const SIGNED_OUT = '{"loggedIn":false,"authMethod":"none","apiProvider":"firstParty"}';
+  const NO_SUBSCRIPTION =
+    'Claude Code failed to start: CLAUDE_CODE_SUBSCRIPTION is on, and the Claude home /workspace/.claude has no subscription login: sign in to it with claude auth login';
+
+  it("keeps the deployment's credentials and asks nothing while CLAUDE_CODE_SUBSCRIPTION is off", async () => {
+    const { run, launched, asked } = start({ env }, SUBSCRIPTION_STATUS);
+    const { args, options } = await launched();
+    expect(asked()).toBe(0);
+    expect(options.env).toMatchObject({ ANTHROPIC_API_KEY: 'test-key', CLAUDE_CODE_USE_BEDROCK: '1' });
+    expect(args).not.toContain('--settings');
+    run.stop();
+  });
+
+  describe('with CLAUDE_CODE_SUBSCRIPTION on', () => {
+    beforeEach(() => {
+      config.claudeCodeSubscription = true;
+    });
+    afterEach(() => {
+      config.claudeCodeSubscription = false;
+    });
+
+    it('runs a task on the signed-in subscription, with nothing that outranks it', async () => {
+      const { args, options } = await capture({ env }, SUBSCRIPTION_STATUS);
+      expect(options.env).toEqual({
+        PATH: '/bin',
+        AWS_BEARER_TOKEN_BEDROCK: 'test-token',
+        CLAUDE_CONFIG_DIR: '/workspace/.claude',
+      });
+      expect(valueOf(args, '--settings')).toBe('{"forceLoginMethod":"claudeai"}');
+    });
+
+    it.each([
+      ['no login', SIGNED_OUT, NO_SUBSCRIPTION],
+      ['a login other than a subscription', '{"loggedIn":true,"authMethod":"api_key"}', NO_SUBSCRIPTION],
+      // What Claude Code 2.1.20, from before `auth status --json`, prints on stdout: nothing.
+      ['no answer', '', 'Claude Code failed to start: claude auth status exited with 0 and no status'],
+    ])('fails the task, and starts nothing, with %s in the home', async (_label, status, message) => {
+      const { run, launches } = start({ env }, status);
+      expect(await Array.fromAsync(run.events)).toEqual([
+        { type: 'result', stopReason: 'error', turns: 0, message },
+      ]);
+      expect(launches).toHaveLength(0);
+    });
+
+    it('asks again for every task, so a sign-in applies to the next one', async () => {
+      let status = SIGNED_OUT;
+      const launches: string[][] = [];
+      const agent = createClaudeCodeAgent(fakeExecutionEnvironment({
+        files: { stat: async () => DIR_STAT },
+        runProgram: (_command, args) => {
+          const child = new FakeChild();
+          if (args[0] === 'auth') child.emitLine(status);
+          else launches.push([...args]);
+          process.nextTick(() => child.finish(0));
+          return child.asExecProcess();
+        },
+      }));
+
+      const first = await Array.fromAsync(agent.run({ ...baseTask, env }).events);
+      status = SUBSCRIPTION_STATUS;
+      await Array.fromAsync(agent.run({ ...baseTask, env }).events);
+
+      expect(first).toEqual([{ type: 'result', stopReason: 'error', turns: 0, message: NO_SUBSCRIPTION }]);
+      expect(launches).toHaveLength(1);
+    });
+
+    it.each([
+      ['before the CLI answers', ''],
+      ['after the CLI reports a subscription', SUBSCRIPTION_STATUS],
+    ])('starts nothing when the task is stopped %s', async (_label, printed) => {
+      const launches: string[][] = [];
+      const run = createClaudeCodeAgent(fakeExecutionEnvironment({
+        files: { stat: async () => DIR_STAT },
+        runProgram: (_command, args) => {
+          launches.push([...args]);
+          const child = new FakeChild();
+          if (printed) child.emitLine(printed);
+          return child.asExecProcess();
+        },
+      })).run(baseTask);
+      await vi.waitFor(() => expect(launches).toEqual([['auth', 'status', '--json']]));
+
+      run.stop();
+
+      expect(await Array.fromAsync(run.events)).toEqual([
+        { type: 'result', stopReason: 'error', turns: 0, message: 'Claude Code was stopped before it started' },
+      ]);
+      expect(launches).toHaveLength(1);
+    });
   });
 });
 
@@ -170,6 +305,8 @@ function mcpHarness(
     },
     files: {
       ...localFiles,
+      // No home, so the CLI is launched for the task alone.
+      stat: () => Promise.reject(new Error('ENOENT')),
       makeTempDir: async (prefix) => {
         const dir = await localFiles.makeTempDir(prefix);
         dirs.push(dir);
@@ -189,8 +326,8 @@ function mcpHarness(
 }
 
 describe('run: MCP servers', () => {
-  it('gives the CLI no MCP server at all when the runtime connects none', () => {
-    const { args } = capture({});
+  it('gives the CLI no MCP server at all when the runtime connects none', async () => {
+    const { args } = await capture({});
     expect(args).not.toContain('--mcp-config');
     // Strict with no config file: no server, an `.mcp.json` in the workdir included.
     expect(args).toContain('--strict-mcp-config');
@@ -315,23 +452,23 @@ describe('run: MCP servers', () => {
  * constraint and any caller framing are appended instead, on one flag.
  */
 describe('run: system prompt args', () => {
-  it('never replaces the default prompt, in any mode', () => {
+  it('never replaces the default prompt, in any mode', async () => {
     for (const mode of ['plan', 'edit'] as const) {
       for (const appendSystemPrompt of ['custom', undefined]) {
-        const { args } = capture({ mode, appendSystemPrompt });
+        const { args } = await capture({ mode, appendSystemPrompt });
         expect(args).not.toContain('--system-prompt');
       }
     }
   });
 
-  it('states plan mode to the model as well as to the CLI', () => {
-    const { args } = capture({ mode: 'plan' });
+  it('states plan mode to the model as well as to the CLI', async () => {
+    const { args } = await capture({ mode: 'plan' });
     expect(valueOf(args, '--append-system-prompt')).toBe(PLAN_ONLY_INSTRUCTION);
     expect(args).toEqual(expect.arrayContaining(['--permission-mode', 'plan']));
   });
 
-  it('carries the plan constraint and a caller prompt on one flag', () => {
-    const { args } = capture({ mode: 'plan', appendSystemPrompt: 'custom' });
+  it('carries the plan constraint and a caller prompt on one flag', async () => {
+    const { args } = await capture({ mode: 'plan', appendSystemPrompt: 'custom' });
     // One occurrence, so neither part can silently drop the other.
     expect(args.filter((a) => a === '--append-system-prompt')).toHaveLength(1);
     const value = valueOf(args, '--append-system-prompt');
@@ -339,13 +476,13 @@ describe('run: system prompt args', () => {
     expect(value).toContain('custom');
   });
 
-  it('leaves edit mode with the caller prompt alone and no plan constraint', () => {
-    const { args } = capture({ mode: 'edit', appendSystemPrompt: 'custom' });
+  it('leaves edit mode with the caller prompt alone and no plan constraint', async () => {
+    const { args } = await capture({ mode: 'edit', appendSystemPrompt: 'custom' });
     expect(valueOf(args, '--append-system-prompt')).toBe('custom');
   });
 
-  it('passes no prompt flag at all for an edit task with no caller prompt', () => {
-    const { args } = capture({});
+  it('passes no prompt flag at all for an edit task with no caller prompt', async () => {
+    const { args } = await capture({});
     expect(args).not.toContain('--append-system-prompt');
   });
 
@@ -482,16 +619,12 @@ describe('run: reading the stream', () => {
   });
 
   it('names Claude Code in the closing message when the binary is missing', async () => {
-    const child = new FakeChild();
+    const { run, launched } = start();
+    const { child } = await launched();
     child.stdout.end();
     child.stderr.end();
-    const run = createClaudeCodeAgent(
-    fakeExecutionEnvironment({ runProgram: () => child.asExecProcess() }),
-  ).run(baseTask);
-    process.nextTick(() => child.emit('error', new Error('spawn claude ENOENT')));
-    const events: CodingAgentEvent[] = [];
-    for await (const event of run.events) events.push(event);
-    expect(events).toEqual([
+    child.emit('error', new Error('spawn claude ENOENT'));
+    expect(await Array.fromAsync(run.events)).toEqual([
       {
         type: 'result',
         stopReason: 'error',
@@ -583,38 +716,26 @@ describe('prepareHome', () => {
 describe('model tier and effort', () => {
   const tiers = ['small', 'medium', 'large'] as const;
   const models = ["haiku","sonnet","opus"];
+
+  /** The args of one task, which then finishes. */
+  async function argsFor(task: Partial<CodingAgentTask>, status?: string): Promise<readonly string[]> {
+    const { run, launched } = start(task, status);
+    const { args, child } = await launched();
+    child.finish(0);
+    await Array.fromAsync(run.events);
+    return args;
+  }
+
   for (const sessionId of [undefined, 'session-1']) {
     it.each(tiers)('maps %s for session ' + sessionId, async (modelTier) => {
-      const child = new FakeChild();
-      let args: readonly string[] = [];
-      const run = createClaudeCodeAgent(
-        fakeExecutionEnvironment({
-          runProgram: (_command, argv) => {
-            args = argv;
-            return child.asExecProcess();
-          },
-        }),
-      ).run({ ...baseTask, modelTier, sessionId });
+      const args = await argsFor({ modelTier, sessionId });
       expect(args[args.indexOf('--model') + 1]).toBe(models[tiers.indexOf(modelTier)]);
-      child.finish(0);
-      await Array.fromAsync(run.events);
     });
 
     it.each(['low', 'medium', 'high'] as const)('passes %s effort for session ' + sessionId, async (effort) => {
-      const child = new FakeChild();
-      let args: readonly string[] = [];
-      const run = createClaudeCodeAgent(
-        fakeExecutionEnvironment({
-          runProgram: (_command, argv) => {
-            args = argv;
-            return child.asExecProcess();
-          },
-        }),
-      ).run({ ...baseTask, effort, sessionId });
+      const args = await argsFor({ effort, sessionId });
       expect(args[args.indexOf('--effort') + 1]).toBe(effort);
       expect(args).not.toContain('--model');
-      child.finish(0);
-      await Array.fromAsync(run.events);
     });
   }
 
@@ -623,19 +744,18 @@ describe('model tier and effort', () => {
     ['medium', 'global.anthropic.claude-sonnet-5-5'],
     ['large', 'opus'],
   ] as const)('maps %s to the Bedrock model when Claude Code runs on Bedrock', async (modelTier, model) => {
-    const child = new FakeChild();
-    let args: readonly string[] = [];
-    const run = createClaudeCodeAgent(
-      fakeExecutionEnvironment({
-        runProgram: (_command, argv) => {
-          args = argv;
-          return child.asExecProcess();
-        },
-      }),
-    ).run({ ...baseTask, env: { AWS_BEARER_TOKEN_BEDROCK: 'test-token' }, modelTier });
+    const args = await argsFor({ env: { AWS_BEARER_TOKEN_BEDROCK: 'test-token' }, modelTier });
     expect(args[args.indexOf('--model') + 1]).toBe(model);
-    child.finish(0);
-    await Array.fromAsync(run.events);
+  });
+
+  it.each(tiers)('maps %s to the subscription model, Bedrock credentials or not', async (modelTier) => {
+    config.claudeCodeSubscription = true;
+    try {
+      const args = await argsFor({ env: { AWS_BEARER_TOKEN_BEDROCK: 'test-token' }, modelTier }, SUBSCRIPTION_STATUS);
+      expect(args[args.indexOf('--model') + 1]).toBe(models[tiers.indexOf(modelTier)]);
+    } finally {
+      config.claudeCodeSubscription = false;
+    }
   });
 
   it.each(tiers)('uses the override for %s', async (modelTier) => {
@@ -643,39 +763,17 @@ describe('model tier and effort', () => {
     const previous = overrides[modelTier];
     overrides[modelTier] = { default: 'custom-model', bedrock: 'custom-model' };
     try {
-      const child = new FakeChild();
-      let args: readonly string[] = [];
-      const run = createClaudeCodeAgent(
-        fakeExecutionEnvironment({
-          runProgram: (_command, argv) => {
-            args = argv;
-            return child.asExecProcess();
-          },
-        }),
-      ).run({ ...baseTask, modelTier, effort: 'high', sessionId: 'session-1' });
+      const args = await argsFor({ modelTier, effort: 'high', sessionId: 'session-1' });
       expect(args[args.indexOf('--model') + 1]).toBe('custom-model');
-      child.finish(0);
-      await Array.fromAsync(run.events);
     } finally {
       overrides[modelTier] = previous;
     }
   });
 
   it('preserves deployment defaults when both parameters are omitted', async () => {
-    const child = new FakeChild();
-    let args: readonly string[] = [];
-    const run = createClaudeCodeAgent(
-      fakeExecutionEnvironment({
-        runProgram: (_command, argv) => {
-          args = argv;
-          return child.asExecProcess();
-        },
-      }),
-    ).run(baseTask);
+    const args = await argsFor({});
     expect(args).not.toContain('--model');
     expect(args).not.toContain('--effort');
     expect(args.some(arg => arg.startsWith('model_reasoning_effort='))).toBe(false);
-    child.finish(0);
-    await Array.fromAsync(run.events);
   });
 });

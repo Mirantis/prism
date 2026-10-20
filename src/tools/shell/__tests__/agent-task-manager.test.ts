@@ -47,6 +47,7 @@ import type {
   CodingAgentRun,
   CodingAgentTask,
 } from '../../../lib/coding-agents/coding-agent';
+import type { ProcessMark } from '../../../lib/execution-environments/execution-environment';
 import {
   AgentTaskManager,
   __setAgentTaskManagerForTests,
@@ -70,9 +71,26 @@ class FakeRun implements CodingAgentRun {
   readonly events: AsyncIterable<CodingAgentEvent> = this.channel;
   exited = false;
   stopped = false;
-  readonly mark = { pid: 4242, startedAt: 1_000 };
+  mark: ProcessMark | undefined = { pid: 4242, startedAt: 1_000 };
+  readonly started: Promise<void>;
+  private begin = (): void => undefined;
 
-  constructor(private readonly stubborn = false) {}
+  /** With `lateStart` the process starts only on `start()`, as a run that checks something first. */
+  constructor(private readonly stubborn = false, lateStart = false) {
+    if (!lateStart) {
+      this.started = Promise.resolve();
+      return;
+    }
+    this.mark = undefined;
+    this.started = new Promise((resolve) => {
+      this.begin = resolve;
+    });
+  }
+
+  start(): void {
+    this.mark = { pid: 4242, startedAt: 1_000 };
+    this.begin();
+  }
 
   emit(event: CodingAgentEvent): void {
     this.channel.push(event);
@@ -99,7 +117,7 @@ class FakeRun implements CodingAgentRun {
 
 const SUCCESS: Omit<ResultEvent, 'type'> = { stopReason: 'end_turn', turns: 1, message: 'ok' };
 
-function makeManager({ stubborn = false } = {}): {
+function makeManager({ stubborn = false, lateStart = false } = {}): {
   manager: AgentTaskManager;
   getRun: () => FakeRun;
   getTask: () => CodingAgentTask;
@@ -112,7 +130,7 @@ function makeManager({ stubborn = false } = {}): {
     prepareHome: () => ({ configDir: '', skillsLinked: true }),
     run: (task) => {
       lastTask = task;
-      lastRun = new FakeRun(stubborn);
+      lastRun = new FakeRun(stubborn, lateStart);
       return lastRun;
     },
   };
@@ -603,6 +621,20 @@ describe('AgentTaskManager', () => {
       await pollUntilComplete(manager, taskId);
       await manager.readStatus(taskId).catch(() => undefined);
       expect(mockEndWork).toHaveBeenCalledWith('coding-task', taskId);
+    });
+
+    it('records the process of a run that starts late, before the agent reports a session', async () => {
+      const { manager: m, getRun: get } = makeManager({ lateStart: true });
+      await m.startTask({ prompt: 'fix the build', mode: 'plan' });
+      await flush();
+      expect(recorded()).toEqual({ params: { prompt: 'fix the build', mode: 'plan', agent: 'claude-code' } });
+
+      get().start();
+      await flush();
+      expect(recorded()).toEqual({
+        params: { prompt: 'fix the build', mode: 'plan', agent: 'claude-code' },
+        process: { pid: 4242, startedAt: 1_000 },
+      });
     });
 
     it('refuses a task it cannot record, and launches nothing', async () => {

@@ -169,6 +169,8 @@ If you set `CLAUDE_CONFIG_DIR`, Claude Code uses that directory and Prism leaves
 it untouched; link its `skills` directory to your Prism skills directory to share
 installed skills. When commands run in a container, each CLI keeps its login
 with the agent's other storage and that setting does not apply.
+To run Claude Code tasks on your Claude subscription, turn it on as
+[Configuration](configuration.md#coding-tasks-on-a-claude-subscription) shows.
 
 - **Start** a task with a prompt, in `edit` or `plan` mode, with a turn
   budget for Claude Code.

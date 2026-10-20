@@ -2,7 +2,7 @@
  * Which coding agents a deployment can run, detected at boot.
  *
  * The same credential cases config.ts used to derive at import, now asked of
- * the execution environment. `hasAuthenticatedClaudeHome` is mocked out so no
+ * the execution environment. `readSavedLogin` is mocked out so no
  * case here runs the real `claude` binary; the saved-Codex-login case uses a
  * real temp `CODEX_HOME`.
  */
@@ -16,7 +16,7 @@ import path from 'node:path';
 // Undo the global mock from setup.ts: these cases read the real derivations.
 vi.unmock('../../config');
 vi.mock('./claude-code/authenticated-home', () => ({
-  hasAuthenticatedClaudeHome: vi.fn(async () => false),
+  readSavedLogin: vi.fn(async () => 'none'),
 }));
 
 // Prevent dotenv from loading .env file during tests

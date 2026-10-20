@@ -14,7 +14,7 @@ import path from 'node:path';
 // Undo the global mock from setup.ts
 vi.unmock('./config');
 vi.mock('./lib/coding-agents/claude-code/authenticated-home', () => ({
-  hasAuthenticatedClaudeHome: vi.fn(() => false),
+  readSavedLogin: vi.fn(async () => 'none'),
 }));
 
 // Prevent dotenv from loading .env file during tests

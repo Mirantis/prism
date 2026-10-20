@@ -8,8 +8,7 @@
  * no longer worth waiting out.
  *
  * The available credentials select the coding agent
- * (`lib/coding-agents/`); the sub-agent inherits the runtime's environment, so
- * it authenticates the same way the agent itself does.
+ * (`lib/coding-agents/`); the sub-agent inherits the runtime's environment.
  */
 import { z } from 'zod';
 import { config, CODING_AGENTS } from '../../config';
