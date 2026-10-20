@@ -9,11 +9,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { AgentWorkspace } from '@prisma/client';
 
-const { mockFindUnique, mockFindFirst, mockCreateAgent } = vi.hoisted(() => ({
+const { mockFindUnique, mockFindFirst, mockCreateAgent, mockInfo } = vi.hoisted(() => ({
   mockFindUnique: vi.fn(),
   mockFindFirst: vi.fn(),
   mockCreateAgent: vi.fn(),
+  mockInfo: vi.fn(),
 }));
+
+vi.mock('../logger', () => ({ logger: { info: mockInfo, warn: vi.fn() } }));
 
 vi.mock('../config', () => ({
   config: {
@@ -94,6 +97,8 @@ describe('resolveOrBootstrapSingleAgent', () => {
       documents: { soulMd: '# Seeded soul' },
     });
     expect(mockFindFirst).not.toHaveBeenCalled();
+    // The bootstrap log names the seeded fields.
+    expect(mockInfo).toHaveBeenCalledWith(expect.objectContaining({ seeded: ['soulMd'] }), expect.stringContaining('bootstrapped'));
   });
 
   it('uses findFirst when AGENT_ID is unset and DB has a row', async () => {

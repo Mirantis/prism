@@ -55,16 +55,18 @@ async function resolve(): Promise<AgentWorkspace> {
 }
 
 async function bootstrap(id: string): Promise<AgentWorkspace> {
+  const documents = readWorkspaceSeed(config.workspaceSeedDir);
   const agent = await agentWorkspaceService.createAgent({
     id,
     userId: config.ownerUserId,
     name: config.agentName,
     agentType: 'AGENT',
     teamName: config.teamName,
-    documents: readWorkspaceSeed(config.workspaceSeedDir),
+    documents,
   });
+  // Only this boot reads the seed, so the log names the fields it found.
   logger.info(
-    { agentId: agent.id, name: agent.name, ownerUserId: agent.userId },
+    { agentId: agent.id, name: agent.name, ownerUserId: agent.userId, seeded: Object.keys(documents) },
     '[SingleAgent] bootstrapped new agent — set AGENT_ID to this id to pin identity across restarts',
   );
   return agent;
