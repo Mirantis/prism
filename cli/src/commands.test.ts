@@ -36,6 +36,7 @@ function stubApi(): { [K in keyof ApiClient]: ReturnType<typeof vi.fn> } {
     setHeartbeatModel: vi.fn(),
     getCronModel: vi.fn(),
     setCronModel: vi.fn(),
+    setModelMode: vi.fn(),
     getHeartbeatStatus: vi.fn(),
     startHeartbeat: vi.fn(),
     stopHeartbeat: vi.fn(),
@@ -574,6 +575,30 @@ describe('/cron-model', () => {
       makeCtx({ args: [], api: api as unknown as ApiClient }),
     );
     expect(api.setCronModel).not.toHaveBeenCalled();
+    expect(out).toMatch(/usage/i);
+  });
+});
+
+describe('/model-mode', () => {
+  it('auto calls setModelMode("auto") and names the tiers in force', async () => {
+    const api = stubApi();
+    api.setModelMode.mockResolvedValue({
+      mode: { override: 'auto', effective: 'auto' },
+      tiers: {
+        small: { override: 'small-model', effective: 'small-model' },
+        medium: { override: null, effective: null },
+        large: { override: 'large-model', effective: 'large-model' },
+      },
+    });
+    const out = await cmd('/model-mode').run(makeCtx({ args: ['auto'], api: api as unknown as ApiClient }));
+    expect(api.setModelMode).toHaveBeenCalledWith('auto');
+    expect(out).toBe('Model mode set to auto: small small-model, large large-model.');
+  });
+
+  it('an unknown mode returns usage and makes no call', async () => {
+    const api = stubApi();
+    const out = await cmd('/model-mode').run(makeCtx({ args: ['smart'], api: api as unknown as ApiClient }));
+    expect(api.setModelMode).not.toHaveBeenCalled();
     expect(out).toMatch(/usage/i);
   });
 });

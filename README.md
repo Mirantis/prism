@@ -150,6 +150,8 @@ cheaper model for routine heartbeats while chat stays on a stronger one. Set
 them from the Profile page, the TUI (`/heartbeat-model`, `/cron-model`), or as
 bootstrap defaults in `~/.prism/settings.json`; leave them empty to inherit the
 main model.
+In **Auto** mode the agent picks a small, medium or large model for each turn
+instead; see [Auto model selection](docs/configuration.md#auto-model-selection).
 
 Prompt caching is built in: the stable parts of the system prompt — identity,
 curated memory, vision, operating manual — cache across turns; only the dynamic

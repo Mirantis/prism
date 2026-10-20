@@ -24,11 +24,8 @@ import { contextService } from './services/context.service';
 import { contextUsageService, type ContextUsageSnapshot } from './services/context-usage.service';
 import { compactionService } from './services/compaction.service';
 import { conversationService } from './services/conversation.service';
-import {
-  agentWorkspaceService,
-  resolveEffectiveModel,
-  resolveScopedModel,
-} from './services/agent-workspace.service';
+import { agentWorkspaceService } from './services/agent-workspace.service';
+import { selectTurnModel } from './lib/model-routing';
 
 import {
   type SystemPromptPart,
@@ -237,20 +234,17 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       ];
     }
 
-    // Heartbeat and cron runs honor their own optional model override,
-    // falling back to the main per-agent model, then the env default. Chat
-    // and every other mode use the main model directly.
-    const modelId =
-      request.mode === 'heartbeat'
-        ? resolveScopedModel(context.heartbeatModel, context.model)
-        : request.mode === 'cron'
-          ? resolveScopedModel(context.cronModel, context.model)
-          : resolveEffectiveModel(context.model);
-    logger.info(`Invoking in ${request.mode} mode with model ${modelId} for agent ${context.agentName}`);
-
     // 3. Create provider and model — createProvider picks the configured
     // vendor (Bedrock/Azure) and routing (direct vs the Lens Agents gateway).
     const provider = createProvider();
+    const turnModel = await selectTurnModel(context, request, provider);
+    const { modelId } = turnModel;
+    logger.info(
+      `Invoking in ${request.mode} mode with model ${modelId}` +
+        (turnModel.tier ? ` (${turnModel.tier} tier, ${turnModel.reason})` : '') +
+        ` for agent ${context.agentName}`,
+    );
+
     const model = provider(modelId);
     const cachePoint = provider.cachePoint(modelId);
     const toolChangeProtocol = provider.toolChanges?.(modelId);
@@ -760,6 +754,10 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       'agent.id': agentId,
       'invoke.mode': request.mode,
       'invocation.duration_ms': String(Date.now() - startTime),
+      'llm.model': modelId,
+      'llm.model_mode': context.modelSelection.mode,
+      'llm.tier_reason': turnModel.reason,
+      ...(turnModel.tier ? { 'llm.tier': turnModel.tier } : {}),
     });
 
   } finally {

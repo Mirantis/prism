@@ -74,6 +74,7 @@ export function createTestAgentContext(overrides?: Partial<AgentContext>): Agent
     model: null,
     heartbeatModel: null,
     cronModel: null,
+    modelSelection: { mode: 'fixed', tiers: { small: null, medium: null, large: null } },
     verbose: false,
     lockedIn: false,
     isBootstrapPhase: false,

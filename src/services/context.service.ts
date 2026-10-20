@@ -5,7 +5,7 @@
  * and conversation history from the local database.
  */
 
-import { agentWorkspaceService } from './agent-workspace.service';
+import { agentWorkspaceService, resolveModelSelection } from './agent-workspace.service';
 import { conversationService } from './conversation.service';
 import { attachmentService } from './attachment.service';
 import { AgentContext } from '../types';
@@ -37,6 +37,7 @@ class ContextService {
       model: agent.model ?? null,
       heartbeatModel: agent.heartbeatModel ?? null,
       cronModel: agent.cronModel ?? null,
+      modelSelection: resolveModelSelection(agent),
       verbose: options.verbose ?? agent.verbose,
       lockedIn: agent.lockedIn,
       isBootstrapPhase,

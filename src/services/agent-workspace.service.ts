@@ -8,7 +8,7 @@
  * all agent operations here via the management API.
  */
 
-import { AgentWorkspace, AgentWorkspaceRevision } from '@prisma/client';
+import { AgentModelMode, AgentWorkspace, AgentWorkspaceRevision } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import { prisma } from '../lib/prisma';
 import { getDefaultWorkspaceFiles } from '../templates/default-workspace';
@@ -49,6 +49,44 @@ export function resolveScopedModel(
   main: string | null | undefined,
 ): string {
   return resolveEffectiveModel(scoped ?? main);
+}
+
+/** A tier of Auto model selection, smallest first. */
+export type ModelTier = 'small' | 'medium' | 'large';
+export const MODEL_TIERS: readonly ModelTier[] = ['small', 'medium', 'large'];
+
+/** The model selection a turn runs under, after the deployment defaults. */
+export interface ModelSelection {
+  mode: 'fixed' | 'auto';
+  tiers: Record<ModelTier, string | null>;
+}
+
+type StoredModelSelection = Pick<AgentWorkspace, 'modelMode' | 'smallModel' | 'mediumModel' | 'largeModel'>;
+
+const TIER_COLUMNS = { small: 'smallModel', medium: 'mediumModel', large: 'largeModel' } as const;
+
+/**
+ * Merge an agent's stored model selection with the deployment defaults
+ * (`config.modelSelection`). The one place a null column meets its env
+ * fallback, as `resolveEffectiveModel` is for the fixed model.
+ */
+export function resolveModelSelection(stored: StoredModelSelection): ModelSelection {
+  const mode = stored.modelMode
+    ? stored.modelMode === AgentModelMode.AUTO ? 'auto' : 'fixed'
+    : config.modelSelection.mode;
+  return {
+    mode,
+    tiers: {
+      small: stored.smallModel ?? config.modelSelection.tiers.small,
+      medium: stored.mediumModel ?? config.modelSelection.tiers.medium,
+      large: stored.largeModel ?? config.modelSelection.tiers.large,
+    },
+  };
+}
+
+/** The tiers Auto needs and lacks: small and large are required, medium is optional. */
+export function missingAutoTiers(tiers: ModelSelection['tiers']): ModelTier[] {
+  return (['small', 'large'] as const).filter((tier) => !tiers[tier]);
 }
 
 /**
@@ -101,6 +139,16 @@ export interface SubagentInfo {
 export interface ModelOverrideInfo {
   override: string | null;
   effective: string;
+}
+
+/**
+ * The model selection as the settings screen shows it: per field, the stored
+ * value (`null` when the agent has not set one) and the value in force after
+ * the deployment default.
+ */
+export interface ModelSelectionInfo {
+  mode: { override: 'fixed' | 'auto' | null; effective: 'fixed' | 'auto' };
+  tiers: Record<ModelTier, { override: string | null; effective: string | null }>;
 }
 
 export interface CreateAgentInput {
@@ -611,6 +659,45 @@ class AgentWorkspaceService {
     return stored;
   }
 
+  /** Read the agent's model selection: mode and tiers, stored and effective. */
+  async getModelSelectionInfo(): Promise<ModelSelectionInfo> {
+    return toModelSelectionInfo(await this.getAgent());
+  }
+
+  /**
+   * Update the model selection. Each field present in `input` is written, and
+   * `null` clears it back to the deployment default. A result in Auto mode with
+   * no small or no large model is refused, since Auto needs both.
+   */
+  async updateModelSelection(input: Record<string, unknown>): Promise<ModelSelectionInfo> {
+    const data: Partial<StoredModelSelection> = {};
+    if ('mode' in input) data.modelMode = normalizeModelMode(input.mode);
+    for (const tier of MODEL_TIERS) {
+      if (tier in input) data[TIER_COLUMNS[tier]] = normalizeModelOverride(input[tier]);
+    }
+
+    const agent = await this.getAgent();
+    const next = resolveModelSelection({ ...agent, ...data });
+    const missing = next.mode === 'auto' ? missingAutoTiers(next.tiers) : [];
+    if (missing.length > 0) {
+      throw new ValidationError(`Auto mode needs a ${missing.join(' and a ')} model`);
+    }
+
+    const updated = await prisma.agentWorkspace.update({ where: { id: agent.id }, data });
+    trackEvent('agent model updated', null, {
+      'agent.id': updated.id,
+      'agent.model_mode': next.mode,
+      ...(next.mode === 'auto'
+        ? {
+            'agent.model_small': next.tiers.small ?? '',
+            'agent.model_medium': next.tiers.medium ?? '',
+            'agent.model_large': next.tiers.large ?? '',
+          }
+        : {}),
+    });
+    return toModelSelectionInfo(updated);
+  }
+
   /** Cron equivalent of {@link updateHeartbeatModel}. */
   async updateCronModel(model: unknown): Promise<ModelOverrideInfo> {
     const normalized = normalizeModelOverride(model);
@@ -630,6 +717,28 @@ class AgentWorkspaceService {
     });
     return { override: updated.cronModel, effective };
   }
+}
+
+function normalizeModelMode(mode: unknown): AgentModelMode | null {
+  if (mode === null) return null;
+  if (mode === 'fixed') return AgentModelMode.FIXED;
+  if (mode === 'auto') return AgentModelMode.AUTO;
+  throw new ValidationError("mode must be 'fixed', 'auto', or null to clear");
+}
+
+function toModelSelectionInfo(agent: StoredModelSelection): ModelSelectionInfo {
+  const effective = resolveModelSelection(agent);
+  const tierInfo = (tier: ModelTier) => ({
+    override: agent[TIER_COLUMNS[tier]],
+    effective: effective.tiers[tier],
+  });
+  return {
+    mode: {
+      override: agent.modelMode ? (agent.modelMode === AgentModelMode.AUTO ? 'auto' : 'fixed') : null,
+      effective: effective.mode,
+    },
+    tiers: { small: tierInfo('small'), medium: tierInfo('medium'), large: tierInfo('large') },
+  };
 }
 
 // Export singleton instance

@@ -6,7 +6,7 @@
  * management route tests; here we assert each mutation emits its event.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 
 const { mockPrisma, mockTrackEvent } = vi.hoisted(() => {
   const prisma = {
@@ -653,5 +653,95 @@ describe('AgentWorkspaceService.rollbackWorkspaceDoc', () => {
     expect(result).toEqual({ status: 'revision_not_found' });
     expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
     expect(mockTrackEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe('model selection', () => {
+  const tiersBefore = { ...config.modelSelection.tiers };
+  const modeBefore = config.modelSelection.mode;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    config.modelSelection.mode = 'fixed';
+    config.modelSelection.tiers = { small: null, medium: null, large: null };
+    mockPrisma.agentWorkspace.update.mockImplementation(async ({ data }: { data: object }) =>
+      createAgentRow({ modelMode: null, smallModel: null, mediumModel: null, largeModel: null, ...data }),
+    );
+  });
+
+  afterAll(() => {
+    config.modelSelection.mode = modeBefore;
+    config.modelSelection.tiers = tiersBefore;
+  });
+
+  function stored(overrides: Record<string, unknown> = {}) {
+    mockPrisma.agentWorkspace.findUnique.mockResolvedValue(
+      createAgentRow({ modelMode: null, smallModel: null, mediumModel: null, largeModel: null, ...overrides }),
+    );
+  }
+
+  it('turns Auto on with a small and a large model', async () => {
+    stored();
+
+    const info = await agentWorkspaceService.updateModelSelection({
+      mode: 'auto',
+      small: 'small-model',
+      large: 'large-model',
+    });
+
+    expect(info.mode).toEqual({ override: 'auto', effective: 'auto' });
+    expect(info.tiers.medium).toEqual({ override: null, effective: null });
+    expect(mockTrackEvent).toHaveBeenCalledWith('agent model updated', null, expect.objectContaining({
+      'agent.model_mode': 'auto',
+      'agent.model_small': 'small-model',
+    }));
+  });
+
+  it('refuses Auto without a large model', async () => {
+    stored({ smallModel: 'small-model' });
+
+    await expect(agentWorkspaceService.updateModelSelection({ mode: 'auto' }))
+      .rejects.toThrow('Auto mode needs a large model');
+    expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses clearing a required tier while Auto is on', async () => {
+    stored({ modelMode: 'AUTO', smallModel: 'small-model', largeModel: 'large-model' });
+
+    await expect(agentWorkspaceService.updateModelSelection({ small: null }))
+      .rejects.toThrow('Auto mode needs a small model');
+  });
+
+  it('accepts tiers in Fixed mode, so they can be set before switching', async () => {
+    stored();
+
+    const info = await agentWorkspaceService.updateModelSelection({ small: 'small-model' });
+
+    expect(info.mode.effective).toBe('fixed');
+    expect(info.tiers.small.override).toBe('small-model');
+  });
+
+  it('fills unset fields from the deployment defaults', async () => {
+    config.modelSelection.mode = 'auto';
+    config.modelSelection.tiers = { small: 'env-small', medium: null, large: 'env-large' };
+    stored({ largeModel: 'agent-large' });
+
+    const info = await agentWorkspaceService.getModelSelectionInfo();
+
+    expect(info).toEqual({
+      mode: { override: null, effective: 'auto' },
+      tiers: {
+        small: { override: null, effective: 'env-small' },
+        medium: { override: null, effective: null },
+        large: { override: 'agent-large', effective: 'agent-large' },
+      },
+    });
+  });
+
+  it('rejects a mode it does not know', async () => {
+    stored();
+
+    await expect(agentWorkspaceService.updateModelSelection({ mode: 'smart' }))
+      .rejects.toThrow("mode must be 'fixed', 'auto', or null to clear");
   });
 });

@@ -34,6 +34,7 @@ export type LlmCallPurpose =
   | 'feedback-gate'
   | 'goal-gate'
   | 'risk-gate'
+  | 'model-routing'
   // A chat platform's thread reply classifier, named for the platform.
   | `${ChatPlatform}-thread-gate`;
 
@@ -55,6 +56,7 @@ export const LLM_CALL_PURPOSES: readonly LlmCallPurpose[] = [
   'feedback-gate',
   'goal-gate',
   'risk-gate',
+  'model-routing',
 ];
 
 interface RecordInput {

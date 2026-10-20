@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { LlmUsageCards } from '@/components/activity/llm-usage-cards';
+import { LlmUsageByModel } from '@/components/activity/llm-usage-by-model';
 import { ToolCallList } from '@/components/activity/tool-call-list';
 import { WebhookRunList } from '@/components/activity/webhook-run-list';
 import { Page } from '@/components/layout/page';
@@ -18,6 +19,7 @@ function ActivityPage() {
       <section className="space-y-3">
         <SectionHeader title="LLM usage" description="Tokens used in the last 24 hours." />
         <LlmUsageCards />
+        <LlmUsageByModel />
       </section>
 
       <section className="space-y-3">

@@ -491,6 +491,29 @@ platform's classification model (`BEDROCK_CLASSIFICATION_MODEL_ID` on Bedrock,
 `ANTHROPIC_CLASSIFICATION_MODEL_ID` on Anthropic,
 `LITELLM_CLASSIFICATION_MODEL_ID` on LiteLLM), independent of this.
 
+### Auto model selection
+
+In **Auto** mode the agent runs each turn on one of three models you name: a
+**small**, an optional **medium** and a **large** model. All three come from the
+active platform and use its model ID format. Auto replaces the main, heartbeat
+and scheduled-task models; switching back to **Fixed** restores them.
+
+Set the models and turn Auto on with the **Model selection** switch on the
+Profile page; `/model-mode auto|fixed` in the TUI switches between the two.
+Auto needs a small and a large model. Leave the medium model empty to choose
+between those two only. To make Auto the default for a deployment, set:
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `MODEL_MODE` | `auto` or `fixed` for an agent that has not chosen one itself | `fixed` |
+| `AUTO_MODEL_SMALL` | Small model. Required when `MODEL_MODE=auto` | — |
+| `AUTO_MODEL_MEDIUM` | Medium model | — (not used) |
+| `AUTO_MODEL_LARGE` | Large model. Required when `MODEL_MODE=auto` | — |
+
+A model set on the agent wins over these. With `MODEL_MODE=auto` and no small
+or no large model, the runtime does not start and names the missing variable.
+The Activity page shows the tokens each model used.
+
 ### Memory embeddings
 
 Which platform embeds [searchable memory](memory.md) is its own choice,

@@ -181,6 +181,12 @@ export interface UpdateStatus {
   } | null;
 }
 
+/** The agent's model mode and its three Auto tiers, stored and in force. */
+export interface ModelSelectionInfo {
+  mode: { override: 'fixed' | 'auto' | null; effective: 'fixed' | 'auto' };
+  tiers: Record<'small' | 'medium' | 'large', { override: string | null; effective: string | null }>;
+}
+
 export interface ApiClient {
   getMe(): Promise<{ agentId: string; userId: string; name: string }>;
   getDetails(): Promise<AgentDetails>;
@@ -192,6 +198,7 @@ export interface ApiClient {
   setHeartbeatModel(model: string | null): Promise<{ model: string | null; effective: string }>;
   getCronModel(): Promise<{ model: string | null; effective: string }>;
   setCronModel(model: string | null): Promise<{ model: string | null; effective: string }>;
+  setModelMode(mode: 'fixed' | 'auto'): Promise<ModelSelectionInfo>;
   getHeartbeatStatus(): Promise<HeartbeatStatus>;
   startHeartbeat(agent: AgentDetails): Promise<{ success: boolean; message: string }>;
   stopHeartbeat(): Promise<{ success: boolean; message: string }>;
@@ -311,6 +318,10 @@ export class HttpApiClient implements ApiClient {
 
   setCronModel(model: string | null): Promise<{ model: string | null; effective: string }> {
     return this.request('PATCH', '/agents/cron-model', { model });
+  }
+
+  setModelMode(mode: 'fixed' | 'auto'): Promise<ModelSelectionInfo> {
+    return this.request('PATCH', '/agents/model-selection', { mode });
   }
 
   getHeartbeatStatus(): Promise<HeartbeatStatus> {

@@ -247,6 +247,11 @@ The agent's identity and runtime controls.
   those on their own model; leave a field empty to inherit the main model (the
   field shows the model it falls back to). See
   **[Configuration → Models](configuration.md#models)**.
+- **Model selection.** A switch between **Fixed**, the models above, and
+  **Auto**, which picks a **Small**, **Medium** or **Large** model for each turn.
+  Auto needs a small and a large model; turning it on before both are set shows
+  their fields first. See
+  **[Configuration → Auto model selection](configuration.md#auto-model-selection)**.
 - **Chat delivery.** A toggle switches between **Concise** (default) and
   **Verbose** mode. In concise mode only the agent's final message is delivered;
   intermediate steps are persisted but not shown. See
@@ -293,7 +298,8 @@ What the agent has spent, and what it has done.
 - **LLM usage.** Four figures for the last 24 hours: total tokens, the input and
   output split, and the share of the prompt served from the cache. Input counts
   the whole prompt, cache included. Each card shows the rounded figure large and
-  the exact count beneath it.
+  the exact count beneath it. A table below the cards splits the same window by
+  model.
 
   Counts every text-generation call, including the ones that produce no
   message. Voice meetings and memory embeddings each run on their own surface,

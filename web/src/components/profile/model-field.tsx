@@ -20,6 +20,7 @@ export function ModelField({
   load,
   save,
   allowEmpty = false,
+  emptyHint = 'Leave empty to use the main agent model.',
   affects = [],
 }: {
   label: string;
@@ -27,6 +28,8 @@ export function ModelField({
   load: () => Promise<{ model: string | null; effective?: string }>;
   save: (model: string | null) => Promise<{ model: string | null; effective?: string }>;
   allowEmpty?: boolean;
+  /** What clearing the field does, shown under it while editing. */
+  emptyHint?: string;
   /**
    * Other model-field query keys whose resolved `effective` depends on this
    * one (the heartbeat/cron fields fall back to the main model), so they get
@@ -90,7 +93,7 @@ export function ModelField({
               }
             }}
             maxLength={MODEL_ID_MAX_LEN}
-            placeholder={allowEmpty ? 'Empty → use main model' : undefined}
+            placeholder={allowEmpty ? emptyHint : undefined}
             className="h-7 w-[360px] px-2 py-1 text-sm"
             aria-label={`${label} ID`}
             autoFocus
@@ -118,7 +121,7 @@ export function ModelField({
           </Button>
           {allowEmpty && (
             <span className="basis-full text-xs text-muted-foreground">
-              Leave empty to use the main agent model.
+              {emptyHint}
             </span>
           )}
           {!valid && value.length > 0 && (
@@ -134,7 +137,7 @@ export function ModelField({
             override
           ) : allowEmpty ? (
             <span className="text-muted-foreground">
-              Default{effective ? ` — uses ${effective}` : ''}
+              {effective ? `Default — uses ${effective}` : 'Not set'}
             </span>
           ) : (
             override || <span className="text-muted-foreground">Loading…</span>

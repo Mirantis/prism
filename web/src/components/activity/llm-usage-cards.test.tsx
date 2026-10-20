@@ -27,6 +27,7 @@ function summary(over: Partial<LlmUsageSummary> = {}): LlmUsageSummary {
     noCacheTokens: 30_000,
     cacheHitPercent: 73,
     calls: 12,
+    byModel: [],
     ...over,
   };
 }

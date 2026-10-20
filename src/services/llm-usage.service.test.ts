@@ -12,6 +12,7 @@ const { mockPrisma } = vi.hoisted(() => ({
     llmCall: {
       aggregate: vi.fn(),
       count: vi.fn(),
+      groupBy: vi.fn(),
     },
   },
 }));
@@ -61,6 +62,7 @@ function noSums() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockPrisma.llmCall.groupBy.mockResolvedValue([]);
 });
 
 describe('llmUsageService.summarize', () => {
@@ -148,5 +150,22 @@ describe('llmUsageService.summarize', () => {
     expect(summary.inputTokens).toBe(0);
     expect(summary.calls).toBe(0);
     expect(summary.cacheHitPercent).toBeNull();
+  });
+});
+
+describe('llmUsageService.summarize per model', () => {
+  it('breaks the window down by model, most tokens first', async () => {
+    mockPrisma.llmCall.aggregate.mockResolvedValue(sums());
+    mockPrisma.llmCall.groupBy.mockResolvedValue([
+      { model: 'small-model', _count: 3, _sum: { totalTokens: 300, inputTokens: 250, outputTokens: 50 } },
+      { model: 'large-model', _count: 1, _sum: { totalTokens: 800, inputTokens: 750, outputTokens: 50 } },
+    ]);
+
+    const result = await llmUsageService.summarize(24);
+
+    expect(result.byModel).toEqual([
+      { model: 'large-model', calls: 1, totalTokens: 800, inputTokens: 750, outputTokens: 50 },
+      { model: 'small-model', calls: 3, totalTokens: 300, inputTokens: 250, outputTokens: 50 },
+    ]);
   });
 });
