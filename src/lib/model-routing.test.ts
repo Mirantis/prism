@@ -289,6 +289,35 @@ describe('classifier input', () => {
   });
 });
 
+describe('context fit', () => {
+  it('sends a request too large for the small window to the large tier on a new thread', async () => {
+    mockWindow.mockImplementation((id: string) => (id === 'large-model' ? { tokens: 1_000_000 } : { tokens: 200_000 }));
+    const pasted = 'x'.repeat(1_000_000); // about 250k tokens
+
+    const result = await selectTurnModel(
+      autoContext({ small: 'small-model', large: 'large-model' }),
+      { ...request, threadId: undefined, prompt: pasted },
+      provider,
+    );
+
+    expect(result).toEqual({ modelId: 'large-model', tier: 'large', reason: 'only-fit' });
+    expect(mockCallModel).not.toHaveBeenCalled();
+  });
+
+  it('adds the incoming request to the thread\'s last measurement', async () => {
+    mockContextTokens.mockResolvedValue(170_000);
+    mockWindow.mockImplementation((id: string) => (id === 'large-model' ? { tokens: 1_000_000 } : { tokens: 200_000 }));
+
+    const result = await selectTurnModel(
+      autoContext({ small: 'small-model', large: 'large-model' }),
+      { ...request, prompt: 'y'.repeat(160_000) }, // about 40k tokens, past the 200k window together
+      provider,
+    );
+
+    expect(result.reason).toBe('only-fit');
+  });
+});
+
 describe('compactionModel', () => {
   it('uses the fixed model in Fixed mode', async () => {
     const context = createTestAgentContext({ model: 'pinned-model' });

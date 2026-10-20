@@ -27,6 +27,8 @@ export const PROMPT_CACHE_TTL_MS = 5 * 60 * 1000;
 const PREVIOUS_REPLY_CHARS = 500;
 /** The longest request the classifier is shown. */
 const REQUEST_CHARS = 4000;
+/** A rough characters-per-token ratio for sizing a request no provider has counted yet. */
+const CHARS_PER_TOKEN = 4;
 
 /** The invoke modes whose calls hold a thread's cache, and compaction, which marks a cold point. */
 const HOLD_PURPOSES: readonly LlmCallPurpose[] = ['chat', 'heartbeat', 'cron', 'goal', 'webhook', 'compaction'];
@@ -63,7 +65,7 @@ export async function selectTurnModel(
 
   const [held, fitting] = await Promise.all([
     heldTier(request.threadId, selection.tiers, provider),
-    tiersThatFit(request.threadId, configured, modelOf),
+    tiersThatFit(request, configured, modelOf),
   ]);
   const top = fitting[fitting.length - 1];
 
@@ -144,19 +146,24 @@ async function heldTier(
 }
 
 /**
- * The configured tiers whose context window holds the thread below the
- * compaction threshold, smallest first. The largest tier always stays, so a
- * turn has somewhere to run; a window the catalog does not know is assumed to fit.
+ * The configured tiers whose context window holds the thread plus the incoming
+ * request below the compaction threshold, smallest first. The largest tier
+ * always stays, so a turn has somewhere to run; a window the catalog does not
+ * know is assumed to fit.
  */
 async function tiersThatFit(
-  threadId: string | undefined,
+  request: RoutedRequest,
   configured: ModelTier[],
   modelOf: (tier: ModelTier) => string,
 ): Promise<ModelTier[]> {
   const top = configured[configured.length - 1];
-  if (!threadId) return configured;
-  const used = await conversationService.getThreadContextTokens(threadId).catch(() => null);
-  if (typeof used !== 'number') return configured;
+  const measured = request.threadId
+    ? await conversationService.getThreadContextTokens(request.threadId).catch(() => null)
+    : null;
+  // The thread's last measurement predates this request, and a new thread has
+  // none. About four characters per token is close enough to send a request
+  // that cannot fit a smaller window to the largest tier.
+  const used = (measured ?? 0) + Math.ceil(request.prompt.length / CHARS_PER_TOKEN);
 
   // `CONTEXT_WINDOW_TOKENS` names one window for every model, so with it set
   // every tier has the same window here.
