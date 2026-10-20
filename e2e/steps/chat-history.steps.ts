@@ -28,17 +28,21 @@ async function firstShown(page: Page): Promise<{ text: string; top: number }> {
   return { text, top };
 }
 
-Given('a conversation with {int} numbered messages', async ({}, count: number) => {
-  // A second apart, so the order on screen is the order written.
-  const start = Date.now() - count * 1000;
-  await dbHelper.createThread(getCurrentAgentId(), {
-    messages: Array.from({ length: count }, (_, i) => ({
-      role: i % 2 === 0 ? ('USER' as const) : ('AGENT' as const),
-      content: numbered(i + 1),
-      createdAt: new Date(start + i * 1000),
-    })),
-  });
-});
+Given(
+  'a conversation with {int} numbered messages, where the first {int} show an image',
+  async ({}, count: number, withImage: number) => {
+    // A second apart, so the order on screen is the order written. Each image has its own
+    // address, so it loads after its message is on screen and changes the rows' height then.
+    const start = Date.now() - count * 1000;
+    await dbHelper.createThread(getCurrentAgentId(), {
+      messages: Array.from({ length: count }, (_, i) => ({
+        role: i % 2 === 0 ? ('USER' as const) : ('AGENT' as const),
+        content: i < withImage ? `${numbered(i + 1)}\n\n![chart](/prism-logo.svg?n=${i + 1})` : numbered(i + 1),
+        createdAt: new Date(start + i * 1000),
+      })),
+    });
+  },
+);
 
 When('I scroll up to the oldest message shown', async ({ page }) => {
   await expect(messages(page).first()).toBeVisible();
@@ -57,6 +61,10 @@ Then(
   async ({ page }) => {
     const before = reading!;
     await expect.poll(async () => (await firstShown(page)).text).not.toBe(before.text);
+    // Measured once the new page's images have loaded and changed its height.
+    await expect
+      .poll(() => scroller(page).evaluate((el) => [...el.querySelectorAll('img')].every((img) => img.complete)))
+      .toBe(true);
     const row = messages(page).filter({ hasText: before.text });
     await expect(row).toBeInViewport();
     const top = (await row.boundingBox())!.y;

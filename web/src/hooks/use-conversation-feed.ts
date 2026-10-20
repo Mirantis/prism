@@ -57,10 +57,12 @@ export function useConversationFeed(connection: ChatConnection) {
           void queryClient.invalidateQueries({ queryKey: threadQueryKey(agentId, threadId) });
         },
         computer: writeComputerStatus,
+        // A resync can follow a restart, which can change the thread mode too.
         resync: () =>
           Promise.all([
             queryClient.invalidateQueries({ queryKey: ['thread', agentId] }),
             queryClient.invalidateQueries({ queryKey: recentThreadsQueryKey(agentId) }),
+            queryClient.invalidateQueries({ queryKey: ['agent', 'me'] }),
           ]),
       }),
     [connection, queryClient, agentId, userId, writeComputerStatus],

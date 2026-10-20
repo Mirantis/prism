@@ -595,10 +595,17 @@ class ConversationService {
     const last = visible.at(-1);
     if (!first || !last || !visible.some((message) => message.role === MessageRole.AGENT)) return messages;
 
-    // The window starts at the visible row before the first message, so the
-    // steps that came before that message are counted too.
+    // The window starts at the last row before the first message that a person sent
+    // or that answers one. A step before that row is shown on it or nowhere. A step
+    // after it can belong to an answer here, even past a heartbeat's row, so a page
+    // shows what the whole history shows.
     const before = await prisma.conversationMessage.findFirst({
-      where: { threadId, internalStep: false, createdAt: { lt: first.createdAt } },
+      where: {
+        threadId,
+        internalStep: false,
+        triggeredBy: MessageTrigger.USER_INPUT,
+        createdAt: { lt: first.createdAt },
+      },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       select: { createdAt: true },
     });

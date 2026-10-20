@@ -10,6 +10,7 @@ import { ChatConnectionProvider } from '@/lib/chat-socket/chat-connection-contex
 import { FakeWebSocket, welcomeFrame } from '@/lib/chat-socket/fake-web-socket';
 import { HeaderActionsProvider } from '@/lib/header-actions-context';
 import { HeaderActionsSlot } from '@/components/layout/header-actions-slot';
+import { ApiError } from '@/api/errors';
 
 // The microphone. The hook's `onFrame` is kept so a test can speak into it.
 const { voiceAudio, microphone } = vi.hoisted(() => ({
@@ -344,6 +345,19 @@ describe('AgentChat', () => {
 
     await waitFor(() => expect(rows()).toEqual(['missed:t1']));
     expect(mockGetThread.mock.calls.length).toBeGreaterThan(loads);
+  });
+
+  it('opens the latest conversation again when the one bare /chat showed is gone', async () => {
+    // A restart in single-thread mode hides the thread this tab resolved before it.
+    mockLatestThread.mockResolvedValueOnce({ id: 't-hidden' }).mockResolvedValue({ id: 't1' });
+    mockGetThread.mockImplementation(async (_agentId: string, _userId: string, threadId: string) => {
+      if (threadId === 't-hidden') throw new ApiError('Thread not found', {}, 404);
+      return { id: 't1', messages: [msg('kept', 't1')] };
+    });
+
+    await renderChat(<AgentChat />);
+
+    await waitFor(() => expect(rows()).toEqual(['kept:t1']));
   });
 
   it('sends nothing before a thread exists', async () => {

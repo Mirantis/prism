@@ -697,7 +697,7 @@ describe('ConversationService', () => {
         }));
       });
 
-      it('bounds the window at the visible message before the first one shown', async () => {
+      it('bounds the window at the last message before the first one shown that a person sent or that answers one', async () => {
         mockPrisma.conversationMessage.findMany
           .mockResolvedValueOnce([row('answer', 'AGENT', 4)])
           .mockResolvedValueOnce([]);
@@ -706,11 +706,28 @@ describe('ConversationService', () => {
         await conversationService.getRecentMessages('thread-db', 1);
 
         expect(mockPrisma.conversationMessage.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-          where: { threadId: 'thread-db', internalStep: false, createdAt: { lt: at(4) } },
+          where: { threadId: 'thread-db', internalStep: false, triggeredBy: 'USER_INPUT', createdAt: { lt: at(4) } },
         }));
         expect(mockPrisma.conversationMessage.findMany).toHaveBeenLastCalledWith(expect.objectContaining({
           where: expect.objectContaining({ createdAt: { gt: at(1), lte: at(4) } }),
         }));
+      });
+
+      it('shows a page that starts at the answer what the whole history shows, past a heartbeat mid-turn', async () => {
+        const question = row('question', 'USER', 1);
+        const heartbeat = row('heartbeat', 'AGENT', 3, null, false, 'HEARTBEAT');
+        const answer = row('answer', 'AGENT', 5);
+        const steps = [row('step-1', 'AGENT', 2, [call('a')], true), row('step-2', 'AGENT', 4, [call('b')], true)];
+        // The window opens after the question, not after the heartbeat that precedes the page.
+        mockPrisma.conversationMessage.findFirst.mockResolvedValueOnce({ createdAt: question.createdAt });
+        mockPrisma.conversationMessage.findMany.mockResolvedValueOnce(steps);
+        const [paged] = await conversationService.withHiddenStepToolCalls('thread-db', [answer]);
+        mockPrisma.conversationMessage.findFirst.mockResolvedValueOnce(null);
+        mockPrisma.conversationMessage.findMany.mockResolvedValueOnce(steps);
+        const whole = await conversationService.withHiddenStepToolCalls('thread-db', [question, heartbeat, answer]);
+
+        expect(callIds(paged)).toEqual(['a', 'b']);
+        expect(callIds(whole.find((m) => m.id === 'answer'))).toEqual(callIds(paged));
       });
 
       it('shows a live reply as a reload shows it', async () => {

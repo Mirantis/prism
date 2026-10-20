@@ -24,8 +24,9 @@ elsewhere with `PRISM_HTTP_URL` or the `~/.prism/settings.json` file — see the
   arrow keys and Enter; Escape cancels.
 - **One conversation.** When the agent keeps
   [one conversation](web-ui.md#one-conversation), `prism` always opens it with its
-  recent history, and `--resume` shows no picker. Its commands run in the agent's
-  workspace, whatever directory you start `prism` in.
+  recent history, and `--resume` shows no picker. Its commands run where the
+  conversation started, whatever directory you start `prism` in: the agent's
+  workspace, or the directory of the `prism` session that created it.
 
 To switch to a different thread mid-session, exit and relaunch with `--resume`.
 

@@ -4,14 +4,9 @@
  * model, and are ordered by id for a client.
  */
 
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import Database from 'better-sqlite3';
-import { PrismaClient } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { applyMigrations } from '../../sea/migrate';
-import { createSqliteAdapter } from '../../lib/prisma-adapter';
+import type { PrismaClient } from '@prisma/client';
+import { openMigratedDatabase, type MigratedDatabase } from '../../test-utils/migrated-database';
 
 const database = vi.hoisted(() => ({ client: undefined as PrismaClient | undefined }));
 
@@ -21,28 +16,14 @@ vi.mock('../../lib/prisma', () => ({
 
 import { DatabaseThreadProvider } from './database-thread.provider';
 
-const MIGRATIONS_DIR = path.resolve(__dirname, '..', '..', '..', 'prisma', 'sqlite', 'migrations');
 const SAME_MOMENT = new Date('2026-10-20T08:00:00.000Z');
 
-let dir: string;
+let opened: MigratedDatabase;
 const provider = new DatabaseThreadProvider();
 
 beforeAll(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'thread-order-'));
-  const file = path.join(dir, 'agent.db');
-  const db = new Database(file);
-  applyMigrations(
-    db,
-    fs
-      .readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => ({
-        name: entry.name,
-        sql: fs.readFileSync(path.join(MIGRATIONS_DIR, entry.name, 'migration.sql'), 'utf8'),
-      })),
-  );
-  db.close();
-  database.client = new PrismaClient({ adapter: createSqliteAdapter(`file:${file}`) });
+  opened = openMigratedDatabase();
+  database.client = opened.client;
   const prisma = database.client;
   await prisma.agentWorkspace.create({
     data: { id: 'agent-1', userId: 'user-1', soulMd: '', userMd: '', memoryMd: '', heartbeatMd: '', bootstrapMd: '' },
@@ -57,8 +38,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await database.client?.$disconnect();
-  fs.rmSync(dir, { recursive: true, force: true });
+  await opened?.close();
 });
 
 describe('DatabaseThreadProvider on SQLite', () => {
