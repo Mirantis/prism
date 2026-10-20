@@ -121,10 +121,6 @@ switching to a DM link, and vice-versa.
   permissions issue), the agent tells you why. Shared file content is kept for
   7 days (see [Tools](tools.md#attachments)); after that the agent still sees
   that the file existed but must ask you to share it again to read it.
-- **Tool calls.** A reply that used tools lists them in a collapsed list under
-  the reply. Expand it to read each call's input and output. In a channel every
-  member can expand it, so link a channel only when its members may use the
-  agent and see what it reads.
 - **Feedback.** Final messages carry 👍 / 👎 buttons; tapping one records
   feedback.
 
