@@ -92,6 +92,8 @@ export interface CodingAgentRun {
    * Undefined until the process starts, and where the environment names none.
    */
   readonly mark: ProcessMark | undefined;
+  /** Settles when the agent's process starts, so `mark` names it from then on. Pending for a run that starts none. */
+  readonly started: Promise<void>;
   /** Ask the run to end, gracefully first and then forced. The stream still ends with a `result`. */
   stop(): void;
 }

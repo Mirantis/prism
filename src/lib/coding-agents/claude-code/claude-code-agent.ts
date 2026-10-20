@@ -2,9 +2,11 @@
  * Claude Code as a coding agent.
  *
  * Runs the `claude` CLI with `--output-format stream-json` and reads its NDJSON
- * stream back as the neutral events of `CodingAgent`. Auth inherits from the
- * runtime's environment: the CLI picks up the same Bedrock or Anthropic
- * credentials the agent itself uses.
+ * stream back as the neutral events of `CodingAgent`. With
+ * `CLAUDE_CODE_SUBSCRIPTION` on, every task runs on the Claude subscription
+ * signed in to the CLI's home. Otherwise auth inherits from the runtime's
+ * environment: the CLI picks up the same Bedrock or Anthropic credentials the
+ * agent itself uses.
  *
  * Its home is the execution environment's `claudeHome`, pointed at through
  * `CLAUDE_CONFIG_DIR`, so the CLI's own state (sessions, `.claude.json`) stays
@@ -15,16 +17,18 @@
  */
 
 import { claudeCodeEnvironment, hasClaudeCodeCredentials } from './credentials';
+import { readSavedLogin, subscriptionEnvironment } from './authenticated-home';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
 import { runCli } from '../cli-run';
+import { deferredRun } from '../deferred-run';
 import {
   getExecutionEnvironment,
   getExecutionEnvironmentFor,
 } from '../../execution-environments/get-execution-environment';
 import type { ExecutionEnvironment } from '../../execution-environments/execution-environment';
 import { prepareSharedSkillsHome } from '../shared-skills-home';
-import { runWithMcpConfig } from './mcp-config';
+import { startWithMcpConfig } from './mcp-config';
 import {
   PLAN_ONLY_INSTRUCTION,
   type CodingAgent,
@@ -37,6 +41,8 @@ import {
 
 const DISPLAY_NAME = 'Claude Code';
 const COMMAND = 'claude';
+
+const SUBSCRIPTION_SETTINGS = JSON.stringify({ forceLoginMethod: 'claudeai' });
 
 /** The input fields that name what a refused tool call was aimed at, most specific first. */
 const TARGET_FIELDS = ['file_path', 'notebook_path', 'command', 'url', 'path', 'pattern'];
@@ -76,36 +82,53 @@ export function createClaudeCodeAgent(environment?: ExecutionEnvironment): Codin
     },
     isAvailable: hasClaudeCodeCredentials,
     run: (task: CodingAgentTask): CodingAgentRun => {
-      const env = claudeCodeEnvironment(task.env);
       // The environment the CLI runs in, which is also where its MCP config
       // has to be.
       const target = environment ?? getExecutionEnvironmentFor(task.workdir);
-      const launch = (mcpConfigPath?: string): CodingAgentRun =>
-        runCli(
-          {
-            taskId: task.taskId,
-            displayName: DISPLAY_NAME,
-            command: COMMAND,
-            args: buildArgs(task, env.CLAUDE_CODE_USE_BEDROCK === '1', mcpConfigPath),
-            cwd: task.workdir,
-            env: {
-              ...env,
-              // Stated on the task's env rather than inherited from this
-              // process: the CLI runs in the execution environment.
-              CLAUDE_CONFIG_DIR: (environment ?? getExecutionEnvironment()).paths().claudeHome,
+      const home = (environment ?? getExecutionEnvironment()).paths().claudeHome;
+      return deferredRun(task.taskId, DISPLAY_NAME, async (signal) => {
+        const subscription = config.claudeCodeSubscription;
+        // Asked on every run, so a sign-in or a sign-out applies to the next task.
+        // Anything but a subscription login fails the task, which then bills nothing.
+        if (subscription && (await readSavedLogin(target, task.env, home, signal)) !== 'subscription') {
+          throw new Error(
+            `CLAUDE_CODE_SUBSCRIPTION is on, and the Claude home ${home} has no subscription login: sign in to it with claude auth login`,
+          );
+        }
+        signal.throwIfAborted();
+        const env = subscription ? subscriptionEnvironment(task.env) : claudeCodeEnvironment(task.env);
+        const launch = (mcpConfigPath?: string): CodingAgentRun =>
+          runCli(
+            {
+              taskId: task.taskId,
+              displayName: DISPLAY_NAME,
+              command: COMMAND,
+              args: buildArgs(task, env.CLAUDE_CODE_USE_BEDROCK === '1', subscription, mcpConfigPath),
+              cwd: task.workdir,
+              env: {
+                ...env,
+                // Stated on the task's env rather than inherited from this
+                // process: the CLI runs in the execution environment.
+                CLAUDE_CONFIG_DIR: home,
+              },
+              parseLine: (line) => parseLine(line, task),
             },
-            parseLine: (line) => parseLine(line, task),
-          },
-          target,
-        );
-      return task.mcpServers.length === 0
-        ? launch()
-        : runWithMcpConfig(task, target, DISPLAY_NAME, launch);
+            target,
+          );
+        return task.mcpServers.length === 0
+          ? launch()
+          : startWithMcpConfig(task, target, signal, launch);
+      });
     },
   };
 }
 
-function buildArgs(task: CodingAgentTask, onBedrock: boolean, mcpConfigPath?: string): string[] {
+function buildArgs(
+  task: CodingAgentTask,
+  onBedrock: boolean,
+  subscription: boolean,
+  mcpConfigPath?: string,
+): string[] {
   const args: string[] = [
     '-p',
     task.prompt,
@@ -120,6 +143,8 @@ function buildArgs(task: CodingAgentTask, onBedrock: boolean, mcpConfigPath?: st
   // read-only rule in plan mode. With no terminal a refused action is skipped,
   // the run goes on, and the result line lists it.
   args.push('--permission-mode', task.mode === 'plan' ? 'plan' : 'auto');
+  // On the subscription the CLI takes the claude.ai login and no other.
+  if (subscription) args.push('--settings', SUBSCRIPTION_SETTINGS);
 
   // The CLI enforces plan mode too; stating it keeps the model planning instead of
   // spending turns on actions the CLI refuses.

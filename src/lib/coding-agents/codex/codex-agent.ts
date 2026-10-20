@@ -76,6 +76,7 @@ export function createCodexAgent(environment?: ExecutionEnvironment): CodingAgen
         events: events(),
         get exited() { return run.exited; },
         get mark() { return run.mark; },
+        started: run.started,
         stop: () => { stopped = true; run.stop(); },
       };
     },

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { hasAuthenticatedClaudeHome } from './authenticated-home';
-vi.mock('./authenticated-home', () => ({ hasAuthenticatedClaudeHome: vi.fn(async () => false) }));
-afterEach(() => vi.mocked(hasAuthenticatedClaudeHome).mockResolvedValue(false));
+import { readSavedLogin } from './authenticated-home';
+vi.mock('./authenticated-home', () => ({ readSavedLogin: vi.fn(async () => 'none') }));
+afterEach(() => vi.mocked(readSavedLogin).mockResolvedValue('none'));
 
 import { claudeCodeEnvironment, hasClaudeCodeCredentials } from './credentials';
 
@@ -34,9 +34,16 @@ describe('coding agent credentials', () => {
     expect(claudeCodeEnvironment({ ...env, CLAUDE_CODE_USE_BEDROCK: '1' }).AWS_REGION).toBe(region);
   });
 
-  it('detects a saved CLI login without environment credentials', async () => {
-    vi.mocked(hasAuthenticatedClaudeHome).mockResolvedValue(true);
-    expect(await hasClaudeCodeCredentials({})).toBe(true);
+  it.each(['subscription', 'other'] as const)(
+    'detects a saved %s login without environment credentials', async (login) => {
+      vi.mocked(readSavedLogin).mockResolvedValue(login);
+      expect(await hasClaudeCodeCredentials({})).toBe(true);
+    },
+  );
+
+  it('reads no login from a CLI that cannot report one', async () => {
+    vi.mocked(readSavedLogin).mockRejectedValue(new Error('claude auth status did not answer in 10 s'));
+    expect(await hasClaudeCodeCredentials({})).toBe(false);
   });
 
   it.each(['ANTHROPIC_FOUNDRY_API_KEY', 'ANTHROPIC_FOUNDRY_AUTH_TOKEN', 'AZURE_API_KEY'])(

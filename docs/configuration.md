@@ -173,6 +173,7 @@ Omitted parameters keep the deployment's model and effort behavior.
 | `CLAUDE_CODE_MODEL_SMALL` | Model for the Claude Code small tier | `haiku` (Bedrock: `global.anthropic.claude-haiku-5-5`) |
 | `CLAUDE_CODE_MODEL_MEDIUM` | Model for the Claude Code medium tier | `sonnet` (Bedrock: `global.anthropic.claude-sonnet-5-5`) |
 | `CLAUDE_CODE_MODEL_LARGE` | Model for the Claude Code large tier | `opus` |
+| `CLAUDE_CODE_SUBSCRIPTION` | `true` runs every Claude Code task on your Claude subscription. See [Coding tasks on a Claude subscription](#coding-tasks-on-a-claude-subscription). | off |
 | `CODEX_MODEL_SMALL` | Model for the Codex small tier | `gpt-5.6-luna` (Bedrock: `openai.gpt-5.6-luna`) |
 | `CODEX_MODEL_MEDIUM` | Model for the Codex medium tier | `gpt-5.6-terra` (Bedrock: `openai.gpt-5.6-terra`) |
 | `CODEX_MODEL_LARGE` | Model for the Codex large tier | `gpt-5.6-sol` (Bedrock: `openai.gpt-5.6-sol`) |
@@ -182,6 +183,29 @@ out of every tier. Blank overrides log a warning and use the default.
 
 `AGENT_NAME`, `TEAM_NAME`, and `OWNER_USER_ID` only matter on the **first** boot
 with an empty database; later boots reuse the stored workspace.
+
+### Coding tasks on a Claude subscription
+
+Claude Code tasks can run on your Claude Pro, Max, Team or Enterprise
+subscription, while the agent itself keeps its `LLM_PROVIDER`. Sign in once with
+the command for where the agent's commands run, then set
+`CLAUDE_CODE_SUBSCRIPTION=true` and restart the agent:
+
+| Where commands run | Command |
+| ------------------ | ------- |
+| On this machine | `CLAUDE_CONFIG_DIR=<data dir>/.claude claude auth login`, where the data dir is `~/.prism` by default |
+| In the container Prism starts | `docker exec -it -e CLAUDE_CONFIG_DIR=/prism/claude prism-agent-exec-<id> claude auth login` |
+| In the Prism image | `docker exec -it -e CLAUDE_CONFIG_DIR=/data/.claude prism claude auth login` |
+
+Open the link that the command prints, choose your subscription account, and paste
+the code back if the command asks for it. Claude Code then uses the subscription and
+none of the agent's API keys or cloud credentials. While no subscription is signed
+in, every Claude Code task fails with a message that says so. The
+`CLAUDE_CODE_MODEL_*` overrides apply to these tasks too, so set them to model
+names the subscription serves, such as `sonnet`, not Bedrock IDs. When the
+subscription reaches its usage limit, tasks fail with Claude Code's message until
+the limit resets. To go back to the agent's credentials, remove the variable and
+restart the agent.
 
 ### What a coding task may do
 

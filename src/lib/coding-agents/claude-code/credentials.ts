@@ -1,5 +1,6 @@
-import { hasAuthenticatedClaudeHome } from './authenticated-home';
+import { readSavedLogin, type SavedLogin } from './authenticated-home';
 import { bedrockRegion, hasBedrockCredentials } from '../bedrock-credentials';
+import { getExecutionEnvironment } from '../../execution-environments/get-execution-environment';
 
 export function claudeCodeEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const foundry = {
@@ -30,5 +31,8 @@ export async function hasClaudeCodeCredentials(env: NodeJS.ProcessEnv): Promise<
     return true;
   }
   // The saved login is the last resort: it costs a run of the CLI itself.
-  return hasAuthenticatedClaudeHome(env);
+  const environment = getExecutionEnvironment();
+  const login = await readSavedLogin(environment, env, environment.paths().claudeHome)
+    .catch((): SavedLogin => 'none');
+  return login !== 'none';
 }

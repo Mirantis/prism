@@ -1052,18 +1052,19 @@ src/
 │   │   └── litellm/
 │   │       └── litellm-provider.ts # An operator's LiteLLM proxy (Anthropic Messages surface; aliases pass through; startup model check): `createLiteLlmProvider(baseURL?)`
 │   ├── coding-agents/          # One folder per coding agent, plus the shared contract and the selector (`CODING_AGENT` and per-task `agent`)
-│   │   ├── coding-agent.ts     # The `CodingAgent` contract: `id`, `displayName`, `prepareHome()` and `run(task)`, which returns a `CodingAgentRun` (an event stream of `text` / `session` / `result` with the actions the agent's checks refused, `exited`, `stop()`). States what the runtime needs and nothing about how an agent is launched
+│   │   ├── coding-agent.ts     # The `CodingAgent` contract: `id`, `displayName`, `prepareHome()` and `run(task)`, which returns a `CodingAgentRun` (an event stream of `text` / `session` / `result` with the actions the agent's checks refused, `exited`, `started`, `stop()`). States what the runtime needs and nothing about how an agent is launched
 │   │   ├── cli-run.ts          # `runCli()`: the process plumbing a CLI-shaped adapter calls — spawn, stdout lines through the adapter's parser, exit wait, the closing `result` when the agent reported none, SIGTERM→SIGKILL stop
+│   │   ├── deferred-run.ts     # `deferredRun()`: a run whose process starts after async work; a stop before then aborts that work, and a failure is the closing `result`
 │   │   ├── get-coding-agent.ts # Selector: `config.codingAgent` → adapter, one instance per agent so the adapter that prepared the home runs every task; a `Record` so a config name without an adapter fails to compile
 │   │   ├── bedrock-credentials.ts # Shared AWS credential detection
 │   │   ├── codex/
 │   │   │   └── codex-agent.ts             # Codex CLI adapter
 │   │   └── claude-code/
-│   │       ├── authenticated-home.ts # Saved CLI login detection, by running the CLI in the execution environment
+│   │       ├── authenticated-home.ts # The home's saved login (`claude auth status`, run in the execution environment): a claude.ai subscription, another login, or none; and `subscriptionEnvironment`, the env without the variables that outrank it
 │   │       ├── credentials.ts # Claude CLI authentication settings
 │   │       ├── home.ts        # Where the CLI keeps its state, resolved off the env the CLI will run with
 │   │       ├── mcp-config.ts  # The task's MCP servers as a `--mcp-config` file: written 0600 in a temp dir of its own, removed before the run's stream ends
-│   │       └── claude-code-agent.ts # The Claude Code adapter: `claude -p --output-format stream-json …` argv (task mode → permission mode, plan-only instruction), the stream-json parser with the result line's `permission_denials`, and the `<DATA>/.claude` home with `CLAUDE_CONFIG_DIR` and the skills symlink
+│   │       └── claude-code-agent.ts # The Claude Code adapter: `claude -p --output-format stream-json …` argv (task mode → permission mode, plan-only instruction), the stream-json parser with the result line's `permission_denials`, and the `<DATA>/.claude` home with `CLAUDE_CONFIG_DIR` and the skills symlink. With `CLAUDE_CODE_SUBSCRIPTION` on, each run asks the home for its login first: a claude.ai subscription runs the task with `subscriptionEnvironment` and `forceLoginMethod: claudeai`, and anything else fails it
 │   ├── execution-environments/ # Where a command runs and what filesystem it sees, plus the shared contract and the selector
 │   │   ├── execution-environment.ts # The contract: `runShell` / `runProgram` returning an `ExecProcess` (`ended` for exit accounting, `closed` once the pipes drain), `ExecutionFiles`, and `paths()` — the agent's directories in this environment
 │   │   ├── exec-stdio-transport.ts # MCP stdio over `runProgram`, so a plugin's server runs where its files are
@@ -1162,6 +1163,7 @@ What the operator sets on `docker run`:
 | `CLAUDE_CODE_MODEL_SMALL` | Model for the Claude Code small tier | `haiku` (Bedrock: `global.anthropic.claude-haiku-5-5`) |
 | `CLAUDE_CODE_MODEL_MEDIUM` | Model for the Claude Code medium tier | `sonnet` (Bedrock: `global.anthropic.claude-sonnet-5-5`) |
 | `CLAUDE_CODE_MODEL_LARGE` | Model for the Claude Code large tier | `opus` |
+| `CLAUDE_CODE_SUBSCRIPTION` | `true` runs every Claude Code task on the Claude subscription signed in to the CLI's home, and fails a task while none is | off |
 | `CODEX_MODEL_SMALL` | Model for the Codex small tier | `gpt-5.6-luna` (Bedrock: `openai.gpt-5.6-luna`) |
 | `CODEX_MODEL_MEDIUM` | Model for the Codex medium tier | `gpt-5.6-terra` (Bedrock: `openai.gpt-5.6-terra`) |
 | `CODEX_MODEL_LARGE` | Model for the Codex large tier | `gpt-5.6-sol` (Bedrock: `openai.gpt-5.6-sol`) |

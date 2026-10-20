@@ -125,6 +125,7 @@ export function runCli(
     get mark() {
       return proc.mark;
     },
+    started: Promise.resolve(),
     stop: () => terminate(proc, taskId),
   };
 }

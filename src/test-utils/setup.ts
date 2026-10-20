@@ -76,6 +76,7 @@ vi.mock('../config', () => ({
       },
     },
     availableCodingAgents: ['claude-code'],
+    claudeCodeSubscription: false,
     awsRegion: 'us-east-1',
     awsAccessKeyId: undefined,
     awsSecretAccessKey: undefined,

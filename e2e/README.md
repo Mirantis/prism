@@ -30,6 +30,9 @@ Coding-agent selection scenarios use an API key, a saved Codex login, or Bedrock
 To test a saved login, start with a stopped test runtime and run
 `CODEX_HOME=/path/to/codex-home OPENAI_API_KEY= CODEX_API_KEY= npm run test --workspace=prism-agent-e2e -- --grep @codex-login`.
 The Codex home must contain a valid, writable `auth.json` from `codex login`.
+To test a Claude subscription, sign a Claude home in with
+`CLAUDE_CONFIG_DIR=/path/to/claude-home claude auth login`, then run
+`CLAUDE_CONFIG_DIR=/path/to/claude-home CLAUDE_CODE_SUBSCRIPTION=true npm run test --workspace=prism-agent-e2e -- --grep @claude-subscription`.
 
 ### The voice chat scenario
 

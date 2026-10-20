@@ -5,6 +5,8 @@ import { expect, test } from '@playwright/test';
 import { HomePage } from '../pages/home.page';
 import { DEFAULT_AGENT_ID, E2E_WORKSPACE } from '../fixtures/test-data';
 import { hasClaudeCodeCredentials } from '../../src/lib/coding-agents/claude-code/credentials';
+import { readSavedLogin } from '../../src/lib/coding-agents/claude-code/authenticated-home';
+import { getExecutionEnvironment } from '../../src/lib/execution-environments/get-execution-environment';
 import { codexAuthMethod } from '../../src/lib/coding-agents/codex/credentials';
 import { getPrisma } from '../support/db-helper';
 import type { ToolCallRecord } from '../../src/types';
@@ -82,6 +84,43 @@ Given('Codex has a saved test login', async () => {
     'Saved-login coverage needs CODEX_HOME with auth.json and empty API key environment variables.');
   expect(process.env.OPENAI_API_KEY).toBe('');
   expect(process.env.CODEX_API_KEY || '').toBe('');
+});
+
+Given('Claude Code has a saved subscription login', async () => {
+  // Read on this machine, where the runtime's tasks run unless they run in its container.
+  test.skip(process.env.EXECUTION_ENVIRONMENT === 'docker',
+    'The container keeps its own Claude home, which this process cannot read.');
+  const home = process.env.CLAUDE_CONFIG_DIR;
+  const login = home
+    ? await readSavedLogin(getExecutionEnvironment(), process.env, home).catch(() => 'none')
+    : 'none';
+  test.skip(login !== 'subscription' || process.env.CLAUDE_CODE_SUBSCRIPTION !== 'true',
+    'Subscription coverage needs CLAUDE_CODE_SUBSCRIPTION=true and CLAUDE_CONFIG_DIR signed in to a Claude subscription with claude auth login.');
+});
+
+When('I ask a Claude Code task how it is signed in', async ({ page }) => {
+  test.setTimeout(240_000);
+  const home = new HomePage(page);
+  await home.navigate();
+  await home.typeMessage(
+    'Use coding_agent with agent="claude-code" in edit mode, giving it this prompt: ' +
+    'Run the shell command `claude auth status --json` and reply with only the value of its authMethod field. ' +
+    'Poll coding_agent_status until completed. Reply with one line only: AUTH=<the result>.',
+  );
+  await home.sendMessage();
+  await home.waitForStreamComplete(180_000);
+});
+
+Then('the coding task is signed in with {string}', async ({}, method: string) => {
+  const statuses = (await codingCalls())
+    .filter(call => call.tool === 'coding_agent_status' && call.success)
+    .map(call => JSON.parse(call.output));
+  expect(statuses).toContainEqual(expect.objectContaining({
+    agent: 'claude-code',
+    completed: true,
+    stopReason: 'end_turn',
+    result: expect.stringContaining(method),
+  }));
 });
 
 When('I ask for a coding task using {string}', async ({ page }, agent: string) => {

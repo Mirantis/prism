@@ -754,6 +754,10 @@ if (!isValidCodingAgent) {
   logger.warn({ configuredAgent: rawCodingAgent }, '[Startup] invalid CODING_AGENT; using the detected default');
 }
 
+// CLAUDE_CODE_SUBSCRIPTION=true runs every Claude Code task on the Claude
+// subscription signed in to the CLI's home, and on nothing else.
+const claudeCodeSubscription = process.env.CLAUDE_CODE_SUBSCRIPTION?.trim().toLowerCase() === 'true';
+
 function codingAgentModelOverride(name: string): string | undefined {
   const raw = process.env[name];
   if (raw === undefined) return undefined;
@@ -1078,6 +1082,7 @@ export const config = {
   codingAgentModels,
   availableCodingAgents,
   configuredCodingAgent,
+  claudeCodeSubscription,
 
   // Overrides the input-context window used by the context-window indicator.
   // Normally derived from the model ID via the models.dev catalog

@@ -246,6 +246,9 @@ export class AgentTaskManager {
     const entry: TaskEntry = { mode: task.mode, state, waiters: [], reading: false, run, params: original };
     this.tasks.set(taskId, entry);
     this.record(taskId, entry);
+    // A run can start its process after this, and the next boot stops a
+    // process left running only by the mark recorded here.
+    void run.started.then(() => this.record(taskId, entry));
 
     logger.info(
       {
