@@ -21,7 +21,7 @@ vi.mock('../config', () => ({
     ownerUserId: '00000000-0000-0000-0000-000000000001',
     agentName: 'Prism',
     teamName: 'Local',
-    workspaceSeed: { soulMd: '# Seeded soul' },
+    workspaceSeedDir: '/seed',
   },
 }));
 
@@ -32,6 +32,10 @@ vi.mock('./prisma', () => ({
       findFirst: mockFindFirst,
     },
   },
+}));
+
+vi.mock('./workspace-seed', () => ({
+  readWorkspaceSeed: (dir: string | undefined) => (dir === '/seed' ? { soulMd: '# Seeded soul' } : {}),
 }));
 
 vi.mock('../services/agent-workspace.service', () => ({

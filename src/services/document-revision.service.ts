@@ -141,8 +141,9 @@ class DocumentRevisionService {
    * Record the seed revision of every document of a new agent. One insert, and
    * no retention pass, because each field is gaining its first revision.
    *
-   * Attributed to the user, because the content came from the template rather
-   * than from anything the agent decided.
+   * Attributed to the user, because the content came with the agent's creation,
+   * from the template or the deployment's seed, rather than from anything the
+   * agent decided.
    *
    * @param tx Transaction client — the caller's, so the agent row and its
    *   history land together.

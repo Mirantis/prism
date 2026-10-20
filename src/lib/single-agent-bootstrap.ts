@@ -21,6 +21,7 @@ import { config } from '../config';
 import { logger } from '../logger';
 import { prisma } from './prisma';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
+import { readWorkspaceSeed } from './workspace-seed';
 
 export async function resolveOrBootstrapSingleAgent(): Promise<AgentWorkspace> {
   const agent = await resolve();
@@ -60,7 +61,7 @@ async function bootstrap(id: string): Promise<AgentWorkspace> {
     name: config.agentName,
     agentType: 'AGENT',
     teamName: config.teamName,
-    documents: config.workspaceSeed,
+    documents: readWorkspaceSeed(config.workspaceSeedDir),
   });
   logger.info(
     { agentId: agent.id, name: agent.name, ownerUserId: agent.userId },
