@@ -89,6 +89,9 @@ vi.mock('../lib/prisma', () => ({
     conversationThread: {
       findUnique: mockThreadFindUnique,
     },
+    conversationMessage: {
+      findMany: (args: unknown) => mockMessageFindMany(args) ?? Promise.resolve([]),
+    },
   },
 }));
 
@@ -118,6 +121,7 @@ vi.mock('../lib/classification', () => ({
 
 const { mockTrackEvent } = vi.hoisted(() => ({ mockTrackEvent: vi.fn() }));
 const { mockKeepWithheldRun } = vi.hoisted(() => ({ mockKeepWithheldRun: vi.fn() }));
+const { mockMessageFindMany } = vi.hoisted(() => ({ mockMessageFindMany: vi.fn() }));
 
 vi.mock('./outbound-message.service', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./outbound-message.service')>()),
@@ -1247,13 +1251,22 @@ describe('CronSchedulerService', () => {
     });
 
     describe('a recurring unbound task that sent a message', () => {
+      const SEND_CALL = {
+        tool: 'send_message',
+        input: JSON.stringify({ target: '#ops', text: 'Nightly build #812 failed. <@U02BEN0002> please check.' }),
+        output: '{}',
+        success: true,
+        timestamp: '2026-10-20T08:00:00Z',
+      };
+      const SENT_LINE = '- To #ops: Nightly build #812 failed. <@U02BEN0002> please check.';
       const SENT = {
         response: 'Posted the build failure to #ops.',
-        toolCalls: [{ tool: 'send_message', input: '{}', output: '{}', success: true, timestamp: '2026-10-20T08:00:00Z' }],
+        toolCalls: [SEND_CALL],
         steps: [{ text: 'Posted the build failure to #ops.' }],
       };
+      const reported = (text: string) => ({ response: text, toolCalls: [], steps: [{ text }] });
 
-      it('gives the next run the note of the run that sent, also when the gate withheld it', async () => {
+      it('gives the next run what the last run sent, also when the gate withheld it', async () => {
         mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
         mockInvoke.mockResolvedValueOnce(SENT);
 
@@ -1261,66 +1274,104 @@ describe('CronSchedulerService', () => {
         await run();
         await run();
 
-        expect(mockInvoke.mock.calls[0][0].lastSentNote).toBeUndefined();
-        expect(mockInvoke.mock.calls[1][0].lastSentNote).toEqual({
-          text: 'Posted the build failure to #ops.',
+        expect(mockInvoke.mock.calls[0][0].lastSend).toBeUndefined();
+        expect(mockInvoke.mock.calls[1][0].lastSend).toEqual({ messages: SENT_LINE, at: expect.any(Number) });
+      });
+
+      it('keeps the record through a run that ends with no text', async () => {
+        mockInvoke.mockResolvedValueOnce(SENT).mockResolvedValueOnce(reported(''));
+
+        const run = scheduleAndCapture();
+        await run();
+        await run();
+        await run();
+
+        expect(mockInvoke.mock.calls[2][0].lastSend).toEqual({ messages: SENT_LINE, at: expect.any(Number) });
+      });
+
+      it("passes on a skipping run's report, whatever the gate made of it", async () => {
+        mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+        mockInvoke
+          .mockResolvedValueOnce(SENT)
+          .mockResolvedValueOnce(reported('Already posted to #ops, staying quiet.'));
+
+        const run = scheduleAndCapture();
+        await run();
+        await run();
+        await run();
+
+        expect(mockInvoke.mock.calls[2][0].lastSend).toEqual({
+          messages: SENT_LINE,
           at: expect.any(Number),
+          latestReport: { text: 'Already posted to #ops, staying quiet.', at: expect.any(Number) },
         });
       });
 
-      it('keeps the note through a run that sent nothing', async () => {
-        mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
+      it('passes on an all-clear, so a recurrence after it reads as new, and a new send replaces both', async () => {
+        mockInvoke
+          .mockResolvedValueOnce(SENT)
+          .mockResolvedValueOnce(reported('The nightly build passed.'))
+          .mockResolvedValueOnce(SENT);
+
+        const run = scheduleAndCapture();
+        await run();
+        await run();
+        await run();
+        await run();
+
+        expect(mockInvoke.mock.calls[2][0].lastSend.latestReport.text).toBe('The nightly build passed.');
+        expect(mockInvoke.mock.calls[3][0].lastSend).toEqual({ messages: SENT_LINE, at: expect.any(Number) });
+      });
+
+      it('records what a run sent before it hit the spending limit', async () => {
+        mockInvoke.mockResolvedValueOnce({ ...SENT, error: { type: 'budget_exceeded', detail: null } });
+
+        const run = scheduleAndCapture();
+        await run();
+        await run();
+
+        expect(mockInvoke.mock.calls[1][0].lastSend).toEqual({ messages: SENT_LINE, at: expect.any(Number) });
+      });
+
+      it('reads what the task sent from its stored runs after a restart, once', async () => {
+        const sentAt = new Date('2026-10-20T06:00:00Z');
+        const reportedAt = new Date('2026-10-20T07:00:00Z');
+        mockMessageFindMany.mockResolvedValueOnce([
+          { content: '**Scheduled Task: Daily Report**\n\nThe build is still failing.', toolCalls: [], createdAt: reportedAt },
+          { content: '**Scheduled Task: Daily Report**\n\nPosted the build failure to #ops.', toolCalls: [SEND_CALL], createdAt: sentAt },
+        ]);
+        cronSchedulerService.stopAll();
+
+        const run = scheduleAndCapture();
+        await run();
+        await run();
+
+        expect(mockMessageFindMany).toHaveBeenCalledTimes(1);
+        expect(mockMessageFindMany.mock.calls[0][0].where).toEqual(
+          expect.objectContaining({
+            triggeredBy: 'CRON_TASK',
+            content: { startsWith: '**Scheduled Task: Daily Report**' },
+            createdAt: { gte: new Date('2025-01-01T00:00:00.000Z') },
+          }),
+        );
+        expect(mockInvoke.mock.calls[0][0].lastSend).toEqual({
+          messages: SENT_LINE,
+          at: sentAt.getTime(),
+          latestReport: { text: 'The build is still failing.', at: reportedAt.getTime() },
+        });
+      });
+
+      it('starts a changed instruction with no record, without reading the stored runs', async () => {
         mockInvoke.mockResolvedValueOnce(SENT);
 
-        const run = scheduleAndCapture();
-        await run();
-        await run();
-        await run();
+        await scheduleAndCapture()();
+        await scheduleAndCapture({ instruction: 'Check the release build instead.' })();
 
-        expect(mockInvoke.mock.calls[2][0].lastSentNote).toEqual(
-          expect.objectContaining({ text: 'Posted the build failure to #ops.' }),
-        );
+        expect(mockInvoke.mock.calls[1][0].lastSend).toBeUndefined();
+        expect(mockMessageFindMany).toHaveBeenCalledTimes(1);
       });
 
-      it('forgets the note after an all-clear, so a recurrence is sent again', async () => {
-        mockInvoke
-          .mockResolvedValueOnce(SENT)
-          .mockResolvedValueOnce({ response: 'The build is green.', toolCalls: [], steps: [{ text: 'The build is green.' }] });
-        mockGenerateText
-          .mockResolvedValueOnce({ text: 'DELIVER' })
-          .mockResolvedValueOnce({ text: 'SUPPRESS' });
-
-        const run = scheduleAndCapture();
-        await run();
-        await run();
-        await run();
-
-        expect(mockInvoke.mock.calls[2][0].lastSentNote).toBeUndefined();
-      });
-
-      it('keeps the note through a repeat, which reports the same finding', async () => {
-        mockInvoke
-          .mockResolvedValueOnce(SENT)
-          .mockResolvedValueOnce({
-            response: 'The build is still failing; already posted to #ops.',
-            toolCalls: [],
-            steps: [{ text: 'The build is still failing; already posted to #ops.' }],
-          });
-        mockGenerateText
-          .mockResolvedValueOnce({ text: 'DELIVER' })
-          .mockResolvedValueOnce({ text: 'REPEAT' });
-
-        const run = scheduleAndCapture();
-        await run();
-        await run();
-        await run();
-
-        expect(mockInvoke.mock.calls[2][0].lastSentNote).toEqual(
-          expect.objectContaining({ text: 'Posted the build failure to #ops.' }),
-        );
-      });
-
-      it('records no note for a run whose instruction changed while it ran', async () => {
+      it('records nothing for a run whose instruction changed while it ran', async () => {
         let finish: (value: unknown) => void = () => {};
         mockInvoke.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
 
@@ -1331,10 +1382,10 @@ describe('CronSchedulerService', () => {
         await running;
         await next();
 
-        expect(mockInvoke.mock.calls[1][0].lastSentNote).toBeUndefined();
+        expect(mockInvoke.mock.calls[1][0].lastSend).toBeUndefined();
       });
 
-      it('gives a thread-bound run no note, since it reads its thread', async () => {
+      it('gives a thread-bound run no record, since it reads its thread', async () => {
         mockThreadFindUnique.mockResolvedValue({ id: 'thread-bound' });
         mockInvoke.mockResolvedValueOnce(SENT);
 
@@ -1342,16 +1393,8 @@ describe('CronSchedulerService', () => {
         await run();
         await run();
 
-        expect(mockInvoke.mock.calls[1][0].lastSentNote).toBeUndefined();
-      });
-
-      it('forgets the note when the instruction changes', async () => {
-        mockInvoke.mockResolvedValueOnce(SENT);
-
-        await scheduleAndCapture()();
-        await scheduleAndCapture({ instruction: 'Check the release build instead.' })();
-
-        expect(mockInvoke.mock.calls[1][0].lastSentNote).toBeUndefined();
+        expect(mockInvoke.mock.calls[1][0].lastSend).toBeUndefined();
+        expect(mockMessageFindMany).not.toHaveBeenCalled();
       });
     });
 
@@ -1601,7 +1644,7 @@ describe('CronSchedulerService', () => {
       const firstRun = run(); // blocks inside invoke
       await run(); // overlapping tick — must skip without invoking
 
-      expect(mockInvoke).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(mockInvoke).toHaveBeenCalledTimes(1));
 
       resolveInvoke({ response: 'Task completed.', toolCalls: [], steps: [{ text: 'Task completed.', toolCalls: [] }] });
       await firstRun;

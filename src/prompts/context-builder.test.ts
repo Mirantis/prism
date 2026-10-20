@@ -310,19 +310,33 @@ describe('system prompt text', () => {
     );
   });
 
-  it("cron mode tells a run what the task's last run sent, after the cached part of the prompt", async () => {
-    const lastSentNote = { text: 'Posted the build failure to #ops.', at: Date.now() - 60 * 60 * 1000 };
-    const parts = await buildSystemPromptParts(createTestAgentContext({ lastSentNote }), 'cron');
+  it('cron mode tells a run what the task sent and what a later run reported, after the cached part', async () => {
+    const lastSend = {
+      messages: '- To #ops: Nightly build #812 failed.',
+      at: Date.now() - 3 * 60 * 60 * 1000,
+      latestReport: { text: 'The build is still failing. The alert is already in #ops.', at: Date.now() - 60 * 60 * 1000 },
+    };
+    const parts = await buildSystemPromptParts(createTestAgentContext({ lastSend }), 'cron');
 
-    const note = parts.find((p) => p.text.includes('# Last Sent Message'));
-    expect(note?.cacheable).toBe(false);
-    expect(note?.text).toContain('The last run of this task (1h ago) sent a message and ended with this note:');
-    expect(note?.text).toContain('Posted the build failure to #ops.');
-    expect(parts.filter((p) => p.cacheable).map((p) => p.text).join()).not.toContain('Posted the build failure');
+    const section = parts.find((p) => p.text.includes('# Messages This Task Sent'));
+    expect(section?.cacheable).toBe(false);
+    expect(section?.text).toContain('A run of this task (3h ago) sent these messages:\n\n- To #ops: Nightly build #812 failed.');
+    expect(section?.text).toContain('The newest run after it (1h ago) reported:\n\nThe build is still failing.');
+    expect(parts.filter((p) => p.cacheable).map((p) => p.text).join()).not.toContain('Nightly build #812');
   });
 
-  it('cron mode without a sent message has no last-sent section', async () => {
-    expect(await promptText(createTestAgentContext(), 'cron')).not.toContain('# Last Sent Message');
+  it('cron mode tells a task that asks for a message on every run to send it, and a conditional one to wait for a new occurrence', async () => {
+    const text = await promptText(createTestAgentContext({ lastSend: { messages: '- To #team: Stand-up at 9.', at: Date.now() } }), 'cron');
+
+    expect(text).toContain('If the task asks for a message on every run, send it as asked.');
+    expect(text).toContain(
+      'If it asks for a message only when something happens, send it again only for a new occurrence, for example one that began after a run reported that the condition had cleared.',
+    );
+    expect(text).toContain('When you do not send a message for that reason, end with the finding that still holds');
+  });
+
+  it('cron mode without a sent message has no sent-messages section', async () => {
+    expect(await promptText(createTestAgentContext(), 'cron')).not.toContain('# Messages This Task Sent');
   });
 
   it('webhook mode includes webhook instructions and no chat/bootstrap sections', async () => {

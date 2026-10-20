@@ -14,7 +14,7 @@ import { config } from '../config';
 import { memoryManagerService, type MemoryBlock } from '../services/memory-manager.service';
 import type { AttachmentMeta } from '../services/attachment.service';
 import { humanFileSize } from '../services/attachment.service';
-import { HeartbeatTrigger } from '../types';
+import { HeartbeatTrigger, type TaskLastSend } from '../types';
 import { skillCatalogService, type SkillSource } from '../services/skill-catalog.service';
 import { getExecutionEnvironment } from '../lib/execution-environments/get-execution-environment';
 import { pluginCatalogService } from '../services/plugin-catalog.service';
@@ -66,8 +66,8 @@ export interface AgentContext {
   recentMessages: ConversationMessage[];
   lastHeartbeatAlert?: string;
   lastHeartbeatAlertAt?: number;
-  /** A recurring task's note from its last run that sent a message, for a run that reads no history. */
-  lastSentNote?: { text: string; at: number };
+  /** What a recurring task's runs sent and reported since, for a run that reads no history. */
+  lastSend?: TaskLastSend;
   /** Per-turn runtime events to surface authoritatively (see InvokeRequest). */
   runtimeNotices?: string[];
 }
@@ -182,7 +182,7 @@ export async function buildSystemPromptParts(
     }
   } else if (mode === 'cron') {
     stableSections.push(getCronInstructions());
-    if (context.lastSentNote) dynamicSections.push(getLastSentInstructions(context.lastSentNote));
+    if (context.lastSend) dynamicSections.push(getLastSendInstructions(context.lastSend));
   } else if (mode === 'webhook') {
     stableSections.push(getWebhookInstructions());
   } else if (mode === 'goal') {
@@ -863,17 +863,25 @@ You are running a scheduled task: follow its instruction and report what you fin
 When this run continues an earlier conversation, you are resuming after a wait you scheduled: reply as the next message in that conversation, not as a standalone report. If what you waited for has not happened yet, you can wait again the same way.`;
 }
 
-/** What a recurring task's last run sent, for a run that reads no history. */
-function getLastSentInstructions(note: { text: string; at: number }): string {
-  return [
-    `# Last Sent Message`,
+/** What a recurring task's runs sent and reported since, for a run that reads no history. */
+function getLastSendInstructions(lastSend: TaskLastSend): string {
+  const lines = [
+    `# Messages This Task Sent`,
     ``,
-    `The last run of this task (${formatTimeAgo(note.at)}) sent a message and ended with this note:`,
+    `A run of this task (${formatTimeAgo(lastSend.at)}) sent these messages:`,
     ``,
-    note.text,
+    lastSend.messages,
+  ];
+  if (lastSend.latestReport) {
+    lines.push(``, `The newest run after it (${formatTimeAgo(lastSend.latestReport.at)}) reported:`, ``, lastSend.latestReport.text);
+  }
+  lines.push(
     ``,
-    `Send that message again only if the situation it reported has changed.`,
-  ].join('\n');
+    `If the task asks for a message on every run, send it as asked.`,
+    `If it asks for a message only when something happens, send it again only for a new occurrence, for example one that began after a run reported that the condition had cleared.`,
+    `When you do not send a message for that reason, end with the finding that still holds, for example "The build is still failing. The alert is already in #ops."`,
+  );
+  return lines.join('\n');
 }
 
 function getWebhookInstructions(): string {

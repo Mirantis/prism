@@ -34,6 +34,7 @@ import {
   MAX_SENT_MESSAGE_LENGTH,
   SEND_MESSAGE_TOOL_NAME,
   WITHHELD_RUN_TEXT,
+  sentMessages,
 } from '../outbound-message.service';
 import { LinkedTarget, SendRefusedError } from '../channel-adapter.interface';
 import type { ToolCallRecord } from '../../types';
@@ -401,5 +402,18 @@ describe('Requirement: a withheld run that sent a message stays in history', () 
     await outboundMessageService.keepWithheldRun({ ...run, toolCalls: [toolCall({ tool: 'memory_search' })] });
 
     expect(mockConversationService.addMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("Requirement: a run's sends read back as where each message went and what it said", () => {
+  it('lists each successful send, with its thread, and skips failed sends and other tools', () => {
+    expect(
+      sentMessages([
+        toolCall({ input: JSON.stringify({ target: '#ops', text: 'Build #812 failed.' }) }),
+        toolCall({ input: JSON.stringify({ target: 'slack:C0RELEASE', thread: '1712345678.000001', text: 'Shipped.' }) }),
+        toolCall({ input: JSON.stringify({ target: '#ops', text: 'Refused.' }), success: false }),
+        toolCall({ tool: 'memory_write', input: '{}' }),
+      ]),
+    ).toEqual(['- To #ops: Build #812 failed.', '- To slack:C0RELEASE, in thread 1712345678.000001: Shipped.']);
   });
 });
