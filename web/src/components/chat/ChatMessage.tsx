@@ -72,7 +72,7 @@ const ChatMessage = memo(function ChatMessage({
         ? 'border bg-card text-foreground'
         : 'bg-muted/25 text-muted-foreground';
     return (
-      <div className={`flex ${ENTER} ${isBlock ? 'justify-start' : 'justify-center'}`}>
+      <div className={`flex ${ENTER} ${isBlock ? 'justify-start' : 'justify-center'}`} data-message-id={message.id}>
         <div className={`max-w-[85%] rounded-xl px-4 py-2 text-sm ${shape} ${skin}`}>
           <ChatMarkdown content={message.content} />
         </div>
@@ -91,7 +91,7 @@ const ChatMessage = memo(function ChatMessage({
   // our own.
   if (sender) {
     return (
-      <div className={`group flex gap-3 ${ENTER}`} data-message-role="participant">
+      <div className={`group flex gap-3 ${ENTER}`} data-message-role="participant" data-message-id={message.id}>
         <ParticipantAvatar name={sender} className="mt-0.5" />
         <div className="flex max-w-[85%] min-w-0 flex-col items-start gap-2">
           <div className="flex h-7 items-center gap-2">
@@ -113,7 +113,12 @@ const ChatMessage = memo(function ChatMessage({
 
   if (message.role === 'USER') {
     return (
-      <div className={`group flex justify-end gap-3 ${ENTER}`} data-message-role="user" data-delivery={message.delivery}>
+      <div
+        className={`group flex justify-end gap-3 ${ENTER}`}
+        data-message-role="user"
+        data-message-id={message.id}
+        data-delivery={message.delivery}
+      >
         <div className="flex max-w-[85%] flex-col items-end gap-1">
           <AttachmentChips message={message} />
           {hasText && (
@@ -151,7 +156,7 @@ const ChatMessage = memo(function ChatMessage({
 
   const help = computerHelpBlocks(message);
   return (
-    <div className={`group flex gap-3 ${ENTER}`} data-message-role="agent">
+    <div className={`group flex gap-3 ${ENTER}`} data-message-role="agent" data-message-id={message.id}>
       <AgentAvatar className="mt-0.5" />
       <div className="min-w-0 flex-1 space-y-2">
         <div className="flex h-7 items-center gap-2">

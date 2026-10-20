@@ -7,7 +7,7 @@ Feature: Reading back a long conversation
     And I have a personal agent
 
   Scenario: Scrolling up loads older messages above the one I was reading
-    Given a conversation with 120 numbered messages
+    Given a conversation with 120 numbered messages, where the first 70 show an image
     When I navigate to the agent chat page
     Then I should see the message "Message 120" in the conversation
     And I should not see the message "Message 001" in the conversation

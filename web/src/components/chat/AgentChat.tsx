@@ -94,7 +94,7 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
 
   // Only resolve/create the latest thread when no specific thread is in the URL
   // — deep-linking to /chat/<id> must not create a fresh thread.
-  const { data: latestThread } = useQuery({
+  const { data: latestThread, refetch: refetchLatest } = useQuery({
     queryKey: ['threads', agent.agentId, 'latest'],
     queryFn: () => runtimeApi.getOrCreateLatestThread(agent.agentId, agent.userId),
     enabled: !threadId,
@@ -127,13 +127,14 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
   const { data: thread, isLoading: isLoadingThread, error: threadError } = useThread(activeThreadId);
   const { loadOlder, isLoadingOlder, retries: olderRetries } = useOlderMessages(activeThreadId);
 
-  // A deep-linked thread that doesn't exist (deleted / not owned) → fall back to
-  // the latest conversation. Guarded on threadId so a latest-thread error can't loop.
+  // A thread the runtime no longer serves → the latest conversation. A deep link leaves
+  // for bare /chat. Bare /chat asks for the latest one again: after a restart in
+  // single-thread mode, the thread it showed can be hidden.
   useEffect(() => {
-    if (threadId && threadError instanceof ApiError) {
-      navigate({ to: '/chat', replace: true });
-    }
-  }, [threadId, threadError, navigate]);
+    if (!(threadError instanceof ApiError)) return;
+    if (threadId) navigate({ to: '/chat', replace: true });
+    else void refetchLatest();
+  }, [threadId, threadError, navigate, refetchLatest]);
 
   useEffect(() => {
     if (!thread || seededUsageFor.current === thread.id) return;
