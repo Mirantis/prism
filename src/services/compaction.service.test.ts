@@ -618,6 +618,7 @@ describe('compactNow (manual)', () => {
   function makeContext(rowCount: number, overrides: Record<string, unknown> = {}) {
     return {
       model: 'stored-model',
+      modelSelection: { mode: 'fixed', tiers: { small: null, medium: null, large: null } },
       lockedIn: false,
       recentMessages: Array.from({ length: rowCount }, (_, i) => ({
         id: `m${i}`,
@@ -839,6 +840,7 @@ describe('reclaiming saved tool outputs at compaction', () => {
   function contextOf(rowCount: number, overrides: Record<string, unknown> = {}) {
     return {
       model: 'stored-model',
+      modelSelection: { mode: 'fixed', tiers: { small: null, medium: null, large: null } },
       lockedIn: false,
       recentMessages: Array.from({ length: rowCount }, (_, i) => ({
         id: `m${i}`,

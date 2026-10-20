@@ -219,6 +219,22 @@ export interface OverrideModelInfo {
   effective: string;
 }
 
+export type ModelTier = 'small' | 'medium' | 'large';
+
+/**
+ * How the agent's turns pick a model. Each field has the stored value (`null`
+ * when the agent has not set it) and the value in force after the deployment
+ * default.
+ */
+export interface ModelSelectionInfo {
+  mode: { override: 'fixed' | 'auto' | null; effective: 'fixed' | 'auto' };
+  tiers: Record<ModelTier, { override: string | null; effective: string | null }>;
+}
+
+export type ModelSelectionPatch = Partial<
+  { mode: 'fixed' | 'auto' | null } & Record<ModelTier, string | null>
+>;
+
 export interface AgentSummary {
   agentId: string;
   userId: string;
@@ -430,6 +446,16 @@ export interface LlmUsageSummary {
   cacheHitPercent: number | null;
   /** Model calls in the window — not a turn count. */
   calls: number;
+  /** The same window per model, most tokens first. */
+  byModel: ModelUsage[];
+}
+
+export interface ModelUsage {
+  model: string;
+  calls: number;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
 }
 
 /** One tool call in the Activity feed (GET /agents/activity/tool-calls). */

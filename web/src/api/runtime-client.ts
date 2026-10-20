@@ -20,6 +20,8 @@ import type {
   TeamsWorkspace,
   ModelInfo,
   OverrideModelInfo,
+  ModelSelectionInfo,
+  ModelSelectionPatch,
   SkillSummary,
   PluginSummary,
   Goal,
@@ -120,6 +122,14 @@ export const runtimeApi = {
     request<OverrideModelInfo>('/agents/cron-model', {
       method: 'PATCH',
       body: JSON.stringify({ model }),
+    }),
+
+  // Fixed or Auto model selection, and the three Auto tiers
+  getModelSelection: () => request<ModelSelectionInfo>('/agents/model-selection'),
+  updateModelSelection: (patch: ModelSelectionPatch) =>
+    request<ModelSelectionInfo>('/agents/model-selection', {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
     }),
 
   // Verbose (delivery mode)

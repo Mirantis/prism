@@ -27,6 +27,13 @@ enum AgentHeartbeatStatus {
   STOPPED
 }
 
+// How a turn's model is chosen. FIXED runs the per-mode model columns; AUTO
+// picks one of the tier columns per turn (`lib/model-routing.ts`).
+enum AgentModelMode {
+  FIXED
+  AUTO
+}
+
 enum MessageRole {
   USER
   AGENT
@@ -101,6 +108,12 @@ model AgentWorkspace {
   model               String?
   heartbeatModel      String?
   cronModel           String?
+  // Null in any of the four falls back to the deployment default
+  // (`MODEL_MODE`, `AUTO_MODEL_SMALL|MEDIUM|LARGE`).
+  modelMode           AgentModelMode?
+  smallModel          String?
+  mediumModel         String?
+  largeModel          String?
 
   dailyResetHour  Int  @default(4)
   idleTimeoutMins Int?
@@ -451,6 +464,8 @@ model LlmCall {
   agentWorkspace AgentWorkspace @relation(fields: [agentId], references: [id], onDelete: Cascade)
 
   @@index([agentId, createdAt])
+  // A thread's newest call, which Auto model selection reads every turn.
+  @@index([agentId, threadId, createdAt])
   @@map("llm_calls")
 }
 

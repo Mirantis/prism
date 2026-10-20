@@ -36,6 +36,7 @@ import { slackRouter } from './routes/slack';
 import { teamsRouter } from './routes/teams';
 import { lockedInRouter } from './routes/locked-in';
 import { agentGuideRouter } from './routes/agent-guide';
+import { modelSelectionRouter } from './routes/model-selection';
 import { documentRevisionsRouter } from './routes/document-revisions';
 import { updateRouter } from './routes/update';
 import { originGuard } from './lib/origin-guard';
@@ -70,6 +71,9 @@ export function createApp() {
 
   // Agent guide editing (PATCH /agents/agent-guide)
   app.use('/agents', agentGuideRouter);
+
+  // Fixed or Auto model selection (/agents/model-selection)
+  app.use('/agents', modelSelectionRouter);
 
   // Identity-document history and restore (/agents/documents/:field/revisions)
   app.use('/agents', documentRevisionsRouter);

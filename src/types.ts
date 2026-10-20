@@ -7,6 +7,7 @@
 import { ConversationMessage, SteeringMessage } from './prompts/context-builder';
 import { ToolLifecycleListener } from './lib/tool-lifecycle';
 import type { ChannelName } from './services/channel-adapter.interface';
+import type { ModelSelection } from './services/agent-workspace.service';
 
 // ============================================================================
 // Agent Status
@@ -34,6 +35,8 @@ export interface AgentContext {
   heartbeatModel: string | null;
   /** Cron/scheduled-task model override; falls back to `model`, then env default. */
   cronModel: string | null;
+  /** Fixed or Auto, with the Auto tiers; deployment defaults already applied. */
+  modelSelection: ModelSelection;
   /** When false, only the final text step is delivered to the channel. */
   verbose: boolean;
   /**

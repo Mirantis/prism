@@ -60,6 +60,7 @@ vi.mock('../config', () => ({
     bedrockModelId: 'anthropic.claude-3-sonnet-20240229-v1:0',
     bedrockClassificationModelId: 'anthropic.claude-3-haiku-20240307-v1:0',
     classificationModelId: 'anthropic.claude-3-haiku-20240307-v1:0',
+    modelSelection: { mode: 'fixed', tiers: { small: null, medium: null, large: null } },
     toolRiskGateMode: 'off',
     invalidToolRiskGateMode: null,
     codingAgent: 'claude-code',

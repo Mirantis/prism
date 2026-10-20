@@ -26,6 +26,16 @@ export interface LlmUsageSummary {
    * compaction and thread title.
    */
   calls: number;
+  /** The same window per model, most tokens first. */
+  byModel: ModelUsage[];
+}
+
+export interface ModelUsage {
+  model: string;
+  calls: number;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
 }
 
 /** Zeros and a null rate, for a runtime with no agent resolved yet. */
@@ -40,6 +50,7 @@ function emptyUsage(windowHours: number): LlmUsageSummary {
     noCacheTokens: 0,
     cacheHitPercent: null,
     calls: 0,
+    byModel: [],
   };
 }
 
@@ -74,6 +85,22 @@ class LlmUsageService {
       },
     });
 
+    const perModel = await prisma.llmCall.groupBy({
+      by: ['model'],
+      where,
+      _count: true,
+      _sum: { totalTokens: true, inputTokens: true, outputTokens: true },
+    });
+    const byModel = perModel
+      .map((row) => ({
+        model: row.model,
+        calls: row._count,
+        totalTokens: row._sum.totalTokens ?? 0,
+        inputTokens: row._sum.inputTokens ?? 0,
+        outputTokens: row._sum.outputTokens ?? 0,
+      }))
+      .sort((a, b) => b.totalTokens - a.totalTokens);
+
     const sum = totals._sum;
     const cacheReadTokens = sum.cacheReadTokens ?? 0;
     const cacheWriteTokens = sum.cacheWriteTokens ?? 0;
@@ -93,6 +120,7 @@ class LlmUsageService {
       noCacheTokens,
       cacheHitPercent: prompt > 0 ? Math.round((cacheReadTokens / prompt) * 100) : null,
       calls: totals._count,
+      byModel,
     };
   }
 }

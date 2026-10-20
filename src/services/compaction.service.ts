@@ -64,7 +64,8 @@ import type { Invoker } from '../lib/task-tool';
 import { buildSystemPromptParts, buildConversationHistory } from '../prompts/context-builder';
 import { getTaskToolInstructions } from '../prompts/task-tool-prompt';
 import { isContextOverflowError } from '../lib/llm-errors';
-import { agentWorkspaceService, resolveEffectiveModel } from './agent-workspace.service';
+import { agentWorkspaceService } from './agent-workspace.service';
+import { compactionModel } from '../lib/model-routing';
 import { summaryToolOptions, toolLedgerService } from './tool-ledger.service';
 import { contextService } from './context.service';
 import { contextUsageService, type ContextUsageSnapshot } from './context-usage.service';
@@ -275,8 +276,8 @@ class CompactionService {
           return;
         }
 
-        const modelId = resolveEffectiveModel(context.model);
         const provider = createProvider();
+        const modelId = await compactionModel(context, threadId, provider);
         const model = provider(modelId);
         const cachePoint = provider.cachePoint(modelId);
 

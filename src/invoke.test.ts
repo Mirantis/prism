@@ -2036,6 +2036,9 @@ describe('invoke', () => {
         'agent.id': 'agent-test-123',
         'invoke.mode': 'chat',
         'invocation.duration_ms': expect.any(String),
+        'llm.model': expect.any(String),
+        'llm.model_mode': 'fixed',
+        'llm.tier_reason': 'fixed',
       });
     });
 

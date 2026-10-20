@@ -27,11 +27,15 @@ const {
   mockGetMetaByExternalTs: vi.fn(),
 }));
 
-vi.mock('./agent-workspace.service', () => ({
-  agentWorkspaceService: {
-    getAgent: mockGetAgent,
-  },
-}));
+vi.mock('./agent-workspace.service', async () => {
+  const actual = await vi.importActual<typeof import('./agent-workspace.service')>('./agent-workspace.service');
+  return {
+    agentWorkspaceService: {
+      getAgent: mockGetAgent,
+    },
+    resolveModelSelection: actual.resolveModelSelection,
+  };
+});
 
 vi.mock('./conversation.service', () => ({
   conversationService: {

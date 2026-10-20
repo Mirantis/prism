@@ -38,7 +38,7 @@ import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
 import { formatInterval } from '@/lib/format';
 import { RestoreBackupDialog } from '@/components/profile/restore-backup-dialog';
-import { ModelField } from '@/components/profile/model-field';
+import { ModelSelectionFields } from '@/components/profile/model-selection-fields';
 import { VerbosityField } from '@/components/profile/verbosity-field';
 import { LockedInField } from '@/components/profile/locked-in-field';
 import { DocumentWorkspace } from '@/components/profile/document-workspace';
@@ -126,27 +126,7 @@ function ProfilePage() {
         <CardHeader><CardTitle>Agent settings</CardTitle></CardHeader>
         <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 [&>*]:min-w-0 [&>*]:rounded-xl [&>*]:bg-muted/15 [&>*]:p-3.5 [&>*]:ring-1 [&>*]:ring-border [&>*]:ring-inset [&>*]:break-words">
           <AgentNameField />
-          <ModelField
-            label="Model"
-            queryKey="agent-model"
-            load={() => runtimeApi.getModel()}
-            save={(m) => runtimeApi.updateModel(m)}
-            affects={['agent-heartbeat-model', 'agent-cron-model']}
-          />
-          <ModelField
-            label="Heartbeat model"
-            queryKey="agent-heartbeat-model"
-            load={() => runtimeApi.getHeartbeatModel()}
-            save={(m) => runtimeApi.updateHeartbeatModel(m)}
-            allowEmpty
-          />
-          <ModelField
-            label="Scheduled-task model"
-            queryKey="agent-cron-model"
-            load={() => runtimeApi.getCronModel()}
-            save={(m) => runtimeApi.updateCronModel(m)}
-            allowEmpty
-          />
+          <ModelSelectionFields />
           {details && <VerbosityField details={details} />}
           {details && <LockedInField details={details} />}
         </CardContent>

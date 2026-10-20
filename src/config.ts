@@ -486,6 +486,27 @@ const modelIds = {
   },
 }[llmProvider];
 
+// Deployment defaults for Auto model selection (`lib/model-routing.ts`). A
+// column the agent has not set falls back to these, as `model` falls back to
+// `chatModelId`. No tier has a built-in default, and `MODEL_MODE=auto` needs
+// a small and a large model.
+const modelModeDefault: 'fixed' | 'auto' =
+  (process.env.MODEL_MODE ?? '').trim().toLowerCase() === 'auto' ? 'auto' : 'fixed';
+const autoModelTiers = {
+  small: process.env.AUTO_MODEL_SMALL?.trim() || null,
+  medium: process.env.AUTO_MODEL_MEDIUM?.trim() || null,
+  large: process.env.AUTO_MODEL_LARGE?.trim() || null,
+};
+if (modelModeDefault === 'auto') {
+  const missing = [
+    ...(autoModelTiers.small ? [] : ['AUTO_MODEL_SMALL']),
+    ...(autoModelTiers.large ? [] : ['AUTO_MODEL_LARGE']),
+  ];
+  if (missing.length > 0) {
+    throw new Error(`MODEL_MODE=auto needs ${missing.join(' and ')}`);
+  }
+}
+
 // Which vendor serves memory embeddings. Its own selection, decoupled from
 // LLM_PROVIDER: chat vendors don't all have embedding models, and an
 // embedding vendor need not serve chat. `none` disables embeddings entirely
@@ -1066,6 +1087,9 @@ export const config = {
   // embeddings are disabled (embedding.service skips the SDK call entirely).
   chatModelId: modelIds.chat,
   classificationModelId: modelIds.classification,
+  // Auto model selection defaults: the mode and the three tiers an agent
+  // falls back to where its own columns are null.
+  modelSelection: { mode: modelModeDefault, tiers: autoModelTiers },
   embeddingModelId,
 
   // Fast-model pre-execution policy gate for sensitive tool calls. Invalid

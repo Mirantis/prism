@@ -879,6 +879,7 @@ and refuses every call, because under `none` the SDK sends no tools block.
 |---------|------|---------|
 | **invokeStream** | `invoke.ts` | Streaming primitive: builds context, collects tools, calls `generateText()` with step limit and early stopping, yields each `InvokeStep` as `onStepFinish` fires. Errors are yielded as friendly steps (via `buildErrorStep`) rather than thrown. Bridges the SDK's push-based callback into async iteration via `utils/async-channel.ts`. |
 | **invoke** | `invoke.ts` | Thin aggregating wrapper around `invokeStream()`: drains the step stream into a single `InvokeResponse`. Used by callers that need the full result before acting (heartbeat, cron, subagent/task tool). |
+| **selectTurnModel** | `lib/model-routing.ts` | The one owner of which model a turn runs on. Fixed mode runs the per-mode model columns. Auto mode runs one of the agent's small / medium / large tiers (`resolveModelSelection` merges the columns with `MODEL_MODE` and `AUTO_MODEL_*`), labelled by the classification model with `purpose: 'model-routing'`. A failed or unknown label runs large; a tier whose window cannot hold the thread is not offered. A thread holds its tier while the newest invoke row of it in `llm_calls` is younger than `PROMPT_CACHE_TTL_MS`: up on any turn, down only on a first turn, after compaction or past the TTL, since a switch reads the whole thread cold on the incoming model |
 | **ConversationEngineService** | `services/conversation-engine.service.ts` | Chat flow orchestration: thread management, iterates `invokeStream()` directly and publishes each text-bearing step the moment it arrives, delivers via local `messageDeliveryService` |
 | **MessageDeliveryService** | `services/message-delivery.service.ts` | Unified message publish: stores via `conversationService`, delivers via channel adapters (channel-scoped for user messages, broadcast for autonomous) |
 | **ThreadTurnService** | `services/thread-turn.service.ts` | The one per-thread primitive: every model invocation on a thread serializes on its mutex (FIFO — chat turns and goal turns alike), and a chat turn *claims* the thread, so a message arriving from the claim until the exchange ends is handed to that turn instead of starting a second one. Channel-agnostic — transports go through the engine, never here directly |
@@ -1021,7 +1022,8 @@ src/
 │   ├── management.ts           # Management API for backend to push heartbeat/slack-heartbeat-trigger events
 │   ├── activity.ts             # Activity page reads: token totals, paged tool calls, paged webhook runs
 │   ├── cron-tasks.ts           # Scheduled tasks: list, create, edit, delete; each write re-registers the task
-│   └── document-revisions.ts   # Per identity document: the write, the history, one revision with its content, and the restore
+│   ├── document-revisions.ts   # Per identity document: the write, the history, one revision with its content, and the restore
+│   └── model-selection.ts      # Fixed or Auto model selection and the three Auto tiers (GET/PATCH /agents/model-selection)
 ├── utils/
 │   ├── async-channel.ts        # Bridges SDK push-based onStepFinish into async iteration (used by invokeStream)
 │   ├── slack-formatter.ts      # Slack message formatting utilities (mrkdwn conversion)
@@ -1098,6 +1100,7 @@ src/
 │   ├── mcp-client.ts           # MCP tool fetching from MCP servers
 │   ├── agent-mcp-servers.ts    # The MCP servers the runtime connects for the agent, as the neutral list a coding task gets
 │   ├── model-call.ts           # The only module calling `generateText`/`generateObject`; records every call's usage
+│   ├── model-routing.ts        # Which model a turn runs on: Fixed, or an Auto tier with the warm-cache hold rule
 │   ├── step-usage.ts           # Token usage: SDK usage → the recorded shape, and folding a turn's steps for the invocation total
 │   ├── media-store.ts          # Attachment bytes as files under `<data dir>/media`: write/read/remove, filename sanitizing, stray-file reaper
 │   ├── public-url.ts           # Which addresses an outbound read may reach: the public internet only, every DNS answer checked when the connection resolves it
@@ -1158,6 +1161,8 @@ What the operator sets on `docker run`:
 | `TEAMS_APP_TENANT_ID` | Entra tenant of the app registration | — |
 | `TEAMS_PORT` | Port of the Teams bot endpoint's own listener, which serves `POST /agents/teams/messages` and nothing else — the port to publish | `3979` |
 | `LLM_PROVIDER` | LLM vendor: `bedrock`, `azure`, `bedrock-mantle`, `openai`, `openrouter`, `anthropic`, or `litellm` (one per container). Any other value runs `bedrock` and logs a startup warning | `bedrock` |
+| `MODEL_MODE` | Model selection for an agent that has not chosen one: `fixed` or `auto` (`lib/model-routing.ts`). With `auto`, `AUTO_MODEL_SMALL` and `AUTO_MODEL_LARGE` are required, and boot fails without them | `fixed` |
+| `AUTO_MODEL_SMALL` / `AUTO_MODEL_MEDIUM` / `AUTO_MODEL_LARGE` | Auto tiers for an agent that has not set its own. Medium is optional; with it unset the classifier chooses between small and large | — |
 | `CODING_AGENT` | Default coding agent: `claude-code` or `codex`. Each task may override it with `agent`. | Claude credentials first, then an OpenAI key, else `claude-code` |
 | `CLAUDE_CODE_MODEL_SMALL` | Model for the Claude Code small tier | `haiku` (Bedrock: `global.anthropic.claude-haiku-5-5`) |
 | `CLAUDE_CODE_MODEL_MEDIUM` | Model for the Claude Code medium tier | `sonnet` (Bedrock: `global.anthropic.claude-sonnet-5-5`) |
