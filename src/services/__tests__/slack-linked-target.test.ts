@@ -289,6 +289,25 @@ describe('Requirement: the agent posts only to its linked Slack targets', () => 
       adapter.started = Promise.resolve();
     });
 
+    it('refuses a send after 30 seconds when the boot never connects Slack', async () => {
+      vi.useFakeTimers();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const adapter = slackAdapterService as any;
+      const connected = adapter.apps;
+      adapter.apps = new Map();
+      adapter.started = new Promise<void>(() => {});
+
+      const send = slackAdapterService.postToTarget(RELEASE, 'Hi');
+      const refused = expect(send).rejects.toThrow('Slack is not connected');
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      await refused;
+      expect(client.chat.postMessage).not.toHaveBeenCalled();
+      adapter.apps = connected;
+      adapter.started = Promise.resolve();
+      vi.useRealTimers();
+    });
+
     it('refuses when Slack is not connected', async () => {
       mockGetSlackConnection.mockResolvedValue(null);
 

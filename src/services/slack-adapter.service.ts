@@ -86,6 +86,9 @@ const SLACK_SPECIAL_MENTION = /<!/;
 /** A Slack message ts, which is also a thread id. */
 const SLACK_TS = /^\d+\.\d+$/;
 
+/** How long a send waits for the boot's Socket Mode start, which has no time limit of its own. */
+const SEND_CONNECT_WAIT_MS = 30_000;
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -193,6 +196,19 @@ class SlackAdapterService implements ChannelAdapter {
   async getAppForTeam(teamId: string): Promise<SlackApp | undefined> {
     await this.started;
     return this.apps.get(teamId);
+  }
+
+  /** The team's app once the boot's Socket Mode start settles, or none after `SEND_CONNECT_WAIT_MS`. */
+  private async appForSend(teamId: string): Promise<SlackApp | undefined> {
+    let timer: NodeJS.Timeout | undefined;
+    const waited = new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => resolve(undefined), SEND_CONNECT_WAIT_MS);
+    });
+    try {
+      return await Promise.race([this.getAppForTeam(teamId), waited]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
@@ -505,7 +521,7 @@ class SlackAdapterService implements ChannelAdapter {
    */
   async postToTarget(target: LinkedTarget, text: string, thread?: string): Promise<PostedMessage> {
     const connection = await getSlackConnection();
-    const slackApp = connection?.isActive ? await this.getAppForTeam(connection.teamId) : undefined;
+    const slackApp = connection?.isActive ? await this.appForSend(connection.teamId) : undefined;
     if (!connection || !slackApp) {
       throw new SendRefusedError('Slack is not connected, so nothing can be sent there.', 'not_connected');
     }
