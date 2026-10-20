@@ -988,7 +988,12 @@ describe('handleInbound agent mode', () => {
     await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalled());
 
     expect(mockKeepWithheldRun).toHaveBeenCalledWith(
-      expect.objectContaining({ content: expect.stringContaining('spending limit'), triggeredBy: 'WEBHOOK', toolCalls }),
+      expect.objectContaining({
+        content: expect.stringMatching(/^This event could not be processed .*spending limit/),
+        triggeredBy: 'WEBHOOK',
+        triggerName: 'alerts',
+        toolCalls,
+      }),
     );
     expect(mockPublish).not.toHaveBeenCalled();
     expect(mockPublishToLatestThread).not.toHaveBeenCalled();
@@ -1101,7 +1106,7 @@ describe('handleInbound agent mode', () => {
     expect(mockPublishToLatestThread).not.toHaveBeenCalled();
   });
 
-  it('keeps a suppressed run in history, so a message it sent is stored', async () => {
+  it('keeps a suppressed run in history as a webhook message: the body alone, named for its subscription', async () => {
     mockSubscriptionFindUnique.mockResolvedValue(
       createSubscription({ deliverTo: 'slack', prompt: 'Only message me if the review fails.' }),
     );
@@ -1115,8 +1120,9 @@ describe('handleInbound agent mode', () => {
       expect.objectContaining({
         agentId: 'agent-1',
         userId: 'user-1',
-        content: expect.stringContaining('Posted the review to #reviews.'),
+        content: 'Posted the review to #reviews.',
         triggeredBy: 'WEBHOOK',
+        triggerName: 'alerts',
       }),
     );
   });

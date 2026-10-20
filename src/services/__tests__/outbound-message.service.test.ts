@@ -373,6 +373,20 @@ describe('Requirement: a withheld run that sent a message stays in history', () 
     );
   });
 
+  it('stores the subscription name of a webhook run, so its history has the event turn', async () => {
+    await outboundMessageService.keepWithheldRun({
+      ...run,
+      triggeredBy: 'WEBHOOK',
+      triggerName: 'release-alerts',
+      toolCalls: [toolCall({})],
+    });
+
+    expect(mockConversationService.addMessage).toHaveBeenCalledWith(
+      'thread-latest',
+      expect.objectContaining({ triggeredBy: 'WEBHOOK', triggerName: 'release-alerts' }),
+    );
+  });
+
   it('stores a fixed text for a run that ended with no text, never an empty message', async () => {
     await outboundMessageService.keepWithheldRun({ ...run, content: '', toolCalls: [toolCall({})] });
 
