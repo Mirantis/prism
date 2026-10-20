@@ -150,7 +150,9 @@ into it, and [compaction](compaction.md) keeps it inside the model's window.
 Slack and Teams threads stay separate conversations.
 
 When you switch an agent to `single`, it keeps the conversation you wrote in last.
-The other conversations come back when you switch to `multi` again.
+The other conversations come back when you switch to `multi` again. A goal that
+was running in one of them stops, with a note in the one conversation; start it
+again there.
 
 ## Channels
 

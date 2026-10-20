@@ -31,6 +31,7 @@ const {
   mockTrackEvent,
   mockEndLoopStatus,
   mockConfig,
+  mockWritableThreadId,
 } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
   mockPublish: vi.fn(),
@@ -45,6 +46,7 @@ const {
   mockTrackEvent: vi.fn(),
   mockEndLoopStatus: vi.fn(),
   mockConfig: { goalMaxTurns: 100, goalDefaultTokenBudget: null as number | null },
+  mockWritableThreadId: vi.fn(),
 }));
 
 vi.mock('../invoke', () => ({ invoke: mockInvoke }));
@@ -57,6 +59,10 @@ vi.mock('./message-delivery.service', () => ({
 }));
 
 vi.mock('ai', () => ({ generateText: mockGenerateText }));
+
+vi.mock('./conversation.service', () => ({
+  conversationService: { writableThreadId: mockWritableThreadId },
+}));
 
 vi.mock('./program-status.service', () => ({
   programStatusService: { beginTurn: () => ({ end: mockEndLoopStatus }) },
@@ -191,6 +197,7 @@ describe('GoalService', () => {
     });
     mockPublish.mockResolvedValue({ id: 'msg-1' });
     mockGenerateText.mockResolvedValue({ text: 'CONTINUE' });
+    mockWritableThreadId.mockImplementation(async (threadId: string) => threadId);
   });
 
   afterEach(async () => {
@@ -281,6 +288,23 @@ describe('GoalService', () => {
   // ==========================================================================
 
   describe('continuation loop', () => {
+    it('stops without a turn when single-thread mode hides its conversation, and says so', async () => {
+      mockWritableThreadId.mockResolvedValue('thread-one');
+
+      await goalService.startGoal({
+        userId: 'user-1',
+        agentId: 'agent-1',
+        threadId: 'thread-1',
+        objective: 'do the thing',
+        originChannel: 'websocket',
+      });
+      await waitForTerminal();
+
+      expect(mockInvoke).not.toHaveBeenCalled();
+      expect(goalRow!.status).toBe('stopped');
+      expect(mockPublish).toHaveBeenCalledWith('user-1', 'thread-1', expect.stringContaining('single-thread mode'), 'GOAL', expect.anything());
+    });
+
     it('completes after one turn when the gate says COMPLETE', async () => {
       mockGenerateText.mockResolvedValue({ text: 'COMPLETE' });
 

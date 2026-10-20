@@ -15,3 +15,10 @@ Feature: Reading back a long conversation
     Then older messages appear above the message I was reading, which stays in place
     When I scroll to the start of the conversation
     Then the conversation shows all 120 numbered messages in order
+
+  Scenario: Opening a reply's tool calls at the top of the view keeps them in place
+    Given a conversation with 60 numbered messages, where message 50 used 6 tools
+    When I navigate to the agent chat page
+    And I scroll until the tool calls of message 50 are just below the top of the view
+    And I open those tool calls
+    Then the tool calls of message 50 stay where they were

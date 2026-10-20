@@ -19,6 +19,7 @@ import * as cron from 'node-cron';
 import { Prisma, type CronTask } from '@prisma/client';
 import { invoke } from '../invoke';
 import { messageDeliveryService } from './message-delivery.service';
+import { conversationService } from './conversation.service';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { isTimezone } from '../lib/timezone';
@@ -485,7 +486,10 @@ class CronSchedulerService {
       logger.error({ err }, `[CronScheduler] Could not record the run of "${task.name}"`);
     });
     const startTime = Date.now();
-    const boundThreadId = task.threadId;
+    // A task that continues a conversation single-thread mode hides runs unbound: it
+    // reads no conversation, and its answer goes to the one conversation.
+    const boundThreadId =
+      task.threadId && (await conversationService.writableThreadId(task.threadId)) === task.threadId ? task.threadId : null;
     // A task saved without an instruction runs on its name, the only text its author gave.
     const instruction = task.instruction.trim() || task.name;
 

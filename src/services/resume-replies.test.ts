@@ -9,13 +9,14 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockFindMany, mockChat, mockAcceptUserMessage, mockContinueReply, mockEndWork, mockLinkToMessage } = vi.hoisted(() => ({
+const { mockFindMany, mockChat, mockAcceptUserMessage, mockContinueReply, mockEndWork, mockLinkToMessage, mockWritableThreadId } = vi.hoisted(() => ({
   mockFindMany: vi.fn(),
   mockLinkToMessage: vi.fn(),
   mockChat: vi.fn(),
   mockAcceptUserMessage: vi.fn(),
   mockContinueReply: vi.fn(),
   mockEndWork: vi.fn(),
+  mockWritableThreadId: vi.fn(),
 }));
 
 vi.mock('../lib/prisma', () => ({ default: { conversationMessage: { findMany: mockFindMany } } }));
@@ -29,6 +30,7 @@ vi.mock('./message-delivery.service', () => ({
   },
 }));
 vi.mock('./pending-work.service', () => ({ pendingWorkService: { end: mockEndWork } }));
+vi.mock('./conversation.service', () => ({ conversationService: { writableThreadId: mockWritableThreadId } }));
 vi.mock('./attachment.service', () => ({ attachmentService: { linkToMessage: mockLinkToMessage } }));
 vi.mock('../logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 
@@ -56,6 +58,7 @@ describe('resumeReplies', () => {
     vi.clearAllMocks();
     stored = [];
     mockChat.mockResolvedValue({});
+    mockWritableThreadId.mockImplementation(async (threadId: string) => threadId);
     mockFindMany.mockImplementation(async ({ where }: { where: { id: { in: string[] } } }) =>
       stored.filter((row) => where.id.in.includes(row.id)),
     );
@@ -76,6 +79,17 @@ describe('resumeReplies', () => {
       resumed: { messageIds: ['m-1', 'm-2'], unsaved: [], unsentAttachmentIds: [] },
       metadata: SLACK,
     });
+  });
+
+  it('closes the work of a thread single-thread mode hides, since the one conversation does not hold its messages', async () => {
+    stored = [message('m-5', 'thread-hidden', 'still there?'), message('m-6', 'thread-one', 'hello')];
+    mockWritableThreadId.mockImplementation(async (threadId: string) => (threadId === 'thread-hidden' ? 'thread-one' : threadId));
+
+    await resumeReplies([owed('m-5', 'thread-hidden', { channel: 'websocket' }), owed('m-6', 'thread-one', { channel: 'websocket' })]);
+
+    expect(mockEndWork).toHaveBeenCalledWith('chat', ['m-5']);
+    expect(mockContinueReply).toHaveBeenCalledTimes(1);
+    expect(mockContinueReply).toHaveBeenCalledWith(message('m-6', 'thread-one', 'hello'), expect.anything());
   });
 
   it("puts a thread in its channel's own queue when the channel has one", async () => {

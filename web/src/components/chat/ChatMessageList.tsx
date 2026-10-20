@@ -26,19 +26,19 @@ function offsetIn(column: Element, row: Element): number {
 }
 
 /**
- * The first message row that starts inside the view, found by halving the rows, or the
- * last row when the view starts inside it. A row partly in view above it counts as
- * above the anchor, so its growth is corrected too.
+ * The message row the top of the view is in, or the first one below it, found by
+ * halving the rows. A tool call the reader opens in that row grows below its top, so
+ * the list does not move.
  */
 function topRow(scroller: Element, column: Element): Anchor | null {
   const rows = column.querySelectorAll(':scope > [data-message-id]');
   const viewTop = scroller.getBoundingClientRect().top;
-  let found: Element | undefined = rows[rows.length - 1];
+  let found: Element | undefined;
   let low = 0;
   let high = rows.length - 1;
   while (low <= high) {
     const middle = (low + high) >> 1;
-    if (rows[middle].getBoundingClientRect().top >= viewTop) {
+    if (rows[middle].getBoundingClientRect().bottom > viewTop) {
       found = rows[middle];
       high = middle - 1;
     } else {
