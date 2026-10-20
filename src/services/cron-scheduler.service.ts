@@ -344,10 +344,6 @@ class CronSchedulerService {
     if (!previous || !sameBaselineKey(previous.task, task)) {
       this.lastDelivered.delete(task.id);
     }
-    // An edited task starts with no record, so its first run reads none from storage.
-    if (previous && previous.task.instruction !== task.instruction) {
-      this.lastSend.set(task.id, null);
-    }
 
     if (!task.isActive) {
       return;
@@ -502,6 +498,9 @@ class CronSchedulerService {
         throw err;
       }
 
+      // A new instruction starts with no send record, so no run reads the old one's sends from
+      // storage, whether the task has a job now or runs again later.
+      if (data.instruction !== task.instruction) this.lastSend.set(taskId, null);
       this.scheduleTask(toBackendCronTask(updated), { source: 'update', invokeMode: opts.invokeMode });
       return { status: 'updated', task: updated };
     });
