@@ -68,6 +68,8 @@ in the Web UI form, or ask the agent: "post the daily summary to Slack only."
 
 A task that asks for a message in another linked channel posts it there with
 [Sending messages](tools.md#sending-messages), and its result says what it sent.
+The next run of a recurring task sees what the last run sent. It sends the
+message again only when the situation has changed.
 
 Scheduled runs use the agent's main model by default, but you can give them
 their own model from the **[Web UI → Profile](web-ui.md#profile)** or the

@@ -119,7 +119,8 @@ vi.mock('../lib/classification', () => ({
 const { mockTrackEvent } = vi.hoisted(() => ({ mockTrackEvent: vi.fn() }));
 const { mockKeepWithheldRun } = vi.hoisted(() => ({ mockKeepWithheldRun: vi.fn() }));
 
-vi.mock('./outbound-message.service', () => ({
+vi.mock('./outbound-message.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./outbound-message.service')>()),
   outboundMessageService: { keepWithheldRun: mockKeepWithheldRun },
 }));
 
@@ -1243,6 +1244,115 @@ describe('CronSchedulerService', () => {
 
       expect(mockInvoke.mock.calls[0][0].broadcastsOutput).toBe(true);
       expect(mockInvoke.mock.calls[1][0].broadcastsOutput).toBeUndefined();
+    });
+
+    describe('a recurring unbound task that sent a message', () => {
+      const SENT = {
+        response: 'Posted the build failure to #ops.',
+        toolCalls: [{ tool: 'send_message', input: '{}', output: '{}', success: true, timestamp: '2026-10-20T08:00:00Z' }],
+        steps: [{ text: 'Posted the build failure to #ops.' }],
+      };
+
+      it('gives the next run the note of the run that sent, also when the gate withheld it', async () => {
+        mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+        mockInvoke.mockResolvedValueOnce(SENT);
+
+        const run = scheduleAndCapture();
+        await run();
+        await run();
+
+        expect(mockInvoke.mock.calls[0][0].lastSentNote).toBeUndefined();
+        expect(mockInvoke.mock.calls[1][0].lastSentNote).toEqual({
+          text: 'Posted the build failure to #ops.',
+          at: expect.any(Number),
+        });
+      });
+
+      it('keeps the note through a run that sent nothing', async () => {
+        mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
+        mockInvoke.mockResolvedValueOnce(SENT);
+
+        const run = scheduleAndCapture();
+        await run();
+        await run();
+        await run();
+
+        expect(mockInvoke.mock.calls[2][0].lastSentNote).toEqual(
+          expect.objectContaining({ text: 'Posted the build failure to #ops.' }),
+        );
+      });
+
+      it('forgets the note after an all-clear, so a recurrence is sent again', async () => {
+        mockInvoke
+          .mockResolvedValueOnce(SENT)
+          .mockResolvedValueOnce({ response: 'The build is green.', toolCalls: [], steps: [{ text: 'The build is green.' }] });
+        mockGenerateText
+          .mockResolvedValueOnce({ text: 'DELIVER' })
+          .mockResolvedValueOnce({ text: 'SUPPRESS' });
+
+        const run = scheduleAndCapture();
+        await run();
+        await run();
+        await run();
+
+        expect(mockInvoke.mock.calls[2][0].lastSentNote).toBeUndefined();
+      });
+
+      it('keeps the note through a repeat, which reports the same finding', async () => {
+        mockInvoke
+          .mockResolvedValueOnce(SENT)
+          .mockResolvedValueOnce({
+            response: 'The build is still failing; already posted to #ops.',
+            toolCalls: [],
+            steps: [{ text: 'The build is still failing; already posted to #ops.' }],
+          });
+        mockGenerateText
+          .mockResolvedValueOnce({ text: 'DELIVER' })
+          .mockResolvedValueOnce({ text: 'REPEAT' });
+
+        const run = scheduleAndCapture();
+        await run();
+        await run();
+        await run();
+
+        expect(mockInvoke.mock.calls[2][0].lastSentNote).toEqual(
+          expect.objectContaining({ text: 'Posted the build failure to #ops.' }),
+        );
+      });
+
+      it('records no note for a run whose instruction changed while it ran', async () => {
+        let finish: (value: unknown) => void = () => {};
+        mockInvoke.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+
+        const running = scheduleAndCapture()();
+        await vi.waitFor(() => expect(mockInvoke).toHaveBeenCalledTimes(1));
+        const next = scheduleAndCapture({ instruction: 'Check the release build instead.' });
+        finish(SENT);
+        await running;
+        await next();
+
+        expect(mockInvoke.mock.calls[1][0].lastSentNote).toBeUndefined();
+      });
+
+      it('gives a thread-bound run no note, since it reads its thread', async () => {
+        mockThreadFindUnique.mockResolvedValue({ id: 'thread-bound' });
+        mockInvoke.mockResolvedValueOnce(SENT);
+
+        const run = scheduleAndCapture({ threadId: 'thread-bound' });
+        await run();
+        await run();
+
+        expect(mockInvoke.mock.calls[1][0].lastSentNote).toBeUndefined();
+      });
+
+      it('forgets the note when the instruction changes', async () => {
+        mockInvoke.mockResolvedValueOnce(SENT);
+
+        await scheduleAndCapture()();
+        await scheduleAndCapture({ instruction: 'Check the release build instead.' })();
+
+        expect(mockInvoke.mock.calls[1][0].lastSentNote).toBeUndefined();
+      });
     });
 
     it('keeps a suppressed run of a thread-bound task in its own thread', async () => {

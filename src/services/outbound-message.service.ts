@@ -95,7 +95,7 @@ class OutboundMessageService {
     triggerName?: string;
     toolCalls: ToolCallRecord[];
   }): Promise<void> {
-    if (!run.toolCalls.some((call) => call.tool === SEND_MESSAGE_TOOL_NAME && call.success)) return;
+    if (!sentAMessage(run.toolCalls)) return;
     const threadId = run.threadId ?? (await conversationService.getOrCreateLatestThread(run.agentId, run.userId)).id;
     const readLive =
       run.threadId !== undefined && (await conversationService.getThreadSource(run.threadId)) !== ThreadSource.DATABASE;
@@ -232,3 +232,8 @@ class OutboundMessageService {
 }
 
 export const outboundMessageService = new OutboundMessageService();
+
+/** Whether a run's tool calls include a message the runtime posted. */
+export function sentAMessage(toolCalls: ToolCallRecord[]): boolean {
+  return toolCalls.some((call) => call.tool === SEND_MESSAGE_TOOL_NAME && call.success);
+}
