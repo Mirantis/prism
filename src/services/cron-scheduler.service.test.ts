@@ -872,6 +872,68 @@ describe('CronSchedulerService', () => {
       expect(mockCronTaskDeleteMany).toHaveBeenCalledTimes(1);
     });
 
+    describe('the send record of an edited task', () => {
+      const SENT_BEFORE = [
+        {
+          content: '**Scheduled Task: Daily Report**\n\nPosted.',
+          toolCalls: [{ tool: 'send_message', input: JSON.stringify({ target: '#ops', text: 'Build #812 failed.' }), output: '{}', success: true, timestamp: '2026-10-20T08:00:00Z' }],
+          createdAt: new Date('2026-10-20T08:00:00Z'),
+        },
+      ];
+      let tick: (() => Promise<void>) | undefined;
+
+      beforeEach(() => {
+        tick = undefined;
+        mockCronSchedule.mockImplementation((_schedule: string, cb: () => Promise<void>) => {
+          tick = cb;
+          return { stop: vi.fn(), getNextRun: () => null };
+        });
+        mockMessageFindMany.mockResolvedValue(SENT_BEFORE);
+        cronSchedulerService.stopAll();
+      });
+
+      afterEach(() => mockMessageFindMany.mockReset());
+
+      it('reads no stored sends for a task edited before its first run in this process', async () => {
+        cronSchedulerService.scheduleTask(toBackendCronTask(storedRow()));
+        mockCronTaskFindFirst.mockResolvedValue(storedRow());
+
+        await cronSchedulerService.updateTask('task-1', { instruction: 'Check the release build instead.' });
+        await tick!();
+
+        expect(mockInvoke.mock.calls[0][0].lastSend).toBeUndefined();
+        expect(mockMessageFindMany).not.toHaveBeenCalled();
+      });
+
+      it('reads no stored sends for a task edited while inactive, when it runs again', async () => {
+        mockCronTaskFindFirst.mockResolvedValue(storedRow({ isActive: false }));
+        mockCronTaskUpdate.mockImplementationOnce(({ data }: { data: Partial<CronTask> }) =>
+          Promise.resolve(storedRow({ ...data, isActive: false })),
+        );
+
+        await cronSchedulerService.updateTask('task-1', { instruction: 'Check the release build instead.' });
+        expect(tick).toBeUndefined();
+        cronSchedulerService.scheduleTask(
+          toBackendCronTask(storedRow({ instruction: 'Check the release build instead.' })),
+        );
+        await tick!();
+
+        expect(mockInvoke.mock.calls[0][0].lastSend).toBeUndefined();
+        expect(mockMessageFindMany).not.toHaveBeenCalled();
+      });
+
+      it('reads the stored sends for a task that runs again without an edit', async () => {
+        cronSchedulerService.scheduleTask(toBackendCronTask(storedRow({ isActive: false })));
+        cronSchedulerService.scheduleTask(toBackendCronTask(storedRow()));
+        await tick!();
+
+        expect(mockMessageFindMany).toHaveBeenCalledTimes(1);
+        expect(mockInvoke.mock.calls[0][0].lastSend).toEqual(
+          expect.objectContaining({ messages: '- To #ops: Build #812 failed.' }),
+        );
+      });
+    });
+
     it('keeps the delivery baseline for an edit that leaves the instruction as it was', async () => {
       let tick!: () => Promise<void>;
       mockCronSchedule.mockImplementation((_schedule: string, cb: () => Promise<void>) => {
@@ -1339,17 +1401,6 @@ describe('CronSchedulerService', () => {
         await run();
 
         expect(mockInvoke.mock.calls[3][0].lastSend.latestReport.text).toBe('The nightly build passed.');
-      });
-
-      it('starts a task edited before its first run in this process with no record, without reading storage', async () => {
-        scheduleAndCapture();
-        cronSchedulerService.stopAll();
-        scheduleAndCapture();
-        const run = scheduleAndCapture({ instruction: 'Check the release build instead.' });
-        await run();
-
-        expect(mockInvoke.mock.calls[0][0].lastSend).toBeUndefined();
-        expect(mockMessageFindMany).not.toHaveBeenCalled();
       });
 
       it('finds a send behind more than 20 later stored runs after a restart', async () => {
