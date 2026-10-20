@@ -505,7 +505,7 @@ class SlackAdapterService implements ChannelAdapter {
    */
   async postToTarget(target: LinkedTarget, text: string, thread?: string): Promise<PostedMessage> {
     const connection = await getSlackConnection();
-    const slackApp = connection?.isActive ? this.apps.get(connection.teamId) : undefined;
+    const slackApp = connection?.isActive ? await this.getAppForTeam(connection.teamId) : undefined;
     if (!connection || !slackApp) {
       throw new SendRefusedError('Slack is not connected, so nothing can be sent there.', 'not_connected');
     }

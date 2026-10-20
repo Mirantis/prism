@@ -267,6 +267,28 @@ describe('Requirement: the agent posts only to its linked Slack targets', () => 
       );
     });
 
+    it('waits for the boot to connect Slack before it sends', async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const adapter = slackAdapterService as any;
+      const connected = adapter.apps;
+      adapter.apps = new Map();
+      let connect: () => void = () => {};
+      adapter.started = new Promise<void>((resolve) => {
+        connect = () => {
+          adapter.apps = connected;
+          resolve();
+        };
+      });
+
+      const send = slackAdapterService.postToTarget(RELEASE, 'Hi');
+      // The send reads the connection and asks for the app before the boot connects.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      connect();
+
+      await expect(send).resolves.toEqual({ messageId: '1712345678.000100' });
+      adapter.started = Promise.resolve();
+    });
+
     it('refuses when Slack is not connected', async () => {
       mockGetSlackConnection.mockResolvedValue(null);
 
