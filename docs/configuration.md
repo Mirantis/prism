@@ -204,8 +204,10 @@ the command for where the agent's commands run, then set
 
 Open the link that the command prints, choose your subscription account, and paste
 the code back if the command asks for it. Claude Code then uses the subscription and
-none of the agent's API keys or cloud credentials. While no subscription is signed
-in, every Claude Code task fails with a message that says so. The
+none of the agent's API keys or cloud credentials. A repository's own
+`.claude/settings.json` cannot switch a task to another provider or key either.
+While no subscription is signed in, every Claude Code task fails with a message
+that says so. The
 `CLAUDE_CODE_MODEL_*` overrides apply to these tasks too, so set them to model
 names the subscription serves, such as `sonnet`, not Bedrock IDs. When the
 subscription reaches its usage limit, tasks fail with Claude Code's message until

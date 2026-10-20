@@ -14,6 +14,50 @@ const PROBE_OUTPUT_LIMIT = 64 * 1024;
 const OUTRANKS_SAVED_LOGIN = /^(ANTHROPIC_|CLAUDE_CODE_USE_|CLAUDE_CODE_OAUTH_TOKEN$)/;
 
 /**
+ * The provider switches and credentials among those variables that Claude Code
+ * 2.1.304 reads. `subscriptionEnvironment` takes them out of the task's env,
+ * but the `env` block of a repository's `.claude/settings.json` or
+ * `settings.local.json` sets them again, and `forceLoginMethod` does not refuse
+ * a provider or key chosen there. Flag settings outrank both files, so a task's
+ * `--settings` restates each one empty. A provider's own base URL needs no
+ * entry: nothing reads it while its switch is off.
+ */
+export const SAVED_LOGIN_OVERRIDES = [
+  'CLAUDE_CODE_USE_BEDROCK',
+  'CLAUDE_CODE_USE_VERTEX',
+  'CLAUDE_CODE_USE_FOUNDRY',
+  'CLAUDE_CODE_USE_ANTHROPIC_AWS',
+  'CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD',
+  'CLAUDE_CODE_USE_MANTLE',
+  'CLAUDE_CODE_USE_GATEWAY',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_AWS_API_KEY',
+  'ANTHROPIC_FOUNDRY_API_KEY',
+  'ANTHROPIC_FOUNDRY_AUTH_TOKEN',
+  'ANTHROPIC_IDENTITY_TOKEN',
+  'ANTHROPIC_IDENTITY_TOKEN_FILE',
+  'ANTHROPIC_UNIX_SOCKET',
+] as const;
+
+/**
+ * The `--settings` of a task on the subscription: the claude.ai login and no
+ * other, whatever the repository's own settings say. An empty `apiKeyHelper`
+ * replaces one that a repository sets. The base URL is the account's own API
+ * rather than empty, because one of the CLI's reads takes an empty value as
+ * set (`??`).
+ */
+export const SUBSCRIPTION_SETTINGS = JSON.stringify({
+  forceLoginMethod: 'claudeai',
+  apiKeyHelper: '',
+  env: {
+    ...Object.fromEntries(SAVED_LOGIN_OVERRIDES.map((name) => [name, ''])),
+    ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
+  },
+});
+
+/**
  * The login saved in the CLI's home: a Claude subscription signed in through
  * claude.ai, another saved login, or none.
  */
