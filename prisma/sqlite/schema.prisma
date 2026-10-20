@@ -273,8 +273,9 @@ model ConversationMessage {
   webhookRun  WebhookRun?
 
   @@index([role, createdAt])
-  // A thread's history in client order, read one page at a time.
-  @@index([threadId, createdAt, id])
+  // A thread's history, whole or one page at a time. Without `id`, rows written in
+  // the same millisecond stay in the order they were written, as the model's view needs.
+  @@index([threadId, createdAt])
   @@map("conversation_messages")
 }
 
@@ -804,10 +805,11 @@ model UpdateAttempt {
 }
 
 /// Deployment state, keyed by name: what this install was doing last time,
-/// rather than anything about the agent. One key today,
-/// `lastExecutionEnvironment`, holding `local` or `docker`.
+/// rather than anything about the agent. `lastExecutionEnvironment` holds
+/// `local` or `docker`. `singleThread` holds the id of single-thread mode's one
+/// conversation, so no later write to another thread moves it.
 ///
-/// It exists to make the storage migration run once per change of environment.
+/// The table exists to make the storage migration run once per change of environment.
 /// That migration copies only what the destination lacks, so repeating it would
 /// overwrite nothing — except that a file deleted on one side is still on the
 /// other, and a repeat copies it back. Recording where the last run happened is

@@ -15,6 +15,7 @@ const {
   mockGetOrCreateLatestThread,
   mockGetThreadWorkspaceRoot,
   mockAddMessage,
+  mockWritableThreadId,
   mockPublish,
   mockInvokeStream,
   mockCountAgentMessages,
@@ -38,6 +39,7 @@ const {
   mockGetOrCreateLatestThread: vi.fn(),
   mockGetThreadWorkspaceRoot: vi.fn(),
   mockAddMessage: vi.fn(),
+  mockWritableThreadId: vi.fn(),
   mockPublish: vi.fn(),
   mockInvokeStream: vi.fn(),
   mockCountAgentMessages: vi.fn(),
@@ -84,6 +86,7 @@ vi.mock('../conversation.service', () => ({
     getOrCreateLatestThread: mockGetOrCreateLatestThread,
     getThreadWorkspaceRoot: mockGetThreadWorkspaceRoot,
     addMessage: mockAddMessage,
+    writableThreadId: mockWritableThreadId,
   },
 }));
 
@@ -178,6 +181,7 @@ describe('Requirement: Conversation Engine', () => {
       userId: 'user-123',
     });
     mockGetThreadWorkspaceRoot.mockResolvedValue(null);
+    mockWritableThreadId.mockImplementation(async (threadId: string) => threadId);
     mockAddMessage.mockImplementation(async (threadId: string, input: Record<string, unknown>) => ({
       message: { id: 'msg-123', threadId, ...input, createdAt: new Date() },
       titleSet: null,
@@ -355,6 +359,21 @@ describe('Requirement: Conversation Engine', () => {
       expect(mockInvokeStream).toHaveBeenCalledWith(
         expect.objectContaining({ workspaceRoot: '/srv/ws' }),
       );
+    });
+
+    it('runs a turn named for another thread in the thread clients show', async () => {
+      mockWritableThreadId.mockResolvedValue('thread-conversation');
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'Hello',
+        threadId: 'thread-older',
+      });
+
+      expect(mockWritableThreadId).toHaveBeenCalledWith('thread-older');
+      expect(mockAddMessage).toHaveBeenCalledWith('thread-conversation', expect.objectContaining({ role: 'USER' }));
+      expect(mockInvokeStream).toHaveBeenCalledWith(expect.objectContaining({ threadId: 'thread-conversation' }));
     });
 
     it('should create new thread if not provided', async () => {

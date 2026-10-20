@@ -46,6 +46,17 @@ vi.mock('../lib/prisma', () => ({
   default: mockPrisma,
 }));
 
+const { runtimeState } = vi.hoisted(() => ({ runtimeState: new Map<string, string>() }));
+
+vi.mock('./runtime-state.service', () => ({
+  SINGLE_THREAD: 'singleThread',
+  runtimeStateService: {
+    get: async (key: string) => runtimeState.get(key) ?? null,
+    set: async (key: string, value: string) => void runtimeState.set(key, value),
+    delete: async (key: string) => void runtimeState.delete(key),
+  },
+}));
+
 const { mockTrackEvent } = vi.hoisted(() => ({ mockTrackEvent: vi.fn() }));
 
 vi.mock('../lib/telemetry', () => ({
@@ -1113,6 +1124,7 @@ describe('ConversationService', () => {
   describe('single-thread mode', () => {
     beforeEach(() => {
       config.threadMode = 'single';
+      runtimeState.clear();
     });
     afterEach(() => {
       config.threadMode = 'multi';
@@ -1123,7 +1135,15 @@ describe('ConversationService', () => {
       mockPrisma.conversationMessage.findFirst.mockResolvedValue(conversation ? { thread: conversation } : null);
     }
 
-    it('keeps the conversation the person wrote in last, not an emptier newer one', async () => {
+    /** `conversation` is the stored one conversation, and its row exists. */
+    function stored(conversation: ReturnType<typeof createTestThread>) {
+      runtimeState.set('singleThread', conversation.id);
+      mockPrisma.conversationThread.findFirst.mockImplementation(async ({ where }: { where: { id?: string } }) =>
+        where.id === conversation.id ? conversation : null,
+      );
+    }
+
+    it('keeps the conversation the person wrote in last, not an emptier newer one, and stores it', async () => {
       wroteLastIn(createTestThread({ id: 'thread-written' }));
 
       const thread = await conversationService.findLatestWebThread('agent-123', 'user-123');
@@ -1139,6 +1159,7 @@ describe('ConversationService', () => {
         select: { thread: true },
       });
       expect(mockPrisma.conversationThread.findFirst).not.toHaveBeenCalled();
+      expect(runtimeState.get('singleThread')).toBe('thread-written');
     });
 
     it('keeps the newest thread when nobody wrote yet, and creates one when there is none', async () => {
@@ -1146,13 +1167,42 @@ describe('ConversationService', () => {
       mockPrisma.conversationThread.findFirst.mockResolvedValueOnce(createTestThread({ id: 'thread-newest' }));
       expect((await conversationService.findLatestWebThread('agent-123', 'user-123'))?.id).toBe('thread-newest');
 
+      runtimeState.clear();
       mockPrisma.conversationThread.findFirst.mockResolvedValueOnce(null);
       mockPrisma.conversationThread.create.mockResolvedValue(createTestThread({ id: 'thread-new' }));
       expect((await conversationService.getOrCreateLatestThread('agent-123', 'user-123')).id).toBe('thread-new');
     });
 
+    it('keeps the stored conversation when the person writes in another thread', async () => {
+      stored(createTestThread({ id: 'thread-one' }));
+      wroteLastIn(createTestThread({ id: 'thread-other' }));
+
+      expect((await conversationService.findLatestWebThread('agent-123', 'user-123'))?.id).toBe('thread-one');
+      expect(mockPrisma.conversationThread.findFirst).toHaveBeenCalledWith({
+        where: { id: 'thread-one', agentId: 'agent-123', userId: 'user-123', externalThreadId: null },
+      });
+      expect(mockPrisma.conversationMessage.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('chooses again when the stored conversation is gone', async () => {
+      runtimeState.set('singleThread', 'thread-gone');
+      mockPrisma.conversationThread.findFirst.mockResolvedValue(null);
+      wroteLastIn(createTestThread({ id: 'thread-written' }));
+
+      expect((await conversationService.findLatestWebThread('agent-123', 'user-123'))?.id).toBe('thread-written');
+      expect(runtimeState.get('singleThread')).toBe('thread-written');
+    });
+
+    it('forgets the stored conversation', async () => {
+      runtimeState.set('singleThread', 'thread-one');
+
+      await conversationService.forgetSingleThread();
+
+      expect(runtimeState.has('singleThread')).toBe(false);
+    });
+
     it('answers a request for a new thread with the one conversation', async () => {
-      wroteLastIn(createTestThread({ id: 'thread-one' }));
+      stored(createTestThread({ id: 'thread-one' }));
 
       const started = await conversationService.startNewThread('agent-123', 'user-123', { workspaceRoot: '/repo' });
       const fresh = await conversationService.getOrCreateFreshThread('agent-123', 'user-123');
@@ -1163,20 +1213,47 @@ describe('ConversationService', () => {
     });
 
     it('lists, opens and reads only the one conversation among web threads', async () => {
-      wroteLastIn(createTestThread({ id: 'thread-one' }));
+      stored(createTestThread({ id: 'thread-one' }));
       const onlyTheConversation = { OR: [{ externalThreadId: { not: null } }, { id: 'thread-one' }] };
       mockPrisma.conversationThread.findMany.mockResolvedValue([]);
-      mockPrisma.conversationThread.findFirst.mockResolvedValue(null);
 
       await conversationService.listThreads('user-123', 'agent-123', { threadSource: 'DATABASE' });
       await conversationService.getOwnedThreadId('user-123', 'agent-123', 'thread-older');
       await conversationService.getThread('user-123', 'agent-123', 'thread-older');
 
       expect(mockPrisma.conversationThread.findMany.mock.calls[0][0].where).toMatchObject(onlyTheConversation);
-      expect(mockPrisma.conversationThread.findFirst).toHaveBeenCalledTimes(2);
-      for (const [query] of mockPrisma.conversationThread.findFirst.mock.calls) {
-        expect(query.where).toMatchObject({ id: 'thread-older', ...onlyTheConversation });
+      const reads = mockPrisma.conversationThread.findFirst.mock.calls.filter(([query]) => query.where.id === 'thread-older');
+      expect(reads).toHaveLength(2);
+      for (const [query] of reads) {
+        expect(query.where).toMatchObject(onlyTheConversation);
       }
     });
+
+    it('writes a run or a turn named for another web thread to the one conversation', async () => {
+      stored(createTestThread({ id: 'thread-one' }));
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({
+        agentId: 'agent-123',
+        userId: 'user-123',
+        externalThreadId: null,
+      });
+
+      expect(await conversationService.writableThreadId('thread-older')).toBe('thread-one');
+    });
+
+    it('writes to a channel thread as named', async () => {
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({
+        agentId: 'agent-123',
+        userId: 'user-123',
+        externalThreadId: 'C123:1700000000.000100',
+      });
+
+      expect(await conversationService.writableThreadId('thread-slack')).toBe('thread-slack');
+      expect(runtimeState.size).toBe(0);
+    });
+  });
+
+  it('writes to the named thread in multi-thread mode', async () => {
+    expect(await conversationService.writableThreadId('thread-older')).toBe('thread-older');
+    expect(mockPrisma.conversationThread.findUnique).not.toHaveBeenCalled();
   });
 });

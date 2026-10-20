@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
@@ -8,6 +8,9 @@ import type { ConversationMessage, ConversationThread } from '@/types';
 
 /** How many messages one page of history holds. */
 export const HISTORY_PAGE = 50;
+
+/** How long a failed page of older messages waits before the list asks for it again. */
+const OLDER_RETRY_MS = 3000;
 
 /**
  * A conversation with the newest part of its history, oldest first and without a gap.
@@ -34,22 +37,43 @@ export function upsertIntoHistory(thread: LoadedThread, message: ConversationMes
   return { ...thread, messages: upsertMessage(thread.messages, message) };
 }
 
+/** One page of a conversation: the newest messages, or those before the message `before`. */
+type PageReader = (before?: string) => Promise<ConversationThread>;
+
 /**
- * One conversation with its newest page of history. The chat socket's events are held
- * while it loads and applied to the result, so a message that arrives during the request
- * is kept.
+ * A conversation's newest pages, read until they hold `depth` messages or start at its
+ * first message.
+ */
+export async function loadHistory(readPage: PageReader, depth: number): Promise<LoadedThread> {
+  const thread = await readPage();
+  let messages = thread.messages ?? [];
+  let hasOlder = messages.length === HISTORY_PAGE;
+  while (hasOlder && messages.length < depth) {
+    const older = (await readPage(messages[0].id)).messages ?? [];
+    messages = [...older, ...messages];
+    hasOlder = older.length === HISTORY_PAGE;
+  }
+  return { ...thread, messages, hasOlder };
+}
+
+/**
+ * One conversation with the newest part of its history. A reload, after compaction or a
+ * resync, reads as many messages as the cache held, so a reader who scrolled back keeps
+ * their place. The chat socket's events are held while it loads and applied to the
+ * result, so a message that arrives during the request is kept.
  */
 export function useThread(threadId: string | undefined, enabled = true) {
   const agent = useAgent();
   const connection = useChatConnection();
+  const queryClient = useQueryClient();
+  const queryKey = threadQueryKey(agent.agentId, threadId);
   return useQuery({
-    queryKey: threadQueryKey(agent.agentId, threadId),
-    queryFn: async (): Promise<LoadedThread> => {
-      const thread = await connection.holdEvents(
-        runtimeApi.getThread(agent.agentId, agent.userId, threadId!, { limit: HISTORY_PAGE }),
-      );
-      const messages = thread.messages ?? [];
-      return { ...thread, messages, hasOlder: messages.length === HISTORY_PAGE };
+    queryKey,
+    queryFn: (): Promise<LoadedThread> => {
+      const depth = queryClient.getQueryData<LoadedThread>(queryKey)?.messages.length ?? 0;
+      const readPage = (before?: string) =>
+        runtimeApi.getThread(agent.agentId, agent.userId, threadId!, { limit: HISTORY_PAGE, before });
+      return connection.holdEvents(loadHistory(readPage, depth));
     },
     enabled: enabled && Boolean(threadId),
   });
@@ -58,13 +82,17 @@ export function useThread(threadId: string | undefined, enabled = true) {
 /**
  * Load the page before the first message of a conversation's cached history. A page
  * that arrives after the cache was loaded again is dropped, since it would follow a
- * different first message and leave a gap.
+ * different first message and leave a gap. `retries` changes a while after a page
+ * fails, and the list then asks again if the reader is still at the top.
  */
 export function useOlderMessages(threadId: string | undefined) {
   const { agentId, userId } = useAgent();
   const queryClient = useQueryClient();
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [retries, setRetries] = useState(0);
   const inFlight = useRef(false);
+  const retryTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(retryTimer.current), []);
 
   const loadOlder = useCallback(async () => {
     const key = threadQueryKey(agentId, threadId);
@@ -82,12 +110,12 @@ export function useOlderMessages(threadId: string | undefined) {
           : thread,
       );
     } catch {
-      // The history stays as it is. The reader's next return to the top asks again.
+      retryTimer.current = setTimeout(() => setRetries((count) => count + 1), OLDER_RETRY_MS);
     } finally {
       inFlight.current = false;
       setIsLoadingOlder(false);
     }
   }, [agentId, userId, threadId, queryClient]);
 
-  return { loadOlder, isLoadingOlder };
+  return { loadOlder, isLoadingOlder, retries };
 }

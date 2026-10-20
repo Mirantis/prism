@@ -349,7 +349,7 @@ Answer with one word: WORTHY or SKIP.`;
     // Get or create thread, capturing its persisted workspace root so shell
     // tools run with the thread's cwd (falling back to the global root when
     // unset — see resolveWorkspace).
-    let threadId = input.threadId;
+    let threadId = input.threadId && (await conversationService.writableThreadId(input.threadId));
     let workspaceRoot: string | undefined;
     if (!threadId) {
       const thread = await conversationService.getOrCreateLatestThread(agentId, userId);

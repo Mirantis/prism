@@ -1749,10 +1749,10 @@ router.get('/skills', async (req: Request, res: Response) => {
       if (owned) {
         workspaceRoot = (await conversationService.getThreadWorkspaceRoot(owned)) ?? undefined;
       }
-    } else if (config.agentId) {
+    } else {
       // No explicit thread → use the latest thread's workspace, read-only (never
       // creates one). The CLI's startup thread carries its launch cwd here.
-      const latest = await conversationService.findLatestWebThread(config.agentId, config.ownerUserId);
+      const latest = await conversationService.findLatestWebThread(config.agentId!, config.ownerUserId);
       workspaceRoot = latest?.workspaceRoot ?? undefined;
     }
     const skills = (await skillCatalogService.getCatalog(workspaceRoot)).map((s) => ({
