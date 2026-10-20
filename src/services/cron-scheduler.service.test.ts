@@ -29,6 +29,7 @@ const {
   mockLoggerError,
   mockBeginWork,
   mockFinishWork,
+  mockWritableThreadId,
   shutdown,
 } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
@@ -48,6 +49,7 @@ const {
   mockLoggerError: vi.fn(),
   mockBeginWork: vi.fn(async () => undefined),
   mockFinishWork: vi.fn(),
+  mockWritableThreadId: vi.fn(),
   shutdown: { controller: new AbortController() },
 }));
 
@@ -61,6 +63,10 @@ vi.mock('./message-delivery.service', () => ({
     publish: mockPublish,
     threadContext: mockThreadContext,
   },
+}));
+
+vi.mock('./conversation.service', () => ({
+  conversationService: { writableThreadId: mockWritableThreadId },
 }));
 
 vi.mock('../lib/prisma', () => ({
@@ -167,6 +173,7 @@ describe('CronSchedulerService', () => {
     mockPublish.mockResolvedValue({ id: 'msg-1', threadId: 'thr-1' });
     mockThreadContext.mockResolvedValue({ channel: 'websocket', threadId: 'thread-bound' });
     mockThreadFindUnique.mockResolvedValue({ id: 'thread-bound' });
+    mockWritableThreadId.mockImplementation(async (threadId: string) => threadId);
     mockCronTaskUpdateMany.mockResolvedValue({ count: 1 });
     mockCronTaskDeleteMany.mockResolvedValue({ count: 1 });
     shutdown.controller = new AbortController();
@@ -878,6 +885,19 @@ describe('CronSchedulerService', () => {
         originChannel: 'slack',
         originChannelId: 'C999',
       });
+
+    it('runs unbound when single-thread mode hides its conversation, and answers in the one conversation', async () => {
+      mockCronValidate.mockReturnValue(false);
+      mockWritableThreadId.mockResolvedValue('thread-one');
+
+      cronSchedulerService.scheduleTask(bound());
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ mode: 'cron', prompt: 'Re-check the deploy.' }));
+      expect(mockInvoke.mock.calls[0][0]).not.toHaveProperty('threadId');
+      expect(mockPublish).not.toHaveBeenCalled();
+      expect(mockDeliverMessage).toHaveBeenCalledWith('agent-1', 'user-abc-123', expect.any(String), 'CRON_TASK', expect.anything());
+    });
 
     it('resumes in the originating thread: invokes with that thread + scoped channel delivery', async () => {
       mockCronValidate.mockReturnValue(false);

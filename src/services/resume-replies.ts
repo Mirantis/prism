@@ -9,6 +9,7 @@ import prisma from '../lib/prisma';
 import { logger } from '../logger';
 import { conversationEngineService, type ChatWork } from './conversation-engine.service';
 import { attachmentService } from './attachment.service';
+import { conversationService } from './conversation.service';
 import { messageDeliveryService } from './message-delivery.service';
 import { pendingWorkService, type PendingWorkItem } from './pending-work.service';
 
@@ -41,6 +42,13 @@ export async function resumeReplies(items: PendingWorkItem[]): Promise<void> {
     threads.set(message.threadId, [...(threads.get(message.threadId) ?? []), message]);
   }
   for (const [threadId, messages] of threads) {
+    // A turn reads the thread that holds the messages. Single-thread mode hides every
+    // other web thread and answers in the one conversation, which does not hold them.
+    if ((await conversationService.writableThreadId(threadId)) !== threadId) {
+      logger.info('Not continuing the reply on thread %s: single-thread mode hides it', threadId);
+      pendingWorkService.end('chat', messages.map((message) => message.id));
+      continue;
+    }
     const newest = messages[messages.length - 1];
     const { agentId, userId, metadata } = work.get(newest.id) as ChatWork;
     const messageIds = messages.map((message) => message.id);

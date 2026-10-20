@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { ConversationMessage } from '@/types';
-import { HISTORY_PAGE, loadHistory, upsertIntoHistory, type LoadedThread } from './use-thread';
+import { HISTORY_PAGE, keepOlderPages, loadHistory, upsertIntoHistory, type LoadedThread } from './use-thread';
 
 function message(id: string, createdAt: string): ConversationMessage {
   return {
@@ -81,5 +81,28 @@ describe('loading a conversation again', () => {
     const loaded = await loadHistory(readPage, 500);
     expect(loaded.messages.map((m) => m.id)).toEqual(history.map((m) => m.id));
     expect(loaded.hasOlder).toBe(false);
+  });
+});
+
+describe('a reload that ends while an older page arrives', () => {
+  const older = [message('m-1', '2026-10-20T08:00:00.000Z'), message('m-2', '2026-10-20T08:01:00.000Z')];
+  const reloaded = [message('m-51', '2026-10-20T09:00:00.000Z'), message('m-52', '2026-10-20T09:01:00.000Z')];
+
+  it('keeps the page the reader scrolled into, ahead of the reload', () => {
+    const cached = thread([...older, ...loaded], false);
+    const next = keepOlderPages(cached, thread(reloaded, true));
+    expect(next.messages.map((m) => m.id)).toEqual(['m-1', 'm-2', 'm-51', 'm-52']);
+    expect(next.hasOlder).toBe(false);
+  });
+
+  it('takes the reload as it is when the cache gained nothing older', () => {
+    const next = keepOlderPages(thread(loaded, true), thread(reloaded, true));
+    expect(next.messages.map((m) => m.id)).toEqual(['m-51', 'm-52']);
+    expect(keepOlderPages(undefined, thread(reloaded, true)).messages).toHaveLength(2);
+  });
+
+  it('takes the reload as it is when it starts at a message the cache does not hold', () => {
+    const next = keepOlderPages(thread(older, true), thread(reloaded, true));
+    expect(next.messages.map((m) => m.id)).toEqual(['m-51', 'm-52']);
   });
 });

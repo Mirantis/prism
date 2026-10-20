@@ -44,6 +44,67 @@ Given(
   },
 );
 
+Given(
+  'a conversation with {int} numbered messages, where message {int} used {int} tools',
+  async ({}, count: number, withTools: number, tools: number) => {
+    const start = Date.now() - count * 1000;
+    const output = Array.from({ length: 12 }, (_, line) => `line ${line + 1}`).join('\n');
+    await dbHelper.createThread(getCurrentAgentId(), {
+      messages: Array.from({ length: count }, (_, i) => ({
+        role: i % 2 === 0 ? ('USER' as const) : ('AGENT' as const),
+        content: numbered(i + 1),
+        createdAt: new Date(start + i * 1000),
+        ...(i + 1 === withTools
+          ? {
+              toolCalls: Array.from({ length: tools }, (_, n) => ({
+                tool: `shell_exec_${n + 1}`,
+                input: '{"command":"ls"}',
+                output,
+                success: true,
+              })),
+            }
+          : {}),
+      })),
+    });
+  },
+);
+
+/** The chip that opens a reply's tool calls. */
+const toolChip = (page: Page, text: string) =>
+  messages(page).filter({ hasText: text }).getByRole('button', { name: /tools? used/ });
+
+/** Where the chip stood on screen when the reader opened it. */
+let chipTop: number | undefined;
+
+When(
+  'I scroll until the tool calls of message {int} are just below the top of the view',
+  async ({ page }, n: number) => {
+    const chip = toolChip(page, numbered(n));
+    await expect(chip).toBeVisible();
+    // The reply's first line is above the view; its chip is 40px below the view's top.
+    await scroller(page).evaluate((el, chipEl) => {
+      const offset = chipEl!.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
+      el.scrollTop = offset - 40;
+    }, await chip.elementHandle());
+    await expect.poll(async () => Math.round((await chip.boundingBox())!.y)).toBeGreaterThan(0);
+    chipTop = (await chip.boundingBox())!.y;
+  },
+);
+
+When('I open those tool calls', async ({ page }) => {
+  const chip = page.getByTestId('chat-messages').getByRole('button', { name: /tools? used/ });
+  await chip.click();
+  await expect(chip).toHaveAttribute('aria-expanded', 'true');
+});
+
+Then('the tool calls of message {int} stay where they were', async ({ page }, n: number) => {
+  const chip = toolChip(page, numbered(n));
+  // The last call's row, so the chip is measured after the whole list has opened.
+  await expect(page.getByTestId('chat-messages').getByText('Shell Exec 6')).toBeVisible();
+  const top = (await chip.boundingBox())!.y;
+  expect(Math.abs(top - chipTop!), `the chip moved from ${chipTop}px to ${top}px`).toBeLessThan(2);
+});
+
 When('I scroll up to the oldest message shown', async ({ page }) => {
   await expect(messages(page).first()).toBeVisible();
   // Where the first message stands once the list is at its top, measured before the

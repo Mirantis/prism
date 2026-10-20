@@ -57,6 +57,17 @@ export async function loadHistory(readPage: PageReader, depth: number): Promise<
 }
 
 /**
+ * A reload's history with the older pages the cache gained while it ran: a page the
+ * reader scrolled into then ends where the reload starts.
+ */
+export function keepOlderPages(cached: LoadedThread | undefined, loaded: LoadedThread): LoadedThread {
+  const first = loaded.messages[0];
+  const at = first && cached ? cached.messages.findIndex((message) => message.id === first.id) : -1;
+  if (!cached || at <= 0) return loaded;
+  return { ...loaded, messages: [...cached.messages.slice(0, at), ...loaded.messages], hasOlder: cached.hasOlder };
+}
+
+/**
  * One conversation with the newest part of its history. A reload, after compaction or a
  * resync, reads as many messages as the cache held, so a reader who scrolled back keeps
  * their place. The chat socket's events are held while it loads and applied to the
@@ -73,7 +84,9 @@ export function useThread(threadId: string | undefined, enabled = true) {
       const depth = queryClient.getQueryData<LoadedThread>(queryKey)?.messages.length ?? 0;
       const readPage = (before?: string) =>
         runtimeApi.getThread(agent.agentId, agent.userId, threadId!, { limit: HISTORY_PAGE, before });
-      return connection.holdEvents(loadHistory(readPage, depth));
+      return connection.holdEvents(
+        loadHistory(readPage, depth).then((loaded) => keepOlderPages(queryClient.getQueryData(queryKey), loaded)),
+      );
     },
     enabled: enabled && Boolean(threadId),
   });

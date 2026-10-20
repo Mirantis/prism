@@ -29,6 +29,7 @@ import { messageDeliveryService } from './message-delivery.service';
 import { ChannelName, isChatPlatform } from './channel-adapter.interface';
 import { threadTurnService } from './thread-turn.service';
 import { conversationThreadActivityService } from './conversation-thread-activity.service';
+import { conversationService } from './conversation.service';
 import { programStatusService } from './program-status.service';
 import { getGateRequest } from '../lib/classification';
 
@@ -293,6 +294,13 @@ class GoalService {
         const goal = await prisma.goal.findUnique({ where: { id: goalId } });
         if (!goal || goal.status !== 'active') {
           logger.info(`[Goal] ${goalId} not active (${goal?.status ?? 'deleted'}) — stopping loop`);
+          return;
+        }
+        // A turn reads the goal's own conversation. In single-thread mode another web
+        // conversation is hidden and its answers go to the one conversation, so the turn
+        // would not see what the last one did. The goal stops, and says so where clients look.
+        if ((await conversationService.writableThreadId(goal.threadId)) !== goal.threadId) {
+          await this.finalize(goal, 'stopped', 'Its conversation is hidden in single-thread mode. Start the goal again here.');
           return;
         }
         endActivity ??= conversationThreadActivityService.beginThread(goal.threadId, goal.userId);
