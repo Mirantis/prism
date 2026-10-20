@@ -1060,11 +1060,11 @@ src/
 │   │   ├── codex/
 │   │   │   └── codex-agent.ts             # Codex CLI adapter
 │   │   └── claude-code/
-│   │       ├── authenticated-home.ts # The home's saved login (`claude auth status`, run in the execution environment): a claude.ai subscription, another login, or none; and `subscriptionEnvironment`, the env without the variables that outrank it
+│   │       ├── authenticated-home.ts # The home's saved login (`claude auth status`, run in the execution environment): a claude.ai subscription, another login, or none; `subscriptionEnvironment`, the env without the variables that outrank it; and `SUBSCRIPTION_SETTINGS`, the `--settings` that restate them, so a repository's `.claude/settings.json` cannot bring one back
 │   │       ├── credentials.ts # Claude CLI authentication settings
 │   │       ├── home.ts        # Where the CLI keeps its state, resolved off the env the CLI will run with
 │   │       ├── mcp-config.ts  # The task's MCP servers as a `--mcp-config` file: written 0600 in a temp dir of its own, removed before the run's stream ends
-│   │       └── claude-code-agent.ts # The Claude Code adapter: `claude -p --output-format stream-json …` argv (task mode → permission mode, plan-only instruction), the stream-json parser with the result line's `permission_denials`, and the `<DATA>/.claude` home with `CLAUDE_CONFIG_DIR` and the skills symlink. With `CLAUDE_CODE_SUBSCRIPTION` on, each run asks the home for its login first: a claude.ai subscription runs the task with `subscriptionEnvironment` and `forceLoginMethod: claudeai`, and anything else fails it
+│   │       └── claude-code-agent.ts # The Claude Code adapter: `claude -p --output-format stream-json …` argv (task mode → permission mode, plan-only instruction), the stream-json parser with the result line's `permission_denials`, and the `<DATA>/.claude` home with `CLAUDE_CONFIG_DIR` and the skills symlink. With `CLAUDE_CODE_SUBSCRIPTION` on, each run asks the home for its login first: a claude.ai subscription runs the task with `subscriptionEnvironment` and `SUBSCRIPTION_SETTINGS` (`forceLoginMethod: claudeai`, the provider switches and keys restated empty), and anything else fails it
 │   ├── execution-environments/ # Where a command runs and what filesystem it sees, plus the shared contract and the selector
 │   │   ├── execution-environment.ts # The contract: `runShell` / `runProgram` returning an `ExecProcess` (`ended` for exit accounting, `closed` once the pipes drain), `ExecutionFiles`, and `paths()` — the agent's directories in this environment
 │   │   ├── exec-stdio-transport.ts # MCP stdio over `runProgram`, so a plugin's server runs where its files are

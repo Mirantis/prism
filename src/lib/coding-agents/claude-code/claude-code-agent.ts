@@ -17,7 +17,7 @@
  */
 
 import { claudeCodeEnvironment, hasClaudeCodeCredentials } from './credentials';
-import { readSavedLogin, subscriptionEnvironment } from './authenticated-home';
+import { readSavedLogin, subscriptionEnvironment, SUBSCRIPTION_SETTINGS } from './authenticated-home';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
 import { runCli } from '../cli-run';
@@ -41,8 +41,6 @@ import {
 
 const DISPLAY_NAME = 'Claude Code';
 const COMMAND = 'claude';
-
-const SUBSCRIPTION_SETTINGS = JSON.stringify({ forceLoginMethod: 'claudeai' });
 
 /** The input fields that name what a refused tool call was aimed at, most specific first. */
 const TARGET_FIELDS = ['file_path', 'notebook_path', 'command', 'url', 'path', 'pattern'];
@@ -143,7 +141,8 @@ function buildArgs(
   // read-only rule in plan mode. With no terminal a refused action is skipped,
   // the run goes on, and the result line lists it.
   args.push('--permission-mode', task.mode === 'plan' ? 'plan' : 'auto');
-  // On the subscription the CLI takes the claude.ai login and no other.
+  // On the subscription the CLI takes the claude.ai login and no other, also
+  // when the repository's own settings name another provider or key.
   if (subscription) args.push('--settings', SUBSCRIPTION_SETTINGS);
 
   // The CLI enforces plan mode too; stating it keeps the model planning instead of

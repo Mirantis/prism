@@ -205,7 +205,12 @@ describe('run: the Claude subscription', () => {
         AWS_BEARER_TOKEN_BEDROCK: 'test-token',
         CLAUDE_CONFIG_DIR: '/workspace/.claude',
       });
-      expect(valueOf(args, '--settings')).toBe('{"forceLoginMethod":"claudeai"}');
+      // A repository's .claude/settings.json can name another provider or key; these outrank it.
+      expect(JSON.parse(valueOf(args, '--settings')!)).toMatchObject({
+        forceLoginMethod: 'claudeai',
+        apiKeyHelper: '',
+        env: { CLAUDE_CODE_USE_BEDROCK: '', CLAUDE_CODE_USE_VERTEX: '', ANTHROPIC_API_KEY: '', ANTHROPIC_BASE_URL: 'https://api.anthropic.com' },
+      });
     });
 
     it.each([

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { FailedSpawnChild, FakeChild } from '../../../test-utils/fake-child';
 import { fakeExecutionEnvironment } from '../../../test-utils/fake-execution-environment';
 import type { ExecutionEnvironment, FileStat, RunOptions } from '../../execution-environments/execution-environment';
-import { readSavedLogin, subscriptionEnvironment } from './authenticated-home';
+import { readSavedLogin, SAVED_LOGIN_OVERRIDES, subscriptionEnvironment, SUBSCRIPTION_SETTINGS } from './authenticated-home';
 
 const DIR_STAT: FileStat = {
   size: 0,
@@ -133,5 +133,18 @@ describe('the env of a task on the subscription', () => {
       AZURE_API_KEY: 'test-key',
       GOOGLE_APPLICATION_CREDENTIALS: '/creds.json',
     });
+  });
+});
+
+describe('the settings of a task on the subscription', () => {
+  it("restate every variable they name, each one the task's env drops", () => {
+    const settings = JSON.parse(SUBSCRIPTION_SETTINGS) as { forceLoginMethod: string; apiKeyHelper: string; env: Record<string, string> };
+    expect(settings.forceLoginMethod).toBe('claudeai');
+    expect(settings.apiKeyHelper).toBe('');
+    expect(settings.env).toEqual({
+      ...Object.fromEntries(SAVED_LOGIN_OVERRIDES.map((name) => [name, ''])),
+      ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
+    });
+    expect(subscriptionEnvironment({ ...settings.env, PATH: '/bin' })).toEqual({ PATH: '/bin' });
   });
 });
