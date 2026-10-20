@@ -440,7 +440,7 @@ describe('HeartbeatService', () => {
     });
 
     it('a suppressed channel-triggered run is kept in history too', async () => {
-      mockDrainTriggerMessages.mockResolvedValueOnce([
+      mockPendingTriggerMessages.mockResolvedValueOnce([
         { sender: 'Test Operator', text: 'deploy failed', timestamp: '2025-01-15T12:00:00Z' },
       ]);
       mockInvoke.mockResolvedValue({
@@ -1776,7 +1776,7 @@ describe('HeartbeatService', () => {
 
     it('keeps a channel-triggered run that hit the spending limit in history, with the budget notice as its text', async () => {
       const toolCalls = [{ tool: 'send_message', input: '{}', output: '{}', success: true, timestamp: '2025-01-15T12:00:00Z' }];
-      mockDrainTriggerMessages.mockResolvedValueOnce([
+      mockPendingTriggerMessages.mockResolvedValueOnce([
         { sender: 'Test Operator', text: 'deploy failed', timestamp: '2025-01-15T12:00:00Z' },
       ]);
       mockInvoke.mockResolvedValue({
