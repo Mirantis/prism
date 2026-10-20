@@ -9,6 +9,7 @@ import {
   GOAL_MAX_TURNS,
 } from './constants';
 import { readAgentModelDefaults } from './lib/prism-settings';
+import { readWorkspaceSeed } from './lib/workspace-seed';
 import { logger } from './logger';
 import { resolveRealtimeConfiguration } from './lib/managed-realtime';
 import { isLoopbackHostname } from './lib/loopback-host';
@@ -967,6 +968,11 @@ export const config = {
   // `chatModelId` at invoke time. Read once at startup, same as the rest of
   // config; only consulted by `createAgent`, so a later edit needs a restart.
   agentDefaults: readAgentModelDefaults(),
+
+  // Identity documents seeded onto a freshly-bootstrapped agent instead of the
+  // default templates, read from PRISM_WORKSPACE_SEED_DIR (`soulMd.md`,
+  // `agentMd.md`, …). Like `agentDefaults`, only the first boot uses them.
+  workspaceSeed: readWorkspaceSeed(),
 
   nexusApiUrl,
 

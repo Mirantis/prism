@@ -38,8 +38,11 @@ export const MAX_REVISIONS_PER_DOCUMENT = 500;
 /** Cap on the stored reason. A write is never refused over the length of its own note. */
 const REASON_MAX_CHARS = 500;
 
-/** The reason recorded for the revisions a new agent is created with. */
-export const SEED_REASON = 'Created from the default template.';
+/**
+ * The reason recorded for the revisions a new agent is created with. It names
+ * no source: a deployment may seed its own documents (`PRISM_WORKSPACE_SEED_DIR`).
+ */
+export const SEED_REASON = 'Created with the agent.';
 
 export interface RecordRevisionInput {
   agentId: string;

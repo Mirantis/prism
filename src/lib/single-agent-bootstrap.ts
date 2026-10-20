@@ -3,9 +3,9 @@
  *
  * Resolves the one `AgentWorkspace` row the runtime runs against. If
  * it doesn't exist yet, creates it with sensible defaults
- * (`config.ownerUserId` / `agentName` / `teamName`) so a fresh container
- * — green-field, or after a `/data` wipe — boots without external
- * seeding.
+ * (`config.ownerUserId` / `agentName` / `teamName`, and the documents
+ * `PRISM_WORKSPACE_SEED_DIR` holds) so a fresh container — green-field, or
+ * after a `/data` wipe — boots without external seeding.
  *
  * Resolution order:
  *   1. `AGENT_ID` set + row exists → use it.
@@ -60,6 +60,7 @@ async function bootstrap(id: string): Promise<AgentWorkspace> {
     name: config.agentName,
     agentType: 'AGENT',
     teamName: config.teamName,
+    documents: config.workspaceSeed,
   });
   logger.info(
     { agentId: agent.id, name: agent.name, ownerUserId: agent.userId },

@@ -21,6 +21,7 @@ vi.mock('../config', () => ({
     ownerUserId: '00000000-0000-0000-0000-000000000001',
     agentName: 'Prism',
     teamName: 'Local',
+    workspaceSeed: { soulMd: '# Seeded soul' },
   },
 }));
 
@@ -86,6 +87,7 @@ describe('resolveOrBootstrapSingleAgent', () => {
       name: 'Prism',
       agentType: 'AGENT',
       teamName: 'Local',
+      documents: { soulMd: '# Seeded soul' },
     });
     expect(mockFindFirst).not.toHaveBeenCalled();
   });
