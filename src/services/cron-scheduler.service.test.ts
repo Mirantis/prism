@@ -1323,6 +1323,55 @@ describe('CronSchedulerService', () => {
         expect(mockInvoke.mock.calls[3][0].lastSend).toEqual({ messages: SENT_LINE, at: expect.any(Number) });
       });
 
+      it("keeps the newest report through a failed run, whose text is the error", async () => {
+        mockInvoke
+          .mockResolvedValueOnce(SENT)
+          .mockResolvedValueOnce(reported('The nightly build passed.'))
+          .mockResolvedValueOnce({
+            ...reported('I encountered an error while processing your request: overloaded'),
+            error: { type: 'generic', detail: 'overloaded' },
+          });
+
+        const run = scheduleAndCapture();
+        await run();
+        await run();
+        await run();
+        await run();
+
+        expect(mockInvoke.mock.calls[3][0].lastSend.latestReport.text).toBe('The nightly build passed.');
+      });
+
+      it('starts a task edited before its first run in this process with no record, without reading storage', async () => {
+        scheduleAndCapture();
+        cronSchedulerService.stopAll();
+        scheduleAndCapture();
+        const run = scheduleAndCapture({ instruction: 'Check the release build instead.' });
+        await run();
+
+        expect(mockInvoke.mock.calls[0][0].lastSend).toBeUndefined();
+        expect(mockMessageFindMany).not.toHaveBeenCalled();
+      });
+
+      it('finds a send behind more than 20 later stored runs after a restart', async () => {
+        const later = Array.from({ length: 150 }, (_, i) => ({
+          content: '**Scheduled Task: Daily Report**\n\nBuild #812 is still failing.',
+          toolCalls: [],
+          createdAt: new Date(Date.UTC(2026, 9, 20, 6, 0, 150 - i)),
+        }));
+        mockMessageFindMany.mockResolvedValueOnce([
+          ...later,
+          { content: '**Scheduled Task: Daily Report**\n\nPosted.', toolCalls: [SEND_CALL], createdAt: new Date(Date.UTC(2026, 9, 20, 5)) },
+        ]);
+        cronSchedulerService.stopAll();
+
+        await scheduleAndCapture()();
+
+        expect(mockMessageFindMany.mock.calls[0][0].take).toBe(200);
+        expect(mockInvoke.mock.calls[0][0].lastSend).toEqual(
+          expect.objectContaining({ messages: SENT_LINE, latestReport: expect.objectContaining({ text: 'Build #812 is still failing.' }) }),
+        );
+      });
+
       it('records what a run sent before it hit the spending limit', async () => {
         mockInvoke.mockResolvedValueOnce({ ...SENT, error: { type: 'budget_exceeded', detail: null } });
 

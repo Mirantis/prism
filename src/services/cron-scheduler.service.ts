@@ -154,6 +154,13 @@ interface ScheduledJob {
 const MISSED_TICK_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * How many stored runs of a task a restart reads to find its last send: a week
+ * of hourly runs that each delivered a result. The read is once per task per
+ * process, and three columns per row.
+ */
+const LAST_SEND_ROWS = 200;
+
+/**
  * A recurring task missed a run when its last run was interrupted, or its tick
  * fell while the runtime was down: its stored next run has passed. A task stored
  * before next runs were stored has none. It missed a run when a tick of its
@@ -336,6 +343,10 @@ class CronSchedulerService {
     this.stopJob(task.id);
     if (!previous || !sameBaselineKey(previous.task, task)) {
       this.lastDelivered.delete(task.id);
+    }
+    // An edited task starts with no record, so its first run reads none from storage.
+    if (previous && previous.task.instruction !== task.instruction) {
+      this.lastSend.set(task.id, null);
     }
 
     if (!task.isActive) {
@@ -534,9 +545,8 @@ class CronSchedulerService {
   }
 
   /**
-   * What the task's runs sent and reported since, under its current instruction.
-   * Read from the stored messages once per process; a failed read is tried again
-   * on the next run.
+   * What the task's runs sent and reported since. Read from the stored messages
+   * once per process; a failed read is tried again on the next run.
    */
   private async lastSendOf(task: BackendCronTask): Promise<TaskLastSend | undefined> {
     if (!this.lastSend.has(task.id)) {
@@ -554,10 +564,13 @@ class CronSchedulerService {
    * The newest stored run of this task that sent a message, and the newest one
    * after it, or undefined when the read fails. An unbound run is stored in its
    * user's thread under the task's heading, delivered or withheld, with its tool
-   * calls. Two trades: the rows hold the task's name, not its id, so a rename
-   * finds none and two tasks of one name read each other's; and a run the gate
-   * withheld that sent nothing is not stored, so a restart loses an all-clear
-   * that came after the send.
+   * calls. The rows hold neither the task's id, its instruction nor a run's error,
+   * which costs these trades after a restart: a rename finds none, and two tasks
+   * of one name read each other's; a send made under an earlier instruction is
+   * read as this instruction's; a failed run can be read as the newest report;
+   * a run the gate withheld that sent nothing is not stored, so an all-clear
+   * after the send is lost; and a send older than the newest `LAST_SEND_ROWS`
+   * runs is lost.
    */
   private async readLastSend(task: BackendCronTask): Promise<TaskLastSend | null | undefined> {
     const heading = `**Scheduled Task: ${task.name}**`;
@@ -571,7 +584,7 @@ class CronSchedulerService {
           createdAt: { gte: new Date(task.createdAt) },
         },
         orderBy: { createdAt: 'desc' },
-        take: 20,
+        take: LAST_SEND_ROWS,
         select: { content: true, toolCalls: true, createdAt: true },
       });
       let latestReport: TaskLastSend['latestReport'];
@@ -767,7 +780,8 @@ class CronSchedulerService {
       const lastStep = result.steps[result.steps.length - 1];
       const responseText = (lastStep?.text ?? '').trim();
       const body = responseText || result.response;
-      if (!boundThreadId && !sent) this.noteReport(task, body);
+      // A failed run's text is the error, not a finding.
+      if (!boundThreadId && !sent && !result.error) this.noteReport(task, body);
 
       // A task that delivers nowhere skips the gate's model call too. A bound
       // task always delivers 'all' (readTaskDelivery), so it never gets here.
