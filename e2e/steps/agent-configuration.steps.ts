@@ -37,7 +37,7 @@ function revisionRows(page: Page) {
  * Edit one of the inline model fields on the Profile page: click its pencil,
  * type the value, Save, and wait for the editor to close on the new value.
  * `label` matches the field's visible label / aria-labels (e.g.
- * "Heartbeat model", "Scheduled-task model").
+ * "Heartbeats", "Scheduled tasks").
  */
 async function setModelField(page: Page, label: string, value: string): Promise<void> {
   await page.getByRole('button', { name: `Edit ${label.toLowerCase()}` }).click();
@@ -64,7 +64,7 @@ Then('I should see the agent type badge', async ({ page }) => {
 
 Then('I should see the heartbeat status', async ({ page }) => {
   // The Heartbeat stat card shows the heartbeat status and "Every ..." interval
-  await expect(page.getByText(/^Every /)).toBeVisible();
+  await expect(page.getByText(/^Every \d/)).toBeVisible();
 });
 
 Then('I should see the heartbeat interval {string}', async ({ page }, expected: string) => {
@@ -83,11 +83,11 @@ Then('I should see profile tabs for {string}, {string}, {string}, {string}, {str
 });
 
 When('I set the heartbeat model to {string}', async ({ page }, value: string) => {
-  await setModelField(page, 'Heartbeat model', value);
+  await setModelField(page, 'Heartbeats', value);
 });
 
 When('I set the scheduled-task model to {string}', async ({ page }, value: string) => {
-  await setModelField(page, 'Scheduled-task model', value);
+  await setModelField(page, 'Scheduled tasks', value);
 });
 
 Then('the stored heartbeat model override is {string}', async ({ page }, value: string) => {
@@ -106,8 +106,8 @@ Then('the stored scheduled-task model override is {string}', async ({ page }, va
 });
 
 When('I clear the heartbeat model override', async ({ page }) => {
-  await page.getByRole('button', { name: 'Edit heartbeat model' }).click();
-  await page.getByRole('button', { name: 'Reset' }).click();
+  await page.getByRole('button', { name: 'Edit heartbeats' }).click();
+  await page.getByRole('button', { name: 'Clear' }).click();
 });
 
 Then('the heartbeat model override is empty and falls back to the main model', async ({ page }) => {
@@ -121,8 +121,8 @@ Then('the heartbeat model override is empty and falls back to the main model', a
 });
 
 When('I clear the scheduled-task model override', async ({ page }) => {
-  await page.getByRole('button', { name: 'Edit scheduled-task model' }).click();
-  await page.getByRole('button', { name: 'Reset' }).click();
+  await page.getByRole('button', { name: 'Edit scheduled tasks' }).click();
+  await page.getByRole('button', { name: 'Clear' }).click();
 });
 
 Then('the scheduled-task model override is empty and falls back to the main model', async ({ page }) => {

@@ -33,6 +33,21 @@ Feature: CLI management commands
     When I run "/cron-model reset"
     Then the cron model is cleared to the main model
 
+  Scenario: /model-mode switches between Auto and Fixed
+    Given the agent has no Auto models
+    When I run "/model-mode"
+    Then I see "Model mode is fixed."
+    When I run "/model-mode auto"
+    Then I see "Auto mode needs a small and a large model"
+    And the agent stays in Fixed mode
+    When the agent is given a small and a large model
+    And I run "/model-mode auto"
+    Then I see "Model mode set to auto: small tui-small-model, large tui-large-model."
+    And the agent is in Auto mode
+    When I run "/model-mode fixed"
+    Then I see "Model mode set to fixed."
+    And the agent is back in Fixed mode
+
   Scenario: /heartbeat status reports the current state
     When I run "/heartbeat status"
     Then I see "active:"

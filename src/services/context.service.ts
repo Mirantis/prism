@@ -5,7 +5,8 @@
  * and conversation history from the local database.
  */
 
-import { agentWorkspaceService, resolveModelSelection } from './agent-workspace.service';
+import { agentWorkspaceService } from './agent-workspace.service';
+import { resolveModelSelection } from '../lib/model-selection';
 import { conversationService } from './conversation.service';
 import { attachmentService } from './attachment.service';
 import { AgentContext } from '../types';

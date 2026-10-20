@@ -664,6 +664,9 @@ describe('model selection', () => {
     vi.clearAllMocks();
     config.modelSelection.mode = 'fixed';
     config.modelSelection.tiers = { small: null, medium: null, large: null };
+    mockPrisma.$transaction.mockImplementation(
+      async (fn: (tx: typeof mockPrisma) => unknown) => fn(mockPrisma),
+    );
     mockPrisma.agentWorkspace.update.mockImplementation(async ({ data }: { data: object }) =>
       createAgentRow({ modelMode: null, smallModel: null, mediumModel: null, largeModel: null, ...data }),
     );
@@ -736,6 +739,31 @@ describe('model selection', () => {
         large: { override: 'agent-large', effective: 'agent-large' },
       },
     });
+  });
+
+  it('refuses the second of two writes that together leave Auto without a small model', async () => {
+    // The row both writes read and change, and a transaction that runs one
+    // callback at a time, as SQLite does.
+    let row = createAgentRow({ modelMode: 'FIXED', smallModel: 's', mediumModel: null, largeModel: 'l' });
+    mockPrisma.agentWorkspace.findUnique.mockImplementation(async () => row);
+    mockPrisma.agentWorkspace.update.mockImplementation(async ({ data }: { data: object }) => {
+      row = { ...row, ...data };
+      return row;
+    });
+    let queue = Promise.resolve();
+    mockPrisma.$transaction.mockImplementation((fn: (tx: typeof mockPrisma) => Promise<unknown>) => {
+      const run = queue.then(() => fn(mockPrisma));
+      queue = run.then(() => undefined, () => undefined);
+      return run;
+    });
+
+    const results = await Promise.allSettled([
+      agentWorkspaceService.updateModelSelection({ mode: 'auto' }),
+      agentWorkspaceService.updateModelSelection({ small: null }),
+    ]);
+
+    expect(results.map((r) => r.status)).toEqual(['fulfilled', 'rejected']);
+    expect(row.smallModel).toBe('s');
   });
 
   it('rejects a mode it does not know', async () => {

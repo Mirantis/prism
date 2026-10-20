@@ -11,8 +11,8 @@ Feature: Auto model selection
     When I navigate to the profile page
     And I turn on Auto model selection
     Then the profile asks for a small and a large model
-    When I set the "Small model" to the small test model
-    And I set the "Large model" to the large test model
+    When I set the "Small" model to the small test model
+    And I set the "Large" model to the large test model
     Then the profile shows Auto model selection
     And the stored model mode is Auto
 

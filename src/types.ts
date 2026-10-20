@@ -7,7 +7,7 @@
 import { ConversationMessage, SteeringMessage } from './prompts/context-builder';
 import { ToolLifecycleListener } from './lib/tool-lifecycle';
 import type { ChannelName } from './services/channel-adapter.interface';
-import type { ModelSelection } from './services/agent-workspace.service';
+import type { ModelSelection } from './lib/model-selection';
 
 // ============================================================================
 // Agent Status

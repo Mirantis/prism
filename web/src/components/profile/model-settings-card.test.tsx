@@ -17,7 +17,7 @@ const { api } = vi.hoisted(() => ({
 vi.mock('@/api/runtime-client', () => ({ runtimeApi: api }));
 vi.mock('@/lib/agent-context', () => ({ useAgent: () => ({ agentId: 'agent-1' }) }));
 
-import { ModelSelectionFields } from './model-selection-fields';
+import { ModelSettingsCard } from './model-settings-card';
 
 function selection(
   mode: 'fixed' | 'auto',
@@ -30,11 +30,11 @@ function selection(
   };
 }
 
-function renderFields() {
+function renderCard() {
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <ModelSelectionFields />
+      <ModelSettingsCard />
     </QueryClientProvider>,
   );
 }
@@ -46,32 +46,32 @@ beforeEach(() => {
   api.getCronModel.mockResolvedValue({ model: null, effective: 'main-model' });
 });
 
-describe('ModelSelectionFields', () => {
+describe('ModelSettingsCard', () => {
   it('shows the fixed model fields in Fixed mode', async () => {
     api.getModelSelection.mockResolvedValue(selection('fixed'));
-    renderFields();
+    renderCard();
 
-    expect(await screen.findByText('Scheduled-task model')).toBeInTheDocument();
-    expect(screen.queryByText('Small model')).not.toBeInTheDocument();
+    expect(await screen.findByText('Scheduled tasks')).toBeInTheDocument();
+    expect(screen.queryByText('Small', { exact: true })).not.toBeInTheDocument();
   });
 
   it('shows the three tiers in Auto mode', async () => {
     api.getModelSelection.mockResolvedValue(selection('auto', { small: 's', large: 'l' }));
-    renderFields();
+    renderCard();
 
-    expect(await screen.findByText('Small model')).toBeInTheDocument();
-    expect(screen.getByText('Medium model')).toBeInTheDocument();
-    expect(screen.getByText('Large model')).toBeInTheDocument();
-    expect(screen.queryByText('Heartbeat model')).not.toBeInTheDocument();
+    expect(await screen.findByText('Small', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('Medium', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('Large', { exact: true })).toBeInTheDocument();
+    expect(screen.queryByText('Heartbeats')).not.toBeInTheDocument();
   });
 
   it('switches straight to Auto when small and large are set', async () => {
     api.getModelSelection.mockResolvedValue(selection('fixed', { small: 's', large: 'l' }));
     api.updateModelSelection.mockResolvedValue(selection('auto', { small: 's', large: 'l' }));
-    renderFields();
+    renderCard();
 
-    const toggle = await screen.findByRole('switch', { name: 'Auto model selection' });
-    await waitFor(() => expect(toggle).not.toHaveAttribute('data-disabled'));
+    const toggle = await screen.findByRole('radio', { name: 'Auto' });
+    await waitFor(() => expect(toggle).toBeEnabled());
     toggle.click();
 
     await waitFor(() => expect(api.updateModelSelection).toHaveBeenCalledWith({ mode: 'auto' }));
@@ -79,14 +79,17 @@ describe('ModelSelectionFields', () => {
 
   it('asks for the missing tiers before switching to Auto', async () => {
     api.getModelSelection.mockResolvedValue(selection('fixed'));
-    renderFields();
+    renderCard();
 
-    const toggle = await screen.findByRole('switch', { name: 'Auto model selection' });
-    await waitFor(() => expect(toggle).not.toHaveAttribute('data-disabled'));
+    const toggle = await screen.findByRole('radio', { name: 'Auto' });
+    await waitFor(() => expect(toggle).toBeEnabled());
     toggle.click();
 
-    expect(await screen.findByText('Set a small and a large model to turn Auto on.')).toBeInTheDocument();
-    expect(screen.getByText('Small model')).toBeInTheDocument();
+    expect(await screen.findByText('To turn on Auto, add a small and a large model. Until then the agent keeps using the fixed models above.')).toBeInTheDocument();
+    expect(screen.getByText('Small', { exact: true })).toBeInTheDocument();
+    // The stored mode is still Fixed, so the switch and the fixed rows say so.
+    expect(screen.getByRole('radio', { name: 'Fixed' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByText('Heartbeats')).toBeInTheDocument();
     expect(api.updateModelSelection).not.toHaveBeenCalled();
   });
 
@@ -95,15 +98,15 @@ describe('ModelSelectionFields', () => {
     api.updateModelSelection.mockImplementation(async (patch: Record<string, unknown>) =>
       'mode' in patch ? selection('auto', { small: 's', large: 'l' }) : selection('fixed', { small: 's', large: 'l' }),
     );
-    renderFields();
+    renderCard();
 
-    const toggle = await screen.findByRole('switch', { name: 'Auto model selection' });
-    await waitFor(() => expect(toggle).not.toHaveAttribute('data-disabled'));
+    const toggle = await screen.findByRole('radio', { name: 'Auto' });
+    await waitFor(() => expect(toggle).toBeEnabled());
     toggle.click();
-    const edit = await screen.findByRole('button', { name: 'Edit large model' });
+    const edit = await screen.findByRole('button', { name: 'Edit large' });
     await waitFor(() => expect(edit).toBeEnabled());
     edit.click();
-    const input = await screen.findByRole('textbox', { name: 'Large model ID' });
+    const input = await screen.findByRole('textbox', { name: 'Large ID' });
     fireEvent.change(input, { target: { value: 'l' } });
     fireEvent.keyDown(input, { key: 'Enter' });
 
@@ -117,15 +120,15 @@ describe('ModelSelectionFields', () => {
       if ('mode' in patch) throw new Error('Runtime unavailable');
       return selection('fixed', { small: 's', large: 'l' });
     });
-    renderFields();
+    renderCard();
 
-    const toggle = await screen.findByRole('switch', { name: 'Auto model selection' });
-    await waitFor(() => expect(toggle).not.toHaveAttribute('data-disabled'));
+    const toggle = await screen.findByRole('radio', { name: 'Auto' });
+    await waitFor(() => expect(toggle).toBeEnabled());
     toggle.click();
-    const edit = await screen.findByRole('button', { name: 'Edit large model' });
+    const edit = await screen.findByRole('button', { name: 'Edit large' });
     await waitFor(() => expect(edit).toBeEnabled());
     edit.click();
-    const input = await screen.findByRole('textbox', { name: 'Large model ID' });
+    const input = await screen.findByRole('textbox', { name: 'Large ID' });
     fireEvent.change(input, { target: { value: 'l' } });
     fireEvent.keyDown(input, { key: 'Enter' });
 

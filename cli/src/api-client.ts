@@ -198,6 +198,7 @@ export interface ApiClient {
   setHeartbeatModel(model: string | null): Promise<{ model: string | null; effective: string }>;
   getCronModel(): Promise<{ model: string | null; effective: string }>;
   setCronModel(model: string | null): Promise<{ model: string | null; effective: string }>;
+  getModelSelection(): Promise<ModelSelectionInfo>;
   setModelMode(mode: 'fixed' | 'auto'): Promise<ModelSelectionInfo>;
   getHeartbeatStatus(): Promise<HeartbeatStatus>;
   startHeartbeat(agent: AgentDetails): Promise<{ success: boolean; message: string }>;
@@ -318,6 +319,10 @@ export class HttpApiClient implements ApiClient {
 
   setCronModel(model: string | null): Promise<{ model: string | null; effective: string }> {
     return this.request('PATCH', '/agents/cron-model', { model });
+  }
+
+  getModelSelection(): Promise<ModelSelectionInfo> {
+    return this.request('GET', '/agents/model-selection');
   }
 
   setModelMode(mode: 'fixed' | 'auto'): Promise<ModelSelectionInfo> {

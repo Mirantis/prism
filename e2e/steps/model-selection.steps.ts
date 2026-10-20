@@ -37,12 +37,12 @@ Given('the agent chooses between the small and the large test models', async ({ 
 });
 
 When('I turn on Auto model selection', async ({ page }) => {
-  const toggle = page.getByRole('switch', { name: 'Auto model selection' });
-  await expect(toggle).toBeEnabled();
-  await toggle.click();
+  const auto = page.getByRole('radio', { name: 'Auto' });
+  await expect(auto).toBeEnabled();
+  await auto.click();
 });
 
-When('I set the {string} to the {word} test model', async ({ page }, label: string, tier: string) => {
+When('I set the {string} model to the {word} test model', async ({ page }, label: string, tier: string) => {
   await page.getByRole('button', { name: `Edit ${label.toLowerCase()}` }).click();
   const input = page.getByRole('textbox', { name: `${label} ID` });
   await input.fill(TEST_MODELS[tier]);
@@ -59,14 +59,16 @@ When('I ask {string}', async ({ page }, text: string) => {
 });
 
 Then('the profile asks for a small and a large model', async ({ page }) => {
-  await expect(page.getByText('Set a small and a large model to turn Auto on.')).toBeVisible();
-  await expect(page.getByText('Small model', { exact: true })).toBeVisible();
-  await expect(page.getByText('Large model', { exact: true })).toBeVisible();
+  // Nothing is stored yet, so the switch still reads Fixed.
+  await expect(page.getByRole('radio', { name: 'Fixed' })).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByText('To turn on Auto, add a small and a large model.', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Edit small' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Edit large' })).toBeVisible();
 });
 
 Then('the profile shows Auto model selection', async ({ page }) => {
-  await expect(page.getByRole('switch', { name: 'Auto model selection' })).toHaveAttribute('aria-checked', 'true');
-  await expect(page.getByText('Set a small and a large model to turn Auto on.')).toBeHidden();
+  await expect(page.getByRole('radio', { name: 'Auto' })).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByText('To turn on Auto, add a small and a large model.', { exact: false })).toBeHidden();
 });
 
 Then('the stored model mode is Auto', async () => {

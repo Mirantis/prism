@@ -655,6 +655,15 @@ class ConversationService {
     });
   }
 
+  /** The thread's latest context measurement in tokens, or null when it has none. */
+  async getThreadContextTokens(threadId: string): Promise<number | null> {
+    const thread = await prisma.conversationThread.findUnique({
+      where: { id: threadId },
+      select: { contextTokens: true },
+    });
+    return thread?.contextTokens ?? null;
+  }
+
   /**
    * Update thread title
    */
