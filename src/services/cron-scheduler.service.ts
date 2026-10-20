@@ -486,10 +486,7 @@ class CronSchedulerService {
       logger.error({ err }, `[CronScheduler] Could not record the run of "${task.name}"`);
     });
     const startTime = Date.now();
-    // A task that continues a conversation single-thread mode hides runs unbound: it
-    // reads no conversation, and its answer goes to the one conversation.
-    const boundThreadId =
-      task.threadId && (await conversationService.writableThreadId(task.threadId)) === task.threadId ? task.threadId : null;
+    const boundThreadId = task.threadId;
     // A task saved without an instruction runs on its name, the only text its author gave.
     const instruction = task.instruction.trim() || task.name;
 
@@ -520,6 +517,11 @@ class CronSchedulerService {
           return true;
         }
       }
+      // A task that continues a conversation single-thread mode hides reads no history:
+      // its answer goes to the one conversation (see `publish`), which that history is
+      // not part of. It still delivers as a bound task, to its own channel alone.
+      const historyThreadId =
+        boundThreadId && (await conversationService.writableThreadId(boundThreadId)) === boundThreadId ? boundThreadId : null;
 
       // Invoke LLM directly (in-process). A bound task runs against its thread so
       // it sees the conversation history (see includeConversation in invoke.ts)
@@ -531,9 +533,9 @@ class CronSchedulerService {
         prompt: instruction,
         afterRestart: opts.afterRestart,
         abortSignal: pendingWorkService.shutdownSignal,
-        ...(boundThreadId
+        ...(historyThreadId
           ? {
-              threadId: boundThreadId,
+              threadId: historyThreadId,
               originChannel: (task.originChannel as ChannelName | null) ?? undefined,
               originChannelId: task.originChannelId ?? undefined,
             }

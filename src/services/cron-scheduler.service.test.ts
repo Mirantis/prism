@@ -886,17 +886,48 @@ describe('CronSchedulerService', () => {
         originChannelId: 'C999',
       });
 
-    it('runs unbound when single-thread mode hides its conversation, and answers in the one conversation', async () => {
+    // A follow-up a person set in a web conversation that single-thread mode now hides.
+    const boundToHiddenWebThread = () =>
+      createCronTask({
+        id: 'wait-web',
+        schedule: 'in 1 minute',
+        nextRunAt: new Date(Date.now() + 60_000).toISOString(),
+        instruction: 'Re-check the deploy.',
+        threadId: 'thread-hidden',
+        originChannel: 'websocket',
+        originChannelId: null,
+      });
+
+    it('reads no history when single-thread mode hides its conversation, and answers on its own channel alone', async () => {
       mockCronValidate.mockReturnValue(false);
       mockWritableThreadId.mockResolvedValue('thread-one');
+      mockThreadContext.mockResolvedValue({ channel: 'websocket', threadId: 'thread-hidden' });
 
-      cronSchedulerService.scheduleTask(bound());
+      cronSchedulerService.scheduleTask(boundToHiddenWebThread());
       await vi.advanceTimersByTimeAsync(60_000);
 
       expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ mode: 'cron', prompt: 'Re-check the deploy.' }));
       expect(mockInvoke.mock.calls[0][0]).not.toHaveProperty('threadId');
-      expect(mockPublish).not.toHaveBeenCalled();
-      expect(mockDeliverMessage).toHaveBeenCalledWith('agent-1', 'user-abc-123', expect.any(String), 'CRON_TASK', expect.anything());
+      // Bound delivery, which `publish` stores in the one conversation; never the broadcast.
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockPublish).toHaveBeenCalledWith(
+        'user-abc-123',
+        'thread-hidden',
+        'Task completed.',
+        'CRON_TASK',
+        expect.objectContaining({ channelContext: { channel: 'websocket', threadId: 'thread-hidden' } }),
+      );
+    });
+
+    it('ends the run when the thread lookup fails, so it is not replayed after a restart', async () => {
+      mockCronValidate.mockReturnValue(false);
+      mockWritableThreadId.mockRejectedValue(new Error('database is locked'));
+
+      cronSchedulerService.scheduleTask(boundToHiddenWebThread());
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(mockInvoke).not.toHaveBeenCalled();
+      expect(mockFinishWork).toHaveBeenCalledWith('cron', 'wait-web');
     });
 
     it('resumes in the originating thread: invokes with that thread + scoped channel delivery', async () => {
