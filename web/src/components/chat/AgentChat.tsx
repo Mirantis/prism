@@ -125,7 +125,7 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
   }, [activeThreadId]);
 
   const { data: thread, isLoading: isLoadingThread, error: threadError } = useThread(activeThreadId);
-  const { loadOlder, isLoadingOlder } = useOlderMessages(activeThreadId);
+  const { loadOlder, isLoadingOlder, retries: olderRetries } = useOlderMessages(activeThreadId);
 
   // A deep-linked thread that doesn't exist (deleted / not owned) → fall back to
   // the latest conversation. Guarded on threadId so a latest-thread error can't loop.
@@ -411,6 +411,7 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
         isLoading={isLoadingThread}
         hasOlder={thread?.hasOlder ?? false}
         isLoadingOlder={isLoadingOlder}
+        olderRetries={olderRetries}
         onLoadOlder={loadOlder}
         threadId={activeThreadId}
         onSuggestion={status === 'connected' && activeThreadId ? sendChat : undefined}

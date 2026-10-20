@@ -14,6 +14,7 @@ import { MessageDeliveryService } from '../message-delivery.service';
 const mockAddMessage = vi.fn();
 const mockGetOrCreateLatestThread = vi.fn();
 const mockWithHiddenStepToolCalls = vi.fn();
+const mockWritableThreadId = vi.fn();
 
 // Mock attachment service (publish links + loads shared-file metadata)
 const mockLinkToMessage = vi.fn();
@@ -37,6 +38,7 @@ vi.mock('../conversation.service', () => ({
     addMessage: (...args: unknown[]) => mockAddMessage(...args),
     getOrCreateLatestThread: (...args: unknown[]) => mockGetOrCreateLatestThread(...args),
     withHiddenStepToolCalls: (...args: unknown[]) => mockWithHiddenStepToolCalls(...args),
+    writableThreadId: (...args: unknown[]) => mockWritableThreadId(...args),
   },
 }));
 
@@ -90,6 +92,7 @@ describe('MessageDeliveryService', () => {
     mockLinkToMessage.mockResolvedValue(undefined);
     mockGetMetaByMessageIds.mockResolvedValue(new Map());
     mockWithHiddenStepToolCalls.mockImplementation(async (_threadId: string, messages: unknown[]) => messages);
+    mockWritableThreadId.mockImplementation(async (threadId: string) => threadId);
   });
 
   afterEach(() => {
@@ -154,6 +157,17 @@ describe('MessageDeliveryService', () => {
         toolCalls,
         blocks,
       });
+    });
+
+    it('stores the message in the thread clients show', async () => {
+      mockWritableThreadId.mockResolvedValue('thread-conversation');
+      service.register(createMockAdapter('test'));
+
+      await service.publish('user-123', 'thread-older', 'Done.', 'CRON_TASK');
+
+      expect(mockWritableThreadId).toHaveBeenCalledWith('thread-older');
+      expect(mockAddMessage).toHaveBeenCalledWith('thread-conversation', expect.objectContaining({ content: 'Done.' }));
+      expect(mockWithHiddenStepToolCalls).toHaveBeenCalledWith('thread-conversation', [sampleMessage]);
     });
 
     it('stores the webhook subscription that produced a message', async () => {

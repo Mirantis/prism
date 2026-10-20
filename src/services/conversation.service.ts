@@ -22,6 +22,7 @@ import { deriveThreadTitle } from '../utils/thread-title';
 import { ThreadMessageProvider } from './thread-provider.interface';
 import { DatabaseThreadProvider } from './providers/database-thread.provider';
 import { attachmentService, type AttachmentMeta } from './attachment.service';
+import { runtimeStateService, SINGLE_THREAD } from './runtime-state.service';
 // The pure derivation, not contextUsageService — that service imports this
 // module, so depending on it here would be a cycle.
 import { buildContextSnapshot, type ContextUsageSnapshot } from '../lib/context-window';
@@ -113,12 +114,19 @@ class ConversationService {
   private liveProviders = new Map<ThreadSource, ThreadMessageProvider>();
 
   /**
-   * Single-thread mode's one conversation: the web thread the person wrote in last,
-   * else the newest web thread. A daily session reset in multi-thread mode leaves an
-   * empty newest thread, which must not hide the conversation the person had. Read
-   * from the database each time, so it follows the rows whoever wrote them.
+   * Single-thread mode's one conversation, stored under `SINGLE_THREAD` so no later
+   * write moves it. With none stored, or once its thread is gone, it is the web thread
+   * the person wrote in last, else the newest web thread. A daily session reset in
+   * multi-thread mode leaves an empty newest thread, which must not hide the
+   * conversation the person had.
    */
   private async singleThread(agentId: string, userId: string): Promise<ConversationThread | null> {
+    const storedId = await runtimeStateService.get(SINGLE_THREAD);
+    const stored = storedId
+      ? await prisma.conversationThread.findFirst({ where: { id: storedId, agentId, userId, externalThreadId: null } })
+      : null;
+    if (stored) return stored;
+
     const lastWritten = await prisma.conversationMessage.findFirst({
       where: {
         role: MessageRole.USER,
@@ -128,7 +136,32 @@ class ConversationService {
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       select: { thread: true },
     });
-    return lastWritten?.thread ?? this.newestWebThread(agentId, userId);
+    const chosen = lastWritten?.thread ?? (await this.newestWebThread(agentId, userId));
+    if (chosen) await runtimeStateService.set(SINGLE_THREAD, chosen.id);
+    return chosen;
+  }
+
+  /**
+   * Forget single-thread mode's conversation, so the next single-thread boot keeps the
+   * conversation the person wrote in last rather than the one it kept before.
+   */
+  async forgetSingleThread(): Promise<void> {
+    await runtimeStateService.delete(SINGLE_THREAD);
+  }
+
+  /**
+   * The thread a run or a chat turn that names `threadId` writes to. In single-thread
+   * mode another web thread resolves to the one conversation, so a task or goal bound
+   * to an older conversation answers where every client shows it.
+   */
+  async writableThreadId(threadId: string): Promise<string> {
+    if (config.threadMode !== 'single') return threadId;
+    const thread = await prisma.conversationThread.findUnique({
+      where: { id: threadId },
+      select: { agentId: true, userId: true, externalThreadId: true },
+    });
+    if (!thread || thread.externalThreadId !== null) return threadId;
+    return (await this.getOrCreateLatestThread(thread.agentId, thread.userId)).id;
   }
 
   private newestWebThread(agentId: string, userId: string): Promise<ConversationThread | null> {

@@ -259,10 +259,13 @@ const initialize = async () => {
       '[Startup] resolving agent workspace',
     );
     const agent = await resolveOrBootstrapSingleAgent();
-    // Created before any work or request can name a thread, so two first requests never make two.
+    // Chosen, and created if need be, before any work or request can name a thread, so
+    // two first requests never make two.
     if (config.threadMode === 'single') {
       const thread = await conversationService.getOrCreateLatestThread(agent.id, agent.userId);
       logger.info({ threadId: thread.id }, '[Startup] single-thread mode');
+    } else {
+      await conversationService.forgetSingleThread();
     }
     // Before any turn, since the tools a turn gets depend on whether remote computers exist.
     await remoteComputerService.load(agent.id);

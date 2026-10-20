@@ -26,6 +26,8 @@ interface ChatMessageListProps {
   /** Whether the runtime holds messages before the first one shown. */
   hasOlder: boolean;
   isLoadingOlder: boolean;
+  /** Changes after a failed load of older messages, so a reader still at the top asks again. */
+  olderRetries: number;
   /** Load the page before the first message shown. */
   onLoadOlder: () => void;
   /** The conversation on screen; a change opens the new one at its end. */
@@ -45,6 +47,7 @@ export default function ChatMessageList({
   isLoading,
   hasOlder,
   isLoadingOlder,
+  olderRetries,
   onLoadOlder,
   threadId,
   onSuggestion,
@@ -108,7 +111,8 @@ export default function ChatMessageList({
   }, [threadId, isLoading]);
 
   // Older messages load as the reader nears the top. A new observer for each first
-  // message reports at once, so a list shorter than the screen keeps loading.
+  // message, and after each failed load, reports at once, so a list shorter than the
+  // screen keeps loading and a reader waiting at the top is answered.
   useEffect(() => {
     const root = scrollRef.current;
     const target = olderRef.current;
@@ -121,7 +125,7 @@ export default function ChatMessageList({
     );
     observer.observe(target);
     return () => observer.disconnect();
-  }, [hasOlder, first?.id, onLoadOlder]);
+  }, [hasOlder, first?.id, onLoadOlder, olderRetries]);
 
   return (
     <div className="relative min-h-0 flex-1">
@@ -139,9 +143,12 @@ export default function ChatMessageList({
           // a large screen is a line the eye cannot follow back.
           <div className="mx-auto w-full max-w-3xl space-y-7 px-4 py-6">
             {hasOlder && (
-              <div ref={olderRef} className="flex h-6 justify-center" data-testid="older-messages">
+              <div ref={olderRef} role="status" className="flex h-6 justify-center" data-testid="older-messages">
                 {isLoadingOlder && (
-                  <LoaderCircle aria-label="Loading older messages" className="size-4 animate-spin text-muted-foreground" />
+                  <>
+                    <LoaderCircle aria-hidden="true" className="size-4 animate-spin text-muted-foreground" />
+                    <span className="sr-only">Loading older messages</span>
+                  </>
                 )}
               </div>
             )}
