@@ -1125,7 +1125,7 @@ src/
 1. Create HTTP server and initialize WebSocket gateway on `/api/ws`
 2. Register channel adapters with `messageDeliveryService` (WebSocket adapter, Slack adapter)
 3. Assert `AGENT_ID` is set (or auto-bootstrap one on first boot).
-4. Load the one agent identified by `AGENT_ID`.
+4. Load the one agent identified by `AGENT_ID`. In single-thread mode, create its one conversation if it has none.
 5. Read the work a restart interrupted: `pendingWorkService.interrupted()`.
 6. Initialize the channel adapters — `lib/slack-config.ts` synthesizes one Slack connection from env (`SLACK_BOT_TOKEN`) via `auth.test`.
 7. Continue the interrupted work: `pendingWorkService.resumeAll()` gives each owner its `pending_work` rows.
@@ -1148,6 +1148,7 @@ What the operator sets on `docker run`:
 | `PRISM_HOST` | Interface the HTTP server binds. Loopback by default, and `lib/origin-guard.ts` then requires a loopback `Host` plus a loopback or absent `Origin` on every request — the guard is app-wide, `/health` included, and covers the `/api/ws` handshake — which is what closes DNS rebinding. A request stating `X-Forwarded-Host` is exempt from the loopback-`Host` rule (that is a proxy in front, a header no browser can state) and is held to the origin rules alone. A non-loopback bind relaxes that to an `Origin` matching the request's own `Host` or its first `X-Forwarded-Host` value, since the exposed address is the operator's to choose. The image sets `0.0.0.0`, which a published port needs | `127.0.0.1` (`0.0.0.0` in the image) |
 | `PRISM_ALLOWED_ORIGINS` | Origin patterns (`lib/origin-patterns.ts`: `scheme://host[:port]` or `scheme://host:*`) that `lib/origin-guard.ts` admits after the loopback-`Host` rule and ahead of its same-host, `X-Forwarded-Host` and loopback-`Origin` checks, on the HTTP routes and both WebSocket handshakes. A listed origin gets `Access-Control-Allow-Origin` (its canonical `URL.origin`) on every response, and its preflight a 204 allowing `GET, HEAD, POST, PUT, PATCH, DELETE` (mirrored by the Nexus sandbox ingress); with any list set, every response has `Vary: Origin`. The loopback decision normalizes `PRISM_HOST` through the URL parser (`127.1`, `::ffff:127.0.0.1`, `localhost.` count), while `listen` gets the value as written. An invalid entry, or any entry on a loopback `PRISM_HOST`, stops startup in `config.ts`: the list is for a runtime behind an authenticating proxy | empty |
 | `PRISM_PROGRAM_STATUS` | `on` or `off`: whether the runtime writes the agent's state to stdout as OSC 7501 reports (`services/program-status.service.ts`). Any other value reports when stdout is a TTY | `on` when stdout is a TTY |
+| `THREAD_MODE` | `multi` or `single`. `single` gives the agent one web conversation, the web thread the person wrote in last (`conversationService.findLatestWebThread`): every web-thread create, list and read answers with it, the other web threads are hidden from clients, and the session manager schedules no resets. Clients read it from `welcome.threadMode` and `GET /agents/me`. Any other value runs `multi` with a startup warning | `multi` |
 | `AGENT_ID` | UUID of the one `AgentWorkspace` this container owns | bootstrapped on first boot |
 | `DATABASE_URL` | SQLite URL for the runtime DB | `file:/data/agent.db` |
 | `NEXUS_API_URL` | Lens Agents server URL (LLM proxy + MCP tools) | — |

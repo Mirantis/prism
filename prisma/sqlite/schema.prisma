@@ -273,6 +273,8 @@ model ConversationMessage {
   webhookRun  WebhookRun?
 
   @@index([role, createdAt])
+  // A thread's history in client order, read one page at a time.
+  @@index([threadId, createdAt, id])
   @@map("conversation_messages")
 }
 

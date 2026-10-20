@@ -38,6 +38,12 @@ export type MessageView = 'model' | 'client';
 export interface MessageReadOptions {
   /** Which projection to read; see {@link MessageView}. Default: `'model'`. */
   view?: MessageView;
+  /**
+   * `getRecentMessages` only: a message id of this view. The read ends just before
+   * it, so a client pages back through history. An id the view does not hold
+   * reads no messages.
+   */
+  before?: string;
 }
 
 export interface ThreadMessageProvider {

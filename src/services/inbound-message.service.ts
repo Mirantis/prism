@@ -30,6 +30,7 @@ import {
   type ThreadActivityChange,
 } from './conversation-thread-activity.service';
 import { messageDeliveryService } from './message-delivery.service';
+import { conversationService } from './conversation.service';
 import { eventStreamService } from './event-stream.service';
 import { pendingWorkService } from './pending-work.service';
 import {
@@ -259,10 +260,10 @@ class InboundMessageService {
     return { message: existing, seq: eventStreamService.seq, queued, duplicate: true };
   }
 
-  /** Only this agent's web conversations take messages from the socket. */
+  /** Only this agent's web conversations that clients may see take messages from the socket. */
   private async checkThread(threadId: string, agentId: string): Promise<void> {
     const thread = await prisma.conversationThread.findUnique({
-      where: { id: threadId },
+      where: { id: threadId, AND: await conversationService.clientThreadFilter(agentId, config.ownerUserId) },
       select: { agentId: true, threadSource: true },
     });
     if (!thread || thread.agentId !== agentId || thread.threadSource !== 'DATABASE') {

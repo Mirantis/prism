@@ -5,6 +5,7 @@ import { MessageSquare, PanelLeft, Search, SquarePen } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { useSidebar } from '@/components/ui/sidebar';
 import { useCommandMenu } from '@/lib/command-menu-context';
+import { useSingleThreadMode } from '@/lib/agent-context';
 import { NAV_GROUPS } from '@/lib/nav';
 import { MOD_KEY } from '@/lib/platform';
 import { threadDisplayName } from '@/lib/thread-name';
@@ -62,8 +63,9 @@ export function CommandMenu() {
   const navigate = useNavigate();
   const { open, setOpen } = useCommandMenu();
   const { toggleSidebar } = useSidebar();
+  const singleThread = useSingleThreadMode();
   const createThread = useCreateThread();
-  const { data: threads } = useRecentThreads({ enabled: open });
+  const { data: threads } = useRecentThreads({ enabled: open && !singleThread });
 
   const run = (action: () => void) => {
     setOpen(false);
@@ -84,7 +86,7 @@ export function CommandMenu() {
             <Search className="size-4 shrink-0 text-muted-foreground" />
             <Command.Input
               autoFocus
-              placeholder="Search pages, conversations and actions…"
+              placeholder={singleThread ? 'Search pages and actions…' : 'Search pages, conversations and actions…'}
               aria-label="Search"
               className="h-12 w-full bg-transparent text-[15px] text-strong outline-none placeholder:text-muted-foreground"
             />
@@ -96,17 +98,19 @@ export function CommandMenu() {
             <Command.Group heading="Actions" className={GROUP}>
               {/* Stays open until the conversation exists, so a failure is said here rather
                   than in a component that is no longer on screen. */}
-              <Item
-                value="action-new-chat"
-                keywords={['New chat', 'conversation', 'start']}
-                disabled={createThread.isPending}
-                onSelect={async () => {
-                  if (await createThread.create()) setOpen(false);
-                }}
-              >
-                <SquarePen />
-                New chat
-              </Item>
+              {!singleThread && (
+                <Item
+                  value="action-new-chat"
+                  keywords={['New chat', 'conversation', 'start']}
+                  disabled={createThread.isPending}
+                  onSelect={async () => {
+                    if (await createThread.create()) setOpen(false);
+                  }}
+                >
+                  <SquarePen />
+                  New chat
+                </Item>
+              )}
               <Item value="action-toggle-sidebar" keywords={['Toggle sidebar', 'collapse', 'expand']} onSelect={() => run(toggleSidebar)}>
                 <PanelLeft />
                 Toggle sidebar
@@ -123,7 +127,7 @@ export function CommandMenu() {
                 </Item>
               ))}
             </Command.Group>
-            {threads && threads.length > 0 && (
+            {!singleThread && threads && threads.length > 0 && (
               <Command.Group heading="Conversations" className={GROUP}>
                 {threads.map((thread) => {
                   const name = threadDisplayName(thread);

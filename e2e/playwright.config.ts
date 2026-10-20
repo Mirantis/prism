@@ -249,6 +249,10 @@ export default defineConfig({
         // and on the host locally, which is two different tests under one name.
         // The scenario that does want a container sets this itself.
         EXECUTION_ENVIRONMENT: process.env.EXECUTION_ENVIRONMENT ?? 'local',
+        // Pinned for the same reason: a `THREAD_MODE` in the repo-root .env would
+        // otherwise run the whole suite with one conversation. The @single-thread
+        // job sets it.
+        THREAD_MODE: process.env.THREAD_MODE || 'multi',
         // The exec image tag the runtime asks for. The container-mode job sets
         // it to the image it built; every other run leaves it unset.
         ...(process.env.SERVICE_VERSION ? { SERVICE_VERSION: process.env.SERVICE_VERSION } : {}),

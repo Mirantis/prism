@@ -45,10 +45,29 @@ export class DatabaseThreadProvider implements ThreadMessageProvider {
     // Same two views as getMessages. Filters live in the WHERE clause (not
     // post-fetch) so `take` yields `limit` *visible* rows — a long turn's
     // hidden steps must not crowd the window.
+    const view: Prisma.ConversationMessageWhereInput =
+      opts?.view === 'client' ? { internalStep: false } : { isCompacted: false };
+    let cursor: { createdAt: Date; id: string } | null = null;
+    if (opts?.before !== undefined) {
+      cursor = await prisma.conversationMessage.findFirst({
+        where: { id: opts.before, threadId, ...view },
+        select: { createdAt: true, id: true },
+      });
+      if (!cursor) return [];
+    }
     const messages = await prisma.conversationMessage.findMany({
       where: {
         threadId,
-        ...(opts?.view === 'client' ? { internalStep: false } : { isCompacted: false }),
+        ...view,
+        // Strictly before the cursor in the client order: (createdAt, id).
+        ...(cursor
+          ? {
+              OR: [
+                { createdAt: { lt: cursor.createdAt } },
+                { createdAt: cursor.createdAt, id: { lt: cursor.id } },
+              ],
+            }
+          : {}),
       },
       orderBy: clientOrder(opts, 'desc'),
       take: limit,

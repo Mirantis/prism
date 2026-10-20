@@ -42,7 +42,8 @@ export class SlackThreadProvider implements ThreadMessageProvider {
 
   async getRecentMessages(threadId: string, limit: number, opts?: MessageReadOptions): Promise<ConversationMessage[]> {
     const allMessages = await this.fetchSlackMessages(threadId, opts);
-    return allMessages.slice(-limit);
+    const end = opts?.before === undefined ? allMessages.length : allMessages.findIndex((m) => m.id === opts.before);
+    return end < 0 ? [] : allMessages.slice(Math.max(0, end - limit), end);
   }
 
   /**

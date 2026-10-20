@@ -22,6 +22,10 @@ elsewhere with `PRISM_HTTP_URL` or the `~/.prism/settings.json` file — see the
   list. The picker shows each thread's title, how long ago it was active, and
   the working directory (and git branch) it was started in. Select one with the
   arrow keys and Enter; Escape cancels.
+- **One conversation.** When the agent keeps
+  [one conversation](web-ui.md#one-conversation), `prism` always opens it with its
+  recent history, and `--resume` shows no picker. Its commands run in the agent's
+  workspace, whatever directory you start `prism` in.
 
 To switch to a different thread mid-session, exit and relaunch with `--resume`.
 

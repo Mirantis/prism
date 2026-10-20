@@ -20,7 +20,8 @@ if (args.includes('--help') || args.includes('-h')) {
   console.log(
     'prism — Prism Agent terminal UI (connects to prism-server at $PRISM_HTTP_URL, default http://127.0.0.1:3003).\n' +
       '  update     Check for a newer Prism release and install it.\n' +
-      '  --resume   Pick a previous conversation to resume instead of starting fresh.',
+      '  --resume   Pick a previous conversation to resume instead of starting fresh.\n' +
+      '             An agent in single-thread mode always opens its one conversation.',
   );
   process.exit(0);
 }
@@ -55,8 +56,13 @@ function main(): void {
 
   if (resume) {
     // Fetch the resumable threads before rendering so we can exit cleanly when
-    // there's nothing to resume (and avoid flashing an empty picker).
+    // there's nothing to resume (and avoid flashing an empty picker). An agent in
+    // single-thread mode has nothing to pick: the CLI opens its one conversation.
     void (async () => {
+      if ((await tuiAdapterService.threadMode()) === 'single') {
+        start();
+        return;
+      }
       const sessions = await tuiAdapterService.listSessions();
       if (sessions.length === 0) {
         console.log('No sessions to resume.');

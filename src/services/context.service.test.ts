@@ -15,13 +15,13 @@ import type { ConversationMessage } from '../prompts/context-builder';
 
 const {
   mockGetAgent,
-  mockGetLatestThread,
+  mockFindLatestWebThread,
   mockGetThreadContext,
   mockGetMetaByMessageIds,
   mockGetMetaByExternalTs,
 } = vi.hoisted(() => ({
   mockGetAgent: vi.fn(),
-  mockGetLatestThread: vi.fn(),
+  mockFindLatestWebThread: vi.fn(),
   mockGetThreadContext: vi.fn(),
   mockGetMetaByMessageIds: vi.fn(),
   mockGetMetaByExternalTs: vi.fn(),
@@ -35,7 +35,7 @@ vi.mock('./agent-workspace.service', () => ({
 
 vi.mock('./conversation.service', () => ({
   conversationService: {
-    getLatestThread: mockGetLatestThread,
+    findLatestWebThread: mockFindLatestWebThread,
     getThreadContext: mockGetThreadContext,
   },
 }));
@@ -93,7 +93,7 @@ function createTestMessage(overrides?: Partial<ConversationMessage>): Conversati
 describe('ContextService', () => {
   beforeEach(() => {
     mockGetAgent.mockReset();
-    mockGetLatestThread.mockReset();
+    mockFindLatestWebThread.mockReset();
     mockGetThreadContext.mockReset();
     // Default: no attachments anywhere (empty maps).
     mockGetMetaByMessageIds.mockReset().mockResolvedValue(new Map());
@@ -175,7 +175,7 @@ describe('ContextService', () => {
       includeConversation: false,
     });
 
-    expect(mockGetLatestThread).not.toHaveBeenCalled();
+    expect(mockFindLatestWebThread).not.toHaveBeenCalled();
     expect(mockGetThreadContext).not.toHaveBeenCalled();
     expect(context.conversationSummary).toBeNull();
     expect(context.recentMessages).toEqual([]);
@@ -194,7 +194,7 @@ describe('ContextService', () => {
       includeConversation: true,
     });
 
-    expect(mockGetLatestThread).not.toHaveBeenCalled();
+    expect(mockFindLatestWebThread).not.toHaveBeenCalled();
     expect(mockGetThreadContext).toHaveBeenCalledWith('thread-1');
     expect(context.conversationSummary).toBe('Previous discussion about pods');
     expect(context.recentMessages).toHaveLength(1);
@@ -206,7 +206,7 @@ describe('ContextService', () => {
 
   it('auto-resolves active thread when includeConversation is true but no threadId', async () => {
     mockGetAgent.mockResolvedValue(createTestAgentWorkspace());
-    mockGetLatestThread.mockResolvedValue({ id: 'active-thread-1' });
+    mockFindLatestWebThread.mockResolvedValue({ id: 'active-thread-1' });
     mockGetThreadContext.mockResolvedValue({
       compactionSummary: null,
       messages: [createTestMessage()],
@@ -217,21 +217,21 @@ describe('ContextService', () => {
       includeConversation: true,
     });
 
-    expect(mockGetLatestThread).toHaveBeenCalledWith('user-1');
+    expect(mockFindLatestWebThread).toHaveBeenCalledWith('agent-1', 'user-1');
     expect(mockGetThreadContext).toHaveBeenCalledWith('active-thread-1');
     expect(context.recentMessages).toHaveLength(1);
   });
 
   it('returns empty conversation when no active thread exists', async () => {
     mockGetAgent.mockResolvedValue(createTestAgentWorkspace());
-    mockGetLatestThread.mockResolvedValue(null);
+    mockFindLatestWebThread.mockResolvedValue(null);
 
     const context = await contextService.getAgentContext('user-1', {
       agentId: 'agent-1',
       includeConversation: true,
     });
 
-    expect(mockGetLatestThread).toHaveBeenCalledWith('user-1');
+    expect(mockFindLatestWebThread).toHaveBeenCalledWith('agent-1', 'user-1');
     expect(mockGetThreadContext).not.toHaveBeenCalled();
     expect(context.conversationSummary).toBeNull();
     expect(context.recentMessages).toEqual([]);
@@ -243,7 +243,7 @@ describe('ContextService', () => {
 
   it('defaults includeConversation to true', async () => {
     mockGetAgent.mockResolvedValue(createTestAgentWorkspace());
-    mockGetLatestThread.mockResolvedValue({ id: 'thread-1' });
+    mockFindLatestWebThread.mockResolvedValue({ id: 'thread-1' });
     mockGetThreadContext.mockResolvedValue({
       compactionSummary: null,
       messages: [createTestMessage()],
@@ -251,7 +251,7 @@ describe('ContextService', () => {
 
     await contextService.getAgentContext('user-1', { agentId: 'agent-1' });
 
-    expect(mockGetLatestThread).toHaveBeenCalled();
+    expect(mockFindLatestWebThread).toHaveBeenCalled();
     expect(mockGetThreadContext).toHaveBeenCalled();
   });
 

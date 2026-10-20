@@ -39,3 +39,8 @@ export function useAgent(): AgentSummary {
   if (!ctx) throw new Error('useAgent must be used inside <AgentProvider>');
   return ctx;
 }
+
+/** Whether the agent keeps one conversation, so the page offers no way to start or switch one. */
+export function useSingleThreadMode(): boolean {
+  return useAgent().threadMode === 'single';
+}

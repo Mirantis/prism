@@ -1,8 +1,9 @@
 /**
- * SlackThreadProvider — waitForExternalMessage
+ * SlackThreadProvider — waitForExternalMessage and getRecentMessages
  *
  * Covers the eventual-consistency wait: poll conversations.replies until the
- * just-posted message appears, with a bounded budget.
+ * just-posted message appears, with a bounded budget. And the page of history a
+ * client reads, before a message.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -117,5 +118,27 @@ describe('SlackThreadProvider.waitForExternalMessage', () => {
 
     await expect(provider.waitForExternalMessage('thread-1', '100.2')).resolves.toBeUndefined();
     expect(mockReplies).not.toHaveBeenCalled();
+  });
+});
+
+describe('SlackThreadProvider.getRecentMessages', () => {
+  const read = ['m-1', 'm-2', 'm-3', 'm-4', 'm-5'].map((id) => ({ id }));
+
+  function providerReading(messages: Array<{ id: string }>): SlackThreadProvider {
+    const provider = new SlackThreadProvider();
+    vi.spyOn(provider as never, 'fetchSlackMessages').mockResolvedValue(messages as never);
+    return provider;
+  }
+
+  it('reads the newest messages, or the page before a message', async () => {
+    const provider = providerReading(read);
+
+    expect(await provider.getRecentMessages('thread-1', 2, { view: 'client' })).toEqual([{ id: 'm-4' }, { id: 'm-5' }]);
+    expect(await provider.getRecentMessages('thread-1', 2, { view: 'client', before: 'm-4' })).toEqual([{ id: 'm-2' }, { id: 'm-3' }]);
+    expect(await provider.getRecentMessages('thread-1', 2, { view: 'client', before: 'm-2' })).toEqual([{ id: 'm-1' }]);
+  });
+
+  it('reads no messages before a message the thread does not hold', async () => {
+    expect(await providerReading(read).getRecentMessages('thread-1', 2, { view: 'client', before: 'gone' })).toEqual([]);
   });
 });

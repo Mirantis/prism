@@ -10,7 +10,7 @@
  * - Provider resolution
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -66,6 +66,7 @@ vi.mock('../logger', () => ({
 // ---------------------------------------------------------------------------
 
 import { conversationService } from './conversation.service';
+import { config } from '../config';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -553,6 +554,37 @@ describe('ConversationService', () => {
       ]);
     });
 
+    it('reads the page before a message, in client order', async () => {
+      const cursorAt = new Date('2026-10-08T08:00:01.000Z');
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({ threadSource: 'DATABASE' });
+      mockPrisma.conversationMessage.findFirst.mockResolvedValue({ createdAt: cursorAt, id: 'm-5' });
+      mockPrisma.conversationMessage.findMany.mockResolvedValue([]);
+
+      await conversationService.getRecentMessages('thread-db', 10, 'm-5');
+
+      expect(mockPrisma.conversationMessage.findFirst).toHaveBeenCalledWith({
+        where: { id: 'm-5', threadId: 'thread-db', internalStep: false },
+        select: { createdAt: true, id: true },
+      });
+      expect(mockPrisma.conversationMessage.findMany).toHaveBeenCalledWith({
+        where: {
+          threadId: 'thread-db',
+          internalStep: false,
+          OR: [{ createdAt: { lt: cursorAt } }, { createdAt: cursorAt, id: { lt: 'm-5' } }],
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: 10,
+      });
+    });
+
+    it('reads no messages before a message the thread does not hold', async () => {
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({ threadSource: 'DATABASE' });
+      mockPrisma.conversationMessage.findFirst.mockResolvedValue(null);
+
+      expect(await conversationService.getRecentMessages('thread-db', 10, 'other-thread-message')).toEqual([]);
+      expect(mockPrisma.conversationMessage.findMany).not.toHaveBeenCalled();
+    });
+
     it('should default to DatabaseThreadProvider when thread is not found', async () => {
       const threadId = 'thread-missing';
       mockPrisma.conversationThread.findUnique.mockResolvedValue(null);
@@ -588,6 +620,20 @@ describe('ConversationService', () => {
           where: { threadId, internalStep: false },
         })
       );
+    });
+
+    it('getThread with a page holds the newest messages of the client view', async () => {
+      const threadId = 'thread-db';
+      mockPrisma.conversationThread.findFirst.mockResolvedValue({ id: threadId, threadSource: 'DATABASE' });
+      mockPrisma.conversationMessage.findMany.mockResolvedValue([]);
+
+      await conversationService.getThread('user-1', 'agent-1', threadId, { limit: 50 });
+
+      expect(mockPrisma.conversationMessage.findMany).toHaveBeenCalledWith({
+        where: { threadId, internalStep: false },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: 50,
+      });
     });
 
     it('getThreadContext keeps internal steps for the model (no internalStep filter)', async () => {
@@ -786,17 +832,17 @@ describe('ConversationService', () => {
   // Get active thread
   // ==========================================================================
 
-  describe('getLatestThread', () => {
+  describe('findLatestWebThread', () => {
     it('should return the latest web thread for a user', async () => {
       const latestThread = createTestThread();
       mockPrisma.conversationThread.findFirst.mockResolvedValue(latestThread);
 
-      const result = await conversationService.getLatestThread('user-123');
+      const result = await conversationService.findLatestWebThread('agent-123', 'user-123');
 
       expect(result).not.toBeNull();
       expect(result!.id).toBe(latestThread.id);
       expect(mockPrisma.conversationThread.findFirst).toHaveBeenCalledWith({
-        where: { userId: 'user-123', externalThreadId: null },
+        where: { agentId: 'agent-123', userId: 'user-123', externalThreadId: null },
         orderBy: { createdAt: 'desc' },
       });
     });
@@ -804,9 +850,10 @@ describe('ConversationService', () => {
     it('should return null when no thread exists', async () => {
       mockPrisma.conversationThread.findFirst.mockResolvedValue(null);
 
-      const result = await conversationService.getLatestThread('user-no-thread');
+      const result = await conversationService.findLatestWebThread('agent-123', 'user-no-thread');
 
       expect(result).toBeNull();
+      expect(mockPrisma.conversationThread.create).not.toHaveBeenCalled();
     });
   });
 
@@ -1056,6 +1103,80 @@ describe('ConversationService', () => {
       expect(live.getRecentMessages).toHaveBeenCalledWith('thread-live', 5, { view: 'client' });
       expect(recent).toEqual([{ id: 'live-2', senderExternalId: 'U1', senderId: 'U1' }]);
       expect(mockPrisma.conversationMessage.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  // ==========================================================================
+  // Single-thread mode
+  // ==========================================================================
+
+  describe('single-thread mode', () => {
+    beforeEach(() => {
+      config.threadMode = 'single';
+    });
+    afterEach(() => {
+      config.threadMode = 'multi';
+    });
+
+    /** The newest message the person wrote is in `conversation`. */
+    function wroteLastIn(conversation: ReturnType<typeof createTestThread> | null) {
+      mockPrisma.conversationMessage.findFirst.mockResolvedValue(conversation ? { thread: conversation } : null);
+    }
+
+    it('keeps the conversation the person wrote in last, not an emptier newer one', async () => {
+      wroteLastIn(createTestThread({ id: 'thread-written' }));
+
+      const thread = await conversationService.findLatestWebThread('agent-123', 'user-123');
+
+      expect(thread?.id).toBe('thread-written');
+      expect(mockPrisma.conversationMessage.findFirst).toHaveBeenCalledWith({
+        where: {
+          role: 'USER',
+          internalStep: false,
+          thread: { agentId: 'agent-123', userId: 'user-123', externalThreadId: null },
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        select: { thread: true },
+      });
+      expect(mockPrisma.conversationThread.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('keeps the newest thread when nobody wrote yet, and creates one when there is none', async () => {
+      wroteLastIn(null);
+      mockPrisma.conversationThread.findFirst.mockResolvedValueOnce(createTestThread({ id: 'thread-newest' }));
+      expect((await conversationService.findLatestWebThread('agent-123', 'user-123'))?.id).toBe('thread-newest');
+
+      mockPrisma.conversationThread.findFirst.mockResolvedValueOnce(null);
+      mockPrisma.conversationThread.create.mockResolvedValue(createTestThread({ id: 'thread-new' }));
+      expect((await conversationService.getOrCreateLatestThread('agent-123', 'user-123')).id).toBe('thread-new');
+    });
+
+    it('answers a request for a new thread with the one conversation', async () => {
+      wroteLastIn(createTestThread({ id: 'thread-one' }));
+
+      const started = await conversationService.startNewThread('agent-123', 'user-123', { workspaceRoot: '/repo' });
+      const fresh = await conversationService.getOrCreateFreshThread('agent-123', 'user-123');
+      const latest = await conversationService.getOrCreateLatestThread('agent-123', 'user-123');
+
+      expect([started.id, fresh.id, latest.id]).toEqual(['thread-one', 'thread-one', 'thread-one']);
+      expect(mockPrisma.conversationThread.create).not.toHaveBeenCalled();
+    });
+
+    it('lists, opens and reads only the one conversation among web threads', async () => {
+      wroteLastIn(createTestThread({ id: 'thread-one' }));
+      const onlyTheConversation = { OR: [{ externalThreadId: { not: null } }, { id: 'thread-one' }] };
+      mockPrisma.conversationThread.findMany.mockResolvedValue([]);
+      mockPrisma.conversationThread.findFirst.mockResolvedValue(null);
+
+      await conversationService.listThreads('user-123', 'agent-123', { threadSource: 'DATABASE' });
+      await conversationService.getOwnedThreadId('user-123', 'agent-123', 'thread-older');
+      await conversationService.getThread('user-123', 'agent-123', 'thread-older');
+
+      expect(mockPrisma.conversationThread.findMany.mock.calls[0][0].where).toMatchObject(onlyTheConversation);
+      expect(mockPrisma.conversationThread.findFirst).toHaveBeenCalledTimes(2);
+      for (const [query] of mockPrisma.conversationThread.findFirst.mock.calls) {
+        expect(query.where).toMatchObject({ id: 'thread-older', ...onlyTheConversation });
+      }
     });
   });
 });

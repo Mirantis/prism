@@ -646,6 +646,16 @@ const meetingTranscriptLogging = ((): 'off' | 'full' => {
   return raw === 'full' ? 'full' : 'off';
 })();
 
+// THREAD_MODE: `multi` (the default) lets clients start and switch conversations;
+// `single` gives the agent one conversation that every client and every autonomous
+// run shares. Any other value runs `multi`, and index.ts warns.
+export const THREAD_MODES = ['multi', 'single'] as const;
+export type ThreadMode = (typeof THREAD_MODES)[number];
+const rawThreadMode = (process.env.THREAD_MODE || '').trim().toLowerCase();
+const isValidThreadMode = (THREAD_MODES as readonly string[]).includes(rawThreadMode);
+const threadMode: ThreadMode = isValidThreadMode ? (rawThreadMode as ThreadMode) : 'multi';
+const invalidThreadMode = rawThreadMode === '' || isValidThreadMode ? null : rawThreadMode;
+
 // PRISM_PROGRAM_STATUS: `on` or `off` sets whether the runtime reports the agent's
 // state on its stdout with OSC 7501. Any other value reports when stdout is a
 // terminal, as in a sandbox.
@@ -1045,6 +1055,11 @@ export const config = {
   disableUpdater: ['1', 'true'].includes((process.env.DISABLE_UPDATER || '').trim().toLowerCase()),
 
   programStatusReports,
+
+  // THREAD_MODE: `multi` or `single` (one conversation). `invalidThreadMode` is
+  // the unrecognized non-empty value, kept for the startup warning.
+  threadMode,
+  invalidThreadMode,
 
   // Goals — autonomous multi-turn objectives. `goalMaxTurns` overrides the
   // GOAL_MAX_TURNS hard cap. `goalDefaultTokenBudget` is the per-goal token

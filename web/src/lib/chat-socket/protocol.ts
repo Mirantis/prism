@@ -49,12 +49,16 @@ export interface ThreadEvent {
   createdAt?: string;
 }
 
+/** `single`: the agent has one conversation, and no client starts or switches one. */
+export type ThreadMode = 'single' | 'multi';
+
 export interface WelcomePayload {
   protocol: number;
   streamId: string;
   seq: number;
   resumed: boolean;
   you: Viewer;
+  threadMode: ThreadMode;
   snapshot: {
     turns: Array<{ threadId: string; state: Exclude<TurnState, 'idle'> }>;
     computer: Record<string, unknown> | null;

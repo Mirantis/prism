@@ -294,6 +294,35 @@ jobs:
             e2e/playwright-report/
           retention-days: 7
 
+  # The @single-thread feature. Its own job for the same reason as e2e-docker: the
+  # runtime reads its thread mode at boot. Its scenarios make no model call.
+  e2e-single-thread:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: ./.github/actions/e2e-setup
+        with:
+          web: 'true'
+
+      - name: Run the single-thread E2E scenarios
+        run: npm run test:e2e:single-thread --workspace=prism-agent-e2e
+        env:
+          CI: true
+          THREAD_MODE: single
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-results-single-thread
+          path: |
+            e2e/test-results/
+            e2e/playwright-report/
+          retention-days: 7
+
   # Every Slack-touching e2e test, serialized repo-wide: two of these running at
   # once share one Slack app and steal each other's events.
   e2e-slack:

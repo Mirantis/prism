@@ -2,7 +2,7 @@
  * Message Routes Tests
  *
  * Covers GET /messages — thread history replay, optionally pinned to a
- * specific thread via ?threadId.
+ * specific thread via ?threadId and paged back with ?before.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -73,7 +73,7 @@ describe('Message Routes', () => {
       expect(res.status).toBe(200);
       expect(mockGetOwnedThreadId).not.toHaveBeenCalled();
       expect(mockGetOrCreateLatestThread).toHaveBeenCalledWith('test-agent-id', 'owner-user-1');
-      expect(mockGetRecentMessages).toHaveBeenCalledWith('latest-thread', 10);
+      expect(mockGetRecentMessages).toHaveBeenCalledWith('latest-thread', 10, undefined);
     });
 
     it('replays a specific, ownership-checked thread when threadId is given', async () => {
@@ -85,8 +85,18 @@ describe('Message Routes', () => {
 
       expect(res.status).toBe(200);
       expect(mockGetOwnedThreadId).toHaveBeenCalledWith('owner-user-1', 'test-agent-id', 'thread-x');
-      expect(mockGetRecentMessages).toHaveBeenCalledWith('thread-x', 50);
+      expect(mockGetRecentMessages).toHaveBeenCalledWith('thread-x', 50, undefined);
       expect(mockGetOrCreateLatestThread).not.toHaveBeenCalled();
+    });
+
+    it('reads the page before a message, capped at 200', async () => {
+      mockGetOwnedThreadId.mockResolvedValue('thread-x');
+      mockGetRecentMessages.mockResolvedValue([]);
+
+      const res = await request(makeApp()).get('/messages?threadId=thread-x&before=m-51&limit=500');
+
+      expect(res.status).toBe(200);
+      expect(mockGetRecentMessages).toHaveBeenCalledWith('thread-x', 200, 'm-51');
     });
 
     it('returns 404 when the requested thread is not owned / does not exist', async () => {

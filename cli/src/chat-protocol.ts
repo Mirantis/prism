@@ -38,6 +38,9 @@ export interface TurnEventPayload {
 /** What the terminal UI shows for a failed turn whose event has no `error`. */
 export const TURN_FAILED_TEXT = 'The response failed.';
 
+/** `single`: the agent has one conversation, and no client starts or switches one. */
+export type ThreadMode = 'single' | 'multi';
+
 export interface WelcomePayload {
   protocol: number;
   streamId: string;
@@ -46,6 +49,7 @@ export interface WelcomePayload {
   /** True when every event after the client's cursor follows this frame. */
   resumed: boolean;
   you: Viewer;
+  threadMode: ThreadMode;
   snapshot: {
     turns: Array<{ threadId: string; state: Exclude<TurnState, 'idle'> }>;
   };

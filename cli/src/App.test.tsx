@@ -15,7 +15,7 @@ const { adapterStub, apiStub, mockEditText } = vi.hoisted(() => {
       markConnected: vi.fn(),
       markDisconnected: vi.fn(),
       resumeThread: vi.fn().mockResolvedValue(undefined),
-      startNewSession: vi.fn().mockResolvedValue('thread-mine'),
+      openConversation: vi.fn().mockResolvedValue('thread-mine'),
       listSessions: vi.fn().mockResolvedValue([]),
       submitUserMessage: vi.fn(),
       cancel: vi.fn().mockReturnValue(true),
@@ -98,8 +98,8 @@ describe('App', () => {
     adapterStub.markDisconnected.mockClear();
     adapterStub.resumeThread.mockReset();
     adapterStub.resumeThread.mockResolvedValue(undefined);
-    adapterStub.startNewSession.mockReset();
-    adapterStub.startNewSession.mockResolvedValue('thread-mine');
+    adapterStub.openConversation.mockReset();
+    adapterStub.openConversation.mockResolvedValue('thread-mine');
     adapterStub.listSessions.mockClear();
     adapterStub.submitUserMessage.mockClear();
     apiStub.listCronTasks.mockClear();
@@ -206,23 +206,23 @@ describe('App', () => {
     });
   });
 
-  it('starts a fresh conversation thread on mount', () => {
+  it('opens the session\'s conversation on mount', () => {
     const { unmount } = render(<App {...baseProps} />);
-    expect(adapterStub.startNewSession).toHaveBeenCalledTimes(1);
-    // Clean slate: no other thread is resumed.
+    expect(adapterStub.openConversation).toHaveBeenCalledTimes(1);
+    // The adapter opens it: no picked thread is resumed.
     expect(adapterStub.resumeThread).not.toHaveBeenCalled();
     unmount();
   });
 
   it('asks for the conversation again while the runtime cannot make one', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    adapterStub.startNewSession.mockResolvedValueOnce(undefined);
+    adapterStub.openConversation.mockResolvedValueOnce(undefined);
     const { unmount } = render(<App {...baseProps} />);
     try {
       await vi.advanceTimersByTimeAsync(0);
-      expect(adapterStub.startNewSession).toHaveBeenCalledTimes(1);
+      expect(adapterStub.openConversation).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(2_000);
-      expect(adapterStub.startNewSession).toHaveBeenCalledTimes(2);
+      expect(adapterStub.openConversation).toHaveBeenCalledTimes(2);
     } finally {
       unmount();
       vi.useRealTimers();
@@ -598,7 +598,7 @@ describe('App', () => {
   it('/goal works on a fresh session with no prior message (thread pinned from startup)', async () => {
     // The fresh-launch session creates a thread server-side; the CLI pins its
     // id so /goal has a thread immediately, without sending a message first.
-    adapterStub.startNewSession.mockResolvedValueOnce('thread-startup');
+    adapterStub.openConversation.mockResolvedValueOnce('thread-startup');
     const { lastFrame, stdin, unmount } = render(<App {...baseProps} />);
     /**
      * Let Ink settle. Two sequential state updates (the resolved session thread,
@@ -608,7 +608,7 @@ describe('App', () => {
     const flush = async (times = 3) => {
       for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
     };
-    await flush(); // let startNewSession().then(pin) settle
+    await flush(); // let openConversation().then(pin) settle
     await flush();
     stdin.write('/goal make the tests pass');
     await flush();
@@ -840,7 +840,7 @@ describe('App', () => {
     expect(frame).toContain('ability-to-cancel (worktree/ability-to-cancel)');
     // Picker owns the screen — the chat surface isn't rendered yet.
     expect(frame).not.toContain('chat with Prism');
-    expect(adapterStub.startNewSession).not.toHaveBeenCalled();
+    expect(adapterStub.openConversation).not.toHaveBeenCalled();
     unmount();
   });
 
@@ -887,7 +887,7 @@ describe('App', () => {
       text: 'continue please',
       attachmentIds: [],
     });
-    expect(adapterStub.startNewSession).not.toHaveBeenCalled();
+    expect(adapterStub.openConversation).not.toHaveBeenCalled();
     unmount();
   });
 

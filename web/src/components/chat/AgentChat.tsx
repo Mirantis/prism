@@ -8,7 +8,7 @@ import { ApiError } from '@/api/errors';
 import { useAgent } from '@/lib/agent-context';
 import { buildTranscript, compareMessages, type TranscriptNote } from '@/lib/chat-socket/transcript';
 import { useChatSocket } from '@/hooks/use-chat-socket';
-import { useThread } from '@/hooks/use-thread';
+import { useOlderMessages, useThread } from '@/hooks/use-thread';
 import { useDictation, type Dictation } from '@/hooks/use-dictation';
 import { useVoiceCall, type VoiceCall } from '@/hooks/use-voice-call';
 import { HeaderActions } from '@/components/layout/header-actions';
@@ -125,6 +125,7 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
   }, [activeThreadId]);
 
   const { data: thread, isLoading: isLoadingThread, error: threadError } = useThread(activeThreadId);
+  const { loadOlder, isLoadingOlder } = useOlderMessages(activeThreadId);
 
   // A deep-linked thread that doesn't exist (deleted / not owned) → fall back to
   // the latest conversation. Guarded on threadId so a latest-thread error can't loop.
@@ -408,6 +409,9 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
         viewer={you}
         turnState={turnState}
         isLoading={isLoadingThread}
+        hasOlder={thread?.hasOlder ?? false}
+        isLoadingOlder={isLoadingOlder}
+        onLoadOlder={loadOlder}
         threadId={activeThreadId}
         onSuggestion={status === 'connected' && activeThreadId ? sendChat : undefined}
         onOpenComputerHelp={openComputerPanel}
