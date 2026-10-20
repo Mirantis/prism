@@ -1,6 +1,6 @@
 /**
  * Management slash commands that hit the runtime's /agents/* REST API:
- * /help, /rename, /model, /heartbeat. None of these call the LLM, so the
+ * /help, /rename, /model, /model-mode, /heartbeat. None of these call the LLM, so the
  * assertions are deterministic and don't need Bedrock. Each command's
  * on-screen SYSTEM reply is asserted in the PTY frame, and the persistent
  * side effect is confirmed with a direct REST query against the runtime.
@@ -150,6 +150,35 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
       );
       expect(res.model).toBeNull();
       expect(res.effective.length).toBeGreaterThan(0);
+    });
+  });
+
+  Scenario('/model-mode switches between Auto and Fixed', ({ Given, When, And }) => {
+    Given('the agent has no Auto models', async () => {
+      await runtimeRequest(env.port, 'PATCH', '/agents/model-selection', {
+        mode: null,
+        small: null,
+        medium: null,
+        large: null,
+      });
+    });
+    When('the agent is given a small and a large model', async () => {
+      await runtimeRequest(env.port, 'PATCH', '/agents/model-selection', {
+        small: 'tui-small-model',
+        large: 'tui-large-model',
+      });
+    });
+    const storedMode = async () =>
+      (await runtimeRequest<{ mode: { effective: string } }>(env.port, 'GET', '/agents/model-selection'))
+        .mode.effective;
+    And('the agent stays in Fixed mode', async () => {
+      expect(await storedMode()).toBe('fixed');
+    });
+    And('the agent is in Auto mode', async () => {
+      expect(await storedMode()).toBe('auto');
+    });
+    And('the agent is back in Fixed mode', async () => {
+      expect(await storedMode()).toBe('fixed');
     });
   });
 

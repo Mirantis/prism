@@ -38,7 +38,7 @@ import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
 import { formatInterval } from '@/lib/format';
 import { RestoreBackupDialog } from '@/components/profile/restore-backup-dialog';
-import { ModelSelectionFields } from '@/components/profile/model-selection-fields';
+import { ModelSettingsCard } from '@/components/profile/model-settings-card';
 import { VerbosityField } from '@/components/profile/verbosity-field';
 import { LockedInField } from '@/components/profile/locked-in-field';
 import { DocumentWorkspace } from '@/components/profile/document-workspace';
@@ -126,11 +126,12 @@ function ProfilePage() {
         <CardHeader><CardTitle>Agent settings</CardTitle></CardHeader>
         <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 [&>*]:min-w-0 [&>*]:rounded-xl [&>*]:bg-muted/15 [&>*]:p-3.5 [&>*]:ring-1 [&>*]:ring-border [&>*]:ring-inset [&>*]:break-words">
           <AgentNameField />
-          <ModelSelectionFields />
           {details && <VerbosityField details={details} />}
           {details && <LockedInField details={details} />}
         </CardContent>
       </Card>
+
+      <ModelSettingsCard />
 
       <StatusPanel details={details} isLoading={isLoading} />
 

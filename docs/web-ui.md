@@ -228,17 +228,15 @@ Alertmanager/PagerDuty/GitHub configs.
 
 The agent's identity and runtime controls.
 
-- **Name & models.** Edit the agent's display name (1–64 characters) and its LLM
-  model ID inline. **Reset** returns the main model to the runtime default.
-  Separate **Heartbeat model** and **Scheduled-task model** fields let you run
-  those on their own model; leave a field empty to inherit the main model (the
-  field shows the model it falls back to). See
-  **[Configuration → Models](configuration.md#models)**.
-- **Model selection.** A switch between **Fixed**, the models above, and
-  **Auto**, which picks a **Small**, **Medium** or **Large** model for each turn.
-  Auto needs a small and a large model; turning it on before both are set shows
-  their fields first. See
-  **[Configuration → Auto model selection](configuration.md#auto-model-selection)**.
+- **Name.** Edit the agent's display name (1–64 characters) inline.
+- **Models.** **Fixed** runs every turn on one model; **Reset to default**
+  returns it to the runtime default. **Heartbeats** and **Scheduled tasks** can
+  each use their own model; leave one empty to use the chat model. **Auto** runs
+  each turn on your **Small**, **Medium** or **Large** model. Auto needs a small
+  and a large model; choosing it before both are set opens their fields below the
+  fixed models.
+  See **[Configuration → Models](configuration.md#models)** and
+  **[Auto model selection](configuration.md#auto-model-selection)**.
 - **Chat delivery.** A toggle switches between **Concise** (default) and
   **Verbose** mode. In concise mode only the agent's final message is delivered;
   intermediate steps are persisted but not shown. See

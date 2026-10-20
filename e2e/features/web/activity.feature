@@ -19,6 +19,7 @@ Feature: Activity page
     And I navigate to the activity page
     Then the token totals are above zero
     And the totals match the recorded model calls
+    And the usage by model matches the recorded model calls
     And the gate calls the turn made are counted too
     And the tool call list is not empty
     And the newest stored tool call is listed first

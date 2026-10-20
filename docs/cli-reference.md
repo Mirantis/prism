@@ -50,7 +50,7 @@ or **Enter** to complete the selection, then **Enter** to run.
 | `/model` | `<id>` \| `reset` | Set the agent's model, or reset to the server default. |
 | `/heartbeat-model` | `<id>` \| `reset` | Set the heartbeat model, or `reset` to inherit the main model. |
 | `/cron-model` | `<id>` \| `reset` | Set the scheduled-task model, or `reset` to inherit the main model. |
-| `/model-mode` | `auto` \| `fixed` | Switch between Auto and Fixed model selection; the Auto models are set on the Profile page. |
+| `/model-mode` | none \| `auto` \| `fixed` | Show the model mode, or switch between Auto and Fixed; the Auto models are set on the Profile page. |
 | `/heartbeat` | `status` \| `start` \| `stop` \| `trigger` \| `every <N>m`\|`<N>h` | Control the heartbeat (interval 1 min – 7 days). |
 | `/goal` | `<objective>` \| `status` \| `list` \| `pause` \| `resume` \| `stop` | Set or manage a background goal the agent pursues across turns. |
 | `/skills` | `[list]` \| `run <name>` | List installed [skills](skills.md), or run one. |

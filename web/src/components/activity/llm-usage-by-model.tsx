@@ -2,11 +2,10 @@ import { useQuery } from '@tanstack/react-query';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
-import { formatTokens } from '@/lib/format';
 
 const WINDOW_HOURS = 24;
 
-/** Token spend over the last 24 hours, one row per model. */
+/** Token spend over the last 24 hours, one row per model, in exact counts. */
 export function LlmUsageByModel() {
   const agent = useAgent();
   // The same query as the usage cards, so the page reads the window once.
@@ -32,12 +31,12 @@ export function LlmUsageByModel() {
       </TableHeader>
       <TableBody>
         {rows.map((row) => (
-          <TableRow key={row.model}>
+          <TableRow key={row.model} data-testid="activity-model-usage-row">
             <TableCell className="font-mono text-xs">{row.model}</TableCell>
-            <TableCell className="text-right">{row.calls.toLocaleString()}</TableCell>
-            <TableCell className="text-right">{formatTokens(row.inputTokens)}</TableCell>
-            <TableCell className="text-right">{formatTokens(row.outputTokens)}</TableCell>
-            <TableCell className="text-right">{formatTokens(row.totalTokens)}</TableCell>
+            <TableCell className="text-right tabular-nums">{row.calls.toLocaleString()}</TableCell>
+            <TableCell className="text-right tabular-nums">{row.inputTokens.toLocaleString()}</TableCell>
+            <TableCell className="text-right tabular-nums">{row.outputTokens.toLocaleString()}</TableCell>
+            <TableCell className="text-right tabular-nums">{row.totalTokens.toLocaleString()}</TableCell>
           </TableRow>
         ))}
       </TableBody>

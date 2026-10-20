@@ -166,6 +166,8 @@ export default defineConfig({
   globalTeardown: require.resolve('./global-teardown'),
 
   use: {
+    // The SPA formats numbers with the browser's locale, and steps compare against en-US figures.
+    locale: 'en-US',
     baseURL: `http://localhost:${WEB_PORT}`,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',

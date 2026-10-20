@@ -10,7 +10,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { mockPrisma, mockLogger } = vi.hoisted(() => ({
-  mockPrisma: { llmCall: { create: vi.fn() } },
+  mockPrisma: { llmCall: { create: vi.fn(), findFirst: vi.fn() } },
   mockLogger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));
 
@@ -196,5 +196,25 @@ describe('llmCallService.record', () => {
 
     expect(returned).toBeUndefined();
     resolveWrite({});
+  });
+});
+
+describe('llmCallService.newestThreadCall', () => {
+  it('reads the newest of the thread\'s calls with the given purposes', async () => {
+    const row = { purpose: 'chat', model: 'm', createdAt: new Date() };
+    mockPrisma.llmCall.findFirst.mockResolvedValue(row);
+
+    expect(await llmCallService.newestThreadCall('thread-1', ['chat', 'compaction'])).toBe(row);
+    expect(mockPrisma.llmCall.findFirst).toHaveBeenCalledWith({
+      where: { agentId: 'agent-1', threadId: 'thread-1', purpose: { in: ['chat', 'compaction'] } },
+      orderBy: { createdAt: 'desc' },
+      select: { purpose: true, model: true, createdAt: true },
+    });
+  });
+
+  it('answers null when the read fails', async () => {
+    mockPrisma.llmCall.findFirst.mockRejectedValue(new Error('locked'));
+
+    expect(await llmCallService.newestThreadCall('thread-1', ['chat'])).toBeNull();
   });
 });

@@ -756,7 +756,8 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       'invocation.duration_ms': String(Date.now() - startTime),
       'llm.model': modelId,
       'llm.model_mode': context.modelSelection.mode,
-      'llm.tier_reason': turnModel.reason,
+      // A stop during routing reads as a fallback, so a canceled turn reports no reason.
+      ...(wasCanceled ? {} : { 'llm.tier_reason': turnModel.reason }),
       ...(turnModel.tier ? { 'llm.tier': turnModel.tier } : {}),
     });
 

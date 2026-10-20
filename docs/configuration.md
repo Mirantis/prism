@@ -466,8 +466,8 @@ In **Auto** mode the agent runs each turn on one of three models you name: a
 active platform and use its model ID format. Auto replaces the main, heartbeat
 and scheduled-task models; switching back to **Fixed** restores them.
 
-Set the models and turn Auto on with the **Model selection** switch on the
-Profile page; `/model-mode auto|fixed` in the TUI switches between the two.
+Set the models and choose **Auto** in the **Models** card on the Profile
+page; `/model-mode auto|fixed` in the TUI switches between the two.
 Auto needs a small and a large model. Leave the medium model empty to choose
 between those two only. To make Auto the default for a deployment, set:
 
@@ -480,7 +480,6 @@ between those two only. To make Auto the default for a deployment, set:
 
 A model set on the agent wins over these. With `MODEL_MODE=auto` and no small
 or no large model, the runtime does not start and names the missing variable.
-The Activity page shows the tokens each model used.
 
 ### Memory embeddings
 

@@ -19,6 +19,8 @@ import { createProvider } from '../lib/llm-providers/create-provider';
 import { collectTools, withToolsCacheControl } from '../lib/tool-collection';
 import { withToolOutputCapture } from '../lib/tool-output-limiter';
 import { evaluateToolRisk } from '../lib/tool-risk-gate';
+import { selectTurnModel } from '../lib/model-routing';
+import type { ModelTier } from '../lib/model-selection';
 import { agentWorkspaceService, resolveEffectiveModel } from '../services/agent-workspace.service';
 import type { AttachmentMeta } from '../services/attachment.service';
 import { contextService } from '../services/context.service';
@@ -440,6 +442,37 @@ export async function judge(rubric: string, reply: string): Promise<boolean> {
   const answer = result.text.trim().toUpperCase().replace(/\.$/, '');
   if (answer !== 'YES' && answer !== 'NO') throw new Error(`The grader answered "${result.text.trim()}".`);
   return answer === 'YES';
+}
+
+/**
+ * The tier Auto model selection picks for a chat request, offered `tiers`, with
+ * `history` as the thread so far. Throws when the classifier call fails, since a
+ * failure runs the large tier and would pass a scenario that expects it.
+ */
+export async function routeTier(
+  prompt: string,
+  options: { history?: HistoryEntry[]; tiers?: ModelTier[] } = {},
+): Promise<ModelTier> {
+  const context = await agentContext([...(options.history ?? []), { user: prompt }]);
+  const offered = options.tiers ?? ['small', 'large'];
+  const tierModel = (tier: ModelTier) => `eval-${tier}-model`;
+  context.modelSelection = {
+    mode: 'auto',
+    tiers: {
+      small: offered.includes('small') ? tierModel('small') : null,
+      medium: offered.includes('medium') ? tierModel('medium') : null,
+      large: offered.includes('large') ? tierModel('large') : null,
+    },
+  };
+  const choice = await selectTurnModel(
+    context,
+    { mode: 'chat', prompt, userId: EVAL_USER_ID, agentId: EVAL_AGENT_ID },
+    createProvider(),
+  );
+  if (choice.reason !== 'classified' || !choice.tier) {
+    throw new Error(`Routing did not classify the request (${choice.reason}).`);
+  }
+  return choice.tier;
 }
 
 /** The models a run uses, for the report. */

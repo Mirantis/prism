@@ -9,6 +9,13 @@
  */
 
 import { AgentModelMode, AgentWorkspace, AgentWorkspaceRevision } from '@prisma/client';
+import {
+  MODEL_TIERS,
+  missingAutoTiers,
+  resolveModelSelection,
+  type ModelTier,
+  type StoredModelSelection,
+} from '../lib/model-selection';
 import { v4 as uuidv4 } from 'uuid';
 import { prisma } from '../lib/prisma';
 import { getDefaultWorkspaceFiles } from '../templates/default-workspace';
@@ -24,6 +31,8 @@ import { documentRevisionService } from './document-revision.service';
 // NOT enforced — users can opt into models the runtime hasn't been told about.
 const MODEL_ID_PATTERN = /^[A-Za-z0-9._:\-/]+$/;
 const MODEL_ID_MAX_LEN = 200;
+
+const TIER_COLUMNS = { small: 'smallModel', medium: 'mediumModel', large: 'largeModel' } as const;
 
 /**
  * Resolve the effective model ID from a stored per-agent override: the
@@ -48,44 +57,6 @@ export function resolveScopedModel(
   main: string | null | undefined,
 ): string {
   return resolveEffectiveModel(scoped ?? main);
-}
-
-/** A tier of Auto model selection, smallest first. */
-export type ModelTier = 'small' | 'medium' | 'large';
-export const MODEL_TIERS: readonly ModelTier[] = ['small', 'medium', 'large'];
-
-/** The model selection a turn runs under, after the deployment defaults. */
-export interface ModelSelection {
-  mode: 'fixed' | 'auto';
-  tiers: Record<ModelTier, string | null>;
-}
-
-type StoredModelSelection = Pick<AgentWorkspace, 'modelMode' | 'smallModel' | 'mediumModel' | 'largeModel'>;
-
-const TIER_COLUMNS = { small: 'smallModel', medium: 'mediumModel', large: 'largeModel' } as const;
-
-/**
- * Merge an agent's stored model selection with the deployment defaults
- * (`config.modelSelection`). The one place a null column meets its env
- * fallback, as `resolveEffectiveModel` is for the fixed model.
- */
-export function resolveModelSelection(stored: StoredModelSelection): ModelSelection {
-  const mode = stored.modelMode
-    ? stored.modelMode === AgentModelMode.AUTO ? 'auto' : 'fixed'
-    : config.modelSelection.mode;
-  return {
-    mode,
-    tiers: {
-      small: stored.smallModel ?? config.modelSelection.tiers.small,
-      medium: stored.mediumModel ?? config.modelSelection.tiers.medium,
-      large: stored.largeModel ?? config.modelSelection.tiers.large,
-    },
-  };
-}
-
-/** The tiers Auto needs and lacks: small and large are required, medium is optional. */
-export function missingAutoTiers(tiers: ModelSelection['tiers']): ModelTier[] {
-  return (['small', 'large'] as const).filter((tier) => !tiers[tier]);
 }
 
 /**
@@ -361,9 +332,10 @@ class AgentWorkspaceService {
    * pinned at boot by resolveOrBootstrapSingleAgent). Throws if AGENT_ID
    * is unset or the row is missing.
    */
-  async getAgent(): Promise<AgentWorkspace> {
+  /** Inside a `$transaction` callback, pass its `tx`: a top-level read waits on the transaction's lock. */
+  async getAgent(client: Pick<typeof prisma, 'agentWorkspace'> = prisma): Promise<AgentWorkspace> {
     if (!config.agentId) throw new Error('AGENT_ID not configured');
-    const agent = await prisma.agentWorkspace.findUnique({ where: { id: config.agentId } });
+    const agent = await client.agentWorkspace.findUnique({ where: { id: config.agentId } });
     if (!agent) throw new Error(`Agent ${config.agentId} not found`);
     return agent;
   }
@@ -670,14 +642,18 @@ class AgentWorkspaceService {
       if (tier in input) data[TIER_COLUMNS[tier]] = normalizeModelOverride(input[tier]);
     }
 
-    const agent = await this.getAgent();
-    const next = resolveModelSelection({ ...agent, ...data });
-    const missing = next.mode === 'auto' ? missingAutoTiers(next.tiers) : [];
-    if (missing.length > 0) {
-      throw new ValidationError(`Auto mode needs a ${missing.join(' and a ')} model`);
-    }
-
-    const updated = await prisma.agentWorkspace.update({ where: { id: agent.id }, data });
+    // One transaction, so two writes in flight cannot each pass the check
+    // against the row the other is about to change.
+    const { updated, next } = await prisma.$transaction(async (tx) => {
+      const agent = await this.getAgent(tx);
+      const merged = resolveModelSelection({ ...agent, ...data });
+      const missing = merged.mode === 'auto' ? missingAutoTiers(merged.tiers) : [];
+      if (missing.length > 0) {
+        throw new ValidationError(`Auto mode needs a ${missing.join(' and a ')} model`);
+      }
+      const row = await tx.agentWorkspace.update({ where: { id: agent.id }, data });
+      return { updated: row, next: merged };
+    });
     trackEvent('agent model updated', null, {
       'agent.id': updated.id,
       'agent.model_mode': next.mode,

@@ -11,7 +11,7 @@ import express from 'express';
 
 const { mockGetAgent, mockPrisma } = vi.hoisted(() => ({
   mockGetAgent: vi.fn(),
-  mockPrisma: { agentWorkspace: { update: vi.fn() } },
+  mockPrisma: { $transaction: vi.fn(), agentWorkspace: { update: vi.fn() } },
 }));
 
 vi.mock('../lib/prisma', () => ({ prisma: mockPrisma }));
@@ -42,6 +42,7 @@ function createTestApp() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockPrisma) => unknown) => fn(mockPrisma));
   mockGetAgent.mockResolvedValue({ id: 'agent-1', ...UNSET });
   mockPrisma.agentWorkspace.update.mockImplementation(async ({ data }: { data: object }) => ({
     id: 'agent-1',

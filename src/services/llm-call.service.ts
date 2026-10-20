@@ -80,6 +80,29 @@ interface RecordInput {
 
 class LlmCallService {
   /**
+   * The newest call recorded on a thread with one of `purposes`, or null when
+   * there is none. A read for the caller's own decision, so a failed read is
+   * logged and returns null.
+   */
+  async newestThreadCall(
+    threadId: string,
+    purposes: readonly LlmCallPurpose[],
+  ): Promise<{ purpose: string; model: string; createdAt: Date } | null> {
+    const owner = config.agentId;
+    if (!owner) return null;
+    try {
+      return await prisma.llmCall.findFirst({
+        where: { agentId: owner, threadId, purpose: { in: [...purposes] } },
+        orderBy: { createdAt: 'desc' },
+        select: { purpose: true, model: true, createdAt: true },
+      });
+    } catch (err) {
+      logger.warn({ err, threadId }, '[LlmCall] failed to read a thread\'s newest call');
+      return null;
+    }
+  }
+
+  /**
    * Record one model call.
    *
    * Returns immediately: the insert runs in the background so no call site

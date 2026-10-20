@@ -247,6 +247,40 @@ Then('the token totals are above zero', async ({ page }) => {
   await expect(activityPage.outputTokens).not.toHaveText('0');
 });
 
+Then('the usage by model matches the recorded model calls', async ({ page }) => {
+  const db = dbHelper.getPrisma();
+  // Rows land fire-and-forget, so reload and re-read until the table and the
+  // stored calls agree.
+  await expect
+    .poll(
+      async () => {
+        const recorded = await db.llmCall.groupBy({
+          by: ['model'],
+          _count: true,
+          _sum: { inputTokens: true, outputTokens: true, totalTokens: true },
+        });
+        const expected = recorded
+          .map((r) => [
+            r.model,
+            r._count.toLocaleString('en-US'),
+            (r._sum.inputTokens ?? 0).toLocaleString('en-US'),
+            (r._sum.outputTokens ?? 0).toLocaleString('en-US'),
+            (r._sum.totalTokens ?? 0).toLocaleString('en-US'),
+          ])
+          .sort((a, b) => a[0].localeCompare(b[0]));
+        await page.reload();
+        const rows = page.getByTestId('activity-model-usage-row');
+        await rows.first().waitFor();
+        const shown = (await rows.evaluateAll((trs) =>
+          trs.map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => td.textContent ?? '')),
+        )).sort((a, b) => a[0].localeCompare(b[0]));
+        return JSON.stringify(shown) === JSON.stringify(expected) ? 'match' : JSON.stringify({ shown, expected });
+      },
+      { timeout: 30_000 },
+    )
+    .toBe('match');
+});
+
 Then('the totals match the recorded model calls', async ({ page }) => {
   const db = dbHelper.getPrisma();
 

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Pencil } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useAgent } from '@/lib/agent-context';
@@ -9,27 +10,36 @@ const MODEL_ID_PATTERN = /^[A-Za-z0-9._:\-/]+$/;
 const MODEL_ID_MAX_LEN = 200;
 
 /**
- * Editable model-ID field. Used for the main agent model and for the
- * heartbeat/cron overrides. When `allowEmpty` is set the field may be cleared
- * to fall back to the main model; the resolved fallback is shown as a hint via
- * the `effective` value returned by the loader.
+ * One model setting as a list row: the label and what the model is for on the
+ * left, the model ID and its edit control on the right. When `allowEmpty` is set
+ * the field may be cleared; the loader's `effective` value then shows what an
+ * empty field falls back to.
  */
 export function ModelField({
   label,
+  description,
+  tag,
   queryKey,
   load,
   save,
   allowEmpty = false,
-  emptyHint = 'Leave empty to use the main agent model.',
+  emptyLabel = 'Not set',
+  fallbackLabel = (model: string) => `Uses ${model}`,
   affects = [],
 }: {
   label: string;
+  /** What this model is used for, under the label. */
+  description?: string;
+  /** A short marker beside the label, such as "Required". */
+  tag?: { text: string; tone: 'muted' | 'attention' };
   queryKey: string;
   load: () => Promise<{ model: string | null; effective?: string }>;
   save: (model: string | null) => Promise<{ model: string | null; effective?: string }>;
   allowEmpty?: boolean;
-  /** What clearing the field does, shown under it while editing. */
-  emptyHint?: string;
+  /** Shown when the field and its fallback are both empty. */
+  emptyLabel?: string;
+  /** Shown when the field is empty and falls back to another model. */
+  fallbackLabel?: (model: string) => string;
   /**
    * Other model-field query keys whose resolved `effective` depends on this
    * one (the heartbeat/cron fields fall back to the main model), so they get
@@ -57,8 +67,6 @@ export function ModelField({
     onSuccess: (data) => {
       queryClient.setQueryData([queryKey, agent.agentId], data);
       queryClient.invalidateQueries({ queryKey: ['agent-details', agent.agentId] });
-      // Dependent fields (heartbeat/cron) resolve `effective` off this model,
-      // so refresh them too.
       for (const key of affects) {
         queryClient.invalidateQueries({ queryKey: [key, agent.agentId] });
       }
@@ -76,71 +84,80 @@ export function ModelField({
   const unchanged = (next ?? '') === override;
   const canSave = valid && !updateMut.isPending && !unchanged;
 
+  const cancel = () => {
+    setEditing(false);
+    setError(null);
+  };
+
   return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-muted-foreground">{label}</span>
+    <div className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+      <div className="min-w-0 sm:max-w-[45%]">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium">{label}</span>
+          {tag && (
+            <Badge
+              variant={tag.tone === 'attention' ? 'secondary' : 'outline'}
+              className={tag.tone === 'attention' ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300' : 'text-muted-foreground'}
+            >
+              {tag.text}
+            </Badge>
+          )}
+        </div>
+        {description && <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>}
+      </div>
+
       {editing ? (
-        <span className="inline-flex flex-wrap items-center gap-2">
-          <Input
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && canSave) {
-                updateMut.mutate(next);
-              } else if (e.key === 'Escape') {
-                setEditing(false);
-                setError(null);
-              }
-            }}
-            maxLength={MODEL_ID_MAX_LEN}
-            placeholder={allowEmpty ? emptyHint : undefined}
-            className="h-7 w-[360px] px-2 py-1 text-sm"
-            aria-label={`${label} ID`}
-            autoFocus
-          />
-          <Button size="sm" onClick={() => updateMut.mutate(next)} disabled={!canSave}>
-            Save
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              setEditing(false);
-              setError(null);
-            }}
-          >
-            Cancel
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => updateMut.mutate(null)}
-            disabled={updateMut.isPending}
-          >
-            Reset
-          </Button>
-          {allowEmpty && (
-            <span className="basis-full text-xs text-muted-foreground">
-              {emptyHint}
-            </span>
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5 sm:max-w-[55%]">
+          <div className="flex items-center gap-2">
+            <Input
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && canSave) updateMut.mutate(next);
+                else if (e.key === 'Escape') cancel();
+              }}
+              maxLength={MODEL_ID_MAX_LEN}
+              placeholder={allowEmpty && effective ? fallbackLabel(effective) : 'Model ID'}
+              className="h-8 min-w-0 flex-1 font-mono text-xs"
+              aria-label={`${label} ID`}
+              autoFocus
+            />
+            <Button size="sm" onClick={() => updateMut.mutate(next)} disabled={!canSave}>
+              Save
+            </Button>
+            <Button size="sm" variant="ghost" onClick={cancel}>
+              Cancel
+            </Button>
+          </div>
+          {override && (
+            <button
+              type="button"
+              className="self-start text-xs text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
+              onClick={() => updateMut.mutate(null)}
+              disabled={updateMut.isPending}
+            >
+              {allowEmpty ? 'Clear' : 'Reset to default'}
+            </button>
           )}
           {!valid && value.length > 0 && (
-            <span className="basis-full text-xs text-destructive">
+            <span className="text-xs text-destructive">
               Use 1–{MODEL_ID_MAX_LEN} chars: letters, digits, and ._:-/ only.
             </span>
           )}
-          {error && <span className="basis-full text-xs text-destructive">{error}</span>}
-        </span>
+          {error && <span className="text-xs text-destructive">{error}</span>}
+        </div>
       ) : (
-        <span className="inline-flex items-center gap-1 text-sm">
-          {override ? (
-            override
-          ) : allowEmpty ? (
-            <span className="text-muted-foreground">
-              {effective ? `Default — uses ${effective}` : 'Not set'}
-            </span>
+        <div className="flex min-w-0 items-center gap-1 sm:justify-end">
+          {!modelInfo ? (
+            <span className="text-sm text-muted-foreground">Loading…</span>
+          ) : override ? (
+            <code title={override} className="truncate rounded bg-muted/50 px-1.5 py-0.5 font-mono text-xs">
+              {override}
+            </code>
           ) : (
-            override || <span className="text-muted-foreground">Loading…</span>
+            <span title={effective} className="truncate text-sm text-muted-foreground">
+              {effective ? fallbackLabel(effective) : emptyLabel}
+            </span>
           )}
           <Button
             variant="ghost"
@@ -155,7 +172,7 @@ export function ModelField({
           >
             <Pencil className="size-3" />
           </Button>
-        </span>
+        </div>
       )}
     </div>
   );
