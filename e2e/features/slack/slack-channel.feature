@@ -11,13 +11,6 @@ Feature: Slack Channel Integration
     Then the bot should reply in the thread within 60 seconds
     And the bot's reply should not be empty
 
-  Scenario: A reply lists its tool calls with their input and output
-    Given a test Slack channel exists
-    And the bot is invited to the channel
-    And I link the channel to the agent via the UI
-    When I send a message mentioning the bot "Use shell_exec once with this exact command: echo slack-plan-check. Then reply with its output."
-    Then the bot's reply lists a "shell_exec" call whose output contains "slack-plan-check"
-
   # The working cue in a channel is the assistant-thread status line, which
   # Slack accepts on regular channel threads (verified by direct probe) but
   # keeps write-only on the API — so it is covered by unit tests instead. The

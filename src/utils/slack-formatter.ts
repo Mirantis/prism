@@ -11,7 +11,6 @@
  * Not supported: Tables, syntax highlighting, horizontal rules
  */
 
-import type { ToolCallRecord } from '../types';
 import { splitContent } from './text-chunker';
 
 // Slack Block Kit types
@@ -50,40 +49,10 @@ interface ActionsBlock {
   elements: ButtonElement[];
 }
 
-interface PreformattedRichText {
-  type: 'rich_text';
-  elements: Array<{
-    type: 'rich_text_preformatted';
-    elements: Array<{ type: 'text'; text: string }>;
-  }>;
-}
-
-interface PlanTask {
-  task_id: string;
-  title: string;
-  status: 'complete' | 'error';
-  details?: PreformattedRichText;
-  output?: PreformattedRichText;
-}
-
-interface PlanBlock {
-  type: 'plan';
-  title: string;
-  tasks: PlanTask[];
-}
-
-export type SlackBlock = MarkdownBlock | SectionBlock | ContextBlock | ActionsBlock | PlanBlock;
+export type SlackBlock = MarkdownBlock | SectionBlock | ContextBlock | ActionsBlock;
 
 // Individual block text limit
 const BLOCK_TEXT_LIMIT = 3000;
-
-// The most tasks Slack accepts in one plan block.
-const PLAN_TASK_LIMIT = 50;
-// 12,000 characters is Slack's limit for a message's markdown text. The inputs and
-// outputs of all tasks in a plan share the same budget.
-const PLAN_TEXT_BUDGET = 12_000;
-const PLAN_FIELD_LIMIT = 2_000;
-const PLAN_TITLE_LIMIT = 150;
 
 // ============================================================================
 // Feedback buttons (👍 / 👎 on agent responses)
@@ -179,41 +148,6 @@ function convertTablesToText(content: string): string {
   });
 }
 
-function cut(text: string, limit: number): string {
-  return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
-}
-
-function preformatted(text: string | undefined, limit: number): PreformattedRichText | undefined {
-  if (!text) return undefined;
-  return {
-    type: 'rich_text',
-    elements: [{ type: 'rich_text_preformatted', elements: [{ type: 'text', text: cut(text, limit) }] }],
-  };
-}
-
-/**
- * A message's tool calls as one plan block. Slack shows it collapsed, and a reader
- * expands it to see each call's input and output.
- */
-function buildToolCallsPlan(toolCalls: ToolCallRecord[]): PlanBlock {
-  const shown = toolCalls.slice(0, PLAN_TASK_LIMIT);
-  const fieldLimit = Math.min(PLAN_FIELD_LIMIT, Math.floor(PLAN_TEXT_BUDGET / (2 * shown.length)));
-  const names = [...new Set(toolCalls.map((tc) => tc.tool))].join(', ');
-  const omitted = toolCalls.length > shown.length ? ` (first ${shown.length} of ${toolCalls.length} calls)` : '';
-
-  return {
-    type: 'plan',
-    title: cut(`🔧 ${names}`, PLAN_TITLE_LIMIT - omitted.length) + omitted,
-    tasks: shown.map((tc, i) => ({
-      task_id: `tool_${i}`,
-      title: tc.tool,
-      status: tc.success ? 'complete' : 'error',
-      details: preformatted(tc.input, fieldLimit),
-      output: preformatted(tc.output, fieldLimit),
-    })),
-  };
-}
-
 /**
  * Options for extending the formatted message.
  */
@@ -231,7 +165,7 @@ export interface FormatSlackMessageOptions {
 export function formatSlackMessage(
   content: string,
   triggeredBy?: string,
-  toolCalls?: ToolCallRecord[],
+  toolCalls?: Array<{ tool: string; [key: string]: unknown }>,
   options?: FormatSlackMessageOptions,
 ): { text: string; blocks: SlackBlock[] } {
   const blocks: SlackBlock[] = [];
@@ -279,8 +213,13 @@ export function formatSlackMessage(
     }
   }
 
+  // Append tool call context block
   if (toolCalls && toolCalls.length > 0) {
-    blocks.push(buildToolCallsPlan(toolCalls));
+    const uniqueTools = [...new Set(toolCalls.map((tc) => tc.tool))];
+    blocks.push({
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: `🔧 ${uniqueTools.join(', ')}` }],
+    });
   }
 
   // Ensure we have at least one block
