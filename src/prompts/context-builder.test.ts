@@ -310,6 +310,21 @@ describe('system prompt text', () => {
     );
   });
 
+  it("cron mode tells a run what the task's last run sent, after the cached part of the prompt", async () => {
+    const lastSentNote = { text: 'Posted the build failure to #ops.', at: Date.now() - 60 * 60 * 1000 };
+    const parts = await buildSystemPromptParts(createTestAgentContext({ lastSentNote }), 'cron');
+
+    const note = parts.find((p) => p.text.includes('# Last Sent Message'));
+    expect(note?.cacheable).toBe(false);
+    expect(note?.text).toContain('The last run of this task (1h ago) sent a message and ended with this note:');
+    expect(note?.text).toContain('Posted the build failure to #ops.');
+    expect(parts.filter((p) => p.cacheable).map((p) => p.text).join()).not.toContain('Posted the build failure');
+  });
+
+  it('cron mode without a sent message has no last-sent section', async () => {
+    expect(await promptText(createTestAgentContext(), 'cron')).not.toContain('# Last Sent Message');
+  });
+
   it('webhook mode includes webhook instructions and no chat/bootstrap sections', async () => {
     const context = createTestAgentContext({ isBootstrapPhase: true });
     const prompt = await promptText(context, 'webhook');

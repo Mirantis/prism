@@ -27,7 +27,7 @@ import {
   type DeliverTo,
 } from './delivery-target.service';
 import { conversationService } from './conversation.service';
-import { outboundMessageService } from './outbound-message.service';
+import { outboundMessageService, sentAMessage } from './outbound-message.service';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { isTimezone } from '../lib/timezone';
@@ -203,6 +203,13 @@ class CronSchedulerService {
   private lastDelivered: Map<string, { text: string; at: number }> = new Map();
 
   /**
+   * Per-task note of the last unbound run that sent a message, delivered or not.
+   * An unbound run reads no history, so this note tells the next run about the
+   * send. In memory only, like the delivery baseline.
+   */
+  private lastSent: Map<string, { text: string; at: number }> = new Map();
+
+  /**
    * Tasks with a run currently in flight, each with the run. node-cron fires ticks regardless
    * of whether the previous run finished, so a run outlasting its interval would otherwise
    * overlap itself — double-delivering and racing the delivery baseline. An overlapping tick
@@ -328,6 +335,7 @@ class CronSchedulerService {
     this.stopJob(task.id);
     if (!previous || !sameBaselineKey(previous.task, task)) {
       this.lastDelivered.delete(task.id);
+      this.lastSent.delete(task.id);
     }
 
     if (!task.isActive) {
@@ -411,6 +419,7 @@ class CronSchedulerService {
     } finally {
       this.firedOneShots.delete(task.id);
       this.lastDelivered.delete(task.id);
+      this.lastSent.delete(task.id);
     }
   }
 
@@ -494,6 +503,7 @@ class CronSchedulerService {
   unscheduleTask(taskId: string, userId?: string, invokeMode?: string): void {
     this.stopJob(taskId);
     this.lastDelivered.delete(taskId);
+    this.lastSent.delete(taskId);
     trackEvent('cron task deleted', userId ?? null, {
       ...(config.agentId ? { 'agent.id': config.agentId } : {}),
       'cron.task.id': taskId,
@@ -625,7 +635,7 @@ class CronSchedulerService {
               originChannel: (task.originChannel as ChannelName | null) ?? undefined,
               originChannelId: task.originChannelId ?? undefined,
             }
-          : { broadcastsOutput: true }),
+          : { broadcastsOutput: true, lastSentNote: this.lastSent.get(task.id) }),
       });
       // A shutdown stopped the run. It delivers nothing and stays due. From here
       // the run delivers, so a shutdown that starts later lets it end.
@@ -674,6 +684,11 @@ class CronSchedulerService {
       const lastStep = result.steps[result.steps.length - 1];
       const responseText = (lastStep?.text ?? '').trim();
       const body = responseText || result.response;
+      const sent = sentAMessage(result.toolCalls);
+      const stillThisTask = this.scheduledJobs.get(task.id)?.task.instruction === task.instruction;
+      if (!boundThreadId && sent && body.trim() && stillThisTask) {
+        this.lastSent.set(task.id, { text: body.trim(), at: Date.now() });
+      }
 
       // A task that delivers nowhere skips the gate's model call too. A bound
       // task always delivers 'all' (readTaskDelivery), so it never gets here.
@@ -731,6 +746,8 @@ class CronSchedulerService {
         if (prior && !verdict.startsWith('REPEAT') && body.trim() !== prior.text) {
           this.lastDelivered.delete(task.id);
         }
+        // An all-clear ends what the note reported, so a recurrence is sent again.
+        if (!sent && !verdict.startsWith('REPEAT')) this.lastSent.delete(task.id);
         await outboundMessageService.keepWithheldRun({
           agentId: task.agentId,
           userId: task.userId,
@@ -802,6 +819,7 @@ class CronSchedulerService {
     }
     this.scheduledJobs.clear();
     this.lastDelivered.clear();
+    this.lastSent.clear();
     logger.info('[CronScheduler] All cron tasks stopped');
   }
 }

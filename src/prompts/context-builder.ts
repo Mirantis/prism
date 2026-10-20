@@ -66,6 +66,8 @@ export interface AgentContext {
   recentMessages: ConversationMessage[];
   lastHeartbeatAlert?: string;
   lastHeartbeatAlertAt?: number;
+  /** A recurring task's note from its last run that sent a message, for a run that reads no history. */
+  lastSentNote?: { text: string; at: number };
   /** Per-turn runtime events to surface authoritatively (see InvokeRequest). */
   runtimeNotices?: string[];
 }
@@ -180,6 +182,7 @@ export async function buildSystemPromptParts(
     }
   } else if (mode === 'cron') {
     stableSections.push(getCronInstructions());
+    if (context.lastSentNote) dynamicSections.push(getLastSentInstructions(context.lastSentNote));
   } else if (mode === 'webhook') {
     stableSections.push(getWebhookInstructions());
   } else if (mode === 'goal') {
@@ -242,11 +245,10 @@ export async function buildSystemPromptParts(
     parts.push({ text: stableSections.join('\n\n---\n\n'), cacheable: true });
   }
   if (dynamicSections.length > 0) {
-    // Never cacheable, and worth little either way: this part holds the date and,
-    // during onboarding, the bootstrap script, so it changes when the date rolls over
-    // or onboarding ends — rare, and few tokens. A breakpoint here would buy about
-    // that much. The point is the ordering, not the saving: what varies sits after the
-    // stable part, whose breakpoint a change here still hits.
+    // Never cacheable: this part holds the sections that change between runs, each a
+    // few tokens, so a breakpoint here would buy little. The point is the ordering, not
+    // the saving: what varies sits after the stable part, whose breakpoint a change
+    // here still hits.
     parts.push({ text: dynamicSections.join('\n\n---\n\n'), cacheable: false });
   }
   // Per-turn runtime notices (e.g. an attachment that failed to download).
@@ -859,6 +861,19 @@ You are running a scheduled task: follow its instruction and report what you fin
 - You can list the scheduled tasks, schedule a task for later and delete a scheduled task.
 
 When this run continues an earlier conversation, you are resuming after a wait you scheduled: reply as the next message in that conversation, not as a standalone report. If what you waited for has not happened yet, you can wait again the same way.`;
+}
+
+/** What a recurring task's last run sent, for a run that reads no history. */
+function getLastSentInstructions(note: { text: string; at: number }): string {
+  return [
+    `# Last Sent Message`,
+    ``,
+    `The last run of this task (${formatTimeAgo(note.at)}) sent a message and ended with this note:`,
+    ``,
+    note.text,
+    ``,
+    `Send that message again only if the situation it reported has changed.`,
+  ].join('\n');
 }
 
 function getWebhookInstructions(): string {

@@ -51,6 +51,8 @@ export interface AgentContext {
   recentMessages: ConversationMessage[];
   lastHeartbeatAlert?: string;
   lastHeartbeatAlertAt?: number;
+  /** A recurring task's note from its last run that sent a message, for a run that reads no history. */
+  lastSentNote?: { text: string; at: number };
   /** Per-turn runtime events surfaced authoritatively in the system prompt. */
   runtimeNotices?: string[];
 }
@@ -108,6 +110,8 @@ export interface InvokeRequest {
   outputDestination?: { platform: ChannelName; conversationId: string };
   lastHeartbeatAlert?: string;
   lastHeartbeatAlertAt?: number;
+  /** A recurring task's note from its last run that sent a message, for a run that reads no history. */
+  lastSentNote?: { text: string; at: number };
   /** Messages that channels queued for this heartbeat, one entry per channel. */
   heartbeatTriggers?: HeartbeatTrigger[];
   /**
