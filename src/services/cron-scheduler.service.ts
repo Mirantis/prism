@@ -204,10 +204,11 @@ class CronSchedulerService {
 
   /**
    * Per unbound task, what its last sending run sent and what the newest run
-   * after it reported, which the next run reads in place of history. Null means
-   * none; an absent entry is read from the stored messages on the first run.
+   * after it reported, which the next run reads in place of history, with the
+   * instruction it was recorded under. Null means none; an absent entry is read
+   * from the stored messages on the first run.
    */
-  private lastSend: Map<string, TaskLastSend | null> = new Map();
+  private lastSend: Map<string, { instruction: string; record: TaskLastSend } | null> = new Map();
 
   /**
    * Tasks with a run currently in flight, each with the run. node-cron fires ticks regardless
@@ -335,9 +336,6 @@ class CronSchedulerService {
     this.stopJob(task.id);
     if (!previous || !sameBaselineKey(previous.task, task)) {
       this.lastDelivered.delete(task.id);
-    }
-    if (previous && previous.task.instruction !== task.instruction) {
-      this.lastSend.set(task.id, null);
     }
 
     if (!task.isActive) {
@@ -536,32 +534,39 @@ class CronSchedulerService {
   }
 
   /**
-   * A run ended: store when, and when the task next runs. Without a run, stores
-   * the next run alone. A one-shot is deleted instead, so this is for a
-   * recurring task. A run can delete its own task, so the write uses
-   * `updateMany`, which accepts a missing row. A failed write is logged; the
-   * stored time then reads as due, and the next boot runs the task once more.
+   * What the task's runs sent and reported since, under its current instruction.
+   * Read from the stored messages once per process; a failed read is tried again
+   * on the next run.
    */
-  /** What the task's runs sent and reported since, read from the stored messages once per process. */
   private async lastSendOf(task: BackendCronTask): Promise<TaskLastSend | undefined> {
-    if (!this.lastSend.has(task.id)) this.lastSend.set(task.id, await this.readLastSend(task));
-    return this.lastSend.get(task.id) ?? undefined;
+    if (!this.lastSend.has(task.id)) {
+      const read = await this.readLastSend(task);
+      // A run that sent while the read was out wins over what the read found.
+      if (read !== undefined && !this.lastSend.has(task.id)) {
+        this.lastSend.set(task.id, read && { instruction: task.instruction, record: read });
+      }
+    }
+    const entry = this.lastSend.get(task.id);
+    return entry?.instruction === task.instruction ? entry.record : undefined;
   }
 
   /**
    * The newest stored run of this task that sent a message, and the newest one
-   * after it. An unbound run is stored under the task's heading, delivered or
-   * withheld, with its tool calls. A run the gate withheld that sent nothing is
-   * not stored, so a restart loses an all-clear that came after the send.
+   * after it, or undefined when the read fails. An unbound run is stored in its
+   * user's thread under the task's heading, delivered or withheld, with its tool
+   * calls. Two trades: the rows hold the task's name, not its id, so a rename
+   * finds none and two tasks of one name read each other's; and a run the gate
+   * withheld that sent nothing is not stored, so a restart loses an all-clear
+   * that came after the send.
    */
-  private async readLastSend(task: BackendCronTask): Promise<TaskLastSend | null> {
+  private async readLastSend(task: BackendCronTask): Promise<TaskLastSend | null | undefined> {
     const heading = `**Scheduled Task: ${task.name}**`;
     try {
       const rows = await prisma.conversationMessage.findMany({
         where: {
           role: 'AGENT',
           triggeredBy: 'CRON_TASK',
-          thread: { agentId: task.agentId },
+          thread: { agentId: task.agentId, userId: task.userId },
           content: { startsWith: heading },
           createdAt: { gte: new Date(task.createdAt) },
         },
@@ -570,16 +575,18 @@ class CronSchedulerService {
         select: { content: true, toolCalls: true, createdAt: true },
       });
       let latestReport: TaskLastSend['latestReport'];
-      for (const row of rows) {
+      // SQLite matches the prefix without regard to case.
+      for (const row of rows.filter((r) => r.content.startsWith(heading))) {
         const messages = sentMessages((row.toolCalls as ToolCallRecord[] | null) ?? []);
         const at = row.createdAt.getTime();
         if (messages.length > 0) return { messages: messages.join('\n'), at, ...(latestReport && { latestReport }) };
         latestReport ??= { text: row.content.slice(heading.length).trim(), at };
       }
+      return null;
     } catch (err) {
       logger.warn({ err }, `[CronScheduler] Could not read what "${task.name}" last sent`);
+      return undefined;
     }
-    return null;
   }
 
   /**
@@ -589,15 +596,17 @@ class CronSchedulerService {
   private noteSends(task: BackendCronTask, toolCalls: ToolCallRecord[]): boolean {
     const messages = sentMessages(toolCalls);
     if (messages.length === 0) return false;
-    if (this.isCurrent(task)) this.lastSend.set(task.id, { messages: messages.join('\n'), at: Date.now() });
+    if (this.isCurrent(task)) {
+      this.lastSend.set(task.id, { instruction: task.instruction, record: { messages: messages.join('\n'), at: Date.now() } });
+    }
     return true;
   }
 
   /** A later run's result, so the next run reads whether the finding still held. An empty result says nothing. */
   private noteReport(task: BackendCronTask, body: string): void {
-    const last = this.lastSend.get(task.id);
-    if (!last || !body.trim() || !this.isCurrent(task)) return;
-    this.lastSend.set(task.id, { ...last, latestReport: { text: body.trim(), at: Date.now() } });
+    const entry = this.lastSend.get(task.id);
+    if (!entry || entry.instruction !== task.instruction || !body.trim() || !this.isCurrent(task)) return;
+    this.lastSend.set(task.id, { ...entry, record: { ...entry.record, latestReport: { text: body.trim(), at: Date.now() } } });
   }
 
   /** Whether the task is still scheduled with the instruction this run had. */
@@ -605,6 +614,13 @@ class CronSchedulerService {
     return this.scheduledJobs.get(task.id)?.task.instruction === task.instruction;
   }
 
+  /**
+   * A run ended: store when, and when the task next runs. Without a run, stores
+   * the next run alone. A one-shot is deleted instead, so this is for a
+   * recurring task. A run can delete its own task, so the write uses
+   * `updateMany`, which accepts a missing row. A failed write is logged; the
+   * stored time then reads as due, and the next boot runs the task once more.
+   */
   private async recordRun(taskId: string, ranAt?: Date): Promise<void> {
     const scheduled = this.scheduledJobs.get(taskId);
     if (!scheduled || scheduled.isOneShot) return;

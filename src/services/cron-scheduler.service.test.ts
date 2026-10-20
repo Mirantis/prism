@@ -1350,6 +1350,7 @@ describe('CronSchedulerService', () => {
         expect(mockMessageFindMany.mock.calls[0][0].where).toEqual(
           expect.objectContaining({
             triggeredBy: 'CRON_TASK',
+            thread: { agentId: 'agent-1', userId: 'user-abc-123' },
             content: { startsWith: '**Scheduled Task: Daily Report**' },
             createdAt: { gte: new Date('2025-01-01T00:00:00.000Z') },
           }),
@@ -1359,6 +1360,41 @@ describe('CronSchedulerService', () => {
           at: sentAt.getTime(),
           latestReport: { text: 'The build is still failing.', at: reportedAt.getTime() },
         });
+      });
+
+      it('skips a stored run whose heading differs only in case, which SQLite matches', async () => {
+        mockMessageFindMany.mockResolvedValueOnce([
+          { content: '**Scheduled Task: daily report**\n\nPosted.', toolCalls: [SEND_CALL], createdAt: new Date() },
+        ]);
+        cronSchedulerService.stopAll();
+
+        await scheduleAndCapture()();
+
+        expect(mockInvoke.mock.calls[0][0].lastSend).toBeUndefined();
+      });
+
+      it('reads the stored runs again on the next run when a read fails', async () => {
+        mockMessageFindMany.mockRejectedValueOnce(new Error('database is locked')).mockResolvedValueOnce([
+          { content: '**Scheduled Task: Daily Report**\n\nPosted.', toolCalls: [SEND_CALL], createdAt: new Date() },
+        ]);
+        cronSchedulerService.stopAll();
+
+        const run = scheduleAndCapture();
+        await run();
+        await run();
+
+        expect(mockInvoke.mock.calls[0][0].lastSend).toBeUndefined();
+        expect(mockInvoke.mock.calls[1][0].lastSend).toEqual(expect.objectContaining({ messages: SENT_LINE }));
+      });
+
+      it('gives no record to a task edited while it was inactive', async () => {
+        mockInvoke.mockResolvedValueOnce(SENT);
+
+        await scheduleAndCapture()();
+        cronSchedulerService.scheduleTask(createCronTask({ isActive: false }));
+        await scheduleAndCapture({ instruction: 'Check the release build instead.' })();
+
+        expect(mockInvoke.mock.calls[1][0].lastSend).toBeUndefined();
       });
 
       it('starts a changed instruction with no record, without reading the stored runs', async () => {
