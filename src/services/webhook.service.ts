@@ -477,6 +477,7 @@ export class WebhookService {
           userId: agent.userId,
           content: budgetMessage,
           triggeredBy: 'WEBHOOK',
+          triggerName: subscription.name,
           toolCalls: result.toolCalls,
         });
       }
@@ -496,8 +497,9 @@ export class WebhookService {
       await outboundMessageService.keepWithheldRun({
         agentId: agent.id,
         userId: agent.userId,
-        content: `**Webhook: ${subscription.name}**\n\n${body}`,
+        content: body,
         triggeredBy: 'WEBHOOK',
+        triggerName: subscription.name,
         toolCalls: result.toolCalls,
       });
       if (subscription.deliverTo !== 'none') return { status: 'suppressed' };

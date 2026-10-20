@@ -91,6 +91,8 @@ class OutboundMessageService {
     threadId?: string;
     content: string;
     triggeredBy: MessageTrigger;
+    /** The webhook subscription that produced the run, for the model's history. */
+    triggerName?: string;
     toolCalls: ToolCallRecord[];
   }): Promise<void> {
     if (!run.toolCalls.some((call) => call.tool === SEND_MESSAGE_TOOL_NAME && call.success)) return;
@@ -101,6 +103,7 @@ class OutboundMessageService {
       content: run.content.trim() ? run.content : WITHHELD_RUN_TEXT,
       role: 'AGENT',
       triggeredBy: run.triggeredBy,
+      triggerName: run.triggerName,
       toolCalls: run.toolCalls,
       ...(readLive && { internalStep: true }),
     });
