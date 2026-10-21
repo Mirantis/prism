@@ -54,6 +54,7 @@ import { slackMessageQueueService } from './services/slack-message-queue.service
 import { SlackThreadProvider } from './services/providers/slack-thread.provider';
 import { ThreadSource } from '@prisma/client';
 import { pluginMcpService } from './services/plugin-mcp.service';
+import { closeMCPClients } from './lib/mcp-client';
 import { updateService } from './services/update/update.service';
 import { pluginCatalogService } from './services/plugin-catalog.service';
 import { reconcileAttachmentStorage } from './lib/attachment-boot';
@@ -438,6 +439,8 @@ const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResp
   // Plugin MCP servers are child processes we spawned; close them explicitly so
   // a bare SIGTERM to the runtime doesn't orphan them.
   await pluginMcpService.shutdownAll();
+  // Close the Lens Agents MCP client. On the legacy protocol this ends its gateway session.
+  await closeMCPClients();
   await getSlackHeartbeatThrottleQueue().stop();
   // Work whose result was delivered during the teardown records that before the exit.
   await pendingWorkService.flush();
