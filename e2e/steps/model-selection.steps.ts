@@ -42,12 +42,13 @@ When('I turn on Auto model selection', async ({ page }) => {
   await auto.click();
 });
 
-When('I set the {string} model to the {word} test model', async ({ page }, label: string, tier: string) => {
-  await page.getByRole('button', { name: `Edit ${label.toLowerCase()}` }).click();
-  const input = page.getByRole('textbox', { name: `${label} ID` });
-  await input.fill(TEST_MODELS[tier]);
-  await input.press('Enter');
-  await expect(page.getByText(TEST_MODELS[tier], { exact: true })).toBeVisible();
+When('I enter the small and the large test models', async ({ page }) => {
+  await page.getByRole('textbox', { name: 'Small model ID' }).fill(SMALL_TEST_MODEL);
+  await page.getByRole('textbox', { name: 'Large model ID' }).fill(LARGE_TEST_MODEL);
+});
+
+When('I save the Auto models', async ({ page }) => {
+  await page.getByRole('button', { name: 'Save and turn on Auto' }).click();
 });
 
 When('I ask {string}', async ({ page }, text: string) => {
@@ -59,16 +60,21 @@ When('I ask {string}', async ({ page }, text: string) => {
 });
 
 Then('the profile asks for a small and a large model', async ({ page }) => {
-  // Nothing is stored yet, so the switch still reads Fixed.
-  await expect(page.getByRole('radio', { name: 'Fixed' })).toHaveAttribute('aria-checked', 'true');
-  await expect(page.getByText('To turn on Auto, add a small and a large model.', { exact: false })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Edit small' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Edit large' })).toBeVisible();
+  await expect(page.getByRole('radio', { name: 'Auto' })).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByRole('form', { name: 'Auto models' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save and turn on Auto' })).toBeDisabled();
+});
+
+Then('the stored model mode is still Fixed', async () => {
+  const agent = await dbHelper.getPrisma().agentWorkspace.findUnique({ where: { id: DEFAULT_AGENT_ID } });
+  expect(agent?.modelMode).not.toBe('AUTO');
 });
 
 Then('the profile shows Auto model selection', async ({ page }) => {
+  await expect(page.getByRole('form', { name: 'Auto models' })).toBeHidden();
   await expect(page.getByRole('radio', { name: 'Auto' })).toHaveAttribute('aria-checked', 'true');
-  await expect(page.getByText('To turn on Auto, add a small and a large model.', { exact: false })).toBeHidden();
+  await expect(page.getByText(SMALL_TEST_MODEL, { exact: true })).toBeVisible();
+  await expect(page.getByText(LARGE_TEST_MODEL, { exact: true })).toBeVisible();
 });
 
 Then('the stored model mode is Auto', async () => {

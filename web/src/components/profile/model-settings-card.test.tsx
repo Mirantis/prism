@@ -77,63 +77,104 @@ describe('ModelSettingsCard', () => {
     await waitFor(() => expect(api.updateModelSelection).toHaveBeenCalledWith({ mode: 'auto' }));
   });
 
-  it('asks for the missing tiers before switching to Auto', async () => {
+  it('switches to Auto with a form for the missing models, storing nothing yet', async () => {
     api.getModelSelection.mockResolvedValue(selection('fixed'));
     renderCard();
 
-    const toggle = await screen.findByRole('radio', { name: 'Auto' });
-    await waitFor(() => expect(toggle).toBeEnabled());
-    toggle.click();
+    const auto = await screen.findByRole('radio', { name: 'Auto' });
+    await waitFor(() => expect(auto).toBeEnabled());
+    auto.click();
 
-    expect(await screen.findByText('To turn on Auto, add a small and a large model. Until then the agent keeps using the fixed models above.')).toBeInTheDocument();
-    expect(screen.getByText('Small', { exact: true })).toBeInTheDocument();
-    // The stored mode is still Fixed, so the switch and the fixed rows say so.
-    expect(screen.getByRole('radio', { name: 'Fixed' })).toHaveAttribute('aria-checked', 'true');
-    expect(screen.getByText('Heartbeats')).toBeInTheDocument();
+    expect(await screen.findByRole('form', { name: 'Auto models' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Auto' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByText('Not saved. The agent keeps using its fixed models until you save.')).toBeInTheDocument();
+    expect(screen.queryByText('Heartbeats')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save and turn on Auto' })).toBeDisabled();
     expect(api.updateModelSelection).not.toHaveBeenCalled();
   });
 
-  it('switches to Auto once the last required tier is saved', async () => {
-    api.getModelSelection.mockResolvedValue(selection('fixed', { small: 's' }));
-    api.updateModelSelection.mockImplementation(async (patch: Record<string, unknown>) =>
-      'mode' in patch ? selection('auto', { small: 's', large: 'l' }) : selection('fixed', { small: 's', large: 'l' }),
-    );
+  it('saves the models and the mode in one request', async () => {
+    api.getModelSelection.mockResolvedValue(selection('fixed'));
+    api.updateModelSelection.mockResolvedValue(selection('auto', { small: 's', large: 'l' }));
     renderCard();
 
-    const toggle = await screen.findByRole('radio', { name: 'Auto' });
-    await waitFor(() => expect(toggle).toBeEnabled());
-    toggle.click();
-    const edit = await screen.findByRole('button', { name: 'Edit large' });
-    await waitFor(() => expect(edit).toBeEnabled());
-    edit.click();
-    const input = await screen.findByRole('textbox', { name: 'Large ID' });
-    fireEvent.change(input, { target: { value: 'l' } });
-    fireEvent.keyDown(input, { key: 'Enter' });
+    const auto = await screen.findByRole('radio', { name: 'Auto' });
+    await waitFor(() => expect(auto).toBeEnabled());
+    auto.click();
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Small model ID' }), { target: { value: 's' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Large model ID' }), { target: { value: 'l' } });
+    screen.getByRole('button', { name: 'Save and turn on Auto' }).click();
 
-    await waitFor(() => expect(api.updateModelSelection).toHaveBeenCalledWith({ mode: 'auto' }));
-    expect(api.updateModelSelection).toHaveBeenCalledTimes(2);
+    await waitFor(() =>
+      expect(api.updateModelSelection).toHaveBeenCalledWith({ mode: 'auto', small: 's', medium: null, large: 'l' }),
+    );
+    expect(api.updateModelSelection).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole('form', { name: 'Auto models' })).not.toBeInTheDocument());
   });
 
-  it('sends one switch request when it fails, and shows the error', async () => {
-    api.getModelSelection.mockResolvedValue(selection('fixed', { small: 's' }));
-    api.updateModelSelection.mockImplementation(async (patch: Record<string, unknown>) => {
-      if ('mode' in patch) throw new Error('Runtime unavailable');
-      return selection('fixed', { small: 's', large: 'l' });
-    });
+  it('goes back to the fixed models on Cancel', async () => {
+    api.getModelSelection.mockResolvedValue(selection('fixed'));
     renderCard();
 
-    const toggle = await screen.findByRole('radio', { name: 'Auto' });
-    await waitFor(() => expect(toggle).toBeEnabled());
-    toggle.click();
-    const edit = await screen.findByRole('button', { name: 'Edit large' });
-    await waitFor(() => expect(edit).toBeEnabled());
-    edit.click();
-    const input = await screen.findByRole('textbox', { name: 'Large ID' });
-    fireEvent.change(input, { target: { value: 'l' } });
-    fireEvent.keyDown(input, { key: 'Enter' });
+    const auto = await screen.findByRole('radio', { name: 'Auto' });
+    await waitFor(() => expect(auto).toBeEnabled());
+    auto.click();
+    (await screen.findByRole('button', { name: 'Cancel' })).click();
+
+    expect(await screen.findByText('Heartbeats')).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Fixed' })).toHaveAttribute('aria-checked', 'true');
+    expect(api.updateModelSelection).not.toHaveBeenCalled();
+  });
+
+  it('keeps the form and shows the error when the save fails', async () => {
+    api.getModelSelection.mockResolvedValue(selection('fixed'));
+    api.updateModelSelection.mockRejectedValue(new Error('Runtime unavailable'));
+    renderCard();
+
+    const auto = await screen.findByRole('radio', { name: 'Auto' });
+    await waitFor(() => expect(auto).toBeEnabled());
+    auto.click();
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Small model ID' }), { target: { value: 's' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Large model ID' }), { target: { value: 'l' } });
+    screen.getByRole('button', { name: 'Save and turn on Auto' }).click();
 
     expect(await screen.findByText('Runtime unavailable')).toBeInTheDocument();
-    await new Promise((r) => setTimeout(r, 50));
-    expect(api.updateModelSelection.mock.calls.filter(([p]) => 'mode' in p)).toHaveLength(1);
+    expect(screen.getByRole('form', { name: 'Auto models' })).toBeInTheDocument();
+    expect(api.updateModelSelection).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a deployment model for a tier left empty, and does not require it', async () => {
+    const fromDeployment = selection('fixed');
+    fromDeployment.tiers.small = { override: null, effective: 'deploy-small' };
+    api.getModelSelection.mockResolvedValue(fromDeployment);
+    api.updateModelSelection.mockResolvedValue(selection('auto', { small: 'deploy-small', large: 'l' }));
+    renderCard();
+
+    const auto = await screen.findByRole('radio', { name: 'Auto' });
+    await waitFor(() => expect(auto).toBeEnabled());
+    auto.click();
+    const small = await screen.findByRole('textbox', { name: 'Small model ID' });
+    expect(small).toHaveAttribute('placeholder', 'deploy-small (deployment default)');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Large model ID' }), { target: { value: 'l' } });
+    screen.getByRole('button', { name: 'Save and turn on Auto' }).click();
+
+    await waitFor(() =>
+      expect(api.updateModelSelection).toHaveBeenCalledWith({ mode: 'auto', small: null, medium: null, large: 'l' }),
+    );
+  });
+
+  it('cannot be cancelled while the save is in flight', async () => {
+    api.getModelSelection.mockResolvedValue(selection('fixed'));
+    api.updateModelSelection.mockReturnValue(new Promise(() => {}));
+    renderCard();
+
+    const auto = await screen.findByRole('radio', { name: 'Auto' });
+    await waitFor(() => expect(auto).toBeEnabled());
+    auto.click();
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Small model ID' }), { target: { value: 's' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Large model ID' }), { target: { value: 'l' } });
+    screen.getByRole('button', { name: 'Save and turn on Auto' }).click();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled());
   });
 });

@@ -7,12 +7,13 @@ Feature: Auto model selection
     Given I am logged in
     And I have a personal agent
 
-  Scenario: Turning Auto on asks for the small and large models first
+  Scenario: Choosing Auto asks for the models and Save turns it on
     When I navigate to the profile page
     And I turn on Auto model selection
     Then the profile asks for a small and a large model
-    When I set the "Small" model to the small test model
-    And I set the "Large" model to the large test model
+    And the stored model mode is still Fixed
+    When I enter the small and the large test models
+    And I save the Auto models
     Then the profile shows Auto model selection
     And the stored model mode is Auto
 
