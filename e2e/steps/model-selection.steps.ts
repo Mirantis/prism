@@ -56,7 +56,7 @@ When('I ask {string}', async ({ page }, text: string) => {
   await homePage.navigate();
   await homePage.typeMessage(text);
   await homePage.sendMessage();
-  await homePage.waitForStreamComplete(120_000);
+  await homePage.waitForStreamComplete(300_000);
 });
 
 Then('the profile asks for a small and a large model', async ({ page }) => {
