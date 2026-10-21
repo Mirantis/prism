@@ -14,6 +14,7 @@ const { mockAdapters, mockConversationService, mockTrackEvent, mockLoggerError }
     getOrCreateLatestThread: vi.fn(),
     getOrCreateThreadByExternalId: vi.fn(),
     getThreadSource: vi.fn(),
+    writableThreadId: vi.fn(),
     addMessage: vi.fn(),
   },
   mockTrackEvent: vi.fn(),
@@ -327,6 +328,7 @@ describe('Requirement: a withheld run that sent a message stays in history', () 
   beforeEach(() => {
     vi.clearAllMocks();
     mockConversationService.getOrCreateLatestThread.mockResolvedValue({ id: 'thread-latest' });
+    mockConversationService.writableThreadId.mockImplementation(async (threadId: string) => threadId);
   });
 
   const run = {
@@ -360,6 +362,17 @@ describe('Requirement: a withheld run that sent a message stays in history', () 
       'thread-bound',
       expect.not.objectContaining({ internalStep: expect.anything() }),
     );
+  });
+
+  it('stores the message in the thread a delivery would write to, the one conversation in single-thread mode', async () => {
+    mockConversationService.writableThreadId.mockResolvedValue('thread-one');
+    mockConversationService.getThreadSource.mockResolvedValue('DATABASE');
+
+    await outboundMessageService.keepWithheldRun({ ...run, threadId: 'thread-hidden', toolCalls: [toolCall({})] });
+
+    expect(mockConversationService.writableThreadId).toHaveBeenCalledWith('thread-hidden');
+    expect(mockConversationService.getThreadSource).toHaveBeenCalledWith('thread-one');
+    expect(mockConversationService.addMessage).toHaveBeenCalledWith('thread-one', expect.anything());
   });
 
   it('stores the message as an internal row in a thread read live from a channel, which replays only those', async () => {
