@@ -868,17 +868,21 @@ When this run continues an earlier conversation, you are resuming after a wait y
 function getLastSendInstructions(lastSend: TaskLastSend, kind: 'task' | 'heartbeat'): string {
   const words =
     kind === 'task'
-      ? { title: 'Messages This Task Sent', run: 'A run of this task', asker: 'the task' }
-      : { title: 'Messages Your Heartbeat Sent', run: 'An earlier heartbeat run', asker: 'a check' };
-  const lines = [
-    `# ${words.title}`,
-    ``,
-    `${words.run} (${formatTimeAgo(lastSend.at)}) sent these messages:`,
-    ``,
-    lastSend.messages,
-  ];
+      ? {
+          title: 'Messages This Task Sent',
+          sent: `A run of this task (${formatTimeAgo(lastSend.at)}) sent these messages:`,
+          report: 'The newest run after it',
+          asker: 'the task',
+        }
+      : {
+          title: 'Messages Your Heartbeat Sent',
+          sent: 'Earlier heartbeat runs sent these messages, the latest to each place:',
+          report: 'The newest heartbeat run',
+          asker: 'a check',
+        };
+  const lines = [`# ${words.title}`, ``, words.sent, ``, lastSend.messages];
   if (lastSend.latestReport) {
-    lines.push(``, `The newest run after it (${formatTimeAgo(lastSend.latestReport.at)}) reported:`, ``, lastSend.latestReport.text);
+    lines.push(``, `${words.report} (${formatTimeAgo(lastSend.latestReport.at)}) reported:`, ``, lastSend.latestReport.text);
   }
   lines.push(
     ``,
