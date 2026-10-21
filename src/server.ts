@@ -5,7 +5,7 @@
  *      /agents/*       — management routes (heartbeat, chat, cron lifecycle)
  *                        + self-update (/agents/update, /agents/update/status)
  *                        + activity reads (/agents/activity/*)
- *                        + agent messages (/agents/agent-messages)
+ *                        + agent messages (/agents/agent-messages, /agents/state)
  *      /threads, /latest-thread — thread resolve/list/open
  *      /messages       — thread history replay
  *      /               — Prism Agent Web UI (static SPA bundle from web/dist)
@@ -45,6 +45,7 @@ import { originGuard } from './lib/origin-guard';
 import { activityRouter } from './routes/activity';
 import { cronTasksRouter } from './routes/cron-tasks';
 import { agentMessagesRouter } from './routes/agent-messages';
+import { agentStateRouter } from './routes/agent-state';
 
 export function createApp() {
   const app = express();
@@ -93,8 +94,10 @@ export function createApp() {
   // Scheduled tasks (/agents/cron-tasks)
   app.use('/agents', cronTasksRouter);
 
-  // Messages from the other agents of the project (POST /agents/agent-messages)
+  // Messages from the other agents of the project, and whether this one is working
+  // (POST /agents/agent-messages, GET /agents/state)
   app.use('/agents', agentMessagesRouter);
+  app.use('/agents', agentStateRouter);
 
   // Thread and message routes: /threads, /latest-thread and /messages.
   // Mounted at the root and registered before the SPA fallback so these

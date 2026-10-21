@@ -31,12 +31,7 @@ import {
 import { logger } from '../../logger';
 import { prisma } from '../../lib/prisma';
 import { trackEvent } from '../../lib/telemetry';
-import { agentStatusService } from '../agent-status.service';
-import { compactionService } from '../compaction.service';
-import { cronSchedulerService } from '../cron-scheduler.service';
-import { goalService } from '../goal.service';
-import { meetingBotService } from '../meeting/meeting-bot.service';
-import { threadTurnService } from '../thread-turn.service';
+import { isAgentIdle } from '../agent-activity';
 import { compareReleaseVersions, fetchLatestReleaseVersion } from './ghcr';
 import {
   removeStagedRelease,
@@ -231,7 +226,7 @@ class UpdateService {
       // reply still arrives. Closing it needs the thread service to refuse new
       // claims for the rest of the process's life, which is a lock with its own
       // failure mode (an update that then fails leaves the agent mute).
-      if (trigger === 'AUTO' && !(await this.isIdle())) {
+      if (trigger === 'AUTO' && !(await isAgentIdle())) {
         // Not an attempt that failed — one that never activated. Drop the
         // row, keep the verified stage, and let the next tick retry.
         await prisma.updateAttempt.delete({ where: { id: attempt.id } });
@@ -330,7 +325,7 @@ class UpdateService {
       });
     }
 
-    if (!(await this.isIdle())) {
+    if (!(await isAgentIdle())) {
       logger.info(`[Update] ${latest} not applied — agent busy, retrying next tick`);
       return;
     }
@@ -376,47 +371,6 @@ class UpdateService {
     // Never hold the process open for it: if the installer does its job, this
     // process is killed long before the deadline.
     timer.unref();
-  }
-
-  /**
-   * Whether nothing is in flight that a restart would interrupt.
-   *
-   * `isBusy()` counts model invocations, which is not the same as "the agent
-   * has nothing running". Two kinds of work outlive the turn that started it,
-   * and both would die unannounced in a restart:
-   *
-   * - a chat exchange, which spans the gap between a turn and the follow-up
-   *   coalesced after it, and holds its claim across that gap;
-   * - a `shell_spawn` child or a `coding_agent` task, started by one tool call
-   *   and polled from later turns — killing one leaves the agent's next status
-   *   poll with nothing to report.
-   */
-  private async isIdle(): Promise<boolean> {
-    if (
-      agentStatusService.isBusy() ||
-      threadTurnService.hasLiveExchange() ||
-      meetingBotService.isActive ||
-      cronSchedulerService.hasRunningTask() ||
-      goalService.hasLiveLoops() ||
-      compactionService.hasInFlight()
-    ) {
-      return false;
-    }
-
-    // Imported here rather than at the top: this service is reachable from the
-    // WebSocket gateway, and the shell tool modules and the voice chat's tool
-    // set have no business in that import graph. An updater that never runs
-    // never loads them.
-    const [{ getProcessManager }, { getAgentTaskManager }, { voiceChatService }] = await Promise.all([
-      import('../../tools/shell/process-manager'),
-      import('../../tools/shell/agent-task-manager'),
-      import('../voice/voice-chat.service'),
-    ]);
-    return (
-      getProcessManager().runningCount() === 0 &&
-      getAgentTaskManager().runningCount() === 0 &&
-      !voiceChatService.isLive
-    );
   }
 
   /**
