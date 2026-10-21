@@ -528,6 +528,33 @@ describe('HeartbeatService', () => {
       });
       expect(mockInvoke.mock.calls[0][0].lastHeartbeatAlert).toBe('Build #812 is still failing.');
     });
+
+    it('restores only the sends of the last three intervals', async () => {
+      vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
+      mockFindLastAlert.mockResolvedValue([
+        { content: 'Posted the disk alert.', createdAt: new Date('2025-01-15T08:00:00Z'), toolCalls: [sendTo('#oncall', 'Disk is 95% full.')] },
+        { content: 'Posted the build failure.', createdAt: new Date('2025-01-14T11:00:00Z'), toolCalls: [SEND] },
+      ]);
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await vi.advanceTimersByTimeAsync(0);
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockInvoke.mock.calls[0][0].lastSend.messages).toBe('- To #oncall (4h ago): Disk is 95% full.');
+    });
+
+    it('restores no record when every send is older than three intervals', async () => {
+      vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
+      mockFindLastAlert.mockResolvedValue([
+        { content: 'Posted the build failure.', createdAt: new Date('2025-01-14T11:00:00Z'), toolCalls: [SEND] },
+      ]);
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await vi.advanceTimersByTimeAsync(0);
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockInvoke.mock.calls[0][0].lastSend).toBeUndefined();
+    });
   });
 
   describe('gate LLM suppression', () => {
