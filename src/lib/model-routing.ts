@@ -201,17 +201,17 @@ function routingInput(context: AgentContext, request: RoutedRequest): string {
   const previous = [...context.recentMessages].reverse().find((m) => m.role === 'AGENT' && m.content.trim());
   return [
     `<request mode="${request.mode}">`,
-    fenced(subject.slice(0, REQUEST_CHARS), 'request'),
+    fenced(subject.slice(0, REQUEST_CHARS)),
     '</request>',
     ...(previous
-      ? ['<previous_reply>', fenced(previous.content.slice(0, PREVIOUS_REPLY_CHARS), 'previous_reply'), '</previous_reply>']
+      ? ['<previous_reply>', fenced(previous.content.slice(0, PREVIOUS_REPLY_CHARS)), '</previous_reply>']
       : []),
   ].join('\n');
 }
 
-/** `text` with every closing `tag` removed, so it cannot end its fence early. */
-function fenced(text: string, tag: string): string {
-  return text.replace(new RegExp(`</\\s*${tag}\\b[^>]*>`, 'gi'), '');
+/** `text` with `<` and `>` escaped, so no tag can form inside its fence. */
+function fenced(text: string): string {
+  return text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 /** The tier the classifier names, or null when it fails or names none on offer. */
