@@ -20,6 +20,7 @@ import { messageDeliveryService } from './message-delivery.service';
 import { outboundMessageService, sentMessageList } from './outbound-message.service';
 import { runClassificationGate, isRecentDuplicate } from '../lib/classification-gate';
 import { agentStatusService } from './agent-status.service';
+import { documentRevisionService } from './document-revision.service';
 import { MAX_RESUME_ATTEMPTS, pendingWorkService, type PendingWorkItem } from './pending-work.service';
 import prisma from '../lib/prisma';
 import { trackEvent } from '../lib/telemetry';
@@ -90,6 +91,8 @@ interface HeartbeatState {
    * delivered alert the duplicate check compares against.
    */
   lastSend: HeartbeatSendRecord | null;
+  /** The restore of the last alert and the send record. Every run waits for it. */
+  restored: Promise<void>;
 }
 
 /**
@@ -229,6 +232,7 @@ class HeartbeatService {
       lastAlertText: null,
       lastAlertAt: null,
       lastSend: null,
+      restored: Promise.resolve(),
     };
 
     this.heartbeatState = state;
@@ -236,23 +240,21 @@ class HeartbeatService {
       this.givenUp = false;
       this.persistSchedule(state);
     }
-    void this.restoreLastAlert(state, agent.heartbeatMd);
+    state.restored = this.restoreLastAlert(state, agent.heartbeatMd);
     return state;
   }
 
   /**
-   * The last alert is the newest heartbeat message delivered, so a restart keeps
-   * what the duplicate check and the gate compare against. Read before the first
-   * run, which the delay floor holds at least a minute away. A withheld run is
-   * stored only when it sent a message, so a row with a send is skipped: it may
-   * be no delivered alert. The trade: when the newest alert's run also sent, the
-   * one before it is restored, and the same alert can be delivered once more. A
-   * heartbeat delivers to a web thread, so the copy a send stores in its target's
-   * own thread is not read. The same rows give back the send record, from the
-   * sends of the last `HEARTBEAT_SEND_RESTORE_INTERVALS` intervals only. The
-   * trade: a suppressed run without a send is not stored, so the restored record
-   * can miss a report that a condition cleared, and a new occurrence inside that
-   * window can read as the one already sent.
+   * The last alert is the newest heartbeat message delivered to a web thread, so
+   * a restart keeps what the duplicate check and the gate compare against. A row
+   * with a send can be a withheld run, so it is skipped, and when the newest
+   * alert's run also sent, the alert before it is restored and can be delivered
+   * once more. The send record holds the sends of the last
+   * `HEARTBEAT_SEND_RESTORE_INTERVALS` intervals after the newest revision of the
+   * Heartbeat document. The trades: a suppressed run without a send is not
+   * stored, so the record can miss a report that a condition cleared; a send
+   * older than the window is sent again; and a document written straight into
+   * the database has no revision, so earlier sends are read as made under it.
    */
   private async restoreLastAlert(state: HeartbeatState, checks: string): Promise<void> {
     try {
@@ -262,20 +264,20 @@ class HeartbeatService {
         take: LAST_ALERT_ROWS,
         select: { content: true, createdAt: true, toolCalls: true },
       });
+      const edited = await documentRevisionService.newest(prisma, state.agentId, 'heartbeatMd');
+      const since = Math.max(
+        Date.now() - HEARTBEAT_SEND_RESTORE_INTERVALS * state.intervalMs,
+        edited?.createdAt.getTime() ?? 0,
+      );
       const sends = rows.map((row) => sentMessageList((row.toolCalls as ToolCallRecord[] | null) ?? []));
-      if (state.lastSend === null) {
-        const since = Date.now() - HEARTBEAT_SEND_RESTORE_INTERVALS * state.intervalMs;
-        let record: HeartbeatSendRecord | null = null;
-        // Oldest first, so a newer send to a place replaces an older one.
-        for (let i = rows.length - 1; i >= 0; i--) {
-          const at = rows[i].createdAt.getTime();
-          if (at >= since) record = mergeSends(record, sends[i], at, checks);
-        }
-        if (record && sends[0].length === 0) {
-          record.latestReport = { text: rows[0].content, at: rows[0].createdAt.getTime() };
-        }
-        state.lastSend = record;
+      let record: HeartbeatSendRecord | null = null;
+      // Oldest first, so a newer copy of a send replaces an older one.
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const at = rows[i].createdAt.getTime();
+        if (at >= since) record = mergeSends(record, sends[i], at, checks);
       }
+      if (record) record.latestReport = { text: rows[0].content, at: rows[0].createdAt.getTime() };
+      state.lastSend = record;
       const last = rows.find((_row, i) => sends[i].length === 0);
       if (!last || state.lastAlertAt !== null) return;
       state.lastAlertText = last.content;
@@ -854,8 +856,9 @@ Answer with one word: DELIVER or SUPPRESS.`;
     state.lastSend = mergeSends(state.lastSend, sentMessageList(toolCalls), Date.now(), checks);
   }
 
-  /** The Heartbeat document this run checks. A record made under other checks is dropped. */
+  /** The Heartbeat document this run checks, once the restore is done. A record made under other checks is dropped. */
   private async readChecks(state: HeartbeatState): Promise<string> {
+    await state.restored;
     const agent = await prisma.agentWorkspace.findUniqueOrThrow({
       where: { id: state.agentId },
       select: { heartbeatMd: true },
