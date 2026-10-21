@@ -31,6 +31,7 @@ vi.mock('../pending-work.service', () => ({ pendingWorkService: { end: mockEndWo
 import { inboundMessageService } from '../inbound-message.service';
 import { eventStreamService } from '../event-stream.service';
 import { conversationThreadActivityService } from '../conversation-thread-activity.service';
+import { trackEvent } from '../../lib/telemetry';
 import type { ChatTurnEnd } from '../conversation-engine.service';
 
 const THREAD_A = 'thread-a';
@@ -562,5 +563,94 @@ describe('InboundMessageService', () => {
       });
       stop();
     });
+  });
+});
+
+describe('InboundMessageService: a message from another agent', () => {
+  const origin = { kind: 'ask' as const, senderId: 'agent-r', senderName: 'Researcher', messageId: 'msg-r1' };
+  const fromAgent = (id: string, threadId = THREAD_A) => ({
+    ...inbound(id, threadId, 'Can you check CI?'),
+    sender: null,
+    agentMessage: origin,
+  });
+  const agentRow = (id: string, threadId = THREAD_A) => ({
+    ...row(id, threadId, 'Can you check CI?'),
+    triggeredBy: 'AGENT_MESSAGE',
+    triggerName: 'ask',
+    senderExternalId: 'agent-r',
+    senderName: 'Researcher',
+    externalMessageId: 'msg-r1',
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    inboundMessageService.resetForTests();
+    eventStreamService.resetForTests();
+    mockConfig.agentId = 'agent-1';
+    mockPrisma.conversationThread.findUnique.mockResolvedValue({
+      agentId: 'agent-1',
+      userId: 'owner-1',
+      threadSource: 'DATABASE',
+    });
+    mockPrisma.conversationMessage.findUnique.mockResolvedValue(null);
+    mockPrisma.conversationMessage.findFirst.mockResolvedValue(null);
+    mockEngine.acceptUserMessage.mockImplementation(async (_input, threadId, id) => ({
+      message: agentRow(id, threadId),
+      titleSet: null,
+    }));
+    mockEngine.chat.mockImplementation(exchange());
+  });
+
+  it('stores it as that agent’s and runs its turn knowing where it came from', async () => {
+    await inboundMessageService.accept(fromAgent('d-1'));
+    await settle();
+
+    const metadata = { channel: 'websocket', agentMessage: origin };
+    expect(mockEngine.acceptUserMessage).toHaveBeenCalledWith(expect.objectContaining({ metadata }), THREAD_A, 'd-1');
+    expect(mockEngine.chat).toHaveBeenCalledWith(expect.objectContaining({ metadata }));
+    expect(trackEvent).toHaveBeenCalledWith('agent message received', 'owner-1', {
+      'agent.id': 'agent-1',
+      'thread.id': THREAD_A,
+      'agent_message.kind': 'ask',
+      'agent_message.duplicate': 'false',
+      'agent_message.attachments': '0',
+    });
+    expect(trackEvent).not.toHaveBeenCalledWith('chat message received', expect.anything(), expect.anything());
+  });
+
+  it('confirms a delivery sent again in the conversation that holds it, after a newer conversation started', async () => {
+    mockPrisma.conversationMessage.findUnique.mockResolvedValue(agentRow('d-1', THREAD_B));
+    mockPrisma.conversationMessage.findFirst.mockResolvedValue({ id: 'reply' });
+
+    const acceptance = await inboundMessageService.accept(fromAgent('d-1', THREAD_A));
+    await settle();
+
+    expect(acceptance).toMatchObject({ duplicate: true, message: { threadId: THREAD_B } });
+    expect(mockEngine.chat).not.toHaveBeenCalled();
+    expect(trackEvent).toHaveBeenCalledWith(
+      'agent message received',
+      'owner-1',
+      expect.objectContaining({ 'thread.id': THREAD_B, 'agent_message.duplicate': 'true' }),
+    );
+  });
+
+  it('refuses an id that belongs to a person’s message, and a person’s id that belongs to an agent’s', async () => {
+    mockPrisma.conversationMessage.findUnique.mockResolvedValue(row('d-1'));
+    await expect(inboundMessageService.accept(fromAgent('d-1'))).rejects.toMatchObject({ code: 'id_conflict' });
+
+    mockPrisma.conversationMessage.findUnique.mockResolvedValue(agentRow('m-1'));
+    await expect(inboundMessageService.accept(inbound('m-1'))).rejects.toMatchObject({ code: 'id_conflict' });
+  });
+
+  it('continues a reply a restart interrupted as a reply to that agent', async () => {
+    inboundMessageService.resume(agentRow('d-2') as never, { messageIds: ['d-2'], unsaved: [], unsentAttachmentIds: [] });
+    await settle();
+
+    expect(mockEngine.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stored: { id: 'd-2', titleSet: null },
+        metadata: { channel: 'websocket', agentMessage: origin },
+      }),
+    );
   });
 });

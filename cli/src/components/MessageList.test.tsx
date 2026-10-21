@@ -65,6 +65,21 @@ describe('MessageList', () => {
     expect(lastFrame() ?? '').not.toContain('grace@example.com');
   });
 
+  it("labels another agent's message with that agent's name, and a notice with its sender's", () => {
+    const fromAgent = { role: 'USER' as const, triggeredBy: 'AGENT_MESSAGE' };
+    const entries = [
+      entry(makeMsg({ ...fromAgent, id: 'a1', content: 'Is CI green?', senderId: 'agent-r', senderName: 'Researcher' })),
+      entry(makeMsg({ ...fromAgent, id: 'a2', content: 'Writer did not answer.', senderId: 'irene-agent', senderName: 'Irene Agent' })),
+    ];
+    const { lastFrame } = render(
+      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId={null} />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('▌ Researcher · Agent');
+    expect(frame).toContain('▌ Irene Agent');
+    expect(frame).not.toContain('▌ You');
+  });
+
   it('says why a message was not sent', () => {
     const entries: ChatEntry[] = [
       { ...entry(makeMsg({ id: 'u1', role: 'USER', content: 'hello' })), local: true, failed: 'There is no such conversation.' },

@@ -37,7 +37,7 @@ import type { ToolCallRecord } from '../types';
  * against it. The Prisma enum cannot serve that: it still declares SYSTEM, which
  * nothing produces.
  */
-export const MESSAGE_TRIGGERS = ['USER_INPUT', 'HEARTBEAT', 'CRON_TASK', 'GOAL', 'WEBHOOK'] as const;
+export const MESSAGE_TRIGGERS = ['USER_INPUT', 'HEARTBEAT', 'CRON_TASK', 'GOAL', 'WEBHOOK', 'AGENT_MESSAGE'] as const;
 
 export type MessageTrigger = (typeof MESSAGE_TRIGGERS)[number];
 

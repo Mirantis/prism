@@ -237,6 +237,20 @@ export interface TaskLastSend {
   reports?: Array<{ text: string; at: number }>;
 }
 
+/**
+ * Where a message from another agent of the project came from. It is a
+ * colleague's request, never the person's words. `ask` is a message whose sender
+ * waits for an answer, and `notice` is what the delivery service itself says
+ * about the agent's messages.
+ */
+export interface AgentMessageOrigin {
+  kind: 'message' | 'ask' | 'notice';
+  senderId: string;
+  senderName: string;
+  /** The message's id, which a reply names. */
+  messageId: string;
+}
+
 export interface ToolCallRecord {
   tool: string;
   input: string;

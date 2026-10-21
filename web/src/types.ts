@@ -1,7 +1,8 @@
 import type { ThreadMode } from '@/lib/chat-socket/protocol';
 
 export type MessageRole = 'USER' | 'AGENT' | 'SYSTEM';
-export type MessageTrigger = 'USER_INPUT' | 'HEARTBEAT' | 'CRON_TASK' | 'GOAL' | 'WEBHOOK';
+/** `AGENT_MESSAGE` marks a USER message that another agent of the project sent. */
+export type MessageTrigger = 'USER_INPUT' | 'HEARTBEAT' | 'CRON_TASK' | 'GOAL' | 'WEBHOOK' | 'AGENT_MESSAGE';
 
 /** Mirrors `ToolOutputTruncation` in src/types.ts. */
 export interface ToolOutputTruncation {

@@ -18,8 +18,9 @@ import { conversationThreadActivityService } from './conversation-thread-activit
 import { attachmentService } from './attachment.service';
 import { pendingWorkService } from './pending-work.service';
 import { RESUMED_REPLY_NOTICE } from '../prompts/resume-prompt';
+import { agentMessageColumns, renderAgentMessage } from '../prompts/agent-message-prompt';
 import { invokeStream } from '../invoke';
-import { ToolCallRecord, InvokeStep, InvokeError, ResumedReply, UIBlock } from '../types';
+import { ToolCallRecord, InvokeStep, InvokeError, ResumedReply, UIBlock, type AgentMessageOrigin } from '../types';
 import type { ConversationMessage as HistoryRow, SteeringMessage } from '../prompts/context-builder';
 import type { ToolLifecycleListener } from '../lib/tool-lifecycle';
 import { logger } from '../logger';
@@ -103,6 +104,11 @@ export interface ChatInput {
     /** The sender's id in the originating channel, stored as-is. */
     senderExternalId?: string;
     senderName?: string;
+    /**
+     * Set when another agent of the project sent the message. It is stored as
+     * that agent's, and the model reads it as a colleague's request.
+     */
+    agentMessage?: AgentMessageOrigin;
   };
 }
 
@@ -184,6 +190,11 @@ function cut(text: string): string {
   return text.length <= UNSAVED_MAX_CHARS ? text : `${text.slice(0, UNSAVED_MAX_CHARS)}…`;
 }
 
+/** A message as a turn's prompt holds it: another agent's inside the tag that names that agent. */
+function promptText(text: string, origin: AgentMessageOrigin | undefined): string {
+  return origin ? renderAgentMessage(origin, text) : text;
+}
+
 /** A call's input with each long string in it cut, so it stays JSON and replays with its arguments. */
 function cutInput(input: string): string {
   return input.length <= UNSAVED_MAX_CHARS ? input : JSON.stringify(cutStrings(JSON.parse(input)));
@@ -246,11 +257,12 @@ class ConversationEngineService {
    *    is a no-op when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset. Showing buttons
    *    in that state would silently drop the rating and waste a classifier call.
    * 2. Per-thread cadence: show on the 1st user turn, then every Nth turn.
-   *    Counts USER messages (one per turn) rather than AGENT messages (one
-   *    per text-producing step), so multi-step responses don't throw the
-   *    cadence off. The current turn's user message has already been stored
-   *    by the caller, so `userCount` is 1 on the very first turn — hence
-   *    `(n - 1) % N === 0`.
+   *    Counts the person's messages (one per turn) rather than AGENT messages
+   *    (one per text-producing step), so multi-step responses don't throw the
+   *    cadence off. Another agent's message and a hidden row the runtime wrote
+   *    for the model are not the person's. The current turn's user message has
+   *    already been stored by the caller, so `userCount` is 1 on the very
+   *    first turn — hence `(n - 1) % N === 0`.
    * 3. Classifier judgment: the configured Haiku classification model rates
    *    whether the reply is substantive enough that a thumbs-up/down signal
    *    would be meaningful (see `isResponseWorthyOfFeedback`). Fail-closed —
@@ -275,6 +287,7 @@ class ConversationEngineService {
         threadId,
         role: 'USER',
         triggeredBy: 'USER_INPUT',
+        internalStep: false,
       },
     });
     if (userCount === 0 || (userCount - 1) % FEEDBACK_CADENCE_N !== 0) {
@@ -383,6 +396,7 @@ Answer with one word: WORTHY or SKIP.`;
       id: messageId,
       text: message,
       attachmentIds: input.attachmentIds ?? [],
+      ...(metadata?.agentMessage ? { agentMessage: metadata.agentMessage } : {}),
     };
     // A reply a restart interrupted is never handed over: what its exchange stores
     // and delivers first belongs to that exchange alone, so it waits for the thread.
@@ -566,8 +580,10 @@ Answer with one word: WORTHY or SKIP.`;
           const agent = await agentWorkspaceService.getAgent();
           verbose = agent.verbose;
 
-          let prompt = message;
+          let prompt = promptText(message, metadata?.agentMessage);
           let appendPrompt = false;
+          // Feedback is the person's to give, on a reply to something they asked.
+          let fromPerson = !metadata?.agentMessage;
           let appendedMessageIds: string[] = [];
           // A resumed exchange stores rows after its message on purpose, and its
           // history ends on the resume notice.
@@ -585,6 +601,7 @@ Answer with one word: WORTHY or SKIP.`;
               workspaceRoot,
               prompt,
               appendPrompt,
+              fromPerson,
               appendedMessageIds,
               promptMessageId,
               verbose,
@@ -637,8 +654,9 @@ Answer with one word: WORTHY or SKIP.`;
 
             // Text only: any files these carried are already linked to their stored
             // message rows, so the follow-up's context build picks them up.
-            prompt = leftover.map((p) => p.text).join('\n\n');
+            prompt = leftover.map((p) => promptText(p.text, p.agentMessage)).join('\n\n');
             appendPrompt = true;
+            fromPerson = leftover.some((p) => !p.agentMessage);
             appendedMessageIds = leftover.map((p) => p.id);
             promptMessageId = undefined;
             runtimeNotices = undefined;
@@ -729,9 +747,13 @@ Answer with one word: WORTHY or SKIP.`;
       id: messageId,
       content: message,
       role: 'USER',
-      triggeredBy: 'USER_INPUT',
-      senderExternalId: metadata?.senderExternalId,
-      senderName: metadata?.senderName,
+      ...(metadata?.agentMessage
+        ? agentMessageColumns(metadata.agentMessage)
+        : {
+            triggeredBy: 'USER_INPUT' as const,
+            senderExternalId: metadata?.senderExternalId,
+            senderName: metadata?.senderName,
+          }),
     });
 
     // First user message named the thread: announce the placeholder title and
@@ -780,6 +802,7 @@ Answer with one word: WORTHY or SKIP.`;
         attachments: p.attachmentIds.length
           ? await attachmentService.getMetaByIds(p.attachmentIds)
           : undefined,
+        ...(p.agentMessage ? { agentMessage: p.agentMessage } : {}),
       })),
     );
   }
@@ -806,6 +829,8 @@ Answer with one word: WORTHY or SKIP.`;
     prompt: string;
     /** Restate `prompt` as the trailing user message (coalesced follow-up). */
     appendPrompt: boolean;
+    /** The turn answers the person, not only other agents, so the person may rate it. */
+    fromPerson: boolean;
     appendedMessageIds: string[];
     /** Snapshot taken once inside the lock; gates intermediate delivery. */
     verbose: boolean;
@@ -922,7 +947,7 @@ Answer with one word: WORTHY or SKIP.`;
     // Stream is done. The buffered step (if any) is the LAST text step:
     // attach the accumulated blocks and the feedback decision here.
     if (bufferedStep) {
-      const includeFeedback = await this.shouldShowFeedback(
+      const includeFeedback = params.fromPerson && await this.shouldShowFeedback(
         threadId, prompt, bufferedStep.text, userId, agentId, params.abortSignal,
       );
       agentMessage = await messageDeliveryService.publish(

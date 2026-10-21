@@ -51,13 +51,13 @@ export const CLIENT_PONG_DEADLINE_MS = 10_000;
 
 // A version-4 uuid, the only id a client may choose for a message. Checked
 // rather than trusted because it becomes the row's primary key.
-const uuidV4 = z
+export const uuidV4 = z
   .string()
   .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i, 'must be a uuid v4');
 
 // Any uuid. Threads and attachments are minted by the server, which does not
 // promise a version.
-const uuid = z
+export const uuid = z
   .string()
   .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, 'must be a uuid');
 

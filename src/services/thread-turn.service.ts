@@ -43,6 +43,7 @@
  */
 
 import { logger } from '../logger';
+import type { AgentMessageOrigin } from '../types';
 
 /**
  * A message waiting to reach the turn that owns a thread.
@@ -56,6 +57,8 @@ export interface PendingMessage {
   text: string;
   /** Ids of already-uploaded attachments the message carried. */
   attachmentIds: string[];
+  /** Set when another agent sent it, so the turn reads it as that agent's. */
+  agentMessage?: AgentMessageOrigin;
 }
 
 /** One claim's messages, oldest first. */

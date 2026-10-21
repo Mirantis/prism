@@ -145,7 +145,7 @@ export default function ChatMessageList({
   // A new message scrolls into view only for a reader already at the end, or for the
   // message they just sent. Somebody reading further up keeps their place, and so does
   // somebody reading older messages as they load.
-  const sentByMe = last?.role === 'USER';
+  const sentByMe = last?.role === 'USER' && last.triggeredBy !== 'AGENT_MESSAGE';
   useEffect(() => {
     if (atBottomRef.current || sentByMe) endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [last?.id, turnState, sentByMe]);

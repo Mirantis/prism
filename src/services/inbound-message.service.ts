@@ -41,7 +41,8 @@ import {
   type TurnOutcome,
   type TurnState,
 } from '../protocol/chat-protocol';
-import type { ResumedReply } from '../types';
+import type { AgentMessageOrigin, ResumedReply } from '../types';
+import { agentMessageOrigin } from '../prompts/agent-message-prompt';
 
 export interface InboundMessage {
   /** The client's id for the message, which becomes the row's. */
@@ -55,6 +56,8 @@ export interface InboundMessage {
    * sign-in gives an email, or a user id, which serves as both today.
    */
   sender: { id: string; name: string } | null;
+  /** Set when another agent of the project sent it, and `sender` is then null. */
+  agentMessage?: AgentMessageOrigin;
 }
 
 export interface Acceptance {
@@ -81,10 +84,33 @@ function outcomeOf({ cancelled, error }: ChatTurnEnd): { outcome: TurnOutcome; e
 
 /** How a message's sender is stored: the id as the external id, the name for display. */
 function senderMetadata(message: InboundMessage) {
+  if (message.agentMessage) return { channel: 'websocket' as const, agentMessage: message.agentMessage };
   return {
     channel: 'websocket' as const,
     ...(message.sender ? { senderExternalId: message.sender.id, senderName: message.sender.name } : {}),
   };
+}
+
+/** One event per message received, a person's or another agent's, whether or not it came before. */
+function trackReceived(message: InboundMessage, duplicate: boolean): void {
+  const common = {
+    ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+    'thread.id': message.threadId,
+  };
+  if (message.agentMessage) {
+    trackEvent('agent message received', config.ownerUserId, {
+      ...common,
+      'agent_message.kind': message.agentMessage.kind,
+      'agent_message.duplicate': String(duplicate),
+      'agent_message.attachments': String(message.attachmentIds.length),
+    });
+    return;
+  }
+  trackEvent('chat message received', config.ownerUserId, {
+    ...common,
+    'chat.duplicate': String(duplicate),
+    'chat.attachments': String(message.attachmentIds.length),
+  });
 }
 
 interface Waiting {
@@ -165,6 +191,7 @@ class InboundMessageService {
    * message, behind the ones accepted before it.
    */
   resume(message: ConversationMessage, resumed: ResumedReply): void {
+    const agentMessage = agentMessageOrigin(message);
     void this.scheduleStored({
       message: {
         id: message.id,
@@ -172,6 +199,7 @@ class InboundMessageService {
         content: message.content,
         attachmentIds: [],
         sender: null,
+        ...(agentMessage ? { agentMessage } : {}),
       },
       titleSet: null,
       resumed,
@@ -216,12 +244,7 @@ class InboundMessageService {
       throw error;
     }
 
-    trackEvent('chat message received', config.ownerUserId, {
-      'agent.id': agentId,
-      'thread.id': inbound.threadId,
-      'chat.duplicate': 'false',
-      'chat.attachments': String(inbound.attachmentIds.length),
-    });
+    trackReceived(inbound, false);
 
     const queued = await this.scheduleStored({ message: inbound, titleSet: stored.titleSet });
     return { message: stored.message, seq: eventStreamService.seq, queued, duplicate: false };
@@ -229,25 +252,26 @@ class InboundMessageService {
 
   /**
    * The id is already a row. A person's message in the same conversation is the
-   * same message sent again, and is confirmed again. Anything else is refused:
-   * the id is the client's choice, and must not attach to an agent's reply or to
-   * another conversation. The client then offers to send it again.
+   * same message sent again, and is confirmed again. So is another agent's
+   * message delivered again, in the conversation that holds it: the newest
+   * conversation can be another one by then. Anything else is refused: the id
+   * is the client's choice, and must not attach to an agent's reply, to another
+   * sender's message or to another conversation. The client then offers to send
+   * it again.
    *
    * A confirmed message whose turn never ran — the process stopped between the
    * store and the turn — is scheduled now. One with an answer after it, or with
    * work under way on its thread, is left alone: answering it twice is worse.
    */
-  private async acceptDuplicate(existing: ConversationMessage, inbound: InboundMessage): Promise<Acceptance> {
-    if (existing.threadId !== inbound.threadId || existing.role !== 'USER') {
+  private async acceptDuplicate(existing: ConversationMessage, received: InboundMessage): Promise<Acceptance> {
+    const fromAgent = received.agentMessage !== undefined;
+    const sameKind = existing.role === 'USER' && (existing.triggeredBy === 'AGENT_MESSAGE') === fromAgent;
+    if (!sameKind || (!fromAgent && existing.threadId !== received.threadId)) {
       throw new InboundMessageError('id_conflict', 'That message id is already taken by another message.');
     }
+    const inbound = { ...received, threadId: existing.threadId };
 
-    trackEvent('chat message received', config.ownerUserId, {
-      ...(config.agentId ? { 'agent.id': config.agentId } : {}),
-      'thread.id': inbound.threadId,
-      'chat.duplicate': 'true',
-      'chat.attachments': String(inbound.attachmentIds.length),
-    });
+    trackReceived(inbound, true);
 
     let queued = this.announced.get(inbound.threadId) === 'queued';
     if (!this.hasWork(inbound.threadId) && !(await this.hasAnswer(existing))) {
