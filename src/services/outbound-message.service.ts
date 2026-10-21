@@ -96,9 +96,12 @@ class OutboundMessageService {
     toolCalls: ToolCallRecord[];
   }): Promise<void> {
     if (sentMessages(run.toolCalls).length === 0) return;
-    const threadId = run.threadId ?? (await conversationService.getOrCreateLatestThread(run.agentId, run.userId)).id;
+    // The thread a delivery of this run would write to, as `publish` resolves it.
+    const threadId = run.threadId
+      ? await conversationService.writableThreadId(run.threadId)
+      : (await conversationService.getOrCreateLatestThread(run.agentId, run.userId)).id;
     const readLive =
-      run.threadId !== undefined && (await conversationService.getThreadSource(run.threadId)) !== ThreadSource.DATABASE;
+      run.threadId !== undefined && (await conversationService.getThreadSource(threadId)) !== ThreadSource.DATABASE;
     await conversationService.addMessage(threadId, {
       content: run.content.trim() ? run.content : WITHHELD_RUN_TEXT,
       role: 'AGENT',
