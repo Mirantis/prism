@@ -154,7 +154,6 @@ export function resolveEventType(
   return header('x-github-event') || header('x-gitlab-event') || fromPayload || 'unknown';
 }
 
-
 /**
  * Render a prompt template against the webhook payload.
  *
