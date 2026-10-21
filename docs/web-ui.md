@@ -246,8 +246,8 @@ The agent's identity and runtime controls.
   returns it to the runtime default. **Heartbeats** and **Scheduled tasks** can
   each use their own model; leave one empty to use the chat model. **Auto** runs
   each turn on your **Small**, **Medium** or **Large** model. Auto needs a small
-  and a large model; choosing it before both are set opens their fields below the
-  fixed models.
+  and a large model; choosing it before both are set asks for them, and **Save and
+  turn on Auto** applies the change.
   See **[Configuration → Models](configuration.md#models)** and
   **[Auto model selection](configuration.md#auto-model-selection)**.
 - **Chat delivery.** A toggle switches between **Concise** (default) and

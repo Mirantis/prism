@@ -28,8 +28,8 @@ export function ModeSwitch({
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
     event.preventDefault();
     if (busy) return;
-    // Flip from the focused option: a choice the caller does not store yet
-    // (Auto before its models are set) leaves `value` where it was.
+    // Flip from the focused option, so the keys follow focus even before the
+    // caller has moved `value`.
     const focused = event.target === buttons.current.auto ? 'auto' : 'fixed';
     const other: ModelMode = focused === 'fixed' ? 'auto' : 'fixed';
     buttons.current[other]?.focus();

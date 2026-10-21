@@ -1,11 +1,11 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Info } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { runtimeApi } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
-import type { ModelSelectionInfo, ModelTier } from '@/types';
+import type { ModelSelectionInfo, ModelSelectionPatch, ModelTier } from '@/types';
+import { TIER_ROWS } from '@/lib/model-tiers';
+import { AutoSetupForm } from './auto-setup-form';
 import { ModelField } from './model-field';
 import { ModeSwitch, type ModelMode as Mode } from './mode-switch';
 
@@ -16,29 +16,17 @@ const MODE_SUMMARY: Record<Mode, string> = {
   auto: 'Each turn runs on the smallest model below that suits the request.',
 };
 
-const TIER_ROWS: { tier: ModelTier; label: string; description: string; required: boolean }[] = [
-  { tier: 'small', label: 'Small', description: 'Quick answers, lookups and simple changes.', required: true },
-  { tier: 'medium', label: 'Medium', description: 'Moderate work on one topic. Leave empty to use small and large only.', required: false },
-  { tier: 'large', label: 'Large', description: 'Multi-step work, code, planning, and anything unclear.', required: true },
-];
-
 /**
  * The agent's model settings. Fixed mode shows one model each for chat,
  * heartbeats and scheduled tasks; Auto mode shows the small, medium and large
- * models the agent chooses between for each turn. The switch shows the stored
- * mode: choosing Auto before a small and a large model are set opens their
- * fields below the fixed ones, and the save that completes them switches.
+ * models the agent chooses between for each turn. Choosing Auto before a small
+ * and a large model are set shows a form for them, and its Save turns Auto on.
  */
 export function ModelSettingsCard() {
   const agent = useAgent();
   const queryClient = useQueryClient();
-  const [pendingAuto, setPendingAutoState] = useState(false);
-  // Read after a tier save resolves, so it has to see a mode changed back meanwhile.
-  const pendingAutoRef = useRef(false);
-  const setPendingAuto = (value: boolean) => {
-    pendingAutoRef.current = value;
-    setPendingAutoState(value);
-  };
+  // Auto chosen but not saved yet: the models typed so far live in the form.
+  const [settingUp, setSettingUp] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const { data: selection } = useQuery({
@@ -46,19 +34,22 @@ export function ModelSettingsCard() {
     queryFn: () => runtimeApi.getModelSelection(),
   });
 
-  const modeMut = useMutation({
-    mutationFn: (mode: Mode) => runtimeApi.updateModelSelection({ mode }),
+  const selectionMut = useMutation({
+    mutationFn: (patch: ModelSelectionPatch) => runtimeApi.updateModelSelection(patch),
     onSuccess: (data) => {
       queryClient.setQueryData([SELECTION_KEY, agent.agentId], data);
-      setPendingAuto(false);
+      // The tier rows read their own queries; the next render reloads them.
+      for (const { tier } of TIER_ROWS) {
+        queryClient.removeQueries({ queryKey: [`agent-model-tier-${tier}`, agent.agentId] });
+      }
+      setSettingUp(false);
       setError(null);
     },
     onError: (e: unknown) => setError(e instanceof Error ? e.message : 'Update failed'),
   });
 
-  const missing = selection ? missingTiers(selection) : [];
   const isAuto = selection?.mode.effective === 'auto';
-  const stored: Mode = isAuto ? 'auto' : 'fixed';
+  const shown: Mode = isAuto || settingUp ? 'auto' : 'fixed';
 
   const loadSelection = () =>
     queryClient.ensureQueryData({
@@ -69,47 +60,34 @@ export function ModelSettingsCard() {
   const saveTier = async (tier: ModelTier, model: string | null) => {
     const saved = await runtimeApi.updateModelSelection({ [tier]: model });
     queryClient.setQueryData([SELECTION_KEY, agent.agentId], saved);
-    // The save that supplies the last required tier finishes the switch the user asked for.
-    if (pendingAutoRef.current && saved.mode.effective !== 'auto' && missingTiers(saved).length === 0) {
-      modeMut.mutate('auto');
-    }
     return tierInfo(saved, tier);
   };
 
   const choose = (mode: Mode) => {
     setError(null);
     if (mode === 'fixed') {
-      setPendingAuto(false);
-      if (isAuto) modeMut.mutate('fixed');
+      setSettingUp(false);
+      if (isAuto) selectionMut.mutate({ mode: 'fixed' });
       return;
     }
-    if (isAuto) return;
-    if (missing.length > 0) setPendingAuto(true);
-    else modeMut.mutate('auto');
+    if (isAuto || settingUp || !selection) return;
+    if (missingTiers(selection).length > 0) setSettingUp(true);
+    else selectionMut.mutate({ mode: 'auto' });
   };
 
-  const tierRows = TIER_ROWS.map(({ tier, label, description, required }) => {
-    const unset = !selection?.tiers[tier].effective;
-    return (
-      <ModelField
-        key={tier}
-        label={label}
-        description={description}
-        tag={
-          required
-            ? unset
-              ? { text: 'Required', tone: 'attention' }
-              : undefined
-            : { text: 'Optional', tone: 'muted' }
-        }
-        queryKey={`agent-model-tier-${tier}`}
-        load={() => loadSelection().then((s) => tierInfo(s, tier))}
-        save={(model) => saveTier(tier, model)}
-        allowEmpty
-        fallbackLabel={(model) => `${model} (deployment default)`}
-      />
-    );
-  });
+  const tierRows = TIER_ROWS.map(({ tier, label, description, required }) => (
+    <ModelField
+      key={tier}
+      label={label}
+      description={description}
+      tag={required ? undefined : { text: 'Optional', tone: 'muted' }}
+      queryKey={`agent-model-tier-${tier}`}
+      load={() => loadSelection().then((s) => tierInfo(s, tier))}
+      save={(model) => saveTier(tier, model)}
+      allowEmpty={!required}
+      fallbackLabel={(model) => `${model} (deployment default)`}
+    />
+  ));
 
   const fixedRows = (
     <>
@@ -146,30 +124,37 @@ export function ModelSettingsCard() {
     <Card>
       <CardHeader>
         <CardTitle>Models</CardTitle>
-        <CardDescription>{MODE_SUMMARY[stored]}</CardDescription>
+        <CardDescription>{MODE_SUMMARY[shown]}</CardDescription>
         <CardAction>
-          <ModeSwitch value={stored} onChange={choose} busy={!selection || modeMut.isPending} />
+          <ModeSwitch value={shown} onChange={choose} busy={!selection || selectionMut.isPending} />
         </CardAction>
       </CardHeader>
       <CardContent className="space-y-3">
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        <div className="divide-y divide-border">{isAuto ? tierRows : fixedRows}</div>
-        {pendingAuto && !isAuto && (
-          <section aria-label="Set up Auto" className="space-y-2 rounded-xl p-3.5 ring-1 ring-border ring-inset">
-            <div className="flex items-start justify-between gap-3">
-              <div role="status" className="flex items-start gap-2 text-sm text-amber-700 dark:text-amber-300">
-                <Info className="mt-0.5 size-4 shrink-0" />
-                <span>
-                  To turn on Auto, add a {missing.join(' and a ')} model. Until then the agent
-                  keeps using the fixed models above.
-                </span>
-              </div>
-              <Button size="sm" variant="ghost" onClick={() => setPendingAuto(false)}>
-                Cancel
-              </Button>
-            </div>
-            <div className="divide-y divide-border">{tierRows}</div>
-          </section>
+        {settingUp && selection ? (
+          <AutoSetupForm
+            initial={{
+              small: selection.tiers.small.override ?? '',
+              medium: selection.tiers.medium.override ?? '',
+              large: selection.tiers.large.override ?? '',
+            }}
+            deploymentDefaults={{
+              small: selection.tiers.small.override ? null : selection.tiers.small.effective,
+              medium: selection.tiers.medium.override ? null : selection.tiers.medium.effective,
+              large: selection.tiers.large.override ? null : selection.tiers.large.effective,
+            }}
+            saving={selectionMut.isPending}
+            error={error}
+            onSave={(patch) => selectionMut.mutate(patch)}
+            onCancel={() => {
+              setSettingUp(false);
+              setError(null);
+            }}
+          />
+        ) : (
+          <>
+            {error && <p className="text-sm text-destructive">{error}</p>}
+            <div className="divide-y divide-border">{isAuto ? tierRows : fixedRows}</div>
+          </>
         )}
       </CardContent>
     </Card>

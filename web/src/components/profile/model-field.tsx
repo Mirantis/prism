@@ -5,9 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useAgent } from '@/lib/agent-context';
-
-const MODEL_ID_PATTERN = /^[A-Za-z0-9._:\-/]+$/;
-const MODEL_ID_MAX_LEN = 200;
+import { MODEL_ID_MAX_LEN, isValidModelId } from '@/lib/model-id';
 
 /**
  * One model setting as a list row: the label and what the model is for on the
@@ -78,9 +76,7 @@ export function ModelField({
 
   const trimmed = value.trim();
   const next = trimmed.length === 0 ? null : trimmed;
-  const valid =
-    (allowEmpty && trimmed.length === 0) ||
-    (trimmed.length > 0 && trimmed.length <= MODEL_ID_MAX_LEN && MODEL_ID_PATTERN.test(trimmed));
+  const valid = (allowEmpty && trimmed.length === 0) || isValidModelId(trimmed);
   const unchanged = (next ?? '') === override;
   const canSave = valid && !updateMut.isPending && !unchanged;
 
