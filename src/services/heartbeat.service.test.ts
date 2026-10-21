@@ -396,6 +396,95 @@ describe('HeartbeatService', () => {
   // Gate LLM suppression
   // ==========================================================================
 
+  describe('what earlier runs sent', () => {
+    const SEND = {
+      tool: 'send_message',
+      input: JSON.stringify({ target: '#ops', text: 'Build #812 failed.' }),
+      output: '{}',
+      success: true,
+      timestamp: '2025-01-15T11:00:00Z',
+    };
+    const reply = (text: string, toolCalls: unknown[] = []) => ({ response: text, toolCalls, steps: [{ text, toolCalls }] });
+
+    it("gives the next run what a run sent, also when the gate suppressed that run's reply", async () => {
+      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+      mockInvoke.mockResolvedValueOnce(reply('Posted the build failure to #ops.', [SEND]));
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await vi.advanceTimersByTimeAsync(0);
+      await heartbeatService.triggerHeartbeat();
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockInvoke.mock.calls[0][0].lastSend).toBeUndefined();
+      expect(mockInvoke.mock.calls[1][0].lastSend).toEqual({ messages: '- To #ops: Build #812 failed.', at: expect.any(Number) });
+      // The delivered-alert baseline stays apart: nothing was delivered.
+      expect(mockInvoke.mock.calls[1][0].lastHeartbeatAlert).toBeUndefined();
+    });
+
+    it("passes on a later run's report, and keeps the record through an empty one", async () => {
+      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+      mockInvoke
+        .mockResolvedValueOnce(reply('Posted the build failure to #ops.', [SEND]))
+        .mockResolvedValueOnce(reply('Build #812 is still failing. The alert is already in #ops.'))
+        .mockResolvedValueOnce(reply(''));
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await vi.advanceTimersByTimeAsync(0);
+      for (let i = 0; i < 4; i++) await heartbeatService.triggerHeartbeat();
+
+      expect(mockInvoke.mock.calls[3][0].lastSend).toEqual({
+        messages: '- To #ops: Build #812 failed.',
+        at: expect.any(Number),
+        latestReport: { text: 'Build #812 is still failing. The alert is already in #ops.', at: expect.any(Number) },
+      });
+    });
+
+    it('records what a run sent before it hit the spending limit', async () => {
+      mockInvoke.mockResolvedValueOnce({ ...reply('', [SEND]), error: { type: 'budget_exceeded', detail: null } });
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await vi.advanceTimersByTimeAsync(0);
+      await heartbeatService.triggerHeartbeat();
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockInvoke.mock.calls[1][0].lastSend).toEqual(expect.objectContaining({ messages: '- To #ops: Build #812 failed.' }));
+    });
+
+    it('gives a channel-triggered run the record too', async () => {
+      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+      mockInvoke.mockResolvedValueOnce(reply('Posted the build failure to #ops.', [SEND]));
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await vi.advanceTimersByTimeAsync(0);
+      await heartbeatService.triggerHeartbeat();
+      mockPendingTriggerMessages.mockResolvedValueOnce([
+        { sender: 'Test Operator', text: 'is the build still red?', timestamp: '2025-01-15T12:00:00Z' },
+      ]);
+      heartbeatService.triggerFrom(triggerSource);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mockInvoke.mock.calls[1][0].lastSend).toEqual(expect.objectContaining({ messages: '- To #ops: Build #812 failed.' }));
+    });
+
+    it('reads the record and the last delivered alert from the same stored messages after a restart', async () => {
+      mockFindLastAlert.mockResolvedValue([
+        { content: 'Build #812 is still failing.', createdAt: new Date('2025-01-15T11:30:00Z'), toolCalls: null },
+        { content: 'Posted the build failure to #ops.', createdAt: new Date('2025-01-15T11:00:00Z'), toolCalls: [SEND] },
+      ]);
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await vi.advanceTimersByTimeAsync(0);
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockInvoke.mock.calls[0][0].lastSend).toEqual({
+        messages: '- To #ops: Build #812 failed.',
+        at: new Date('2025-01-15T11:00:00Z').getTime(),
+        latestReport: { text: 'Build #812 is still failing.', at: new Date('2025-01-15T11:30:00Z').getTime() },
+      });
+      expect(mockInvoke.mock.calls[0][0].lastHeartbeatAlert).toBe('Build #812 is still failing.');
+    });
+  });
+
   describe('gate LLM suppression', () => {
     beforeEach(() => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));

@@ -335,6 +335,16 @@ describe('system prompt text', () => {
     expect(text).toContain('When you do not send a message for that reason, end with the finding that still holds');
   });
 
+  it('heartbeat mode tells a run what an earlier heartbeat run sent, after the cached part', async () => {
+    const lastSend = { messages: '- To #ops: Build #812 failed.', at: Date.now() - 60 * 60 * 1000 };
+    const parts = await buildSystemPromptParts(createTestAgentContext({ lastSend }), 'heartbeat');
+
+    const section = parts.find((p) => p.text.includes('# Messages Your Heartbeat Sent'));
+    expect(section?.cacheable).toBe(false);
+    expect(section?.text).toContain('An earlier heartbeat run (1h ago) sent these messages:\n\n- To #ops: Build #812 failed.');
+    expect(section?.text).toContain('If a check asks for a message on every run, send it as asked.');
+  });
+
   it('cron mode without a sent message has no sent-messages section', async () => {
     expect(await promptText(createTestAgentContext(), 'cron')).not.toContain('# Messages This Task Sent');
   });

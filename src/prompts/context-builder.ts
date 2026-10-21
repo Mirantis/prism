@@ -180,9 +180,10 @@ export async function buildSystemPromptParts(
     if (heartbeatContext) {
       stableSections.push(heartbeatContext);
     }
+    if (context.lastSend) dynamicSections.push(getLastSendInstructions(context.lastSend, 'heartbeat'));
   } else if (mode === 'cron') {
     stableSections.push(getCronInstructions());
-    if (context.lastSend) dynamicSections.push(getLastSendInstructions(context.lastSend));
+    if (context.lastSend) dynamicSections.push(getLastSendInstructions(context.lastSend, 'task'));
   } else if (mode === 'webhook') {
     stableSections.push(getWebhookInstructions());
   } else if (mode === 'goal') {
@@ -863,12 +864,16 @@ You are running a scheduled task: follow its instruction and report what you fin
 When this run continues an earlier conversation, you are resuming after a wait you scheduled: reply as the next message in that conversation, not as a standalone report. If what you waited for has not happened yet, you can wait again the same way.`;
 }
 
-/** What a recurring task's runs sent and reported since, for a run that reads no history. */
-function getLastSendInstructions(lastSend: TaskLastSend): string {
+/** What a recurring task's or the heartbeat's runs sent and reported since, for a run that reads no history. */
+function getLastSendInstructions(lastSend: TaskLastSend, kind: 'task' | 'heartbeat'): string {
+  const words =
+    kind === 'task'
+      ? { title: 'Messages This Task Sent', run: 'A run of this task', asker: 'the task' }
+      : { title: 'Messages Your Heartbeat Sent', run: 'An earlier heartbeat run', asker: 'a check' };
   const lines = [
-    `# Messages This Task Sent`,
+    `# ${words.title}`,
     ``,
-    `A run of this task (${formatTimeAgo(lastSend.at)}) sent these messages:`,
+    `${words.run} (${formatTimeAgo(lastSend.at)}) sent these messages:`,
     ``,
     lastSend.messages,
   ];
@@ -877,7 +882,7 @@ function getLastSendInstructions(lastSend: TaskLastSend): string {
   }
   lines.push(
     ``,
-    `If the task asks for a message on every run, send it as asked.`,
+    `If ${words.asker} asks for a message on every run, send it as asked.`,
     `If it asks for a message only when something happens, send it again only for a new occurrence, for example one that began after a run reported that the condition had cleared.`,
     `When you do not send a message for that reason, end with the finding that still holds, for example "The build is still failing. The alert is already in #ops."`,
   );
