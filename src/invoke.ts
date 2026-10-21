@@ -263,7 +263,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       context.lastHeartbeatAlert = request.lastHeartbeatAlert;
       context.lastHeartbeatAlertAt = request.lastHeartbeatAlertAt;
     }
-    if (request.mode === 'cron') context.lastSend = request.lastSend;
+    if (request.mode === 'cron' || request.mode === 'heartbeat') context.lastSend = request.lastSend;
 
     // Per-turn runtime notices → surfaced as an authoritative system-prompt
     // section (e.g. an attachment that failed to download).

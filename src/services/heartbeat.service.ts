@@ -25,7 +25,7 @@ import prisma from '../lib/prisma';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { formatTimeAgo } from '../prompts/context-builder';
-import { ChannelTriggerMessage, HeartbeatTrigger, InvokeStep, type ToolCallRecord } from '../types';
+import { ChannelTriggerMessage, HeartbeatTrigger, InvokeStep, type TaskLastSend, type ToolCallRecord } from '../types';
 import { heartbeatDelayMs, heartbeatDueAt } from './heartbeat-schedule';
 import type { ChatPlatform } from './channel-adapter.interface';
 
@@ -65,6 +65,12 @@ interface HeartbeatState {
   consecutiveErrors: number;
   lastAlertText: string | null;
   lastAlertAt: number | null;
+  /**
+   * What the last run that sent a message sent, and what the newest run after it
+   * reported. A run reads no history, so this tells it about earlier sends. It is
+   * separate from the delivered alert the duplicate check compares against.
+   */
+  lastSend: TaskLastSend | null;
 }
 
 interface HeartbeatResult {
@@ -190,6 +196,7 @@ class HeartbeatService {
       consecutiveErrors: 0,
       lastAlertText: null,
       lastAlertAt: null,
+      lastSend: null,
     };
 
     this.heartbeatState = state;
@@ -209,7 +216,7 @@ class HeartbeatService {
    * be no delivered alert. The trade: when the newest alert's run also sent, the
    * one before it is restored, and the same alert can be delivered once more. A
    * heartbeat delivers to a web thread, so the copy a send stores in its target's
-   * own thread is not read.
+   * own thread is not read. The same rows give back what the last sending run sent.
    */
   private async restoreLastAlert(state: HeartbeatState): Promise<void> {
     try {
@@ -219,7 +226,17 @@ class HeartbeatService {
         take: LAST_ALERT_ROWS,
         select: { content: true, createdAt: true, toolCalls: true },
       });
-      const last = rows.find((row) => sentMessages((row.toolCalls as ToolCallRecord[] | null) ?? []).length === 0);
+      const sends = rows.map((row) => sentMessages((row.toolCalls as ToolCallRecord[] | null) ?? []));
+      const sentAt = sends.findIndex((messages) => messages.length > 0);
+      if (sentAt >= 0 && state.lastSend === null) {
+        const after = sentAt > 0 ? rows[0] : undefined;
+        state.lastSend = {
+          messages: sends[sentAt].join('\n'),
+          at: rows[sentAt].createdAt.getTime(),
+          ...(after && { latestReport: { text: after.content, at: after.createdAt.getTime() } }),
+        };
+      }
+      const last = rows.find((_row, i) => sends[i].length === 0);
       if (!last || state.lastAlertAt !== null) return;
       state.lastAlertText = last.content;
       state.lastAlertAt = last.createdAt.getTime();
@@ -423,6 +440,7 @@ class HeartbeatService {
         prompt: triggered ? this.buildTriggeredHeartbeatPrompt(triggers) : this.buildHeartbeatPrompt(),
         lastHeartbeatAlert: state.lastAlertText ?? undefined,
         lastHeartbeatAlertAt: state.lastAlertAt ?? undefined,
+        lastSend: state.lastSend ?? undefined,
         heartbeatTriggers: triggered ? triggers : undefined,
         abortSignal: pendingWorkService.shutdownSignal,
       });
@@ -433,6 +451,7 @@ class HeartbeatService {
         return { shouldSkip: true, text: 'Stopped by shutdown' };
       }
       delivering = true;
+      const sent = this.noteSends(state, invokeResult.toolCalls);
 
       // Budget exceeded — skip and reset error streak so the timer keeps running.
       // The cycle still happened, so the next one is a full interval away.
@@ -452,6 +471,7 @@ class HeartbeatService {
       }
 
       const responseText = lastResponseText(invokeResult.steps);
+      if (!sent && !invokeResult.error) this.noteReport(state, responseText);
 
       // Determine if we should deliver
       let shouldDeliver = false;
@@ -609,12 +629,14 @@ class HeartbeatService {
         prompt: this.buildTriggeredHeartbeatPrompt(triggers),
         lastHeartbeatAlert: state.lastAlertText ?? undefined,
         lastHeartbeatAlertAt: state.lastAlertAt ?? undefined,
+        lastSend: state.lastSend ?? undefined,
         heartbeatTriggers: triggers,
         abortSignal: pendingWorkService.shutdownSignal,
       });
       // A shutdown stopped the run. The messages stay queued for the next boot.
       if (pendingWorkService.shutdownSignal.aborted) return;
       delivering = true;
+      const sent = this.noteSends(state, invokeResult.toolCalls);
 
       // Budget exceeded — skip gracefully
       if (invokeResult.error?.type === 'budget_exceeded') {
@@ -633,6 +655,7 @@ class HeartbeatService {
       }
 
       const responseText = lastResponseText(invokeResult.steps);
+      if (!sent && !invokeResult.error) this.noteReport(state, responseText);
 
       // Determine if we should deliver (same gate logic as regular heartbeats)
       let shouldDeliver = false;
@@ -782,6 +805,20 @@ Answer with one word: DELIVER or SUPPRESS.`;
   private isDuplicate(state: HeartbeatState | undefined, alertText: string): boolean {
     if (!state?.lastAlertText || !state.lastAlertAt) return false;
     return isRecentDuplicate({ text: state.lastAlertText, at: state.lastAlertAt }, alertText);
+  }
+
+  /** A run that sent replaces the send record. Answers whether the run sent. */
+  private noteSends(state: HeartbeatState, toolCalls: ToolCallRecord[]): boolean {
+    const messages = sentMessages(toolCalls);
+    if (messages.length === 0) return false;
+    state.lastSend = { messages: messages.join('\n'), at: Date.now() };
+    return true;
+  }
+
+  /** A later run's result, so the next run reads whether the finding still held. An empty result says nothing. */
+  private noteReport(state: HeartbeatState, text: string): void {
+    if (!state.lastSend || !text.trim()) return;
+    state.lastSend = { ...state.lastSend, latestReport: { text: text.trim(), at: Date.now() } };
   }
 
   private recordAlert(state: HeartbeatState | undefined, alertText: string): void {
