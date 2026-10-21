@@ -14,6 +14,7 @@
  * filtering, delivery or LLM work happens.
  */
 
+import { fence } from '../lib/prompt-fence';
 import { ConversationMessage, WebhookSubscription } from '@prisma/client';
 import { invoke } from '../invoke';
 import { messageDeliveryService, PublishOptions } from './message-delivery.service';
@@ -152,6 +153,10 @@ export function resolveEventType(
   return header('x-github-event') || header('x-gitlab-event') || fromPayload || 'unknown';
 }
 
+/** The tags of the message an agent-mode run receives: the operator's prompt, and the event's data inside it. */
+export const WEBHOOK_PROMPT_TAG = 'subscription_prompt';
+export const WEBHOOK_EVENT_DATA_TAG = 'event_data';
+
 /**
  * Render a prompt template against the webhook payload.
  *
@@ -160,21 +165,25 @@ export function resolveEventType(
  * (truncated). Unresolvable keys are left literal. An empty template falls
  * back to a raw payload dump with an event/route lead-in — the agent reasons
  * over the JSON directly.
+ *
+ * `wrapValue` receives every piece of text taken from the payload, so a caller
+ * can mark it as data; the deliver-only path delivers the text as it is.
  */
 export function renderWebhookPrompt(
   template: string | null | undefined,
   payload: Record<string, unknown>,
   eventType: string,
   routeName: string,
+  wrapValue: (value: string) => string = (value) => value,
 ): string {
   if (!template || !template.trim()) {
     const truncated = JSON.stringify(payload, null, 2).slice(0, RAW_PAYLOAD_MAX_CHARS);
-    return `Webhook event '${eventType}' on route '${routeName}':\n\n\`\`\`json\n${truncated}\n\`\`\``;
+    return `Webhook event '${eventType}' on route '${routeName}':\n\n${wrapValue(`\`\`\`json\n${truncated}\n\`\`\``)}`;
   }
 
   return template.replace(/\{([a-zA-Z0-9_.]+)\}/g, (match, key: string) => {
     if (key === '__raw__') {
-      return JSON.stringify(payload, null, 2).slice(0, RAW_PAYLOAD_MAX_CHARS);
+      return wrapValue(JSON.stringify(payload, null, 2).slice(0, RAW_PAYLOAD_MAX_CHARS));
     }
     let value: unknown = payload;
     for (const part of key.split('.')) {
@@ -186,10 +195,30 @@ export function renderWebhookPrompt(
       }
     }
     if (value !== null && typeof value === 'object') {
-      return JSON.stringify(value, null, 2).slice(0, NESTED_VALUE_MAX_CHARS);
+      return wrapValue(JSON.stringify(value, null, 2).slice(0, NESTED_VALUE_MAX_CHARS));
     }
-    return String(value);
+    return wrapValue(String(value));
   });
+}
+
+/**
+ * The message an agent-mode run receives: the subscription's prompt inside
+ * `subscription_prompt`, with every value taken from the event fenced as
+ * `event_data`, so the model follows the operator's words and treats the
+ * sender's as data. An empty template has no operator words, so the message is
+ * the event alone.
+ */
+export function renderWebhookTurnPrompt(
+  template: string | null | undefined,
+  payload: Record<string, unknown>,
+  eventType: string,
+  routeName: string,
+): string {
+  const rendered = renderWebhookPrompt(template, payload, eventType, routeName, (value) =>
+    fence(value, WEBHOOK_EVENT_DATA_TAG, [WEBHOOK_PROMPT_TAG]),
+  );
+  if (!template || !template.trim()) return rendered;
+  return `<${WEBHOOK_PROMPT_TAG} name="${routeName}">\n${rendered}\n</${WEBHOOK_PROMPT_TAG}>`;
 }
 
 /** An agent run, as `pending_work` holds it until the run ends. */
@@ -278,11 +307,10 @@ export class WebhookService {
       return { status: 'ignored', event: eventType };
     }
 
-    const prompt = renderWebhookPrompt(subscription.prompt, payload, eventType, name);
-
     const run = { id: runId, agentId: agent.id, name, event: eventType };
 
     if (subscription.deliverOnly) {
+      const prompt = renderWebhookPrompt(subscription.prompt, payload, eventType, name);
       // Direct delivery: the rendered template IS the message. No LLM. The row
       // is written first, so a database that cannot record the event answers
       // 500 before anything is sent.
@@ -311,6 +339,7 @@ export class WebhookService {
 
     // Agent mode — enqueue and answer 202 now; runs drain serially per
     // subscription so nothing is dropped and nothing fans out.
+    const prompt = renderWebhookTurnPrompt(subscription.prompt, payload, eventType, name);
     const queue = this.pending.get(subscription.id) ?? [];
     if (queue.length >= WEBHOOK_MAX_PENDING) {
       logger.warn(`[Webhook] '${name}' queue is full (${queue.length} pending) — rejecting with 429`);

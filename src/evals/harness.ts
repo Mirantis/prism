@@ -161,10 +161,10 @@ type HistoryEntry =
 type ToolStub = (input: Record<string, unknown>) => unknown;
 
 interface TurnInput {
-  mode: 'chat' | 'heartbeat' | 'cron';
+  mode: 'chat' | 'heartbeat' | 'cron' | 'webhook';
   /** The thread so far. A chat thread ends with the user's message, as the engine stores it first. */
   history?: HistoryEntry[];
-  /** The prompt of a heartbeat or cron run, appended as `invokeStream` appends it. */
+  /** The prompt of a heartbeat, cron or webhook run, appended as `invokeStream` appends it. */
   prompt?: string;
   /** A channel turn instead of a direct message. */
   channel?: { name: string; platform: ChatPlatform };
