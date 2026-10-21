@@ -215,6 +215,23 @@ async function readsReleaseNotes(options: { computer: boolean }): Promise<Grade>
   return { pass: fetched && otherReads.length === 0, detail: describeTrace(trace) };
 }
 
+const NO_MESSAGE_INSTRUCTION =
+  'Sweep the Needs Attention list on the team board and fix the cards as the runbook says. ' +
+  'Record every finding on its card. Never send me a message about this task, just do the work.';
+
+/** A long instruction with the no-message sentence first, where the docs tell users to put it. */
+const LONG_NO_MESSAGE_INSTRUCTION = [
+  'Never send me a message about this task, just do the work.',
+  'Sweep the Needs Attention list on the team board three times a day. The goal: keep the list in good shape, and catch pull requests that need attention even when no card covers them.',
+  'READ FRESH each run: the board workflow runbook and the create-card, request-review and finish-card skills in the team repository. Read the team conventions before the first board or GitHub write of the run.',
+  'ACCESS: the board REST API through curl, with no auth header (the proxy adds it). GitHub through `gh api` only. For CI use `actions/runs?head_sha=`.',
+  'REPOS: acme/billing-api, acme/web-app and acme/docs-site. docs-site is public: no internal links in anything written there.',
+  'SIGNALS: a pull request is linked to a card when the card has it attached, or when its description contains the card URL. A card comment that contains the pull request URL counts only to prevent a duplicate card. The owner is the pull request author.',
+  'STEP 1, fix automatically: attach a linked pull request that is not attached. Add the owner as a member when the card has none. Create a card in Needs Attention for a pull request with no card, with one request comment: "Please review <url> at <short sha>." For a pull request with no commits for 14 days, ask the author on the card and on the pull request to push it through, mark it as draft, or close it.',
+  'STEP 2, record what needs a human on the card: the head moved after the review request, approved but not merged for more than a day, changes requested with no push since, CI red, merge conflicts, or a card in the wrong list.',
+  'RULES: never state a pull request number, SHA, card or comment that you did not read back in this run. Read back after every write.',
+].join('\n\n');
+
 export const SCENARIOS: Scenario[] = [
   // ---- Chat: acting on requests ------------------------------------------
   {
@@ -663,6 +680,69 @@ export const SCENARIOS: Scenario[] = [
         await cronGate(
           'Check the nightly backup job and only tell me if it failed.',
           'The nightly backup job failed at 02:00 with exit code 3: no space left on /backups.',
+        ),
+        'DELIVER',
+      ),
+  },
+  {
+    id: 'cron-gate.suppresses-no-message-run-notes',
+    expect: 'A task that asks for no message is suppressed when the result is notes about the run.',
+    grader: 'gate verdict',
+    run: async () =>
+      expectVerdict(
+        await cronGate(
+          NO_MESSAGE_INSTRUCTION,
+          [
+            'The runbook is unchanged since the last run. Next, the lists and the open cards.',
+            'Only one card sits in Needs Attention. Now the open pull requests in the two repositories.',
+            'The attachment and the member change both read back. I will record this run in memory.',
+          ].join('\n\n'),
+        ),
+        'SUPPRESS',
+      ),
+  },
+  {
+    id: 'cron-gate.suppresses-no-message-finding',
+    expect: 'A task that asks for no message is suppressed even when the result reports a finding.',
+    grader: 'gate verdict',
+    run: async () =>
+      expectVerdict(
+        await cronGate(
+          NO_MESSAGE_INSTRUCTION,
+          'Pull request #42 in billing-api has merge conflicts with main, and its card was in Done while the ' +
+            'pull request is still open. I moved the card to Needs Attention and asked the author on the card.',
+        ),
+        'SUPPRESS',
+      ),
+  },
+  {
+    id: 'cron-gate.suppresses-no-message-long-instruction',
+    expect: 'A long instruction that starts by asking for no message is suppressed when the result reports findings.',
+    grader: 'gate verdict',
+    run: async () =>
+      expectVerdict(
+        await cronGate(
+          LONG_NO_MESSAGE_INSTRUCTION,
+          [
+            "The conventions file is unchanged since the last run. Next, the board's lists and open cards.",
+            'Only two cards sit in Needs Attention. Now the open pull requests in the three repositories.',
+            'docs-site has no open pull requests. Pull request #318 in billing-api is approved on its current head and has waited two days to merge, and #322 in web-app has merge conflicts with main.',
+            'I attached #322 to its card and added its author as a member. Both writes read back. Now the finding comments on the two cards.',
+            'Both comments read back. I will record this run in memory.',
+          ].join('\n\n'),
+        ),
+        'SUPPRESS',
+      ),
+  },
+  {
+    id: 'cron-gate.delivers-no-message-exception',
+    expect: 'A task that asks for no message unless something fails is delivered when it fails.',
+    grader: 'gate verdict',
+    run: async () =>
+      expectVerdict(
+        await cronGate(
+          'Rotate the staging API keys every night. Never send me a message about it unless a rotation fails.',
+          'The rotation of the payments key failed: the vault returned 403 permission denied.',
         ),
         'DELIVER',
       ),

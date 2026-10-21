@@ -95,6 +95,10 @@ Haiku) decides whether it's worth your attention. The gate is
 - A **conditional** task ("check the deploy queue and only tell me if something
   is stuck") stays silent when the condition isn't met — no "nothing to report"
   noise.
+- A task that asks for **no message** ("just do the work, never tell me about
+  it") delivers nothing unless the run ends in an error. In a long instruction,
+  put that sentence first. To hear when the work fails, name the exception:
+  "never tell me unless it fails".
 - The gate also sees the **last result the task delivered**, so a conditional
   check that merely repeats an already-reported finding stays quiet until
   something changes. When a quiet run observes a *different* situation (e.g.
