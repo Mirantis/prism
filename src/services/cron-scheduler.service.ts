@@ -728,7 +728,9 @@ class CronSchedulerService {
               originChannel: (task.originChannel as ChannelName | null) ?? undefined,
               originChannelId: task.originChannelId ?? undefined,
             }
-          : { broadcastsOutput: true, lastSend: await this.lastSendOf(task) }),
+          : {}),
+        // Only an unbound task's answer is broadcast, and only an unbound task recurs.
+        ...(!boundThreadId && { broadcastsOutput: true, lastSend: await this.lastSendOf(task) }),
       });
       // A shutdown stopped the run. It delivers nothing and stays due. From here
       // the run delivers, so a shutdown that starts later lets it end.
