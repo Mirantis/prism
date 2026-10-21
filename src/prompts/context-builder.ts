@@ -22,10 +22,18 @@ import { getExecutionEnvironment } from '../lib/execution-environments/get-execu
 import { pluginCatalogService } from '../services/plugin-catalog.service';
 import { toModelToolName } from '../lib/tool-names';
 import { renderLegacyStoredOutput } from '../lib/tool-output-limiter';
+import {
+  agentMessageColumns,
+  agentMessageOrigin,
+  renderAgentMessage,
+  type AgentMessageColumns,
+} from './agent-message-prompt';
+import type { AgentMessageOrigin } from '../types';
 
 // Minimal type for conversation messages (matches Prisma's shape).
 // toolCalls uses Prisma's Json? type (any JSON value); parseToolCalls() validates at runtime.
-export interface ConversationMessage {
+// The origin columns say when a USER row is another agent's message.
+export interface ConversationMessage extends AgentMessageColumns {
   id: string;
   role: 'USER' | 'AGENT' | 'SYSTEM';
   content: string;
@@ -37,7 +45,10 @@ export interface ConversationMessage {
   // context service always do.
   externalMessageId?: string | null;
   internalStep?: boolean;
-  /** The webhook subscription that produced a webhook message. */
+  /**
+   * The webhook subscription that produced a webhook message, or the kind of a
+   * message from another agent.
+   */
   triggerName?: string | null;
   // Attachment metadata (no bytes) — the agent pulls content on demand via
   // hydrate_attachment / view_attachment tools.
@@ -647,6 +658,8 @@ export interface SteeringMessage {
   text: string;
   /** Files it carried. */
   attachments?: AttachmentMeta[];
+  /** Set when another agent sent it. */
+  agentMessage?: AgentMessageOrigin;
 }
 
 /**
@@ -662,6 +675,7 @@ export function buildSteeringMessage(msg: SteeringMessage): ModelMessage {
     role: 'USER',
     content: msg.text,
     attachments: msg.attachments,
+    ...(msg.agentMessage ? agentMessageColumns(msg.agentMessage) : {}),
   });
 
   // Keep the plain-string form when there's just text, same as history.
@@ -690,36 +704,38 @@ export function buildUserMessage(msg: ConversationMessage): ModelMessage | null 
  * Attachment bytes are never inlined here. Each attachment renders as a
  * lightweight text stub so the agent knows what's available, and can pull
  * content on demand via hydrate_attachment / view_attachment tools.
+ *
+ * A message from another agent is one part: its text and stubs inside the tag
+ * that names the sender.
  */
 function buildUserContentParts(msg: ConversationMessage): UserContentPart[] {
-  const parts: UserContentPart[] = [];
-
-  if (msg.content?.trim()) {
-    parts.push({ type: 'text', text: msg.content });
+  const texts = [
+    ...(msg.content?.trim() ? [msg.content] : []),
+    ...(msg.attachments ?? []).map(attachmentStub),
+  ];
+  const origin = agentMessageOrigin(msg);
+  if (origin && texts.length > 0) {
+    return [{ type: 'text', text: renderAgentMessage(origin, texts.join('\n')) }];
   }
+  return texts.map((text) => ({ type: 'text', text }));
+}
 
-  for (const att of msg.attachments ?? []) {
-    const head = `[Attachment: ${att.filename} · id=${att.id} · ${att.mediaType} · ${humanFileSize(att.sizeBytes)}`;
-    // Category-aware hint: the stub is the instruction the model actually
-    // follows (it sits right next to the file), so it points images and PDFs at
-    // view_attachment.
-    const hint =
-      att.category === 'image'
-        ? 'use view_attachment to look at it, or hydrate_attachment to save it to disk.'
-        : att.category === 'pdf'
-          ? 'use view_attachment to read it, or hydrate_attachment + pdftotext for shell inspection.'
-          : 'not on disk yet. Call hydrate_attachment to write it to the filesystem, then inspect it with shell tools.';
-    parts.push({
-      type: 'text',
-      // No tool hint on an expired stub — the content is gone, so the model
-      // shouldn't burn a tool call discovering that.
-      text: att.expired
-        ? `${head} · content expired] — no longer stored; ask the user to share it again if needed.`
-        : `${head}] — ${hint}`,
-    });
-  }
-
-  return parts;
+function attachmentStub(att: AttachmentMeta): string {
+  const head = `[Attachment: ${att.filename} · id=${att.id} · ${att.mediaType} · ${humanFileSize(att.sizeBytes)}`;
+  // Category-aware hint: the stub is the instruction the model actually
+  // follows (it sits right next to the file), so it points images and PDFs at
+  // view_attachment.
+  const hint =
+    att.category === 'image'
+      ? 'use view_attachment to look at it, or hydrate_attachment to save it to disk.'
+      : att.category === 'pdf'
+        ? 'use view_attachment to read it, or hydrate_attachment + pdftotext for shell inspection.'
+        : 'not on disk yet. Call hydrate_attachment to write it to the filesystem, then inspect it with shell tools.';
+  // No tool hint on an expired stub — the content is gone, so the model
+  // shouldn't burn a tool call discovering that.
+  return att.expired
+    ? `${head} · content expired] — no longer stored; ask the user to share it again if needed.`
+    : `${head}] — ${hint}`;
 }
 
 /**

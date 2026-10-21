@@ -1,0 +1,103 @@
+/**
+ * Agent Messages Route
+ *
+ * POST /agents/agent-messages — a message from another agent of the Lens Agents
+ * project, delivered by the Irene Agent backend. It is stored in the web
+ * conversation as that agent's, and its turn is scheduled like a chat message's.
+ * The answer comes once the message is stored, before the turn runs; the backend
+ * sends a delivery again until it gets one, and the same `id` is stored once.
+ */
+
+import { Router, Request, Response } from 'express';
+import { z } from 'zod';
+import { config } from '../config';
+import { logger } from '../logger';
+import { uuid, uuidV4 } from '../protocol/chat-protocol';
+import { conversationService } from '../services/conversation.service';
+import { InboundMessageError, inboundMessageService } from '../services/inbound-message.service';
+
+const router = Router();
+
+const agentMessage = z
+  .object({
+    /** The delivery's id, which becomes the stored message's. */
+    id: uuidV4,
+    /** The message's own id, which a reply names. */
+    messageId: uuid,
+    conversationId: uuid,
+    kind: z.enum(['message', 'notice']),
+    sender: z.object({ id: z.string().min(1).max(64), name: z.string().min(1).max(128) }).strict(),
+    content: z
+      .string()
+      .max(32_000)
+      .refine((text) => text.trim().length > 0, 'content must not be blank'),
+    expectsReply: z.boolean().default(false),
+    attachmentIds: z.array(uuid).max(5).default([]),
+  })
+  .strict();
+
+/** What each refusal of the inbound service is over HTTP. */
+const REFUSALS: Partial<Record<InboundMessageError['code'], number>> = {
+  unavailable: 503,
+  unknown_thread: 404,
+  id_conflict: 409,
+};
+
+router.post('/agent-messages', async (req: Request, res: Response) => {
+  // The Lens Agents ingress names a person with this header and sets none for a
+  // service, such as the backend. People talk to the agent in the conversation,
+  // and refusing them here keeps a browser from posting as another agent. The
+  // ingress is what authenticates; the header only tells the two apart.
+  if (req.get('x-forwarded-user-id') !== undefined) {
+    res.status(403).json({ error: 'Only another agent of the project sends agent messages.' });
+    return;
+  }
+
+  const parsed = agentMessage.safeParse(req.body);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    res.status(400).json({ error: issue ? `${issue.path.join('.') || 'body'}: ${issue.message}` : 'Invalid body.' });
+    return;
+  }
+  const body = parsed.data;
+
+  const agentId = config.agentId;
+  if (!agentId) {
+    res.status(503).json({ error: 'The agent is still starting. Try again shortly.' });
+    return;
+  }
+
+  try {
+    // The web conversation: the one conversation in single-thread mode, else the newest.
+    const thread = await conversationService.getOrCreateLatestThread(agentId, config.ownerUserId);
+    const acceptance = await inboundMessageService.accept({
+      id: body.id,
+      threadId: thread.id,
+      content: body.content,
+      attachmentIds: body.attachmentIds,
+      sender: null,
+      agentMessage: {
+        kind: body.kind === 'notice' ? 'notice' : body.expectsReply ? 'ask' : 'message',
+        senderId: body.sender.id,
+        senderName: body.sender.name,
+        messageId: body.messageId,
+      },
+    });
+    res.status(202).json({
+      messageId: acceptance.message.id,
+      threadId: acceptance.message.threadId,
+      queued: acceptance.queued,
+      duplicate: acceptance.duplicate,
+    });
+  } catch (error: unknown) {
+    const status = error instanceof InboundMessageError ? REFUSALS[error.code] : undefined;
+    if (status && error instanceof Error) {
+      res.status(status).json({ error: error.message });
+      return;
+    }
+    logger.error({ err: error, deliveryId: body.id }, '[AgentMessages] Could not store an agent message');
+    res.status(500).json({ error: 'The message could not be stored.' });
+  }
+});
+
+export { router as agentMessagesRouter };

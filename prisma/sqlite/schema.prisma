@@ -46,6 +46,9 @@ enum MessageTrigger {
   CRON_TASK
   GOAL
   WEBHOOK
+  // A message from another agent of the project, or the delivery service's notice
+  // about one. It is stored as a USER row and is never the person's.
+  AGENT_MESSAGE
   // Retained for historical rows; no code produces it. Prisma throws
   // "Value 'SYSTEM' not found in enum 'MessageTrigger'" when it reads a row whose
   // value the schema does not declare, and live databases hold such rows.
@@ -267,7 +270,8 @@ model ConversationMessage {
   content     String
   triggeredBy MessageTrigger
   // The webhook subscription that produced a WEBHOOK message. The model's
-  // history names it; clients show the content alone.
+  // history names it; clients show the content alone. On an AGENT_MESSAGE row it
+  // is the kind: `message`, `ask` (the sender waits for an answer) or `notice`.
   triggerName String?
   toolCalls   Json?
   blocks      Json?

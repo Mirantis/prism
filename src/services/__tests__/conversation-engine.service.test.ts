@@ -1276,6 +1276,45 @@ describe('Requirement: Conversation Engine', () => {
       );
     });
 
+    const researcher = { kind: 'ask' as const, senderId: 'agent-r', senderName: 'Researcher', messageId: 'msg-r1' };
+
+    it('hands another agent\'s message to the running turn as that agent\'s', async () => {
+      const held = heldTurn();
+      mockInvokeStream.mockImplementation(held.generator);
+
+      const first = conversationEngineService.chat(steerInput('review the PR'));
+      await held.running;
+      await conversationEngineService.chat(
+        steerInput('Can you check CI?', { metadata: { channel: 'websocket', agentMessage: researcher } }),
+      );
+
+      await expect(held.requests[0].steering?.()).resolves.toEqual([
+        { text: 'Can you check CI?', attachments: undefined, agentMessage: researcher },
+      ]);
+
+      held.release();
+      await first;
+    });
+
+    it('restates a late message from another agent inside its tag in the follow-up', async () => {
+      const held = heldTurn();
+      mockInvokeStream.mockImplementationOnce(held.generator).mockImplementation(instantTurn);
+
+      const first = conversationEngineService.chat(steerInput('review the PR'));
+      await held.running;
+      await conversationEngineService.chat(steerInput('wait'));
+      await conversationEngineService.chat(
+        steerInput('Can you check CI?', { metadata: { channel: 'websocket', agentMessage: researcher } }),
+      );
+      held.release();
+      await first;
+
+      expect(mockInvokeStream.mock.calls[1][0].prompt).toBe(
+        'wait\n\n<agent-message from="Researcher" agent-id="agent-r" message-id="msg-r1" expects-reply="true">\n' +
+          'Can you check CI?\n</agent-message>',
+      );
+    });
+
     it('does not start a follow-up turn after a cancel', async () => {
       const held = heldTurn();
       mockInvokeStream.mockImplementationOnce(held.generator).mockImplementation(instantTurn);
@@ -1880,6 +1919,83 @@ describe('Requirement: Conversation Engine', () => {
         const last = mockUpdateWork.mock.calls.at(-1)?.[2] as { unsaved: Array<{ tool: string }> };
         expect(last.unsaved.map((u) => u.tool)).toEqual(['coding_agent', 'coding_agent_status']);
         expect(mockFinishWork).toHaveBeenCalledWith('chat', []);
+      });
+    });
+  });
+
+  describe('Scenario: A message from another agent', () => {
+    const notice = { kind: 'notice' as const, senderId: 'irene-agent', senderName: 'Irene Agent', messageId: 'msg-n1' };
+    const fromWriter = { kind: 'message' as const, senderId: 'agent-w', senderName: 'Writer', messageId: 'msg-w1' };
+
+    it('stores it as that agent\'s, and keeps where it came from for a restart', async () => {
+      await conversationEngineService.acceptUserMessage(
+        {
+          agentId: 'agent-123',
+          userId: 'user-123',
+          message: 'Draft is ready.',
+          metadata: { channel: 'websocket', agentMessage: fromWriter },
+        },
+        'thread-123',
+        'delivery-1',
+      );
+
+      expect(mockAddMessage).toHaveBeenCalledWith('thread-123', {
+        id: 'delivery-1',
+        content: 'Draft is ready.',
+        role: 'USER',
+        triggeredBy: 'AGENT_MESSAGE',
+        triggerName: 'message',
+        senderExternalId: 'agent-w',
+        senderName: 'Writer',
+        externalMessageId: 'msg-w1',
+      });
+      expect(mockBeginWork).toHaveBeenCalledWith(
+        'chat',
+        'delivery-1',
+        expect.objectContaining({ metadata: { channel: 'websocket', agentMessage: fromWriter } }),
+      );
+    });
+
+    it('starts the turn on the tagged message, and asks the person no feedback', async () => {
+      mockIsTelemetryEnabled.mockReturnValue(true);
+      mockCountAgentMessages.mockResolvedValue(1);
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        threadId: 'thread-agent-message',
+        message: 'Your message to Writer could not be delivered.',
+        metadata: { channel: 'websocket', agentMessage: notice },
+      });
+
+      expect(mockInvokeStream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: '<agent-notice>\nYour message to Writer could not be delivered.\n</agent-notice>',
+        }),
+      );
+      expect(mockGenerateText).not.toHaveBeenCalled();
+      expect(mockPublish).toHaveBeenCalledWith(
+        'user-123',
+        'thread-agent-message',
+        'I am a helpful AI assistant.',
+        'USER_INPUT',
+        expect.objectContaining({ channelContext: expect.objectContaining({ includeFeedback: false }) }),
+      );
+    });
+
+    it('counts only the person\'s own messages toward the feedback cadence', async () => {
+      mockIsTelemetryEnabled.mockReturnValue(true);
+      mockCountAgentMessages.mockResolvedValue(1);
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        message: 'Explain x in detail',
+        metadata: { channel: 'websocket' },
+      });
+
+      expect(mockCountAgentMessages).toHaveBeenCalledWith({
+        where: { threadId: 'thread-123', role: 'USER', triggeredBy: 'USER_INPUT', internalStep: false },
       });
     });
   });

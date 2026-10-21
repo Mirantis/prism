@@ -52,6 +52,18 @@ describe('ChatMessage', () => {
     expect(container.querySelector('.justify-end')).toBeNull();
   });
 
+  it("puts another agent's message on the participants' side as that agent's, even before the runtime says who you are", () => {
+    const fromAgent = userMessage({ triggeredBy: 'AGENT_MESSAGE', senderId: 'agent-r', senderName: 'Researcher' });
+    const { container } = renderMessage(fromAgent, undefined);
+    expect(screen.getByTestId('message-sender').textContent).toBe('Researcher · Agent');
+    expect(container.querySelector('[data-message-role="participant"]')).not.toBeNull();
+  });
+
+  it('names a notice by its sender alone', () => {
+    renderMessage(userMessage({ triggeredBy: 'AGENT_MESSAGE', senderId: 'irene-agent', senderName: 'Irene Agent' }), ADA);
+    expect(screen.getByTestId('message-sender').textContent).toBe('Irene Agent');
+  });
+
   it('draws every message as your own until the runtime says who you are', () => {
     const { container } = renderMessage(userMessage(), undefined);
     expect(screen.queryByTestId('message-sender')).toBeNull();

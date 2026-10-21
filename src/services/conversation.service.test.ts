@@ -706,7 +706,12 @@ describe('ConversationService', () => {
         await conversationService.getRecentMessages('thread-db', 1);
 
         expect(mockPrisma.conversationMessage.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-          where: { threadId: 'thread-db', internalStep: false, triggeredBy: 'USER_INPUT', createdAt: { lt: at(4) } },
+          where: {
+            threadId: 'thread-db',
+            internalStep: false,
+            triggeredBy: { in: ['USER_INPUT', 'AGENT_MESSAGE'] },
+            createdAt: { lt: at(4) },
+          },
         }));
         expect(mockPrisma.conversationMessage.findMany).toHaveBeenLastCalledWith(expect.objectContaining({
           where: expect.objectContaining({ createdAt: { gt: at(1), lte: at(4) } }),
@@ -783,6 +788,25 @@ describe('ConversationService', () => {
         const answer = messages.find((m) => m.id === 'answer');
         expect(callIds(answer)).toEqual(['fresh', 'own']);
         expect(messages.find((m) => m.id === 'next-question')?.toolCalls).toBeNull();
+      });
+
+      it('shows a cancelled turn\'s calls nowhere when another agent\'s message comes next, as for a person\'s', async () => {
+        mockPrisma.conversationMessage.findMany
+          .mockResolvedValueOnce([
+            row('answer', 'AGENT', 5, [call('own')]),
+            row('agent-message', 'USER', 3, null, false, 'AGENT_MESSAGE'),
+            row('question', 'USER', 1),
+          ])
+          .mockResolvedValueOnce([
+            row('cancelled-step', 'AGENT', 2, [call('stale')], true),
+            row('step', 'AGENT', 4, [call('fresh')], true),
+          ]);
+        mockPrisma.conversationMessage.findFirst.mockResolvedValue(null);
+
+        const messages = await conversationService.getRecentMessages('thread-db', 10);
+
+        expect(callIds(messages.find((m) => m.id === 'answer'))).toEqual(['fresh', 'own']);
+        expect(messages.find((m) => m.id === 'agent-message')?.toolCalls).toBeNull();
       });
 
       it('shows a cancelled turn\'s calls nowhere when a heartbeat speaks next', async () => {
@@ -1169,6 +1193,7 @@ describe('ConversationService', () => {
       expect(mockPrisma.conversationMessage.findFirst).toHaveBeenCalledWith({
         where: {
           role: 'USER',
+          triggeredBy: 'USER_INPUT',
           internalStep: false,
           thread: { agentId: 'agent-123', userId: 'user-123', externalThreadId: null },
         },

@@ -61,12 +61,20 @@ function toolCallSummary(toolCalls: unknown): string | null {
   return `· used ${names.join(', ')}`;
 }
 
+/** The sender of what the delivery service itself says about the agent's messages. */
+const NOTICE_SENDER_ID = 'irene-agent';
+
 /**
- * "You", unless someone else wrote it: another person in the same conversation.
- * Until the runtime has said who this terminal is, every message is "You" — the
- * runtime stamps ours with our id, and they would otherwise read as someone else's.
+ * "You", unless someone else wrote it: another person in the same conversation,
+ * or another agent of the project ("{name} · Agent", a notice its sender's name).
+ * Until the runtime has said who this terminal is, a person's message is "You" —
+ * the runtime stamps ours with our id, and they would otherwise read as someone else's.
  */
 function userLabel(message: TuiMessage, self: Viewer | undefined): string {
+  if (message.triggeredBy === 'AGENT_MESSAGE') {
+    const name = message.senderName ?? message.senderId ?? 'Agent';
+    return message.senderId === NOTICE_SENDER_ID ? name : `${name} · Agent`;
+  }
   if (!self || !message.senderId || message.senderId === self.id) return 'You';
   return message.senderName ?? message.senderId;
 }

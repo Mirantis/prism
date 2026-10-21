@@ -39,6 +39,15 @@ interface ChatMessageProps {
   onEdit: (id: string) => void;
 }
 
+/** The sender of what the delivery service itself says about the agent's messages. */
+const NOTICE_SENDER_ID = 'irene-agent';
+
+/** "{name} · Agent" for another agent's message, the name alone for a notice. */
+function agentSender(message: ConversationMessage): string {
+  const name = message.senderName ?? message.senderId ?? 'Agent';
+  return message.senderId === NOTICE_SENDER_ID ? name : `${name} · Agent`;
+}
+
 /** A message rises into place as it arrives. */
 const ENTER = 'animate-in fade-in-0 slide-in-from-bottom-1 duration-300 ease-out';
 
@@ -82,13 +91,15 @@ const ChatMessage = memo(function ChatMessage({
 
   const hasText = message.content.trim().length > 0;
   const sender =
-    message.role === 'USER' && viewer !== undefined && message.senderId && message.senderId !== viewer.id
-      ? (message.senderName ?? message.senderId)
-      : null;
+    message.role === 'USER' && message.triggeredBy === 'AGENT_MESSAGE'
+      ? agentSender(message)
+      : message.role === 'USER' && viewer !== undefined && message.senderId && message.senderId !== viewer.id
+        ? (message.senderName ?? message.senderId)
+        : null;
 
-  // Somebody else sharing the agent: on the left with everyone who is not this
-  // person, laid out like the agent's replies, in a bubble that never passes for
-  // our own.
+  // Somebody else sharing the agent, or another agent of the project: on the left
+  // with everyone who is not this person, laid out like the agent's replies, in a
+  // bubble that never passes for our own.
   if (sender) {
     return (
       <div className={`group flex gap-3 ${ENTER}`} data-message-role="participant" data-message-id={message.id}>

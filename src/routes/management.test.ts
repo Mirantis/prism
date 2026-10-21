@@ -167,8 +167,10 @@ vi.mock('../services/skill-catalog.service', () => ({
   skillCatalogService: { getCatalog: mockGetCatalog, find: mockFind },
 }));
 
+// `events` because the inbound message service (pulled in via createApp)
+// subscribes to the engine's turns in its constructor.
 vi.mock('../services/conversation-engine.service', () => ({
-  conversationEngineService: { chat: mockChatEngine },
+  conversationEngineService: { chat: mockChatEngine, events: { on: vi.fn() } },
 }));
 
 vi.mock('../services/slack-heartbeat-trigger.service', () => ({

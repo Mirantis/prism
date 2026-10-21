@@ -41,13 +41,18 @@ export interface MessageInput {
   content: string;
   role: MessageRole;
   triggeredBy: MessageTrigger;
-  /** The webhook subscription that produced a WEBHOOK message, for the model's history. */
+  /**
+   * The webhook subscription that produced a WEBHOOK message, or the kind of an
+   * AGENT_MESSAGE, for the model's history.
+   */
   triggerName?: string;
   toolCalls?: unknown[];
   blocks?: unknown[];
   // Multi-user context (for channel messages)
   senderExternalId?: string; // The sender's id in the channel the message came from
   senderName?: string; // Human-readable display name
+  /** The id the message has outside this database, such as another agent's message id. */
+  externalMessageId?: string;
   /**
    * Marks a row the runtime wrote for the model, never for the reader.
    *
@@ -130,6 +135,7 @@ class ConversationService {
     const lastWritten = await prisma.conversationMessage.findFirst({
       where: {
         role: MessageRole.USER,
+        triggeredBy: MessageTrigger.USER_INPUT,
         internalStep: false,
         thread: { agentId, userId, externalThreadId: null },
       },
@@ -506,6 +512,7 @@ class ConversationService {
         blocks: input.blocks as Prisma.InputJsonValue | undefined,
         senderExternalId: input.senderExternalId,
         senderName: input.senderName,
+        externalMessageId: input.externalMessageId,
         internalStep: input.internalStep,
       },
     });
@@ -588,11 +595,13 @@ class ConversationService {
    * A hidden step is shown on the first message at or after it that answers a
    * person, passing over one nobody asked for, such as a heartbeat's. When the
    * person's own message comes first, the step is shown nowhere: that keeps a
-   * cancelled turn's calls off the next answer. A message sent to steer a running
-   * turn is a person's message too, so the steps before it are not shown either:
-   * the rarer case, traded for not telling the two apart.
+   * cancelled turn's calls off the next answer. Another agent's message asks like
+   * a person's, so it counts the same. A message sent to steer a running turn is
+   * a person's message too, so the steps before it are not shown either: the
+   * rarer case, traded for not telling the two apart.
    */
   async withHiddenStepToolCalls<T extends ConversationMessage>(threadId: string, messages: T[]): Promise<T[]> {
+    const asking: MessageTrigger[] = [MessageTrigger.USER_INPUT, MessageTrigger.AGENT_MESSAGE];
     const visible = [...messages].sort(
       (a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
     );
@@ -608,7 +617,7 @@ class ConversationService {
       where: {
         threadId,
         internalStep: false,
-        triggeredBy: MessageTrigger.USER_INPUT,
+        triggeredBy: { in: asking },
         createdAt: { lt: first.createdAt },
       },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -629,7 +638,7 @@ class ConversationService {
     for (const step of steps) {
       if (!Array.isArray(step.toolCalls) || step.toolCalls.length === 0) continue;
       const shownOn = visible.find(
-        (message) => message.triggeredBy === MessageTrigger.USER_INPUT && message.createdAt.getTime() >= step.createdAt.getTime(),
+        (message) => asking.includes(message.triggeredBy) && message.createdAt.getTime() >= step.createdAt.getTime(),
       );
       if (shownOn?.role !== MessageRole.AGENT) continue;
       hidden.set(shownOn.id, [...(hidden.get(shownOn.id) ?? []), ...step.toolCalls]);
