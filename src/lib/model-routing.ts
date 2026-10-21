@@ -12,16 +12,13 @@ import { logger } from '../logger';
 import { callModel } from './model-call';
 import { getGateRequest } from './classification';
 import { langfuseTelemetry } from './telemetry';
-import type { LlmProvider } from './llm-providers/llm-provider';
+import { PROMPT_CACHE_TTL_MS, type LlmProvider } from './llm-providers/llm-provider';
 import { contextWindowFor } from './context-window';
 import { resolveEffectiveModel, resolveScopedModel } from '../services/agent-workspace.service';
 import { llmCallService, type LlmCallPurpose } from '../services/llm-call.service';
 import { conversationService } from '../services/conversation.service';
 import { MODEL_TIERS, missingAutoTiers, type ModelTier } from './model-selection';
 import type { AgentContext, InvokeRequest } from '../types';
-
-/** How long a provider keeps a prompt cache warm without a read. */
-export const PROMPT_CACHE_TTL_MS = 5 * 60 * 1000;
 
 /** The longest previous reply the classifier is shown, so a follow-up keeps its subject. */
 const PREVIOUS_REPLY_CHARS = 500;

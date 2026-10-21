@@ -113,6 +113,13 @@ export const BEDROCK_CACHE_POINT: CachePointFragment = {
 };
 
 /**
+ * How long a cache written through the breakpoints above stays warm without a
+ * read. Both fragments request the provider's default lifetime, which is five
+ * minutes. A fragment that names a longer `ttl` changes this with it.
+ */
+export const PROMPT_CACHE_TTL_MS = 5 * 60 * 1000;
+
+/**
  * The fragment for vendors whose prompt caching needs no breakpoints — and for
  * the ones whose support for them is unknown. Both mean "send nothing", which
  * spreads into `providerOptions` as a no-op.

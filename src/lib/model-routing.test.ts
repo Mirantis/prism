@@ -29,7 +29,8 @@ vi.mock('../logger', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), error: vi.fn(), warn: mockWarn },
 }));
 
-import { selectTurnModel, compactionModel, PROMPT_CACHE_TTL_MS } from './model-routing';
+import { selectTurnModel, compactionModel } from './model-routing';
+import { PROMPT_CACHE_TTL_MS } from './llm-providers/llm-provider';
 import { createTestAgentContext, createTestInvokeRequest } from '../test-utils/factories';
 import type { AgentContext } from '../types';
 import type { LlmProvider } from './llm-providers/llm-provider';
