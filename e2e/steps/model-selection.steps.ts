@@ -56,7 +56,9 @@ When('I ask {string}', async ({ page }, text: string) => {
   await homePage.navigate();
   await homePage.typeMessage(text);
   await homePage.sendMessage();
-  await homePage.waitForStreamComplete(300_000);
+  // 240 s leaves room under the 360 s @slow budget for the Background and the
+  // other ask, so a hung turn fails at this step instead of at the test timeout.
+  await homePage.waitForStreamComplete(240_000);
 });
 
 Then('the profile asks for a small and a large model', async ({ page }) => {

@@ -17,7 +17,8 @@ Feature: Auto model selection
     Then the profile shows Auto model selection
     And the stored model mode is Auto
 
-  # @slow: the large-tier request writes code with tests, a turn that can take a few minutes.
+  # @slow: the Background and both turns share one test timeout, and the large-tier turn alone
+  # can take longer than the default 120 s.
   @slow
   Scenario: Each turn runs on the model its request needs
     Given the agent chooses between the small and the large test models
