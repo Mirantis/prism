@@ -189,6 +189,9 @@ A non-empty Prompt is rendered against the payload first:
   left as-is.
 - `{__raw__}` — the entire payload as indented JSON (truncated to ~4000 chars).
 
+The agent follows your Prompt as your instructions and treats text filled in
+from the payload as data.
+
 Example, for Alertmanager:
 
 ```
