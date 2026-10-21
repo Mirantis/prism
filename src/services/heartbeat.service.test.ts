@@ -461,7 +461,7 @@ describe('HeartbeatService', () => {
       expect(mockInvoke.mock.calls[1][0].lastSend).toEqual(expect.objectContaining({ messages: '- To #ops (just now): Build #812 failed.' }));
     });
 
-    it('keeps the latest send to each place, so a send about one incident keeps the others', async () => {
+    it('keeps the sends about several incidents, also to one place', async () => {
       mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
       mockInvoke
         .mockResolvedValueOnce(reply('Posted the build failure to #ops.', [SEND]))
@@ -481,11 +481,27 @@ describe('HeartbeatService', () => {
         '- To #oncall (1h ago): Disk is 95% full.\n- To #ops (3h ago): Build #812 failed.',
       );
       expect(mockInvoke.mock.calls[3][0].lastSend.messages).toBe(
-        '- To #ops (just now): Build #813 failed.\n- To #oncall (1h ago): Disk is 95% full.',
+        '- To #ops (just now): Build #813 failed.\n- To #oncall (1h ago): Disk is 95% full.\n- To #ops (3h ago): Build #812 failed.',
       );
     });
 
-    it('keeps at most ten places, dropping the oldest send', async () => {
+    it('keeps a repeated message once, at its newest time', async () => {
+      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+      mockInvoke
+        .mockResolvedValueOnce(reply('Posted the build failure to #ops.', [SEND]))
+        .mockResolvedValueOnce(reply('Posted the build failure to #ops again.', [SEND]));
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await vi.advanceTimersByTimeAsync(0);
+      await heartbeatService.triggerHeartbeat();
+      vi.setSystemTime(Date.now() + 2 * 60 * 60 * 1000);
+      await heartbeatService.triggerHeartbeat();
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockInvoke.mock.calls[2][0].lastSend.messages).toBe('- To #ops (just now): Build #812 failed.');
+    });
+
+    it('keeps at most ten sends, dropping the oldest', async () => {
       mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
       const sends = Array.from({ length: 11 }, (_, i) => sendTo(`#team-${i}`, `Alert ${i}.`));
       for (const send of sends) mockInvoke.mockResolvedValueOnce(reply('Posted an alert.', [send]));
@@ -497,7 +513,8 @@ describe('HeartbeatService', () => {
       const messages: string = mockInvoke.mock.calls[11][0].lastSend.messages;
       expect(messages.split('\n')).toHaveLength(10);
       expect(messages).toContain('#team-10');
-      expect(messages).not.toContain('#team-0:');
+      expect(messages).not.toContain('#team-0 (');
+      expect(messages).toContain('#team-1 (');
     });
 
     it('drops the record when the Heartbeat document changes', async () => {

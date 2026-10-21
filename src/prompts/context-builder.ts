@@ -876,7 +876,7 @@ function getLastSendInstructions(lastSend: TaskLastSend, kind: 'task' | 'heartbe
         }
       : {
           title: 'Messages Your Heartbeat Sent',
-          sent: 'Earlier heartbeat runs sent these messages, the latest to each place:',
+          sent: 'Earlier heartbeat runs sent these messages, newest first:',
           report: 'The newest heartbeat run',
           asker: 'a check',
         };

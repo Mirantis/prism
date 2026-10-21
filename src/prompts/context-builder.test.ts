@@ -346,7 +346,7 @@ describe('system prompt text', () => {
     const section = parts.find((p) => p.text.includes('# Messages Your Heartbeat Sent'));
     expect(section?.cacheable).toBe(false);
     expect(section?.text).toContain(
-      'Earlier heartbeat runs sent these messages, the latest to each place:\n\n- To #ops (1h ago): Build #812 failed.\n- To #oncall (3h ago): Disk is 95% full.',
+      'Earlier heartbeat runs sent these messages, newest first:\n\n- To #ops (1h ago): Build #812 failed.\n- To #oncall (3h ago): Disk is 95% full.',
     );
     expect(section?.text).toContain('The newest heartbeat run (30min ago) reported:\n\nBuild #812 still fails.');
     expect(section?.text).toContain('If a check asks for a message on every run, send it as asked.');

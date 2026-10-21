@@ -42,10 +42,10 @@ const LAST_ALERT_ROWS = 20;
 /** How many heartbeat intervals back a restart reads sends into the send record. */
 const HEARTBEAT_SEND_RESTORE_INTERVALS = 3;
 
-/** How many places the send record keeps a latest message for. */
-const HEARTBEAT_SEND_PLACES = 10;
+/** How many sends the send record keeps. */
+const HEARTBEAT_SENDS = 10;
 
-/** The record with `sends` made at `at` under `checks`, each replacing the older send to its place. */
+/** The record with `sends` made at `at` under `checks`, each replacing an older send of the same text to the same place. */
 function mergeSends(
   record: HeartbeatSendRecord | null,
   sends: Array<{ place: string; text: string }>,
@@ -54,8 +54,8 @@ function mergeSends(
 ): HeartbeatSendRecord | null {
   if (sends.length === 0) return record;
   const fresh = sends.map((send) => ({ ...send, at }));
-  const kept = (record?.sends ?? []).filter((old) => !fresh.some((send) => send.place === old.place));
-  return { ...record, checks, sends: [...fresh, ...kept].slice(0, HEARTBEAT_SEND_PLACES) };
+  const kept = (record?.sends ?? []).filter((old) => !fresh.some((send) => send.place === old.place && send.text === old.text));
+  return { ...record, checks, sends: [...fresh, ...kept].slice(0, HEARTBEAT_SENDS) };
 }
 
 // ============================================================================
@@ -93,10 +93,11 @@ interface HeartbeatState {
 }
 
 /**
- * The latest message sent to each place, newest first, at most
- * `HEARTBEAT_SEND_PLACES`. A heartbeat runs several checks, so a send about one
- * incident keeps the sends about the others. `checks` is the Heartbeat document
- * the sends were made under: a run under other checks drops the record.
+ * The newest `HEARTBEAT_SENDS` messages earlier runs sent, newest first, with a
+ * repeated message kept once. A heartbeat runs several checks, so the record
+ * holds sends about several incidents, also in one channel. `checks` is the
+ * Heartbeat document the sends were made under: a run under other checks drops
+ * the record.
  */
 interface HeartbeatSendRecord {
   checks: string;
