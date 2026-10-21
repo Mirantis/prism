@@ -17,7 +17,7 @@ import { invoke } from '../invoke';
 import { lastResponseText } from '../lib/last-response-text';
 import { AgentWorkspace } from '@prisma/client';
 import { messageDeliveryService } from './message-delivery.service';
-import { outboundMessageService } from './outbound-message.service';
+import { outboundMessageService, sentMessages } from './outbound-message.service';
 import { runClassificationGate, isRecentDuplicate } from '../lib/classification-gate';
 import { agentStatusService } from './agent-status.service';
 import { MAX_RESUME_ATTEMPTS, pendingWorkService, type PendingWorkItem } from './pending-work.service';
@@ -25,7 +25,7 @@ import prisma from '../lib/prisma';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { formatTimeAgo } from '../prompts/context-builder';
-import { ChannelTriggerMessage, HeartbeatTrigger, InvokeStep } from '../types';
+import { ChannelTriggerMessage, HeartbeatTrigger, InvokeStep, type ToolCallRecord } from '../types';
 import { heartbeatDelayMs, heartbeatDueAt } from './heartbeat-schedule';
 import type { ChatPlatform } from './channel-adapter.interface';
 
@@ -35,6 +35,9 @@ import type { ChatPlatform } from './channel-adapter.interface';
  */
 const HEARTBEAT_BUDGET_NOTICE =
   "This heartbeat check stopped: your organization's AI spending limit has been reached.";
+
+/** How many stored heartbeat messages a restart reads to find the last delivered alert. */
+const LAST_ALERT_ROWS = 20;
 
 // ============================================================================
 // Types
@@ -201,15 +204,20 @@ class HeartbeatService {
   /**
    * The last alert is the newest heartbeat message delivered, so a restart keeps
    * what the duplicate check and the gate compare against. Read before the first
-   * run, which the delay floor holds at least a minute away.
+   * run, which the delay floor holds at least a minute away. A withheld run is
+   * stored only when it sent a message, so a row with a send is skipped: it may
+   * be no delivered alert. The trade: when the newest alert's run also sent, the
+   * one before it is restored, and the same alert can be delivered once more.
    */
   private async restoreLastAlert(state: HeartbeatState): Promise<void> {
     try {
-      const last = await prisma.conversationMessage.findFirst({
+      const rows = await prisma.conversationMessage.findMany({
         where: { role: 'AGENT', triggeredBy: 'HEARTBEAT', thread: { agentId: state.agentId } },
         orderBy: { createdAt: 'desc' },
-        select: { content: true, createdAt: true },
+        take: LAST_ALERT_ROWS,
+        select: { content: true, createdAt: true, toolCalls: true },
       });
+      const last = rows.find((row) => sentMessages((row.toolCalls as ToolCallRecord[] | null) ?? []).length === 0);
       if (!last || state.lastAlertAt !== null) return;
       state.lastAlertText = last.content;
       state.lastAlertAt = last.createdAt.getTime();

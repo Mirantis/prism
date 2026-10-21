@@ -68,7 +68,7 @@ vi.mock('./pending-work.service', () => ({
 }));
 
 vi.mock('../lib/prisma', () => ({
-  default: { conversationMessage: { findFirst: mockFindLastAlert } },
+  default: { conversationMessage: { findMany: mockFindLastAlert } },
 }));
 
 vi.mock('./agent-status.service', () => ({
@@ -89,7 +89,8 @@ vi.mock('../lib/classification', () => ({
 const { mockTrackEvent } = vi.hoisted(() => ({ mockTrackEvent: vi.fn() }));
 const { mockKeepWithheldRun } = vi.hoisted(() => ({ mockKeepWithheldRun: vi.fn() }));
 
-vi.mock('./outbound-message.service', () => ({
+vi.mock('./outbound-message.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./outbound-message.service')>()),
   outboundMessageService: { keepWithheldRun: mockKeepWithheldRun },
 }));
 
@@ -207,7 +208,7 @@ describe('HeartbeatService', () => {
     mockDeliverMessage.mockResolvedValue({ messageId: 'msg-1', threadId: 'thr-1' });
     mockPendingTriggerMessages.mockResolvedValue([]);
     mockRemoveTriggerMessages.mockResolvedValue(undefined);
-    mockFindLastAlert.mockResolvedValue(null);
+    mockFindLastAlert.mockResolvedValue([]);
     shutdown.controller = new AbortController();
   });
 
@@ -947,10 +948,9 @@ describe('HeartbeatService', () => {
 
     it('suppresses the alert the last process delivered, after a restart', async () => {
       mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
-      mockFindLastAlert.mockResolvedValue({
-        content: 'Pod crashing!',
-        createdAt: new Date('2025-01-15T11:58:00Z'),
-      });
+      mockFindLastAlert.mockResolvedValue([
+        { content: 'Pod crashing!', createdAt: new Date('2025-01-15T11:58:00Z'), toolCalls: null },
+      ]);
       mockInvoke.mockResolvedValue({
         response: 'Pod crashing!',
         toolCalls: [],
@@ -961,6 +961,28 @@ describe('HeartbeatService', () => {
       await vi.advanceTimersByTimeAsync(0);
       await heartbeatService.triggerHeartbeat();
 
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockGenerateText).not.toHaveBeenCalled();
+    });
+
+    it('restores the last delivered alert, not a newer withheld record of a run that sent, after a restart', async () => {
+      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
+      const send = { tool: 'send_message', input: JSON.stringify({ target: '#ops', text: 'Build #812 failed.' }), output: '{}', success: true, timestamp: '2025-01-15T11:59:00Z' };
+      mockFindLastAlert.mockResolvedValue([
+        { content: "This heartbeat check stopped: your organization's AI spending limit has been reached.", createdAt: new Date('2025-01-15T11:59:00Z'), toolCalls: [send] },
+        { content: 'Build #812 is failing.', createdAt: new Date('2025-01-15T11:58:00Z'), toolCalls: null },
+      ]);
+      mockInvoke.mockResolvedValue({
+        response: 'Build #812 is failing.',
+        toolCalls: [],
+        steps: [{ text: 'Build #812 is failing.', toolCalls: [] }],
+      });
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await vi.advanceTimersByTimeAsync(0);
+      await heartbeatService.triggerHeartbeat();
+
+      // The restored baseline is the delivered alert, so the repeat is a duplicate.
       expect(mockDeliverMessage).not.toHaveBeenCalled();
       expect(mockGenerateText).not.toHaveBeenCalled();
     });
