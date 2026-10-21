@@ -1056,11 +1056,13 @@ src/
 │   ├── coding-agents/          # One folder per coding agent, plus the shared contract and the selector (`CODING_AGENT` and per-task `agent`)
 │   │   ├── coding-agent.ts     # The `CodingAgent` contract: `id`, `displayName`, `prepareHome()` and `run(task)`, which returns a `CodingAgentRun` (an event stream of `text` / `session` / `result` with the actions the agent's checks refused, `exited`, `started`, `stop()`). States what the runtime needs and nothing about how an agent is launched
 │   │   ├── cli-run.ts          # `runCli()`: the process plumbing a CLI-shaped adapter calls — spawn, stdout lines through the adapter's parser, exit wait, the closing `result` when the agent reported none, SIGTERM→SIGKILL stop
+│   │   ├── cli-probe.ts        # `probeCli()`: one short, timed run of an agent's CLI for its answer, such as a login status
 │   │   ├── deferred-run.ts     # `deferredRun()`: a run whose process starts after async work; a stop before then aborts that work, and a failure is the closing `result`
 │   │   ├── get-coding-agent.ts # Selector: `config.codingAgent` → adapter, one instance per agent so the adapter that prepared the home runs every task; a `Record` so a config name without an adapter fails to compile
 │   │   ├── bedrock-credentials.ts # Shared AWS credential detection
 │   │   ├── codex/
-│   │   │   └── codex-agent.ts             # Codex CLI adapter
+│   │   │   ├── credentials.ts             # Which credential a task uses; for `CODEX_SUBSCRIPTION`, the home's saved login (`codex login status`) and `subscriptionEnvironment`
+│   │   │   └── codex-agent.ts             # Codex CLI adapter. With `CODEX_SUBSCRIPTION` on, each run asks the home for its login first: a ChatGPT login runs the task with `forced_login_method="chatgpt"`, and anything else fails it
 │   │   └── claude-code/
 │   │       ├── authenticated-home.ts # The home's saved login (`claude auth status`, run in the execution environment): a claude.ai subscription, another login, or none; `subscriptionEnvironment`, the env without the variables that outrank it; and `SUBSCRIPTION_SETTINGS`, the `--settings` that restate them, so a repository's `.claude/settings.json` cannot bring one back
 │   │       ├── credentials.ts # Claude CLI authentication settings
@@ -1173,6 +1175,7 @@ What the operator sets on `docker run`:
 | `CODEX_MODEL_SMALL` | Model for the Codex small tier | `gpt-5.6-luna` (Bedrock: `openai.gpt-5.6-luna`) |
 | `CODEX_MODEL_MEDIUM` | Model for the Codex medium tier | `gpt-5.6-terra` (Bedrock: `openai.gpt-5.6-terra`) |
 | `CODEX_MODEL_LARGE` | Model for the Codex large tier | `gpt-5.6-sol` (Bedrock: `openai.gpt-5.6-sol`) |
+| `CODEX_SUBSCRIPTION` | `true` runs every Codex task on the ChatGPT login saved in the CLI's home, and fails a task while none is | off |
 | `EMBEDDING_PROVIDER` | Memory-embedding vendor, decoupled from the chat vendor: `bedrock`, `azure-openai`, `openai`, `openrouter`, or `none` (embeddings off). Unset or unrecognized derives the chat vendor's default. The model still comes from the selected vendor's `*_EMBEDDING_MODEL_ID` var | derived from `LLM_PROVIDER` (anthropic: `openai` with `OPENAI_API_KEY` or `NEXUS_API_URL`, else `none`) |
 | `AWS_BEARER_TOKEN_BEDROCK` | Bedrock API key; on Bedrock selected over SigV4 when set, on mantle sent as `x-api-key` and **required** direct | — |
 | `AWS_REGION` | AWS region for Bedrock and for the mantle host | `us-east-1` |

@@ -13,10 +13,12 @@ import { logger } from '../../../logger';
 import { fakeExecutionEnvironment } from '../../../test-utils/fake-execution-environment';
 import { localFiles } from '../../execution-environments/local/local-files';
 import type {
+  ExecutionEnvironment,
   ExecutionFiles,
   FileStat,
   RunOptions,
 } from '../../execution-environments/execution-environment';
+import { __setExecutionEnvironmentForTests } from '../../execution-environments/get-execution-environment';
 import type {
   CodingAgentEvent,
   CodingAgentMcpServer,
@@ -26,6 +28,16 @@ import type {
 import { PLAN_ONLY_INSTRUCTION } from '../coding-agent';
 import { createClaudeCodeAgent } from './claude-code-agent';
 import { claudeMcpConfig } from './mcp-config';
+
+/** The environment a task's workdir resolves to, when a test stands one in. */
+const forPath = vi.hoisted(() => ({ environment: null as ExecutionEnvironment | null }));
+vi.mock('../../execution-environments/get-execution-environment', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../execution-environments/get-execution-environment')>();
+  return {
+    ...actual,
+    getExecutionEnvironmentFor: (cwd?: string) => forPath.environment ?? actual.getExecutionEnvironmentFor(cwd),
+  };
+});
 
 const baseTask: CodingAgentTask = {
   taskId: 't1',
@@ -224,6 +236,32 @@ describe('run: the Claude subscription', () => {
         { type: 'result', stopReason: 'error', turns: 0, message },
       ]);
       expect(launches).toHaveLength(0);
+    });
+
+    it("reads the login and runs a task on the host from the host's home, while other commands run in a container", async () => {
+      const homes: Array<string | undefined> = [];
+      forPath.environment = fakeExecutionEnvironment({
+        paths: { claudeHome: '/host/.claude' },
+        files: { stat: async () => DIR_STAT },
+        runProgram: (_command, args, options) => {
+          homes.push(options.env.CLAUDE_CONFIG_DIR);
+          const child = new FakeChild();
+          child.emitLine(args[0] === 'auth'
+            ? SUBSCRIPTION_STATUS
+            : JSON.stringify({ type: 'result', subtype: 'success', result: 'ok', num_turns: 1 }));
+          process.nextTick(() => child.finish(0));
+          return child.asExecProcess();
+        },
+      });
+      __setExecutionEnvironmentForTests(fakeExecutionEnvironment({ paths: { claudeHome: '/prism/claude' } }));
+      try {
+        const events = await Array.fromAsync(createClaudeCodeAgent().run({ ...baseTask, workdir: '/repo', env }).events);
+        expect(events.at(-1)).toMatchObject({ stopReason: 'end_turn' });
+        expect(homes).toEqual(['/host/.claude', '/host/.claude']);
+      } finally {
+        forPath.environment = null;
+        __setExecutionEnvironmentForTests(null);
+      }
     });
 
     it('asks again for every task, so a sign-in applies to the next one', async () => {

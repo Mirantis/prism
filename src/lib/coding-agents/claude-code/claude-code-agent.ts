@@ -80,10 +80,10 @@ export function createClaudeCodeAgent(environment?: ExecutionEnvironment): Codin
     },
     isAvailable: hasClaudeCodeCredentials,
     run: (task: CodingAgentTask): CodingAgentRun => {
-      // The environment the CLI runs in, which is also where its MCP config
-      // has to be.
+      // The environment the CLI runs in, which is also where its home and its
+      // MCP config have to be.
       const target = environment ?? getExecutionEnvironmentFor(task.workdir);
-      const home = (environment ?? getExecutionEnvironment()).paths().claudeHome;
+      const home = target.paths().claudeHome;
       return deferredRun(task.taskId, DISPLAY_NAME, async (signal) => {
         const subscription = config.claudeCodeSubscription;
         // Asked on every run, so a sign-in or a sign-out applies to the next task.

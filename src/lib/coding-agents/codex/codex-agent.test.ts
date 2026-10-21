@@ -8,9 +8,21 @@ import { PLAN_ONLY_INSTRUCTION, type CodingAgentEvent, type CodingAgentTask } fr
 import { createCodexAgent } from './codex-agent';
 import { fakeExecutionEnvironment, type FakeRun } from '../../../test-utils/fake-execution-environment';
 import { localFiles } from '../../execution-environments/local/local-files';
+import type { ExecutionEnvironment, RunOptions } from '../../execution-environments/execution-environment';
+import { __setExecutionEnvironmentForTests } from '../../execution-environments/get-execution-environment';
 import { trackEvent } from '../../telemetry';
 
 vi.mock('../../telemetry', () => ({ trackEvent: vi.fn() }));
+
+/** The environment a task's workdir resolves to, when a test stands one in. */
+const forPath = vi.hoisted(() => ({ environment: null as ExecutionEnvironment | null }));
+vi.mock('../../execution-environments/get-execution-environment', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../execution-environments/get-execution-environment')>();
+  return {
+    ...actual,
+    getExecutionEnvironmentFor: (cwd?: string) => forPath.environment ?? actual.getExecutionEnvironmentFor(cwd),
+  };
+});
 
 const task: CodingAgentTask = {
   taskId: 'task-1', prompt: 'Inspect the project', workdir: '/work',
@@ -273,6 +285,183 @@ describe('Codex adapter', () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+/** `codex login status` for a ChatGPT login, as Codex 0.163 prints it on stderr. */
+const CHATGPT = 'Logged in using ChatGPT';
+
+/**
+ * An environment whose `codex login status` prints `status`, recording every
+ * other launch. Without `status` the status call never ends.
+ */
+function subscriptionHarness(status?: string) {
+  const launches: Array<{ args: readonly string[]; options: RunOptions; child: FakeChild }> = [];
+  let asked = 0;
+  const environment = fakeExecutionEnvironment({
+    paths: { codexHome: '/home/.codex' },
+    runProgram: (_command, args, options) => {
+      const child = new FakeChild();
+      if (args[0] !== 'login') {
+        launches.push({ args, options, child });
+        return child.asExecProcess();
+      }
+      asked += 1;
+      if (status !== undefined) {
+        child.stderr.write(`${status}\n`);
+        process.nextTick(() => child.finish(0));
+      }
+      return child.asExecProcess();
+    },
+  });
+  return { agent: createCodexAgent(environment), launches, asked: () => asked };
+}
+
+describe('the ChatGPT subscription', () => {
+  const env = {
+    PATH: '/bin',
+    OPENAI_API_KEY: 'test-key',
+    CODEX_API_KEY: 'test-codex-key',
+    CODEX_ACCESS_TOKEN: 'test-token',
+    AWS_BEARER_TOKEN_BEDROCK: 'test-bedrock-key',
+  };
+  const NO_LOGIN =
+    'Codex failed to start: CODEX_SUBSCRIPTION is on, and the Codex home /home/.codex has no ChatGPT login: sign in to it with codex login';
+
+  it('asks nothing and keeps the API key while CODEX_SUBSCRIPTION is off', async () => {
+    const { agent, launches, asked } = subscriptionHarness(CHATGPT);
+    const run = agent.run({ ...task, env });
+    expect(asked()).toBe(0);
+    expect(launches[0].options.env).toMatchObject({ OPENAI_API_KEY: 'test-key', CODEX_API_KEY: 'test-codex-key' });
+    expect(launches[0].args).toContain('forced_login_method="api"');
+    launches[0].child.finish(0);
+    await Array.fromAsync(run.events);
+  });
+
+  describe('with CODEX_SUBSCRIPTION on', () => {
+    beforeEach(() => {
+      config.codexSubscription = true;
+    });
+    afterEach(() => {
+      config.codexSubscription = false;
+    });
+
+    it('runs a task on the ChatGPT login, with no API key and no Bedrock', async () => {
+      const { agent, launches } = subscriptionHarness(CHATGPT);
+      const run = agent.run({ ...task, env, modelTier: 'medium' });
+      await vi.waitFor(() => expect(launches).toHaveLength(1));
+      const { args, options, child } = launches[0];
+      expect(options.env).toEqual({
+        PATH: '/bin',
+        AWS_BEARER_TOKEN_BEDROCK: 'test-bedrock-key',
+        CODEX_HOME: '/home/.codex',
+      });
+      expect(args).toEqual(expect.arrayContaining([
+        'model_provider="openai"', 'forced_login_method="chatgpt"', 'cli_auth_credentials_store="file"',
+      ]));
+      expect(args).not.toContain('model_provider="amazon-bedrock"');
+      expect(args[args.indexOf('--model') + 1]).toBe('gpt-5.6-terra');
+      child.emitLine(JSON.stringify({ type: 'turn.completed' }));
+      child.finish(0);
+      await Array.fromAsync(run.events);
+      expect(trackEvent).toHaveBeenCalledWith('codex task finished', 'test-owner-id', {
+        'task.id': task.taskId, 'auth.method': 'subscription', status: 'end_turn', elapsed_ms: expect.any(String),
+      });
+    });
+
+    it.each([
+      ['no login', 'Not logged in', NO_LOGIN],
+      ['an API-key login', 'Logged in using an API key - sk-test-***-real', NO_LOGIN],
+      ['no answer', '', 'Codex failed to start: codex login status exited with 0 and no status'],
+    ])('fails the task, and starts nothing, with %s in the home', async (_label, status, message) => {
+      const { agent, launches } = subscriptionHarness(status);
+      expect(await Array.fromAsync(agent.run({ ...task, env }).events)).toEqual([
+        { type: 'result', stopReason: 'error', turns: 0, message },
+      ]);
+      expect(launches).toHaveLength(0);
+      expect(trackEvent).toHaveBeenCalledWith('codex task finished', 'test-owner-id', {
+        'task.id': task.taskId, 'auth.method': 'subscription', status: 'error', elapsed_ms: expect.any(String),
+      });
+    });
+
+    it("reads the login and runs a task on the host from the host's home, while other commands run in a container", async () => {
+      const homes: Array<string | undefined> = [];
+      forPath.environment = fakeExecutionEnvironment({
+        paths: { codexHome: '/host/.codex' },
+        runProgram: (_command, args, options) => {
+          homes.push(options.env.CODEX_HOME);
+          const child = new FakeChild();
+          if (args[0] === 'login') child.stderr.write(`${CHATGPT}\n`);
+          else child.emitLine(JSON.stringify({ type: 'turn.completed' }));
+          process.nextTick(() => child.finish(0));
+          return child.asExecProcess();
+        },
+      });
+      __setExecutionEnvironmentForTests(fakeExecutionEnvironment({ paths: { codexHome: '/prism/codex' } }));
+      try {
+        const events = await Array.fromAsync(createCodexAgent().run({ ...task, workdir: '/repo', env }).events);
+        expect(events.at(-1)).toMatchObject({ stopReason: 'end_turn' });
+        expect(homes).toEqual(['/host/.codex', '/host/.codex']);
+      } finally {
+        forPath.environment = null;
+        __setExecutionEnvironmentForTests(null);
+      }
+    });
+
+    it('asks again for every task, so a sign-in applies to the next one', async () => {
+      let status = 'Not logged in';
+      const launches: string[][] = [];
+      const agent = createCodexAgent(fakeExecutionEnvironment({
+        paths: { codexHome: '/home/.codex' },
+        runProgram: (_command, args) => {
+          const child = new FakeChild();
+          if (args[0] === 'login') child.stderr.write(`${status}\n`);
+          else launches.push([...args]);
+          process.nextTick(() => child.finish(0));
+          return child.asExecProcess();
+        },
+      }));
+
+      const first = await Array.fromAsync(agent.run({ ...task, env }).events);
+      status = CHATGPT;
+      await Array.fromAsync(agent.run({ ...task, env }).events);
+
+      expect(first).toEqual([{ type: 'result', stopReason: 'error', turns: 0, message: NO_LOGIN }]);
+      expect(launches).toHaveLength(1);
+    });
+
+    it.each([
+      ['before the CLI answers', ''],
+      ['after the CLI reports a ChatGPT login', CHATGPT],
+    ])('starts nothing when the task is stopped %s', async (_label, printed) => {
+      const launches: string[][] = [];
+      let asked = 0;
+      const agent = createCodexAgent(fakeExecutionEnvironment({
+        paths: { codexHome: '/home/.codex' },
+        runProgram: (_command, args) => {
+          const child = new FakeChild();
+          if (args[0] === 'login') {
+            asked += 1;
+            if (printed) child.stderr.write(`${printed}\n`);
+          } else {
+            launches.push([...args]);
+          }
+          return child.asExecProcess();
+        },
+      }));
+      const run = agent.run({ ...task, env });
+      await vi.waitFor(() => expect(asked).toBe(1));
+
+      run.stop();
+
+      expect(await Array.fromAsync(run.events)).toEqual([
+        { type: 'result', stopReason: 'error', turns: 0, message: 'Codex was stopped before it started' },
+      ]);
+      expect(launches).toHaveLength(0);
+      expect(trackEvent).toHaveBeenCalledWith('codex task finished', 'test-owner-id', {
+        'task.id': task.taskId, 'auth.method': 'subscription', status: 'stopped', elapsed_ms: expect.any(String),
+      });
+    });
   });
 });
 

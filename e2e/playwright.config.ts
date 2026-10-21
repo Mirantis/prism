@@ -23,6 +23,8 @@ config({ path: path.resolve(__dirname, '.env.e2e.local'), override: true });
 // dev-server proxy ("/agents" + "/api/ws" → :3003) just works.
 const RUNTIME_PORT = 3003;
 const WEB_PORT = 5173;
+/** An OpenAI key in the right form that the API refuses. */
+const REFUSED_OPENAI_KEY = 'sk-e2e-refused-key';
 
 // SQLite e2e DB lives next to the schema so Prisma's schema-relative path
 // resolution (file:./e2e.db) lands on the same file from every cwd.
@@ -292,7 +294,11 @@ export default defineConfig({
         // their expected percentage from the bundled catalog, so a fresher remote
         // window would make them flaky by design.
         MODELS_DEV_URL: '',
-        OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
+        // A ChatGPT subscription run holds OpenAI keys the API refuses, so a Codex
+        // task can succeed only on the saved login (`@codex-subscription`).
+        ...(process.env.CODEX_SUBSCRIPTION === 'true'
+          ? { OPENAI_API_KEY: REFUSED_OPENAI_KEY, CODEX_API_KEY: REFUSED_OPENAI_KEY }
+          : { OPENAI_API_KEY: process.env.OPENAI_API_KEY || '' }),
         // The browser the agent's computer opens. The runtime looks for one in the
         // places an image installs it, and this suite runs the runtime on the host,
         // where there may be none — so it is handed the Chromium this suite already

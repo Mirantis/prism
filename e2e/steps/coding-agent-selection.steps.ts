@@ -7,7 +7,7 @@ import { DEFAULT_AGENT_ID, E2E_WORKSPACE } from '../fixtures/test-data';
 import { hasClaudeCodeCredentials } from '../../src/lib/coding-agents/claude-code/credentials';
 import { readSavedLogin } from '../../src/lib/coding-agents/claude-code/authenticated-home';
 import { getExecutionEnvironment } from '../../src/lib/execution-environments/get-execution-environment';
-import { codexAuthMethod } from '../../src/lib/coding-agents/codex/credentials';
+import { codexAuthMethod, readCodexLogin } from '../../src/lib/coding-agents/codex/credentials';
 import { getPrisma } from '../support/db-helper';
 import type { ToolCallRecord } from '../../src/types';
 
@@ -98,6 +98,17 @@ Given('Claude Code has a saved subscription login', async () => {
   // Opted in, a probe that gives no answer fails the scenario rather than skipping it.
   const login = await readSavedLogin({ ...getExecutionEnvironment(), workspaceRoot: () => E2E_WORKSPACE }, process.env, home);
   test.skip(login !== 'subscription', needs);
+});
+
+Given('Codex has a saved ChatGPT login', async () => {
+  test.skip(process.env.EXECUTION_ENVIRONMENT === 'docker',
+    'The container keeps its own Codex home, which this process cannot read.');
+  const home = process.env.CODEX_HOME ?? '';
+  const needs = 'Subscription coverage needs CODEX_SUBSCRIPTION=true and CODEX_HOME signed in to ChatGPT with codex login.';
+  test.skip(!home || process.env.CODEX_SUBSCRIPTION !== 'true', needs);
+  // Read in the runtime's workspace, for the reason the Claude step gives.
+  const login = await readCodexLogin({ ...getExecutionEnvironment(), workspaceRoot: () => E2E_WORKSPACE }, process.env, home);
+  test.skip(login !== 'chatgpt', needs);
 });
 
 When('I ask a Claude Code task how it is signed in', async ({ page }) => {

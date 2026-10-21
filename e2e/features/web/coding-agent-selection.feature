@@ -40,3 +40,15 @@ Feature: Coding agent delegation
     And Claude Code has a saved subscription login
     When I ask a Claude Code task how it is signed in
     Then the coding task is signed in with "claude.ai"
+
+  # With CODEX_SUBSCRIPTION=true the runtime holds OpenAI keys the API refuses,
+  # so the task can succeed only on the saved ChatGPT login.
+  @codex-subscription
+  Scenario: Run a coding task on a saved ChatGPT subscription, not on the agent's OpenAI key
+    Given I am logged in
+    And I have a personal agent
+    And Codex has a saved ChatGPT login
+    And a coding task file contains "before"
+    When I ask for a coding task using "codex"
+    Then the coding task file contains "after"
+    And the coding task used "codex"

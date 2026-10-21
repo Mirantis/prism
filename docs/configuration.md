@@ -179,6 +179,7 @@ Omitted parameters keep the deployment's model and effort behavior.
 | `CODEX_MODEL_SMALL` | Model for the Codex small tier | `gpt-5.6-luna` (Bedrock: `openai.gpt-5.6-luna`) |
 | `CODEX_MODEL_MEDIUM` | Model for the Codex medium tier | `gpt-5.6-terra` (Bedrock: `openai.gpt-5.6-terra`) |
 | `CODEX_MODEL_LARGE` | Model for the Codex large tier | `gpt-5.6-sol` (Bedrock: `openai.gpt-5.6-sol`) |
+| `CODEX_SUBSCRIPTION` | `true` runs every Codex task on your ChatGPT subscription. See [Codex tasks on a ChatGPT subscription](#codex-tasks-on-a-chatgpt-subscription). | off |
 
 Set each tier to a model your account can serve; set all three overrides to keep a model
 out of every tier. Blank overrides log a warning and use the default.
@@ -213,6 +214,35 @@ names the subscription serves, such as `sonnet`, not Bedrock IDs. When the
 subscription reaches its usage limit, tasks fail with Claude Code's message until
 the limit resets. To go back to the agent's credentials, remove the variable and
 restart the agent.
+
+When commands run in a container, a conversation you start with `prism` inside a
+repository runs its tasks on this machine, so sign in on this machine as well.
+
+### Codex tasks on a ChatGPT subscription
+
+Codex tasks can run on your ChatGPT subscription, while the agent itself keeps its
+`LLM_PROVIDER`. Sign in once with the command for where the agent's commands run,
+then set `CODEX_SUBSCRIPTION=true` and restart the agent:
+
+| Where commands run | Command |
+| ------------------ | ------- |
+| On this machine | `CODEX_HOME=<data dir>/.codex codex login`, where the data dir is `~/.prism` by default |
+| In the container Prism starts | `docker exec -it -e CODEX_HOME=/prism/codex prism-agent-exec-<id> codex login --device-auth` |
+| In the Prism image | `docker exec -it -e CODEX_HOME=/data/.codex prism codex login --device-auth` |
+
+Sign in with ChatGPT. In a container, open the link that the command prints and
+enter its one-time code there. Codex then uses the subscription and none of the
+agent's API keys or Bedrock credentials. While no ChatGPT login is saved, every
+Codex task fails with a message that says so. The `CODEX_MODEL_*` overrides apply
+to these tasks too, so set them to models your plan serves, not Bedrock IDs. When
+the subscription reaches its usage limit, tasks fail with Codex's message until the
+limit resets. To go back to the agent's credentials, remove the variable and
+restart the agent.
+
+To send tasks to Codex by default, set `CODING_AGENT=codex` as well. When commands
+run in a container, a conversation you
+start with `prism` inside a repository runs its tasks on this machine, so sign in on
+this machine as well.
 
 ### What a coding task may do
 
