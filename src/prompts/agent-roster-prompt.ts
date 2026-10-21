@@ -68,6 +68,7 @@ export function rosterUpdateNotice(before: Roster, after: Roster): string | null
   for (const agent of before.agents) {
     if (!present.has(agent.id)) lines.push(`- Left: ${oneLine(agent.name)}`);
   }
+  if (before.self.name !== after.self.name) lines.push(`- You are now ${oneLine(after.self.name)}`);
   if (before.self.role !== after.self.role) lines.push(`- Your own role is now: ${roleText(after.self.role)}`);
   if (lines.length === 0) return null;
   return ['<agent-roster-update>', ...lines, '</agent-roster-update>'].join('\n');

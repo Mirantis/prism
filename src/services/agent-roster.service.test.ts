@@ -148,6 +148,21 @@ describe('agentRosterService.beforeChatTurn', () => {
     expect(snapshot()).toMatchObject({ version: 'v2', noticeMessageId: 'notice-1' });
   });
 
+  it('tells the agent its own new name when only that changed', async () => {
+    mockCallListAgents.mockResolvedValueOnce(answer({ version: 'v1', self, agents: [writer] }));
+    await check();
+    vi.setSystemTime(new Date('2026-10-21T12:05:00.000Z'));
+    mockCallListAgents.mockResolvedValue(answer({ version: 'v2', self: { ...self, name: 'Reviewer' }, agents: [writer] }));
+
+    await check();
+
+    expect(mockAddMessage).toHaveBeenCalledTimes(2);
+    expect(mockAddMessage.mock.calls[1][1].content).toBe(
+      ['<agent-roster-update>', '- You are now Reviewer', '</agent-roster-update>'].join('\n'),
+    );
+    expect(snapshot()).toMatchObject({ version: 'v2', self: { name: 'Reviewer' }, noticeMessageId: 'notice-1' });
+  });
+
   it('adds the whole roster again once a compaction folded it away', async () => {
     mockCallListAgents.mockResolvedValueOnce(answer({ version: 'v1', self, agents: [writer] }));
     await check();
