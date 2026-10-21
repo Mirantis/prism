@@ -8,7 +8,8 @@
  * The gate is instruction-aware: it sees the task's instruction so tasks that
  * ask for unconditional output (reports, digests, reminders) always deliver,
  * conditional "only tell me if..." checks may go quiet, and tasks that ask for
- * no message deliver only an error.
+ * no message deliver only what the scheduler sends past this gate: an error or
+ * a run with a blocked tool call.
  */
 
 import { formatTimeAgo } from './context-builder';

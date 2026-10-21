@@ -1201,6 +1201,50 @@ describe('CronSchedulerService', () => {
       );
     });
 
+    it('delivers a run whose tool call the risk gate refused without consulting the gate', async () => {
+      const text = "I couldn't rotate the keys: the call was blocked by policy.";
+      mockInvoke.mockResolvedValue({
+        response: text,
+        toolCalls: [{
+          tool: 'shell_exec',
+          input: JSON.stringify({ command: './rotate-keys.sh staging' }),
+          output: JSON.stringify({
+            error: 'Tool call blocked by the configured risk policy (category=credential_access, risk=high).',
+            code: 'TOOL_RISK_BLOCKED',
+            risk: 'high',
+            category: 'credential_access',
+          }),
+          success: false,
+          timestamp: '2026-10-21T02:00:00.000Z',
+        }],
+        steps: [{ text, toolCalls: [] }],
+      });
+      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+
+      const run = scheduleAndCapture({
+        instruction: 'Rotate the staging API keys every night. Never send me a message about it, just do the work.',
+      });
+      await run();
+
+      expect(mockGenerateText).not.toHaveBeenCalled();
+      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('asks the gate about a run whose failed tool call the risk gate did not refuse', async () => {
+      mockInvoke.mockResolvedValue({
+        response: 'Done.',
+        toolCalls: [{ tool: 'shell_exec', input: '{}', output: '', success: false, timestamp: '2026-10-21T02:00:00.000Z' }],
+        steps: [{ text: 'Done.', toolCalls: [] }],
+      });
+      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+
+      const run = scheduleAndCapture({ instruction: 'Clean up the build cache. Never tell me about it.' });
+      await run();
+
+      expect(mockGenerateText).toHaveBeenCalledTimes(1);
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+    });
+
     it('clears the baseline when a suppressed run observes a different situation', async () => {
       const outage = { response: 'Database is down.', toolCalls: [], steps: [{ text: 'Database is down.', toolCalls: [] }] };
       const allClear = { response: 'All clear.', toolCalls: [], steps: [{ text: 'All clear.', toolCalls: [] }] };

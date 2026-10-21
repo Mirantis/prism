@@ -24,6 +24,8 @@ import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { isTimezone } from '../lib/timezone';
 import { runVerdictGate } from '../lib/classification-gate';
+import type { ToolRiskGateErrorCode } from '../lib/tool-risk-gate';
+import type { ToolCallRecord } from '../types';
 import { CRON_TASK_GATE_PROMPT, buildCronGateUserMessage } from '../prompts/cron-prompt';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
@@ -109,6 +111,19 @@ function missedRun(task: BackendCronTask, job: { match(date: Date): boolean }): 
     if (job.match(new Date(tick))) return true;
   }
   return false;
+}
+
+/**
+ * Whether the risk gate refused one of a run's tool calls. `invoke` records a
+ * refusal as a failed call whose output is the refusal's summary with its code;
+ * any other failed call has no output.
+ */
+function hasRiskBlockedCall(toolCalls: ToolCallRecord[]): boolean {
+  return toolCalls.some((call) => {
+    if (call.success || !call.output) return false;
+    const { code } = JSON.parse(call.output) as { code?: ToolRiskGateErrorCode };
+    return code === 'TOOL_RISK_BLOCKED' || code === 'TOOL_RISK_EVALUATION_UNAVAILABLE';
+  });
 }
 
 // ============================================================================
@@ -572,8 +587,10 @@ class CronSchedulerService {
       const body = responseText || result.response;
 
       // Suppression ladder: an empty result is suppressed outright; a run that
-      // ended in an error message is always delivered (an error is never
-      // "nothing to report"); the classification gate decides the rest. The
+      // ended in an error message, or whose tool call the risk gate refused, is
+      // always delivered (neither is "nothing to report", and a task told to
+      // send no message would otherwise fail silently on every run); the
+      // classification gate decides the rest. The
       // gate sees the task instruction — so unconditional "send me X" tasks
       // always deliver, even when the text repeats — and the last delivered
       // result, so a conditional check that merely repeats it stays quiet.
@@ -584,7 +601,7 @@ class CronSchedulerService {
       let verdict: string;
       if (!body.trim()) {
         verdict = 'SUPPRESS';
-      } else if (result.error) {
+      } else if (result.error || hasRiskBlockedCall(result.toolCalls)) {
         verdict = 'DELIVER';
       } else {
         verdict = await runVerdictGate({
