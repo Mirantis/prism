@@ -912,7 +912,9 @@ and refuses every call, because under `none` the SDK sends no tools block.
 | **PluginMcpService** | `services/plugin-mcp.service.ts` | Connects each plugin's MCP servers (lazily, once per server), qualifies and orders their tools, closes them at shutdown |
 | **WebSocketGatewayService** | `services/websocket-gateway.service.ts` | The chat socket, protocol v2 (`protocol/chat-protocol.ts`, `docs/websocket-protocol.md`): the `hello`/`welcome` handshake and resume, validated requests answered `ack`/`nack`, connection limits, and voice and dictation on the same socket |
 | **EventStreamService** | `services/event-stream.service.ts` | The numbered stream every chat client reads, and the bounded window a reconnecting client is replayed from |
-| **InboundMessageService** | `services/inbound-message.service.ts` | A chat message from the socket: stored under the client's id first, confirmed, then answered one turn at a time for the agent; and each conversation's `queued`/`running`/`idle` state |
+| **InboundMessageService** | `services/inbound-message.service.ts` | A chat message from the socket, or another agent's message from `POST /agents/agent-messages`: stored under the sender's id first, confirmed, then answered one turn at a time for the agent; and each conversation's `queued`/`running`/`idle` state. A delivery sent again is the same message in whichever conversation holds it; an id that names another sender's message is refused |
+| **AgentRosterService** | `services/agent-roster.service.ts` | Before a chat turn, at most once a minute per thread, calls the Lens Agents `list_agents` tool (`callListAgents` in `lib/mcp-client.ts`) with the version the thread last read, and stores the whole roster or the difference as a hidden USER row (`prompts/agent-roster-prompt.ts`). The snapshot is `runtime_state` `agentRoster:<threadId>`; a compacted or missing roster row means the whole roster again. Never throws: a failure is a warning and the turn runs |
+| **isAgentIdle** | `services/agent-activity.ts` | Whether nothing runs or waits: model calls, live exchanges, working threads, cron, goals, compaction, meetings, voice, and processes a tool started. The updater defers to it, and `GET /agents/state` reports it |
 | **ProgramStatusService** | `services/program-status.service.ts` | The agent's state as OSC 7501 reports on stdout, for LNS and terminals, and `clear` at process exit |
 | **WebSocketAdapterService** | `services/websocket-adapter.service.ts` | ChannelAdapter for WebSocket delivery, calls local gateway directly |
 | **BackendClient** | `lib/backend-client.ts` | Typed HTTP client for backend internal REST API: access control (`canAccessAgent()`) + SlackConnection read-only access (`getActiveSlackConnections()`, `getSlackConnection()`) |
@@ -932,6 +934,8 @@ src/
 │   ├── message-delivery.service.ts # Unified message publish: store + channel-scoped or broadcast delivery
 │   ├── delivery-target.service.ts # A webhook's or a scheduled task's configured target: all, chat, a channel (or chosen linked channels of it), none
 │   ├── thread-turn.service.ts  # Per-thread mutex + mid-turn inbox (turn steering, coalesced follow-ups)
+│   ├── agent-roster.service.ts # The other agents of the project, as a hidden row before a chat turn: whole, or what changed
+│   ├── agent-activity.ts       # `isAgentIdle`: whether nothing runs or waits (the updater, `GET /agents/state`)
 │   ├── agent-workspace.service.ts # Agent CRUD, ownership validation, platform tokens, subagents; `writeWorkspaceDoc` / `rollbackWorkspaceDoc`, the one write path for an identity document
 │   ├── document-revision.service.ts # Identity-document revisions: record, history (with drift), read one, restore, 500-per-document bound
 │   ├── agent-status.service.ts  # Direct Prisma writes for agent fields (heartbeat schedule/status)
@@ -1024,6 +1028,8 @@ src/
 ├── routes/
 │   ├── management.ts           # Management API for backend to push heartbeat/slack-heartbeat-trigger events
 │   ├── activity.ts             # Activity page reads: token totals, paged tool calls, paged webhook runs
+│   ├── agent-messages.ts       # POST /agents/agent-messages: another agent's message, stored and scheduled (403 for a person)
+│   ├── agent-state.ts          # GET /agents/state: working or idle
 │   ├── cron-tasks.ts           # Scheduled tasks: list, create, edit, delete; each write re-registers the task
 │   ├── document-revisions.ts   # Per identity document: the write, the history, one revision with its content, and the restore
 │   └── model-selection.ts      # Fixed or Auto model selection and the three Auto tiers (GET/PATCH /agents/model-selection)
@@ -1102,7 +1108,7 @@ src/
 │   ├── file-janitor.ts         # Hourly sweep of the durable file stores: orphaned uploads, stale hydrate scratch dirs, over-TTL attachment content, stray media files, over-TTL saved tool outputs
 │   ├── llm-errors.ts           # Single owner of LLM/runtime error → user-facing text (`buildErrorStep`, budget detection)
 │   ├── log-redaction.ts        # The global pino `err` serializer: an allow-list, so no SDK request/response body is ever logged
-│   ├── mcp-client.ts           # MCP tool fetching from MCP servers
+│   ├── mcp-client.ts           # MCP tool fetching from MCP servers; `callListAgents`, the runtime's own call of Lens Agents' `list_agents` (found by its raw name)
 │   ├── agent-mcp-servers.ts    # The MCP servers the runtime connects for the agent, as the neutral list a coding task gets
 │   ├── model-call.ts           # The only module calling `generateText`/`generateObject`; records every call's usage
 │   ├── model-routing.ts        # Which model a turn runs on: Fixed, or an Auto tier with the warm-cache hold rule
@@ -1121,6 +1127,8 @@ src/
 │   └── schema.prisma           # Prisma schema for runtime PostgreSQL database
 └── prompts/
     ├── context-builder.ts      # System prompt and message construction
+    ├── agent-message-prompt.ts # Another agent's message as the model reads it: `<agent-message …>` or `<agent-notice>`, escaped
+    ├── agent-roster-prompt.ts  # The roster notices: the whole `<agent-roster>`, or the `<agent-roster-update>` difference
     ├── channel-prompt.ts       # Team-channel behavior instructions, naming the channel as its adapter words it
     ├── early-stopping-prompt.ts # Prompt for summarizing when step limit is reached
     └── resume-prompt.ts        # What a model continuing interrupted work is told: the chat notice, the run notice, the coding-task prompt
@@ -1234,16 +1242,43 @@ What the operator sets on `docker run`:
 
 ## Chat Flow
 
-There are two entry points for chat, both handled locally by the agent-runtime:
+There are three entry points for chat, all handled locally by the agent-runtime:
 
 1. **WebSocket**: Client -> Lens Agents ingress -> WS gateway -> `inboundMessageService.accept()` (stores the message, confirms it) -> `conversationEngineService.chat()` (local, no HTTP)
 2. **Slack**: Bolt Socket Mode message -> `conversationEngineService.chat()` (local, no HTTP)
+3. **Agent messages**: Irene Agent backend -> Lens Agents private ingress -> `POST /agents/agent-messages` (`routes/agent-messages.ts`, 403 when the ingress names a person) -> `inboundMessageService.accept()` into the web conversation -> `conversationEngineService.chat()`
 
-In both cases, `conversationEngineService.chat()` manages the thread, **iterates `invokeStream()` directly** (no queue, no HTTP), and `messageDeliveryService.publish()`'es each text-bearing step the moment its `onStepFinish` fires. Each delivery uses a `channelContext` that scopes the publish to the originating channel only (WebSocket or Slack), so users see intermediate text from multi-step responses in real time instead of one big block at the end.
+In every case, `conversationEngineService.chat()` manages the thread, **iterates `invokeStream()` directly** (no queue, no HTTP), and `messageDeliveryService.publish()`'es each text-bearing step the moment its `onStepFinish` fires. Each delivery uses a `channelContext` that scopes the publish to the originating channel only (WebSocket or Slack), so users see intermediate text from multi-step responses in real time instead of one big block at the end.
 
 The engine keeps a **one-step buffer**: it can't know a step is the last text step until the next step (or stream end) arrives, so the last publish is the one that carries the accumulated UI `blocks` and the `shouldShowFeedback` decision. Earlier steps publish with `includeFeedback: false` and no blocks.
 
 The management `POST /agents/chat` endpoint remains available for internal/debug use.
+
+### Agent messages
+
+A message from another agent of the Lens Agents project is a USER row with
+`triggeredBy: AGENT_MESSAGE`, `triggerName` its kind (`message`, `ask` when the
+sender waits for an answer, `notice`), and the sending agent in
+`senderExternalId`, `senderName` and `externalMessageId`. The origin travels as
+`ChatInput.metadata.agentMessage` and `PendingMessage.agentMessage`, so a
+pending-work row, a steered message and a coalesced follow-up keep it.
+
+- **The model reads it inside a tag**, never as the person's words:
+  `prompts/agent-message-prompt.ts` renders `<agent-message from=… agent-id=…
+  message-id=… expects-reply=…>` or `<agent-notice>`, with the text escaped.
+  History, `buildSteeringMessage` and the coalesced prompt use the one renderer,
+  so the replayed bytes are the ones the model first read.
+- **It is not the person's.** The feedback prompt and its cadence count the
+  person's messages alone, a hidden step before it stays hidden as before a
+  person's message, and single-thread mode keeps the conversation the person
+  wrote in last. Its reply is an ordinary chat reply (`USER_INPUT`) in the web
+  conversation.
+- **The roster** comes before a chat turn, inside the claim, from
+  `agentRosterService` (see **Key Services**). The guidance on treating agent
+  messages lives in that hidden roster row, so the system prompt and its cached
+  prefix are the same for every agent.
+- **`GET /agents/state`** (`routes/agent-state.ts`) answers `working` or `idle`
+  from `isAgentIdle`.
 
 ### Turn Steering (mid-turn messages)
 

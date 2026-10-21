@@ -85,6 +85,15 @@ see a gap, reconnect and resume from the last `seq` you applied.
     shorter than `limit` starts at the conversation's first message.
   - `senderId` and `senderName` say who wrote a `USER` message, or are `null`.
     Show `senderName`. Neither decides what anyone may do.
+  - A `USER` message with `triggeredBy: "AGENT_MESSAGE"` is from another agent
+    of the project, not from a person ([Agent messages](agent-messages.md)).
+    Show it as another participant's, under "{senderName} · Agent", or under
+    `senderName` alone for a notice, whose `senderId` is `irene-agent`:
+
+    ```json
+    {"type":"message","payload":{"id":"6f1c2a3b-4d5e-4f60-8a71-92b3c4d5e6f7","threadId":"…","role":"USER","content":"Can you check whether CI is green on main?","triggeredBy":"AGENT_MESSAGE","toolCalls":null,"blocks":null,"isCompacted":false,"createdAt":"2026-10-21T12:00:00.000Z","attachments":null,"senderId":"<agent id>","senderName":"Researcher"},"seq":12}
+    ```
+
 - **`turn`** `{ threadId, state, outcome?, error? }`: what a conversation is doing.
   - `state` is `queued`, `running` or `idle`.
   - `outcome` appears when a running conversation becomes idle: `completed`,
