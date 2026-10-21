@@ -17,6 +17,8 @@ Feature: Auto model selection
     Then the profile shows Auto model selection
     And the stored model mode is Auto
 
+  # @slow: the large-tier request writes code with tests, a turn that can take a few minutes.
+  @slow
   Scenario: Each turn runs on the model its request needs
     Given the agent chooses between the small and the large test models
     When I ask "What is 2 + 2? Reply with the number only."
