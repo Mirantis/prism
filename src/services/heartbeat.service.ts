@@ -45,16 +45,17 @@ const HEARTBEAT_SEND_RESTORE_INTERVALS = 3;
 /** How many places the send record keeps a latest message for. */
 const HEARTBEAT_SEND_PLACES = 10;
 
-/** The record with `sends` made at `at`, each replacing the older send to its place. */
+/** The record with `sends` made at `at` under `checks`, each replacing the older send to its place. */
 function mergeSends(
   record: HeartbeatSendRecord | null,
   sends: Array<{ place: string; text: string }>,
   at: number,
+  checks: string,
 ): HeartbeatSendRecord | null {
   if (sends.length === 0) return record;
   const fresh = sends.map((send) => ({ ...send, at }));
   const kept = (record?.sends ?? []).filter((old) => !fresh.some((send) => send.place === old.place));
-  return { ...record, sends: [...fresh, ...kept].slice(0, HEARTBEAT_SEND_PLACES) };
+  return { ...record, checks, sends: [...fresh, ...kept].slice(0, HEARTBEAT_SEND_PLACES) };
 }
 
 // ============================================================================
@@ -94,9 +95,11 @@ interface HeartbeatState {
 /**
  * The latest message sent to each place, newest first, at most
  * `HEARTBEAT_SEND_PLACES`. A heartbeat runs several checks, so a send about one
- * incident keeps the sends about the others.
+ * incident keeps the sends about the others. `checks` is the Heartbeat document
+ * the sends were made under: a run under other checks drops the record.
  */
 interface HeartbeatSendRecord {
+  checks: string;
   sends: Array<{ place: string; text: string; at: number }>;
   latestReport?: { text: string; at: number };
 }
@@ -232,7 +235,7 @@ class HeartbeatService {
       this.givenUp = false;
       this.persistSchedule(state);
     }
-    void this.restoreLastAlert(state);
+    void this.restoreLastAlert(state, agent.heartbeatMd);
     return state;
   }
 
@@ -250,7 +253,7 @@ class HeartbeatService {
    * can miss a report that a condition cleared, and a new occurrence inside that
    * window can read as the one already sent.
    */
-  private async restoreLastAlert(state: HeartbeatState): Promise<void> {
+  private async restoreLastAlert(state: HeartbeatState, checks: string): Promise<void> {
     try {
       const rows = await prisma.conversationMessage.findMany({
         where: { role: 'AGENT', triggeredBy: 'HEARTBEAT', thread: { agentId: state.agentId, externalThreadId: null } },
@@ -265,7 +268,7 @@ class HeartbeatService {
         // Oldest first, so a newer send to a place replaces an older one.
         for (let i = rows.length - 1; i >= 0; i--) {
           const at = rows[i].createdAt.getTime();
-          if (at >= since) record = mergeSends(record, sends[i], at);
+          if (at >= since) record = mergeSends(record, sends[i], at, checks);
         }
         if (record && sends[0].length === 0) {
           record.latestReport = { text: rows[0].content, at: rows[0].createdAt.getTime() };
@@ -466,6 +469,7 @@ class HeartbeatService {
       }
       const triggered = triggers.length > 0;
       await this.beginRun(state, read);
+      const checks = await this.readChecks(state);
 
       // Invoke LLM directly (in-process, no HTTP)
       const invokeResult = await invoke({
@@ -487,7 +491,7 @@ class HeartbeatService {
         return { shouldSkip: true, text: 'Stopped by shutdown' };
       }
       delivering = true;
-      this.noteSends(state, invokeResult.toolCalls);
+      this.noteSends(state, invokeResult.toolCalls, checks);
 
       // Budget exceeded — skip and reset error streak so the timer keeps running.
       // The cycle still happened, so the next one is a full interval away.
@@ -656,6 +660,7 @@ class HeartbeatService {
       const startTime = Date.now();
       const triggers: HeartbeatTrigger[] = [{ platform: source.platform, messages }];
       await this.beginRun(state, read);
+      const checks = await this.readChecks(state);
 
       const invokeResult = await invoke({
         userId: state.userId,
@@ -672,7 +677,7 @@ class HeartbeatService {
       // A shutdown stopped the run. The messages stay queued for the next boot.
       if (pendingWorkService.shutdownSignal.aborted) return;
       delivering = true;
-      this.noteSends(state, invokeResult.toolCalls);
+      this.noteSends(state, invokeResult.toolCalls, checks);
 
       // Budget exceeded — skip gracefully
       if (invokeResult.error?.type === 'budget_exceeded') {
@@ -844,8 +849,18 @@ Answer with one word: DELIVER or SUPPRESS.`;
   }
 
   /** A run's sends join the record, each replacing the older send to its place. */
-  private noteSends(state: HeartbeatState, toolCalls: ToolCallRecord[]): void {
-    state.lastSend = mergeSends(state.lastSend, sentMessageList(toolCalls), Date.now());
+  private noteSends(state: HeartbeatState, toolCalls: ToolCallRecord[], checks: string): void {
+    state.lastSend = mergeSends(state.lastSend, sentMessageList(toolCalls), Date.now(), checks);
+  }
+
+  /** The Heartbeat document this run checks. A record made under other checks is dropped. */
+  private async readChecks(state: HeartbeatState): Promise<string> {
+    const agent = await prisma.agentWorkspace.findUniqueOrThrow({
+      where: { id: state.agentId },
+      select: { heartbeatMd: true },
+    });
+    if (state.lastSend && state.lastSend.checks !== agent.heartbeatMd) state.lastSend = null;
+    return agent.heartbeatMd;
   }
 
   /** The record as the prompt reads it: each send with its age. */

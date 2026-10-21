@@ -25,6 +25,7 @@ const {
   mockLoggerError,
   mockRemoveTriggerMessages,
   mockFindLastAlert,
+  mockFindChecks,
   mockBeginWork,
   mockFinishWork,
   shutdown,
@@ -41,6 +42,7 @@ const {
   mockLoggerError: vi.fn(),
   mockRemoveTriggerMessages: vi.fn(),
   mockFindLastAlert: vi.fn(),
+  mockFindChecks: vi.fn(),
   mockBeginWork: vi.fn(async () => undefined),
   mockFinishWork: vi.fn(),
   shutdown: { controller: new AbortController() },
@@ -68,7 +70,10 @@ vi.mock('./pending-work.service', () => ({
 }));
 
 vi.mock('../lib/prisma', () => ({
-  default: { conversationMessage: { findMany: mockFindLastAlert } },
+  default: {
+    conversationMessage: { findMany: mockFindLastAlert },
+    agentWorkspace: { findUniqueOrThrow: mockFindChecks },
+  },
 }));
 
 vi.mock('./agent-status.service', () => ({
@@ -209,6 +214,7 @@ describe('HeartbeatService', () => {
     mockPendingTriggerMessages.mockResolvedValue([]);
     mockRemoveTriggerMessages.mockResolvedValue(undefined);
     mockFindLastAlert.mockResolvedValue([]);
+    mockFindChecks.mockResolvedValue({ heartbeatMd: 'Check for new items.' });
     shutdown.controller = new AbortController();
   });
 
@@ -492,6 +498,35 @@ describe('HeartbeatService', () => {
       expect(messages.split('\n')).toHaveLength(10);
       expect(messages).toContain('#team-10');
       expect(messages).not.toContain('#team-0:');
+    });
+
+    it('drops the record when the Heartbeat document changes', async () => {
+      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+      mockInvoke.mockResolvedValueOnce(reply('Posted the build failure to #ops.', [SEND]));
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await vi.advanceTimersByTimeAsync(0);
+      await heartbeatService.triggerHeartbeat();
+      await heartbeatService.triggerHeartbeat();
+      mockFindChecks.mockResolvedValue({ heartbeatMd: 'Check the disk usage.' });
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockInvoke.mock.calls[1][0].lastSend).toEqual(expect.objectContaining({ messages: '- To #ops (just now): Build #812 failed.' }));
+      expect(mockInvoke.mock.calls[2][0].lastSend).toBeUndefined();
+    });
+
+    it('drops a restored record when the Heartbeat document changed since the restart', async () => {
+      vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
+      mockFindLastAlert.mockResolvedValue([
+        { content: 'Posted the build failure.', createdAt: new Date('2025-01-15T11:00:00Z'), toolCalls: [SEND] },
+      ]);
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await vi.advanceTimersByTimeAsync(0);
+      mockFindChecks.mockResolvedValue({ heartbeatMd: 'Check the disk usage.' });
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockInvoke.mock.calls[0][0].lastSend).toBeUndefined();
     });
 
     it('gives a channel-triggered run the record too', async () => {
