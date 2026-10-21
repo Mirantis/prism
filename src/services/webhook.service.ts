@@ -15,6 +15,7 @@
  */
 
 import { fence } from '../lib/prompt-fence';
+import { WEBHOOK_EVENT_DATA_TAG, WEBHOOK_PROMPT_TAG } from '../prompts/webhook-prompt-tags';
 import { ConversationMessage, WebhookSubscription } from '@prisma/client';
 import { invoke } from '../invoke';
 import { messageDeliveryService, PublishOptions } from './message-delivery.service';
@@ -153,9 +154,6 @@ export function resolveEventType(
   return header('x-github-event') || header('x-gitlab-event') || fromPayload || 'unknown';
 }
 
-/** The tags of the message an agent-mode run receives: the operator's prompt, and the event's data inside it. */
-export const WEBHOOK_PROMPT_TAG = 'subscription_prompt';
-export const WEBHOOK_EVENT_DATA_TAG = 'event_data';
 
 /**
  * Render a prompt template against the webhook payload.
@@ -178,7 +176,8 @@ export function renderWebhookPrompt(
 ): string {
   if (!template || !template.trim()) {
     const truncated = JSON.stringify(payload, null, 2).slice(0, RAW_PAYLOAD_MAX_CHARS);
-    return `Webhook event '${eventType}' on route '${routeName}':\n\n${wrapValue(`\`\`\`json\n${truncated}\n\`\`\``)}`;
+    // The event type comes from the sender's headers or payload, so it is a value like any other.
+    return `Webhook event '${wrapValue(eventType)}' on route '${routeName}':\n\n${wrapValue(`\`\`\`json\n${truncated}\n\`\`\``)}`;
   }
 
   return template.replace(/\{([a-zA-Z0-9_.]+)\}/g, (match, key: string) => {
@@ -215,7 +214,7 @@ export function renderWebhookTurnPrompt(
   routeName: string,
 ): string {
   const rendered = renderWebhookPrompt(template, payload, eventType, routeName, (value) =>
-    fence(value, WEBHOOK_EVENT_DATA_TAG, [WEBHOOK_PROMPT_TAG]),
+    fence(value, WEBHOOK_EVENT_DATA_TAG),
   );
   if (!template || !template.trim()) return rendered;
   return `<${WEBHOOK_PROMPT_TAG} name="${routeName}">\n${rendered}\n</${WEBHOOK_PROMPT_TAG}>`;
