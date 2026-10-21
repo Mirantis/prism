@@ -8,6 +8,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { tool } from 'ai';
 import { z } from 'zod';
+// Imported once here: a cold import of the tool graph takes seconds, which inside a test
+// body counts against that test's timeout.
+import { filterToolsByMode } from '../../lib/tool-collection';
 
 const mockJoin = vi.fn();
 const mockLeave = vi.fn();
@@ -385,9 +388,7 @@ describe('meeting tool mode', () => {
     'update_heartbeat_config', 'update_settings', 'update_vision', 'clear_bootstrap',
   ];
 
-  it('withholds share_file, and only share_file', async () => {
-    const { filterToolsByMode } = await import('../../lib/tool-collection');
-
+  it('withholds share_file, and only share_file', () => {
     // Deliberately unrestricted apart from share_file: an agent that can only read
     // is little use in a working meeting, so `prompts/meeting-prompt.ts` is the
     // only guard on the destructive tools — asserted in meeting-prompt.test.ts.
@@ -402,8 +403,7 @@ describe('meeting tool mode', () => {
     );
   });
 
-  it('is chat minus share_file plus the chat read, so the two cannot drift apart', async () => {
-    const { filterToolsByMode } = await import('../../lib/tool-collection');
+  it('is chat minus share_file plus the chat read, so the two cannot drift apart', () => {
     const all = Object.fromEntries(EVERYTHING.map((n) => [n, stub()]));
 
     const expected = [
@@ -414,13 +414,12 @@ describe('meeting tool mode', () => {
     expect(Object.keys(filterToolsByMode(all, 'meeting')).sort()).toEqual(expected);
   });
 
-  it('offers the whole meeting set in chat except the chat read', async () => {
+  it('offers the whole meeting set in chat except the chat read', () => {
     // A chat turn can post into a call that is already running. It costs the line being
     // stored with the thread like any other tool argument, which two reviewers weighed
     // and accepted; `docs/tools.md` says so. Reading the chat is the one that cannot pay
     // that cost: the words are other people's, and a stored tool result is replayed into
     // every later turn.
-    const { filterToolsByMode } = await import('../../lib/tool-collection');
     const all = Object.fromEntries(EVERYTHING.map((n) => [n, stub()]));
 
     expect(Object.keys(filterToolsByMode(all, 'chat')).sort()).toEqual(
@@ -428,9 +427,7 @@ describe('meeting tool mode', () => {
     );
   });
 
-  it('keeps joining, leaving and the chat read out of the autonomous modes', async () => {
-    const { filterToolsByMode } = await import('../../lib/tool-collection');
-
+  it('keeps joining, leaving and the chat read out of the autonomous modes', () => {
     // An autonomous run dialling into a live call with people in it, or hanging up on
     // one, is never what the operator asked for — only a person in a conversation
     // decides that. Posting one line into a call already running is the reverse: a
@@ -462,12 +459,11 @@ describe('meeting tool mode', () => {
     }
   });
 
-  it('keeps those three out of a mode nobody enumerated either', async () => {
+  it('keeps those three out of a mode nobody enumerated either', () => {
     // The fallback hands an unknown mode every other tool, which is the right default
     // for a caller this function has not heard of. It is the wrong default for the two
     // that change which call the agent is in, and for the read whose result that caller
     // would store.
-    const { filterToolsByMode } = await import('../../lib/tool-collection');
 
     const filtered = filterToolsByMode(
       {
