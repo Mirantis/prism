@@ -1084,6 +1084,18 @@ describe('CronSchedulerService', () => {
       );
     });
 
+    it('refuses no broadcast target for a task single-thread mode hides, whose answer is not broadcast', async () => {
+      mockCronValidate.mockReturnValue(false);
+      mockWritableThreadId.mockResolvedValue('thread-one');
+      mockThreadContext.mockResolvedValue({ channel: 'websocket', threadId: 'thread-hidden' });
+
+      cronSchedulerService.scheduleTask(boundToHiddenWebThread());
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(mockInvoke.mock.calls[0][0]).not.toHaveProperty('broadcastsOutput');
+      expect(mockInvoke.mock.calls[0][0]).not.toHaveProperty('lastSend');
+    });
+
     it('ends the run when the thread lookup fails, so it is not replayed after a restart', async () => {
       mockCronValidate.mockReturnValue(false);
       mockWritableThreadId.mockRejectedValue(new Error('database is locked'));
