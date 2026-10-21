@@ -86,7 +86,7 @@ describe('getMCPTools', () => {
     expect(mockCreateMCPClient).toHaveBeenCalledTimes(1);
   });
 
-  it('closes a client whose session expired and connects again in the same collection', async () => {
+  it('replaces a client whose listing failed and keeps it open for the tools other turns hold', async () => {
     const stale = fakeClient();
     const replacement = fakeClient(async () => ({ kubectl_get: { description: 'Get' } }));
     mockCreateMCPClient.mockResolvedValueOnce(stale).mockResolvedValueOnce(replacement);
@@ -97,7 +97,7 @@ describe('getMCPTools', () => {
     const tools = await getMCPTools({ url: MCP_URL });
 
     expect(tools).toHaveProperty('kubectl_get');
-    expect(stale.close).toHaveBeenCalledTimes(1);
+    expect(stale.close).not.toHaveBeenCalled();
     expect(mockCreateMCPClient).toHaveBeenCalledTimes(2);
 
     await getMCPTools({ url: MCP_URL });
@@ -111,7 +111,7 @@ describe('getMCPTools', () => {
     mockCreateMCPClient.mockResolvedValueOnce(stale).mockResolvedValueOnce(replacement);
     const { getMCPTools } = await load();
     await getMCPTools({ url: MCP_URL });
-    stale.tools.mockRejectedValue(sessionExpired());
+    stale.tools.mockRejectedValue(new Error('fetch failed'));
 
     const results = await Promise.all([getMCPTools({ url: MCP_URL }), getMCPTools({ url: MCP_URL })]);
 
@@ -130,6 +130,18 @@ describe('getMCPTools', () => {
     expect(mockCreateMCPClient).toHaveBeenCalledTimes(2);
   });
 
+  it('gives every collection waiting on a failed connect an empty set, with no second connect', async () => {
+    let reject!: (error: Error) => void;
+    mockCreateMCPClient.mockReturnValueOnce(new Promise((_r, j) => { reject = j; }));
+    const { getMCPTools } = await load();
+
+    const waiting = [getMCPTools({ url: MCP_URL }), getMCPTools({ url: MCP_URL })];
+    reject(new Error('MCP client initialization timed out after 10000ms'));
+
+    expect(await Promise.all(waiting)).toEqual([{}, {}]);
+    expect(mockCreateMCPClient).toHaveBeenCalledTimes(1);
+  });
+
   it('returns empty object when the reconnect after a failed listing also fails', async () => {
     const stale = fakeClient();
     mockCreateMCPClient
@@ -140,7 +152,6 @@ describe('getMCPTools', () => {
     stale.tools.mockRejectedValueOnce(sessionExpired());
 
     expect(await getMCPTools({ url: MCP_URL })).toEqual({});
-    expect(stale.close).toHaveBeenCalledTimes(1);
   });
 });
 

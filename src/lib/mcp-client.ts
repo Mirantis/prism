@@ -18,10 +18,10 @@ import { logger } from '../logger';
 type MCPToolSet = Record<string, Tool>;
 type MCPClient = Awaited<ReturnType<typeof createVercelMCPClient>>;
 
-/** Bounded because every collection waits on the cached connect: a hung one is dropped and retried. */
+/** Bounded because every collection waits on the cached connect: a hung one leaves the cache. */
 const CONNECT_TIMEOUT_MS = 10_000;
 
-/** Bounded so shutdown stays inside the process-level force-exit budget. */
+/** Bounded so a slow gateway does not hold up shutdown. */
 const SHUTDOWN_TIMEOUT_MS = 2_000;
 
 export interface MCPConnectionConfig {
@@ -36,17 +36,28 @@ let closed = false;
 /**
  * The tools of the MCP server at `url`, listed through the cached client.
  *
+ * A failed listing removes the client from the cache and connects once more.
+ * That client stays open, because tools another turn already holds, such as a
+ * meeting's, run through it.
+ *
  * @returns Record of tools, or empty object if connection fails
  */
 export async function getMCPTools({ url }: MCPConnectionConfig): Promise<MCPToolSet> {
-  const reused = clients.get(url);
-  if (reused) {
-    try {
-      return (await (await reused).tools()) as MCPToolSet;
-    } catch (error) {
-      logger.warn({ err: error }, `[MCPClient] ${url} failed; connecting again`);
-      forget(url, reused);
-    }
+  if (closed) return {};
+  const cached = connect(url);
+  let client: MCPClient;
+  try {
+    client = await cached;
+  } catch (error) {
+    logger.error({ err: error }, `[MCPClient] Failed to connect to ${url}`);
+    return {};
+  }
+
+  try {
+    return (await client.tools()) as MCPToolSet;
+  } catch (error) {
+    logger.warn({ err: error }, `[MCPClient] Listing tools at ${url} failed; connecting again`);
+    uncache(url, cached);
   }
 
   const fresh = connect(url);
@@ -54,7 +65,7 @@ export async function getMCPTools({ url }: MCPConnectionConfig): Promise<MCPTool
     return (await (await fresh).tools()) as MCPToolSet;
   } catch (error) {
     logger.error({ err: error }, `[MCPClient] Failed to connect to ${url}`);
-    forget(url, fresh);
+    uncache(url, fresh);
     return {};
   }
 }
@@ -83,11 +94,11 @@ function connect(url: string): Promise<MCPClient> {
     initializationOptions: { timeout: CONNECT_TIMEOUT_MS },
   });
   clients.set(url, pending);
+  // A failed connect leaves the cache, so the next collection connects again.
+  pending.catch(() => uncache(url, pending));
   return pending;
 }
 
-/** Remove a failed client from the cache and close it, which ends its gateway session. */
-function forget(url: string, stale: Promise<MCPClient>): void {
+function uncache(url: string, stale: Promise<MCPClient>): void {
   if (clients.get(url) === stale) clients.delete(url);
-  void stale.then((client) => client.close()).catch(() => {});
 }
