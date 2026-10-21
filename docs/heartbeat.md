@@ -55,6 +55,9 @@ worth your attention:
 This means a heartbeat with no configured checks, or one that finds nothing,
 stays silent — the agent doesn't send "nothing to report" noise.
 
+When a check posts a message to a linked channel or DM, the next heartbeat sees
+what it sent, and posts again only for a new finding.
+
 The gate is **fail-open**: if the classification call itself errors, the message
 is delivered rather than dropped, so a transient failure never hides a real
 alert.
