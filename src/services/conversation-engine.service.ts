@@ -19,6 +19,7 @@ import { attachmentService } from './attachment.service';
 import { pendingWorkService } from './pending-work.service';
 import { RESUMED_REPLY_NOTICE } from '../prompts/resume-prompt';
 import { agentMessageColumns, renderAgentMessage } from '../prompts/agent-message-prompt';
+import { agentRosterService } from './agent-roster.service';
 import { invokeStream } from '../invoke';
 import { ToolCallRecord, InvokeStep, InvokeError, ResumedReply, UIBlock, type AgentMessageOrigin } from '../types';
 import type { ConversationMessage as HistoryRow, SteeringMessage } from '../prompts/context-builder';
@@ -572,6 +573,10 @@ Answer with one word: WORTHY or SKIP.`;
               internalStep: true,
             });
           }
+
+          // Who the other agents of the project are, stored the same way when it is
+          // new to this conversation, so the turn reads it and later turns replay it.
+          await agentRosterService.beforeChatTurn(threadId, abortSignal);
 
           // Snapshot the verbose flag once inside the lock and thread it through the
           // whole exchange (InvokeRequest → context → delivery gating in streamTurn),

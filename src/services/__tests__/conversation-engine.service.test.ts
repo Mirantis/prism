@@ -34,6 +34,7 @@ const {
   mockWorkRows,
   mockFlushWork,
   mockFinishWork,
+  mockBeforeChatTurn,
   shutdown,
 } = vi.hoisted(() => ({
   mockGetOrCreateLatestThread: vi.fn(),
@@ -60,6 +61,7 @@ const {
   mockWorkRows: vi.fn(),
   mockFlushWork: vi.fn(async () => undefined),
   mockFinishWork: vi.fn(),
+  mockBeforeChatTurn: vi.fn(),
   shutdown: { controller: new AbortController() },
 }));
 
@@ -146,6 +148,10 @@ vi.mock('../agent-workspace.service', () => ({
   agentWorkspaceService: {
     getAgent: mockGetAgent,
   },
+}));
+
+vi.mock('../agent-roster.service', () => ({
+  agentRosterService: { beforeChatTurn: mockBeforeChatTurn },
 }));
 
 vi.mock('../pending-work.service', () => ({
@@ -1997,6 +2003,21 @@ describe('Requirement: Conversation Engine', () => {
       expect(mockCountAgentMessages).toHaveBeenCalledWith({
         where: { threadId: 'thread-123', role: 'USER', triggeredBy: 'USER_INPUT', internalStep: false },
       });
+    });
+  });
+
+  describe('Scenario: The other agents of the project', () => {
+    it('brings the roster up to date before the turn reads its history, on the thread it holds', async () => {
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        threadId: 'thread-roster',
+        message: 'Who can draft the newsletter?',
+        metadata: { channel: 'websocket' },
+      });
+
+      expect(mockBeforeChatTurn).toHaveBeenCalledWith('thread-roster', expect.any(AbortSignal));
+      expect(mockBeforeChatTurn.mock.invocationCallOrder[0]).toBeLessThan(mockInvokeStream.mock.invocationCallOrder[0]!);
     });
   });
 

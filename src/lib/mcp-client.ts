@@ -13,6 +13,7 @@
 
 import { experimental_createMCPClient as createVercelMCPClient } from '@ai-sdk/mcp';
 import { Tool } from 'ai';
+import { config } from '../config';
 import { logger } from '../logger';
 
 type MCPToolSet = Record<string, Tool>;
@@ -101,4 +102,85 @@ function connect(url: string): Promise<MCPClient> {
 
 function uncache(url: string, stale: Promise<MCPClient>): void {
   if (clients.get(url) === stale) clients.delete(url);
+}
+
+/** How long a listing without `list_agents` holds before the endpoint is asked again. */
+const LIST_AGENTS_ABSENT_RECHECK_MS = 10 * 60_000;
+
+/** The name the Lens Agents MCP endpoint gives `list_agents`, once a listing found it. */
+let listAgentsToolName: string | null = null;
+let listAgentsAbsentAt = Number.NEGATIVE_INFINITY;
+
+/**
+ * The `list_agents` tool of the `lens-agents-client` server. The endpoint puts a
+ * prefix of its own in front, so only the last two `__` segments are compared,
+ * and on the name the server gives, which the tools block may shorten.
+ */
+function isListAgentsTool(name: string): boolean {
+  const segments = name.split('__');
+  return segments.at(-2) === 'lens-agents-client' && segments.at(-1) === 'list_agents';
+}
+
+/** The first text part of a tool's result. */
+function resultText(result: Awaited<ReturnType<MCPClient['callTool']>>): string | undefined {
+  const content: unknown = 'content' in result ? result.content : undefined;
+  if (!Array.isArray(content)) return undefined;
+  const part = content.find((item) => item?.type === 'text');
+  return typeof part?.text === 'string' ? part.text : undefined;
+}
+
+async function findListAgentsTool(client: MCPClient, signal: AbortSignal): Promise<string | null> {
+  let cursor: string | undefined;
+  do {
+    const page = await client.listTools({
+      ...(cursor ? { params: { cursor } } : {}),
+      options: { signal },
+    });
+    const found = page.tools.find((tool) => isListAgentsTool(tool.name));
+    if (found) return found.name;
+    cursor = page.nextCursor;
+  } while (cursor);
+  return null;
+}
+
+/**
+ * Call `list_agents` on the Lens Agents MCP endpoint as the runtime itself, not
+ * as the model, and answer the text of its result. Null when `NEXUS_MCP_URL` is
+ * unset or the endpoint has no such tool. A failed call throws.
+ */
+export async function callListAgents(args: Record<string, unknown>, signal: AbortSignal): Promise<string | null> {
+  const url = config.nexusMcpUrl;
+  if (!url) return null;
+  if (!listAgentsToolName && Date.now() - listAgentsAbsentAt < LIST_AGENTS_ABSENT_RECHECK_MS) return null;
+
+  const client = await createVercelMCPClient({
+    transport: { type: 'http', url },
+    initializationOptions: { signal },
+  });
+  try {
+    const name = listAgentsToolName ?? (await findListAgentsTool(client, signal));
+    if (!name) {
+      listAgentsAbsentAt = Date.now();
+      return null;
+    }
+    listAgentsToolName = name;
+    const result = await client.callTool({ name, arguments: args, options: { signal } }).catch((error: unknown) => {
+      // The tool may be gone since it was found; the next call lists the tools again.
+      listAgentsToolName = null;
+      throw error;
+    });
+    const text = resultText(result);
+    if (result.isError || text === undefined) {
+      throw new Error(`list_agents answered ${result.isError ? 'an error' : 'no text'}`);
+    }
+    return text;
+  } finally {
+    await client.close().catch((err: unknown) => logger.debug({ err }, '[MCPClient] Closing the list_agents client failed'));
+  }
+}
+
+/** Forget what the listings found, as a restart would. For tests. */
+export function resetListAgentsToolForTests(): void {
+  listAgentsToolName = null;
+  listAgentsAbsentAt = Number.NEGATIVE_INFINITY;
 }
