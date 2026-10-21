@@ -34,7 +34,8 @@ import {
   type ConversationMessage,
 } from '../prompts/context-builder';
 import { COMPACTION_PROMPT } from '../prompts/compaction-prompt';
-import type { AgentContext, HeartbeatTrigger, InvokeRequest, TaskLastSend } from '../types';
+import { agentMessageColumns } from '../prompts/agent-message-prompt';
+import type { AgentContext, AgentMessageOrigin, HeartbeatTrigger, InvokeRequest, TaskLastSend } from '../types';
 import type { ChatPlatform } from '../services/channel-adapter.interface';
 import { slackChannelLabel } from '../utils/slack-formatter';
 import { teamsChannelLabel } from '../utils/teams-formatter';
@@ -138,6 +139,10 @@ export async function withSampleAccounting<T>(
 /** One stored message of the thread a scenario starts from. */
 type HistoryEntry =
   | { user: string; attachments?: AttachmentMeta[] }
+  /** A message from another agent of the project. */
+  | { fromAgent: AgentMessageOrigin; text: string }
+  /** A row the runtime wrote for the model alone, such as the roster of the other agents. */
+  | { hidden: string }
   | {
       agent: string;
       toolCalls?: { tool: string; input: unknown; output: unknown }[];
@@ -304,6 +309,12 @@ function toStoredMessage(entry: HistoryEntry, index: number): ConversationMessag
   const id = `eval-message-${index + 1}`;
   if ('user' in entry) {
     return { id, role: 'USER', content: entry.user, attachments: entry.attachments };
+  }
+  if ('fromAgent' in entry) {
+    return { id, role: 'USER', content: entry.text, ...agentMessageColumns(entry.fromAgent) };
+  }
+  if ('hidden' in entry) {
+    return { id, role: 'USER', content: entry.hidden, internalStep: true };
   }
   return {
     id,
