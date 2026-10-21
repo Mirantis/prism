@@ -7,7 +7,8 @@
  *
  * The gate is instruction-aware: it sees the task's instruction so tasks that
  * ask for unconditional output (reports, digests, reminders) always deliver,
- * while conditional "only tell me if..." checks may go quiet.
+ * conditional "only tell me if..." checks may go quiet, and tasks that ask for
+ * no message deliver only an error.
  */
 
 import { formatTimeAgo } from './context-builder';
@@ -17,6 +18,7 @@ export const CRON_TASK_GATE_PROMPT = `You decide whether the result of a schedul
 First decide what the instruction asks for:
 - Unconditional: a message on every run, such as a summary, report, digest, reminder, or "tell me X", "send me X" or "reply with X" with no condition. Answer DELIVER whatever the result says. A bare marker, an exact repeat or "nothing changed" is still the message the user asked for.
 - Conditional: a message only in some case, such as "only tell me if", "alert me when" or "notify me if". Work the task does on every run, such as storing a memory, does not make it unconditional.
+- No message: no message on any run, such as "never tell me about this", "don't post anything" or "just do the work, no report". Answer SUPPRESS whatever the result says. An instruction that names an exception, such as "never tell me unless it fails", is conditional.
 
 For a conditional task, answer REPEAT when the result reports the same finding as the last delivered result with no meaningful change, also in other words; a condition that is still true and was already reported is a repeat. Answer SUPPRESS when the result is an all-clear or says the condition is not met, or when it talks about the run itself ("task ran successfully", "nothing to check", "staying quiet") instead of reporting a finding. Otherwise answer DELIVER: the condition occurred, there is a new finding or a significant change, or the user has something to act on.
 
