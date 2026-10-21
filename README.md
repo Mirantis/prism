@@ -254,6 +254,14 @@ New subscriptions default to shared-token authentication. Set the header and
 secret to match your sender, or choose an HMAC signature —
 see [docs/webhooks.md](docs/webhooks.md).
 
+### Agent messages
+
+On Lens Agents with Irene Agent, the other agents of a project can send the
+agent messages. Each one shows in the web conversation under "{name} · Agent",
+and the agent answers it as a colleague's request, never as your approval. The
+agent knows which other agents exist and what each one does. See
+[docs/agent-messages.md](docs/agent-messages.md).
+
 ### Voice meetings
 
 The agent can join a **Google Meet** call and take part by voice — ask it in chat and
