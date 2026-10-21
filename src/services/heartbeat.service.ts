@@ -39,6 +39,9 @@ const HEARTBEAT_BUDGET_NOTICE =
 /** How many stored heartbeat messages a restart reads to find the last delivered alert. */
 const LAST_ALERT_ROWS = 20;
 
+/** How many heartbeat intervals back a restart reads sends into the send record. */
+const HEARTBEAT_SEND_RESTORE_INTERVALS = 3;
+
 /** How many places the send record keeps a latest message for. */
 const HEARTBEAT_SEND_PLACES = 10;
 
@@ -241,7 +244,11 @@ class HeartbeatService {
    * be no delivered alert. The trade: when the newest alert's run also sent, the
    * one before it is restored, and the same alert can be delivered once more. A
    * heartbeat delivers to a web thread, so the copy a send stores in its target's
-   * own thread is not read. The same rows give back what the last sending run sent.
+   * own thread is not read. The same rows give back the send record, from the
+   * sends of the last `HEARTBEAT_SEND_RESTORE_INTERVALS` intervals only. The
+   * trade: a suppressed run without a send is not stored, so the restored record
+   * can miss a report that a condition cleared, and a new occurrence inside that
+   * window can read as the one already sent.
    */
   private async restoreLastAlert(state: HeartbeatState): Promise<void> {
     try {
@@ -253,9 +260,13 @@ class HeartbeatService {
       });
       const sends = rows.map((row) => sentMessageList((row.toolCalls as ToolCallRecord[] | null) ?? []));
       if (state.lastSend === null) {
+        const since = Date.now() - HEARTBEAT_SEND_RESTORE_INTERVALS * state.intervalMs;
         let record: HeartbeatSendRecord | null = null;
         // Oldest first, so a newer send to a place replaces an older one.
-        for (let i = rows.length - 1; i >= 0; i--) record = mergeSends(record, sends[i], rows[i].createdAt.getTime());
+        for (let i = rows.length - 1; i >= 0; i--) {
+          const at = rows[i].createdAt.getTime();
+          if (at >= since) record = mergeSends(record, sends[i], at);
+        }
         if (record && sends[0].length === 0) {
           record.latestReport = { text: rows[0].content, at: rows[0].createdAt.getTime() };
         }
