@@ -17,7 +17,7 @@ import { invoke } from '../invoke';
 import { lastResponseText } from '../lib/last-response-text';
 import { AgentWorkspace } from '@prisma/client';
 import { messageDeliveryService } from './message-delivery.service';
-import { outboundMessageService, sentMessages } from './outbound-message.service';
+import { outboundMessageService, sentMessageList } from './outbound-message.service';
 import { runClassificationGate, isRecentDuplicate } from '../lib/classification-gate';
 import { agentStatusService } from './agent-status.service';
 import { MAX_RESUME_ATTEMPTS, pendingWorkService, type PendingWorkItem } from './pending-work.service';
@@ -38,6 +38,21 @@ const HEARTBEAT_BUDGET_NOTICE =
 
 /** How many stored heartbeat messages a restart reads to find the last delivered alert. */
 const LAST_ALERT_ROWS = 20;
+
+/** How many places the send record keeps a latest message for. */
+const HEARTBEAT_SEND_PLACES = 10;
+
+/** The record with `sends` made at `at`, each replacing the older send to its place. */
+function mergeSends(
+  record: HeartbeatSendRecord | null,
+  sends: Array<{ place: string; text: string }>,
+  at: number,
+): HeartbeatSendRecord | null {
+  if (sends.length === 0) return record;
+  const fresh = sends.map((send) => ({ ...send, at }));
+  const kept = (record?.sends ?? []).filter((old) => !fresh.some((send) => send.place === old.place));
+  return { ...record, sends: [...fresh, ...kept].slice(0, HEARTBEAT_SEND_PLACES) };
+}
 
 // ============================================================================
 // Types
@@ -66,11 +81,21 @@ interface HeartbeatState {
   lastAlertText: string | null;
   lastAlertAt: number | null;
   /**
-   * What the last run that sent a message sent, and what the newest run after it
-   * reported. A run reads no history, so this tells it about earlier sends. It is
-   * separate from the delivered alert the duplicate check compares against.
+   * What earlier runs sent, and what the newest run reported. A run reads no
+   * history, so this tells it about earlier sends. It is separate from the
+   * delivered alert the duplicate check compares against.
    */
-  lastSend: TaskLastSend | null;
+  lastSend: HeartbeatSendRecord | null;
+}
+
+/**
+ * The latest message sent to each place, newest first, at most
+ * `HEARTBEAT_SEND_PLACES`. A heartbeat runs several checks, so a send about one
+ * incident keeps the sends about the others.
+ */
+interface HeartbeatSendRecord {
+  sends: Array<{ place: string; text: string; at: number }>;
+  latestReport?: { text: string; at: number };
 }
 
 interface HeartbeatResult {
@@ -226,15 +251,15 @@ class HeartbeatService {
         take: LAST_ALERT_ROWS,
         select: { content: true, createdAt: true, toolCalls: true },
       });
-      const sends = rows.map((row) => sentMessages((row.toolCalls as ToolCallRecord[] | null) ?? []));
-      const sentAt = sends.findIndex((messages) => messages.length > 0);
-      if (sentAt >= 0 && state.lastSend === null) {
-        const after = sentAt > 0 ? rows[0] : undefined;
-        state.lastSend = {
-          messages: sends[sentAt].join('\n'),
-          at: rows[sentAt].createdAt.getTime(),
-          ...(after && { latestReport: { text: after.content, at: after.createdAt.getTime() } }),
-        };
+      const sends = rows.map((row) => sentMessageList((row.toolCalls as ToolCallRecord[] | null) ?? []));
+      if (state.lastSend === null) {
+        let record: HeartbeatSendRecord | null = null;
+        // Oldest first, so a newer send to a place replaces an older one.
+        for (let i = rows.length - 1; i >= 0; i--) record = mergeSends(record, sends[i], rows[i].createdAt.getTime());
+        if (record && sends[0].length === 0) {
+          record.latestReport = { text: rows[0].content, at: rows[0].createdAt.getTime() };
+        }
+        state.lastSend = record;
       }
       const last = rows.find((_row, i) => sends[i].length === 0);
       if (!last || state.lastAlertAt !== null) return;
@@ -440,7 +465,7 @@ class HeartbeatService {
         prompt: triggered ? this.buildTriggeredHeartbeatPrompt(triggers) : this.buildHeartbeatPrompt(),
         lastHeartbeatAlert: state.lastAlertText ?? undefined,
         lastHeartbeatAlertAt: state.lastAlertAt ?? undefined,
-        lastSend: state.lastSend ?? undefined,
+        lastSend: this.sendRecordForPrompt(state),
         heartbeatTriggers: triggered ? triggers : undefined,
         abortSignal: pendingWorkService.shutdownSignal,
       });
@@ -451,7 +476,7 @@ class HeartbeatService {
         return { shouldSkip: true, text: 'Stopped by shutdown' };
       }
       delivering = true;
-      const sent = this.noteSends(state, invokeResult.toolCalls);
+      this.noteSends(state, invokeResult.toolCalls);
 
       // Budget exceeded — skip and reset error streak so the timer keeps running.
       // The cycle still happened, so the next one is a full interval away.
@@ -471,7 +496,7 @@ class HeartbeatService {
       }
 
       const responseText = lastResponseText(invokeResult.steps);
-      if (!sent && !invokeResult.error) this.noteReport(state, responseText);
+      if (!invokeResult.error) this.noteReport(state, responseText);
 
       // Determine if we should deliver
       let shouldDeliver = false;
@@ -629,14 +654,14 @@ class HeartbeatService {
         prompt: this.buildTriggeredHeartbeatPrompt(triggers),
         lastHeartbeatAlert: state.lastAlertText ?? undefined,
         lastHeartbeatAlertAt: state.lastAlertAt ?? undefined,
-        lastSend: state.lastSend ?? undefined,
+        lastSend: this.sendRecordForPrompt(state),
         heartbeatTriggers: triggers,
         abortSignal: pendingWorkService.shutdownSignal,
       });
       // A shutdown stopped the run. The messages stay queued for the next boot.
       if (pendingWorkService.shutdownSignal.aborted) return;
       delivering = true;
-      const sent = this.noteSends(state, invokeResult.toolCalls);
+      this.noteSends(state, invokeResult.toolCalls);
 
       // Budget exceeded — skip gracefully
       if (invokeResult.error?.type === 'budget_exceeded') {
@@ -655,7 +680,7 @@ class HeartbeatService {
       }
 
       const responseText = lastResponseText(invokeResult.steps);
-      if (!sent && !invokeResult.error) this.noteReport(state, responseText);
+      if (!invokeResult.error) this.noteReport(state, responseText);
 
       // Determine if we should deliver (same gate logic as regular heartbeats)
       let shouldDeliver = false;
@@ -807,15 +832,23 @@ Answer with one word: DELIVER or SUPPRESS.`;
     return isRecentDuplicate({ text: state.lastAlertText, at: state.lastAlertAt }, alertText);
   }
 
-  /** A run that sent replaces the send record. Answers whether the run sent. */
-  private noteSends(state: HeartbeatState, toolCalls: ToolCallRecord[]): boolean {
-    const messages = sentMessages(toolCalls);
-    if (messages.length === 0) return false;
-    state.lastSend = { messages: messages.join('\n'), at: Date.now() };
-    return true;
+  /** A run's sends join the record, each replacing the older send to its place. */
+  private noteSends(state: HeartbeatState, toolCalls: ToolCallRecord[]): void {
+    state.lastSend = mergeSends(state.lastSend, sentMessageList(toolCalls), Date.now());
   }
 
-  /** A later run's result, so the next run reads whether the finding still held. An empty result says nothing. */
+  /** The record as the prompt reads it: each send with its age. */
+  private sendRecordForPrompt(state: HeartbeatState): TaskLastSend | undefined {
+    const record = state.lastSend;
+    if (!record) return undefined;
+    return {
+      messages: record.sends.map(({ place, text, at }) => `- To ${place} (${formatTimeAgo(at)}): ${text}`).join('\n'),
+      at: record.sends[0].at,
+      ...(record.latestReport && { latestReport: record.latestReport }),
+    };
+  }
+
+  /** A run's result, so the next run reads whether a finding still held. An empty result says nothing. */
   private noteReport(state: HeartbeatState, text: string): void {
     if (!state.lastSend || !text.trim()) return;
     state.lastSend = { ...state.lastSend, latestReport: { text: text.trim(), at: Date.now() } };

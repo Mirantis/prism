@@ -336,12 +336,19 @@ describe('system prompt text', () => {
   });
 
   it('heartbeat mode tells a run what an earlier heartbeat run sent, after the cached part', async () => {
-    const lastSend = { messages: '- To #ops: Build #812 failed.', at: Date.now() - 60 * 60 * 1000 };
+    const lastSend = {
+      messages: '- To #ops (1h ago): Build #812 failed.\n- To #oncall (3h ago): Disk is 95% full.',
+      at: Date.now() - 60 * 60 * 1000,
+      latestReport: { text: 'Build #812 still fails.', at: Date.now() - 30 * 60 * 1000 },
+    };
     const parts = await buildSystemPromptParts(createTestAgentContext({ lastSend }), 'heartbeat');
 
     const section = parts.find((p) => p.text.includes('# Messages Your Heartbeat Sent'));
     expect(section?.cacheable).toBe(false);
-    expect(section?.text).toContain('An earlier heartbeat run (1h ago) sent these messages:\n\n- To #ops: Build #812 failed.');
+    expect(section?.text).toContain(
+      'Earlier heartbeat runs sent these messages, the latest to each place:\n\n- To #ops (1h ago): Build #812 failed.\n- To #oncall (3h ago): Disk is 95% full.',
+    );
+    expect(section?.text).toContain('The newest heartbeat run (30min ago) reported:\n\nBuild #812 still fails.');
     expect(section?.text).toContain('If a check asks for a message on every run, send it as asked.');
   });
 

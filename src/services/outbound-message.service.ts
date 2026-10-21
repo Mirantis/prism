@@ -236,12 +236,17 @@ class OutboundMessageService {
 
 export const outboundMessageService = new OutboundMessageService();
 
-/** The messages a run's tool calls posted, one line each: where it went, then its text. */
-export function sentMessages(toolCalls: ToolCallRecord[]): string[] {
+/** The messages a run's tool calls posted: where each went, the thread included, and its text. */
+export function sentMessageList(toolCalls: ToolCallRecord[]): Array<{ place: string; text: string }> {
   return toolCalls
     .filter((call) => call.tool === SEND_MESSAGE_TOOL_NAME && call.success)
     .map((call) => {
       const { target, thread, text } = JSON.parse(call.input) as { target: string; thread?: string; text: string };
-      return `- To ${target}${thread ? `, in thread ${thread}` : ''}: ${text}`;
+      return { place: `${target}${thread ? `, in thread ${thread}` : ''}`, text };
     });
+}
+
+/** The messages a run's tool calls posted, one line each: where it went, then its text. */
+export function sentMessages(toolCalls: ToolCallRecord[]): string[] {
+  return sentMessageList(toolCalls).map(({ place, text }) => `- To ${place}: ${text}`);
 }
