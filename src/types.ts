@@ -220,8 +220,8 @@ export interface ResumedReply {
 }
 
 /**
- * What a recurring task's runs sent and reported since, for a run that reads no
- * history: the messages of the last run that sent, and the newest result after it.
+ * What earlier runs of a recurring task or the heartbeat sent, and the newest
+ * result since, for a run that reads no history.
  */
 export interface TaskLastSend {
   /** One line per message: where it went, then its text. */
