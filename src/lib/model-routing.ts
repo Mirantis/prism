@@ -14,6 +14,7 @@ import { getGateRequest } from './classification';
 import { langfuseTelemetry } from './telemetry';
 import { PROMPT_CACHE_TTL_MS, type LlmProvider } from './llm-providers/llm-provider';
 import { contextWindowFor } from './context-window';
+import { escapeAngles } from './prompt-fence';
 import { resolveEffectiveModel, resolveScopedModel } from '../services/agent-workspace.service';
 import { llmCallService, type LlmCallPurpose } from '../services/llm-call.service';
 import { conversationService } from '../services/conversation.service';
@@ -201,17 +202,12 @@ function routingInput(context: AgentContext, request: RoutedRequest): string {
   const previous = [...context.recentMessages].reverse().find((m) => m.role === 'AGENT' && m.content.trim());
   return [
     `<request mode="${request.mode}">`,
-    fenced(subject.slice(0, REQUEST_CHARS)),
+    escapeAngles(subject.slice(0, REQUEST_CHARS)),
     '</request>',
     ...(previous
-      ? ['<previous_reply>', fenced(previous.content.slice(0, PREVIOUS_REPLY_CHARS)), '</previous_reply>']
+      ? ['<previous_reply>', escapeAngles(previous.content.slice(0, PREVIOUS_REPLY_CHARS)), '</previous_reply>']
       : []),
   ].join('\n');
-}
-
-/** `text` with `<` and `>` escaped, so no tag can form inside its fence. */
-function fenced(text: string): string {
-  return text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 /** The tier the classifier names, or null when it fails or names none on offer. */
