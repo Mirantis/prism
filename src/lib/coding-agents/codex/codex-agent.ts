@@ -9,8 +9,19 @@ import {
   type CodingAgentEvent,
   type CodingAgentTask,
 } from '../coding-agent';
-import { codexApiKey, codexAuthMethod, hasSavedCodexLogin } from './credentials';
-import { getExecutionEnvironment } from '../../execution-environments/get-execution-environment';
+import {
+  codexApiKey,
+  codexAuthMethod,
+  hasSavedCodexLogin,
+  readCodexLogin,
+  subscriptionEnvironment,
+  type CodexAuthMethod,
+} from './credentials';
+import { deferredRun } from '../deferred-run';
+import {
+  getExecutionEnvironment,
+  getExecutionEnvironmentFor,
+} from '../../execution-environments/get-execution-environment';
 import { prepareSharedSkillsHome } from '../shared-skills-home';
 
 interface StreamLine {
@@ -39,24 +50,41 @@ export function createCodexAgent(environment?: ExecutionEnvironment): CodingAgen
       return Boolean(codexAuthMethod(env, savedLogin));
     },
     run: (task) => {
-      const authMethod = codexAuthMethod(task.env, savedLogin);
+      const subscription = config.codexSubscription;
+      const authMethod: CodexAuthMethod | undefined = subscription
+        ? 'subscription'
+        : codexAuthMethod(task.env, savedLogin);
       const startedAt = Date.now();
       const props = { 'task.id': task.taskId, 'auth.method': authMethod ?? 'none' };
       trackEvent('codex task started', config.ownerUserId, props);
-      const run = runCli({
+      // The environment the CLI runs in, which is also where its home is.
+      const runIn = environment ?? getExecutionEnvironmentFor(task.workdir);
+      const home = runIn.paths().codexHome;
+      const launch = (env: NodeJS.ProcessEnv) => runCli({
         taskId: task.taskId,
         displayName: 'Codex',
         command: 'codex',
         args: buildArgs(task, authMethod),
         cwd: task.workdir,
         env: {
-          ...task.env,
-          CODEX_HOME: target().paths().codexHome,
-          CODEX_API_KEY: codexApiKey(task.env),
+          ...env,
+          CODEX_HOME: home,
           ...(task.debug ? { RUST_LOG: 'debug' } : {}),
         },
         parseLine: createParser(),
-      }, environment);
+      }, runIn);
+      const run = subscription
+        ? deferredRun(task.taskId, 'Codex', async (signal) => {
+          // Asked on every run, so a sign-in or a sign-out applies to the next task.
+          // Anything but a ChatGPT login fails the task, which then bills nothing.
+          const login = await readCodexLogin(runIn, task.env, home, signal);
+          if (login !== 'chatgpt') {
+            throw new Error(`CODEX_SUBSCRIPTION is on, and the Codex home ${home} has no ChatGPT login: sign in to it with codex login`);
+          }
+          signal.throwIfAborted();
+          return launch(subscriptionEnvironment(task.env));
+        })
+        : launch({ ...task.env, CODEX_API_KEY: codexApiKey(task.env) });
       let stopped = false;
       async function* events(): AsyncGenerator<CodingAgentEvent> {
         let status = 'error';
@@ -83,7 +111,7 @@ export function createCodexAgent(environment?: ExecutionEnvironment): CodingAgen
   };
 }
 
-function buildArgs(task: CodingAgentTask, authMethod: ReturnType<typeof codexAuthMethod>): string[] {
+function buildArgs(task: CodingAgentTask, authMethod: CodexAuthMethod | undefined): string[] {
   // Every task runs without Codex's sandbox: in an unprivileged container, the
   // deployed shape, the sandbox cannot start and every command in it fails.
   // Nothing can answer an approval request, so none is asked.
@@ -103,6 +131,11 @@ function buildArgs(task: CodingAgentTask, authMethod: ReturnType<typeof codexAut
     args.push('-c', 'model_provider="openai"');
     if (authMethod === 'api') args.push('-c', 'forced_login_method="api"');
     if (authMethod === 'saved') args.push('-c', 'cli_auth_credentials_store="file"');
+    // A repository's `.codex/config.toml` cannot move the task off this login:
+    // Codex 0.163 ignores its `model_provider`, `model_providers` and `profiles`.
+    if (authMethod === 'subscription') {
+      args.push('-c', 'forced_login_method="chatgpt"', '-c', 'cli_auth_credentials_store="file"');
+    }
   }
   // An omitted tier or effort must emit no selection flag here, preserving
   // deployment configuration and the existing Bedrock default above. Keep

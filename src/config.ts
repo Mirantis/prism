@@ -767,6 +767,9 @@ if (!isValidCodingAgent) {
 // CLAUDE_CODE_SUBSCRIPTION=true runs every Claude Code task on the Claude
 // subscription signed in to the CLI's home, and on nothing else.
 const claudeCodeSubscription = process.env.CLAUDE_CODE_SUBSCRIPTION?.trim().toLowerCase() === 'true';
+// CODEX_SUBSCRIPTION=true runs every Codex task on the ChatGPT subscription
+// signed in to the CLI's home, and on nothing else.
+const codexSubscription = process.env.CODEX_SUBSCRIPTION?.trim().toLowerCase() === 'true';
 
 function codingAgentModelOverride(name: string): string | undefined {
   const raw = process.env[name];
@@ -1103,6 +1106,7 @@ export const config = {
   availableCodingAgents,
   configuredCodingAgent,
   claudeCodeSubscription,
+  codexSubscription,
 
   // Overrides the input-context window used by the context-window indicator.
   // Normally derived from the model ID via the models.dev catalog

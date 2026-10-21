@@ -33,6 +33,10 @@ The Codex home must contain a valid, writable `auth.json` from `codex login`.
 To test a Claude subscription, sign a Claude home in with
 `CLAUDE_CONFIG_DIR=/path/to/claude-home claude auth login`, then run
 `CLAUDE_CONFIG_DIR=/path/to/claude-home CLAUDE_CODE_SUBSCRIPTION=true npm run test --workspace=prism-agent-e2e -- --grep @claude-subscription`.
+To test a ChatGPT subscription, sign a Codex home in with
+`CODEX_HOME=/path/to/codex-home codex login`, then run
+`CODEX_HOME=/path/to/codex-home CODEX_SUBSCRIPTION=true npm run test --workspace=prism-agent-e2e -- --grep @codex-subscription`.
+That run gives the runtime OpenAI keys the API refuses, so the scenario passes only on the ChatGPT login.
 
 ### The voice chat scenario
 

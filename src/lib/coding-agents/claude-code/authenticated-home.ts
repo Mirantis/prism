@@ -1,11 +1,5 @@
-import { captureProgram } from '../../execution-environments/capture';
 import type { ExecutionEnvironment } from '../../execution-environments/execution-environment';
-
-/** How long the CLI gets to answer before the probe gives up on it. */
-const PROBE_TIMEOUT_MS = 10_000;
-
-/** Enough for the status JSON and whatever else the CLI prints around it. */
-const PROBE_OUTPUT_LIMIT = 64 * 1024;
+import { probeCli } from '../cli-probe';
 
 /**
  * The variables that outrank a saved login in the CLI's credential order, or
@@ -94,15 +88,10 @@ export async function readSavedLogin(
   } catch {
     return 'none';
   }
-  const run = await captureProgram(environment, 'claude', ['auth', 'status', '--json'], {
-    cwd: environment.workspaceRoot(),
+  const run = await probeCli(environment, 'claude', ['auth', 'status', '--json'], {
     env: { ...subscriptionEnvironment(env), CLAUDE_CONFIG_DIR: configDir },
-    timeoutMs: PROBE_TIMEOUT_MS,
-    limitBytes: PROBE_OUTPUT_LIMIT,
-    abortSignal: signal,
+    signal,
   });
-  if (run.error) throw new Error(`claude auth status failed: ${run.error.message}`);
-  if (run.timedOut) throw new Error(`claude auth status did not answer in ${PROBE_TIMEOUT_MS / 1000} s`);
   // The CLI exits 1 with the same JSON when nobody is signed in.
   let status: AuthStatus;
   try {
