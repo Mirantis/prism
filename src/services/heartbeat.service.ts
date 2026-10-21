@@ -207,12 +207,14 @@ class HeartbeatService {
    * run, which the delay floor holds at least a minute away. A withheld run is
    * stored only when it sent a message, so a row with a send is skipped: it may
    * be no delivered alert. The trade: when the newest alert's run also sent, the
-   * one before it is restored, and the same alert can be delivered once more.
+   * one before it is restored, and the same alert can be delivered once more. A
+   * heartbeat delivers to a web thread, so the copy a send stores in its target's
+   * own thread is not read.
    */
   private async restoreLastAlert(state: HeartbeatState): Promise<void> {
     try {
       const rows = await prisma.conversationMessage.findMany({
-        where: { role: 'AGENT', triggeredBy: 'HEARTBEAT', thread: { agentId: state.agentId } },
+        where: { role: 'AGENT', triggeredBy: 'HEARTBEAT', thread: { agentId: state.agentId, externalThreadId: null } },
         orderBy: { createdAt: 'desc' },
         take: LAST_ALERT_ROWS,
         select: { content: true, createdAt: true, toolCalls: true },

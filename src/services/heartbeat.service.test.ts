@@ -986,6 +986,17 @@ describe('HeartbeatService', () => {
       expect(mockDeliverMessage).not.toHaveBeenCalled();
       expect(mockGenerateText).not.toHaveBeenCalled();
     });
+
+    it("reads the last alert from web threads only, not a send's copy in its target's thread", async () => {
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mockFindLastAlert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ thread: { agentId: 'agent-1', externalThreadId: null } }),
+        }),
+      );
+    });
   });
 
   // ==========================================================================
