@@ -96,9 +96,11 @@ Haiku) decides whether it's worth your attention. The gate is
   is stuck") stays silent when the condition isn't met — no "nothing to report"
   noise.
 - A task that asks for **no message** ("just do the work, never tell me about
-  it") delivers nothing unless the run ends in an error. In a long instruction,
-  put that sentence first. To hear when the work fails, name the exception:
-  "never tell me unless it fails".
+  it") delivers nothing unless the run itself fails: it ends in an error, or the
+  [risk gate](configuration.md#tool-risk-gate) blocks one of its actions. A
+  failure the agent reports in its own words stays silent. In a long
+  instruction, put that sentence first. To hear about every failure, name the
+  exception: "never tell me unless it fails".
 - The gate also sees the **last result the task delivered**, so a conditional
   check that merely repeats an already-reported finding stays quiet until
   something changes. When a quiet run observes a *different* situation (e.g.
@@ -107,9 +109,9 @@ Haiku) decides whether it's worth your attention. The gate is
   memory is in-process only and resets when the runtime restarts.)
 
 The gate is **fail-open**: if the classification call errors, the result is
-delivered rather than dropped — and a run that ends in an error message skips
-the gate entirely, so failures are never silently swallowed. A suppressed run
-is still a full run — the task's last-run timestamp advances and a one-shot
+delivered rather than dropped. A run that ends in an error, or in which the
+[risk gate](configuration.md#tool-risk-gate) blocked an action, skips the gate
+and always delivers. A suppressed run is still a full run — the task's last-run timestamp advances and a one-shot
 still deletes itself; only the message is withheld.
 
 ## Reliability
@@ -122,8 +124,6 @@ still deletes itself; only the message is withheld.
 - A run that is still executing when the task's next tick fires is not
   overlapped: the new tick is skipped (and logged), never queued or run
   concurrently.
-- Recurring tasks keep a consecutive-error count so a repeatedly failing task is
-  visible rather than silently spinning.
 
 ## Heartbeat vs. scheduled task — which to use?
 

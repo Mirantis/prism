@@ -663,6 +663,61 @@ export const SCENARIOS: Scenario[] = [
       ),
   },
   {
+    id: 'cron-gate.suppresses-no-message-exception-success',
+    expect: 'A task that asks for no message unless something fails is suppressed when it succeeds.',
+    grader: 'gate verdict',
+    run: async () =>
+      expectVerdict(
+        await cronGate(
+          'Rotate the staging API keys every night. Never send me a message about it unless a rotation fails.',
+          'Rotated the payments, search and billing keys. Each new key reads back from the vault.',
+        ),
+        'SUPPRESS',
+      ),
+  },
+  {
+    id: 'cron-gate.delivers-scoped-posting-ban',
+    expect: 'A ban on posting in one place does not stop a report the instruction asks for.',
+    grader: 'gate verdict',
+    run: async () =>
+      expectVerdict(
+        await cronGate(
+          'Every morning check PR #12 in billing-api for new review comments and tell me about them. Don\'t post anything on GitHub.',
+          'Two new review comments on PR #12 since yesterday: one asks for a test of the refund path, and one asks ' +
+            'to rename `applyCredit` to `applyAccountCredit`.',
+        ),
+        'DELIVER',
+      ),
+  },
+  {
+    id: 'cron-gate.delivers-scoped-channel-ban',
+    expect: 'A ban on posting in one channel does not stop a summary the instruction asks for.',
+    grader: 'gate verdict',
+    run: async () =>
+      expectVerdict(
+        await cronGate(
+          'Summarise yesterday\'s deploys for me every morning. Don\'t post anything in #general.',
+          'Yesterday had three deploys: billing-api v2.14.0 and web-app v8.3.1 succeeded, and docs-site was rolled ' +
+            'back after a broken link check.',
+        ),
+        'DELIVER',
+      ),
+  },
+  {
+    id: 'cron-gate.delivers-split-silence',
+    expect: 'An instruction that is silent about one topic but asks to hear about another delivers that other topic.',
+    grader: 'gate verdict',
+    run: async () =>
+      expectVerdict(
+        await cronGate(
+          'Sweep the team board every afternoon. Never message me about card hygiene, but tell me about any PR that needs a human.',
+          'Pull request #57 in web-app has had changes requested for three days with no push since. It needs its ' +
+            'author to respond. I also attached two pull requests to their cards.',
+        ),
+        'DELIVER',
+      ),
+  },
+  {
     id: 'webhook-gate.suppresses-no-match',
     expect: 'A webhook reply that finds nothing to report under a conditional instruction is suppressed.',
     grader: 'gate verdict',
