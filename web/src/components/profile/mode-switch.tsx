@@ -42,7 +42,8 @@ export function ModeSwitch({
       aria-label="Model selection"
       aria-busy={busy}
       onKeyDown={onKeyDown}
-      className="inline-flex rounded-lg bg-muted p-[3px] text-sm"
+      // The same track and raised option as `TabsList` / `TabsTrigger`, so the two controls read alike.
+      className="inline-flex h-8 items-center rounded-lg bg-muted p-[3px] text-sm"
     >
       {OPTIONS.map(({ mode, label }) => (
         <button
@@ -59,10 +60,12 @@ export function ModeSwitch({
             if (!busy) onChange(mode);
           }}
           className={cn(
-            'rounded-md px-3 py-1 font-medium transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none aria-disabled:opacity-50',
+            'inline-flex h-[calc(100%-1px)] items-center rounded-md border border-transparent px-3 font-medium transition-all',
+            'focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1 focus-visible:outline-ring',
+            'aria-disabled:pointer-events-none aria-disabled:opacity-50',
             value === mode
-              ? 'bg-background text-foreground shadow-sm'
-              : 'text-muted-foreground hover:text-foreground',
+              ? 'bg-background text-foreground shadow-sm dark:border-input dark:bg-input/30'
+              : 'text-foreground/60 hover:text-foreground dark:text-muted-foreground dark:hover:text-foreground',
           )}
         >
           {label}
