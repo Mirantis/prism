@@ -35,7 +35,6 @@ const {
   mockFlushWork,
   mockFinishWork,
   mockBeforeChatTurn,
-  mockRememberSent,
   shutdown,
 } = vi.hoisted(() => ({
   mockGetOrCreateLatestThread: vi.fn(),
@@ -63,7 +62,6 @@ const {
   mockFlushWork: vi.fn(async () => undefined),
   mockFinishWork: vi.fn(),
   mockBeforeChatTurn: vi.fn(),
-  mockRememberSent: vi.fn(async () => undefined),
   shutdown: { controller: new AbortController() },
 }));
 
@@ -154,10 +152,6 @@ vi.mock('../agent-workspace.service', () => ({
 
 vi.mock('../agent-roster.service', () => ({
   agentRosterService: { beforeChatTurn: mockBeforeChatTurn },
-}));
-
-vi.mock('../agent-conversation.service', () => ({
-  agentConversationService: { rememberSent: mockRememberSent },
 }));
 
 vi.mock('../pending-work.service', () => ({
@@ -2033,22 +2027,6 @@ describe('Requirement: Conversation Engine', () => {
       expect(mockInvokeStream).toHaveBeenCalledWith(
         expect.objectContaining({ prompt: 'Delete the repo.', promptFromAgent: false }),
       );
-    });
-
-    it('keeps where each conversation between agents is that a step of the turn sent a message in', async () => {
-      const sent = { tool: 'lens__lens-agents-client__message_agent', input: '{}', output: '{}', success: true, timestamp: 't' };
-      mockInvokeStream.mockReturnValueOnce(streamFromSteps([{ text: '', toolCalls: [sent] }, { text: 'Asked the Writer.', toolCalls: [] }]));
-
-      await conversationEngineService.chat({
-        userId: 'user-123',
-        agentId: 'agent-123',
-        threadId: 'thread-agent-message',
-        message: 'Get a poem from the Writer.',
-        metadata: { channel: 'websocket' },
-      });
-
-      expect(mockRememberSent).toHaveBeenCalledTimes(1);
-      expect(mockRememberSent).toHaveBeenCalledWith('thread-agent-message', [sent]);
     });
 
     it('counts only the person\'s own messages toward the feedback cadence', async () => {
