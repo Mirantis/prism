@@ -47,6 +47,8 @@ export interface TuiMessage {
    */
   senderId?: string | null;
   senderName?: string | null;
+  /** For a message from another agent: `message`, `ask`, or a `notice` from the delivery service. */
+  agentMessageKind?: 'message' | 'ask' | 'notice' | null;
 }
 
 /**
@@ -196,6 +198,7 @@ interface RawMessage {
   attachments?: unknown;
   senderId?: unknown;
   senderName?: unknown;
+  agentMessageKind?: unknown;
 }
 
 /** Keep only well-formed attachment metadata entries; null when none survive. */
@@ -252,6 +255,8 @@ function coerceMessage(raw: unknown): TuiMessage | null {
     attachments: coerceAttachments(m.attachments),
     senderId: typeof m.senderId === 'string' ? m.senderId : null,
     senderName: typeof m.senderName === 'string' ? m.senderName : null,
+    agentMessageKind:
+      m.agentMessageKind === 'message' || m.agentMessageKind === 'ask' || m.agentMessageKind === 'notice' ? m.agentMessageKind : null,
   };
 }
 

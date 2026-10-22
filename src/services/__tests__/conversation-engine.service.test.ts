@@ -1934,7 +1934,7 @@ describe('Requirement: Conversation Engine', () => {
   });
 
   describe('Scenario: A message from another agent', () => {
-    const notice = { kind: 'notice' as const, senderId: 'irene-agent', senderName: 'Irene Agent', messageId: 'msg-n1' };
+    const notice = { kind: 'notice' as const, senderId: 'messaging', senderName: 'Messaging', messageId: 'msg-n1' };
     const fromWriter = { kind: 'message' as const, senderId: 'agent-w', senderName: 'Writer', messageId: 'msg-w1' };
 
     it('stores it as that agent\'s, and keeps where it came from for a restart', async () => {

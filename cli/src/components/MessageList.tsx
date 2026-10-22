@@ -61,9 +61,6 @@ function toolCallSummary(toolCalls: unknown): string | null {
   return `· used ${names.join(', ')}`;
 }
 
-/** The sender of what the delivery service itself says about the agent's messages. */
-const NOTICE_SENDER_ID = 'irene-agent';
-
 /**
  * "You", unless someone else wrote it: another person in the same conversation,
  * or another agent of the project ("{name} · Agent", a notice its sender's name).
@@ -73,7 +70,7 @@ const NOTICE_SENDER_ID = 'irene-agent';
 function userLabel(message: TuiMessage, self: Viewer | undefined): string {
   if (message.triggeredBy === 'AGENT_MESSAGE') {
     const name = message.senderName ?? message.senderId ?? 'Agent';
-    return message.senderId === NOTICE_SENDER_ID ? name : `${name} · Agent`;
+    return message.agentMessageKind === 'notice' ? name : `${name} · Agent`;
   }
   if (!self || !message.senderId || message.senderId === self.id) return 'You';
   return message.senderName ?? message.senderId;

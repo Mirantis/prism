@@ -60,8 +60,8 @@ describe('ChatMessage', () => {
   });
 
   it('names a notice by its sender alone', () => {
-    renderMessage(userMessage({ triggeredBy: 'AGENT_MESSAGE', senderId: 'irene-agent', senderName: 'Irene Agent' }), ADA);
-    expect(screen.getByTestId('message-sender').textContent).toBe('Irene Agent');
+    renderMessage(userMessage({ triggeredBy: 'AGENT_MESSAGE', senderId: 'messaging', senderName: 'Messaging', agentMessageKind: 'notice' }), ADA);
+    expect(screen.getByTestId('message-sender').textContent).toBe('Messaging');
   });
 
   it('draws every message as your own until the runtime says who you are', () => {

@@ -914,7 +914,7 @@ and refuses every call, because under `none` the SDK sends no tools block.
 | **EventStreamService** | `services/event-stream.service.ts` | The numbered stream every chat client reads, and the bounded window a reconnecting client is replayed from |
 | **InboundMessageService** | `services/inbound-message.service.ts` | A chat message from the socket, or another agent's message from `POST /agents/agent-messages`: stored under the sender's id first, confirmed, then answered one turn at a time for the agent; and each conversation's `queued`/`running`/`idle` state. A delivery sent again is the same message in whichever conversation holds it, and its turn is scheduled from the stored row; an id that names another sender's message, or another message id, is refused |
 | **AgentConversationService** | `services/agent-conversation.service.ts` | Which web conversation holds each conversation between agents: `runtime_state` `agentConversation:<conversationId>`, set by a delivery and by the agent's own successful `message_agent` call (its answer's first line). A delivery goes there while a client can still write to it, else to the one conversation or the newest |
-| **AgentRosterService** | `services/agent-roster.service.ts` | Before a chat turn, at most once a minute per thread, calls the Lens Agents `list_agents` tool (`callListAgents` in `lib/mcp-client.ts`) with the version the thread last read, and stores the whole roster or the difference as a hidden USER row (`prompts/agent-roster-prompt.ts`). The snapshot is `runtime_state` `agentRoster:<threadId>`; a compacted or missing roster row means the whole roster again. Never throws: a failure is a warning and the turn runs |
+| **AgentRosterService** | `services/agent-roster.service.ts` | Before a chat turn, at most once a minute per thread, calls the MCP endpoint's `list_agents` tool (`callListAgents` in `lib/mcp-client.ts`) with the version the thread last read, and stores the whole roster or the difference as a hidden USER row (`prompts/agent-roster-prompt.ts`). The snapshot is `runtime_state` `agentRoster:<threadId>`; a compacted or missing roster row means the whole roster again. Never throws: a failure is a warning and the turn runs |
 | **isAgentIdle** | `services/agent-activity.ts` | Whether nothing runs or waits: model calls, live exchanges, working threads, cron, goals, compaction, meetings, voice, and processes a tool started. The updater defers to it, and `GET /agents/state` reports it |
 | **ProgramStatusService** | `services/program-status.service.ts` | The agent's state as OSC 7501 reports on stdout, for LNS and terminals, and `clear` at process exit |
 | **WebSocketAdapterService** | `services/websocket-adapter.service.ts` | ChannelAdapter for WebSocket delivery, calls local gateway directly |
@@ -1109,7 +1109,7 @@ src/
 │   ├── file-janitor.ts         # Hourly sweep of the durable file stores: orphaned uploads, stale hydrate scratch dirs, over-TTL attachment content, stray media files, over-TTL saved tool outputs
 │   ├── llm-errors.ts           # Single owner of LLM/runtime error → user-facing text (`buildErrorStep`, budget detection)
 │   ├── log-redaction.ts        # The global pino `err` serializer: an allow-list, so no SDK request/response body is ever logged
-│   ├── mcp-client.ts           # MCP tool fetching from MCP servers; `callListAgents`, the runtime's own call of Lens Agents' `list_agents` (found by its raw name)
+│   ├── mcp-client.ts           # MCP tool fetching from MCP servers; `callListAgents`, the runtime's own call of the endpoint's `list_agents` (found by its last name segment)
 │   ├── agent-mcp-servers.ts    # The MCP servers the runtime connects for the agent, as the neutral list a coding task gets
 │   ├── model-call.ts           # The only module calling `generateText`/`generateObject`; records every call's usage
 │   ├── model-routing.ts        # Which model a turn runs on: Fixed, or an Auto tier with the warm-cache hold rule
@@ -1247,7 +1247,7 @@ There are three entry points for chat, all handled locally by the agent-runtime:
 
 1. **WebSocket**: Client -> Lens Agents ingress -> WS gateway -> `inboundMessageService.accept()` (stores the message, confirms it) -> `conversationEngineService.chat()` (local, no HTTP)
 2. **Slack**: Bolt Socket Mode message -> `conversationEngineService.chat()` (local, no HTTP)
-3. **Agent messages**: Irene Agent backend -> Lens Agents private ingress -> `POST /agents/agent-messages` (`routes/agent-messages.ts`, 403 when the ingress names a person) -> `inboundMessageService.accept()` into the web conversation that holds its `conversationId` -> `conversationEngineService.chat()`
+3. **Agent messages**: delivery service -> `POST /agents/agent-messages` (`routes/agent-messages.ts`, signed by the service, 403 when the ingress names a person) -> `inboundMessageService.accept()` into the web conversation that holds its `conversationId` -> `conversationEngineService.chat()`
 
 In every case, `conversationEngineService.chat()` manages the thread, **iterates `invokeStream()` directly** (no queue, no HTTP), and `messageDeliveryService.publish()`'es each text-bearing step the moment its `onStepFinish` fires. Each delivery uses a `channelContext` that scopes the publish to the originating channel only (WebSocket or Slack), so users see intermediate text from multi-step responses in real time instead of one big block at the end.
 
@@ -1257,10 +1257,11 @@ The management `POST /agents/chat` endpoint remains available for internal/debug
 
 ### Agent messages
 
-A message from another agent of the Lens Agents project is a USER row with
+A message from another agent of the project is a USER row with
 `triggeredBy: AGENT_MESSAGE`, `triggerName` its kind (`message`, `ask` when the
 sender waits for an answer, `notice`), and the sending agent in
-`senderExternalId`, `senderName` and `externalMessageId`. The origin travels as
+`senderExternalId`, `senderName` and `externalMessageId`. The chat socket sends
+the kind as `agentMessageKind`, which the clients label a notice by. The origin travels as
 `ChatInput.agentMessage` and `PendingMessage.agentMessage`, so a pending-work
 row, a steered message and a coalesced follow-up keep it. It is never in
 `ChatInput.metadata`, which `POST /agents/chat` takes from the request body:
@@ -1284,10 +1285,9 @@ only `inboundMessageService` sets it, for the agent-message route.
   `agentRosterService` (see **Key Services**). The longer guidance on treating
   agent messages lives in that hidden roster row, so the system prompt and its
   cached prefix are the same for every agent.
-- **Who may post** is the Irene Agent backend alone, proved by its signature
-  (`lib/agent-message-signature.ts`), never by the ingress: that admits every
-  member of the project, people's API tokens and other agents' own tokens
-  among them. The signature is an ES256 token for this agent and the exact
+- **Who may post** is the delivery service alone, proved by its signature
+  (`lib/agent-message-signature.ts`), never by the ingress, which may admit
+  more than the service, such as people and the other agents themselves. The signature is an ES256 token for this agent and the exact
   body. Its keys come from the `delivery` field of `list_agents`, kept in
   `runtime_state` for an hour and read again for a key the runtime does not
   hold. The body parser keeps the raw bytes for it (`lib/raw-body.ts`).

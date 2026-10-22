@@ -69,14 +69,14 @@ describe('MessageList', () => {
     const fromAgent = { role: 'USER' as const, triggeredBy: 'AGENT_MESSAGE' };
     const entries = [
       entry(makeMsg({ ...fromAgent, id: 'a1', content: 'Is CI green?', senderId: 'agent-r', senderName: 'Researcher' })),
-      entry(makeMsg({ ...fromAgent, id: 'a2', content: 'Writer did not answer.', senderId: 'irene-agent', senderName: 'Irene Agent' })),
+      entry(makeMsg({ ...fromAgent, id: 'a2', content: 'Writer did not answer.', senderId: 'messaging', senderName: 'Messaging', agentMessageKind: 'notice' })),
     ];
     const { lastFrame } = render(
       <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId={null} />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('▌ Researcher · Agent');
-    expect(frame).toContain('▌ Irene Agent');
+    expect(frame).toContain('▌ Messaging');
     expect(frame).not.toContain('▌ You');
   });
 

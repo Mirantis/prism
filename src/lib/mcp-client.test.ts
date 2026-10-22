@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { config } from '../config';
 // The module the callListAgents tests share; the getMCPTools tests load fresh copies.
-import { callListAgents, isLensAgentsClientTool, resetListAgentsToolForTests } from './mcp-client';
+import { callListAgents, isAgentMessagingTool, resetListAgentsToolForTests } from './mcp-client';
 import { toModelToolName } from './tool-names';
 
 const { mockCreateMCPClient } = vi.hoisted(() => ({
@@ -45,7 +45,7 @@ async function load(): Promise<McpClientModule> {
 
 
 describe('callListAgents', () => {
-  const RAW_NAME = '0b6e1c2a-5d1f-4c3e-9a7b-2f8d4e6a1c3b__lens-agents-client__list_agents';
+  const RAW_NAME = '0b6e1c2a-5d1f-4c3e-9a7b-2f8d4e6a1c3b__agent-directory__list_agents';
   const signal = new AbortController().signal;
   let client: { listTools: ReturnType<typeof vi.fn>; callTool: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> };
 
@@ -57,7 +57,7 @@ describe('callListAgents', () => {
       listTools: vi.fn(async ({ params }: { params?: { cursor?: string } } = {}) =>
         params?.cursor === 'page-2'
           ? { tools: [{ name: RAW_NAME }] }
-          : { tools: [{ name: 'list_agents' }, { name: 'github__list_agents' }], nextCursor: 'page-2' },
+          : { tools: [{ name: 'list_agent' }, { name: 'github__list_agents_all' }], nextCursor: 'page-2' },
       ),
       callTool: vi.fn(async () => ({ content: [{ type: 'text', text: '{"version":"v1","unchanged":true}\nNo change.' }] })),
       close: vi.fn(async () => undefined),
@@ -125,7 +125,7 @@ describe('callListAgents', () => {
     expect(client.close).toHaveBeenCalledTimes(3);
   });
 
-  it('answers null with no Lens Agents MCP endpoint', async () => {
+  it('answers null with no MCP endpoint', async () => {
     const url = config.nexusMcpUrl;
     (config as { nexusMcpUrl: string | null }).nexusMcpUrl = null;
     try {
@@ -287,31 +287,33 @@ describe('closeMCPClients', () => {
   });
 });
 
-describe('isLensAgentsClientTool', () => {
-  it('reads a server name by its last two segments', () => {
-    expect(isLensAgentsClientTool('lens__lens-agents-client__message_agent', 'message_agent')).toBe(true);
-    expect(isLensAgentsClientTool('lens__lens-agents-client__message_agent', 'list_agents')).toBe(false);
-    expect(isLensAgentsClientTool('lens__github__message_agent', 'message_agent')).toBe(false);
+describe('isAgentMessagingTool', () => {
+  it('reads a tool by its last segment, whatever prefix the endpoint gives it', () => {
+    expect(isAgentMessagingTool('hub__agent-directory__message_agent', 'message_agent')).toBe(true);
+    expect(isAgentMessagingTool('message_agent', 'message_agent')).toBe(true);
+    expect(isAgentMessagingTool('hub__agent-directory__message_agent', 'list_agents')).toBe(false);
+    expect(isAgentMessagingTool('hub__github__message_agents', 'message_agent')).toBe(false);
+    expect(isAgentMessagingTool('hub__message_agent__send', 'message_agent')).toBe(false);
   });
 
   it.each([
     ['a letter', 'a1c3e5f7-2b4d-4f6a-8c0e-1d3f5a7c9e2b'],
     ['a digit', '9e2b4d6f-8a0c-4e2a-b4c6-d8e0f2a4c6e8'],
   ])('knows the name the model is shown for a listed tool whose uuid starts with %s', async (_, uuid) => {
-    const serverName = `${uuid}__lens-agents-client__message_agent`;
+    const serverName = `${uuid}__agent-directory__message_agent`;
     const modelName = toModelToolName(serverName);
     // The tools block shortens the name past the tool's own segment.
     expect(modelName).not.toContain('message_agent');
     const mcp = await load();
-    expect(mcp.isLensAgentsClientTool(modelName, 'message_agent')).toBe(false);
+    expect(mcp.isAgentMessagingTool(modelName, 'message_agent')).toBe(false);
 
     mockCreateMCPClient.mockResolvedValueOnce(
       fakeClient(async () => ({ [serverName]: { description: 'Message an agent' }, memory_search: {} })),
     );
     await mcp.getMCPTools({ url: MCP_URL });
 
-    expect(mcp.isLensAgentsClientTool(modelName, 'message_agent')).toBe(true);
-    expect(mcp.isLensAgentsClientTool(modelName, 'list_agents')).toBe(false);
-    expect(mcp.isLensAgentsClientTool(toModelToolName('memory_search'), 'message_agent')).toBe(false);
+    expect(mcp.isAgentMessagingTool(modelName, 'message_agent')).toBe(true);
+    expect(mcp.isAgentMessagingTool(modelName, 'list_agents')).toBe(false);
+    expect(mcp.isAgentMessagingTool(toModelToolName('memory_search'), 'message_agent')).toBe(false);
   });
 });

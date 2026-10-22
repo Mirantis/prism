@@ -1,5 +1,5 @@
 Feature: Messages from other agents of the project
-  As a user whose agent works beside other agents on Lens Agents
+  As a user whose agent works beside other agents of its project
   I want a message another agent sends mine to show in my conversation as that agent's
   and to be answered there, while nobody can post one in another agent's name
 

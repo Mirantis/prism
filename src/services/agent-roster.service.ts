@@ -3,8 +3,8 @@
  *
  * Keeps a conversation's model told which other agents of the project exist and
  * what each one does, so it can hand them work without asking for the list.
- * Before a chat turn, at most once a minute per conversation, it calls the Lens
- * Agents `list_agents` tool with the roster version the conversation last read,
+ * Before a chat turn, at most once a minute per conversation, it calls the
+ * `list_agents` tool of the MCP endpoint with the roster version the conversation last read,
  * and stores what is new as a hidden message (`internalStep`): the whole roster
  * the first time and once a compaction folded it away, otherwise the
  * difference. The message replays with the history, so the cached prefix stays

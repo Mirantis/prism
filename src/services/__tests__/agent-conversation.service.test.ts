@@ -17,7 +17,7 @@ vi.mock('../runtime-state.service', () => ({
 
 import { agentConversationService } from '../agent-conversation.service';
 
-const MESSAGE_AGENT = 'lens__lens-agents-client__message_agent';
+const MESSAGE_AGENT = 'hub__agent-directory__message_agent';
 const CONVERSATION = '0f0f0f0f-0000-4000-8000-0000000000c1';
 const sent = (text: string) => ({ content: [{ type: 'text', text }] });
 const tool = (result: unknown) => ({ description: 'd', inputSchema: { type: 'object' }, execute: vi.fn(async () => result) }) as unknown as Tool;

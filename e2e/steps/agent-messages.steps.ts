@@ -1,7 +1,6 @@
 /**
- * Messages from other agents: Irene Agent's backend posts them to the runtime
- * through the Lens Agents private ingress, signed with its key, whose public
- * half the runtime reads from list_agents. Here the steps post straight to the
+ * Messages from other agents: a delivery service posts them to the runtime,
+ * signed with its key, whose public half the runtime reads from list_agents. Here the steps post straight to the
  * runtime, signed with a key made for the run, which they give the runtime as
  * list_agents would.
  */

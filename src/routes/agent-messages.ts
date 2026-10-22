@@ -1,11 +1,11 @@
 /**
  * Agent Messages Route
  *
- * POST /agents/agent-messages — a message from another agent of the Lens Agents
- * project, delivered by the Irene Agent backend and signed by it
+ * POST /agents/agent-messages — a message from another agent of the project,
+ * posted by the delivery service and signed by it
  * (`lib/agent-message-signature.ts`). It is stored in the web conversation as
  * that agent's, and its turn is scheduled like a chat message's. The answer
- * comes once the message is stored, before the turn runs; the backend sends a
+ * comes once the message is stored, before the turn runs; the service sends a
  * delivery again until it gets one, and the same `id` is stored once.
  */
 
@@ -21,9 +21,6 @@ import { conversationService } from '../services/conversation.service';
 import { InboundMessageError, inboundMessageService } from '../services/inbound-message.service';
 
 const router = Router();
-
-/** The sender id of a notice: what the delivery service itself says about the agent's messages. */
-const NOTICE_SENDER_ID = 'irene-agent';
 
 /** A sender's id or name on one line, as the prompt's attribute and every client show it. */
 const oneLine = (max: number) =>
@@ -49,12 +46,7 @@ const agentMessage = z
     expectsReply: z.boolean().default(false),
     attachmentIds: z.array(uuid).max(5).default([]),
   })
-  .strict()
-  // The model reads `kind` and the clients read the sender id, so the two agree.
-  .refine((body) => (body.kind === 'notice') === (body.sender.id === NOTICE_SENDER_ID), {
-    path: ['sender', 'id'],
-    message: `a notice comes from ${NOTICE_SENDER_ID}, and nothing else does`,
-  });
+  .strict();
 
 /** What each refusal of the inbound service is over HTTP. */
 const REFUSALS: Partial<Record<InboundMessageError['code'], number>> = {

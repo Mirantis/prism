@@ -134,8 +134,6 @@ describe('POST /agents/agent-messages', () => {
     ['too many attachments', { attachmentIds: Array.from({ length: 6 }, () => MESSAGE) }, 'attachmentIds'],
     ['a sender name past the limit', { sender: { id: 'agent-r', name: 'n'.repeat(129) } }, 'sender.name'],
     ['a sender name with nothing to show', { sender: { id: 'agent-r', name: '\n\t ' } }, 'sender.name'],
-    ['a notice from an agent', { kind: 'notice', sender: { id: 'agent-r', name: 'Researcher' } }, 'sender.id'],
-    ['a message from the delivery service', { sender: { id: 'irene-agent', name: 'Irene Agent' } }, 'sender.id'],
     ['a field the contract does not have', { replyTo: MESSAGE }, 'body'],
   ])('refuses %s with 400', async (_case, overrides, field) => {
     const res = await post(delivery(overrides));
@@ -160,6 +158,7 @@ describe('POST /agents/agent-messages', () => {
       triggeredBy: 'AGENT_MESSAGE',
       senderId: 'agent-r',
       senderName: 'Researcher',
+      agentMessageKind: 'ask',
     });
 
     expect(res.status).toBe(202);
@@ -244,21 +243,29 @@ describe('POST /agents/agent-messages', () => {
 
   it('stores a notice as one', async () => {
     const id = 'd4e5f607-1829-43a4-b526-d7e8f9a0b1c2';
+    const shown: MessageEventPayload[] = [];
+    const stop = eventStreamService.subscribe(({ event }) => {
+      if (event.type === 'message') shown.push(event.payload);
+    });
     const res = await post(
         delivery({
           id,
           kind: 'notice',
-          sender: { id: 'irene-agent', name: 'Irene Agent' },
+          sender: { id: 'messaging', name: 'Messaging' },
           content: 'Writer did not answer your message.',
           expectsReply: undefined,
         }),
       );
 
+    stop();
+
     expect(res.status).toBe(202);
+    // The clients label it by its kind, whatever the delivery service calls itself.
+    expect(shown[0]).toMatchObject({ id, senderId: 'messaging', senderName: 'Messaging', agentMessageKind: 'notice' });
     expect(await database.client!.conversationMessage.findUniqueOrThrow({ where: { id } })).toMatchObject({
       triggeredBy: 'AGENT_MESSAGE',
       triggerName: 'notice',
-      senderName: 'Irene Agent',
+      senderName: 'Messaging',
     });
     // Its turn answers it, and has stored that answer before the database closes.
     await vi.waitFor(async () =>
@@ -297,10 +304,10 @@ describe('POST /agents/agent-messages', () => {
       // The agent's message_agent call there started conversation ASKED. The
       // endpoint's name for the tool is long enough that the model is shown a
       // shortened one, and the tool is offered under that.
-      const { noteLensAgentsClientTools } = await import('../lib/mcp-client');
+      const { noteAgentMessagingTools } = await import('../lib/mcp-client');
       const { toModelToolName } = await import('../lib/tool-names');
-      const serverName = '0b6e1c2a-5d1f-4c3e-9a7b-2f8d4e6a1c3b__lens-agents-client__message_agent';
-      noteLensAgentsClientTools([serverName]);
+      const serverName = '0b6e1c2a-5d1f-4c3e-9a7b-2f8d4e6a1c3b__agent-directory__message_agent';
+      noteAgentMessagingTools([serverName]);
       const { agentConversationService } = await import('../services/agent-conversation.service');
       const name = toModelToolName(serverName);
       const answer = `{"messageId":"${ASKED}","conversationId":"${ASKED}","delivered":["Researcher"],"waiting":[]}\nResearcher has it.`;

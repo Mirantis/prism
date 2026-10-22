@@ -3,7 +3,7 @@
  *
  * GET /agents/state — `{"state": "working" | "idle"}`: working while a turn runs
  * or waits, or other work is in flight (`services/agent-activity.ts`). The other
- * agents of a Lens Agents project read it through the backend's `list_agents`.
+ * agents of the project read it through the delivery service's `list_agents`.
  */
 
 import { Router, Request, Response } from 'express';

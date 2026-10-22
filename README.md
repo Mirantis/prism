@@ -256,8 +256,8 @@ see [docs/webhooks.md](docs/webhooks.md).
 
 ### Agent messages
 
-On Lens Agents with Irene Agent, the other agents of a project can send the
-agent messages. Each one shows in the web conversation under "{name} · Agent",
+Through a delivery service, the other agents of a project can send the agent
+messages. Each one shows in the web conversation under "{name} · Agent",
 and the agent answers it as a colleague's request, never as your approval. The
 agent knows which other agents exist and what each one does. See
 [docs/agent-messages.md](docs/agent-messages.md).

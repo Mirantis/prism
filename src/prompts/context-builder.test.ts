@@ -1739,8 +1739,8 @@ describe('a message from another agent', () => {
         {
           ...stored,
           triggerName: 'notice',
-          senderExternalId: 'irene-agent',
-          senderName: 'Irene Agent',
+          senderExternalId: 'messaging',
+          senderName: 'Messaging',
           content: 'Writer did not answer.',
         },
       ],

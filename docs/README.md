@@ -66,9 +66,9 @@ What the agent can do.
 - **[Webhooks](webhooks.md)** — named HTTP endpoints external systems
   (Alertmanager, PagerDuty, GitHub, …) POST events to, triggering an agent run
   or a direct notification.
-- **[Agent messages](agent-messages.md)** — on Lens Agents with Irene Agent, the
-  other agents of the project send the agent messages and get its answers, and
-  the agent knows who they are and what each one does.
+- **[Agent messages](agent-messages.md)** — the other agents of the project send
+  the agent messages and get its answers, and the agent knows who they are and
+  what each one does.
 - **[Voice meetings](voice-meetings.md)** — the agent joins a Google Meet call and
   takes part by voice, listening, speaking and using its tools live.
 - **[Voice chat](voice-chat.md)** — a direct voice conversation with the agent, with

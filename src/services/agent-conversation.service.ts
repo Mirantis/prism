@@ -2,7 +2,7 @@
  * Agent Conversation Service
  *
  * Which web conversation holds each conversation between agents, so an answer
- * comes back where the question was asked. The Irene Agent backend gives every
+ * comes back where the question was asked. The delivery service gives every
  * message a `conversationId`: a new message starts one, and a reply, and a
  * notice about a message, carry the one it belongs to. The agent's own
  * `message_agent` call answers the id, and each delivery names it. The web
@@ -13,7 +13,7 @@
 import type { Tool } from 'ai';
 import { z } from 'zod';
 import { config } from '../config';
-import { isLensAgentsClientTool } from '../lib/mcp-client';
+import { isAgentMessagingTool } from '../lib/mcp-client';
 import prisma from '../lib/prisma';
 import { stringifyToolOutput } from '../lib/tool-output-limiter';
 import { logger } from '../logger';
@@ -76,7 +76,7 @@ class AgentConversationService {
     const wrapped: Record<string, Tool> = {};
     for (const [name, tool] of Object.entries(tools)) {
       const execute = tool.execute;
-      if (!execute || !isLensAgentsClientTool(name, 'message_agent')) {
+      if (!execute || !isAgentMessagingTool(name, 'message_agent')) {
         wrapped[name] = tool;
         continue;
       }

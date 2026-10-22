@@ -39,13 +39,10 @@ interface ChatMessageProps {
   onEdit: (id: string) => void;
 }
 
-/** The sender of what the delivery service itself says about the agent's messages. */
-const NOTICE_SENDER_ID = 'irene-agent';
-
 /** "{name} · Agent" for another agent's message, the name alone for a notice. */
 function agentSender(message: ConversationMessage): string {
   const name = message.senderName ?? message.senderId ?? 'Agent';
-  return message.senderId === NOTICE_SENDER_ID ? name : `${name} · Agent`;
+  return message.agentMessageKind === 'notice' ? name : `${name} · Agent`;
 }
 
 /** A message rises into place as it arrives. */

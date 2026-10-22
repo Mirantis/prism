@@ -3,10 +3,10 @@
  *
  * Single owner of "did the delivery service send this agent message?".
  *
- * The Lens Agents private ingress admits every member of the project to
- * `POST /agents/agent-messages`: a person, a person's API token, another
- * agent's own token, and the delivery service's session. It names none of
- * them but a person. So the service signs each delivery, and the runtime takes
+ * Whatever stands in front of the runtime port may admit more than the delivery
+ * service to `POST /agents/agent-messages`, such as the people of the project
+ * and the other agents themselves, and need not say which. So the service
+ * signs each delivery, and the runtime takes
  * none without that signature:
  *
  *   `x-agent-message-signature` holds an ES256 compact JWT, `typ`
@@ -14,8 +14,8 @@
  *   body (`sha256`, base64url), good for a minute.
  *
  * The keys and the audience come from the `delivery` field of the
- * `list_agents` answer, which the runtime asks for itself through the Lens
- * Agents MCP. They are kept in `runtime_state`, so a restart costs no call, and
+ * `list_agents` answer, which the runtime asks for itself through its MCP
+ * endpoint. They are kept in `runtime_state`, so a restart costs no call, and
  * trusted for an hour, so a key the service dropped is soon no longer trusted.
  * A signature that names a key the runtime does not hold asks again, at most
  * every 30 seconds, which is how a new key reaches the runtime. Until that read
