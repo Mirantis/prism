@@ -20,7 +20,7 @@
 # /bin/bash, which rules out Alpine's busybox, and both coding-agent CLIs are
 # npm packages. Same base family as the runtime image, so a command behaves the
 # same in either.
-FROM node:26-bookworm-slim
+FROM node:26.12.1-bookworm-slim
 
 # `setsid` (util-linux) is load-bearing, not incidental: every command runs
 # under it so the payload becomes a process-group leader and `shell_kill` can

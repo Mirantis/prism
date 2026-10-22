@@ -1,10 +1,10 @@
 # Prism Agent Dockerfile
 # Multi-stage build for smaller production image.
 #
-# Base: node:26-bookworm-slim (glibc).
+# Base: node:26.12.1-bookworm-slim (glibc).
 
 # Stage 1: Build
-FROM node:26-bookworm-slim AS builder
+FROM node:26.12.1-bookworm-slim AS builder
 
 WORKDIR /app
 
@@ -47,7 +47,7 @@ COPY cli ./cli
 RUN npm run build --workspace=prism-cli
 
 # Stage 2: Production
-FROM node:26-bookworm-slim AS runner
+FROM node:26.12.1-bookworm-slim AS runner
 
 WORKDIR /app
 
