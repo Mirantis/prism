@@ -2,15 +2,18 @@
  * Agent Messages Route
  *
  * POST /agents/agent-messages — a message from another agent of the Lens Agents
- * project, delivered by the Irene Agent backend. It is stored in the web
- * conversation as that agent's, and its turn is scheduled like a chat message's.
- * The answer comes once the message is stored, before the turn runs; the backend
- * sends a delivery again until it gets one, and the same `id` is stored once.
+ * project, delivered by the Irene Agent backend and signed by it
+ * (`lib/agent-message-signature.ts`). It is stored in the web conversation as
+ * that agent's, and its turn is scheduled like a chat message's. The answer
+ * comes once the message is stored, before the turn runs; the backend sends a
+ * delivery again until it gets one, and the same `id` is stored once.
  */
 
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { config } from '../config';
+import { AGENT_MESSAGE_SIGNATURE_HEADER, verifyAgentMessageSignature } from '../lib/agent-message-signature';
+import { getRawBody } from '../lib/raw-body';
 import { logger } from '../logger';
 import { uuid, uuidV4 } from '../protocol/chat-protocol';
 import { agentConversationService } from '../services/agent-conversation.service';
@@ -21,9 +24,6 @@ const router = Router();
 
 /** The sender id of a notice: what the delivery service itself says about the agent's messages. */
 const NOTICE_SENDER_ID = 'irene-agent';
-
-/** The headers the Lens Agents ingress writes to name a person, and only a person. */
-const PERSON_HEADERS = ['x-forwarded-user', 'x-forwarded-user-id'];
 
 /** A sender's id or name on one line, as the prompt's attribute and every client show it. */
 const oneLine = (max: number) =>
@@ -64,13 +64,18 @@ const REFUSALS: Partial<Record<InboundMessageError['code'], number>> = {
 };
 
 router.post('/agent-messages', async (req: Request, res: Response) => {
-  // The Lens Agents ingress names a person signed in to it with these headers,
-  // and names no API-token caller, such as the backend. People talk to the agent
-  // in the conversation, and refusing them here keeps a browser from posting as
-  // another agent. The ingress is what authenticates; the headers only tell a
-  // person from a token.
-  if (PERSON_HEADERS.some((header) => req.get(header) !== undefined)) {
-    res.status(403).json({ error: 'Only another agent of the project sends agent messages.' });
+  // The ingress admits every member of the project, people, their API tokens
+  // and other agents among them, so only the delivery service's signature says
+  // who sent this. Checked before anything in the body is read.
+  const signature = await verifyAgentMessageSignature(req.get(AGENT_MESSAGE_SIGNATURE_HEADER), getRawBody(req));
+  if (!signature.ok) {
+    logger.warn({ reason: signature.reason, status: signature.status }, '[AgentMessages] Refused a delivery');
+    res.status(signature.status).json({
+      error:
+        signature.status === 503
+          ? 'The keys that check agent messages cannot be read right now. Try again shortly.'
+          : 'An agent message needs a valid signature from the delivery service.',
+    });
     return;
   }
 

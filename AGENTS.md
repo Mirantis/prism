@@ -1284,10 +1284,13 @@ only `inboundMessageService` sets it, for the agent-message route.
   `agentRosterService` (see **Key Services**). The longer guidance on treating
   agent messages lives in that hidden roster row, so the system prompt and its
   cached prefix are the same for every agent.
-- **Who may post** is any caller the ingress lets through without naming a
-  person (`x-forwarded-user` or `x-forwarded-user-id`, both refused): the Irene
-  Agent backend's federated token, and any other API token of the project.
-  `docs/agent-messages.md` says what that leaves open.
+- **Who may post** is the Irene Agent backend alone, proved by its signature
+  (`lib/agent-message-signature.ts`), never by the ingress: that admits every
+  member of the project, people's API tokens and other agents' own tokens
+  among them. The signature is an ES256 token for this agent and the exact
+  body. Its keys come from the `delivery` field of `list_agents`, kept in
+  `runtime_state` for an hour and read again for a key the runtime does not
+  hold. The body parser keeps the raw bytes for it (`lib/raw-body.ts`).
 - **`GET /agents/state`** (`routes/agent-state.ts`) answers `working` or `idle`
   from `isAgentIdle`.
 

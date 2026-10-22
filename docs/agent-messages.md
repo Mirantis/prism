@@ -31,19 +31,24 @@ webhook run, the agent calls `list_agents` itself.
 ## Delivering a message: `POST /agents/agent-messages`
 
 Irene Agent posts each message to the runtime port, through the Lens Agents
-private ingress, which authenticates the call. A request that the ingress
-names a person for (`x-forwarded-user` or `x-forwarded-user-id`) is refused
-with `403`: people talk to the agent in the conversation. This route is the
-only one that stores an agent's message: `POST /agents/threads/:threadId/messages`
-refuses `triggeredBy: "AGENT_MESSAGE"` with `400`.
+private ingress. The ingress admits every member of the project: a person, a
+person's API token, another agent's own token, and Irene Agent's session. So
+Irene Agent signs each delivery, and the runtime takes none without that
+signature (`lib/agent-message-signature.ts`):
 
-The ingress names no caller that signs in with an API token, so the runtime
-cannot tell Irene Agent's federated token from another API token of the
-project. A project member's personal token can post a message under any
-sender's name, or a notice, past Irene Agent's limits and pause. Closing that
-needs the ingress to say which token called, or Irene Agent to sign each
-delivery; until then, give API tokens only to people you would let speak as
-the project's agents.
+- `x-agent-message-signature` holds an ES256 compact JWT with `typ`
+  `agent-message+jwt`. It names this agent in `aud` and the SHA-256 of the
+  exact body in `sha256` (base64url), and is good for a minute.
+- The public keys and the agent's own id come from `list_agents`, in the
+  `delivery` field of its answer, which the runtime asks for itself through the
+  Lens Agents MCP. The runtime keeps them in `runtime_state`
+  (`agentMessageKeys`) and trusts them for an hour. A signature with a key it
+  does not hold makes it ask again, at most every 30 seconds, so a new key
+  reaches it with the next delivery.
+
+People talk to the agent in the conversation. This route is the only one that
+stores an agent's message: `POST /agents/threads/:threadId/messages` refuses
+`triggeredBy: "AGENT_MESSAGE"` with `400`.
 
 ```json
 {
@@ -79,9 +84,9 @@ deleted or is hidden by single-thread mode, goes to the one conversation when
 |--------|---------|
 | `202` `{"messageId","threadId","queued","duplicate"}` | Stored, and its turn is scheduled. `duplicate: true` means the same `id` was already stored. |
 | `400` `{"error"}` | The body does not match the contract. |
-| `403` | A person sent it. |
+| `401` `{"error"}` | No signature, or one that is not Irene Agent's, or not for this agent and this body. |
 | `409` | The `id` belongs to another message: a person's, or another sender's or message id's. |
-| `503` | The agent is still starting. Send it again later. |
+| `503` | The agent is still starting, or cannot read the keys right now. Send it again later. |
 
 On the [chat socket](websocket-protocol.md), the message is a `USER` message with
 `triggeredBy: "AGENT_MESSAGE"` and the sending agent's `senderId` and
@@ -107,5 +112,8 @@ flight, such as a scheduled task or a coding task. Otherwise it answers
   tool: a project administrator opens the agent in an Irene Agent client, which
   grants it. When the agent cannot read the list, the log has a warning that
   starts with `[AgentRoster]`, and the turn runs without it.
-- **A delivery answers `503`.** The agent is still starting. Irene Agent sends
-  the message again.
+- **A delivery answers `503`.** The agent is still starting, or cannot read
+  the keys from `list_agents`. Irene Agent sends the message again. The log
+  has a warning that starts with `[AgentMessages]`.
+- **A delivery answers `401`.** It came without Irene Agent's signature, or
+  with a key `list_agents` does not list. The log line names the reason.
