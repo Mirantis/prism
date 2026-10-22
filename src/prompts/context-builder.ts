@@ -871,18 +871,20 @@ function getLastSendInstructions(lastSend: TaskLastSend, kind: 'task' | 'heartbe
       ? {
           title: 'Messages This Task Sent',
           sent: `A run of this task (${formatTimeAgo(lastSend.at)}) sent these messages:`,
-          report: 'The newest run after it',
           asker: 'the task',
         }
       : {
           title: 'Messages Your Heartbeat Sent',
           sent: 'Earlier heartbeat runs sent these messages, newest first:',
-          report: 'The newest heartbeat run',
           asker: 'a check',
         };
   const lines = [`# ${words.title}`, ``, words.sent, ``, lastSend.messages];
   if (lastSend.latestReport) {
-    lines.push(``, `${words.report} (${formatTimeAgo(lastSend.latestReport.at)}) reported:`, ``, lastSend.latestReport.text);
+    lines.push(``, `The newest run after it (${formatTimeAgo(lastSend.latestReport.at)}) reported:`, ``, lastSend.latestReport.text);
+  }
+  if (lastSend.reports?.length) {
+    lines.push(``, `The runs since the oldest of these sends reported, newest first:`);
+    for (const report of lastSend.reports) lines.push(``, `(${formatTimeAgo(report.at)}) ${report.text}`);
   }
   lines.push(
     ``,

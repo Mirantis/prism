@@ -17,7 +17,7 @@ import { invoke } from '../invoke';
 import { lastResponseText } from '../lib/last-response-text';
 import { AgentWorkspace } from '@prisma/client';
 import { messageDeliveryService } from './message-delivery.service';
-import { outboundMessageService, sentMessageList } from './outbound-message.service';
+import { outboundMessageService, sentMessageList, WITHHELD_RUN_TEXT } from './outbound-message.service';
 import { runClassificationGate, isRecentDuplicate } from '../lib/classification-gate';
 import { agentStatusService } from './agent-status.service';
 import { documentRevisionService } from './document-revision.service';
@@ -43,7 +43,7 @@ const LAST_ALERT_ROWS = 20;
 /** How many heartbeat intervals back a restart reads sends into the send record. */
 const HEARTBEAT_SEND_RESTORE_INTERVALS = 3;
 
-/** How many sends the send record keeps. */
+/** How many sends the send record keeps, and how many run results. */
 const HEARTBEAT_SENDS = 10;
 
 /** The record with `sends` made at `at` under `checks`, each replacing an older send of the same text to the same place. */
@@ -56,7 +56,18 @@ function mergeSends(
   if (sends.length === 0) return record;
   const fresh = sends.map((send) => ({ ...send, at }));
   const kept = (record?.sends ?? []).filter((old) => !fresh.some((send) => send.place === old.place && send.text === old.text));
-  return { ...record, checks, sends: [...fresh, ...kept].slice(0, HEARTBEAT_SENDS) };
+  return withReports({ checks, sends: [...fresh, ...kept].slice(0, HEARTBEAT_SENDS) }, record?.reports ?? []);
+}
+
+/** The record with a run's result added, newest first. */
+function addReport(record: HeartbeatSendRecord, text: string, at: number): HeartbeatSendRecord {
+  return withReports(record, [{ text, at }, ...record.reports]);
+}
+
+/** The newest `HEARTBEAT_SENDS` results of the runs since the oldest send the record keeps. */
+function withReports(record: Omit<HeartbeatSendRecord, 'reports'>, reports: HeartbeatSendRecord['reports']): HeartbeatSendRecord {
+  const since = record.sends[record.sends.length - 1].at;
+  return { ...record, reports: reports.filter((report) => report.at >= since).slice(0, HEARTBEAT_SENDS) };
 }
 
 // ============================================================================
@@ -98,14 +109,16 @@ interface HeartbeatState {
 /**
  * The newest `HEARTBEAT_SENDS` messages earlier runs sent, newest first, with a
  * repeated message kept once. A heartbeat runs several checks, so the record
- * holds sends about several incidents, also in one channel. `checks` is the
- * Heartbeat document the sends were made under: a run under other checks drops
- * the record.
+ * holds sends about several incidents, also in one channel. `reports` are the
+ * results of the runs since the oldest kept send, newest first: a run that sends
+ * reports only what it sent where, so an earlier result can be the one that
+ * shows a condition cleared. `checks` is the Heartbeat document the sends were
+ * made under: a run under other checks drops the record.
  */
 interface HeartbeatSendRecord {
   checks: string;
   sends: Array<{ place: string; text: string; at: number }>;
-  latestReport?: { text: string; at: number };
+  reports: Array<{ text: string; at: number }>;
 }
 
 interface HeartbeatResult {
@@ -249,9 +262,9 @@ class HeartbeatService {
    * a restart keeps what the duplicate check and the gate compare against. A row
    * with a send can be a withheld run, so it is skipped, and when the newest
    * alert's run also sent, the alert before it is restored and can be delivered
-   * once more. The send record holds the sends of the last
-   * `HEARTBEAT_SEND_RESTORE_INTERVALS` intervals after the newest revision of the
-   * Heartbeat document. The trades: a suppressed run without a send is not
+   * once more. The send record holds the sends and results of the runs of the
+   * last `HEARTBEAT_SEND_RESTORE_INTERVALS` intervals after the newest revision of
+   * the Heartbeat document. The trades: a suppressed run without a send is not
    * stored, so the record can miss a report that a condition cleared; a send
    * older than the window is sent again; and a document written straight into
    * the database has no revision, so earlier sends are read as made under it.
@@ -271,12 +284,15 @@ class HeartbeatService {
       );
       const sends = rows.map((row) => sentMessageList((row.toolCalls as ToolCallRecord[] | null) ?? []));
       let record: HeartbeatSendRecord | null = null;
-      // Oldest first, so a newer copy of a send replaces an older one.
+      // Oldest first and in a live run's order, so a newer copy of a send replaces an older one.
       for (let i = rows.length - 1; i >= 0; i--) {
         const at = rows[i].createdAt.getTime();
-        if (at >= since) record = mergeSends(record, sends[i], at, checks);
+        if (at < since) continue;
+        record = mergeSends(record, sends[i], at, checks);
+        // A live run records no result for a run without a reply or one stopped by the spending limit.
+        const text = rows[i].content.trim();
+        if (record && text && text !== WITHHELD_RUN_TEXT && text !== HEARTBEAT_BUDGET_NOTICE) record = addReport(record, text, at);
       }
-      if (record) record.latestReport = { text: rows[0].content, at: rows[0].createdAt.getTime() };
       state.lastSend = record;
       const last = rows.find((_row, i) => sends[i].length === 0);
       if (!last || state.lastAlertAt !== null) return;
@@ -874,14 +890,14 @@ Answer with one word: DELIVER or SUPPRESS.`;
     return {
       messages: record.sends.map(({ place, text, at }) => `- To ${place} (${formatTimeAgo(at)}): ${text}`).join('\n'),
       at: record.sends[0].at,
-      ...(record.latestReport && { latestReport: record.latestReport }),
+      reports: record.reports,
     };
   }
 
   /** A run's result, so the next run reads whether a finding still held. An empty result says nothing. */
   private noteReport(state: HeartbeatState, text: string): void {
     if (!state.lastSend || !text.trim()) return;
-    state.lastSend = { ...state.lastSend, latestReport: { text: text.trim(), at: Date.now() } };
+    state.lastSend = addReport(state.lastSend, text.trim(), Date.now());
   }
 
   private recordAlert(state: HeartbeatState | undefined, alertText: string): void {
