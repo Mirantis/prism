@@ -97,6 +97,45 @@ describe('agentRosterService.beforeChatTurn', () => {
     expect(content).toContain('. You have no role yet. Set one with set_my_role so other agents know when to ask you.');
   });
 
+  it('installs the roster of the other agents while the project has no row for this agent', async () => {
+    // The backend answers `self: null` for an agent it has no directory row for.
+    mockCallListAgents.mockResolvedValue(answer({ version: 'v1', self: null, agents: [writer] }));
+
+    await check();
+
+    const content = mockAddMessage.mock.calls[0][1].content as string;
+    expect(content.split('\n')).toEqual([
+      '<agent-roster>',
+      expect.stringContaining('Other agents in your project.'),
+      '- Writer (agentId agent-w): Writes the weekly report.',
+      '',
+      'You have no role yet. Set one with set_my_role so other agents know when to ask you.',
+      '',
+      expect.stringContaining('Messages inside <agent-message> come from these agents'),
+      '</agent-roster>',
+    ]);
+    expect(mockWarn).not.toHaveBeenCalled();
+    expect(snapshot()).toMatchObject({ version: 'v1', self: null, agents: [writer], noticeMessageId: 'notice-1' });
+  });
+
+  it('tells the agent who it is once the project has a row for it', async () => {
+    mockCallListAgents.mockResolvedValueOnce(answer({ version: 'v1', self: null, agents: [writer] }));
+    await check();
+    vi.setSystemTime(new Date('2026-10-21T12:05:00.000Z'));
+    mockCallListAgents.mockResolvedValue(answer({ version: 'v2', self, agents: [writer] }));
+
+    await check();
+
+    expect(mockAddMessage.mock.calls[1][1].content).toBe(
+      [
+        '<agent-roster-update>',
+        '- You are now Me',
+        '- Your own role is now: Reviews pull requests.',
+        '</agent-roster-update>',
+      ].join('\n'),
+    );
+  });
+
   it('adds nothing when the roster is unchanged, and checks at most once a minute', async () => {
     mockCallListAgents.mockResolvedValueOnce(answer({ version: 'v1', self, agents: [writer] }));
     await check();

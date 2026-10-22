@@ -41,10 +41,13 @@ interface RosterSnapshot extends Roster {
 
 const rosterAgent = z.object({ id: z.string(), name: z.string(), role: z.string().nullable() });
 
-/** The first line of the tool's answer. The rest is the same roster for a model to read. */
+/**
+ * The first line of the tool's answer. The rest is the same roster for a model
+ * to read. `self` is null while the project has no row for this agent.
+ */
 const listAgentsAnswer = z.union([
   z.object({ version: z.string(), unchanged: z.literal(true) }),
-  z.object({ version: z.string(), self: rosterAgent, agents: z.array(rosterAgent) }),
+  z.object({ version: z.string(), self: rosterAgent.nullable(), agents: z.array(rosterAgent) }),
 ]);
 
 const snapshotKey = (threadId: string) => `agentRoster:${threadId}`;

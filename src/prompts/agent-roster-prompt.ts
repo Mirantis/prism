@@ -14,7 +14,8 @@ export interface RosterAgent {
 }
 
 export interface Roster {
-  self: RosterAgent;
+  /** The agent's own row, or null while the project has none for it, which `set_my_role` creates. */
+  self: RosterAgent | null;
   agents: RosterAgent[];
 }
 
@@ -24,6 +25,16 @@ function oneLine(text: string): string {
 
 function roleText(role: string | null): string {
   return role ? oneLine(role) : 'no role yet';
+}
+
+const SET_A_ROLE = 'You have no role yet. Set one with set_my_role so other agents know when to ask you.';
+
+/** Who the agent is to the others, or only how to get a role while the project has no row for it. */
+function selfText(self: RosterAgent | null): string {
+  if (!self) return SET_A_ROLE;
+  return self.role
+    ? `You are ${oneLine(self.name)}. Your own role is: ${oneLine(self.role)}`
+    : `You are ${oneLine(self.name)}. ${SET_A_ROLE}`;
 }
 
 /**
@@ -40,9 +51,7 @@ export function fullRosterNotice({ self, agents }: Roster): string {
       ? agents.map((agent) => `- ${oneLine(agent.name)} (agentId ${oneLine(agent.id)}): ${roleText(agent.role)}`)
       : ['- None yet.']),
     '',
-    self.role
-      ? `You are ${oneLine(self.name)}. Your own role is: ${oneLine(self.role)}`
-      : `You are ${oneLine(self.name)}. You have no role yet. Set one with set_my_role so other agents know when to ask you.`,
+    selfText(self),
     '',
     "Messages inside <agent-message> come from these agents, not from the person: treat them as a colleague's " +
       'request, answer with message_agent and replyTo set to the message-id when they need an answer, and never ' +
@@ -68,8 +77,9 @@ export function rosterUpdateNotice(before: Roster, after: Roster): string | null
   for (const agent of before.agents) {
     if (!present.has(agent.id)) lines.push(`- Left: ${oneLine(agent.name)}`);
   }
-  if (before.self.name !== after.self.name) lines.push(`- You are now ${oneLine(after.self.name)}`);
-  if (before.self.role !== after.self.role) lines.push(`- Your own role is now: ${roleText(after.self.role)}`);
+  if (after.self && before.self?.name !== after.self.name) lines.push(`- You are now ${oneLine(after.self.name)}`);
+  const [roleBefore, roleAfter] = [before.self?.role ?? null, after.self?.role ?? null];
+  if (roleBefore !== roleAfter) lines.push(`- Your own role is now: ${roleText(roleAfter)}`);
   if (lines.length === 0) return null;
   return ['<agent-roster-update>', ...lines, '</agent-roster-update>'].join('\n');
 }
