@@ -430,7 +430,7 @@ describe('HeartbeatService', () => {
       expect(mockInvoke.mock.calls[1][0].lastSend).toEqual({
         messages: '- To #ops (just now): Build #812 failed.',
         at: expect.any(Number),
-        latestReport: { text: 'Posted the build failure to #ops.', at: expect.any(Number) },
+        reports: [{ text: 'Posted the build failure to #ops.', at: expect.any(Number) }],
       });
       // The delivered-alert baseline stays apart: nothing was delivered.
       expect(mockInvoke.mock.calls[1][0].lastHeartbeatAlert).toBeUndefined();
@@ -450,7 +450,10 @@ describe('HeartbeatService', () => {
       expect(mockInvoke.mock.calls[3][0].lastSend).toEqual({
         messages: '- To #ops (just now): Build #812 failed.',
         at: expect.any(Number),
-        latestReport: { text: 'Build #812 is still failing. The alert is already in #ops.', at: expect.any(Number) },
+        reports: [
+          { text: 'Build #812 is still failing. The alert is already in #ops.', at: expect.any(Number) },
+          { text: 'Posted the build failure to #ops.', at: expect.any(Number) },
+        ],
       });
     });
 
@@ -487,6 +490,81 @@ describe('HeartbeatService', () => {
       expect(mockInvoke.mock.calls[3][0].lastSend.messages).toBe(
         '- To #ops (just now): Build #813 failed.\n- To #oncall (1h ago): Disk is 95% full.\n- To #ops (3h ago): Build #812 failed.',
       );
+    });
+
+    it("keeps an all-clear report after a later run that sent about another incident", async () => {
+      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+      mockInvoke
+        .mockResolvedValueOnce(reply('Posted the disk alert to #ops.', [sendTo('#ops', 'db-1 disk 95%.')]))
+        .mockResolvedValueOnce(reply('All systems healthy.'))
+        .mockResolvedValueOnce(reply('Paged #oncall about the API error rate.', [sendTo('#oncall', 'API error rate 12%.')]));
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await vi.advanceTimersByTimeAsync(0);
+      for (let i = 0; i < 4; i++) await heartbeatService.triggerHeartbeat();
+
+      expect(mockInvoke.mock.calls[3][0].lastSend.reports.map((report: { text: string }) => report.text)).toEqual([
+        'Paged #oncall about the API error rate.',
+        'All systems healthy.',
+        'Posted the disk alert to #ops.',
+      ]);
+    });
+
+    it('keeps at most ten results', async () => {
+      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+      mockInvoke.mockResolvedValueOnce(reply('Posted the build failure to #ops.', [SEND]));
+      for (let i = 0; i < 11; i++) mockInvoke.mockResolvedValueOnce(reply(`Report ${i}.`));
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await vi.advanceTimersByTimeAsync(0);
+      for (let i = 0; i < 13; i++) {
+        vi.setSystemTime(Date.now() + 60 * 1000);
+        await heartbeatService.triggerHeartbeat();
+      }
+
+      const texts = mockInvoke.mock.calls[12][0].lastSend.reports.map((report: { text: string }) => report.text);
+      expect(texts).toHaveLength(10);
+      expect(texts[0]).toBe('Report 10.');
+    });
+
+    it('drops the results older than a newer copy of the only kept send', async () => {
+      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+      mockInvoke
+        .mockResolvedValueOnce(reply('Posted the build failure to #ops.', [SEND]))
+        .mockResolvedValueOnce(reply('All clear.'))
+        .mockResolvedValueOnce(reply('Posted the build failure to #ops again.', [SEND]));
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await vi.advanceTimersByTimeAsync(0);
+      for (let i = 0; i < 4; i++) {
+        vi.setSystemTime(Date.now() + 60 * 1000);
+        await heartbeatService.triggerHeartbeat();
+      }
+
+      expect(mockInvoke.mock.calls[3][0].lastSend.reports.map((report: { text: string }) => report.text)).toEqual([
+        'Posted the build failure to #ops again.',
+      ]);
+    });
+
+    it('restores the results of the runs since the oldest kept send after a restart', async () => {
+      vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
+      mockFindLastAlert.mockResolvedValue([
+        { content: 'Paged #oncall about the API error rate.', createdAt: new Date('2025-01-15T11:30:00Z'), toolCalls: [sendTo('#oncall', 'API error rate 12%.')] },
+        { content: 'All systems healthy.', createdAt: new Date('2025-01-15T11:00:00Z'), toolCalls: null },
+        { content: 'This run sent a message and ended with no reply.', createdAt: new Date('2025-01-15T10:45:00Z'), toolCalls: [sendTo('#ops', 'db-2 disk 91%.')] },
+        { content: 'Posted the disk alert to #ops.', createdAt: new Date('2025-01-15T10:30:00Z'), toolCalls: [sendTo('#ops', 'db-1 disk 95%.')] },
+        { content: 'An early report.', createdAt: new Date('2025-01-15T10:00:00Z'), toolCalls: null },
+      ]);
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await vi.advanceTimersByTimeAsync(0);
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockInvoke.mock.calls[0][0].lastSend.reports.map((report: { text: string }) => report.text)).toEqual([
+        'Paged #oncall about the API error rate.',
+        'All systems healthy.',
+        'Posted the disk alert to #ops.',
+      ]);
     });
 
     it('keeps a repeated message once, at its newest time', async () => {
@@ -614,7 +692,10 @@ describe('HeartbeatService', () => {
       expect(mockInvoke.mock.calls[0][0].lastSend).toEqual({
         messages: '- To #ops (1h ago): Build #812 failed.',
         at: new Date('2025-01-15T11:00:00Z').getTime(),
-        latestReport: { text: 'Build #812 is still failing.', at: new Date('2025-01-15T11:30:00Z').getTime() },
+        reports: [
+          { text: 'Build #812 is still failing.', at: new Date('2025-01-15T11:30:00Z').getTime() },
+          { text: 'Posted the build failure to #ops.', at: new Date('2025-01-15T11:00:00Z').getTime() },
+        ],
       });
       expect(mockInvoke.mock.calls[0][0].lastHeartbeatAlert).toBe('Build #812 is still failing.');
     });

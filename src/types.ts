@@ -228,6 +228,8 @@ export interface TaskLastSend {
   messages: string;
   at: number;
   latestReport?: { text: string; at: number };
+  /** The heartbeat's results of the runs since the oldest send in `messages`, newest first. */
+  reports?: Array<{ text: string; at: number }>;
 }
 
 export interface ToolCallRecord {
