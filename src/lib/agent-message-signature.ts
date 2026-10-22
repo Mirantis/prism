@@ -18,7 +18,8 @@
  * Agents MCP. They are kept in `runtime_state`, so a restart costs no call, and
  * trusted for an hour, so a key the service dropped is soon no longer trusted.
  * A signature that names a key the runtime does not hold asks again, at most
- * every 30 seconds, which is how a new key reaches the runtime.
+ * every 30 seconds, which is how a new key reaches the runtime. Until that read
+ * answers, such a delivery gets 503, so the service sends it again.
  */
 
 import crypto from 'crypto';
@@ -84,9 +85,10 @@ export async function verifyAgentMessageSignature(
   }
 
   let keys = await readKeys();
-  if (!holds(keys, kid, now)) keys = (await refreshKeys(now)) ?? keys;
-  // Old keys are not trusted in place of keys that cannot be read: the service tries again later.
-  if (!keys || now - keys.fetchedAt >= KEYS_MAX_AGE_MS) return refuse(503, 'the delivery keys cannot be read now');
+  // Kept keys that lack `kid` or are older than an hour decide nothing: without
+  // a read on this call, the service sends the delivery again later.
+  if (!holds(keys, kid, now)) keys = await refreshKeys(now);
+  if (!keys) return refuse(503, 'the delivery keys cannot be read now');
   const jwk = keys.keys.find((key) => key.kid === kid);
   if (!jwk) return refuse(401, 'signed with a key the delivery service does not list');
 

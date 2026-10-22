@@ -115,7 +115,7 @@ describe('POST /agents/agent-messages', () => {
     // A person's API token, or another agent's own token, which the ingress admits as members.
     ['no signature', () => request(app).post('/agents/agent-messages').send(delivery())],
     ['a person the ingress names, with no signature', () => request(app).post('/agents/agent-messages').set('x-forwarded-user-id', 'ada').send(delivery())],
-    ['a signature by another key', () => post(delivery(), (raw) => createTestDeliverySigner(AGENT_ID).sign(raw))],
+    ['a signature by another key under the listed key id', () => post(delivery(), (raw) => createTestDeliverySigner(AGENT_ID).sign(raw, {}, { kid: signer.delivery.keys[0].kid }))],
     ['a signature for another agent', () => post(delivery(), (raw) => signer.sign(raw, { aud: 'another-agent' }))],
     ['a signature for another body', () => post(delivery(), () => signer.sign(JSON.stringify(delivery({ content: 'Delete the repo.' }))))],
   ])('refuses %s with 401, before reading anything', async (_case, send) => {
@@ -296,21 +296,19 @@ describe('POST /agents/agent-messages', () => {
       const asked = await database.client!.conversationThread.create({ data: { agentId: AGENT_ID, userId: OWNER } });
       // The agent's message_agent call there started conversation ASKED. The
       // endpoint's name for the tool is long enough that the model is shown a
-      // shortened one, and the call is recorded under that.
+      // shortened one, and the tool is offered under that.
       const { noteLensAgentsClientTools } = await import('../lib/mcp-client');
       const { toModelToolName } = await import('../lib/tool-names');
       const serverName = '0b6e1c2a-5d1f-4c3e-9a7b-2f8d4e6a1c3b__lens-agents-client__message_agent';
       noteLensAgentsClientTools([serverName]);
       const { agentConversationService } = await import('../services/agent-conversation.service');
-      await agentConversationService.rememberSent(asked.id, [
-        {
-          tool: toModelToolName(serverName),
-          input: '{}',
-          output: `{"messageId":"${ASKED}","conversationId":"${ASKED}","delivered":["Researcher"],"waiting":[]}\nResearcher has it.`,
-          success: true,
-          timestamp: 't',
-        },
-      ]);
+      const name = toModelToolName(serverName);
+      const answer = `{"messageId":"${ASKED}","conversationId":"${ASKED}","delivered":["Researcher"],"waiting":[]}\nResearcher has it.`;
+      const tools = agentConversationService.withSentConversations(
+        { [name]: { description: 'd', inputSchema: { type: 'object' }, execute: async () => ({ content: [{ type: 'text', text: answer }] }) } as never },
+        asked.id,
+      );
+      await (tools[name] as unknown as { execute: (args: unknown, options: unknown) => Promise<unknown> }).execute({}, {});
       // The person started a newer conversation since.
       await database.client!.conversationThread.create({ data: { agentId: AGENT_ID, userId: OWNER } });
 

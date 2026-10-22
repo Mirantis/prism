@@ -105,8 +105,19 @@ vi.mock('./lib/llm-providers/create-provider', () => ({
   createProvider: mockCreateBedrockProvider,
 }));
 
-vi.mock('./lib/mcp-client', () => ({
+vi.mock('./lib/mcp-client', async (importOriginal) => ({
+  isLensAgentsClientTool: (await importOriginal<typeof import('./lib/mcp-client')>()).isLensAgentsClientTool,
   getMCPTools: mockGetMCPTools,
+}));
+
+const { runtimeState } = vi.hoisted(() => ({ runtimeState: new Map<string, string>() }));
+
+vi.mock('./services/runtime-state.service', () => ({
+  runtimeStateService: {
+    get: async (key: string) => runtimeState.get(key) ?? null,
+    set: async (key: string, value: string) => void runtimeState.set(key, value),
+    delete: async (key: string) => void runtimeState.delete(key),
+  },
 }));
 
 vi.mock('./services/plugin-mcp.service', () => ({
@@ -1180,6 +1191,34 @@ describe('invoke', () => {
         }),
       }),
     ]);
+  });
+
+  describe('message_agent', () => {
+    const MESSAGE_AGENT = 'lens__lens-agents-client__message_agent';
+    const CONVERSATION = '0f0f0f0f-0000-4000-8000-0000000000c1';
+
+    // A goal or a bound scheduled task delegates as a chat turn does, and the
+    // answer can arrive while the step still runs.
+    it.each(['chat', 'goal', 'cron'] as const)('keeps the conversation a %s run starts in its thread before the call returns', async (mode) => {
+      runtimeState.clear();
+      mockGetMCPTools.mockResolvedValue({
+        [MESSAGE_AGENT]: {
+          description: 'Message another agent of the project.',
+          inputSchema: { type: 'object' },
+          execute: async () => ({ content: [{ type: 'text', text: `{"conversationId":"${CONVERSATION}"}\nSent to the Writer.` }] }),
+        },
+      });
+      let keptOnReturn: string | undefined;
+      mockGenerateText.mockImplementation(async (opts: { tools: Record<string, { execute: (a: unknown, o: unknown) => Promise<unknown> }> }) => {
+        await opts.tools[MESSAGE_AGENT]!.execute({}, { toolCallId: 'c1', messages: [] });
+        keptOnReturn = runtimeState.get(`agentConversation:${CONVERSATION}`);
+        return { text: 'Asked the Writer.', steps: [{ text: 'Asked the Writer.', toolCalls: [], toolResults: [] }] };
+      });
+
+      await invoke(createTestInvokeRequest({ mode, threadId: 'thread-delegating' }));
+
+      expect(keptOnReturn).toBe('thread-delegating');
+    });
   });
 
   describe('tool-result persistence', () => {

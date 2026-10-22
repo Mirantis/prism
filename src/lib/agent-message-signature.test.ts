@@ -77,23 +77,29 @@ describe('verifyAgentMessageSignature', () => {
   });
 
   it('asks list_agents about a key it does not hold at most every 30 seconds, and refuses one it does not list', async () => {
-    keep(signer.delivery);
+    const now = Date.now();
+    keep(signer.delivery, now);
     mockCallListAgents.mockResolvedValue(listAgentsAnswer(signer.delivery));
     const stranger = createTestDeliverySigner(AGENT);
 
-    expect(await verifyAgentMessageSignature(stranger.sign(body), raw)).toMatchObject({ status: 401 });
-    expect(await verifyAgentMessageSignature(stranger.sign(body), raw)).toMatchObject({ status: 401 });
+    expect(await verifyAgentMessageSignature(stranger.sign(body), raw, now)).toMatchObject({ status: 401 });
+    // Between reads the key may be one the service has just added, so it sends the delivery again.
+    expect(await verifyAgentMessageSignature(stranger.sign(body), raw, now + 29_000)).toMatchObject({ status: 503 });
     expect(mockCallListAgents).toHaveBeenCalledTimes(1);
+    expect(await verifyAgentMessageSignature(stranger.sign(body), raw, now + 30_000)).toMatchObject({ status: 401 });
+    expect(mockCallListAgents).toHaveBeenCalledTimes(2);
   });
 
   it('takes a new key from list_agents, as after the service replaced its key', async () => {
-    keep(signer.delivery);
+    const now = Date.now();
+    keep(signer.delivery, now);
     const next = createTestDeliverySigner(AGENT);
     mockCallListAgents.mockResolvedValue(listAgentsAnswer(next.delivery));
 
-    expect(await verifyAgentMessageSignature(next.sign(body), raw)).toEqual({ ok: true });
-    // The old key is no longer listed, so no longer trusted.
-    expect(await verifyAgentMessageSignature(signer.sign(body), raw)).toMatchObject({ status: 401 });
+    expect(await verifyAgentMessageSignature(next.sign(body), raw, now)).toEqual({ ok: true });
+    // The old key is no longer listed, so no longer trusted: the next read refuses it.
+    expect(await verifyAgentMessageSignature(signer.sign(body), raw, now)).toMatchObject({ ok: false, status: 503 });
+    expect(await verifyAgentMessageSignature(signer.sign(body), raw, now + 30_000)).toMatchObject({ ok: false, status: 401 });
   });
 
   it.each([
@@ -104,6 +110,17 @@ describe('verifyAgentMessageSignature', () => {
     arrange();
 
     expect(await verifyAgentMessageSignature(signer.sign(body), raw)).toMatchObject({ ok: false, status: 503 });
+  });
+
+  it.each([
+    ['list_agents is not there', () => mockCallListAgents.mockResolvedValue(null)],
+    ['list_agents fails', () => mockCallListAgents.mockRejectedValue(new Error('timed out'))],
+  ])('answers 503 for a key it does not hold when %s, as after the service replaced its key', async (_case, arrange) => {
+    keep(signer.delivery);
+    arrange();
+    const next = createTestDeliverySigner(AGENT);
+
+    expect(await verifyAgentMessageSignature(next.sign(body), raw)).toMatchObject({ ok: false, status: 503 });
   });
 
   it('reads keys older than an hour again, and does not trust them when it cannot', async () => {

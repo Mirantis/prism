@@ -10,13 +10,14 @@
  * `runtime_state`.
  */
 
+import type { Tool } from 'ai';
 import { z } from 'zod';
 import { config } from '../config';
 import { isLensAgentsClientTool } from '../lib/mcp-client';
 import prisma from '../lib/prisma';
+import { stringifyToolOutput } from '../lib/tool-output-limiter';
 import { logger } from '../logger';
 import { uuid } from '../protocol/chat-protocol';
-import type { ToolCallRecord } from '../types';
 import { conversationService } from './conversation.service';
 import { runtimeStateService } from './runtime-state.service';
 
@@ -25,11 +26,10 @@ const conversationKey = (conversationId: string) => `agentConversation:${convers
 /** The first line of `message_agent`'s answer. A sentence for the model follows it. */
 const sentAnswer = z.object({ conversationId: uuid });
 
-/** The conversation a successful `message_agent` call started or answered, or null. */
-function sentConversationId(call: ToolCallRecord): string | null {
-  if (!call.success || !isLensAgentsClientTool(call.tool, 'message_agent')) return null;
+/** The conversation a `message_agent` result started or answered, or null. */
+function sentConversationId(result: unknown): string | null {
   try {
-    const answer = sentAnswer.safeParse(JSON.parse(call.output.split('\n', 1)[0]));
+    const answer = sentAnswer.safeParse(JSON.parse(stringifyToolOutput(result).split('\n', 1)[0]!));
     return answer.success ? answer.data.conversationId : null;
   } catch {
     return null;
@@ -65,18 +65,40 @@ class AgentConversationService {
   }
 
   /**
-   * Keep each conversation that the agent's own `message_agent` calls started or
-   * answered in `threadId`, so the answers to them come back there. Never throws.
+   * Wrap the agent's `message_agent` tools so that each call that starts or
+   * answers a conversation keeps it in `threadId` before its result returns.
+   * The other agent can answer while the step still runs, so the answer comes
+   * back to the run's thread in every mode. Without a thread the tools are
+   * returned untouched.
    */
-  async rememberSent(threadId: string, calls: ToolCallRecord[]): Promise<void> {
-    for (const call of calls) {
-      const conversationId = sentConversationId(call);
-      if (!conversationId) continue;
-      try {
-        await this.remember(conversationId, threadId);
-      } catch (err) {
-        logger.warn({ err, threadId, conversationId }, '[AgentConversation] Could not keep where a conversation between agents is');
+  withSentConversations(tools: Record<string, Tool>, threadId: string | undefined): Record<string, Tool> {
+    if (!threadId) return tools;
+    const wrapped: Record<string, Tool> = {};
+    for (const [name, tool] of Object.entries(tools)) {
+      const execute = tool.execute;
+      if (!execute || !isLensAgentsClientTool(name, 'message_agent')) {
+        wrapped[name] = tool;
+        continue;
       }
+      wrapped[name] = {
+        ...tool,
+        execute: async (args: unknown, options: unknown) => {
+          const result = await (execute as (a: unknown, o: unknown) => Promise<unknown>)(args, options);
+          await this.keepSent(sentConversationId(result), threadId);
+          return result;
+        },
+      } as Tool;
+    }
+    return wrapped;
+  }
+
+  /** Keep a conversation the agent's own message started. A failure costs only where its answer goes. */
+  private async keepSent(conversationId: string | null, threadId: string): Promise<void> {
+    if (!conversationId) return;
+    try {
+      await this.remember(conversationId, threadId);
+    } catch (err) {
+      logger.warn({ err, threadId, conversationId }, '[AgentConversation] Could not keep where a conversation between agents is');
     }
   }
 }
