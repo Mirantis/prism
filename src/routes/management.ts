@@ -1466,6 +1466,13 @@ router.get('/threads/:threadId', async (req: Request<{ threadId: string }>, res:
 });
 
 /**
+ * The triggers a client may add a message under. Not AGENT_MESSAGE: the model
+ * reads that as another agent's message, and the web UI and CLI label it as
+ * one, so only `POST /agents/agent-messages` stores one.
+ */
+const CLIENT_MESSAGE_TRIGGERS = MESSAGE_TRIGGERS.filter((trigger) => trigger !== 'AGENT_MESSAGE');
+
+/**
  * POST /agents/threads/:threadId/messages
  * Add a message to a thread.
  * Body: { content, role, triggeredBy, toolCalls?, blocks?, senderExternalId?, senderName? }
@@ -1491,8 +1498,8 @@ router.post('/threads/:threadId/messages', async (req: Request<{ threadId: strin
 
     // Validated against the runtime's own list, not the Prisma enum: that enum keeps
     // SYSTEM so history stays readable, and nothing produces a SYSTEM message any more.
-    if (!(MESSAGE_TRIGGERS as readonly string[]).includes(triggeredBy)) {
-      res.status(400).json({ error: `Invalid triggeredBy: ${triggeredBy}. Must be one of: ${MESSAGE_TRIGGERS.join(', ')}` });
+    if (!(CLIENT_MESSAGE_TRIGGERS as readonly string[]).includes(triggeredBy)) {
+      res.status(400).json({ error: `Invalid triggeredBy: ${triggeredBy}. Must be one of: ${CLIENT_MESSAGE_TRIGGERS.join(', ')}` });
       return;
     }
 

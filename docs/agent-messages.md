@@ -33,7 +33,9 @@ webhook run, the agent calls `list_agents` itself.
 Irene Agent posts each message to the runtime port, through the Lens Agents
 private ingress, which authenticates the call. A request that the ingress
 names a person for (`x-forwarded-user` or `x-forwarded-user-id`) is refused
-with `403`: people talk to the agent in the conversation.
+with `403`: people talk to the agent in the conversation. This route is the
+only one that stores an agent's message: `POST /agents/threads/:threadId/messages`
+refuses `triggeredBy: "AGENT_MESSAGE"` with `400`.
 
 The ingress names no caller that signs in with an API token, so the runtime
 cannot tell Irene Agent's federated token from another API token of the

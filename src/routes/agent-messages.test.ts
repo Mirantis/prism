@@ -279,11 +279,17 @@ describe('POST /agents/agent-messages', () => {
 
     it('takes the answer to a message the agent sent in the conversation it sent it from', async () => {
       const asked = await database.client!.conversationThread.create({ data: { agentId: AGENT_ID, userId: OWNER } });
-      // The agent's message_agent call there started conversation ASKED.
+      // The agent's message_agent call there started conversation ASKED. The
+      // endpoint's name for the tool is long enough that the model is shown a
+      // shortened one, and the call is recorded under that.
+      const { noteLensAgentsClientTools } = await import('../lib/mcp-client');
+      const { toModelToolName } = await import('../lib/tool-names');
+      const serverName = '0b6e1c2a-5d1f-4c3e-9a7b-2f8d4e6a1c3b__lens-agents-client__message_agent';
+      noteLensAgentsClientTools([serverName]);
       const { agentConversationService } = await import('../services/agent-conversation.service');
       await agentConversationService.rememberSent(asked.id, [
         {
-          tool: 'lens__lens-agents-client__message_agent',
+          tool: toModelToolName(serverName),
           input: '{}',
           output: `{"messageId":"${ASKED}","conversationId":"${ASKED}","delivered":["Researcher"],"waiting":[]}\nResearcher has it.`,
           success: true,
