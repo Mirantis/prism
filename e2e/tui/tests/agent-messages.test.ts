@@ -1,7 +1,8 @@
 /**
  * `prism-cli` showing messages from the other agents of a Lens Agents project.
  * Irene Agent's backend posts them to `/agents/agent-messages` through the
- * private ingress, which sets no person's headers; the steps post the same way.
+ * private ingress, signed with its key; the steps post the same way, signed
+ * with a key made for the run, which they give the runtime as list_agents would.
  * The labels are checked as the socket delivers each message and again from the
  * history a reopened terminal reads. Single-thread mode, so the reopened
  * terminal opens the same conversation.
@@ -13,6 +14,7 @@ import { readFileSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { expect } from 'vitest';
 import { loadFeatureFromText, describeFeature } from '@amiceli/vitest-cucumber';
+import { createTestDeliverySigner } from '../../../src/test-utils/agent-message-signer';
 import { BOOT_FRAME_TIMEOUT_MS, startPrism, type TuiSession } from '../harness';
 import { countMessages, setupRuntime, runtimeRequest, type RuntimeTestEnv } from '../setup';
 
@@ -27,10 +29,12 @@ const feature = loadFeatureFromText(
 
 let env: RuntimeTestEnv;
 let session: TuiSession | undefined;
+const signer = createTestDeliverySigner('tui-agent');
 
 describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, AfterEachScenario, Scenario }) => {
   BeforeAllScenarios(async () => {
     env = await setupRuntime({ runtimeEnvOverrides: { THREAD_MODE: 'single' } });
+    keepDeliveryKeys(env.dbPath);
   });
   AfterAllScenarios(async () => {
     await env.cleanup();
@@ -40,8 +44,8 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, AfterEachScen
     session = undefined;
   });
 
-  const post = (kind: 'message' | 'notice', sender: { id: string; name: string }, content: string) =>
-    runtimeRequest(env.port, 'POST', '/agents/agent-messages', {
+  const post = async (kind: 'message' | 'notice', sender: { id: string; name: string }, content: string) => {
+    const body = JSON.stringify({
       id: randomUUID(),
       messageId: randomUUID(),
       conversationId: randomUUID(),
@@ -51,6 +55,13 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, AfterEachScen
       expectsReply: false,
       attachmentIds: [],
     });
+    const res = await fetch(`http://127.0.0.1:${env.port}/agents/agent-messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-agent-message-signature': signer.sign(body) },
+      body,
+    });
+    if (res.status !== 202) throw new Error(`POST /agents/agent-messages → ${res.status}: ${await res.text()}`);
+  };
 
   const showsSender = (sender: string) =>
     session!.waitForFrame(new RegExp(`▌ ${escapeRegExp(sender)}`), 30_000);
@@ -108,6 +119,17 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, AfterEachScen
  * thread's own createdAt, so the value reads back through Prisma whatever its
  * on-disk DateTime encoding.
  */
+/** Give the runtime the run's key, as list_agents would. */
+function keepDeliveryKeys(dbPath: string): void {
+  const { key, value } = signer.keptKeys();
+  const db = new Database(dbPath);
+  try {
+    db.prepare('INSERT OR REPLACE INTO runtime_state (key, value, updatedAt) VALUES (?, ?, ?)').run(key, value, Date.now());
+  } finally {
+    db.close();
+  }
+}
+
 function seedMessage(dbPath: string, threadId: string, content: string): void {
   const db = new Database(dbPath);
   try {
