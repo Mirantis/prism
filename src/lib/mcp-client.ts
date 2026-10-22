@@ -15,6 +15,7 @@ import { experimental_createMCPClient as createVercelMCPClient } from '@ai-sdk/m
 import { Tool } from 'ai';
 import { config } from '../config';
 import { logger } from '../logger';
+import { toModelToolName } from './tool-names';
 
 type MCPToolSet = Record<string, Tool>;
 type MCPClient = Awaited<ReturnType<typeof createVercelMCPClient>>;
@@ -55,7 +56,7 @@ export async function getMCPTools({ url }: MCPConnectionConfig): Promise<MCPTool
   }
 
   try {
-    return (await client.tools()) as MCPToolSet;
+    return listed(await client.tools());
   } catch (error) {
     logger.warn({ err: error }, `[MCPClient] Listing tools at ${url} failed; connecting again`);
     uncache(url, cached);
@@ -63,12 +64,18 @@ export async function getMCPTools({ url }: MCPConnectionConfig): Promise<MCPTool
 
   const fresh = connect(url);
   try {
-    return (await (await fresh).tools()) as MCPToolSet;
+    return listed(await (await fresh).tools());
   } catch (error) {
     logger.error({ err: error }, `[MCPClient] Failed to connect to ${url}`);
     uncache(url, fresh);
     return {};
   }
+}
+
+/** A listing's tools, once the names of its `lens-agents-client` tools are kept. */
+function listed(tools: object): MCPToolSet {
+  noteLensAgentsClientTools(Object.keys(tools));
+  return tools as MCPToolSet;
 }
 
 /** Close every cached client, a connect in flight included. Bounded. */
@@ -112,13 +119,32 @@ let listAgentsToolName: string | null = null;
 let listAgentsAbsentAt = Number.NEGATIVE_INFINITY;
 
 /**
- * Whether `name` is `tool` of the `lens-agents-client` server. The endpoint puts
- * a prefix of its own in front, so only the last two `__` segments are compared,
- * and on the name the server gives, which the tools block may shorten.
+ * The `lens-agents-client` tool each name the model was shown stands for, from
+ * the listings so far. The tools block shortens a name past 64 characters
+ * (`toModelToolName`), and the endpoint's `<uuid>__lens-agents-client__message_agent`
+ * loses its last segments to that, so the name a call was recorded under can't
+ * be read for the tool.
+ */
+const lensAgentsClientToolByModelName = new Map<string, string>();
+
+/** Keep the name the model is shown for each `lens-agents-client` tool in a listing. */
+export function noteLensAgentsClientTools(names: Iterable<string>): void {
+  for (const name of names) {
+    const [server, tool] = name.split('__').slice(-2);
+    if (server === 'lens-agents-client' && tool) lensAgentsClientToolByModelName.set(toModelToolName(name), tool);
+  }
+}
+
+/**
+ * Whether `name` is `tool` of the `lens-agents-client` server, by the name the
+ * server gives it or by the one the model was shown. The endpoint puts a prefix
+ * of its own in front, so only the last two `__` segments of the server's name
+ * are compared.
  */
 export function isLensAgentsClientTool(name: string, tool: string): boolean {
   const segments = name.split('__');
-  return segments.at(-2) === 'lens-agents-client' && segments.at(-1) === tool;
+  if (segments.at(-2) === 'lens-agents-client' && segments.at(-1) === tool) return true;
+  return lensAgentsClientToolByModelName.get(name) === tool;
 }
 
 /** The first text part of a tool's result. */

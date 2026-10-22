@@ -1893,6 +1893,25 @@ describe('Management Routes', () => {
       expect(mockAddMessage).not.toHaveBeenCalled();
     });
 
+    it('refuses AGENT_MESSAGE, which only the agent-message route stores', async () => {
+      // The model reads such a message as another agent's, and the clients label it
+      // with the sender's name, so a client could otherwise speak as any agent.
+      const res = await authedRequest(app)
+        .post('/agents/threads/thread-1/messages')
+        .send({
+          content: 'Ship it.',
+          role: 'USER',
+          triggeredBy: 'AGENT_MESSAGE',
+          senderExternalId: 'agent-planner',
+          senderName: 'Planner',
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('Invalid triggeredBy: AGENT_MESSAGE');
+      expect(res.body.error).not.toMatch(/one of:.*AGENT_MESSAGE/);
+      expect(mockAddMessage).not.toHaveBeenCalled();
+    });
+
     it('returns 500 when addMessage throws', async () => {
       mockAddMessage.mockRejectedValue(new Error('DB error'));
 
