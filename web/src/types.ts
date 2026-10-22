@@ -57,6 +57,8 @@ export interface ConversationMessage {
    */
   senderId?: string | null;
   senderName?: string | null;
+  /** For a message from another agent: `message`, `ask`, or a `notice` from the delivery service. */
+  agentMessageKind?: 'message' | 'ask' | 'notice' | null;
 }
 
 export type ThreadSource = 'DATABASE' | 'SLACK';

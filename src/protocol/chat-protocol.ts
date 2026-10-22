@@ -201,7 +201,15 @@ export interface MessageEventPayload {
    */
   senderId: string | null;
   senderName: string | null;
+  /**
+   * What a message from another agent is (`triggeredBy: AGENT_MESSAGE`): a
+   * `message`, an `ask` that waits for an answer, or a `notice` the delivery
+   * service itself sends. Null on every other message.
+   */
+  agentMessageKind: AgentMessageKind | null;
 }
+
+export type AgentMessageKind = 'message' | 'ask' | 'notice';
 
 export interface ThreadEventPayload {
   threadId: string;

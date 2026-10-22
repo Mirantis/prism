@@ -72,9 +72,9 @@ export async function getMCPTools({ url }: MCPConnectionConfig): Promise<MCPTool
   }
 }
 
-/** A listing's tools, once the names of its `lens-agents-client` tools are kept. */
+/** A listing's tools, once the names of its agent messaging tools are kept. */
 function listed(tools: object): MCPToolSet {
-  noteLensAgentsClientTools(Object.keys(tools));
+  noteAgentMessagingTools(Object.keys(tools));
   return tools as MCPToolSet;
 }
 
@@ -114,37 +114,39 @@ function uncache(url: string, stale: Promise<MCPClient>): void {
 /** How long a listing without `list_agents` holds before the endpoint is asked again. */
 const LIST_AGENTS_ABSENT_RECHECK_MS = 10 * 60_000;
 
-/** The name the Lens Agents MCP endpoint gives `list_agents`, once a listing found it. */
+/** The name the MCP endpoint gives `list_agents`, once a listing found it. */
 let listAgentsToolName: string | null = null;
 let listAgentsAbsentAt = Number.NEGATIVE_INFINITY;
 
-/**
- * The `lens-agents-client` tool each name the model was shown stands for, from
- * the listings so far. The tools block shortens a name past 64 characters
- * (`toModelToolName`), and the endpoint's `<uuid>__lens-agents-client__message_agent`
- * loses its last segments to that, so the name a call was recorded under can't
- * be read for the tool.
- */
-const lensAgentsClientToolByModelName = new Map<string, string>();
+/** The tools agent messages run on, by the last `__` segment of their name. */
+const AGENT_MESSAGING_TOOLS: ReadonlySet<string> = new Set(['list_agents', 'message_agent']);
 
-/** Keep the name the model is shown for each `lens-agents-client` tool in a listing. */
-export function noteLensAgentsClientTools(names: Iterable<string>): void {
+/**
+ * The agent messaging tool each name the model was shown stands for, from the
+ * listings so far. The tools block shortens a name past 64 characters
+ * (`toModelToolName`), and a long prefix such as `<uuid>__<server>__` costs the
+ * name its last segment, so the name a call was recorded under can't be read
+ * for the tool.
+ */
+const agentMessagingToolByModelName = new Map<string, string>();
+
+/** Keep the name the model is shown for each agent messaging tool in a listing. */
+export function noteAgentMessagingTools(names: Iterable<string>): void {
   for (const name of names) {
-    const [server, tool] = name.split('__').slice(-2);
-    if (server === 'lens-agents-client' && tool) lensAgentsClientToolByModelName.set(toModelToolName(name), tool);
+    const tool = name.split('__').at(-1);
+    if (tool && AGENT_MESSAGING_TOOLS.has(tool)) agentMessagingToolByModelName.set(toModelToolName(name), tool);
   }
 }
 
 /**
- * Whether `name` is `tool` of the `lens-agents-client` server, by the name the
- * server gives it or by the one the model was shown. The endpoint puts a prefix
- * of its own in front, so only the last two `__` segments of the server's name
- * are compared.
+ * Whether `name` is the agent messaging tool `tool`, by the name the endpoint
+ * gives it or by the one the model was shown. The endpoint may put prefixes of
+ * its own in front, such as the server's name, so only the last `__` segment of
+ * its name is compared.
  */
-export function isLensAgentsClientTool(name: string, tool: string): boolean {
-  const segments = name.split('__');
-  if (segments.at(-2) === 'lens-agents-client' && segments.at(-1) === tool) return true;
-  return lensAgentsClientToolByModelName.get(name) === tool;
+export function isAgentMessagingTool(name: string, tool: string): boolean {
+  if (name.split('__').at(-1) === tool) return true;
+  return agentMessagingToolByModelName.get(name) === tool;
 }
 
 /** The first text part of a tool's result. */
@@ -162,7 +164,7 @@ async function findListAgentsTool(client: MCPClient, signal: AbortSignal): Promi
       ...(cursor ? { params: { cursor } } : {}),
       options: { signal },
     });
-    const found = page.tools.find((tool) => isLensAgentsClientTool(tool.name, 'list_agents'));
+    const found = page.tools.find((tool) => isAgentMessagingTool(tool.name, 'list_agents'));
     if (found) return found.name;
     cursor = page.nextCursor;
   } while (cursor);
@@ -170,7 +172,7 @@ async function findListAgentsTool(client: MCPClient, signal: AbortSignal): Promi
 }
 
 /**
- * Call `list_agents` on the Lens Agents MCP endpoint as the runtime itself, not
+ * Call `list_agents` on the MCP endpoint as the runtime itself, not
  * as the model, and answer the text of its result. Null when `NEXUS_MCP_URL` is
  * unset or the endpoint has no such tool. A failed call throws.
  */

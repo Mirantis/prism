@@ -106,7 +106,7 @@ vi.mock('./lib/llm-providers/create-provider', () => ({
 }));
 
 vi.mock('./lib/mcp-client', async (importOriginal) => ({
-  isLensAgentsClientTool: (await importOriginal<typeof import('./lib/mcp-client')>()).isLensAgentsClientTool,
+  isAgentMessagingTool: (await importOriginal<typeof import('./lib/mcp-client')>()).isAgentMessagingTool,
   getMCPTools: mockGetMCPTools,
 }));
 
@@ -1194,7 +1194,7 @@ describe('invoke', () => {
   });
 
   describe('message_agent', () => {
-    const MESSAGE_AGENT = 'lens__lens-agents-client__message_agent';
+    const MESSAGE_AGENT = 'hub__agent-directory__message_agent';
     const CONVERSATION = '0f0f0f0f-0000-4000-8000-0000000000c1';
 
     // A goal or a bound scheduled task delegates as a chat turn does, and the

@@ -1,7 +1,7 @@
 /**
- * `prism-cli` showing messages from the other agents of a Lens Agents project.
- * Irene Agent's backend posts them to `/agents/agent-messages` through the
- * private ingress, signed with its key; the steps post the same way, signed
+ * `prism-cli` showing messages from the other agents of the project. A delivery
+ * service posts them to `/agents/agent-messages`, signed with its key; the
+ * steps post the same way, signed
  * with a key made for the run, which they give the runtime as list_agents would.
  * The labels are checked as the socket delivers each message and again from the
  * history a reopened terminal reads. Single-thread mode, so the reopened
@@ -19,7 +19,7 @@ import { BOOT_FRAME_TIMEOUT_MS, startPrism, type TuiSession } from '../harness';
 import { countMessages, setupRuntime, runtimeRequest, type RuntimeTestEnv } from '../setup';
 
 /** The sender id of what the delivery service itself says about the agent's messages. */
-const NOTICE_SENDER_ID = 'irene-agent';
+const NOTICE_SENDER_ID = 'messaging';
 /** Already in the conversation, so its frame shows the terminal has read the history and is following the stream. */
 const HISTORY_MARKER = 'agent-messages-history-marker';
 

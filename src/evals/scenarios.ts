@@ -214,8 +214,8 @@ const slackPost = tool({
   }),
 });
 
-/** The agent messaging tools of the Lens Agents MCP endpoint, as a short prefix names them. */
-const MESSAGE_AGENT = 'lens-agents-client__message_agent';
+/** The agent messaging tools of the MCP endpoint, as a short prefix names them. */
+const MESSAGE_AGENT = 'agent-directory__message_agent';
 const AGENT_MESSAGE_TOOLS: Record<string, Tool> = {
   [MESSAGE_AGENT]: tool({
     description:
@@ -232,7 +232,7 @@ const AGENT_MESSAGE_TOOLS: Record<string, Tool> = {
       required: ['message'],
     }),
   }),
-  'lens-agents-client__list_agents': tool({
+  'agent-directory__list_agents': tool({
     description: 'List the other agents in your project, their roles, and whether each one is working.',
     inputSchema: jsonSchema<Record<string, never>>({ type: 'object', properties: {} }),
   }),

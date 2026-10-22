@@ -10,7 +10,7 @@ import type { ConversationMessage } from '@prisma/client';
 import { ChannelAdapter, ChannelContext, DeliverableMessage } from './channel-adapter.interface';
 import { eventStreamService } from './event-stream.service';
 import { inboundMessageService } from './inbound-message.service';
-import type { MessageEventPayload } from '../protocol/chat-protocol';
+import type { AgentMessageKind, MessageEventPayload } from '../protocol/chat-protocol';
 import type { ResumedReply } from '../types';
 import { logger } from '../logger';
 
@@ -35,7 +35,14 @@ export function messageEventPayload(message: DeliverableMessage): MessageEventPa
     attachments: (message.attachments as MessageEventPayload['attachments']) ?? null,
     senderId: message.senderExternalId ?? null,
     senderName: message.senderName ?? null,
+    agentMessageKind: agentMessageKind(message),
   };
+}
+
+/** A message from another agent keeps its kind in `triggerName`. */
+function agentMessageKind(message: DeliverableMessage): AgentMessageKind | null {
+  if (message.triggeredBy !== 'AGENT_MESSAGE') return null;
+  return message.triggerName === 'ask' || message.triggerName === 'notice' ? message.triggerName : 'message';
 }
 
 class WebSocketAdapterService implements ChannelAdapter {
