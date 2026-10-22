@@ -7,6 +7,7 @@
 
 import prisma from '../lib/prisma';
 import { logger } from '../logger';
+import { agentMessageOrigin } from '../prompts/agent-message-prompt';
 import { conversationEngineService, type ChatWork } from './conversation-engine.service';
 import { attachmentService } from './attachment.service';
 import { conversationService } from './conversation.service';
@@ -62,6 +63,7 @@ export async function resumeReplies(items: PendingWorkItem[]): Promise<void> {
       queue.continueReply(newest, { messageIds, unsaved, unsentAttachmentIds });
       continue;
     }
+    const agentMessage = agentMessageOrigin(newest);
     void conversationEngineService
       .chat({
         agentId,
@@ -71,6 +73,7 @@ export async function resumeReplies(items: PendingWorkItem[]): Promise<void> {
         stored: { id: newest.id, titleSet: null },
         resumed: { messageIds, unsaved, unsentAttachmentIds },
         metadata,
+        ...(agentMessage ? { agentMessage } : {}),
       })
       .catch((err) => logger.error({ err, threadId }, 'Could not continue the interrupted reply'));
   }

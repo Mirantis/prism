@@ -1,0 +1,84 @@
+/**
+ * Agent Conversation Service
+ *
+ * Which web conversation holds each conversation between agents, so an answer
+ * comes back where the question was asked. The Irene Agent backend gives every
+ * message a `conversationId`: a new message starts one, and a reply, and a
+ * notice about a message, carry the one it belongs to. The agent's own
+ * `message_agent` call answers the id, and each delivery names it. The web
+ * conversation is kept under `agentConversation:<conversationId>` in
+ * `runtime_state`.
+ */
+
+import { z } from 'zod';
+import { config } from '../config';
+import { isLensAgentsClientTool } from '../lib/mcp-client';
+import prisma from '../lib/prisma';
+import { logger } from '../logger';
+import { uuid } from '../protocol/chat-protocol';
+import type { ToolCallRecord } from '../types';
+import { conversationService } from './conversation.service';
+import { runtimeStateService } from './runtime-state.service';
+
+const conversationKey = (conversationId: string) => `agentConversation:${conversationId}`;
+
+/** The first line of `message_agent`'s answer. A sentence for the model follows it. */
+const sentAnswer = z.object({ conversationId: uuid });
+
+/** The conversation a successful `message_agent` call started or answered, or null. */
+function sentConversationId(call: ToolCallRecord): string | null {
+  if (!call.success || !isLensAgentsClientTool(call.tool, 'message_agent')) return null;
+  try {
+    const answer = sentAnswer.safeParse(JSON.parse(call.output.split('\n', 1)[0]));
+    return answer.success ? answer.data.conversationId : null;
+  } catch {
+    return null;
+  }
+}
+
+class AgentConversationService {
+  /**
+   * The web conversation that holds `conversationId`, while a client can still
+   * write to it. Null when none does yet, when it was deleted, and when
+   * single-thread mode hides it.
+   */
+  async threadFor(conversationId: string, agentId: string): Promise<string | null> {
+    const threadId = await runtimeStateService.get(conversationKey(conversationId));
+    if (!threadId) return null;
+    const thread = await prisma.conversationThread.findFirst({
+      where: {
+        id: threadId,
+        agentId,
+        userId: config.ownerUserId,
+        externalThreadId: null,
+        threadSource: 'DATABASE',
+        AND: await conversationService.clientThreadFilter(agentId, config.ownerUserId),
+      },
+      select: { id: true },
+    });
+    return thread?.id ?? null;
+  }
+
+  /** Keep `conversationId` in the web conversation that now holds it. */
+  async remember(conversationId: string, threadId: string): Promise<void> {
+    await runtimeStateService.set(conversationKey(conversationId), threadId);
+  }
+
+  /**
+   * Keep each conversation that the agent's own `message_agent` calls started or
+   * answered in `threadId`, so the answers to them come back there. Never throws.
+   */
+  async rememberSent(threadId: string, calls: ToolCallRecord[]): Promise<void> {
+    for (const call of calls) {
+      const conversationId = sentConversationId(call);
+      if (!conversationId) continue;
+      try {
+        await this.remember(conversationId, threadId);
+      } catch (err) {
+        logger.warn({ err, threadId, conversationId }, '[AgentConversation] Could not keep where a conversation between agents is');
+      }
+    }
+  }
+}
+
+export const agentConversationService = new AgentConversationService();

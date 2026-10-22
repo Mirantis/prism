@@ -912,7 +912,8 @@ and refuses every call, because under `none` the SDK sends no tools block.
 | **PluginMcpService** | `services/plugin-mcp.service.ts` | Connects each plugin's MCP servers (lazily, once per server), qualifies and orders their tools, closes them at shutdown |
 | **WebSocketGatewayService** | `services/websocket-gateway.service.ts` | The chat socket, protocol v2 (`protocol/chat-protocol.ts`, `docs/websocket-protocol.md`): the `hello`/`welcome` handshake and resume, validated requests answered `ack`/`nack`, connection limits, and voice and dictation on the same socket |
 | **EventStreamService** | `services/event-stream.service.ts` | The numbered stream every chat client reads, and the bounded window a reconnecting client is replayed from |
-| **InboundMessageService** | `services/inbound-message.service.ts` | A chat message from the socket, or another agent's message from `POST /agents/agent-messages`: stored under the sender's id first, confirmed, then answered one turn at a time for the agent; and each conversation's `queued`/`running`/`idle` state. A delivery sent again is the same message in whichever conversation holds it; an id that names another sender's message is refused |
+| **InboundMessageService** | `services/inbound-message.service.ts` | A chat message from the socket, or another agent's message from `POST /agents/agent-messages`: stored under the sender's id first, confirmed, then answered one turn at a time for the agent; and each conversation's `queued`/`running`/`idle` state. A delivery sent again is the same message in whichever conversation holds it, and its turn is scheduled from the stored row; an id that names another sender's message, or another message id, is refused |
+| **AgentConversationService** | `services/agent-conversation.service.ts` | Which web conversation holds each conversation between agents: `runtime_state` `agentConversation:<conversationId>`, set by a delivery and by the agent's own successful `message_agent` call (its answer's first line). A delivery goes there while a client can still write to it, else to the one conversation or the newest |
 | **AgentRosterService** | `services/agent-roster.service.ts` | Before a chat turn, at most once a minute per thread, calls the Lens Agents `list_agents` tool (`callListAgents` in `lib/mcp-client.ts`) with the version the thread last read, and stores the whole roster or the difference as a hidden USER row (`prompts/agent-roster-prompt.ts`). The snapshot is `runtime_state` `agentRoster:<threadId>`; a compacted or missing roster row means the whole roster again. Never throws: a failure is a warning and the turn runs |
 | **isAgentIdle** | `services/agent-activity.ts` | Whether nothing runs or waits: model calls, live exchanges, working threads, cron, goals, compaction, meetings, voice, and processes a tool started. The updater defers to it, and `GET /agents/state` reports it |
 | **ProgramStatusService** | `services/program-status.service.ts` | The agent's state as OSC 7501 reports on stdout, for LNS and terminals, and `clear` at process exit |
@@ -1246,7 +1247,7 @@ There are three entry points for chat, all handled locally by the agent-runtime:
 
 1. **WebSocket**: Client -> Lens Agents ingress -> WS gateway -> `inboundMessageService.accept()` (stores the message, confirms it) -> `conversationEngineService.chat()` (local, no HTTP)
 2. **Slack**: Bolt Socket Mode message -> `conversationEngineService.chat()` (local, no HTTP)
-3. **Agent messages**: Irene Agent backend -> Lens Agents private ingress -> `POST /agents/agent-messages` (`routes/agent-messages.ts`, 403 when the ingress names a person) -> `inboundMessageService.accept()` into the web conversation -> `conversationEngineService.chat()`
+3. **Agent messages**: Irene Agent backend -> Lens Agents private ingress -> `POST /agents/agent-messages` (`routes/agent-messages.ts`, 403 when the ingress names a person) -> `inboundMessageService.accept()` into the web conversation that holds its `conversationId` -> `conversationEngineService.chat()`
 
 In every case, `conversationEngineService.chat()` manages the thread, **iterates `invokeStream()` directly** (no queue, no HTTP), and `messageDeliveryService.publish()`'es each text-bearing step the moment its `onStepFinish` fires. Each delivery uses a `channelContext` that scopes the publish to the originating channel only (WebSocket or Slack), so users see intermediate text from multi-step responses in real time instead of one big block at the end.
 
@@ -1260,23 +1261,33 @@ A message from another agent of the Lens Agents project is a USER row with
 `triggeredBy: AGENT_MESSAGE`, `triggerName` its kind (`message`, `ask` when the
 sender waits for an answer, `notice`), and the sending agent in
 `senderExternalId`, `senderName` and `externalMessageId`. The origin travels as
-`ChatInput.metadata.agentMessage` and `PendingMessage.agentMessage`, so a
-pending-work row, a steered message and a coalesced follow-up keep it.
+`ChatInput.agentMessage` and `PendingMessage.agentMessage`, so a pending-work
+row, a steered message and a coalesced follow-up keep it. It is never in
+`ChatInput.metadata`, which `POST /agents/chat` takes from the request body:
+only `inboundMessageService` sets it, for the agent-message route.
 
 - **The model reads it inside a tag**, never as the person's words:
   `prompts/agent-message-prompt.ts` renders `<agent-message from=… agent-id=…
-  message-id=… expects-reply=…>` or `<agent-notice>`, with the text escaped.
+  message-id=… expects-reply=…>` or `<agent-notice>`, with the text escaped,
+  after a fixed sentence that says another agent wrote it, not the person.
   History, `buildSteeringMessage` and the coalesced prompt use the one renderer,
   so the replayed bytes are the ones the model first read.
 - **It is not the person's.** The feedback prompt and its cadence count the
   person's messages alone, a hidden step before it stays hidden as before a
   person's message, and single-thread mode keeps the conversation the person
-  wrote in last. Its reply is an ordinary chat reply (`USER_INPUT`) in the web
-  conversation.
+  wrote in last. A turn on other agents' messages alone sets
+  `InvokeRequest.promptFromAgent`, and the tool risk gate then sends the prompt
+  as `requestFromAnotherAgent`, which its rules say authorizes nothing, instead
+  of `initialUserPrompt`. Its reply is an ordinary chat reply (`USER_INPUT`) in
+  the web conversation.
 - **The roster** comes before a chat turn, inside the claim, from
-  `agentRosterService` (see **Key Services**). The guidance on treating agent
-  messages lives in that hidden roster row, so the system prompt and its cached
-  prefix are the same for every agent.
+  `agentRosterService` (see **Key Services**). The longer guidance on treating
+  agent messages lives in that hidden roster row, so the system prompt and its
+  cached prefix are the same for every agent.
+- **Who may post** is any caller the ingress lets through without naming a
+  person (`x-forwarded-user` or `x-forwarded-user-id`, both refused): the Irene
+  Agent backend's federated token, and any other API token of the project.
+  `docs/agent-messages.md` says what that leaves open.
 - **`GET /agents/state`** (`routes/agent-state.ts`) answers `working` or `idle`
   from `isAgentIdle`.
 
