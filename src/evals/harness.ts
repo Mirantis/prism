@@ -341,6 +341,8 @@ function toStoredMessage(entry: HistoryEntry, index: number): ConversationMessag
 export async function toolRiskDecision(input: {
   mode: 'chat' | 'heartbeat';
   prompt: string;
+  /** The prompt is another agent's message, as a turn on one sends it. */
+  promptFromAgent?: boolean;
   tool: string;
   input: Record<string, unknown>;
 }): Promise<'allow' | 'block'> {
@@ -363,6 +365,7 @@ export async function toolRiskDecision(input: {
     input: input.input,
     invocationMode: input.mode,
     initialPrompt: input.prompt,
+    initialPromptFromAgent: input.promptFromAgent === true,
     messages: [{ role: 'user', content: input.prompt }],
     agentGuide: context.agentMd,
     userId: EVAL_USER_ID,

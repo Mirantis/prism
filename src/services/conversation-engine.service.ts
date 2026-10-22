@@ -20,6 +20,7 @@ import { pendingWorkService } from './pending-work.service';
 import { RESUMED_REPLY_NOTICE } from '../prompts/resume-prompt';
 import { agentMessageColumns, renderAgentMessage } from '../prompts/agent-message-prompt';
 import { agentRosterService } from './agent-roster.service';
+import { agentConversationService } from './agent-conversation.service';
 import { invokeStream } from '../invoke';
 import { ToolCallRecord, InvokeStep, InvokeError, ResumedReply, UIBlock, type AgentMessageOrigin } from '../types';
 import type { ConversationMessage as HistoryRow, SteeringMessage } from '../prompts/context-builder';
@@ -91,6 +92,12 @@ export interface ChatInput {
   stored?: { id: string; titleSet: string | null };
   /** The exchange continues one a restart interrupted. `message` is the newest message it owes an answer. */
   resumed?: ResumedReply;
+  /**
+   * Set when another agent of the project sent the message. It is stored as that
+   * agent's, and the model reads it as a colleague's request. Only the runtime's
+   * own agent-message route sets it: `metadata` can come from a request body.
+   */
+  agentMessage?: AgentMessageOrigin;
   metadata?: {
     /** The `name` of the adapter the message came through; the reply goes back there. */
     channel?: ChannelName;
@@ -105,11 +112,6 @@ export interface ChatInput {
     /** The sender's id in the originating channel, stored as-is. */
     senderExternalId?: string;
     senderName?: string;
-    /**
-     * Set when another agent of the project sent the message. It is stored as
-     * that agent's, and the model reads it as a colleague's request.
-     */
-    agentMessage?: AgentMessageOrigin;
   };
 }
 
@@ -157,7 +159,7 @@ export interface ChatWork {
    * The message itself until its row is stored, so the boot stores it when a
    * restart came first. `acceptUserMessage` writes it.
    */
-  message?: Pick<ChatInput, 'message' | 'attachmentIds'>;
+  message?: Pick<ChatInput, 'message' | 'attachmentIds' | 'agentMessage'>;
   /**
    * The tool calls the turn has made that no stored message holds yet: a step's
    * calls are stored with the next text step. A resumed exchange stores them
@@ -359,6 +361,7 @@ Answer with one word: WORTHY or SKIP.`;
   async chat(input: ChatInput): Promise<ChatResponse> {
     const startTime = Date.now();
     const { agentId, userId, message, metadata } = input;
+    const agentOrigin = input.agentMessage;
 
     // Get or create thread, capturing its persisted workspace root so shell
     // tools run with the thread's cwd (falling back to the global root when
@@ -397,7 +400,7 @@ Answer with one word: WORTHY or SKIP.`;
       id: messageId,
       text: message,
       attachmentIds: input.attachmentIds ?? [],
-      ...(metadata?.agentMessage ? { agentMessage: metadata.agentMessage } : {}),
+      ...(agentOrigin ? { agentMessage: agentOrigin } : {}),
     };
     // A reply a restart interrupted is never handed over: what its exchange stores
     // and delivers first belongs to that exchange alone, so it waits for the thread.
@@ -585,10 +588,10 @@ Answer with one word: WORTHY or SKIP.`;
           const agent = await agentWorkspaceService.getAgent();
           verbose = agent.verbose;
 
-          let prompt = promptText(message, metadata?.agentMessage);
+          let prompt = promptText(message, agentOrigin);
           let appendPrompt = false;
           // Feedback is the person's to give, on a reply to something they asked.
-          let fromPerson = !metadata?.agentMessage;
+          let fromPerson = !agentOrigin;
           let appendedMessageIds: string[] = [];
           // A resumed exchange stores rows after its message on purpose, and its
           // history ends on the resume notice.
@@ -726,11 +729,11 @@ Answer with one word: WORTHY or SKIP.`;
    * id — see `MessageInput.id`.
    */
   async acceptUserMessage(
-    input: Pick<ChatInput, 'agentId' | 'userId' | 'message' | 'attachmentIds' | 'metadata'>,
+    input: Pick<ChatInput, 'agentId' | 'userId' | 'message' | 'attachmentIds' | 'metadata' | 'agentMessage'>,
     threadId: string,
     id?: string,
   ): Promise<{ message: ConversationMessage; titleSet: string | null }> {
-    const { agentId, userId, message, metadata } = input;
+    const { agentId, userId, message, metadata, agentMessage } = input;
     const messageId = id ?? randomUUID();
 
     // Owed an answer from before it is stored until the exchange that answers it
@@ -741,7 +744,7 @@ Answer with one word: WORTHY or SKIP.`;
       agentId,
       userId,
       ...(metadata ? { metadata } : {}),
-      message: { message, attachmentIds: input.attachmentIds },
+      message: { message, attachmentIds: input.attachmentIds, ...(agentMessage ? { agentMessage } : {}) },
     };
     await pendingWorkService.begin('chat', messageId, work);
 
@@ -752,8 +755,8 @@ Answer with one word: WORTHY or SKIP.`;
       id: messageId,
       content: message,
       role: 'USER',
-      ...(metadata?.agentMessage
-        ? agentMessageColumns(metadata.agentMessage)
+      ...(agentMessage
+        ? agentMessageColumns(agentMessage)
         : {
             triggeredBy: 'USER_INPUT' as const,
             senderExternalId: metadata?.senderExternalId,
@@ -873,6 +876,7 @@ Answer with one word: WORTHY or SKIP.`;
       agentId,
       mode: 'chat',
       prompt,
+      promptFromAgent: !params.fromPerson,
       appendPrompt: params.appendPrompt,
       appendedMessageIds: params.appendedMessageIds,
       promptMessageId: params.promptMessageId,
@@ -889,6 +893,8 @@ Answer with one word: WORTHY or SKIP.`;
       onHistoryRead: params.onHistoryRead,
     })) {
       allToolCalls.push(...step.toolCalls);
+      // The answers to the agent's messages come back to this conversation.
+      if (step.toolCalls.length > 0) await agentConversationService.rememberSent(threadId, step.toolCalls);
       if (step.blocks) allBlocks.push(...step.blocks);
       if (step.attachmentIds) allAttachmentIds.push(...step.attachmentIds);
       pendingToolCalls.push(...step.toolCalls);

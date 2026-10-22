@@ -1,6 +1,10 @@
 /**
  * Whether the agent has work in flight: what a restart would interrupt, and what
  * `GET /agents/state` reports as working.
+ *
+ * The updater had its own copy of this check, without the working threads. They
+ * cover a message between its scheduling and its turn, a gap in which a restart
+ * would only delay the turn, and which the updater now waits out too.
  */
 
 import { agentStatusService } from './agent-status.service';

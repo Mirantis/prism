@@ -27,6 +27,8 @@ import { runtimeStateService } from './runtime-state.service';
 const CHECK_INTERVAL_MS = 60_000;
 /** The turn waits for the check, so a slow endpoint costs it this much at most. */
 const CHECK_TIMEOUT_MS = 10_000;
+/** A check that held the turn this long is logged with its duration. */
+const SLOW_CHECK_MS = 2_000;
 
 /** What a conversation last read, under `agentRoster:<threadId>` in `runtime_state`. */
 interface RosterSnapshot extends Roster {
@@ -62,6 +64,8 @@ class AgentRosterService {
     } catch (err) {
       logger.warn({ err, threadId }, '[AgentRoster] Could not read the roster of the other agents');
     }
+    const durationMs = Date.now() - now;
+    if (durationMs >= SLOW_CHECK_MS) logger.info({ threadId, durationMs }, '[AgentRoster] Reading the roster held the turn');
   }
 
   private async check(threadId: string, signal: AbortSignal): Promise<void> {

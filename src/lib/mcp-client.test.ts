@@ -80,6 +80,14 @@ describe('callListAgents', () => {
     expect(client.close).toHaveBeenCalledTimes(1);
   });
 
+  it('answers without waiting for the client to close', async () => {
+    // Closing can send a DELETE for the session, which takes no signal.
+    client.close.mockReturnValue(new Promise<undefined>(() => {}));
+
+    await expect(callListAgents({}, signal)).resolves.toBe('{"version":"v1","unchanged":true}\nNo change.');
+    expect(client.close).toHaveBeenCalledTimes(1);
+  });
+
   it('lists the tools once, then calls the tool it found', async () => {
     await callListAgents({}, signal);
     await callListAgents({}, signal);

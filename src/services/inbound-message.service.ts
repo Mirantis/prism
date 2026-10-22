@@ -82,12 +82,17 @@ function outcomeOf({ cancelled, error }: ChatTurnEnd): { outcome: TurnOutcome; e
   return { outcome: 'failed', error: turnError(error) };
 }
 
-/** How a message's sender is stored: the id as the external id, the name for display. */
-function senderMetadata(message: InboundMessage) {
-  if (message.agentMessage) return { channel: 'websocket' as const, agentMessage: message.agentMessage };
+/**
+ * How a message's sender is stored: a person's id as the external id and the
+ * name for display, or the other agent's origin, which only this service sets.
+ */
+function senderInput(message: InboundMessage) {
+  if (message.agentMessage) return { metadata: { channel: 'websocket' as const }, agentMessage: message.agentMessage };
   return {
-    channel: 'websocket' as const,
-    ...(message.sender ? { senderExternalId: message.sender.id, senderName: message.sender.name } : {}),
+    metadata: {
+      channel: 'websocket' as const,
+      ...(message.sender ? { senderExternalId: message.sender.id, senderName: message.sender.name } : {}),
+    },
   };
 }
 
@@ -229,7 +234,7 @@ class InboundMessageService {
           userId: config.ownerUserId,
           message: inbound.content,
           attachmentIds: inbound.attachmentIds,
-          metadata: senderMetadata(inbound),
+          ...senderInput(inbound),
         },
         inbound.threadId,
         inbound.id,
@@ -253,23 +258,34 @@ class InboundMessageService {
   /**
    * The id is already a row. A person's message in the same conversation is the
    * same message sent again, and is confirmed again. So is another agent's
-   * message delivered again, in the conversation that holds it: the newest
-   * conversation can be another one by then. Anything else is refused: the id
-   * is the client's choice, and must not attach to an agent's reply, to another
-   * sender's message or to another conversation. The client then offers to send
-   * it again.
+   * message delivered again, from the same sender with the same message id, in
+   * the conversation that holds it: the newest conversation can be another one
+   * by then. Anything else is refused: the id is the client's choice, and must
+   * not attach to an agent's reply, to another sender's message or to another
+   * conversation. The client then offers to send it again.
    *
    * A confirmed message whose turn never ran — the process stopped between the
-   * store and the turn — is scheduled now. One with an answer after it, or with
-   * work under way on its thread, is left alone: answering it twice is worse.
+   * store and the turn — is scheduled now, as the row holds it: the history
+   * shows the row, so the turn answers its words and its sender. One with an
+   * answer after it, or with work under way on its thread, is left alone:
+   * answering it twice is worse.
    */
   private async acceptDuplicate(existing: ConversationMessage, received: InboundMessage): Promise<Acceptance> {
     const fromAgent = received.agentMessage !== undefined;
     const sameKind = existing.role === 'USER' && (existing.triggeredBy === 'AGENT_MESSAGE') === fromAgent;
-    if (!sameKind || (!fromAgent && existing.threadId !== received.threadId)) {
+    const stored = agentMessageOrigin(existing);
+    const sameSender =
+      !received.agentMessage ||
+      (stored?.senderId === received.agentMessage.senderId && stored.messageId === received.agentMessage.messageId);
+    if (!sameKind || !sameSender || (!fromAgent && existing.threadId !== received.threadId)) {
       throw new InboundMessageError('id_conflict', 'That message id is already taken by another message.');
     }
-    const inbound = { ...received, threadId: existing.threadId };
+    const inbound: InboundMessage = {
+      ...received,
+      threadId: existing.threadId,
+      content: existing.content,
+      ...(stored ? { agentMessage: stored } : {}),
+    };
 
     trackReceived(inbound, true);
 
@@ -400,7 +416,7 @@ class InboundMessageService {
       attachmentIds: message.attachmentIds,
       stored: { id: message.id, titleSet: waiting.titleSet },
       ...(waiting.resumed ? { resumed: waiting.resumed } : {}),
-      metadata: senderMetadata(message),
+      ...senderInput(message),
     };
   }
 

@@ -89,6 +89,12 @@ export interface InvokeRequest {
   agentId: string;
   mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal' | 'webhook';
   prompt: string;
+  /**
+   * `prompt` holds only messages from other agents of the project, nothing the
+   * person wrote. The tool risk gate then reads it as theirs, which authorizes
+   * nothing, instead of as the person's request.
+   */
+  promptFromAgent?: boolean;
   threadId?: string;
   /** Override the agent's persisted verbose flag for this invocation. */
   verbose?: boolean;

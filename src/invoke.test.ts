@@ -1090,10 +1090,23 @@ describe('invoke', () => {
         mode: 'observe',
         invocationMode: 'cron',
         initialPrompt: 'check deployment',
+        initialPromptFromAgent: false,
         agentGuide: '',
         userId: 'user-test-456',
         agentId: 'agent-test-123',
       },
+    );
+  });
+
+  it("tells the risk gate when the prompt is another agent's message", async () => {
+    mockGetShellTools.mockReturnValue({ shell_exec: { description: 'exec' } });
+    config.toolRiskGateMode = 'enforce';
+
+    await invoke(createTestInvokeRequest({ promptFromAgent: true }));
+
+    expect(mockWithToolRiskGate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ initialPromptFromAgent: true }),
     );
   });
 

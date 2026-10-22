@@ -112,13 +112,13 @@ let listAgentsToolName: string | null = null;
 let listAgentsAbsentAt = Number.NEGATIVE_INFINITY;
 
 /**
- * The `list_agents` tool of the `lens-agents-client` server. The endpoint puts a
- * prefix of its own in front, so only the last two `__` segments are compared,
+ * Whether `name` is `tool` of the `lens-agents-client` server. The endpoint puts
+ * a prefix of its own in front, so only the last two `__` segments are compared,
  * and on the name the server gives, which the tools block may shorten.
  */
-function isListAgentsTool(name: string): boolean {
+export function isLensAgentsClientTool(name: string, tool: string): boolean {
   const segments = name.split('__');
-  return segments.at(-2) === 'lens-agents-client' && segments.at(-1) === 'list_agents';
+  return segments.at(-2) === 'lens-agents-client' && segments.at(-1) === tool;
 }
 
 /** The first text part of a tool's result. */
@@ -136,7 +136,7 @@ async function findListAgentsTool(client: MCPClient, signal: AbortSignal): Promi
       ...(cursor ? { params: { cursor } } : {}),
       options: { signal },
     });
-    const found = page.tools.find((tool) => isListAgentsTool(tool.name));
+    const found = page.tools.find((tool) => isLensAgentsClientTool(tool.name, 'list_agents'));
     if (found) return found.name;
     cursor = page.nextCursor;
   } while (cursor);
@@ -175,7 +175,9 @@ export async function callListAgents(args: Record<string, unknown>, signal: Abor
     }
     return text;
   } finally {
-    await client.close().catch((err: unknown) => logger.debug({ err }, '[MCPClient] Closing the list_agents client failed'));
+    // Not awaited: closing can send a DELETE for the session, which takes no
+    // signal, and the turn waits for this call. A slow one ends on its own.
+    void client.close().catch((err: unknown) => logger.debug({ err }, '[MCPClient] Closing the list_agents client failed'));
   }
 }
 

@@ -13,10 +13,25 @@ import { z } from 'zod';
 import { config } from '../config';
 import { logger } from '../logger';
 import { uuid, uuidV4 } from '../protocol/chat-protocol';
+import { agentConversationService } from '../services/agent-conversation.service';
 import { conversationService } from '../services/conversation.service';
 import { InboundMessageError, inboundMessageService } from '../services/inbound-message.service';
 
 const router = Router();
+
+/** The sender id of a notice: what the delivery service itself says about the agent's messages. */
+const NOTICE_SENDER_ID = 'irene-agent';
+
+/** The headers the Lens Agents ingress writes to name a person, and only a person. */
+const PERSON_HEADERS = ['x-forwarded-user', 'x-forwarded-user-id'];
+
+/** A sender's id or name on one line, as the prompt's attribute and every client show it. */
+const oneLine = (max: number) =>
+  z
+    .string()
+    .max(max)
+    .transform((text) => text.replace(/\p{Cc}/gu, ' ').replace(/\s+/g, ' ').trim())
+    .refine((text) => text.length > 0, 'must not be blank');
 
 const agentMessage = z
   .object({
@@ -26,7 +41,7 @@ const agentMessage = z
     messageId: uuid,
     conversationId: uuid,
     kind: z.enum(['message', 'notice']),
-    sender: z.object({ id: z.string().min(1).max(64), name: z.string().min(1).max(128) }).strict(),
+    sender: z.object({ id: oneLine(64), name: oneLine(128) }).strict(),
     content: z
       .string()
       .max(32_000)
@@ -34,7 +49,12 @@ const agentMessage = z
     expectsReply: z.boolean().default(false),
     attachmentIds: z.array(uuid).max(5).default([]),
   })
-  .strict();
+  .strict()
+  // The model reads `kind` and the clients read the sender id, so the two agree.
+  .refine((body) => (body.kind === 'notice') === (body.sender.id === NOTICE_SENDER_ID), {
+    path: ['sender', 'id'],
+    message: `a notice comes from ${NOTICE_SENDER_ID}, and nothing else does`,
+  });
 
 /** What each refusal of the inbound service is over HTTP. */
 const REFUSALS: Partial<Record<InboundMessageError['code'], number>> = {
@@ -44,11 +64,12 @@ const REFUSALS: Partial<Record<InboundMessageError['code'], number>> = {
 };
 
 router.post('/agent-messages', async (req: Request, res: Response) => {
-  // The Lens Agents ingress names a person with this header and sets none for a
-  // service, such as the backend. People talk to the agent in the conversation,
-  // and refusing them here keeps a browser from posting as another agent. The
-  // ingress is what authenticates; the header only tells the two apart.
-  if (req.get('x-forwarded-user-id') !== undefined) {
+  // The Lens Agents ingress names a person signed in to it with these headers,
+  // and names no API-token caller, such as the backend. People talk to the agent
+  // in the conversation, and refusing them here keeps a browser from posting as
+  // another agent. The ingress is what authenticates; the headers only tell a
+  // person from a token.
+  if (PERSON_HEADERS.some((header) => req.get(header) !== undefined)) {
     res.status(403).json({ error: 'Only another agent of the project sends agent messages.' });
     return;
   }
@@ -68,11 +89,15 @@ router.post('/agent-messages', async (req: Request, res: Response) => {
   }
 
   try {
-    // The web conversation: the one conversation in single-thread mode, else the newest.
-    const thread = await conversationService.getOrCreateLatestThread(agentId, config.ownerUserId);
+    // The web conversation that holds the conversation between agents, such as the
+    // one whose message_agent call this answers. A new one goes to the one
+    // conversation in single-thread mode, else to the newest.
+    const threadId =
+      (await agentConversationService.threadFor(body.conversationId, agentId)) ??
+      (await conversationService.getOrCreateLatestThread(agentId, config.ownerUserId)).id;
     const acceptance = await inboundMessageService.accept({
       id: body.id,
-      threadId: thread.id,
+      threadId,
       content: body.content,
       attachmentIds: body.attachmentIds,
       sender: null,
@@ -83,6 +108,11 @@ router.post('/agent-messages', async (req: Request, res: Response) => {
         messageId: body.messageId,
       },
     });
+    // The rest of this conversation between agents follows it here. The message
+    // is stored either way, so a failure costs only where the next one goes.
+    await agentConversationService
+      .remember(body.conversationId, acceptance.message.threadId)
+      .catch((err: unknown) => logger.warn({ err, deliveryId: body.id }, '[AgentMessages] Could not keep where the conversation is'));
     res.status(202).json({
       messageId: acceptance.message.id,
       threadId: acceptance.message.threadId,
