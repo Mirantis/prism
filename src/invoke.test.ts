@@ -106,7 +106,7 @@ vi.mock('./lib/llm-providers/create-provider', () => ({
 }));
 
 vi.mock('./lib/mcp-client', async (importOriginal) => ({
-  isAgentMessagingTool: (await importOriginal<typeof import('./lib/mcp-client')>()).isAgentMessagingTool,
+  soleAgentMessagingTool: (await importOriginal<typeof import('./lib/mcp-client')>()).soleAgentMessagingTool,
   getMCPTools: mockGetMCPTools,
 }));
 
@@ -1218,6 +1218,25 @@ describe('invoke', () => {
       await invoke(createTestInvokeRequest({ mode, threadId: 'thread-delegating' }));
 
       expect(keptOnReturn).toBe('thread-delegating');
+    });
+
+    it("keeps no conversation when another server offers a message_agent too, whatever either answers", async () => {
+      runtimeState.clear();
+      const other = 'hub__other-framework__message_agent';
+      const answer = async () => ({ content: [{ type: 'text', text: `{"conversationId":"${CONVERSATION}"}\nSent.` }] });
+      mockGetMCPTools.mockResolvedValue({
+        [MESSAGE_AGENT]: { description: 'Message another agent of the project.', inputSchema: { type: 'object' }, execute: answer },
+        [other]: { description: 'Message an agent.', inputSchema: { type: 'object' }, execute: answer },
+      });
+      mockGenerateText.mockImplementation(async (opts: { tools: Record<string, { execute: (a: unknown, o: unknown) => Promise<unknown> }> }) => {
+        await opts.tools[MESSAGE_AGENT]!.execute({}, { toolCallId: 'c1', messages: [] });
+        await opts.tools[other]!.execute({}, { toolCallId: 'c2', messages: [] });
+        return { text: 'Asked.', steps: [{ text: 'Asked.', toolCalls: [], toolResults: [] }] };
+      });
+
+      await invoke(createTestInvokeRequest({ threadId: 'thread-delegating' }));
+
+      expect(runtimeState.has(`agentConversation:${CONVERSATION}`)).toBe(false);
     });
   });
 

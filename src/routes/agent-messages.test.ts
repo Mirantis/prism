@@ -38,6 +38,7 @@ import { inboundMessageService } from '../services/inbound-message.service';
 import { messageDeliveryService } from '../services/message-delivery.service';
 import { webSocketAdapterService } from '../services/websocket-adapter.service';
 import { eventStreamService } from '../services/event-stream.service';
+import { conversationService } from '../services/conversation.service';
 import type { MessageEventPayload } from '../protocol/chat-protocol';
 
 const AGENT_ID = 'test-agent-id';
@@ -267,6 +268,10 @@ describe('POST /agents/agent-messages', () => {
       triggerName: 'notice',
       senderName: 'Messaging',
     });
+    // Read back from history, as a reload or a reopened CLI does, it keeps that label.
+    const { threadId } = await database.client!.conversationMessage.findUniqueOrThrow({ where: { id } });
+    const history = await conversationService.getRecentMessages(threadId, 50);
+    expect(history.find((message) => message.id === id)).toMatchObject({ senderId: 'messaging', agentMessageKind: 'notice' });
     // Its turn answers it, and has stored that answer before the database closes.
     await vi.waitFor(async () =>
       expect(await database.client!.conversationMessage.count({ where: { role: 'AGENT' } })).toBe(3),

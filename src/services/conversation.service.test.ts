@@ -1153,7 +1153,7 @@ describe('ConversationService', () => {
       expect(live.getMessages).toHaveBeenCalledWith('thread-live');
       expect(context).toEqual({ compactionSummary: null, threadSource: 'SLACK', messages: [{ id: 'live-1' }] });
       expect(live.getRecentMessages).toHaveBeenCalledWith('thread-live', 5, { view: 'client' });
-      expect(recent).toEqual([{ id: 'live-2', senderExternalId: 'U1', senderId: 'U1' }]);
+      expect(recent).toEqual([{ id: 'live-2', senderExternalId: 'U1', senderId: 'U1', agentMessageKind: null }]);
       expect(mockPrisma.conversationMessage.findMany).not.toHaveBeenCalled();
     });
   });

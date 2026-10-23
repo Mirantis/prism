@@ -63,8 +63,9 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, AfterEachScen
     if (res.status !== 202) throw new Error(`POST /agents/agent-messages → ${res.status}: ${await res.text()}`);
   };
 
+  // The whole label: a notice's `▌ Messaging` must not be `▌ Messaging · Agent`.
   const showsSender = (sender: string) =>
-    session!.waitForFrame(new RegExp(`▌ ${escapeRegExp(sender)}`), 30_000);
+    session!.waitForFrame(new RegExp(`▌ ${escapeRegExp(sender)}(?! · Agent)`), 30_000);
 
   Scenario(
     'Agent messages show under their senders, as they arrive and after reopening',

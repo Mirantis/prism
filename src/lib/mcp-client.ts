@@ -149,6 +149,23 @@ export function isAgentMessagingTool(name: string, tool: string): boolean {
   return agentMessagingToolByModelName.get(name) === tool;
 }
 
+/**
+ * The one name in `names` that is the agent messaging tool `tool`, or null when
+ * none is or more than one is. Only the last segment of a name says which tool it
+ * is, so any server on the endpoint can offer one that matches. With two, the
+ * runtime can't tell the platform's own from another server's, and trusting
+ * either would let that server decide which keys sign deliveries or which
+ * conversations are kept, so it uses neither.
+ */
+export function soleAgentMessagingTool(names: Iterable<string>, tool: string): string | null {
+  const matches = [...names].filter((name) => isAgentMessagingTool(name, tool));
+  if (matches.length > 1) {
+    logger.warn({ tool, matches }, '[MCPClient] More than one tool is an agent messaging tool; using none of them');
+    return null;
+  }
+  return matches[0] ?? null;
+}
+
 /** The first text part of a tool's result. */
 function resultText(result: Awaited<ReturnType<MCPClient['callTool']>>): string | undefined {
   const content: unknown = 'content' in result ? result.content : undefined;
@@ -157,18 +174,19 @@ function resultText(result: Awaited<ReturnType<MCPClient['callTool']>>): string 
   return typeof part?.text === 'string' ? part.text : undefined;
 }
 
+/** The endpoint's one `list_agents` across every page of its listing; null for none or several. */
 async function findListAgentsTool(client: MCPClient, signal: AbortSignal): Promise<string | null> {
+  const names: string[] = [];
   let cursor: string | undefined;
   do {
     const page = await client.listTools({
       ...(cursor ? { params: { cursor } } : {}),
       options: { signal },
     });
-    const found = page.tools.find((tool) => isAgentMessagingTool(tool.name, 'list_agents'));
-    if (found) return found.name;
+    names.push(...page.tools.map((tool) => tool.name));
     cursor = page.nextCursor;
   } while (cursor);
-  return null;
+  return soleAgentMessagingTool(names, 'list_agents');
 }
 
 /**
