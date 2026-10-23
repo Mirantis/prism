@@ -101,16 +101,65 @@ describe('Requirement: a retired Socket Mode app opens no socket and does not en
     expect(sockets).toHaveLength(1);
     expect(unhandled).not.toHaveBeenCalled();
   });
+
+  it('retires a client whose apps.connections.open body arrives after the stop', async () => {
+    const late = lateBody();
+    let headersSent!: () => void;
+    const headersAreOut = new Promise<void>((resolve) => (headersSent = resolve));
+    const socketFetch = await connectThenDrop(async () => {
+      setImmediate(headersSent);
+      return late.response;
+    });
+    // The stop comes after the headers reach the client and before the body does.
+    await headersAreOut;
+
+    await retireSocketApp(receiver!, receiver!.client, socketFetch.retire);
+    late.send(JSON.stringify({ ok: true, url: `ws://127.0.0.1:${portOf(slack)}/` }));
+    await wait(3 * PING_TIMEOUT_MS);
+
+    expect(sockets).toHaveLength(1);
+    expect(unhandled).not.toHaveBeenCalled();
+  });
 });
+
+/** A response whose headers are there at once and whose body comes on `send`. */
+function lateBody(): { response: Response; send(body: string): void } {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const stream = new ReadableStream<Uint8Array>({ start: (c) => (controller = c) });
+  return {
+    response: new Response(stream, { status: 200, headers: { 'content-type': 'application/json' } }),
+    send: (body) => {
+      controller.enqueue(new TextEncoder().encode(body));
+      controller.close();
+    },
+  };
+}
 
 describe('Requirement: a retired fetch answers nothing', () => {
   const settle = (): Promise<string> => new Promise((resolve) => setImmediate(() => resolve('pending')));
 
   it('passes requests through until it is retired', async () => {
-    const response = Response.json({ ok: true });
-    const socketFetch = retirableFetch(async () => response);
+    const socketFetch = retirableFetch(async () =>
+      Response.json({ ok: false, error: 'ratelimited' }, { status: 429, headers: { 'retry-after': '3' } }),
+    );
 
-    expect(await socketFetch.fetch('https://slack.com/api/apps.connections.open')).toBe(response);
+    const response = await socketFetch.fetch('https://slack.com/api/apps.connections.open');
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get('retry-after')).toBe('3');
+    expect(await response.json()).toEqual({ ok: false, error: 'ratelimited' });
+  });
+
+  it('holds a response whose body arrives after the retire', async () => {
+    const late = lateBody();
+    const socketFetch = retirableFetch(async () => late.response);
+    const answered = socketFetch.fetch('https://slack.com/api/apps.connections.open');
+    await settle();
+
+    socketFetch.retire();
+    late.send(JSON.stringify({ ok: true, url: 'wss://wss-primary.slack.com/link' }));
+
+    expect(await Promise.race([answered, settle()])).toBe('pending');
   });
 
   it('holds a request that answers or fails after the retire', async () => {

@@ -4,7 +4,9 @@
  * `disconnect()` closes the client's socket. A reconnect that already started
  * keeps retrying `apps.connections.open`, and it opens a socket when Slack
  * answers. The client's requests go through `retirableFetch`, so a retired
- * client gets no answer and its reconnect waits for ever.
+ * client gets no answer and its reconnect waits for ever. `fetch` resolves
+ * when the headers arrive, and the client reads the body later, so the gate
+ * reads the body first and answers with a copy of the response.
  */
 
 import type { FetchFunction } from '@slack/web-api';
@@ -23,7 +25,10 @@ export function retirableFetch(fetch: FetchFunction): RetirableFetch {
       if (retired) return never;
       try {
         const response = await fetch(url, init);
-        return retired ? never : response;
+        const body = await response.text();
+        if (retired) return never;
+        const { status, statusText, headers } = response;
+        return new Response(body, { status, statusText, headers: [...headers.entries()] });
       } catch (error) {
         if (retired) return never;
         throw error;
