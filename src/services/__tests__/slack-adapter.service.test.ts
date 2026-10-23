@@ -527,6 +527,34 @@ describe('Requirement: a Socket Mode connection that stays down is rebuilt', () 
     expect(adapter.apps.get('T001').app).toBe(builtApps[1]);
   });
 
+  it.each([
+    ['connects', (finish: { resolve: () => void; reject: (error: Error) => void }) => finish.resolve()],
+    ['fails', (finish: { resolve: () => void; reject: (error: Error) => void }) => finish.reject(new Error('late'))],
+  ])('keeps the boot waiting for the rebuilt app when the replaced start %s first', async (_, settleFirst) => {
+    let first!: { resolve: () => void; reject: (error: Error) => void };
+    let connectSecond!: () => void;
+    mockAppStart
+      .mockImplementationOnce(() => new Promise<void>((resolve, reject) => (first = { resolve, reject })))
+      .mockImplementationOnce(function (this: BuiltApp) {
+        return new Promise<void>((resolve) => {
+          connectSecond = () => connects.call(this).then(resolve);
+        });
+      });
+    await slackAdapterService.initialize();
+    await settle();
+    const waiting = slackAdapterService.getAppForTeam('T001');
+    await vi.advanceTimersByTimeAsync(SOCKET_STALL_MS);
+    await settle();
+
+    settleFirst(first);
+    await settle();
+    expect(await Promise.race([waiting, settle().then(() => 'still waiting')])).toBe('still waiting');
+
+    connectSecond();
+    await settle();
+    expect(await waiting).toMatchObject({ app: builtApps[1] });
+  });
+
   it('hands the rebuilt app to work that waited for a boot start that never connects', async () => {
     mockAppStart.mockImplementationOnce(hangs).mockImplementation(connects);
     await slackAdapterService.initialize();
