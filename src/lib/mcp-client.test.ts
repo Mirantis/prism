@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { config } from '../config';
 // The module the callListAgents tests share; the getMCPTools tests load fresh copies.
-import { callListAgents, isAgentMessagingTool, resetListAgentsToolForTests } from './mcp-client';
+import { callListAgents, isAgentMessagingTool, resetListAgentsToolForTests, soleAgentMessagingTool } from './mcp-client';
 import { toModelToolName } from './tool-names';
 
 const { mockCreateMCPClient } = vi.hoisted(() => ({
@@ -110,6 +110,19 @@ describe('callListAgents', () => {
     await callListAgents({}, signal);
     expect(mockCreateMCPClient).toHaveBeenCalledTimes(2);
     expect(client.close).toHaveBeenCalledTimes(2);
+  });
+
+  it('takes a second list_agents on another page, from another server, as no tool', async () => {
+    // Either one could be the platform's; trusting the first would let any server decide the signing keys.
+    client.listTools.mockImplementation(async ({ params }: { params?: { cursor?: string } } = {}) =>
+      params?.cursor === 'page-2'
+        ? { tools: [{ name: RAW_NAME }] }
+        : { tools: [{ name: 'other-framework__list_agents' }], nextCursor: 'page-2' },
+    );
+
+    expect(await callListAgents({}, signal)).toBeNull();
+    expect(client.listTools).toHaveBeenCalledTimes(2);
+    expect(client.callTool).not.toHaveBeenCalled();
   });
 
   it('throws when the tool answers an error, and lists the tools again on a failed call', async () => {
@@ -294,6 +307,16 @@ describe('isAgentMessagingTool', () => {
     expect(isAgentMessagingTool('hub__agent-directory__message_agent', 'list_agents')).toBe(false);
     expect(isAgentMessagingTool('hub__github__message_agents', 'message_agent')).toBe(false);
     expect(isAgentMessagingTool('hub__message_agent__send', 'message_agent')).toBe(false);
+  });
+
+  it('names the one tool in a set that is the tool, and none when two servers offer it', () => {
+    expect(soleAgentMessagingTool(['memory_search', 'hub__agent-directory__message_agent'], 'message_agent')).toBe(
+      'hub__agent-directory__message_agent',
+    );
+    expect(soleAgentMessagingTool(['memory_search'], 'message_agent')).toBeNull();
+    expect(
+      soleAgentMessagingTool(['hub__agent-directory__message_agent', 'hub__other-framework__message_agent'], 'message_agent'),
+    ).toBeNull();
   });
 
   it.each([

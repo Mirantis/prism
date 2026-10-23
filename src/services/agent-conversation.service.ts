@@ -13,7 +13,7 @@
 import type { Tool } from 'ai';
 import { z } from 'zod';
 import { config } from '../config';
-import { isAgentMessagingTool } from '../lib/mcp-client';
+import { soleAgentMessagingTool } from '../lib/mcp-client';
 import prisma from '../lib/prisma';
 import { stringifyToolOutput } from '../lib/tool-output-limiter';
 import { logger } from '../logger';
@@ -65,18 +65,19 @@ class AgentConversationService {
   }
 
   /**
-   * Wrap the agent's `message_agent` tools so that each call that starts or
+   * Wrap the agent's `message_agent` tool so that each call that starts or
    * answers a conversation keeps it in `threadId` before its result returns.
    * The other agent can answer while the step still runs, so the answer comes
-   * back to the run's thread in every mode. Without a thread the tools are
-   * returned untouched.
+   * back to the run's thread in every mode. Without a thread, or with more than
+   * one tool named `message_agent`, the tools are returned untouched.
    */
   withSentConversations(tools: Record<string, Tool>, threadId: string | undefined): Record<string, Tool> {
     if (!threadId) return tools;
+    const messageAgent = soleAgentMessagingTool(Object.keys(tools), 'message_agent');
     const wrapped: Record<string, Tool> = {};
     for (const [name, tool] of Object.entries(tools)) {
       const execute = tool.execute;
-      if (!execute || !isAgentMessagingTool(name, 'message_agent')) {
+      if (!execute || name !== messageAgent) {
         wrapped[name] = tool;
         continue;
       }

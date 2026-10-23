@@ -19,6 +19,8 @@ import { config } from '../config';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { deriveThreadTitle } from '../utils/thread-title';
+import { agentMessageKind } from '../lib/agent-message-kind';
+import type { AgentMessageKind } from '../protocol/chat-protocol';
 import { ThreadMessageProvider } from './thread-provider.interface';
 import { DatabaseThreadProvider } from './providers/database-thread.provider';
 import { attachmentService, type AttachmentMeta } from './attachment.service';
@@ -87,10 +89,13 @@ export interface ThreadCreated {
 /**
  * A client's copy of a stored message names its sender as the chat socket's
  * `message` event does, so history and live messages have one shape: a client
- * that tells its own messages from others' by `senderId` must find it on both.
+ * that tells its own messages from others' by `senderId`, or labels another
+ * agent's by `agentMessageKind`, must find them on both.
  */
-function withSenderId<T extends ConversationMessage>(message: T): T & { senderId: string | null } {
-  return { ...message, senderId: message.senderExternalId ?? null };
+function withSender<T extends ConversationMessage>(
+  message: T,
+): T & { senderId: string | null; agentMessageKind: AgentMessageKind | null } {
+  return { ...message, senderId: message.senderExternalId ?? null, agentMessageKind: agentMessageKind(message) };
 }
 
 export interface MessageWithAttachments extends ConversationMessage {
@@ -441,7 +446,7 @@ class ConversationService {
     // completes, or when the stored model is unrecognized.
     const contextUsage = buildContextSnapshot(threadId, thread.contextModel, thread.contextTokens);
 
-    return { ...thread, messages: withAttachments.map(withSenderId), contextUsage };
+    return { ...thread, messages: withAttachments.map(withSender), contextUsage };
   }
 
   /**
@@ -581,7 +586,7 @@ class ConversationService {
   ): Promise<ConversationMessage[]> {
     const provider = await this.resolveProvider(threadId);
     const messages = await provider.getRecentMessages(threadId, limit, { view: 'client', before });
-    return (await this.withHiddenStepToolCalls(threadId, messages)).map(withSenderId);
+    return (await this.withHiddenStepToolCalls(threadId, messages)).map(withSender);
   }
 
   /**
