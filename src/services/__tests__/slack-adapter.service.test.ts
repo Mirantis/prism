@@ -67,8 +67,14 @@ vi.mock('../../utils/slack-formatter', async (importOriginal) => ({
   formatSlackMessage: (s: string) => s,
 }));
 /** A mocked Bolt app, as the adapter built it. */
+/** A mocked Socket Mode receiver, with the options the adapter gave it. */
+interface BuiltReceiver {
+  client: import('node:events').EventEmitter;
+  options: { installerOptions: { clientOptions: { fetch: (url: string) => Promise<unknown> } } };
+}
+
 interface BuiltApp {
-  options: { botId?: string; botUserId?: string; receiver?: { client: import('node:events').EventEmitter } };
+  options: { botId?: string; botUserId?: string; receiver?: BuiltReceiver };
   stop: ReturnType<typeof vi.fn>;
   message: ReturnType<typeof vi.fn>;
 }
@@ -96,6 +102,7 @@ vi.mock('@slack/bolt', async () => {
     },
     SocketModeReceiver: class {
       client = new EventEmitter();
+      constructor(readonly options: BuiltReceiver['options']) {}
     },
     LogLevel: { INFO: 'info', WARN: 'warn' },
   };
@@ -337,14 +344,19 @@ describe('Requirement: a Socket Mode connection that stays down is rebuilt', () 
   const settle = (): Promise<void> => new Promise<void>((resolve) => setImmediate(resolve));
   const clientOf = (app: BuiltApp) => app.options.receiver!.client;
 
-  function stopWatches(): void {
-    for (const stopWatch of adapter.socketWatches.values()) stopWatch();
-    adapter.socketWatches = new Map();
+  function stopSockets(): void {
+    for (const socket of adapter.sockets.values()) void socket.stop();
+    adapter.sockets = new Map();
+  }
+  /** Whether a request of this app's socket client is still answered. */
+  async function socketFetchAnswers(app: BuiltApp): Promise<boolean> {
+    const { fetch } = app.options.receiver!.options.installerOptions.clientOptions;
+    return Promise.race([fetch('https://slack.com/api/apps.connections.open').then(() => true, () => true), settle().then(() => false)]);
   }
 
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
-    stopWatches();
+    stopSockets();
     builtApps.length = 0;
     adapter.apps = new Map();
     adapter.started = Promise.resolve();
@@ -355,7 +367,7 @@ describe('Requirement: a Socket Mode connection that stays down is rebuilt', () 
   });
 
   afterEach(() => {
-    stopWatches();
+    stopSockets();
     vi.useRealTimers();
     delete process.env.SLACK_APP_TOKEN;
     mockAppStart.mockResolvedValue(undefined);
@@ -425,16 +437,17 @@ describe('Requirement: a Socket Mode connection that stays down is rebuilt', () 
 
     expect(builtApps[0].stop).toHaveBeenCalled();
     expect(failReconnect).not.toHaveBeenCalled();
+  });
 
-    // The stalled `apps.connections.open` answers late. The SDK's `start()`
-    // listens for `disconnected`, reports `connecting`, and its socket fails
-    // before hello.
-    const failLateStart = vi.fn();
-    client.once('disconnected', failLateStart);
-    client.emit('connecting');
-    client.emit('disconnected');
+  it('retires the stalled client, so a late apps.connections.open answer opens no socket', async () => {
+    mockAppStart.mockImplementation(connects);
+    await slackAdapterService.initializeConnection('conn-001');
+    clientOf(builtApps[0]).emit('reconnecting');
 
-    expect(failLateStart).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(SOCKET_STALL_MS);
+    await settle();
+
+    expect(await socketFetchAnswers(builtApps[0])).toBe(false);
   });
 
   it('receives Slack messages on the rebuilt connection', async () => {
@@ -497,7 +510,7 @@ describe('Requirement: a Socket Mode connection that stays down is rebuilt', () 
     ]);
   });
 
-  it('stops a replaced client that connects late and keeps the new app', async () => {
+  it('keeps the new app when the replaced start settles late', async () => {
     let finishFirstStart!: () => void;
     mockAppStart
       .mockImplementationOnce(() => new Promise<void>((resolve) => (finishFirstStart = resolve)))
@@ -506,14 +519,11 @@ describe('Requirement: a Socket Mode connection that stays down is rebuilt', () 
     await settle();
     await vi.advanceTimersByTimeAsync(SOCKET_STALL_MS);
     await settle();
-    const stopsBeforeLateConnect = builtApps[0].stop.mock.calls.length;
 
-    // The old client's `apps.connections.open` answers at last.
-    clientOf(builtApps[0]).emit('connected');
     finishFirstStart();
     await settle();
 
-    expect(builtApps[0].stop.mock.calls.length).toBeGreaterThan(stopsBeforeLateConnect);
+    expect(builtApps[0].stop).toHaveBeenCalled();
     expect(adapter.apps.get('T001').app).toBe(builtApps[1]);
   });
 
@@ -543,11 +553,40 @@ describe('Requirement: a Socket Mode connection that stays down is rebuilt', () 
     expect(builtApps).toHaveLength(1);
     expect(vi.getTimerCount()).toBe(0);
 
+    expect(await socketFetchAnswers(builtApps[0])).toBe(false);
+
     finishStart();
     await settle();
 
-    expect(builtApps[0].stop).toHaveBeenCalledOnce();
+    expect(builtApps[0].stop).toHaveBeenCalled();
     expect(slackAdapterService.listConnectedWorkspaces()).toEqual([]);
+  });
+
+  it.each([
+    ['shutdown', () => slackAdapterService.shutdown()],
+    ['disconnect', () => slackAdapterService.disconnectAndDeactivate('conn-001')],
+  ])('%s stops the app without failing a reconnect that waits for hello', async (_, stop) => {
+    mockAppStart.mockImplementation(connects);
+    mockSlackMappingService.deleteByConnectionId.mockResolvedValue(0);
+    mockPrisma.slackVerificationCode.deleteMany.mockResolvedValue({ count: 0 });
+    mockSlackHeartbeatTriggerService.deleteByConnectionId.mockResolvedValue(0);
+    mockPrisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof mockPrisma) => Promise<unknown>) => callback(mockPrisma),
+    );
+    await slackAdapterService.initializeConnection('conn-001');
+    const client = clientOf(builtApps[0]);
+    const failReconnect = vi.fn();
+    client.emit('reconnecting');
+    client.once('disconnected', failReconnect);
+    builtApps[0].stop.mockImplementation(async () => {
+      client.emit('disconnected');
+    });
+
+    await stop();
+
+    expect(builtApps[0].stop).toHaveBeenCalled();
+    expect(failReconnect).not.toHaveBeenCalled();
+    expect(await socketFetchAnswers(builtApps[0])).toBe(false);
   });
 });
 
