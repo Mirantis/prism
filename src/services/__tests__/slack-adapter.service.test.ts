@@ -66,22 +66,40 @@ vi.mock('../../utils/slack-formatter', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../utils/slack-formatter')>()),
   formatSlackMessage: (s: string) => s,
 }));
-const { mockAppStart, mockPostMessage } = vi.hoisted(() => ({
+/** A mocked Bolt app, as the adapter built it. */
+interface BuiltApp {
+  options: { botId?: string; botUserId?: string; receiver?: { client: import('node:events').EventEmitter } };
+  stop: ReturnType<typeof vi.fn>;
+  message: ReturnType<typeof vi.fn>;
+}
+
+const { mockAppStart, mockPostMessage, builtApps } = vi.hoisted(() => ({
   mockAppStart: vi.fn().mockResolvedValue(undefined),
   mockPostMessage: vi.fn(),
+  builtApps: [] as BuiltApp[],
 }));
 
-vi.mock('@slack/bolt', () => ({
-  App: class {
-    error = vi.fn();
-    start = mockAppStart;
-    client = { chat: { postMessage: mockPostMessage } };
-    message = vi.fn();
-    action = vi.fn();
-    event = vi.fn();
-  },
-  LogLevel: { INFO: 'info', WARN: 'warn' },
-}));
+vi.mock('@slack/bolt', async () => {
+  const { EventEmitter } = await import('node:events');
+  return {
+    App: class {
+      error = vi.fn();
+      start = mockAppStart;
+      stop = vi.fn().mockResolvedValue(undefined);
+      client = { chat: { postMessage: mockPostMessage } };
+      message = vi.fn();
+      action = vi.fn();
+      event = vi.fn();
+      constructor(readonly options: BuiltApp['options']) {
+        builtApps.push(this);
+      }
+    },
+    SocketModeReceiver: class {
+      client = new EventEmitter();
+    },
+    LogLevel: { INFO: 'info', WARN: 'warn' },
+  };
+});
 
 const { mockTrackEvent } = vi.hoisted(() => ({ mockTrackEvent: vi.fn() }));
 
@@ -96,6 +114,7 @@ vi.mock('../../logger', () => ({
 vi.mock('../../config', () => ({ config: {} }));
 
 import { slackAdapterService } from '../slack-adapter.service';
+import { SOCKET_STALL_MS } from '../slack-socket-watchdog';
 import { slackChannelLabel } from '../../utils/slack-formatter';
 import { attachmentService } from '../attachment.service';
 import { conversationService } from '../conversation.service';
@@ -291,6 +310,244 @@ describe('Requirement: boot does not wait for the Slack socket', () => {
     await delivered;
 
     expect(mockPostMessage).toHaveBeenCalledWith(expect.objectContaining({ channel: 'C001', text: 'Deployed.' }));
+  });
+});
+
+describe('Requirement: a Socket Mode connection that stays down is rebuilt', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const adapter = slackAdapterService as any;
+  const connection = {
+    id: 'conn-001',
+    teamId: 'T001',
+    teamName: 'Test Workspace',
+    isActive: true,
+    botToken: 'xoxb-test',
+    botId: 'B_BOT',
+    botUserId: 'U_BOT',
+  };
+
+  /** A start that reaches Slack: the client reports `connected` on Slack's hello. */
+  function connects(this: BuiltApp): Promise<void> {
+    this.options.receiver?.client.emit('connected');
+    return Promise.resolve();
+  }
+  /** A start that waits on `apps.connections.open` for ever. */
+  const hangs = (): Promise<void> => new Promise<void>(() => {});
+  /** Lets every pending promise job run; the fake timers leave setImmediate real. */
+  const settle = (): Promise<void> => new Promise<void>((resolve) => setImmediate(resolve));
+  const clientOf = (app: BuiltApp) => app.options.receiver!.client;
+
+  function stopWatches(): void {
+    for (const stopWatch of adapter.socketWatches.values()) stopWatch();
+    adapter.socketWatches = new Map();
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    stopWatches();
+    builtApps.length = 0;
+    adapter.apps = new Map();
+    adapter.started = Promise.resolve();
+    mockGetSlackConnection.mockResolvedValue(connection);
+    mockGetActiveSlackConnections.mockResolvedValue([connection]);
+    mockSlackMappingService.getActiveUserMappingsWithDmChannel.mockResolvedValue([]);
+    process.env.SLACK_APP_TOKEN = 'xapp-test';
+  });
+
+  afterEach(() => {
+    stopWatches();
+    vi.useRealTimers();
+    delete process.env.SLACK_APP_TOKEN;
+    mockAppStart.mockResolvedValue(undefined);
+  });
+
+  it('rebuilds a connection whose reconnect never gets a socket address', async () => {
+    mockAppStart.mockImplementation(connects);
+    await slackAdapterService.initializeConnection('conn-001');
+    expect(builtApps).toHaveLength(1);
+
+    // The socket drops; the reconnect then waits on `apps.connections.open`.
+    clientOf(builtApps[0]).emit('reconnecting');
+    await vi.advanceTimersByTimeAsync(SOCKET_STALL_MS - 1);
+    expect(builtApps).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await settle();
+
+    expect(builtApps).toHaveLength(2);
+    expect(builtApps[0].stop).toHaveBeenCalled();
+    expect(mockAppStart).toHaveBeenCalledTimes(2);
+    expect(adapter.apps.get('T001').app).toBe(builtApps[1]);
+  });
+
+  it('builds each app with the bot identity, so Bolt makes no auth.test of its own', async () => {
+    // An App built without them runs `auth.test` in its constructor, and a
+    // failure of that call during an outage ends the process.
+    mockAppStart.mockImplementation(connects);
+    await slackAdapterService.initializeConnection('conn-001');
+    clientOf(builtApps[0]).emit('reconnecting');
+    await vi.advanceTimersByTimeAsync(SOCKET_STALL_MS);
+    await settle();
+
+    for (const app of builtApps) expect(app.options).toMatchObject({ botId: 'B_BOT', botUserId: 'U_BOT' });
+  });
+
+  it('rebuilds a connection whose socket opens but never connects', async () => {
+    mockAppStart.mockImplementation(connects);
+    await slackAdapterService.initializeConnection('conn-001');
+    const client = clientOf(builtApps[0]);
+    client.emit('reconnecting');
+    client.emit('authenticated');
+    client.emit('connecting');
+
+    await vi.advanceTimersByTimeAsync(SOCKET_STALL_MS);
+    await settle();
+
+    expect(builtApps).toHaveLength(2);
+    expect(adapter.apps.get('T001').app).toBe(builtApps[1]);
+  });
+
+  it('stops the stalled app without failing the reconnect that waits for hello', async () => {
+    mockAppStart.mockImplementation(connects);
+    await slackAdapterService.initializeConnection('conn-001');
+    const client = clientOf(builtApps[0]);
+    // The SDK's reconnect waits for `connected` and rejects on `disconnected`,
+    // which `stop()` reports.
+    const failReconnect = vi.fn();
+    client.emit('reconnecting');
+    client.once('disconnected', failReconnect);
+    builtApps[0].stop.mockImplementation(async () => {
+      client.emit('disconnected');
+    });
+
+    await vi.advanceTimersByTimeAsync(SOCKET_STALL_MS);
+    await settle();
+
+    expect(builtApps[0].stop).toHaveBeenCalled();
+    expect(failReconnect).not.toHaveBeenCalled();
+
+    // The stalled `apps.connections.open` answers late. The SDK's `start()`
+    // listens for `disconnected`, reports `connecting`, and its socket fails
+    // before hello.
+    const failLateStart = vi.fn();
+    client.once('disconnected', failLateStart);
+    client.emit('connecting');
+    client.emit('disconnected');
+
+    expect(failLateStart).not.toHaveBeenCalled();
+  });
+
+  it('receives Slack messages on the rebuilt connection', async () => {
+    mockAppStart.mockImplementation(connects);
+    await slackAdapterService.initializeConnection('conn-001');
+    clientOf(builtApps[0]).emit('reconnecting');
+    await vi.advanceTimersByTimeAsync(SOCKET_STALL_MS);
+    await settle();
+    const handleDmMessage = vi.spyOn(adapter, 'handleDmMessage').mockResolvedValue(undefined);
+
+    const [onMessage] = builtApps[1].message.mock.calls[0];
+    await onMessage({
+      message: { user: 'U_HUMAN', text: 'are you there?', channel: 'D001', channel_type: 'im', ts: '1710000000.000100' },
+      say: vi.fn(),
+    });
+
+    expect(handleDmMessage).toHaveBeenCalledWith(
+      'conn-001',
+      'U_HUMAN',
+      'are you there?',
+      'D001',
+      expect.any(Function),
+      'T001',
+      '1710000000.000100',
+      undefined,
+      [],
+    );
+  });
+
+  it('never rebuilds a healthy connection', async () => {
+    mockAppStart.mockImplementation(connects);
+    await slackAdapterService.initializeConnection('conn-001');
+    const client = clientOf(builtApps[0]);
+
+    // Slack asks the client to reconnect from time to time; it is back in seconds.
+    for (let minute = 0; minute < 30; minute += 1) {
+      await vi.advanceTimersByTimeAsync(55_000);
+      client.emit('reconnecting');
+      await vi.advanceTimersByTimeAsync(5_000);
+      client.emit('connected');
+    }
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    await settle();
+
+    expect(builtApps).toHaveLength(1);
+    expect(builtApps[0].stop).not.toHaveBeenCalled();
+  });
+
+  it('builds the connection again after a failed start', async () => {
+    mockAppStart.mockRejectedValueOnce(new Error('invalid_auth')).mockImplementation(connects);
+    await slackAdapterService.initializeConnection('conn-001');
+    expect(slackAdapterService.listConnectedWorkspaces()).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(SOCKET_STALL_MS);
+    await settle();
+
+    expect(builtApps).toHaveLength(2);
+    expect(slackAdapterService.listConnectedWorkspaces()).toEqual([
+      { teamId: 'T001', teamName: 'Test Workspace', botUserId: 'U_BOT' },
+    ]);
+  });
+
+  it('stops a replaced client that connects late and keeps the new app', async () => {
+    let finishFirstStart!: () => void;
+    mockAppStart
+      .mockImplementationOnce(() => new Promise<void>((resolve) => (finishFirstStart = resolve)))
+      .mockImplementation(connects);
+    void slackAdapterService.initializeConnection('conn-001');
+    await settle();
+    await vi.advanceTimersByTimeAsync(SOCKET_STALL_MS);
+    await settle();
+    const stopsBeforeLateConnect = builtApps[0].stop.mock.calls.length;
+
+    // The old client's `apps.connections.open` answers at last.
+    clientOf(builtApps[0]).emit('connected');
+    finishFirstStart();
+    await settle();
+
+    expect(builtApps[0].stop.mock.calls.length).toBeGreaterThan(stopsBeforeLateConnect);
+    expect(adapter.apps.get('T001').app).toBe(builtApps[1]);
+  });
+
+  it('hands the rebuilt app to work that waited for a boot start that never connects', async () => {
+    mockAppStart.mockImplementationOnce(hangs).mockImplementation(connects);
+    await slackAdapterService.initialize();
+    await settle();
+    // A reply the boot continues waits for the boot's starts.
+    const waiting = slackAdapterService.getAppForTeam('T001');
+
+    await vi.advanceTimersByTimeAsync(SOCKET_STALL_MS);
+    await settle();
+    const app = await Promise.race([waiting, settle().then(() => 'still waiting')]);
+
+    expect(app).toMatchObject({ app: builtApps[1] });
+  });
+
+  it('does not rebuild after shutdown, and stops a start that connects after it', async () => {
+    let finishStart!: () => void;
+    mockAppStart.mockImplementation(() => new Promise<void>((resolve) => (finishStart = resolve)));
+    void slackAdapterService.initializeConnection('conn-001');
+    await settle();
+
+    await slackAdapterService.shutdown();
+    await vi.advanceTimersByTimeAsync(10 * SOCKET_STALL_MS);
+    await settle();
+    expect(builtApps).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
+
+    finishStart();
+    await settle();
+
+    expect(builtApps[0].stop).toHaveBeenCalledOnce();
+    expect(slackAdapterService.listConnectedWorkspaces()).toEqual([]);
   });
 });
 
