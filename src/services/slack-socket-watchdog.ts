@@ -14,7 +14,7 @@
 export const SOCKET_STALL_MS = 3 * 60_000;
 
 /** The lifecycle events of a Socket Mode client that the watch reads. */
-export interface SocketEvents {
+interface SocketEvents {
   on(event: string, listener: () => void): unknown;
   off(event: string, listener: () => void): unknown;
 }
