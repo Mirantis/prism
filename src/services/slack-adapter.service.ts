@@ -699,8 +699,7 @@ class SlackAdapterService implements ChannelAdapter {
     // level-matched logger rather than Bolt's named one.
     //
     // The adapter builds the receiver itself, so the socket watch can read the
-    // lifecycle events of its client, and a stop can retire its requests. The
-    // socket's own logger names its lines `socket-mode:…` rather than `bolt-app`.
+    // lifecycle events of its client, and a stop can retire its requests.
     //
     // `botId` and `botUserId` come from the boot's `auth.test`. Without them the
     // App constructor runs its own `auth.test`, and a failure of that call is an
