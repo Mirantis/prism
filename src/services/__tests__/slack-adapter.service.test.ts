@@ -555,6 +555,27 @@ describe('Requirement: a Socket Mode connection that stays down is rebuilt', () 
     expect(await waiting).toMatchObject({ app: builtApps[1] });
   });
 
+  it.each([
+    ['a disconnect', () => slackAdapterService.disconnectAndDeactivate('conn-001')],
+    ['a new connection for the team', () => slackAdapterService.initializeConnection('conn-001')],
+  ])('ends the boot when %s stops its pending start', async (_, stop) => {
+    mockAppStart.mockImplementationOnce(hangs).mockImplementation(connects);
+    mockSlackMappingService.deleteByConnectionId.mockResolvedValue(0);
+    mockPrisma.slackVerificationCode.deleteMany.mockResolvedValue({ count: 0 });
+    mockSlackHeartbeatTriggerService.deleteByConnectionId.mockResolvedValue(0);
+    mockPrisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof mockPrisma) => Promise<unknown>) => callback(mockPrisma),
+    );
+    await slackAdapterService.initialize();
+    await settle();
+    const waiting = slackAdapterService.getAppForTeam('T001');
+
+    await stop();
+    await settle();
+
+    expect(await Promise.race([waiting.then(() => 'settled'), settle().then(() => 'still waiting')])).toBe('settled');
+  });
+
   it('hands the rebuilt app to work that waited for a boot start that never connects', async () => {
     mockAppStart.mockImplementationOnce(hangs).mockImplementation(connects);
     await slackAdapterService.initialize();
