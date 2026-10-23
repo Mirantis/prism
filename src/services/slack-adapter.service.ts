@@ -662,8 +662,7 @@ class SlackAdapterService implements ChannelAdapter {
     //     platform `__nexus_cred:<uuid>__` sentinel (header-only rewrite).
     //   - `BOUNDED_SLACK_CLIENT_OPTIONS`: a request deadline and a few
     //     seconds-scale retries instead of the SDK's `timeout: 0` +
-    //     ~30 minutes of them, for every post and for the `auth.test` that
-    //     `app.start()` runs. `app.start()` still waits on
+    //     ~30 minutes of them, for every post. `app.start()` still waits on
     //     `apps.connections.open` under the SDK's own `timeout: 0`, which is
     //     why `initialize()` does not wait for it.
     //
@@ -680,8 +679,14 @@ class SlackAdapterService implements ChannelAdapter {
     // literal: anything the socket leg also needs — a proxying `fetch`, say —
     // has to be added to *both*, and its WebClient logs through a plain
     // level-matched logger rather than Bolt's named one.
+    //
+    // `botId` and `botUserId` come from the boot's `auth.test`. Without them the
+    // App constructor runs its own `auth.test`, and a failure of that call is an
+    // unhandled rejection, which ends the process during an outage.
     const app = new App({
       token: botToken,
+      botId: connection.botId,
+      botUserId: connection.botUserId,
       ...(isSocketMode && {
         appToken,
         socketMode: true,

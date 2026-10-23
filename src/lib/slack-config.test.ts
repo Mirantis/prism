@@ -79,6 +79,7 @@ describe('slack-config', () => {
       teamId: 'T123',
       teamName: 'Test Team',
       botToken: 'xoxb-TEST',
+      botId: 'B123',
       botUserId: 'UBOT',
       installedAt: expect.any(String),
       isActive: true,

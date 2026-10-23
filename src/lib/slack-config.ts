@@ -20,6 +20,7 @@ export interface SlackConnectionRecord {
   teamId: string;
   teamName: string;
   botToken: string;
+  botId: string;
   botUserId: string;
   installedAt: string;
   isActive: boolean;
@@ -84,6 +85,7 @@ async function loadFromEnv(): Promise<SlackConnectionRecord | null> {
     teamId,
     teamName,
     botToken,
+    botId,
     botUserId,
     installedAt: new Date().toISOString(),
     isActive: true,

@@ -21,6 +21,7 @@ const singletonRecord: SlackConnectionRecord = {
   teamId: 'T123',
   teamName: 'Test',
   botToken: 'xoxb-TEST',
+  botId: 'BBOT',
   botUserId: 'UBOT',
   installedAt: new Date().toISOString(),
   isActive: true,
