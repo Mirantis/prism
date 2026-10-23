@@ -730,11 +730,12 @@ class SlackAdapterService implements ChannelAdapter {
 
     // Start Socket Mode if available. The watch stays armed when the start
     // fails, so the connection is built again after SOCKET_STALL_MS. When the
-    // watch rebuilds the app, this start ends with the rebuild, so the boot's
-    // `started` settles even when this start never does.
+    // watch rebuilds the app, this call ends with the rebuild, so the boot's
+    // `started` waits for the first app that connects or fails.
     if (receiver) {
       const { teamId } = connection;
       await this.sockets.get(teamId)?.stop();
+      let rebuild: Promise<void> | undefined;
       let onRebuild!: (done: Promise<void>) => void;
       const rebuilt = new Promise<void>((resolve) => (onRebuild = resolve));
       const handle: SocketHandle = {
@@ -746,14 +747,17 @@ class SlackAdapterService implements ChannelAdapter {
         },
       };
       const stopWatch = watchSocket(receiver.client, () => {
-        onRebuild(this.rebuildSocket(connectionId, teamId, handle));
+        rebuild = this.rebuildSocket(connectionId, teamId, handle);
+        onRebuild(rebuild);
       });
       this.sockets.set(teamId, handle);
       try {
         const connected = await Promise.race([app.start().then(() => true), rebuilt.then(() => false)]);
         if (!connected) return;
       } catch (error: unknown) {
-        if (this.sockets.get(teamId) !== handle) return;
+        // A rebuild, a shutdown or a disconnect replaced this app while it
+        // started. The call ends with the rebuild, when one runs.
+        if (this.sockets.get(teamId) !== handle) return rebuild;
         const message = error instanceof Error ? error.message : String(error);
         logger.error(
           'Slack Socket Mode failed for %s; trying again in %d minutes: %s',
@@ -764,9 +768,9 @@ class SlackAdapterService implements ChannelAdapter {
         return;
       }
       if (this.sockets.get(teamId) !== handle) {
-        // A rebuild, a shutdown or a disconnect replaced this app while it started.
+        // Replaced while it started, as above.
         await handle.stop();
-        return;
+        return rebuild;
       }
       logger.info('Slack Socket Mode connected: %s', connection.teamName);
     } else {
