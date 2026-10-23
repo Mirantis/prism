@@ -728,18 +728,20 @@ class SlackAdapterService implements ChannelAdapter {
     this.setupFeedbackActionHandlers(app);
 
     // Start Socket Mode if available. The watch stays armed when the start
-    // fails, so the connection is built again after SOCKET_STALL_MS. When the
-    // watch rebuilds the app, this call ends with the rebuild, so the boot's
-    // `started` waits for the first app that connects or fails.
+    // fails, so the connection is built again after SOCKET_STALL_MS. A stop
+    // leaves the start pending for good, so the stop also ends this call. When
+    // the stop comes from the watch's rebuild, the call ends with the rebuild,
+    // so the boot's `started` waits for the first app that connects or fails.
     if (receiver) {
       const { teamId } = connection;
       await this.sockets.get(teamId)?.stop();
       let rebuild: Promise<void> | undefined;
-      let onRebuild!: (done: Promise<void>) => void;
-      const rebuilt = new Promise<void>((resolve) => (onRebuild = resolve));
+      let onStop!: () => void;
+      const stopped = new Promise<void>((resolve) => (onStop = resolve));
       const handle: SocketHandle = {
         stop: async () => {
           stopWatch();
+          onStop();
           await retireSocketApp(app, receiver.client, socketFetch.retire).catch((error: unknown) => {
             logger.warn({ err: error, teamId }, 'Failed to stop a Slack Socket Mode app');
           });
@@ -747,12 +749,11 @@ class SlackAdapterService implements ChannelAdapter {
       };
       const stopWatch = watchSocket(receiver.client, () => {
         rebuild = this.rebuildSocket(connectionId, teamId, handle);
-        onRebuild(rebuild);
       });
       this.sockets.set(teamId, handle);
       try {
-        const connected = await Promise.race([app.start().then(() => true), rebuilt.then(() => false)]);
-        if (!connected) return;
+        const connected = await Promise.race([app.start().then(() => true), stopped.then(() => false)]);
+        if (!connected) return rebuild;
       } catch (error: unknown) {
         // A rebuild, a shutdown or a disconnect replaced this app while it
         // started. The call ends with the rebuild, when one runs.
