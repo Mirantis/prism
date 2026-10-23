@@ -59,6 +59,7 @@ import {
   createToolStatusListener,
 } from './slack-working-indicator';
 import { SOCKET_STALL_MS, watchSocket } from './slack-socket-watchdog';
+import { retirableFetch, retireSocketApp } from './slack-socket-retire';
 
 // ============================================================================
 // Tunables
@@ -83,6 +84,11 @@ type GateMessage = { user?: string; text?: string; ts?: string };
  * thread classifier; `react` puts 👀 on a message addressed to another person.
  */
 type ThreadParticipation = ThreadAction | { action: 'react' };
+
+/** A Socket Mode app the adapter started. `stop` ends its watch and retires its client. */
+interface SocketHandle {
+  stop(): Promise<void>;
+}
 
 export interface SlackApp {
   app: App;
@@ -136,11 +142,10 @@ class SlackAdapterService implements ChannelAdapter {
   /** The boot's Socket Mode starts, settled whether or not they connected. */
   private started: Promise<void> = Promise.resolve();
   /**
-   * The stop function of each team's socket watch. It also identifies the
-   * team's current app: a rebuild or a late start whose watch is not here
-   * belongs to an app that was replaced or shut down.
+   * Each team's current Socket Mode app. A rebuild or a late start whose handle
+   * is not here belongs to an app that was replaced or shut down.
    */
-  private socketWatches = new Map<string, () => void>();
+  private sockets = new Map<string, SocketHandle>();
 
   // Reads the live Slack thread; used here to await read-consistency. Created
   // lazily (not in a field initializer) because SlackThreadProvider imports
@@ -610,9 +615,11 @@ class SlackAdapterService implements ChannelAdapter {
   async shutdown(): Promise<void> {
     logger.info('Shutting down Slack adapter...');
 
-    // Stop the watches first: a stopped client reports `disconnected`.
-    for (const stopWatch of this.socketWatches.values()) stopWatch();
-    this.socketWatches.clear();
+    // Stop the Socket Mode apps first: a stopped client reports `disconnected`,
+    // which re-arms a watch and fails a reconnect that waits for hello.
+    const sockets = [...this.sockets.values()];
+    this.sockets.clear();
+    await Promise.all(sockets.map((socket) => socket.stop()));
 
     // Clear working indicators while the Bolt clients are still up, so the
     // best-effort reaction removals / status clears can reach Slack.
@@ -692,14 +699,15 @@ class SlackAdapterService implements ChannelAdapter {
     // level-matched logger rather than Bolt's named one.
     //
     // The adapter builds the receiver itself, so the socket watch can read the
-    // lifecycle events of its client. The socket's own logger names its lines
-    // `socket-mode:…` rather than `bolt-app`.
+    // lifecycle events of its client, and a stop can retire its requests. The
+    // socket's own logger names its lines `socket-mode:…` rather than `bolt-app`.
     //
     // `botId` and `botUserId` come from the boot's `auth.test`. Without them the
     // App constructor runs its own `auth.test`, and a failure of that call is an
     // unhandled rejection, which ends the process during an outage.
+    const socketFetch = retirableFetch(stripBodyToken);
     const receiver = appToken
-      ? new SocketModeReceiver({ appToken, logLevel, installerOptions: { clientOptions: { fetch: stripBodyToken } } })
+      ? new SocketModeReceiver({ appToken, logLevel, installerOptions: { clientOptions: { fetch: socketFetch.fetch } } })
       : undefined;
     const app = new App({
       token: botToken,
@@ -725,18 +733,27 @@ class SlackAdapterService implements ChannelAdapter {
     // watch rebuilds the app, this start ends with the rebuild, so the boot's
     // `started` settles even when this start never does.
     if (receiver) {
-      this.socketWatches.get(connection.teamId)?.();
-      let onRebuild!: (rebuild: Promise<void>) => void;
+      const { teamId } = connection;
+      await this.sockets.get(teamId)?.stop();
+      let onRebuild!: (done: Promise<void>) => void;
       const rebuilt = new Promise<void>((resolve) => (onRebuild = resolve));
+      const handle: SocketHandle = {
+        stop: async () => {
+          stopWatch();
+          await retireSocketApp(app, receiver.client, socketFetch.retire).catch((error: unknown) => {
+            logger.warn({ err: error, teamId }, 'Failed to stop a Slack Socket Mode app');
+          });
+        },
+      };
       const stopWatch = watchSocket(receiver.client, () => {
-        onRebuild(this.rebuildSocket(connectionId, connection.teamId, app, receiver.client, stopWatch));
+        onRebuild(this.rebuildSocket(connectionId, teamId, handle));
       });
-      this.socketWatches.set(connection.teamId, stopWatch);
+      this.sockets.set(teamId, handle);
       try {
         const connected = await Promise.race([app.start().then(() => true), rebuilt.then(() => false)]);
         if (!connected) return;
       } catch (error: unknown) {
-        if (this.socketWatches.get(connection.teamId) !== stopWatch) return;
+        if (this.sockets.get(teamId) !== handle) return;
         const message = error instanceof Error ? error.message : String(error);
         logger.error(
           'Slack Socket Mode failed for %s; trying again in %d minutes: %s',
@@ -746,9 +763,9 @@ class SlackAdapterService implements ChannelAdapter {
         );
         return;
       }
-      if (this.socketWatches.get(connection.teamId) !== stopWatch) {
+      if (this.sockets.get(teamId) !== handle) {
         // A rebuild, a shutdown or a disconnect replaced this app while it started.
-        await app.stop();
+        await handle.stop();
         return;
       }
       logger.info('Slack Socket Mode connected: %s', connection.teamName);
@@ -773,38 +790,15 @@ class SlackAdapterService implements ChannelAdapter {
 
   /**
    * Replace a Socket Mode app whose client has not connected for
-   * SOCKET_STALL_MS. The rebuild stops when `stopWatch` is no longer the team's
-   * watch, because a shutdown, a disconnect or a newer connection replaced it.
-   * The old app stays in `apps` until the new one connects, so posts keep working.
+   * SOCKET_STALL_MS. The rebuild stops when `handle` is no longer the team's
+   * current app, because a shutdown, a disconnect or a newer connection
+   * replaced it. The old app stays in `apps` until the new one connects, so
+   * posts keep working.
    */
-  private async rebuildSocket(
-    connectionId: string,
-    teamId: string,
-    app: App,
-    client: SocketModeReceiver['client'],
-    stopWatch: () => void,
-  ): Promise<void> {
+  private async rebuildSocket(connectionId: string, teamId: string, handle: SocketHandle): Promise<void> {
     logger.warn('Slack socket for team %s has not connected for %d minutes; rebuilding it', teamId, SOCKET_STALL_MS / 60_000);
-    // A reconnect of the SDK runs `start()`, which waits for Slack's hello and
-    // rejects, with no handler, when the client reports `disconnected`. That
-    // rejection ends the process, and a stopped client reports `disconnected`.
-    // So the stop removes that listener now, and again when a late
-    // `apps.connections.open` answer starts a socket (`connecting` follows the
-    // listener).
-    const dropStartListener = (): void => {
-      client.removeAllListeners('disconnected');
-    };
-    const stopApp = (): Promise<unknown> => {
-      dropStartListener();
-      return app.stop().catch((error: unknown) => {
-        logger.warn({ err: error, teamId }, 'Failed to stop the stalled Slack app');
-      });
-    };
-    client.once('connecting', dropStartListener);
-    // That late socket can also reach hello.
-    client.once('connected', () => void stopApp());
-    await stopApp();
-    if (this.socketWatches.get(teamId) !== stopWatch) return;
+    await handle.stop();
+    if (this.sockets.get(teamId) !== handle) return;
     await this.initializeConnection(connectionId).catch((error: unknown) => {
       logger.error({ err: error, teamId }, 'Failed to rebuild the Slack connection');
     });
@@ -2208,10 +2202,11 @@ class SlackAdapterService implements ChannelAdapter {
       throw new Error('Connection not found');
     }
 
-    // Stop the socket watch and the Bolt app first so no new messages arrive
-    // during cleanup and no rebuild starts.
-    this.socketWatches.get(connection.teamId)?.();
-    this.socketWatches.delete(connection.teamId);
+    // Stop the Socket Mode app first so no new messages arrive during cleanup
+    // and no rebuild starts.
+    const socket = this.sockets.get(connection.teamId);
+    this.sockets.delete(connection.teamId);
+    await socket?.stop();
     const slackApp = this.apps.get(connection.teamId);
     try {
       if (slackApp?.isSocketMode) {
