@@ -57,6 +57,9 @@ export interface PendingMessage {
   attachmentIds: string[];
 }
 
+/** One claim's messages, oldest first. */
+type Inbox = PendingMessage[];
+
 interface ThreadState {
   /**
    * Tail of the FIFO queue. Each mutex acquisition chains onto the previous tail
@@ -66,11 +69,11 @@ interface ThreadState {
   tail: Promise<void>;
   /** Mutex acquisitions queued or running; keeps the entry alive. */
   refs: number;
-  /** True while a turn owns the thread's inbox and will answer what lands in it. */
-  claimed: boolean;
-  /** Messages handed to the claiming turn, oldest first. */
-  pending: PendingMessage[];
-  /** Callers of `claimWhenFree`, each given the claim in turn when the one before releases it. */
+  /** The inbox of the claim that takes hand-overs now, or null when the thread is free. */
+  accepting: Inbox | null;
+  /** The inbox of every claim not yet released, the accepting one and any closed one. */
+  open: Set<Inbox>;
+  /** Callers of `claimWhenFree`, each given the claim in turn when the one before stops taking hand-overs. */
   queued: Array<(claim: ThreadClaim) => void>;
 }
 
@@ -86,8 +89,8 @@ export interface ThreadClaim {
    * the inbox has been collecting messages in the meantime.
    */
   run<T>(fn: () => Promise<T>): Promise<T>;
-  /** Take everything pending, oldest first, to fold into the next step. */
-  drain(): PendingMessage[];
+  /** Take what is pending, oldest first, or only the messages `which` selects. */
+  drain(which?: (message: PendingMessage) => boolean): PendingMessage[];
   /**
    * Take what is pending, or release the claim when nothing is. Synchronous, so
    * the emptiness test and the release are one act: a message cannot arrive
@@ -103,6 +106,13 @@ export interface ThreadClaim {
    * Returns nothing once the claim has ended.
    */
   end(): PendingMessage[];
+  /**
+   * Stop taking hand-overs, for an exchange that was cancelled and is still
+   * unwinding. The next message takes the thread and gets a turn of its own,
+   * which runs once this one leaves the mutex. What was handed over before
+   * stays with this claim until it ends.
+   */
+  close(): void;
 }
 
 /** Log a warning past this many pending messages — a sign of a stuck turn. */
@@ -126,12 +136,11 @@ class ThreadTurnService {
    */
   claimOrOffer(threadId: string, message: PendingMessage): ThreadClaim | null {
     const state = this.stateFor(threadId);
-    if (state.claimed) {
-      this.push(threadId, state, message);
+    if (state.accepting) {
+      this.push(threadId, state.accepting, message);
       return null;
     }
 
-    state.claimed = true;
     return this.claimFor(threadId, state);
   }
 
@@ -142,10 +151,7 @@ class ThreadTurnService {
    */
   claimWhenFree(threadId: string): Promise<ThreadClaim> {
     const state = this.stateFor(threadId);
-    if (!state.claimed) {
-      state.claimed = true;
-      return Promise.resolve(this.claimFor(threadId, state));
-    }
+    if (!state.accepting) return Promise.resolve(this.claimFor(threadId, state));
     return new Promise((resolve) => state.queued.push(resolve));
   }
 
@@ -158,10 +164,10 @@ class ThreadTurnService {
    * gateway) and fall back to it.
    */
   offer(threadId: string, message: PendingMessage): boolean {
-    const state = this.threads.get(threadId);
-    if (!state?.claimed) return false;
+    const inbox = this.threads.get(threadId)?.accepting;
+    if (!inbox) return false;
 
-    this.push(threadId, state, message);
+    this.push(threadId, inbox, message);
     return true;
   }
 
@@ -176,14 +182,10 @@ class ThreadTurnService {
    * became history.
    */
   withdraw(threadId: string, message: PendingMessage): boolean {
-    const state = this.threads.get(threadId);
-    if (!state) return false;
+    const inbox = [...(this.threads.get(threadId)?.open ?? [])].find((open) => open.includes(message));
+    if (!inbox) return false;
 
-    const at = state.pending.indexOf(message);
-    if (at === -1) return false;
-
-    state.pending.splice(at, 1);
-    this.forget(threadId, state);
+    inbox.splice(inbox.indexOf(message), 1);
     return true;
   }
 
@@ -196,14 +198,14 @@ class ThreadTurnService {
     return this.withMutex(threadId, fn);
   }
 
-  /** True while a turn owns the thread and its inbox (logs/tests). */
+  /** True while a turn takes hand-overs on the thread (logs/tests). */
   isClaimed(threadId: string): boolean {
-    return Boolean(this.threads.get(threadId)?.claimed);
+    return Boolean(this.threads.get(threadId)?.accepting);
   }
 
-  /** How many messages are waiting on the claiming turn (logs/tests). */
+  /** How many messages are waiting on the turns that hold claims on the thread (logs/tests). */
   pendingCount(threadId: string): number {
-    return this.threads.get(threadId)?.pending.length ?? 0;
+    return [...(this.threads.get(threadId)?.open ?? [])].reduce((sum, inbox) => sum + inbox.length, 0);
   }
 
   /**
@@ -247,19 +249,32 @@ class ThreadTurnService {
   }
 
   private claimFor(threadId: string, state: ThreadState): ThreadClaim {
+    const inbox: Inbox = [];
+    state.accepting = inbox;
+    state.open.add(inbox);
     let open = true;
+
+    // A claim that stops taking hand-overs passes the thread to the first caller
+    // waiting for it, in the same act, so no message can take it between them.
+    const close = () => {
+      if (state.accepting !== inbox) return;
+      state.accepting = null;
+      const next = state.queued.shift();
+      if (next) next(this.claimFor(threadId, state));
+    };
 
     const release = (): PendingMessage[] => {
       if (!open) return [];
       open = false;
-      state.claimed = false;
+      close();
+      state.open.delete(inbox);
       // Nothing pending outlives the turn that could have answered it. A turn
       // ends its exchange through `drainOrRelease()`, which only releases on an
       // empty inbox — so anything here belongs to a turn that ended some other
       // way: a cancel, or a throw. The messages are stored either way, so they
       // stay in history for the next turn to read; keeping the pending copy
       // would instead hand that turn text it has already seen.
-      const abandoned = this.take(state);
+      const abandoned = inbox.splice(0);
       if (abandoned.length > 0) {
         logger.info(
           'Thread %s released with %d message(s) no turn took; they stay in history',
@@ -267,13 +282,7 @@ class ThreadTurnService {
           abandoned.length,
         );
       }
-      const next = state.queued.shift();
-      if (next) {
-        state.claimed = true;
-        next(this.claimFor(threadId, state));
-      } else {
-        this.forget(threadId, state);
-      }
+      this.forget(threadId, state);
       return abandoned;
     };
 
@@ -292,44 +301,44 @@ class ThreadTurnService {
           release();
         });
       },
-      drain: () => {
+      drain: (which) => {
         check('drain');
-        return this.take(state);
+        if (!which) return inbox.splice(0);
+        const taken = inbox.filter(which);
+        inbox.splice(0, inbox.length, ...inbox.filter((message) => !which(message)));
+        return taken;
       },
       drainOrRelease: () => {
         check('drainOrRelease');
-        if (state.pending.length === 0) {
+        if (inbox.length === 0) {
           release();
           return [];
         }
-        return this.take(state);
+        return inbox.splice(0);
       },
       end: release,
+      close: () => {
+        if (open) close();
+      },
     };
   }
 
-  private push(threadId: string, state: ThreadState, message: PendingMessage): void {
-    state.pending.push(message);
+  private push(threadId: string, inbox: Inbox, message: PendingMessage): void {
+    inbox.push(message);
 
-    if (state.pending.length === PENDING_WARN_THRESHOLD) {
+    if (inbox.length === PENDING_WARN_THRESHOLD) {
       logger.warn(
         'Thread %s has %d messages waiting on the turn that owns it — the turn may be stuck',
         threadId,
-        state.pending.length,
+        inbox.length,
       );
     }
-  }
-
-  private take(state: ThreadState): PendingMessage[] {
-    const taken = state.pending;
-    state.pending = [];
-    return taken;
   }
 
   private stateFor(threadId: string): ThreadState {
     let state = this.threads.get(threadId);
     if (!state) {
-      state = { tail: Promise.resolve(), refs: 0, claimed: false, pending: [], queued: [] };
+      state = { tail: Promise.resolve(), refs: 0, accepting: null, open: new Set(), queued: [] };
       this.threads.set(threadId, state);
     }
     return state;
@@ -341,7 +350,7 @@ class ThreadTurnService {
    * the entry, which is what lets a claim outlive the mutex acquisition it wraps.
    */
   private forget(threadId: string, state: ThreadState): void {
-    if (state.refs === 0 && !state.claimed && state.pending.length === 0) {
+    if (state.refs === 0 && state.open.size === 0) {
       this.threads.delete(threadId);
     }
   }

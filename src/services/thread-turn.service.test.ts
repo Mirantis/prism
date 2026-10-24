@@ -443,6 +443,79 @@ describe('threadTurnService', () => {
     });
   });
 
+  describe('close', () => {
+    it('lets the next message take the thread while the closed claim still runs', async () => {
+      const thread = nextThread();
+      const first = claim(thread);
+      const held = deferred();
+      const running = first.run(() => held.promise);
+
+      first.close();
+
+      expect(threadTurnService.offer(thread, msg('after the stop'))).toBe(false);
+      const second = threadTurnService.claimOrOffer(thread, msg('a turn of its own'));
+      expect(second).not.toBeNull();
+      held.resolve();
+      await running;
+      // The closed claim's release leaves the next claim in place.
+      expect(threadTurnService.isClaimed(thread)).toBe(true);
+      expect(threadTurnService.offer(thread, msg('steers the second turn'))).toBe(true);
+      expect(second!.drain()).toEqual([msg('steers the second turn')]);
+      second!.end();
+    });
+
+    it('keeps what was handed over before the close with the closed claim', () => {
+      const thread = nextThread();
+      const first = claim(thread);
+      threadTurnService.offer(thread, msg('before the stop'));
+      first.close();
+      const second = claim(thread);
+      threadTurnService.offer(thread, msg('after the stop'));
+
+      expect(first.end()).toEqual([msg('before the stop')]);
+      expect(second.drain()).toEqual([msg('after the stop')]);
+      second.end();
+      expect(threadTurnService.isTracked(thread)).toBe(false);
+    });
+
+    it('gives the thread to a caller waiting for it', async () => {
+      const thread = nextThread();
+      const first = claim(thread);
+      const waiting = threadTurnService.claimWhenFree(thread);
+
+      first.close();
+
+      const next = await waiting;
+      expect(threadTurnService.isClaimed(thread)).toBe(true);
+      first.end();
+      expect(threadTurnService.isClaimed(thread)).toBe(true);
+      next.end();
+    });
+
+    it('withdraws a message from a closed claim', () => {
+      const thread = nextThread();
+      const first = claim(thread);
+      const handed = msg('withdrawn');
+      threadTurnService.offer(thread, handed);
+      first.close();
+
+      expect(threadTurnService.withdraw(thread, handed)).toBe(true);
+      expect(first.end()).toEqual([]);
+    });
+  });
+
+  describe('drain with a selection', () => {
+    it('takes the selected messages and keeps the rest in order', () => {
+      const thread = nextThread();
+      const taken = claim(thread);
+      for (const text of ['a', 'b', 'c']) threadTurnService.offer(thread, msg(text));
+
+      expect(taken.drain((message) => message.text === 'b')).toEqual([msg('b')]);
+      expect(taken.drain()).toEqual([msg('a'), msg('c')]);
+      taken.end();
+    });
+  });
+
   describe('claim scoping', () => {
     it('rejects a claim used after it ended', async () => {
       // The claim is the only route to the inbox, and it dies with the exchange —

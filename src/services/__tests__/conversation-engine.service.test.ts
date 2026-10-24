@@ -1438,6 +1438,94 @@ describe('Requirement: Conversation Engine', () => {
       expect(threadTurnService.pendingCount(steerThread)).toBe(0);
     });
 
+    it('answers a message sent after the stop with a turn of its own', async () => {
+      // The stopped turn is still unwinding, e.g. a tool call finishing its abort.
+      const held = heldTurn();
+      mockInvokeStream.mockImplementationOnce(held.generator).mockImplementation(instantTurn);
+      const controller = new AbortController();
+      const first = conversationEngineService.chat(
+        steerInput('review the PR', { abortSignal: controller.signal }),
+      );
+      await held.running;
+
+      controller.abort();
+      const second = conversationEngineService.chat(steerInput('summarize the README instead'));
+      held.release();
+      await first;
+      await second;
+
+      expect(mockInvokeStream).toHaveBeenCalledTimes(2);
+      expect(mockInvokeStream.mock.calls[1][0].prompt).toBe('summarize the README instead');
+    });
+
+    it('leaves a steer-only message sent after the stop to its transport', async () => {
+      const held = heldTurn();
+      mockInvokeStream.mockImplementation(held.generator);
+      const controller = new AbortController();
+      const first = conversationEngineService.chat(
+        steerInput('review the PR', { abortSignal: controller.signal }),
+      );
+      await held.running;
+
+      controller.abort();
+      const offered = await conversationEngineService.chat(
+        steerInput('summarize the README instead', { steerOnly: true, stored: { id: 'msg-after-stop', titleSet: null } }),
+      );
+      held.release();
+      await first;
+
+      expect(offered.steered).toBe(false);
+    });
+
+    it('does not inject a handed-over message that the history it read already holds', async () => {
+      // The second message is stored while the first turn still reads the agent,
+      // so the history the turn reads ends on it.
+      let readAgent!: () => void;
+      const agentRead = new Promise<void>((r) => {
+        readAgent = r;
+      });
+      mockGetAgent.mockImplementationOnce(async () => {
+        await agentRead;
+        return { verbose: true };
+      });
+      let steered: unknown[] | undefined;
+      mockInvokeStream.mockImplementation(async function* (request: {
+        onHistoryRead?: () => void;
+        steering?: () => Promise<unknown[]>;
+      }) {
+        request.onHistoryRead?.();
+        steered = await request.steering?.();
+        yield { text: 'ok', toolCalls: [] };
+      });
+
+      const first = conversationEngineService.chat(steerInput('review the PR'));
+      expect((await conversationEngineService.chat(steerInput('skip the tests'))).steered).toBe(true);
+      readAgent();
+      await first;
+
+      expect(steered).toEqual([]);
+      expect(mockInvokeStream).toHaveBeenCalledTimes(1);
+      expect(mockFinishWork).toHaveBeenCalledWith('chat', mockBeginWork.mock.calls.map((call) => call[1]));
+    });
+
+    it('injects a handed-over message stored after the history was read', async () => {
+      const held = heldTurn();
+      mockInvokeStream.mockImplementation(async function* (request: { onHistoryRead?: () => void }) {
+        request.onHistoryRead?.();
+        yield* held.generator(request as never);
+      });
+      const first = conversationEngineService.chat(steerInput('review the PR'));
+      await held.running;
+
+      await conversationEngineService.chat(steerInput('skip the tests'));
+
+      await expect(held.requests[0].steering?.()).resolves.toEqual([
+        { text: 'skip the tests', attachments: undefined },
+      ]);
+      held.release();
+      await first;
+    });
+
     describe('A restart at any moment', () => {
       /** The id each stored message was owed under, in the order they arrived. */
       const owedIds = () => mockBeginWork.mock.calls.map((call) => call[1] as string);
