@@ -1266,7 +1266,9 @@ in one synchronous act:
 3. **Coalesce** — messages that land after the turn's last step boundary are
    answered by **one** follow-up turn (not one per message) with
    `appendPrompt: true`, since their text sits earlier in history than the
-   previous turn's replies. A canceled turn runs no follow-up.
+   previous turn's replies. A canceled turn runs no follow-up, and from the
+   abort on it takes no hand-overs (`claim.close()`), so a message sent after
+   the stop starts a turn of its own.
 
 **Why a claim rather than "is it invoking right now".** The claim is what makes
 the decision atomic. A turn that owns a thread does real work before it reaches

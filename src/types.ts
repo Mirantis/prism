@@ -125,6 +125,8 @@ export interface InvokeRequest {
    * `threadTurnService`). Async so the source can load attachment bytes.
    */
   steering?: () => Promise<SteeringMessage[]>;
+  /** Called the moment the turn starts reading the thread's history. */
+  onHistoryRead?: () => void;
   /**
    * Fired around each tool execution (started/completed).
    * Purely observational; listener errors never affect the turn.

@@ -101,7 +101,8 @@ The main conversation surface.
   Stop still means "stop the turn" — it never clears what you have typed. One
   caveat: if you stop a turn before it has picked your mid-turn message up, that
   turn never answers it. The message stays in the conversation and the agent
-  reads it as history next time, but nothing replies to it there and then. The
+  reads it as history next time, but nothing replies to it there and then. A
+  message you send after you stop gets a reply of its own. The
   **[Terminal UI](terminal-ui.md#chatting)** and [Slack](slack.md) behave the
   same way.
 - **Tool calls.** When the agent uses a tool, the message shows an

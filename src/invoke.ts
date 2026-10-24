@@ -196,6 +196,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
   // Fetch context. Failures become friendly error steps.
   let context;
   try {
+    request.onHistoryRead?.();
     context = await contextService.getAgentContext(request.userId, {
       threadId: request.threadId,
       includeConversation,

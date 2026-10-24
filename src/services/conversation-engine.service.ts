@@ -57,6 +57,9 @@ interface StreamedTurn {
   completed: boolean;
 }
 
+/** The messages whose row is written, so a history read from then on holds them. */
+const storedHandOvers = new WeakSet<PendingMessage>();
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -412,7 +415,7 @@ Answer with one word: WORTHY or SKIP.`;
     const stored: Promise<{ titleSet: string | null }> = input.stored
       ? Promise.resolve(input.stored)
       : this.acceptUserMessage(input, threadId, messageId);
-    stored.catch(() => {});
+    stored.then(() => storedHandOvers.add(pending), () => {});
 
     if (!claim) {
       let titleSet: string | null;
@@ -504,6 +507,9 @@ Answer with one word: WORTHY or SKIP.`;
     // come through the engine.
     const endActivity = conversationThreadActivityService.beginThread(threadId, userId);
     const controller = new AbortController();
+    // A cancelled exchange takes no more hand-overs, so a message sent after the
+    // stop gets a turn of its own.
+    controller.signal.addEventListener('abort', () => claim.close(), { once: true });
     const abort = () => controller.abort();
     // A shutdown stops the exchange too. Its messages stay owed, so the next boot
     // continues it.
@@ -579,6 +585,9 @@ Answer with one word: WORTHY or SKIP.`;
               // that arrived while we were still storing or waiting for the mutex —
               // reaches the model on the next step.
               steering: () => this.loadSteering(take(claim.drain())),
+              // A handed-over message already stored when the turn reads history is
+              // in that history, so the turn answers it from there.
+              onHistoryRead: () => take(claim.drain((handed) => storedHandOvers.has(handed))),
             });
 
             if (streamed.text) responseTexts.push(streamed.text);
@@ -786,6 +795,7 @@ Answer with one word: WORTHY or SKIP.`;
     /** Files an interrupted turn shared, which this turn's reply delivers. */
     unsentAttachmentIds?: string[];
     steering: () => Promise<SteeringMessage[]>;
+    onHistoryRead: () => void;
   }): Promise<StreamedTurn> {
     const { userId, agentId, threadId, prompt, channelContext, metadata } = params;
 
@@ -819,6 +829,7 @@ Answer with one word: WORTHY or SKIP.`;
       abortSignal: params.abortSignal,
       onToolEvent: params.onToolEvent,
       steering: params.steering,
+      onHistoryRead: params.onHistoryRead,
     })) {
       allToolCalls.push(...step.toolCalls);
       if (step.blocks) allBlocks.push(...step.blocks);
