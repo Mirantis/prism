@@ -106,7 +106,7 @@ export interface ChannelAdapter {
    */
   continueReply?(message: ConversationMessage, resumed: ResumedReply): void;
 
-  /** The ids of the agent's linked shared channels, which a webhook can choose to post to. */
+  /** The ids of the agent's linked shared channels, which a webhook or a scheduled task can choose to post to. */
   linkedChannelIds?(agentId: string): Promise<string[]>;
 
   /**

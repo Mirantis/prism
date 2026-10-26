@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SlackChannelMapping, WebhookSubscription } from '@/types';
-import {
-  slackChannelNames,
-  slackChannelsToSave,
-  subscriptionFormValues,
-} from './webhook-subscription-form';
+import { slackChannelNames } from '@/lib/delivery-labels';
+import { slackChannelsToSave, subscriptionFormValues } from './webhook-subscription-form';
 
 const stored: WebhookSubscription = {
   id: 'wh-1',

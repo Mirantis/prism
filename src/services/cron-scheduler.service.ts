@@ -19,6 +19,13 @@ import * as cron from 'node-cron';
 import { Prisma, type CronTask } from '@prisma/client';
 import { invoke } from '../invoke';
 import { messageDeliveryService } from './message-delivery.service';
+import {
+  DELIVER_TARGETS,
+  deliveryTargetService,
+  isValidDeliverTo,
+  parseCommaList,
+  type DeliverTo,
+} from './delivery-target.service';
 import { conversationService } from './conversation.service';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
@@ -58,6 +65,9 @@ export interface BackendCronTask {
   threadId: string | null;
   originChannel: string | null;
   originChannelId: string | null;
+  /** Where an unbound task delivers: `DELIVER_TARGETS`, and the chosen channels, comma-separated. */
+  deliverTo: string;
+  channelIds: string | null;
 }
 
 /** A stored task in the scheduler's shape, its dates as ISO strings. */
@@ -76,13 +86,53 @@ export interface CronTaskChanges {
   name?: string;
   schedule?: string;
   instruction?: string;
+  deliverTo?: string;
+  /** The linked channels of the target's channel to post to; null or empty = its default destination. */
+  channelIds?: string[] | null;
 }
 
 export type CronTaskEdit =
   | { status: 'updated'; task: CronTask }
   | { status: 'not_found'; error: string }
   | { status: 'running'; error: string }
-  | { status: 'invalid'; field: 'name' | 'schedule'; error: string };
+  | { status: 'invalid'; field: 'name' | 'schedule' | 'deliverTo' | 'channelIds'; error: string };
+
+/** What a task write stores for its delivery. */
+type TaskDelivery =
+  | { ok: true; value: { deliverTo: DeliverTo; channelIds: string | null } }
+  | { ok: false; field: 'deliverTo' | 'channelIds'; error: string };
+
+/**
+ * Read the delivery a task write stores. A write that leaves the target out keeps
+ * the current one, and a new target drops the chosen channels the write does not
+ * restate. A task that continues a conversation answers there, so it takes no
+ * other target.
+ */
+export async function readTaskDelivery(
+  changes: Pick<CronTaskChanges, 'deliverTo' | 'channelIds'>,
+  agentId: string,
+  current: { deliverTo: string; channelIds: string | null; threadId: string | null },
+): Promise<TaskDelivery> {
+  const deliverTo = changes.deliverTo ?? current.deliverTo;
+  if (!isValidDeliverTo(deliverTo)) {
+    return { ok: false, field: 'deliverTo', error: `deliverTo must be one of: ${DELIVER_TARGETS.join(', ')}` };
+  }
+  let channelIds = deliverTo === current.deliverTo ? current.channelIds : null;
+  if (changes.channelIds !== undefined) {
+    const read = await deliveryTargetService.readChannelIds(
+      changes.channelIds,
+      deliverTo,
+      agentId,
+      parseCommaList(current.channelIds),
+    );
+    if (!read.ok) return { ok: false, field: 'channelIds', error: read.error };
+    channelIds = read.value;
+  }
+  if (current.threadId && (deliverTo !== 'all' || channelIds)) {
+    return { ok: false, field: 'deliverTo', error: 'This task continues a conversation, so it replies there' };
+  }
+  return { ok: true, value: { deliverTo, channelIds } };
+}
 
 interface ScheduledJob {
   task: BackendCronTask;
@@ -284,6 +334,7 @@ class CronSchedulerService {
         'cron.schedule': task.schedule,
         'cron.one_shot': String(isOneShot),
         'cron.continue_in_thread': String(Boolean(task.threadId)),
+        'cron.deliver_to': task.deliverTo,
         ...(opts.invokeMode ? { 'invoke.mode': opts.invokeMode } : {}),
       });
     }
@@ -394,12 +445,22 @@ class CronSchedulerService {
         timing = { schedule: cronExpression, nextRunAt };
       }
 
-      const data = { name: name ?? task.name, instruction: instruction ?? task.instruction, ...timing };
+      const delivery = await readTaskDelivery(changes, task.agentId, task);
+      if (!delivery.ok) return { status: 'invalid', field: delivery.field, error: delivery.error };
+
+      const data = {
+        name: name ?? task.name,
+        instruction: instruction ?? task.instruction,
+        ...timing,
+        ...delivery.value,
+      };
       const unchanged =
         data.name === task.name &&
         data.instruction === task.instruction &&
         data.schedule === task.schedule &&
-        data.nextRunAt?.getTime() === task.nextRunAt?.getTime();
+        data.nextRunAt?.getTime() === task.nextRunAt?.getTime() &&
+        data.deliverTo === task.deliverTo &&
+        data.channelIds === task.channelIds;
       if (unchanged) return { status: 'updated', task };
 
       let updated: CronTask;
@@ -568,6 +629,7 @@ class CronSchedulerService {
       const channelContext = boundThreadId
         ? await messageDeliveryService.threadContext(boundThreadId, task.originChannel, task.originChannelId)
         : undefined;
+      const target = { deliverTo: task.deliverTo, channelIds: parseCommaList(task.channelIds) };
 
       // Budget exceeded — notify user and record the attempt
       if (result.error?.type === 'budget_exceeded') {
@@ -575,7 +637,7 @@ class CronSchedulerService {
         if (boundThreadId) {
           await messageDeliveryService.publish(task.userId, boundThreadId, budgetMessage, 'CRON_TASK', { channelContext });
         } else {
-          await messageDeliveryService.publishToLatestThread(task.agentId, task.userId, budgetMessage, 'CRON_TASK');
+          await deliveryTargetService.deliver(task.agentId, task.userId, target, budgetMessage, 'CRON_TASK');
         }
         trackRun('budget_exceeded');
         return true;
@@ -585,6 +647,13 @@ class CronSchedulerService {
       const lastStep = result.steps[result.steps.length - 1];
       const responseText = (lastStep?.text ?? '').trim();
       const body = responseText || result.response;
+
+      // A task that delivers nowhere skips the gate's model call too.
+      if (!boundThreadId && task.deliverTo === 'none') {
+        logger.info(`[CronScheduler] "${task.name}" completed in ${Date.now() - startTime}ms, delivering nowhere`);
+        trackRun('completed');
+        return true;
+      }
 
       // Suppression ladder: an empty result is suppressed outright; a run that
       // ended in an error message, or whose tool call the risk gate refused, is
@@ -641,9 +710,10 @@ class CronSchedulerService {
           channelContext,
         });
       } else {
-        await messageDeliveryService.publishToLatestThread(
+        await deliveryTargetService.deliver(
           task.agentId,
           task.userId,
+          target,
           `**Scheduled Task: ${task.name}**\n\n${body}`,
           'CRON_TASK',
           {

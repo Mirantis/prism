@@ -4,7 +4,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { FieldDescription, FieldError, FieldLegend, FieldSet } from '@/components/ui/field';
 import { useSlackChannels } from '@/hooks/use-slack-channels';
 
-interface WebhookSlackChannelsFieldProps {
+interface SlackChannelsFieldProps {
   value: string[];
   onChange: (ids: string[]) => void;
   error?: string;
@@ -14,7 +14,7 @@ interface WebhookSlackChannelsFieldProps {
  * The linked Slack channels a Slack delivery posts to. A chosen channel that
  * was unlinked since stays listed, so the user can see it and clear it.
  */
-export function WebhookSlackChannelsField({ value, onChange, error }: WebhookSlackChannelsFieldProps) {
+export function SlackChannelsField({ value, onChange, error }: SlackChannelsFieldProps) {
   const { data, isPending } = useSlackChannels();
   const linked = data?.channels ?? [];
   const options = [

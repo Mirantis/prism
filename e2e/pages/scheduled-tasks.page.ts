@@ -48,6 +48,13 @@ export class ScheduledTasksPage extends BasePage {
     await this.page.locator('#cron-instruction').fill(instruction);
   }
 
+  /** Pick the open dialog's Deliver to target by its label. */
+  async chooseDeliverTo(label: string) {
+    await this.page.locator('#cron-deliver-to').click();
+    await this.page.getByRole('option', { name: label, exact: true }).click();
+    await this.page.getByRole('listbox').waitFor({ state: 'hidden' });
+  }
+
   /** Open the dialog, name the task, pick a preset schedule, and submit. */
   async createTaskFromPreset(name: string, preset: string, instruction: string) {
     await this.startTaskFromPreset(name, preset);

@@ -2,13 +2,6 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
   Field,
   FieldDescription,
   FieldError,
@@ -18,10 +11,10 @@ import {
   FieldSeparator,
   FieldSet,
 } from '@/components/ui/field';
-import type { WebhookDeliverTo } from '@/types';
+import { DeliverToField } from '@/components/shared/deliver-to-field';
+import { SlackChannelsField } from '@/components/shared/slack-channels-field';
 import { WebhookAuthFields } from './webhook-auth-fields';
-import { WebhookSlackChannelsField } from './webhook-slack-channels-field';
-import { DELIVER_LABELS, type WebhookSubscriptionFormValues } from './webhook-subscription-form';
+import { type WebhookSubscriptionFormValues } from './webhook-subscription-form';
 
 interface WebhookSubscriptionFieldsProps {
   /** `create` adds the Name field; the name is the endpoint path, so edit has none. */
@@ -110,31 +103,16 @@ export function WebhookSubscriptionFields({
       <FieldSet>
         <FieldLegend>Delivery</FieldLegend>
         <div className="flex flex-wrap items-start gap-6">
-          <Field data-invalid={Boolean(fieldErrors.deliverTo)} className="w-auto">
-            <FieldLabel htmlFor="webhook-deliver-to">Deliver to</FieldLabel>
-            <Select
-              value={values.deliverTo}
-              onValueChange={(value) => {
-                if (!value) return;
-                const deliverTo = value as WebhookDeliverTo;
-                onChange('deliverTo', deliverTo);
-                // Deliver only posts the template, so it needs a target.
-                if (deliverTo === 'none') onChange('deliverOnly', false);
-              }}
-            >
-              <SelectTrigger id="webhook-deliver-to" className="min-w-40">
-                <SelectValue>{DELIVER_LABELS[values.deliverTo]}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{DELIVER_LABELS.all}</SelectItem>
-                <SelectItem value="chat">{DELIVER_LABELS.chat}</SelectItem>
-                <SelectItem value="slack">{DELIVER_LABELS.slack}</SelectItem>
-                <SelectItem value="teams">{DELIVER_LABELS.teams}</SelectItem>
-                <SelectItem value="none">{DELIVER_LABELS.none}</SelectItem>
-              </SelectContent>
-            </Select>
-            {fieldErrors.deliverTo && <FieldError>{fieldErrors.deliverTo}</FieldError>}
-          </Field>
+          <DeliverToField
+            id="webhook-deliver-to"
+            value={values.deliverTo}
+            onChange={(deliverTo) => {
+              onChange('deliverTo', deliverTo);
+              // Deliver only posts the template, so it needs a target.
+              if (deliverTo === 'none') onChange('deliverOnly', false);
+            }}
+            error={fieldErrors.deliverTo}
+          />
           <Field className="w-auto">
             <FieldLabel htmlFor="webhook-deliver-only">Deliver only</FieldLabel>
             <label className="flex items-center gap-2 text-sm has-data-disabled:text-muted-foreground" htmlFor="webhook-deliver-only">
@@ -152,7 +130,7 @@ export function WebhookSubscriptionFields({
           <FieldDescription>The agent runs and posts no message, even when the run fails.</FieldDescription>
         )}
         {values.deliverTo === 'slack' && (
-          <WebhookSlackChannelsField
+          <SlackChannelsField
             value={values.slackChannelIds}
             onChange={(ids) => onChange('slackChannelIds', ids)}
             error={fieldErrors.slackChannelIds}

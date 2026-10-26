@@ -2,6 +2,8 @@ import { Clock, Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { IconTile } from '@/components/shared/icon-tile';
 import { describeSchedule } from '@/lib/cron-presets';
+import { DELIVER_LABELS, slackChannelNames } from '@/lib/delivery-labels';
+import { useSlackChannels } from '@/hooks/use-slack-channels';
 import { formatRelativeTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { CronTask } from '@/types';
@@ -17,6 +19,14 @@ export function ScheduledTaskItem({
   onDelete: () => void;
 }) {
   const described = describeSchedule(task.schedule);
+  const { data: slackChannels } = useSlackChannels();
+  // Every connected channel is the usual target, so the row names only another one.
+  const delivery =
+    task.threadId || task.deliverTo === 'all'
+      ? null
+      : [DELIVER_LABELS[task.deliverTo], slackChannelNames(task.channelIds, slackChannels?.channels ?? [])]
+          .filter(Boolean)
+          .join(': ');
   return (
     <li
       data-testid="scheduled-task"
@@ -48,6 +58,11 @@ export function ScheduledTaskItem({
           <span title={task.lastRunAt ? new Date(task.lastRunAt).toLocaleString() : undefined}>
             {task.lastRunAt ? `Last run ${formatRelativeTime(task.lastRunAt)}` : 'Not run yet'}
           </span>
+          {delivery && (
+            <span data-testid="scheduled-task-delivery">
+              {task.deliverTo === 'none' ? 'Delivers nowhere' : `Delivers to ${delivery}`}
+            </span>
+          )}
         </div>
       </div>
       <div className="flex shrink-0 items-start gap-1">

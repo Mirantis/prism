@@ -12,7 +12,7 @@ import { ScheduledTasksPage } from '../pages/scheduled-tasks.page';
 import * as dbHelper from '../support/db-helper';
 import { getCurrentAgentId } from './common.steps';
 
-const { When, Then } = createBdd();
+const { Given, When, Then } = createBdd();
 
 When('I navigate to the scheduled tasks page', async ({ page }) => {
   await new ScheduledTasksPage(page).navigate();
@@ -61,6 +61,53 @@ When(
     await expect(page.locator('#cron-name')).toHaveValue(name);
     await expect(page.locator('#cron-instruction')).toHaveValue('Post a short standup summary.');
     await tasks.saveEdit(newName, preset, instruction);
+  },
+);
+
+When(
+  "I choose {string} as the new task's delivery target and schedule it",
+  async ({ page }, label: string) => {
+    const tasks = new ScheduledTasksPage(page);
+    await tasks.chooseDeliverTo(label);
+    await tasks.scheduleButton.click();
+    await tasks.dialog.waitFor({ state: 'hidden', timeout: 10_000 });
+  },
+);
+
+When(
+  'I change the delivery target of the task {string} to {string}',
+  async ({ page }, name: string, label: string) => {
+    const tasks = new ScheduledTasksPage(page);
+    await tasks.openEdit(name);
+    await tasks.chooseDeliverTo(label);
+    await tasks.dialog.getByRole('button', { name: 'Save', exact: true }).click();
+    await tasks.dialog.waitFor({ state: 'hidden', timeout: 10_000 });
+  },
+);
+
+Then('the task {string} delivers to {string}', async ({ page }, name: string, label: string) => {
+  const tasks = new ScheduledTasksPage(page);
+  await expect(tasks.taskRow(name).getByTestId('scheduled-task-delivery')).toHaveText(`Delivers to ${label}`);
+  // The Edit dialog opens on the stored target.
+  await tasks.openEdit(name);
+  await expect(page.locator('#cron-deliver-to')).toHaveText(label);
+  await tasks.dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(tasks.dialog).toBeHidden();
+});
+
+Then('the task {string} names no delivery target', async ({ page }, name: string) => {
+  await expect(new ScheduledTasksPage(page).taskRow(name).getByTestId('scheduled-task-delivery')).toHaveCount(0);
+});
+
+Given(
+  'a one-off scheduled task {string} in {int} seconds that delivers to {string} with the instruction {string}',
+  async ({}, name: string, seconds: number, deliverTo: string, instruction: string) => {
+    const res = await fetch(`${process.env.AGENT_RUNTIME_URL}/agents/cron-tasks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name, schedule: `in ${seconds} seconds`, instruction, deliverTo }),
+    });
+    expect(res.status).toBe(201);
   },
 );
 

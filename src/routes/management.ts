@@ -102,14 +102,13 @@ import {
   importAgent as importAgentArchive,
   ArchiveValidationError,
 } from '../services/agent-archive.service';
+import { WEBHOOK_NAME_RE, normalizeWebhookName, toPublicSubscription } from '../services/webhook.service';
 import {
-  WEBHOOK_NAME_RE,
+  DELIVER_TARGETS,
+  deliveryTargetService,
   isValidDeliverTo,
-  normalizeWebhookName,
   parseCommaList,
-  toPublicSubscription,
-  WEBHOOK_DELIVER_TARGETS,
-} from '../services/webhook.service';
+} from '../services/delivery-target.service';
 import {
   isValidAuthAlgorithm,
   isValidAuthEncoding,
@@ -860,12 +859,7 @@ function readWebhookAuthFields(
   return { ok: true, values };
 }
 
-/**
- * Read the Slack channel list from a request body, as the stored column value.
- * The list belongs to the Slack target. Each id has to name a channel linked
- * to the agent, or one the subscription already holds, so a channel unlinked
- * after it was chosen does not block an unrelated edit.
- */
+/** Read a subscription's Slack channel list, its error keyed to the `slackChannelIds` field. */
 async function readSlackChannelIds(
   raw: unknown,
   deliverTo: string,
@@ -875,26 +869,8 @@ async function readSlackChannelIds(
   | { ok: false; error: string; fieldErrors: Record<string, string> }
   | { ok: true; value: string | null }
 > {
-  const fail = (message: string) =>
-    ({ ok: false as const, error: message, fieldErrors: { slackChannelIds: message } });
-
-  // null clears the list, as it clears the nullable fields beside it.
-  const list = raw === null ? [] : raw;
-  if (!Array.isArray(list) || list.some((id) => typeof id !== 'string')) {
-    return fail('slackChannelIds must be an array of Slack channel ids');
-  }
-  const ids = [...new Set((list as string[]).map((id) => id.trim()).filter((id) => id.length > 0))];
-  if (ids.length === 0) return { ok: true, value: null };
-  const channel = messageDeliveryService.getAdapter(deliverTo);
-  if (!channel?.linkedChannelIds) {
-    return fail("Slack channels apply only when deliverTo is 'slack'");
-  }
-  const linked = new Set(await channel.linkedChannelIds(agentId));
-  const unknown = ids.filter((id) => !linked.has(id) && !stored.includes(id));
-  if (unknown.length > 0) {
-    return fail(`Not a Slack channel linked to the agent: ${unknown.join(', ')}`);
-  }
-  return { ok: true, value: ids.join(',') };
+  const read = await deliveryTargetService.readChannelIds(raw, deliverTo, agentId, stored);
+  return read.ok ? read : { ...read, fieldErrors: { slackChannelIds: read.error } };
 }
 
 /**
@@ -985,8 +961,8 @@ router.post('/webhook-subscriptions', async (req: Request, res: Response) => {
     const deliverTo = body.deliverTo ?? 'all';
     if (!isValidDeliverTo(deliverTo)) {
       res.status(400).json({
-        error: `deliverTo must be one of: ${WEBHOOK_DELIVER_TARGETS.join(', ')}`,
-        fieldErrors: { deliverTo: `Must be one of: ${WEBHOOK_DELIVER_TARGETS.join(', ')}` },
+        error: `deliverTo must be one of: ${DELIVER_TARGETS.join(', ')}`,
+        fieldErrors: { deliverTo: `Must be one of: ${DELIVER_TARGETS.join(', ')}` },
       });
       return;
     }
@@ -1105,8 +1081,8 @@ router.patch('/webhook-subscriptions/:id', async (req: Request<{ id: string }>, 
     if (body.deliverTo !== undefined) {
       if (!isValidDeliverTo(body.deliverTo)) {
         reject(400, {
-          error: `deliverTo must be one of: ${WEBHOOK_DELIVER_TARGETS.join(', ')}`,
-          fieldErrors: { deliverTo: `Must be one of: ${WEBHOOK_DELIVER_TARGETS.join(', ')}` },
+          error: `deliverTo must be one of: ${DELIVER_TARGETS.join(', ')}`,
+          fieldErrors: { deliverTo: `Must be one of: ${DELIVER_TARGETS.join(', ')}` },
         });
         return;
       }

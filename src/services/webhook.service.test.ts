@@ -153,10 +153,8 @@ import {
   renderWebhookPrompt,
   renderWebhookTurnPrompt,
   resolveEventType,
-  parseCommaList,
   toPublicSubscription,
   normalizeWebhookName,
-  isValidDeliverTo,
   WEBHOOK_MAX_PENDING,
 } from './webhook.service';
 import { logger } from '../logger';
@@ -333,7 +331,7 @@ describe('renderWebhookTurnPrompt', () => {
 });
 
 // ---------------------------------------------------------------------------
-// resolveEventType / parseCommaList
+// resolveEventType
 // ---------------------------------------------------------------------------
 
 describe('resolveEventType', () => {
@@ -348,14 +346,6 @@ describe('resolveEventType', () => {
 
   it('handles array-valued headers', () => {
     expect(resolveEventType({ 'x-github-event': ['issues'] }, {})).toBe('issues');
-  });
-});
-
-describe('parseCommaList', () => {
-  it('splits and trims, dropping empties', () => {
-    expect(parseCommaList(' push, pull_request ,,')).toEqual(['push', 'pull_request']);
-    expect(parseCommaList(null)).toEqual([]);
-    expect(parseCommaList('')).toEqual([]);
   });
 });
 
@@ -375,15 +365,6 @@ describe('validation helpers', () => {
   it('normalizes names like hermes (trim, lowercase, spaces → hyphens)', () => {
     expect(normalizeWebhookName('  GitHub Push ')).toBe('github-push');
     expect(normalizeWebhookName(42)).toBe('');
-  });
-
-  it('accepts only known deliver targets', () => {
-    expect(isValidDeliverTo('all')).toBe(true);
-    expect(isValidDeliverTo('chat')).toBe(true);
-    expect(isValidDeliverTo('slack')).toBe(true);
-    expect(isValidDeliverTo('teams')).toBe(true);
-    expect(isValidDeliverTo('none')).toBe(true);
-    expect(isValidDeliverTo('log')).toBe(false);
   });
 });
 

@@ -149,6 +149,8 @@ describe('Scheduled task routes', () => {
       isActive: true,
       nextRunAt: null,
       lastRunAt: null,
+      deliverTo: 'all',
+      channelIds: null,
       createdAt: new Date('2025-01-01T00:00:00Z'),
       updatedAt: new Date('2025-01-01T00:00:00Z'),
     };
@@ -172,6 +174,8 @@ describe('Scheduled task routes', () => {
           schedule: '0 9 * * *',
           instruction: 'Generate report',
           nextRunAt: null,
+          deliverTo: 'all',
+          channelIds: null,
         },
       });
       expect(mockScheduleTask).toHaveBeenCalledWith(
@@ -277,6 +281,8 @@ describe('Scheduled task routes', () => {
       threadId: null,
       originChannel: null,
       originChannelId: null,
+      deliverTo: 'all',
+      channelIds: null,
       createdAt: new Date('2025-01-01T00:00:00Z'),
       updatedAt: new Date('2025-01-01T00:00:00Z'),
     };
@@ -310,7 +316,14 @@ describe('Scheduled task routes', () => {
       expect(mockPrisma.cronTask.findFirst).toHaveBeenCalledWith({ where: { id: 'ct-1' } });
       expect(mockPrisma.cronTask.update).toHaveBeenCalledWith({
         where: { id: 'ct-1' },
-        data: { name: 'Weekday Report', schedule: '0 10 * * 1-5', instruction: 'Summarize the day', nextRunAt: null },
+        data: {
+          name: 'Weekday Report',
+          schedule: '0 10 * * 1-5',
+          instruction: 'Summarize the day',
+          nextRunAt: null,
+          deliverTo: 'all',
+          channelIds: null,
+        },
       });
       expect(mockScheduleTask).toHaveBeenCalledWith(
         expect.objectContaining({ id: 'ct-1', name: 'Weekday Report', schedule: '0 10 * * 1-5' }),
@@ -331,8 +344,48 @@ describe('Scheduled task routes', () => {
 
       expect(mockPrisma.cronTask.update).toHaveBeenCalledWith({
         where: { id: 'ct-1' },
-        data: { name: 'Daily Report', instruction: 'Only this', schedule: '0 9 * * *', nextRunAt: null },
+        data: {
+          name: 'Daily Report',
+          instruction: 'Only this',
+          schedule: '0 9 * * *',
+          nextRunAt: null,
+          deliverTo: 'all',
+          channelIds: null,
+        },
       });
+    });
+
+    it('saves a new target and lists the chosen channels as an array', async () => {
+      const stored = { ...recurring, deliverTo: 'slack', channelIds: 'C1' };
+      mockPrisma.cronTask.findFirst.mockResolvedValue(stored);
+      echoUpdate(stored);
+
+      const res = await request(app).patch('/agents/cron-tasks/ct-1').send({ deliverTo: 'chat' });
+
+      expect(res.status).toBe(200);
+      expect(mockPrisma.cronTask.update).toHaveBeenCalledWith({
+        where: { id: 'ct-1' },
+        data: expect.objectContaining({ deliverTo: 'chat', channelIds: null }),
+      });
+      expect(res.body).toMatchObject({ deliverTo: 'chat', channelIds: [] });
+    });
+
+    it('refuses an unknown target on the deliverTo field', async () => {
+      mockPrisma.cronTask.findFirst.mockResolvedValue(recurring);
+
+      const res = await request(app).patch('/agents/cron-tasks/ct-1').send({ deliverTo: 'log' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.fieldErrors.deliverTo).toContain('deliverTo must be one of');
+      expect(mockPrisma.cronTask.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a channel list that is not an array of ids', async () => {
+      const res = await request(app).patch('/agents/cron-tasks/ct-1').send({ channelIds: 'C1' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.fieldErrors.channelIds).toBeDefined();
+      expect(mockPrisma.cronTask.findFirst).not.toHaveBeenCalled();
     });
 
     it('keeps a one-shot’s run time when the body leaves its schedule out', async () => {

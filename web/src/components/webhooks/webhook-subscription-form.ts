@@ -1,20 +1,12 @@
-import type { SlackChannelMapping, WebhookDeliverTo, WebhookSubscription } from '@/types';
+import type { DeliverTo, WebhookSubscription } from '@/types';
 import { EMPTY_WEBHOOK_AUTH, type WebhookAuthFormValues } from './webhook-auth-fields';
-
-export const DELIVER_LABELS: Record<WebhookDeliverTo, string> = {
-  all: 'All channels',
-  chat: 'Chat',
-  slack: 'Slack',
-  teams: 'Microsoft Teams',
-  none: 'None',
-};
 
 /** Every field of the create and edit forms. Edit leaves `name` alone. */
 export interface WebhookSubscriptionFormValues extends WebhookAuthFormValues {
   name: string;
   description: string;
   events: string;
-  deliverTo: WebhookDeliverTo;
+  deliverTo: DeliverTo;
   /** The Slack channels a Slack delivery posts to; kept while another target is picked. */
   slackChannelIds: string[];
   deliverOnly: boolean;
@@ -58,14 +50,4 @@ export function subscriptionFormValues(subscription: WebhookSubscription): Webho
 /** The channel list to save: the runtime accepts one for the Slack target only. */
 export function slackChannelsToSave(values: WebhookSubscriptionFormValues): string[] {
   return values.deliverTo === 'slack' ? values.slackChannelIds : [];
-}
-
-/** `#name` for each chosen channel; one no longer linked shows its id. */
-export function slackChannelNames(ids: string[], linked: SlackChannelMapping[]): string {
-  return ids
-    .map((id) => {
-      const channel = linked.find((c) => c.channelId === id);
-      return channel ? `#${channel.channelName ?? id}` : id;
-    })
-    .join(', ');
 }

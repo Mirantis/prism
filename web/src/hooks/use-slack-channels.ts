@@ -5,7 +5,7 @@ import { useAgent } from '@/lib/agent-context';
 /**
  * The Slack channels linked to the agent, under the key the Channels page
  * reads and invalidates. Unlike `useSlackStatus`, the read does not wait for a
- * connected workspace, so a channel a webhook posts to keeps its name while
+ * connected workspace, so a channel a webhook or a task posts to keeps its name while
  * Slack is not connected.
  */
 export function useSlackChannels() {

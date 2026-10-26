@@ -13,9 +13,9 @@ interface ScheduledTaskDialogProps {
   onClose: () => void;
 }
 
-const FIELDS = ['name', 'schedule', 'instruction'] as const;
+const TEXT_FIELDS = ['name', 'schedule', 'instruction'] as const;
 
-/** Create a scheduled task, or edit the name, schedule and instruction of one. */
+/** Create a scheduled task, or edit the name, schedule, instruction and delivery of one. */
 export function ScheduledTaskDialog({ task, onClose }: ScheduledTaskDialogProps) {
   const agent = useAgent();
   const queryClient = useQueryClient();
@@ -24,14 +24,19 @@ export function ScheduledTaskDialog({ task, onClose }: ScheduledTaskDialogProps)
     name: task?.name ?? '',
     schedule: task?.schedule ?? '0 9 * * *',
     instruction: task?.instruction ?? '',
+    deliverTo: task?.deliverTo ?? 'all',
+    channelIds: task?.channelIds ?? [],
   });
   const input: CronTaskInput = {
     name: values.name.trim(),
     schedule: values.schedule.trim(),
     instruction: values.instruction.trim(),
+    deliverTo: values.deliverTo,
+    // The runtime takes a channel list for the Slack target only; the form keeps it while another is picked.
+    channelIds: values.deliverTo === 'slack' ? values.channelIds : [],
   };
 
-  const setField = (key: keyof CronTaskInput, value: string) => {
+  const setField = <K extends keyof CronTaskInput>(key: K, value: CronTaskInput[K]) => {
     setValues((v) => ({ ...v, [key]: value }));
     clearFieldError(key);
   };
@@ -44,9 +49,11 @@ export function ScheduledTaskDialog({ task, onClose }: ScheduledTaskDialogProps)
       }
       // An edit sends only the fields that changed: a schedule that is sent is read again from now.
       const changes: Partial<CronTaskInput> = {};
-      for (const key of FIELDS) {
+      for (const key of TEXT_FIELDS) {
         if (input[key] !== (task[key] ?? '').trim()) changes[key] = input[key];
       }
+      if (input.deliverTo !== task.deliverTo) changes.deliverTo = input.deliverTo;
+      if (input.channelIds.join(',') !== task.channelIds.join(',')) changes.channelIds = input.channelIds;
       if (Object.keys(changes).length > 0) await runtimeApi.updateCronTask(task.id, changes);
     },
     onSuccess: () => {
@@ -78,7 +85,7 @@ export function ScheduledTaskDialog({ task, onClose }: ScheduledTaskDialogProps)
         onChange={setField}
         fieldErrors={fieldErrors}
         runsOnceAt={keepsRunTime ? task.nextRunAt : null}
-        repeatable={!task?.threadId}
+        continuesConversation={Boolean(task?.threadId)}
       />
     </CreateModal>
   );
