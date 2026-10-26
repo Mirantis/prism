@@ -568,6 +568,7 @@ Answer with one word: WORTHY or SKIP.`;
 
           let prompt = message;
           let appendPrompt = false;
+          let appendedMessageIds: string[] = [];
           // A resumed exchange stores rows after its message on purpose, and its
           // history ends on the resume notice.
           let promptMessageId = input.resumed ? undefined : messageId;
@@ -584,6 +585,7 @@ Answer with one word: WORTHY or SKIP.`;
               workspaceRoot,
               prompt,
               appendPrompt,
+              appendedMessageIds,
               promptMessageId,
               verbose,
               channelContext,
@@ -637,6 +639,7 @@ Answer with one word: WORTHY or SKIP.`;
             // message rows, so the follow-up's context build picks them up.
             prompt = leftover.map((p) => p.text).join('\n\n');
             appendPrompt = true;
+            appendedMessageIds = leftover.map((p) => p.id);
             promptMessageId = undefined;
             runtimeNotices = undefined;
           }
@@ -803,6 +806,7 @@ Answer with one word: WORTHY or SKIP.`;
     prompt: string;
     /** Restate `prompt` as the trailing user message (coalesced follow-up). */
     appendPrompt: boolean;
+    appendedMessageIds: string[];
     /** Snapshot taken once inside the lock; gates intermediate delivery. */
     verbose: boolean;
     channelContext: PublishOptions['channelContext'];
@@ -840,6 +844,7 @@ Answer with one word: WORTHY or SKIP.`;
       mode: 'chat',
       prompt,
       appendPrompt: params.appendPrompt,
+      appendedMessageIds: params.appendedMessageIds,
       promptMessageId: params.promptMessageId,
       threadId,
       workspaceRoot: params.workspaceRoot,
