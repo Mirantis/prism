@@ -1489,7 +1489,7 @@ describe('Requirement: Conversation Engine', () => {
     it('does not inject a handed-over message that the history it read already holds', async () => {
       // The second message is stored while the first turn still reads the agent,
       // so the history the turn reads ends on it.
-      const storedIds = () => new Set(mockBeginWork.mock.calls.map((call) => call[1] as string));
+      const storedRows = () => mockBeginWork.mock.calls.map((call) => ({ id: call[1] as string }));
       let readAgent!: () => void;
       const agentRead = new Promise<void>((r) => {
         readAgent = r;
@@ -1500,10 +1500,10 @@ describe('Requirement: Conversation Engine', () => {
       });
       let steered: unknown[] | undefined;
       mockInvokeStream.mockImplementation(async function* (request: {
-        onHistoryRead?: (rowIds: ReadonlySet<string>) => void;
+        onHistoryRead?: (rows: Array<{ id: string; attachments?: Array<{ id: string }> }>) => void;
         steering?: () => Promise<unknown[]>;
       }) {
-        request.onHistoryRead?.(storedIds());
+        request.onHistoryRead?.(storedRows());
         steered = await request.steering?.();
         yield { text: 'ok', toolCalls: [] };
       });
@@ -1524,10 +1524,10 @@ describe('Requirement: Conversation Engine', () => {
       let steered: unknown[] | undefined;
       const held = heldTurn();
       mockInvokeStream.mockImplementation(async function* (request: {
-        onHistoryRead?: (rowIds: ReadonlySet<string>) => void;
+        onHistoryRead?: (rows: Array<{ id: string; attachments?: Array<{ id: string }> }>) => void;
         steering?: () => Promise<unknown[]>;
       }) {
-        request.onHistoryRead?.(new Set(['msg-socket']));
+        request.onHistoryRead?.([{ id: 'msg-socket' }]);
         yield* held.generator(request as never);
         steered = await request.steering?.();
       });
@@ -1546,12 +1546,39 @@ describe('Requirement: Conversation Engine', () => {
       expect(mockInvokeStream).toHaveBeenCalledTimes(1);
     });
 
+    it('injects a handed-over message whose row the history read before its files were linked', async () => {
+      // The row is stored before its files are linked, so a turn can read it
+      // without them. Steering then sends the message with its files.
+      const held = heldTurn();
+      mockGetMetaByIds.mockResolvedValue([
+        { id: 'att-1', filename: 'screen.png', mediaType: 'image/png', category: 'image', sizeBytes: 4 },
+      ]);
+      mockInvokeStream.mockImplementation(async function* (request: {
+        onHistoryRead?: (rows: Array<{ id: string; attachments?: Array<{ id: string }> }>) => void;
+      }) {
+        request.onHistoryRead?.([{ id: 'msg-socket', attachments: [] }]);
+        yield* held.generator(request as never);
+      });
+      const first = conversationEngineService.chat(steerInput('review the PR'));
+      await held.running;
+
+      await conversationEngineService.chat(
+        steerInput('look at this', { steerOnly: true, stored: { id: 'msg-socket', titleSet: null }, attachmentIds: ['att-1'] }),
+      );
+
+      await expect(held.requests[0].steering?.()).resolves.toEqual([
+        { text: 'look at this', attachments: [expect.objectContaining({ id: 'att-1' })] },
+      ]);
+      held.release();
+      await first;
+    });
+
     it('injects a handed-over message stored after the history was read', async () => {
       const held = heldTurn();
       mockInvokeStream.mockImplementation(async function* (request: {
-        onHistoryRead?: (rowIds: ReadonlySet<string>) => void;
+        onHistoryRead?: (rows: Array<{ id: string; attachments?: Array<{ id: string }> }>) => void;
       }) {
-        request.onHistoryRead?.(new Set(mockBeginWork.mock.calls.map((call) => call[1] as string)));
+        request.onHistoryRead?.(mockBeginWork.mock.calls.map((call) => ({ id: call[1] as string })));
         yield* held.generator(request as never);
       });
       const first = conversationEngineService.chat(steerInput('review the PR'));

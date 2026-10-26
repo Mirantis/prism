@@ -126,11 +126,11 @@ export interface InvokeRequest {
    */
   steering?: () => Promise<SteeringMessage[]>;
   /**
-   * Called once the turn has read the thread's history, with the ids of the rows
-   * it read. A message handed to the turn that is among them reaches the model
-   * through history, so it must not be injected again by `steering`.
+   * Called once the turn has read the thread's history, with the rows it read. A
+   * message handed to the turn that is among them, with all of its files, reaches
+   * the model through history, so it must not be injected again by `steering`.
    */
-  onHistoryRead?: (rowIds: ReadonlySet<string>) => void;
+  onHistoryRead?: (rows: ReadonlyArray<ConversationMessage>) => void;
   /**
    * Fired around each tool execution (started/completed).
    * Purely observational; listener errors never affect the turn.
@@ -149,9 +149,9 @@ export interface InvokeRequest {
   appendPrompt?: boolean;
   /**
    * The stored row of a chat prompt. When the history ends on an agent row
-   * stored after it, the prompt is appended as `appendPrompt` would: a turn that
-   * was stopped may store its last reply after the next message arrived, and
-   * history alone would then end on the assistant.
+   * stored after it, every user row from it on is restated after that row, as
+   * history renders it: a turn that was stopped may store its last reply after
+   * the next messages arrived, and history alone would then end on the assistant.
    */
   promptMessageId?: string;
   /**

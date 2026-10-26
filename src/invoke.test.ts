@@ -142,7 +142,8 @@ vi.mock('./services/conversation.service', () => ({
   conversationService: { addMessage: mockAddMessage },
 }));
 
-vi.mock('./prompts/context-builder', () => ({
+vi.mock('./prompts/context-builder', async (importOriginal) => ({
+  buildUserMessage: (await importOriginal<typeof import('./prompts/context-builder')>()).buildUserMessage,
   buildSystemPromptParts: mockBuildSystemPromptParts,
   buildRecalledMemories: mockBuildRecalledMemories,
   recalledMemoryContent: (recalled: string) =>
@@ -2165,6 +2166,40 @@ describe('invoke', () => {
         expect(messages[messages.length - 1]).toMatchObject({ role: 'user', content: 'summarize the README' });
       });
 
+      it('restates every user row from the prompt on, in order, after the reply', async () => {
+        // m1 started the turn and m2 was handed to it; both landed before the reply.
+        mockGetAgentContext.mockResolvedValue(rows('AGENT'));
+        mockBuildConversationMessages.mockReturnValue(history);
+
+        await invoke(createTestInvokeRequest({ mode: 'chat', prompt: 'review the PR', promptMessageId: 'first' }));
+
+        expect(mockGenerateText.mock.calls[0][0].messages.slice(-2)).toEqual([
+          { role: 'user', content: 'review the PR' },
+          { role: 'user', content: 'summarize the README' },
+        ]);
+      });
+
+      it('restates a file-only prompt with its attachment stub', async () => {
+        const file = { id: 'att-1', filename: 'screen.png', mediaType: 'image/png', category: 'image' as const, sizeBytes: 2048 };
+        mockGetAgentContext.mockResolvedValue(
+          createTestAgentContext({
+            recentMessages: [
+              { id: 'file', role: 'USER', content: '', attachments: [file], externalMessageId: null, internalStep: false },
+              { id: 'reply', role: 'AGENT', content: 'Stopped.', externalMessageId: null, internalStep: false },
+            ],
+          }),
+        );
+        mockBuildConversationMessages.mockReturnValue([{ role: 'assistant', content: 'Stopped.' }]);
+
+        await invoke(createTestInvokeRequest({ mode: 'chat', prompt: '', promptMessageId: 'file' }));
+
+        const messages = mockGenerateText.mock.calls[0][0].messages;
+        expect(messages[messages.length - 1]).toEqual({
+          role: 'user',
+          content: expect.stringContaining('[Attachment: screen.png · id=att-1'),
+        });
+      });
+
       it('does not append the prompt when the history ends on its row', async () => {
         mockGetAgentContext.mockResolvedValue(rows('USER'));
         mockBuildConversationMessages.mockReturnValue(history.slice(0, 2));
@@ -2198,7 +2233,7 @@ describe('invoke', () => {
       await invoke(createTestInvokeRequest({ mode: 'chat', onHistoryRead }));
 
       expect(onHistoryRead).toHaveBeenCalledTimes(1);
-      expect([...onHistoryRead.mock.calls[0][0]]).toEqual(['m1', 'm2']);
+      expect(onHistoryRead.mock.calls[0][0].map((row: { id: string }) => row.id)).toEqual(['m1', 'm2']);
     });
 
     it('closes a run after a restart with the notice, behind the history and the prompt', async () => {
