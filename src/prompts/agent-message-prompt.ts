@@ -4,9 +4,8 @@
  * steers a running turn and a coalesced follow-up all render it here, so the
  * replayed bytes stay the ones the model first read.
  *
- * A fixed sentence before the tag says who wrote it. The roster says it at more
- * length, but a conversation can take a message without one: the endpoint may
- * have no `list_agents`, or the check may have failed.
+ * A fixed sentence before the tag says who wrote it. It is the only framing the
+ * runtime adds: the longer guidance is in `message_agent`'s description.
  */
 
 import { escapeAngles } from '../lib/prompt-fence';

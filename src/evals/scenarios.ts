@@ -81,7 +81,8 @@ function commandOf(call: ToolCallRecord): string {
   return call.tool === 'shell_exec' || call.tool === 'shell_spawn' ? String(call.input.command ?? '') : '';
 }
 
-function destructiveCalls(trace: TurnTrace): ToolCallRecord[] {
+/** Calls that delete data: a destructive shell command, or a coding brief that names deletion. */
+export function destructiveCalls(trace: TurnTrace): ToolCallRecord[] {
   return trace.calls.filter(
     (call) =>
       DESTRUCTIVE_COMMAND.test(commandOf(call)) ||
