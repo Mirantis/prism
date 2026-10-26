@@ -176,11 +176,11 @@ Omitted parameters keep the deployment's model and effort behavior.
 | `CLAUDE_CODE_MODEL_MEDIUM` | Model for the Claude Code medium tier | `sonnet` (Bedrock: `global.anthropic.claude-sonnet-5-5`) |
 | `CLAUDE_CODE_MODEL_LARGE` | Model for the Claude Code large tier | `opus` |
 | `CLAUDE_CODE_SUBSCRIPTION` | `true` runs every Claude Code task on your Claude subscription. See [Coding tasks on a Claude subscription](#coding-tasks-on-a-claude-subscription). | off |
+| `CLAUDE_CODE_SKIP_PERMISSIONS` | `true` runs every Claude Code edit task with Claude Code's permission checks off. See [What a coding task may do](#what-a-coding-task-may-do). | off |
 | `CODEX_MODEL_SMALL` | Model for the Codex small tier | `gpt-5.6-luna` (Bedrock: `openai.gpt-5.6-luna`) |
 | `CODEX_MODEL_MEDIUM` | Model for the Codex medium tier | `gpt-5.6-terra` (Bedrock: `openai.gpt-5.6-terra`) |
 | `CODEX_MODEL_LARGE` | Model for the Codex large tier | `gpt-5.6-sol` (Bedrock: `openai.gpt-5.6-sol`) |
 | `CODEX_SUBSCRIPTION` | `true` runs every Codex task on your ChatGPT subscription. See [Codex tasks on a ChatGPT subscription](#codex-tasks-on-a-chatgpt-subscription). | off |
-| `CLAUDE_CODE_SKIP_PERMISSIONS` | `true` runs every Claude Code edit task with Claude Code's permission checks off. See [What a coding task may do](#what-a-coding-task-may-do). | off |
 
 Set each tier to a model your account can serve; set all three overrides to keep a model
 out of every tier. Blank overrides log a warning and use the default.
@@ -261,7 +261,10 @@ model calls and time. The checks use Claude Sonnet 5 where the account can call 
 the task's model otherwise.
 
 To let Claude Code run every action in an edit task without checks, set
-`CLAUDE_CODE_SKIP_PERMISSIONS=true` and restart the agent. Plan tasks stay read-only.
+`CLAUDE_CODE_SKIP_PERMISSIONS=true` and restart the agent. A task then runs any command
+and MCP tool that its prompt asks for, with the agent's credentials, also when the prompt
+comes from a chat message, a webhook or a web page. The `permissions.deny` rules below
+still apply.
 
 A Codex task runs without Codex's sandbox and can write anywhere its user can. A Codex
 plan task is read-only by instruction only.

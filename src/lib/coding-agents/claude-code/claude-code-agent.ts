@@ -121,6 +121,15 @@ export function createClaudeCodeAgent(environment?: ExecutionEnvironment): Codin
   };
 }
 
+/**
+ * The permission mode a task asks the CLI for. The bypass is for edit tasks the
+ * operator runs where nothing else needs to check them; a plan task stays read-only.
+ */
+function permissionModeFor(task: CodingAgentTask): 'plan' | 'auto' | 'bypassPermissions' {
+  if (task.mode === 'plan') return 'plan';
+  return config.claudeCodeSkipPermissions ? 'bypassPermissions' : 'auto';
+}
+
 function buildArgs(
   task: CodingAgentTask,
   onBedrock: boolean,
@@ -139,12 +148,12 @@ function buildArgs(
 
   // The CLI's own checks decide each action: its classifier in auto mode, the
   // read-only rule in plan mode. With no terminal a refused action is skipped,
-  // the run goes on, and the result line lists it. `CLAUDE_CODE_SKIP_PERMISSIONS`
-  // is the operator's opt-out for edit tasks.
-  if (task.mode === 'edit' && config.claudeCodeSkipPermissions) {
+  // the run goes on, and the result line lists it.
+  const permissionMode = permissionModeFor(task);
+  if (permissionMode === 'bypassPermissions') {
     args.push('--dangerously-skip-permissions');
   } else {
-    args.push('--permission-mode', task.mode === 'plan' ? 'plan' : 'auto');
+    args.push('--permission-mode', permissionMode);
   }
   // On the subscription the CLI takes the claude.ai login and no other, also
   // when the repository's own settings name another provider or key.
@@ -187,18 +196,15 @@ function parseLine(line: string, task: CodingAgentTask): CodingAgentEvent[] {
   const parsed = JSON.parse(line) as StreamLine;
   const events: CodingAgentEvent[] = [];
 
-  // Where auto mode is unavailable, most often for the model, the CLI starts in
-  // Manual mode and refuses every action that needs approval; the refusals alone
-  // read like a policy decision.
-  if (
-    parsed.subtype === 'init' &&
-    task.mode === 'edit' &&
-    !config.claudeCodeSkipPermissions &&
-    parsed.permissionMode !== 'auto'
-  ) {
+  // Where the mode the task asked for is unavailable (auto mode for the model,
+  // the bypass when settings disable it), the CLI starts in Manual mode and
+  // refuses every action that needs approval; the refusals alone read like a
+  // policy decision.
+  const expectedMode = permissionModeFor(task);
+  if (parsed.subtype === 'init' && parsed.permissionMode !== expectedMode) {
     logger.warn(
-      { taskId: task.taskId, model: parsed.model, permissionMode: parsed.permissionMode },
-      '[AgentTask] Claude Code did not start in auto mode, so it refuses every action that needs approval; check that its model supports auto mode',
+      { taskId: task.taskId, model: parsed.model, permissionMode: parsed.permissionMode, expectedMode },
+      `[AgentTask] Claude Code did not start in ${expectedMode} mode, so it refuses every action that needs approval; check that its model supports the mode and that no settings disable it`,
     );
   }
 
