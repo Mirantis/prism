@@ -125,8 +125,12 @@ export interface InvokeRequest {
    * `threadTurnService`). Async so the source can load attachment bytes.
    */
   steering?: () => Promise<SteeringMessage[]>;
-  /** Called the moment the turn starts reading the thread's history. */
-  onHistoryRead?: () => void;
+  /**
+   * Called once the turn has read the thread's history, with the ids of the rows
+   * it read. A message handed to the turn that is among them reaches the model
+   * through history, so it must not be injected again by `steering`.
+   */
+  onHistoryRead?: (rowIds: ReadonlySet<string>) => void;
   /**
    * Fired around each tool execution (started/completed).
    * Purely observational; listener errors never affect the turn.
@@ -143,6 +147,13 @@ export interface InvokeRequest {
    * Bedrock/Anthropic reject.
    */
   appendPrompt?: boolean;
+  /**
+   * The stored row of a chat prompt. When the history ends on an agent row
+   * stored after it, the prompt is appended as `appendPrompt` would: a turn that
+   * was stopped may store its last reply after the next message arrived, and
+   * history alone would then end on the assistant.
+   */
+  promptMessageId?: string;
   /**
    * The run starts work that a restart may have stopped part-way. The model is
    * told in a message after the prompt, so the cached prefix before it holds.

@@ -10,10 +10,11 @@
  *    and background goal turns alike — runs under the thread's mutex, so two of
  *    them never build context from the same thread concurrently.
  *
- * 2. **Steerable.** A chat turn *claims* the thread. From the instant it claims
- *    until it has answered everything, a message arriving on that thread is
- *    handed to it (`claimOrOffer`, `offer`) instead of starting a turn of its
- *    own. The claiming turn picks the message up at its next step boundary —
+ * 2. **Steerable.** A chat turn *claims* the thread. A claim takes hand-overs
+ *    from the instant it claims until it closes or releases: in that time a
+ *    message arriving on that thread is handed to it (`claimOrOffer`, `offer`)
+ *    instead of starting a turn of its own. A turn releases once it has answered
+ *    everything, and a cancelled one closes at the stop (`close`). The claiming turn picks the message up at its next step boundary —
  *    text and any files alike — so the user can redirect work in flight instead
  *    of waiting minutes for a turn that then answers a question the agent has
  *    moved past.
@@ -78,9 +79,9 @@ interface ThreadState {
 }
 
 /**
- * The thread, taken by the turn that answers a message. Its inbox is open for
- * the whole claim, which is why nothing can slip between "no turn has this
- * thread" and "this turn has it".
+ * The thread, taken by the turn that answers a message. It takes hand-overs from
+ * the moment it is taken until it closes or releases, which is why nothing can
+ * slip between "no turn has this thread" and "this turn has it".
  */
 export interface ThreadClaim {
   /**
@@ -145,9 +146,9 @@ class ThreadTurnService {
   }
 
   /**
-   * Take the thread once no turn owns it. A releasing claim passes straight to
-   * the first caller waiting here, so no message can take the thread between
-   * them. For an exchange that must not be handed to another turn.
+   * Take the thread once no claim takes hand-overs on it. A claim that closes or
+   * releases passes straight to the first caller waiting here, so no message can
+   * take the thread between them. For an exchange that must not be handed to another turn.
    */
   claimWhenFree(threadId: string): Promise<ThreadClaim> {
     const state = this.stateFor(threadId);
@@ -304,8 +305,10 @@ class ThreadTurnService {
       drain: (which) => {
         check('drain');
         if (!which) return inbox.splice(0);
-        const taken = inbox.filter(which);
-        inbox.splice(0, inbox.length, ...inbox.filter((message) => !which(message)));
+        const taken: PendingMessage[] = [];
+        const kept: PendingMessage[] = [];
+        for (const message of inbox) (which(message) ? taken : kept).push(message);
+        inbox.splice(0, inbox.length, ...kept);
         return taken;
       },
       drainOrRelease: () => {

@@ -91,3 +91,16 @@ Feature: Agent Chat
     And no reply is an error
     And the thread has 2 user messages
     And no delivered agent message contains "ALPHA"
+
+  Scenario: Answer a message sent right after Stop
+    Given the shell workspace has no steering marker
+    When I navigate to the agent chat page
+    And I type "Use your shell to run `touch steering-started.marker && sleep 20`, then reply with exactly ALPHA." in the chat input
+    And I send the message
+    And the agent has started running the shell command
+    And I stop the in-progress response
+    And I type "Reply with exactly CHARLIE." in the chat input
+    And I send the message
+    Then the agent reply contains "CHARLIE"
+    And no reply is an error
+    And the thread has 2 user messages
