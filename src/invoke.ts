@@ -146,10 +146,12 @@ function restatedAfterReply(context: AgentContext, promptMessageId: string | und
 
 /**
  * The user rows stored after both the last agent row and the rows of a
- * follow-up's appended prompt, as history renders them.
+ * follow-up's appended prompt, as history renders them; none when history
+ * has none of those rows, as a thread provider that gives rows its own ids reads it.
  */
 function restatedAfterFollowUp(context: AgentContext, appendedMessageIds: ReadonlyArray<string>): ModelMessage[] {
   const rows = context.recentMessages;
+  if (!rows.some((row) => appendedMessageIds.includes(row.id))) return [];
   let after = rows.length;
   while (after > 0 && rows[after - 1].role !== 'AGENT' && !appendedMessageIds.includes(rows[after - 1].id)) after--;
   return rows
