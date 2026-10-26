@@ -57,9 +57,6 @@ interface StreamedTurn {
   completed: boolean;
 }
 
-/** The messages whose row is written, so a history read from then on holds them. */
-const storedHandOvers = new WeakSet<PendingMessage>();
-
 // ============================================================================
 // Types
 // ============================================================================
@@ -415,7 +412,7 @@ Answer with one word: WORTHY or SKIP.`;
     const stored: Promise<{ titleSet: string | null }> = input.stored
       ? Promise.resolve(input.stored)
       : this.acceptUserMessage(input, threadId, messageId);
-    stored.then(() => storedHandOvers.add(pending), () => {});
+    stored.catch(() => {});
 
     if (!claim) {
       let titleSet: string | null;
@@ -481,6 +478,12 @@ Answer with one word: WORTHY or SKIP.`;
       turnIds.push(...ids);
       return handed;
     };
+    // The rows this exchange's turns read as history. A message handed over that
+    // is among them reached the model there, so the turn answers it without
+    // injecting it again — even one offered after the read, as the chat socket
+    // does with a message it stored first.
+    const read = new Set<string>();
+    const unread = (handed: PendingMessage[]) => handed.filter((p) => !read.has(p.id));
     const work: ChatWork = { threadId, agentId, userId, ...(metadata ? { metadata } : {}) };
     // Kept as a turn goes on the row of the first message it answers, which stays
     // until the turn's reply is out. A restart stores what the turn did before the
@@ -560,6 +563,9 @@ Answer with one word: WORTHY or SKIP.`;
 
           let prompt = message;
           let appendPrompt = false;
+          // A resumed exchange stores rows after its message on purpose, and its
+          // history ends on the resume notice.
+          let promptMessageId = input.resumed ? undefined : messageId;
           // Notices describe events from preparing *this* message (e.g. an
           // attachment that failed to download), so they belong to the first turn
           // only — repeating them in a follow-up would re-report stale events.
@@ -573,6 +579,7 @@ Answer with one word: WORTHY or SKIP.`;
               workspaceRoot,
               prompt,
               appendPrompt,
+              promptMessageId,
               verbose,
               channelContext,
               metadata,
@@ -584,10 +591,12 @@ Answer with one word: WORTHY or SKIP.`;
               // Drained at every step boundary, so a message handed to us — even one
               // that arrived while we were still storing or waiting for the mutex —
               // reaches the model on the next step.
-              steering: () => this.loadSteering(take(claim.drain())),
-              // A handed-over message already stored when the turn reads history is
-              // in that history, so the turn answers it from there.
-              onHistoryRead: () => take(claim.drain((handed) => storedHandOvers.has(handed))),
+              steering: () => this.loadSteering(unread(take(claim.drain()))),
+              // A handed-over message the history holds is answered from there.
+              onHistoryRead: (rowIds) => {
+                for (const id of rowIds) read.add(id);
+                take(claim.drain((handed) => read.has(handed.id)));
+              },
             });
 
             if (streamed.text) responseTexts.push(streamed.text);
@@ -611,13 +620,19 @@ Answer with one word: WORTHY or SKIP.`;
             // An empty inbox ends the exchange and releases the thread in the same
             // synchronous act, so no message can be handed to a claim that is about
             // to end — the next one starts a turn of its own.
-            const leftover = take(claim.drainOrRelease());
+            //
+            // A message the turn read as history it has answered. An inbox that held
+            // only those is asked again, so the claim releases when nothing else waits.
+            let handed = take(claim.drainOrRelease());
+            while (handed.length > 0 && unread(handed).length === 0) handed = take(claim.drainOrRelease());
+            const leftover = unread(handed);
             if (leftover.length === 0) break;
 
             // Text only: any files these carried are already linked to their stored
             // message rows, so the follow-up's context build picks them up.
             prompt = leftover.map((p) => p.text).join('\n\n');
             appendPrompt = true;
+            promptMessageId = undefined;
             runtimeNotices = undefined;
           }
         } finally {
@@ -795,7 +810,8 @@ Answer with one word: WORTHY or SKIP.`;
     /** Files an interrupted turn shared, which this turn's reply delivers. */
     unsentAttachmentIds?: string[];
     steering: () => Promise<SteeringMessage[]>;
-    onHistoryRead: () => void;
+    onHistoryRead: (rowIds: ReadonlySet<string>) => void;
+    promptMessageId?: string;
   }): Promise<StreamedTurn> {
     const { userId, agentId, threadId, prompt, channelContext, metadata } = params;
 
@@ -819,6 +835,7 @@ Answer with one word: WORTHY or SKIP.`;
       mode: 'chat',
       prompt,
       appendPrompt: params.appendPrompt,
+      promptMessageId: params.promptMessageId,
       threadId,
       workspaceRoot: params.workspaceRoot,
       verbose: params.verbose,

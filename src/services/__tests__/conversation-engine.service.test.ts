@@ -1455,7 +1455,16 @@ describe('Requirement: Conversation Engine', () => {
       await second;
 
       expect(mockInvokeStream).toHaveBeenCalledTimes(2);
-      expect(mockInvokeStream.mock.calls[1][0].prompt).toBe('summarize the README instead');
+      // The stopped turn stored its reply after the second message's row, so the
+      // second turn names that row and invokeStream appends the prompt behind the
+      // reply instead of sending a request that ends on the assistant.
+      const [firstId, secondId] = mockBeginWork.mock.calls.map((call) => call[1]);
+      expect(mockInvokeStream.mock.calls[0][0]).toMatchObject({ promptMessageId: firstId });
+      expect(mockInvokeStream.mock.calls[1][0]).toMatchObject({
+        prompt: 'summarize the README instead',
+        promptMessageId: secondId,
+        appendPrompt: false,
+      });
     });
 
     it('leaves a steer-only message sent after the stop to its transport', async () => {
@@ -1480,6 +1489,7 @@ describe('Requirement: Conversation Engine', () => {
     it('does not inject a handed-over message that the history it read already holds', async () => {
       // The second message is stored while the first turn still reads the agent,
       // so the history the turn reads ends on it.
+      const storedIds = () => new Set(mockBeginWork.mock.calls.map((call) => call[1] as string));
       let readAgent!: () => void;
       const agentRead = new Promise<void>((r) => {
         readAgent = r;
@@ -1490,10 +1500,10 @@ describe('Requirement: Conversation Engine', () => {
       });
       let steered: unknown[] | undefined;
       mockInvokeStream.mockImplementation(async function* (request: {
-        onHistoryRead?: () => void;
+        onHistoryRead?: (rowIds: ReadonlySet<string>) => void;
         steering?: () => Promise<unknown[]>;
       }) {
-        request.onHistoryRead?.();
+        request.onHistoryRead?.(storedIds());
         steered = await request.steering?.();
         yield { text: 'ok', toolCalls: [] };
       });
@@ -1508,10 +1518,40 @@ describe('Requirement: Conversation Engine', () => {
       expect(mockFinishWork).toHaveBeenCalledWith('chat', mockBeginWork.mock.calls.map((call) => call[1]));
     });
 
+    it('does not inject a message offered after the history read that the history holds', async () => {
+      // The chat socket stores a message before it offers it, so a turn can read
+      // the row before the message reaches its inbox.
+      let steered: unknown[] | undefined;
+      const held = heldTurn();
+      mockInvokeStream.mockImplementation(async function* (request: {
+        onHistoryRead?: (rowIds: ReadonlySet<string>) => void;
+        steering?: () => Promise<unknown[]>;
+      }) {
+        request.onHistoryRead?.(new Set(['msg-socket']));
+        yield* held.generator(request as never);
+        steered = await request.steering?.();
+      });
+      const first = conversationEngineService.chat(steerInput('review the PR'));
+      await held.running;
+
+      const offered = await conversationEngineService.chat(
+        steerInput('skip the tests', { steerOnly: true, stored: { id: 'msg-socket', titleSet: null } }),
+      );
+      held.release();
+      await first;
+
+      expect(offered.steered).toBe(true);
+      expect(steered).toEqual([]);
+      // Answered from history, so no follow-up turn restates it.
+      expect(mockInvokeStream).toHaveBeenCalledTimes(1);
+    });
+
     it('injects a handed-over message stored after the history was read', async () => {
       const held = heldTurn();
-      mockInvokeStream.mockImplementation(async function* (request: { onHistoryRead?: () => void }) {
-        request.onHistoryRead?.();
+      mockInvokeStream.mockImplementation(async function* (request: {
+        onHistoryRead?: (rowIds: ReadonlySet<string>) => void;
+      }) {
+        request.onHistoryRead?.(new Set(mockBeginWork.mock.calls.map((call) => call[1] as string)));
         yield* held.generator(request as never);
       });
       const first = conversationEngineService.chat(steerInput('review the PR'));

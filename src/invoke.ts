@@ -109,13 +109,27 @@ export async function buildTurnRequest(
   // Chat: prompt is already in history (conversation engine stores it before invoke).
   // Heartbeat/cron: prompt is NOT in history — always append it.
   // A coalesced steering follow-up sets `appendPrompt` because its prompt sits
-  // earlier in history than the previous turn's replies (see InvokeRequest).
-  if (request.mode !== 'chat' || request.appendPrompt || messages.length === 0) {
+  // earlier in history than the previous turn's replies, and a stopped turn can
+  // store its last reply after this prompt's row (see InvokeRequest).
+  if (
+    request.mode !== 'chat' ||
+    request.appendPrompt ||
+    messages.length === 0 ||
+    repliedAfter(context, request.promptMessageId)
+  ) {
     messages.push({ role: 'user' as const, content: request.prompt });
   }
   if (request.afterRestart) messages.push({ role: 'user' as const, content: RESUMED_RUN_NOTICE });
 
   return { systemParts, messages, toolChangeMessages: history.trailingToolChanges };
+}
+
+/** True when the history ends on an agent row stored after the prompt's row. */
+function repliedAfter(context: AgentContext, promptMessageId: string | undefined): boolean {
+  if (!promptMessageId) return false;
+  const rows = context.recentMessages;
+  const at = rows.findIndex((row) => row.id === promptMessageId);
+  return at !== -1 && at < rows.length - 1 && rows[rows.length - 1].role === 'AGENT';
 }
 
 /**
@@ -196,7 +210,6 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
   // Fetch context. Failures become friendly error steps.
   let context;
   try {
-    request.onHistoryRead?.();
     context = await contextService.getAgentContext(request.userId, {
       threadId: request.threadId,
       includeConversation,
@@ -209,6 +222,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
     yield buildErrorStep(error);
     return;
   }
+  request.onHistoryRead?.(new Set(context.recentMessages.map((row) => row.id)));
 
   let activity: ThreadActivity | undefined;
   try {

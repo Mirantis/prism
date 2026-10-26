@@ -1268,7 +1268,16 @@ in one synchronous act:
    `appendPrompt: true`, since their text sits earlier in history than the
    previous turn's replies. A canceled turn runs no follow-up, and from the
    abort on it takes no hand-overs (`claim.close()`), so a message sent after
-   the stop starts a turn of its own.
+   the stop starts a turn of its own. The stopped turn can still store its last
+   reply after that message's row, so the new turn passes `promptMessageId` and
+   `invokeStream` appends the prompt when history ends on an agent row stored
+   after it.
+
+A hand-over whose row is in the history a turn read (`onHistoryRead`, called
+with the row ids after `getAgentContext`) is answered from history and never
+injected by steering, even when it is offered after the read. Slack-sourced
+threads read history from Slack, whose ids do not match the stored rows, so a
+message stored before the read still reaches the model twice there.
 
 **Why a claim rather than "is it invoking right now".** The claim is what makes
 the decision atomic. A turn that owns a thread does real work before it reaches

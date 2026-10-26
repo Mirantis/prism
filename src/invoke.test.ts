@@ -2134,6 +2134,73 @@ describe('invoke', () => {
       });
     });
 
+    describe('a prompt a stopped turn replied after', () => {
+      // A message sent after Stop is stored before the stopped turn stores its
+      // last reply, and history is ordered by row, so it ends on that reply.
+      const rows = (last: 'USER' | 'AGENT') =>
+        createTestAgentContext({
+          recentMessages: [
+            { id: 'first', role: 'USER', content: 'review the PR', externalMessageId: null, internalStep: false },
+            { id: 'second', role: 'USER', content: 'summarize the README', externalMessageId: null, internalStep: false },
+            ...(last === 'AGENT'
+              ? [{ id: 'reply', role: 'AGENT' as const, content: 'Stopped.', externalMessageId: null, internalStep: false }]
+              : []),
+          ],
+        });
+      const history = [
+        { role: 'user', content: 'review the PR' },
+        { role: 'user', content: 'summarize the README' },
+        { role: 'assistant', content: 'Stopped.' },
+      ];
+
+      it('appends the prompt when the history ends on an agent row after its row', async () => {
+        mockGetAgentContext.mockResolvedValue(rows('AGENT'));
+        mockBuildConversationMessages.mockReturnValue(history);
+
+        await invoke(
+          createTestInvokeRequest({ mode: 'chat', prompt: 'summarize the README', promptMessageId: 'second' }),
+        );
+
+        const messages = mockGenerateText.mock.calls[0][0].messages;
+        expect(messages[messages.length - 1]).toMatchObject({ role: 'user', content: 'summarize the README' });
+      });
+
+      it('does not append the prompt when the history ends on its row', async () => {
+        mockGetAgentContext.mockResolvedValue(rows('USER'));
+        mockBuildConversationMessages.mockReturnValue(history.slice(0, 2));
+
+        await invoke(
+          createTestInvokeRequest({ mode: 'chat', prompt: 'summarize the README', promptMessageId: 'second' }),
+        );
+
+        expect(mockGenerateText.mock.calls[0][0].messages).toMatchObject(history.slice(0, 2));
+      });
+
+      it('does not append the prompt when the history does not hold its row', async () => {
+        mockGetAgentContext.mockResolvedValue(rows('AGENT'));
+        mockBuildConversationMessages.mockReturnValue(history);
+
+        await invoke(createTestInvokeRequest({ mode: 'chat', prompt: 'summarize the README', promptMessageId: 'slack-ts' }));
+
+        expect(mockGenerateText.mock.calls[0][0].messages).toMatchObject(history);
+      });
+    });
+
+    it('reports the rows of the history it read', async () => {
+      mockGetAgentContext.mockResolvedValue(createTestAgentContext({
+          recentMessages: [
+            { id: 'm1', role: 'USER', content: 'hello', externalMessageId: null, internalStep: false },
+            { id: 'm2', role: 'AGENT', content: 'hi', externalMessageId: null, internalStep: false },
+          ],
+        }));
+      const onHistoryRead = vi.fn();
+
+      await invoke(createTestInvokeRequest({ mode: 'chat', onHistoryRead }));
+
+      expect(onHistoryRead).toHaveBeenCalledTimes(1);
+      expect([...onHistoryRead.mock.calls[0][0]]).toEqual(['m1', 'm2']);
+    });
+
     it('closes a run after a restart with the notice, behind the history and the prompt', async () => {
       // The history and the system prompt in front of it stay the bytes the last
       // run sent, so the cached prefix holds.
