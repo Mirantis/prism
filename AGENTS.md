@@ -61,8 +61,9 @@ to clear.
   how the agent is launched, read and given a home is its business alone. A new agent is one
   folder plus one entry in the selector.
 - **A delegated coding task runs under its CLI's own checks.** Claude Code runs an
-  edit task in `--permission-mode auto` and a plan task in `plan`, never with the
-  permissions bypass. Codex runs every task with `sandbox_mode="danger-full-access"`
+  edit task in `--permission-mode auto` and a plan task in `plan`. The bypass
+  (`--dangerously-skip-permissions`) runs only on an edit task, and only when the
+  operator sets `CLAUDE_CODE_SKIP_PERMISSIONS=true`. Codex runs every task with `sandbox_mode="danger-full-access"`
   and `approval_policy="never"`, since its sandbox cannot start in an unprivileged
   container; a Codex plan task is read-only by `PLAN_ONLY_INSTRUCTION` alone.
   A refusal the CLI reports reaches the task result as `refusals`, and a task that
@@ -1172,6 +1173,7 @@ What the operator sets on `docker run`:
 | `CLAUDE_CODE_MODEL_MEDIUM` | Model for the Claude Code medium tier | `sonnet` (Bedrock: `global.anthropic.claude-sonnet-5-5`) |
 | `CLAUDE_CODE_MODEL_LARGE` | Model for the Claude Code large tier | `opus` |
 | `CLAUDE_CODE_SUBSCRIPTION` | `true` runs every Claude Code task on the Claude subscription signed in to the CLI's home, and fails a task while none is | off |
+| `CLAUDE_CODE_SKIP_PERMISSIONS` | `true` runs every Claude Code edit task with `--dangerously-skip-permissions` instead of auto mode; a plan task stays in `plan` | off |
 | `CODEX_MODEL_SMALL` | Model for the Codex small tier | `gpt-5.6-luna` (Bedrock: `openai.gpt-5.6-luna`) |
 | `CODEX_MODEL_MEDIUM` | Model for the Codex medium tier | `gpt-5.6-terra` (Bedrock: `openai.gpt-5.6-terra`) |
 | `CODEX_MODEL_LARGE` | Model for the Codex large tier | `gpt-5.6-sol` (Bedrock: `openai.gpt-5.6-sol`) |

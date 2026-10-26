@@ -139,8 +139,13 @@ function buildArgs(
 
   // The CLI's own checks decide each action: its classifier in auto mode, the
   // read-only rule in plan mode. With no terminal a refused action is skipped,
-  // the run goes on, and the result line lists it.
-  args.push('--permission-mode', task.mode === 'plan' ? 'plan' : 'auto');
+  // the run goes on, and the result line lists it. `CLAUDE_CODE_SKIP_PERMISSIONS`
+  // is the operator's opt-out for edit tasks.
+  if (task.mode === 'edit' && config.claudeCodeSkipPermissions) {
+    args.push('--dangerously-skip-permissions');
+  } else {
+    args.push('--permission-mode', task.mode === 'plan' ? 'plan' : 'auto');
+  }
   // On the subscription the CLI takes the claude.ai login and no other, also
   // when the repository's own settings name another provider or key.
   if (subscription) args.push('--settings', SUBSCRIPTION_SETTINGS);
@@ -185,7 +190,12 @@ function parseLine(line: string, task: CodingAgentTask): CodingAgentEvent[] {
   // Where auto mode is unavailable, most often for the model, the CLI starts in
   // Manual mode and refuses every action that needs approval; the refusals alone
   // read like a policy decision.
-  if (parsed.subtype === 'init' && task.mode === 'edit' && parsed.permissionMode !== 'auto') {
+  if (
+    parsed.subtype === 'init' &&
+    task.mode === 'edit' &&
+    !config.claudeCodeSkipPermissions &&
+    parsed.permissionMode !== 'auto'
+  ) {
     logger.warn(
       { taskId: task.taskId, model: parsed.model, permissionMode: parsed.permissionMode },
       '[AgentTask] Claude Code did not start in auto mode, so it refuses every action that needs approval; check that its model supports auto mode',

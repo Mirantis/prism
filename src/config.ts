@@ -791,6 +791,9 @@ const claudeCodeSubscription = process.env.CLAUDE_CODE_SUBSCRIPTION?.trim().toLo
 // CODEX_SUBSCRIPTION=true runs every Codex task on the ChatGPT subscription
 // signed in to the CLI's home, and on nothing else.
 const codexSubscription = process.env.CODEX_SUBSCRIPTION?.trim().toLowerCase() === 'true';
+// CLAUDE_CODE_SKIP_PERMISSIONS=true runs every Claude Code edit task with its
+// permission checks off; a plan task stays in plan mode.
+const claudeCodeSkipPermissions = process.env.CLAUDE_CODE_SKIP_PERMISSIONS?.trim().toLowerCase() === 'true';
 
 function codingAgentModelOverride(name: string): string | undefined {
   const raw = process.env[name];
@@ -1131,6 +1134,7 @@ export const config = {
   configuredCodingAgent,
   claudeCodeSubscription,
   codexSubscription,
+  claudeCodeSkipPermissions,
 
   // Overrides the input-context window used by the context-window indicator.
   // Normally derived from the model ID via the models.dev catalog
