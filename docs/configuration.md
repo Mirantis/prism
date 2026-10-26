@@ -180,6 +180,7 @@ Omitted parameters keep the deployment's model and effort behavior.
 | `CODEX_MODEL_MEDIUM` | Model for the Codex medium tier | `gpt-5.6-terra` (Bedrock: `openai.gpt-5.6-terra`) |
 | `CODEX_MODEL_LARGE` | Model for the Codex large tier | `gpt-5.6-sol` (Bedrock: `openai.gpt-5.6-sol`) |
 | `CODEX_SUBSCRIPTION` | `true` runs every Codex task on your ChatGPT subscription. See [Codex tasks on a ChatGPT subscription](#codex-tasks-on-a-chatgpt-subscription). | off |
+| `CLAUDE_CODE_SKIP_PERMISSIONS` | `true` runs every Claude Code edit task with Claude Code's permission checks off. See [What a coding task may do](#what-a-coding-task-may-do). | off |
 
 Set each tier to a model your account can serve; set all three overrides to keep a model
 out of every tier. Blank overrides log a warning and use the default.
@@ -258,6 +259,9 @@ other model has every edit refused, and the runtime logs a warning that names th
 model. Auto mode checks an edit task's shell commands before they run, which can add
 model calls and time. The checks use Claude Sonnet 5 where the account can call it, and
 the task's model otherwise.
+
+To let Claude Code run every action in an edit task without checks, set
+`CLAUDE_CODE_SKIP_PERMISSIONS=true` and restart the agent. Plan tasks stay read-only.
 
 A Codex task runs without Codex's sandbox and can write anywhere its user can. A Codex
 plan task is read-only by instruction only.

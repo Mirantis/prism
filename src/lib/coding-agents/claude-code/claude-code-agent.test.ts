@@ -180,6 +180,27 @@ describe('run: the spawn', () => {
     expect(args).not.toContain('--dangerously-skip-permissions');
     expect(args).not.toContain('--allow-dangerously-skip-permissions');
   });
+
+  describe('with CLAUDE_CODE_SKIP_PERMISSIONS on', () => {
+    beforeEach(() => {
+      config.claudeCodeSkipPermissions = true;
+    });
+    afterEach(() => {
+      config.claudeCodeSkipPermissions = false;
+    });
+
+    it('runs an edit task with the permission checks skipped', async () => {
+      const { args } = await capture({ mode: 'edit' });
+      expect(args).toContain('--dangerously-skip-permissions');
+      expect(args).not.toContain('--permission-mode');
+    });
+
+    it('keeps a plan task in plan mode', async () => {
+      const { args } = await capture({ mode: 'plan' });
+      expect(valueOf(args, '--permission-mode')).toBe('plan');
+      expect(args).not.toContain('--dangerously-skip-permissions');
+    });
+  });
 });
 
 describe('run: the Claude subscription', () => {
@@ -643,6 +664,17 @@ describe('run: reading the stream', () => {
         { taskId: 't1', model: 'us.anthropic.claude-haiku-4-5-20251001-v1:0', permissionMode },
         expect.stringContaining('did not start in auto mode'),
       );
+    }
+  });
+
+  it('does not warn about auto mode while CLAUDE_CODE_SKIP_PERMISSIONS is on', async () => {
+    config.claudeCodeSkipPermissions = true;
+    const warn = vi.spyOn(logger, 'warn');
+    try {
+      await eventsFor([{ type: 'system', subtype: 'init', session_id: 's1', permissionMode: 'bypassPermissions' }]);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      config.claudeCodeSkipPermissions = false;
     }
   });
 
