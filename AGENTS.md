@@ -60,10 +60,10 @@ to clear.
   `CODING_AGENT` or the task's `agent` parameter), and the adapter runs it end to end:
   how the agent is launched, read and given a home is its business alone. A new agent is one
   folder plus one entry in the selector.
-- **A delegated coding task runs under its CLI's own checks.** Claude Code runs an
-  edit task in `--permission-mode auto` and a plan task in `plan`. The bypass
-  (`--dangerously-skip-permissions`) runs only on an edit task, and only when the
-  operator sets `CLAUDE_CODE_SKIP_PERMISSIONS=true`. Codex runs every task with `sandbox_mode="danger-full-access"`
+- **A delegated coding task runs under its CLI's own checks by default.** Claude Code
+  runs an edit task in `--permission-mode auto`, or `bypassPermissions` when the
+  operator sets `CLAUDE_CODE_SKIP_PERMISSIONS=true`, and a plan task in `plan`.
+  Codex runs every task with `sandbox_mode="danger-full-access"`
   and `approval_policy="never"`, since its sandbox cannot start in an unprivileged
   container; a Codex plan task is read-only by `PLAN_ONLY_INSTRUCTION` alone.
   A refusal the CLI reports reaches the task result as `refusals`, and a task that

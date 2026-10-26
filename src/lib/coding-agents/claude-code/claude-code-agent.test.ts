@@ -651,6 +651,7 @@ describe('run: reading the stream', () => {
     ['edit', 'default', true],
     ['edit', 'auto', false],
     ['plan', 'plan', false],
+    ['plan', 'default', true],
   ] as const)('warns when a %s task starts in %s mode: %s', async (mode, permissionMode, warns) => {
     const warn = vi.spyOn(logger, 'warn');
     // The opening line of Claude Code 2.1.296 on Bedrock with `--model haiku`.
@@ -661,21 +662,39 @@ describe('run: reading the stream', () => {
     expect(warn.mock.calls.length > 0).toBe(warns);
     if (warns) {
       expect(warn).toHaveBeenCalledWith(
-        { taskId: 't1', model: 'us.anthropic.claude-haiku-4-5-20251001-v1:0', permissionMode },
-        expect.stringContaining('did not start in auto mode'),
+        {
+          taskId: 't1', model: 'us.anthropic.claude-haiku-4-5-20251001-v1:0', permissionMode,
+          expectedMode: mode === 'plan' ? 'plan' : 'auto',
+        },
+        expect.stringContaining(`did not start in ${mode === 'plan' ? 'plan' : 'auto'} mode`),
       );
     }
   });
 
-  it('does not warn about auto mode while CLAUDE_CODE_SKIP_PERMISSIONS is on', async () => {
-    config.claudeCodeSkipPermissions = true;
-    const warn = vi.spyOn(logger, 'warn');
-    try {
-      await eventsFor([{ type: 'system', subtype: 'init', session_id: 's1', permissionMode: 'bypassPermissions' }]);
-      expect(warn).not.toHaveBeenCalled();
-    } finally {
+  describe('with CLAUDE_CODE_SKIP_PERMISSIONS on', () => {
+    beforeEach(() => {
+      config.claudeCodeSkipPermissions = true;
+    });
+    afterEach(() => {
       config.claudeCodeSkipPermissions = false;
-    }
+    });
+
+    // Settings with `permissions.disableBypassPermissionsMode: "disable"` start
+    // the CLI in `default` instead.
+    it.each([
+      ['default', true],
+      ['bypassPermissions', false],
+    ] as const)('warns when an edit task starts in %s mode: %s', async (permissionMode, warns) => {
+      const warn = vi.spyOn(logger, 'warn');
+      await eventsFor([{ type: 'system', subtype: 'init', session_id: 's1', permissionMode }]);
+      expect(warn.mock.calls.length > 0).toBe(warns);
+      if (warns) {
+        expect(warn).toHaveBeenCalledWith(
+          expect.objectContaining({ permissionMode, expectedMode: 'bypassPermissions' }),
+          expect.stringContaining('did not start in bypassPermissions mode'),
+        );
+      }
+    });
   });
 
   it('falls back to the subtype as the message when the result line has no text', async () => {
