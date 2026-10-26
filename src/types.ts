@@ -148,6 +148,12 @@ export interface InvokeRequest {
    */
   appendPrompt?: boolean;
   /**
+   * The stored rows of an appended prompt's messages. A user row stored after
+   * them and after the last agent row was handed to this turn and read as
+   * history, so it is restated after the prompt, which keeps a newer correction last.
+   */
+  appendedMessageIds?: string[];
+  /**
    * The stored row of a chat prompt. When the history ends on an agent row
    * stored after it, every user row from it on is restated after that row, as
    * history renders it: a turn that was stopped may store its last reply after

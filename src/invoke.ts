@@ -113,11 +113,16 @@ export async function buildTurnRequest(
   // earlier in history than the previous turn's replies. A stopped turn can store
   // its last reply after this prompt's row and the ones handed over with it, so
   // those are restated in order, files included (see InvokeRequest).
+  // A follow-up also restates the messages handed to it after the previous reply,
+  // which it reads as history, so the newest instruction stays last.
   const restated = request.mode === 'chat' && !request.appendPrompt ? restatedAfterReply(context, request.promptMessageId) : [];
   if (restated.length > 0) {
     messages.push(...restated);
   } else if (request.mode !== 'chat' || request.appendPrompt || messages.length === 0) {
     messages.push({ role: 'user' as const, content: request.prompt });
+  }
+  if (request.mode === 'chat' && request.appendPrompt) {
+    messages.push(...restatedAfterFollowUp(context, request.appendedMessageIds ?? []));
   }
   if (request.afterRestart) messages.push({ role: 'user' as const, content: RESUMED_RUN_NOTICE });
 
@@ -135,6 +140,20 @@ function restatedAfterReply(context: AgentContext, promptMessageId: string | und
   if (at === -1 || at === rows.length - 1 || rows[rows.length - 1].role !== 'AGENT') return [];
   return rows
     .slice(at)
+    .filter((row) => row.role === 'USER')
+    .flatMap((row) => buildUserMessage(row) ?? []);
+}
+
+/**
+ * The user rows stored after both the last agent row and the rows of a
+ * follow-up's appended prompt, as history renders them.
+ */
+function restatedAfterFollowUp(context: AgentContext, appendedMessageIds: ReadonlyArray<string>): ModelMessage[] {
+  const rows = context.recentMessages;
+  let after = rows.length;
+  while (after > 0 && rows[after - 1].role !== 'AGENT' && !appendedMessageIds.includes(rows[after - 1].id)) after--;
+  return rows
+    .slice(after)
     .filter((row) => row.role === 'USER')
     .flatMap((row) => buildUserMessage(row) ?? []);
 }

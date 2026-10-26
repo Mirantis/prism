@@ -1255,6 +1255,8 @@ describe('Requirement: Conversation Engine', () => {
       // than the first turn's replies, so history alone would end on an assistant
       // turn — the shape the provider rejects as assistant prefill.
       expect(followUp.appendPrompt).toBe(true);
+      // Its stored row, so a message handed over after it is restated after the prompt.
+      expect(followUp.appendedMessageIds).toEqual([expect.any(String)]);
     });
 
     it('coalesces several late messages into a single follow-up', async () => {

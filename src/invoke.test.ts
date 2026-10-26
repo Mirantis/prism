@@ -2135,6 +2135,52 @@ describe('invoke', () => {
       });
     });
 
+    describe('a follow-up handed a message after the previous reply', () => {
+      // m1 was left over from the previous turn; m2 was handed to the follow-up
+      // before its history read, so the follow-up answers it from history.
+      const row = (id: string, role: 'USER' | 'AGENT', content: string) =>
+        ({ id, role, content, externalMessageId: null, internalStep: false });
+
+      it('restates the newer message after the appended prompt', async () => {
+        mockGetAgentContext.mockResolvedValue(
+          createTestAgentContext({
+            recentMessages: [row('m1', 'USER', 'run tests'), row('r1', 'AGENT', 'Done.'), row('m2', 'USER', 'skip tests')],
+          }),
+        );
+        mockBuildConversationMessages.mockReturnValue([
+          { role: 'user', content: 'run tests' },
+          { role: 'assistant', content: 'Done.' },
+          { role: 'user', content: 'skip tests' },
+        ]);
+
+        await invoke(createTestInvokeRequest({ mode: 'chat', prompt: 'run tests', appendPrompt: true, appendedMessageIds: ['m1'] }));
+
+        expect(mockGenerateText.mock.calls[0][0].messages.slice(-2)).toEqual([
+          { role: 'user', content: 'run tests' },
+          { role: 'user', content: 'skip tests' },
+        ]);
+      });
+
+      it('restates no row of the appended prompt itself', async () => {
+        // m1 was stored after the reply, so its row already follows it.
+        mockGetAgentContext.mockResolvedValue(
+          createTestAgentContext({ recentMessages: [row('r1', 'AGENT', 'Done.'), row('m1', 'USER', 'run tests')] }),
+        );
+        mockBuildConversationMessages.mockReturnValue([
+          { role: 'assistant', content: 'Done.' },
+          { role: 'user', content: 'run tests' },
+        ]);
+
+        await invoke(createTestInvokeRequest({ mode: 'chat', prompt: 'run tests', appendPrompt: true, appendedMessageIds: ['m1'] }));
+
+        expect(mockGenerateText.mock.calls[0][0].messages).toMatchObject([
+          { role: 'assistant', content: 'Done.' },
+          { role: 'user', content: 'run tests' },
+          { role: 'user', content: 'run tests' },
+        ]);
+      });
+    });
+
     describe('a prompt a stopped turn replied after', () => {
       // A message sent after Stop is stored before the stopped turn stores its
       // last reply, and history is ordered by row, so it ends on that reply.
