@@ -2179,6 +2179,27 @@ describe('invoke', () => {
           { role: 'user', content: 'run tests' },
         ]);
       });
+
+      it('restates nothing when history gives the rows ids of its own', async () => {
+        // A thread provider that reads history live gives each row an id of its own.
+        mockGetAgentContext.mockResolvedValue(
+          createTestAgentContext({
+            recentMessages: [row('live-r1', 'AGENT', 'Done.'), row('live-m1', 'USER', 'run tests')],
+          }),
+        );
+        mockBuildConversationMessages.mockReturnValue([
+          { role: 'assistant', content: 'Done.' },
+          { role: 'user', content: 'run tests' },
+        ]);
+
+        await invoke(createTestInvokeRequest({ mode: 'chat', prompt: 'run tests', appendPrompt: true, appendedMessageIds: ['m1'] }));
+
+        expect(mockGenerateText.mock.calls[0][0].messages).toMatchObject([
+          { role: 'assistant', content: 'Done.' },
+          { role: 'user', content: 'run tests' },
+          { role: 'user', content: 'run tests' },
+        ]);
+      });
     });
 
     describe('a prompt a stopped turn replied after', () => {
