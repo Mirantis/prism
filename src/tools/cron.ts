@@ -9,10 +9,22 @@ import { Tool, tool } from 'ai';
 import { z } from 'zod';
 import * as cron from 'node-cron';
 import prisma from '../lib/prisma';
-import { cronSchedulerService, toBackendCronTask } from '../services/cron-scheduler.service';
+import { cronSchedulerService, readTaskDelivery, toBackendCronTask } from '../services/cron-scheduler.service';
 import { parseSchedule } from '../services/cron-schedule';
+import { DELIVER_TARGETS, parseCommaList } from '../services/delivery-target.service';
 import { logger } from '../logger';
 import type { ChannelName } from '../services/channel-adapter.interface';
+
+const deliverToParam = z
+  .enum(DELIVER_TARGETS)
+  .describe(
+    'Where the result goes: "all" (every connected channel), "chat" (web chat only), a channel ' +
+    'name (its direct conversation, else its main channel), or "none" (run without posting). ' +
+    'Default "all". A task that continues in the thread replies there.',
+  );
+const channelIdsParam = z
+  .array(z.string())
+  .describe('Linked channel ids of the deliverTo channel to post to, instead of its default destination');
 
 export function getCronTools(
   userId: string,
@@ -43,8 +55,10 @@ export function getCronTools(
             'scheduled task in the latest conversation. Use this to "wait" and resume the ' +
             'conversation here. Only valid for one-off schedules like "in 10 minutes".',
           ),
+        deliverTo: deliverToParam.optional(),
+        channelIds: channelIdsParam.optional(),
       }),
-      execute: async ({ name, schedule, instruction, continueInThread }) => {
+      execute: async ({ name, schedule, instruction, continueInThread, deliverTo, channelIds }) => {
         const { cronExpression, isOneShot, nextRunAt } = parseSchedule(schedule);
 
         if (!isOneShot && !cron.validate(cronExpression)) {
@@ -66,6 +80,12 @@ export function getCronTools(
             error: 'continueInThread requires an active conversation thread to resume in.',
           };
         }
+        const delivery = await readTaskDelivery({ deliverTo, channelIds }, agentId, {
+          deliverTo: 'all',
+          channelIds: null,
+          threadId: bindToThread ? (threadId ?? null) : null,
+        });
+        if (!delivery.ok) return { success: false, error: delivery.error };
 
         const task = await prisma.cronTask.create({
           data: {
@@ -75,6 +95,7 @@ export function getCronTools(
             schedule: cronExpression,
             instruction,
             nextRunAt,
+            ...delivery.value,
             ...(bindToThread
               ? { threadId, originChannel, originChannelId: originChannelId ?? null }
               : {}),
@@ -120,6 +141,8 @@ export function getCronTools(
             schedule: t.schedule,
             instruction: t.instruction,
             isActive: t.isActive,
+            deliverTo: t.deliverTo,
+            channelIds: parseCommaList(t.channelIds),
             nextRunAt: t.nextRunAt?.toISOString() ?? null,
             lastRunAt: t.lastRunAt?.toISOString() ?? null,
           })),
@@ -128,12 +151,15 @@ export function getCronTools(
     }),
 
     update_scheduled_task: tool({
-      description: 'Change the name, schedule or instruction of a scheduled task. A field you leave out keeps its value.',
+      description:
+        'Change the name, schedule, instruction or delivery of a scheduled task. A field you leave out keeps its value.',
       inputSchema: z.object({
         taskId: z.string().describe('The task ID to change'),
         name: z.string().optional().describe('New short name for the task'),
         schedule: z.string().optional().describe('New time to run: "in 30 seconds", "in 2 minutes", "every hour", "at 3pm", cron expression'),
         instruction: z.string().optional().describe('New instruction: what to do when the task runs'),
+        deliverTo: deliverToParam.optional(),
+        channelIds: channelIdsParam.optional(),
       }),
       execute: async ({ taskId, ...changes }) => {
         const result = await cronSchedulerService.updateTask(taskId, changes, {

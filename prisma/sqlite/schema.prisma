@@ -370,6 +370,12 @@ model CronTask {
   originChannel   String?
   originChannelId String?
 
+  // Where a task that continues no conversation delivers its result:
+  // `DELIVER_TARGETS`. `channelIds` lists the linked channels of that target's
+  // channel it posts to; null = the channel's default destination.
+  deliverTo  String  @default("all")
+  channelIds String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

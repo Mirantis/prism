@@ -194,11 +194,13 @@ List, create, edit, and delete the agent's cron-driven runs.
 
 - Each task in the list shows its name, its instruction, its schedule as a cron
   expression (e.g. `0 9 * * *`) and, for a common schedule, in words, whether it
-  is active, and its next and last run.
+  is active, its next and last run, and where it delivers when that is not all
+  channels.
 - **Create** opens a form: a name, a cron expression, and an optional
   instruction describing what the agent should do on each tick. Common schedules,
   such as **Weekdays at 09:00**, fill in the expression with one press. The form
-  names the agent's time zone, which every schedule runs in.
+  names the agent's time zone, which every schedule runs in. **Deliver to** sets
+  where the result goes, as for a [webhook](webhooks.md#delivery-targets--storage).
 - **Edit** (the pencil on a task) opens the same form with the task's name,
   schedule, and instruction.
 - **Delete** removes a task after a confirmation.

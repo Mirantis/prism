@@ -30,6 +30,8 @@ const {
   mockBeginWork,
   mockFinishWork,
   mockWritableThreadId,
+  mockGetAdapter,
+  mockGetOrCreateLatestThread,
   shutdown,
 } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
@@ -50,6 +52,8 @@ const {
   mockBeginWork: vi.fn(async () => undefined),
   mockFinishWork: vi.fn(),
   mockWritableThreadId: vi.fn(),
+  mockGetAdapter: vi.fn(),
+  mockGetOrCreateLatestThread: vi.fn(),
   shutdown: { controller: new AbortController() },
 }));
 
@@ -62,11 +66,15 @@ vi.mock('./message-delivery.service', () => ({
     publishToLatestThread: mockDeliverMessage,
     publish: mockPublish,
     threadContext: mockThreadContext,
+    getAdapter: mockGetAdapter,
   },
 }));
 
 vi.mock('./conversation.service', () => ({
-  conversationService: { writableThreadId: mockWritableThreadId },
+  conversationService: {
+    writableThreadId: mockWritableThreadId,
+    getOrCreateLatestThread: mockGetOrCreateLatestThread,
+  },
 }));
 
 vi.mock('../lib/prisma', () => ({
@@ -151,6 +159,8 @@ function createCronTask(overrides: Partial<BackendCronTask> = {}): BackendCronTa
     threadId: null,
     originChannel: null,
     originChannelId: null,
+    deliverTo: 'all',
+    channelIds: null,
     ...overrides,
   };
 }
@@ -713,6 +723,8 @@ describe('CronSchedulerService', () => {
         threadId: null,
         originChannel: null,
         originChannelId: null,
+        deliverTo: 'all',
+        channelIds: null,
         createdAt: new Date('2025-01-01T00:00:00Z'),
         updatedAt: new Date('2025-01-01T00:00:00Z'),
         ...overrides,
@@ -867,6 +879,65 @@ describe('CronSchedulerService', () => {
       const gateInputs = mockGenerateText.mock.calls.map(([call]) => call.messages[0].content as string);
       expect(gateInputs[1]).toContain('## Last Delivered Result');
       expect(gateInputs[2]).toContain('No previous result has been delivered');
+    });
+
+    it('saves a new target and re-registers the task with it', async () => {
+      mockCronTaskFindFirst.mockResolvedValue(storedRow());
+      mockCronTaskUpdate.mockImplementation(async ({ data }) => storedRow(data));
+
+      const result = await cronSchedulerService.updateTask('task-1', { deliverTo: 'chat' });
+
+      expect(result.status).toBe('updated');
+      expect(mockCronTaskUpdate).toHaveBeenCalledWith({
+        where: { id: 'task-1' },
+        data: expect.objectContaining({ deliverTo: 'chat', channelIds: null }),
+      });
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'cron task updated',
+        'user-abc-123',
+        expect.objectContaining({ 'cron.deliver_to': 'chat' }),
+      );
+    });
+
+    it('drops the chosen channels when the target changes', async () => {
+      mockCronTaskFindFirst.mockResolvedValue(storedRow({ deliverTo: 'slack', channelIds: 'C1,C2' }));
+      mockCronTaskUpdate.mockImplementation(async ({ data }) => storedRow(data));
+
+      await cronSchedulerService.updateTask('task-1', { deliverTo: 'teams' });
+
+      expect(mockCronTaskUpdate).toHaveBeenCalledWith({
+        where: { id: 'task-1' },
+        data: expect.objectContaining({ deliverTo: 'teams', channelIds: null }),
+      });
+    });
+
+    it('refuses an unknown target', async () => {
+      mockCronTaskFindFirst.mockResolvedValue(storedRow());
+
+      const result = await cronSchedulerService.updateTask('task-1', { deliverTo: 'log' });
+
+      expect(result).toMatchObject({ status: 'invalid', field: 'deliverTo' });
+      expect(mockCronTaskUpdate).not.toHaveBeenCalled();
+    });
+
+    it('refuses chosen channels on a channel that links none', async () => {
+      mockCronTaskFindFirst.mockResolvedValue(storedRow());
+      mockGetAdapter.mockReturnValue({ name: 'websocket' });
+
+      const result = await cronSchedulerService.updateTask('task-1', { channelIds: ['C1'] });
+
+      expect(result).toMatchObject({ status: 'invalid', field: 'channelIds' });
+    });
+
+    it('refuses another target for a task that continues a conversation', async () => {
+      mockCronTaskFindFirst.mockResolvedValue(
+        storedRow({ schedule: 'in 1 minutes', nextRunAt: new Date(Date.now() + 60_000), threadId: 'thread-bound' }),
+      );
+
+      const result = await cronSchedulerService.updateTask('task-1', { deliverTo: 'chat' });
+
+      expect(result).toMatchObject({ status: 'invalid', field: 'deliverTo' });
+      expect(mockCronTaskUpdate).not.toHaveBeenCalled();
     });
   });
 
@@ -1138,6 +1209,36 @@ describe('CronSchedulerService', () => {
       await run();
 
       expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('delivers to web chat alone for a task whose target is chat', async () => {
+      mockGetOrCreateLatestThread.mockResolvedValue({ id: 'thr-latest' });
+
+      const run = scheduleAndCapture({ deliverTo: 'chat' });
+      await run();
+
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockPublish).toHaveBeenCalledWith(
+        'user-abc-123',
+        'thr-latest',
+        expect.stringContaining('**Scheduled Task: Daily Report**'),
+        'CRON_TASK',
+        expect.objectContaining({ channelContext: { channel: 'websocket', threadId: 'thr-latest' } }),
+      );
+    });
+
+    it('runs a task whose target is none without the gate and delivers nothing', async () => {
+      const run = scheduleAndCapture({ deliverTo: 'none' });
+      await run();
+
+      expect(mockGenerateText).not.toHaveBeenCalled();
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockPublish).not.toHaveBeenCalled();
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'cron task executed',
+        'user-abc-123',
+        expect.objectContaining({ 'cron.result': 'completed' }),
+      );
     });
 
     it('fails open and delivers when the gate call throws', async () => {
@@ -1496,6 +1597,7 @@ describe('CronSchedulerService', () => {
         'cron.schedule': '0 9 * * *',
         'cron.one_shot': 'false',
         'cron.continue_in_thread': 'false',
+        'cron.deliver_to': 'all',
       });
     });
 

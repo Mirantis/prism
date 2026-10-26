@@ -39,7 +39,11 @@ vi.mock('../../services/cron-scheduler.service', async () => {
   const actual = await vi.importActual<typeof import('../../services/cron-scheduler.service')>(
     '../../services/cron-scheduler.service',
   );
-  return { toBackendCronTask: actual.toBackendCronTask, cronSchedulerService: mockScheduler };
+  return {
+    toBackendCronTask: actual.toBackendCronTask,
+    readTaskDelivery: actual.readTaskDelivery,
+    cronSchedulerService: mockScheduler,
+  };
 });
 
 vi.mock('../../lib/telemetry', () => ({
@@ -169,6 +173,50 @@ describe('cron tools', () => {
     });
   });
 
+  it('schedule_task stores the target it is given', async () => {
+    mockPrisma.cronTask.create.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+      Promise.resolve({ id: 'task-3', nextRunAt: null, ...data }),
+    );
+
+    await tools.schedule_task.execute({
+      name: 'Digest',
+      schedule: 'every 2 hours',
+      instruction: 'digest',
+      deliverTo: 'chat',
+    });
+
+    expect(mockPrisma.cronTask.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ deliverTo: 'chat', channelIds: null }),
+    });
+  });
+
+  it('schedule_task stores every connected channel as the target by default', async () => {
+    mockPrisma.cronTask.create.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+      Promise.resolve({ id: 'task-3', nextRunAt: null, ...data }),
+    );
+
+    await tools.schedule_task.execute({ name: 'Digest', schedule: 'every 2 hours', instruction: 'digest' });
+
+    expect(mockPrisma.cronTask.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ deliverTo: 'all', channelIds: null }),
+    });
+  });
+
+  it('update_scheduled_task passes a new target to the scheduler', async () => {
+    mockScheduler.updateTask.mockResolvedValue({
+      status: 'updated',
+      task: { id: 'task-1', name: 'Daily Report', schedule: '0 9 * * *', nextRunAt: null },
+    });
+
+    await tools.update_scheduled_task.execute({ taskId: 'task-1', deliverTo: 'none' });
+
+    expect(mockScheduler.updateTask).toHaveBeenCalledWith(
+      'task-1',
+      { deliverTo: 'none' },
+      { owner: { userId: 'user-1', agentId: 'agent-1' }, invokeMode: 'heartbeat' },
+    );
+  });
+
   it('delete_scheduled_task does not unschedule (or emit) when no row was deleted', async () => {
     mockPrisma.cronTask.deleteMany.mockResolvedValue({ count: 0 });
 
@@ -256,6 +304,20 @@ describe('cron tools', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toMatch(/thread/i);
+      expect(mockPrisma.cronTask.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects another target for a task that continues in the thread', async () => {
+      const result = (await boundTools().schedule_task.execute({
+        name: 'Recheck',
+        schedule: 'in 5 minutes',
+        instruction: 'x',
+        continueInThread: true,
+        deliverTo: 'chat',
+      })) as { success: boolean; error?: string };
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/continues a conversation/);
       expect(mockPrisma.cronTask.create).not.toHaveBeenCalled();
     });
 

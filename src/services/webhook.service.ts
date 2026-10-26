@@ -16,15 +16,14 @@
 
 import { fence } from '../lib/prompt-fence';
 import { WEBHOOK_EVENT_DATA_TAG, WEBHOOK_PROMPT_TAG } from '../prompts/webhook-prompt-tags';
-import { ConversationMessage, WebhookSubscription } from '@prisma/client';
+import type { WebhookSubscription } from '@prisma/client';
 import { invoke } from '../invoke';
-import { messageDeliveryService, PublishOptions } from './message-delivery.service';
+import type { PublishOptions } from './message-delivery.service';
+import { deliveryTargetService, parseCommaList, type Delivery } from './delivery-target.service';
 import { webhookRunService, WebhookRunResult, type AcceptedEvent } from './webhook-run.service';
 import { pendingWorkService, type PendingWorkItem } from './pending-work.service';
-import { conversationService } from './conversation.service';
 import { agentWorkspaceService } from './agent-workspace.service';
 import { prisma } from '../lib/prisma';
-import { CHAT_PLATFORMS, type ChannelName } from './channel-adapter.interface';
 import { trackEvent } from '../lib/telemetry';
 import { verifyWebhookAuth } from '../lib/webhook-signature';
 import { runClassificationGate } from '../lib/classification-gate';
@@ -34,9 +33,6 @@ import { logger } from '../logger';
 // ============================================================================
 // Types
 // ============================================================================
-
-export const WEBHOOK_DELIVER_TARGETS = ['all', 'chat', ...CHAT_PLATFORMS, 'none'] as const;
-export type WebhookDeliverTo = (typeof WEBHOOK_DELIVER_TARGETS)[number];
 
 /** Subscription name rule, borrowed from hermes: lowercase slug. */
 export const WEBHOOK_NAME_RE = /^[a-z0-9][a-z0-9_-]*$/;
@@ -52,21 +48,8 @@ export type WebhookInboundResult =
   | { status: 'delivered'; event: string } // 200 — deliver-only, published
   | { status: 'accepted'; event: string }; // 202 — agent run dispatched or queued
 
-/**
- * What a delivery stored: the message, or null for 'none'. A delivery to chosen
- * channels also counts the channels it posted to and the unlinked ones it
- * skipped.
- */
-interface Delivery {
-  message: ConversationMessage | null;
-  chosenChannels?: { channel: ChannelName; posted: number; skipped: number };
-}
-
 /** A run's result, with the channel counts its delivery reported. */
 type RunOutcome = WebhookRunResult & Pick<Delivery, 'chosenChannels'>;
-
-/** What a webhook message is published with. */
-type WebhookPublishOptions = Pick<PublishOptions, 'triggerName' | 'toolCalls' | 'attachmentIds'>;
 
 /** The `webhook processed` props for a delivery to chosen channels, named for the channel. */
 function chosenChannelProps(chosen: Delivery['chosenChannels']): Record<string, string> {
@@ -95,19 +78,6 @@ const NESTED_VALUE_MAX_CHARS = 2000;
 /** Normalize a user-supplied subscription name the way hermes does. */
 export function normalizeWebhookName(raw: unknown): string {
   return typeof raw === 'string' ? raw.trim().toLowerCase().replace(/\s+/g, '-') : '';
-}
-
-export function isValidDeliverTo(value: unknown): value is WebhookDeliverTo {
-  return typeof value === 'string' && (WEBHOOK_DELIVER_TARGETS as readonly string[]).includes(value);
-}
-
-/** Parse a stored comma-separated column; null or empty is an empty list. */
-export function parseCommaList(value: string | null | undefined): string[] {
-  if (!value) return [];
-  return value
-    .split(',')
-    .map((e) => e.trim())
-    .filter((e) => e.length > 0);
 }
 
 /** A subscription as the management API exposes it: no secret, ever. */
@@ -573,130 +543,22 @@ export class WebhookService {
     }
   }
 
-  /**
-   * Deliver a webhook message: to the chosen channels of a subscription that
-   * has them, when its target links channels, else per the subscription's
-   * target. Each stored message names the subscription for the model.
-   */
-  private async deliver(
+  /** Deliver a webhook message per the subscription's target, naming the subscription for the model. */
+  private deliver(
     agentId: string,
     userId: string,
-    target: Pick<WebhookSubscription, 'name' | 'deliverTo' | 'slackChannelIds'>,
+    subscription: Pick<WebhookSubscription, 'name' | 'deliverTo' | 'slackChannelIds'>,
     content: string,
     options?: Pick<PublishOptions, 'toolCalls' | 'attachmentIds'>,
   ): Promise<Delivery> {
-    const published = { ...options, triggerName: target.name };
-    const chosen = parseCommaList(target.slackChannelIds);
-    const channel = messageDeliveryService.getAdapter(target.deliverTo);
-    if (chosen.length > 0 && channel?.linkedChannelIds) {
-      const linked = new Set(await channel.linkedChannelIds(agentId));
-      return this.deliverToChosenChannels(agentId, userId, channel.name, linked, chosen, content, published);
-    }
-    return { message: await this.deliverToTarget(agentId, userId, target.deliverTo, content, published) };
-  }
-
-  /**
-   * Deliver a webhook message per the subscription's target, and return the
-   * stored message, or null for 'none':
-   * - 'all' — broadcast to every connected channel (heartbeat/cron behavior).
-   * - 'chat' — scoped to web chat; stored in the web-visible latest thread.
-   * - a channel's name — scoped to that channel's default destination (the
-   *   direct conversation, else the main channel). Stored in the destination's
-   *   own thread, keyed by a non-null externalThreadId, so `listThreads` hides
-   *   it from web Recents + the CLI resume picker. Falls back to the latest
-   *   (web-visible) thread + a warning when the channel has no destination.
-   * - 'none' — nothing is published or stored.
-   */
-  private async deliverToTarget(
-    agentId: string,
-    userId: string,
-    deliverTo: string,
-    content: string,
-    options: WebhookPublishOptions,
-  ): Promise<ConversationMessage | null> {
-    if (deliverTo === 'none') return null;
-
-    if (deliverTo === 'chat') {
-      return this.deliverToChat(agentId, userId, content, options);
-    }
-
-    const channel = messageDeliveryService.getAdapter(deliverTo);
-    if (channel?.defaultDestination) {
-      const destination = await channel.defaultDestination(agentId, userId);
-      if (destination) {
-        // Reuse the destination's own conversation thread, keyed by its
-        // conversation id and hidden from web/CLI Recents.
-        const { threadKey, ...route } = destination;
-        const thread = await conversationService.getOrCreateThreadByExternalId(userId, agentId, threadKey);
-        return messageDeliveryService.publish(userId, thread.id, content, 'WEBHOOK', {
-          ...options,
-          channelContext: { channel: channel.name, ...route, threadId: thread.id },
-        });
-      }
-      // No direct conversation or channel linked, so the channel cannot deliver.
-      // Store in the web-visible latest thread so the event isn't silently lost.
-      logger.warn(
-        "[Webhook] deliverTo:'%s' but no direct conversation or channel is linked — storing in the web thread instead",
-        deliverTo,
-      );
-      return messageDeliveryService.publishToLatestThread(agentId, userId, content, 'WEBHOOK', options);
-    }
-
-    // 'all' — broadcast to every connected channel.
-    return messageDeliveryService.publishToLatestThread(agentId, userId, content, 'WEBHOOK', options);
-  }
-
-  /** Publish to web chat only, in the web-visible latest thread. */
-  private async deliverToChat(
-    agentId: string,
-    userId: string,
-    content: string,
-    options: WebhookPublishOptions,
-  ): Promise<ConversationMessage> {
-    const thread = await conversationService.getOrCreateLatestThread(agentId, userId);
-    return messageDeliveryService.publish(userId, thread.id, content, 'WEBHOOK', {
-      ...options,
-      channelContext: { channel: 'websocket', threadId: thread.id },
-    });
-  }
-
-  /**
-   * Post to each chosen channel that is still linked to the agent, and return
-   * the first stored message. Each post is stored in its channel's own thread.
-   * A shared file belongs to one message, so files go with the first post
-   * only: a run that shares files and posts to several channels is rare.
-   * When no chosen channel is linked any more, the message goes to web chat
-   * only, because the list excludes every other destination on that platform.
-   */
-  private async deliverToChosenChannels(
-    agentId: string,
-    userId: string,
-    channel: ChannelName,
-    linked: Set<string>,
-    chosen: string[],
-    content: string,
-    options: WebhookPublishOptions,
-  ): Promise<Delivery> {
-    const reachable = chosen.filter((id) => linked.has(id));
-    const chosenChannels = { channel, posted: reachable.length, skipped: chosen.length - reachable.length };
-    if (chosenChannels.skipped > 0) {
-      const unlinked = chosen.filter((id) => !linked.has(id));
-      logger.warn(`[Webhook] Skipping ${channel} channels that are no longer linked: ${unlinked.join(', ')}`);
-    }
-
-    let first: ConversationMessage | null = null;
-    for (const channelId of reachable) {
-      const thread = await conversationService.getOrCreateThreadByExternalId(userId, agentId, channelId);
-      const message = await messageDeliveryService.publish(userId, thread.id, content, 'WEBHOOK', {
-        ...options,
-        channelContext: { channel, channelId, threadId: thread.id },
-      });
-      first ??= message;
-    }
-    if (first) return { message: first, chosenChannels };
-
-    logger.warn(`[Webhook] None of the chosen ${channel} channels is linked — storing in the web thread instead`);
-    return { message: await this.deliverToChat(agentId, userId, content, options), chosenChannels };
+    return deliveryTargetService.deliver(
+      agentId,
+      userId,
+      { deliverTo: subscription.deliverTo, channelIds: parseCommaList(subscription.slackChannelIds) },
+      content,
+      'WEBHOOK',
+      { ...options, triggerName: subscription.name },
+    );
   }
 }
 

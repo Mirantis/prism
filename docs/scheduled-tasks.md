@@ -49,7 +49,7 @@ Schedules run in the agent's configured **timezone** (see
 | Where | How |
 |-------|-----|
 | Conversation | "Schedule a daily 9am summary of failing pods." or "Move that summary to 8am." The agent creates or changes the task. |
-| Web UI | **Scheduled Tasks** page — create (name + cron + instruction), list, edit, delete. |
+| Web UI | **Scheduled Tasks** page — create (name + cron + instruction + delivery), list, edit, delete. |
 | Terminal UI | `/schedules` panel — list, **n** to create, **e** to edit, **d** to delete. |
 | Voice meeting | "Look into that and get back to me." The agent schedules a one-off task and says when it runs — see [Voice meetings](voice-meetings.md). |
 
@@ -59,6 +59,12 @@ with its full toolset and delivers the result to your active conversation (and
 to connected channels, labeled as a scheduled-task result) — unless there is
 nothing worth reporting (see
 [Quiet when there's nothing to report](#quiet-when-theres-nothing-to-report)).
+
+Each task also has a **Deliver to** target, with the same choices as a
+[webhook's](webhooks.md#delivery-targets--storage): **All channels** (the
+default), **Chat**, **Slack** (optionally to chosen linked channels),
+**Microsoft Teams**, or **None**, which runs the task and posts nothing. Set it
+in the Web UI form, or ask the agent: "post the daily summary to Slack only."
 
 Scheduled runs use the agent's main model by default, but you can give them
 their own model from the **[Web UI → Profile](web-ui.md#profile)** or the

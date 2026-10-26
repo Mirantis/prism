@@ -34,12 +34,11 @@ import { WebhookEditDialog } from '@/components/webhooks/webhook-edit-dialog';
 import { isWebhookAuthComplete } from '@/components/webhooks/webhook-auth-fields';
 import { WebhookSubscriptionFields } from '@/components/webhooks/webhook-subscription-fields';
 import {
-  DELIVER_LABELS,
   EMPTY_WEBHOOK_SUBSCRIPTION_FORM,
-  slackChannelNames,
   slackChannelsToSave,
   type WebhookSubscriptionFormValues,
 } from '@/components/webhooks/webhook-subscription-form';
+import { DELIVER_LABELS, slackChannelNames } from '@/lib/delivery-labels';
 import type { WebhookSubscription } from '@/types';
 
 export const Route = createFileRoute('/webhooks')({

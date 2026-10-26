@@ -18,10 +18,12 @@ import { prisma } from '../lib/prisma';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
 import {
   cronSchedulerService,
+  readTaskDelivery,
   toBackendCronTask,
   type CronTaskChanges,
 } from '../services/cron-scheduler.service';
 import { parseSchedule } from '../services/cron-schedule';
+import { parseCommaList } from '../services/delivery-target.service';
 
 const router = Router();
 
@@ -36,7 +38,26 @@ function toListedTask(task: CronTask) {
     ...task,
     recurring,
     nextRunAt: recurring ? cronSchedulerService.nextRunFor(task.id) : task.nextRunAt,
+    channelIds: parseCommaList(task.channelIds),
   };
+}
+
+/** The delivery fields of a request body, or the name of the field that has the wrong type. */
+function readDeliveryFields(
+  body: Record<string, unknown>,
+): { ok: true; changes: Pick<CronTaskChanges, 'deliverTo' | 'channelIds'> } | { ok: false; field: string; error: string } {
+  const { deliverTo, channelIds } = body;
+  if (deliverTo !== undefined && typeof deliverTo !== 'string') {
+    return { ok: false, field: 'deliverTo', error: 'deliverTo must be a string' };
+  }
+  if (
+    channelIds !== undefined &&
+    channelIds !== null &&
+    !(Array.isArray(channelIds) && channelIds.every((id) => typeof id === 'string'))
+  ) {
+    return { ok: false, field: 'channelIds', error: 'channelIds must be an array of channel ids' };
+  }
+  return { ok: true, changes: { deliverTo, channelIds } };
 }
 
 function rejectField(res: Response, field: string, error: string): void {
@@ -69,7 +90,7 @@ router.get('/cron-tasks', async (_req: Request, res: Response) => {
  * Create + register a cron task. Mirrors the agent's own `schedule_task`
  * tool: persists to Prisma first, then registers in-memory via the
  * scheduler service.
- * Body: { name, schedule, instruction }
+ * Body: { name, schedule, instruction, deliverTo?, channelIds? }
  */
 router.post('/cron-tasks', async (req: Request, res: Response) => {
   try {
@@ -84,7 +105,22 @@ router.post('/cron-tasks', async (req: Request, res: Response) => {
       return;
     }
 
+    const fields = readDeliveryFields(req.body);
+    if (!fields.ok) {
+      rejectField(res, fields.field, fields.error);
+      return;
+    }
+
     const agent = await agentWorkspaceService.getAgent();
+    const delivery = await readTaskDelivery(fields.changes, agent.id, {
+      deliverTo: 'all',
+      channelIds: null,
+      threadId: null,
+    });
+    if (!delivery.ok) {
+      rejectField(res, delivery.field, delivery.error);
+      return;
+    }
 
     const { cronExpression, isOneShot, nextRunAt } = parseSchedule(schedule);
     if (!isOneShot && !cron.validate(cronExpression)) {
@@ -100,12 +136,13 @@ router.post('/cron-tasks', async (req: Request, res: Response) => {
         schedule: cronExpression,
         instruction,
         nextRunAt,
+        ...delivery.value,
       },
     });
 
     cronSchedulerService.scheduleTask(toBackendCronTask(task));
 
-    res.status(201).json(task);
+    res.status(201).json(toListedTask(task));
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     logger.error(`[CronTasks] Failed to create cron task for agent: ${msg}`);
@@ -117,7 +154,7 @@ router.post('/cron-tasks', async (req: Request, res: Response) => {
  * PATCH /agents/cron-tasks/:taskId
  * Edit a task and re-register it. A field the body leaves out keeps its value, and a schedule
  * the body gives is read again from now.
- * Body: { name?, schedule?, instruction? }, at least one of them
+ * Body: { name?, schedule?, instruction?, deliverTo?, channelIds? }, at least one of them
  */
 router.patch('/cron-tasks/:taskId', async (req: Request<{ taskId: string }>, res: Response) => {
   try {
@@ -132,8 +169,15 @@ router.patch('/cron-tasks/:taskId', async (req: Request<{ taskId: string }>, res
       }
       changes[field] = value;
     }
+    const fields = readDeliveryFields(body);
+    if (!fields.ok) {
+      rejectField(res, fields.field, fields.error);
+      return;
+    }
+    if (fields.changes.deliverTo !== undefined) changes.deliverTo = fields.changes.deliverTo;
+    if (fields.changes.channelIds !== undefined) changes.channelIds = fields.changes.channelIds;
     if (Object.keys(changes).length === 0) {
-      res.status(400).json({ error: 'Nothing to change: send a name, a schedule or an instruction' });
+      res.status(400).json({ error: 'Nothing to change: send a name, a schedule, an instruction or a delivery' });
       return;
     }
 

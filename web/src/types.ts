@@ -330,6 +330,10 @@ export interface CronTask {
   nextRunAt: string | null;
   /** The conversation a one-off task continues in, if it continues one. */
   threadId: string | null;
+  /** Where the result goes; a task that continues a conversation answers there. */
+  deliverTo: DeliverTo;
+  /** Linked channels of the target's channel to post to; empty = its default destination. */
+  channelIds: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -339,9 +343,12 @@ export interface CronTaskInput {
   name: string;
   schedule: string;
   instruction: string;
+  deliverTo: DeliverTo;
+  channelIds: string[];
 }
 
-export type WebhookDeliverTo = 'all' | 'chat' | 'slack' | 'teams' | 'none';
+/** Where a webhook subscription or a scheduled task posts its message. */
+export type DeliverTo = 'all' | 'chat' | 'slack' | 'teams' | 'none';
 
 /**
  * Sender-verification scheme. Deliberately generic — no provider names: the
@@ -369,7 +376,7 @@ export interface WebhookSubscription {
   events: string | null;
   /** Prompt template ({dot.path} / {__raw__}); null = raw payload dump. */
   prompt: string | null;
-  deliverTo: WebhookDeliverTo;
+  deliverTo: DeliverTo;
   /** Linked Slack channel ids a Slack delivery posts to; empty = the DM, else the main channel. */
   slackChannelIds: string[];
   deliverOnly: boolean;

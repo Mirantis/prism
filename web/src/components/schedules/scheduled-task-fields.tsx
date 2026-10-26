@@ -7,7 +7,12 @@ import {
   FieldError,
   FieldGroup,
   FieldLabel,
+  FieldLegend,
+  FieldSeparator,
+  FieldSet,
 } from '@/components/ui/field';
+import { DeliverToField } from '@/components/shared/deliver-to-field';
+import { SlackChannelsField } from '@/components/shared/slack-channels-field';
 import { CRON_PRESETS, describeSchedule, normalizeSchedule } from '@/lib/cron-presets';
 import { cn } from '@/lib/utils';
 import { runtimeApi } from '@/api/runtime-client';
@@ -16,21 +21,21 @@ import type { CronTaskInput } from '@/types';
 
 interface ScheduledTaskFieldsProps {
   values: CronTaskInput;
-  onChange: (key: keyof CronTaskInput, value: string) => void;
+  onChange: <K extends keyof CronTaskInput>(key: K, value: CronTaskInput[K]) => void;
   fieldErrors: Record<string, string>;
   /** The time a one-off task runs, while the form still holds its schedule. */
   runsOnceAt?: string | null;
-  /** False for a task that continues a conversation, which only runs once. */
-  repeatable?: boolean;
+  /** True for a task that continues a conversation: it only runs once, and it answers there. */
+  continuesConversation?: boolean;
 }
 
-/** Name, schedule and instruction of a scheduled task, as the task dialog asks for them. */
+/** Name, schedule, instruction and delivery of a scheduled task, as the task dialog asks for them. */
 export function ScheduledTaskFields({
   values,
   onChange,
   fieldErrors,
   runsOnceAt,
-  repeatable = true,
+  continuesConversation = false,
 }: ScheduledTaskFieldsProps) {
   const agent = useAgent();
 
@@ -42,7 +47,7 @@ export function ScheduledTaskFields({
   const zoneWords = details ? `the agent's time zone, ${details.timezone}` : "the agent's time zone";
   const described = describeSchedule(values.schedule);
   const scheduleHelp = runsOnceAt
-    ? `Runs once, at ${new Date(runsOnceAt).toLocaleString()}.${repeatable ? ' Enter a cron expression to repeat it instead.' : ''}`
+    ? `Runs once, at ${new Date(runsOnceAt).toLocaleString()}.${continuesConversation ? '' : ' Enter a cron expression to repeat it instead.'}`
     : described
       ? `${described} in ${zoneWords}. Edit the expression for another time.`
       : `A cron expression: minute, hour, day of month, month, day of week, read in ${zoneWords}.`;
@@ -109,6 +114,32 @@ export function ScheduledTaskFields({
         />
         {fieldErrors.instruction && <FieldError>{fieldErrors.instruction}</FieldError>}
       </Field>
+      {continuesConversation ? (
+        <FieldDescription>The task replies in the conversation that scheduled it.</FieldDescription>
+      ) : (
+        <>
+          <FieldSeparator />
+          <FieldSet>
+            <FieldLegend>Delivery</FieldLegend>
+            <DeliverToField
+              id="cron-deliver-to"
+              value={values.deliverTo}
+              onChange={(deliverTo) => onChange('deliverTo', deliverTo)}
+              error={fieldErrors.deliverTo}
+            />
+            {values.deliverTo === 'none' && (
+              <FieldDescription>The task runs and posts no message, even when the run fails.</FieldDescription>
+            )}
+            {values.deliverTo === 'slack' && (
+              <SlackChannelsField
+                value={values.channelIds}
+                onChange={(ids) => onChange('channelIds', ids)}
+                error={fieldErrors.channelIds}
+              />
+            )}
+          </FieldSet>
+        </>
+      )}
     </FieldGroup>
   );
 }

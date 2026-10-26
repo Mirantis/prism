@@ -32,6 +32,22 @@ Feature: Scheduled tasks page
     And the task "Monday plan" has the instruction "Post the plan for the week."
     And the task "Weekday standup" is not listed
 
+  Scenario: A task's delivery target can be chosen and changed
+    When I navigate to the scheduled tasks page
+    And I start the task "Chat digest" with the "Weekdays at 09:00" schedule
+    And I give the new task the instruction "Post a short digest."
+    And I choose "Chat" as the new task's delivery target and schedule it
+    Then the task "Chat digest" delivers to "Chat"
+    When I change the delivery target of the task "Chat digest" to "All channels"
+    Then the task "Chat digest" names no delivery target
+
+  Scenario: A task that delivers nowhere runs and posts nothing
+    Given a one-off scheduled task "nowhere-check" in 20 seconds that delivers to "none" with the instruction "Use your memory_write tool to store a memory with the exact content NOWHERE_CHECK_RAN. Then reply with exactly NOWHERE_CHECK_DONE and nothing else."
+    Then a scheduled task named "nowhere-check" is created for the agent
+    And the scheduled task named "nowhere-check" runs to completion
+    And the quiet task has written "NOWHERE_CHECK_RAN" to memory
+    And no scheduled-task message is delivered after the quiet task was created
+
   Scenario: The agent edits a task when asked in chat
     When I navigate to the scheduled tasks page
     And I create the task "Weekday standup" with the "Weekdays at 09:00" schedule
