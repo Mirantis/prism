@@ -20,7 +20,7 @@ import { pendingWorkService } from './pending-work.service';
 import { RESUMED_REPLY_NOTICE } from '../prompts/resume-prompt';
 import { invokeStream } from '../invoke';
 import { ToolCallRecord, InvokeStep, InvokeError, ResumedReply, UIBlock } from '../types';
-import type { SteeringMessage } from '../prompts/context-builder';
+import type { ConversationMessage as HistoryRow, SteeringMessage } from '../prompts/context-builder';
 import type { ToolLifecycleListener } from '../lib/tool-lifecycle';
 import { logger } from '../logger';
 import prisma from '../lib/prisma';
@@ -478,12 +478,17 @@ Answer with one word: WORTHY or SKIP.`;
       turnIds.push(...ids);
       return handed;
     };
-    // The rows this exchange's turns read as history. A message handed over that
-    // is among them reached the model there, so the turn answers it without
-    // injecting it again — even one offered after the read, as the chat socket
-    // does with a message it stored first.
-    const read = new Set<string>();
-    const unread = (handed: PendingMessage[]) => handed.filter((p) => !read.has(p.id));
+    // The rows this exchange's turns read as history, each with the files it held
+    // then. A message handed over that is among them reached the model there, so
+    // the turn answers it without injecting it again — even one offered after the
+    // read, as the chat socket does with a message it stored first. A row read
+    // before its files were linked to it has not: steering still sends those.
+    const read = new Map<string, Set<string>>();
+    const isRead = (handed: PendingMessage) => {
+      const files = read.get(handed.id);
+      return files !== undefined && handed.attachmentIds.every((id) => files.has(id));
+    };
+    const unread = (handed: PendingMessage[]) => handed.filter((p) => !isRead(p));
     const work: ChatWork = { threadId, agentId, userId, ...(metadata ? { metadata } : {}) };
     // Kept as a turn goes on the row of the first message it answers, which stays
     // until the turn's reply is out. A restart stores what the turn did before the
@@ -593,9 +598,9 @@ Answer with one word: WORTHY or SKIP.`;
               // reaches the model on the next step.
               steering: () => this.loadSteering(unread(take(claim.drain()))),
               // A handed-over message the history holds is answered from there.
-              onHistoryRead: (rowIds) => {
-                for (const id of rowIds) read.add(id);
-                take(claim.drain((handed) => read.has(handed.id)));
+              onHistoryRead: (rows) => {
+                for (const row of rows) read.set(row.id, new Set((row.attachments ?? []).map((att) => att.id)));
+                take(claim.drain(isRead));
               },
             });
 
@@ -810,7 +815,7 @@ Answer with one word: WORTHY or SKIP.`;
     /** Files an interrupted turn shared, which this turn's reply delivers. */
     unsentAttachmentIds?: string[];
     steering: () => Promise<SteeringMessage[]>;
-    onHistoryRead: (rowIds: ReadonlySet<string>) => void;
+    onHistoryRead: (rows: ReadonlyArray<HistoryRow>) => void;
     promptMessageId?: string;
   }): Promise<StreamedTurn> {
     const { userId, agentId, threadId, prompt, channelContext, metadata } = params;

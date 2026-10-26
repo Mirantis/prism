@@ -548,17 +548,8 @@ export function buildConversationHistory(
   // Add recent messages (only user and assistant, skip system and empty messages)
   for (const msg of context.recentMessages) {
     if (msg.role === 'USER') {
-      const parts = buildUserContentParts(msg);
-      // Skip only when there's neither text nor any attachment.
-      if (parts.length > 0) {
-        // Keep the plain-string form when there's just text, rather than wrapping
-        // every turn in a content array of one part.
-        if (parts.length === 1 && parts[0].type === 'text') {
-          push({ role: 'user', content: parts[0].text });
-        } else {
-          push({ role: 'user', content: parts });
-        }
-      }
+      const message = buildUserMessage(msg);
+      if (message) push(message);
     } else if (msg.role === 'AGENT') {
       if (msg.triggerName) push(webhookEventTurn(msg.triggerName));
       const toolCalls = parseToolCalls(msg);
@@ -659,6 +650,19 @@ export function buildSteeringMessage(msg: SteeringMessage): ModelMessage {
  * lightweight text stub so the agent knows what's available, and can pull
  * content on demand via hydrate_attachment / view_attachment tools.
  */
+/**
+ * A user row as history renders it: its text and a stub per attachment, or null
+ * when it has neither.
+ */
+export function buildUserMessage(msg: ConversationMessage): ModelMessage | null {
+  const parts = buildUserContentParts(msg);
+  if (parts.length === 0) return null;
+  // Keep the plain-string form when there's just text, rather than wrapping
+  // every turn in a content array of one part.
+  if (parts.length === 1 && parts[0].type === 'text') return { role: 'user', content: parts[0].text };
+  return { role: 'user', content: parts };
+}
+
 function buildUserContentParts(msg: ConversationMessage): UserContentPart[] {
   const parts: UserContentPart[] = [];
 

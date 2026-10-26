@@ -36,6 +36,7 @@ import {
   recentMemoryContent,
   buildConversationHistory,
   buildSteeringMessage,
+  buildUserMessage,
 } from './prompts/context-builder';
 import { getChannelBehaviorInstructions } from './prompts/channel-prompt';
 import { getTaskToolInstructions } from './prompts/task-tool-prompt';
@@ -109,14 +110,13 @@ export async function buildTurnRequest(
   // Chat: prompt is already in history (conversation engine stores it before invoke).
   // Heartbeat/cron: prompt is NOT in history — always append it.
   // A coalesced steering follow-up sets `appendPrompt` because its prompt sits
-  // earlier in history than the previous turn's replies, and a stopped turn can
-  // store its last reply after this prompt's row (see InvokeRequest).
-  if (
-    request.mode !== 'chat' ||
-    request.appendPrompt ||
-    messages.length === 0 ||
-    repliedAfter(context, request.promptMessageId)
-  ) {
+  // earlier in history than the previous turn's replies. A stopped turn can store
+  // its last reply after this prompt's row and the ones handed over with it, so
+  // those are restated in order, files included (see InvokeRequest).
+  const restated = request.mode === 'chat' && !request.appendPrompt ? restatedAfterReply(context, request.promptMessageId) : [];
+  if (restated.length > 0) {
+    messages.push(...restated);
+  } else if (request.mode !== 'chat' || request.appendPrompt || messages.length === 0) {
     messages.push({ role: 'user' as const, content: request.prompt });
   }
   if (request.afterRestart) messages.push({ role: 'user' as const, content: RESUMED_RUN_NOTICE });
@@ -124,12 +124,19 @@ export async function buildTurnRequest(
   return { systemParts, messages, toolChangeMessages: history.trailingToolChanges };
 }
 
-/** True when the history ends on an agent row stored after the prompt's row. */
-function repliedAfter(context: AgentContext, promptMessageId: string | undefined): boolean {
-  if (!promptMessageId) return false;
+/**
+ * The user rows from the prompt's row on, as history renders them, when the
+ * history ends on an agent row stored after the prompt's row; otherwise none.
+ */
+function restatedAfterReply(context: AgentContext, promptMessageId: string | undefined): ModelMessage[] {
+  if (!promptMessageId) return [];
   const rows = context.recentMessages;
   const at = rows.findIndex((row) => row.id === promptMessageId);
-  return at !== -1 && at < rows.length - 1 && rows[rows.length - 1].role === 'AGENT';
+  if (at === -1 || at === rows.length - 1 || rows[rows.length - 1].role !== 'AGENT') return [];
+  return rows
+    .slice(at)
+    .filter((row) => row.role === 'USER')
+    .flatMap((row) => buildUserMessage(row) ?? []);
 }
 
 /**
@@ -222,7 +229,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
     yield buildErrorStep(error);
     return;
   }
-  request.onHistoryRead?.(new Set(context.recentMessages.map((row) => row.id)));
+  request.onHistoryRead?.(context.recentMessages);
 
   let activity: ThreadActivity | undefined;
   try {
