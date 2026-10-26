@@ -24,7 +24,6 @@ vi.mock('../lib/prisma', () => {
 });
 vi.mock('../invoke', () => ({ invokeStream: mockInvokeStream }));
 vi.mock('../services/thread-title.service', () => ({ threadTitleService: { onFirstUserMessage: vi.fn() } }));
-vi.mock('../services/agent-roster.service', () => ({ agentRosterService: { beforeChatTurn: vi.fn() } }));
 vi.mock('../lib/telemetry', () => ({
   trackEvent: mockTrackEvent,
   isTelemetryEnabled: () => false,
