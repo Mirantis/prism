@@ -644,13 +644,6 @@ export function buildSteeringMessage(msg: SteeringMessage): ModelMessage {
 }
 
 /**
- * Turn a USER message + its attachment metadata into AI SDK content parts.
- *
- * Attachment bytes are never inlined here. Each attachment renders as a
- * lightweight text stub so the agent knows what's available, and can pull
- * content on demand via hydrate_attachment / view_attachment tools.
- */
-/**
  * A user row as history renders it: its text and a stub per attachment, or null
  * when it has neither.
  */
@@ -663,6 +656,13 @@ export function buildUserMessage(msg: ConversationMessage): ModelMessage | null 
   return { role: 'user', content: parts };
 }
 
+/**
+ * Turn a USER message + its attachment metadata into AI SDK content parts.
+ *
+ * Attachment bytes are never inlined here. Each attachment renders as a
+ * lightweight text stub so the agent knows what's available, and can pull
+ * content on demand via hydrate_attachment / view_attachment tools.
+ */
 function buildUserContentParts(msg: ConversationMessage): UserContentPart[] {
   const parts: UserContentPart[] = [];
 
