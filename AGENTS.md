@@ -914,7 +914,6 @@ and refuses every call, because under `none` the SDK sends no tools block.
 | **EventStreamService** | `services/event-stream.service.ts` | The numbered stream every chat client reads, and the bounded window a reconnecting client is replayed from |
 | **InboundMessageService** | `services/inbound-message.service.ts` | A chat message from the socket, or another agent's message from `POST /agents/agent-messages`: stored under the sender's id first, confirmed, then answered one turn at a time for the agent; and each conversation's `queued`/`running`/`idle` state. A delivery sent again is the same message in whichever conversation holds it, and its turn is scheduled from the stored row; an id that names another sender's message, or another message id, is refused |
 | **AgentConversationService** | `services/agent-conversation.service.ts` | Which web conversation holds each conversation between agents: `runtime_state` `agentConversation:<conversationId>`, set by a delivery and by the agent's own successful `message_agent` call (its answer's first line). A delivery goes there while a client can still write to it, else to the one conversation or the newest |
-| **AgentRosterService** | `services/agent-roster.service.ts` | Before a chat turn, at most once a minute per thread, calls the MCP endpoint's `list_agents` tool (`callListAgents` in `lib/mcp-client.ts`) with the version the thread last read, and stores the whole roster or the difference as a hidden USER row (`prompts/agent-roster-prompt.ts`). The snapshot is `runtime_state` `agentRoster:<threadId>`; a compacted or missing roster row means the whole roster again. Never throws: a failure is a warning and the turn runs |
 | **isAgentIdle** | `services/agent-activity.ts` | Whether nothing runs or waits: model calls, live exchanges, working threads, cron, goals, compaction, meetings, voice, and processes a tool started. The updater defers to it, and `GET /agents/state` reports it |
 | **ProgramStatusService** | `services/program-status.service.ts` | The agent's state as OSC 7501 reports on stdout, for LNS and terminals, and `clear` at process exit |
 | **WebSocketAdapterService** | `services/websocket-adapter.service.ts` | ChannelAdapter for WebSocket delivery, calls local gateway directly |
@@ -935,7 +934,6 @@ src/
 │   ├── message-delivery.service.ts # Unified message publish: store + channel-scoped or broadcast delivery
 │   ├── delivery-target.service.ts # A webhook's or a scheduled task's configured target: all, chat, a channel (or chosen linked channels of it), none
 │   ├── thread-turn.service.ts  # Per-thread mutex + mid-turn inbox (turn steering, coalesced follow-ups)
-│   ├── agent-roster.service.ts # The other agents of the project, as a hidden row before a chat turn: whole, or what changed
 │   ├── agent-activity.ts       # `isAgentIdle`: whether nothing runs or waits (the updater, `GET /agents/state`)
 │   ├── agent-workspace.service.ts # Agent CRUD, ownership validation, platform tokens, subagents; `writeWorkspaceDoc` / `rollbackWorkspaceDoc`, the one write path for an identity document
 │   ├── document-revision.service.ts # Identity-document revisions: record, history (with drift), read one, restore, 500-per-document bound
@@ -1129,7 +1127,6 @@ src/
 └── prompts/
     ├── context-builder.ts      # System prompt and message construction
     ├── agent-message-prompt.ts # Another agent's message as the model reads it: `<agent-message …>` or `<agent-notice>`, escaped
-    ├── agent-roster-prompt.ts  # The roster notices: the whole `<agent-roster>`, or the `<agent-roster-update>` difference
     ├── channel-prompt.ts       # Team-channel behavior instructions, naming the channel as its adapter words it
     ├── early-stopping-prompt.ts # Prompt for summarizing when step limit is reached
     └── resume-prompt.ts        # What a model continuing interrupted work is told: the chat notice, the run notice, the coding-task prompt
@@ -1281,10 +1278,12 @@ only `inboundMessageService` sets it, for the agent-message route.
   as `requestFromAnotherAgent`, which its rules say authorizes nothing, instead
   of `initialUserPrompt`. Its reply is an ordinary chat reply (`USER_INPUT`) in
   the web conversation.
-- **The roster** comes before a chat turn, inside the claim, from
-  `agentRosterService` (see **Key Services**). The longer guidance on treating
-  agent messages lives in that hidden roster row, so the system prompt and its
-  cached prefix are the same for every agent.
+- **The other agents** are in the messaging tools' descriptions, not in the
+  conversation: `list_agents`' names them and says to call it before a task,
+  `message_agent`'s says how to treat their messages. The runtime adds no
+  roster, so the system prompt and the history are the same with or without
+  other agents. `src/evals/colleague-scenarios.ts` measures what the agent
+  does with those descriptions.
 - **Who may post** is the delivery service alone, proved by its signature
   (`lib/agent-message-signature.ts`), never by the ingress, which may admit
   more than the service, such as people and the other agents themselves. The signature is an ES256 token for this agent and the exact

@@ -22,12 +22,17 @@ MCP endpoint (`NEXUS_MCP_URL`) has a `list_agents` tool.
 
 ## Who the other agents are
 
-Before the agent answers in a conversation, it reads which other agents are in
-the project and what each one does. The first time in a conversation, and after
-[compaction](compaction.md), the conversation gets the whole list; after that it
-gets only what changed. The list stays hidden from clients. A conversation is
-where the agent reads it: in a heartbeat check, a scheduled task, a goal or a
-webhook run, the agent calls `list_agents` itself.
+The runtime adds nothing about the other agents to a conversation. The
+messaging tools tell the agent: `list_agents`' description says that other
+agents very likely exist, names them with their roles, and says to call
+`list_agents` before a task, and `message_agent`'s says how to treat a message
+from another agent. The tools are in every run, so a heartbeat check, a
+scheduled task, a goal or a webhook run knows the other agents as much as a
+chat does.
+
+The `colleagues.` prompt evals check that the agent hands a task that matches
+another agent's role to that agent, keeps its own work, and calls nothing for
+a thank-you or a general question.
 
 ## Delivering a message: `POST /agents/agent-messages`
 
@@ -111,8 +116,8 @@ flight, such as a scheduled task or a coding task. Otherwise it answers
 ## When something goes wrong
 
 - **The agent does not know the other agents.** It needs the `list_agents`
-  tool on its MCP endpoint, which the platform the agent runs on grants. When the agent cannot read the list, the log has a warning that
-  starts with `[AgentRoster]`, and the turn runs without it.
+  tool on its MCP endpoint, which the platform the agent runs on grants. The
+  agents its description names are as the platform last stored them.
 - **A delivery answers `503`.** The agent is still starting, or cannot read
   the keys from `list_agents`. The delivery service sends the message again. The log
   has a warning that starts with `[AgentMessages]`.
