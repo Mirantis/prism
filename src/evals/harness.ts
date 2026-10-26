@@ -141,8 +141,6 @@ type HistoryEntry =
   | { user: string; attachments?: AttachmentMeta[] }
   /** A message from another agent of the project. */
   | { fromAgent: AgentMessageOrigin; text: string }
-  /** A row the runtime wrote for the model alone, such as the roster of the other agents. */
-  | { hidden: string }
   | {
       agent: string;
       toolCalls?: { tool: string; input: unknown; output: unknown }[];
@@ -312,9 +310,6 @@ function toStoredMessage(entry: HistoryEntry, index: number): ConversationMessag
   }
   if ('fromAgent' in entry) {
     return { id, role: 'USER', content: entry.text, ...agentMessageColumns(entry.fromAgent) };
-  }
-  if ('hidden' in entry) {
-    return { id, role: 'USER', content: entry.hidden, internalStep: true };
   }
   return {
     id,
