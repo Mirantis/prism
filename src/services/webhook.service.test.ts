@@ -830,20 +830,21 @@ describe('handleInbound agent mode', () => {
     );
   });
 
-  it('no destination linked: falls back to the web latest thread and warns', async () => {
+  it('no destination linked: falls back to web chat only, not to every channel', async () => {
     mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'slack' }));
     mockInvoke.mockResolvedValue(invokeResult('handled'));
 
     await webhookService.handleInbound('alerts', {}, {}, 'run-1');
-    await vi.waitFor(() => expect(mockPublishToLatestThread).toHaveBeenCalled());
+    await vi.waitFor(() => expect(mockPublish).toHaveBeenCalled());
 
     expect(mockGetOrCreateThreadByExternalId).not.toHaveBeenCalled();
-    expect(mockPublishToLatestThread).toHaveBeenCalledWith(
-      'agent-1',
+    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
+    expect(mockPublish).toHaveBeenCalledWith(
       'user-1',
+      'thread-1',
       'handled',
       'WEBHOOK',
-      expect.objectContaining({}),
+      expect.objectContaining({ channelContext: { channel: 'websocket', threadId: 'thread-1' } }),
     );
   });
 

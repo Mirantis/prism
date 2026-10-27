@@ -160,7 +160,7 @@ sent and where it's recorded:
   in that Slack destination's own conversation thread (the DM conversation in
   personal mode; a dedicated per-channel thread in team mode), which the web
   Recents list and CLI resume picker don't show. If no Slack DM or channel is
-  linked, the message falls back to the web thread (and the runtime logs a
+  linked, the message goes to web chat only (and the runtime logs a
   warning) so a triggered event is never silently lost. With **Slack
   channels** checked, the message goes to each checked channel instead, stored
   in that channel's own thread. A checked channel that is unlinked later gets
