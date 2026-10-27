@@ -568,9 +568,9 @@ export class WebhookService {
   /**
    * Where `deliver` posts the final message, so `send_message` refuses it as a
    * target: the broadcast for 'all', and for a single platform its one
-   * conversation, or the broadcast of the web-thread fallback when the platform
-   * has none. A send into a chosen channel is not refused: the webhook prompt
-   * rule asks the agent not to post its final message there.
+   * conversation. A platform without one gets the message in web chat only. A
+   * send into a chosen channel is not refused: the webhook prompt rule asks the
+   * agent not to post its final message there.
    */
   private async outputTarget(
     agentId: string,
@@ -582,7 +582,7 @@ export class WebhookService {
     if (!channel?.defaultDestination) return {};
     if (parseCommaList(target.slackChannelIds).length > 0 && channel.linkedChannelIds) return {};
     const destination = await channel.defaultDestination(agentId, userId);
-    if (!destination) return { broadcastsOutput: true };
+    if (!destination) return {};
     return { outputDestination: { platform: channel.name, conversationId: destination.threadKey } };
   }
 
