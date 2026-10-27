@@ -22,7 +22,7 @@ import { createPendingFileWrites } from './lib/pending-file-writes';
 import { SHARE_FILE_TOOL_NAME } from './tools/share-file';
 import { contextService } from './services/context.service';
 import { contextUsageService, type ContextUsageSnapshot } from './services/context-usage.service';
-import { compactionService } from './services/compaction.service';
+import { compactionService, toForkRows } from './services/compaction.service';
 import { conversationService } from './services/conversation.service';
 import { agentWorkspaceService } from './services/agent-workspace.service';
 import { selectTurnModel } from './lib/model-routing';
@@ -480,12 +480,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       declaredTools: Boolean(declared),
       messages,
       injections: injections.map((i) => i.message),
-      contextRows: context.recentMessages.map((m) => ({
-        id: m.id,
-        externalMessageId: m.externalMessageId ?? null,
-        internalStep: m.internalStep ?? false,
-        contentChars: m.content.length,
-      })),
+      contextRows: toForkRows(context.recentMessages),
     });
 
 

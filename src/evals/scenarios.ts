@@ -11,6 +11,7 @@ import {
   replyOf,
   routeTier,
   runTurn,
+  summarizeThread,
   toolRiskDecision,
   type ToolCallRecord,
   type TurnTrace,
@@ -21,6 +22,7 @@ import { heartbeatService } from '../services/heartbeat.service';
 import type { PostingCeiling } from '../services/delivery-target.service';
 import { scheduledRunPrompt } from '../prompts/scheduled-run-prompt';
 import { ALERT_THE_USER } from '../tools/computer';
+import { FACTS_HEADING } from '../prompts/compaction-prompt';
 import type { AttachmentMeta } from '../services/attachment.service';
 
 export interface Grade {
@@ -684,7 +686,80 @@ const DELIVERY_SCENARIOS: Scenario[] = [
   ),
 ];
 
+/** A working session whose details a summary has to carry word for word. All values are invented. */
+const DEPLOY_SESSION = [
+  { user: 'Our checkout-api deploy to staging fails. Never touch the production cluster while we debug this.' },
+  {
+    agent: 'The rollout is stuck on the new pods.',
+    toolCalls: [
+      {
+        tool: 'shell_exec',
+        input: { command: 'kubectl -n shop-staging rollout status deploy/checkout-api' },
+        output: 'error: deployment "checkout-api" exceeded its progress deadline',
+      },
+      {
+        tool: 'shell_exec',
+        input: { command: 'kubectl -n shop-staging logs deploy/checkout-api --tail=20' },
+        output: 'FATAL: password authentication failed for user "checkout_rw" (SQLSTATE 28P01)',
+      },
+    ],
+  },
+  { user: 'The secret was rotated yesterday. I prefer kustomize overlays over editing manifests by hand.' },
+  {
+    agent: 'The pods read an old secret.',
+    toolCalls: [
+      {
+        tool: 'shell_read',
+        input: { path: 'deploy/overlays/staging/secret-ref.yaml' },
+        output: 'secretName: checkout-db-2026-09',
+      },
+    ],
+  },
+  { user: 'Point it at checkout-db-2026-10 and redeploy staging.' },
+  {
+    agent: 'I updated the overlay. The redeploy has not run yet.',
+    toolCalls: [
+      {
+        tool: 'shell_edit',
+        input: { path: 'deploy/overlays/staging/secret-ref.yaml' },
+        output: 'replaced 1 line',
+      },
+    ],
+  },
+  { user: 'Thanks, I will be back in an hour.' },
+  { agent: 'Understood.' },
+];
+
+/** The strings a summary of `DEPLOY_SESSION` keeps verbatim, and the sections it keeps. */
+const DEPLOY_VERBATIM = [
+  'SQLSTATE 28P01',
+  'deploy/overlays/staging/secret-ref.yaml',
+  'checkout-db-2026-10',
+  'shop-staging',
+];
+const SUMMARY_HEADINGS = ['## Goal', '## User Requests', '## Next Steps', FACTS_HEADING];
+
 export const SCENARIOS: Scenario[] = [
+  {
+    id: 'compaction.keeps-details',
+    expect:
+      'A summary keeps the error code, path and secret name verbatim, keeps every section, states that the ' +
+      'redeploy is still to do, records the production restriction, and stays under 2,000 words.',
+    grader: 'reply text',
+    run: async () => {
+      const summary = await summarizeThread(DEPLOY_SESSION);
+      const missing = [...DEPLOY_VERBATIM, ...SUMMARY_HEADINGS].filter((s) => !summary.includes(s));
+      const words = summary.split(/\s+/).filter(Boolean).length;
+      const facts = summary.slice(summary.indexOf(FACTS_HEADING));
+      const pass =
+        missing.length === 0 &&
+        words < 2_000 &&
+        /redeploy/i.test(summary.slice(summary.indexOf('## Next Steps'))) &&
+        /production/i.test(summary) &&
+        /kustomize/i.test(facts);
+      return { pass, detail: `missing: [${missing.join(', ')}] | ${words} words | ${clip(summary, 300)}` };
+    },
+  },
   ...DELIVERY_SCENARIOS,
   {
     id: 'delivery.cron-bound-continuation',

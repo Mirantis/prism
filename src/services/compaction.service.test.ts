@@ -73,6 +73,7 @@ vi.mock('../lib/telemetry', () => ({
 }));
 
 vi.mock('../lib/model-catalog', () => ({ MIN_PLAUSIBLE_CONTEXT: 1_000 }));
+vi.mock('../lib/context-window', () => ({ contextWindowFor: () => null }));
 vi.mock('../lib/langfuse', () => ({ isLangfuseEnabled: () => false }));
 
 // Implementations set via .mockResolvedValue/.mockReturnValue are re-applied in
@@ -104,6 +105,7 @@ const { mockBuildConversationHistory } = vi.hoisted(() => ({
 vi.mock('../prompts/context-builder', () => ({
   buildSystemPromptParts: mockBuildSystemPromptParts,
   buildConversationHistory: mockBuildConversationHistory,
+  SUMMARY_MESSAGE_OPENING: '<conversation-summary>',
 }));
 vi.mock('../prompts/task-tool-prompt', () => ({
   getTaskToolInstructions: (subs: { name: string }[]) => `TASK TOOLS: ${subs.map((s) => s.name).join(',')}`,
@@ -124,8 +126,15 @@ const { mockRemoveToolOutputs } = vi.hoisted(() => ({
 vi.mock('../lib/tool-output-store', () => ({
   removeToolOutputs: (...args: unknown[]) => mockRemoveToolOutputs(...args),
 }));
+const { mockIsLockedIn, mockMemoryWrite } = vi.hoisted(() => ({
+  mockIsLockedIn: vi.fn(),
+  mockMemoryWrite: vi.fn(),
+}));
+vi.mock('./memory-manager.service', () => ({
+  memoryManagerService: { writeIfNew: mockMemoryWrite },
+}));
 vi.mock('./agent-workspace.service', () => ({
-  agentWorkspaceService: { getSubagents: vi.fn(async () => []) },
+  agentWorkspaceService: { getSubagents: vi.fn(async () => []), isLockedIn: mockIsLockedIn },
   resolveEffectiveModel: (stored: string | null | undefined) => stored ?? 'default-model',
 }));
 
@@ -134,7 +143,7 @@ const { mockLogger } = vi.hoisted(() => ({
 }));
 vi.mock('../logger', () => ({ logger: mockLogger }));
 
-import { COMPACTION_PROMPT } from '../prompts/compaction-prompt';
+import { COMPACTION_PROMPT, FACTS_HEADING } from '../prompts/compaction-prompt';
 import { ANTHROPIC_TOOL_CHANGES } from '../lib/llm-providers/tool-changes';
 import { toolLedgerService } from './tool-ledger.service';
 import {
@@ -143,6 +152,7 @@ import {
   type CompactionEvent,
   type CompactionFork,
   type ForkRow,
+  splitTail,
 } from './compaction.service';
 
 const THREAD = 'thread-1';
@@ -152,6 +162,8 @@ function makeRows(count: number, overrides: Partial<ForkRow> = {}): ForkRow[] {
     id: `m${i}`,
     externalMessageId: null,
     internalStep: false,
+    // Rows alternate request and reply, so the tail can start on any even index.
+    fromUser: i % 2 === 0,
     contentChars: 100,
     ...overrides,
   }));
@@ -228,6 +240,8 @@ beforeEach(() => {
   });
   mockPrisma.conversationMessage.findMany.mockResolvedValue([]);
   mockRemoveToolOutputs.mockResolvedValue(0);
+  mockIsLockedIn.mockResolvedValue(false);
+  mockMemoryWrite.mockResolvedValue({ id: 'mem-1' });
   mockApplyEstimate.mockImplementation((input: { usedTokens: number }) => ({
     threadId: THREAD,
     modelId: 'model-x',
@@ -405,10 +419,10 @@ describe('commit — SLACK threads', () => {
     });
     mockConfig.compactionTailMessages = 1;
     const rows: ForkRow[] = [
-      { id: 's0', externalMessageId: '1700.0002', internalStep: false, contentChars: 50 },
-      { id: 'i0', externalMessageId: null, internalStep: true, contentChars: 50 },
-      { id: 's1', externalMessageId: '1700.0010', internalStep: false, contentChars: 50 },
-      { id: 's2', externalMessageId: '1700.0011', internalStep: false, contentChars: 50 }, // tail
+      { id: 's0', externalMessageId: '1700.0002', internalStep: false, fromUser: false, contentChars: 50 },
+      { id: 'i0', externalMessageId: null, internalStep: true, fromUser: false, contentChars: 50 },
+      { id: 's1', externalMessageId: '1700.0010', internalStep: false, fromUser: false, contentChars: 50 },
+      { id: 's2', externalMessageId: '1700.0011', internalStep: false, fromUser: true, contentChars: 50 }, // tail
     ];
     compactionService.maybeAutoCompact(makeFork({ contextRows: rows }));
     await flushAuto();
@@ -803,16 +817,16 @@ describe('compactNow (manual)', () => {
 });
 
 describe('hasCompactableHistory', () => {
-  it('is true for DATABASE threads with more uncompacted rows than the tail', async () => {
-    mockPrisma.conversationMessage.count.mockResolvedValue(7);
+  it('is true for DATABASE threads with more than the newest message uncompacted', async () => {
+    mockPrisma.conversationMessage.count.mockResolvedValue(2);
     await expect(compactionService.hasCompactableHistory(THREAD)).resolves.toBe(true);
     expect(mockPrisma.conversationMessage.count).toHaveBeenCalledWith({
       where: { threadId: THREAD, isCompacted: false },
     });
   });
 
-  it('is false at or below the tail', async () => {
-    mockPrisma.conversationMessage.count.mockResolvedValue(6);
+  it('is false with nothing before the newest message', async () => {
+    mockPrisma.conversationMessage.count.mockResolvedValue(1);
     await expect(compactionService.hasCompactableHistory(THREAD)).resolves.toBe(false);
   });
 
@@ -933,5 +947,198 @@ describe('reclaiming saved tool outputs at compaction', () => {
     const where = mockPrisma.conversationMessage.findMany.mock.calls[0]?.[0]?.where;
     expect(where.id.in.every((id: string) => ['m1', 'm3', 'm5', 'm7', 'm9'].includes(id))).toBe(true);
     expect(mockRemoveToolOutputs).toHaveBeenCalledWith(['aaaaaaaa-0000-4000-8000-000000000004']);
+  });
+});
+
+describe('splitTail', () => {
+  const row = (id: string, fromUser: boolean, contentChars = 100): ForkRow => ({
+    id,
+    externalMessageId: null,
+    internalStep: false,
+    fromUser,
+    contentChars,
+  });
+
+  it('starts the tail on a user message, never on the reply that answers it', () => {
+    mockConfig.compactionTailMessages = 3;
+    const rows = [row('u0', true), row('a0', false), row('u1', true), row('a1', false), row('a2', false)];
+
+    const { compactable, tail } = splitTail(rows);
+
+    // Three newest rows would start on a1's request-less reply; the tail backs off to u1.
+    expect(tail.map((r) => r.id)).toEqual(['u1', 'a1', 'a2']);
+    expect(compactable.map((r) => r.id)).toEqual(['u0', 'a0']);
+  });
+
+  it('leaves out a reply whose tool output alone exceeds the token budget', () => {
+    const rows = [row('u0', true), row('a0', false, 500_000), row('u1', true), row('a1', false)];
+
+    expect(splitTail(rows).tail.map((r) => r.id)).toEqual(['u1', 'a1']);
+  });
+
+  it('keeps the newest request when its reply alone has more step rows than the cap', () => {
+    mockConfig.compactionTailMessages = 3;
+    const rows = [row('u0', true), row('a0', false), row('u1', true), ...['s1', 's2', 's3', 's4'].map((id) => row(id, false))];
+
+    expect(splitTail(rows).tail.map((r) => r.id)).toEqual(['u1', 's1', 's2', 's3', 's4']);
+  });
+
+  it('summarizes everything with a tail of 0', () => {
+    mockConfig.compactionTailMessages = 0;
+    const rows = [row('u0', true), row('a0', false)];
+
+    expect(splitTail(rows)).toEqual({ compactable: rows, tail: [] });
+  });
+
+  it('summarizes everything when even the newest exchange does not fit', () => {
+    const rows = [row('u0', true), row('a0', false), row('u1', true), row('a1', false, 500_000)];
+
+    const { compactable, tail } = splitTail(rows);
+
+    expect(tail).toEqual([]);
+    expect(compactable).toHaveLength(4);
+  });
+});
+
+describe('summary checks', () => {
+  it('writes nothing when the summary was cut off at the output limit', async () => {
+    mockGenerateText.mockResolvedValue({ text: '## Goal\n- half a summ', finishReason: 'length' });
+    const events = captureEvents();
+
+    compactionService.maybeAutoCompact(makeFork());
+    await flushAuto();
+
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(events.at(-1)).toMatchObject({ status: 'failed', error: expect.stringContaining('cut off') });
+  });
+
+  it('keeps a previous summary when overflow recovery shrinks the history', async () => {
+    const OVERFLOW = Object.assign(new Error('prompt is too long: 1200000 tokens > 1000000 maximum'), {
+      statusCode: 400,
+    });
+    mockGenerateText.mockRejectedValueOnce(OVERFLOW).mockResolvedValueOnce({ text: 'THE SUMMARY' });
+    const summary: ModelMessage = { role: 'user', content: '<conversation-summary>\nearlier' };
+    const messages: ModelMessage[] = [
+      summary,
+      { role: 'user', content: 'q1' },
+      { role: 'assistant', content: 'a1' },
+      { role: 'user', content: 'q2' },
+      { role: 'assistant', content: 'a2' },
+    ];
+    const { snapshot: _s, finalAssistantText: _f, ...base } = makeFork();
+
+    compactionService.maybeCompactAfterOverflow({ ...base, messages });
+    await flushAuto();
+
+    const retried = mockGenerateText.mock.calls[1][0].messages as ModelMessage[];
+    expect(retried[0]).toBe(summary);
+    expect(retried.map((m) => m.content)).not.toContain('q1');
+  });
+
+  it('drops the summary last, when nothing else is left to drop', async () => {
+    const OVERFLOW = new Error('prompt is too long: 250000 tokens > 200000 maximum');
+    mockGenerateText.mockRejectedValueOnce(OVERFLOW).mockResolvedValueOnce({ text: 'THE SUMMARY' });
+    const summary: ModelMessage = { role: 'user', content: '<conversation-summary>\nhuge' };
+    const { snapshot: _s, finalAssistantText: _f, ...base } = makeFork();
+
+    compactionService.maybeCompactAfterOverflow({
+      ...base,
+      messages: [summary, { role: 'user', content: 'q1' }, { role: 'assistant', content: 'a1' }],
+    });
+    await flushAuto();
+
+    // Behind the summary there is one exchange, which a quarter-cut cannot shorten.
+    const last = mockGenerateText.mock.calls[1][0].messages as ModelMessage[];
+    expect(last.map((m) => m.content)).toEqual(['q1', 'a1', COMPACTION_PROMPT]);
+    expect(mockPrisma.$transaction).toHaveBeenCalled();
+  });
+});
+
+describe('summary output budget', () => {
+  it('asks for no more output than the window has room for', async () => {
+    compactionService.maybeAutoCompact(
+      makeFork({ snapshot: { threadId: THREAD, modelId: 'model-x', usedTokens: 180_000, windowTokens: 200_000, usedPercent: 90 } }),
+    );
+    await flushAuto();
+
+    expect(mockGenerateText.mock.calls[0][0].maxOutputTokens).toBe(16_000);
+  });
+
+  it('asks for the full budget on a large window', async () => {
+    compactionService.maybeAutoCompact(
+      makeFork({ snapshot: { threadId: THREAD, modelId: 'model-x', usedTokens: 900_000, windowTokens: 1_000_000, usedPercent: 90 } }),
+    );
+    await flushAuto();
+
+    expect(mockGenerateText.mock.calls[0][0].maxOutputTokens).toBe(32_000);
+  });
+});
+
+describe('facts to remember', () => {
+  const withFacts = `## Goal\n- ship it\n\n${FACTS_HEADING}\n- The user deploys on Fridays.\n- Staging runs in eu-west-1.`;
+
+  it('stores each fact as a memory and keeps them out of the stored summary', async () => {
+    mockGenerateText.mockResolvedValue({ text: withFacts });
+
+    compactionService.maybeAutoCompact(makeFork());
+    await flushAuto();
+
+    expect(mockPrisma.conversationThread.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ compactionSummary: '## Goal\n- ship it' }) }),
+    );
+    expect(mockMemoryWrite.mock.calls.map((c) => c[1])).toEqual([
+      { content: 'The user deploys on Fridays.', category: 'observation' },
+      { content: 'Staging runs in eu-west-1.', category: 'observation' },
+    ]);
+  });
+
+  it('stores nothing in locked-in mode', async () => {
+    mockGenerateText.mockResolvedValue({ text: withFacts });
+    mockIsLockedIn.mockResolvedValue(true);
+
+    compactionService.maybeAutoCompact(makeFork());
+    await flushAuto();
+
+    expect(mockMemoryWrite).not.toHaveBeenCalled();
+    expect(mockPrisma.$transaction).toHaveBeenCalled();
+  });
+
+  it('counts only the facts memory did not hold yet', async () => {
+    mockGenerateText.mockResolvedValue({ text: withFacts });
+    mockMemoryWrite.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'mem-2' });
+
+    compactionService.maybeAutoCompact(makeFork());
+    await flushAuto();
+
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'compaction finished',
+      'user-1',
+      expect.objectContaining({ 'compaction.facts_stored': '1' }),
+    );
+  });
+
+  it('keeps a section the model put after the facts in the summary', async () => {
+    mockGenerateText.mockResolvedValue({
+      text: `## Goal\n- ship it\n\n${FACTS_HEADING}\n- Deploys run on Fridays.\n\n## Relevant Files\n- \`deploy.sh\``,
+    });
+
+    compactionService.maybeAutoCompact(makeFork());
+    await flushAuto();
+
+    expect(mockMemoryWrite.mock.calls.map((c) => c[1].content)).toEqual(['Deploys run on Fridays.']);
+    expect(mockPrisma.conversationThread.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ compactionSummary: '## Goal\n- ship it\n\n## Relevant Files\n- `deploy.sh`' }),
+      }),
+    );
+  });
+
+  it('stores nothing for a facts section that says none', async () => {
+    mockGenerateText.mockResolvedValue({ text: `## Goal\n- ship it\n\n${FACTS_HEADING}\n- none` });
+
+    compactionService.maybeAutoCompact(makeFork());
+    await flushAuto();
+
+    expect(mockMemoryWrite).not.toHaveBeenCalled();
   });
 });

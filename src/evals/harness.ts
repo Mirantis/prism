@@ -11,7 +11,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { generateText, stepCountIs, type LanguageModelUsage, type Tool } from 'ai';
 import { config } from '../config';
-import { MAX_OUTPUT_TOKENS } from '../constants';
+import { COMPACTION_MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS } from '../constants';
 import { callModel } from '../lib/model-call';
 import { getGateRequest } from '../lib/classification';
 import { createProvider } from '../lib/llm-providers/create-provider';
@@ -28,7 +28,12 @@ import { llmCallService } from '../services/llm-call.service';
 import { buildTurnRequest } from '../invoke';
 import { COMPUTER_INSTRUCTIONS } from '../prompts/computer-prompt';
 import { getComputerTools } from '../tools/computer';
-import type { ConversationMessage } from '../prompts/context-builder';
+import {
+  buildConversationHistory,
+  buildSystemPromptParts,
+  type ConversationMessage,
+} from '../prompts/context-builder';
+import { COMPACTION_PROMPT } from '../prompts/compaction-prompt';
 import type { AgentContext, HeartbeatTrigger, InvokeRequest, TaskLastSend } from '../types';
 import type { ChatPlatform } from '../services/channel-adapter.interface';
 import { slackChannelLabel } from '../utils/slack-formatter';
@@ -353,6 +358,37 @@ export async function toolRiskDecision(input: {
     agentId: EVAL_AGENT_ID,
   });
   return decision.decision;
+}
+
+// ---------------------------------------------------------------------------
+// Compaction
+// ---------------------------------------------------------------------------
+
+/**
+ * The summary a compaction of `history` writes: the chat system prompt and the thread,
+ * then the compaction prompt, as `compactionService` sends them. The tools block is
+ * left out, since the summary call may not use a tool and the prefix cache is no
+ * concern here. Throws on a summary cut off at the output budget, which the runtime
+ * refuses too.
+ */
+export async function summarizeThread(history: HistoryEntry[]): Promise<string> {
+  const context = await agentContext(history);
+  const modelId = resolveEffectiveModel(context.model);
+  const system = (await buildSystemPromptParts(context, 'chat')).map((part) => ({
+    role: 'system' as const,
+    content: part.text,
+  }));
+  const result = await callModel(
+    { purpose: 'compaction', agentId: EVAL_AGENT_ID },
+    {
+      model: createProvider()(modelId),
+      system,
+      messages: [...buildConversationHistory(context).messages, { role: 'user', content: COMPACTION_PROMPT }],
+      maxOutputTokens: COMPACTION_MAX_OUTPUT_TOKENS,
+    },
+  );
+  if (result.finishReason === 'length') throw new Error('The summary was cut off at the output limit.');
+  return result.text;
 }
 
 // ---------------------------------------------------------------------------

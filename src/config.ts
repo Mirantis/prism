@@ -742,7 +742,7 @@ const compactionThresholdPercent: number | null =
       : COMPACTION_THRESHOLD_PERCENT;
 
 // Tail size: 0 is legal (compact everything; the rebuilt context is just the
-// summary pair plus the next user message); junk/negative falls back.
+// summary message plus the next user message); junk/negative falls back.
 const rawCompactionTail = parseInt(process.env.COMPACTION_TAIL_MESSAGES ?? '', 10);
 const compactionTailMessages =
   Number.isFinite(rawCompactionTail) && rawCompactionTail >= 0 ? rawCompactionTail : COMPACTION_TAIL_MESSAGES;

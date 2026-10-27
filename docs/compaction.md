@@ -30,12 +30,22 @@ appears in the chat and the context meter drops.
 
 ## What survives
 
-- The newest messages (default **6**) are never compacted — they stay in the
-  context word-for-word, so the conversation keeps its immediate continuity.
-- The summary is structured (goal, important details, current state, next
-  steps, relevant files) and instructed to preserve exact paths, commands,
-  error strings, and identifiers, and to capture what tool calls did and
-  returned — the compacted context contains no raw tool calls.
+- The newest messages stay in the context word-for-word: up to **6** of them,
+  together no larger than about 30,000 tokens, starting at one of your
+  messages. Your latest request and its reply stay whole even when they are
+  more than 6 messages. A reply with very large tool output is summarized
+  instead.
+- The summary is structured (goal, your requests, important details, current
+  state, next steps, relevant files), stays under about 2,000 words, and keeps
+  exact paths, commands, error strings and identifiers. It also records what
+  tool calls did and returned, because the compacted context contains no raw
+  tool calls.
+- Lasting facts the summary finds, such as your preferences and details of your
+  environment, are saved to the agent's long-term [memory](memory.md), unless
+  memory already holds them. Locked-in mode turns this off. Ask the agent to
+  forget one you don't want kept.
+- To steer what summaries keep, add a `## Compact Instructions` section to the
+  [Agent Guide](agent-identity.md#the-seven-documents).
 
 ## Repeated compactions
 
@@ -56,7 +66,7 @@ newer replies afterwards. The Slack channel itself is never modified.
 | Variable | Meaning | Default |
 |----------|---------|---------|
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-compact at this percent of the model's window; `0` disables auto-compaction | `90` |
-| `COMPACTION_TAIL_MESSAGES` | Newest messages kept out of compaction | `6` |
+| `COMPACTION_TAIL_MESSAGES` | At most this many of the newest messages are kept out of compaction; your latest request and its reply always stay whole | `6` |
 
 Auto-compaction works best when the model's context window is known; see
 **[Context-window size](configuration.md#context-window-size)**. For a model

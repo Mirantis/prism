@@ -228,6 +228,42 @@ describe('Memory Manager Service', () => {
     });
   });
 
+  describe('Scenario: Memory write unless already known', () => {
+    const input = { content: 'Deploys run on Fridays.', category: 'observation' };
+
+    it('writes nothing when an entry with the same meaning is stored', async () => {
+      mockEmbeddingService.generateEmbedding.mockResolvedValue([0.1, 0.2]);
+      mockEmbeddingService.searchByEmbedding.mockResolvedValue([{ id: 'e1' }]);
+
+      await expect(memoryManagerService.writeIfNew('u', input, { agentId: 'a' })).resolves.toBeNull();
+      expect(mockEmbeddingService.searchByEmbedding).toHaveBeenCalledWith('a', [0.1, 0.2], {
+        limit: 1,
+        similarityThreshold: 0.9,
+      });
+      expect(mockPrisma.memoryEntry.create).not.toHaveBeenCalled();
+    });
+
+    it('writes a new fact and stores the embedding it already computed', async () => {
+      mockEmbeddingService.generateEmbedding.mockResolvedValue([0.1, 0.2]);
+      mockEmbeddingService.searchByEmbedding.mockResolvedValue([]);
+      mockEmbeddingService.storeEmbedding.mockResolvedValue(undefined);
+      mockPrisma.memoryEntry.create.mockResolvedValue({ id: 'e2' });
+
+      await expect(memoryManagerService.writeIfNew('u', input, { agentId: 'a' })).resolves.toEqual({ id: 'e2' });
+      expect(mockEmbeddingService.storeEmbedding).toHaveBeenCalledWith('e2', [0.1, 0.2]);
+      expect(mockEmbeddingService.generateEmbedding).toHaveBeenCalledTimes(1);
+    });
+
+    it('compares the text when embeddings are off', async () => {
+      mockPrisma.memoryEntry.count.mockResolvedValue(1);
+
+      await expect(memoryManagerService.writeIfNew('u', input, { agentId: 'a' })).resolves.toBeNull();
+      expect(mockPrisma.memoryEntry.count).toHaveBeenCalledWith({
+        where: { agentId: 'a', content: 'Deploys run on Fridays.' },
+      });
+    });
+  });
+
   describe('Scenario: Memory delete', () => {
     it('should delete a single entry by ID', async () => {
       const userId = 'user-123';

@@ -25,6 +25,7 @@ import {
   buildRecentMemories,
   recentMemoryContent,
   buildConversationHistory,
+  SUMMARY_MESSAGE_OPENING,
   buildSteeringMessage,
 } from './context-builder';
 vi.mock('../lib/has-binary', () => ({ missingBinary: vi.fn(async () => null) }));
@@ -885,16 +886,16 @@ describe('buildConversationHistory', () => {
     expect(messages).toEqual([]);
   });
 
-  it('adds conversation summary as user + assistant message pair', () => {
+  it('adds the conversation summary as one user message, with no reply after it', () => {
     const context = createTestAgentContext({
       conversationSummary: 'Discussed pod scaling.',
       recentMessages: [],
     });
     const messages = buildConversationHistory(context).messages;
-    expect(messages).toHaveLength(2);
+    expect(messages).toHaveLength(1);
     expect(messages[0].role).toBe('user');
+    expect(messages[0].content).toMatch(new RegExp(`^${SUMMARY_MESSAGE_OPENING}`));
     expect(messages[0].content).toContain('Discussed pod scaling.');
-    expect(messages[1].role).toBe('assistant');
   });
 
   it('filters out SYSTEM role messages', () => {
@@ -1413,7 +1414,21 @@ describe('buildConversationHistory with tool-change announcements', () => {
     expect(history.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'system', 'assistant']);
   });
 
-  it('places one that counts from the start between the summary and its reply', () => {
+  it('places one that counts from the start before the first reply after the summary', () => {
+    const context = createTestAgentContext({
+      conversationSummary: 'Earlier work.',
+      recentMessages: [
+        { id: 'u1', role: 'USER', content: 'next' },
+        { id: 'a1', role: 'AGENT', content: 'done' },
+      ],
+    });
+
+    const history = buildConversationHistory(context, [{ afterRowId: null, message: announcement('a') }]);
+
+    expect(history.messages.map((m) => m.role)).toEqual(['user', 'user', 'system', 'assistant']);
+  });
+
+  it('sends one that counts from the start last when no reply follows the summary yet', () => {
     const context = createTestAgentContext({
       conversationSummary: 'Earlier work.',
       recentMessages: [{ id: 'u1', role: 'USER', content: 'next' }],
@@ -1421,7 +1436,8 @@ describe('buildConversationHistory with tool-change announcements', () => {
 
     const history = buildConversationHistory(context, [{ afterRowId: null, message: announcement('a') }]);
 
-    expect(history.messages.map((m) => m.role)).toEqual(['user', 'system', 'assistant', 'user']);
+    expect(history.messages.map((m) => m.role)).toEqual(['user', 'user']);
+    expect(history.trailingToolChanges).toHaveLength(1);
   });
 });
 
