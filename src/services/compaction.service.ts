@@ -4,7 +4,7 @@
  * Folds a thread's older history into one structured summary so the context
  * stays inside the model's window while the newest messages (the tail) remain
  * verbatim. The summary is *anchored*: on re-compaction the previous summary is
- * already in the message array (as the synthetic pair `context-builder.ts`
+ * already in the message array (as the summary message `context-builder.ts`
  * injects), and the prompt folds it into the new, complete summary — so one
  * `compactionSummary` column per thread is the whole persistent state.
  *
@@ -51,9 +51,10 @@ import { callModel } from '../lib/model-call';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { logger } from '../logger';
-import { MAX_OUTPUT_TOKENS } from '../constants';
-import { COMPACTION_PROMPT } from '../prompts/compaction-prompt';
+import { COMPACTION_MAX_OUTPUT_TOKENS, COMPACTION_TAIL_TOKENS } from '../constants';
+import { COMPACTION_PROMPT, FACTS_HEADING } from '../prompts/compaction-prompt';
 import { MIN_PLAUSIBLE_CONTEXT } from '../lib/model-catalog';
+import { contextWindowFor } from '../lib/context-window';
 import { createProvider } from '../lib/llm-providers/create-provider';
 import type { CachePointFragment } from '../lib/llm-providers/llm-provider';
 
@@ -61,13 +62,18 @@ import { collectTools, withToolsCacheControl } from '../lib/tool-collection';
 import { withToolOutputCapture } from '../lib/tool-output-limiter';
 import { removeToolOutputs } from '../lib/tool-output-store';
 import type { Invoker } from '../lib/task-tool';
-import { buildSystemPromptParts, buildConversationHistory } from '../prompts/context-builder';
+import {
+  buildSystemPromptParts,
+  buildConversationHistory,
+  SUMMARY_MESSAGE_OPENING,
+} from '../prompts/context-builder';
 import { getTaskToolInstructions } from '../prompts/task-tool-prompt';
 import { isContextOverflowError } from '../lib/llm-errors';
 import { agentWorkspaceService } from './agent-workspace.service';
 import { compactionModel } from '../lib/model-routing';
 import { summaryToolOptions, toolLedgerService } from './tool-ledger.service';
 import { contextService } from './context.service';
+import { memoryManagerService } from './memory-manager.service';
 import { contextUsageService, type ContextUsageSnapshot } from './context-usage.service';
 import { threadTurnService } from './thread-turn.service';
 import { trackEvent, langfuseTelemetry } from '../lib/telemetry';
@@ -85,7 +91,9 @@ export interface ForkRow {
   externalMessageId: string | null;
   /** Concise-mode internal steps are real DB rows. */
   internalStep: boolean;
-  /** For the post-compaction size estimate (~4 chars/token). */
+  /** A user's message. The kept tail starts on one, so a reply never opens it without its request. */
+  fromUser: boolean;
+  /** The message's text plus its tool calls and results, for sizing the tail (~4 chars/token). */
   contentChars: number;
 }
 
@@ -105,7 +113,7 @@ export interface CompactionFork {
   tools: Record<string, Tool>;
   /** Whether `tools` is the conversation's declared list (tool-ledger.service.ts). */
   declaredTools: boolean;
-  /** History as sent, summary pair included, without the turn's trailing tool-change announcements. */
+  /** History as sent, summary message included, without the turn's trailing tool-change announcements. */
   messages: ModelMessage[];
   /** Mid-turn steering messages, in arrival order. */
   injections: ModelMessage[];
@@ -142,6 +150,9 @@ export interface CompactionEvent {
   detail?: string;
 }
 
+/** One finished summary, before it is committed. */
+type CompleteInput = Omit<FinishInput, 'messagesCompacted' | 'factsStored'>;
+
 interface FinishInput {
   userId: string;
   agentId: string;
@@ -155,6 +166,8 @@ interface FinishInput {
   summary: string;
   rows: ForkRow[];
   messagesCompacted: number;
+  /** Facts from the summary that went to long-term memory. */
+  factsStored: number;
 }
 
 class CompactionService {
@@ -192,7 +205,7 @@ class CompactionService {
       // catalog value; refusing to act on it bounds the blast radius of a bad
       // registry entry to a wrong percentage on screen (see model-catalog.ts).
       if (fork.snapshot.windowTokens < MIN_PLAUSIBLE_CONTEXT) return;
-      if (fork.contextRows.length <= config.compactionTailMessages) return; // nothing meaningful
+      if (splitTail(fork.contextRows).compactable.length === 0) return; // nothing meaningful
       if (this.inFlight.has(fork.threadId)) return; // once per exchange
 
       this.inFlight.add(fork.threadId);
@@ -226,7 +239,7 @@ class CompactionService {
   maybeCompactAfterOverflow(fork: CompactionFork): void {
     try {
       if (config.compactionThresholdPercent === null) return; // operator disabled auto-compaction
-      if (fork.contextRows.length <= config.compactionTailMessages) return;
+      if (splitTail(fork.contextRows).compactable.length === 0) return;
       if (this.inFlight.has(fork.threadId)) return;
 
       this.inFlight.add(fork.threadId);
@@ -268,7 +281,7 @@ class CompactionService {
           includeConversation: true,
         });
         const rows = toForkRows(context.recentMessages);
-        if (rows.length <= config.compactionTailMessages) {
+        if (splitTail(rows).compactable.length === 0) {
           // A no-op, not a failure: the REST precheck counts DB rows while this
           // counts the context view (attachFiles drops empty rows), so a thread
           // at the tail boundary can pass the 409 gate and land here.
@@ -347,17 +360,16 @@ class CompactionService {
             : Object.keys(cachedTools).length > 0
               ? { tools: cachedTools, toolChoice: 'none' as const }
               : {}),
-          maxOutputTokens: MAX_OUTPUT_TOKENS,
+          maxOutputTokens: summaryOutputBudget(contextWindowFor(modelId)?.tokens, thread?.contextTokens),
           ...langfuseTelemetry('compaction', { userId, sessionId: threadId }),
         });
-        const summary = result.text.trim();
-        if (!summary) {
-          this.fail(userId, agentId, threadId, 'manual', 'The model returned an empty summary.');
+        const summary = readSummary(result);
+        if ('error' in summary) {
+          this.fail(userId, agentId, threadId, 'manual', summary.error);
           return;
         }
 
-        const { messagesCompacted } = await this.commit(threadId, summary, rows);
-        await this.finish({
+        await this.complete({
           userId,
           agentId,
           threadId,
@@ -366,9 +378,8 @@ class CompactionService {
           modelId,
           threadSource: thread?.threadSource ?? 'DATABASE',
           tokensBefore: thread?.contextTokens ?? null,
-          summary,
+          summary: summary.text,
           rows,
-          messagesCompacted,
         });
       });
     } catch (err) {
@@ -392,10 +403,12 @@ class CompactionService {
     // Channel-backed threads pass through — their history lives in the
     // channel, not in DB rows, so a row count says nothing about them.
     if (thread?.threadSource !== 'DATABASE') return true;
+    // A row count cannot size the tail, which is measured in tokens, so this asks only
+    // for more than the newest message. compactNow's own check decides the rest.
     const uncompacted = await prisma.conversationMessage.count({
       where: { threadId, isCompacted: false },
     });
-    return uncompacted > config.compactionTailMessages;
+    return uncompacted > 1;
   }
 
   /** The forked summarize request — see the module doc for the cache story. */
@@ -435,12 +448,12 @@ class CompactionService {
               // the tools block under 'none', it keeps the turn's tools segment.
               toolChoice: 'none' as const,
             }),
-        maxOutputTokens: MAX_OUTPUT_TOKENS,
+        maxOutputTokens: summaryOutputBudget(fork.snapshot.windowTokens, fork.snapshot.usedTokens),
         ...langfuseTelemetry('compaction', { userId, sessionId: threadId }),
       });
-      const summary = result.text.trim();
-      if (!summary) {
-        this.fail(userId, agentId, threadId, 'auto', 'The model returned an empty summary.');
+      const summary = readSummary(result);
+      if ('error' in summary) {
+        this.fail(userId, agentId, threadId, 'auto', summary.error);
         return;
       }
 
@@ -448,8 +461,7 @@ class CompactionService {
         where: { id: threadId },
         select: { threadSource: true },
       });
-      const { messagesCompacted } = await this.commit(threadId, summary, fork.contextRows);
-      await this.finish({
+      await this.complete({
         userId,
         agentId,
         threadId,
@@ -458,9 +470,8 @@ class CompactionService {
         modelId: fork.modelId,
         threadSource: thread?.threadSource ?? 'DATABASE',
         tokensBefore: fork.snapshot.usedTokens,
-        summary,
+        summary: summary.text,
         rows: fork.contextRows,
-        messagesCompacted,
       });
     } catch (err) {
       logger.error({ err, threadId }, '[Compaction] auto-compaction failed');
@@ -476,7 +487,9 @@ class CompactionService {
    * re-anchored on a user message so tool-call pairs never split). The commit
    * still marks every fork row minus the tail: rows whose content fell out of
    * the shrunken summarize input lose their detail, which is the accepted
-   * price of unsticking a thread that otherwise rejects forever.
+   * price of unsticking a thread that otherwise rejects forever. When even the
+   * previous summary has to go, the new one replaces it without having read it,
+   * and the history before it is gone from the context.
    */
   private async runOverflowCompaction(fork: CompactionFork): Promise<void> {
     const { userId, agentId, threadId } = fork;
@@ -484,7 +497,7 @@ class CompactionService {
       this.start(userId, agentId, threadId, 'auto');
 
       let history: ModelMessage[] = [...fork.messages, ...fork.injections];
-      let summary = '';
+      let summary: SummaryOutcome;
       // Each shrink drops a quarter, so the reachable floor is 0.75^(n-1) of
       // the original: 5 attempts bottom out at ~32%, which still overflows a
       // history several times the window — and that is exactly the first turn
@@ -508,10 +521,10 @@ class CompactionService {
                   tools: Object.keys(fork.tools).length > 0 ? fork.tools : undefined,
                   toolChoice: 'none' as const,
                 }),
-            maxOutputTokens: MAX_OUTPUT_TOKENS,
+            maxOutputTokens: COMPACTION_MAX_OUTPUT_TOKENS,
             ...langfuseTelemetry('compaction', { userId, sessionId: threadId }),
           });
-          summary = result.text.trim();
+          summary = readSummary(result);
           break;
         } catch (err) {
           if (attempt >= MAX_ATTEMPTS - 1 || !isContextOverflowError(err)) throw err;
@@ -523,8 +536,8 @@ class CompactionService {
           history = shrunk;
         }
       }
-      if (!summary) {
-        this.fail(userId, agentId, threadId, 'auto', 'The model returned an empty summary.');
+      if ('error' in summary) {
+        this.fail(userId, agentId, threadId, 'auto', summary.error);
         return;
       }
 
@@ -532,8 +545,7 @@ class CompactionService {
         where: { id: threadId },
         select: { threadSource: true, contextTokens: true },
       });
-      const { messagesCompacted } = await this.commit(threadId, summary, fork.contextRows);
-      await this.finish({
+      await this.complete({
         userId,
         agentId,
         threadId,
@@ -542,14 +554,48 @@ class CompactionService {
         modelId: fork.modelId,
         threadSource: thread?.threadSource ?? 'DATABASE',
         tokensBefore: thread?.contextTokens ?? null,
-        summary,
+        summary: summary.text,
         rows: fork.contextRows,
-        messagesCompacted,
       });
     } catch (err) {
       logger.error({ err, threadId }, '[Compaction] overflow compaction failed');
       this.fail(userId, agentId, threadId, 'auto', errorText(err));
     }
+  }
+
+  /**
+   * Shared last step of every runner: commit the summary without its facts section,
+   * keep the facts, report it.
+   */
+  private async complete(input: CompleteInput): Promise<void> {
+    const { summary, facts } = splitFacts(input.summary);
+    const { messagesCompacted } = await this.commit(input.threadId, summary, input.rows);
+    const factsStored = await this.rememberFacts(input.userId, input.agentId, facts);
+    await this.finish({ ...input, summary, messagesCompacted, factsStored });
+  }
+
+  /**
+   * Store each fact the summary listed as a long-term memory, so it outlives the
+   * summaries that fold this one in. A fact already stored is skipped, since a fact
+   * still in the kept tail is listed again by the next compaction. Locked-in mode
+   * freezes long-term memory, as it does for `memory_write`. Best effort: the
+   * compaction is already committed. Returns how many it stored.
+   */
+  private async rememberFacts(userId: string, agentId: string, facts: string[]): Promise<number> {
+    if (facts.length === 0) return 0;
+    let stored = 0;
+    try {
+      if (await agentWorkspaceService.isLockedIn()) return 0;
+      for (const content of facts) {
+        if (await memoryManagerService.writeIfNew(userId, { content, category: 'observation' }, { agentId })) {
+          stored++;
+        }
+      }
+      logger.info(`[Compaction] stored ${stored} of ${facts.length} fact(s) from the summary in long-term memory`);
+    } catch (err) {
+      logger.warn({ err }, '[Compaction] could not store the summary facts in long-term memory');
+    }
+    return stored;
   }
 
   /**
@@ -569,9 +615,7 @@ class CompactionService {
     summary: string,
     rows: ForkRow[],
   ): Promise<{ messagesCompacted: number }> {
-    const tail = config.compactionTailMessages;
-    // slice(0, -0) would be empty — tail 0 means "compact everything".
-    const compactable = tail > 0 ? rows.slice(0, -tail) : rows;
+    const { compactable } = splitTail(rows);
     if (compactable.length === 0) return { messagesCompacted: 0 };
 
     const thread = await prisma.conversationThread.findUnique({
@@ -674,10 +718,8 @@ class CompactionService {
 
   /** Shared completion: meter estimate, completed event, finished telemetry. */
   private async finish(input: FinishInput): Promise<void> {
-    const tail = config.compactionTailMessages;
-    const tailRows = tail > 0 ? input.rows.slice(-tail) : [];
-    const tailChars = tailRows.reduce((n, r) => n + r.contentChars, 0);
-    // ~4 chars/token over the rebuilt context (summary pair + verbatim tail).
+    const tailChars = splitTail(input.rows).tail.reduce((n, r) => n + r.contentChars, 0);
+    // ~4 chars/token over the rebuilt context (summary message + verbatim tail).
     // Undershoots — the system prompt and tools aren't counted — and
     // self-corrects on the next turn's provider-reported usage.
     const estimatedTokens = Math.ceil((input.summary.length + tailChars) / 4);
@@ -706,6 +748,7 @@ class CompactionService {
       'compaction.trigger': input.trigger,
       'compaction.reason': input.reason,
       'compaction.messages_compacted': String(input.messagesCompacted),
+      'compaction.facts_stored': String(input.factsStored),
       ...(input.tokensBefore != null ? { 'context.tokens_before': String(input.tokensBefore) } : {}),
       ...(snapshot ? { 'context.tokens_after': String(estimatedTokens) } : {}),
       ...(snapshot ? { 'context.window_tokens': String(snapshot.windowTokens) } : {}),
@@ -776,15 +819,98 @@ class CompactionService {
 
 }
 
-function toForkRows(
-  messages: Array<{ id: string; externalMessageId?: string | null; internalStep?: boolean; content: string }>,
+const CHARS_PER_TOKEN = 4;
+
+/** A context's rows as the commit marks them. */
+export function toForkRows(
+  messages: Array<{
+    id: string;
+    role: string;
+    externalMessageId?: string | null;
+    internalStep?: boolean;
+    content: string;
+    toolCalls?: unknown;
+  }>,
 ): ForkRow[] {
   return messages.map((m) => ({
     id: m.id,
     externalMessageId: m.externalMessageId ?? null,
     internalStep: m.internalStep ?? false,
-    contentChars: m.content.length,
+    fromUser: m.role === 'USER',
+    contentChars: m.content.length + (m.toolCalls ? JSON.stringify(m.toolCalls).length : 0),
   }));
+}
+
+/**
+ * The rows a compaction keeps verbatim, and the ones before them it summarizes.
+ * The tail is the longest run of newest rows that starts on a user's message, holds
+ * at most `compactionTailMessages` rows and fits `COMPACTION_TAIL_TOKENS`. The row
+ * cap gives way for the newest exchange, since one reply can be many step rows.
+ * When even the newest exchange does not fit the token budget, everything is
+ * summarized.
+ */
+export function splitTail(rows: ForkRow[]): { compactable: ForkRow[]; tail: ForkRow[] } {
+  if (config.compactionTailMessages === 0) return { compactable: rows, tail: [] };
+  const budget = COMPACTION_TAIL_TOKENS * CHARS_PER_TOKEN;
+  let start = rows.length;
+  let chars = 0;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    chars += rows[i].contentChars;
+    if (chars > budget) break;
+    if (rows.length - i > config.compactionTailMessages && start < rows.length) break;
+    if (rows[i].fromUser) start = i;
+  }
+  return { compactable: rows.slice(0, start), tail: rows.slice(start) };
+}
+
+/** Room left for the forked request's own additions: the turn's reply and the prompt. */
+const SUMMARY_REQUEST_MARGIN_TOKENS = 4_000;
+const MIN_SUMMARY_OUTPUT_TOKENS = 4_096;
+
+/**
+ * The summary call's output budget. The Anthropic Messages API refuses a request
+ * whose input plus `max_tokens` exceeds the window, so a nearly full window gets
+ * the room it has left rather than the full budget.
+ */
+function summaryOutputBudget(windowTokens: number | null | undefined, usedTokens: number | null | undefined): number {
+  if (!windowTokens || usedTokens == null) return COMPACTION_MAX_OUTPUT_TOKENS;
+  // Under the floor the request fails on its size, and overflow recovery takes the thread
+  // on its next turn.
+  const room = windowTokens - usedTokens - SUMMARY_REQUEST_MARGIN_TOKENS;
+  return Math.max(MIN_SUMMARY_OUTPUT_TOKENS, Math.min(COMPACTION_MAX_OUTPUT_TOKENS, room));
+}
+
+type SummaryOutcome = { text: string } | { error: string };
+
+/** A summary the commit may use: not empty, and not cut off at the output budget. */
+function readSummary(result: { text: string; finishReason: string }): SummaryOutcome {
+  if (result.finishReason === 'length') {
+    return { error: 'The summary was cut off at the output limit, so nothing was compacted.' };
+  }
+  const text = result.text.trim();
+  return text ? { text } : { error: 'The model returned an empty summary.' };
+}
+
+const FACTS_SECTION = new RegExp(`^${FACTS_HEADING}[ \\t]*$`, 'im');
+
+/**
+ * Split the facts section off a summary. The summary keeps the rest, sections after
+ * the facts included; each bullet of the facts becomes a memory. A "none" bullet,
+ * or no section, gives no facts.
+ */
+function splitFacts(summary: string): { summary: string; facts: string[] } {
+  const heading = FACTS_SECTION.exec(summary);
+  if (!heading) return { summary, facts: [] };
+  const bodyStart = heading.index + heading[0].length;
+  const next = summary.slice(bodyStart).search(/^## /m);
+  const bodyEnd = next === -1 ? summary.length : bodyStart + next;
+  const facts = summary
+    .slice(bodyStart, bodyEnd)
+    .split('\n')
+    .map((line) => line.replace(/^\s*[-*]\s+/, '').trim())
+    .filter((line) => line && !/^none\.?$/i.test(line) && !line.startsWith('#'));
+  const rest = `${summary.slice(0, heading.index).trimEnd()}\n\n${summary.slice(bodyEnd).trim()}`.trim();
+  return { summary: rest, facts };
 }
 
 function errorText(err: unknown): string {
@@ -804,13 +930,31 @@ const neverInvoke: Invoker = async () => {
  * Drop the oldest quarter of a summarize history that did not fit, then
  * re-anchor on a user message: an array sliced mid tool-exchange could start
  * on an assistant tool-call or a dangling tool result, both of which the
- * providers reject. Returns null when nothing meaningful would remain.
+ * providers reject. A previous summary opens the history and stays, since it
+ * stands for everything before it. Returns null when nothing meaningful would
+ * remain.
  */
 function shrinkHistoryHead(history: ModelMessage[]): ModelMessage[] | null {
-  const drop = Math.max(1, Math.ceil(history.length / 4));
-  const shrunk = history.slice(drop);
-  while (shrunk.length > 0 && shrunk[0].role !== 'user') shrunk.shift();
-  return shrunk.length >= 1 && shrunk.length < history.length ? shrunk : null;
+  const head = isSummaryMessage(history[0]) ? history.slice(0, 1) : [];
+  const rest = history.slice(head.length);
+  const shrunk = anchorOnUser(rest.slice(Math.max(1, Math.ceil(rest.length / 4))));
+  if (shrunk.length >= 1 && shrunk.length < rest.length) return [...head, ...shrunk];
+  // Nothing is left to drop behind the summary, so the summary goes last.
+  const withoutSummary = anchorOnUser(rest);
+  return head.length > 0 && withoutSummary.length > 0 ? withoutSummary : null;
+}
+
+function anchorOnUser(messages: ModelMessage[]): ModelMessage[] {
+  const first = messages.findIndex((m) => m.role === 'user');
+  return first === -1 ? [] : messages.slice(first);
+}
+
+function isSummaryMessage(message: ModelMessage | undefined): boolean {
+  return (
+    message?.role === 'user' &&
+    typeof message.content === 'string' &&
+    message.content.startsWith(SUMMARY_MESSAGE_OPENING)
+  );
 }
 
 export const compactionService = new CompactionService();

@@ -230,7 +230,9 @@ const { mockMaybeAutoCompact, mockMaybeCompactAfterOverflow } = vi.hoisted(() =>
   mockMaybeCompactAfterOverflow: vi.fn(),
 }));
 
-vi.mock('./services/compaction.service', () => ({
+vi.mock('./services/compaction.service', async (importOriginal) => ({
+  // The real row mapping, so the fork's rows are checked as the commit reads them.
+  toForkRows: (await importOriginal<typeof import('./services/compaction.service')>()).toForkRows,
   compactionService: {
     maybeAutoCompact: mockMaybeAutoCompact,
     maybeCompactAfterOverflow: mockMaybeCompactAfterOverflow,

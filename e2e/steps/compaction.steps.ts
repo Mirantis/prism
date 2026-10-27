@@ -84,6 +84,34 @@ Given('a conversation seeded with 10 messages', async ({ page }) => {
   await page.evaluate(watchCompactingIndicator);
 });
 
+/** A preference worth keeping beyond the conversation, stated in a message that gets compacted. */
+const PREFERENCE = 'From now on, always roll out changes with a blue-green deployment, never in place.';
+
+Given('a conversation seeded with 10 messages where I state a lasting preference', async ({ page }) => {
+  const messages = Array.from({ length: SEED_COUNT }, (_, i) => ({
+    role: (i % 2 === 0 ? 'USER' : 'AGENT') as 'USER' | 'AGENT',
+    content: i === 0 ? PREFERENCE : i === 1 ? 'Noted: blue-green rollouts from now on.' : seededContent(i),
+  }));
+  await dbHelper.createThread(DEFAULT_AGENT_ID, { title: 'Compaction preference', messages });
+  await new HomePage(page).navigate();
+  await expect(new HomePage(page).getMessageByText(PREFERENCE)).toBeVisible({ timeout: 10_000 });
+});
+
+Then("the agent's long-term memory holds that preference", async () => {
+  const entries = await pollUntil(
+    () => dbHelper.getPrisma().memoryEntry.findMany({ where: { agentId: DEFAULT_AGENT_ID } }),
+    (rows) => rows.some((r) => /blue-green/i.test(r.content)),
+    60_000,
+  );
+  expect(entries.map((r) => r.content).join('\n')).toMatch(/blue-green/i);
+});
+
+Then('the stored summary leaves the facts section out', async () => {
+  const thread = await pollUntil(latestThread, (t) => Boolean(t.compactionSummary), 60_000);
+  expect(thread.compactionSummary).toContain('## Goal');
+  expect(thread.compactionSummary).not.toContain('## Facts to remember');
+});
+
 Then('the compacting indicator appears', async ({ page }) => {
   // Broadcast as the `started` compaction frame.
   await expect

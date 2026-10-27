@@ -16,6 +16,14 @@ Feature: Manual conversation compaction
     And the thread stores a compaction summary with the tail preserved
     And a manual compaction telemetry event is recorded
 
+  Scenario: A lasting preference from the compacted history is saved to memory
+    Given a conversation seeded with 10 messages where I state a lasting preference
+    When I type "/compact" in the chat input
+    And I send the message
+    And the compaction note appears in the conversation
+    Then the agent's long-term memory holds that preference
+    And the stored summary leaves the facts section out
+
   Scenario: The full history stays visible after compaction
     Given a conversation seeded with 10 messages
     When I type "/compact" in the chat input

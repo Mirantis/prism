@@ -542,16 +542,10 @@ export function buildConversationHistory(
     messages.push(message);
   };
 
-  // Add compaction summary as a user message with context marker
+  // The compaction summary stands in for the rows it replaced. It is rebuilt on every
+  // turn, so its text holds for any turn after the compaction, not only the next one.
   if (context.conversationSummary) {
-    push({
-      role: 'user',
-      content: `[Previous conversation summary for context]\n${context.conversationSummary}`,
-    });
-    push({
-      role: 'assistant',
-      content: 'I understand the previous conversation context. How can I help you now?',
-    });
+    push({ role: 'user', content: summaryMessage(context.conversationSummary) });
   }
 
   // Add recent messages (only user and assistant, skip system and empty messages)
@@ -603,6 +597,16 @@ export function buildConversationHistory(
   }
 
   return { messages, trailingToolChanges: pending };
+}
+
+/** Opens the user message that holds a thread's compaction summary. */
+export const SUMMARY_MESSAGE_OPENING = '<conversation-summary>';
+
+function summaryMessage(summary: string): string {
+  return (
+    `${SUMMARY_MESSAGE_OPENING}\nThe earlier part of this conversation, summarized. ` +
+    `The messages after this one continue it.\n\n${summary}\n</conversation-summary>`
+  );
 }
 
 /**
