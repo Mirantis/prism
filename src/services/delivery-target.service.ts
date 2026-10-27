@@ -110,8 +110,8 @@ class DeliveryTargetService {
    * - a channel's name — scoped to that channel's default destination (the
    *   direct conversation, else the main channel). Stored in the destination's
    *   own thread, keyed by a non-null externalThreadId, so `listThreads` hides
-   *   it from web Recents + the CLI resume picker. Falls back to the latest
-   *   (web-visible) thread + a warning when the channel has no destination.
+   *   it from web Recents + the CLI resume picker. Falls back to web chat only
+   *   + a warning when the channel has no destination.
    * - 'none' — nothing is published or stored.
    */
   private async deliverToTarget(
@@ -142,12 +142,13 @@ class DeliveryTargetService {
         });
       }
       // No direct conversation or channel linked, so the channel cannot deliver.
-      // Store in the web-visible latest thread so the message isn't silently lost.
+      // Post to web chat only, so the message isn't silently lost and doesn't
+      // reach the channels the target leaves out.
       logger.warn(
         "[Delivery] deliverTo:'%s' but no direct conversation or channel is linked — storing in the web thread instead",
         deliverTo,
       );
-      return messageDeliveryService.publishToLatestThread(agentId, userId, content, triggeredBy, options);
+      return this.deliverToChat(agentId, userId, content, triggeredBy, options);
     }
 
     // 'all' — broadcast to every connected channel.

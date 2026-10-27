@@ -202,7 +202,7 @@ List, create, edit, and delete the agent's cron-driven runs.
   names the agent's time zone, which every schedule runs in. **Deliver to** sets
   where the result goes, as for a [webhook](webhooks.md#delivery-targets--storage).
 - **Edit** (the pencil on a task) opens the same form with the task's name,
-  schedule, and instruction.
+  schedule, instruction and delivery.
 - **Delete** removes a task after a confirmation.
 
 The Web UI's form takes raw cron expressions. (The agent itself, and the

@@ -881,6 +881,25 @@ describe('CronSchedulerService', () => {
       expect(gateInputs[2]).toContain('No previous result has been delivered');
     });
 
+    it('drops the delivery baseline when the task moves to another target', async () => {
+      let tick!: () => Promise<void>;
+      mockCronSchedule.mockImplementation((_schedule: string, cb: () => Promise<void>) => {
+        tick = cb;
+        return { stop: vi.fn(), getNextRun: () => null };
+      });
+      const row = storedRow();
+      cronSchedulerService.scheduleTask(toBackendCronTask(row));
+      await tick(); // delivers to every channel, which sets the baseline
+      mockCronTaskFindFirst.mockResolvedValue(row);
+      mockCronTaskUpdate.mockImplementation(async ({ data }) => storedRow(data));
+
+      await cronSchedulerService.updateTask('task-1', { deliverTo: 'chat' });
+      await tick();
+
+      const gateInputs = mockGenerateText.mock.calls.map(([call]) => call.messages[0].content as string);
+      expect(gateInputs[1]).toContain('No previous result has been delivered');
+    });
+
     it('saves a new target and re-registers the task with it', async () => {
       mockCronTaskFindFirst.mockResolvedValue(storedRow());
       mockCronTaskUpdate.mockImplementation(async ({ data }) => storedRow(data));
@@ -1237,7 +1256,7 @@ describe('CronSchedulerService', () => {
       expect(mockTrackEvent).toHaveBeenCalledWith(
         'cron task executed',
         'user-abc-123',
-        expect.objectContaining({ 'cron.result': 'completed' }),
+        expect.objectContaining({ 'cron.result': 'completed', 'cron.deliver_to': 'none' }),
       );
     });
 
@@ -1550,6 +1569,7 @@ describe('CronSchedulerService', () => {
         'cron.task.id': 'task-1',
         'cron.result': 'completed',
         'cron.continue_in_thread': 'false',
+        'cron.deliver_to': 'all',
         'cron.duration_ms': expect.any(String),
       });
     });

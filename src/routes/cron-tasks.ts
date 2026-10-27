@@ -42,7 +42,11 @@ function toListedTask(task: CronTask) {
   };
 }
 
-/** The delivery fields of a request body, or the name of the field that has the wrong type. */
+/**
+ * The delivery fields of a request body, or the name of the field that has the wrong type.
+ * `readTaskDelivery` checks the values; this types the body, and refuses a wrong type before
+ * the task's row is read and locked.
+ */
 function readDeliveryFields(
   body: Record<string, unknown>,
 ): { ok: true; changes: Pick<CronTaskChanges, 'deliverTo' | 'channelIds'> } | { ok: false; field: string; error: string } {
@@ -55,7 +59,7 @@ function readDeliveryFields(
     channelIds !== null &&
     !(Array.isArray(channelIds) && channelIds.every((id) => typeof id === 'string'))
   ) {
-    return { ok: false, field: 'channelIds', error: 'channelIds must be an array of channel ids' };
+    return { ok: false, field: 'channelIds', error: 'The channel list must be an array of channel ids' };
   }
   return { ok: true, changes: { deliverTo, channelIds } };
 }

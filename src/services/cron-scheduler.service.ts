@@ -134,6 +134,14 @@ export async function readTaskDelivery(
   return { ok: true, value: { deliverTo, channelIds } };
 }
 
+/**
+ * Whether two versions of a task share a delivery baseline: the same instruction
+ * to the same target. A result delivered to one channel is not a repeat for another.
+ */
+function sameBaselineKey(a: BackendCronTask, b: BackendCronTask): boolean {
+  return a.instruction === b.instruction && a.deliverTo === b.deliverTo && a.channelIds === b.channelIds;
+}
+
 interface ScheduledJob {
   task: BackendCronTask;
   /** A node-cron task for a recurring schedule, or the timer of a one-shot. */
@@ -304,7 +312,7 @@ class CronSchedulerService {
    * Schedule a task, replacing any job it already has. `source` decides the telemetry event:
    * `cron task scheduled` for a new task, `cron task updated` for an edit, none for `boot`.
    * The scheduler owns both events. `invokeMode` is the mode of the agent run that made the
-   * change. A task keeps its delivery baseline while its instruction is the same.
+   * change. A task keeps its delivery baseline while its instruction and its target are the same.
    */
   scheduleTask(
     task: BackendCronTask,
@@ -317,7 +325,7 @@ class CronSchedulerService {
 
     const previous = this.scheduledJobs.get(task.id);
     this.stopJob(task.id);
-    if (previous?.task.instruction !== task.instruction) {
+    if (!previous || !sameBaselineKey(previous.task, task)) {
       this.lastDelivered.delete(task.id);
     }
 
@@ -574,6 +582,7 @@ class CronSchedulerService {
         'cron.task.id': task.id,
         'cron.result': result,
         'cron.continue_in_thread': String(Boolean(boundThreadId)),
+        'cron.deliver_to': task.deliverTo,
         'cron.duration_ms': String(Date.now() - startTime),
       });
 
@@ -648,8 +657,9 @@ class CronSchedulerService {
       const responseText = (lastStep?.text ?? '').trim();
       const body = responseText || result.response;
 
-      // A task that delivers nowhere skips the gate's model call too.
-      if (!boundThreadId && task.deliverTo === 'none') {
+      // A task that delivers nowhere skips the gate's model call too. A bound
+      // task always delivers 'all' (readTaskDelivery), so it never gets here.
+      if (task.deliverTo === 'none') {
         logger.info(`[CronScheduler] "${task.name}" completed in ${Date.now() - startTime}ms, delivering nowhere`);
         trackRun('completed');
         return true;
@@ -727,9 +737,10 @@ class CronSchedulerService {
       // recordAlert parity), keyed on the un-headered body so the unbound
       // "**Scheduled Task: …**" header can't defeat the comparison. A task that is
       // no longer scheduled, such as one its own run deleted, has no next run to
-      // compare, so it keeps no baseline, and one edited to a new instruction during
-      // the run starts without one.
-      if (this.scheduledJobs.get(task.id)?.task.instruction === task.instruction) {
+      // compare, so it keeps no baseline, and one edited to a new instruction or
+      // target during the run starts without one.
+      const scheduled = this.scheduledJobs.get(task.id)?.task;
+      if (scheduled && sameBaselineKey(scheduled, task)) {
         this.lastDelivered.set(task.id, { text: body.trim(), at: Date.now() });
       }
 
