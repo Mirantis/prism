@@ -5,14 +5,17 @@
  *      /agents/*       — management routes (heartbeat, chat, cron lifecycle)
  *                        + self-update (/agents/update, /agents/update/status)
  *                        + activity reads (/agents/activity/*)
- *                        + agent messages (/agents/agent-messages, /agents/state)
  *      /threads, /latest-thread — thread resolve/list/open
  *      /messages       — thread history replay
  *      /               — Prism Agent Web UI (static SPA bundle from web/dist)
  *
+ *      /agents/state   — whether the agent is working, for the other agents
+ *
  * Webhook ingestion (POST /agents/webhooks/:name) has a listener of its own on
  * `WEBHOOK_PORT`, so a deployment can expose it to senders and keep the port
- * above private.
+ * above private. Messages from the other agents of the project
+ * (POST /agents/agent-messages) have one too, on `AGENT_MESSAGES_PORT`
+ * (`createAgentMessagesApp`), so a deployment can route them apart from the API.
  *
  * Auth is handled by the routing in front of the runtime; the container itself
  * trusts every incoming connection, with two exceptions. `originGuard` answers
@@ -94,9 +97,8 @@ export function createApp() {
   // Scheduled tasks (/agents/cron-tasks)
   app.use('/agents', cronTasksRouter);
 
-  // Messages from the other agents of the project, and whether this one is working
-  // (POST /agents/agent-messages, GET /agents/state)
-  app.use('/agents', agentMessagesRouter);
+  // Whether this agent is working, for the other agents of the project
+  // (GET /agents/state). Their messages arrive on `AGENT_MESSAGES_PORT`.
   app.use('/agents', agentStateRouter);
 
   // Thread and message routes: /threads, /latest-thread and /messages.
@@ -120,6 +122,34 @@ export function createApp() {
   }
 
   return app;
+}
+
+/**
+ * The agent-messages listener: `POST /agents/agent-messages` alone, on
+ * `AGENT_MESSAGES_PORT`. No browser calls it, so it has no origin guard and no
+ * CORS; the route checks who posted (`routes/agent-messages.ts`). The body
+ * limit fits the largest message the route takes.
+ */
+export function createAgentMessagesApp() {
+  const app = express();
+  app.use(express.json({ limit: '1mb' }));
+  app.use('/agents', agentMessagesRouter);
+  return app;
+}
+
+/**
+ * Opens the agent-messages listener on `config.host`, as the API. A port that
+ * cannot be opened is logged and leaves the rest of the runtime running:
+ * deliveries then fail, and the sender tries again later.
+ */
+export function listenForAgentMessages(server: Pick<Server, 'listen' | 'on'>): void {
+  server.on('error', (error: NodeJS.ErrnoException) => {
+    const reason = error.code === 'EADDRINUSE' ? 'The port is already in use. Choose a free AGENT_MESSAGES_PORT and restart.' : error.message;
+    logger.error(`[AgentMessages] Cannot listen on port ${config.agentMessagesPort}. ${reason}`);
+  });
+  server.listen(config.agentMessagesPort, config.host, () => {
+    logger.info({ port: config.agentMessagesPort, host: config.host }, '[AgentMessages] Listening');
+  });
 }
 
 /**

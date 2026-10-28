@@ -137,12 +137,13 @@ public HTTPS (see [Microsoft Teams](teams.md#the-public-messaging-endpoint)).
 |----------|---------|---------|
 | `PORT` | HTTP port the runtime listens on | `3003` |
 | `WEBHOOK_PORT` | HTTP port opened when the [webhook receiver](webhooks.md) is enabled | `3004` |
+| `AGENT_MESSAGES_PORT` | HTTP port the other agents' messages arrive on, on the `PRISM_HOST` interface ([agent messages](agent-messages.md)). It serves `POST /agents/agent-messages` alone, and the main port does not serve it. Must differ from `PORT` and `WEBHOOK_PORT`; a taken port is logged and the rest of the runtime keeps running | `3005` |
 | `PRISM_HOST` | Network interface the runtime listens on. The default accepts connections from this machine only. Set it to `0.0.0.0` to accept them from the network — the Docker image does, so a published port works. The name is prefixed because a bare `HOST` is the machine's own hostname in some environments. | `127.0.0.1` (`0.0.0.0` in Docker) |
 | `PRISM_ALLOWED_ORIGINS` | Comma-separated web origins on other sites whose pages may call the runtime, open its chat connection and use the [Computer](computer.md) desktop with pointer and keyboard. Write each as `https://app.example.com`, or `https://app.example.com:*` for any port. Set it only when an authenticating proxy is in front of the runtime: with a loopback `PRISM_HOST` the runtime refuses to start. | empty |
 | `PRISM_PROGRAM_STATUS` | Whether the runtime reports the agent's state on its output, so that a terminal or [Lens Sandbox](lens-sandbox.md#the-agents-state-in-lns) can show when the agent waits for you, has finished or has failed: `on` or `off`. | `on` when the output is a terminal |
 | `DATABASE_URL` | SQLite URL for the agent database. The Docker image's `start.sh` sets this to `file:/data/agent.db`; locally it resolves next to the Prisma schema. | `file:/data/agent.db` (Docker) |
 | `AGENT_ID` | Pin the agent's UUID. Unset → a fresh UUID is generated on first boot and reused thereafter. | generated |
-| `AGENT_MESSAGES_TOKEN_ID` | The API token id the ingress names in `x-forwarded-token-id` for the delivery service of [agent messages](agent-messages.md); deliveries from any other caller are refused. The header is trustworthy only for requests that arrive through the ingress, so the runtime should listen on loopback where the platform tunnels to it (`PRISM_HOST=127.0.0.1`). Unset, deliveries answer `503`. | unset |
+| `AGENT_MESSAGES_TOKEN_ID` | The API token id the ingress names in `x-forwarded-token-id` for the delivery service of [agent messages](agent-messages.md); deliveries from any other caller are refused. The header is trustworthy only for requests that arrive through the ingress. Unset, deliveries answer `503`. | unset |
 | `AGENT_NAME` | Display name on first boot | `Prism` |
 | `TEAM_NAME` | Team name on first boot | `Local` |
 | `OWNER_USER_ID` | Owner user ID on first boot | local sentinel UUID |
@@ -304,6 +305,9 @@ By default the runtime is reachable from this machine only.
   `proxy_set_header X-Forwarded-Host $host`) or rewrite `Host` to a loopback
   name (`ngrok --host-header=rewrite`) — otherwise its requests, webhook
   deliveries included, are answered with 403.
+
+[Agent messages](agent-messages.md) arrive on their own port too,
+`AGENT_MESSAGES_PORT`; expose it only to the delivery service's ingress.
 
 [Webhooks](webhooks.md) arrive on their own port, `WEBHOOK_PORT`. The receiver
 toggle, subscriptions and their sender credentials live in the database, managed

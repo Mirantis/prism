@@ -7,7 +7,7 @@ vi.mock('./services/webhook.service', () => ({
   webhookService: { handleInbound: mockHandleInbound },
 }));
 
-import { createApp } from './server';
+import { createAgentMessagesApp, createApp } from './server';
 import { createWebhookApp } from './services/webhook-receiver.service';
 
 describe('GET /health', () => {
@@ -77,5 +77,41 @@ describe('webhook deliveries', () => {
       expect(res.status).toBe(400);
     }
     expect(mockHandleInbound).not.toHaveBeenCalled();
+  });
+});
+
+describe('agent messages', () => {
+  it('reach the agent-messages listener', async () => {
+    // No AGENT_MESSAGES_TOKEN_ID in the test configuration: the route answers, and refuses for now.
+    const res = await request(createAgentMessagesApp()).post('/agents/agent-messages').send({});
+    expect(res.status).toBe(503);
+  });
+
+  it('refuse a person on the agent-messages listener', async () => {
+    const res = await request(createAgentMessagesApp())
+      .post('/agents/agent-messages')
+      .set('x-forwarded-user', 'person@example.com')
+      .send({});
+    expect(res.status).toBe(403);
+  });
+
+  it('are not served on the main port', async () => {
+    const res = await request(createApp()).post('/agents/agent-messages').send({});
+    expect(res.status).toBe(404);
+  });
+
+  it('share their listener with nothing else', async () => {
+    const app = createAgentMessagesApp();
+    expect((await request(app).get('/agents/state')).status).toBe(404);
+    expect((await request(app).get('/health')).status).toBe(404);
+    expect((await request(app).post('/agents/webhooks/alerts').send({})).status).toBe(404);
+  });
+
+  it('give a browser no CORS permission', async () => {
+    const preflight = await request(createAgentMessagesApp())
+      .options('/agents/agent-messages')
+      .set('origin', 'https://site.example')
+      .set('access-control-request-method', 'POST');
+    expect(preflight.headers['access-control-allow-origin']).toBeUndefined();
   });
 });

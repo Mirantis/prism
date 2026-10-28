@@ -44,6 +44,7 @@ vi.mock('../config', () => ({
     listensOnLoopback: true,
     allowedOrigins: [],
     webhookPort: 3004,
+    agentMessagesPort: 3005,
     webhookPublicUrl: null,
     agentId: 'test-agent-id',
     ownerUserId: 'test-owner-id',
