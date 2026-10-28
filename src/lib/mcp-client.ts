@@ -13,7 +13,6 @@
 
 import { experimental_createMCPClient as createVercelMCPClient } from '@ai-sdk/mcp';
 import { Tool } from 'ai';
-import { config } from '../config';
 import { logger } from '../logger';
 import { toModelToolName } from './tool-names';
 
@@ -111,13 +110,6 @@ function uncache(url: string, stale: Promise<MCPClient>): void {
   if (clients.get(url) === stale) clients.delete(url);
 }
 
-/** How long a listing without `list_agents` holds before the endpoint is asked again. */
-const LIST_AGENTS_ABSENT_RECHECK_MS = 10 * 60_000;
-
-/** The name the MCP endpoint gives `list_agents`, once a listing found it. */
-let listAgentsToolName: string | null = null;
-let listAgentsAbsentAt = Number.NEGATIVE_INFINITY;
-
 /** The tools agent messages run on, by the last `__` segment of their name. */
 const AGENT_MESSAGING_TOOLS: ReadonlySet<string> = new Set(['list_agents', 'message_agent']);
 
@@ -154,8 +146,8 @@ export function isAgentMessagingTool(name: string, tool: string): boolean {
  * none is or more than one is. Only the last segment of a name says which tool it
  * is, so any server on the endpoint can offer one that matches. With two, the
  * runtime can't tell the platform's own from another server's, and trusting
- * either would let that server decide which keys sign deliveries or which
- * conversations are kept, so it uses neither.
+ * either would let that server decide which conversations are kept, so it uses
+ * neither.
  */
 export function soleAgentMessagingTool(names: Iterable<string>, tool: string): string | null {
   const matches = [...names].filter((name) => isAgentMessagingTool(name, tool));
@@ -164,71 +156,4 @@ export function soleAgentMessagingTool(names: Iterable<string>, tool: string): s
     return null;
   }
   return matches[0] ?? null;
-}
-
-/** The first text part of a tool's result. */
-function resultText(result: Awaited<ReturnType<MCPClient['callTool']>>): string | undefined {
-  const content: unknown = 'content' in result ? result.content : undefined;
-  if (!Array.isArray(content)) return undefined;
-  const part = content.find((item) => item?.type === 'text');
-  return typeof part?.text === 'string' ? part.text : undefined;
-}
-
-/** The endpoint's one `list_agents` across every page of its listing; null for none or several. */
-async function findListAgentsTool(client: MCPClient, signal: AbortSignal): Promise<string | null> {
-  const names: string[] = [];
-  let cursor: string | undefined;
-  do {
-    const page = await client.listTools({
-      ...(cursor ? { params: { cursor } } : {}),
-      options: { signal },
-    });
-    names.push(...page.tools.map((tool) => tool.name));
-    cursor = page.nextCursor;
-  } while (cursor);
-  return soleAgentMessagingTool(names, 'list_agents');
-}
-
-/**
- * Call `list_agents` on the MCP endpoint as the runtime itself, not
- * as the model, and answer the text of its result. Null when `NEXUS_MCP_URL` is
- * unset or the endpoint has no such tool. A failed call throws.
- */
-export async function callListAgents(args: Record<string, unknown>, signal: AbortSignal): Promise<string | null> {
-  const url = config.nexusMcpUrl;
-  if (!url) return null;
-  if (!listAgentsToolName && Date.now() - listAgentsAbsentAt < LIST_AGENTS_ABSENT_RECHECK_MS) return null;
-
-  const client = await createVercelMCPClient({
-    transport: { type: 'http', url },
-    initializationOptions: { signal },
-  });
-  try {
-    const name = listAgentsToolName ?? (await findListAgentsTool(client, signal));
-    if (!name) {
-      listAgentsAbsentAt = Date.now();
-      return null;
-    }
-    listAgentsToolName = name;
-    const result = await client.callTool({ name, arguments: args, options: { signal } }).catch((error: unknown) => {
-      // The tool may be gone since it was found; the next call lists the tools again.
-      listAgentsToolName = null;
-      throw error;
-    });
-    const text = resultText(result);
-    if (result.isError || text === undefined) {
-      throw new Error(`list_agents answered ${result.isError ? 'an error' : 'no text'}`);
-    }
-    return text;
-  } finally {
-    // Not awaited: closing can send a DELETE for the session, which takes no
-    // signal, and the turn waits for this call. A slow one ends on its own.
-    void client.close().catch((err: unknown) => logger.debug({ err }, '[MCPClient] Closing the list_agents client failed'));
-  }
-}
-
-/** Forget what the listings found, as a restart would. For tests. */
-export function resetListAgentsToolForTests(): void {
-  listAgentsToolName = null;
-  listAgentsAbsentAt = Number.NEGATIVE_INFINITY;
 }

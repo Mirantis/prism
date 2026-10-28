@@ -11,6 +11,13 @@ import path from 'node:path';
 // the upsert key so per-scenario resets keep the same row id.
 export const DEFAULT_AGENT_ID = '00000000-0000-0000-0000-0000000000e2';
 
+/**
+ * The API token id the steps send in `x-forwarded-token-id`, as the ingress names
+ * the delivery service of agent messages. Passed to the runtime as
+ * AGENT_MESSAGES_TOKEN_ID.
+ */
+export const AGENT_MESSAGES_TOKEN_ID = 'e2e-agent-messages-token';
+
 export const TEST_USER = {
   id: 'e2e-test-user-001',
   email: 'e2e-test@example.com',

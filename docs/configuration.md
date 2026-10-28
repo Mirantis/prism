@@ -142,6 +142,7 @@ public HTTPS (see [Microsoft Teams](teams.md#the-public-messaging-endpoint)).
 | `PRISM_PROGRAM_STATUS` | Whether the runtime reports the agent's state on its output, so that a terminal or [Lens Sandbox](lens-sandbox.md#the-agents-state-in-lns) can show when the agent waits for you, has finished or has failed: `on` or `off`. | `on` when the output is a terminal |
 | `DATABASE_URL` | SQLite URL for the agent database. The Docker image's `start.sh` sets this to `file:/data/agent.db`; locally it resolves next to the Prisma schema. | `file:/data/agent.db` (Docker) |
 | `AGENT_ID` | Pin the agent's UUID. Unset → a fresh UUID is generated on first boot and reused thereafter. | generated |
+| `AGENT_MESSAGES_TOKEN_ID` | The API token id the ingress names in `x-forwarded-token-id` for the delivery service of [agent messages](agent-messages.md); deliveries from any other caller are refused. The header is trustworthy only for requests that arrive through the ingress, so the runtime should listen on loopback where the platform tunnels to it (`PRISM_HOST=127.0.0.1`). Unset, deliveries answer `503`. | unset |
 | `AGENT_NAME` | Display name on first boot | `Prism` |
 | `TEAM_NAME` | Team name on first boot | `Local` |
 | `OWNER_USER_ID` | Owner user ID on first boot | local sentinel UUID |

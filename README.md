@@ -387,6 +387,7 @@ restarts.
 | `EMBEDDING_PROVIDER` | Memory-embedding platform, independent of `LLM_PROVIDER`: `bedrock`, `azure-openai`, `openai`, `openrouter`, or `none` — see [Configuration](docs/configuration.md#memory-embeddings) | derived from `LLM_PROVIDER` |
 | `DATABASE_URL` | SQLite URL. The local default resolves to `prisma/sqlite/agent.db`; the Docker image's `start.sh` overrides to `file:/data/agent.db` so the mounted `/data` volume is used | `file:./agent.db` (Docker: `file:/data/agent.db`) |
 | `AGENT_ID` | Pin the agent's UUID. When unset, a fresh UUID is generated on first boot and reused on subsequent boots via the workspace row in the DB | generated |
+| `AGENT_MESSAGES_TOKEN_ID` | The API token id the ingress names in `x-forwarded-token-id` for the delivery service of [agent messages](docs/agent-messages.md); deliveries from any other caller are refused. The header is trustworthy only for requests that arrive through the ingress, so the runtime should listen on loopback where the platform tunnels to it (`PRISM_HOST=127.0.0.1`). Unset, deliveries answer `503`. | unset |
 | `NEXUS_API_URL` | Base URL of the Lens Agents instance used for WebSocket authorization and the MCP/LLM proxy | `http://localhost:3002` |
 | `AGENT_NAME` | Display name on first boot | `Prism` |
 | `TEAM_NAME` | Team name on first boot | `Local` |

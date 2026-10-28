@@ -45,7 +45,6 @@ import { originGuard } from './lib/origin-guard';
 import { activityRouter } from './routes/activity';
 import { cronTasksRouter } from './routes/cron-tasks';
 import { agentMessagesRouter } from './routes/agent-messages';
-import { captureRawBody } from './lib/raw-body';
 import { agentStateRouter } from './routes/agent-state';
 
 export function createApp() {
@@ -55,9 +54,7 @@ export function createApp() {
   // CORS headers of a listed origin are on every response, errors included.
   app.use(originGuard);
 
-  // The raw bytes are kept for the routes that check a signature over them,
-  // such as POST /agents/agent-messages.
-  app.use(express.json({ limit: '5mb', verify: captureRawBody }));
+  app.use(express.json({ limit: '5mb' }));
 
   // Health check
   app.get('/health', (_req, res) => {

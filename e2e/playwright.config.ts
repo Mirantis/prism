@@ -6,6 +6,7 @@ import os from 'os';
 import { execSync } from 'child_process';
 import { config } from 'dotenv';
 import {
+  AGENT_MESSAGES_TOKEN_ID,
   DEFAULT_AGENT_ID,
   E2E_DATA_DIR,
   E2E_WORKSPACE,
@@ -244,6 +245,8 @@ export default defineConfig({
         LENS_SANDBOX_INGRESS_PORTS: `web=${RUNTIME_PORT}`,
         DATABASE_URL: E2E_DATABASE_URL,
         AGENT_ID: DEFAULT_AGENT_ID,
+        // The token id the agent message steps send as the ingress would.
+        AGENT_MESSAGES_TOKEN_ID,
         // Writable workspace for the agent's shell/share_file tools (see above).
         SHELL_WORKSPACE_ROOT: E2E_WORKSPACE,
         // Persistent data dir → skills live at <dir>/skills (seeded above).

@@ -1010,6 +1010,11 @@ export const config = {
   // one with a generated UUID.
   agentId: process.env.AGENT_ID,
 
+  // The API token id the ingress names in `x-forwarded-token-id` for the
+  // delivery service of agent messages (routes/agent-messages.ts). Null until
+  // set: deliveries then answer 503, so the service sends them again later.
+  agentMessagesTokenId: process.env.AGENT_MESSAGES_TOKEN_ID?.trim() || null,
+
   // First-boot bootstrap defaults. When the SQLite DB is empty (fresh
   // container, or operator wiped /data), the runtime auto-creates an
   // `AgentWorkspace` row using these. Subsequent boots find the row via

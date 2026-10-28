@@ -2,18 +2,18 @@
  * Agent Messages Route
  *
  * POST /agents/agent-messages — a message from another agent of the project,
- * posted by the delivery service and signed by it
- * (`lib/agent-message-signature.ts`). It is stored in the web conversation as
- * that agent's, and its turn is scheduled like a chat message's. The answer
- * comes once the message is stored, before the turn runs; the service sends a
+ * posted by the delivery service. The ingress names the API token of each
+ * caller in `x-forwarded-token-id`, and only the token `AGENT_MESSAGES_TOKEN_ID`
+ * names may post here. The message is stored in the web conversation as that
+ * agent's, and its turn is scheduled like a chat message's. The answer comes
+ * once the message is stored, before the turn runs; the service sends a
  * delivery again until it gets one, and the same `id` is stored once.
  */
 
+import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { config } from '../config';
-import { AGENT_MESSAGE_SIGNATURE_HEADER, verifyAgentMessageSignature } from '../lib/agent-message-signature';
-import { getRawBody } from '../lib/raw-body';
 import { logger } from '../logger';
 import { uuid, uuidV4 } from '../protocol/chat-protocol';
 import { agentConversationService } from '../services/agent-conversation.service';
@@ -21,6 +21,31 @@ import { conversationService } from '../services/conversation.service';
 import { InboundMessageError, inboundMessageService } from '../services/inbound-message.service';
 
 const router = Router();
+
+/** The headers the ingress writes to name a person, and only a person. */
+const PERSON_HEADERS = ['x-forwarded-user', 'x-forwarded-user-id'];
+
+/**
+ * The header the ingress writes with the id of the API token a caller used. It
+ * drops any copy the caller sent, so it is to be trusted only for a request that
+ * came through the ingress: the runtime listens on loopback where the platform
+ * tunnels to it.
+ */
+const TOKEN_ID_HEADER = 'x-forwarded-token-id';
+
+/** Why a request is not the delivery service's, or null when it is. */
+function notTheDeliveryService(tokenId: string | undefined): { status: 401 | 503; reason: string } | null {
+  const expected = config.agentMessagesTokenId;
+  if (!expected) return { status: 503, reason: 'AGENT_MESSAGES_TOKEN_ID is not set' };
+  if (!tokenId) return { status: 401, reason: 'the ingress named no API token' };
+  return sameText(tokenId, expected) ? null : { status: 401, reason: 'another API token' };
+}
+
+/** Equal strings, compared in constant time whatever their lengths. */
+function sameText(a: string, b: string): boolean {
+  const digest = (text: string) => crypto.createHash('sha256').update(text, 'utf8').digest();
+  return crypto.timingSafeEqual(digest(a), digest(b));
+}
 
 /** A sender's id or name on one line, as the prompt's attribute and every client show it. */
 const oneLine = (max: number) =>
@@ -56,17 +81,29 @@ const REFUSALS: Partial<Record<InboundMessageError['code'], number>> = {
 };
 
 router.post('/agent-messages', async (req: Request, res: Response) => {
-  // The ingress admits every member of the project, people, their API tokens
-  // and other agents among them, so only the delivery service's signature says
-  // who sent this. Checked before anything in the body is read.
-  const signature = await verifyAgentMessageSignature(req.get(AGENT_MESSAGE_SIGNATURE_HEADER), getRawBody(req));
-  if (!signature.ok) {
-    logger.warn({ reason: signature.reason, status: signature.status }, '[AgentMessages] Refused a delivery');
-    res.status(signature.status).json({
+  // The ingress names a person signed in to it with these headers. People talk
+  // to the agent in the conversation, and refusing them here keeps a browser
+  // from posting as another agent.
+  if (PERSON_HEADERS.some((header) => req.get(header) !== undefined)) {
+    res.status(403).json({ error: 'Only another agent of the project sends agent messages.' });
+    return;
+  }
+
+  // The ingress admits every member of the project, their API tokens and other
+  // agents among them, so only the token it names says who sent this. Checked
+  // before anything in the body is read.
+  const tokenId = req.get(TOKEN_ID_HEADER);
+  const refusal = notTheDeliveryService(tokenId);
+  if (refusal) {
+    logger.warn(
+      { reason: refusal.reason, status: refusal.status, tokenId: tokenId?.slice(0, 12) },
+      '[AgentMessages] Refused a delivery',
+    );
+    res.status(refusal.status).json({
       error:
-        signature.status === 503
-          ? 'The keys that check agent messages cannot be read right now. Try again shortly.'
-          : 'An agent message needs a valid signature from the delivery service.',
+        refusal.status === 503
+          ? 'Agent messages are not set up on this agent yet.'
+          : 'Only the delivery service posts agent messages.',
     });
     return;
   }
