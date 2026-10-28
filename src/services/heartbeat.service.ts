@@ -26,7 +26,7 @@ import prisma from '../lib/prisma';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { formatTimeAgo } from '../prompts/context-builder';
-import { ChannelTriggerMessage, HeartbeatTrigger, InvokeStep, type TaskLastSend, type ToolCallRecord } from '../types';
+import { ChannelTriggerMessage, HeartbeatTrigger, InvokeStep, type InvokeResponse, type TaskLastSend, type ToolCallRecord } from '../types';
 import { heartbeatDelayMs, heartbeatDueAt } from './heartbeat-schedule';
 import type { ChatPlatform } from './channel-adapter.interface';
 
@@ -507,6 +507,7 @@ class HeartbeatService {
       // queued, so the next boot runs it. From here the run delivers, so a
       // shutdown that starts later lets it end.
       if (pendingWorkService.shutdownSignal.aborted) {
+        await this.keepStoppedRun(state, invokeResult);
         return { shouldSkip: true, text: 'Stopped by shutdown' };
       }
       delivering = true;
@@ -694,7 +695,10 @@ class HeartbeatService {
         abortSignal: pendingWorkService.shutdownSignal,
       });
       // A shutdown stopped the run. The messages stay queued for the next boot.
-      if (pendingWorkService.shutdownSignal.aborted) return;
+      if (pendingWorkService.shutdownSignal.aborted) {
+        await this.keepStoppedRun(state, invokeResult);
+        return;
+      }
       delivering = true;
       this.noteSends(state, invokeResult.toolCalls, checks);
 
@@ -892,6 +896,17 @@ Answer with one word: DELIVER or SUPPRESS.`;
       at: record.sends[0].at,
       reports: record.reports,
     };
+  }
+
+  /** A message a run sent before a shutdown stopped it stays in history, so the restored record has it. The unfinished text is no report. */
+  private async keepStoppedRun(state: HeartbeatState, invokeResult: InvokeResponse): Promise<void> {
+    await outboundMessageService.keepWithheldRun({
+      agentId: state.agentId,
+      userId: state.userId,
+      content: WITHHELD_RUN_TEXT,
+      triggeredBy: 'HEARTBEAT',
+      toolCalls: invokeResult.toolCalls,
+    });
   }
 
   /** A run's result, so the next run reads whether a finding still held. An empty result says nothing. */

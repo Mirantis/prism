@@ -783,5 +783,33 @@ describe('GoalService', () => {
       expect(goalRow!.status).toBe('active');
       expect(goalRow!.turnCount).toBe(0);
     });
+
+    it('keeps in the goal thread a message sent by a turn a shutdown stopped', async () => {
+      setActiveGoal({ status: 'active' });
+      const toolCalls = [{ tool: 'send_message', input: '{}', output: '{}', success: true, timestamp: '2026-10-14T00:00:00Z' }];
+      let finishTurn!: () => void;
+      mockInvoke.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishTurn = () => resolve({ response: '', toolCalls, steps: [] });
+          }),
+      );
+
+      await goalService.restoreActiveGoals('agent-1');
+      await vi.waitFor(() => expect(mockInvoke).toHaveBeenCalled());
+      goalService.stopAll();
+      finishTurn();
+      await flush();
+
+      expect(mockPublish).not.toHaveBeenCalled();
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith({
+        agentId: 'agent-1',
+        userId: 'user-1',
+        threadId: 'thread-1',
+        content: '',
+        triggeredBy: 'GOAL',
+        toolCalls,
+      });
+    });
   });
 });
