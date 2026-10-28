@@ -33,6 +33,7 @@ const {
   mockConfig,
   mockWritableThreadId,
   mockKeepWithheldRun,
+  mockMessageFindMany,
 } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
   mockPublish: vi.fn(),
@@ -49,11 +50,13 @@ const {
   mockConfig: { goalMaxTurns: 100, goalDefaultTokenBudget: null as number | null },
   mockWritableThreadId: vi.fn(),
   mockKeepWithheldRun: vi.fn(),
+  mockMessageFindMany: vi.fn(),
 }));
 
 vi.mock('../invoke', () => ({ invoke: mockInvoke }));
 
-vi.mock('./outbound-message.service', () => ({
+vi.mock('./outbound-message.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./outbound-message.service')>()),
   outboundMessageService: { keepWithheldRun: mockKeepWithheldRun },
 }));
 
@@ -84,6 +87,7 @@ vi.mock('../lib/prisma', () => ({
       update: mockGoalUpdate,
       updateMany: mockGoalUpdateMany,
     },
+    conversationMessage: { findMany: mockMessageFindMany },
   },
 }));
 
@@ -204,6 +208,7 @@ describe('GoalService', () => {
     mockPublish.mockResolvedValue({ id: 'msg-1' });
     mockGenerateText.mockResolvedValue({ text: 'CONTINUE' });
     mockWritableThreadId.mockImplementation(async (threadId: string) => threadId);
+    mockMessageFindMany.mockResolvedValue([]);
   });
 
   afterEach(async () => {
@@ -509,6 +514,74 @@ describe('GoalService', () => {
       expect(mockKeepWithheldRun).toHaveBeenCalledWith(
         expect.objectContaining({ threadId: 'thread-1', content: '', triggeredBy: 'GOAL', toolCalls }),
       );
+    });
+
+    it("gives a turn what the goal's earlier turns sent", async () => {
+      mockGenerateText.mockResolvedValue({ text: 'COMPLETE' });
+      mockInvoke.mockResolvedValue({ response: 'Watching.', toolCalls: [], steps: [{ text: 'Watching.' }], usage: { totalTokens: 3 } });
+      const send = {
+        tool: 'send_message',
+        input: JSON.stringify({ target: '#releases', text: 'The rollout started.' }),
+        output: '{}',
+        success: true,
+        timestamp: '2026-10-14T00:00:00Z',
+      };
+      mockMessageFindMany.mockResolvedValue([{ createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000), toolCalls: [send] }]);
+
+      await goalService.startGoal({
+        userId: 'user-1',
+        agentId: 'agent-1',
+        threadId: 'thread-1',
+        objective: 'tell #releases the rollout started, then watch it',
+        originChannel: 'websocket',
+      });
+      await waitForTerminal();
+
+      expect(mockMessageFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { threadId: 'thread-1', role: 'AGENT', triggeredBy: 'GOAL', createdAt: { gte: expect.any(Date) } },
+          take: 20,
+        }),
+      );
+      expect(mockInvoke.mock.calls[0][0].lastSend).toEqual({
+        messages: '- To #releases (2h ago): The rollout started.',
+        at: expect.any(Number),
+      });
+    });
+
+    it('runs the turn with no record when the earlier sends cannot be read', async () => {
+      mockGenerateText.mockResolvedValue({ text: 'COMPLETE' });
+      mockInvoke.mockResolvedValue({ response: 'Done.', toolCalls: [], steps: [{ text: 'Done.' }], usage: { totalTokens: 3 } });
+      mockMessageFindMany.mockRejectedValue(new Error('database is locked'));
+
+      await goalService.startGoal({
+        userId: 'user-1',
+        agentId: 'agent-1',
+        threadId: 'thread-1',
+        objective: 'check the release',
+        originChannel: 'websocket',
+      });
+      await waitForTerminal();
+
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+      expect(mockInvoke.mock.calls[0][0].lastSend).toBeUndefined();
+    });
+
+    it('gives a turn no record when no earlier turn sent', async () => {
+      mockGenerateText.mockResolvedValue({ text: 'COMPLETE' });
+      mockInvoke.mockResolvedValue({ response: 'Done.', toolCalls: [], steps: [{ text: 'Done.' }], usage: { totalTokens: 3 } });
+      mockMessageFindMany.mockResolvedValue([{ createdAt: new Date(), toolCalls: null }]);
+
+      await goalService.startGoal({
+        userId: 'user-1',
+        agentId: 'agent-1',
+        threadId: 'thread-1',
+        objective: 'check the release',
+        originChannel: 'websocket',
+      });
+      await waitForTerminal();
+
+      expect(mockInvoke.mock.calls[0][0].lastSend).toBeUndefined();
     });
 
     it('records nothing beside a delivered turn', async () => {

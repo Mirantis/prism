@@ -357,6 +357,17 @@ describe('system prompt text', () => {
     expect(section?.text).toContain('If a check asks for a message on every run, send it as asked.');
   });
 
+  it("goal mode tells a turn what the goal's earlier turns sent, after the cached part", async () => {
+    const lastSend = { messages: '- To #releases (2h ago): The rollout started.', at: Date.now() - 2 * 60 * 60 * 1000 };
+    const parts = await buildSystemPromptParts(createTestAgentContext({ lastSend }), 'goal');
+
+    const section = parts.find((p) => p.text.includes('# Messages This Goal Sent'));
+    expect(section?.cacheable).toBe(false);
+    expect(section?.text).toContain(
+      '# Messages This Goal Sent\n\nEarlier turns of this goal sent these messages, newest first:\n\n- To #releases (2h ago): The rollout started.\n\nSend one of these messages again only when the objective asks for it again, for example at a new stage of the work.',
+    );
+  });
+
   it('cron mode without a sent message has no sent-messages section', async () => {
     expect(await promptText(createTestAgentContext(), 'cron')).not.toContain('# Messages This Task Sent');
   });
