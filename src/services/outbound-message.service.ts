@@ -78,6 +78,9 @@ class OutboundMessageService {
     try {
       if (input.target === WEB_CHAT_TARGET && input.ceiling?.webChat) {
         target = WEB_CHAT_TRACKED;
+        if (input.thread !== undefined) {
+          throw new SendRefusedError('Web chat has no threads. Send the message without a thread.', 'web_chat_thread');
+        }
         const text = this.checkText(input.text);
         const message = await messageDeliveryService.publishToWebChat(input.agentId, input.userId, text, input.trigger);
         this.track(input, 'sent', target);
@@ -122,7 +125,7 @@ class OutboundMessageService {
       : (await conversationService.getOrCreateLatestThread(run.agentId, run.userId)).id;
     const readLive =
       run.threadId !== undefined && (await conversationService.getThreadSource(threadId)) !== ThreadSource.DATABASE;
-    const postedToWebChat = sentMessageList(run.toolCalls).some(({ place }) => place === WEB_CHAT_TARGET);
+    const postedToWebChat = sentMessageList(run.toolCalls).some(({ target }) => target === WEB_CHAT_TARGET);
     const { message } = await conversationService.addMessage(threadId, {
       content: run.content.trim() ? run.content : WITHHELD_RUN_TEXT,
       role: 'AGENT',
@@ -186,14 +189,16 @@ class OutboundMessageService {
   }
 
   private async resolveTarget(input: SendInput): Promise<{ target: LinkedTarget; adapter: PostingAdapter }> {
-    const found = this.findTarget(await this.linked(input.agentId), input.target);
-    if (!input.ceiling) return this.orRefuse(found, input.target, linkedList(await this.listTargets(input.agentId)));
+    const linked = await this.linked(input.agentId);
+    const found = this.findTarget(linked, input.target);
+    if (!input.ceiling) return this.orRefuse(found, input.target, () => linkedList(linked.map(({ target }) => target)));
 
-    const allowed = new Set(input.ceiling.targets.map((t) => t.key));
-    const known = ceilingList(input.ceiling);
+    const ceiling = input.ceiling;
+    const allowed = new Set(ceiling.targets.map((t) => t.key));
+    const known = () => ceilingList(ceiling);
     if (found.length === 1 && !allowed.has(found[0].target.key)) {
       throw new SendRefusedError(
-        `Your delivery setting does not let this run post to ${describeTarget(found[0].target)}, so nothing was sent. ${known}`,
+        `Your delivery setting does not let this run post to ${describeTarget(found[0].target)}, so nothing was sent. ${known()}`,
         'outside_delivery',
       );
     }
@@ -218,17 +223,18 @@ class OutboundMessageService {
   private orRefuse(
     found: Array<{ target: LinkedTarget; adapter: PostingAdapter }>,
     requested: string,
-    known: string,
+    /** The places to name when the send is refused. */
+    known: () => string,
   ): { target: LinkedTarget; adapter: PostingAdapter } {
     if (found.length === 1) return found[0];
     if (found.length > 1) {
       throw new SendRefusedError(
-        `More than one linked channel is named "${requested}". Name one by its target. ${known}`,
+        `More than one linked channel is named "${requested}". Name one by its target. ${known()}`,
         'ambiguous_target',
       );
     }
     throw new SendRefusedError(
-      `"${requested}" is not a channel or DM linked to this agent, so nothing was sent. ${known}`,
+      `"${requested}" is not a channel or DM linked to this agent, so nothing was sent. ${known()}`,
       'unknown_target',
     );
   }
@@ -288,13 +294,13 @@ function ceilingList(ceiling: PostingCeiling): string {
   return names.length ? `This run may post to: ${names.join(', ')}.` : 'This run may post nowhere.';
 }
 
-/** The messages a run's tool calls posted: where each went, the thread included, and its text. */
-export function sentMessageList(toolCalls: ToolCallRecord[]): Array<{ place: string; text: string }> {
+/** The messages a run's tool calls posted: the target, where each went with the thread included, and its text. */
+export function sentMessageList(toolCalls: ToolCallRecord[]): Array<{ target: string; place: string; text: string }> {
   return toolCalls
     .filter((call) => call.tool === SEND_MESSAGE_TOOL_NAME && call.success)
     .map((call) => {
       const { target, thread, text } = JSON.parse(call.input) as { target: string; thread?: string; text: string };
-      return { place: `${target}${thread ? `, in thread ${thread}` : ''}`, text };
+      return { target, place: `${target}${thread ? `, in thread ${thread}` : ''}`, text };
     });
 }
 

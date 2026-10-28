@@ -49,8 +49,12 @@ earlier ones posted, and posts again only for a new finding or a change.
 where a heartbeat may post: every linked channel and web chat (the default), web
 chat only, Slack or Teams, chosen Slack channels, or nowhere. A check that names
 a place inside that setting posts there; otherwise the heartbeat posts to your
-DM, else the main channel, else web chat. A check that fails with an error is
-posted for you to the same place.
+DM, else the main channel, else web chat. A check that fails with an error, or
+that runs out of steps before it posts, is posted for you to the setting's
+destination instead: with every linked channel, that's web chat and your DM or
+the main channel on each linked integration (as a webhook's **All channels**
+delivery is); with Slack or Teams, your DM, else the main channel; with chosen
+Slack channels, each chosen channel.
 
 ## Controlling the heartbeat
 

@@ -506,6 +506,8 @@ describe('CronSchedulerService', () => {
         triggeredBy: 'CRON_TASK',
         toolCalls,
       });
+      // The post reached people, so the run ends: run again after the restart, it would post twice.
+      expect(mockFinishWork).toHaveBeenCalledWith('cron', 'task-1');
     });
 
     it('keeps a run as pending work from before the model call until it is recorded', async () => {
@@ -1632,6 +1634,44 @@ describe('CronSchedulerService', () => {
       await run();
 
       expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the closing line of a run that posted before the risk gate refused a later call', async () => {
+      const send = { tool: 'send_message', input: JSON.stringify({ target: 'slack:D1', text: 'Usage report' }), output: '{}', success: true, timestamp: '2026-10-21T02:00:00.000Z' };
+      const blocked = {
+        tool: 'shell_exec',
+        input: JSON.stringify({ command: 'rm -rf /tmp/build' }),
+        output: JSON.stringify({ error: 'Tool call blocked.', code: 'TOOL_RISK_BLOCKED' }),
+        success: false,
+        timestamp: '2026-10-21T02:00:01.000Z',
+      };
+      const text = 'Posted the report to your DM; the cleanup command was blocked.';
+      mockInvoke.mockResolvedValue({ response: text, toolCalls: [send, blocked], steps: [{ text, toolCalls: [] }] });
+
+      await scheduleAndCapture()();
+
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith(expect.objectContaining({ content: `**Scheduled Task: Daily Report**\n\n${text}` }));
+    });
+
+    it('delivers the summary of a run that ran out of steps before it posted', async () => {
+      const text = 'I ran out of steps before the report was done.';
+      mockInvoke.mockResolvedValue({
+        response: text,
+        toolCalls: [],
+        steps: [{ text, toolCalls: [], stepLimit: true }],
+        stepLimitReached: true,
+      });
+
+      await scheduleAndCapture({ instruction: 'Send me the usage report.' })();
+
+      expect(mockDeliverMessage).toHaveBeenCalledExactlyOnceWith(
+        'agent-1',
+        'user-abc-123',
+        `**Scheduled Task: Daily Report**\n\n${text}`,
+        'CRON_TASK',
+        expect.anything(),
+      );
     });
 
     it('stores a run whose failed tool call the risk gate did not refuse, and delivers nothing', async () => {

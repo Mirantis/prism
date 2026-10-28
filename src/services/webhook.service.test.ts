@@ -1295,6 +1295,32 @@ describe('a restart at any moment', () => {
     expect(mockFinishWork).not.toHaveBeenCalled();
   });
 
+  it('ends a run a shutdown stopped after it posted, so the next boot does not post it again', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
+    const toolCalls = [sentMessageCall('slack:C_REL', 'Deploy failed.')];
+    mockInvoke.mockImplementation(async () => {
+      shutdown.controller.abort();
+      return invokeResult('', { toolCalls });
+    });
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+
+    await vi.waitFor(() => expect(mockFinishWork).toHaveBeenCalledWith('webhook', 'run-1'));
+    expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status: 'completed' });
+    expect(mockKeepWithheldRun).toHaveBeenCalledWith(expect.objectContaining({ triggeredBy: 'WEBHOOK', toolCalls }));
+  });
+
+  it('delivers the summary of a run that ran out of steps before it posted', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
+    mockInvoke.mockResolvedValue({ ...invokeResult('Ran out of steps reviewing the PR.'), stepLimitReached: true });
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+
+    await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status: 'completed', messageId: 'msg-1' }));
+    expect(mockPublishToLatestThread.mock.calls[0][2]).toBe('Ran out of steps reviewing the PR.');
+    expect(mockKeepWithheldRun).not.toHaveBeenCalled();
+  });
+
   it('runs an interrupted run again at boot and fails only the runs it cannot', async () => {
     mockSubscriptionFindUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
       where.id === 'sub-1' ? createSubscription() : null,
