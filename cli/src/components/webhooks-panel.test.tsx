@@ -123,7 +123,7 @@ describe('the terminal webhooks panel', () => {
     await type(stdin, ENTER);
     expect(lastFrame()).toContain('Edit webhook alerts');
 
-    // Description, Events, Deliver to (→ Chat), Deliver only (off), Prompt.
+    // Description, Events, May post to (→ Chat), Deliver only (off), Prompt.
     await type(stdin, 'Pager alerts', TAB, 'push', TAB, RIGHT, TAB, ' ', TAB, ' ');
     await settle();
     expect(order).toEqual(['suspend', 'edit', 'resume']);
@@ -169,7 +169,7 @@ describe('the terminal webhooks panel', () => {
     expect(frame).toContain('[ ] #release-notes');
     expect(frame).toContain('[x] C_GONE not linked');
 
-    // Description → Events → Deliver to → #general → #release-notes, then C_GONE.
+    // Description → Events → May post to → #general → #release-notes, then C_GONE.
     await type(stdin, TAB, TAB, TAB, TAB, ' ', TAB, ' ');
     expect(lastFrame()).toContain('[x] #release-notes');
     expect(lastFrame()).toContain('[ ] C_GONE');

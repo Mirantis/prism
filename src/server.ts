@@ -37,6 +37,7 @@ import { teamsRouter } from './routes/teams';
 import { lockedInRouter } from './routes/locked-in';
 import { agentGuideRouter } from './routes/agent-guide';
 import { modelSelectionRouter } from './routes/model-selection';
+import { heartbeatDeliveryRouter } from './routes/heartbeat-delivery';
 import { documentRevisionsRouter } from './routes/document-revisions';
 import { updateRouter } from './routes/update';
 import { originGuard } from './lib/origin-guard';
@@ -74,6 +75,9 @@ export function createApp() {
 
   // Fixed or Auto model selection (/agents/model-selection)
   app.use('/agents', modelSelectionRouter);
+
+  // Where a heartbeat run may post (/agents/heartbeat/delivery)
+  app.use('/agents', heartbeatDeliveryRouter);
 
   // Identity-document history and restore (/agents/documents/:field/revisions)
   app.use('/agents', documentRevisionsRouter);

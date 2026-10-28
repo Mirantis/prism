@@ -16,9 +16,8 @@
 import { invoke } from '../invoke';
 import { lastResponseText } from '../lib/last-response-text';
 import { AgentWorkspace } from '@prisma/client';
-import { messageDeliveryService } from './message-delivery.service';
 import { outboundMessageService, sentMessageList, WITHHELD_RUN_TEXT } from './outbound-message.service';
-import { runClassificationGate, isRecentDuplicate } from '../lib/classification-gate';
+import { deliveryTargetService, parseCommaList, type DeliveryTarget } from './delivery-target.service';
 import { agentStatusService } from './agent-status.service';
 import { documentRevisionService } from './document-revision.service';
 import { MAX_RESUME_ATTEMPTS, pendingWorkService, type PendingWorkItem } from './pending-work.service';
@@ -37,8 +36,11 @@ import type { ChatPlatform } from './channel-adapter.interface';
 const HEARTBEAT_BUDGET_NOTICE =
   "This heartbeat check stopped: your organization's AI spending limit has been reached.";
 
-/** How many stored heartbeat messages a restart reads to find the last delivered alert. */
-const LAST_ALERT_ROWS = 20;
+/** How many stored heartbeat messages a restart reads to restore the send record. */
+const SEND_RECORD_ROWS = 20;
+
+/** How a heartbeat run ended: it posted, posted nothing, or ended in an error the runtime delivered. */
+type HeartbeatOutcome = 'posted' | 'silent' | 'error';
 
 /** How many heartbeat intervals back a restart reads sends into the send record. */
 const HEARTBEAT_SEND_RESTORE_INTERVALS = 3;
@@ -94,8 +96,6 @@ interface HeartbeatState {
   lastRun: Date | null;
   isRunning: boolean;
   consecutiveErrors: number;
-  lastAlertText: string | null;
-  lastAlertAt: number | null;
   /**
    * What earlier runs sent, and what the newest run reported. A run reads no
    * history, so this tells it about earlier sends. It is separate from the
@@ -242,8 +242,6 @@ class HeartbeatService {
       lastRun: agent.lastHeartbeat,
       isRunning: false,
       consecutiveErrors: 0,
-      lastAlertText: null,
-      lastAlertAt: null,
       lastSend: null,
       restored: Promise.resolve(),
     };
@@ -253,28 +251,25 @@ class HeartbeatService {
       this.givenUp = false;
       this.persistSchedule(state);
     }
-    state.restored = this.restoreLastAlert(state, agent.heartbeatMd);
+    state.restored = this.restoreSendRecord(state, agent.heartbeatMd);
     return state;
   }
 
   /**
-   * The last alert is the newest heartbeat message delivered to a web thread, so
-   * a restart keeps what the duplicate check and the gate compare against. A row
-   * with a send can be a withheld run, so it is skipped, and when the newest
-   * alert's run also sent, the alert before it is restored and can be delivered
-   * once more. The send record holds the sends and results of the runs of the
-   * last `HEARTBEAT_SEND_RESTORE_INTERVALS` intervals after the newest revision of
-   * the Heartbeat document. The trades: a suppressed run without a send is not
-   * stored, so the record can miss a report that a condition cleared; a send
-   * older than the window is sent again; and a document written straight into
-   * the database has no revision, so earlier sends are read as made under it.
+   * The send record holds the sends and results of the runs of the last
+   * `HEARTBEAT_SEND_RESTORE_INTERVALS` intervals after the newest revision of the
+   * Heartbeat document, read from the stored heartbeat rows of the web threads.
+   * The trades: a run that posted nothing is not stored, so the record can miss a
+   * report that a condition cleared; a send older than the window is sent again;
+   * and a document written straight into the database has no revision, so
+   * earlier sends are read as made under it.
    */
-  private async restoreLastAlert(state: HeartbeatState, checks: string): Promise<void> {
+  private async restoreSendRecord(state: HeartbeatState, checks: string): Promise<void> {
     try {
       const rows = await prisma.conversationMessage.findMany({
         where: { role: 'AGENT', triggeredBy: 'HEARTBEAT', thread: { agentId: state.agentId, externalThreadId: null } },
         orderBy: { createdAt: 'desc' },
-        take: LAST_ALERT_ROWS,
+        take: SEND_RECORD_ROWS,
         select: { content: true, createdAt: true, toolCalls: true },
       });
       const edited = await documentRevisionService.newest(prisma, state.agentId, 'heartbeatMd');
@@ -294,12 +289,8 @@ class HeartbeatService {
         if (record && text && text !== WITHHELD_RUN_TEXT && text !== HEARTBEAT_BUDGET_NOTICE) record = addReport(record, text, at);
       }
       state.lastSend = record;
-      const last = rows.find((_row, i) => sends[i].length === 0);
-      if (!last || state.lastAlertAt !== null) return;
-      state.lastAlertText = last.content;
-      state.lastAlertAt = last.createdAt.getTime();
     } catch (err) {
-      logger.warn({ err }, '[Heartbeat] Could not read the last alert');
+      logger.warn({ err }, '[Heartbeat] Could not read the send record');
     }
   }
 
@@ -488,17 +479,15 @@ class HeartbeatService {
       }
       const triggered = triggers.length > 0;
       await this.beginRun(state, read);
-      const checks = await this.readChecks(state);
+      const { checks, delivery } = await this.readChecks(state);
 
       // Invoke LLM directly (in-process, no HTTP)
       const invokeResult = await invoke({
         userId,
         agentId: state.agentId,
         mode: 'heartbeat',
-        broadcastsOutput: true,
+        postingCeiling: await deliveryTargetService.ceiling(state.agentId, delivery),
         prompt: triggered ? this.buildTriggeredHeartbeatPrompt(triggers) : this.buildHeartbeatPrompt(),
-        lastHeartbeatAlert: state.lastAlertText ?? undefined,
-        lastHeartbeatAlertAt: state.lastAlertAt ?? undefined,
         lastSend: this.sendRecordForPrompt(state),
         heartbeatTriggers: triggered ? triggers : undefined,
         abortSignal: pendingWorkService.shutdownSignal,
@@ -532,64 +521,16 @@ class HeartbeatService {
 
       const responseText = lastResponseText(invokeResult.steps);
       if (!invokeResult.error) this.noteReport(state, responseText);
-
-      // Determine if we should deliver
-      let shouldDeliver = false;
-      if (!responseText) {
-        // Empty response — nothing to deliver
-        shouldDeliver = false;
-      } else if (this.isDuplicate(state, responseText)) {
-        // Exact duplicate within 24h — cheap programmatic check
-        shouldDeliver = false;
-      } else {
-        // Ask the classification gate
-        shouldDeliver = await this.shouldDeliverAlert(
-          state.agentId,
-          userId,
-          responseText,
-          state.lastAlertText ?? null,
-          state.lastAlertAt ?? null,
-        );
-      }
-
       this.logSteps(responseText, invokeResult.steps);
-
-      if (shouldDeliver) {
-        await messageDeliveryService.publishToLatestThread(
-          state.agentId,
-          userId,
-          responseText,
-          'HEARTBEAT',
-          {
-            toolCalls: invokeResult.toolCalls.length > 0 ? invokeResult.toolCalls : undefined,
-            attachmentIds: invokeResult.attachmentIds,
-          },
-        );
-
-        this.recordAlert(state, responseText);
-        logger.info(`[Heartbeat] Alert for agent: ${responseText.substring(0, 100)}`);
-      } else {
-        await outboundMessageService.keepWithheldRun({
-          agentId: state.agentId,
-          userId,
-          content: responseText,
-          triggeredBy: 'HEARTBEAT',
-          toolCalls: invokeResult.toolCalls,
-        });
-      }
+      const outcome = await this.finishRun(state, delivery, invokeResult, responseText);
 
       await this.endCycle(state, read);
 
       state.consecutiveErrors = 0;
 
-      const result: HeartbeatResult = {
-        shouldSkip: !shouldDeliver,
-        text: shouldDeliver ? responseText : '',
-      };
-
-      logger.info(`[Heartbeat] Completed in ${Date.now() - startTime}ms: ${result.shouldSkip ? 'suppressed' : 'alert'}`);
-      this.trackHeartbeat(state, 'timer', shouldDeliver ? 'delivered' : 'suppressed', startTime);
-      return result;
+      logger.info(`[Heartbeat] Completed in ${Date.now() - startTime}ms: ${outcome}`);
+      this.trackHeartbeat(state, 'timer', outcome, startTime, sentMessageList(invokeResult.toolCalls).length);
+      return { shouldSkip: outcome === 'silent', text: responseText };
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : 'Unknown error';
       logger.error(`[Heartbeat] Failed: ${errMsg}`);
@@ -680,16 +621,14 @@ class HeartbeatService {
       const startTime = Date.now();
       const triggers: HeartbeatTrigger[] = [{ platform: source.platform, messages }];
       await this.beginRun(state, read);
-      const checks = await this.readChecks(state);
+      const { checks, delivery } = await this.readChecks(state);
 
       const invokeResult = await invoke({
         userId: state.userId,
         agentId: state.agentId,
         mode: 'heartbeat',
-        broadcastsOutput: true,
+        postingCeiling: await deliveryTargetService.ceiling(state.agentId, delivery),
         prompt: this.buildTriggeredHeartbeatPrompt(triggers),
-        lastHeartbeatAlert: state.lastAlertText ?? undefined,
-        lastHeartbeatAlertAt: state.lastAlertAt ?? undefined,
         lastSend: this.sendRecordForPrompt(state),
         heartbeatTriggers: triggers,
         abortSignal: pendingWorkService.shutdownSignal,
@@ -720,57 +659,15 @@ class HeartbeatService {
 
       const responseText = lastResponseText(invokeResult.steps);
       if (!invokeResult.error) this.noteReport(state, responseText);
-
-      // Determine if we should deliver (same gate logic as regular heartbeats)
-      let shouldDeliver = false;
-      if (!responseText) {
-        shouldDeliver = false;
-      } else if (this.isDuplicate(state, responseText)) {
-        shouldDeliver = false;
-      } else {
-        shouldDeliver = await this.shouldDeliverAlert(
-          state.agentId,
-          state.userId,
-          responseText,
-          state.lastAlertText ?? null,
-          state.lastAlertAt ?? null,
-        );
-      }
-
       this.logSteps(responseText, invokeResult.steps, `${source.channel}-triggered`);
-
-      logger.info(`[Heartbeat] ${label} heartbeat shouldDeliver=${shouldDeliver}`);
-
-      if (shouldDeliver) {
-        await messageDeliveryService.publishToLatestThread(
-          state.agentId,
-          state.userId,
-          responseText,
-          'HEARTBEAT',
-          {
-            toolCalls: invokeResult.toolCalls.length > 0 ? invokeResult.toolCalls : undefined,
-            attachmentIds: invokeResult.attachmentIds,
-          },
-        );
-
-        this.recordAlert(state, responseText);
-        logger.info(`[Heartbeat] ${label} alert: ${responseText.substring(0, 100)}`);
-      } else {
-        await outboundMessageService.keepWithheldRun({
-          agentId: state.agentId,
-          userId: state.userId,
-          content: responseText,
-          triggeredBy: 'HEARTBEAT',
-          toolCalls: invokeResult.toolCalls,
-        });
-      }
+      const outcome = await this.finishRun(state, delivery, invokeResult, responseText);
 
       await this.endCycle(state, read);
 
       state.consecutiveErrors = 0;
 
-      logger.info(`[Heartbeat] ${label} heartbeat completed in ${Date.now() - startTime}ms`);
-      this.trackHeartbeat(state, source.channel, shouldDeliver ? 'delivered' : 'suppressed', startedAt);
+      logger.info(`[Heartbeat] ${label} heartbeat completed in ${Date.now() - startTime}ms: ${outcome}`);
+      this.trackHeartbeat(state, source.channel, outcome, startedAt, sentMessageList(invokeResult.toolCalls).length);
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : 'Unknown error';
       logger.error(`[Heartbeat] ${label} heartbeat failed: ${errMsg}`);
@@ -798,13 +695,15 @@ class HeartbeatService {
     state: HeartbeatState,
     /** `timer`, or the channel whose messages started the run. */
     trigger: 'timer' | ChatPlatform,
-    result: 'delivered' | 'suppressed' | 'budget_exceeded' | 'error',
+    result: HeartbeatOutcome | 'budget_exceeded',
     startTime: number,
+    messagesSent = 0,
   ): void {
     trackEvent('heartbeat completed', state.userId, {
       'agent.id': state.agentId,
       'heartbeat.trigger': trigger,
       'heartbeat.result': result,
+      'heartbeat.messages_sent': String(messagesSent),
       'heartbeat.duration_ms': String(Date.now() - startTime),
     });
   }
@@ -835,40 +734,31 @@ class HeartbeatService {
     return `Perform your heartbeat check now. This heartbeat was triggered by new messages in the monitored ${platforms} ${channels}.`;
   }
 
-  private async shouldDeliverAlert(
-    agentId: string,
-    userId: string,
-    heartbeatResponse: string,
-    lastAlertText: string | null,
-    lastAlertAt: number | null,
-  ): Promise<boolean> {
-    if (!heartbeatResponse.trim()) return false;
-
-    const lastAlertContext = lastAlertText
-      ? `## Last Alert Sent to User (${lastAlertAt ? formatTimeAgo(lastAlertAt) : 'recently'})\n${lastAlertText}`
-      : 'No previous alert has been sent.';
-
-    const systemPrompt = `You decide whether an agent's heartbeat report goes to the user. The agent writes a report on every periodic check, and the user wants a message only when there is something new.
-
-Answer DELIVER when the report has a new issue or finding, a status change since the last alert (resolved, worse, or more items affected), or information the user can act on and has not seen.
-
-Answer SUPPRESS when the report is an all-clear, repeats the last alert, differs from it only in small details, or talks about the heartbeat itself ("no checks are configured", "the heartbeat config is empty", "nothing to check", "staying quiet") instead of reporting a finding.
-
-Answer with one word: DELIVER or SUPPRESS.`;
-
-    return runClassificationGate({
-      system: systemPrompt,
-      user: `${lastAlertContext}\n\n## New Heartbeat Report\n${heartbeatResponse}`,
-      functionId: 'heartbeat-gate',
-      userId,
-      agentId,
-      logLabel: 'Heartbeat:Gate',
+  /**
+   * A run reaches people only through what the agent posted. Its result is kept
+   * as the run's record, except a run that ended in an error: the agent could not
+   * post that, so it goes to the delivery setting's destination.
+   */
+  private async finishRun(
+    state: HeartbeatState,
+    delivery: DeliveryTarget,
+    invokeResult: InvokeResponse,
+    responseText: string,
+  ): Promise<HeartbeatOutcome> {
+    if (invokeResult.error && responseText) {
+      await deliveryTargetService.deliver(state.agentId, state.userId, delivery, responseText, 'HEARTBEAT', {
+        toolCalls: invokeResult.toolCalls.length > 0 ? invokeResult.toolCalls : undefined,
+      });
+      return 'error';
+    }
+    await outboundMessageService.keepWithheldRun({
+      agentId: state.agentId,
+      userId: state.userId,
+      content: responseText,
+      triggeredBy: 'HEARTBEAT',
+      toolCalls: invokeResult.toolCalls,
     });
-  }
-
-  private isDuplicate(state: HeartbeatState | undefined, alertText: string): boolean {
-    if (!state?.lastAlertText || !state.lastAlertAt) return false;
-    return isRecentDuplicate({ text: state.lastAlertText, at: state.lastAlertAt }, alertText);
+    return sentMessageList(invokeResult.toolCalls).length > 0 ? 'posted' : 'silent';
   }
 
   /** A run's sends join the record, each replacing the older send to its place. */
@@ -876,15 +766,21 @@ Answer with one word: DELIVER or SUPPRESS.`;
     state.lastSend = mergeSends(state.lastSend, sentMessageList(toolCalls), Date.now(), checks);
   }
 
-  /** The Heartbeat document this run checks, once the restore is done. A record made under other checks is dropped. */
-  private async readChecks(state: HeartbeatState): Promise<string> {
+  /**
+   * The Heartbeat document this run checks, and where it may post, once the
+   * restore is done. A record made under other checks is dropped.
+   */
+  private async readChecks(state: HeartbeatState): Promise<{ checks: string; delivery: DeliveryTarget }> {
     await state.restored;
     const agent = await prisma.agentWorkspace.findUniqueOrThrow({
       where: { id: state.agentId },
-      select: { heartbeatMd: true },
+      select: { heartbeatMd: true, heartbeatDeliverTo: true, heartbeatChannelIds: true },
     });
     if (state.lastSend && state.lastSend.checks !== agent.heartbeatMd) state.lastSend = null;
-    return agent.heartbeatMd;
+    return {
+      checks: agent.heartbeatMd,
+      delivery: { deliverTo: agent.heartbeatDeliverTo, channelIds: parseCommaList(agent.heartbeatChannelIds) },
+    };
   }
 
   /** The record as the prompt reads it: each send with its age. */
@@ -915,11 +811,6 @@ Answer with one word: DELIVER or SUPPRESS.`;
     state.lastSend = addReport(state.lastSend, text.trim(), Date.now());
   }
 
-  private recordAlert(state: HeartbeatState | undefined, alertText: string): void {
-    if (!state) return;
-    state.lastAlertText = alertText;
-    state.lastAlertAt = Date.now();
-  }
 
   // ============================================================================
   // Status & Control

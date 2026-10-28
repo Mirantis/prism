@@ -2,8 +2,7 @@
  * Heartbeat Service Tests
  *
  * Tests for HeartbeatService: startHeartbeat, stopHeartbeat, triggerHeartbeat,
- * getStatus, duplicate alert suppression, classification gate LLM,
- * consecutive error handling.
+ * getStatus, how a run ends, the send record, consecutive error handling.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -18,13 +17,12 @@ const {
   mockUpdateHeartbeatSchedule,
   mockUpdateAgentHeartbeatStatus,
   mockPendingTriggerMessages,
-  mockGenerateText,
-  mockGetGateRequest,
+  mockCeiling,
   mockLoggerInfo,
   mockLoggerDebug,
   mockLoggerError,
   mockRemoveTriggerMessages,
-  mockFindLastAlert,
+  mockFindHeartbeatRows,
   mockFindChecks,
   mockNewestRevision,
   mockBeginWork,
@@ -36,13 +34,12 @@ const {
   mockUpdateHeartbeatSchedule: vi.fn(),
   mockUpdateAgentHeartbeatStatus: vi.fn(),
   mockPendingTriggerMessages: vi.fn(),
-  mockGenerateText: vi.fn(),
-  mockGetGateRequest: vi.fn(),
+  mockCeiling: vi.fn(),
   mockLoggerInfo: vi.fn(),
   mockLoggerDebug: vi.fn(),
   mockLoggerError: vi.fn(),
   mockRemoveTriggerMessages: vi.fn(),
-  mockFindLastAlert: vi.fn(),
+  mockFindHeartbeatRows: vi.fn(),
   mockFindChecks: vi.fn(),
   mockNewestRevision: vi.fn(),
   mockBeginWork: vi.fn(async () => undefined),
@@ -55,9 +52,12 @@ vi.mock('../invoke', () => ({
 }));
 
 vi.mock('./message-delivery.service', () => ({
-  messageDeliveryService: {
-    publishToLatestThread: mockDeliverMessage,
-  },
+  messageDeliveryService: {},
+}));
+
+vi.mock('./delivery-target.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./delivery-target.service')>()),
+  deliveryTargetService: { ceiling: mockCeiling, deliver: mockDeliverMessage },
 }));
 
 vi.mock('./pending-work.service', () => ({
@@ -73,7 +73,7 @@ vi.mock('./pending-work.service', () => ({
 
 vi.mock('../lib/prisma', () => ({
   default: {
-    conversationMessage: { findMany: mockFindLastAlert },
+    conversationMessage: { findMany: mockFindHeartbeatRows },
     agentWorkspace: { findUniqueOrThrow: mockFindChecks },
     agentWorkspaceRevision: { findFirst: mockNewestRevision },
   },
@@ -84,14 +84,6 @@ vi.mock('./agent-status.service', () => ({
     updateHeartbeatSchedule: mockUpdateHeartbeatSchedule,
     updateAgentHeartbeatStatus: mockUpdateAgentHeartbeatStatus,
   },
-}));
-
-vi.mock('ai', () => ({
-  generateText: mockGenerateText,
-}));
-
-vi.mock('../lib/classification', () => ({
-  getGateRequest: mockGetGateRequest,
 }));
 
 const { mockTrackEvent } = vi.hoisted(() => ({ mockTrackEvent: vi.fn() }));
@@ -194,6 +186,11 @@ function persistedRow(agent: AgentWorkspace): AgentWorkspace {
   return createAgent({ ...agent, lastHeartbeat, nextHeartbeatAt });
 }
 
+/** The Heartbeat columns a run reads: the checks and the delivery setting. */
+function checksRow(heartbeatMd: string, heartbeatDeliverTo = 'all', heartbeatChannelIds: string | null = null) {
+  return { heartbeatMd, heartbeatDeliverTo, heartbeatChannelIds };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -202,22 +199,16 @@ describe('HeartbeatService', () => {
   beforeEach(() => {
     vi.useFakeTimers();
 
-    // Default: gate suppresses (most tests override this)
-    mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
-    mockGetGateRequest.mockReturnValue({
-      model: 'classification-model',
-      providerOptions: {},
-      samplingParams: { temperature: 0 },
-    });
     // Sensible defaults
     mockInvoke.mockResolvedValue({ response: 'All systems healthy.', toolCalls: [], steps: [] });
     mockUpdateHeartbeatSchedule.mockResolvedValue(undefined);
     mockUpdateAgentHeartbeatStatus.mockResolvedValue(undefined);
-    mockDeliverMessage.mockResolvedValue({ messageId: 'msg-1', threadId: 'thr-1' });
+    mockDeliverMessage.mockResolvedValue({ message: null });
+    mockCeiling.mockResolvedValue({ webChat: true, targets: [] });
     mockPendingTriggerMessages.mockResolvedValue([]);
     mockRemoveTriggerMessages.mockResolvedValue(undefined);
-    mockFindLastAlert.mockResolvedValue([]);
-    mockFindChecks.mockResolvedValue({ heartbeatMd: 'Check for new items.' });
+    mockFindHeartbeatRows.mockResolvedValue([]);
+    mockFindChecks.mockResolvedValue(checksRow('Check for new items.'));
     mockNewestRevision.mockResolvedValue(null);
     shutdown.controller = new AbortController();
   });
@@ -403,7 +394,7 @@ describe('HeartbeatService', () => {
   });
 
   // ==========================================================================
-  // Gate LLM suppression
+  // The send record
   // ==========================================================================
 
   describe('what earlier runs sent', () => {
@@ -417,8 +408,7 @@ describe('HeartbeatService', () => {
     const reply = (text: string, toolCalls: unknown[] = []) => ({ response: text, toolCalls, steps: [{ text, toolCalls }] });
     const sendTo = (target: string, text: string) => ({ ...SEND, input: JSON.stringify({ target, text }) });
 
-    it("gives the next run what a run sent, also when the gate suppressed that run's reply", async () => {
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+    it('gives the next run what a run sent', async () => {
       mockInvoke.mockResolvedValueOnce(reply('Posted the build failure to #ops.', [SEND]));
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
@@ -432,12 +422,9 @@ describe('HeartbeatService', () => {
         at: expect.any(Number),
         reports: [{ text: 'Posted the build failure to #ops.', at: expect.any(Number) }],
       });
-      // The delivered-alert baseline stays apart: nothing was delivered.
-      expect(mockInvoke.mock.calls[1][0].lastHeartbeatAlert).toBeUndefined();
     });
 
     it("passes on a later run's report, and keeps the record through an empty one", async () => {
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
       mockInvoke
         .mockResolvedValueOnce(reply('Posted the build failure to #ops.', [SEND]))
         .mockResolvedValueOnce(reply('Build #812 is still failing. The alert is already in #ops.'))
@@ -469,7 +456,6 @@ describe('HeartbeatService', () => {
     });
 
     it('keeps the sends about several incidents, also to one place', async () => {
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
       mockInvoke
         .mockResolvedValueOnce(reply('Posted the build failure to #ops.', [SEND]))
         .mockResolvedValueOnce(reply('Posted the disk alert to #oncall.', [sendTo('#oncall', 'Disk is 95% full.')]))
@@ -493,7 +479,6 @@ describe('HeartbeatService', () => {
     });
 
     it("keeps an all-clear report after a later run that sent about another incident", async () => {
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
       mockInvoke
         .mockResolvedValueOnce(reply('Posted the disk alert to #ops.', [sendTo('#ops', 'db-1 disk 95%.')]))
         .mockResolvedValueOnce(reply('All systems healthy.'))
@@ -511,7 +496,6 @@ describe('HeartbeatService', () => {
     });
 
     it('keeps at most ten results', async () => {
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
       mockInvoke.mockResolvedValueOnce(reply('Posted the build failure to #ops.', [SEND]));
       for (let i = 0; i < 11; i++) mockInvoke.mockResolvedValueOnce(reply(`Report ${i}.`));
 
@@ -528,7 +512,6 @@ describe('HeartbeatService', () => {
     });
 
     it('drops the results older than a newer copy of the only kept send', async () => {
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
       mockInvoke
         .mockResolvedValueOnce(reply('Posted the build failure to #ops.', [SEND]))
         .mockResolvedValueOnce(reply('All clear.'))
@@ -548,7 +531,7 @@ describe('HeartbeatService', () => {
 
     it('restores the results of the runs since the oldest kept send after a restart', async () => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
-      mockFindLastAlert.mockResolvedValue([
+      mockFindHeartbeatRows.mockResolvedValue([
         { content: 'Paged #oncall about the API error rate.', createdAt: new Date('2025-01-15T11:30:00Z'), toolCalls: [sendTo('#oncall', 'API error rate 12%.')] },
         { content: 'All systems healthy.', createdAt: new Date('2025-01-15T11:00:00Z'), toolCalls: null },
         { content: 'This run sent a message and ended with no reply.', createdAt: new Date('2025-01-15T10:45:00Z'), toolCalls: [sendTo('#ops', 'db-2 disk 91%.')] },
@@ -568,7 +551,6 @@ describe('HeartbeatService', () => {
     });
 
     it('keeps a repeated message once, at its newest time', async () => {
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
       mockInvoke
         .mockResolvedValueOnce(reply('Posted the build failure to #ops.', [SEND]))
         .mockResolvedValueOnce(reply('Posted the build failure to #ops again.', [SEND]));
@@ -584,7 +566,6 @@ describe('HeartbeatService', () => {
     });
 
     it('keeps at most ten sends, dropping the oldest', async () => {
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
       const sends = Array.from({ length: 11 }, (_, i) => sendTo(`#team-${i}`, `Alert ${i}.`));
       for (const send of sends) mockInvoke.mockResolvedValueOnce(reply('Posted an alert.', [send]));
 
@@ -600,14 +581,13 @@ describe('HeartbeatService', () => {
     });
 
     it('drops the record when the Heartbeat document changes', async () => {
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
       mockInvoke.mockResolvedValueOnce(reply('Posted the build failure to #ops.', [SEND]));
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await vi.advanceTimersByTimeAsync(0);
       await heartbeatService.triggerHeartbeat();
       await heartbeatService.triggerHeartbeat();
-      mockFindChecks.mockResolvedValue({ heartbeatMd: 'Check the disk usage.' });
+      mockFindChecks.mockResolvedValue(checksRow('Check the disk usage.'));
       await heartbeatService.triggerHeartbeat();
 
       expect(mockInvoke.mock.calls[1][0].lastSend).toEqual(expect.objectContaining({ messages: '- To #ops (just now): Build #812 failed.' }));
@@ -616,26 +596,25 @@ describe('HeartbeatService', () => {
 
     it('drops a restored record when the Heartbeat document changed since the restart', async () => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
-      mockFindLastAlert.mockResolvedValue([
+      mockFindHeartbeatRows.mockResolvedValue([
         { content: 'Posted the build failure.', createdAt: new Date('2025-01-15T11:00:00Z'), toolCalls: [SEND] },
       ]);
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await vi.advanceTimersByTimeAsync(0);
-      mockFindChecks.mockResolvedValue({ heartbeatMd: 'Check the disk usage.' });
+      mockFindChecks.mockResolvedValue(checksRow('Check the disk usage.'));
       await heartbeatService.triggerHeartbeat();
 
       expect(mockInvoke.mock.calls[0][0].lastSend).toBeUndefined();
     });
 
     it('drops the record on a channel-triggered run when the Heartbeat document changes', async () => {
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
       mockInvoke.mockResolvedValueOnce(reply('Posted the build failure to #ops.', [SEND]));
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await vi.advanceTimersByTimeAsync(0);
       await heartbeatService.triggerHeartbeat();
-      mockFindChecks.mockResolvedValue({ heartbeatMd: 'Check the disk usage.' });
+      mockFindChecks.mockResolvedValue(checksRow('Check the disk usage.'));
       mockPendingTriggerMessages.mockResolvedValueOnce([
         { sender: 'Test Operator', text: 'is the build still red?', timestamp: '2025-01-15T12:00:00Z' },
       ]);
@@ -648,7 +627,7 @@ describe('HeartbeatService', () => {
     it('gives a channel-triggered run at boot the restored record', async () => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
       let answer: (rows: unknown[]) => void = () => {};
-      mockFindLastAlert.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+      mockFindHeartbeatRows.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
       mockPendingTriggerMessages.mockResolvedValueOnce([
         { sender: 'Test Operator', text: 'is the build still red?', timestamp: '2025-01-15T12:00:00Z' },
       ]);
@@ -663,7 +642,6 @@ describe('HeartbeatService', () => {
     });
 
     it('gives a channel-triggered run the record too', async () => {
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
       mockInvoke.mockResolvedValueOnce(reply('Posted the build failure to #ops.', [SEND]));
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
@@ -678,9 +656,9 @@ describe('HeartbeatService', () => {
       expect(mockInvoke.mock.calls[1][0].lastSend).toEqual(expect.objectContaining({ messages: '- To #ops (just now): Build #812 failed.' }));
     });
 
-    it('reads the record and the last delivered alert from the same stored messages after a restart', async () => {
+    it('restores the record from the stored messages after a restart', async () => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
-      mockFindLastAlert.mockResolvedValue([
+      mockFindHeartbeatRows.mockResolvedValue([
         { content: 'Build #812 is still failing.', createdAt: new Date('2025-01-15T11:30:00Z'), toolCalls: null },
         { content: 'Posted the build failure to #ops.', createdAt: new Date('2025-01-15T11:00:00Z'), toolCalls: [SEND] },
       ]);
@@ -697,12 +675,11 @@ describe('HeartbeatService', () => {
           { text: 'Posted the build failure to #ops.', at: new Date('2025-01-15T11:00:00Z').getTime() },
         ],
       });
-      expect(mockInvoke.mock.calls[0][0].lastHeartbeatAlert).toBe('Build #812 is still failing.');
     });
 
     it('restores only the sends of the last three intervals', async () => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
-      mockFindLastAlert.mockResolvedValue([
+      mockFindHeartbeatRows.mockResolvedValue([
         { content: 'Posted the disk alert.', createdAt: new Date('2025-01-15T08:00:00Z'), toolCalls: [sendTo('#oncall', 'Disk is 95% full.')] },
         { content: 'Posted the build failure.', createdAt: new Date('2025-01-14T11:00:00Z'), toolCalls: [SEND] },
       ]);
@@ -716,19 +693,18 @@ describe('HeartbeatService', () => {
 
     it('restores no send made before the newest revision of the Heartbeat document', async () => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
       mockInvoke.mockResolvedValueOnce(reply('Posted the build failure to #ops.', [SEND]));
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await vi.advanceTimersByTimeAsync(0);
       await heartbeatService.triggerHeartbeat();
       heartbeatService.stopHeartbeat();
 
-      mockFindLastAlert.mockResolvedValue([
+      mockFindHeartbeatRows.mockResolvedValue([
         { content: 'Posted the build failure.', createdAt: new Date('2025-01-15T11:00:00Z'), toolCalls: [SEND] },
       ]);
       mockNewestRevision.mockResolvedValue({ createdAt: new Date('2025-01-15T11:30:00Z') });
       heartbeatService.startHeartbeat(createAgent({ heartbeatMd: 'Check the disk usage.' }), 'keep-schedule');
-      mockFindChecks.mockResolvedValue({ heartbeatMd: 'Check the disk usage.' });
+      mockFindChecks.mockResolvedValue(checksRow('Check the disk usage.'));
       await vi.advanceTimersByTimeAsync(0);
       await heartbeatService.triggerHeartbeat();
 
@@ -741,7 +717,7 @@ describe('HeartbeatService', () => {
 
     it('restores no record when every send is older than three intervals', async () => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
-      mockFindLastAlert.mockResolvedValue([
+      mockFindHeartbeatRows.mockResolvedValue([
         { content: 'Posted the build failure.', createdAt: new Date('2025-01-14T11:00:00Z'), toolCalls: [SEND] },
       ]);
 
@@ -753,215 +729,149 @@ describe('HeartbeatService', () => {
     });
   });
 
-  describe('gate LLM suppression', () => {
+  describe('how a run ends', () => {
+    const SEND = {
+      tool: 'send_message',
+      input: JSON.stringify({ target: '#ops', text: 'Pod frontend-abc is in CrashLoopBackOff.' }),
+      output: '{}',
+      success: true,
+      timestamp: '2025-01-15T12:00:00Z',
+    };
+
     beforeEach(() => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
     });
 
-    it('gate returns SUPPRESS → message not delivered', async () => {
+    it('delivers no final message, and keeps the run in history', async () => {
       mockInvoke.mockResolvedValue({
         response: 'Pod frontend-abc is in CrashLoopBackOff!',
         toolCalls: [],
         steps: [{ text: 'Pod frontend-abc is in CrashLoopBackOff!', toolCalls: [] }],
       });
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       const result = await heartbeatService.triggerHeartbeat();
 
-      expect(result.shouldSkip).toBe(true);
-      expect(result.text).toBe('');
+      expect(result).toEqual({ shouldSkip: true, text: 'Pod frontend-abc is in CrashLoopBackOff!' });
       expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith({
+        agentId: 'agent-1',
+        userId: 'user-abc-123',
+        content: 'Pod frontend-abc is in CrashLoopBackOff!',
+        triggeredBy: 'HEARTBEAT',
+        toolCalls: [],
+      });
     });
 
-    it('gate returns SUPPRESS → the run is kept in history, so a message it sent is stored', async () => {
-      const toolCalls = [{ tool: 'send_message', input: '{}', output: '{}', success: true, timestamp: '2025-01-15T12:00:00Z' }];
+    it('reports a run whose agent sent a message as posted, and stores the run', async () => {
       mockInvoke.mockResolvedValue({
         response: 'Posted the outage note to #ops.',
-        toolCalls,
-        steps: [{ text: 'Posted the outage note to #ops.', toolCalls }],
+        toolCalls: [SEND],
+        steps: [{ text: 'Posted the outage note to #ops.', toolCalls: [SEND] }],
       });
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
-      await heartbeatService.triggerHeartbeat();
+      const result = await heartbeatService.triggerHeartbeat();
 
+      expect(result).toEqual({ shouldSkip: false, text: 'Posted the outage note to #ops.' });
       expect(mockDeliverMessage).not.toHaveBeenCalled();
-      expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ mode: 'heartbeat', broadcastsOutput: true }));
       expect(mockKeepWithheldRun).toHaveBeenCalledWith({
         agentId: 'agent-1',
         userId: 'user-abc-123',
         content: 'Posted the outage note to #ops.',
         triggeredBy: 'HEARTBEAT',
-        toolCalls,
+        toolCalls: [SEND],
       });
     });
 
-    it('a suppressed channel-triggered run is kept in history too', async () => {
+    it('keeps a channel-triggered run in history too', async () => {
       mockPendingTriggerMessages.mockResolvedValueOnce([
         { sender: 'Test Operator', text: 'deploy failed', timestamp: '2025-01-15T12:00:00Z' },
       ]);
       mockInvoke.mockResolvedValue({
         response: 'Posted to #ops.',
-        toolCalls: [],
-        steps: [{ text: 'Posted to #ops.', toolCalls: [] }],
+        toolCalls: [SEND],
+        steps: [{ text: 'Posted to #ops.', toolCalls: [SEND] }],
       });
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       heartbeatService.triggerFrom(triggerSource);
       await vi.advanceTimersByTimeAsync(0);
 
       expect(mockKeepWithheldRun).toHaveBeenCalledWith(
-        expect.objectContaining({ content: 'Posted to #ops.', triggeredBy: 'HEARTBEAT' }),
+        expect.objectContaining({ content: 'Posted to #ops.', triggeredBy: 'HEARTBEAT', toolCalls: [SEND] }),
       );
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
     });
 
-    it('gate returns DELIVER → message delivered', async () => {
+    it.each(['timer', 'channel'])("%s run delivers an error's text to the agent's delivery setting", async (trigger) => {
+      mockFindChecks.mockResolvedValue(checksRow('Check for new items.', 'slack', 'C1,C2'));
       mockInvoke.mockResolvedValue({
-        response: 'Pod frontend-abc is in CrashLoopBackOff!',
-        toolCalls: [],
-        steps: [{ text: 'Pod frontend-abc is in CrashLoopBackOff!', toolCalls: [] }],
+        response: 'I encountered an error.',
+        toolCalls: [SEND],
+        steps: [{ text: 'I encountered an error.', toolCalls: [SEND] }],
+        error: { type: 'generic', detail: 'Bedrock timeout' },
       });
-      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
-
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
-      const result = await heartbeatService.triggerHeartbeat();
 
-      expect(result.shouldSkip).toBe(false);
-      expect(result.text).toBe('Pod frontend-abc is in CrashLoopBackOff!');
-      expect(mockDeliverMessage).toHaveBeenCalledWith(
+      if (trigger === 'channel') {
+        mockPendingTriggerMessages.mockResolvedValueOnce([
+          { sender: 'Test Operator', text: 'deploy failed', timestamp: '2025-01-15T12:00:00Z' },
+        ]);
+        heartbeatService.triggerFrom(triggerSource);
+        await vi.advanceTimersByTimeAsync(0);
+      } else {
+        await heartbeatService.triggerHeartbeat();
+      }
+
+      expect(mockDeliverMessage).toHaveBeenCalledExactlyOnceWith(
         'agent-1',
         'user-abc-123',
-        'Pod frontend-abc is in CrashLoopBackOff!',
+        { deliverTo: 'slack', channelIds: ['C1', 'C2'] },
+        'I encountered an error.',
         'HEARTBEAT',
-        expect.objectContaining({ toolCalls: undefined }),
+        { toolCalls: [SEND] },
       );
+      expect(mockKeepWithheldRun).not.toHaveBeenCalled();
     });
 
-    it('gate call fails → fail-open, message delivered', async () => {
+    it('keeps an error with no text in history, and delivers nothing', async () => {
       mockInvoke.mockResolvedValue({
-        response: 'Pod frontend-abc is in CrashLoopBackOff!',
+        response: '',
         toolCalls: [],
-        steps: [{ text: 'Pod frontend-abc is in CrashLoopBackOff!', toolCalls: [] }],
+        steps: [],
+        error: { type: 'generic', detail: null },
       });
-      mockGenerateText.mockRejectedValue(new Error('Bedrock timeout'));
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
-      const result = await heartbeatService.triggerHeartbeat();
+      await heartbeatService.triggerHeartbeat();
 
-      expect(result.shouldSkip).toBe(false);
-      expect(mockDeliverMessage).toHaveBeenCalled();
-    });
-
-    it('empty response → gate not called, suppressed', async () => {
-      mockInvoke.mockResolvedValue({ response: '', toolCalls: [], steps: [] });
-
-      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
-      const result = await heartbeatService.triggerHeartbeat();
-
-      expect(result.shouldSkip).toBe(true);
-      expect(mockGenerateText).not.toHaveBeenCalled();
       expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith(expect.objectContaining({ content: '' }));
     });
 
-    it('exact duplicate → gate not called (isDuplicate catches it first)', async () => {
-      mockInvoke.mockResolvedValue({
-        response: 'Pod crashing!',
-        toolCalls: [],
-        steps: [{ text: 'Pod crashing!', toolCalls: [] }],
-      });
-      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
-
+    it.each(['timer', 'channel'])('%s run may post where the stored delivery setting allows', async (trigger) => {
+      const ceiling = { webChat: false, targets: [{ platform: 'slack', kind: 'channel', conversationId: 'C1' }] };
+      mockCeiling.mockResolvedValue(ceiling);
+      mockFindChecks.mockResolvedValue(checksRow('Check for new items.', 'slack', 'C1'));
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
 
-      // First call — gate says DELIVER
-      await heartbeatService.triggerHeartbeat();
-      expect(mockGenerateText).toHaveBeenCalledTimes(1);
-      mockGenerateText.mockClear();
+      if (trigger === 'channel') {
+        mockPendingTriggerMessages.mockResolvedValueOnce([
+          { sender: 'Test Operator', text: 'deploy failed', timestamp: '2025-01-15T12:00:00Z' },
+        ]);
+        heartbeatService.triggerFrom(triggerSource);
+        await vi.advanceTimersByTimeAsync(0);
+      } else {
+        await heartbeatService.triggerHeartbeat();
+      }
 
-      // Second call — exact same text, isDuplicate should catch it
-      await heartbeatService.triggerHeartbeat();
-      expect(mockGenerateText).not.toHaveBeenCalled();
-      expect(mockDeliverMessage).toHaveBeenCalledTimes(1); // only from first call
-    });
-
-    it('gate receives last alert context in its prompt', async () => {
-      mockInvoke.mockResolvedValue({
-        response: 'Pod frontend-abc is in CrashLoopBackOff!',
-        toolCalls: [],
-        steps: [{ text: 'Pod frontend-abc is in CrashLoopBackOff!', toolCalls: [] }],
+      expect(mockFindChecks).toHaveBeenCalledWith({
+        where: { id: 'agent-1' },
+        select: { heartbeatMd: true, heartbeatDeliverTo: true, heartbeatChannelIds: true },
       });
-      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
-
-      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
-
-      // First heartbeat — no previous alert
-      await heartbeatService.triggerHeartbeat();
-      expect(mockGenerateText).toHaveBeenCalledWith(
-        expect.objectContaining({
-          messages: [expect.objectContaining({
-            content: expect.stringContaining('No previous alert has been sent.'),
-          })],
-        }),
-      );
-
-      mockGenerateText.mockClear();
-      // Change the response so isDuplicate doesn't catch it
-      mockInvoke.mockResolvedValue({
-        response: 'Pod frontend-abc still in CrashLoopBackOff, restarts: 15',
-        toolCalls: [],
-        steps: [{ text: 'Pod frontend-abc still in CrashLoopBackOff, restarts: 15', toolCalls: [] }],
-      });
-
-      // Second heartbeat — should include last alert context
-      await heartbeatService.triggerHeartbeat();
-      expect(mockGenerateText).toHaveBeenCalledWith(
-        expect.objectContaining({
-          messages: [expect.objectContaining({
-            content: expect.stringContaining('Last Alert Sent to User'),
-          })],
-        }),
-      );
-    });
-
-    it('gate uses low maxOutputTokens and temperature 0', async () => {
-      mockInvoke.mockResolvedValue({
-        response: 'Some alert',
-        toolCalls: [],
-        steps: [{ text: 'Some alert', toolCalls: [] }],
-      });
-      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
-
-      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
-      await heartbeatService.triggerHeartbeat();
-
-      expect(mockGenerateText).toHaveBeenCalledWith(
-        expect.objectContaining({
-          // 16 = the OpenAI Responses API minimum; a cap, so free elsewhere.
-          maxOutputTokens: 16,
-          temperature: 0,
-        }),
-      );
-    });
-
-    it('gate prompt instructs suppression of heartbeat meta-commentary', async () => {
-      mockInvoke.mockResolvedValue({
-        response: 'Heartbeat config is empty — no checks configured. Staying quiet.',
-        toolCalls: [],
-        steps: [{ text: 'Heartbeat config is empty — no checks configured. Staying quiet.', toolCalls: [] }],
-      });
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
-
-      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
-      await heartbeatService.triggerHeartbeat();
-
-      expect(mockGenerateText).toHaveBeenCalledWith(
-        expect.objectContaining({
-          system: expect.stringContaining('talks about the heartbeat itself'),
-        }),
-      );
-      expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockCeiling).toHaveBeenCalledWith('agent-1', { deliverTo: 'slack', channelIds: ['C1'] });
+      expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ mode: 'heartbeat', postingCeiling: ceiling }));
     });
   });
 
@@ -974,7 +884,7 @@ describe('HeartbeatService', () => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
     });
 
-    it('delivers only the last step text as a single message', async () => {
+    it("keeps the last step's text as the run's record", async () => {
       mockInvoke.mockResolvedValue({
         response: 'Checking pods...\n\nPod frontend-abc is in CrashLoopBackOff!',
         toolCalls: [{ tool: 'kubectl', input: '{}', output: 'crash', success: true, timestamp: '2025-01-15T12:00:00Z' }],
@@ -989,25 +899,19 @@ describe('HeartbeatService', () => {
           },
         ],
       });
-      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await heartbeatService.triggerHeartbeat();
 
-      // Should deliver exactly one message with the last step's text
-      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
-      expect(mockDeliverMessage).toHaveBeenCalledWith(
-        'agent-1',
-        'user-abc-123',
-        'Pod frontend-abc is in CrashLoopBackOff!',
-        'HEARTBEAT',
+      expect(mockKeepWithheldRun).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({
+          content: 'Pod frontend-abc is in CrashLoopBackOff!',
           toolCalls: expect.arrayContaining([expect.objectContaining({ tool: 'kubectl' })]),
         }),
       );
     });
 
-    it.each(['timer', 'channel'])('%s delivers an alert before an empty final step', async (trigger) => {
+    it.each(['timer', 'channel'])('%s keeps an alert written before an empty final step', async (trigger) => {
       // A recorded e2e run wrote an alert with memory_write, then ended with an empty step.
       const alert = '**⚠️ ALERT: Production Deployment Failure**';
       mockInvoke.mockResolvedValue({
@@ -1019,7 +923,6 @@ describe('HeartbeatService', () => {
           { text: '', toolCalls: [] },
         ],
       });
-      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
       heartbeatService.startHeartbeat(createAgent());
 
       if (trigger === 'channel') {
@@ -1032,13 +935,10 @@ describe('HeartbeatService', () => {
         await heartbeatService.triggerHeartbeat();
       }
 
-      expect(mockGenerateText).toHaveBeenCalled();
-      expect(mockDeliverMessage).toHaveBeenCalledExactlyOnceWith(
-        'agent-1', 'user-abc-123', alert, 'HEARTBEAT', expect.anything(),
-      );
+      expect(mockKeepWithheldRun).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ content: alert }));
     });
 
-    it('passes all toolCalls from invokeResult (not per-step accumulated)', async () => {
+    it("keeps the run's tool calls from the invoke result, not one step's", async () => {
       const toolCall1 = { tool: 'kubectl', input: '{}', output: 'pods', success: true, timestamp: '2025-01-15T12:00:00Z' };
       const toolCall2 = { tool: 'aws', input: '{}', output: 'ok', success: true, timestamp: '2025-01-15T12:00:01Z' };
 
@@ -1050,17 +950,12 @@ describe('HeartbeatService', () => {
           { text: 'Summary', toolCalls: [toolCall2] },
         ],
       });
-      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await heartbeatService.triggerHeartbeat();
 
-      expect(mockDeliverMessage).toHaveBeenCalledWith(
-        'agent-1',
-        'user-abc-123',
-        'Summary',
-        'HEARTBEAT',
-        { toolCalls: [toolCall1, toolCall2] },
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith(
+        expect.objectContaining({ content: 'Summary', toolCalls: [toolCall1, toolCall2] }),
       );
     });
 
@@ -1074,9 +969,8 @@ describe('HeartbeatService', () => {
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       const result = await heartbeatService.triggerHeartbeat();
 
-      // Empty responseText means nothing to deliver
-      expect(result.shouldSkip).toBe(true);
-      expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(result).toEqual({ shouldSkip: true, text: '' });
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith(expect.objectContaining({ content: '' }));
     });
 
     it('uses last step text even when intermediate steps have no text', async () => {
@@ -1088,18 +982,11 @@ describe('HeartbeatService', () => {
           { text: 'Final summary', toolCalls: [] },
         ],
       });
-      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await heartbeatService.triggerHeartbeat();
 
-      expect(mockDeliverMessage).toHaveBeenCalledWith(
-        'agent-1',
-        'user-abc-123',
-        'Final summary',
-        'HEARTBEAT',
-        expect.anything(),
-      );
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith(expect.objectContaining({ content: 'Final summary' }));
     });
   });
 
@@ -1149,7 +1036,6 @@ describe('HeartbeatService', () => {
           { text: 'Investigating', toolCalls: [] },
         ],
       });
-      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       heartbeatService.triggerFrom(triggerSource);
@@ -1182,82 +1068,12 @@ describe('HeartbeatService', () => {
     });
   });
 
-  // ==========================================================================
-  // Duplicate alert suppression
-  // ==========================================================================
-
-  describe('duplicate alert suppression', () => {
-    beforeEach(() => {
-      vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
-      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
-    });
-
-    it('suppresses identical alerts within 24 hours', async () => {
-      mockInvoke.mockResolvedValue({
-        response: 'Pod crashing!',
-        toolCalls: [],
-        steps: [{ text: 'Pod crashing!', toolCalls: [] }],
-      });
-
-      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
-
-      // First alert should be delivered
-      await heartbeatService.triggerHeartbeat();
-      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
-
-      mockDeliverMessage.mockClear();
-
-      // Second identical alert within 24h should be suppressed (isDuplicate)
-      await heartbeatService.triggerHeartbeat();
-      expect(mockDeliverMessage).not.toHaveBeenCalled();
-    });
-
-    it('delivers alert again after 24 hours have passed', async () => {
-      mockInvoke.mockResolvedValue({
-        response: 'Pod crashing!',
-        toolCalls: [],
-        steps: [{ text: 'Pod crashing!', toolCalls: [] }],
-      });
-
-      // Use a very long interval so the timer does not fire during time advance
-      heartbeatService.startHeartbeat(
-        createAgent({ heartbeatIntervalMs: 100 * 60 * 60 * 1000 }),
-        'keep-schedule',
-      );
-
-      // First alert
-      await heartbeatService.triggerHeartbeat();
-      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
-      mockDeliverMessage.mockClear();
-
-      // Advance time past 24 hours (the interval won't fire because it's 100h)
-      vi.advanceTimersByTime(25 * 60 * 60 * 1000);
-
-      // Same alert should now be delivered again since >24h passed
-      await heartbeatService.triggerHeartbeat();
-      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
-    });
-
-    it('delivers different alerts even within 24 hours', async () => {
-      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
-
-      mockInvoke.mockResolvedValue({ response: 'Alert A', toolCalls: [], steps: [{ text: 'Alert A', toolCalls: [] }] });
-      await heartbeatService.triggerHeartbeat();
-
-      mockInvoke.mockResolvedValue({ response: 'Alert B', toolCalls: [], steps: [{ text: 'Alert B', toolCalls: [] }] });
-      await heartbeatService.triggerHeartbeat();
-
-      expect(mockDeliverMessage).toHaveBeenCalledTimes(2);
-    });
-  });
-
   describe('a check a restart interrupts', () => {
     beforeEach(() => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
-      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
     });
 
-    it('moves the schedule only after the alert is delivered', async () => {
+    it('moves the schedule only after the run is stored', async () => {
       mockInvoke.mockResolvedValue({ response: 'Disk full', toolCalls: [], steps: [{ text: 'Disk full', toolCalls: [] }] });
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
@@ -1266,7 +1082,7 @@ describe('HeartbeatService', () => {
       const ran = mockUpdateHeartbeatSchedule.mock.calls.findIndex(
         (call) => (call[0] as ScheduleWrite).lastHeartbeat,
       );
-      expect(mockDeliverMessage.mock.invocationCallOrder[0]).toBeLessThan(
+      expect(mockKeepWithheldRun.mock.invocationCallOrder[0]).toBeLessThan(
         mockUpdateHeartbeatSchedule.mock.invocationCallOrder[ran],
       );
     });
@@ -1313,11 +1129,11 @@ describe('HeartbeatService', () => {
       expect(mockDeliverMessage).not.toHaveBeenCalled();
     });
 
-    it('ends the cycle when a shutdown starts once the delivery is under way', async () => {
-      // The delivery may have reached a channel, so the next boot must not run
-      // the check again and send the alert twice.
+    it('ends the cycle when a shutdown starts once the run is being stored', async () => {
+      // The run's sends have reached their channels, so the next boot must not
+      // run the check again and send them twice.
       mockInvoke.mockResolvedValue({ response: 'Disk full', toolCalls: [], steps: [{ text: 'Disk full', toolCalls: [] }] });
-      mockDeliverMessage.mockImplementationOnce(async () => {
+      mockKeepWithheldRun.mockImplementationOnce(async () => {
         shutdown.controller.abort();
         throw new Error('socket closed');
       });
@@ -1330,52 +1146,11 @@ describe('HeartbeatService', () => {
       );
     });
 
-    it('suppresses the alert the last process delivered, after a restart', async () => {
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
-      mockFindLastAlert.mockResolvedValue([
-        { content: 'Pod crashing!', createdAt: new Date('2025-01-15T11:58:00Z'), toolCalls: null },
-      ]);
-      mockInvoke.mockResolvedValue({
-        response: 'Pod crashing!',
-        toolCalls: [],
-        steps: [{ text: 'Pod crashing!', toolCalls: [] }],
-      });
-
-      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
-      await vi.advanceTimersByTimeAsync(0);
-      await heartbeatService.triggerHeartbeat();
-
-      expect(mockDeliverMessage).not.toHaveBeenCalled();
-      expect(mockGenerateText).not.toHaveBeenCalled();
-    });
-
-    it('restores the last delivered alert, not a newer withheld record of a run that sent, after a restart', async () => {
-      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
-      const send = { tool: 'send_message', input: JSON.stringify({ target: '#ops', text: 'Build #812 failed.' }), output: '{}', success: true, timestamp: '2025-01-15T11:59:00Z' };
-      mockFindLastAlert.mockResolvedValue([
-        { content: "This heartbeat check stopped: your organization's AI spending limit has been reached.", createdAt: new Date('2025-01-15T11:59:00Z'), toolCalls: [send] },
-        { content: 'Build #812 is failing.', createdAt: new Date('2025-01-15T11:58:00Z'), toolCalls: null },
-      ]);
-      mockInvoke.mockResolvedValue({
-        response: 'Build #812 is failing.',
-        toolCalls: [],
-        steps: [{ text: 'Build #812 is failing.', toolCalls: [] }],
-      });
-
-      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
-      await vi.advanceTimersByTimeAsync(0);
-      await heartbeatService.triggerHeartbeat();
-
-      // The restored baseline is the delivered alert, so the repeat is a duplicate.
-      expect(mockDeliverMessage).not.toHaveBeenCalled();
-      expect(mockGenerateText).not.toHaveBeenCalled();
-    });
-
-    it("reads the last alert from web threads only, not a send's copy in its target's thread", async () => {
+    it("restores the send record from web threads only, not a send's copy in its target's thread", async () => {
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await vi.advanceTimersByTimeAsync(0);
 
-      expect(mockFindLastAlert).toHaveBeenCalledWith(
+      expect(mockFindHeartbeatRows).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ thread: { agentId: 'agent-1', externalThreadId: null } }),
         }),
@@ -1449,9 +1224,8 @@ describe('HeartbeatService', () => {
       await heartbeatService.triggerHeartbeat();
       expect(heartbeatService.getStatus()?.consecutiveErrors).toBe(2);
 
-      // Then: success (gate suppresses, but errors still reset)
+      // Then: a run that posts nothing still resets the streak
       mockInvoke.mockResolvedValue({ response: 'All systems healthy.', toolCalls: [], steps: [] });
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
       await heartbeatService.triggerHeartbeat();
 
       expect(heartbeatService.getStatus()?.consecutiveErrors).toBe(0);
@@ -1779,10 +1553,16 @@ describe('HeartbeatService', () => {
       expect(mockInvoke).toHaveBeenCalledTimes(2);
     });
 
-    it('re-registering during a run adds no second run and keeps the alert history', async () => {
+    it('re-registering during a run adds no second run and keeps the send record', async () => {
+      const send = {
+        tool: 'send_message',
+        input: JSON.stringify({ target: '#ops', text: 'Pod crashing!' }),
+        output: '{}',
+        success: true,
+        timestamp: '2025-01-15T12:00:00Z',
+      };
       let resolveInvoke!: (v: unknown) => void;
-      mockInvoke.mockReturnValue(new Promise((r) => { resolveInvoke = r; }));
-      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
+      mockInvoke.mockReturnValueOnce(new Promise((r) => { resolveInvoke = r; }));
 
       const agent = createAgent();
       heartbeatService.startHeartbeat(agent, 'keep-schedule');
@@ -1791,25 +1571,18 @@ describe('HeartbeatService', () => {
       heartbeatService.startHeartbeat(agent, 'keep-schedule');
 
       resolveInvoke({
-        response: 'Pod crashing!',
-        toolCalls: [],
-        steps: [{ text: 'Pod crashing!', toolCalls: [] }],
+        response: 'Posted the crash to #ops.',
+        toolCalls: [send],
+        steps: [{ text: 'Posted the crash to #ops.', toolCalls: [send] }],
       });
       await firstRun;
       expect(mockInvoke).toHaveBeenCalledTimes(1);
-      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
 
-      // The alert history survived the re-registration, so the same text is
-      // still a duplicate.
-      mockInvoke.mockResolvedValue({
-        response: 'Pod crashing!',
-        toolCalls: [],
-        steps: [{ text: 'Pod crashing!', toolCalls: [] }],
-      });
-      mockDeliverMessage.mockClear();
       await heartbeatService.triggerHeartbeat();
 
-      expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockInvoke.mock.calls[1][0].lastSend).toEqual(
+        expect.objectContaining({ messages: '- To #ops (just now): Pod crashing!' }),
+      );
     });
 
     it('re-arms after a cycle that throws out of the run', async () => {
@@ -1860,7 +1633,6 @@ describe('HeartbeatService', () => {
 
     beforeEach(() => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
-      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
     });
 
     it('returns ignored when agent has no heartbeat state', () => {
@@ -1943,7 +1715,7 @@ describe('HeartbeatService', () => {
     });
 
     describe('a restart at any moment', () => {
-      it('removes the messages a run read once the run has ended, after its delivery', async () => {
+      it('removes the messages a run read once the run has ended, after it is stored', async () => {
         mockPendingTriggerMessages.mockResolvedValueOnce([channelMsg('prod is down')]);
         mockInvoke.mockResolvedValue({
           response: 'Incident in prod!',
@@ -1956,7 +1728,7 @@ describe('HeartbeatService', () => {
         await vi.advanceTimersByTimeAsync(0);
 
         expect(mockRemoveTriggerMessages).toHaveBeenCalledWith(['pending-0']);
-        expect(mockDeliverMessage.mock.invocationCallOrder[0]).toBeLessThan(
+        expect(mockKeepWithheldRun.mock.invocationCallOrder[0]).toBeLessThan(
           mockRemoveTriggerMessages.mock.invocationCallOrder[0],
         );
       });
@@ -2036,27 +1808,6 @@ describe('HeartbeatService', () => {
       });
     });
 
-    it('delivers the response when gate says DELIVER', async () => {
-      mockPendingTriggerMessages.mockResolvedValueOnce([channelMsg('prod is down')]);
-      mockInvoke.mockResolvedValue({
-        response: 'Incident in prod!',
-        toolCalls: [],
-        steps: [{ text: 'Incident in prod!', toolCalls: [] }],
-      });
-
-      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
-      heartbeatService.triggerFrom(triggerSource);
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(mockDeliverMessage).toHaveBeenCalledWith(
-        'agent-1',
-        'user-abc-123',
-        'Incident in prod!',
-        'HEARTBEAT',
-        expect.anything(),
-      );
-    });
-
     it('resets isRunning after completion', async () => {
       mockPendingTriggerMessages.mockResolvedValueOnce([channelMsg('check')]);
       mockInvoke.mockResolvedValue({
@@ -2114,13 +1865,20 @@ describe('HeartbeatService', () => {
       expect(mockTrackEvent).not.toHaveBeenCalled();
     });
 
-    it('emits "heartbeat completed" with result=delivered when the gate delivers', async () => {
-      mockInvoke.mockResolvedValue({
-        response: 'Alert!',
-        toolCalls: [],
-        steps: [{ text: 'Alert!', toolCalls: [] }],
+    it('emits "heartbeat completed" with result=posted and the count of messages the run sent', async () => {
+      const send = (target: string) => ({
+        tool: 'send_message',
+        input: JSON.stringify({ target, text: 'Disk is 95% full.' }),
+        output: '{}',
+        success: true,
+        timestamp: '2025-01-15T12:00:00Z',
       });
-      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
+      const toolCalls = [send('#ops'), send('#oncall')];
+      mockInvoke.mockResolvedValue({
+        response: 'Posted the disk alert.',
+        toolCalls,
+        steps: [{ text: 'Posted the disk alert.', toolCalls }],
+      });
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await heartbeatService.triggerHeartbeat();
@@ -2128,18 +1886,18 @@ describe('HeartbeatService', () => {
       expect(mockTrackEvent).toHaveBeenCalledWith('heartbeat completed', 'user-abc-123', {
         'agent.id': 'agent-1',
         'heartbeat.trigger': 'timer',
-        'heartbeat.result': 'delivered',
+        'heartbeat.result': 'posted',
+        'heartbeat.messages_sent': '2',
         'heartbeat.duration_ms': expect.any(String),
       });
     });
 
-    it('emits "heartbeat completed" with result=suppressed when the gate suppresses', async () => {
+    it('emits "heartbeat completed" with result=silent when the run sent nothing', async () => {
       mockInvoke.mockResolvedValue({
         response: 'All clear.',
         toolCalls: [],
         steps: [{ text: 'All clear.', toolCalls: [] }],
       });
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       await heartbeatService.triggerHeartbeat();
@@ -2147,7 +1905,7 @@ describe('HeartbeatService', () => {
       expect(mockTrackEvent).toHaveBeenCalledWith(
         'heartbeat completed',
         'user-abc-123',
-        expect.objectContaining({ 'heartbeat.result': 'suppressed' }),
+        expect.objectContaining({ 'heartbeat.result': 'silent', 'heartbeat.messages_sent': '0' }),
       );
     });
 
@@ -2238,7 +1996,6 @@ describe('HeartbeatService', () => {
         toolCalls: [],
         steps: [{ text: 'Incident!', toolCalls: [] }],
       });
-      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
 
       heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
       heartbeatService.triggerFrom(triggerSource);
@@ -2247,7 +2004,7 @@ describe('HeartbeatService', () => {
       expect(mockTrackEvent).toHaveBeenCalledWith(
         'heartbeat completed',
         'user-abc-123',
-        expect.objectContaining({ 'heartbeat.trigger': 'slack', 'heartbeat.result': 'delivered' }),
+        expect.objectContaining({ 'heartbeat.trigger': 'slack', 'heartbeat.result': 'silent' }),
       );
     });
   });

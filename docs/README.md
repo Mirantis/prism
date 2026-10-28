@@ -58,11 +58,11 @@ What the agent can do.
 - **[Compaction](compaction.md)** — how long conversations stay inside the
   model's context window: older history is folded into a summary automatically
   (or with `/compact`) while the newest messages stay verbatim.
-- **[Heartbeat](heartbeat.md)** — the always-on monitoring loop, its
-  DELIVER/SUPPRESS gate and Slack triggers.
+- **[Heartbeat](heartbeat.md)** — the always-on monitoring loop, where it may
+  post, and Slack triggers.
 - **[Scheduled tasks](scheduled-tasks.md)** — putting one-shot and recurring
-  work on the agent's calendar with natural language or cron; runs pass the
-  same DELIVER/SUPPRESS gate, so a check with nothing to report stays quiet.
+  work on the agent's calendar with natural language or cron; a run with
+  nothing to report posts nothing.
 - **[Webhooks](webhooks.md)** — named HTTP endpoints external systems
   (Alertmanager, PagerDuty, GitHub, …) POST events to, triggering an agent run
   or a direct notification.

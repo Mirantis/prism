@@ -42,6 +42,7 @@ import { ModelSettingsCard } from '@/components/profile/model-settings-card';
 import { VerbosityField } from '@/components/profile/verbosity-field';
 import { LockedInField } from '@/components/profile/locked-in-field';
 import { DocumentWorkspace } from '@/components/profile/document-workspace';
+import { HeartbeatDeliveryField } from '@/components/profile/heartbeat-delivery-field';
 import { Page } from '@/components/layout/page';
 import { PageHeader } from '@/components/layout/page-header';
 import { StatusPill } from '@/components/shared/status-pill';
@@ -314,6 +315,7 @@ function StatusPanel({ details, isLoading }: { details: AgentDetails | undefined
             )}
           </Field>
         </div>
+        <HeartbeatDeliveryField agentId={agent.agentId} />
         <div className="flex flex-wrap gap-2">
           {hbStatus?.isActive ? (
             <Button size="sm" variant="outline" onClick={() => stopMut.mutate()} disabled={stopMut.isPending}>

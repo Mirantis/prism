@@ -18,7 +18,10 @@ import {
   LinkedTarget,
   PostedMessage,
   SendRefusedError,
+  WEB_CHAT_NAME,
+  WEB_CHAT_TARGET,
 } from './channel-adapter.interface';
+import type { PostingCeiling } from './delivery-target.service';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import type { ToolCallRecord } from '../types';
@@ -32,6 +35,10 @@ export const MAX_SENT_MESSAGE_LENGTH = 4000;
 /** The stored text of a withheld run that sent a message and ended with no text of its own. */
 export const WITHHELD_RUN_TEXT = 'This run sent a message and ended with no reply.';
 
+/** What the `agent message sent` event reports about a target. */
+type TrackedTarget = { platform: string; kind: string };
+const WEB_CHAT_TRACKED: TrackedTarget = { platform: WEB_CHAT_TARGET, kind: WEB_CHAT_TARGET };
+
 /** The plain broadcast words, each of which notifies a whole conversation. */
 const BROADCAST = /(?:^|[^A-Za-z0-9])@(?:channel|here|everyone)(?![A-Za-z0-9])/i;
 
@@ -44,12 +51,17 @@ export interface SendInput {
   text: string;
   /** What started the sending run, recorded on the message stored in the target's history. */
   trigger: MessageTrigger;
-  /**
-   * Where the run's own final message goes, which the service refuses as a
-   * target: one conversation and thread, or `broadcast` for a run without a
-   * thread, whose output goes to the main channel and the user's own DM.
-   */
-  origin?: { platform: ChannelName; conversationId?: string; thread?: string } | 'broadcast';
+  /** The conversation and thread the run's own reply goes to, which the service refuses as a target. */
+  origin?: { platform: ChannelName; conversationId?: string; thread?: string };
+  /** Where an autonomous run may post. Set, it also allows web chat as `WEB_CHAT_TARGET`. */
+  ceiling?: PostingCeiling;
+}
+
+/** What a send posted to: a target's key and name, and the posted message's id. */
+export interface SentMessage {
+  key: string;
+  name: string | null;
+  messageId: string;
 }
 
 type PostingAdapter = ChannelAdapter &
@@ -61,17 +73,24 @@ class OutboundMessageService {
   }
 
   /** Post the message, or throw an error whose message tells the agent why not. */
-  async send(input: SendInput): Promise<{ target: LinkedTarget; messageId: string }> {
-    let target: LinkedTarget | undefined;
+  async send(input: SendInput): Promise<SentMessage> {
+    let target: TrackedTarget | undefined;
     try {
+      if (input.target === WEB_CHAT_TARGET && input.ceiling?.webChat) {
+        target = WEB_CHAT_TRACKED;
+        const text = this.checkText(input.text);
+        const message = await messageDeliveryService.publishToWebChat(input.agentId, input.userId, text, input.trigger);
+        this.track(input, 'sent', target);
+        return { key: WEB_CHAT_TARGET, name: WEB_CHAT_NAME, messageId: message.id };
+      }
       const resolved = await this.resolveTarget(input);
       target = resolved.target;
       const text = this.checkText(input.text);
-      this.checkOrigin(target, input);
+      this.checkOrigin(resolved.target, input);
       const { messageId, history } = await this.post(resolved, text, input);
       this.track(input, 'sent', target);
       if (history) await this.storeInTargetHistory(input, history, text);
-      return { target, messageId };
+      return { key: resolved.target.key, name: resolved.target.name, messageId };
     } catch (error: unknown) {
       if (error instanceof SendRefusedError) this.track(input, 'refused', target, error.code);
       throw error;
@@ -79,11 +98,12 @@ class OutboundMessageService {
   }
 
   /**
-   * A gate that withholds a run's output also drops the run's record. A run
-   * that sent a message keeps it: its message is stored, undelivered, in its
-   * own thread, or in the latest thread for a run that has none. A thread read
-   * live from a channel replays only the channel's messages and internal rows,
-   * so there the record is an internal row.
+   * A run whose final message is not delivered keeps its record when it sent a
+   * message: the message is stored, undelivered, in its own thread, or in the
+   * latest thread for a run that has none. The record is an internal row, which
+   * the model reads and no client shows, in a thread read live from a channel,
+   * which replays only the channel's messages and internal rows, and when the
+   * run posted into web chat, where the post itself already shows.
    */
   async keepWithheldRun(run: {
     agentId: string;
@@ -94,22 +114,24 @@ class OutboundMessageService {
     /** The webhook subscription that produced the run, for the model's history. */
     triggerName?: string;
     toolCalls: ToolCallRecord[];
-  }): Promise<void> {
-    if (sentMessages(run.toolCalls).length === 0) return;
+  }): Promise<string | null> {
+    if (sentMessages(run.toolCalls).length === 0) return null;
     // The thread a delivery of this run would write to, as `publish` resolves it.
     const threadId = run.threadId
       ? await conversationService.writableThreadId(run.threadId)
       : (await conversationService.getOrCreateLatestThread(run.agentId, run.userId)).id;
     const readLive =
       run.threadId !== undefined && (await conversationService.getThreadSource(threadId)) !== ThreadSource.DATABASE;
-    await conversationService.addMessage(threadId, {
+    const postedToWebChat = sentMessageList(run.toolCalls).some(({ place }) => place === WEB_CHAT_TARGET);
+    const { message } = await conversationService.addMessage(threadId, {
       content: run.content.trim() ? run.content : WITHHELD_RUN_TEXT,
       role: 'AGENT',
       triggeredBy: run.triggeredBy,
       triggerName: run.triggerName,
       toolCalls: run.toolCalls,
-      ...(readLive && { internalStep: true }),
+      ...((readLive || postedToWebChat) && { internalStep: true }),
     });
+    return message.id;
   }
 
   /**
@@ -164,26 +186,49 @@ class OutboundMessageService {
   }
 
   private async resolveTarget(input: SendInput): Promise<{ target: LinkedTarget; adapter: PostingAdapter }> {
-    const linked = await this.linked(input.agentId);
-    const exact = linked.find(({ target }) => target.key === input.target);
-    if (exact) return exact;
+    const found = this.findTarget(await this.linked(input.agentId), input.target);
+    if (!input.ceiling) return this.orRefuse(found, input.target, linkedList(await this.listTargets(input.agentId)));
 
-    const name = input.target.replace(/^#/, '').toLowerCase();
-    const named = linked.filter(({ target }) => target.kind === 'channel' && target.name?.toLowerCase() === name);
-    if (named.length === 1) return named[0];
-
-    const targets = linked.map(({ target }) => target);
-    const known = targets.length
-      ? `Linked targets: ${targets.map((t) => (t.name ? `${t.key} (${t.name})` : t.key)).join(', ')}.`
-      : 'No channel or DM is linked to this agent.';
-    if (named.length > 1) {
+    const allowed = new Set(input.ceiling.targets.map((t) => t.key));
+    const known = ceilingList(input.ceiling);
+    if (found.length === 1 && !allowed.has(found[0].target.key)) {
       throw new SendRefusedError(
-        `More than one linked channel is named "${input.target}". Name one by its target. ${known}`,
+        `Your delivery setting does not let this run post to ${describeTarget(found[0].target)}, so nothing was sent. ${known}`,
+        'outside_delivery',
+      );
+    }
+    return this.orRefuse(
+      found.filter(({ target }) => allowed.has(target.key)),
+      input.target,
+      known,
+    );
+  }
+
+  /** The linked targets `requested` names: its exact key, else each channel of that name. */
+  private findTarget(
+    linked: Array<{ target: LinkedTarget; adapter: PostingAdapter }>,
+    requested: string,
+  ): Array<{ target: LinkedTarget; adapter: PostingAdapter }> {
+    const exact = linked.find(({ target }) => target.key === requested);
+    if (exact) return [exact];
+    const name = requested.replace(/^#/, '').toLowerCase();
+    return linked.filter(({ target }) => target.kind === 'channel' && target.name?.toLowerCase() === name);
+  }
+
+  private orRefuse(
+    found: Array<{ target: LinkedTarget; adapter: PostingAdapter }>,
+    requested: string,
+    known: string,
+  ): { target: LinkedTarget; adapter: PostingAdapter } {
+    if (found.length === 1) return found[0];
+    if (found.length > 1) {
+      throw new SendRefusedError(
+        `More than one linked channel is named "${requested}". Name one by its target. ${known}`,
         'ambiguous_target',
       );
     }
     throw new SendRefusedError(
-      `"${input.target}" is not a channel or DM linked to this agent, so nothing was sent. ${known}`,
+      `"${requested}" is not a channel or DM linked to this agent, so nothing was sent. ${known}`,
       'unknown_target',
     );
   }
@@ -208,13 +253,6 @@ class OutboundMessageService {
 
   private checkOrigin(target: LinkedTarget, input: SendInput): void {
     const origin = input.origin;
-    if (origin === 'broadcast') {
-      if (!target.isMain && !(target.kind === 'dm' && target.dmUserId === input.userId)) return;
-      throw new SendRefusedError(
-        `Your final message already goes to ${describeTarget(target)}: the output of a run without a conversation goes to the main channel and to your user's DM. Write the message as your final message instead.`,
-        'own_conversation',
-      );
-    }
     if (!origin || origin.platform !== target.platform || origin.conversationId !== target.conversationId) return;
     if ((origin.thread ?? undefined) !== (input.thread ?? undefined)) return;
     throw new SendRefusedError(
@@ -223,7 +261,7 @@ class OutboundMessageService {
     );
   }
 
-  private track(input: SendInput, outcome: 'sent' | 'refused' | 'failed', target?: LinkedTarget, reason?: string): void {
+  private track(input: SendInput, outcome: 'sent' | 'refused' | 'failed', target?: TrackedTarget, reason?: string): void {
     trackEvent('agent message sent', input.userId, {
       'agent.id': input.agentId,
       'send.outcome': outcome,
@@ -235,6 +273,20 @@ class OutboundMessageService {
 }
 
 export const outboundMessageService = new OutboundMessageService();
+
+function targetName(t: LinkedTarget): string {
+  return t.name ? `${t.key} (${t.name})` : t.key;
+}
+
+function linkedList(targets: LinkedTarget[]): string {
+  return targets.length ? `Linked targets: ${targets.map(targetName).join(', ')}.` : 'No channel or DM is linked to this agent.';
+}
+
+/** The targets a delivery setting allows, as a refusal names them. */
+function ceilingList(ceiling: PostingCeiling): string {
+  const names = [...(ceiling.webChat ? [`${WEB_CHAT_TARGET} (${WEB_CHAT_NAME})`] : []), ...ceiling.targets.map(targetName)];
+  return names.length ? `This run may post to: ${names.join(', ')}.` : 'This run may post nowhere.';
+}
 
 /** The messages a run's tool calls posted: where each went, the thread included, and its text. */
 export function sentMessageList(toolCalls: ToolCallRecord[]): Array<{ place: string; text: string }> {

@@ -16,11 +16,11 @@ interface DeliverToFieldProps {
   error?: string;
 }
 
-/** Where a message an agent run produces is posted. */
+/** Where an agent run may post. The agent posts only when the run has something to say. */
 export function DeliverToField({ id, value, onChange, error }: DeliverToFieldProps) {
   return (
     <Field data-invalid={Boolean(error)} className="w-auto">
-      <FieldLabel htmlFor={id}>Deliver to</FieldLabel>
+      <FieldLabel htmlFor={id}>May post to</FieldLabel>
       <Select
         value={value}
         onValueChange={(next) => {

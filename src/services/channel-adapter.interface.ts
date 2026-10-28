@@ -74,6 +74,10 @@ export interface LinkedTarget {
   dmUserId?: string;
 }
 
+/** The `send_message` target that posts into web chat, for a run whose delivery setting allows it. */
+export const WEB_CHAT_TARGET = 'chat';
+export const WEB_CHAT_NAME = 'Web chat';
+
 /** A message `postToTarget` posted. */
 export interface PostedMessage {
   messageId: string;

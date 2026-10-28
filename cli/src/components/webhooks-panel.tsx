@@ -387,7 +387,7 @@ export const WebhooksPanel: React.FC<Props> = ({ api, onClose, suspendInput, inp
           />
         </Box>
         <Box>
-          {label('deliverTo', 'Deliver to')}
+          {label('deliverTo', 'May post to')}
           <Text>‹ {deliverLabel(form.deliverTo)} ›</Text>
         </Box>
         {form.deliverTo === 'slack' && options.length === 0 && (

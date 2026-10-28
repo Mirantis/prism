@@ -10,9 +10,9 @@
 import type { ConversationMessage } from '@prisma/client';
 import { messageDeliveryService, type PublishOptions } from './message-delivery.service';
 import { conversationService } from './conversation.service';
-import { CHAT_PLATFORMS, type ChannelName } from './channel-adapter.interface';
+import { CHAT_PLATFORMS, type ChannelName, type LinkedTarget } from './channel-adapter.interface';
+import { outboundMessageService } from './outbound-message.service';
 import { logger } from '../logger';
-import type { InvokeRequest } from '../types';
 
 export const DELIVER_TARGETS = ['all', 'chat', ...CHAT_PLATFORMS, 'none'] as const;
 export type DeliverTo = (typeof DELIVER_TARGETS)[number];
@@ -37,6 +37,15 @@ export interface DeliveryTarget {
 }
 
 /**
+ * Where an autonomous run may post: web chat, and the linked targets. A run
+ * posts only what the agent sends, so this is the whole of its reach.
+ */
+export interface PostingCeiling {
+  webChat: boolean;
+  targets: LinkedTarget[];
+}
+
+/**
  * What a delivery stored: the message, or null for 'none'. A delivery to chosen
  * channels also counts the channels it posted to and the unlinked ones it
  * skipped.
@@ -47,7 +56,7 @@ export interface Delivery {
 }
 
 /** The triggers of a message that a target delivers. */
-type TargetTrigger = 'CRON_TASK' | 'WEBHOOK';
+type TargetTrigger = 'HEARTBEAT' | 'CRON_TASK' | 'WEBHOOK';
 
 type TargetPublishOptions = Pick<PublishOptions, 'triggerName' | 'toolCalls' | 'attachmentIds'>;
 
@@ -73,24 +82,22 @@ class DeliveryTargetService {
   }
 
   /**
-   * Where `deliver` posts the final message, so `send_message` refuses it as a
-   * target: the broadcast for 'all', and for a single platform its one
-   * conversation. A platform without one gets the message in web chat only, and
-   * 'chat' and 'none' reach no channel. A send into a chosen channel is not
-   * refused: the prompt rule asks the agent not to post its final message there.
+   * Where a run under this target may post with `send_message`: every linked
+   * target and web chat for 'all', web chat for 'chat', nothing for 'none', and
+   * for a platform its linked targets, or only the chosen channels when some are
+   * chosen. A platform with none of them linked gets web chat, as `deliver` does.
    */
-  async outputTarget(
-    agentId: string,
-    userId: string,
-    target: DeliveryTarget,
-  ): Promise<Pick<InvokeRequest, 'broadcastsOutput' | 'outputDestination'>> {
-    if (target.deliverTo === 'all') return { broadcastsOutput: true };
-    const channel = messageDeliveryService.getAdapter(target.deliverTo);
-    if (!channel?.defaultDestination) return {};
-    if (target.channelIds.length > 0 && channel.linkedChannelIds) return {};
-    const destination = await channel.defaultDestination(agentId, userId);
-    if (!destination) return {};
-    return { outputDestination: { platform: channel.name, conversationId: destination.threadKey } };
+  async ceiling(agentId: string, target: DeliveryTarget): Promise<PostingCeiling> {
+    if (target.deliverTo === 'none') return { webChat: false, targets: [] };
+    if (target.deliverTo === 'chat') return { webChat: true, targets: [] };
+    const linked = await outboundMessageService.listTargets(agentId);
+    if (target.deliverTo === 'all') return { webChat: true, targets: linked };
+    const own = linked.filter((t) => t.platform === target.deliverTo);
+    const allowed =
+      target.channelIds.length > 0
+        ? own.filter((t) => t.kind === 'channel' && target.channelIds.includes(t.conversationId))
+        : own;
+    return allowed.length > 0 ? { webChat: false, targets: allowed } : { webChat: true, targets: [] };
   }
 
   /**
@@ -177,7 +184,6 @@ class DeliveryTargetService {
     return messageDeliveryService.publishToLatestThread(agentId, userId, content, triggeredBy, options);
   }
 
-  /** Publish to web chat only, in the web-visible latest thread. */
   private async deliverToChat(
     agentId: string,
     userId: string,
@@ -185,11 +191,7 @@ class DeliveryTargetService {
     triggeredBy: TargetTrigger,
     options: TargetPublishOptions,
   ): Promise<ConversationMessage> {
-    const thread = await conversationService.getOrCreateLatestThread(agentId, userId);
-    return messageDeliveryService.publish(userId, thread.id, content, triggeredBy, {
-      ...options,
-      channelContext: { channel: 'websocket', threadId: thread.id },
-    });
+    return messageDeliveryService.publishToWebChat(agentId, userId, content, triggeredBy, options);
   }
 
   /**

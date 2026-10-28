@@ -14,7 +14,6 @@ import { config } from '../config';
 import { MAX_OUTPUT_TOKENS } from '../constants';
 import { callModel } from '../lib/model-call';
 import { getGateRequest } from '../lib/classification';
-import { runClassificationGate } from '../lib/classification-gate';
 import { createProvider } from '../lib/llm-providers/create-provider';
 import { collectTools, withToolsCacheControl } from '../lib/tool-collection';
 import { withToolOutputCapture } from '../lib/tool-output-limiter';
@@ -24,14 +23,12 @@ import type { ModelTier } from '../lib/model-selection';
 import { agentWorkspaceService, resolveEffectiveModel } from '../services/agent-workspace.service';
 import type { AttachmentMeta } from '../services/attachment.service';
 import { contextService } from '../services/context.service';
-import { heartbeatService } from '../services/heartbeat.service';
+import type { PostingCeiling } from '../services/delivery-target.service';
 import { llmCallService } from '../services/llm-call.service';
 import { buildTurnRequest } from '../invoke';
 import { COMPUTER_INSTRUCTIONS } from '../prompts/computer-prompt';
 import { getComputerTools } from '../tools/computer';
 import type { ConversationMessage } from '../prompts/context-builder';
-import { CRON_TASK_GATE_PROMPT, buildCronGateUserMessage } from '../prompts/cron-prompt';
-import { WEBHOOK_GATE_PROMPT, buildWebhookGateUserMessage } from '../prompts/webhook-gate-prompt';
 import type { AgentContext, InvokeRequest, TaskLastSend } from '../types';
 import type { ChatPlatform } from '../services/channel-adapter.interface';
 import { slackChannelLabel } from '../utils/slack-formatter';
@@ -93,7 +90,6 @@ export async function agentContext(history: HistoryEntry[] = []): Promise<AgentC
 // ---------------------------------------------------------------------------
 
 interface SampleCalls {
-  gateCalls: number;
   inputTokens: number;
   outputTokens: number;
 }
@@ -102,14 +98,12 @@ const sampleCalls = new AsyncLocalStorage<SampleCalls>();
 
 /**
  * Every runtime model call goes through `callModel`, which reports it to
- * `llmCallService`. The eval reads that report instead of writing it: it counts each
- * sample's tokens, and it tells a gate's fail-open DELIVER, which makes no successful
- * call, from a real one.
+ * `llmCallService`. The eval reads that report instead of writing it, and counts
+ * each sample's tokens.
  */
 llmCallService.record = (input) => {
   const calls = sampleCalls.getStore();
   if (!calls) return;
-  if (input.purpose === 'delivery-gate') calls.gateCalls++;
   addUsage(calls, input.usage);
 };
 
@@ -122,7 +116,7 @@ function addUsage(calls: SampleCalls, usage: LanguageModelUsage | undefined): vo
 export async function withSampleAccounting<T>(
   run: () => Promise<T>,
 ): Promise<{ outcome: { value: T } | { error: unknown }; inputTokens: number; outputTokens: number }> {
-  const calls: SampleCalls = { gateCalls: 0, inputTokens: 0, outputTokens: 0 };
+  const calls: SampleCalls = { inputTokens: 0, outputTokens: 0 };
   let outcome: { value: T } | { error: unknown };
   try {
     outcome = { value: await sampleCalls.run(calls, run) };
@@ -130,17 +124,6 @@ export async function withSampleAccounting<T>(
     outcome = { error };
   }
   return { outcome, inputTokens: calls.inputTokens, outputTokens: calls.outputTokens };
-}
-
-/** Run a fail-open delivery gate and throw when its model call did not succeed. */
-async function expectGateCall(run: () => Promise<boolean>): Promise<Verdict> {
-  const calls = sampleCalls.getStore();
-  const before = calls?.gateCalls ?? 0;
-  const deliver = await run();
-  if ((calls?.gateCalls ?? 0) === before) {
-    throw new Error('The delivery gate call failed, and the gate fell back to DELIVER.');
-  }
-  return deliver ? 'DELIVER' : 'SUPPRESS';
 }
 
 // ---------------------------------------------------------------------------
@@ -180,6 +163,10 @@ interface TurnInput {
   extraTools?: Record<string, Tool>;
   /** What a recurring task's earlier runs sent, as the scheduler gives an unbound cron run. */
   lastSend?: TaskLastSend;
+  /** Fields a run's service sets on the agent's context, such as the heartbeat's checks. */
+  context?: Partial<AgentContext>;
+  /** Where a heartbeat, unbound scheduled-task or webhook run may post, as its service sets it. */
+  postingCeiling?: PostingCeiling;
 }
 
 export interface ToolCallRecord {
@@ -212,6 +199,8 @@ export function replyOf(trace: TurnTrace): string {
 export async function runTurn(input: TurnInput): Promise<TurnTrace> {
   const context = await agentContext(input.history);
   context.lastSend = input.lastSend;
+  context.postingCeiling = input.postingCeiling;
+  Object.assign(context, input.context);
   const agentId = input.withSubagent ? PARENT_AGENT_ID : EVAL_AGENT_ID;
   const modelId = resolveEffectiveModel(context.model);
   const provider = createProvider();
@@ -222,6 +211,7 @@ export async function runTurn(input: TurnInput): Promise<TurnTrace> {
     agentId,
     mode: input.mode,
     originChannel: input.channel?.platform ?? 'websocket',
+    postingCeiling: input.postingCeiling,
     taskInvoker: async () => {
       throw new Error('The eval stubs the Task tool.');
     },
@@ -323,63 +313,8 @@ function toStoredMessage(entry: HistoryEntry, index: number): ConversationMessag
 }
 
 // ---------------------------------------------------------------------------
-// The gates
+// The tool risk gate
 // ---------------------------------------------------------------------------
-
-export type Verdict = 'DELIVER' | 'SUPPRESS';
-
-/** The heartbeat service's own delivery gate. */
-export async function heartbeatGate(
-  report: string,
-  lastAlert?: { text: string; hoursAgo: number },
-): Promise<Verdict> {
-  if (!report.trim()) return 'SUPPRESS';
-  return expectGateCall(() =>
-    heartbeatService['shouldDeliverAlert'](
-      EVAL_AGENT_ID,
-      EVAL_USER_ID,
-      report,
-      lastAlert?.text ?? null,
-      lastAlert ? Date.now() - lastAlert.hoursAgo * 3_600_000 : null,
-    ),
-  );
-}
-
-/** The scheduled-task gate, composed as `cronSchedulerService` composes it. */
-export async function cronGate(
-  instruction: string,
-  result: string,
-  lastDelivered?: { text: string; hoursAgo: number },
-): Promise<Verdict> {
-  if (!result.trim()) return 'SUPPRESS';
-  return expectGateCall(() =>
-    runClassificationGate({
-      system: CRON_TASK_GATE_PROMPT,
-      user: buildCronGateUserMessage({
-        instruction,
-        resultText: result,
-        lastDeliveredText: lastDelivered?.text ?? null,
-        lastDeliveredAt: lastDelivered ? Date.now() - lastDelivered.hoursAgo * 3_600_000 : null,
-      }),
-      functionId: 'cron-gate',
-      agentId: EVAL_AGENT_ID,
-      logLabel: 'Eval:CronGate',
-    }),
-  );
-}
-
-/** The webhook reply gate, composed as `webhookService` composes it. */
-export async function webhookGate(instruction: string, reply: string): Promise<Verdict> {
-  return expectGateCall(() =>
-    runClassificationGate({
-      system: WEBHOOK_GATE_PROMPT,
-      user: buildWebhookGateUserMessage({ instruction, replyText: reply }),
-      functionId: 'webhook-gate',
-      agentId: EVAL_AGENT_ID,
-      logLabel: 'Eval:WebhookGate',
-    }),
-  );
-}
 
 /**
  * The tool risk gate's decision on one call, with the tool's real description and

@@ -1,11 +1,12 @@
 /**
  * Scheduled-task suppression step definitions (web)
  *
- * Exercises the delivery gate on cron runs: an unconditional task ("reply with
- * exactly X") always delivers, a conditional check whose condition is not met
- * ("only tell me if the year is 1999") runs, records its execution, and posts
- * nothing, and a conditional check whose condition holds on every run posts
- * once.
+ * A scheduled run posts only what the agent sends: an unconditional task
+ * ("reply with exactly X") posts every run, a conditional check whose condition
+ * is not met ("only tell me if the year is 1999") runs, records its execution,
+ * and posts nothing, and a conditional check whose condition holds on every run
+ * posts once. A message counts when a client shows it: the run's record of a
+ * post into web chat is an internal row.
  *
  * The auth/navigation/chat steps are reused from the other suites. We assert
  * on the database (the `cron_tasks` and `conversation_messages` tables)
@@ -64,6 +65,7 @@ Then('a scheduled-task message containing {string} is delivered', async ({}, mar
         where: {
           role: 'AGENT',
           triggeredBy: 'CRON_TASK',
+          internalStep: false,
           content: { contains: marker },
           thread: { agentId },
         },
@@ -94,8 +96,7 @@ Given(
 When('the recurring task has run {int} times', async ({}, runs: number) => {
   expect(recurringTask).toBeTruthy();
   const { id } = recurringTask as { id: string };
-  // `lastRunAt` moves once per run, after the agent's turn and before the gate
-  // and the delivery. A tick that would overlap a running execution is skipped.
+  // `lastRunAt` moves once per run, after the agent's turn. A tick that would overlap a running execution is skipped.
   const seen = new Set<number>();
   await pollUntil(
     async () => {
@@ -108,7 +109,7 @@ When('the recurring task has run {int} times', async ({}, runs: number) => {
     1000,
   );
   expect(seen.size).toBeGreaterThanOrEqual(runs);
-  // Stop further ticks. The last run can still be at its gate or its delivery.
+  // Stop further ticks. The last run can still be storing its record.
   const res = await fetch(`${process.env.AGENT_RUNTIME_URL}/agents/cron-tasks/${id}`, { method: 'DELETE' });
   expect(res.ok).toBe(true);
 });
@@ -121,6 +122,7 @@ Then('exactly {int} scheduled-task message is delivered after the recurring task
       where: {
         role: 'AGENT',
         triggeredBy: 'CRON_TASK',
+        internalStep: false,
         createdAt: { gte: since },
         thread: { agentId: getCurrentAgentId() },
       },
@@ -145,8 +147,7 @@ Then('exactly {int} scheduled-task message is delivered after the recurring task
 Then('the scheduled task named {string} runs to completion', async ({}, name: string) => {
   const agentId = getCurrentAgentId();
   // A one-off task auto-deletes after its run, so the row disappearing proves
-  // the run executed and its bookkeeping (including the delete) was unaffected
-  // by suppression.
+  // the run executed and its bookkeeping (including the delete) completed.
   const remaining = await pollUntil(
     () => dbHelper.getPrisma().cronTask.findMany({ where: { agentId, name } }),
     (t) => t.length === 0,
@@ -158,7 +159,7 @@ Then('the scheduled task named {string} runs to completion', async ({}, name: st
 Then('the quiet task has written {string} to memory', async ({}, marker: string) => {
   const agentId = getCurrentAgentId();
   // The memory write is the proof the run itself succeeded: a run that crashed
-  // before the gate would also leave no message, so message absence alone
+  // would also leave no message, so message absence alone
   // would falsely certify suppression.
   const entries = await pollUntil(
     () =>
@@ -182,6 +183,7 @@ Then('no scheduled-task message is delivered after the quiet task was created', 
     where: {
       role: 'AGENT',
       triggeredBy: 'CRON_TASK',
+      internalStep: false,
       createdAt: { gte: quietTaskCreatedAt as Date },
       thread: { agentId },
     },

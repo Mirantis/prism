@@ -104,6 +104,10 @@ model AgentWorkspace {
 
   heartbeatIntervalMs Int                  @default(28800000)
   heartbeatStatus     AgentHeartbeatStatus @default(ENABLED)
+  // Where a heartbeat run may post: `DELIVER_TARGETS`. `heartbeatChannelIds`
+  // lists the linked channels of that target's channel; null = all of them.
+  heartbeatDeliverTo  String               @default("all")
+  heartbeatChannelIds String?
   timezone            String               @default("UTC")
   model               String?
   heartbeatModel      String?

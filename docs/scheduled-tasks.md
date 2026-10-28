@@ -88,43 +88,28 @@ conversation — with its full history — and replies right where you left off:
   top-level message.
 - In the **web** and **terminal** UIs, it continues the same conversation thread.
 
-A regular scheduled task (without continuation) still behaves as before: its
-result is delivered to your latest conversation, labeled as a scheduled-task
-result. Continuations pass through the same suppression gate as any other run —
-a conditional wait with nothing new stays quiet.
+A continuation whose wait is not over yet waits again and posts nothing.
 
 ## Quiet when there's nothing to report
 
-Every scheduled run passes through the same
-**[DELIVER / SUPPRESS gate](heartbeat.md#the-deliver--suppress-gate)** as the
-heartbeat: after the run produces its result, a small, fast model (Claude
-Haiku) decides whether it's worth your attention. The gate is
-**instruction-aware** — it reads the task's instruction alongside the result:
+A scheduled run posts a message only when its instruction asks for one:
 
 - A task that asks for output **unconditionally** ("send me a daily summary,"
-  "remind me at 3pm") always delivers, even when the result says nothing has
-  changed. You asked to hear from it on every run.
+  "remind me at 3pm") posts on every run.
 - A **conditional** task ("check the deploy queue and only tell me if something
-  is stuck") stays silent when the condition isn't met — no "nothing to report"
-  noise.
+  is stuck") posts only when the condition is met, and does not post the same
+  finding again until something changes.
 - A task that asks for **no message** ("just do the work, never tell me about
-  it") delivers nothing unless the run itself fails: it ends in an error, or the
-  [risk gate](configuration.md#tool-risk-gate) blocks one of its actions. A
-  failure the agent reports in its own words stays silent. In a long
-  instruction, put that sentence first. To hear about every failure, name the
-  exception: "never tell me unless it fails".
-- The gate also sees the **last result the task delivered**, so a conditional
-  check that merely repeats an already-reported finding stays quiet until
-  something changes. When a quiet run observes a *different* situation (e.g.
-  the incident resolved), that memory is cleared — so if the same condition
-  later recurs, it alerts again instead of being mistaken for a repeat. (This
-  memory is in-process only and resets when the runtime restarts.)
+  it") posts nothing. A run that ends in an error, or in which the
+  [risk gate](configuration.md#tool-risk-gate) blocked an action, is posted for
+  you all the same.
 
-The gate is **fail-open**: if the classification call errors, the result is
-delivered rather than dropped. A run that ends in an error, or in which the
-[risk gate](configuration.md#tool-risk-gate) blocked an action, skips the gate
-and always delivers. A suppressed run is still a full run — the task's last-run timestamp advances and a one-shot
-still deletes itself; only the message is withheld.
+**May post to** on the task sets where it may post: every linked channel and web
+chat (the default), web chat only, Slack or Teams, chosen Slack channels, or
+nowhere. Name a place in the instruction ("post it to #releases") to pick one
+inside that setting; otherwise the task posts to your DM, else the main channel,
+else web chat. A run that posts nothing is still a full run: the task's last-run
+timestamp advances and a one-shot still deletes itself.
 
 ## Reliability
 
@@ -139,8 +124,7 @@ still deletes itself; only the message is withheld.
 
 ## Heartbeat vs. scheduled task — which to use?
 
-Both stay quiet when there's nothing worth saying — they share the same
-DELIVER/SUPPRESS gate.
+Both post only when there's something worth saying.
 
 - Use the **[heartbeat](heartbeat.md)** for the single standing *monitoring*
   loop with its own configured checks and cadence.

@@ -41,16 +41,24 @@ Then(
   async ({}, marker: string, first: string, second: string) => {
     const agentId = getCurrentAgentId();
     const db = dbHelper.getPrisma();
-    const message = await db.conversationMessage.findFirst({
+    // The run posts the marker mid-run. Its record, stored beside the post once the run
+    // ends, holds the run's tool calls.
+    const posted = await db.conversationMessage.findFirst({
       where: { role: 'AGENT', triggeredBy: 'CRON_TASK', content: { contains: marker }, thread: { agentId } },
     });
-    expect(message).not.toBeNull();
-
-    const calls = (message!.toolCalls ?? []) as { tool: string; input: string; success: boolean }[];
-    const deletedIds = calls
-      .filter((call) => call.tool === 'delete_scheduled_task' && call.success)
-      .map((call) => (JSON.parse(call.input) as { taskId: string }).taskId);
-    expect(deletedIds).toEqual(expect.arrayContaining([taskIds.get(first), taskIds.get(second)]));
+    expect(posted).not.toBeNull();
+    const deletedIds = async () => {
+      const rows = await db.conversationMessage.findMany({
+        where: { role: 'AGENT', triggeredBy: 'CRON_TASK', thread: { agentId } },
+      });
+      return rows
+        .flatMap((row) => (row.toolCalls ?? []) as { tool: string; input: string; success: boolean }[])
+        .filter((call) => call.tool === 'delete_scheduled_task' && call.success)
+        .map((call) => (JSON.parse(call.input) as { taskId: string }).taskId);
+    };
+    await expect
+      .poll(deletedIds, { timeout: 60_000 })
+      .toEqual(expect.arrayContaining([taskIds.get(first), taskIds.get(second)]));
 
     const remaining = await db.cronTask.findMany({ where: { agentId, name: { in: [first, second] } } });
     expect(remaining).toEqual([]);

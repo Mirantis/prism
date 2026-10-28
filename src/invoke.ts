@@ -258,11 +258,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
     activity = await conversationThreadActivityService.begin(request);
     computerUse.idle = activity.idle;
 
-    // 1. For heartbeat mode, inject last alert
-    if (request.mode === 'heartbeat') {
-      context.lastHeartbeatAlert = request.lastHeartbeatAlert;
-      context.lastHeartbeatAlertAt = request.lastHeartbeatAlertAt;
-    }
+    context.postingCeiling = request.postingCeiling;
     if (request.mode === 'cron' || request.mode === 'heartbeat' || request.mode === 'goal') context.lastSend = request.lastSend;
 
     // Per-turn runtime notices → surfaced as an authoritative system-prompt
@@ -314,8 +310,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       mode: request.mode,
       originChannel: request.originChannel,
       originChannelId: request.originChannelId,
-      broadcastsOutput: request.broadcastsOutput,
-      outputDestination: request.outputDestination,
+      postingCeiling: request.postingCeiling,
       workspaceRoot: request.workspaceRoot,
       taskInvoker: invoke,
       registerAttachmentInjection: (message) => pendingAttachmentInjections.push(message),

@@ -111,7 +111,7 @@ or **Enter** to complete the selection, then **Enter** to run.
 | `Space` | Pause or resume the selected subscription. |
 | `Enter` | Edit the selected subscription; in the form, save it. |
 | `Tab` / arrows | Move between fields in the form. |
-| `Left` / `Right` | Change **Deliver to**. |
+| `Left` / `Right` | Change **May post to**. |
 | `Space` (form) | Toggle **Deliver only** or a Slack channel, or open the prompt in `$EDITOR`. |
 | `Esc` | Close the panel / cancel. |
 

@@ -103,9 +103,9 @@ describe('llmCallService.record', () => {
   });
 
   it('records a call that has no thread and published nothing', async () => {
-    // A suppressed heartbeat, a compaction and a gate all look like this, and
+    // A silent heartbeat, a compaction and a gate all look like this, and
     // they are the reason the table is written at the call.
-    for (const purpose of ['heartbeat', 'compaction', 'delivery-gate'] as const) {
+    for (const purpose of ['heartbeat', 'compaction', 'risk-gate'] as const) {
       llmCallService.record({ purpose, model: 'claude-haiku-4-5', usage: usage() });
     }
     await settle();
@@ -117,7 +117,7 @@ describe('llmCallService.record', () => {
     expect(mockPrisma.llmCall.create.mock.calls.map((c) => c[0].data.purpose)).toEqual([
       'heartbeat',
       'compaction',
-      'delivery-gate',
+      'risk-gate',
     ]);
   });
 

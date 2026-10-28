@@ -8,8 +8,9 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockAdapters, mockConversationService, mockTrackEvent, mockLoggerError } = vi.hoisted(() => ({
+const { mockAdapters, mockConversationService, mockTrackEvent, mockLoggerError, mockPublishToWebChat } = vi.hoisted(() => ({
   mockAdapters: [] as Array<Record<string, unknown>>,
+  mockPublishToWebChat: vi.fn(),
   mockConversationService: {
     getOrCreateLatestThread: vi.fn(),
     getOrCreateThreadByExternalId: vi.fn(),
@@ -22,7 +23,7 @@ const { mockAdapters, mockConversationService, mockTrackEvent, mockLoggerError }
 }));
 
 vi.mock('../message-delivery.service', () => ({
-  messageDeliveryService: { getAdapters: () => mockAdapters },
+  messageDeliveryService: { getAdapters: () => mockAdapters, publishToWebChat: mockPublishToWebChat },
 }));
 vi.mock('../conversation.service', () => ({ conversationService: mockConversationService }));
 vi.mock('../../lib/telemetry', () => ({ trackEvent: mockTrackEvent }));
@@ -121,7 +122,7 @@ describe('Requirement: the agent sends only to a linked target, and never a broa
 
       expect(slack.postToTarget).toHaveBeenCalledWith(RELEASE, 'Release v2 is out.', '1712345678.000001');
       expect(teams.postToTarget).not.toHaveBeenCalled();
-      expect(result).toEqual({ target: RELEASE, messageId: '1712345678.000100' });
+      expect(result).toEqual({ key: RELEASE.key, name: RELEASE.name, messageId: '1712345678.000100' });
       expect(mockTrackEvent).toHaveBeenCalledWith('agent message sent', 'user-1', {
         'agent.id': 'agent-1',
         'send.outcome': 'sent',
@@ -179,7 +180,7 @@ describe('Requirement: the agent sends only to a linked target, and never a broa
       slack.postToTarget.mockResolvedValue({ messageId: 'm-1', history: { userId: 'user-2', threadKey: 'D0OTHER' } });
       mockConversationService.getOrCreateThreadByExternalId.mockRejectedValue(new Error('database is locked'));
 
-      await expect(send()).resolves.toEqual({ target: RELEASE, messageId: 'm-1' });
+      await expect(send()).resolves.toEqual({ key: RELEASE.key, name: RELEASE.name, messageId: 'm-1' });
       expect(mockLoggerError).toHaveBeenCalled();
     });
   });
@@ -244,41 +245,62 @@ describe('Requirement: the agent sends only to a linked target, and never a broa
       expect(slack.postToTarget).not.toHaveBeenCalled();
     });
 
-    describe('a run without a thread, whose output goes to the main channel and the user DM', () => {
+    describe('an autonomous run, which may post only where its delivery setting allows', () => {
+      const ceiling = { webChat: false, targets: [RELEASE, OWN_DM] };
+
       beforeEach(() => {
         slack.listLinkedTargets.mockResolvedValue([GENERAL, RELEASE, OWN_DM, OTHER_DM]);
       });
 
-      it('refuses the main channel', async () => {
-        const result = send({ target: 'slack:C0GENERAL', origin: 'broadcast' });
+      it('posts to a target the setting allows, the main channel and the own DM included', async () => {
+        await send({ target: 'slack:C0RELEASE', ceiling });
+        await send({ target: 'slack:D0OWNER', ceiling: { webChat: false, targets: [GENERAL, OWN_DM] } });
+        await send({ target: 'slack:C0GENERAL', ceiling: { webChat: false, targets: [GENERAL, OWN_DM] } });
 
-        await expect(result).rejects.toThrow('Your final message already goes to #general');
+        expect(slack.postToTarget.mock.calls.map(([target]) => target.key)).toEqual([
+          'slack:C0RELEASE',
+          'slack:D0OWNER',
+          'slack:C0GENERAL',
+        ]);
+      });
+
+      it('refuses a linked target the setting leaves out, and names the allowed ones', async () => {
+        const result = send({ target: '#general', ceiling });
+
+        await expect(result).rejects.toThrow('Your delivery setting does not let this run post to #general');
+        await expect(result).rejects.toThrow('This run may post to: slack:C0RELEASE (release), slack:D0OWNER (<@U0OWNER>).');
         expect(slack.postToTarget).not.toHaveBeenCalled();
         expect(mockTrackEvent).toHaveBeenCalledWith(
           'agent message sent',
           'user-1',
-          expect.objectContaining({ 'send.outcome': 'refused', 'send.reason': 'own_conversation' }),
+          expect.objectContaining({ 'send.outcome': 'refused', 'send.reason': 'outside_delivery' }),
         );
       });
 
-      it('refuses the main channel on another platform too', async () => {
-        await expect(send({ target: 'teams:19:release@thread.tacv2', origin: 'broadcast' })).rejects.toThrow(
-          'Your final message already goes to #Release',
+      it('posts into web chat when the setting allows it', async () => {
+        mockPublishToWebChat.mockResolvedValue({ id: 'msg-web-1' });
+
+        const result = await send({ target: 'chat', ceiling: { webChat: true, targets: [] } });
+
+        expect(mockPublishToWebChat).toHaveBeenCalledWith('agent-1', 'user-1', 'Release v2 is out.', 'CRON_TASK');
+        expect(result).toEqual({ key: 'chat', name: 'Web chat', messageId: 'msg-web-1' });
+        expect(mockTrackEvent).toHaveBeenCalledWith(
+          'agent message sent',
+          'user-1',
+          expect.objectContaining({ 'send.outcome': 'sent', 'send.platform': 'chat' }),
         );
       });
 
-      it("refuses the user's own DM", async () => {
-        await expect(send({ target: 'slack:D0OWNER', origin: 'broadcast' })).rejects.toThrow(
-          'Your final message already goes to the DM with <@U0OWNER>',
-        );
-        expect(slack.postToTarget).not.toHaveBeenCalled();
+      it('refuses web chat when the setting leaves it out, and in a conversation', async () => {
+        await expect(send({ target: 'chat', ceiling })).rejects.toThrow('"chat" is not a channel or DM linked to this agent');
+        await expect(send({ target: 'chat' })).rejects.toThrow('"chat" is not a channel or DM linked to this agent');
+        expect(mockPublishToWebChat).not.toHaveBeenCalled();
       });
 
-      it("allows a channel that is not main, and another user's DM", async () => {
-        await send({ target: 'slack:C0RELEASE', origin: 'broadcast' });
-        await send({ target: 'slack:D0OTHER', origin: 'broadcast' });
-
-        expect(slack.postToTarget.mock.calls.map(([target]) => target.key)).toEqual(['slack:C0RELEASE', 'slack:D0OTHER']);
+      it('lists only the allowed targets when a name matches nothing it allows', async () => {
+        await expect(send({ target: 'slack:C0RANDOM', ceiling: { webChat: true, targets: [RELEASE] } })).rejects.toThrow(
+          'This run may post to: chat (Web chat), slack:C0RELEASE (release).',
+        );
       });
     });
 
@@ -329,6 +351,7 @@ describe('Requirement: a withheld run that sent a message stays in history', () 
     vi.clearAllMocks();
     mockConversationService.getOrCreateLatestThread.mockResolvedValue({ id: 'thread-latest' });
     mockConversationService.writableThreadId.mockImplementation(async (threadId: string) => threadId);
+    mockConversationService.addMessage.mockResolvedValue({ message: { id: 'msg-kept' } });
   });
 
   const run = {
@@ -338,10 +361,10 @@ describe('Requirement: a withheld run that sent a message stays in history', () 
     triggeredBy: 'CRON_TASK' as const,
   };
 
-  it("stores the run's message in the latest thread when the run has none", async () => {
+  it("stores the run's message in the latest thread when the run has none, and returns its id", async () => {
     const toolCalls = [toolCall({})];
 
-    await outboundMessageService.keepWithheldRun({ ...run, toolCalls });
+    expect(await outboundMessageService.keepWithheldRun({ ...run, toolCalls })).toBe('msg-kept');
 
     expect(mockConversationService.addMessage).toHaveBeenCalledWith('thread-latest', {
       content: 'Posted the release note to #release.',
@@ -385,6 +408,25 @@ describe('Requirement: a withheld run that sent a message stays in history', () 
       'thread-slack',
       expect.objectContaining({ content: 'Posted the release note to #release.', internalStep: true }),
     );
+  });
+
+  it('stores the record as an internal row when the run posted into web chat, where the post already shows', async () => {
+    const posted = toolCall({ input: JSON.stringify({ target: 'chat', text: 'Release v2 is out.' }) });
+
+    await outboundMessageService.keepWithheldRun({ ...run, toolCalls: [posted] });
+
+    expect(mockConversationService.addMessage).toHaveBeenCalledWith(
+      'thread-latest',
+      expect.objectContaining({ internalStep: true }),
+    );
+  });
+
+  it('stores the record as a visible row when the run posted only to a channel', async () => {
+    const posted = toolCall({ input: JSON.stringify({ target: 'slack:C0RELEASE', text: 'Release v2 is out.' }) });
+
+    await outboundMessageService.keepWithheldRun({ ...run, toolCalls: [posted] });
+
+    expect(mockConversationService.addMessage.mock.calls[0][1]).not.toHaveProperty('internalStep');
   });
 
   it('stores the subscription name of a webhook run, so its history has the event turn', async () => {

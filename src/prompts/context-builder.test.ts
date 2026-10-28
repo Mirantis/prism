@@ -39,6 +39,19 @@ beforeAll(async () => {
 
 import { createTestAgentContext } from '../test-utils/factories';
 import type { AttachmentMeta } from '../services/attachment.service';
+import type { PostingCeiling } from '../services/delivery-target.service';
+
+/** Web chat, the user's own DM and the main channel, as `deliveryTargetService.ceiling` lists them. */
+const CEILING: PostingCeiling = {
+  webChat: true,
+  targets: [
+    { key: 'slack:D0USER001', platform: 'slack', kind: 'dm', conversationId: 'D0USER001', name: 'Ana Example', isMain: false, dmUserId: 'user-123' },
+    { key: 'slack:C0TEAM001', platform: 'slack', kind: 'channel', conversationId: 'C0TEAM001', name: 'platform-team', isMain: true },
+  ],
+};
+
+const POSTING_RULE =
+  "Nothing you write in this run reaches anyone unless you post it with send_message. Your final message is kept as this run's record and is not delivered.";
 
 /**
  * The joined prompt text. `buildSystemPrompt` used to be a production export that
@@ -249,22 +262,33 @@ describe('system prompt text', () => {
     expect(prompt).toContain('A remark about the heartbeat configuration itself');
   });
 
-  it('heartbeat mode injects last alert when present', async () => {
-    const context = createTestAgentContext({
-      lastHeartbeatAlert: 'Pod nginx-abc is CrashLoopBackOff',
-      lastHeartbeatAlertAt: Date.now() - 30 * 60 * 1000, // 30 min ago
-    });
-    const prompt = await promptText(context, 'heartbeat');
-    expect(prompt).toContain('### Last Alert');
-    expect(prompt).toContain('30min ago');
-    expect(prompt).toContain('Pod nginx-abc is CrashLoopBackOff');
-    expect(prompt).toContain('meaningfully changed');
+  it.each(['heartbeat', 'cron', 'webhook'] as const)(
+    '%s mode lists the places its delivery setting allows after the cached part, with the user DM as the default',
+    async (mode) => {
+      const parts = await buildSystemPromptParts(
+        createTestAgentContext({ userId: 'user-123', postingCeiling: CEILING }),
+        mode,
+      );
+
+      const section = parts.find((p) => p.text.includes('# Where This Run May Post'));
+      expect(section?.cacheable).toBe(false);
+      expect(section?.text).toContain(
+        "Your user's delivery setting lets this run post to these places. Name the place by its target in send_message.\n" +
+          '- `chat`: web chat\n' +
+          '- `slack:D0USER001`: the DM with Ana Example, your user\n' +
+          '- `slack:C0TEAM001`: #platform-team, the main channel\n\n' +
+          'The default place is `slack:D0USER001`. Post there when the instruction names no place.',
+      );
+    },
+  );
+
+  it('a run whose delivery setting allows no place is told that nothing it finds reaches anyone', async () => {
+    const text = await promptText(createTestAgentContext({ postingCeiling: { webChat: false, targets: [] } }), 'cron');
+    expect(text).toContain("Your user's delivery setting lets this run post nowhere, so nothing it finds reaches anyone.");
   });
 
-  it('heartbeat mode omits last alert section when no prior alert', async () => {
-    const context = createTestAgentContext();
-    const prompt = await promptText(context, 'heartbeat');
-    expect(prompt).not.toContain('### Last Alert');
+  it('a run without a delivery setting has no places section', async () => {
+    expect(await promptText(createTestAgentContext(), 'heartbeat')).not.toContain('# Where This Run May Post');
   });
 
   it('heartbeat mode includes a messages section for each channel that triggered it', async () => {
@@ -294,20 +318,21 @@ describe('system prompt text', () => {
     expect(prompt).toContain('# Scheduled Task Mode');
   });
 
-  it('cron mode steers conditional tasks toward a brief all-clear, never meta-commentary', async () => {
-    const context = createTestAgentContext();
-    const prompt = await promptText(context, 'cron');
-    expect(prompt).toContain('asks for output unconditionally');
-    expect(prompt).toContain('reply with a brief all-clear such as "Nothing to report"');
-    expect(prompt).toContain('A remark about the task itself');
+  it('a task that continues no conversation is told that only what it posts reaches anyone', async () => {
+    const prompt = await promptText(createTestAgentContext({ postingCeiling: CEILING }), 'cron');
+    expect(prompt).toContain(POSTING_RULE);
+    expect(prompt).not.toContain('continues an earlier conversation');
   });
 
-  it('cron mode tells the agent its response is delivered for it, and to send only to another target itself', async () => {
-    const context = createTestAgentContext();
-    const prompt = await promptText(context, 'cron');
+  it('a task that continues a conversation is told its reply goes there, and that an empty reply is not delivered', async () => {
+    const prompt = await promptText(createTestAgentContext(), 'cron');
     expect(prompt).toContain(
-      '- Your final message is delivered to the conversation or channel this task reports into, so do not also post it there with send_message or another messaging tool; that sends it twice. When the task asks for a message in another linked channel, thread or DM, send it with send_message and end with one line that says what you sent where. A conditional task\'s all-clear is not delivered, so keep it brief.',
+      '- Reply as the next message in that conversation, not as a standalone report. Your final message is delivered there, so do not also post it there with send_message or another messaging tool; that sends it twice.',
     );
+    expect(prompt).toContain(
+      '- If what you waited for has not happened yet, wait again the same way and end with an empty reply. An empty reply is not delivered.',
+    );
+    expect(prompt).not.toContain(POSTING_RULE);
   });
 
   it('cron mode tells a run what the task sent and what a later run reported, after the cached part', async () => {
@@ -381,18 +406,17 @@ describe('system prompt text', () => {
     expect(prompt).not.toContain('# Scheduled Task Mode');
   });
 
-  it('heartbeat mode tells the agent its result is delivered for it, and to send only to another target itself', async () => {
-    const prompt = await promptText(createTestAgentContext(), 'heartbeat');
+  it.each(['heartbeat', 'webhook'] as const)('%s mode tells the agent that only what it posts reaches anyone', async (mode) => {
+    const prompt = await promptText(createTestAgentContext({ postingCeiling: CEILING }), mode);
+    expect(prompt).toContain(POSTING_RULE);
     expect(prompt).toContain(
-      "- Your final message is delivered to the user's conversation, their DM and the main channel when it is worth reporting, so do not also post it there with send_message or another messaging tool; that sends it twice. When a check asks for a message in another linked channel, thread or DM, send it with send_message and end with one line that says what you sent where.",
+      "Post nothing when a conditional instruction's condition is not met, when the instruction asks for no message, or when the only news is that the run ran.",
     );
   });
 
-  it('webhook mode tells the agent its result is delivered for it, and to send only to another target itself', async () => {
-    const prompt = await promptText(createTestAgentContext(), 'webhook');
-    expect(prompt).toContain(
-      'When this webhook delivers its result, your final message goes to its destination, so do not also post it there with send_message or another messaging tool; that sends it twice. When the event calls for a message in another linked channel, thread or DM, send it with send_message and end with one line that says what you sent where.',
-    );
+  it('heartbeat mode posts nothing when everything looks normal', async () => {
+    const prompt = await promptText(createTestAgentContext(), 'heartbeat');
+    expect(prompt).toContain('- When everything looks normal, or no checks are configured, post nothing.');
   });
 
   it('goal mode tells the agent its turn is posted in the goal conversation, so it does not send it there too', async () => {
@@ -573,18 +597,6 @@ describe('buildSystemPromptParts', () => {
     expect(stable.text).toContain('Check items.');
   });
 
-  it('heartbeat mode puts last alert in stable part', async () => {
-    const context = createTestAgentContext({
-      lastHeartbeatAlert: 'Pod crashed',
-      lastHeartbeatAlertAt: Date.now() - 30 * 60 * 1000,
-    });
-    const parts = await buildSystemPromptParts(context, 'heartbeat');
-    const stable = parts.find((p) => p.cacheable)!;
-
-    expect(stable.text).toContain('### Last Alert');
-    expect(stable.text).toContain('Pod crashed');
-  });
-
   it('heartbeat mode puts trigger messages in stable part', async () => {
     const context = createTestAgentContext();
     const messages = [
@@ -615,38 +627,6 @@ describe('buildSystemPromptParts', () => {
         expect(second[0].cacheable, `mode ${mode}`).toBe(true);
         expect(second[0].text, `mode ${mode}`).toBe(first[0].text);
       }
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  // The one known exception, pinned rather than wished away: a heartbeat's last
-  // alert is rendered as a relative time inside the cacheable part, so that prefix
-  // really does churn turn to turn. Documented here so nobody "fixes" the test
-  // above by deleting its heartbeat case.
-  //
-  // Left unfixed on purpose. Moving those sections behind the breakpoint would buy
-  // nothing: heartbeats are typically hours apart and the cache lives five minutes,
-  // so there is no earlier entry to hit however the parts are arranged, and within
-  // one run the prompt is built once and reused by every step. It would pay only
-  // when a chat turn ran in the preceding five minutes.
-  it('churns the stable prefix when a heartbeat renders its last alert as a relative time', async () => {
-    vi.useFakeTimers();
-    try {
-      const start = new Date('2026-01-01T00:00:00Z');
-      const context = createTestAgentContext({
-        lastHeartbeatAlert: 'Pod crashed',
-        lastHeartbeatAlertAt: start.getTime() - 30 * 60 * 1000,
-      });
-
-      vi.setSystemTime(start);
-      const first = await buildSystemPromptParts(context, 'heartbeat');
-      vi.setSystemTime(new Date('2026-01-02T09:30:00Z'));
-      const second = await buildSystemPromptParts(context, 'heartbeat');
-
-      expect(first[0].text).toContain('30min ago');
-      expect(second[0].text).toContain('1d ago');
-      expect(second[0].text).not.toBe(first[0].text);
     } finally {
       vi.useRealTimers();
     }

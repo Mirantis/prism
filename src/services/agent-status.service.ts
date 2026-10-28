@@ -8,6 +8,7 @@
 import { AgentStatus, Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { AgentHeartbeatStatus } from '../types';
+import { DELIVER_TARGETS, deliveryTargetService, isValidDeliverTo, parseCommaList } from './delivery-target.service';
 
 class AgentStatusService {
   private activeProcessingCount: Map<string, number> = new Map();
@@ -75,6 +76,43 @@ class AgentStatusService {
     const agent = await prisma.agentWorkspace.findFirstOrThrow();
 
     await this.updateAgentById(agent.id, { heartbeatStatus });
+  }
+
+  /** Where a heartbeat run may post: a `DELIVER_TARGETS` value and the chosen linked channels. */
+  async getHeartbeatDelivery(): Promise<{ deliverTo: string; channelIds: string[] }> {
+    const agent = await prisma.agentWorkspace.findFirstOrThrow({
+      select: { heartbeatDeliverTo: true, heartbeatChannelIds: true },
+    });
+    return { deliverTo: agent.heartbeatDeliverTo, channelIds: parseCommaList(agent.heartbeatChannelIds) };
+  }
+
+  /**
+   * Change where a heartbeat run may post. A channel list is kept only for the
+   * target it was chosen for; the next run reads the new setting.
+   */
+  async updateHeartbeatDelivery(
+    changes: { deliverTo?: unknown; channelIds?: unknown },
+  ): Promise<{ ok: false; error: string } | { ok: true; value: { deliverTo: string; channelIds: string[] } }> {
+    const agent = await prisma.agentWorkspace.findFirstOrThrow({
+      select: { id: true, heartbeatDeliverTo: true, heartbeatChannelIds: true },
+    });
+    const deliverTo = changes.deliverTo ?? agent.heartbeatDeliverTo;
+    if (!isValidDeliverTo(deliverTo)) {
+      return { ok: false, error: `deliverTo must be one of: ${DELIVER_TARGETS.join(', ')}` };
+    }
+    let channelIds = deliverTo === agent.heartbeatDeliverTo ? agent.heartbeatChannelIds : null;
+    if (changes.channelIds !== undefined) {
+      const read = await deliveryTargetService.readChannelIds(
+        changes.channelIds,
+        deliverTo,
+        agent.id,
+        parseCommaList(agent.heartbeatChannelIds),
+      );
+      if (!read.ok) return read;
+      channelIds = read.value;
+    }
+    await this.updateAgentById(agent.id, { heartbeatDeliverTo: deliverTo, heartbeatChannelIds: channelIds });
+    return { ok: true, value: { deliverTo, channelIds: parseCommaList(channelIds) } };
   }
 
   async updateAgentStatus(agentId: string, status: AgentStatus): Promise<void> {

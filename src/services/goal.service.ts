@@ -583,7 +583,7 @@ class GoalService {
   /**
    * Haiku completion gate — the sole completion signal. Fail → CONTINUE so a
    * gate error can never prematurely complete a goal (the turn/stall caps bound
-   * the loop regardless). Mirrors heartbeat.service.ts#shouldDeliverAlert.
+   * the loop regardless).
    */
   private async shouldDeclareGoalComplete(objective: string, latestTurnText: string): Promise<boolean> {
     if (!latestTurnText.trim()) return false;
