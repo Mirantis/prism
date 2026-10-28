@@ -448,8 +448,19 @@ class GoalService {
       });
       runtime.afterRestart = false;
       // A stop or a shutdown ended the turn. It delivers nothing and is not counted,
-      // so a goal a shutdown interrupted runs the turn again after the restart.
-      if (runtime.aborted) return null;
+      // so a goal a shutdown interrupted runs the turn again after the restart. A
+      // message the turn sent stays in the goal's history, so the rerun reads it.
+      if (runtime.aborted) {
+        await outboundMessageService.keepWithheldRun({
+          agentId: goal.agentId,
+          userId: goal.userId,
+          threadId: goal.threadId,
+          content: (result.steps[result.steps.length - 1]?.text ?? '').trim(),
+          triggeredBy: 'GOAL',
+          toolCalls: result.toolCalls,
+        });
+        return null;
+      }
 
       const budgetExceeded = result.error?.type === 'budget_exceeded';
       const lastStep = result.steps[result.steps.length - 1];

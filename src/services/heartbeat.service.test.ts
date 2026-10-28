@@ -1286,6 +1286,33 @@ describe('HeartbeatService', () => {
       );
     });
 
+    it('keeps a message sent by a run a shutdown stopped, on the timer and the channel-triggered path', async () => {
+      const toolCalls = [{ tool: 'send_message', input: '{}', output: '{}', success: true, timestamp: '2025-01-15T12:00:00Z' }];
+      mockInvoke.mockImplementation(async () => {
+        shutdown.controller.abort();
+        return { response: 'Posted to #ops.', toolCalls, steps: [{ text: 'Posted to #ops.', toolCalls }] };
+      });
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await heartbeatService.triggerHeartbeat();
+      mockPendingTriggerMessages.mockResolvedValueOnce([
+        { sender: 'Test Operator', text: 'is the build still red?', timestamp: '2025-01-15T12:00:00Z' },
+      ]);
+      heartbeatService.triggerFrom(triggerSource);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const kept = {
+        agentId: 'agent-1',
+        userId: 'user-abc-123',
+        content: 'This run sent a message and ended with no reply.',
+        triggeredBy: 'HEARTBEAT',
+        toolCalls,
+      };
+      expect(mockKeepWithheldRun).toHaveBeenNthCalledWith(1, kept);
+      expect(mockKeepWithheldRun).toHaveBeenNthCalledWith(2, kept);
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+    });
+
     it('ends the cycle when a shutdown starts once the delivery is under way', async () => {
       // The delivery may have reached a channel, so the next boot must not run
       // the check again and send the alert twice.

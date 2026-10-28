@@ -27,7 +27,7 @@ import {
   type DeliverTo,
 } from './delivery-target.service';
 import { conversationService } from './conversation.service';
-import { outboundMessageService, sentMessages } from './outbound-message.service';
+import { outboundMessageService, sentMessages, WITHHELD_RUN_TEXT } from './outbound-message.service';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { isTimezone } from '../lib/timezone';
@@ -736,9 +736,19 @@ class CronSchedulerService {
           lastSend: await this.lastSendOf(task),
         }),
       });
-      // A shutdown stopped the run. It delivers nothing and stays due. From here
+      // A shutdown stopped the run. It delivers nothing and stays due, and a message
+      // it sent stays in history, so the run after the restart reads it. From here
       // the run delivers, so a shutdown that starts later lets it end.
       if (pendingWorkService.shutdownSignal.aborted) {
+        const stoppedText = (result.steps[result.steps.length - 1]?.text ?? '').trim() || WITHHELD_RUN_TEXT;
+        await outboundMessageService.keepWithheldRun({
+          agentId: task.agentId,
+          userId: task.userId,
+          threadId: boundThreadId ?? undefined,
+          content: boundThreadId ? stoppedText : `**Scheduled Task: ${task.name}**\n\n${stoppedText}`,
+          triggeredBy: 'CRON_TASK',
+          toolCalls: result.toolCalls,
+        });
         stopped = true;
         return false;
       }

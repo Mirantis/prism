@@ -505,6 +505,34 @@ describe('CronSchedulerService', () => {
       expect(mockFinishWork).not.toHaveBeenCalled();
     });
 
+    it('keeps a message sent by a run a shutdown stopped, under the task heading', async () => {
+      let cronCallback: (() => Promise<void>) | undefined;
+      mockCronValidate.mockReturnValue(true);
+      mockCronSchedule.mockImplementation((_schedule: string, cb: () => Promise<void>) => {
+        cronCallback = cb;
+        return { stop: vi.fn(), getNextRun: () => tomorrow };
+      });
+      const toolCalls = [{ tool: 'send_message', input: '{}', output: '{}', success: true, timestamp: '2026-10-14T00:00:00Z' }];
+      mockInvoke.mockImplementation(async () => {
+        shutdown.controller.abort();
+        return { response: '', toolCalls, steps: [] };
+      });
+      cronSchedulerService.scheduleTask(createCronTask());
+      await vi.advanceTimersByTimeAsync(0);
+
+      await cronCallback!();
+
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith({
+        agentId: 'agent-1',
+        userId: 'user-abc-123',
+        threadId: undefined,
+        content: '**Scheduled Task: Daily Report**\n\nThis run sent a message and ended with no reply.',
+        triggeredBy: 'CRON_TASK',
+        toolCalls,
+      });
+    });
+
     it('keeps a run as pending work from before the model call until it is recorded', async () => {
       let cronCallback: (() => Promise<void>) | undefined;
       mockCronValidate.mockReturnValue(true);
