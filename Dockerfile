@@ -281,6 +281,7 @@ RUN chmod +x ./start.sh
 ENV NODE_ENV=production
 ENV PORT=3003
 ENV WEBHOOK_PORT=3004
+ENV AGENT_MESSAGES_PORT=3005
 # A published port requires the runtime to listen on every interface. The
 # default is loopback, which is what a local install wants.
 ENV PRISM_HOST=0.0.0.0
@@ -309,7 +310,7 @@ RUN --mount=type=secret,id=otel_api_key \
     fi
 
 # 3979 is the Microsoft Teams bot endpoint, the one port to publish publicly.
-EXPOSE 3003 3004 3979
+EXPOSE 3003 3004 3005 3979
 
 # Per-agent SQLite DB and the installed skills bundles live here. Owned by node
 # so the runtime user can write; the skills/ subdir is pre-created so first-boot

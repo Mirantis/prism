@@ -1027,7 +1027,7 @@ src/
 ├── routes/
 │   ├── management.ts           # Management API for backend to push heartbeat/slack-heartbeat-trigger events
 │   ├── activity.ts             # Activity page reads: token totals, paged tool calls, paged webhook runs
-│   ├── agent-messages.ts       # POST /agents/agent-messages: another agent's message, stored and scheduled (403 for a person)
+│   ├── agent-messages.ts       # POST /agents/agent-messages on AGENT_MESSAGES_PORT: another agent's message, stored and scheduled (403 for a person)
 │   ├── agent-state.ts          # GET /agents/state: working or idle
 │   ├── cron-tasks.ts           # Scheduled tasks: list, create, edit, delete; each write re-registers the task
 │   ├── document-revisions.ts   # Per identity document: the write, the history, one revision with its content, and the restore
@@ -1156,6 +1156,7 @@ What the operator sets on `docker run`:
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `PORT` | Agent runtime server port | `3003` |
+| `AGENT_MESSAGES_PORT` | Port of the agent-messages listener (`createAgentMessagesApp`), which serves `POST /agents/agent-messages` alone, on the `PRISM_HOST` interface; the main port does not serve it. Must be a port number different from `PORT` and `WEBHOOK_PORT`, or startup stops. Always open; a taken port is logged and the rest of the runtime runs | `3005` |
 | `WEBHOOK_PORT` | Port of the webhook listener (`createWebhookApp`), which serves `POST /agents/webhooks/:name` alone, on the `PRISM_HOST` interface. A literal default, not derived from `PORT`. The receiver service opens the port only while enabled; disabling closes connections and the listener. A taken port reports an error and preserves the saved setting for the next restart | `3004` |
 | `PRISM_HOST` | Interface the HTTP server binds. Loopback by default, and `lib/origin-guard.ts` then requires a loopback `Host` plus a loopback or absent `Origin` on every request — the guard is app-wide, `/health` included, and covers the `/api/ws` handshake — which is what closes DNS rebinding. A request stating `X-Forwarded-Host` is exempt from the loopback-`Host` rule (that is a proxy in front, a header no browser can state) and is held to the origin rules alone. A non-loopback bind relaxes that to an `Origin` matching the request's own `Host` or its first `X-Forwarded-Host` value, since the exposed address is the operator's to choose. The image sets `0.0.0.0`, which a published port needs | `127.0.0.1` (`0.0.0.0` in the image) |
 | `PRISM_ALLOWED_ORIGINS` | Origin patterns (`lib/origin-patterns.ts`: `scheme://host[:port]` or `scheme://host:*`) that `lib/origin-guard.ts` admits after the loopback-`Host` rule and ahead of its same-host, `X-Forwarded-Host` and loopback-`Origin` checks, on the HTTP routes and both WebSocket handshakes. A listed origin gets `Access-Control-Allow-Origin` (its canonical `URL.origin`) on every response, and its preflight a 204 allowing `GET, HEAD, POST, PUT, PATCH, DELETE` (mirrored by the Nexus sandbox ingress); with any list set, every response has `Vary: Origin`. The loopback decision normalizes `PRISM_HOST` through the URL parser (`127.1`, `::ffff:127.0.0.1`, `localhost.` count), while `listen` gets the value as written. An invalid entry, or any entry on a loopback `PRISM_HOST`, stops startup in `config.ts`: the list is for a runtime behind an authenticating proxy | empty |
@@ -1289,8 +1290,14 @@ only `inboundMessageService` sets it, for the agent-message route.
   equal `AGENT_MESSAGES_TOKEN_ID` (`config.agentMessagesTokenId`, compared in
   constant time), or the request gets 401; unset, every delivery gets 503. The
   ingress drops a caller's own copy of the header, so it is trustworthy only
-  for requests through the ingress: the runtime listens on loopback where the
-  platform tunnels to it. The runtime itself never calls `list_agents`.
+  for requests through the ingress. The runtime itself never calls `list_agents`.
+- **Its own port.** `POST /agents/agent-messages` is served by
+  `createAgentMessagesApp` (`server.ts`) on `AGENT_MESSAGES_PORT` (default
+  3005, on `PRISM_HOST`), with a 1 MB JSON body limit and nothing else: no
+  origin guard, no CORS, no other route. `createApp` does not mount it, so the
+  main port answers 404. `index.ts` opens it after the API and closes it with
+  the webhook receiver on shutdown; a port that cannot be opened is logged and
+  the runtime keeps running.
 - **`GET /agents/state`** (`routes/agent-state.ts`) answers `working` or `idle`
   from `isAgentIdle`.
 

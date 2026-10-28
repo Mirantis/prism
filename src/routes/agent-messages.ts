@@ -2,7 +2,8 @@
  * Agent Messages Route
  *
  * POST /agents/agent-messages — a message from another agent of the project,
- * posted by the delivery service. The ingress names the API token of each
+ * posted by the delivery service. Served on `AGENT_MESSAGES_PORT` alone
+ * (`createAgentMessagesApp` in `server.ts`), never on the main port. The ingress names the API token of each
  * caller in `x-forwarded-token-id`, and only the token `AGENT_MESSAGES_TOKEN_ID`
  * names may post here. The message is stored in the web conversation as that
  * agent's, and its turn is scheduled like a chat message's. The answer comes
@@ -28,8 +29,7 @@ const PERSON_HEADERS = ['x-forwarded-user', 'x-forwarded-user-id'];
 /**
  * The header the ingress writes with the id of the API token a caller used. It
  * drops any copy the caller sent, so it is to be trusted only for a request that
- * came through the ingress: the runtime listens on loopback where the platform
- * tunnels to it.
+ * came through the ingress.
  */
 const TOKEN_ID_HEADER = 'x-forwarded-token-id';
 

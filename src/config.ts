@@ -26,6 +26,14 @@ const projectId = process.env.PROJECT_ID;
 const port = parseInt(process.env.PORT || '3003', 10);
 const webhookPort = parseInt(process.env.WEBHOOK_PORT || '3004', 10);
 if (webhookPort === port) throw new Error('WEBHOOK_PORT must differ from PORT');
+// Messages from the other agents of the project arrive on a port of their own
+// (`createAgentMessagesApp`), so the API above never serves them.
+const agentMessagesPort = parseInt(process.env.AGENT_MESSAGES_PORT || '3005', 10);
+if (!Number.isInteger(agentMessagesPort) || agentMessagesPort < 1 || agentMessagesPort > 65535) {
+  throw new Error('AGENT_MESSAGES_PORT must be a port number');
+}
+if (agentMessagesPort === port) throw new Error('AGENT_MESSAGES_PORT must differ from PORT');
+if (agentMessagesPort === webhookPort) throw new Error('AGENT_MESSAGES_PORT must differ from WEBHOOK_PORT');
 // Loopback by default, so only this machine connects. The container image
 // sets `PRISM_HOST=0.0.0.0`, which is what a published port needs.
 const host = process.env.PRISM_HOST?.trim() || '127.0.0.1';
@@ -889,6 +897,8 @@ export const config = {
   // Webhook senders POST here, apart from the Web UI and the management API.
   webhookPort,
   webhookPublicUrl,
+  // Other agents' messages arrive here, apart from everything else.
+  agentMessagesPort,
   // Dev convenience default; production sets DATABASE_URL=file:/data/agent.db
   // via start.sh so the container's mounted /data volume is used.
   databaseUrl: process.env.DATABASE_URL ?? 'file:./agent.db',

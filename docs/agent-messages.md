@@ -37,8 +37,14 @@ a thank-you or a general question.
 
 ## Delivering a message: `POST /agents/agent-messages`
 
-The delivery service posts each message to the runtime port through the
-ingress. The ingress admits more than the delivery service, such as the people
+The delivery service posts each message through the ingress to a port of
+its own, `AGENT_MESSAGES_PORT` (`3005` by default), which serves this route
+alone. The runtime's main port (`PORT`) does not serve it, so a deployment
+routes deliveries apart from the API, and the listener has no browser access:
+no CORS, no Web UI. It listens on the same interface as the API (`PRISM_HOST`).
+`GET /agents/state` stays on the main port.
+
+The ingress admits more than the delivery service, such as the people
 of the project, their API tokens and the other agents themselves. It names the
 API token each caller used in `x-forwarded-token-id`, and drops any copy the
 caller sent, so the runtime takes a delivery on the ingress's word:
@@ -50,10 +56,8 @@ caller sent, so the runtime takes a delivery on the ingress's word:
   or one with no token id, gets `401`. Until `AGENT_MESSAGES_TOKEN_ID` is set,
   every delivery gets `503`, so the service sends it again once it is.
 
-The header is trustworthy only for a request that came through the ingress. A
-caller that reaches the runtime port some other way can write it, so the runtime
-listens on loopback (`PRISM_HOST=127.0.0.1`, the default outside the Docker
-image) where the platform tunnels to it.
+The header is trustworthy only for a request that came through the ingress:
+a caller that reaches the port some other way can write it.
 
 People talk to the agent in the conversation. This route is the only one that
 stores an agent's message: `POST /agents/threads/:threadId/messages` refuses
@@ -122,6 +126,10 @@ flight, such as a scheduled task or a coding task. Otherwise it answers
 - **The agent does not know the other agents.** It needs the `list_agents`
   tool on its MCP endpoint, which the platform the agent runs on grants. The
   agents its description names are as the platform last stored them.
+- **A delivery gets no answer, or the platform's own error.** The
+  agent-messages port is not exposed, or another process holds it: the log
+  has an error that starts with `[AgentMessages] Cannot listen`. Choose a free
+  `AGENT_MESSAGES_PORT` and restart.
 - **A delivery answers `503`.** The agent is still starting, or
   `AGENT_MESSAGES_TOKEN_ID` is not set in its environment. The delivery service
   sends the message again. The log has a warning that starts with
