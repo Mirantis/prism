@@ -26,7 +26,7 @@ import { invoke } from '../invoke';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { messageDeliveryService } from './message-delivery.service';
-import { outboundMessageService } from './outbound-message.service';
+import { outboundMessageService, sentMessageList } from './outbound-message.service';
 import { ChannelName, isChatPlatform } from './channel-adapter.interface';
 import { threadTurnService } from './thread-turn.service';
 import { conversationThreadActivityService } from './conversation-thread-activity.service';
@@ -38,7 +38,11 @@ import { trackEvent, langfuseTelemetry } from '../lib/telemetry';
 import { logger } from '../logger';
 import { buildGoalContinuationPrompt, GOAL_COMPLETION_GATE_PROMPT } from '../prompts/goal-prompt';
 import { GOAL_MAX_OBJECTIVE_CHARS, GOAL_MAX_STALL_TURNS, GOAL_TURN_DELAY_MS } from '../constants';
-import { ToolCallRecord } from '../types';
+import { ToolCallRecord, type TaskLastSend } from '../types';
+import { formatTimeAgo } from '../prompts/context-builder';
+
+/** How many of a goal's stored turns a turn reads for the messages the goal sent. */
+const GOAL_SEND_ROWS = 20;
 
 /** Statuses a goal can be in while still "live" (loop should run / can resume). */
 const LIVE_STATUSES = ['active', 'paused'] as const;
@@ -440,6 +444,7 @@ class GoalService {
         }),
         afterRestart: runtime.afterRestart,
         abortSignal: runtime.abort.signal,
+        lastSend: await this.lastSendOf(goal),
       });
       runtime.afterRestart = false;
       // A stop or a shutdown ended the turn. It delivers nothing and is not counted,
@@ -516,6 +521,34 @@ class GoalService {
       'goal.tokens': String(goal.tokensUsed),
       'goal.elapsed_ms': String(elapsedMs),
     });
+  }
+
+  /**
+   * What this goal's earlier turns sent, from its newest `GOAL_SEND_ROWS` stored
+   * turns. A goal turn reads no history, so this keeps a later turn from sending
+   * the same message again. The trade: a stored row names no goal, so a send of
+   * a goal this one replaced, stored after this one began, is read as this one's.
+   */
+  private async lastSendOf(goal: Goal): Promise<TaskLastSend | undefined> {
+    try {
+      const rows = await prisma.conversationMessage.findMany({
+        where: { threadId: goal.threadId, role: 'AGENT', triggeredBy: 'GOAL', createdAt: { gte: goal.createdAt } },
+        orderBy: { createdAt: 'desc' },
+        take: GOAL_SEND_ROWS,
+        select: { createdAt: true, toolCalls: true },
+      });
+      const sends = rows.flatMap((row) =>
+        sentMessageList((row.toolCalls as ToolCallRecord[] | null) ?? []).map((send) => ({ ...send, at: row.createdAt.getTime() })),
+      );
+      if (sends.length === 0) return undefined;
+      return {
+        messages: sends.map(({ place, text, at }) => `- To ${place} (${formatTimeAgo(at)}): ${text}`).join('\n'),
+        at: sends[0].at,
+      };
+    } catch (err) {
+      logger.warn({ err }, `[Goal] ${goal.id} could not read its earlier sends`);
+      return undefined;
+    }
   }
 
   /** Deliver goal-turn output scoped to the originating channel. */

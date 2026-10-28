@@ -190,6 +190,7 @@ export async function buildSystemPromptParts(
     // No chat section: a goal turn has no live user to answer a question, and a turn
     // that asked one would end without progress.
     stableSections.push(getGoalInstructions());
+    if (context.lastSend) dynamicSections.push(getGoalSendInstructions(context.lastSend));
   } else if (mode === 'meeting') {
     // No chat-mode section: a live voice meeting is not a conversation with the
     // user, and its delivery rules are the opposite of chat's (no markdown, no
@@ -862,6 +863,19 @@ You are running a scheduled task: follow its instruction and report what you fin
 - You can list the scheduled tasks, schedule a task for later and delete a scheduled task.
 
 When this run continues an earlier conversation, you are resuming after a wait you scheduled: reply as the next message in that conversation, not as a standalone report. If what you waited for has not happened yet, you can wait again the same way.`;
+}
+
+/** What a goal's earlier turns sent, for a turn that reads no history. */
+function getGoalSendInstructions(lastSend: TaskLastSend): string {
+  return [
+    `# Messages This Goal Sent`,
+    ``,
+    `Earlier turns of this goal sent these messages, newest first:`,
+    ``,
+    lastSend.messages,
+    ``,
+    `Send one of these messages again only when the objective asks for it again, for example at a new stage of the work.`,
+  ].join('\n');
 }
 
 /** What a recurring task's or the heartbeat's runs sent and reported since, for a run that reads no history. */
