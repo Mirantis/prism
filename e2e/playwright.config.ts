@@ -15,6 +15,7 @@ import {
 } from './fixtures/test-data';
 import { MOCK_REALTIME_PORT } from './support/mock-realtime-port';
 import { WEBHOOK_PORT } from './support/webhook-port';
+import { AGENT_MESSAGES_PORT } from './support/agent-messages-port';
 
 // Load e2e environment variables (.env.e2e.local overrides for secrets)
 config({ path: path.resolve(__dirname, '.env.e2e') });
@@ -238,6 +239,7 @@ export default defineConfig({
       env: {
         PORT: String(RUNTIME_PORT),
         WEBHOOK_PORT: String(WEBHOOK_PORT),
+        AGENT_MESSAGES_PORT: String(AGENT_MESSAGES_PORT),
         PRISM_PUBLIC_URL: process.env.SLACK_E2E_BOT_TOKEN ? SLACK_COMPUTER_PUBLIC_URL : '',
         NEXUS_INGRESS_ORIGINS_WEB: process.env.SLACK_E2E_BOT_TOKEN
           ? `http://alias.localhost:${WEB_PORT}`

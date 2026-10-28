@@ -56,7 +56,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, AfterEachScen
       expectsReply: false,
       attachmentIds: [],
     });
-    const res = await fetch(`http://127.0.0.1:${env.port}/agents/agent-messages`, {
+    const res = await fetch(`http://127.0.0.1:${env.agentMessagesPort}/agents/agent-messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-forwarded-token-id': DELIVERY_TOKEN_ID },
       body,
