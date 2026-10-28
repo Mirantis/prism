@@ -303,9 +303,10 @@ context from compounding indefinitely.
 - **Output cap** — 16,000 tokens per generation.
 - **Per-tool output limits** — large tool responses are truncated before
   reaching the model, so a single tool call can't flood context.
-- **Posting ceiling** — a heartbeat, scheduled-task or webhook run reaches
-  people only through messages the agent posts, and only to the places its
-  delivery setting allows. A run that fails is posted for the agent.
+- **Posting ceiling** — a heartbeat, scheduled-task or webhook run's
+  `send_message` posts only to the places its delivery setting allows. The
+  run's other tools (`shell_exec`, MCP and plugin tools) are not limited by
+  it. A run that fails is posted for the agent.
 
 ### Observability
 

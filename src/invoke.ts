@@ -712,6 +712,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
           toolCalls: [],
           ...(summaryUsage ? { usage: summaryUsage } : {}),
           blocks: earlyStoppingBlocks,
+          stepLimit: true,
         });
       }
 
@@ -873,6 +874,7 @@ export async function invoke(request: InvokeRequest): Promise<InvokeResponse> {
     ...(usage ? { usage } : {}),
     steps,
     ...(errorMeta ? { error: errorMeta } : {}),
+    ...(steps.some((s) => s.stepLimit) ? { stepLimitReached: true as const } : {}),
   };
 }
 

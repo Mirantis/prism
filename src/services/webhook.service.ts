@@ -388,7 +388,7 @@ export class WebhookService {
 
   /**
    * Run the agent over the rendered prompt and record how the run ended. A run a
-   * shutdown stops records nothing, and the next boot runs it again.
+   * shutdown stops before it posts records nothing, and the next boot runs it again.
    */
   private async runAgent(
     subscription: WebhookSubscription,
@@ -439,7 +439,7 @@ export class WebhookService {
 
   /**
    * Invoke the agent and deliver its final response, or the spending-limit
-   * notice. Null when a shutdown stopped the run before it delivered anything.
+   * notice. Null when a shutdown stopped the run before it posted anything.
    */
   private async invokeAndDeliver(
     agent: { id: string; userId: string },
@@ -459,7 +459,22 @@ export class WebhookService {
         channelIds: parseCommaList(subscription.slackChannelIds),
       }),
     });
-    if (pendingWorkService.shutdownSignal.aborted) return null;
+    const sent = sentMessageList(result.toolCalls).length > 0;
+    // A stopped run that posted already reached people, so it ends here: run
+    // again after the restart, it would post the same message a second time.
+    if (pendingWorkService.shutdownSignal.aborted) {
+      if (!sent) return null;
+      const stoppedText = (result.steps[result.steps.length - 1]?.text ?? '').trim();
+      const recordId = await outboundMessageService.keepWithheldRun({
+        agentId: agent.id,
+        userId: agent.userId,
+        content: stoppedText,
+        triggeredBy: 'WEBHOOK',
+        triggerName: subscription.name,
+        toolCalls: result.toolCalls,
+      });
+      return { status: 'completed', ...(recordId ? { messageId: recordId } : {}) };
+    }
 
     // The message stores the run's tool calls and shared files whatever the result.
     const stored = {
@@ -494,6 +509,11 @@ export class WebhookService {
       const { message, chosenChannels } = await this.deliver(agent.id, agent.userId, subscription, body, stored);
       return { status: 'failed', error: result.error.detail, messageId: message?.id, chosenChannels };
     }
+    // A run that ran out of steps before it posted ends on a summary it could not post.
+    if (result.stepLimitReached && !sent) {
+      const { message, chosenChannels } = await this.deliver(agent.id, agent.userId, subscription, body, stored);
+      return { status: 'completed', messageId: message?.id, chosenChannels };
+    }
 
     // Otherwise the run reaches people only through what the agent posted. A run
     // that posted is stored with its sends, and its run row names that record.
@@ -505,7 +525,7 @@ export class WebhookService {
       triggerName: subscription.name,
       toolCalls: result.toolCalls,
     });
-    if (sentMessageList(result.toolCalls).length === 0) return { status: 'suppressed' };
+    if (!sent) return { status: 'suppressed' };
     return { status: 'completed', ...(recordId ? { messageId: recordId } : {}) };
   }
 

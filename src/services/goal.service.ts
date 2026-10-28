@@ -549,7 +549,7 @@ class GoalService {
         select: { createdAt: true, toolCalls: true },
       });
       const sends = rows.flatMap((row) =>
-        sentMessageList((row.toolCalls as ToolCallRecord[] | null) ?? []).map((send) => ({ ...send, at: row.createdAt.getTime() })),
+        sentMessageList((row.toolCalls as ToolCallRecord[] | null) ?? []).map(({ place, text }) => ({ place, text, at: row.createdAt.getTime() })),
       );
       if (sends.length === 0) return undefined;
       return {

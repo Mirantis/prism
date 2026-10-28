@@ -210,6 +210,9 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
   // Applied to everything, not just the built-ins: an MCP tool that shares a
   // name with a built-in the current mode removed must not survive either.
   const modeFilteredTools = filterToolsByMode(merged, input.mode);
+  // A run with a posting ceiling reaches people only through `send_message`,
+  // which carries no file, so a file it shared would reach nobody.
+  if (input.postingCeiling) delete modeFilteredTools[SHARE_FILE_TOOL_NAME];
 
   // Locked-in mode: withhold the workspace-markdown writers and the long-term
   // memory writers. Applied after the mode filter so it holds for every mode,
@@ -329,7 +332,8 @@ function omitLockedTools(tools: Record<string, Tool>): Record<string, Tool> {
  * Reading the call's chat goes the other way: only the model in the call gets it.
  *
  * - chat: All tools except `read_meeting_chat`
- * - heartbeat, cron, webhook: minus the goal tools; the schedule tools stay
+ * - heartbeat, cron, webhook: minus the goal tools; the schedule tools stay. A run with a
+ *   posting ceiling also loses share_file (see collectTools)
  * - subagent: minus share_file (no user channel), goal tools and the message tools (no user thread)
  * - goal: minus create_goal (no nested goals) and the schedule tools; get_goal stays
  * - meeting: chat's set minus share_file and the message tools, plus read_meeting_chat (see the function body)

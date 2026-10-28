@@ -177,8 +177,8 @@ When an agent run posts a message, web chat keeps a record of that run.
 
 Put the condition in the prompt, for example "Review the PR. Message me only if
 the review finds a blocking problem." A prompt that asks for a message on every
-event, or an empty prompt, gets one every time. A failed run is always posted,
-except with **None**.
+event, or an empty prompt, gets one every time. A failed run, and one that ran
+out of steps before it posted, is always posted, except with **None**.
 
 ## Prompt templates
 

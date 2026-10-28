@@ -8,13 +8,15 @@ interface SlackChannelsFieldProps {
   value: string[];
   onChange: (ids: string[]) => void;
   error?: string;
+  /** Set while a change is saving, when the next change would be built on a stale `value`. */
+  disabled?: boolean;
 }
 
 /**
  * The linked Slack channels a Slack delivery posts to. A chosen channel that
  * was unlinked since stays listed, so the user can see it and clear it.
  */
-export function SlackChannelsField({ value, onChange, error }: SlackChannelsFieldProps) {
+export function SlackChannelsField({ value, onChange, error, disabled }: SlackChannelsFieldProps) {
   const { data, isPending } = useSlackChannels();
   const linked = data?.channels ?? [];
   const options = [
@@ -45,6 +47,7 @@ export function SlackChannelsField({ value, onChange, error }: SlackChannelsFiel
                 <label className="flex items-center gap-2">
                   <Checkbox
                     checked={value.includes(option.id)}
+                    disabled={disabled}
                     onCheckedChange={(checked: boolean) => toggle(option.id, checked)}
                   />
                   <span className={option.isLinked ? undefined : 'font-mono text-muted-foreground'}>

@@ -658,7 +658,7 @@ class CronSchedulerService {
     logger.info(`[CronScheduler] Executing "${task.name}" for user ${task.userId}`);
 
     let sentCalls: ToolCallRecord[] = [];
-    const trackRun =(result: 'posted' | 'silent' | 'budget_exceeded' | 'error') =>
+    const trackRun = (result: 'posted' | 'silent' | 'budget_exceeded' | 'error') =>
       trackEvent('cron task executed', task.userId, {
         'agent.id': task.agentId,
         'cron.task.id': task.id,
@@ -715,9 +715,10 @@ class CronSchedulerService {
           lastSend: await this.lastSendOf(task),
         }),
       });
-      // A shutdown stopped the run. It delivers nothing and stays due, and a message
-      // it sent stays in history, so the run after the restart reads it. From here
-      // the run delivers, so a shutdown that starts later lets it end.
+      // A shutdown stopped the run. It delivers nothing, and a message it sent stays
+      // in history. A run that sent nothing stays due; one that sent already reached
+      // people, so it ends, as a run again after the restart would send it twice.
+      // From here the run delivers, so a shutdown that starts later lets it end.
       if (pendingWorkService.shutdownSignal.aborted) {
         const stoppedText = (result.steps[result.steps.length - 1]?.text ?? '').trim() || WITHHELD_RUN_TEXT;
         await outboundMessageService.keepWithheldRun({
@@ -728,6 +729,7 @@ class CronSchedulerService {
           triggeredBy: 'CRON_TASK',
           toolCalls: result.toolCalls,
         });
+        if (sentMessageList(result.toolCalls).length > 0) return true;
         stopped = true;
         return false;
       }
@@ -803,10 +805,14 @@ class CronSchedulerService {
       }
 
       // An unbound run reaches people only through what the agent posted. A run
-      // that ended in an error, or whose tool call the risk gate refused, could
-      // not post what happened, so its result goes to the task's target.
+      // that ended in an error could not post what happened, so its result goes
+      // to the task's target, as does that of a run that posted nothing because
+      // the risk gate refused a tool call or it ran out of steps. A run that did
+      // post keeps its closing line, which says where it posted, to itself.
       const content = `**Scheduled Task: ${task.name}**\n\n${body}`;
-      const failed = Boolean(result.error) || hasRiskBlockedCall(result.toolCalls);
+      const failed =
+        Boolean(result.error) ||
+        (!sent && (hasRiskBlockedCall(result.toolCalls) || Boolean(result.stepLimitReached)));
       const { message } = failed
         ? await deliveryTargetService.deliver(task.agentId, task.userId, target, content, 'CRON_TASK', {
             toolCalls,

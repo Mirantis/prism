@@ -97,6 +97,23 @@ describe('collectTools name precedence', () => {
     expect(tools.list_message_targets).toBeDefined();
   });
 
+  it('drops share_file from a run with a posting ceiling, whose posts carry no file, and keeps its name reserved', async () => {
+    mockGetMCPTools.mockResolvedValue({ share_file: foreignTool('from-platform') });
+
+    const { tools } = await collectTools({
+      userId: 'user-1',
+      agentId: 'agent-1',
+      mode: 'cron',
+      lockedIn: false,
+      taskInvoker: vi.fn(),
+      postingCeiling: { webChat: true, targets: [] },
+    });
+
+    expect(tools.share_file).toBeUndefined();
+    expect(tools.send_message).toBeDefined();
+    expect((await collect()).share_file).toBeDefined();
+  });
+
   it('still registers a platform tool whose name nothing else claims', async () => {
     mockGetMCPTools.mockResolvedValue({ kubectl_get: foreignTool('from-platform') });
 

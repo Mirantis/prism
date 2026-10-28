@@ -16,7 +16,7 @@ import type { AttachmentMeta } from '../services/attachment.service';
 import { humanFileSize } from '../services/attachment.service';
 import { HeartbeatTrigger, type TaskLastSend } from '../types';
 import type { PostingCeiling } from '../services/delivery-target.service';
-import { describeTarget, WEB_CHAT_TARGET } from '../services/channel-adapter.interface';
+import { type LinkedTarget, WEB_CHAT_TARGET } from '../services/channel-adapter.interface';
 import { skillCatalogService, type SkillSource } from '../services/skill-catalog.service';
 import { getExecutionEnvironment } from '../lib/execution-environments/get-execution-environment';
 import { pluginCatalogService } from '../services/plugin-catalog.service';
@@ -864,7 +864,7 @@ function getPostingPlaces(ceiling: PostingCeiling, userId: string): string {
     ...(ceiling.webChat ? [{ key: WEB_CHAT_TARGET, label: 'web chat' }] : []),
     ...ceiling.targets.map((t) => ({
       key: t.key,
-      label: `${describeTarget(t)}${t.isMain ? ', the main channel' : ''}${t.kind === 'dm' && t.dmUserId === userId ? ', your user' : ''}`,
+      label: `${quotedTarget(t)}${t.isMain ? ', the main channel' : ''}${t.kind === 'dm' && t.dmUserId === userId ? ', your user' : ''}`,
     })),
   ];
   if (places.length === 0) {
@@ -882,6 +882,16 @@ function getPostingPlaces(ceiling: PostingCeiling, userId: string): string {
     '',
     `The default place is \`${fallback}\`. Post there when the instruction names no place.`,
   ].join('\n');
+}
+
+/**
+ * A target as the posting places name it. A name is text people on the platform
+ * chose, so it goes in quotes, on one line, with no backticks.
+ */
+function quotedTarget(target: LinkedTarget): string {
+  if (!target.name) return target.kind === 'dm' ? 'the DM' : target.key;
+  const name = target.name.replace(/[\r\n`]+/g, ' ').trim();
+  return target.kind === 'dm' ? `the DM with ${JSON.stringify(name)}` : `the channel ${JSON.stringify(`#${name}`)}`;
 }
 
 function getCronInstructions(posts: boolean): string {

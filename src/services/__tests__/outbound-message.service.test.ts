@@ -291,6 +291,13 @@ describe('Requirement: the agent sends only to a linked target, and never a broa
         );
       });
 
+      it('refuses a thread in web chat, which has none', async () => {
+        await expect(send({ target: 'chat', thread: '1761638400.000100', ceiling: { webChat: true, targets: [] } })).rejects.toThrow(
+          'Web chat has no threads.',
+        );
+        expect(mockPublishToWebChat).not.toHaveBeenCalled();
+      });
+
       it('refuses web chat when the setting leaves it out, and in a conversation', async () => {
         await expect(send({ target: 'chat', ceiling })).rejects.toThrow('"chat" is not a channel or DM linked to this agent');
         await expect(send({ target: 'chat' })).rejects.toThrow('"chat" is not a channel or DM linked to this agent');
@@ -419,6 +426,14 @@ describe('Requirement: a withheld run that sent a message stays in history', () 
       'thread-latest',
       expect.objectContaining({ internalStep: true }),
     );
+  });
+
+  it('reads a web chat post as one whatever its thread', async () => {
+    const posted = toolCall({ input: JSON.stringify({ target: 'chat', thread: 'x', text: 'Release v2 is out.' }) });
+
+    await outboundMessageService.keepWithheldRun({ ...run, toolCalls: [posted] });
+
+    expect(mockConversationService.addMessage).toHaveBeenCalledWith('thread-latest', expect.objectContaining({ internalStep: true }));
   });
 
   it('stores the record as a visible row when the run posted only to a channel', async () => {

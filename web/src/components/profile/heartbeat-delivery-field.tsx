@@ -27,7 +27,12 @@ export function HeartbeatDeliveryField({ agentId }: { agentId: string }) {
       />
       {data.deliverTo === 'none' && <FieldDescription>Heartbeat checks run and post no message.</FieldDescription>}
       {data.deliverTo === 'slack' && (
-        <SlackChannelsField value={data.channelIds} onChange={(channelIds) => updateMut.mutate({ channelIds })} />
+        // Each check builds on the saved list, so the next one waits for the save.
+        <SlackChannelsField
+          value={data.channelIds}
+          onChange={(channelIds) => updateMut.mutate({ channelIds })}
+          disabled={updateMut.isPending}
+        />
       )}
       {updateMut.error && (
         <FieldError>{updateMut.error instanceof Error ? updateMut.error.message : 'Update failed'}</FieldError>

@@ -100,9 +100,10 @@ A scheduled run posts a message only when its instruction asks for one:
   is stuck") posts only when the condition is met, and does not post the same
   finding again until something changes.
 - A task that asks for **no message** ("just do the work, never tell me about
-  it") posts nothing. A run that ends in an error, or in which the
-  [risk gate](configuration.md#tool-risk-gate) blocked an action, is posted for
-  you all the same.
+  it") posts nothing. A run that ends in an error is posted for you all the
+  same, and so is one that posted nothing because the
+  [risk gate](configuration.md#tool-risk-gate) blocked an action or it ran out
+  of steps.
 
 **May post to** on the task sets where it may post: every linked channel and web
 chat (the default), web chat only, Slack or Teams, chosen Slack channels, or

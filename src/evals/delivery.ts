@@ -14,7 +14,8 @@ import { heartbeatService } from '../services/heartbeat.service';
 import { renderWebhookTurnPrompt } from '../services/webhook.service';
 import { scheduledRunPrompt } from '../prompts/scheduled-run-prompt';
 import { WEB_CHAT_TARGET, type LinkedTarget } from '../services/channel-adapter.interface';
-import type { PostingCeiling } from '../services/delivery-target.service';
+import { deliveryTargetService, type PostingCeiling } from '../services/delivery-target.service';
+import { outboundMessageService } from '../services/outbound-message.service';
 import type { TaskLastSend } from '../types';
 
 /** A place a message can reach. A linked channel is named `#name`. */
@@ -69,18 +70,18 @@ export interface Outcome {
   detail: string;
 }
 
-/** The places a delivery setting allows, as `deliveryTargetService.ceiling` derives them. */
-function postingCeiling(ceiling: Ceiling): PostingCeiling {
-  const targets = (places: Place[]) => LINKED.filter((t) => places.includes(t.place));
-  switch (ceiling.deliverTo) {
-    case 'all':
-      return { webChat: true, targets: LINKED };
-    case 'chat':
-      return { webChat: true, targets: [] };
-    case 'none':
-      return { webChat: false, targets: [] };
-    case 'slack':
-      return { webChat: false, targets: ceiling.channels?.length ? targets(ceiling.channels) : LINKED };
+/** The places a delivery setting allows: `deliveryTargetService.ceiling` itself, over the linked workspace. */
+async function postingCeiling(ceiling: Ceiling): Promise<PostingCeiling> {
+  const channelIds =
+    ceiling.deliverTo === 'slack'
+      ? LINKED.filter((t) => ceiling.channels?.includes(t.place)).map((t) => t.conversationId)
+      : [];
+  const listTargets = outboundMessageService.listTargets;
+  outboundMessageService.listTargets = async () => LINKED;
+  try {
+    return await deliveryTargetService.ceiling('eval-agent', { deliverTo: ceiling.deliverTo, channelIds });
+  } finally {
+    outboundMessageService.listTargets = listTargets;
   }
 }
 
@@ -128,7 +129,7 @@ function lastSendOf(earlier: EarlierMessage | undefined): TaskLastSend | undefin
 
 /** Run one heartbeat, scheduled-task or webhook run and report every place a message reached. */
 export async function runAutonomous(run: AutonomousRun): Promise<Outcome> {
-  const ceiling = postingCeiling(run.ceiling ?? { deliverTo: 'all' });
+  const ceiling = await postingCeiling(run.ceiling ?? { deliverTo: 'all' });
   const reached: Posted[] = [];
 
   const trace = await runTurn({

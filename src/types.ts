@@ -294,6 +294,8 @@ export interface InvokeStep {
   // invokeStream's error path (so invoke() can surface structured metadata
   // in InvokeResponse.error without needing its own try/catch).
   error?: InvokeError;
+  // Set on the summary step `invokeStream` asks for once the run reaches `STEP_LIMIT`.
+  stepLimit?: true;
 }
 
 export interface InvokeResponse {
@@ -308,4 +310,6 @@ export interface InvokeResponse {
   usage?: StepUsage;
   steps: InvokeStep[];
   error?: InvokeError;
+  // The run reached `STEP_LIMIT` and ended on a forced summary, with no tool run after it.
+  stepLimitReached?: true;
 }

@@ -835,6 +835,34 @@ describe('HeartbeatService', () => {
       expect(mockKeepWithheldRun).not.toHaveBeenCalled();
     });
 
+    it('delivers the summary of a run that ran out of steps before it posted, and keeps one that posted', async () => {
+      const summary = { text: 'Ran out of steps checking the disks.', toolCalls: [], stepLimit: true as const };
+      mockInvoke.mockResolvedValueOnce({ response: summary.text, toolCalls: [], steps: [summary], stepLimitReached: true });
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockDeliverMessage).toHaveBeenCalledExactlyOnceWith(
+        'agent-1',
+        'user-abc-123',
+        expect.anything(),
+        summary.text,
+        'HEARTBEAT',
+        { toolCalls: undefined },
+      );
+
+      mockDeliverMessage.mockClear();
+      mockInvoke.mockResolvedValueOnce({
+        response: summary.text,
+        toolCalls: [SEND],
+        steps: [{ text: '', toolCalls: [SEND] }, summary],
+        stepLimitReached: true,
+      });
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith(expect.objectContaining({ content: summary.text, toolCalls: [SEND] }));
+    });
+
     it('keeps an error with no text in history, and delivers nothing', async () => {
       mockInvoke.mockResolvedValue({
         response: '',
@@ -1127,6 +1155,9 @@ describe('HeartbeatService', () => {
       expect(mockKeepWithheldRun).toHaveBeenNthCalledWith(1, kept);
       expect(mockKeepWithheldRun).toHaveBeenNthCalledWith(2, kept);
       expect(mockDeliverMessage).not.toHaveBeenCalled();
+      // The posts reached people, so the runs end: run again after the restart, they would post twice.
+      expect(mockUpdateHeartbeatSchedule).toHaveBeenCalledWith(expect.objectContaining({ lastHeartbeat: expect.any(Date) }));
+      expect(mockRemoveTriggerMessages).toHaveBeenCalledWith(['pending-0']);
     });
 
     it('ends the cycle when a shutdown starts once the run is being stored', async () => {

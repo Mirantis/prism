@@ -56,7 +56,7 @@ function mergeSends(
   checks: string,
 ): HeartbeatSendRecord | null {
   if (sends.length === 0) return record;
-  const fresh = sends.map((send) => ({ ...send, at }));
+  const fresh = sends.map(({ place, text }) => ({ place, text, at }));
   const kept = (record?.sends ?? []).filter((old) => !fresh.some((send) => send.place === old.place && send.text === old.text));
   return withReports({ checks, sends: [...fresh, ...kept].slice(0, HEARTBEAT_SENDS) }, record?.reports ?? []);
 }
@@ -492,11 +492,12 @@ class HeartbeatService {
         heartbeatTriggers: triggered ? triggers : undefined,
         abortSignal: pendingWorkService.shutdownSignal,
       });
-      // A shutdown stopped the run. The check stays due and the messages stay
-      // queued, so the next boot runs it. From here the run delivers, so a
-      // shutdown that starts later lets it end.
+      // A shutdown stopped the run. One that posted nothing stays due with its
+      // messages queued, so the next boot runs it; one that posted already reached
+      // people, so it ends. From here the run delivers, so a shutdown that starts
+      // later lets it end.
       if (pendingWorkService.shutdownSignal.aborted) {
-        await this.keepStoppedRun(state, invokeResult);
+        if (await this.keepStoppedRun(state, invokeResult)) await this.endCycle(state, read);
         return { shouldSkip: true, text: 'Stopped by shutdown' };
       }
       delivering = true;
@@ -633,9 +634,10 @@ class HeartbeatService {
         heartbeatTriggers: triggers,
         abortSignal: pendingWorkService.shutdownSignal,
       });
-      // A shutdown stopped the run. The messages stay queued for the next boot.
+      // A shutdown stopped the run. The messages of one that posted nothing stay
+      // queued for the next boot; one that posted already answered them.
       if (pendingWorkService.shutdownSignal.aborted) {
-        await this.keepStoppedRun(state, invokeResult);
+        if (await this.keepStoppedRun(state, invokeResult)) await this.endCycle(state, read);
         return;
       }
       delivering = true;
@@ -736,8 +738,9 @@ class HeartbeatService {
 
   /**
    * A run reaches people only through what the agent posted. Its result is kept
-   * as the run's record, except a run that ended in an error: the agent could not
-   * post that, so it goes to the delivery setting's destination.
+   * as the run's record, except a run that ended in an error, or ran out of steps
+   * before it posted: the agent could not post that, so it goes to the delivery
+   * setting's destination.
    */
   private async finishRun(
     state: HeartbeatState,
@@ -745,7 +748,8 @@ class HeartbeatService {
     invokeResult: InvokeResponse,
     responseText: string,
   ): Promise<HeartbeatOutcome> {
-    if (invokeResult.error && responseText) {
+    const unposted = invokeResult.stepLimitReached && sentMessageList(invokeResult.toolCalls).length === 0;
+    if ((invokeResult.error || unposted) && responseText) {
       await deliveryTargetService.deliver(state.agentId, state.userId, delivery, responseText, 'HEARTBEAT', {
         toolCalls: invokeResult.toolCalls.length > 0 ? invokeResult.toolCalls : undefined,
       });
@@ -794,8 +798,11 @@ class HeartbeatService {
     };
   }
 
-  /** A message a run sent before a shutdown stopped it stays in history, so the restored record has it. The unfinished text is no report. */
-  private async keepStoppedRun(state: HeartbeatState, invokeResult: InvokeResponse): Promise<void> {
+  /**
+   * A message a run sent before a shutdown stopped it stays in history, so the
+   * restored record has it. The unfinished text is no report. Answers whether the run sent.
+   */
+  private async keepStoppedRun(state: HeartbeatState, invokeResult: InvokeResponse): Promise<boolean> {
     await outboundMessageService.keepWithheldRun({
       agentId: state.agentId,
       userId: state.userId,
@@ -803,6 +810,7 @@ class HeartbeatService {
       triggeredBy: 'HEARTBEAT',
       toolCalls: invokeResult.toolCalls,
     });
+    return sentMessageList(invokeResult.toolCalls).length > 0;
   }
 
   /** A run's result, so the next run reads whether a finding still held. An empty result says nothing. */
