@@ -12,6 +12,7 @@ import { messageDeliveryService, type PublishOptions } from './message-delivery.
 import { conversationService } from './conversation.service';
 import { CHAT_PLATFORMS, type ChannelName } from './channel-adapter.interface';
 import { logger } from '../logger';
+import type { InvokeRequest } from '../types';
 
 export const DELIVER_TARGETS = ['all', 'chat', ...CHAT_PLATFORMS, 'none'] as const;
 export type DeliverTo = (typeof DELIVER_TARGETS)[number];
@@ -69,6 +70,27 @@ class DeliveryTargetService {
       return this.deliverToChosenChannels(agentId, userId, channel.name, linked, target.channelIds, content, triggeredBy, options);
     }
     return { message: await this.deliverToTarget(agentId, userId, target.deliverTo, content, triggeredBy, options) };
+  }
+
+  /**
+   * Where `deliver` posts the final message, so `send_message` refuses it as a
+   * target: the broadcast for 'all', and for a single platform its one
+   * conversation. A platform without one gets the message in web chat only, and
+   * 'chat' and 'none' reach no channel. A send into a chosen channel is not
+   * refused: the prompt rule asks the agent not to post its final message there.
+   */
+  async outputTarget(
+    agentId: string,
+    userId: string,
+    target: DeliveryTarget,
+  ): Promise<Pick<InvokeRequest, 'broadcastsOutput' | 'outputDestination'>> {
+    if (target.deliverTo === 'all') return { broadcastsOutput: true };
+    const channel = messageDeliveryService.getAdapter(target.deliverTo);
+    if (!channel?.defaultDestination) return {};
+    if (target.channelIds.length > 0 && channel.linkedChannelIds) return {};
+    const destination = await channel.defaultDestination(agentId, userId);
+    if (!destination) return {};
+    return { outputDestination: { platform: channel.name, conversationId: destination.threadKey } };
   }
 
   /**

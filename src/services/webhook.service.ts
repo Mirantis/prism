@@ -18,20 +18,18 @@ import { fence } from '../lib/prompt-fence';
 import { WEBHOOK_EVENT_DATA_TAG, WEBHOOK_PROMPT_TAG } from '../prompts/webhook-prompt-tags';
 import type { WebhookSubscription } from '@prisma/client';
 import { invoke } from '../invoke';
-import { messageDeliveryService, type PublishOptions } from './message-delivery.service';
+import type { PublishOptions } from './message-delivery.service';
 import { deliveryTargetService, parseCommaList, type Delivery } from './delivery-target.service';
 import { webhookRunService, WebhookRunResult, type AcceptedEvent } from './webhook-run.service';
 import { pendingWorkService, type PendingWorkItem } from './pending-work.service';
 import { outboundMessageService } from './outbound-message.service';
 import { agentWorkspaceService } from './agent-workspace.service';
 import { prisma } from '../lib/prisma';
-import type { ChannelName } from './channel-adapter.interface';
 import { trackEvent } from '../lib/telemetry';
 import { verifyWebhookAuth } from '../lib/webhook-signature';
 import { runClassificationGate } from '../lib/classification-gate';
 import { WEBHOOK_GATE_PROMPT, buildWebhookGateUserMessage } from '../prompts/webhook-gate-prompt';
 import { logger } from '../logger';
-import type { InvokeRequest } from '../types';
 
 // ============================================================================
 // Types
@@ -458,7 +456,10 @@ export class WebhookService {
       prompt,
       afterRestart,
       abortSignal: pendingWorkService.shutdownSignal,
-      ...(await this.outputTarget(agent.id, agent.userId, subscription)),
+      ...(await deliveryTargetService.outputTarget(agent.id, agent.userId, {
+        deliverTo: subscription.deliverTo,
+        channelIds: parseCommaList(subscription.slackChannelIds),
+      })),
     });
     if (pendingWorkService.shutdownSignal.aborted) return null;
 
@@ -563,27 +564,6 @@ export class WebhookService {
       logger.error({ err: deliverError }, `[Webhook] '${subscription.name}' failure notice could not be delivered`);
       return null;
     }
-  }
-
-  /**
-   * Where `deliver` posts the final message, so `send_message` refuses it as a
-   * target: the broadcast for 'all', and for a single platform its one
-   * conversation. A platform without one gets the message in web chat only. A
-   * send into a chosen channel is not refused: the webhook prompt rule asks the
-   * agent not to post its final message there.
-   */
-  private async outputTarget(
-    agentId: string,
-    userId: string,
-    target: Pick<WebhookSubscription, 'deliverTo' | 'slackChannelIds'>,
-  ): Promise<Pick<InvokeRequest, 'broadcastsOutput' | 'outputDestination'>> {
-    if (target.deliverTo === 'all') return { broadcastsOutput: true };
-    const channel = messageDeliveryService.getAdapter(target.deliverTo);
-    if (!channel?.defaultDestination) return {};
-    if (parseCommaList(target.slackChannelIds).length > 0 && channel.linkedChannelIds) return {};
-    const destination = await channel.defaultDestination(agentId, userId);
-    if (!destination) return {};
-    return { outputDestination: { platform: channel.name, conversationId: destination.threadKey } };
   }
 
   /** Deliver a webhook message per the subscription's target, naming the subscription for the model. */
