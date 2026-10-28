@@ -57,7 +57,7 @@ export async function setupRuntime(opts: SetupOptions = {}): Promise<RuntimeTest
   const dbPath = path.join(tempDir, 'agent.db');
   const port = await findFreePort();
   // Its own free port, so runtimes started side by side do not contend for the default.
-  const agentMessagesPort = await findFreePort();
+  const agentMessagesPort = await findFreePort([port]);
 
   // Apply the SQLite schema to the fresh DB. `db push` is the right tool for
   // a one-shot dev/test DB — no migration history needed.
@@ -332,9 +332,18 @@ export async function clearCronTasks(port: number): Promise<void> {
 /**
  * Bind a server to port 0 (kernel-assigned ephemeral), read the port, then
  * close. There's a small race window between close and the test consumer
- * re-binding, but it's good enough for one-shot allocation.
+ * re-binding, but it's good enough for one-shot allocation. A port in
+ * `exclude` (one already handed out for the same runtime, which nothing has
+ * bound yet) is skipped, since the kernel may hand it out again.
  */
-function findFreePort(): Promise<number> {
+async function findFreePort(exclude: readonly number[] = []): Promise<number> {
+  for (;;) {
+    const port = await bindEphemeralPort();
+    if (!exclude.includes(port)) return port;
+  }
+}
+
+function bindEphemeralPort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
     server.unref();
