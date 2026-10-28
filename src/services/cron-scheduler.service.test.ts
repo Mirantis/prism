@@ -1324,6 +1324,36 @@ describe('CronSchedulerService', () => {
       expect(mockInvoke.mock.calls[1][0].broadcastsOutput).toBeUndefined();
     });
 
+    it.each(['none', 'chat'])('tells an unbound run with target %s that its output reaches no channel', async (deliverTo) => {
+      await scheduleAndCapture({ deliverTo })();
+
+      expect(mockInvoke.mock.calls[0][0]).not.toHaveProperty('broadcastsOutput');
+      expect(mockInvoke.mock.calls[0][0]).not.toHaveProperty('outputDestination');
+    });
+
+    it("tells an unbound run with one platform's target the one conversation it posts to", async () => {
+      const defaultDestination = vi.fn().mockResolvedValue({ threadKey: 'D_OWNER', channelId: 'D_OWNER' });
+      mockGetAdapter.mockReturnValue({ name: 'slack', defaultDestination, linkedChannelIds: vi.fn() });
+
+      await scheduleAndCapture({ deliverTo: 'slack' })();
+
+      expect(mockInvoke.mock.calls[0][0]).not.toHaveProperty('broadcastsOutput');
+      expect(mockInvoke.mock.calls[0][0].outputDestination).toEqual({ platform: 'slack', conversationId: 'D_OWNER' });
+    });
+
+    it('tells an unbound run with chosen channels, or a platform with no destination, that its output reaches no refused target', async () => {
+      const defaultDestination = vi.fn().mockResolvedValue(null);
+      mockGetAdapter.mockReturnValue({ name: 'slack', defaultDestination, linkedChannelIds: vi.fn().mockResolvedValue(['C_REL']) });
+
+      await scheduleAndCapture({ deliverTo: 'slack', channelIds: 'C_REL' })();
+      await scheduleAndCapture({ id: 'task-2', deliverTo: 'slack' })();
+
+      for (const [request] of mockInvoke.mock.calls) {
+        expect(request).not.toHaveProperty('broadcastsOutput');
+        expect(request).not.toHaveProperty('outputDestination');
+      }
+    });
+
     describe('a recurring unbound task that sent a message', () => {
       const SEND_CALL = {
         tool: 'send_message',

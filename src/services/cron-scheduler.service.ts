@@ -711,6 +711,7 @@ class CronSchedulerService {
       // not part of. It still delivers as a bound task, to its own channel alone.
       const historyThreadId =
         boundThreadId && (await conversationService.writableThreadId(boundThreadId)) === boundThreadId ? boundThreadId : null;
+      const target = { deliverTo: task.deliverTo, channelIds: parseCommaList(task.channelIds) };
 
       // Invoke LLM directly (in-process). A bound task runs against its thread so
       // it sees the conversation history (see includeConversation in invoke.ts)
@@ -729,8 +730,11 @@ class CronSchedulerService {
               originChannelId: task.originChannelId ?? undefined,
             }
           : {}),
-        // Only an unbound task's answer is broadcast, and only an unbound task recurs.
-        ...(!boundThreadId && { broadcastsOutput: true, lastSend: await this.lastSendOf(task) }),
+        // An unbound task's answer goes to its delivery target, and only an unbound task recurs.
+        ...(!boundThreadId && {
+          ...(await deliveryTargetService.outputTarget(task.agentId, task.userId, target)),
+          lastSend: await this.lastSendOf(task),
+        }),
       });
       // A shutdown stopped the run. It delivers nothing and stays due. From here
       // the run delivers, so a shutdown that starts later lets it end.
@@ -744,7 +748,6 @@ class CronSchedulerService {
       const channelContext = boundThreadId
         ? await messageDeliveryService.threadContext(boundThreadId, task.originChannel, task.originChannelId)
         : undefined;
-      const target = { deliverTo: task.deliverTo, channelIds: parseCommaList(task.channelIds) };
 
       const sent = !boundThreadId && this.noteSends(task, result.toolCalls);
 
