@@ -4,10 +4,9 @@
  * The module caches one client per URL, so each test loads a fresh copy.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { config } from '../config';
-// The module the callListAgents tests share; the getMCPTools tests load fresh copies.
-import { callListAgents, isAgentMessagingTool, resetListAgentsToolForTests, soleAgentMessagingTool } from './mcp-client';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+// The module the agent messaging tool tests share; the getMCPTools tests load fresh copies.
+import { isAgentMessagingTool, soleAgentMessagingTool } from './mcp-client';
 import { toModelToolName } from './tool-names';
 
 const { mockCreateMCPClient } = vi.hoisted(() => ({
@@ -42,113 +41,6 @@ async function load(): Promise<McpClientModule> {
   vi.resetModules();
   return import('./mcp-client');
 }
-
-
-describe('callListAgents', () => {
-  const RAW_NAME = '0b6e1c2a-5d1f-4c3e-9a7b-2f8d4e6a1c3b__agent-directory__list_agents';
-  const signal = new AbortController().signal;
-  let client: { listTools: ReturnType<typeof vi.fn>; callTool: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> };
-
-  beforeEach(() => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-10-21T12:00:00.000Z'));
-    resetListAgentsToolForTests();
-    client = {
-      listTools: vi.fn(async ({ params }: { params?: { cursor?: string } } = {}) =>
-        params?.cursor === 'page-2'
-          ? { tools: [{ name: RAW_NAME }] }
-          : { tools: [{ name: 'list_agent' }, { name: 'github__list_agents_all' }], nextCursor: 'page-2' },
-      ),
-      callTool: vi.fn(async () => ({ content: [{ type: 'text', text: '{"version":"v1","unchanged":true}\nNo change.' }] })),
-      close: vi.fn(async () => undefined),
-    };
-    mockCreateMCPClient.mockResolvedValue(client);
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('finds the tool by the name the endpoint gives it, calls it, and closes the client', async () => {
-    const text = await callListAgents({ knownVersion: 'v1' }, signal);
-
-    expect(text).toBe('{"version":"v1","unchanged":true}\nNo change.');
-    expect(mockCreateMCPClient).toHaveBeenCalledWith({
-      transport: { type: 'http', url: 'http://localhost:3002/mcp' },
-      initializationOptions: { signal },
-    });
-    expect(client.callTool).toHaveBeenCalledWith({ name: RAW_NAME, arguments: { knownVersion: 'v1' }, options: { signal } });
-    expect(client.close).toHaveBeenCalledTimes(1);
-  });
-
-  it('answers without waiting for the client to close', async () => {
-    // Closing can send a DELETE for the session, which takes no signal.
-    client.close.mockReturnValue(new Promise<undefined>(() => {}));
-
-    await expect(callListAgents({}, signal)).resolves.toBe('{"version":"v1","unchanged":true}\nNo change.');
-    expect(client.close).toHaveBeenCalledTimes(1);
-  });
-
-  it('lists the tools once, then calls the tool it found', async () => {
-    await callListAgents({}, signal);
-    await callListAgents({}, signal);
-
-    expect(client.listTools).toHaveBeenCalledTimes(2);
-    expect(client.callTool).toHaveBeenCalledTimes(2);
-    expect(client.close).toHaveBeenCalledTimes(2);
-  });
-
-  it('answers null without the tool, and lists again only after ten minutes', async () => {
-    client.listTools.mockResolvedValue({ tools: [{ name: 'kubectl__get' }] });
-
-    expect(await callListAgents({}, signal)).toBeNull();
-    vi.setSystemTime(new Date('2026-10-21T12:09:59.000Z'));
-    expect(await callListAgents({}, signal)).toBeNull();
-    expect(mockCreateMCPClient).toHaveBeenCalledTimes(1);
-
-    vi.setSystemTime(new Date('2026-10-21T12:10:00.000Z'));
-    await callListAgents({}, signal);
-    expect(mockCreateMCPClient).toHaveBeenCalledTimes(2);
-    expect(client.close).toHaveBeenCalledTimes(2);
-  });
-
-  it('takes a second list_agents on another page, from another server, as no tool', async () => {
-    // Either one could be the platform's; trusting the first would let any server decide the signing keys.
-    client.listTools.mockImplementation(async ({ params }: { params?: { cursor?: string } } = {}) =>
-      params?.cursor === 'page-2'
-        ? { tools: [{ name: RAW_NAME }] }
-        : { tools: [{ name: 'other-framework__list_agents' }], nextCursor: 'page-2' },
-    );
-
-    expect(await callListAgents({}, signal)).toBeNull();
-    expect(client.listTools).toHaveBeenCalledTimes(2);
-    expect(client.callTool).not.toHaveBeenCalled();
-  });
-
-  it('throws when the tool answers an error, and lists the tools again on a failed call', async () => {
-    client.callTool.mockResolvedValueOnce({ isError: true, content: [{ type: 'text', text: 'denied' }] });
-    await expect(callListAgents({}, signal)).rejects.toThrow('list_agents answered an error');
-
-    client.callTool.mockRejectedValueOnce(new Error('unknown tool'));
-    await expect(callListAgents({}, signal)).rejects.toThrow('unknown tool');
-    await callListAgents({}, signal);
-
-    // Listed for the first call, kept after the error answer, listed again after the failed call.
-    expect(client.listTools).toHaveBeenCalledTimes(4);
-    expect(client.close).toHaveBeenCalledTimes(3);
-  });
-
-  it('answers null with no MCP endpoint', async () => {
-    const url = config.nexusMcpUrl;
-    (config as { nexusMcpUrl: string | null }).nexusMcpUrl = null;
-    try {
-      expect(await callListAgents({}, signal)).toBeNull();
-      expect(mockCreateMCPClient).not.toHaveBeenCalled();
-    } finally {
-      (config as { nexusMcpUrl: string | null }).nexusMcpUrl = url;
-    }
-  });
-});
 
 describe('getMCPTools', () => {
   beforeEach(() => {

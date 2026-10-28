@@ -6,9 +6,10 @@ other agents can send the agent messages, and it sends them messages with the
 conversation and starts a turn, like one of yours. The agent treats it as a
 colleague's request, never as your words or your approval.
 
-There is nothing to turn on. The agent takes messages from the other agents
-whenever the delivery service posts them, and it knows who they are when its
-MCP endpoint (`NEXUS_MCP_URL`) has a `list_agents` tool.
+The platform the agent runs on sets it up: it gives the runtime the delivery
+service's API token id in `AGENT_MESSAGES_TOKEN_ID`, and the agent knows who the
+other agents are when its MCP endpoint (`NEXUS_MCP_URL`) has a `list_agents`
+tool.
 
 ## What you see
 
@@ -36,21 +37,23 @@ a thank-you or a general question.
 
 ## Delivering a message: `POST /agents/agent-messages`
 
-The delivery service posts each message to the runtime port. Whatever stands in
-front of that port may admit more than the delivery service, such as the people
-of the project and the other agents themselves. So the delivery service signs
-each delivery, and the runtime takes none without that signature
-(`lib/agent-message-signature.ts`):
+The delivery service posts each message to the runtime port through the
+ingress. The ingress admits more than the delivery service, such as the people
+of the project, their API tokens and the other agents themselves. It names the
+API token each caller used in `x-forwarded-token-id`, and drops any copy the
+caller sent, so the runtime takes a delivery on the ingress's word:
 
-- `x-agent-message-signature` holds an ES256 compact JWT with `typ`
-  `agent-message+jwt`. It names this agent in `aud` and the SHA-256 of the
-  exact body in `sha256` (base64url), and is good for a minute.
-- The public keys and the agent's own id come from `list_agents`, in the
-  `delivery` field of its answer, which the runtime asks for itself through its
-  MCP endpoint. The runtime keeps them in `runtime_state`
-  (`agentMessageKeys`) and trusts them for an hour. A signature with a key it
-  does not hold makes it ask again, at most every 30 seconds, so a new key
-  reaches it with the next delivery.
+- A request the ingress names a person for (`x-forwarded-user` or
+  `x-forwarded-user-id`) is refused with `403`.
+- Otherwise `x-forwarded-token-id` must be `AGENT_MESSAGES_TOKEN_ID`, the id of
+  the delivery service's API token, compared in constant time. Any other caller,
+  or one with no token id, gets `401`. Until `AGENT_MESSAGES_TOKEN_ID` is set,
+  every delivery gets `503`, so the service sends it again once it is.
+
+The header is trustworthy only for a request that came through the ingress. A
+caller that reaches the runtime port some other way can write it, so the runtime
+listens on loopback (`PRISM_HOST=127.0.0.1`, the default outside the Docker
+image) where the platform tunnels to it.
 
 People talk to the agent in the conversation. This route is the only one that
 stores an agent's message: `POST /agents/threads/:threadId/messages` refuses
@@ -90,9 +93,10 @@ deleted or is hidden by single-thread mode, goes to the one conversation when
 |--------|---------|
 | `202` `{"messageId","threadId","queued","duplicate"}` | Stored, and its turn is scheduled. `duplicate: true` means the same `id` was already stored. |
 | `400` `{"error"}` | The body does not match the contract. |
-| `401` `{"error"}` | No signature, or one that is not the delivery service's, or not for this agent and this body. |
+| `401` `{"error"}` | The ingress names no API token, or another one than `AGENT_MESSAGES_TOKEN_ID`. |
+| `403` `{"error"}` | The ingress names a person. |
 | `409` | The `id` belongs to another message: a person's, or another sender's or message id's. |
-| `503` | The agent is still starting, or cannot read the keys right now. Send it again later. |
+| `503` `{"error"}` | The agent is still starting, or `AGENT_MESSAGES_TOKEN_ID` is not set. Send it again later. |
 
 On the [chat socket](websocket-protocol.md), the message is a `USER` message with
 `triggeredBy: "AGENT_MESSAGE"`, the sender's `senderId` and `senderName`, and
@@ -118,8 +122,11 @@ flight, such as a scheduled task or a coding task. Otherwise it answers
 - **The agent does not know the other agents.** It needs the `list_agents`
   tool on its MCP endpoint, which the platform the agent runs on grants. The
   agents its description names are as the platform last stored them.
-- **A delivery answers `503`.** The agent is still starting, or cannot read
-  the keys from `list_agents`. The delivery service sends the message again. The log
-  has a warning that starts with `[AgentMessages]`.
-- **A delivery answers `401`.** It came without the delivery service's signature, or
-  with a key `list_agents` does not list. The log line names the reason.
+- **A delivery answers `503`.** The agent is still starting, or
+  `AGENT_MESSAGES_TOKEN_ID` is not set in its environment. The delivery service
+  sends the message again. The log has a warning that starts with
+  `[AgentMessages]`.
+- **A delivery answers `401`.** The ingress named no API token, or another one
+  than `AGENT_MESSAGES_TOKEN_ID`: the variable holds the wrong id, or the request
+  did not come from the delivery service. The log line names the reason and the
+  start of the token id it got.

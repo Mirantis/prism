@@ -1107,7 +1107,7 @@ src/
 │   ├── file-janitor.ts         # Hourly sweep of the durable file stores: orphaned uploads, stale hydrate scratch dirs, over-TTL attachment content, stray media files, over-TTL saved tool outputs
 │   ├── llm-errors.ts           # Single owner of LLM/runtime error → user-facing text (`buildErrorStep`, budget detection)
 │   ├── log-redaction.ts        # The global pino `err` serializer: an allow-list, so no SDK request/response body is ever logged
-│   ├── mcp-client.ts           # MCP tool fetching from MCP servers; `callListAgents`, the runtime's own call of the endpoint's `list_agents` (found by its last name segment)
+│   ├── mcp-client.ts           # MCP tool fetching from MCP servers; which tools are the agent messaging tools (`list_agents`, `message_agent`, by their last name segment)
 │   ├── agent-mcp-servers.ts    # The MCP servers the runtime connects for the agent, as the neutral list a coding task gets
 │   ├── model-call.ts           # The only module calling `generateText`/`generateObject`; records every call's usage
 │   ├── model-routing.ts        # Which model a turn runs on: Fixed, or an Auto tier with the warm-cache hold rule
@@ -1244,7 +1244,7 @@ There are three entry points for chat, all handled locally by the agent-runtime:
 
 1. **WebSocket**: Client -> Lens Agents ingress -> WS gateway -> `inboundMessageService.accept()` (stores the message, confirms it) -> `conversationEngineService.chat()` (local, no HTTP)
 2. **Slack**: Bolt Socket Mode message -> `conversationEngineService.chat()` (local, no HTTP)
-3. **Agent messages**: delivery service -> `POST /agents/agent-messages` (`routes/agent-messages.ts`, signed by the service, 403 when the ingress names a person) -> `inboundMessageService.accept()` into the web conversation that holds its `conversationId` -> `conversationEngineService.chat()`
+3. **Agent messages**: delivery service -> `POST /agents/agent-messages` (`routes/agent-messages.ts`, the service's API token id as the ingress names it, 403 when the ingress names a person) -> `inboundMessageService.accept()` into the web conversation that holds its `conversationId` -> `conversationEngineService.chat()`
 
 In every case, `conversationEngineService.chat()` manages the thread, **iterates `invokeStream()` directly** (no queue, no HTTP), and `messageDeliveryService.publish()`'es each text-bearing step the moment its `onStepFinish` fires. Each delivery uses a `channelContext` that scopes the publish to the originating channel only (WebSocket or Slack), so users see intermediate text from multi-step responses in real time instead of one big block at the end.
 
@@ -1284,12 +1284,13 @@ only `inboundMessageService` sets it, for the agent-message route.
   roster, so the system prompt and the history are the same with or without
   other agents. `src/evals/colleague-scenarios.ts` measures what the agent
   does with those descriptions.
-- **Who may post** is the delivery service alone, proved by its signature
-  (`lib/agent-message-signature.ts`), never by the ingress, which may admit
-  more than the service, such as people and the other agents themselves. The signature is an ES256 token for this agent and the exact
-  body. Its keys come from the `delivery` field of `list_agents`, kept in
-  `runtime_state` for an hour and read again for a key the runtime does not
-  hold. The body parser keeps the raw bytes for it (`lib/raw-body.ts`).
+- **Who may post** is the delivery service alone, as the ingress names it: a
+  person the ingress names gets 403, and otherwise `x-forwarded-token-id` must
+  equal `AGENT_MESSAGES_TOKEN_ID` (`config.agentMessagesTokenId`, compared in
+  constant time), or the request gets 401; unset, every delivery gets 503. The
+  ingress drops a caller's own copy of the header, so it is trustworthy only
+  for requests through the ingress: the runtime listens on loopback where the
+  platform tunnels to it. The runtime itself never calls `list_agents`.
 - **`GET /agents/state`** (`routes/agent-state.ts`) answers `working` or `idle`
   from `isAgentIdle`.
 
