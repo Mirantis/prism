@@ -30,6 +30,8 @@ export interface RuntimeTestEnv {
   dbPath: string;
   /** Port the runtime is listening on. */
   port: number;
+  /** Port the runtime takes other agents' messages on. */
+  agentMessagesPort: number;
   /** Env block to pass to `startPrism({ env })`. */
   prismEnv: NodeJS.ProcessEnv;
   /** Handle to the running agent-runtime process — pass to startPrism for log tailing in error messages. */
@@ -54,6 +56,8 @@ export async function setupRuntime(opts: SetupOptions = {}): Promise<RuntimeTest
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tui-e2e-'));
   const dbPath = path.join(tempDir, 'agent.db');
   const port = await findFreePort();
+  // Its own free port, so runtimes started side by side do not contend for the default.
+  const agentMessagesPort = await findFreePort();
 
   // Apply the SQLite schema to the fresh DB. `db push` is the right tool for
   // a one-shot dev/test DB — no migration history needed.
@@ -70,6 +74,7 @@ export async function setupRuntime(opts: SetupOptions = {}): Promise<RuntimeTest
     ...process.env,
     DATABASE_URL: `file:${dbPath}`,
     PORT: String(port),
+    AGENT_MESSAGES_PORT: String(agentMessagesPort),
     // Only pass BEDROCK_MODEL_ID through when the surrounding env actually
     // sets it; otherwise let the runtime's own default (src/config.ts) win.
     // The Playwright e2e suite does the same, and the CI IAM role is
@@ -117,6 +122,7 @@ export async function setupRuntime(opts: SetupOptions = {}): Promise<RuntimeTest
     tempDir,
     dbPath,
     port,
+    agentMessagesPort,
     prismEnv,
     runtime,
     async cleanup() {

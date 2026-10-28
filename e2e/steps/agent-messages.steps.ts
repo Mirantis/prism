@@ -10,10 +10,11 @@ import { randomUUID } from 'node:crypto';
 import { createBdd } from 'playwright-bdd';
 import { expect } from '@playwright/test';
 import { AGENT_MESSAGES_TOKEN_ID } from '../fixtures/test-data';
+import { AGENT_MESSAGES_PORT } from '../support/agent-messages-port';
 
 const { When, Then } = createBdd();
 
-const AGENT_MESSAGES_URL = 'http://localhost:3003/agents/agent-messages';
+const AGENT_MESSAGES_URL = `http://localhost:${AGENT_MESSAGES_PORT}/agents/agent-messages`;
 
 // Scenarios run one at a time (workers: 1), so module state belongs to the current scenario.
 let lastStatus: number | undefined;
