@@ -2,9 +2,10 @@
  * Cron Scheduler Service Tests
  *
  * Tests for CronSchedulerService: scheduleTask (recurring + one-shot),
- * unscheduleTask, executeTask, delivery gate suppression, stopAll.
+ * unscheduleTask, executeTask, what a run posts and stores, stopAll.
  */
 
+import { scheduledRunPrompt } from '../prompts/scheduled-run-prompt';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
@@ -24,14 +25,12 @@ const {
   mockCronTaskUpdate,
   mockCronSchedule,
   mockCronValidate,
-  mockGenerateText,
-  mockGetGateRequest,
   mockLoggerError,
   mockBeginWork,
   mockFinishWork,
   mockWritableThreadId,
   mockGetAdapter,
-  mockGetOrCreateLatestThread,
+  mockPublishToWebChat,
   shutdown,
 } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
@@ -46,14 +45,12 @@ const {
   mockCronTaskUpdate: vi.fn(),
   mockCronSchedule: vi.fn(),
   mockCronValidate: vi.fn(),
-  mockGenerateText: vi.fn(),
-  mockGetGateRequest: vi.fn(),
   mockLoggerError: vi.fn(),
   mockBeginWork: vi.fn(async () => undefined),
   mockFinishWork: vi.fn(),
   mockWritableThreadId: vi.fn(),
   mockGetAdapter: vi.fn(),
-  mockGetOrCreateLatestThread: vi.fn(),
+  mockPublishToWebChat: vi.fn(),
   shutdown: { controller: new AbortController() },
 }));
 
@@ -65,6 +62,7 @@ vi.mock('./message-delivery.service', () => ({
   messageDeliveryService: {
     publishToLatestThread: mockDeliverMessage,
     publish: mockPublish,
+    publishToWebChat: mockPublishToWebChat,
     threadContext: mockThreadContext,
     getAdapter: mockGetAdapter,
   },
@@ -73,7 +71,6 @@ vi.mock('./message-delivery.service', () => ({
 vi.mock('./conversation.service', () => ({
   conversationService: {
     writableThreadId: mockWritableThreadId,
-    getOrCreateLatestThread: mockGetOrCreateLatestThread,
   },
 }));
 
@@ -111,21 +108,16 @@ vi.mock('node-cron', () => ({
   validate: mockCronValidate,
 }));
 
-vi.mock('ai', () => ({
-  generateText: mockGenerateText,
-}));
-
-vi.mock('../lib/classification', () => ({
-  getGateRequest: mockGetGateRequest,
-}));
-
 const { mockTrackEvent } = vi.hoisted(() => ({ mockTrackEvent: vi.fn() }));
-const { mockKeepWithheldRun } = vi.hoisted(() => ({ mockKeepWithheldRun: vi.fn() }));
+const { mockKeepWithheldRun, mockListTargets } = vi.hoisted(() => ({
+  mockKeepWithheldRun: vi.fn(),
+  mockListTargets: vi.fn(),
+}));
 const { mockMessageFindMany } = vi.hoisted(() => ({ mockMessageFindMany: vi.fn() }));
 
 vi.mock('./outbound-message.service', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./outbound-message.service')>()),
-  outboundMessageService: { keepWithheldRun: mockKeepWithheldRun },
+  outboundMessageService: { keepWithheldRun: mockKeepWithheldRun, listTargets: mockListTargets },
 }));
 
 vi.mock('../lib/telemetry', () => ({
@@ -196,14 +188,8 @@ describe('CronSchedulerService', () => {
     mockWritableThreadId.mockImplementation(async (threadId: string) => threadId);
     mockCronTaskUpdateMany.mockResolvedValue({ count: 1 });
     mockCronTaskDeleteMany.mockResolvedValue({ count: 1 });
+    mockListTargets.mockResolvedValue([]);
     shutdown.controller = new AbortController();
-    // Default: gate delivers (the suppression suite overrides this)
-    mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
-    mockGetGateRequest.mockReturnValue({
-      model: 'classification-model',
-      providerOptions: {},
-      samplingParams: { temperature: 0 },
-    });
   });
 
   afterEach(() => {
@@ -256,12 +242,8 @@ describe('CronSchedulerService', () => {
       const second = { stop: vi.fn(), getNextRun: () => next };
       mockCronValidate.mockReturnValue(true);
       mockCronSchedule.mockReturnValueOnce(first).mockReturnValueOnce(second);
-      // The baseline the DELIVER/SUPPRESS gate compares against; the instruction is unchanged,
-      // so a zone change must not make the next unchanged result read as new.
-      const baselines = (cronSchedulerService as unknown as { lastDelivered: Map<string, unknown> }).lastDelivered;
 
       cronSchedulerService.scheduleTask(createCronTask({ id: 'task-tz', schedule: '0 9 * * *' }));
-      baselines.set('task-tz', { text: 'Pods are fine.', at: Date.now() });
       cronSchedulerService.useTimezone('Europe/Helsinki');
 
       expect(first.stop).toHaveBeenCalled();
@@ -269,7 +251,6 @@ describe('CronSchedulerService', () => {
         timezone: 'Europe/Helsinki',
       });
       expect(cronSchedulerService.nextRunFor('task-tz')).toEqual(next);
-      expect(baselines.has('task-tz')).toBe(true);
       // The replacement is not a new schedule.
       const scheduledEvents = mockTrackEvent.mock.calls.filter(([name]) => name === 'cron task scheduled');
       expect(scheduledEvents).toHaveLength(1);
@@ -316,7 +297,7 @@ describe('CronSchedulerService', () => {
       expect(mockJob1.stop).toHaveBeenCalled();
     });
 
-    it('delivers only the final step text for multi-step results', async () => {
+    it('stores only the final step text of a multi-step result', async () => {
       mockInvoke.mockResolvedValue({
         response: 'Checking...\n\nAll clear.',
         toolCalls: [{ tool: 'aws_costs', input: '{}', output: '0', success: true, timestamp: '2025-01-15T12:00:00Z' }],
@@ -343,15 +324,12 @@ describe('CronSchedulerService', () => {
       cronSchedulerService.scheduleTask(createCronTask({ name: 'Cost Check' }));
       await cronCallback!();
 
-      // Should deliver a single message with only the last step's text
-      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
-      expect(mockDeliverMessage).toHaveBeenCalledWith(
-        'agent-1',
-        'user-abc-123',
-        '**Scheduled Task: Cost Check**\n\nAll clear.',
-        'CRON_TASK',
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockKeepWithheldRun).toHaveBeenCalledTimes(1);
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith(
         expect.objectContaining({
-          toolCalls: expect.arrayContaining([expect.objectContaining({ tool: 'aws_costs' })]),
+          content: '**Scheduled Task: Cost Check**\n\nAll clear.',
+          toolCalls: [expect.objectContaining({ tool: 'aws_costs' })],
         }),
       );
     });
@@ -375,20 +353,17 @@ describe('CronSchedulerService', () => {
         userId: 'user-abc-123',
         agentId: 'agent-1',
         mode: 'cron',
-        prompt: 'Check system health',
+        prompt: scheduledRunPrompt('Check system health'),
         abortSignal: expect.any(AbortSignal),
-        broadcastsOutput: true,
+        postingCeiling: { webChat: true, targets: [] },
+        lastSend: undefined,
       });
       expect(mockCronTaskUpdateMany).toHaveBeenCalledWith({
         where: { id: 'task-1' },
         data: { nextRunAt: null, lastRunAt: expect.any(Date) },
       });
-      expect(mockDeliverMessage).toHaveBeenCalledWith(
-        'agent-1',
-        'user-abc-123',
-        expect.stringContaining('Daily Report'),
-        'CRON_TASK',
-        expect.objectContaining({ toolCalls: expect.any(Array) }),
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('Daily Report'), toolCalls: expect.any(Array) }),
       );
     });
   });
@@ -585,16 +560,16 @@ describe('CronSchedulerService', () => {
       expect(mockCronTaskDeleteMany).toHaveBeenCalledWith({ where: { id: 'oneshot-loop' } });
     });
 
-    it('records a run whose result went out while the process shut down', async () => {
-      // The model finished; the shutdown lands during the delivery, which the
-      // result still reaches. The next boot must not run and deliver it again.
+    it('records a run whose result was stored while the process shut down', async () => {
+      // The model finished; the shutdown lands while the run is stored, which
+      // still happens. The next boot must not run the task again.
       let cronCallback: (() => Promise<void>) | undefined;
       mockCronValidate.mockReturnValue(true);
       mockCronSchedule.mockImplementation((_schedule: string, cb: () => Promise<void>) => {
         cronCallback = cb;
         return { stop: vi.fn(), getNextRun: () => tomorrow };
       });
-      mockDeliverMessage.mockImplementationOnce(async () => {
+      mockKeepWithheldRun.mockImplementationOnce(async () => {
         shutdown.controller.abort();
       });
       cronSchedulerService.scheduleTask(createCronTask());
@@ -604,7 +579,7 @@ describe('CronSchedulerService', () => {
       await cronCallback!();
 
       expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ afterRestart: undefined }));
-      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
+      expect(mockKeepWithheldRun).toHaveBeenCalledTimes(1);
       expect(mockCronTaskUpdateMany).toHaveBeenCalledWith({
         where: { id: 'task-1' },
         data: { nextRunAt: tomorrow, lastRunAt: expect.any(Date) },
@@ -681,15 +656,16 @@ describe('CronSchedulerService', () => {
         userId: 'user-abc-123',
         agentId: 'agent-1',
         mode: 'cron',
-        prompt: 'Generate the daily report.',
+        prompt: scheduledRunPrompt('Generate the daily report.'),
         afterRestart: false,
         abortSignal: expect.any(AbortSignal),
-        broadcastsOutput: true,
+        postingCeiling: { webChat: true, targets: [] },
+        lastSend: undefined,
       });
       expect(mockCronTaskDeleteMany).toHaveBeenCalledWith({ where: { id: 'oneshot-2' } });
     });
 
-    it('delivers and logs no error when the run deleted its own task', async () => {
+    it('stores the run and logs no error when the run deleted its own task', async () => {
       mockCronValidate.mockReturnValue(false);
       const task = createCronTask({
         id: 'oneshot-self',
@@ -707,12 +683,8 @@ describe('CronSchedulerService', () => {
       cronSchedulerService.scheduleTask(task);
       await vi.advanceTimersByTimeAsync(60_000);
 
-      expect(mockDeliverMessage).toHaveBeenCalledWith(
-        'agent-1',
-        'user-abc-123',
-        '**Scheduled Task: Daily Report**\n\nDone.',
-        'CRON_TASK',
-        expect.anything(),
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith(
+        expect.objectContaining({ content: '**Scheduled Task: Daily Report**\n\nDone.' }),
       );
       expect(mockCronTaskDeleteMany).toHaveBeenCalledWith({ where: { id: 'oneshot-self' } });
       expect(mockLoggerError).not.toHaveBeenCalled();
@@ -736,10 +708,11 @@ describe('CronSchedulerService', () => {
         userId: 'user-abc-123',
         agentId: 'agent-1',
         mode: 'cron',
-        prompt: 'Generate the daily report.',
+        prompt: scheduledRunPrompt('Generate the daily report.'),
         afterRestart: false,
         abortSignal: expect.any(AbortSignal),
-        broadcastsOutput: true,
+        postingCeiling: { webChat: true, targets: [] },
+        lastSend: undefined,
       });
     });
   });
@@ -804,7 +777,7 @@ describe('CronSchedulerService', () => {
       await vi.advanceTimersByTimeAsync(10);
 
       expect(mockInvoke).toHaveBeenCalledTimes(1);
-      expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'The new instruction.' }));
+      expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ prompt: scheduledRunPrompt('The new instruction.') }));
       expect(mockCronTaskDeleteMany).toHaveBeenCalledTimes(1);
     });
 
@@ -847,7 +820,7 @@ describe('CronSchedulerService', () => {
       await recurringRun;
       await vi.advanceTimersByTimeAsync(0);
       expect(mockInvoke).toHaveBeenCalledTimes(2);
-      expect(mockInvoke).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: 'Check once more.' }));
+      expect(mockInvoke).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: scheduledRunPrompt('Check once more.') }));
       expect(mockCronTaskDeleteMany).toHaveBeenCalledWith({ where: { id: 'task-1' } });
     });
 
@@ -896,7 +869,7 @@ describe('CronSchedulerService', () => {
 
       expect(edit.status).toBe('updated');
       expect(mockInvoke).toHaveBeenCalledTimes(2);
-      expect(mockInvoke).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: 'Check twice.' }));
+      expect(mockInvoke).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: scheduledRunPrompt('Check twice.') }));
       expect(mockCronTaskDeleteMany).toHaveBeenCalledTimes(1);
     });
 
@@ -960,47 +933,6 @@ describe('CronSchedulerService', () => {
           expect.objectContaining({ messages: '- To #ops: Build #812 failed.' }),
         );
       });
-    });
-
-    it('keeps the delivery baseline for an edit that leaves the instruction as it was', async () => {
-      let tick!: () => Promise<void>;
-      mockCronSchedule.mockImplementation((_schedule: string, cb: () => Promise<void>) => {
-        tick = cb;
-        return { stop: vi.fn(), getNextRun: () => null };
-      });
-      const row = storedRow();
-      cronSchedulerService.scheduleTask(toBackendCronTask(row));
-      await tick(); // delivers, which sets the baseline
-      mockCronTaskFindFirst.mockResolvedValue(row);
-
-      await cronSchedulerService.updateTask('task-1', { name: 'Half-hourly report', schedule: '*/30 * * * *' });
-      await tick();
-      mockCronTaskFindFirst.mockResolvedValue(storedRow({ schedule: '*/30 * * * *' }));
-      await cronSchedulerService.updateTask('task-1', { instruction: 'Only tell me if the build breaks.' });
-      await tick();
-
-      const gateInputs = mockGenerateText.mock.calls.map(([call]) => call.messages[0].content as string);
-      expect(gateInputs[1]).toContain('## Last Delivered Result');
-      expect(gateInputs[2]).toContain('No previous result has been delivered');
-    });
-
-    it('drops the delivery baseline when the task moves to another target', async () => {
-      let tick!: () => Promise<void>;
-      mockCronSchedule.mockImplementation((_schedule: string, cb: () => Promise<void>) => {
-        tick = cb;
-        return { stop: vi.fn(), getNextRun: () => null };
-      });
-      const row = storedRow();
-      cronSchedulerService.scheduleTask(toBackendCronTask(row));
-      await tick(); // delivers to every channel, which sets the baseline
-      mockCronTaskFindFirst.mockResolvedValue(row);
-      mockCronTaskUpdate.mockImplementation(async ({ data }) => storedRow(data));
-
-      await cronSchedulerService.updateTask('task-1', { deliverTo: 'chat' });
-      await tick();
-
-      const gateInputs = mockGenerateText.mock.calls.map(([call]) => call.messages[0].content as string);
-      expect(gateInputs[1]).toContain('No previous result has been delivered');
     });
 
     it('saves a new target and re-registers the task with it', async () => {
@@ -1112,7 +1044,7 @@ describe('CronSchedulerService', () => {
       );
     });
 
-    it('refuses no broadcast target for a task single-thread mode hides, whose answer is not broadcast', async () => {
+    it('gives no posting ceiling to a task single-thread mode hides, whose reply goes to its conversation', async () => {
       mockCronValidate.mockReturnValue(false);
       mockWritableThreadId.mockResolvedValue('thread-one');
       mockThreadContext.mockResolvedValue({ channel: 'websocket', threadId: 'thread-hidden' });
@@ -1120,7 +1052,7 @@ describe('CronSchedulerService', () => {
       cronSchedulerService.scheduleTask(boundToHiddenWebThread());
       await vi.advanceTimersByTimeAsync(60_000);
 
-      expect(mockInvoke.mock.calls[0][0]).not.toHaveProperty('broadcastsOutput');
+      expect(mockInvoke.mock.calls[0][0]).not.toHaveProperty('postingCeiling');
       expect(mockInvoke.mock.calls[0][0]).not.toHaveProperty('lastSend');
     });
 
@@ -1185,7 +1117,7 @@ describe('CronSchedulerService', () => {
       expect(mockTrackEvent).toHaveBeenCalledWith(
         'cron task executed',
         'user-abc-123',
-        expect.objectContaining({ 'cron.continue_in_thread': 'true' }),
+        expect.objectContaining({ 'cron.continue_in_thread': 'true', 'cron.result': 'posted' }),
       );
     });
 
@@ -1290,10 +1222,10 @@ describe('CronSchedulerService', () => {
   });
 
   // ==========================================================================
-  // Delivery gate (suppression)
+  // What a run posts and stores
   // ==========================================================================
 
-  describe('delivery gate', () => {
+  describe('what a run posts and stores', () => {
     /** Schedule a recurring task and return the captured cron callback. */
     function scheduleAndCapture(overrides: Partial<BackendCronTask> = {}): () => Promise<void> {
       let cronCallback: (() => Promise<void>) | undefined;
@@ -1306,15 +1238,27 @@ describe('CronSchedulerService', () => {
       return cronCallback!;
     }
 
-    it('suppresses delivery when the gate says SUPPRESS, but still records the run', async () => {
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+    const failed = (text: string) => ({
+      response: text,
+      toolCalls: [],
+      steps: [{ text, toolCalls: [] }],
+      error: { type: 'generic', detail: 'model timeout' },
+    });
 
+    it('stores an unbound run that posted nothing, delivers nothing, and records the run', async () => {
       const run = scheduleAndCapture();
       await run();
 
       expect(mockDeliverMessage).not.toHaveBeenCalled();
       expect(mockPublish).not.toHaveBeenCalled();
-      // Bookkeeping is unaffected by suppression
+      expect(mockPublishToWebChat).not.toHaveBeenCalled();
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith({
+        agentId: 'agent-1',
+        userId: 'user-abc-123',
+        content: '**Scheduled Task: Daily Report**\n\nTask completed.',
+        triggeredBy: 'CRON_TASK',
+        toolCalls: [expect.objectContaining({ tool: 'memory_write' })],
+      });
       expect(mockCronTaskUpdateMany).toHaveBeenCalledWith({
         where: { id: 'task-1' },
         data: { nextRunAt: null, lastRunAt: expect.any(Date) },
@@ -1322,66 +1266,38 @@ describe('CronSchedulerService', () => {
       expect(mockTrackEvent).toHaveBeenCalledWith(
         'cron task executed',
         'user-abc-123',
-        expect.objectContaining({ 'cron.result': 'suppressed' }),
+        expect.objectContaining({ 'cron.result': 'silent', 'cron.messages_sent': '0' }),
       );
     });
 
-    it('keeps a suppressed run in history, so a message it sent is stored', async () => {
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
-
-      const run = scheduleAndCapture();
-      await run();
-
-      expect(mockKeepWithheldRun).toHaveBeenCalledWith({
-        agentId: 'agent-1',
-        userId: 'user-abc-123',
-        threadId: undefined,
-        content: '**Scheduled Task: Daily Report**\n\nTask completed.',
-        triggeredBy: 'CRON_TASK',
-        toolCalls: [expect.objectContaining({ tool: 'memory_write' })],
-      });
-    });
-
-    it('tells an unbound run that its output is broadcast, and a thread-bound run that it is not', async () => {
+    it('gives an unbound run the posting ceiling of its target, and a thread-bound run none', async () => {
       mockThreadFindUnique.mockResolvedValue({ id: 'thread-bound' });
 
       await scheduleAndCapture()();
       await scheduleAndCapture({ id: 'task-2', threadId: 'thread-bound' })();
 
-      expect(mockInvoke.mock.calls[0][0].broadcastsOutput).toBe(true);
-      expect(mockInvoke.mock.calls[1][0].broadcastsOutput).toBeUndefined();
+      expect(mockInvoke.mock.calls[0][0].postingCeiling).toEqual({ webChat: true, targets: [] });
+      expect(mockInvoke.mock.calls[1][0]).not.toHaveProperty('postingCeiling');
     });
 
-    it.each(['none', 'chat'])('tells an unbound run with target %s that its output reaches no channel', async (deliverTo) => {
+    it.each([
+      ['none', { webChat: false, targets: [] }],
+      ['chat', { webChat: true, targets: [] }],
+    ])('gives an unbound run with target %s its posting ceiling', async (deliverTo, ceiling) => {
       await scheduleAndCapture({ deliverTo })();
 
-      expect(mockInvoke.mock.calls[0][0]).not.toHaveProperty('broadcastsOutput');
-      expect(mockInvoke.mock.calls[0][0]).not.toHaveProperty('outputDestination');
+      expect(mockInvoke.mock.calls[0][0].postingCeiling).toEqual(ceiling);
     });
 
-    it("tells an unbound run with one platform's target the one conversation it posts to", async () => {
-      const defaultDestination = vi.fn().mockResolvedValue({ threadKey: 'D_OWNER', channelId: 'D_OWNER' });
-      mockGetAdapter.mockReturnValue({ name: 'slack', defaultDestination, linkedChannelIds: vi.fn() });
-
-      await scheduleAndCapture({ deliverTo: 'slack' })();
-
-      expect(mockInvoke.mock.calls[0][0]).not.toHaveProperty('broadcastsOutput');
-      expect(mockInvoke.mock.calls[0][0].outputDestination).toEqual({ platform: 'slack', conversationId: 'D_OWNER' });
-    });
-
-    it('tells an unbound run with chosen channels, or a platform with no destination, that its output reaches no refused target', async () => {
-      const defaultDestination = vi.fn().mockResolvedValue(null);
-      mockGetAdapter.mockReturnValue({ name: 'slack', defaultDestination, linkedChannelIds: vi.fn().mockResolvedValue(['C_REL']) });
+    it('limits an unbound run with chosen channels to those channels', async () => {
+      const release = { key: 'slack:C_REL', platform: 'slack', kind: 'channel', conversationId: 'C_REL', name: 'release' };
+      const ops = { key: 'slack:C_OPS', platform: 'slack', kind: 'channel', conversationId: 'C_OPS', name: 'ops' };
+      mockListTargets.mockResolvedValue([release, ops]);
 
       await scheduleAndCapture({ deliverTo: 'slack', channelIds: 'C_REL' })();
-      await scheduleAndCapture({ id: 'task-2', deliverTo: 'slack' })();
 
-      for (const [request] of mockInvoke.mock.calls) {
-        expect(request).not.toHaveProperty('broadcastsOutput');
-        expect(request).not.toHaveProperty('outputDestination');
-      }
+      expect(mockInvoke.mock.calls[0][0].postingCeiling).toEqual({ webChat: false, targets: [release] });
     });
-
     describe('a recurring unbound task that sent a message', () => {
       const SEND_CALL = {
         tool: 'send_message',
@@ -1398,8 +1314,7 @@ describe('CronSchedulerService', () => {
       };
       const reported = (text: string) => ({ response: text, toolCalls: [], steps: [{ text }] });
 
-      it('gives the next run what the last run sent, also when the gate withheld it', async () => {
-        mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+      it('gives the next run what the last run sent', async () => {
         mockInvoke.mockResolvedValueOnce(SENT);
 
         const run = scheduleAndCapture();
@@ -1421,8 +1336,7 @@ describe('CronSchedulerService', () => {
         expect(mockInvoke.mock.calls[2][0].lastSend).toEqual({ messages: SENT_LINE, at: expect.any(Number) });
       });
 
-      it("passes on a skipping run's report, whatever the gate made of it", async () => {
-        mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+      it("passes on a skipping run's report", async () => {
         mockInvoke
           .mockResolvedValueOnce(SENT)
           .mockResolvedValueOnce(reported('Already posted to #ops, staying quiet.'));
@@ -1604,136 +1518,96 @@ describe('CronSchedulerService', () => {
       });
     });
 
-    it('keeps a suppressed run of a thread-bound task in its own thread', async () => {
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
-      mockThreadFindUnique.mockResolvedValue({ id: 'thread-bound' });
-
-      const run = scheduleAndCapture({ threadId: 'thread-bound' });
-      await run();
-
-      expect(mockKeepWithheldRun).toHaveBeenCalledWith(expect.objectContaining({ threadId: 'thread-bound' }));
-    });
-
-    it('keeps nothing extra for a delivered run, whose message holds its tool calls', async () => {
-      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
-
-      const run = scheduleAndCapture();
-      await run();
-
-      expect(mockKeepWithheldRun).not.toHaveBeenCalled();
-    });
-
     it('runs a task saved without an instruction on its name', async () => {
       // The row a user saves from the page with the whole task typed into Name.
       const name = 'Fetch the top 5 news items and summarize them';
       const run = scheduleAndCapture({ name, instruction: '' });
       await run();
 
-      expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ prompt: name }));
-      expect(JSON.stringify(mockGenerateText.mock.calls)).toContain(name);
+      expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ prompt: scheduledRunPrompt(name) }));
     });
 
-    it('delivers when the gate says DELIVER', async () => {
-      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
-
-      const run = scheduleAndCapture();
-      await run();
-
-      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
-    });
-
-    it('delivers to web chat alone for a task whose target is chat', async () => {
-      mockGetOrCreateLatestThread.mockResolvedValue({ id: 'thr-latest' });
-
-      const run = scheduleAndCapture({ deliverTo: 'chat' });
-      await run();
-
-      expect(mockDeliverMessage).not.toHaveBeenCalled();
-      expect(mockPublish).toHaveBeenCalledWith(
-        'user-abc-123',
-        'thr-latest',
-        expect.stringContaining('**Scheduled Task: Daily Report**'),
-        'CRON_TASK',
-        expect.objectContaining({ channelContext: { channel: 'websocket', threadId: 'thr-latest' } }),
-      );
-    });
-
-    it('runs a task whose target is none without the gate and delivers nothing', async () => {
-      const run = scheduleAndCapture({ deliverTo: 'none' });
-      await run();
-
-      expect(mockGenerateText).not.toHaveBeenCalled();
-      expect(mockDeliverMessage).not.toHaveBeenCalled();
-      expect(mockPublish).not.toHaveBeenCalled();
-      expect(mockTrackEvent).toHaveBeenCalledWith(
-        'cron task executed',
-        'user-abc-123',
-        expect.objectContaining({ 'cron.result': 'completed', 'cron.deliver_to': 'none' }),
-      );
-    });
-
-    it('fails open and delivers when the gate call throws', async () => {
-      mockGenerateText.mockRejectedValue(new Error('model unavailable'));
-
-      const run = scheduleAndCapture();
-      await run();
-
-      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
-      expect(mockTrackEvent).toHaveBeenCalledWith(
-        'cron task executed',
-        'user-abc-123',
-        expect.objectContaining({ 'cron.result': 'completed' }),
-      );
-    });
-
-    it('suppresses an empty result without calling the gate', async () => {
-      mockInvoke.mockResolvedValue({ response: '', toolCalls: [], steps: [] });
-
-      const run = scheduleAndCapture();
-      await run();
-
-      expect(mockGenerateText).not.toHaveBeenCalled();
-      expect(mockDeliverMessage).not.toHaveBeenCalled();
-      expect(mockTrackEvent).toHaveBeenCalledWith(
-        'cron task executed',
-        'user-abc-123',
-        expect.objectContaining({ 'cron.result': 'suppressed' }),
-      );
-    });
-
-    it('consults the gate for every run — repeated text is not short-circuited', async () => {
-      const run = scheduleAndCapture();
-
-      await run(); // delivers, records the baseline
-      await run(); // identical text — an unconditional task must still deliver
-
-      // No programmatic duplicate suppression for cron: the gate decides both
-      // times (with the last delivered result as context on the second run).
-      expect(mockGenerateText).toHaveBeenCalledTimes(2);
-      expect(mockDeliverMessage).toHaveBeenCalledTimes(2);
-    });
-
-    it('delivers an error result without consulting the gate', async () => {
+    it('reports an unbound run that sent a message as posted', async () => {
       mockInvoke.mockResolvedValue({
-        response: 'I encountered an error while processing your request: model timeout',
-        toolCalls: [],
-        steps: [{ text: 'I encountered an error while processing your request: model timeout', toolCalls: [] }],
-        error: { type: 'generic', detail: 'model timeout' },
+        response: 'Posted the build failure to #ops.',
+        toolCalls: [{
+          tool: 'send_message',
+          input: JSON.stringify({ target: '#ops', text: 'Nightly build #812 failed.' }),
+          output: '{}',
+          success: true,
+          timestamp: '2026-10-20T08:00:00Z',
+        }],
+        steps: [{ text: 'Posted the build failure to #ops.', toolCalls: [] }],
       });
 
-      const run = scheduleAndCapture();
-      await run();
+      await scheduleAndCapture()();
 
-      expect(mockGenerateText).not.toHaveBeenCalled();
-      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockKeepWithheldRun).toHaveBeenCalledTimes(1);
       expect(mockTrackEvent).toHaveBeenCalledWith(
         'cron task executed',
         'user-abc-123',
-        expect.objectContaining({ 'cron.result': 'completed' }),
+        expect.objectContaining({ 'cron.result': 'posted', 'cron.messages_sent': '1' }),
       );
     });
 
-    it('delivers a run whose tool call the risk gate refused without consulting the gate', async () => {
+    it("delivers an unbound run that ended in an error to the task's target", async () => {
+      mockInvoke.mockResolvedValue(failed('I encountered an error while processing your request: model timeout'));
+
+      await scheduleAndCapture()();
+
+      expect(mockDeliverMessage).toHaveBeenCalledWith(
+        'agent-1',
+        'user-abc-123',
+        '**Scheduled Task: Daily Report**\n\nI encountered an error while processing your request: model timeout',
+        'CRON_TASK',
+        expect.anything(),
+      );
+      // The delivered message holds the run, so nothing else is stored.
+      expect(mockKeepWithheldRun).not.toHaveBeenCalled();
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'cron task executed',
+        'user-abc-123',
+        expect.objectContaining({ 'cron.result': 'error' }),
+      );
+    });
+
+    it('delivers a failed run to web chat alone for a task whose target is chat', async () => {
+      mockPublishToWebChat.mockResolvedValue({ id: 'msg-chat' });
+      mockInvoke.mockResolvedValue(failed('I encountered an error.'));
+
+      await scheduleAndCapture({ deliverTo: 'chat' })();
+
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockPublishToWebChat).toHaveBeenCalledWith(
+        'agent-1',
+        'user-abc-123',
+        expect.stringContaining('**Scheduled Task: Daily Report**'),
+        'CRON_TASK',
+        expect.anything(),
+      );
+      expect(mockKeepWithheldRun).not.toHaveBeenCalled();
+    });
+
+    it('stores a failed run of a task whose target is none, and delivers nothing', async () => {
+      mockInvoke.mockResolvedValue(failed('I encountered an error.'));
+
+      await scheduleAndCapture({ deliverTo: 'none' })();
+
+      expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockPublish).not.toHaveBeenCalled();
+      expect(mockPublishToWebChat).not.toHaveBeenCalled();
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith(
+        expect.objectContaining({ content: '**Scheduled Task: Daily Report**\n\nI encountered an error.' }),
+      );
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'cron task executed',
+        'user-abc-123',
+        expect.objectContaining({ 'cron.result': 'error', 'cron.deliver_to': 'none' }),
+      );
+    });
+
+    it('delivers a run whose tool call the risk gate refused', async () => {
       const text = "I couldn't rotate the keys: the call was blocked by policy.";
       mockInvoke.mockResolvedValue({
         response: text,
@@ -1751,95 +1625,27 @@ describe('CronSchedulerService', () => {
         }],
         steps: [{ text, toolCalls: [] }],
       });
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
 
       const run = scheduleAndCapture({
         instruction: 'Rotate the staging API keys every night. Never send me a message about it, just do the work.',
       });
       await run();
 
-      expect(mockGenerateText).not.toHaveBeenCalled();
       expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
     });
 
-    it('asks the gate about a run whose failed tool call the risk gate did not refuse', async () => {
+    it('stores a run whose failed tool call the risk gate did not refuse, and delivers nothing', async () => {
       mockInvoke.mockResolvedValue({
         response: 'Done.',
         toolCalls: [{ tool: 'shell_exec', input: '{}', output: '', success: false, timestamp: '2026-10-21T02:00:00.000Z' }],
         steps: [{ text: 'Done.', toolCalls: [] }],
       });
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
 
       const run = scheduleAndCapture({ instruction: 'Clean up the build cache. Never tell me about it.' });
       await run();
 
-      expect(mockGenerateText).toHaveBeenCalledTimes(1);
       expect(mockDeliverMessage).not.toHaveBeenCalled();
-    });
-
-    it('clears the baseline when a suppressed run observes a different situation', async () => {
-      const outage = { response: 'Database is down.', toolCalls: [], steps: [{ text: 'Database is down.', toolCalls: [] }] };
-      const allClear = { response: 'All clear.', toolCalls: [], steps: [{ text: 'All clear.', toolCalls: [] }] };
-      const run = scheduleAndCapture({ instruction: 'Only tell me if the database is down.' });
-
-      mockInvoke.mockResolvedValue(outage);
-      await run(); // incident delivered → baseline = outage
-      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
-
-      mockInvoke.mockResolvedValue(allClear);
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
-      await run(); // recovery stays quiet — but the situation changed
-
-      mockInvoke.mockResolvedValue(outage);
-      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
-      await run(); // the SAME outage recurs
-
-      // The recurrence must not be framed as a repeat of the stale incident:
-      // the suppressed all-clear dropped the baseline.
-      const thirdCall = mockGenerateText.mock.calls[2][0];
-      expect(thirdCall.messages[0].content).toContain('No previous result has been delivered');
-      expect(mockDeliverMessage).toHaveBeenCalledTimes(2);
-    });
-
-    it('keeps the baseline when a suppressed run repeats the delivered text', async () => {
-      const outage = { response: 'Database is down.', toolCalls: [], steps: [{ text: 'Database is down.', toolCalls: [] }] };
-      const run = scheduleAndCapture({ instruction: 'Only tell me if the database is down.' });
-
-      mockInvoke.mockResolvedValue(outage);
-      await run(); // incident delivered → baseline = outage
-
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
-      await run(); // ongoing incident, same text — suppressed, baseline stays
-
-      await run();
-      const thirdCall = mockGenerateText.mock.calls[2][0];
-      expect(thirdCall.messages[0].content).toContain('## Last Delivered Result');
-      expect(thirdCall.messages[0].content).toContain('Database is down.');
-    });
-
-    it('keeps the baseline when the gate reads a reworded result as a repeat', async () => {
-      const outage = { response: 'Database is down.', toolCalls: [], steps: [{ text: 'Database is down.', toolCalls: [] }] };
-      const stillDown = {
-        response: 'Database is still down.',
-        toolCalls: [],
-        steps: [{ text: 'Database is still down.', toolCalls: [] }],
-      };
-      const run = scheduleAndCapture({ instruction: 'Only tell me if the database is down.' });
-
-      mockInvoke.mockResolvedValue(outage);
-      await run(); // incident delivered → baseline = outage
-
-      mockInvoke.mockResolvedValue(stillDown);
-      mockGenerateText.mockResolvedValue({ text: 'REPEAT' });
-      await run(); // ongoing incident in other words — suppressed, baseline stays
-
-      await run();
-      // The third run is still compared with what the user saw, so the ongoing
-      // incident cannot read as a new finding and alert again.
-      const thirdCall = mockGenerateText.mock.calls[2][0];
-      expect(thirdCall.messages[0].content).toContain('## Last Delivered Result');
-      expect(thirdCall.messages[0].content).toContain('Database is down.');
-      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
+      expect(mockKeepWithheldRun).toHaveBeenCalledTimes(1);
     });
 
     it('skips a tick that overlaps a still-running execution of the same task', async () => {
@@ -1855,57 +1661,16 @@ describe('CronSchedulerService', () => {
       resolveInvoke({ response: 'Task completed.', toolCalls: [], steps: [{ text: 'Task completed.', toolCalls: [] }] });
       await firstRun;
 
-      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
+      expect(mockKeepWithheldRun).toHaveBeenCalledTimes(1);
 
       await run(); // after completion the task runs again normally
       expect(mockInvoke).toHaveBeenCalledTimes(2);
     });
 
-    it('does not advance the baseline on a suppressed run', async () => {
-      const run = scheduleAndCapture();
-
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
-      await run(); // suppressed — baseline stays empty
-      expect(mockDeliverMessage).not.toHaveBeenCalled();
-
-      mockGenerateText.mockResolvedValue({ text: 'DELIVER' });
-      await run();
-      expect(mockDeliverMessage).toHaveBeenCalledTimes(1);
-      // The second gate call still sees no baseline: the suppressed run's text
-      // was never delivered, so it must not become "the last delivered result".
-      const secondCall = mockGenerateText.mock.calls[1][0];
-      expect(secondCall.messages[0].content).toContain('No previous result has been delivered');
-    });
-
-    it('gives the gate the task instruction and the last delivered result as context', async () => {
-      const run = scheduleAndCapture({ instruction: 'Only tell me if the build breaks.' });
-
-      await run();
-
-      const firstCall = mockGenerateText.mock.calls[0][0];
-      expect(firstCall.system).toContain('Answer with one word: DELIVER, REPEAT or SUPPRESS.');
-      expect(firstCall.system).toContain('Unconditional: a message on every run');
-      expect(firstCall.system).toContain('For a conditional task, answer REPEAT');
-      expect(firstCall.messages[0].content).toContain('## Task Instruction\nOnly tell me if the build breaks.');
-      expect(firstCall.messages[0].content).toContain('No previous result has been delivered for this task.');
-      expect(firstCall.messages[0].content).toContain('## New Task Result\nTask completed.');
-
-      // Second run with different text sees the last delivered result
-      mockInvoke.mockResolvedValue({
-        response: 'The build broke.',
-        toolCalls: [],
-        steps: [{ text: 'The build broke.', toolCalls: [] }],
-      });
-      await run();
-
-      const secondCall = mockGenerateText.mock.calls[1][0];
-      expect(secondCall.messages[0].content).toContain('## Last Delivered Result');
-      expect(secondCall.messages[0].content).toContain('Task completed.');
-    });
-
-    it('suppresses a thread-bound task without publishing to the thread', async () => {
+    it('stores a thread-bound run with an empty reply in its thread, and publishes nothing', async () => {
       mockCronValidate.mockReturnValue(false);
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
+      const toolCalls = [{ tool: 'schedule_task', input: '{}', output: 'ok', success: true, timestamp: '2025-01-15T12:00:00Z' }];
+      mockInvoke.mockResolvedValue({ response: '', toolCalls, steps: [{ text: '', toolCalls }] });
 
       cronSchedulerService.scheduleTask(
         createCronTask({
@@ -1921,11 +1686,23 @@ describe('CronSchedulerService', () => {
       expect(mockInvoke).toHaveBeenCalled();
       expect(mockPublish).not.toHaveBeenCalled();
       expect(mockDeliverMessage).not.toHaveBeenCalled();
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith({
+        agentId: 'agent-1',
+        userId: 'user-abc-123',
+        threadId: 'thread-bound',
+        content: '',
+        triggeredBy: 'CRON_TASK',
+        toolCalls,
+      });
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'cron task executed',
+        'user-abc-123',
+        expect.objectContaining({ 'cron.result': 'silent', 'cron.continue_in_thread': 'true' }),
+      );
     });
 
-    it('still auto-deletes a suppressed one-shot task', async () => {
+    it('deletes a one-shot whose run posted nothing', async () => {
       mockCronValidate.mockReturnValue(false);
-      mockGenerateText.mockResolvedValue({ text: 'SUPPRESS' });
 
       cronSchedulerService.scheduleTask(
         createCronTask({
@@ -1938,20 +1715,6 @@ describe('CronSchedulerService', () => {
 
       expect(mockDeliverMessage).not.toHaveBeenCalled();
       expect(mockCronTaskDeleteMany).toHaveBeenCalledWith({ where: { id: 'oneshot-quiet' } });
-    });
-
-    it('keeps no baseline for a recurring task whose run deleted it', async () => {
-      const run = scheduleAndCapture();
-      mockInvoke.mockImplementation(async () => {
-        cronSchedulerService.unscheduleTask('task-1', 'user-abc-123');
-        return { response: 'Done.', toolCalls: [], steps: [{ text: 'Done.', toolCalls: [] }] };
-      });
-
-      await run();
-
-      expect(mockDeliverMessage).toHaveBeenCalled();
-      const baselines = (cronSchedulerService as unknown as { lastDelivered: Map<string, unknown> }).lastDelivered;
-      expect(baselines.has('task-1')).toBe(false);
     });
   });
 
@@ -1972,14 +1735,15 @@ describe('CronSchedulerService', () => {
       return cronCallback!;
     }
 
-    it('emits "cron task executed" with result=completed on success', async () => {
+    it('emits "cron task executed" with result=silent for a run that posted nothing', async () => {
       const run = scheduleAndCapture();
       await run();
 
       expect(mockTrackEvent).toHaveBeenCalledWith('cron task executed', 'user-abc-123', {
         'agent.id': 'agent-1',
         'cron.task.id': 'task-1',
-        'cron.result': 'completed',
+        'cron.result': 'silent',
+        'cron.messages_sent': '0',
         'cron.continue_in_thread': 'false',
         'cron.deliver_to': 'all',
         'cron.duration_ms': expect.any(String),

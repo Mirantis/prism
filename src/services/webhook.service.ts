@@ -22,13 +22,11 @@ import type { PublishOptions } from './message-delivery.service';
 import { deliveryTargetService, parseCommaList, type Delivery } from './delivery-target.service';
 import { webhookRunService, WebhookRunResult, type AcceptedEvent } from './webhook-run.service';
 import { pendingWorkService, type PendingWorkItem } from './pending-work.service';
-import { outboundMessageService } from './outbound-message.service';
+import { outboundMessageService, sentMessageList } from './outbound-message.service';
 import { agentWorkspaceService } from './agent-workspace.service';
 import { prisma } from '../lib/prisma';
 import { trackEvent } from '../lib/telemetry';
 import { verifyWebhookAuth } from '../lib/webhook-signature';
-import { runClassificationGate } from '../lib/classification-gate';
-import { WEBHOOK_GATE_PROMPT, buildWebhookGateUserMessage } from '../prompts/webhook-gate-prompt';
 import { logger } from '../logger';
 
 // ============================================================================
@@ -456,10 +454,10 @@ export class WebhookService {
       prompt,
       afterRestart,
       abortSignal: pendingWorkService.shutdownSignal,
-      ...(await deliveryTargetService.outputTarget(agent.id, agent.userId, {
+      postingCeiling: await deliveryTargetService.ceiling(agent.id, {
         deliverTo: subscription.deliverTo,
         channelIds: parseCommaList(subscription.slackChannelIds),
-      })),
+      }),
     });
     if (pendingWorkService.shutdownSignal.aborted) return null;
 
@@ -490,58 +488,25 @@ export class WebhookService {
     const responseText = (lastStep?.text ?? '').trim();
     const body = responseText || result.response;
 
-    // 'none' delivers nothing, so it skips the gate's model call too.
-    const delivered =
-      subscription.deliverTo !== 'none' &&
-      (await this.passesDeliveryGate(subscription, body, result.error !== undefined, agent));
-    if (!delivered) {
-      await outboundMessageService.keepWithheldRun({
-        agentId: agent.id,
-        userId: agent.userId,
-        content: body,
-        triggeredBy: 'WEBHOOK',
-        triggerName: subscription.name,
-        toolCalls: result.toolCalls,
-      });
-      if (subscription.deliverTo !== 'none') return { status: 'suppressed' };
+    // A model error ends the run on an error step, which the agent could not
+    // post, so it goes to the subscription's target.
+    if (result.error) {
+      const { message, chosenChannels } = await this.deliver(agent.id, agent.userId, subscription, body, stored);
+      return { status: 'failed', error: result.error.detail, messageId: message?.id, chosenChannels };
     }
 
-    const { message, chosenChannels } = await this.deliver(
-      agent.id,
-      agent.userId,
-      subscription,
-      body,
-      stored,
-    );
-
-    // A model error ends the run on an error step, delivered like any reply.
-    if (result.error) return { status: 'failed', error: result.error.detail, messageId: message?.id, chosenChannels };
-    return { status: 'completed', messageId: message?.id, chosenChannels };
-  }
-
-  /**
-   * Whether an agent-mode reply is delivered. An empty reply is not. An error
-   * reply always is, and so is every reply of a subscription without a prompt,
-   * which set the agent no condition. The classification gate decides the rest
-   * from the prompt, so a webhook that asks for a message on every event gets
-   * one, and a reply with nothing to report stays quiet.
-   */
-  private async passesDeliveryGate(
-    subscription: WebhookSubscription,
-    body: string,
-    isError: boolean,
-    agent: { id: string; userId: string },
-  ): Promise<boolean> {
-    if (!body.trim()) return false;
-    if (isError || !subscription.prompt) return true;
-    return runClassificationGate({
-      system: WEBHOOK_GATE_PROMPT,
-      user: buildWebhookGateUserMessage({ instruction: subscription.prompt, replyText: body }),
-      functionId: 'webhook-gate',
-      userId: agent.userId,
+    // Otherwise the run reaches people only through what the agent posted. A run
+    // that posted is stored with its sends, and its run row names that record.
+    const recordId = await outboundMessageService.keepWithheldRun({
       agentId: agent.id,
-      logLabel: 'Webhook:Gate',
+      userId: agent.userId,
+      content: body,
+      triggeredBy: 'WEBHOOK',
+      triggerName: subscription.name,
+      toolCalls: result.toolCalls,
     });
+    if (sentMessageList(result.toolCalls).length === 0) return { status: 'suppressed' };
+    return { status: 'completed', ...(recordId ? { messageId: recordId } : {}) };
   }
 
   /**

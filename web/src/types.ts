@@ -256,6 +256,12 @@ export interface HeartbeatStatus {
   intervalMs: number | null;
 }
 
+/** Where a heartbeat run may post. */
+export interface HeartbeatDelivery {
+  deliverTo: DeliverTo;
+  channelIds: string[];
+}
+
 export interface SlackLinkStatus {
   hasDmMapping: boolean;
   hasChannelMapping: boolean;

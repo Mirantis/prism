@@ -3,9 +3,9 @@
  *
  * Covers prompt template rendering (hermes semantics), event-type resolution
  * and filtering, generic sender verification, deliver-only vs agent-mode
- * handling, scoped vs broadcast delivery, the delivery gate, the 'none'
- * target, the budget/error paths, and the run record each accepted event
- * leaves.
+ * handling, scoped vs broadcast delivery, the posting ceiling an agent run
+ * gets, what an agent run delivers and stores, the budget/error paths, and the
+ * run record each accepted event leaves.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -19,6 +19,7 @@ const {
   mockInvoke,
   mockPublishToLatestThread,
   mockPublish,
+  mockPublishToWebChat,
   mockGetOrCreateLatestThread,
   mockGetOrCreateThreadByExternalId,
   mockGetAgent,
@@ -30,7 +31,6 @@ const {
   mockRunStart,
   mockRunFinish,
   mockWebhookRunUpdate,
-  mockRunClassificationGate,
   mockRunRequeue,
   mockRunFailInterrupted,
   mockBeginWork,
@@ -41,6 +41,7 @@ const {
   mockInvoke: vi.fn(),
   mockPublishToLatestThread: vi.fn(),
   mockPublish: vi.fn(),
+  mockPublishToWebChat: vi.fn(),
   mockGetOrCreateLatestThread: vi.fn(),
   mockGetOrCreateThreadByExternalId: vi.fn(),
   mockGetAgent: vi.fn(),
@@ -52,7 +53,6 @@ const {
   mockRunStart: vi.fn(),
   mockRunFinish: vi.fn(),
   mockWebhookRunUpdate: vi.fn(),
-  mockRunClassificationGate: vi.fn(),
   mockRunRequeue: vi.fn(),
   mockRunFailInterrupted: vi.fn(),
   mockBeginWork: vi.fn(),
@@ -65,10 +65,14 @@ vi.mock('../invoke', () => ({
   invoke: mockInvoke,
 }));
 
-const { mockKeepWithheldRun } = vi.hoisted(() => ({ mockKeepWithheldRun: vi.fn() }));
+const { mockKeepWithheldRun, mockListTargets } = vi.hoisted(() => ({
+  mockKeepWithheldRun: vi.fn(),
+  mockListTargets: vi.fn(),
+}));
 
-vi.mock('./outbound-message.service', () => ({
-  outboundMessageService: { keepWithheldRun: mockKeepWithheldRun },
+vi.mock('./outbound-message.service', async (importOriginal) => ({
+  sentMessageList: (await importOriginal<typeof import('./outbound-message.service')>()).sentMessageList,
+  outboundMessageService: { keepWithheldRun: mockKeepWithheldRun, listTargets: mockListTargets },
 }));
 
 vi.mock('./message-delivery.service', () => {
@@ -81,6 +85,7 @@ vi.mock('./message-delivery.service', () => {
     messageDeliveryService: {
       publishToLatestThread: mockPublishToLatestThread,
       publish: mockPublish,
+      publishToWebChat: mockPublishToWebChat,
       getAdapter: (name: string) => adapters.find((adapter) => adapter.name === name),
     },
   };
@@ -136,10 +141,6 @@ vi.mock('../lib/prisma', () => {
 vi.mock('../lib/telemetry', () => ({
   langfuseTelemetry: () => ({}),
   trackEvent: mockTrackEvent,
-}));
-
-vi.mock('../lib/classification-gate', () => ({
-  runClassificationGate: mockRunClassificationGate,
 }));
 
 vi.mock('../logger', () => ({
@@ -204,14 +205,19 @@ function invokeResult(text: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** A successful send_message call, as a run's tool calls record it. */
+function sentMessageCall(target: string, text: string) {
+  return { tool: 'send_message', input: JSON.stringify({ target, text }), output: '{}', success: true };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetAgent.mockResolvedValue(AGENT);
-  // Default: the gate lets every reply through. Gate tests override this.
-  mockRunClassificationGate.mockResolvedValue(true);
   mockGetOrCreateLatestThread.mockResolvedValue({ id: 'thread-1' });
   mockPublishToLatestThread.mockResolvedValue({ id: 'msg-1' });
   mockPublish.mockResolvedValue({ id: 'msg-1' });
+  mockPublishToWebChat.mockResolvedValue({ id: 'msg-1' });
+  mockListTargets.mockResolvedValue([]);
   mockRunAccept.mockResolvedValue(undefined);
   mockRunRequeue.mockResolvedValue(true);
   mockRunFailInterrupted.mockResolvedValue(0);
@@ -653,20 +659,14 @@ describe('handleInbound deliver-only', () => {
     expect(mockTrackEvent).not.toHaveBeenCalled();
   });
 
-  it('scopes deliver-only chat delivery via channelContext', async () => {
+  it('scopes deliver-only chat delivery to web chat', async () => {
     mockSubscriptionFindUnique.mockResolvedValue(
       createSubscription({ deliverOnly: true, deliverTo: 'chat', prompt: 'ping' }),
     );
     await webhookService.handleInbound('alerts', {}, {}, 'run-1');
-    expect(mockPublish).toHaveBeenCalledWith(
-      'user-1',
-      'thread-1',
-      'ping',
-      'WEBHOOK',
-      expect.objectContaining({
-        channelContext: { channel: 'websocket', threadId: 'thread-1' },
-      }),
-    );
+    expect(mockPublishToWebChat).toHaveBeenCalledWith('agent-1', 'user-1', 'ping', 'WEBHOOK', {
+      triggerName: 'alerts',
+    });
     expect(mockPublishToLatestThread).not.toHaveBeenCalled();
   });
 });
@@ -676,29 +676,43 @@ describe('handleInbound deliver-only', () => {
 // ---------------------------------------------------------------------------
 
 describe('handleInbound agent mode', () => {
-  it('returns accepted immediately and delivers the final response when the run finishes', async () => {
+  it('returns accepted immediately and stores the run when it finishes', async () => {
     mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
     let resolveInvoke!: (v: unknown) => void;
     mockInvoke.mockReturnValue(new Promise((r) => (resolveInvoke = r)));
 
     const result = await webhookService.handleInbound('alerts', { status: 'firing' }, {}, 'run-1');
     expect(result).toEqual({ status: 'accepted', event: 'unknown' });
-    // Fire-and-forget: nothing delivered while the run is in flight.
-    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
+    // Fire-and-forget: nothing stored while the run is in flight.
+    expect(mockKeepWithheldRun).not.toHaveBeenCalled();
 
     resolveInvoke(invokeResult('All clear — noise alert.'));
-    await vi.waitFor(() => expect(mockPublishToLatestThread).toHaveBeenCalled());
+    await vi.waitFor(() => expect(mockKeepWithheldRun).toHaveBeenCalled());
 
     expect(mockInvoke).toHaveBeenCalledWith(
       expect.objectContaining({ mode: 'webhook', userId: 'user-1', agentId: 'agent-1' }),
     );
-    expect(mockPublishToLatestThread).toHaveBeenCalledWith(
-      'agent-1',
-      'user-1',
-      'All clear — noise alert.',
-      'WEBHOOK',
-      expect.objectContaining({ triggerName: 'alerts' }),
-    );
+  });
+
+  it('stores a run that sent a message, delivers nothing more, and ends completed', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
+    const toolCalls = [sentMessageCall('slack:C_REL', 'Release 1.2 is out.')];
+    mockInvoke.mockResolvedValue(invokeResult('Posted the release note.', { toolCalls }));
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status: 'completed' }));
+
+    expect(mockKeepWithheldRun).toHaveBeenCalledWith({
+      agentId: 'agent-1',
+      userId: 'user-1',
+      content: 'Posted the release note.',
+      triggeredBy: 'WEBHOOK',
+      triggerName: 'alerts',
+      toolCalls,
+    });
+    expect(mockPublish).not.toHaveBeenCalled();
+    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
+    expect(mockPublishToWebChat).not.toHaveBeenCalled();
     expect(mockTrackEvent).toHaveBeenCalledWith(
       'webhook processed',
       'user-1',
@@ -706,7 +720,29 @@ describe('handleInbound agent mode', () => {
     );
   });
 
-  it('records the run as queued, then running, then finished with the message it delivered', async () => {
+  it('stores a run that sent nothing, delivers nothing, and ends suppressed', async () => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
+    // A refused send posted nothing.
+    const toolCalls = [{ ...sentMessageCall('slack:C_REL', 'hi'), success: false }];
+    mockInvoke.mockResolvedValue(invokeResult('Nothing to report.', { toolCalls }));
+
+    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status: 'suppressed' }));
+
+    expect(mockKeepWithheldRun).toHaveBeenCalledWith(
+      expect.objectContaining({ content: 'Nothing to report.', triggeredBy: 'WEBHOOK', triggerName: 'alerts' }),
+    );
+    expect(mockPublish).not.toHaveBeenCalled();
+    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
+    expect(mockPublishToWebChat).not.toHaveBeenCalled();
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'webhook processed',
+      'user-1',
+      expect.objectContaining({ 'webhook.status': 'suppressed' }),
+    );
+  });
+
+  it('records the run as queued, then running, then finished', async () => {
     mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
     let resolveInvoke!: (v: unknown) => void;
     mockInvoke.mockReturnValue(new Promise((r) => (resolveInvoke = r)));
@@ -720,9 +756,7 @@ describe('handleInbound agent mode', () => {
     expect(mockRunFinish).not.toHaveBeenCalled();
 
     resolveInvoke(invokeResult('done'));
-    await vi.waitFor(() =>
-      expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status: 'completed', messageId: 'msg-1' }),
-    );
+    await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status: 'suppressed' }));
   });
 
   it('answers 500 rather than 202 when the run cannot be recorded, and runs nothing', async () => {
@@ -754,18 +788,18 @@ describe('handleInbound agent mode', () => {
       expect(mockTrackEvent).toHaveBeenCalledWith(
         'webhook processed',
         'user-1',
-        expect.objectContaining({ 'webhook.status': 'completed' }),
+        expect.objectContaining({ 'webhook.status': 'suppressed' }),
       ),
     );
     expect(mockInvoke).toHaveBeenCalledTimes(1);
-    expect(mockPublishToLatestThread).toHaveBeenCalledTimes(1);
+    expect(mockKeepWithheldRun).toHaveBeenCalledTimes(1);
     expect(mockWebhookRunUpdate).toHaveBeenLastCalledWith({
       where: { id: 'run-1' },
-      data: expect.objectContaining({ status: 'completed', messageId: 'msg-1' }),
+      data: expect.objectContaining({ status: 'suppressed' }),
     });
   });
 
-  it('finishes a run that ended on a model error as failed, and still delivers its reply', async () => {
+  it('delivers the reply of a run that ended on a model error, and finishes it as failed', async () => {
     mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
     mockInvoke.mockResolvedValue(
       invokeResult('I encountered an error.', {
@@ -785,6 +819,7 @@ describe('handleInbound agent mode', () => {
     expect(mockPublishToLatestThread.mock.calls[0][2]).toBe(
       'I encountered an error.',
     );
+    expect(mockKeepWithheldRun).not.toHaveBeenCalled();
     expect(mockTrackEvent).toHaveBeenCalledWith(
       'webhook processed',
       'user-1',
@@ -793,12 +828,12 @@ describe('handleInbound agent mode', () => {
   });
 
   it("stores channel-scoped output in the destination's own thread, hidden from web", async () => {
-    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'slack' }));
+    mockSubscriptionFindUnique.mockResolvedValue(
+      createSubscription({ deliverTo: 'slack', deliverOnly: true, prompt: 'handled' }),
+    );
     mockDefaultDestination.mockResolvedValue({ threadKey: 'D123' });
-    mockInvoke.mockResolvedValue(invokeResult('handled'));
 
     await webhookService.handleInbound('alerts', {}, {}, 'run-1');
-    await vi.waitFor(() => expect(mockPublish).toHaveBeenCalled());
 
     // Keyed on the destination's conversation id → the same DATABASE thread the
     // channel's chat uses, hidden from web Recents by the listThreads
@@ -818,12 +853,12 @@ describe('handleInbound agent mode', () => {
   });
 
   it('routes to the conversation the destination names', async () => {
-    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'slack' }));
+    mockSubscriptionFindUnique.mockResolvedValue(
+      createSubscription({ deliverTo: 'slack', deliverOnly: true, prompt: 'handled' }),
+    );
     mockDefaultDestination.mockResolvedValue({ threadKey: 'C_MAIN', channelId: 'C_MAIN' });
-    mockInvoke.mockResolvedValue(invokeResult('handled'));
 
     await webhookService.handleInbound('alerts', {}, {}, 'run-1');
-    await vi.waitFor(() => expect(mockPublish).toHaveBeenCalled());
 
     expect(mockPublish).toHaveBeenCalledWith(
       'user-1',
@@ -837,31 +872,33 @@ describe('handleInbound agent mode', () => {
   });
 
   it('no destination linked: falls back to web chat only, not to every channel', async () => {
-    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'slack' }));
-    mockInvoke.mockResolvedValue(invokeResult('handled'));
+    mockSubscriptionFindUnique.mockResolvedValue(
+      createSubscription({ deliverTo: 'slack', deliverOnly: true, prompt: 'handled' }),
+    );
 
     await webhookService.handleInbound('alerts', {}, {}, 'run-1');
-    await vi.waitFor(() => expect(mockPublish).toHaveBeenCalled());
 
     expect(mockGetOrCreateThreadByExternalId).not.toHaveBeenCalled();
     expect(mockPublishToLatestThread).not.toHaveBeenCalled();
-    expect(mockPublish).toHaveBeenCalledWith(
-      'user-1',
-      'thread-1',
-      'handled',
-      'WEBHOOK',
-      expect.objectContaining({ channelContext: { channel: 'websocket', threadId: 'thread-1' } }),
-    );
+    expect(mockPublish).not.toHaveBeenCalled();
+    expect(mockPublishToWebChat).toHaveBeenCalledWith('agent-1', 'user-1', 'handled', 'WEBHOOK', {
+      triggerName: 'alerts',
+    });
   });
 
-  it('chosen channels: posts to each one in its own channel thread, and nowhere else', async () => {
+  it('chosen channels: posts an error reply to each one in its own channel thread, and nowhere else', async () => {
     mockSubscriptionFindUnique.mockResolvedValue(
       createSubscription({ deliverTo: 'slack', slackChannelIds: 'C_REL,C_IOS' }),
     );
     mockListChannelIds.mockResolvedValue(['C_MAIN', 'C_REL', 'C_IOS']);
     mockDefaultDestination.mockResolvedValue({ threadKey: 'D123' });
     mockPublish.mockResolvedValueOnce({ id: 'msg-rel' }).mockResolvedValueOnce({ id: 'msg-ios' });
-    mockInvoke.mockResolvedValue(invokeResult('handled', { attachmentIds: ['att-1'] }));
+    mockInvoke.mockResolvedValue(
+      invokeResult('I encountered an error.', {
+        attachmentIds: ['att-1'],
+        error: { type: 'generic', detail: 'model unavailable' },
+      }),
+    );
 
     await webhookService.handleInbound('alerts', {}, {}, 'run-1');
     await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalled());
@@ -875,7 +912,7 @@ describe('handleInbound agent mode', () => {
     // The list replaces the DM and the main channel.
     expect(mockDefaultDestination).not.toHaveBeenCalled();
     expect(mockPublishToLatestThread).not.toHaveBeenCalled();
-    expect(mockRunFinish).toHaveBeenCalledWith('run-1', expect.objectContaining({ status: 'completed', messageId: 'msg-rel' }));
+    expect(mockRunFinish).toHaveBeenCalledWith('run-1', expect.objectContaining({ status: 'failed', messageId: 'msg-rel' }));
     expect(mockTrackEvent).toHaveBeenCalledWith(
       'webhook processed',
       'user-1',
@@ -916,11 +953,10 @@ describe('handleInbound agent mode', () => {
 
     await webhookService.handleInbound('release', {}, {}, 'run-1');
 
-    // Scoped to the web socket: a broadcast would reach the main channel.
-    expect(mockPublish).toHaveBeenCalledTimes(1);
-    expect(mockPublish).toHaveBeenCalledWith('user-1', 'thread-1', 'ping', 'WEBHOOK', {
+    // Web chat only: a broadcast would reach the main channel.
+    expect(mockPublish).not.toHaveBeenCalled();
+    expect(mockPublishToWebChat).toHaveBeenCalledWith('agent-1', 'user-1', 'ping', 'WEBHOOK', {
       triggerName: 'alerts',
-      channelContext: { channel: 'websocket', threadId: 'thread-1' },
     });
     expect(mockPublishToLatestThread).not.toHaveBeenCalled();
     expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status: 'delivered', messageId: 'msg-1' });
@@ -963,7 +999,6 @@ describe('handleInbound agent mode', () => {
       "This event could not be processed — your organization's AI spending limit has been reached: monthly cap. Please contact your administrator to increase the budget.",
     );
     expect(options).toEqual(expect.objectContaining({ triggerName: 'alerts' }));
-    expect(mockRunClassificationGate).not.toHaveBeenCalled();
     expect(mockTrackEvent).toHaveBeenCalledWith(
       'webhook processed',
       'user-1',
@@ -1039,7 +1074,9 @@ describe('handleInbound agent mode', () => {
 
   it('finishes a run as failed with no message when the failure notice cannot be delivered either', async () => {
     mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
-    mockInvoke.mockResolvedValue(invokeResult('done'));
+    mockInvoke.mockResolvedValue(
+      invokeResult('I encountered an error.', { error: { type: 'generic', detail: 'model unavailable' } }),
+    );
     mockPublishToLatestThread.mockRejectedValue(new Error('database is locked'));
 
     await webhookService.handleInbound('alerts', {}, {}, 'run-1');
@@ -1053,206 +1090,69 @@ describe('handleInbound agent mode', () => {
     );
   });
 
-  it('asks the gate with the prompt template as the instruction', async () => {
-    mockSubscriptionFindUnique.mockResolvedValue(
-      createSubscription({ prompt: 'Only tell me if {status} is firing.' }),
-    );
-    mockInvoke.mockResolvedValue(invokeResult('HighMemory is firing on node-3.'));
+  it.each([
+    ['a message it sent', [sentMessageCall('slack:C_REL', 'Done.')], 'completed'],
+    ['nothing it sent', [], 'suppressed'],
+  ])("stores a 'none' run with %s like any other run", async (_label, toolCalls, status) => {
+    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'none' }));
+    mockInvoke.mockResolvedValue(invokeResult('Posted the review on GitHub.', { toolCalls }));
 
-    await webhookService.handleInbound('alerts', { status: 'firing' }, {}, 'run-1');
-    await vi.waitFor(() => expect(mockPublishToLatestThread).toHaveBeenCalled());
-
-    // The template, not the rendered prompt: the gate reads what the user asked
-    // for, and the payload stays out of the gate's input.
-    expect(mockRunClassificationGate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        functionId: 'webhook-gate',
-        agentId: 'agent-1',
-        user: '## Webhook Instruction\nOnly tell me if {status} is firing.\n\n## Agent Reply\n```\nHighMemory is firing on node-3.\n```',
-      }),
-    );
-  });
-
-  it('delivers every reply of a subscription without a prompt, without a gate call', async () => {
-    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ prompt: null }));
-    mockInvoke.mockResolvedValue(invokeResult('Alert HighMemory resolved, nothing further.'));
-    mockRunClassificationGate.mockResolvedValue(false);
-
-    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
-    await vi.waitFor(() => expect(mockPublishToLatestThread).toHaveBeenCalled());
-
-    expect(mockRunClassificationGate).not.toHaveBeenCalled();
-  });
-
-  it('posts nothing when the gate suppresses the reply', async () => {
-    mockSubscriptionFindUnique.mockResolvedValue(
-      createSubscription({ deliverTo: 'slack', prompt: 'Review the PR. Only message me if the review fails.' }),
-    );
-    mockDefaultDestination.mockResolvedValue({ threadKey: 'D123' });
-    mockInvoke.mockResolvedValue(invokeResult('Nothing to do: the PR is a draft.'));
-    mockRunClassificationGate.mockResolvedValue(false);
-
-    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
-    await vi.waitFor(() =>
-      expect(mockTrackEvent).toHaveBeenCalledWith(
-        'webhook processed',
-        'user-1',
-        expect.objectContaining({ 'webhook.status': 'suppressed' }),
-      ),
-    );
-
-    expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status: 'suppressed' });
-    expect(mockPublish).not.toHaveBeenCalled();
-    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
-  });
-
-  it('keeps a suppressed run in history as a webhook message: the body alone, named for its subscription', async () => {
-    mockSubscriptionFindUnique.mockResolvedValue(
-      createSubscription({ deliverTo: 'slack', prompt: 'Only message me if the review fails.' }),
-    );
-    mockInvoke.mockResolvedValue(invokeResult('Posted the review to #reviews.'));
-    mockRunClassificationGate.mockResolvedValue(false);
-
-    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
-    await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status: 'suppressed' }));
+    const result = await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+    expect(result).toEqual({ status: 'accepted', event: 'unknown' });
+    await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status }));
 
     expect(mockKeepWithheldRun).toHaveBeenCalledWith(
-      expect.objectContaining({
-        agentId: 'agent-1',
-        userId: 'user-1',
-        content: 'Posted the review to #reviews.',
-        triggeredBy: 'WEBHOOK',
-        triggerName: 'alerts',
-      }),
+      expect.objectContaining({ content: 'Posted the review on GitHub.', triggeredBy: 'WEBHOOK' }),
     );
-  });
-
-  it("keeps a 'none' run in history too, and still delivers nothing", async () => {
-    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'none' }));
-    mockInvoke.mockResolvedValue(invokeResult('Posted the review to #reviews.'));
-
-    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
-    await vi.waitFor(() =>
-      expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status: 'completed', messageId: undefined }),
-    );
-
-    expect(mockKeepWithheldRun).toHaveBeenCalledWith(expect.objectContaining({ triggeredBy: 'WEBHOOK' }));
     expect(mockPublish).not.toHaveBeenCalled();
     expect(mockPublishToLatestThread).not.toHaveBeenCalled();
+    expect(mockPublishToWebChat).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['all', true],
-    ['chat', false],
-    ['none', false],
-  ])("tells the run whether its output is broadcast for deliverTo '%s'", async (deliverTo, broadcastsOutput) => {
-    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo }));
-    mockInvoke.mockResolvedValue(invokeResult('Done.'));
+  describe('the posting ceiling invoke gets', () => {
+    const MAIN = {
+      key: 'slack:C_MAIN',
+      platform: 'slack',
+      kind: 'channel',
+      conversationId: 'C_MAIN',
+      name: 'general',
+      isMain: true,
+    };
+    const REL = { ...MAIN, key: 'slack:C_REL', conversationId: 'C_REL', name: 'releases', isMain: false };
+    const DM = { ...MAIN, key: 'slack:D123', kind: 'dm', conversationId: 'D123', name: null, isMain: false };
 
-    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
-    await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalled());
+    async function ceilingFor(subscription: Record<string, unknown>) {
+      mockSubscriptionFindUnique.mockResolvedValue(createSubscription(subscription));
+      mockInvoke.mockResolvedValue(invokeResult('Done.'));
+      await webhookService.handleInbound('alerts', {}, {}, 'run-1');
+      await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalled());
+      return mockInvoke.mock.calls[0][0].postingCeiling;
+    }
 
-    expect(Boolean(mockInvoke.mock.calls[0][0].broadcastsOutput)).toBe(broadcastsOutput);
-  });
+    beforeEach(() => {
+      mockListTargets.mockResolvedValue([MAIN, REL, DM]);
+    });
 
-  it('tells a single-platform run with no destination that its output reaches no channel, as the web chat fallback does not', async () => {
-    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'slack' }));
-    mockDefaultDestination.mockResolvedValue(null);
-    mockInvoke.mockResolvedValue(invokeResult('Done.'));
+    it.each([
+      ['all', { webChat: true, targets: [MAIN, REL, DM] }],
+      ['chat', { webChat: true, targets: [] }],
+      ['none', { webChat: false, targets: [] }],
+      ['slack', { webChat: false, targets: [MAIN, REL, DM] }],
+    ])("for deliverTo '%s'", async (deliverTo, ceiling) => {
+      expect(await ceilingFor({ deliverTo })).toEqual(ceiling);
+    });
 
-    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
-    await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalled());
+    it('holds only the chosen channels when the subscription chose some', async () => {
+      expect(await ceilingFor({ deliverTo: 'slack', slackChannelIds: 'C_REL,C_GONE' })).toEqual({
+        webChat: false,
+        targets: [REL],
+      });
+    });
 
-    expect(mockInvoke.mock.calls[0][0].broadcastsOutput).toBeUndefined();
-    expect(mockInvoke.mock.calls[0][0].outputDestination).toBeUndefined();
-    // The delivery the refusal matches: web chat only, with no channel scope beyond it.
-    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
-    expect(mockPublish).toHaveBeenCalledWith(
-      'user-1',
-      'thread-1',
-      'Done.',
-      'WEBHOOK',
-      expect.objectContaining({ channelContext: { channel: 'websocket', threadId: 'thread-1' } }),
-    );
-  });
-
-  it('tells the run its output is not broadcast when it posts to chosen channels', async () => {
-    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'slack', slackChannelIds: 'C_REL' }));
-    mockInvoke.mockResolvedValue(invokeResult('Done.'));
-
-    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
-    await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalled());
-
-    expect(mockInvoke.mock.calls[0][0].broadcastsOutput).toBeFalsy();
-    expect(mockInvoke.mock.calls[0][0].outputDestination).toBeUndefined();
-  });
-
-  it('tells a single-platform run the one conversation its output goes to', async () => {
-    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'slack' }));
-    mockDefaultDestination.mockResolvedValue({ threadKey: 'D123' });
-    mockInvoke.mockResolvedValue(invokeResult('Done.'));
-
-    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
-    await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalled());
-
-    expect(mockInvoke.mock.calls[0][0].broadcastsOutput).toBeFalsy();
-    expect(mockInvoke.mock.calls[0][0].outputDestination).toEqual({ platform: 'slack', conversationId: 'D123' });
-  });
-
-  it('names no single conversation for a broadcast run', async () => {
-    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'all' }));
-    mockInvoke.mockResolvedValue(invokeResult('Done.'));
-
-    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
-    await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalled());
-
-    expect(mockInvoke.mock.calls[0][0].outputDestination).toBeUndefined();
-  });
-
-  it('keeps nothing extra for a delivered run', async () => {
-    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ prompt: null }));
-    mockInvoke.mockResolvedValue(invokeResult('Alert resolved.'));
-
-    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
-    await vi.waitFor(() => expect(mockPublishToLatestThread).toHaveBeenCalled());
-
-    expect(mockKeepWithheldRun).not.toHaveBeenCalled();
-  });
-
-  it('posts nothing for an empty reply, without a gate call', async () => {
-    mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
-    mockInvoke.mockResolvedValue(invokeResult('   '));
-
-    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
-    await vi.waitFor(() =>
-      expect(mockTrackEvent).toHaveBeenCalledWith(
-        'webhook processed',
-        'user-1',
-        expect.objectContaining({ 'webhook.status': 'suppressed' }),
-      ),
-    );
-
-    expect(mockRunClassificationGate).not.toHaveBeenCalled();
-    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
-  });
-
-  it('delivers an error reply without asking the gate', async () => {
-    mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
-    mockInvoke.mockResolvedValue(
-      invokeResult('I encountered an error while processing your request.', {
-        error: { type: 'generic', detail: 'tool failed' },
-      }),
-    );
-
-    await webhookService.handleInbound('alerts', {}, {}, 'run-1');
-    await vi.waitFor(() => expect(mockPublishToLatestThread).toHaveBeenCalled());
-
-    expect(mockRunClassificationGate).not.toHaveBeenCalled();
-    expect(mockTrackEvent).toHaveBeenCalledWith(
-      'webhook processed',
-      'user-1',
-      expect.objectContaining({ 'webhook.status': 'error' }),
-    );
+    it('allows web chat alone for a platform with nothing linked, where its delivery falls back', async () => {
+      mockListTargets.mockResolvedValue([]);
+      expect(await ceilingFor({ deliverTo: 'slack' })).toEqual({ webChat: true, targets: [] });
+    });
   });
 
   it("tracks a 'none' run that ends in an error step as an error, and posts nothing", async () => {
@@ -1272,11 +1172,6 @@ describe('handleInbound agent mode', () => {
       ),
     );
 
-    expect(mockTrackEvent).not.toHaveBeenCalledWith(
-      'webhook processed',
-      'user-1',
-      expect.objectContaining({ 'webhook.status': 'completed' }),
-    );
     expect(mockRunFinish).toHaveBeenCalledWith('run-1', {
       status: 'failed',
       error: 'tool failed',
@@ -1284,28 +1179,7 @@ describe('handleInbound agent mode', () => {
     });
     expect(mockPublish).not.toHaveBeenCalled();
     expect(mockPublishToLatestThread).not.toHaveBeenCalled();
-  });
-
-  it("runs the agent for a 'none' subscription and posts nothing, without a gate call", async () => {
-    mockSubscriptionFindUnique.mockResolvedValue(createSubscription({ deliverTo: 'none' }));
-    mockInvoke.mockResolvedValue(invokeResult('Posted the review on GitHub.'));
-
-    const result = await webhookService.handleInbound('alerts', {}, {}, 'run-1');
-    expect(result).toEqual({ status: 'accepted', event: 'unknown' });
-    await vi.waitFor(() =>
-      expect(mockTrackEvent).toHaveBeenCalledWith(
-        'webhook processed',
-        'user-1',
-        expect.objectContaining({ 'webhook.status': 'completed' }),
-      ),
-    );
-
-    expect(mockInvoke).toHaveBeenCalledWith(expect.objectContaining({ mode: 'webhook' }));
-    expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status: 'completed', messageId: undefined });
-    expect(mockRunClassificationGate).not.toHaveBeenCalled();
-    expect(mockPublish).not.toHaveBeenCalled();
-    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
-    expect(mockGetOrCreateLatestThread).not.toHaveBeenCalled();
+    expect(mockPublishToWebChat).not.toHaveBeenCalled();
   });
 
   it("posts no failure notice for a 'none' subscription", async () => {
@@ -1342,9 +1216,9 @@ describe('handleInbound agent mode', () => {
     await vi.waitFor(() => expect(mockInvoke).toHaveBeenCalledTimes(2));
     resolvers[1](invokeResult('second done'));
 
-    // Both events produced a delivered message — nothing was dropped.
-    await vi.waitFor(() => expect(mockPublishToLatestThread).toHaveBeenCalledTimes(2));
-    const contents = mockPublishToLatestThread.mock.calls.map((c) => c[2]);
+    // Both runs were stored — nothing was dropped.
+    await vi.waitFor(() => expect(mockKeepWithheldRun).toHaveBeenCalledTimes(2));
+    const contents = mockKeepWithheldRun.mock.calls.map((c) => c[0].content);
     expect(contents).toContain('first done');
     expect(contents).toContain('second done');
   });
@@ -1371,9 +1245,7 @@ describe('handleInbound agent mode', () => {
     // Unwind so the queued runs don't leak into other tests.
     mockInvoke.mockResolvedValue(invokeResult('done'));
     resolveFirst(invokeResult('done'));
-    await vi.waitFor(() =>
-      expect(mockPublishToLatestThread).toHaveBeenCalledTimes(WEBHOOK_MAX_PENDING + 1),
-    );
+    await vi.waitFor(() => expect(mockKeepWithheldRun).toHaveBeenCalledTimes(WEBHOOK_MAX_PENDING + 1));
   });
 });
 
@@ -1396,16 +1268,15 @@ describe('a restart at any moment', () => {
 
   it('stops owing a run whose result went out while the process shut down', async () => {
     mockSubscriptionFindUnique.mockResolvedValue(createSubscription());
-    mockInvoke.mockResolvedValue(invokeResult('done'));
-    mockPublishToLatestThread.mockImplementationOnce(async () => {
+    mockInvoke.mockResolvedValue(invokeResult('done', { toolCalls: [sentMessageCall('slack:C_REL', 'Done.')] }));
+    mockKeepWithheldRun.mockImplementationOnce(async () => {
       shutdown.controller.abort();
-      return { id: 'msg-1' };
     });
 
     await webhookService.handleInbound('alerts', {}, {}, 'run-1');
 
     await vi.waitFor(() => expect(mockFinishWork).toHaveBeenCalledWith('webhook', 'run-1'));
-    expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status: 'completed', messageId: 'msg-1' });
+    expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status: 'completed' });
   });
 
   it('records no result for a run a shutdown stops, so the next boot runs it again', async () => {
@@ -1420,7 +1291,7 @@ describe('a restart at any moment', () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(mockRunFinish).not.toHaveBeenCalled();
-    expect(mockPublishToLatestThread).not.toHaveBeenCalled();
+    expect(mockKeepWithheldRun).not.toHaveBeenCalled();
     expect(mockFinishWork).not.toHaveBeenCalled();
   });
 
@@ -1440,9 +1311,7 @@ describe('a restart at any moment', () => {
     expect(mockRunRequeue).toHaveBeenCalledWith(run1);
     expect(mockEndWork).toHaveBeenCalledWith('webhook', 'run-2');
     expect(mockRunFailInterrupted).toHaveBeenCalledWith('agent-1', ['run-1']);
-    await vi.waitFor(() =>
-      expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status: 'completed', messageId: 'msg-1' }),
-    );
+    await vi.waitFor(() => expect(mockRunFinish).toHaveBeenCalledWith('run-1', { status: 'suppressed' }));
     // The model is told an earlier run may have acted, so it checks before it repeats a step.
     expect(mockInvoke).toHaveBeenCalledWith(
       expect.objectContaining({ prompt: 'Deploy failed', afterRestart: true }),

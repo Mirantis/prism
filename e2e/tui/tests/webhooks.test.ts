@@ -174,7 +174,7 @@ describeFeature(
           session!.send(KEYS.ENTER);
           await session!.waitForFrame(`Edit webhook ${name}`, 5_000);
           await session!.waitForFrame(`[ ] #${channel}`, 5_000);
-          // Description → Events → Deliver to → the first channel → the second.
+          // Description → Events → May post to → the first channel → the second.
           for (let i = 0; i < 4; i++) {
             session!.send(KEYS.DOWN);
             await sleep(150);
@@ -211,7 +211,7 @@ describeFeature(
           await sleep(300);
           session!.send(description);
           await session!.waitForFrame(new RegExp(`Description\\s+${description}`), 5_000);
-          // Description → Events → Deliver to → Deliver only → Prompt.
+          // Description → Events → May post to → Deliver only → Prompt.
           for (let i = 0; i < 4; i++) {
             session!.send(KEYS.DOWN);
             await sleep(150);

@@ -11,8 +11,8 @@ On each tick the agent:
 
 1. Runs the checks defined in its **Heartbeat** document (see
    **[The agent's identity](agent-identity.md)**), using its full toolset.
-2. Passes the result through a fast **DELIVER / SUPPRESS** classification gate.
-3. Delivers an alert only if the gate says DELIVER — otherwise it stays quiet.
+2. Posts a message only when a check finds something you need to know (see
+   [Where a check posts](#where-a-check-posts)).
 
 You configure *what* it checks by editing the Heartbeat document (just tell the
 agent what to watch). You configure *how often* with the interval.
@@ -24,8 +24,7 @@ The check itself runs on the agent's main model by default, but you can give
 the heartbeat its own model — useful for running routine checks on a cheaper
 model. Set it from the **[Web UI → Profile](web-ui.md#profile)** or the
 **[Terminal UI](terminal-ui.md#slash-commands)** (`/heartbeat-model <id>`); leave
-it empty to use the main model. (The DELIVER/SUPPRESS gate below always runs on
-its own fast model, regardless.)
+it empty to use the main model.
 
 ## Cadence
 
@@ -40,30 +39,18 @@ The interval counts from the last check, so a restart does not postpone the next
 one. An agent that comes back with a check already due runs it about a minute
 later. Changing the interval starts a new interval from that moment.
 
-## The DELIVER / SUPPRESS gate
+## Where a check posts
 
-Running a check is cheap; pestering you is not. So after the main check produces
-a result, a small, fast model (Claude Haiku) reads it and decides whether it's
-worth your attention:
+A heartbeat posts a message only when a check finds something you need to know,
+and a check that finds nothing stays silent. The next heartbeat sees what the
+earlier ones posted, and posts again only for a new finding or a change.
 
-- **DELIVER** — a new issue, a significant change, or actionable information you
-  haven't seen.
-- **SUPPRESS** — a repeat of the last alert, a minor variation, a generic "all
-  clear," or meta-commentary about the heartbeat itself (e.g. "no checks are
-  configured").
-
-This means a heartbeat with no configured checks, or one that finds nothing,
-stays silent — the agent doesn't send "nothing to report" noise.
-
-When a check posts a message to a linked channel or DM, the next heartbeat sees
-what it sent, and posts again only for a new finding.
-
-The gate is **fail-open**: if the classification call itself errors, the message
-is delivered rather than dropped, so a transient failure never hides a real
-alert.
-
-[Scheduled tasks](scheduled-tasks.md#quiet-when-theres-nothing-to-report) run
-through the same gate, with the task's instruction as added context.
+**May post to** under Heartbeat Status on the [Profile page](web-ui.md) sets
+where a heartbeat may post: every linked channel and web chat (the default), web
+chat only, Slack or Teams, chosen Slack channels, or nowhere. A check that names
+a place inside that setting posts there; otherwise the heartbeat posts to your
+DM, else the main channel, else web chat. A check that fails with an error is
+posted for you to the same place.
 
 ## Controlling the heartbeat
 

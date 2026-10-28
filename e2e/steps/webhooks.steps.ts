@@ -323,10 +323,11 @@ Then(
   'a webhook-triggered message reading exactly {string} is stored in the conversation',
   async ({}, text: string) => {
     const agentId = getCurrentAgentId();
+    // The run's record of a post into web chat is an internal row, which no client shows.
     const messages = await pollUntil(
       () =>
         dbHelper.getPrisma().conversationMessage.findMany({
-          where: { triggeredBy: 'WEBHOOK', thread: { agentId } },
+          where: { triggeredBy: 'WEBHOOK', internalStep: false, thread: { agentId } },
         }),
       (rows) => rows.length > 0,
       120_000,
@@ -369,23 +370,10 @@ Then('the agent has run for the webhook', async () => {
   expect(run).not.toBeNull();
 });
 
-Then('the delivery gate has decided on the webhook reply', async () => {
-  // The gate runs after the agent's call, so its row is the newer one.
-  const decided = await pollUntil(
-    async () => {
-      const [run, gate] = await Promise.all([latestLlmCall('webhook'), latestLlmCall('delivery-gate')]);
-      return Boolean(run && gate && gate.createdAt >= run.createdAt);
-    },
-    (done) => done,
-    120_000,
-  );
-  expect(decided).toBe(true);
-});
-
 Then('no webhook-triggered message is stored in the conversation', async () => {
   const agentId = getCurrentAgentId();
-  // Called once the run's last model call is recorded: a delivery follows that
-  // call within milliseconds, so a short grace period catches one.
+  // Called once the run is finished: its posts and its record are stored by
+  // then, so a short grace period is enough.
   const messages = await pollUntil(
     () =>
       dbHelper.getPrisma().conversationMessage.findMany({

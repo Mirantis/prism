@@ -31,8 +31,8 @@ Click **New subscription** on the Webhooks page. **Delivery** and
 | — | **Name** | Lowercase slug (`[a-z0-9][a-z0-9_-]*`); becomes the endpoint path `/agents/webhooks/<name>`. Spaces are normalized to hyphens. |
 | — | **Description** | What this webhook does (optional, shown in the list). |
 | — | **Events** | Comma-separated event-type allowlist; empty = accept all. See [Event filtering](#event-filtering). |
-| Delivery | **Deliver to** | Where results go: **All channels** (default — web chat, Slack and Teams, like heartbeat alerts), **Chat** (web chat only), **Slack** (Slack only), **Microsoft Teams** (Teams only), or **None** (nowhere) — see [Delivery targets & storage](#delivery-targets--storage). |
-| Delivery | **Slack channels** | Shown when **Deliver to** is **Slack**: the linked channels to post to. With none checked, the message goes to your DM, else the main channel. |
+| Delivery | **May post to** | Where the run may post: **All channels** (default — web chat, Slack and Teams, like heartbeat alerts), **Chat** (web chat only), **Slack** (Slack only), **Microsoft Teams** (Teams only), or **None** (nowhere) — see [Delivery targets & storage](#delivery-targets--storage). |
+| Delivery | **Slack channels** | Shown when **May post to** is **Slack**: the linked channels to post to. With none checked, the message goes to your DM, else the main channel. |
 | Delivery | **Deliver only** | Skip the agent: the rendered prompt template is posted directly as the message. Zero LLM cost — useful for plain notifications. |
 | Delivery | **Prompt** / **Message template** | Instructions for the agent, or the message sent in **Deliver only** mode. Supports payload substitution — see below. |
 | Authentication | **Scheme** | How the sender proves itself: **Shared token in a header** (default), **HMAC signature of the body**, or **None**. |
@@ -145,8 +145,11 @@ The parameters:
 
 ## Delivery targets & storage
 
-Each subscription's **Deliver to** setting controls both where the message is
-sent and where it's recorded:
+Each subscription's **May post to** setting is where an agent run may post. The
+agent posts only what the prompt asks for, to the place the prompt names inside
+this setting, else to your DM, else the main channel, else web chat. A
+**Deliver only** message and a failed run are posted for you, and this setting
+controls both where that message is sent and where it's recorded:
 
 - **All channels** (default) — broadcast, exactly like a heartbeat alert: the
   message appears in web chat and is sent to every linked integration. On
@@ -170,12 +173,10 @@ sent and where it's recorded:
 - **None** — the agent runs and posts no message, even when the run fails. Use
   it when the agent's work lands somewhere else, such as a review on GitHub.
 
-When the agent sends a message to a channel or DM during a run whose reply is
-not posted, web chat keeps a record of that run.
+When an agent run posts a message, web chat keeps a record of that run.
 
-An agent reply is posted only when it has something to report. Put the
-condition in the prompt, for example "Review the PR. Message me only if the
-review finds a blocking problem." A prompt that asks for a message on every
+Put the condition in the prompt, for example "Review the PR. Message me only if
+the review finds a blocking problem." A prompt that asks for a message on every
 event, or an empty prompt, gets one every time. A failed run is always posted,
 except with **None**.
 

@@ -200,8 +200,8 @@ List, create, edit, and delete the agent's cron-driven runs.
 - **Create** opens a form: a name, a cron expression, and an optional
   instruction describing what the agent should do on each tick. Common schedules,
   such as **Weekdays at 09:00**, fill in the expression with one press. The form
-  names the agent's time zone, which every schedule runs in. **Deliver to** sets
-  where the result goes, as for a [webhook](webhooks.md#delivery-targets--storage).
+  names the agent's time zone, which every schedule runs in. **May post to** sets
+  where the run may post, as for a [webhook](webhooks.md#delivery-targets--storage).
 - **Edit** (the pencil on a task) opens the same form with the task's name,
   schedule, instruction and delivery.
 - **Delete** removes a task after a confirmation.
@@ -277,7 +277,8 @@ The agent's identity and runtime controls.
 - **Heartbeat controls.** A status panel shows whether the heartbeat is Active
   or Stopped, its interval, the last run time, and a consecutive-error count.
   Buttons let you **Start**, **Stop**, or **Trigger now**, and you can edit the
-  interval inline (1–10080 minutes). See **[Heartbeat](heartbeat.md)**.
+  interval inline (1–10080 minutes). **May post to** sets where a heartbeat may
+  post. See **[Heartbeat](heartbeat.md#where-a-check-posts)**.
 - **Backup & restore.** **Export** downloads a `.prism` snapshot of the entire
   agent — chat history, memory, scheduled tasks, settings, and Slack mappings.
   **Restore** replaces the agent from a `.prism` file (a destructive operation;

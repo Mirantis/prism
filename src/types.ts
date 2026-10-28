@@ -7,6 +7,7 @@
 import { ConversationMessage, SteeringMessage } from './prompts/context-builder';
 import { ToolLifecycleListener } from './lib/tool-lifecycle';
 import type { ChannelName } from './services/channel-adapter.interface';
+import type { PostingCeiling } from './services/delivery-target.service';
 import type { ModelSelection } from './lib/model-selection';
 
 // ============================================================================
@@ -49,8 +50,8 @@ export interface AgentContext {
   isBootstrapPhase: boolean;
   conversationSummary: string | null;
   recentMessages: ConversationMessage[];
-  lastHeartbeatAlert?: string;
-  lastHeartbeatAlertAt?: number;
+  /** Where a heartbeat, scheduled-task or webhook run may post (see InvokeRequest). */
+  postingCeiling?: PostingCeiling;
   /** What earlier runs of a recurring task, the heartbeat or a goal sent, for a run that reads no history. */
   lastSend?: TaskLastSend;
   /** Per-turn runtime events surfaced authoritatively in the system prompt. */
@@ -102,14 +103,10 @@ export interface InvokeRequest {
    */
   channelLabel?: string;
   /**
-   * The run's final message goes to the main channel and the user's DMs, so
-   * `send_message` refuses those as targets.
+   * Where a heartbeat, scheduled-task or webhook run may post. Set, nothing the
+   * run writes is delivered unless the agent posts it with `send_message`.
    */
-  broadcastsOutput?: boolean;
-  /** The one conversation the run's final message goes to, so `send_message` refuses it as a target. */
-  outputDestination?: { platform: ChannelName; conversationId: string };
-  lastHeartbeatAlert?: string;
-  lastHeartbeatAlertAt?: number;
+  postingCeiling?: PostingCeiling;
   /** What earlier runs of a recurring task, the heartbeat or a goal sent, for a run that reads no history. */
   lastSend?: TaskLastSend;
   /** Messages that channels queued for this heartbeat, one entry per channel. */

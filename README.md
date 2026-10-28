@@ -206,10 +206,9 @@ shows the difference between two revisions, and restores an earlier one.
 
 An always-on monitoring loop. Default cadence is every 8 hours, configurable
 per agent. On each tick, the agent runs the checks defined in its heartbeat
-document, then a fast classification model (Haiku) decides whether the result
-is worth bothering the user with — DELIVER or SUPPRESS. Identical alerts
-within 24 hours are suppressed by full-text comparison, so the agent doesn't
-re-page on the same finding.
+document, and posts a message only when a check finds something new. It sees
+what earlier heartbeats posted, so it doesn't re-page on the same finding. The
+user sets where a heartbeat may post.
 
 Heartbeats can also be **Slack-triggered**: messages in designated trigger
 channels queue, and incoming traffic wakes the heartbeat between scheduled
@@ -217,8 +216,7 @@ runs. Pending messages are drained atomically so no message is orphaned, even
 if multiple arrive while the agent is busy.
 
 The heartbeat's reasoning runs on the main model by default, or a
-heartbeat-specific model if one is set (the Haiku DELIVER/SUPPRESS gate is
-always its own fast model).
+heartbeat-specific model if one is set.
 
 ### Scheduled tasks
 
@@ -226,9 +224,9 @@ The agent puts work on its own calendar. Tasks can be one-shot or recurring,
 specified in natural language or cron syntax, and survive restarts. One-shot
 tasks delete themselves after running; recurring tasks track their last run,
 their next run, and consecutive errors. The agent can list, run-now, or
-cancel its own tasks. Scheduled runs pass the same DELIVER/SUPPRESS gate as
-heartbeats — instruction-aware, so an unconditional "send me X" task always
-delivers while a conditional check with nothing to report stays silent.
+cancel its own tasks. A scheduled run posts what its instruction asks for, to
+a place the task's delivery setting allows: an unconditional "send me X" task
+posts every run, and a conditional check with nothing to report posts nothing.
 Scheduled runs use the main model by default, or a
 scheduled-task-specific model if one is set. A one-shot task can also
 **continue in the current conversation** when it fires — so the agent can
@@ -305,11 +303,9 @@ context from compounding indefinitely.
 - **Output cap** — 16,000 tokens per generation.
 - **Per-tool output limits** — large tool responses are truncated before
   reaching the model, so a single tool call can't flood context.
-- **Delivery classification gate** — heartbeat and scheduled-task results
-  pass programmatic checks first (empty responses are dropped; heartbeats
-  also suppress exact 24-hour duplicates; scheduled-run error messages
-  always deliver); the LLM gate only runs if those pass; if the gate itself
-  errors, the message is delivered (fail-open).
+- **Posting ceiling** — a heartbeat, scheduled-task or webhook run reaches
+  people only through messages the agent posts, and only to the places its
+  delivery setting allows. A run that fails is posted for the agent.
 
 ### Observability
 
@@ -388,7 +384,7 @@ restarts.
 | `OWNER_USER_ID` | Owner user ID on first boot. The default is a local sentinel — Slack identity linking later overlays the real `lensUserId` per-message | `00000000-0000-0000-0000-000000000001` |
 | `PRISM_WORKSPACE_SEED_DIR` | A directory of documents (`soulMd.md`, `agentMd.md`, …) the agent starts with on first boot instead of the defaults — see [Configuration](docs/configuration.md#core) | unset |
 | `BEDROCK_MODEL_ID` | Main model | `global.anthropic.claude-opus-5-5` |
-| `BEDROCK_CLASSIFICATION_MODEL_ID` | Heartbeat gate model | `global.anthropic.claude-haiku-5-5` |
+| `BEDROCK_CLASSIFICATION_MODEL_ID` | Classification gate model | `global.anthropic.claude-haiku-5-5` |
 | `BEDROCK_EMBEDDING_MODEL_ID` | Embedding model | `amazon.titan-embed-text-v2:0` |
 | `AWS_REGION` | AWS region | `us-east-1` |
 | `CONTEXT_WINDOW_TOKENS` | Context window to assume for the context-usage indicator; only needed for a model the catalog doesn't know | derived from the model ID |

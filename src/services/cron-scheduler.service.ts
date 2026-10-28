@@ -27,14 +27,13 @@ import {
   type DeliverTo,
 } from './delivery-target.service';
 import { conversationService } from './conversation.service';
-import { outboundMessageService, sentMessages, WITHHELD_RUN_TEXT } from './outbound-message.service';
+import { outboundMessageService, sentMessageList, sentMessages, WITHHELD_RUN_TEXT } from './outbound-message.service';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { isTimezone } from '../lib/timezone';
-import { runVerdictGate } from '../lib/classification-gate';
 import type { ToolRiskGateErrorCode } from '../lib/tool-risk-gate';
-import { CRON_TASK_GATE_PROMPT, buildCronGateUserMessage } from '../prompts/cron-prompt';
 import { trackEvent } from '../lib/telemetry';
+import { scheduledRunPrompt } from '../prompts/scheduled-run-prompt';
 import { logger } from '../logger';
 import { parseSchedule } from './cron-schedule';
 import type { ChannelName } from './channel-adapter.interface';
@@ -135,14 +134,6 @@ export async function readTaskDelivery(
   return { ok: true, value: { deliverTo, channelIds } };
 }
 
-/**
- * Whether two versions of a task share a delivery baseline: the same instruction
- * to the same target. A result delivered to one channel is not a repeat for another.
- */
-function sameBaselineKey(a: BackendCronTask, b: BackendCronTask): boolean {
-  return a.instruction === b.instruction && a.deliverTo === b.deliverTo && a.channelIds === b.channelIds;
-}
-
 interface ScheduledJob {
   task: BackendCronTask;
   /** A node-cron task for a recurring schedule, or the timer of a one-shot. */
@@ -200,14 +191,6 @@ class CronSchedulerService {
   private scheduledJobs: Map<string, ScheduledJob> = new Map();
   /** The zone every recurring schedule is read in: the agent's setting, set at boot and on change. */
   private timezone = 'UTC';
-
-  /**
-   * Per-task delivery baseline for the suppression gate (heartbeat parity:
-   * in-memory only, resets on restart). Advanced only when a run actually
-   * delivers, so suppressed runs keep comparing against the last text the
-   * user saw.
-   */
-  private lastDelivered: Map<string, { text: string; at: number }> = new Map();
 
   /**
    * Per unbound task, what its last sending run sent and what the newest run
@@ -339,11 +322,7 @@ class CronSchedulerService {
       return;
     }
 
-    const previous = this.scheduledJobs.get(task.id);
     this.stopJob(task.id);
-    if (!previous || !sameBaselineKey(previous.task, task)) {
-      this.lastDelivered.delete(task.id);
-    }
 
     if (!task.isActive) {
       return;
@@ -425,7 +404,6 @@ class CronSchedulerService {
       }
     } finally {
       this.firedOneShots.delete(task.id);
-      this.lastDelivered.delete(task.id);
       this.lastSend.delete(task.id);
     }
   }
@@ -512,7 +490,6 @@ class CronSchedulerService {
    */
   unscheduleTask(taskId: string, userId?: string, invokeMode?: string): void {
     this.stopJob(taskId);
-    this.lastDelivered.delete(taskId);
     this.lastSend.delete(taskId);
     trackEvent('cron task deleted', userId ?? null, {
       ...(config.agentId ? { 'agent.id': config.agentId } : {}),
@@ -680,11 +657,13 @@ class CronSchedulerService {
 
     logger.info(`[CronScheduler] Executing "${task.name}" for user ${task.userId}`);
 
-    const trackRun = (result: 'completed' | 'suppressed' | 'budget_exceeded' | 'error') =>
+    let sentCalls: ToolCallRecord[] = [];
+    const trackRun =(result: 'posted' | 'silent' | 'budget_exceeded' | 'error') =>
       trackEvent('cron task executed', task.userId, {
         'agent.id': task.agentId,
         'cron.task.id': task.id,
         'cron.result': result,
+        'cron.messages_sent': String(sentMessageList(sentCalls).length),
         'cron.continue_in_thread': String(Boolean(boundThreadId)),
         'cron.deliver_to': task.deliverTo,
         'cron.duration_ms': String(Date.now() - startTime),
@@ -720,7 +699,7 @@ class CronSchedulerService {
         userId: task.userId,
         agentId: task.agentId,
         mode: 'cron',
-        prompt: instruction,
+        prompt: boundThreadId ? instruction : scheduledRunPrompt(instruction),
         afterRestart: opts.afterRestart,
         abortSignal: pendingWorkService.shutdownSignal,
         ...(historyThreadId
@@ -730,9 +709,9 @@ class CronSchedulerService {
               originChannelId: task.originChannelId ?? undefined,
             }
           : {}),
-        // An unbound task's answer goes to its delivery target, and only an unbound task recurs.
+        // An unbound task posts within its delivery target, and only an unbound task recurs.
         ...(!boundThreadId && {
-          ...(await deliveryTargetService.outputTarget(task.agentId, task.userId, target)),
+          postingCeiling: await deliveryTargetService.ceiling(task.agentId, target),
           lastSend: await this.lastSendOf(task),
         }),
       });
@@ -759,6 +738,7 @@ class CronSchedulerService {
         ? await messageDeliveryService.threadContext(boundThreadId, task.originChannel, task.originChannelId)
         : undefined;
 
+      sentCalls = result.toolCalls;
       const sent = !boundThreadId && this.noteSends(task, result.toolCalls);
 
       // Budget exceeded — notify user and record the attempt
@@ -796,111 +776,55 @@ class CronSchedulerService {
       const body = responseText || result.response;
       // A failed run's text is the error, not a finding.
       if (!boundThreadId && !sent && !result.error) this.noteReport(task, body);
-
-      // A task that delivers nowhere skips the gate's model call too. A bound
-      // task always delivers 'all' (readTaskDelivery), so it never gets here.
-      if (task.deliverTo === 'none') {
-        await outboundMessageService.keepWithheldRun({
-          agentId: task.agentId,
-          userId: task.userId,
-          content: `**Scheduled Task: ${task.name}**\n\n${body}`,
-          triggeredBy: 'CRON_TASK',
-          toolCalls: result.toolCalls,
-        });
-        logger.info(`[CronScheduler] "${task.name}" completed in ${Date.now() - startTime}ms, delivering nowhere`);
-        trackRun('completed');
-        return true;
-      }
-
-      // Suppression ladder: an empty result is suppressed outright; a run that
-      // ended in an error message, or whose tool call the risk gate refused, is
-      // always delivered (neither is "nothing to report", and a task told to
-      // send no message would otherwise fail silently on every run); the
-      // classification gate decides the rest. The
-      // gate sees the task instruction — so unconditional "send me X" tasks
-      // always deliver, even when the text repeats — and the last delivered
-      // result, so a conditional check that merely repeats it stays quiet.
-      // No pre-gate duplicate short-circuit here (unlike the heartbeat):
-      // it would silence unconditional tasks whose output is legitimately
-      // identical run after run, e.g. an hourly fixed-text reminder.
-      const prior = this.lastDelivered.get(task.id) ?? null;
-      let verdict: string;
-      if (!body.trim()) {
-        verdict = 'SUPPRESS';
-      } else if (result.error || hasRiskBlockedCall(result.toolCalls)) {
-        verdict = 'DELIVER';
-      } else {
-        verdict = await runVerdictGate({
-          system: CRON_TASK_GATE_PROMPT,
-          user: buildCronGateUserMessage({
-            instruction,
-            resultText: body,
-            lastDeliveredText: prior?.text ?? null,
-            lastDeliveredAt: prior?.at ?? null,
-          }),
-          functionId: 'cron-gate',
-          userId: task.userId,
-          agentId: task.agentId,
-          logLabel: 'CronScheduler:Gate',
-        });
-      }
-
-      if (!verdict.startsWith('DELIVER')) {
-        // A suppressed run that is neither a repeat nor the delivered text means
-        // the situation changed while we stayed quiet (e.g. the incident resolved
-        // into an all-clear). Drop the baseline so a later recurrence reads as a
-        // new finding, not as a repeat of the stale one.
-        if (prior && !verdict.startsWith('REPEAT') && body.trim() !== prior.text) {
-          this.lastDelivered.delete(task.id);
-        }
-        await outboundMessageService.keepWithheldRun({
-          agentId: task.agentId,
-          userId: task.userId,
-          threadId: boundThreadId ?? undefined,
-          content: boundThreadId ? body : `**Scheduled Task: ${task.name}**\n\n${body}`,
-          triggeredBy: 'CRON_TASK',
-          toolCalls: result.toolCalls,
-        });
-        logger.info(`[CronScheduler] "${task.name}" suppressed — nothing new to report`);
-        trackRun('suppressed');
-        return true;
-      }
+      const toolCalls = result.toolCalls.length > 0 ? result.toolCalls : undefined;
 
       if (boundThreadId) {
-        // Thread-bound: deliver as a natural continuation of the conversation
-        // (no "Scheduled Task" header), scoped to the originating channel/thread.
-        await messageDeliveryService.publish(task.userId, boundThreadId, body, 'CRON_TASK', {
-          toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined,
-          attachmentIds: result.attachmentIds,
-          channelContext,
-        });
-      } else {
-        await deliveryTargetService.deliver(
-          task.agentId,
-          task.userId,
-          target,
-          `**Scheduled Task: ${task.name}**\n\n${body}`,
-          'CRON_TASK',
-          {
-            toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined,
+        // A continuation replies in its conversation, with no "Scheduled Task"
+        // header. An empty reply is a wait with nothing to say yet.
+        if (responseText) {
+          await messageDeliveryService.publish(task.userId, boundThreadId, responseText, 'CRON_TASK', {
+            toolCalls,
             attachmentIds: result.attachmentIds,
-          },
-        );
+            channelContext,
+          });
+        } else {
+          await outboundMessageService.keepWithheldRun({
+            agentId: task.agentId,
+            userId: task.userId,
+            threadId: boundThreadId,
+            content: body,
+            triggeredBy: 'CRON_TASK',
+            toolCalls: result.toolCalls,
+          });
+        }
+        logger.info(`[CronScheduler] "${task.name}" completed in ${Date.now() - startTime}ms`);
+        trackRun(responseText ? 'posted' : 'silent');
+        return true;
       }
 
-      // Advance the delivery baseline only on an actual delivery (heartbeat
-      // recordAlert parity), keyed on the un-headered body so the unbound
-      // "**Scheduled Task: …**" header can't defeat the comparison. A task that is
-      // no longer scheduled, such as one its own run deleted, has no next run to
-      // compare, so it keeps no baseline, and one edited to a new instruction or
-      // target during the run starts without one.
-      const scheduled = this.scheduledJobs.get(task.id)?.task;
-      if (scheduled && sameBaselineKey(scheduled, task)) {
-        this.lastDelivered.set(task.id, { text: body.trim(), at: Date.now() });
+      // An unbound run reaches people only through what the agent posted. A run
+      // that ended in an error, or whose tool call the risk gate refused, could
+      // not post what happened, so its result goes to the task's target.
+      const content = `**Scheduled Task: ${task.name}**\n\n${body}`;
+      const failed = Boolean(result.error) || hasRiskBlockedCall(result.toolCalls);
+      const { message } = failed
+        ? await deliveryTargetService.deliver(task.agentId, task.userId, target, content, 'CRON_TASK', {
+            toolCalls,
+            attachmentIds: result.attachmentIds,
+          })
+        : { message: null };
+      if (!message) {
+        await outboundMessageService.keepWithheldRun({
+          agentId: task.agentId,
+          userId: task.userId,
+          content,
+          triggeredBy: 'CRON_TASK',
+          toolCalls: result.toolCalls,
+        });
       }
 
       logger.info(`[CronScheduler] "${task.name}" completed in ${Date.now() - startTime}ms`);
-      trackRun('completed');
+      trackRun(failed ? 'error' : sent ? 'posted' : 'silent');
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : 'Unknown error';
       logger.error(`[CronScheduler] "${task.name}" failed: ${errMsg}`);
@@ -923,7 +847,6 @@ class CronSchedulerService {
       }
     }
     this.scheduledJobs.clear();
-    this.lastDelivered.clear();
     this.lastSend.clear();
     logger.info('[CronScheduler] All cron tasks stopped');
   }

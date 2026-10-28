@@ -218,9 +218,9 @@ Then('the webhook runs read newest first:', async ({ page }, table: DataTable) =
 Then(
   'the webhook run {string} is listed as {string}',
   async ({ page }, name: string, result: string) => {
-    // A run finishes just after its message is stored; the list reads again
-    // while a run it shows is unfinished.
-    await expect(new ActivityPage(page).webhookRun(name)).toContainText(result, { timeout: 30_000 });
+    // The list reads again while a run it shows is unfinished, and an agent run
+    // can take a few model calls to finish.
+    await expect(new ActivityPage(page).webhookRun(name)).toContainText(result, { timeout: 120_000 });
   },
 );
 

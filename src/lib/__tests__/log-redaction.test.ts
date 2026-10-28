@@ -10,7 +10,7 @@
  * sentence standing in for private user content — the exact payload shape that
  * reached production logs.
  *
- * The prompt is the scheduled-task gate's because it is a real, surviving
+ * The prompt is the goal completion gate's because it is a real, surviving
  * `generateText` payload. It used to be the meeting addressed-gate's, which was the
  * call that produced the production leak; that gate now judges audio over a
  * WebSocket and builds no such prompt, so the payload had to come from one of the
@@ -23,7 +23,7 @@ import { APICallError, RetryError } from 'ai';
 import pino from 'pino';
 import { serializeError } from '../log-redaction';
 import { logger } from '../../logger';
-import { CRON_TASK_GATE_PROMPT } from '../../prompts/cron-prompt';
+import { GOAL_COMPLETION_GATE_PROMPT } from '../../prompts/goal-prompt';
 
 const TRANSCRIPT = 'Emma, can you take a look at the staging cluster?';
 const RESPONSE_BODY = '{"message":"model access denied for account 1234"}';
@@ -34,7 +34,7 @@ function apiError(overrides: Partial<Parameters<typeof APICallError>[0]> = {}) {
     message: 'Bad Request',
     url: 'https://bedrock-runtime.us-east-1.amazonaws.com/model/haiku/converse',
     requestBodyValues: {
-      system: CRON_TASK_GATE_PROMPT,
+      system: GOAL_COMPLETION_GATE_PROMPT,
       messages: [{ role: 'user', content: `Assistant's name: Emma\nSentence: ${TRANSCRIPT}` }],
     },
     statusCode: 400,

@@ -883,7 +883,7 @@ and refuses every call, because under `none` the SDK sends no tools block.
 | **selectTurnModel** | `lib/model-routing.ts` | The one owner of which model a turn runs on. Fixed mode runs the per-mode model columns. Auto mode runs one of the agent's small / medium / large tiers (`resolveModelSelection` merges the columns with `MODEL_MODE` and `AUTO_MODEL_*`), labelled by the classification model with `purpose: 'model-routing'`. A failed or unknown label runs large; a tier whose window cannot hold the thread plus the incoming request is not offered. A thread holds its tier while the newest invoke row of it in `llm_calls` is younger than `PROMPT_CACHE_TTL_MS`: up on any turn, down only on a first turn, after compaction or past the TTL, since a switch reads the whole thread cold on the incoming model |
 | **ConversationEngineService** | `services/conversation-engine.service.ts` | Chat flow orchestration: thread management, iterates `invokeStream()` directly and publishes each text-bearing step the moment it arrives, delivers via local `messageDeliveryService` |
 | **MessageDeliveryService** | `services/message-delivery.service.ts` | Unified message publish: stores via `conversationService`, delivers via channel adapters (channel-scoped for user messages, broadcast for autonomous) |
-| **DeliveryTargetService** | `services/delivery-target.service.ts` | Delivers a webhook subscription's or an unbound scheduled task's message to its stored target (`DELIVER_TARGETS`, plus chosen linked channels), and checks a channel list a write gives |
+| **DeliveryTargetService** | `services/delivery-target.service.ts` | `ceiling`, the one owner of where a heartbeat, unbound scheduled-task or webhook run may post (`DELIVER_TARGETS`, plus chosen linked channels); delivers a message the runtime posts for such a run (a failure, a budget notice, a deliver-only template) to that target; checks a channel list a write gives |
 | **ThreadTurnService** | `services/thread-turn.service.ts` | The one per-thread primitive: every model invocation on a thread serializes on its mutex (FIFO — chat turns and goal turns alike), and a chat turn *claims* the thread, so a message arriving from the claim until the exchange ends is handed to that turn instead of starting a second one. Channel-agnostic — transports go through the engine, never here directly |
 | **ContextService** | `services/context.service.ts` | Builds agent context from local database: agent data via `agentWorkspaceService.getAgentById()` and conversation history via Prisma |
 | **ConversationService** | `services/conversation.service.ts` | Thread and message CRUD via Prisma, pluggable thread providers (the database by default, a live-read provider per `ThreadSource` that a channel registers in `index.ts`) |
@@ -891,7 +891,7 @@ and refuses every call, because under `none` the SDK sends no tools block.
 | **DocumentRevisionService** | `services/document-revision.service.ts` | Identity-document revisions: append one per accepted write, the history of one document (with the drift verdict), one revision's content, and the seed rows a new agent gets. Bounded at `MAX_REVISIONS_PER_DOCUMENT` (500) per document, trimmed in the insert's transaction |
 | **AgentStatusService** | `services/agent-status.service.ts` | Direct Prisma writes for agent fields (heartbeat schedule, heartbeat status) |
 | **HeartbeatService** | `services/heartbeat.service.ts` | Always-on monitoring loop with in-process timers, full-text duplicate suppression, Slack-triggered heartbeats. The interval is measured from the last run (see **Heartbeat Design → Schedule**) |
-| **CronSchedulerService** | `services/cron-scheduler.service.ts` | Scheduled task execution using node-cron and setTimeout; reads every recurring schedule in the agent's time zone (`useTimezone`, set at boot and by the settings tool, which re-registers the running jobs); manages cron task state directly via Prisma (list, edit, update run timestamps, delete); an edit and a one-shot's start take the same per-task lock, and an edit of a one-shot that has started is refused; skips a tick that would overlap a still-running execution of the same task; runs each result through the instruction-aware DELIVER/SUPPRESS gate before delivering (empty results suppressed, error results and runs with a risk-blocked tool call bypass the gate and always deliver, in-memory per-task last-delivered baseline fed to the gate as context — cleared when a suppressed run observes a different situation so a recurrence re-alerts — fail-open) |
+| **CronSchedulerService** | `services/cron-scheduler.service.ts` | Scheduled task execution using node-cron and setTimeout; reads every recurring schedule in the agent's time zone (`useTimezone`, set at boot and by the settings tool, which re-registers the running jobs); manages cron task state directly via Prisma (list, edit, update run timestamps, delete); an edit and a one-shot's start take the same per-task lock, and an edit of a one-shot that has started is refused; skips a tick that would overlap a still-running execution of the same task; an unbound run reaches people only through what the agent posts with `send_message` inside the task's ceiling, and the runtime posts only a run that ended in an error or a risk-blocked call; a bound run replies in its conversation, and an empty reply is not delivered |
 | **SlackAdapterService** | `services/slack-adapter.service.ts` | Full Slack implementation: Bolt apps, Socket Mode, message handling, verification codes |
 | **SlackMappingService** | `services/slack-mapping.service.ts` | SlackMapping CRUD for user and channel mappings via Prisma |
 | **ThreadReplyClassifierService** | `services/thread-reply-classifier.service.ts` | Respond or ignore for a reply without a mention, in a chat thread the bot takes part in. Each adapter owns its own participation rule and transcript, then asks here. One structured-output call on the classification model, tracing off, fail-open to `respond`; owns each platform's `<platform> thread classification failed` event and `<platform>-thread-gate` purpose |
@@ -1099,7 +1099,6 @@ src/
 │   │   ├── openai-embedding-provider.ts # text-embedding-3 on the OpenAI API
 │   │   └── openrouter-embedding-provider.ts # OpenAI SDK at openrouter.ai (`vendor/model` ids; off by default)
 │   ├── classification.ts       # Classification-gate request factories (`getGateRequest()` for the generateText gates, `getClassificationRequest()` for generateObject) — model + the active vendor's merged `providerOptions`
-│   ├── classification-gate.ts  # Shared one-word-verdict gate call (`runClassificationGate`) + `isRecentDuplicate`, used by the DELIVER/SUPPRESS gates
 │   ├── file-janitor.ts         # Hourly sweep of the durable file stores: orphaned uploads, stale hydrate scratch dirs, over-TTL attachment content, stray media files, over-TTL saved tool outputs
 │   ├── llm-errors.ts           # Single owner of LLM/runtime error → user-facing text (`buildErrorStep`, budget detection)
 │   ├── log-redaction.ts        # The global pino `err` serializer: an allow-list, so no SDK request/response body is ever logged
@@ -1123,8 +1122,6 @@ src/
 └── prompts/
     ├── context-builder.ts      # System prompt and message construction
     ├── channel-prompt.ts       # Team-channel behavior instructions, naming the channel as its adapter words it
-    ├── cron-prompt.ts          # Scheduled-task DELIVER/SUPPRESS gate prompt (instruction-aware) + gate user-message builder
-    ├── webhook-gate-prompt.ts  # Webhook agent-reply DELIVER/SUPPRESS gate prompt (reads the subscription prompt as the instruction)
     ├── early-stopping-prompt.ts # Prompt for summarizing when step limit is reached
     └── resume-prompt.ts        # What a model continuing interrupted work is told: the chat notice, the run notice, the coding-task prompt
 ```
@@ -1186,7 +1183,7 @@ What the operator sets on `docker run`:
 | `AWS_ACCESS_KEY_ID` | AWS SigV4 credentials | — |
 | `AWS_SECRET_ACCESS_KEY` | AWS SigV4 credentials | — |
 | `BEDROCK_MODEL_ID` | AWS Bedrock model ID | `global.anthropic.claude-opus-5-5` |
-| `BEDROCK_CLASSIFICATION_MODEL_ID` | Bedrock model for classification gate (heartbeat & scheduled-task DELIVER/SUPPRESS) | `global.anthropic.claude-haiku-5-5` |
+| `BEDROCK_CLASSIFICATION_MODEL_ID` | Bedrock model for the classification gates (tool risk, model routing, thread replies, goal completion) | `global.anthropic.claude-haiku-5-5` |
 | `AZURE_RESOURCE_NAME` / `AZURE_API_KEY` | Foundry resource + key (Claude via Microsoft Foundry; used when `LLM_PROVIDER=azure`) | — |
 | `AZURE_MODEL_ID` / `AZURE_CLASSIFICATION_MODEL_ID` | Foundry Claude deployment names (chat / classification gate) | `claude-opus-5` / `claude-haiku-5-5` |
 | `AZURE_EMBEDDING_MODEL_ID` | Azure OpenAI `text-embedding-3` deployment for memory embeddings (fail-open if absent; `''` to skip) | `text-embedding-3-small` |
@@ -1361,9 +1358,9 @@ messages into one provider-level user turn.
 
 ## Heartbeat/Cron Flow (In-Process)
 
-Heartbeat and cron services call `invoke()` (the drain wrapper) directly in-process, no HTTP. They need the **full aggregated response** before they can act — both run a DELIVER/SUPPRESS classification gate over the complete text (`lib/classification-gate.ts`; the cron gate is instruction-aware, see `prompts/cron-prompt.ts`) — so per-step streaming would not buy anything here. Structured budget metadata flows through as `InvokeResponse.error` (populated when any step carried `error: { type: 'budget_exceeded' }`).
+Heartbeat and cron services call `invoke()` (the drain wrapper) directly in-process, no HTTP. They act on the whole run: its sends, its error and its final text. Structured budget metadata flows through as `InvokeResponse.error` (populated when any step carried `error: { type: 'budget_exceeded' }`).
 
-Results are delivered to users via local `messageDeliveryService.publishToActiveThread()`.
+A heartbeat, unbound scheduled-task or webhook run gets `postingCeiling` (`deliveryTargetService.ceiling`): the places its delivery setting allows, web chat included as the `send_message` target `chat`. Nothing the run writes is delivered; the agent posts with `send_message`, which refuses a target outside the ceiling (`outside_delivery`). The prompt states this in a stable `### Posting` rule and lists the places in a dynamic `# Where This Run May Post` section. The final text is kept as the run's record (`keepWithheldRun`). The runtime posts only what the agent could not: a run that ended in an error, a budget notice, a deliver-only webhook.
 
 ## Step Limit and Early Stopping
 
@@ -1382,7 +1379,7 @@ The main `invokeStream()`/`invoke()` calls send no sampling params (`temperature
 
 ## LLM Error Handling
 
-`lib/llm-errors.ts#buildErrorStep(error)` is the **single owner** of LLM/runtime error → user-facing text. It distinguishes gateway RFC 7807 `budget-exceeded` 429s (returns a friendly "spending limit reached" message and tags the step with `error: { type: 'budget_exceeded', detail }`) from generic errors (returns a "I encountered an error…" step tagged `error: { type: 'generic', detail }`, with the response body's `detail` field when present). The SDK wraps retried failures with a `lastError` field — `buildErrorStep` unwraps it before classifying. The cron scheduler uses the tag to route error results **around** the DELIVER/SUPPRESS gate: an error message is never "nothing to report", so it always delivers.
+`lib/llm-errors.ts#buildErrorStep(error)` is the **single owner** of LLM/runtime error → user-facing text. It distinguishes gateway RFC 7807 `budget-exceeded` 429s (returns a friendly "spending limit reached" message and tags the step with `error: { type: 'budget_exceeded', detail }`) from generic errors (returns a "I encountered an error…" step tagged `error: { type: 'generic', detail }`, with the response body's `detail` field when present). The SDK wraps retried failures with a `lastError` field — `buildErrorStep` unwraps it before classifying. The heartbeat, cron and webhook services post an error result for the agent, since a failed run could not post it.
 
 It's used only inside `invokeStream()`'s catch paths (context-fetch failure, `generateText` rejection). Errors are pushed onto the step channel rather than thrown, so consumers don't need a separate error-handling path: chat just sees a final friendly step and delivers it; `invoke()` aggregates the text and surfaces the structured `error` field on `InvokeResponse` so heartbeat/cron can detect budget exhaustion programmatically.
 
@@ -1442,32 +1439,21 @@ fresh.
 
 The heartbeat uses a minimal prompt contract.
 
-- **System prompt**: Includes `## Heartbeats` section with configured checks from `heartbeatMd`. The prompt instructs the agent to follow its configured checks; a downstream classification gate decides whether to deliver or suppress the response.
+- **System prompt**: Includes `## Heartbeats` section with configured checks from `heartbeatMd`. The prompt instructs the agent to follow its configured checks and to post only what the user needs to know.
 - **User prompt**: A single sentence: `"Perform your heartbeat check now."`
 
 ### Heartbeat Result Shape
 
 ```typescript
 interface HeartbeatResult {
-  shouldSkip: boolean;  // true = nothing to report (gate suppressed or skipped)
+  shouldSkip: boolean;  // true = the run posted nothing
   text: string;         // alert text, or skip reason
 }
 ```
 
-### Duplicate Suppression
+### Send Record
 
-Uses **full-text comparison** (not hash-based). The `HeartbeatState` tracks:
-
-```typescript
-interface HeartbeatState {
-  // ... timer/status fields ...
-  lastAlertText: string | null;    // full text of last delivered alert
-  lastAlertAt: number | null;      // timestamp of last delivered alert
-  slackTriggerPending: boolean;    // true when Slack messages queued during execution
-}
-```
-
-An alert is considered a duplicate if the trimmed text exactly matches `lastAlertText` and was delivered within the last 24 hours. A boot reads `lastAlertText` and `lastAlertAt` from the newest delivered heartbeat message, so a restart keeps them.
+The heartbeat's duplicate guard is its send record (`lastSend`): the newest ten messages earlier runs posted and the results of the runs since. The prompt shows it after the cached prefix, and the agent posts again only for a new finding. A boot restores it from the stored heartbeat rows.
 
 ### Channel-Triggered Heartbeats
 
@@ -1477,20 +1463,9 @@ A channel that starts the heartbeat with its own messages is a `HeartbeatTrigger
 - **Timer-based heartbeats also read them**: a timer heartbeat reads every registered source before it invokes the LLM, so queued messages are never orphaned.
 - A run removes the messages it read only once it ends, so a restart before then leaves them for the next run, and the boot starts that run (`answerPendingTriggers`).
 
-### Classification Gate
-
-After the main LLM call produces a heartbeat response, a second cheap LLM call acts as a DELIVER/SUPPRESS gate. This replaced the earlier fragile `HEARTBEAT_OK` token parsing.
-
-- **Model**: the fast classification model via `getGateRequest()` (from `lib/classification.ts`, which goes through `createProvider()` and also carries the vendor's `classificationProviderOptions`), configured by `BEDROCK_CLASSIFICATION_MODEL_ID` (or `AZURE_CLASSIFICATION_MODEL_ID` on Azure, `BEDROCK_MANTLE_CLASSIFICATION_MODEL_ID` on bedrock-mantle, `OPENAI_CLASSIFICATION_MODEL_ID` on openai).
-- **Input**: The heartbeat response text and the last alert context (text + how long ago it was sent, formatted via `formatTimeAgo`).
-- **Output**: A single word -- `DELIVER` or `SUPPRESS`. Uses `maxOutputTokens: 16` (the OpenAI Responses API minimum — a cap, so free on the Claude vendors) and the provider's gate sampling params: `temperature: 0` on Mantle for determinism, omitted entirely on every other vendor (Haiku 5.5 and GPT-5.x reject or strip it), with reasoning off so thinking tokens can't eat the budget: `reasoningEffort: 'none'` on openai, `thinking: { type: 'disabled' }` on bedrock, azure and anthropic.
-- **Meta-commentary**: The gate prompt explicitly suppresses reports that are meta-commentary about the heartbeat itself (e.g. "no checks configured", "heartbeat config is empty") rather than real findings.
-- **Fail-open**: If the gate call throws an error, the message is delivered (safe default).
-- **Ordering**: Programmatic checks (empty response, exact-match 24h duplicate suppression) run first. The gate LLM call is only made when those checks pass.
-
 ### Default Heartbeat Template
 
-The default `heartbeatMd` contains only headers and comments (no active checks). The agent always runs the LLM call, but when no checks are configured the heartbeat system prompt steers it to produce a plain brief "all clear" (never commentary about the config being empty), which the classification gate suppresses via `SUPPRESS`.
+The default `heartbeatMd` contains only headers and comments (no active checks). The agent always runs the LLM call, but when no checks are configured the heartbeat system prompt tells it to post nothing.
 
 ## Empty Message Filtering
 

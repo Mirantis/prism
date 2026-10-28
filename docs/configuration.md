@@ -475,7 +475,7 @@ defines**.
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `BEDROCK_MODEL_ID` | **(Bedrock)** Main model (the agent's reasoning loop) | `global.anthropic.claude-opus-5-5` |
-| `BEDROCK_CLASSIFICATION_MODEL_ID` | **(Bedrock)** Fast model for classification gates: the [heartbeat](heartbeat.md) and [scheduled-task](scheduled-tasks.md) DELIVER/SUPPRESS gate, and the optional [tool-risk gate](tools.md#risk-gate) | `global.anthropic.claude-haiku-5-5` |
+| `BEDROCK_CLASSIFICATION_MODEL_ID` | **(Bedrock)** Fast model for classification gates, such as the optional [tool-risk gate](tools.md#risk-gate) | `global.anthropic.claude-haiku-5-5` |
 | `BEDROCK_EMBEDDING_MODEL_ID` | **(Bedrock)** Embedding model for [searchable memory](memory.md) | `amazon.titan-embed-text-v2:0` |
 | `AWS_REGION` | **(Bedrock)** AWS region for Bedrock | `us-east-1` |
 | `AZURE_MODEL_ID` | **(Azure)** Main model — a Claude chat deployment name | `claude-opus-5` |
@@ -487,13 +487,13 @@ defines**.
 | `BEDROCK_MANTLE_EMBEDDING_MODEL_ID` | **(Mantle)** Embedding model, served by Titan on `bedrock-runtime` — mantle has none of its own. Set to `''` to skip embeddings entirely. | `amazon.titan-embed-text-v2:0` |
 | `AWS_REGION` | **(Mantle)** Region for both the mantle host and the Titan embedding leg | `us-east-1` |
 | `OPENAI_MODEL_ID` | **(OpenAI)** Main model (the agent's reasoning loop) | `gpt-5.6-sol` |
-| `OPENAI_CLASSIFICATION_MODEL_ID` | **(OpenAI)** Fast model for the heartbeat gate. The gates pin it to `reasoningEffort: 'none'` (the SDK name for the API's `reasoning.effort`) and send no `temperature` — GPT-5.x models reject or strip an explicit temperature, and reasoning tokens would eat the gates' tiny output budgets. | `gpt-5.6-luna` |
+| `OPENAI_CLASSIFICATION_MODEL_ID` | **(OpenAI)** Fast model for classification gates. The gates pin it to `reasoningEffort: 'none'` (the SDK name for the API's `reasoning.effort`) and send no `temperature` — GPT-5.x models reject or strip an explicit temperature, and reasoning tokens would eat the gates' tiny output budgets. | `gpt-5.6-luna` |
 | `OPENAI_EMBEDDING_MODEL_ID` | **(OpenAI)** Embedding model (a `text-embedding-3` model; truncated to 1024 dims to match the memory index). Set to `''` to skip embeddings entirely. | `text-embedding-3-small` |
 | `OPENROUTER_MODEL_ID` | **(OpenRouter)** Main model, as `vendor/model` — OpenRouter addresses every model that way, so a bare `gpt-5.6-sol` is not one it can route. The default mirrors the OpenAI tier so the provider's GPT-5.x parameter handling stays valid; point it at another vendor (`google/gemini-3-pro`, `deepseek/deepseek-v3.2`, `anthropic/claude-sonnet-5`) and those assumptions may not hold. | `openai/gpt-5.6-sol` |
-| `OPENROUTER_CLASSIFICATION_MODEL_ID` | **(OpenRouter)** Fast `vendor/model` for the heartbeat gate, under the same parameter caveat as the OpenAI one. | `openai/gpt-5.6-luna` |
+| `OPENROUTER_CLASSIFICATION_MODEL_ID` | **(OpenRouter)** Fast `vendor/model` for classification gates, under the same parameter caveat as the OpenAI one. | `openai/gpt-5.6-luna` |
 | `OPENROUTER_EMBEDDING_MODEL_ID` | **(OpenRouter)** Embedding model, as `vendor/model`. **Off by default**, unlike the other platforms: OpenRouter routes embedding models from several vendors whose native dimensionalities differ, and the memory index is fixed at 1024 dims — so there is no id that is right by default. Name one that can deliver 1024 (`openai/text-embedding-3-small` truncates to it) to switch memory embeddings on. | `''` (disabled) |
 | `ANTHROPIC_MODEL_ID` | **(Anthropic)** Main model (the agent's reasoning loop) | `claude-opus-5` |
-| `ANTHROPIC_CLASSIFICATION_MODEL_ID` | **(Anthropic)** Fast model for the heartbeat gate | `claude-haiku-5-5` |
+| `ANTHROPIC_CLASSIFICATION_MODEL_ID` | **(Anthropic)** Fast model for classification gates | `claude-haiku-5-5` |
 | `LITELLM_MODEL_ID` | **(LiteLLM)** Main model, as your proxy names it | `claude-opus-5-5` |
 | `LITELLM_CLASSIFICATION_MODEL_ID` | **(LiteLLM)** Fast model for classification gates, as your proxy names it. Name a Claude or other non-reasoning model: the gates allow a few output tokens, and a reasoning model can use them up before it answers. | `claude-haiku-5-5` |
 | `CONTEXT_WINDOW_TOKENS` | Input-context window (tokens) to assume for the agent's model. Only needed when the catalog doesn't recognize it. Ignored unless a positive integer. | derived from the model ID |
@@ -518,15 +518,7 @@ time, so the same value keeps working if you switch back to `bedrock`.
 same ways — the Web UI Profile page or the TUI `/heartbeat-model` /
 `/cron-model` commands. Both default to empty and fall back to the main model
 (which in turn falls back to the active platform's main model), so you can run
-routine heartbeats on a cheaper model while chat stays on a stronger one. The
-DELIVER/SUPPRESS gate (heartbeat and scheduled tasks) always uses the active
-platform's classification model (`BEDROCK_CLASSIFICATION_MODEL_ID` on Bedrock,
-`AZURE_CLASSIFICATION_MODEL_ID` on Azure,
-`BEDROCK_MANTLE_CLASSIFICATION_MODEL_ID` on mantle,
-`OPENAI_CLASSIFICATION_MODEL_ID` on OpenAI,
-`OPENROUTER_CLASSIFICATION_MODEL_ID` on OpenRouter,
-`ANTHROPIC_CLASSIFICATION_MODEL_ID` on Anthropic,
-`LITELLM_CLASSIFICATION_MODEL_ID` on LiteLLM), independent of this.
+routine heartbeats on a cheaper model while chat stays on a stronger one.
 
 ### Auto model selection
 

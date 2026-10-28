@@ -30,7 +30,6 @@ export type LlmCallPurpose =
   | 'early-stopping'
   | 'compaction'
   | 'thread-title'
-  | 'delivery-gate'
   | 'feedback-gate'
   | 'goal-gate'
   | 'risk-gate'
@@ -52,7 +51,6 @@ export const LLM_CALL_PURPOSES: readonly LlmCallPurpose[] = [
   'early-stopping',
   'compaction',
   'thread-title',
-  'delivery-gate',
   'feedback-gate',
   'goal-gate',
   'risk-gate',

@@ -97,20 +97,21 @@ Then(
 
 Then('a HEARTBEAT-triggered agent message exists for the agent', async () => {
   const agentId = getCurrentAgentId();
-  // The adapter records the Slack message id once Slack has accepted the post, so the
-  // reply can be in the channel a moment before its row holds the id.
+  // The heartbeat posts with send_message, and the run's record, stored once the run
+  // ends, lists that call. The post can be in the channel a moment before the record.
   const message = await pollUntil(
-    () =>
-      getPrisma().conversationMessage.findFirst({
-        where: {
-          role: 'AGENT',
-          triggeredBy: 'HEARTBEAT',
-          thread: { agentId },
-          externalMessageId: { not: null },
-        },
+    async () => {
+      const rows = await getPrisma().conversationMessage.findMany({
+        where: { role: 'AGENT', triggeredBy: 'HEARTBEAT', thread: { agentId } },
         orderBy: { createdAt: 'desc' },
-      }),
-    { timeoutMs: 10_000, intervalMs: 250, label: 'the heartbeat reply recording its Slack message id' },
+      });
+      return rows.find((row) =>
+        ((row.toolCalls ?? []) as { tool: string; success: boolean }[]).some(
+          (call) => call.tool === 'send_message' && call.success,
+        ),
+      );
+    },
+    { timeoutMs: 30_000, intervalMs: 500, label: 'the heartbeat run recording its send_message call' },
   );
-  expect(message, 'no HEARTBEAT-triggered agent message has a Slack message id').toBeTruthy();
+  expect(message, 'no HEARTBEAT-triggered agent message records a send_message call').toBeTruthy();
 });

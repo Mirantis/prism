@@ -188,6 +188,21 @@ export class MessageDeliveryService {
     return this.publish(userId, thread.id, content, triggeredBy, options);
   }
 
+  /** Publish an autonomous message to web chat only, in the web-visible latest thread. */
+  async publishToWebChat(
+    agentId: string,
+    userId: string,
+    content: string,
+    triggeredBy: MessageTrigger,
+    options?: Omit<PublishOptions, 'channelContext'>,
+  ): Promise<ConversationMessage> {
+    const thread = await conversationService.getOrCreateLatestThread(agentId, userId);
+    return this.publish(userId, thread.id, content, triggeredBy, {
+      ...options,
+      channelContext: { channel: 'websocket', threadId: thread.id },
+    });
+  }
+
   /**
    * Send a stored message that `publish` does not, to every channel that shows
    * the whole conversation. There are two such messages:

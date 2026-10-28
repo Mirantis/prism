@@ -10,6 +10,7 @@ import type {
   DocumentField,
   DocumentRevision,
   DocumentRevisionHistory,
+  HeartbeatDelivery,
   HeartbeatStatus,
   SlackChannelMapping,
   SlackHeartbeatTrigger,
@@ -93,6 +94,12 @@ export const runtimeApi = {
     request<HeartbeatStatus>('/agents/heartbeat/interval', {
       method: 'PATCH',
       body: JSON.stringify({ intervalMs }),
+    }),
+  heartbeatDelivery: () => request<HeartbeatDelivery>('/agents/heartbeat/delivery'),
+  updateHeartbeatDelivery: (changes: Partial<HeartbeatDelivery>) =>
+    request<HeartbeatDelivery>('/agents/heartbeat/delivery', {
+      method: 'PATCH',
+      body: JSON.stringify(changes),
     }),
   updateAgentName: (name: string) =>
     request<AgentSummary>('/agents/name', {

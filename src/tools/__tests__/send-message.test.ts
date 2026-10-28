@@ -41,7 +41,7 @@ describe('Requirement: the message tools act for the run that calls them', () =>
   beforeEach(() => {
     vi.clearAllMocks();
     mockOutbound.listTargets.mockResolvedValue([RELEASE]);
-    mockOutbound.send.mockResolvedValue({ target: RELEASE, messageId: '1712345678.000100' });
+    mockOutbound.send.mockResolvedValue({ key: RELEASE.key, name: RELEASE.name, messageId: '1712345678.000100' });
   });
 
   it("lists the agent's linked targets", async () => {
@@ -73,6 +73,7 @@ describe('Requirement: the message tools act for the run that calls them', () =>
       text: 'Release v2 is out.',
       origin: { platform: 'slack', conversationId: 'C0GENERAL', thread: '1712345678.000001' },
       trigger: 'USER_INPUT',
+      ceiling: undefined,
     });
     expect(result).toEqual({ sent: true, target: 'slack:C0RELEASE', name: 'release', messageId: '1712345678.000100' });
   });
@@ -105,26 +106,32 @@ describe('Requirement: the message tools act for the run that calls them', () =>
     expect(mockOutbound.send.mock.calls[0][0].origin).toBeUndefined();
   });
 
-  it('sends with the broadcast as the reply destination from a run whose output is broadcast', async () => {
-    const tools = getSendMessageTools('user-1', 'agent-1', 'heartbeat', undefined, undefined, undefined, true);
-    await run(tools.send_message, { target: 'slack:C0RELEASE', text: 'Hi' });
+  it('sends with the delivery setting and no reply destination from an autonomous run', async () => {
+    const ceiling = { webChat: true, targets: [RELEASE] };
+    const tools = getSendMessageTools('user-1', 'agent-1', 'heartbeat', undefined, undefined, undefined, ceiling);
+    await run(tools.send_message, { target: 'chat', text: 'Hi' });
 
     expect(mockThreadContext).not.toHaveBeenCalled();
-    expect(mockOutbound.send.mock.calls[0][0].origin).toBe('broadcast');
+    expect(mockOutbound.send.mock.calls[0][0]).toMatchObject({ target: 'chat', ceiling, trigger: 'HEARTBEAT' });
+    expect(mockOutbound.send.mock.calls[0][0].origin).toBeUndefined();
   });
 
-  it('sends with the one conversation the output goes to as the reply destination', async () => {
-    const tools = getSendMessageTools('user-1', 'agent-1', 'webhook', undefined, undefined, undefined, false, {
-      platform: 'slack',
-      conversationId: 'D0OWNER',
+  it('lists web chat and only the targets the delivery setting allows to an autonomous run', async () => {
+    const tools = getSendMessageTools('user-1', 'agent-1', 'cron', undefined, undefined, undefined, {
+      webChat: true,
+      targets: [RELEASE],
     });
-    await run(tools.send_message, { target: 'teams:19:release@thread.tacv2', text: 'Hi' });
 
-    expect(mockThreadContext).not.toHaveBeenCalled();
-    expect(mockOutbound.send.mock.calls[0][0].origin).toEqual({ platform: 'slack', conversationId: 'D0OWNER' });
+    expect(await run(tools.list_message_targets, {})).toEqual({
+      targets: [
+        { target: 'chat', platform: 'chat', kind: 'chat', name: 'Web chat', main: false },
+        { target: 'slack:C0RELEASE', platform: 'slack', kind: 'channel', name: 'release', main: false },
+      ],
+    });
+    expect(mockOutbound.listTargets).not.toHaveBeenCalled();
   });
 
-  it('sends with no reply destination from a run with no thread whose output is not broadcast', async () => {
+  it('sends with no reply destination from a turn with no thread', async () => {
     await run(getSendMessageTools('user-1', 'agent-1', 'chat').send_message, { target: 'slack:C0RELEASE', text: 'Hi' });
 
     expect(mockOutbound.send.mock.calls[0][0].origin).toBeUndefined();
