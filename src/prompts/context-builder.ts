@@ -953,6 +953,7 @@ function getLastSendInstructions(lastSend: TaskLastSend, kind: 'task' | 'heartbe
     ``,
     `If ${words.asker} asks for a message on every run, send it as asked.`,
     `If it asks for a message only when something happens, send it again only for a new occurrence, for example one that began after a run reported that the condition had cleared.`,
+    ...(kind === 'task' ? [`A condition that still holds is not a new occurrence, also when this run finds it again.`] : []),
     `When you do not send a message for that reason, end with the finding that still holds, for example "The build is still failing. The alert is already in #ops."`,
   );
   return lines.join('\n');
