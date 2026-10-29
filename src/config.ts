@@ -793,6 +793,9 @@ function resolveHeartbeatIntervalMs(): number {
   return DEFAULT_HEARTBEAT_INTERVAL_MS;
 }
 
+// Idle compaction is on unless IDLE_COMPACTION is `off`.
+const idleCompaction = process.env.IDLE_COMPACTION?.trim().toLowerCase() !== 'off';
+
 // Same defensive shape as CONTEXT_WINDOW_TOKENS above: junk parses to NaN and
 // a non-positive TTL would expire everything on the next sweep, so both fall
 // back to the 168 h default.
@@ -1226,6 +1229,10 @@ export const config = {
   // Newest messages excluded from compaction and kept verbatim in the context.
   // COMPACTION_TAIL_MESSAGES, default COMPACTION_TAIL_MESSAGES (6); 0 is legal.
   compactionTailMessages,
+
+  // Whether a large chat conversation is compacted before its one-hour cache
+  // expires. IDLE_COMPACTION=off turns it off; threshold compaction stays.
+  idleCompaction,
 
   // Live voice meetings (see the derivations above). The meeting tools are only
   // registered when `openaiRealtimeApiKey` is set AND the container has the browser and

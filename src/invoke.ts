@@ -15,7 +15,7 @@ import { callModel } from './lib/model-call';
 import { config } from './config';
 import { logger } from './logger';
 import { createProvider, missingProviderSettings } from './lib/llm-providers/create-provider';
-import { mergeProviderOptions, type DeferredToolProtocol } from './lib/llm-providers/llm-provider';
+import { cacheTtlFor, mergeProviderOptions, type DeferredToolProtocol } from './lib/llm-providers/llm-provider';
 import { collectTools, withToolsCacheControl } from './lib/tool-collection';
 import { summaryToolOptions, toolLedgerService, type AnchoredToolChange } from './services/tool-ledger.service';
 import { createPendingFileWrites } from './lib/pending-file-writes';
@@ -220,6 +220,8 @@ export async function* invokeStream(request: InvokeRequest): AsyncGenerator<Invo
 
 /** `ending.cancelled` is set when a stop ends the turn: the caller's, or the computer's. */
 async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}): AsyncGenerator<InvokeStep> {
+  // The thread is in use again, so a pending idle compaction would summarize a stale view of it.
+  if (request.threadId) compactionService.cancelIdle(request.threadId);
   const startTime = Date.now();
 
   // Preflight: short-circuit before any DB call.
@@ -308,7 +310,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
     );
 
     const model = provider(modelId);
-    const cachePoint = provider.cachePoint(modelId);
+    const cachePoint = provider.cachePoint(modelId, cacheTtlFor(request.mode));
     const toolChangeProtocol = provider.toolChanges?.(modelId);
     const deferredToolProtocol = provider.deferredTools?.(modelId);
 
@@ -814,13 +816,15 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
             }
           : null);
       if (request.threadId && triggerSnapshot && context.recentMessages.length > 0) {
-        compactionService.maybeAutoCompact({
+        const fork = {
           ...compactionForkBase(request.threadId),
           finalAssistantText: [summarizeSteps(result.steps), earlyStoppingText ?? '']
             .filter(Boolean)
             .join('\n\n'),
           snapshot: triggerSnapshot,
-        });
+        };
+        compactionService.maybeAutoCompact(fork);
+        if (request.mode === 'chat') compactionService.armIdle(fork);
       }
 
       channel.close();

@@ -98,6 +98,8 @@ export interface CompactionEvent {
   error?: string;
   /** Skipped only — why there was nothing to do. */
   detail?: string;
+  /** Completed only — the conversation was compacted while it sat idle. */
+  idle?: boolean;
 }
 
 /** Update progress frame (WS `update` envelope). Install-level, not per-thread. */

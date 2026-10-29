@@ -43,6 +43,13 @@ Manage long-term memory. See **[Memory](memory.md)** for the full picture.
 **Write** and **Delete** are withheld and refused while
 **[locked-in mode](configuration.md#locked-in-mode)** is on. **Search** stays.
 
+## Compacted history
+
+**Read compacted history** — read the earlier messages of the conversation that
+a [compaction](compaction.md) summary replaced, with their tool calls and
+results, or search them for a word. The agent uses it when the summary leaves
+out a detail it needs.
+
 ## Self-management
 
 The agent can edit its own identity from inside a conversation — this is how
@@ -337,8 +344,7 @@ agent's data directory, and the truncation notice gives the agent the path. It r
 what it needs with the shell — `jq` when the payload is JSON, which most tool
 results are, otherwise `grep` or `sed`. So the part it wasn't shown is still
 reachable, in a call as well as in chat. Saved copies are kept for **7 days**
-(configurable via `TOOL_OUTPUT_TTL_HOURS`) and are deleted sooner once the
-conversation they belong to has been compacted away.
+(configurable via `TOOL_OUTPUT_TTL_HOURS`).
 
 The agent is told to pull only what it needs rather than read the file back whole:
 everything it reads returns to the context the cap just protected. So expect it to

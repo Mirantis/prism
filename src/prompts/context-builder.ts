@@ -5,6 +5,7 @@
  * No data fetching here — that stays in the backend's context-builder.service.ts.
  */
 
+import { COMPACTED_HISTORY_TOOL_NAME } from '../tools/conversation-history';
 import { WEBHOOK_EVENT_DATA_TAG, WEBHOOK_PROMPT_TAG } from './webhook-prompt-tags';
 import { AssistantModelMessage, ModelMessage, ToolModelMessage } from 'ai';
 import type { AnchoredToolChange } from '../services/tool-ledger.service';
@@ -651,7 +652,8 @@ export const SUMMARY_MESSAGE_OPENING = `<${SUMMARY_TAG}>`;
 function summaryMessage(summary: string): string {
   return (
     `${SUMMARY_MESSAGE_OPENING}\nThe earlier part of this conversation, summarized. ` +
-    `The messages after this one continue it.\n\n${breakTag(summary, SUMMARY_TAG)}\n</${SUMMARY_TAG}>`
+    `The messages after this one continue it. ${COMPACTED_HISTORY_TOOL_NAME} reads the earlier messages ` +
+    `word for word.\n\n${breakTag(summary, SUMMARY_TAG)}\n</${SUMMARY_TAG}>`
   );
 }
 

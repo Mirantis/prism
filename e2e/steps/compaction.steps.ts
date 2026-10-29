@@ -134,6 +134,16 @@ Then('a manual compaction telemetry event is recorded', async () => {
   expect(JSON.stringify(event.attributes)).not.toContain('compaction-seed-0');
 });
 
+Then('the agent read the compacted history', async () => {
+  const thread = await latestThread();
+  const rows = await pollUntil(
+    () => dbHelper.getPrisma().conversationMessage.findMany({ where: { threadId: thread.id, role: 'AGENT' } }),
+    (found) => found.some((r) => JSON.stringify(r.toolCalls ?? '').includes('read_compacted_history')),
+    120_000,
+  );
+  expect(rows.some((r) => JSON.stringify(r.toolCalls ?? '').includes('read_compacted_history'))).toBe(true);
+});
+
 Then('every seeded message is still visible in the conversation', async ({ page }) => {
   // Decision: compaction changes only the model's view; the scrollback keeps
   // the full thread, compacted rows included.

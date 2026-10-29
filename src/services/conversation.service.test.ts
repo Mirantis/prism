@@ -1331,3 +1331,41 @@ describe('ConversationService', () => {
     expect(mockPrisma.conversationThread.findUnique).not.toHaveBeenCalled();
   });
 });
+
+describe('listCompactedMessages', () => {
+  const row = (content: string, toolCalls: unknown = null) => ({
+    role: 'AGENT',
+    content,
+    toolCalls,
+    internalStep: false,
+    createdAt: new Date('2026-10-01T09:00:00.000Z'),
+  });
+
+  beforeEach(() => {
+    mockPrisma.conversationMessage.findMany.mockReset();
+  });
+
+  it('pages without a query and says whether more follow', async () => {
+    mockPrisma.conversationMessage.findMany.mockResolvedValue([row('a'), row('b'), row('c')]);
+
+    const page = await conversationService.listCompactedMessages('t1', { offset: 4, limit: 2 });
+
+    expect(mockPrisma.conversationMessage.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { threadId: 't1', isCompacted: true }, skip: 4, take: 3 }),
+    );
+    expect(page).toEqual({ messages: [row('a'), row('b')], more: true });
+  });
+
+  it('matches text and tool calls, ignoring case', async () => {
+    mockPrisma.conversationMessage.findMany.mockResolvedValueOnce([
+      row('nothing here'),
+      row('The PODS crashed'),
+      row('ran it', [{ tool: 'shell_exec', output: 'pods: 0/3 ready' }]),
+    ]);
+
+    const page = await conversationService.listCompactedMessages('t1', { query: 'pods', offset: 0, limit: 5 });
+
+    expect(page.messages.map((m) => m.content)).toEqual(['The PODS crashed', 'ran it']);
+    expect(page.more).toBe(false);
+  });
+});

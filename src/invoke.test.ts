@@ -235,9 +235,11 @@ vi.mock('./services/llm-call.service', () => ({
   llmCallService: { record: mockRecordLlmCall },
 }));
 
-const { mockMaybeAutoCompact, mockMaybeCompactAfterOverflow } = vi.hoisted(() => ({
+const { mockMaybeAutoCompact, mockMaybeCompactAfterOverflow, mockArmIdle, mockCancelIdle } = vi.hoisted(() => ({
   mockMaybeAutoCompact: vi.fn(),
   mockMaybeCompactAfterOverflow: vi.fn(),
+  mockArmIdle: vi.fn(),
+  mockCancelIdle: vi.fn(),
 }));
 
 vi.mock('./services/compaction.service', async (importOriginal) => ({
@@ -246,6 +248,8 @@ vi.mock('./services/compaction.service', async (importOriginal) => ({
   compactionService: {
     maybeAutoCompact: mockMaybeAutoCompact,
     maybeCompactAfterOverflow: mockMaybeCompactAfterOverflow,
+    armIdle: mockArmIdle,
+    cancelIdle: mockCancelIdle,
   },
 }));
 
@@ -639,7 +643,15 @@ describe('invoke', () => {
       await invoke(createTestInvokeRequest({ mode: 'cron' }));
 
       expect(modelFn).toHaveBeenCalledWith('cron-model');
-      expect(modelFn.cachePoint).toHaveBeenCalledWith('cron-model');
+      expect(modelFn.cachePoint).toHaveBeenCalledWith('cron-model', '5m');
+    });
+
+    it('asks for a one-hour cache on a chat turn, which waits on a person', async () => {
+      const modelFn = captureModelId();
+
+      await invoke(createTestInvokeRequest({ mode: 'chat' }));
+
+      expect(modelFn.cachePoint).toHaveBeenCalledWith(expect.any(String), '1h');
     });
 
     it('chat mode ignores heartbeat/cron overrides and uses the main model', async () => {

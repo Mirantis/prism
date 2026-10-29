@@ -15,7 +15,8 @@ export function useCompaction(appendSystemMessage: (text: string) => void): bool
       setCompacting(event.status === 'started');
       if (event.status === 'completed') {
         const n = event.messagesCompacted ?? 0;
-        appendSystemMessage(`Conversation compacted — ${n} older message${n === 1 ? '' : 's'} summarized.`);
+        const when = event.idle ? ' while idle' : '';
+        appendSystemMessage(`Conversation compacted${when} — ${n} older message${n === 1 ? '' : 's'} summarized.`);
       } else if (event.status === 'skipped') {
         // A no-op, not an error: only worth saying when the user asked for it.
         if (event.trigger === 'manual') {

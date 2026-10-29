@@ -31,7 +31,6 @@ import {
 } from './execution-environments/get-execution-environment';
 import type { ExecutionFiles } from './execution-environments/execution-environment';
 import { resolveWorkspace } from './execution-environments/workspace';
-import { logger } from '../logger';
 
 /** One place saved copies are kept, and the filesystem that reaches it. */
 interface Store {
@@ -162,35 +161,6 @@ export async function readToolOutput(id: string): Promise<string | null> {
     return files.readText(full);
   }
   return null;
-}
-
-/**
- * Delete saved outputs by id. Best effort: called when a thread or a message that
- * named them is deleted, so a spill does not sit for the rest of its TTL
- * referenced by nothing. The TTL sweep is the backstop for whatever this misses.
- */
-export async function removeToolOutputs(ids: readonly string[]): Promise<number> {
-  let removed = 0;
-  for (const { dir, files } of allStores()) {
-    for (const id of ids) {
-      if (!isToolOutputId(id)) continue;
-      const full = path.posix.join(dir, id);
-      try {
-        // Already gone is the expected case, so the count reports what was really
-        // there rather than how many ids the caller named.
-        await files.lstat(full);
-      } catch {
-        continue;
-      }
-      try {
-        await files.remove(full);
-        removed++;
-      } catch (err) {
-        logger.warn({ err }, `[ToolOutputStore] could not delete saved output ${id}`);
-      }
-    }
-  }
-  return removed;
 }
 
 /**

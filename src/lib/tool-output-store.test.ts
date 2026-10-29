@@ -12,7 +12,6 @@ vi.mock('../logger', () => ({ logger: { warn: vi.fn(), debug: vi.fn(), info: vi.
 import {
   writeToolOutput,
   readToolOutput,
-  removeToolOutputs,
   reapExpiredToolOutputs,
   isToolOutputId,
   MAX_SPILL_BYTES,
@@ -103,25 +102,6 @@ describe('writeToolOutput / readToolOutput', () => {
   });
 });
 
-describe('removeToolOutputs', () => {
-  it('deletes the named copies and ignores ones already gone', async () => {
-    const a = await writeToolOutput('a');
-    const b = await writeToolOutput('b');
-
-    expect(await removeToolOutputs([a.id, b.id, '0f9a1c2e-3b4d-4e5f-8a9b-0c1d2e3f4a5b'])).toBe(2);
-    expect(await readToolOutput(a.id)).toBeNull();
-    expect(await readToolOutput(b.id)).toBeNull();
-  });
-
-  it('never touches a file outside its directory', async () => {
-    const outside = path.join(dataDir, 'agent.db');
-    await fs.writeFile(outside, 'secret');
-
-    expect(await removeToolOutputs(['../agent.db'])).toBe(0);
-    expect(await fs.readFile(outside, 'utf8')).toBe('secret');
-  });
-});
-
 describe('reapExpiredToolOutputs', () => {
   const HOUR = 60 * 60 * 1000;
 
@@ -184,12 +164,12 @@ describe('a thread rooted outside the deployment environment', () => {
     expect(outside.path.startsWith(resolveToolOutputDir())).toBe(true);
   });
 
-  it('reads, removes and reaps a copy on either side', async () => {
+  it('reads and reaps a copy on either side', async () => {
     const inside = await writeToolOutput('inside');
     const outside = await writeToolOutput('outside', '/Users/me/dev/repo');
 
     expect(await readToolOutput(outside.id)).toBe('outside');
-    expect(await removeToolOutputs([inside.id, outside.id])).toBe(2);
+    expect(await readToolOutput(inside.id)).toBe('inside');
 
     const stale = await writeToolOutput('stale', '/Users/me/dev/repo');
     const past = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
