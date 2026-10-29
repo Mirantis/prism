@@ -491,6 +491,17 @@ const DELIVERY_SCENARIOS: Scenario[] = [
     reachedNothing,
   ),
   deliveryScenario(
+    'delivery.cron-condition-holds-held',
+    'A conditional task whose condition holds on every run does not post again what the last run posted.',
+    {
+      mode: 'cron',
+      instruction: 'Check whether 7 is a prime number. Only send me a message if it is, and start it with REPEAT_CHECK_FOUND.',
+      ceiling: { deliverTo: 'chat' },
+      earlier: { text: 'REPEAT_CHECK_FOUND: 7 is a prime number.', hoursAgo: 0, place: 'web chat' },
+    },
+    reachedNothing,
+  ),
+  deliveryScenario(
     'delivery.cron-unconditional-repeat-sent',
     'An unconditional report reaches the user again, though it repeats the last one.',
     {
@@ -1008,15 +1019,17 @@ export const SCENARIOS: Scenario[] = [
     expect: 'A task that asks for a message on every run sends it again although an earlier run sent the same text.',
     grader: 'tool call',
     run: async () => {
+      const lastSend = {
+        messages: `- To #team: On-call this week: ${ANA}. Please check the rota.`,
+        at: Date.now() - 7 * 24 * HOUR_MS,
+      };
       const trace = await runTurn({
         mode: 'cron',
         prompt: scheduledRunPrompt(
           `Every Monday at 09:00 UTC, post this reminder in #team: "On-call this week: ${ANA}. Please check the rota."`,
+          lastSend,
         ),
-        lastSend: {
-          messages: `- To #team: On-call this week: ${ANA}. Please check the rota.`,
-          at: Date.now() - 7 * 24 * HOUR_MS,
-        },
+        lastSend,
         maxSteps: 4,
         postingCeiling: SEND_CEILING,
         stubs: SEND_STUBS,
@@ -1029,13 +1042,14 @@ export const SCENARIOS: Scenario[] = [
     expect: 'A conditional task does not send again for the failure an earlier run already sent, and says it still holds.',
     grader: 'tool call',
     run: async () => {
+      const lastSend = {
+        messages: `- To #ops: Nightly build #812 failed in the integration tests. ${BEN} please check.`,
+        at: Date.now() - HOUR_MS,
+      };
       const trace = await runTurn({
         mode: 'cron',
-        prompt: scheduledRunPrompt(NIGHTLY_CHECK),
-        lastSend: {
-          messages: `- To #ops: Nightly build #812 failed in the integration tests. ${BEN} please check.`,
-          at: Date.now() - HOUR_MS,
-        },
+        prompt: scheduledRunPrompt(NIGHTLY_CHECK, lastSend),
+        lastSend,
         maxSteps: 4,
         postingCeiling: SEND_CEILING,
         stubs: { ...SEND_STUBS, shell_exec: () => ({ stdout: nightlyStatus(812, 'FAILED'), stderr: '', exitCode: 0 }) },
@@ -1049,14 +1063,15 @@ export const SCENARIOS: Scenario[] = [
     expect: 'A conditional task sends again for a failure that began after a run reported the condition had cleared.',
     grader: 'tool call',
     run: async () => {
+      const lastSend = {
+        messages: `- To #ops: Nightly build #790 failed in the integration tests. ${BEN} please check.`,
+        at: Date.now() - 72 * HOUR_MS,
+        latestReport: { text: 'The nightly build #801 passed.', at: Date.now() - 48 * HOUR_MS },
+      };
       const trace = await runTurn({
         mode: 'cron',
-        prompt: scheduledRunPrompt(NIGHTLY_CHECK),
-        lastSend: {
-          messages: `- To #ops: Nightly build #790 failed in the integration tests. ${BEN} please check.`,
-          at: Date.now() - 72 * HOUR_MS,
-          latestReport: { text: 'The nightly build #801 passed.', at: Date.now() - 48 * HOUR_MS },
-        },
+        prompt: scheduledRunPrompt(NIGHTLY_CHECK, lastSend),
+        lastSend,
         maxSteps: 4,
         postingCeiling: SEND_CEILING,
         stubs: { ...SEND_STUBS, shell_exec: () => ({ stdout: nightlyStatus(812, 'FAILED'), stderr: '', exitCode: 0 }) },

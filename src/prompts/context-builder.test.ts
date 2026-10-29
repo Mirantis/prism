@@ -38,6 +38,7 @@ beforeAll(async () => {
 });
 
 import { createTestAgentContext } from '../test-utils/factories';
+import { scheduledRunPrompt } from './scheduled-run-prompt';
 import type { AttachmentMeta } from '../services/attachment.service';
 import type { PostingCeiling } from '../services/delivery-target.service';
 
@@ -360,6 +361,17 @@ describe('system prompt text', () => {
     expect(parts.filter((p) => p.cacheable).map((p) => p.text).join()).not.toContain('Nightly build #812');
   });
 
+  it("a scheduled run's reminder names the send-record section only when its prompt has one", async () => {
+    const lastSend = { messages: '- To chat: REPEAT_CHECK_FOUND: 7 is a prime number.', at: Date.now() };
+    const text = await promptText(createTestAgentContext({ lastSend, postingCeiling: CEILING }), 'cron');
+
+    expect(text).toContain('# Messages This Task Sent');
+    expect(scheduledRunPrompt('Check whether 7 is a prime number.', lastSend)).toContain(
+      'Before you post, read "Messages This Task Sent".',
+    );
+    expect(scheduledRunPrompt('Check whether 7 is a prime number.')).not.toContain('Messages This Task Sent');
+  });
+
   it('cron mode tells a task that asks for a message on every run to send it, and a conditional one to wait for a new occurrence', async () => {
     const text = await promptText(createTestAgentContext({ lastSend: { messages: '- To #team: Stand-up at 9.', at: Date.now() } }), 'cron');
 
@@ -367,6 +379,7 @@ describe('system prompt text', () => {
     expect(text).toContain(
       'If it asks for a message only when something happens, send it again only for a new occurrence, for example one that began after a run reported that the condition had cleared.',
     );
+    expect(text).toContain('A condition that still holds is not a new occurrence, also when this run finds it again.');
     expect(text).toContain('When you do not send a message for that reason, end with the finding that still holds');
   });
 
@@ -390,6 +403,7 @@ describe('system prompt text', () => {
       'The runs since the oldest of these sends reported, newest first:\n\n(30min ago) Build #812 still fails.\n\n(2h ago) All systems healthy.',
     );
     expect(section?.text).toContain('If a check asks for a message on every run, send it as asked.');
+    expect(section?.text).not.toContain('A condition that still holds is not a new occurrence');
   });
 
   it("goal mode tells a turn what the goal's earlier turns sent, after the cached part", async () => {

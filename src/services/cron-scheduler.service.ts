@@ -695,11 +695,12 @@ class CronSchedulerService {
       // Invoke LLM directly (in-process). A bound task runs against its thread so
       // it sees the conversation history (see includeConversation in invoke.ts)
       // and can re-schedule another "wait" to keep polling in-thread.
+      const lastSend = boundThreadId ? undefined : await this.lastSendOf(task);
       const result = await invoke({
         userId: task.userId,
         agentId: task.agentId,
         mode: 'cron',
-        prompt: boundThreadId ? instruction : scheduledRunPrompt(instruction),
+        prompt: boundThreadId ? instruction : scheduledRunPrompt(instruction, lastSend),
         afterRestart: opts.afterRestart,
         abortSignal: pendingWorkService.shutdownSignal,
         ...(historyThreadId
@@ -712,7 +713,7 @@ class CronSchedulerService {
         // An unbound task posts within its delivery target, and only an unbound task recurs.
         ...(!boundThreadId && {
           postingCeiling: await deliveryTargetService.ceiling(task.agentId, target),
-          lastSend: await this.lastSendOf(task),
+          lastSend,
         }),
       });
       // A shutdown stopped the run. It delivers nothing, and a message it sent stays
