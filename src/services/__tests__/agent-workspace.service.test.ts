@@ -134,6 +134,24 @@ describe('AgentWorkspaceService telemetry', () => {
     }
   });
 
+  it('creates the agent with the configured heartbeat interval', async () => {
+    const prev = config.heartbeatIntervalMs;
+    config.heartbeatIntervalMs = 7_200_000;
+    try {
+      mockPrisma.agentWorkspace.create.mockResolvedValue(createAgentRow({ id: 'agent-new' }));
+      await agentWorkspaceService.createAgent({
+        id: 'agent-new',
+        userId: 'user-1',
+        name: 'Helper',
+        agentType: 'AGENT',
+        teamName: 'Team',
+      });
+      expect(mockPrisma.agentWorkspace.create.mock.calls[0][0].data.heartbeatIntervalMs).toBe(7_200_000);
+    } finally {
+      config.heartbeatIntervalMs = prev;
+    }
+  });
+
   it('creates the agent from the default templates, with the name filled in', async () => {
     mockPrisma.agentWorkspace.create.mockResolvedValue(createAgentRow({ id: 'agent-new' }));
     await agentWorkspaceService.createAgent({

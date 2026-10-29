@@ -21,6 +21,7 @@ import { WORKSPACE_DOC_LABELS } from '../lib/workspace-docs';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { config } from '../config';
+import { MIN_HEARTBEAT_INTERVAL_MS } from '../constants';
 
 /** Shared input schema for workspace-file update tools (dual-mode: full replace or targeted edits). */
 const workspaceFileInputSchema = z.object({
@@ -203,7 +204,9 @@ export function getAgentConfigTools(): Record<string, Tool> {
 
         switch (setting) {
           case 'heartbeatIntervalMs':
-            if (typeof coerced !== 'number' || coerced < 60000) throw new Error('Heartbeat interval must be >= 60000ms');
+            if (typeof coerced !== 'number' || coerced < MIN_HEARTBEAT_INTERVAL_MS) {
+              throw new Error(`Heartbeat interval must be >= ${MIN_HEARTBEAT_INTERVAL_MS}ms`);
+            }
             updateData.heartbeatIntervalMs = coerced;
             break;
           case 'timezone':

@@ -51,6 +51,7 @@ vi.mock('../config', () => ({
     // database opens only when a test queries the client.
     databaseUrl: 'file::memory:',
     agentDefaults: {},
+    heartbeatIntervalMs: 28_800_000,
     // Self-update: off in unit tests (dev shape). The gate matrix is asserted
     // in update.service.test.ts, which overrides these per case.
     appVersion: '',

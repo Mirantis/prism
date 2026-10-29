@@ -6,7 +6,9 @@ import {
   TOOL_OUTPUT_TTL_HOURS,
   COMPACTION_TAIL_MESSAGES,
   COMPACTION_THRESHOLD_PERCENT,
+  DEFAULT_HEARTBEAT_INTERVAL_MS,
   GOAL_MAX_TURNS,
+  MIN_HEARTBEAT_INTERVAL_MS,
 } from './constants';
 import { readAgentModelDefaults } from './lib/prism-settings';
 import { logger } from './logger';
@@ -744,6 +746,20 @@ const rawCompactionTail = parseInt(process.env.COMPACTION_TAIL_MESSAGES ?? '', 1
 const compactionTailMessages =
   Number.isFinite(rawCompactionTail) && rawCompactionTail >= 0 ? rawCompactionTail : COMPACTION_TAIL_MESSAGES;
 
+// Heartbeat interval of a new agent. An unset value takes the default silently;
+// a set value that is not an integer of at least the minimum warns and takes it too.
+function resolveHeartbeatIntervalMs(): number {
+  const raw = (process.env.HEARTBEAT_INTERVAL_MS ?? '').trim();
+  if (!raw) return DEFAULT_HEARTBEAT_INTERVAL_MS;
+  const parsed = Number(raw);
+  if (Number.isInteger(parsed) && parsed >= MIN_HEARTBEAT_INTERVAL_MS) return parsed;
+  logger.warn(
+    { configured: raw, minimumMs: MIN_HEARTBEAT_INTERVAL_MS },
+    '[Startup] invalid HEARTBEAT_INTERVAL_MS; using the default',
+  );
+  return DEFAULT_HEARTBEAT_INTERVAL_MS;
+}
+
 // Same defensive shape as CONTEXT_WINDOW_TOKENS above: junk parses to NaN and
 // a non-positive TTL would expire everything on the next sweep, so both fall
 // back to the 168 h default.
@@ -1158,6 +1174,7 @@ export const config = {
   // means disabled (COMPACTION_THRESHOLD_PERCENT=0); otherwise 1–100, default
   // COMPACTION_THRESHOLD_PERCENT (90).
   compactionThresholdPercent,
+  heartbeatIntervalMs: resolveHeartbeatIntervalMs(),
 
   // Newest messages excluded from compaction and kept verbatim in the context.
   // COMPACTION_TAIL_MESSAGES, default COMPACTION_TAIL_MESSAGES (6); 0 is legal.
