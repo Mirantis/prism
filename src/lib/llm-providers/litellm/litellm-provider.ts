@@ -20,7 +20,7 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { config, isGatewayEndpoint } from '../../../config';
 import { logger } from '../../../logger';
-import { ANTHROPIC_CACHE_POINT, type LlmProvider } from '../llm-provider';
+import { anthropicCachePoint, type CacheTtl, type LlmProvider } from '../llm-provider';
 
 /** How long the startup check waits for the proxy's model list. */
 const MODEL_LIST_TIMEOUT_MS = 10_000;
@@ -45,7 +45,7 @@ export function createLiteLlmProvider(baseURL?: string): LlmProvider {
     // No gate temperature, for the same reason: a GPT-5.x upstream rejects an
     // explicit one, and every model accepts its own default.
     classificationSamplingParams: {},
-    cachePoint: () => ANTHROPIC_CACHE_POINT,
+    cachePoint: (_modelId: string, ttl?: CacheTtl) => anthropicCachePoint(ttl),
     ...(baseURL ? { startupCheck: () => checkModels(baseURL, apiKey) } : {}),
   });
 }

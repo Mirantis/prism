@@ -68,7 +68,7 @@ newer replies afterwards. The Slack channel itself is never modified.
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-compact at this percent of the model's window; `0` disables auto-compaction | `90` |
 | `COMPACTION_TAIL_MESSAGES` | At most this many of the newest messages are kept out of compaction, except that a long latest reply stays whole when it fits | `6` |
 | `IDLE_COMPACTION` | `off` stops compacting large conversations while they sit idle | on |
-| `CHAT_CACHE_TTL` | `1h` keeps a chat's prompt cache for an hour instead of five minutes, with recent Claude models on Amazon Bedrock. It pays when people come back within the hour, and costs more when they work in short bursts with long breaks | `5m` |
+| `CHAT_CACHE_TTL` | `1h` asks the provider to keep a chat's prompt cache for an hour instead of five minutes. It pays when people come back within the hour, and costs more when they work in short bursts with long breaks | `5m` |
 
 Auto-compaction works best when the model's context window is known; see
 **[Context-window size](configuration.md#context-window-size)**. For a model
