@@ -15,7 +15,7 @@ import { MAX_OUTPUT_TOKENS } from '../constants';
 import { callModel } from '../lib/model-call';
 import { getGateRequest } from '../lib/classification';
 import { createProvider } from '../lib/llm-providers/create-provider';
-import { cacheTtlFor } from '../lib/llm-providers/llm-provider';
+import { cacheRequestOptions, cacheTtlFor } from '../lib/llm-providers/llm-provider';
 import { collectTools, withToolsCacheControl } from '../lib/tool-collection';
 import { withToolOutputCapture } from '../lib/tool-output-limiter';
 import { evaluateToolRisk } from '../lib/tool-risk-gate';
@@ -256,6 +256,7 @@ export async function runTurn(input: TurnInput): Promise<TurnTrace> {
       tools: withToolsCacheControl(withToolOutputCapture(stubTools(turnTools, input.stubs ?? {})), cachePoint),
       toolChoice: 'auto',
       maxOutputTokens: MAX_OUTPUT_TOKENS,
+      providerOptions: cacheRequestOptions(provider, modelId, cacheTtlFor(input.mode)),
       stopWhen: stepCountIs(input.maxSteps ?? 1),
     },
   );

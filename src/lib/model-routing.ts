@@ -140,7 +140,7 @@ async function heldTier(
   };
   const tier = MODEL_TIERS.find((t) => tiers[t] && sentId(tiers[t] as string) === last.model);
   if (!tier) return null;
-  const ttl = cacheTtlMs(provider.cachePoint(last.model, cacheTtlFor(last.purpose)));
+  const ttl = cacheTtlMs(provider, last.model, cacheTtlFor(last.purpose));
   return { tier, warm: Date.now() - last.createdAt.getTime() < ttl };
 }
 

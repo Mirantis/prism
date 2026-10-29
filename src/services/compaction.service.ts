@@ -60,7 +60,14 @@ import { COMPACTION_PROMPT } from '../prompts/compaction-prompt';
 import { MIN_PLAUSIBLE_CONTEXT } from '../lib/model-catalog';
 import { contextWindowFor } from '../lib/context-window';
 import { createProvider } from '../lib/llm-providers/create-provider';
-import { cacheTtlFor, cacheTtlMs, NO_CACHE_POINT, type CachePointFragment } from '../lib/llm-providers/llm-provider';
+import {
+  cacheRequestOptions,
+  cacheTtlFor,
+  cacheTtlMs,
+  NO_CACHE_POINT,
+  type CachePointFragment,
+  type ProviderOptionsFragment,
+} from '../lib/llm-providers/llm-provider';
 import { llmCallService, type LlmCallPurpose } from './llm-call.service';
 import { conversationService } from './conversation.service';
 
@@ -114,6 +121,8 @@ export interface CompactionFork {
   model: LanguageModel;
   /** The provider's prompt-cache breakpoint fragment. */
   cachePoint: CachePointFragment;
+  /** The turn's request-level cache options, which the summary sends too. */
+  cacheRequest: ProviderOptionsFragment;
   /** cachedSystem — cache breakpoints included. */
   system: SystemModelMessage[];
   /** cachedTools — what the summarize call declares (see `declaredTools`). */
@@ -406,13 +415,14 @@ class CompactionService {
     const provider = createProvider();
     const modelId = await compactionModel(context, threadId, provider);
     const model = provider(modelId);
-    // A read does not depend on the lifetime asked for, and the commit retires this
-    // prefix, so a five-minute entry is the cheaper write. An idle summary whose cache
+    // The chat turns' lifetime, since on some vendors an entry of another lifetime
+    // replaces the thread's entry instead of reading it. An idle summary whose cache
     // has expired reads the thread at full price whatever it asks for, and nothing
     // reuses its prefix, so it writes no entry at all.
-    const cold = lastCallAt !== undefined &&
-      Date.now() - lastCallAt.getTime() > cacheTtlMs(provider.cachePoint(modelId, cacheTtlFor('chat')));
-    const cachePoint = cold ? NO_CACHE_POINT : provider.cachePoint(modelId, '5m');
+    const ttl = cacheTtlFor('chat');
+    const cold = lastCallAt !== undefined && Date.now() - lastCallAt.getTime() > cacheTtlMs(provider, modelId, ttl);
+    const cachePoint = cold ? NO_CACHE_POINT : provider.cachePoint(modelId, ttl);
+    const cacheRequest = cacheRequestOptions(provider, modelId, ttl, !cold);
 
     // A conversation with a declared tool list sends that list: its cached
     // prefix starts with it, and its tool-change announcements name it.
@@ -495,6 +505,7 @@ class CompactionService {
           ? { tools: cachedTools, toolChoice: 'none' as const }
           : {}),
       maxOutputTokens: summaryOutputBudget(contextWindowFor(modelId)?.tokens, thread?.contextTokens),
+      providerOptions: cacheRequest,
       ...langfuseTelemetry('compaction', { userId, sessionId: threadId }),
     });
     const summary = readSummary(result);
@@ -576,6 +587,7 @@ class CompactionService {
               toolChoice: 'none' as const,
             }),
         maxOutputTokens: summaryOutputBudget(fork.snapshot.windowTokens, fork.snapshot.usedTokens),
+        providerOptions: fork.cacheRequest,
         ...langfuseTelemetry('compaction', { userId, sessionId: threadId }),
       });
       const summary = readSummary(result);
@@ -649,6 +661,7 @@ class CompactionService {
                   toolChoice: 'none' as const,
                 }),
             maxOutputTokens: MAX_OUTPUT_TOKENS,
+            providerOptions: fork.cacheRequest,
             ...langfuseTelemetry('compaction', { userId, sessionId: threadId }),
           });
           summary = readSummary(result);

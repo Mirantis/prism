@@ -30,13 +30,13 @@
 import { config, isGatewayEndpoint } from '../../../config';
 import { logger } from '../../../logger';
 import { createOpenAiCompatibleProvider } from '../openai-compatible';
-import type { LlmProvider } from '../llm-provider';
+import type { CacheTtl, LlmProvider, ProviderOptionsFragment } from '../llm-provider';
 
 export function createOpenAiProvider(baseURL?: string): LlmProvider {
   const gatewayServesIt = isGatewayEndpoint(baseURL);
   logger.info({ routing: gatewayServesIt ? 'nexus' : 'direct' }, 'Creating OpenAI provider');
 
-  return createOpenAiCompatibleProvider({
+  const provider = createOpenAiCompatibleProvider({
     // On the gateway the real key is injected on the outbound leg, so no local
     // key is needed — but the SDK insists on one, so fall back to a decoy (the
     // same pattern as the Azure and mantle factories).
@@ -44,6 +44,23 @@ export function createOpenAiProvider(baseURL?: string): LlmProvider {
     // undefined → the SDK's own default, https://api.openai.com/v1.
     baseURL,
   });
+  return Object.assign(provider, { cacheRequest: openAiCacheRequest, cacheTtlMs: openAiCacheTtlMs });
+}
+
+/**
+ * `1h` asks for a 12-hour entry, the one lifetime OpenAI offers past its 30-minute
+ * default. `prompt_cache_options` exists from GPT-5.6 on, and an earlier model
+ * refuses it, so `5m` sends nothing. Under `1h` a request that must not write sends
+ * explicit mode, which writes nothing without breakpoints. Under `5m` such a request
+ * writes its prompt once; that is the trade for sending nothing an earlier model refuses.
+ */
+function openAiCacheRequest(_modelId: string, ttl: CacheTtl, write: boolean): ProviderOptionsFragment {
+  if (ttl !== '1h') return {};
+  return { openai: { promptCacheOptions: write ? { ttl: '12h' } : { mode: 'explicit' } } };
+}
+
+function openAiCacheTtlMs(_modelId: string, ttl: CacheTtl): number {
+  return ttl === '1h' ? 12 * 60 * 60 * 1000 : 30 * 60 * 1000;
 }
 
 /**

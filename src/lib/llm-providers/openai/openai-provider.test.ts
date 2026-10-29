@@ -21,6 +21,7 @@ vi.mock('@ai-sdk/openai', () => ({
 }));
 
 import { createOpenAiProvider, missingOpenAiSettings } from './openai-provider';
+import { cacheRequestOptions, cacheTtlMs } from '../llm-provider';
 
 describe('createOpenAiProvider', () => {
   beforeEach(() => {
@@ -88,6 +89,22 @@ describe('createOpenAiProvider', () => {
 
   it('declares the empty cache-point fragment — OpenAI caching is automatic', () => {
     expect(createOpenAiProvider().cachePoint('gpt-5.6')).toEqual({});
+  });
+
+  it('asks for a 12-hour entry under 1h and sends nothing at the default', () => {
+    const provider = createOpenAiProvider();
+    expect(cacheRequestOptions(provider, 'gpt-5.6-sol', '5m')).toEqual({});
+    expect(cacheRequestOptions(provider, 'gpt-5.6-sol', '5m', false)).toEqual({});
+    expect(cacheRequestOptions(provider, 'gpt-5.6-sol', '1h')).toEqual({
+      openai: { promptCacheOptions: { ttl: '12h' } },
+    });
+    // Explicit mode with no breakpoint writes nothing: a live gpt-5.6-sol request
+    // reported cache_write_tokens 0 where the same prompt in implicit mode wrote 6,022.
+    expect(cacheRequestOptions(provider, 'gpt-5.6-sol', '1h', false)).toEqual({
+      openai: { promptCacheOptions: { mode: 'explicit' } },
+    });
+    expect(cacheTtlMs(provider, 'gpt-5.6-sol', '5m')).toBe(30 * 60 * 1000);
+    expect(cacheTtlMs(provider, 'gpt-5.6-sol', '1h')).toBe(12 * 60 * 60 * 1000);
   });
 
   it('declares no structuredOutputOptions — the SDK native path works', () => {

@@ -177,6 +177,7 @@ function makeFork(overrides: Partial<AutoCompactFork> = {}): AutoCompactFork {
     modelId: 'model-x',
     model: { modelId: 'model-x' } as never,
     cachePoint: { anthropic: { cacheControl: { type: 'ephemeral' as const } } },
+    cacheRequest: {},
     system: [{ role: 'system', content: 'system prompt' }] as never,
     tools: { shell: {} as never },
     declaredTools: false,
@@ -321,6 +322,14 @@ describe('the forked summarize request', () => {
         providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
       },
     ]);
+  });
+
+  it("sends the turn's request-level cache options", async () => {
+    const cacheRequest = { openai: { promptCacheOptions: { ttl: '12h' as const } } };
+    compactionService.maybeAutoCompact(makeFork({ cacheRequest }));
+    await flushAuto();
+
+    expect(mockGenerateText.mock.calls[0][0].providerOptions).toBe(cacheRequest);
   });
 
   it('sends a declared tool list under auto, refusing every call', async () => {
@@ -555,6 +564,14 @@ describe('maybeCompactAfterOverflow', () => {
       'user-1',
       expect.objectContaining({ 'compaction.reason': 'overflow' }),
     );
+  });
+
+  it("sends the turn's request-level cache options", async () => {
+    const cacheRequest = { openai: { promptCacheOptions: { ttl: '12h' as const } } };
+    compactionService.maybeCompactAfterOverflow(makeOverflowFork({ cacheRequest }));
+    await flushAuto();
+
+    expect(mockGenerateText.mock.calls[0][0].providerOptions).toBe(cacheRequest);
   });
 
   it('shrinks the history head and retries when the summarize call itself overflows', async () => {
@@ -1142,6 +1159,41 @@ describe('idle compaction', () => {
     await fire(0.9 * HOUR);
 
     expect(JSON.stringify(mockGenerateText.mock.calls[0][0])).toContain('cacheControl');
+  });
+
+  describe('on a vendor whose lifetime is a request option', () => {
+    const provider = mockCreateProvider();
+    beforeEach(() => {
+      (provider.cachePoint as ReturnType<typeof vi.fn>).mockReturnValue({});
+      Object.assign(provider, {
+        cacheRequest: (_id: string, ttl: string, write: boolean) =>
+          ttl === '1h' ? { openai: { promptCacheOptions: write ? { ttl: '12h' } : { mode: 'explicit' } } } : {},
+        cacheTtlMs: (_id: string, ttl: string) => (ttl === '1h' ? 12 * HOUR : HOUR / 2),
+      });
+      mockCreateProvider.mockReturnValue(provider);
+      mockConfig.chatCacheTtl = '1h';
+    });
+
+    it('sends the chat turns\' lifetime while their cache is warm', async () => {
+      compactionService.armIdle(turn({ cachePoint: {} }));
+
+      await fire(0.9 * HOUR);
+
+      expect(mockGenerateText.mock.calls[0][0].providerOptions).toEqual({
+        openai: { promptCacheOptions: { ttl: '12h' } },
+      });
+    });
+
+    it('asks for no entry once that cache has expired', async () => {
+      compactionService.armIdle(turn({ cachePoint: {} }));
+      mockNewestThreadCall.mockResolvedValue({ purpose: 'chat', model: 'm', createdAt: new Date(Date.now() - 13 * HOUR) });
+
+      await fire(0.9 * HOUR);
+
+      expect(mockGenerateText.mock.calls[0][0].providerOptions).toEqual({
+        openai: { promptCacheOptions: { mode: 'explicit' } },
+      });
+    });
   });
 
   it('arms nothing with IDLE_COMPACTION=off', () => {
