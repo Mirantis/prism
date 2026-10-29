@@ -13,7 +13,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mocks (hoisted)
 // ============================================================================
 
-const { mockPrisma, mockSlackMappingService } = vi.hoisted(() => ({
+const { mockPrisma, mockSlackMappingService, mockIsHeartbeatTriggerChannel } = vi.hoisted(() => ({
   mockPrisma: {
     slackVerificationCode: { findUnique: vi.fn(), delete: vi.fn() },
     slackMapping: { findFirst: vi.fn(), findUnique: vi.fn(), create: vi.fn() },
@@ -23,6 +23,7 @@ const { mockPrisma, mockSlackMappingService } = vi.hoisted(() => ({
     findUserMapping: vi.fn(),
     findByChannelId: vi.fn(),
   },
+  mockIsHeartbeatTriggerChannel: vi.fn(),
 }));
 
 vi.mock('../../lib/prisma', () => ({
@@ -43,7 +44,7 @@ vi.mock('../conversation-engine.service', () => ({
 
 vi.mock('../slack-heartbeat-trigger.service', () => ({
   slackHeartbeatTriggerService: {
-    isHeartbeatTriggerChannel: vi.fn().mockResolvedValue({ isTrigger: false }),
+    isHeartbeatTriggerChannel: mockIsHeartbeatTriggerChannel,
   },
 }));
 
@@ -238,6 +239,8 @@ describe('Slack channel linking copy', () => {
     mockPrisma.$transaction.mockResolvedValue([]);
     mockPrisma.slackVerificationCode.delete.mockResolvedValue({});
     mockPrisma.slackMapping.findUnique.mockResolvedValue(null);
+    mockIsHeartbeatTriggerChannel.mockResolvedValue({ isTrigger: false });
+    mockSlackMappingService.findByChannelId.mockResolvedValue(null);
     (slackAdapterService as any).getChannelName = vi.fn().mockResolvedValue('general');
   });
 
@@ -254,7 +257,7 @@ describe('Slack channel linking copy', () => {
   it('uses the same wording as the DM path for an invalid code', async () => {
     mockPrisma.slackVerificationCode.findUnique.mockResolvedValue(null);
 
-    await handleChannelMessage(say);
+    await handleChannelMessage(say, `<@U_BOT_123> ${CODE}`);
 
     expect(postedText(say)).toBe(
       '❌ That code is not valid. Generate a new code in Prism Agent, under Settings → Channels.',
@@ -266,7 +269,7 @@ describe('Slack channel linking copy', () => {
       verificationCode('CHANNEL', { expiresAt: new Date(Date.now() - 60 * 1000) }),
     );
 
-    await handleChannelMessage(say);
+    await handleChannelMessage(say, `<@U_BOT_123> ${CODE}`);
 
     expect(postedText(say)).toBe(
       '❌ That code has expired. Generate a new code in Prism Agent, under Settings → Channels.',

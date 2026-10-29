@@ -497,6 +497,79 @@ describe('Requirement: Channel message mention detection', () => {
     });
   });
 
+  describe('Scenario: A six-hex message outside an unlinked channel is not a link code', () => {
+    beforeEach(() => {
+      (slackAdapterService as any).verifyAndLinkChannel = vi.fn();
+    });
+
+    it('answers a six-hex message in a linked channel on the normal path', async () => {
+      mockSlackMappingService.findByChannelId.mockResolvedValue(makeMapping());
+      mockConversationService.getOrCreateThreadByExternalId.mockResolvedValue({ id: 'thread-001' });
+      mockConversationEngineService.chat.mockResolvedValue(undefined);
+
+      await handleChannelMessage(
+        CONNECTION_ID, CHANNEL_ID, SLACK_USER_ID,
+        `<@${BOT_USER_ID}> cafe12`,
+        undefined, MESSAGE_TS, mockSay, BOT_USER_ID, TEAM_ID
+      );
+
+      expect((slackAdapterService as any).verifyAndLinkChannel).not.toHaveBeenCalled();
+      expect(mockSay).not.toHaveBeenCalled();
+      expect(mockConversationEngineService.chat).toHaveBeenCalled();
+    });
+
+    it('queues a six-hex message in a heartbeat trigger channel for the heartbeat', async () => {
+      mockSlackHeartbeatTriggerService.isHeartbeatTriggerChannel.mockResolvedValue({
+        isTrigger: true,
+        agentId: 'agent-001',
+      });
+      (slackAdapterService as any).throttledNotify = vi.fn().mockResolvedValue(undefined);
+
+      await handleChannelMessage(
+        CONNECTION_ID, CHANNEL_ID, SLACK_USER_ID,
+        'cafe12',
+        undefined, MESSAGE_TS, mockSay, BOT_USER_ID, TEAM_ID
+      );
+
+      expect((slackAdapterService as any).verifyAndLinkChannel).not.toHaveBeenCalled();
+      expect(mockSay).not.toHaveBeenCalled();
+      expect(mockSlackMessageQueueService.enqueue).toHaveBeenCalledWith(
+        'agent-001',
+        expect.objectContaining({ text: 'cafe12' }),
+      );
+    });
+  });
+
+  describe('Scenario: A rejected link code in an unlinked channel', () => {
+    beforeEach(() => {
+      mockSlackMappingService.findByChannelId.mockResolvedValue(null);
+      (slackAdapterService as any).verifyAndLinkChannel = vi
+        .fn()
+        .mockResolvedValue({ success: false, message: 'That code is not valid.' });
+    });
+
+    it('stays silent without a bot mention', async () => {
+      await handleChannelMessage(
+        CONNECTION_ID, CHANNEL_ID, SLACK_USER_ID,
+        'cafe12',
+        undefined, MESSAGE_TS, mockSay, BOT_USER_ID, TEAM_ID
+      );
+
+      expect((slackAdapterService as any).verifyAndLinkChannel).toHaveBeenCalled();
+      expect(mockSay).not.toHaveBeenCalled();
+    });
+
+    it('replies with the rejection when the bot is mentioned', async () => {
+      await handleChannelMessage(
+        CONNECTION_ID, CHANNEL_ID, SLACK_USER_ID,
+        `<@${BOT_USER_ID}> cafe12`,
+        undefined, MESSAGE_TS, mockSay, BOT_USER_ID, TEAM_ID
+      );
+
+      expect(mockSay).toHaveBeenCalledWith('❌ That code is not valid.');
+    });
+  });
+
   describe('Scenario: Missing lensUserId on mapping', () => {
     it('should warn when mentioned in a channel with incomplete mapping', async () => {
       mockSlackMappingService.findByChannelId.mockResolvedValue(

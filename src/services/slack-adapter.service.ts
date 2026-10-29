@@ -1099,29 +1099,28 @@ class SlackAdapterService implements ChannelAdapter {
 
     let indicator: WorkingIndicatorHandle | null = null;
     try {
-      // Check if this looks like a verification code (6 hex chars, possibly with formatting)
-      // Strip common Slack formatting: *bold*, _italic_, ~strike~
-      const strippedText = messageText.replace(/[*_~`]/g, '').trim();
-      const codeMatch = strippedText.match(/^[A-Fa-f0-9]{6}$/);
-      if (codeMatch) {
-        const code = strippedText.toUpperCase();
-        // Verify directly using local service (agent-runtime owns verification)
-        const result = await this.verifyDmLinkCode(code, slackUserId, dmChannelId);
-
-        if (result.success) {
-          await say(`✅ ${result.message}`);
-          // Rebuild user cache after linking
-          await this.rebuildUserCache();
-        } else {
-          await say(`❌ ${result.message}`);
-        }
-        return;
-      }
-
-      // Find the user mapping for this Slack user
+      // Find the user mapping for this Slack user. A linked user's message is
+      // never a link code, so the code check below runs for unlinked users only.
       const mapping = await slackMappingService.findUserMapping(connectionId, slackUserId);
 
       if (!mapping) {
+        // Check if this looks like a verification code (6 hex chars, possibly with formatting)
+        // Strip common Slack formatting: *bold*, _italic_, ~strike~
+        const strippedText = messageText.replace(/[*_~`]/g, '').trim();
+        if (this.isVerificationCode(strippedText)) {
+          // Verify directly using local service (agent-runtime owns verification)
+          const result = await this.verifyDmLinkCode(strippedText.toUpperCase(), slackUserId, dmChannelId);
+
+          if (result.success) {
+            await say(`✅ ${result.message}`);
+            // Rebuild user cache after linking
+            await this.rebuildUserCache();
+          } else {
+            await say(`❌ ${result.message}`);
+          }
+          return;
+        }
+
         logger.info(
           'Slack DM from unlinked user %s (connection %s) — message not handled; prompting them to link their account',
           slackUserId,
@@ -1239,21 +1238,7 @@ class SlackAdapterService implements ChannelAdapter {
     teamId: string,
     files: SlackFileMeta[] = []
   ): Promise<void> {
-    // Check if this looks like a verification code FIRST (before channel link check)
-    // This allows linking an unlinked channel
-    // Strip bot mention first so "@Bot ABC123" is detected as a verification code
-    const textForCodeCheck = messageText.replace(new RegExp(`<@${botUserId}>`, 'g'), '').trim();
-    const strippedText = textForCodeCheck.replace(/[*_~`]/g, '').trim();
-    if (this.isVerificationCode(strippedText)) {
-      logger.info('Received potential verification code in channel %s', channelId);
-      const result = await this.verifyAndLinkChannel(strippedText.toUpperCase(), channelId, slackUserId, teamId);
-      try {
-        await say(result.success ? `✅ ${result.message}` : `❌ ${result.message}`);
-      } catch (sayError) {
-        logger.warn('Failed to post verification result in channel %s: %s', channelId, sayError instanceof Error ? sayError.message : String(sayError));
-      }
-      return;
-    }
+    const isMentioned = messageText.includes(`<@${botUserId}>`);
 
     // File-only messages reach the queue paths below with empty text — those
     // paths never download files, so describe them instead of enqueueing ''
@@ -1285,9 +1270,31 @@ class SlackAdapterService implements ChannelAdapter {
     // Check if channel is linked to an agent
     const mapping = await slackMappingService.findByChannelId(channelId);
     if (!mapping) {
+      // Only an unlinked channel takes a link code. Strip the bot mention first
+      // so "@Bot ABC123" is detected as a code.
+      const strippedText = messageText
+        .replace(new RegExp(`<@${botUserId}>`, 'g'), '')
+        .replace(/[*_~`]/g, '')
+        .trim();
+      if (this.isVerificationCode(strippedText)) {
+        logger.info('Received potential verification code in channel %s', channelId);
+        const result = await this.verifyAndLinkChannel(strippedText.toUpperCase(), channelId, slackUserId, teamId);
+        // A six-hex message without a mention is often not a code at all, such as a short commit SHA.
+        if (!result.success && !isMentioned) {
+          logger.info('Verification code rejected in channel %s without a bot mention — no reply: %s', channelId, result.message);
+          return;
+        }
+        try {
+          await say(result.success ? `✅ ${result.message}` : `❌ ${result.message}`);
+        } catch (sayError) {
+          logger.warn('Failed to post verification result in channel %s: %s', channelId, sayError instanceof Error ? sayError.message : String(sayError));
+        }
+        return;
+      }
+
       logger.info('Slack channel %s is not linked to an agent — message not handled', channelId);
       // Channel not linked — if the bot was @mentioned, prompt the user to link
-      if (messageText.includes(`<@${botUserId}>`)) {
+      if (isMentioned) {
         await say("I'm not activated in this channel yet.\n\nPlease enter a verification code from your agent settings to link me.");
       }
       return;
@@ -1297,15 +1304,12 @@ class SlackAdapterService implements ChannelAdapter {
     // This must be set - do not fall back to connection.userId (which is the admin who installed the app)
     if (!mapping.lensUserId) {
       logger.warn('Channel mapping for %s has no lensUserId - skipping (legacy mapping?)', channelId);
-      if (messageText.includes(`<@${botUserId}>`)) {
+      if (isMentioned) {
         await say("This channel has an incomplete configuration. Please unlink and re-link the channel.");
       }
       return;
     }
     const userId = mapping.lensUserId;
-
-    // Check if mentioned in the message
-    const isMentioned = messageText.includes(`<@${botUserId}>`);
 
     logger.info(
       'Slack channel message from %s in %s (threadTs=%s, isMentioned=%s, botUserId=%s, text=%s)',

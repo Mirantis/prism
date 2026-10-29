@@ -188,6 +188,18 @@ describe('Slack DM handler (DM isolation + threading)', () => {
     );
   });
 
+  it('handles a six-hex DM from a linked user as a normal message, not as a link code', async () => {
+    (slackAdapterService as any).verifyDmLinkCode = vi.fn();
+
+    await handleDmMessage(undefined, 'cafe12');
+
+    expect((slackAdapterService as any).verifyDmLinkCode).not.toHaveBeenCalled();
+    expect(mockSay).not.toHaveBeenCalled();
+    expect(mockConversationEngineService.chat).toHaveBeenCalledWith(
+      expect.objectContaining({ threadId: `thread-for-${DM_CHANNEL}` }),
+    );
+  });
+
   it('does not resolve a DM thread when the Slack user is unlinked', async () => {
     mockSlackMappingService.findUserMapping.mockResolvedValue(null);
 
@@ -364,6 +376,7 @@ describe('Slack DM working indicator', () => {
   });
 
   it('never shows the indicator for a verification code or an unlinked user', async () => {
+    mockSlackMappingService.findUserMapping.mockResolvedValue(null);
     (slackAdapterService as any).verifyDmLinkCode = vi
       .fn()
       .mockResolvedValue({ success: true, message: 'linked' });
@@ -371,7 +384,6 @@ describe('Slack DM working indicator', () => {
     await handleDmMessage(undefined, 'ABC123');
     expect(reactionsAdd).not.toHaveBeenCalled();
 
-    mockSlackMappingService.findUserMapping.mockResolvedValue(null);
     await handleDmMessage(undefined);
     expect(reactionsAdd).not.toHaveBeenCalled();
     expect(setStatus).not.toHaveBeenCalled();
