@@ -748,7 +748,14 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
           snapshot: triggerSnapshot,
         };
         compactionService.maybeAutoCompact(fork);
-        if (request.mode === 'chat') compactionService.armIdle(fork);
+        if (request.mode === 'chat') {
+          compactionService.armIdle({
+            userId: request.userId,
+            agentId,
+            threadId: request.threadId,
+            usedTokens: triggerSnapshot.usedTokens,
+          });
+        }
       }
 
       channel.close();

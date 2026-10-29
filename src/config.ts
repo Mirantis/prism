@@ -774,6 +774,9 @@ function resolveHeartbeatIntervalMs(): number {
 // Idle compaction is on unless IDLE_COMPACTION is `off`.
 const idleCompaction = process.env.IDLE_COMPACTION?.trim().toLowerCase() !== 'off';
 
+// The prompt-cache lifetime a chat turn asks for: `5m` unless CHAT_CACHE_TTL is `1h`.
+const chatCacheTtl: '5m' | '1h' = process.env.CHAT_CACHE_TTL?.trim().toLowerCase() === '1h' ? '1h' : '5m';
+
 // Same defensive shape as CONTEXT_WINDOW_TOKENS above: junk parses to NaN and
 // a non-positive TTL would expire everything on the next sweep, so both fall
 // back to the 168 h default.
@@ -1204,6 +1207,11 @@ export const config = {
   // Whether a large chat conversation is compacted before its one-hour cache
   // expires. IDLE_COMPACTION=off turns it off; threshold compaction stays.
   idleCompaction,
+
+  // How long a chat turn asks the provider to keep its prompt cache. `1h` writes
+  // cost 2× input instead of 1.25×, so they pay only where people come back within
+  // the hour. CHAT_CACHE_TTL, default `5m`.
+  chatCacheTtl,
 
   // Live voice meetings (see the derivations above). The meeting tools are only
   // registered when `openaiRealtimeApiKey` is set AND the container has the browser and

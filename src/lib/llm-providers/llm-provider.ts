@@ -17,6 +17,7 @@
  */
 
 import type { LanguageModel, SystemModelMessage } from 'ai';
+import { config } from '../../config';
 
 /**
  * A `providerOptions` fragment — vendor namespace → option bag.
@@ -84,9 +85,9 @@ export type AnthropicCachePoint = { anthropic: { cacheControl: { type: 'ephemera
  */
 export type CacheTtl = '5m' | '1h';
 
-/** The cache a run of `mode` asks for: a chat waits on a person, every other mode runs alone. */
+/** The cache a run of `mode` asks for: `CHAT_CACHE_TTL` for a chat turn, five minutes for any other. */
 export function cacheTtlFor(mode: string): CacheTtl {
-  return mode === 'chat' ? '1h' : '5m';
+  return mode === 'chat' ? config.chatCacheTtl : '5m';
 }
 
 /**
@@ -133,8 +134,7 @@ export const BEDROCK_CACHE_POINT: CachePointFragment = {
 };
 
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
-/** The lifetime a one-hour breakpoint asks for. */
-export const ONE_HOUR_MS = 60 * 60 * 1000;
+const ONE_HOUR_MS = 60 * 60 * 1000;
 
 /**
  * How long a cache written through `fragment` stays warm without a read: an hour

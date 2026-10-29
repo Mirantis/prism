@@ -5,6 +5,7 @@
  * rule that keeps a thread on its model while that model's cache is warm.
  */
 
+import { config } from '../config';
 import { ANTHROPIC_CACHE_POINT, ANTHROPIC_CACHE_POINT_1H } from './llm-providers/llm-provider';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -199,13 +200,28 @@ describe('selectTurnModel', () => {
       expect(result).toEqual({ modelId: 'medium-model', tier: 'medium', reason: 'held' });
     });
 
-    it('holds a chat thread for the hour its cache stays warm', async () => {
+    it('holds a chat thread for the hour its cache stays warm with CHAT_CACHE_TTL=1h', async () => {
+      const before = config.chatCacheTtl;
+      (config as { chatCacheTtl: string }).chatCacheTtl = '1h';
+      try {
+        lastTurn('large-model', 10 * 60 * 1000);
+        label('SMALL');
+
+        const result = await selectTurnModel(autoContext(), request, provider);
+
+        expect(result).toEqual({ modelId: 'large-model', tier: 'large', reason: 'held' });
+      } finally {
+        (config as { chatCacheTtl: string }).chatCacheTtl = before;
+      }
+    });
+
+    it('moves a chat thread down five minutes after its turn on the default cache', async () => {
       lastTurn('large-model', 10 * 60 * 1000);
       label('SMALL');
 
       const result = await selectTurnModel(autoContext(), request, provider);
 
-      expect(result).toEqual({ modelId: 'large-model', tier: 'large', reason: 'held' });
+      expect(result.tier).toBe('small');
     });
 
     it("moves down once a chat turn's cache has gone cold", async () => {
