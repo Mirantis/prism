@@ -142,15 +142,15 @@ describe('createBedrockProvider', () => {
     });
   });
 
-  it('asks for a one-hour entry only on a Claude family a live call checked', () => {
+  it('asks a Claude model for the cache lifetime it is given', () => {
     const provider = createBedrockProvider();
     const oneHour = { anthropic: { cacheControl: { type: 'ephemeral', ttl: '1h' } } };
     const fiveMinutes = { anthropic: { cacheControl: { type: 'ephemeral' } } };
 
     expect(provider.cachePoint('global.anthropic.claude-opus-5-5', '1h')).toEqual(oneHour);
-    expect(provider.cachePoint('us.anthropic.claude-sonnet-4-5-20250929-v1:0', '1h')).toEqual(oneHour);
-    expect(provider.cachePoint('us.anthropic.claude-haiku-4-5-20251001-v1:0', '1h')).toEqual(fiveMinutes);
+    expect(provider.cachePoint('us.anthropic.claude-haiku-4-5-20251001-v1:0', '1h')).toEqual(oneHour);
     expect(provider.cachePoint('global.anthropic.claude-opus-5-5', '5m')).toEqual(fiveMinutes);
+    expect(provider.cachePoint('us.xai.grok-4.6', '1h')).toEqual({});
   });
 
   it('gives no Converse model a breakpoint — one that cannot cache rejects the request', () => {

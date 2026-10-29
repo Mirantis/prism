@@ -30,7 +30,12 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
-import { ANTHROPIC_CACHE_POINT, ANTHROPIC_THINKING_OFF, type LlmProvider } from '../llm-provider';
+import {
+  ANTHROPIC_THINKING_OFF,
+  anthropicCachePoint,
+  type CacheTtl,
+  type LlmProvider,
+} from '../llm-provider';
 
 /**
  * A Bedrock spelling of a Claude id: an optional cross-region
@@ -80,7 +85,7 @@ export function createAnthropicProvider(): LlmProvider {
 
   const dispatcher = (modelId: string) => anthropic(toFirstPartyModelId(modelId));
   return Object.assign(dispatcher, {
-    cachePoint: () => ANTHROPIC_CACHE_POINT,
+    cachePoint: (_modelId: string, ttl?: CacheTtl) => anthropicCachePoint(ttl),
     classificationProviderOptions: ANTHROPIC_THINKING_OFF,
     classificationSamplingParams: {},
   });
