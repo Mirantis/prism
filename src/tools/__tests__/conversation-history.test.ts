@@ -86,6 +86,25 @@ describe('read_compacted_history', () => {
     expect(result.nextOffset).toBe(shown);
   });
 
+  it('cuts a long message text and a long tool input too', async () => {
+    mockList.mockResolvedValue({
+      messages: [
+        {
+          role: 'AGENT',
+          content: 'z'.repeat(40_000),
+          toolCalls: [{ tool: 'shell_write', input: { path: 'a', content: 'w'.repeat(40_000) }, output: 'ok' }],
+          internalStep: false,
+          createdAt: at,
+        },
+      ],
+      more: false,
+    });
+
+    const result = await run({});
+
+    expect(JSON.stringify(result).length).toBeLessThan(6_000);
+  });
+
   it('cuts a long tool result inside a page', async () => {
     mockList.mockResolvedValue({
       messages: [{ role: 'AGENT', content: '', toolCalls: [{ tool: 't', output: 'y'.repeat(5_000) }], internalStep: false, createdAt: at }],

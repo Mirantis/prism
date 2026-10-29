@@ -134,6 +134,40 @@ Then('a manual compaction telemetry event is recorded', async () => {
   expect(JSON.stringify(event.attributes)).not.toContain('compaction-seed-0');
 });
 
+/** One line of a long, invented deploy log holds the build id; the summary below never names it. */
+const BUILD_ID = 'bld-7f3a9c2e';
+const DEPLOY_LOG = Array.from({ length: 400 }, (_, i) =>
+  i === 287 ? `step ${i}: artifact uploaded, build id ${BUILD_ID}` : `step ${i}: ok (checkout-api rollout, replica ${i % 3})`,
+).join('\n');
+
+Given('a compacted conversation whose summary leaves out the build id from a deploy log', async ({ page }) => {
+  const threadId = await dbHelper.createThread(DEFAULT_AGENT_ID, {
+    title: 'Deploy log',
+    messages: [
+      { role: 'USER', content: 'Read yesterday\'s deploy log of checkout-api and tell me if it went fine.' },
+      {
+        role: 'AGENT',
+        content: 'The rollout finished; every step reported ok.',
+        toolCalls: [{ tool: 'shell_exec', input: '{"command":"cat deploy.log"}', output: DEPLOY_LOG, rendered: true }],
+      },
+      { role: 'USER', content: 'Thanks.' },
+      { role: 'AGENT', content: 'You are welcome.' },
+    ],
+  });
+  const prisma = dbHelper.getPrisma();
+  await prisma.conversationMessage.updateMany({ where: { threadId }, data: { isCompacted: true } });
+  await prisma.conversationThread.update({
+    where: { id: threadId },
+    data: {
+      compactionSummary:
+        '## Goal\n- Check whether yesterday\'s checkout-api deploy went fine.\n\n' +
+        '## Current State\n- Done: read the deploy log with shell_exec; every step reported ok.',
+      compactedAt: new Date(),
+    },
+  });
+  await new HomePage(page).navigate();
+});
+
 Then('the agent read the compacted history', async () => {
   const thread = await latestThread();
   const rows = await pollUntil(
