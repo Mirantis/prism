@@ -11,7 +11,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { generateText, stepCountIs, type LanguageModelUsage, type Tool } from 'ai';
 import { config } from '../config';
-import { COMPACTION_MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS } from '../constants';
+import { MAX_OUTPUT_TOKENS } from '../constants';
 import { callModel } from '../lib/model-call';
 import { getGateRequest } from '../lib/classification';
 import { createProvider } from '../lib/llm-providers/create-provider';
@@ -384,7 +384,7 @@ export async function summarizeThread(history: HistoryEntry[]): Promise<string> 
       model: createProvider()(modelId),
       system,
       messages: [...buildConversationHistory(context).messages, { role: 'user', content: COMPACTION_PROMPT }],
-      maxOutputTokens: COMPACTION_MAX_OUTPUT_TOKENS,
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
     },
   );
   if (result.finishReason === 'length') throw new Error('The summary was cut off at the output limit.');

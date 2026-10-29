@@ -93,16 +93,9 @@ export const COMPACTION_TAIL_MESSAGES = 6;
 
 /**
  * The most tokens those kept messages may hold, tool calls and results included.
- * A tail that held a turn's tool output whole could keep the thread above the
- * trigger right after compacting it.
+ * Bounds the kept tail, so the context falls below the trigger after a compaction.
  */
 export const COMPACTION_TAIL_TOKENS = 30_000;
-
-/**
- * Output budget of a summary request. Thinking counts against it, and a summary
- * cut short is refused, so it sits well above the length the prompt asks for.
- */
-export const COMPACTION_MAX_OUTPUT_TOKENS = 32_000;
 
 // ============================================================================
 // Updates

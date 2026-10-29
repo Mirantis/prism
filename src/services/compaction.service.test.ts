@@ -126,15 +126,8 @@ const { mockRemoveToolOutputs } = vi.hoisted(() => ({
 vi.mock('../lib/tool-output-store', () => ({
   removeToolOutputs: (...args: unknown[]) => mockRemoveToolOutputs(...args),
 }));
-const { mockIsLockedIn, mockMemoryWrite } = vi.hoisted(() => ({
-  mockIsLockedIn: vi.fn(),
-  mockMemoryWrite: vi.fn(),
-}));
-vi.mock('./memory-manager.service', () => ({
-  memoryManagerService: { writeIfNew: mockMemoryWrite },
-}));
 vi.mock('./agent-workspace.service', () => ({
-  agentWorkspaceService: { getSubagents: vi.fn(async () => []), isLockedIn: mockIsLockedIn },
+  agentWorkspaceService: { getSubagents: vi.fn(async () => []) },
   resolveEffectiveModel: (stored: string | null | undefined) => stored ?? 'default-model',
 }));
 
@@ -143,7 +136,7 @@ const { mockLogger } = vi.hoisted(() => ({
 }));
 vi.mock('../logger', () => ({ logger: mockLogger }));
 
-import { COMPACTION_PROMPT, FACTS_HEADING } from '../prompts/compaction-prompt';
+import { COMPACTION_PROMPT } from '../prompts/compaction-prompt';
 import { ANTHROPIC_TOOL_CHANGES } from '../lib/llm-providers/tool-changes';
 import { toolLedgerService } from './tool-ledger.service';
 import {
@@ -153,6 +146,7 @@ import {
   type CompactionFork,
   type ForkRow,
   splitTail,
+  toForkRows,
 } from './compaction.service';
 
 const THREAD = 'thread-1';
@@ -240,8 +234,6 @@ beforeEach(() => {
   });
   mockPrisma.conversationMessage.findMany.mockResolvedValue([]);
   mockRemoveToolOutputs.mockResolvedValue(0);
-  mockIsLockedIn.mockResolvedValue(false);
-  mockMemoryWrite.mockResolvedValue({ id: 'mem-1' });
   mockApplyEstimate.mockImplementation((input: { usedTokens: number }) => ({
     threadId: THREAD,
     modelId: 'model-x',
@@ -817,16 +809,16 @@ describe('compactNow (manual)', () => {
 });
 
 describe('hasCompactableHistory', () => {
-  it('is true for DATABASE threads with more than the newest message uncompacted', async () => {
-    mockPrisma.conversationMessage.count.mockResolvedValue(2);
+  it('is true for a DATABASE thread with any uncompacted message', async () => {
+    mockPrisma.conversationMessage.count.mockResolvedValue(1);
     await expect(compactionService.hasCompactableHistory(THREAD)).resolves.toBe(true);
     expect(mockPrisma.conversationMessage.count).toHaveBeenCalledWith({
       where: { threadId: THREAD, isCompacted: false },
     });
   });
 
-  it('is false with nothing before the newest message', async () => {
-    mockPrisma.conversationMessage.count.mockResolvedValue(1);
+  it('is false for a thread with no uncompacted message', async () => {
+    mockPrisma.conversationMessage.count.mockResolvedValue(0);
     await expect(compactionService.hasCompactableHistory(THREAD)).resolves.toBe(false);
   });
 
@@ -983,6 +975,43 @@ describe('splitTail', () => {
     expect(splitTail(rows).tail.map((r) => r.id)).toEqual(['u1', 's1', 's2', 's3', 's4']);
   });
 
+  it('starts the tail on the request, not on the recalled-memory block stored after it', () => {
+    mockConfig.compactionTailMessages = 6;
+    const recall: ForkRow = { ...row('r1', false), internalStep: true };
+    const rows = [row('u0', true), row('a0', false), row('u1', true), recall, ...['s1', 's2', 's3', 's4', 's5'].map((id) => row(id, false))];
+
+    expect(splitTail(rows).tail.map((r) => r.id)).toEqual(['u1', 'r1', 's1', 's2', 's3', 's4', 's5']);
+  });
+
+  it('keeps the newest rows that fit in a thread with no user message', () => {
+    mockConfig.compactionTailMessages = 3;
+    const rows = ['g1', 'g2', 'g3', 'g4', 'g5'].map((id) => row(id, false));
+
+    expect(splitTail(rows).tail.map((r) => r.id)).toEqual(['g3', 'g4', 'g5']);
+  });
+
+  it('stops at the token budget in a thread with no user message', () => {
+    const rows = [row('g1', false), row('g2', false), row('g3', false, 500_000), row('g4', false), row('g5', false)];
+
+    expect(splitTail(rows).tail.map((r) => r.id)).toEqual(['g4', 'g5']);
+  });
+
+  it('keeps nothing when the newest row of such a thread is over the budget', () => {
+    const rows = [row('g1', false), row('g2', false, 500_000)];
+
+    expect(splitTail(rows).tail).toEqual([]);
+  });
+
+  it('reads a recalled-memory block, stored in a user row, as no request', () => {
+    const [recall, request] = toForkRows([
+      { id: 'r1', role: 'USER', internalStep: true, content: '<recalled-memories>' },
+      { id: 'u1', role: 'USER', content: 'deploy it' },
+    ]);
+
+    expect(recall.fromUser).toBe(false);
+    expect(request.fromUser).toBe(true);
+  });
+
   it('summarizes everything with a tail of 0', () => {
     mockConfig.compactionTailMessages = 0;
     const rows = [row('u0', true), row('a0', false)];
@@ -1057,88 +1086,20 @@ describe('summary checks', () => {
 describe('summary output budget', () => {
   it('asks for no more output than the window has room for', async () => {
     compactionService.maybeAutoCompact(
-      makeFork({ snapshot: { threadId: THREAD, modelId: 'model-x', usedTokens: 180_000, windowTokens: 200_000, usedPercent: 90 } }),
+      makeFork({ snapshot: { threadId: THREAD, modelId: 'model-x', usedTokens: 186_000, windowTokens: 200_000, usedPercent: 93 } }),
     );
     await flushAuto();
 
-    expect(mockGenerateText.mock.calls[0][0].maxOutputTokens).toBe(16_000);
+    expect(mockGenerateText.mock.calls[0][0].maxOutputTokens).toBe(10_000);
   });
 
-  it('asks for the full budget on a large window', async () => {
+  it("asks for a chat turn's budget on a large window", async () => {
     compactionService.maybeAutoCompact(
       makeFork({ snapshot: { threadId: THREAD, modelId: 'model-x', usedTokens: 900_000, windowTokens: 1_000_000, usedPercent: 90 } }),
     );
     await flushAuto();
 
-    expect(mockGenerateText.mock.calls[0][0].maxOutputTokens).toBe(32_000);
+    expect(mockGenerateText.mock.calls[0][0].maxOutputTokens).toBe(16_000);
   });
 });
 
-describe('facts to remember', () => {
-  const withFacts = `## Goal\n- ship it\n\n${FACTS_HEADING}\n- The user deploys on Fridays.\n- Staging runs in eu-west-1.`;
-
-  it('stores each fact as a memory and keeps them out of the stored summary', async () => {
-    mockGenerateText.mockResolvedValue({ text: withFacts });
-
-    compactionService.maybeAutoCompact(makeFork());
-    await flushAuto();
-
-    expect(mockPrisma.conversationThread.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ compactionSummary: '## Goal\n- ship it' }) }),
-    );
-    expect(mockMemoryWrite.mock.calls.map((c) => c[1])).toEqual([
-      { content: 'The user deploys on Fridays.', category: 'observation' },
-      { content: 'Staging runs in eu-west-1.', category: 'observation' },
-    ]);
-  });
-
-  it('stores nothing in locked-in mode', async () => {
-    mockGenerateText.mockResolvedValue({ text: withFacts });
-    mockIsLockedIn.mockResolvedValue(true);
-
-    compactionService.maybeAutoCompact(makeFork());
-    await flushAuto();
-
-    expect(mockMemoryWrite).not.toHaveBeenCalled();
-    expect(mockPrisma.$transaction).toHaveBeenCalled();
-  });
-
-  it('counts only the facts memory did not hold yet', async () => {
-    mockGenerateText.mockResolvedValue({ text: withFacts });
-    mockMemoryWrite.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'mem-2' });
-
-    compactionService.maybeAutoCompact(makeFork());
-    await flushAuto();
-
-    expect(mockTrackEvent).toHaveBeenCalledWith(
-      'compaction finished',
-      'user-1',
-      expect.objectContaining({ 'compaction.facts_stored': '1' }),
-    );
-  });
-
-  it('keeps a section the model put after the facts in the summary', async () => {
-    mockGenerateText.mockResolvedValue({
-      text: `## Goal\n- ship it\n\n${FACTS_HEADING}\n- Deploys run on Fridays.\n\n## Relevant Files\n- \`deploy.sh\``,
-    });
-
-    compactionService.maybeAutoCompact(makeFork());
-    await flushAuto();
-
-    expect(mockMemoryWrite.mock.calls.map((c) => c[1].content)).toEqual(['Deploys run on Fridays.']);
-    expect(mockPrisma.conversationThread.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ compactionSummary: '## Goal\n- ship it\n\n## Relevant Files\n- `deploy.sh`' }),
-      }),
-    );
-  });
-
-  it('stores nothing for a facts section that says none', async () => {
-    mockGenerateText.mockResolvedValue({ text: `## Goal\n- ship it\n\n${FACTS_HEADING}\n- none` });
-
-    compactionService.maybeAutoCompact(makeFork());
-    await flushAuto();
-
-    expect(mockMemoryWrite).not.toHaveBeenCalled();
-  });
-});

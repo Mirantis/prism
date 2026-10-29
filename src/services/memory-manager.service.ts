@@ -84,12 +84,6 @@ const MAX_RECENT = 8;
 const RECENT_CHAR_BUDGET = 2000;
 /** The automatic per-turn recall looks back a year. */
 const RELEVANT_WINDOW_MS = 365 * 24 * 60 * 60 * 1000;
-/**
- * Cosine similarity at which `writeIfNew` treats a stored entry as the same fact.
- * Set high, so a skipped fact is a near-repeat; two facts that differ in one word
- * can still score above it, and the second is then not stored.
- */
-const DUPLICATE_SIMILARITY = 0.9;
 
 class MemoryManagerService {
   /**
@@ -164,34 +158,6 @@ class MemoryManagerService {
     embeddingService.generateAndStoreEmbedding(options.agentId, entry.id, input.content)
       .catch(err => logger.warn({ err, entryId: entry.id }, 'Failed to generate embedding for memory entry'));
 
-    return entry;
-  }
-
-  /**
-   * Write, unless an entry with the same meaning is stored already: one at
-   * `DUPLICATE_SIMILARITY` or closer, or with embeddings off, one with the same text.
-   * For writes nobody reviews, which can repeat what an earlier one stored. Returns
-   * null when it wrote nothing.
-   */
-  async writeIfNew(userId: string, input: MemoryWriteInput, options: { agentId: string }): Promise<MemoryEntry | null> {
-    const { agentId } = options;
-    const embedding = await embeddingService.generateEmbedding(agentId, input.content);
-    const known = embedding
-      ? (await embeddingService.searchByEmbedding(agentId, embedding, {
-          limit: 1,
-          similarityThreshold: DUPLICATE_SIMILARITY,
-        })).length > 0
-      : (await prisma.memoryEntry.count({ where: { agentId, content: input.content } })) > 0;
-    if (known) return null;
-
-    const entry = await prisma.memoryEntry.create({
-      data: { agentId, content: input.content, category: input.category, importance: input.importance ?? 5 },
-    });
-    if (embedding) {
-      await embeddingService
-        .storeEmbedding(entry.id, embedding)
-        .catch((err) => logger.warn({ err, entryId: entry.id }, 'Failed to store embedding for memory entry'));
-    }
     return entry;
   }
 

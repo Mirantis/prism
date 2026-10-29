@@ -360,8 +360,16 @@ function memoryBlockOpening(tag: string): string {
  * bytes. The leading blank line is part of the string for the same reason.
  */
 function memoryBlockContent(tag: string, entries: string): string {
-  const payload = entries.replace(new RegExp(`<(\\s*\\/?\\s*)${tag}`, 'gi'), `<\u200b$1${tag}`);
-  return `${memoryBlockOpening(tag)}${payload}\n</${tag}>`;
+  return `${memoryBlockOpening(tag)}${breakTag(entries, tag)}\n</${tag}>`;
+}
+
+/**
+ * `text` with every opening or closing `tag` broken by a zero-width space, so text
+ * from anywhere cannot close the block it is wrapped in. Case-insensitive, and it
+ * matches internal whitespace too, since a model reads tag case and spacing loosely.
+ */
+function breakTag(text: string, tag: string): string {
+  return text.replace(new RegExp(`<(\\s*\\/?\\s*)${tag}`, 'gi'), `<\u200b$1${tag}`);
 }
 
 /** The turn's recalled memories, as the block sent after the user's message. */
@@ -599,13 +607,20 @@ export function buildConversationHistory(
   return { messages, trailingToolChanges: pending };
 }
 
-/** Opens the user message that holds a thread's compaction summary. */
-export const SUMMARY_MESSAGE_OPENING = '<conversation-summary>';
+const SUMMARY_TAG = 'conversation-summary';
 
+/** Opens the user message that holds a thread's compaction summary. */
+export const SUMMARY_MESSAGE_OPENING = `<${SUMMARY_TAG}>`;
+
+/**
+ * The summary quotes errors, commands and messages verbatim, so its tag is broken
+ * inside it, as in a memory block. The text depends only on the stored summary, so
+ * every turn sends the same bytes.
+ */
 function summaryMessage(summary: string): string {
   return (
     `${SUMMARY_MESSAGE_OPENING}\nThe earlier part of this conversation, summarized. ` +
-    `The messages after this one continue it.\n\n${summary}\n</conversation-summary>`
+    `The messages after this one continue it.\n\n${breakTag(summary, SUMMARY_TAG)}\n</${SUMMARY_TAG}>`
   );
 }
 

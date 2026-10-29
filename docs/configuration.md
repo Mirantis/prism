@@ -499,7 +499,7 @@ defines**.
 | `CONTEXT_WINDOW_TOKENS` | Input-context window (tokens) to assume for the agent's model. Only needed when the catalog doesn't recognize it. Ignored unless a positive integer. | derived from the model ID |
 | `MODELS_DEV_URL` | Refresh the model-window catalog from a registry once at startup. Unset means no outbound call, bundled catalog only. | — (disabled) |
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-[compact](compaction.md) a conversation when its context occupancy reaches this percent of the model's window. `0` disables auto-compaction; out-of-range values fall back to the default. | `90` |
-| `COMPACTION_TAIL_MESSAGES` | At most this many of the newest messages stay out of compaction and remain in the context verbatim; the latest request and its reply always stay whole. `0` summarizes everything. | `6` |
+| `COMPACTION_TAIL_MESSAGES` | At most this many of the newest messages stay out of compaction and remain in the context verbatim. A long latest reply stays whole when it fits. `0` summarizes everything. | `6` |
 | `HEARTBEAT_INTERVAL_MS` | Heartbeat interval, in milliseconds, of an agent created after you set it. An agent keeps the interval it already has. A value that is not an integer from `60000` (1 minute) to `604800000` (1 week) logs a warning and the default applies. | `28800000` (8 hours) |
 | `DISABLE_UPDATER` | Set to `1` (or `true`) to turn off [automatic updates](installation.md#automatic-updates): the hourly check, the auto-install, and the `prism update` command. | — (updater on for native installs) |
 
