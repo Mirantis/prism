@@ -85,6 +85,8 @@ export interface CompactionEvent {
   error?: string;
   /** Skipped only — why there was nothing to do. */
   detail?: string;
+  /** Completed only — the conversation was compacted while it sat idle. */
+  idle?: boolean;
 }
 
 /** Update progress frame (WS `update` envelope). Install-level, not per-thread. */
@@ -303,6 +305,7 @@ function coerceCompactionEvent(raw: unknown): CompactionEvent | null {
     trigger: e.trigger,
     tokensBefore: typeof e.tokensBefore === 'number' ? e.tokensBefore : null,
     tokensAfter: typeof e.tokensAfter === 'number' ? e.tokensAfter : null,
+    ...(e.idle === true ? { idle: true } : {}),
     messagesCompacted: typeof e.messagesCompacted === 'number' ? e.messagesCompacted : undefined,
     error: typeof e.error === 'string' ? e.error : undefined,
     detail: typeof e.detail === 'string' ? e.detail : undefined,

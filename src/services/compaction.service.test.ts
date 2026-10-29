@@ -8,7 +8,7 @@
  * post-compaction estimate.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ModelMessage } from 'ai';
 
 const { mockGenerateText } = vi.hoisted(() => ({
@@ -40,6 +40,7 @@ const { mockConfig } = vi.hoisted(() => ({
   mockConfig: {
     compactionThresholdPercent: 90 as number | null,
     compactionTailMessages: 6,
+    idleCompaction: true,
   },
 }));
 vi.mock('../config', () => ({ config: mockConfig }));
@@ -120,12 +121,7 @@ vi.mock('../lib/tool-collection', () => ({
 vi.mock('../lib/tool-output-limiter', () => ({
   withToolOutputCapture: (tools: Record<string, unknown>) => tools,
 }));
-const { mockRemoveToolOutputs } = vi.hoisted(() => ({
-  mockRemoveToolOutputs: vi.fn().mockResolvedValue(0),
-}));
-vi.mock('../lib/tool-output-store', () => ({
-  removeToolOutputs: (...args: unknown[]) => mockRemoveToolOutputs(...args),
-}));
+
 vi.mock('./agent-workspace.service', () => ({
   agentWorkspaceService: { getSubagents: vi.fn(async () => []) },
   resolveEffectiveModel: (stored: string | null | undefined) => stored ?? 'default-model',
@@ -218,6 +214,7 @@ beforeEach(() => {
   }
   mockConfig.compactionThresholdPercent = 90;
   mockConfig.compactionTailMessages = 6;
+  mockConfig.idleCompaction = true;
   mockGenerateText.mockResolvedValue({ text: 'THE SUMMARY' });
   mockBuildSystemPromptParts.mockResolvedValue([{ text: 'system prompt', cacheable: true }]);
   mockBuildConversationMessages.mockReturnValue([{ role: 'user', content: 'hello' }]);
@@ -233,7 +230,6 @@ beforeEach(() => {
     createdAt: new Date('2026-08-04T10:00:00.000Z'),
   });
   mockPrisma.conversationMessage.findMany.mockResolvedValue([]);
-  mockRemoveToolOutputs.mockResolvedValue(0);
   mockApplyEstimate.mockImplementation((input: { usedTokens: number }) => ({
     threadId: THREAD,
     modelId: 'model-x',
@@ -674,7 +670,7 @@ describe('compactNow (manual)', () => {
     // Resolved against the model this compaction actually runs, not the agent's
     // stored default — the two differ under a mode override, and a breakpoint
     // aimed at the wrong protocol is dropped silently.
-    expect(mockCreateProvider.mock.results[0]?.value.cachePoint).toHaveBeenCalledWith('stored-model');
+    expect(mockCreateProvider.mock.results[0]?.value.cachePoint).toHaveBeenCalledWith('stored-model', '5m');
     // Cacheable system parts carry the Anthropic breakpoint, like invoke.ts.
     expect(request.system).toEqual([
       {
@@ -829,118 +825,6 @@ describe('hasCompactableHistory', () => {
   });
 });
 
-describe('reclaiming saved tool outputs at compaction', () => {
-  // A compacted message never re-enters the context, so the saved copies its tool
-  // calls named can no longer be reached and the files can go. Without a test the
-  // TTL hides a regression here for a week.
-  const bigCall = (spillId: string) => ({
-    tool: 'kubectl',
-    input: '{}',
-    output: 'cut view',
-    success: true,
-    timestamp: '2026-01-01T00:00:00Z',
-    rendered: true,
-    truncated: { totalChars: 500_000, keptChars: 30_000, omittedChars: 470_000, spillId },
-  });
-
-  function contextOf(rowCount: number, overrides: Record<string, unknown> = {}) {
-    return {
-      model: 'stored-model',
-      modelSelection: { mode: 'fixed', tiers: { small: null, medium: null, large: null } },
-      lockedIn: false,
-      recentMessages: Array.from({ length: rowCount }, (_, i) => ({
-        id: `m${i}`,
-        role: 'USER',
-        content: 'x'.repeat(100),
-        externalMessageId: null,
-        internalStep: false,
-      })),
-      ...overrides,
-    };
-  }
-
-  it('deletes the copies the compacted messages named', async () => {
-    mockGetAgentContext.mockResolvedValue(contextOf(10));
-    mockPrisma.conversationMessage.findMany.mockResolvedValue([
-      { toolCalls: [bigCall('aaaaaaaa-0000-4000-8000-000000000001')] },
-      { toolCalls: [bigCall('aaaaaaaa-0000-4000-8000-000000000002')] },
-    ]);
-
-    await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD });
-
-    expect(mockRemoveToolOutputs).toHaveBeenCalledWith([
-      'aaaaaaaa-0000-4000-8000-000000000001',
-      'aaaaaaaa-0000-4000-8000-000000000002',
-    ]);
-  });
-
-  it('asks for the copies only of the messages it just retired', async () => {
-    mockGetAgentContext.mockResolvedValue(contextOf(10));
-
-    await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD });
-
-    const where = mockPrisma.conversationMessage.findMany.mock.calls[0]?.[0]?.where;
-    expect(where.id.in.length).toBeGreaterThan(0);
-    // The tail is kept verbatim, so its rows must not be reclaimed.
-    expect(where.id.in).not.toContain('m9');
-  });
-
-  it('skips rows whose tool calls were never cut', async () => {
-    mockGetAgentContext.mockResolvedValue(contextOf(10));
-    mockPrisma.conversationMessage.findMany.mockResolvedValue([
-      { toolCalls: [{ tool: 'memory_search', input: '{}', output: 'small', success: true, timestamp: 't', rendered: true }] },
-      { toolCalls: null },
-    ]);
-
-    await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD });
-
-    expect(mockRemoveToolOutputs).not.toHaveBeenCalled();
-  });
-
-  it('reports the compaction as done even when the copies cannot be deleted', async () => {
-    // The rows are already committed. A failed reclaim costs disk until the TTL
-    // sweep, and must not turn a finished compaction into a reported failure.
-    mockGetAgentContext.mockResolvedValue(contextOf(10));
-    mockPrisma.conversationMessage.findMany.mockResolvedValue([
-      { toolCalls: [bigCall('aaaaaaaa-0000-4000-8000-000000000003')] },
-    ]);
-    mockRemoveToolOutputs.mockRejectedValue(new Error('disk gone'));
-    const events = captureEvents();
-
-    await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD });
-
-    expect(events.map((e) => e.status)).toEqual(['started', 'completed']);
-  });
-
-  it('reclaims the internal rows it marked on a Slack thread', async () => {
-    // Only internal rows are marked there; the rest move behind a watermark.
-    mockPrisma.conversationThread.findUnique.mockResolvedValue({
-      threadSource: 'SLACK',
-      contextTokens: 12_345,
-      workspaceRoot: null,
-    });
-    mockGetAgentContext.mockResolvedValue(
-      contextOf(10, {
-        recentMessages: Array.from({ length: 10 }, (_, i) => ({
-          id: `m${i}`,
-          role: i % 2 === 0 ? 'USER' : 'AGENT',
-          content: 'x'.repeat(100),
-          externalMessageId: `1700.000${i}`,
-          internalStep: i % 2 === 1,
-        })),
-      }),
-    );
-    mockPrisma.conversationMessage.findMany.mockResolvedValue([
-      { toolCalls: [bigCall('aaaaaaaa-0000-4000-8000-000000000004')] },
-    ]);
-
-    await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD });
-
-    const where = mockPrisma.conversationMessage.findMany.mock.calls[0]?.[0]?.where;
-    expect(where.id.in.every((id: string) => ['m1', 'm3', 'm5', 'm7', 'm9'].includes(id))).toBe(true);
-    expect(mockRemoveToolOutputs).toHaveBeenCalledWith(['aaaaaaaa-0000-4000-8000-000000000004']);
-  });
-});
 
 describe('splitTail', () => {
   const row = (id: string, fromUser: boolean, contentChars = 100): ForkRow => ({
@@ -1103,3 +987,109 @@ describe('summary output budget', () => {
   });
 });
 
+
+describe('idle compaction', () => {
+  const HOUR = 60 * 60 * 1000;
+  const oneHourCache = { anthropic: { cacheControl: { type: 'ephemeral' as const, ttl: '1h' as const } } };
+  const idleFork = (overrides: Partial<AutoCompactFork> = {}) =>
+    makeFork({
+      cachePoint: oneHourCache,
+      snapshot: { threadId: THREAD, modelId: 'model-x', usedTokens: 250_000, windowTokens: 1_000_000, usedPercent: 25 },
+      ...overrides,
+    });
+
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    compactionService.cancelIdle(THREAD);
+    vi.useRealTimers();
+  });
+
+  it('compacts a large conversation shortly before its one-hour cache expires', async () => {
+    const events = captureEvents();
+    compactionService.armIdle(idleFork());
+
+    vi.advanceTimersByTime(0.9 * HOUR - 1);
+    expect(mockRun).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    vi.useRealTimers();
+    await flushAuto();
+
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    expect(events.at(-1)).toMatchObject({ status: 'completed', trigger: 'auto', idle: true });
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'compaction finished',
+      'user-1',
+      expect.objectContaining({ 'compaction.reason': 'idle' }),
+    );
+  });
+
+  it('does nothing when the thread is used again before the timer fires', () => {
+    compactionService.armIdle(idleFork());
+    compactionService.cancelIdle(THREAD);
+
+    vi.advanceTimersByTime(HOUR);
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it('keeps one timer per thread, from the newest turn', () => {
+    compactionService.armIdle(idleFork());
+    vi.advanceTimersByTime(30 * 60 * 1000);
+    compactionService.armIdle(idleFork());
+
+    vi.advanceTimersByTime(30 * 60 * 1000);
+    expect(mockRun).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(24 * 60 * 1000);
+    expect(mockRun).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['a conversation under the size floor', { snapshot: { threadId: THREAD, modelId: 'model-x', usedTokens: 150_000, windowTokens: 1_000_000, usedPercent: 15 } }],
+    ['a request on the five-minute cache', { cachePoint: { anthropic: { cacheControl: { type: 'ephemeral' as const } } } }],
+    ['a vendor without cache breakpoints', { cachePoint: {} }],
+  ])('arms nothing for %s', (_case, overrides) => {
+    compactionService.armIdle(idleFork(overrides as Partial<AutoCompactFork>));
+
+    vi.advanceTimersByTime(2 * HOUR);
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it('arms nothing with IDLE_COMPACTION=off', () => {
+    mockConfig.idleCompaction = false;
+    compactionService.armIdle(idleFork());
+
+    vi.advanceTimersByTime(2 * HOUR);
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it('skips a timer that fired while a turn held the thread', async () => {
+    let releaseTurn!: () => void;
+    const turnHeld = new Promise<void>((resolve) => (releaseTurn = resolve));
+    const queued: Array<() => Promise<unknown>> = [];
+    mockRun.mockImplementation((_threadId: string, fn: () => Promise<unknown>) => {
+      const job = turnHeld.then(fn);
+      queued.push(fn);
+      runState.last = job;
+      return job;
+    });
+    compactionService.armIdle(idleFork());
+
+    vi.advanceTimersByTime(0.9 * HOUR);
+    vi.advanceTimersByTime(1000);
+    compactionService.cancelIdle(THREAD); // the turn that held the thread starts its invocation
+    vi.useRealTimers();
+    releaseTurn();
+    await flushAuto();
+
+    expect(queued).toHaveLength(1);
+    expect(mockGenerateText).not.toHaveBeenCalled();
+  });
+
+  it('is cancelled when a threshold compaction of the thread starts', () => {
+    compactionService.armIdle(idleFork());
+    compactionService.maybeAutoCompact(makeFork());
+    mockRun.mockClear();
+
+    vi.advanceTimersByTime(2 * HOUR);
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+});

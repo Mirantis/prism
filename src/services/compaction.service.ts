@@ -51,16 +51,20 @@ import { callModel } from '../lib/model-call';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { logger } from '../logger';
-import { COMPACTION_TAIL_TOKENS, MAX_OUTPUT_TOKENS } from '../constants';
+import {
+  COMPACTION_TAIL_TOKENS,
+  IDLE_COMPACTION_MIN_TOKENS,
+  IDLE_COMPACTION_TTL_SHARE,
+  MAX_OUTPUT_TOKENS,
+} from '../constants';
 import { COMPACTION_PROMPT } from '../prompts/compaction-prompt';
 import { MIN_PLAUSIBLE_CONTEXT } from '../lib/model-catalog';
 import { contextWindowFor } from '../lib/context-window';
 import { createProvider } from '../lib/llm-providers/create-provider';
-import type { CachePointFragment } from '../lib/llm-providers/llm-provider';
+import { cacheTtlMs, type CachePointFragment } from '../lib/llm-providers/llm-provider';
 
 import { collectTools, withToolsCacheControl } from '../lib/tool-collection';
 import { withToolOutputCapture } from '../lib/tool-output-limiter';
-import { removeToolOutputs } from '../lib/tool-output-store';
 import type { Invoker } from '../lib/task-tool';
 import {
   buildSystemPromptParts,
@@ -150,6 +154,8 @@ export interface CompactionEvent {
   error?: string;
   /** Skipped only. Why there was nothing to do. */
   detail?: string;
+  /** Completed only: the conversation was compacted while it sat idle. */
+  idle?: true;
 }
 
 /** One finished summary, before it is committed: the report plus the rows it covers. */
@@ -161,7 +167,7 @@ interface FinishInput {
   threadId: string;
   trigger: 'auto' | 'manual';
   /** Telemetry-only refinement of `trigger`: what actually fired the job. */
-  reason: 'threshold' | 'overflow' | 'manual';
+  reason: 'threshold' | 'overflow' | 'manual' | 'idle';
   modelId: string;
   threadSource: string;
   tokensBefore: number | null;
@@ -181,6 +187,17 @@ class CompactionService {
    */
   private readonly inFlight = new Set<string>();
 
+  /**
+   * One timer per idle chat conversation, holding the fork of its last turn. In
+   * memory only: after a restart the next turn writes the whole thread to the cache
+   * once, and threshold compaction still bounds the thread. A thread a session reset
+   * left behind still gets its one summary.
+   */
+  private readonly idleTimers = new Map<string, NodeJS.Timeout>();
+
+  /** When each thread was last used by an invocation or a compaction, for `compactIdle`. */
+  private readonly lastUse = new Map<string, number>();
+
   /** Whether any compaction is currently running. */
   hasInFlight(): boolean {
     return this.inFlight.size > 0;
@@ -199,6 +216,7 @@ class CompactionService {
    */
   maybeAutoCompact(fork: AutoCompactFork): void {
     try {
+      this.cancelIdle(fork.threadId);
       const threshold = config.compactionThresholdPercent;
       if (threshold === null) return; // disabled by operator
       if (fork.snapshot.usedPercent < threshold) return;
@@ -229,6 +247,58 @@ class CompactionService {
   }
 
   /**
+   * Idle path. After a chat turn whose cache lives an hour, a conversation of at
+   * least `IDLE_COMPACTION_MIN_TOKENS` is compacted shortly before that cache
+   * expires, reading the turn's warm prefix. A conversation that continues within
+   * the hour keeps every message. Any later invocation or compaction of the thread
+   * cancels the timer. Synchronous, never throws.
+   */
+  armIdle(fork: AutoCompactFork): void {
+    this.cancelIdle(fork.threadId);
+    if (!config.idleCompaction || config.compactionThresholdPercent === null) return;
+    if (this.inFlight.has(fork.threadId)) return; // a threshold compaction already runs
+    const ttl = cacheTtlMs(fork.cachePoint);
+    if (ttl < ONE_HOUR_MS) return;
+    if (fork.snapshot.usedTokens < IDLE_COMPACTION_MIN_TOKENS) return;
+    if (splitTail(fork.contextRows).compactable.length === 0) return;
+
+    // Measured from the turn's end; the cache clock started at its last request, at
+    // most a few minutes earlier, which the share leaves room for.
+    const timer = setTimeout(() => this.compactIdle(fork), ttl * IDLE_COMPACTION_TTL_SHARE);
+    timer.unref();
+    this.idleTimers.set(fork.threadId, timer);
+  }
+
+  /** Drops a conversation's idle timer: it has moved on, or is being compacted now. */
+  cancelIdle(threadId: string): void {
+    this.lastUse.set(threadId, Date.now());
+    const timer = this.idleTimers.get(threadId);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.idleTimers.delete(threadId);
+  }
+
+  private compactIdle(fork: AutoCompactFork): void {
+    this.idleTimers.delete(fork.threadId);
+    if (this.inFlight.has(fork.threadId)) return;
+    this.inFlight.add(fork.threadId);
+    const firedAt = Date.now();
+    void threadTurnService
+      .run(fork.threadId, async () => {
+        // A turn that claimed the thread before the timer fired ran first, and the
+        // fork no longer describes the thread. That turn found this job in flight, so
+        // it armed no timer and ran no threshold check; its next turn does both.
+        if ((this.lastUse.get(fork.threadId) ?? 0) >= firedAt) return;
+        await this.runAutoCompaction(fork, 'idle');
+      })
+      .catch((err) => {
+        logger.error({ err, threadId: fork.threadId }, '[Compaction] idle compaction failed');
+        this.fail(fork.userId, fork.agentId, fork.threadId, 'auto', errorText(err));
+      })
+      .finally(() => this.settle(fork.threadId));
+  }
+
+  /**
    * Overflow recovery. Called by invokeStream's error path when a turn's
    * request outgrew the model's context window: that turn never reaches the
    * threshold hook (it only runs on success), and every later turn rebuilds
@@ -239,6 +309,7 @@ class CompactionService {
    */
   maybeCompactAfterOverflow(fork: CompactionFork): void {
     try {
+      this.cancelIdle(fork.threadId);
       if (config.compactionThresholdPercent === null) return; // operator disabled auto-compaction
       if (splitTail(fork.contextRows).compactable.length === 0) return;
       if (this.inFlight.has(fork.threadId)) return;
@@ -266,6 +337,7 @@ class CompactionService {
    */
   async compactNow(input: { userId: string; agentId: string; threadId: string }): Promise<void> {
     const { userId, agentId, threadId } = input;
+    this.cancelIdle(threadId);
     if (this.inFlight.has(threadId)) return; // one already queued/running is enough
     this.inFlight.add(threadId);
     try {
@@ -292,7 +364,9 @@ class CompactionService {
         const provider = createProvider();
         const modelId = await compactionModel(context, threadId, provider);
         const model = provider(modelId);
-        const cachePoint = provider.cachePoint(modelId);
+        // A read does not depend on the lifetime asked for, and the commit retires this
+        // prefix, so a five-minute entry is the cheaper write.
+        const cachePoint = provider.cachePoint(modelId, '5m');
 
         // A conversation with a declared tool list sends that list: its cached
         // prefix starts with it, and its tool-change announcements name it.
@@ -412,7 +486,7 @@ class CompactionService {
   }
 
   /** The forked summarize request — see the module doc for the cache story. */
-  private async runAutoCompaction(fork: AutoCompactFork): Promise<void> {
+  private async runAutoCompaction(fork: AutoCompactFork, reason: 'threshold' | 'idle' = 'threshold'): Promise<void> {
     const { userId, agentId, threadId } = fork;
     try {
       this.start(userId, agentId, threadId, 'auto');
@@ -466,7 +540,7 @@ class CompactionService {
         agentId,
         threadId,
         trigger: 'auto',
-        reason: 'threshold',
+        reason,
         modelId: fork.modelId,
         threadSource: thread?.threadSource ?? 'DATABASE',
         tokensBefore: fork.snapshot.usedTokens,
@@ -594,11 +668,6 @@ class CompactionService {
       select: { threadSource: true },
     });
 
-    // The message rows this pass marks compacted. A compacted message never
-    // re-enters the context, so any tool output it saved is now unreachable and can
-    // be reclaimed.
-    let compactedMessageIds: string[] = [];
-
     if (thread?.threadSource !== 'DATABASE') {
       const externalMessageIds = compactable
         .map((r) => r.externalMessageId)
@@ -607,7 +676,6 @@ class CompactionService {
         ? externalMessageIds.reduce((max, ts) => (parseFloat(ts) > parseFloat(max) ? ts : max))
         : null;
       const internalIds = compactable.filter((r) => r.internalStep).map((r) => r.id);
-      compactedMessageIds = internalIds;
       await prisma.$transaction([
         prisma.conversationMessage.updateMany({
           where: { id: { in: internalIds } },
@@ -624,7 +692,6 @@ class CompactionService {
       ]);
     } else {
       const ids = compactable.map((r) => r.id);
-      compactedMessageIds = ids;
       const newest = await prisma.conversationMessage.findFirst({
         where: { id: { in: ids } },
         orderBy: { createdAt: 'desc' },
@@ -646,45 +713,10 @@ class CompactionService {
       ]);
     }
 
-    await this.reclaimSavedToolOutputs(compactedMessageIds);
-
     logger.info(
       `[Compaction] compacted ${compactable.length} message(s) in thread ${threadId} (${summary.length} chars of summary)`,
     );
     return { messagesCompacted: compactable.length, tail };
-  }
-
-  /**
-   * Delete the saved copies of tool outputs belonging to messages this pass just
-   * retired. Their ids only ever reached the model through a notice in a message
-   * that is now out of the context, so nothing can ask for them again.
-   *
-   * Best effort, and never allowed to fail a compaction that has already been
-   * committed: the TTL sweep in the janitor is the backstop, so the cost of a miss
-   * is disk held a few days longer, while the cost of throwing here would be a
-   * compaction reported as failed after it succeeded.
-   */
-  private async reclaimSavedToolOutputs(messageIds: string[]): Promise<void> {
-    if (messageIds.length === 0) return;
-    try {
-      const rows = await prisma.conversationMessage.findMany({
-        where: { id: { in: messageIds } },
-        select: { toolCalls: true },
-      });
-      const ids = rows.flatMap((row) =>
-        (Array.isArray(row.toolCalls) ? row.toolCalls : [])
-          .map((tc) => (tc as { truncated?: { spillId?: string } } | null)?.truncated?.spillId)
-          .filter((id): id is string => typeof id === 'string'),
-      );
-      if (ids.length === 0) return;
-
-      const removed = await removeToolOutputs(ids);
-      if (removed > 0) {
-        logger.info(`[Compaction] reclaimed ${removed} saved tool output(s) for compacted messages`);
-      }
-    } catch (err) {
-      logger.warn({ err }, '[Compaction] could not reclaim saved tool outputs');
-    }
   }
 
   /** Shared completion: meter estimate, completed event, finished telemetry. */
@@ -710,6 +742,7 @@ class CompactionService {
       tokensBefore: input.tokensBefore,
       tokensAfter: snapshot ? estimatedTokens : null,
       messagesCompacted: input.messagesCompacted,
+      ...(input.reason === 'idle' ? { idle: true as const } : {}),
     } satisfies CompactionEvent);
 
     trackEvent('compaction finished', input.userId, {
@@ -790,6 +823,7 @@ class CompactionService {
 }
 
 const CHARS_PER_TOKEN = 4;
+const ONE_HOUR_MS = 60 * 60 * 1000;
 
 /** A context's rows as the commit marks them. */
 export function toForkRows(

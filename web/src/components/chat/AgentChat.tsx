@@ -306,7 +306,8 @@ export default function AgentChat({ threadId }: { threadId?: string }) {
     setCompactionNotice(null);
     if (compactionNotice.status === 'completed') {
       const n = compactionNotice.messagesCompacted ?? 0;
-      appendSystemMessage(`Conversation compacted — ${n} older message${n === 1 ? '' : 's'} summarized.`);
+      const when = compactionNotice.idle ? ' while idle' : '';
+      appendSystemMessage(`Conversation compacted${when} — ${n} older message${n === 1 ? '' : 's'} summarized.`);
     } else if (compactionNotice.status === 'skipped') {
       // A no-op, not an error: only worth saying when the user asked for it.
       if (compactionNotice.trigger === 'manual') {

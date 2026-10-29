@@ -5,6 +5,7 @@
  * rule that keeps a thread on its model while that model's cache is warm.
  */
 
+import { ANTHROPIC_CACHE_POINT, ANTHROPIC_CACHE_POINT_1H } from './llm-providers/llm-provider';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { mockCallModel, mockNewestCall, mockContextTokens, mockWindow, mockSentId } = vi.hoisted(() => ({
@@ -30,12 +31,14 @@ vi.mock('../logger', () => ({
 }));
 
 import { selectTurnModel, compactionModel } from './model-routing';
-import { PROMPT_CACHE_TTL_MS } from './llm-providers/llm-provider';
+
 import { createTestAgentContext, createTestInvokeRequest } from '../test-utils/factories';
 import type { AgentContext } from '../types';
 import type { LlmProvider } from './llm-providers/llm-provider';
 
-const provider = ((id: string) => ({ modelId: mockSentId(id) })) as unknown as LlmProvider;
+const provider = Object.assign((id: string) => ({ modelId: mockSentId(id) }), {
+  cachePoint: (_id: string, ttl?: string) => (ttl === '1h' ? ANTHROPIC_CACHE_POINT_1H : ANTHROPIC_CACHE_POINT),
+}) as unknown as LlmProvider;
 
 const TIERS = { small: 'small-model', medium: 'medium-model', large: 'large-model' };
 
@@ -196,8 +199,26 @@ describe('selectTurnModel', () => {
       expect(result).toEqual({ modelId: 'medium-model', tier: 'medium', reason: 'held' });
     });
 
-    it('moves down once the cache has gone cold', async () => {
-      lastTurn('large-model', PROMPT_CACHE_TTL_MS + 1000);
+    it('holds a chat thread for the hour its cache stays warm', async () => {
+      lastTurn('large-model', 10 * 60 * 1000);
+      label('SMALL');
+
+      const result = await selectTurnModel(autoContext(), request, provider);
+
+      expect(result).toEqual({ modelId: 'large-model', tier: 'large', reason: 'held' });
+    });
+
+    it("moves down once a chat turn's cache has gone cold", async () => {
+      lastTurn('large-model', 60 * 60 * 1000 + 1000);
+      label('SMALL');
+
+      const result = await selectTurnModel(autoContext(), request, provider);
+
+      expect(result.tier).toBe('small');
+    });
+
+    it('moves down five minutes after a run that is not a chat turn', async () => {
+      lastTurn('large-model', 5 * 60 * 1000 + 1000, 'heartbeat');
       label('SMALL');
 
       const result = await selectTurnModel(autoContext(), request, provider);

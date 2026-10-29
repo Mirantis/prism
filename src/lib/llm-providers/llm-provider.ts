@@ -76,7 +76,18 @@ export const ANTHROPIC_THINKING_OFF: ProviderOptionsFragment = {
 };
 
 /** Anthropic's ephemeral prompt-cache breakpoint fragment. */
-export type AnthropicCachePoint = { anthropic: { cacheControl: { type: 'ephemeral' } } };
+export type AnthropicCachePoint = { anthropic: { cacheControl: { type: 'ephemeral'; ttl?: '1h' } } };
+
+/**
+ * How long a request asks its cache entries to stay warm. `1h` costs 2× input on
+ * the write instead of 1.25×, so it pays only where people pause between turns.
+ */
+export type CacheTtl = '5m' | '1h';
+
+/** The cache a run of `mode` asks for: a chat waits on a person, every other mode runs alone. */
+export function cacheTtlFor(mode: string): CacheTtl {
+  return mode === 'chat' ? '1h' : '5m';
+}
 
 /**
  * Bedrock Converse's own breakpoint — a `cachePoint` block in the request,
@@ -107,17 +118,30 @@ export const ANTHROPIC_CACHE_POINT: CachePointFragment = {
   anthropic: { cacheControl: { type: 'ephemeral' } },
 };
 
+/**
+ * The same breakpoint asking for a one-hour entry. Declared only by a vendor
+ * where a live call showed the API accepts it, which is Bedrock's Claude branch: a
+ * field the API refuses fails every request that carries it.
+ */
+export const ANTHROPIC_CACHE_POINT_1H: CachePointFragment = {
+  anthropic: { cacheControl: { type: 'ephemeral', ttl: '1h' } },
+};
+
 /** The fragment Bedrock's Converse surface reads. */
 export const BEDROCK_CACHE_POINT: CachePointFragment = {
   bedrock: { cachePoint: { type: 'default' } },
 };
 
+const FIVE_MINUTES_MS = 5 * 60 * 1000;
+const ONE_HOUR_MS = 60 * 60 * 1000;
+
 /**
- * How long a cache written through the breakpoints above stays warm without a
- * read. Both fragments request the provider's default lifetime, which is five
- * minutes. A fragment that names a longer `ttl` changes this with it.
+ * How long a cache written through `fragment` stays warm without a read: an hour
+ * for a breakpoint that asks for one, else the providers' default of five minutes.
  */
-export const PROMPT_CACHE_TTL_MS = 5 * 60 * 1000;
+export function cacheTtlMs(fragment: CachePointFragment): number {
+  return 'anthropic' in fragment && fragment.anthropic.cacheControl.ttl === '1h' ? ONE_HOUR_MS : FIVE_MINUTES_MS;
+}
 
 /**
  * The fragment for vendors whose prompt caching needs no breakpoints — and for
@@ -137,8 +161,12 @@ export type LlmProvider = ((modelId: string) => LanguageModel) & {
    * breakpoints from different namespaces. Getting it wrong is invisible —
    * the SDK drops an unrecognized namespace silently — so the choice belongs
    * beside the dispatcher that picks the protocol, not at the call site.
+   *
+   * `ttl` asks for a one-hour entry. A vendor or model where that is not known to
+   * be accepted returns its five-minute fragment, so `cacheTtlMs` of the result is
+   * what the request really asks for.
    */
-  cachePoint: (modelId: string) => CachePointFragment;
+  cachePoint: (modelId: string, ttl?: CacheTtl) => CachePointFragment;
   /**
    * Whether one model gets a prompt-cache breakpoint on this vendor, for the
    * startup line to report; undefined when the vendor has nothing to say and
