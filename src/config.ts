@@ -8,6 +8,7 @@ import {
   COMPACTION_THRESHOLD_PERCENT,
   DEFAULT_HEARTBEAT_INTERVAL_MS,
   GOAL_MAX_TURNS,
+  MAX_HEARTBEAT_INTERVAL_MS,
   MIN_HEARTBEAT_INTERVAL_MS,
 } from './constants';
 import { readAgentModelDefaults } from './lib/prism-settings';
@@ -747,14 +748,16 @@ const compactionTailMessages =
   Number.isFinite(rawCompactionTail) && rawCompactionTail >= 0 ? rawCompactionTail : COMPACTION_TAIL_MESSAGES;
 
 // Heartbeat interval of a new agent. An unset value takes the default silently;
-// a set value that is not an integer of at least the minimum warns and takes it too.
+// a set value that is not an integer between the minimum and the maximum warns and takes it too.
 function resolveHeartbeatIntervalMs(): number {
   const raw = (process.env.HEARTBEAT_INTERVAL_MS ?? '').trim();
   if (!raw) return DEFAULT_HEARTBEAT_INTERVAL_MS;
   const parsed = Number(raw);
-  if (Number.isInteger(parsed) && parsed >= MIN_HEARTBEAT_INTERVAL_MS) return parsed;
+  if (Number.isInteger(parsed) && parsed >= MIN_HEARTBEAT_INTERVAL_MS && parsed <= MAX_HEARTBEAT_INTERVAL_MS) {
+    return parsed;
+  }
   logger.warn(
-    { configured: raw, minimumMs: MIN_HEARTBEAT_INTERVAL_MS },
+    { configured: raw, minimumMs: MIN_HEARTBEAT_INTERVAL_MS, maximumMs: MAX_HEARTBEAT_INTERVAL_MS },
     '[Startup] invalid HEARTBEAT_INTERVAL_MS; using the default',
   );
   return DEFAULT_HEARTBEAT_INTERVAL_MS;

@@ -408,12 +408,12 @@ describe('config', () => {
       expect(mockWarn).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('HEARTBEAT_INTERVAL_MS'));
     });
 
-    it.each([['7200000', 7_200_000], ['60000', 60_000]])('uses %s', async (value, expected) => {
+    it.each([['7200000', 7_200_000], ['60000', 60_000], ['604800000', 604_800_000]])('uses %s', async (value, expected) => {
       process.env.HEARTBEAT_INTERVAL_MS = value;
       expect((await loadConfig()).heartbeatIntervalMs).toBe(expected);
     });
 
-    it.each(['59999', '0', '-5', '1.5', 'abc', '2h'])('warns and uses 8 hours for %s', async (value) => {
+    it.each(['59999', '604800001', '2592000000', '0', '-5', '1.5', 'abc', '2h'])('warns and uses 8 hours for %s', async (value) => {
       process.env.HEARTBEAT_INTERVAL_MS = value;
       mockWarn.mockClear();
       expect((await loadConfig()).heartbeatIntervalMs).toBe(28_800_000);

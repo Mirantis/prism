@@ -90,7 +90,14 @@ import {
 } from '../lib/execution-environments/get-execution-environment';
 import { compactionService } from '../services/compaction.service';
 import { attachmentService, detectMediaType, classifyMediaType } from '../services/attachment.service';
-import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB, GOAL_MAX_OBJECTIVE_CHARS, MAX_MESSAGE_PAGE } from '../constants';
+import {
+  MAX_FILE_SIZE_BYTES,
+  MAX_FILE_SIZE_MB,
+  GOAL_MAX_OBJECTIVE_CHARS,
+  MAX_HEARTBEAT_INTERVAL_MS,
+  MAX_MESSAGE_PAGE,
+  MIN_HEARTBEAT_INTERVAL_MS,
+} from '../constants';
 import { goalService } from '../services/goal.service';
 import { hasComputer } from '../services/computer/supported';
 import {
@@ -661,10 +668,7 @@ router.get('/heartbeat/status', async (_req: Request, res: Response) => {
  * Body: { intervalMs: number }
  */
 const MIN_INTERVAL = '1 minute';
-const MIN_INTERVAL_MS = 60_000;
-
 const MAX_INTERVAL = '1 week';
-const MAX_INTERVAL_MS = 7 * 24 * 60 * 60_000;
 
 router.patch('/heartbeat/interval', async (req: Request, res: Response) => {
   try {
@@ -674,9 +678,9 @@ router.patch('/heartbeat/interval', async (req: Request, res: Response) => {
       res.status(400).json({ error: 'intervalMs must be a finite number' });
       return;
     }
-    if (intervalMs < MIN_INTERVAL_MS || intervalMs > MAX_INTERVAL_MS) {
+    if (intervalMs < MIN_HEARTBEAT_INTERVAL_MS || intervalMs > MAX_HEARTBEAT_INTERVAL_MS) {
       res.status(400).json({
-        error: `intervalMs must be between ${MIN_INTERVAL_MS} (${MIN_INTERVAL}) and ${MAX_INTERVAL_MS} (${MAX_INTERVAL})`,
+        error: `intervalMs must be between ${MIN_HEARTBEAT_INTERVAL_MS} (${MIN_INTERVAL}) and ${MAX_HEARTBEAT_INTERVAL_MS} (${MAX_INTERVAL})`,
       });
       return;
     }

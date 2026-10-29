@@ -24,7 +24,6 @@ import { MAX_RESUME_ATTEMPTS, pendingWorkService, type PendingWorkItem } from '.
 import prisma from '../lib/prisma';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
-import { config } from '../config';
 import { formatTimeAgo } from '../prompts/context-builder';
 import { ChannelTriggerMessage, HeartbeatTrigger, type TriggerPlace, InvokeStep, type InvokeResponse, type TaskLastSend, type ToolCallRecord } from '../types';
 import { heartbeatDelayMs, heartbeatDueAt } from './heartbeat-schedule';
@@ -205,7 +204,7 @@ class HeartbeatService {
       return;
     }
 
-    const intervalMs = agent.heartbeatIntervalMs || config.heartbeatIntervalMs;
+    const intervalMs = agent.heartbeatIntervalMs;
     const now = Date.now();
 
     // Re-registration keeps the live state object: a run in flight writes its
