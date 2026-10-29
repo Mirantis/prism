@@ -105,6 +105,20 @@ describe('read_compacted_history', () => {
     expect(JSON.stringify(result).length).toBeLessThan(6_000);
   });
 
+  it('says when the query matched elsewhere in the message and not in a cut result', async () => {
+    mockList.mockResolvedValue({
+      messages: [
+        { role: 'USER', content: 'Find the build id', toolCalls: [{ tool: 't', output: 'q'.repeat(5_000) }], internalStep: false, createdAt: at },
+      ],
+      more: false,
+    });
+
+    const result = await run({ query: 'build id' });
+    const output = (result.messages as Array<{ toolCalls: Array<{ output: string }> }>)[0].toolCalls[0].output;
+
+    expect(output).toMatch(/Your query occurs elsewhere in this message, not in this text\./);
+  });
+
   it('cuts a long tool result inside a page', async () => {
     mockList.mockResolvedValue({
       messages: [{ role: 'AGENT', content: '', toolCalls: [{ tool: 't', output: 'y'.repeat(5_000) }], internalStep: false, createdAt: at }],
@@ -114,7 +128,7 @@ describe('read_compacted_history', () => {
     const result = await run({});
     const output = (result.messages as Array<{ toolCalls: Array<{ output: string }> }>)[0].toolCalls[0].output;
 
-    expect(output).toMatch(/^y{2000}\n\[2000 of 5000 characters shown\.\]$/);
+    expect(output).toMatch(/^y{2000}\n\[Cut: 2000 of 5000 characters shown\. The rest may hold what you need\. Call again with a query/);
   });
 
   it("shows the window around the query's match and where the whole result is saved", async () => {
@@ -137,6 +151,7 @@ describe('read_compacted_history', () => {
 
     expect(call.output).toContain('OOMKilled pod-7');
     expect(call.output).toMatch(/^\[From character \d+\.\]/);
+    expect(call.output).toMatch(/Call again with another query to see the part around its match\.\]$/);
     expect(call.savedAt).toBe('/data/tool-outputs/spill-1');
   });
 
