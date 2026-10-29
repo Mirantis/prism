@@ -41,6 +41,7 @@ const { mockConfig } = vi.hoisted(() => ({
     compactionThresholdPercent: 90 as number | null,
     compactionTailMessages: 6,
     idleCompaction: true,
+    chatCacheTtl: '5m' as '5m' | '1h',
   },
 }));
 vi.mock('../config', () => ({ config: mockConfig }));
@@ -133,6 +134,15 @@ vi.mock('./agent-workspace.service', () => ({
   resolveEffectiveModel: (stored: string | null | undefined) => stored ?? 'default-model',
 }));
 
+const { mockNewestThreadCall, mockListIdleCandidates } = vi.hoisted(() => ({
+  mockNewestThreadCall: vi.fn(),
+  mockListIdleCandidates: vi.fn(),
+}));
+vi.mock('./llm-call.service', () => ({ llmCallService: { newestThreadCall: mockNewestThreadCall } }));
+vi.mock('./conversation.service', () => ({
+  conversationService: { listIdleCompactionCandidates: mockListIdleCandidates },
+}));
+
 const { mockLogger } = vi.hoisted(() => ({
   mockLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -221,6 +231,7 @@ beforeEach(() => {
   mockConfig.compactionThresholdPercent = 90;
   mockConfig.compactionTailMessages = 6;
   mockConfig.idleCompaction = true;
+  mockConfig.chatCacheTtl = '5m';
   mockGenerateText.mockResolvedValue({ text: 'THE SUMMARY' });
   mockBuildSystemPromptParts.mockResolvedValue([{ text: 'system prompt', cacheable: true }]);
   mockBuildConversationMessages.mockReturnValue([{ role: 'user', content: 'hello' }]);
@@ -755,6 +766,30 @@ describe('compactNow (manual)', () => {
     expect(request.system[0].content).toBe('system prompt\n\nTASK TOOLS: helper');
   });
 
+  it('declares the tool list for a conversation it has no record of, as after a restart', async () => {
+    // Under tool choice 'none' the SDK sends no tools block, so a request without a
+    // declared list missed the prefix the chat turns cached.
+    mockGetAgentContext.mockResolvedValue(makeContext(8));
+    mockCreateProvider.mockReturnValueOnce(
+      Object.assign((modelId: string) => ({ modelId }), {
+        cachePoint: vi.fn(() => ({ anthropic: { cacheControl: { type: 'ephemeral' } } })),
+        toolChanges: () => ANTHROPIC_TOOL_CHANGES,
+      }),
+    );
+
+    await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: 'thread-after-restart' });
+
+    const request = mockGenerateText.mock.calls[0][0];
+    expect(mockCollectTools).toHaveBeenCalled();
+    expect(Object.keys(request.tools)).toEqual(['shell']);
+    expect(request.toolChoice).toBe('auto');
+    // The record it leaves is the baseline the next chat turn would have declared.
+    const record = toolLedgerService.peek({ threadId: 'thread-after-restart', modelId: 'stored-model', protocol: ANTHROPIC_TOOL_CHANGES });
+    expect(Object.keys(record?.tools ?? {})).toEqual(['shell']);
+    expect(record?.toolChanges).toEqual([]);
+    expect(record?.deferred.size).toBe(0);
+  });
+
   it('sends the declared list of a conversation that has one, with its announcements', async () => {
     mockGetAgentContext.mockResolvedValue(makeContext(8));
     mockCreateProvider.mockReturnValueOnce(
@@ -1013,29 +1048,55 @@ describe('summary output budget', () => {
 describe('idle compaction', () => {
   const HOUR = 60 * 60 * 1000;
   const oneHourCache = { anthropic: { cacheControl: { type: 'ephemeral' as const, ttl: '1h' as const } } };
-  const idleFork = (overrides: Partial<AutoCompactFork> = {}) =>
-    makeFork({
-      cachePoint: oneHourCache,
-      snapshot: { threadId: THREAD, modelId: 'model-x', usedTokens: 250_000, windowTokens: 1_000_000, usedPercent: 25 },
-      ...overrides,
-    });
+  const turn = (overrides: Record<string, unknown> = {}) => ({
+    userId: 'user-1',
+    agentId: 'agent-1',
+    threadId: THREAD,
+    cachePoint: oneHourCache,
+    usedTokens: 250_000,
+    ...overrides,
+  });
+  const context = {
+    model: 'stored-model',
+    modelSelection: { mode: 'fixed', tiers: { small: null, medium: null, large: null } },
+    lockedIn: false,
+    recentMessages: Array.from({ length: 8 }, (_, i) => ({
+      id: `m${i}`,
+      role: i % 2 === 0 ? 'USER' : 'AGENT',
+      content: 'x'.repeat(100),
+      externalMessageId: null,
+      internalStep: false,
+    })),
+  };
 
-  beforeEach(() => vi.useFakeTimers());
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mockGetAgentContext.mockResolvedValue(context);
+    mockNewestThreadCall.mockResolvedValue(null);
+    mockListIdleCandidates.mockResolvedValue([]);
+  });
   afterEach(() => {
     compactionService.cancelIdle(THREAD);
     vi.useRealTimers();
   });
 
-  it('compacts a large conversation shortly before its one-hour cache expires', async () => {
+  /** Fire the due timer, then let the queued job and its settle run on real timers. */
+  async function fire(ms: number): Promise<void> {
+    vi.advanceTimersByTime(ms);
+    vi.useRealTimers();
+    await flushAuto();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  it('compacts a large conversation shortly before its one-hour cache expires, from the stored thread', async () => {
     const events = captureEvents();
-    compactionService.armIdle(idleFork());
+    compactionService.armIdle(turn());
 
     vi.advanceTimersByTime(0.9 * HOUR - 1);
     expect(mockRun).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(1);
-    vi.useRealTimers();
-    await flushAuto();
+    await fire(1);
 
+    expect(mockGetAgentContext).toHaveBeenCalled();
     expect(mockGenerateText).toHaveBeenCalledTimes(1);
     expect(events.at(-1)).toMatchObject({ status: 'completed', trigger: 'auto', idle: true });
     expect(mockTrackEvent).toHaveBeenCalledWith(
@@ -1046,73 +1107,116 @@ describe('idle compaction', () => {
   });
 
   it('does nothing when the thread is used again before the timer fires', () => {
-    compactionService.armIdle(idleFork());
+    compactionService.armIdle(turn());
     compactionService.cancelIdle(THREAD);
 
     vi.advanceTimersByTime(HOUR);
     expect(mockRun).not.toHaveBeenCalled();
   });
 
-  it('keeps one timer per thread, from the newest turn', () => {
-    compactionService.armIdle(idleFork());
-    vi.advanceTimersByTime(30 * 60 * 1000);
-    compactionService.armIdle(idleFork());
+  it("runs when the turn's own last call row is stamped just after the timer was armed", async () => {
+    compactionService.armIdle(turn());
+    mockNewestThreadCall.mockResolvedValue({ purpose: 'chat', model: 'm', createdAt: new Date(Date.now() + 1) });
 
-    vi.advanceTimersByTime(30 * 60 * 1000);
-    expect(mockRun).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(24 * 60 * 1000);
+    await fire(0.9 * HOUR);
+
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips a timer that fired while a newer turn ran on the thread', async () => {
+    compactionService.armIdle(turn());
+    mockNewestThreadCall.mockResolvedValue({ purpose: 'chat', model: 'm', createdAt: new Date(Date.now() + HOUR) });
+
+    await fire(0.9 * HOUR);
+
     expect(mockRun).toHaveBeenCalledTimes(1);
-  });
-
-  it.each([
-    ['a conversation under the size floor', { snapshot: { threadId: THREAD, modelId: 'model-x', usedTokens: 150_000, windowTokens: 1_000_000, usedPercent: 15 } }],
-    ['a request on the five-minute cache', { cachePoint: { anthropic: { cacheControl: { type: 'ephemeral' as const } } } }],
-    ['a vendor without cache breakpoints', { cachePoint: {} }],
-  ])('arms nothing for %s', (_case, overrides) => {
-    compactionService.armIdle(idleFork(overrides as Partial<AutoCompactFork>));
-
-    vi.advanceTimersByTime(2 * HOUR);
-    expect(mockRun).not.toHaveBeenCalled();
-  });
-
-  it('arms nothing with IDLE_COMPACTION=off', () => {
-    mockConfig.idleCompaction = false;
-    compactionService.armIdle(idleFork());
-
-    vi.advanceTimersByTime(2 * HOUR);
-    expect(mockRun).not.toHaveBeenCalled();
-  });
-
-  it('skips a timer that fired while a turn held the thread', async () => {
-    let releaseTurn!: () => void;
-    const turnHeld = new Promise<void>((resolve) => (releaseTurn = resolve));
-    const queued: Array<() => Promise<unknown>> = [];
-    mockRun.mockImplementation((_threadId: string, fn: () => Promise<unknown>) => {
-      const job = turnHeld.then(fn);
-      queued.push(fn);
-      runState.last = job;
-      return job;
-    });
-    compactionService.armIdle(idleFork());
-
-    vi.advanceTimersByTime(0.9 * HOUR);
-    vi.advanceTimersByTime(1000);
-    compactionService.cancelIdle(THREAD); // the turn that held the thread starts its invocation
-    vi.useRealTimers();
-    releaseTurn();
-    await flushAuto();
-
-    expect(queued).toHaveLength(1);
     expect(mockGenerateText).not.toHaveBeenCalled();
     expect(compactionService.hasInFlight()).toBe(false);
   });
 
-  it('is cancelled when a threshold compaction of the thread starts', () => {
-    compactionService.armIdle(idleFork());
-    compactionService.maybeAutoCompact(makeFork());
-    mockRun.mockClear();
+  it('arms nothing for a conversation under the size floor', () => {
+    compactionService.armIdle(turn({ usedTokens: 150_000 }));
 
     vi.advanceTimersByTime(2 * HOUR);
     expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it('writes no cache entry for a summary whose cache has expired', async () => {
+    // The default provider stub answers a five-minute breakpoint, long expired after the last turn.
+    compactionService.armIdle(turn());
+    mockNewestThreadCall.mockResolvedValue({ purpose: 'chat', model: 'm', createdAt: new Date(Date.now() - 2 * HOUR) });
+
+    await fire(0.9 * HOUR);
+
+    const request = mockGenerateText.mock.calls[0][0];
+    expect(JSON.stringify(request)).not.toContain('cacheControl');
+  });
+
+  it('keeps the breakpoints while a one-hour cache is still warm', async () => {
+    const provider = mockCreateProvider();
+    (provider.cachePoint as ReturnType<typeof vi.fn>).mockImplementation((_id: string, ttl?: string) =>
+      ttl === '1h' ? oneHourCache : { anthropic: { cacheControl: { type: 'ephemeral' } } },
+    );
+    mockCreateProvider.mockReturnValue(provider);
+    mockConfig.chatCacheTtl = '1h';
+    compactionService.armIdle(turn());
+
+    await fire(0.9 * HOUR);
+
+    expect(JSON.stringify(mockGenerateText.mock.calls[0][0])).toContain('cacheControl');
+  });
+
+  it('arms nothing with IDLE_COMPACTION=off', () => {
+    mockConfig.idleCompaction = false;
+    compactionService.armIdle(turn());
+
+    vi.advanceTimersByTime(2 * HOUR);
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  describe('after a restart', () => {
+    const candidate = { id: THREAD, agentId: 'agent-1', userId: 'user-1', compactedAt: null };
+    const chatCall = (agoMs: number) => ({ purpose: 'chat', model: 'stored-model', createdAt: new Date(Date.now() - agoMs) });
+    const provider = mockCreateProvider();
+    beforeEach(() => {
+      (provider.cachePoint as ReturnType<typeof vi.fn>).mockReturnValue(oneHourCache);
+      mockCreateProvider.mockReturnValue(provider);
+      mockListIdleCandidates.mockResolvedValue([candidate]);
+    });
+
+    it('re-arms the timer for the rest of the wait', async () => {
+      mockNewestThreadCall.mockResolvedValue(chatCall(30 * 60 * 1000));
+      await compactionService.restoreIdle();
+
+      vi.advanceTimersByTime(23 * 60 * 1000);
+      expect(mockRun).not.toHaveBeenCalled();
+      await fire(60 * 1000 + 1);
+      expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    });
+
+    it('compacts at once a conversation whose cache has already expired', async () => {
+      mockNewestThreadCall.mockResolvedValue(chatCall(2 * HOUR));
+      await compactionService.restoreIdle();
+
+      await fire(0);
+      expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves a conversation compacted after its last turn', async () => {
+      mockNewestThreadCall.mockResolvedValue(chatCall(30 * 60 * 1000));
+      mockListIdleCandidates.mockResolvedValue([{ ...candidate, compactedAt: new Date() }]);
+      await compactionService.restoreIdle();
+
+      vi.advanceTimersByTime(2 * HOUR);
+      expect(mockRun).not.toHaveBeenCalled();
+    });
+
+    it('leaves a conversation whose newest call was not a chat turn', async () => {
+      mockNewestThreadCall.mockResolvedValue({ ...chatCall(30 * 60 * 1000), purpose: 'cron' });
+      await compactionService.restoreIdle();
+
+      vi.advanceTimersByTime(2 * HOUR);
+      expect(mockRun).not.toHaveBeenCalled();
+    });
   });
 });

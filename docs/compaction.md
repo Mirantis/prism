@@ -18,12 +18,14 @@ scrollback; compaction only changes what the model sees.
 - **Manually.** Run **`/compact`** in the web chat or the terminal UI to
   compact the current conversation at any time. If there is nothing to compact
   yet, the command says so.
-- **While idle.** A large conversation that you leave for about an hour is
-  compacted shortly before the agent's prompt cache for it expires, so your
-  next message is answered from the summary without re-reading the whole
-  thread. A conversation you come back to within the hour keeps every message.
-  This runs with recent Claude models on Amazon Bedrock. Set `IDLE_COMPACTION=off`
-  to turn it off.
+- **While idle.** A conversation of about 200,000 tokens or more that you leave
+  for about an hour is compacted, so your next message starts from the summary
+  instead of the whole thread. A conversation you come back to within the hour
+  keeps every message. A restart of the agent in between keeps the compaction
+  scheduled. Set `IDLE_COMPACTION=off` to turn it off;
+  `COMPACTION_THRESHOLD_PERCENT=0` turns it off as well. A threshold low enough to
+  compact conversations before they reach that size leaves nothing to compact
+  while idle.
 - **On overflow.** A single turn can outgrow the window outright (the provider
   rejects the request as too long). That rejection triggers a recovery
   compaction immediately: the runtime summarizes the history — shrinking the
@@ -65,7 +67,8 @@ newer replies afterwards. The Slack channel itself is never modified.
 |----------|---------|---------|
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-compact at this percent of the model's window; `0` disables auto-compaction | `90` |
 | `COMPACTION_TAIL_MESSAGES` | At most this many of the newest messages are kept out of compaction, except that a long latest reply stays whole when it fits | `6` |
-| `IDLE_COMPACTION` | `off` stops compacting large conversations while they sit idle (recent Claude models on Amazon Bedrock only) | on |
+| `IDLE_COMPACTION` | `off` stops compacting large conversations while they sit idle | on |
+| `CHAT_CACHE_TTL` | `1h` keeps a chat's prompt cache for an hour instead of five minutes, with recent Claude models on Amazon Bedrock. It pays when people come back within the hour, and costs more when they work in short bursts with long breaks | `5m` |
 
 Auto-compaction works best when the model's context window is known; see
 **[Context-window size](configuration.md#context-window-size)**. For a model

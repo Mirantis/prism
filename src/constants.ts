@@ -106,14 +106,18 @@ export const COMPACTION_TAIL_MESSAGES = 6;
 export const COMPACTION_TAIL_TOKENS = 30_000;
 
 /**
- * A chat conversation at least this large is compacted when it sits idle until its
- * one-hour prompt cache is about to expire, so the next turn re-writes a summary
- * instead of the whole thread. Below it, the re-write costs less than the summary.
+ * A chat conversation at least this large is compacted when it sits idle for
+ * `IDLE_COMPACTION_DELAY_MS`, so the next turn writes a summary to the cache instead
+ * of the whole thread. Below it, the saving does not pay for the summary.
  */
 export const IDLE_COMPACTION_MIN_TOKENS = 200_000;
 
-/** The share of the cache lifetime an idle conversation waits before it is compacted. */
-export const IDLE_COMPACTION_TTL_SHARE = 0.9;
+/**
+ * How long a chat conversation sits idle before it is compacted: just inside a
+ * one-hour cache, which the summary then reads. On a five-minute cache it reads
+ * the thread cold, which still costs less than the write its next turn would pay.
+ */
+export const IDLE_COMPACTION_DELAY_MS = 54 * 60 * 1000;
 
 // ============================================================================
 // Updates
