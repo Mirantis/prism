@@ -8,24 +8,23 @@
  * injects), and the prompt folds it into the new, complete summary — so one
  * `compactionSummary` column per thread is the whole persistent state.
  *
- * Two entry points:
+ * Three entry points:
  *
  * - `maybeAutoCompact(fork)` — called by `invokeStream()` after a thread-bound
  *   turn with the turn's own request ingredients (model, cached system parts,
  *   cached tools, live message array). Reusing them makes the summarize call a
  *   "forked request": the provider's prompt cache already holds the
  *   tools+system+history prefix, so the fork is mostly a cache read.
- * - `compactNow()` — the manual `/compact` path (REST). Rebuilds the context
- *   from stored rows and attaches the same tool set a chat turn sends (with
- *   toolChoice 'none'), so the request shares the tools+stable-system cache prefix
- *   chat turns keep warm — and now the history behind it too: nothing per-turn sits
- *   in the system prompt any more (the date changes once a day, and a turn's
- *   recalled memories are a stored row this path replays like any other), so this
- *   request hits whichever message entry a recent turn left.
+ * - `compactNow()` — the manual `/compact` path (REST) — and the idle path
+ *   (`armIdle`, `restoreIdle`) share `compactRebuilt`. It rebuilds the request from
+ *   stored rows with the tool list the next chat turn would declare, so it reads the
+ *   tools+system+history prefix a recent turn cached: nothing per-turn sits in the
+ *   system prompt (the date changes once a day, and a turn's recalled memories are a
+ *   stored row this path replays like any other).
  *
- * Both serialize on the per-thread mutex (`threadTurnService.run`) so a
+ * All serialize on the per-thread mutex (`threadTurnService.run`) so a
  * compaction never rewrites thread state while a turn is building its context.
- * Both commit atomically, marking exactly the rows that were in the summarized
+ * All commit atomically, marking exactly the rows that were in the summarized
  * context (minus the tail) — never "all but last N at commit time" — so a
  * message that lands between fork and commit is never swallowed: it stays
  * uncompacted and verbatim in the next context.
@@ -54,14 +53,16 @@ import { logger } from '../logger';
 import {
   COMPACTION_TAIL_TOKENS,
   IDLE_COMPACTION_MIN_TOKENS,
-  IDLE_COMPACTION_TTL_SHARE,
+  IDLE_COMPACTION_DELAY_MS,
   MAX_OUTPUT_TOKENS,
 } from '../constants';
 import { COMPACTION_PROMPT } from '../prompts/compaction-prompt';
 import { MIN_PLAUSIBLE_CONTEXT } from '../lib/model-catalog';
 import { contextWindowFor } from '../lib/context-window';
 import { createProvider } from '../lib/llm-providers/create-provider';
-import { cacheTtlMs, ONE_HOUR_MS, type CachePointFragment } from '../lib/llm-providers/llm-provider';
+import { cacheTtlFor, cacheTtlMs, NO_CACHE_POINT, type CachePointFragment } from '../lib/llm-providers/llm-provider';
+import { llmCallService, type LlmCallPurpose } from './llm-call.service';
+import { conversationService } from './conversation.service';
 
 import { collectTools, withToolsCacheControl } from '../lib/tool-collection';
 import { withToolOutputCapture } from '../lib/tool-output-limiter';
@@ -195,15 +196,11 @@ class CompactionService {
   private readonly inFlight = new Set<string>();
 
   /**
-   * One timer per idle chat conversation, holding the fork of its last turn. In
-   * memory only: after a restart the next turn writes the whole thread to the cache
-   * once, and threshold compaction still bounds the thread. A thread a session reset
-   * left behind still gets its one summary.
+   * One timer per idle chat conversation. `restoreIdle` re-arms them at boot from
+   * stored data. A thread a session reset left behind still gets its one summary.
    */
   private readonly idleTimers = new Map<string, NodeJS.Timeout>();
 
-  /** Threads whose idle compaction waits on the thread's lock; `cancelIdle` withdraws one. */
-  private readonly idleQueued = new Set<string>();
 
   /** Whether any compaction is currently running. */
   hasInFlight(): boolean {
@@ -253,55 +250,82 @@ class CompactionService {
   }
 
   /**
-   * Idle path. After a chat turn whose cache lives an hour, a conversation of at
-   * least `IDLE_COMPACTION_MIN_TOKENS` is compacted shortly before that cache
-   * expires, reading the turn's warm prefix. A conversation that continues within
-   * the hour keeps every message. Any later invocation or compaction of the thread
-   * cancels the timer. Synchronous, never throws.
+   * Idle path. After a chat turn, a conversation of at least
+   * `IDLE_COMPACTION_MIN_TOKENS` is compacted once it has sat idle for
+   * `IDLE_COMPACTION_DELAY_MS`. On a one-hour cache that reads the turn's warm
+   * prefix; on a shorter one it reads the thread cold, which still costs less than
+   * the write the next turn would pay for the whole thread. Any later invocation of
+   * the thread cancels the timer. The due time comes from stored data
+   * (`restoreIdle`), so a restart re-arms it. Synchronous, never throws.
    */
-  armIdle(fork: AutoCompactFork): void {
-    this.cancelIdle(fork.threadId);
+  armIdle(input: IdleInput & { usedTokens: number }): void {
+    this.cancelIdle(input.threadId);
     if (!config.idleCompaction || config.compactionThresholdPercent === null) return;
-    if (this.inFlight.has(fork.threadId)) return; // a threshold compaction already runs
-    const ttl = cacheTtlMs(fork.cachePoint);
-    if (ttl < ONE_HOUR_MS) return;
-    if (fork.snapshot.usedTokens < IDLE_COMPACTION_MIN_TOKENS) return;
-    if (splitTail(fork.contextRows).compactable.length === 0) return;
-
+    if (input.usedTokens < IDLE_COMPACTION_MIN_TOKENS) return;
     // Measured from the turn's end; the cache clock started at its last request, at
-    // most a few minutes earlier, which the share leaves room for.
-    const timer = setTimeout(() => this.compactIdle(fork), ttl * IDLE_COMPACTION_TTL_SHARE);
-    timer.unref();
-    this.idleTimers.set(fork.threadId, timer);
+    // most a few minutes earlier, which the delay leaves room for.
+    this.scheduleIdle({ userId: input.userId, agentId: input.agentId, threadId: input.threadId, after: new Date() }, IDLE_COMPACTION_DELAY_MS);
+  }
+
+  /**
+   * At boot, re-arm the idle compactions a restart dropped: the conversations used
+   * in the last day whose newest turn was a chat turn, of at least
+   * `IDLE_COMPACTION_MIN_TOKENS`, and not compacted since. One already past its due
+   * time is compacted at once.
+   */
+  async restoreIdle(): Promise<void> {
+    if (!config.idleCompaction || config.compactionThresholdPercent === null) return;
+    const candidates = await conversationService.listIdleCompactionCandidates(
+      IDLE_COMPACTION_MIN_TOKENS,
+      new Date(Date.now() - IDLE_RESTORE_WINDOW_MS),
+    );
+    for (const thread of candidates) {
+      const last = await llmCallService.newestThreadCall(thread.id, THREAD_TURN_PURPOSES);
+      if (last?.purpose !== 'chat') continue;
+      if (thread.compactedAt && thread.compactedAt >= last.createdAt) continue;
+      const dueAt = last.createdAt.getTime() + IDLE_COMPACTION_DELAY_MS;
+      this.scheduleIdle(
+        { userId: thread.userId, agentId: thread.agentId, threadId: thread.id, after: last.createdAt },
+        Math.max(0, dueAt - Date.now()),
+      );
+    }
+    if (candidates.length > 0) logger.info(`[Compaction] checked ${candidates.length} conversation(s) for idle compaction`);
   }
 
   /** Drops a conversation's idle timer: it has moved on, or is being compacted now. */
   cancelIdle(threadId: string): void {
-    this.idleQueued.delete(threadId);
     const timer = this.idleTimers.get(threadId);
     if (!timer) return;
     clearTimeout(timer);
     this.idleTimers.delete(threadId);
   }
 
-  private compactIdle(fork: AutoCompactFork): void {
-    this.idleTimers.delete(fork.threadId);
-    if (this.inFlight.has(fork.threadId)) return;
-    this.inFlight.add(fork.threadId);
-    this.idleQueued.add(fork.threadId);
+  private scheduleIdle(due: IdleDue, delayMs: number): void {
+    this.cancelIdle(due.threadId);
+    const timer = setTimeout(() => this.compactIdle(due), delayMs);
+    timer.unref();
+    this.idleTimers.set(due.threadId, timer);
+  }
+
+  private compactIdle(due: IdleDue): void {
+    this.idleTimers.delete(due.threadId);
+    if (this.inFlight.has(due.threadId)) return;
+    this.inFlight.add(due.threadId);
     void threadTurnService
-      .run(fork.threadId, async () => {
-        // A turn that claimed the thread before the timer fired withdrew this job, and
-        // the fork no longer describes the thread. That turn found the job in flight,
-        // so it armed no timer and ran no threshold check; its next turn does both.
-        if (!this.idleQueued.delete(fork.threadId)) return;
-        await this.runAutoCompaction(fork, 'idle');
+      .run(due.threadId, async () => {
+        // A turn that claimed the thread before the timer fired ran first, so the
+        // conversation is no longer idle and this job stops. The tolerance covers a
+        // call row stamped just after the turn armed the timer; the next turn starts
+        // with a person's message, seconds later at least.
+        const last = await llmCallService.newestThreadCall(due.threadId, THREAD_TURN_PURPOSES);
+        if (last && last.createdAt.getTime() > due.after.getTime() + STALE_TOLERANCE_MS) return;
+        await this.compactRebuilt(due, 'auto', 'idle', last?.createdAt ?? due.after);
       })
       .catch((err) => {
-        logger.error({ err, threadId: fork.threadId }, '[Compaction] idle compaction failed');
-        this.fail(fork.userId, fork.agentId, fork.threadId, 'auto', errorText(err));
+        logger.error({ err, threadId: due.threadId }, '[Compaction] idle compaction failed');
+        this.fail(due.userId, due.agentId, due.threadId, 'auto', errorText(err));
       })
-      .finally(() => this.settle(fork.threadId));
+      .finally(() => this.settle(due.threadId));
   }
 
   /**
@@ -336,9 +360,8 @@ class CompactionService {
   }
 
   /**
-   * Manual path (`/compact` → REST). Rebuilds the context fresh under the
-   * thread mutex; the provider cache miss is accepted — there is no live turn
-   * to fork from.
+   * Manual path (`/compact` → REST): a compaction rebuilt from the stored thread
+   * under the thread mutex (see `compactRebuilt`).
    */
   async compactNow(input: { userId: string; agentId: string; threadId: string }): Promise<void> {
     const { userId, agentId, threadId } = input;
@@ -347,153 +370,179 @@ class CompactionService {
     this.cancelIdle(threadId);
     this.inFlight.add(threadId);
     try {
-      await threadTurnService.run(threadId, async () => {
-        this.start(userId, agentId, threadId, 'manual');
-
-        const thread = await prisma.conversationThread.findUnique({
-          where: { id: threadId },
-          select: { threadSource: true, contextTokens: true, workspaceRoot: true },
-        });
-        const context = await contextService.getAgentContext(userId, {
-          agentId,
-          threadId,
-          includeConversation: true,
-        });
-        const rows = toForkRows(context.recentMessages);
-        if (splitTail(rows).compactable.length === 0) {
-          // A no-op, not a failure: the REST precheck cannot size the tail, so a
-          // short thread lands here.
-          this.skip(userId, agentId, threadId, 'manual', 'Nothing to compact yet.');
-          return;
-        }
-
-        const provider = createProvider();
-        const modelId = await compactionModel(context, threadId, provider);
-        const model = provider(modelId);
-        // A read does not depend on the lifetime asked for, and the commit retires this
-        // prefix, so a five-minute entry is the cheaper write.
-        const cachePoint = provider.cachePoint(modelId, '5m');
-
-        // A conversation with a declared tool list sends that list: its cached
-        // prefix starts with it, and its tool-change announcements name it.
-        const protocol = provider.toolChanges?.(modelId);
-        const declared = protocol ? toolLedgerService.peek({ threadId, modelId, protocol }) : undefined;
-
-        // Same tool set as a chat turn, sent with toolChoice 'none': the tools
-        // block must match byte-for-byte or the request misses the
-        // tools+stable-system cache prefix chat turns keep warm. The Task
-        // invoker can never run under toolChoice 'none'.
-        // A declared list is the tools block itself, but deferred tools still
-        // need the collected set for the catalog and the replayed loads.
-        const deferredToolProtocol = provider.deferredTools?.(modelId);
-        const collected = declared && !deferredToolProtocol
-          ? undefined
-          : await collectTools({
-              userId,
-              agentId,
-              threadId,
-              mode: 'chat',
-              workspaceRoot: thread?.workspaceRoot ?? undefined,
-              taskInvoker: neverInvoke,
-              lockedIn: context.lockedIn,
-            });
-        const subagents = collected?.subagents ?? await agentWorkspaceService.getSubagents(agentId);
-        // Nothing executes here (`toolChoice: 'none'`), so saving is off — the
-        // wrap exists only so this request's tools block is built exactly like a
-        // chat turn's, which is what the provider's cache prefix is keyed on.
-        const toolSearch = await planToolSearch({
-          tools: collected ? withToolOutputCapture(collected.tools, { spill: false }) : {},
-          deferrable: collected?.deferrable ?? [],
-          protocol: deferredToolProtocol,
-          modelId,
-          telemetry: { userId, agentId, mode: 'compaction' },
-        });
-        // A declared list is already the tools block the chat turns send.
-        const cachedTools = withToolsCacheControl(
-          declared ? declared.tools : toolSearch.tools,
-          cachePoint,
-          declared?.deferred,
-        );
-
-        const systemParts = await buildSystemPromptParts(
-          context,
-          'chat',
-          undefined,
-          thread?.workspaceRoot ?? undefined,
-        );
-        // Mirror invoke.ts: task-tool instructions, and a shared web chat's
-        // channel instructions, ride the stable part, and cacheable parts carry
-        // the Anthropic breakpoints — without them this request neither reads nor
-        // refreshes the shared prefix. The thread records no origin channel, so
-        // its label comes as for a continuation.
-        const { channelLabel } = await messageDeliveryService.threadContext(threadId);
-        const stablePart = systemParts.find((p) => p.cacheable);
-        if (channelLabel && stablePart) {
-          stablePart.text += '\n\n' + getChannelBehaviorInstructions(channelLabel);
-        }
-        if (subagents.length > 0 && stablePart) {
-          stablePart.text += '\n\n' + getTaskToolInstructions(
-            subagents.map((s) => ({ name: s.name, description: s.description })),
-          );
-        }
-        const toolSearchPrompt = declared
-          ? await toolSearch.promptFor(declared.tools, declared.deferred)
-          : toolSearch;
-        if (toolSearchPrompt.catalog && stablePart) stablePart.text += '\n\n' + toolSearchPrompt.catalog;
-        const system: SystemModelMessage[] = systemParts.map((part) => ({
-          role: 'system' as const,
-          content: part.text,
-          ...(part.cacheable ? { providerOptions: cachePoint } : {}),
-        }));
-        const history = buildConversationHistory(
-          context,
-          declared?.toolChanges,
-          toolSearchPrompt.replayToolCall,
-          Boolean(channelLabel),
-        );
-        const messages: ModelMessage[] = [
-          ...history.messages,
-          { role: 'user' as const, content: COMPACTION_PROMPT, providerOptions: cachePoint },
-          ...history.trailingToolChanges,
-        ];
-
-        const result = await callModel({ purpose: 'compaction', threadId }, {
-          model,
-          system,
-          messages,
-          ...(declared || toolSearch.summaryDeclaresTools
-            ? summaryToolOptions(cachedTools)
-            : Object.keys(cachedTools).length > 0
-              ? { tools: cachedTools, toolChoice: 'none' as const }
-              : {}),
-          maxOutputTokens: summaryOutputBudget(contextWindowFor(modelId)?.tokens, thread?.contextTokens),
-          ...langfuseTelemetry('compaction', { userId, sessionId: threadId }),
-        });
-        const summary = readSummary(result);
-        if ('error' in summary) {
-          this.fail(userId, agentId, threadId, 'manual', summary.error);
-          return;
-        }
-
-        await this.complete({
-          userId,
-          agentId,
-          threadId,
-          trigger: 'manual',
-          reason: 'manual',
-          modelId,
-          threadSource: thread?.threadSource ?? 'DATABASE',
-          tokensBefore: thread?.contextTokens ?? null,
-          summary: summary.text,
-          rows,
-        });
-      });
+      await threadTurnService.run(threadId, () => this.compactRebuilt(input, 'manual', 'manual'));
     } catch (err) {
       logger.error({ err, threadId }, '[Compaction] manual compaction failed');
       this.fail(userId, agentId, threadId, 'manual', errorText(err));
     } finally {
       this.settle(threadId);
     }
+  }
+
+  /**
+   * One compaction whose request is rebuilt from the stored thread, as the next chat
+   * turn would send it, so it reads the prefix that turn's cache holds. Runs under
+   * the thread's lock; the caller owns `inFlight`.
+   */
+  private async compactRebuilt(
+    input: { userId: string; agentId: string; threadId: string },
+    trigger: 'auto' | 'manual',
+    reason: 'manual' | 'idle',
+    lastCallAt?: Date,
+  ): Promise<void> {
+    const { userId, agentId, threadId } = input;
+    this.start(userId, agentId, threadId, trigger);
+
+    const thread = await prisma.conversationThread.findUnique({
+      where: { id: threadId },
+      select: { threadSource: true, contextTokens: true, workspaceRoot: true },
+    });
+    const context = await contextService.getAgentContext(userId, {
+      agentId,
+      threadId,
+      includeConversation: true,
+    });
+    const rows = toForkRows(context.recentMessages);
+    if (splitTail(rows).compactable.length === 0) {
+      // A no-op, not a failure: the REST precheck cannot size the tail, so a
+      // short thread lands here.
+      this.skip(userId, agentId, threadId, trigger, 'Nothing to compact yet.');
+      return;
+    }
+
+    const provider = createProvider();
+    const modelId = await compactionModel(context, threadId, provider);
+    const model = provider(modelId);
+    // A read does not depend on the lifetime asked for, and the commit retires this
+    // prefix, so a five-minute entry is the cheaper write. An idle summary whose cache
+    // has expired reads the thread at full price whatever it asks for, and nothing
+    // reuses its prefix, so it writes no entry at all.
+    const cold = lastCallAt !== undefined &&
+      Date.now() - lastCallAt.getTime() > cacheTtlMs(provider.cachePoint(modelId, cacheTtlFor('chat')));
+    const cachePoint = cold ? NO_CACHE_POINT : provider.cachePoint(modelId, '5m');
+
+    // A conversation with a declared tool list sends that list: its cached
+    // prefix starts with it, and its tool-change announcements name it.
+    const protocol = provider.toolChanges?.(modelId);
+    const known = protocol ? toolLedgerService.peek({ threadId, modelId, protocol }) : undefined;
+
+    // Same tool set as a chat turn: the tools block must match byte-for-byte
+    // or the request misses the tools+stable-system cache prefix chat turns
+    // keep warm. The Task invoker can never run here. A declared list is the
+    // tools block itself, but deferred tools still need the collected set for
+    // the catalog and the replayed loads.
+    const deferredToolProtocol = provider.deferredTools?.(modelId);
+    const collected = known && !deferredToolProtocol
+      ? undefined
+      : await collectTools({
+          userId,
+          agentId,
+          threadId,
+          mode: 'chat',
+          workspaceRoot: thread?.workspaceRoot ?? undefined,
+          taskInvoker: neverInvoke,
+          lockedIn: context.lockedIn,
+        });
+    const subagents = collected?.subagents ?? (await agentWorkspaceService.getSubagents(agentId));
+    // Nothing executes here, so saving is off — the wrap exists only so this
+    // request's tools block is built exactly like a chat turn's, which is what the
+    // provider's cache prefix is keyed on.
+    const toolSearch = await planToolSearch({
+      tools: collected ? withToolOutputCapture(collected.tools, { spill: false }) : {},
+      deferrable: collected?.deferrable ?? [],
+      protocol: deferredToolProtocol,
+      modelId,
+      telemetry: { userId, agentId, mode: 'compaction' },
+    });
+    // A conversation the ledger has no record of, as after a restart, gets the
+    // list its next chat turn would declare. Without a declared list the
+    // request goes out under tool choice 'none', which sends no tools block and
+    // so misses the prefix the chat turns cached.
+    const declared = protocol
+      ? (known ??
+        (await toolLedgerService.declare({
+          threadId,
+          modelId,
+          protocol,
+          available: toolSearch.tools,
+          rowIds: context.recentMessages.map((row) => row.id),
+        })))
+      : undefined;
+    // A declared list is already the tools block the chat turns send.
+    const cachedTools = withToolsCacheControl(declared?.tools ?? toolSearch.tools, cachePoint, declared?.deferred);
+
+    const systemParts = await buildSystemPromptParts(
+      context,
+      'chat',
+      undefined,
+      thread?.workspaceRoot ?? undefined,
+    );
+    // Mirror invoke.ts: task-tool instructions, and a shared web chat's
+    // channel instructions, ride the stable part, and cacheable parts carry
+    // the Anthropic breakpoints — without them this request neither reads nor
+    // refreshes the shared prefix. The thread records no origin channel, so
+    // its label comes as for a continuation.
+    const { channelLabel } = await messageDeliveryService.threadContext(threadId);
+    const stablePart = systemParts.find((p) => p.cacheable);
+    if (channelLabel && stablePart) {
+      stablePart.text += '\n\n' + getChannelBehaviorInstructions(channelLabel);
+    }
+    if (subagents.length > 0 && stablePart) {
+      stablePart.text += '\n\n' + getTaskToolInstructions(
+        subagents.map((s) => ({ name: s.name, description: s.description })),
+      );
+    }
+    const toolSearchPrompt = declared
+      ? await toolSearch.promptFor(declared.tools, declared.deferred)
+      : toolSearch;
+    if (toolSearchPrompt.catalog && stablePart) stablePart.text += '\n\n' + toolSearchPrompt.catalog;
+    const system: SystemModelMessage[] = systemParts.map((part) => ({
+      role: 'system' as const,
+      content: part.text,
+      ...(part.cacheable ? { providerOptions: cachePoint } : {}),
+    }));
+    const history = buildConversationHistory(
+      context,
+      declared?.toolChanges,
+      toolSearchPrompt.replayToolCall,
+      Boolean(channelLabel),
+    );
+    const messages: ModelMessage[] = [
+      ...history.messages,
+      { role: 'user' as const, content: COMPACTION_PROMPT, providerOptions: cachePoint },
+      ...history.trailingToolChanges,
+    ];
+
+    const result = await callModel({ purpose: 'compaction', threadId }, {
+      model,
+      system,
+      messages,
+      ...(declared || toolSearch.summaryDeclaresTools
+        ? summaryToolOptions(cachedTools)
+        : Object.keys(cachedTools).length > 0
+          ? { tools: cachedTools, toolChoice: 'none' as const }
+          : {}),
+      maxOutputTokens: summaryOutputBudget(contextWindowFor(modelId)?.tokens, thread?.contextTokens),
+      ...langfuseTelemetry('compaction', { userId, sessionId: threadId }),
+    });
+    const summary = readSummary(result);
+    if ('error' in summary) {
+      this.fail(userId, agentId, threadId, trigger, summary.error);
+      return;
+    }
+
+    await this.complete({
+      userId,
+      agentId,
+      threadId,
+      trigger,
+      reason,
+      modelId,
+      threadSource: thread?.threadSource ?? 'DATABASE',
+      tokensBefore: thread?.contextTokens ?? null,
+      summary: summary.text,
+      rows,
+    });
   }
 
   /**
@@ -518,7 +567,7 @@ class CompactionService {
   }
 
   /** The forked summarize request — see the module doc for the cache story. */
-  private async runAutoCompaction(fork: AutoCompactFork, reason: 'threshold' | 'idle' = 'threshold'): Promise<void> {
+  private async runAutoCompaction(fork: AutoCompactFork): Promise<void> {
     const { userId, agentId, threadId } = fork;
     try {
       this.start(userId, agentId, threadId, 'auto');
@@ -572,7 +621,7 @@ class CompactionService {
         agentId,
         threadId,
         trigger: 'auto',
-        reason,
+        reason: 'threshold',
         modelId: fork.modelId,
         threadSource: thread?.threadSource ?? 'DATABASE',
         tokensBefore: fork.snapshot.usedTokens,
@@ -855,6 +904,26 @@ class CompactionService {
 }
 
 const CHARS_PER_TOKEN = 4;
+
+/** How much later than an idle timer's arm time a call row may be stamped and still be the same turn's. */
+const STALE_TOLERANCE_MS = 5_000;
+
+/** How far back `restoreIdle` looks for a conversation someone still uses. */
+const IDLE_RESTORE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** The calls that use a conversation; a newer one than an idle timer's means it moved on. */
+const THREAD_TURN_PURPOSES: readonly LlmCallPurpose[] = ['chat', 'cron', 'goal', 'webhook', 'compaction'];
+
+interface IdleInput {
+  userId: string;
+  agentId: string;
+  threadId: string;
+}
+
+/** A pending idle compaction, and the time after which a call on the thread cancels it. */
+interface IdleDue extends IdleInput {
+  after: Date;
+}
 
 /** A context's rows as the commit marks them. */
 export function toForkRows(

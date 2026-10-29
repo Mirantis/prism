@@ -646,12 +646,19 @@ describe('invoke', () => {
       expect(modelFn.cachePoint).toHaveBeenCalledWith('cron-model', '5m');
     });
 
-    it('asks for a one-hour cache on a chat turn, which waits on a person', async () => {
+    it('asks for the chat cache lifetime on a chat turn', async () => {
       const modelFn = captureModelId();
+      const before = config.chatCacheTtl;
+      try {
+        await invoke(createTestInvokeRequest({ mode: 'chat' }));
+        expect(modelFn.cachePoint).toHaveBeenLastCalledWith(expect.any(String), '5m');
 
-      await invoke(createTestInvokeRequest({ mode: 'chat' }));
-
-      expect(modelFn.cachePoint).toHaveBeenCalledWith(expect.any(String), '1h');
+        (config as { chatCacheTtl: string }).chatCacheTtl = '1h';
+        await invoke(createTestInvokeRequest({ mode: 'chat' }));
+        expect(modelFn.cachePoint).toHaveBeenLastCalledWith(expect.any(String), '1h');
+      } finally {
+        (config as { chatCacheTtl: string }).chatCacheTtl = before;
+      }
     });
 
     it('chat mode ignores heartbeat/cron overrides and uses the main model', async () => {

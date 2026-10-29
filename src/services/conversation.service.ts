@@ -802,6 +802,17 @@ class ConversationService {
     return { messages: found.slice(0, options.limit), more: found.length > options.limit };
   }
 
+  /** The threads idle compaction may have to finish after a restart: large, and used since `since`. */
+  async listIdleCompactionCandidates(
+    minTokens: number,
+    since: Date,
+  ): Promise<Array<{ id: string; agentId: string; userId: string; compactedAt: Date | null }>> {
+    return prisma.conversationThread.findMany({
+      where: { contextTokens: { gte: minTokens }, updatedAt: { gte: since } },
+      select: { id: true, agentId: true, userId: true, compactedAt: true },
+    });
+  }
+
   /**
    * Set the external thread ID on an existing thread.
    * Used to link an internal thread to an external channel thread.

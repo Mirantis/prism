@@ -42,6 +42,7 @@ import { initMeetingToolAvailability } from './lib/tool-collection';
 import { initComputerAvailability } from './services/computer/supported';
 import { cronSchedulerService } from './services/cron-scheduler.service';
 import { goalService } from './services/goal.service';
+import { compactionService } from './services/compaction.service';
 import { programStatusService } from './services/program-status.service';
 import { sessionManagerService } from './services/session-manager.service';
 import { slackAdapterService } from './services/slack-adapter.service';
@@ -364,6 +365,10 @@ const initialize = async () => {
 
     // Resume any goal that was still active when the process last stopped.
     await goalService.restoreActiveGoals(agent.id);
+
+    // Re-arm the idle compactions the restart dropped; best effort, a failure only
+    // leaves a conversation to its next turn.
+    compactionService.restoreIdle().catch((err) => logger.warn({ err }, '[Compaction] could not restore idle compactions'));
 
     await sessionManagerService.initialize();
     logger.info('Session manager initialized');

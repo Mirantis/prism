@@ -53,6 +53,9 @@ vi.mock('../config', () => ({
     databaseUrl: 'file::memory:',
     agentDefaults: {},
     heartbeatIntervalMs: 28_800_000,
+
+    // Chat turns ask for the default five-minute prompt cache.
+    chatCacheTtl: '5m',
     // Self-update: off in unit tests (dev shape). The gate matrix is asserted
     // in update.service.test.ts, which overrides these per case.
     appVersion: '',
