@@ -20,6 +20,11 @@ const { mockGetMCPTools, mockGetPluginTools, mockGetSubagents } = vi.hoisted(() 
 }));
 
 vi.mock('./mcp-client', () => ({ getMCPTools: mockGetMCPTools }));
+const { mockGetThreadSource } = vi.hoisted(() => ({ mockGetThreadSource: vi.fn() }));
+vi.mock('../services/conversation.service', async (original) => ({
+  ...(await original<typeof import('../services/conversation.service')>()),
+  conversationService: { getThreadSource: mockGetThreadSource },
+}));
 vi.mock('../services/plugin-mcp.service', () => ({
   pluginMcpService: { getTools: mockGetPluginTools },
 }));
@@ -215,5 +220,31 @@ describe('computer tool modes', () => {
     const { tools } = await collectTools({ userId: 'user', agentId: 'agent', mode, lockedIn: false, taskInvoker: vi.fn() });
     expect(tools.computer_browse).toBeDefined();
     expect(tools.computer_help).toBeDefined();
+  });
+});
+
+describe('compacted-history tool', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSubagents.mockResolvedValue([]);
+    mockGetMCPTools.mockResolvedValue({});
+    mockGetPluginTools.mockResolvedValue({});
+  });
+
+  const collect = (threadId?: string) =>
+    collectTools({ userId: 'user-1', agentId: 'agent-1', threadId, mode: 'chat', lockedIn: false, taskInvoker: vi.fn() });
+
+  it('is offered on a stored thread', async () => {
+    mockGetThreadSource.mockResolvedValue('DATABASE');
+    expect((await collect('thread-1')).tools).toHaveProperty('read_compacted_history');
+  });
+
+  it('is not offered on a thread read live from a channel, whose messages stay there', async () => {
+    mockGetThreadSource.mockResolvedValue('SLACK');
+    expect((await collect('thread-1')).tools).not.toHaveProperty('read_compacted_history');
+  });
+
+  it('is not offered to a run without a thread', async () => {
+    expect((await collect()).tools).not.toHaveProperty('read_compacted_history');
   });
 });

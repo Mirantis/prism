@@ -78,6 +78,8 @@ export interface AgentContext {
   lockedIn: boolean;
   isBootstrapPhase: boolean;
   conversationSummary: string | null;
+  /** Whether `read_compacted_history` can read the messages the summary replaced. */
+  compactedHistoryReadable?: boolean;
   recentMessages: ConversationMessage[];
   /** Where a heartbeat, scheduled-task or webhook run may post. Set, only what the agent posts is delivered. */
   postingCeiling?: PostingCeiling;
@@ -572,7 +574,7 @@ export function buildConversationHistory(
   // The compaction summary stands in for the rows it replaced. It is rebuilt on every
   // turn, so its text holds for any turn after the compaction, not only the next one.
   if (context.conversationSummary) {
-    push({ role: 'user', content: summaryMessage(context.conversationSummary) });
+    push({ role: 'user', content: summaryMessage(context.conversationSummary, context.compactedHistoryReadable === true) });
   }
 
   // Add recent messages (only user and assistant, skip system and empty messages)
@@ -649,11 +651,11 @@ export const SUMMARY_MESSAGE_OPENING = `<${SUMMARY_TAG}>`;
  * inside it, as in a memory block. The text depends only on the stored summary, so
  * every turn sends the same bytes.
  */
-function summaryMessage(summary: string): string {
+function summaryMessage(summary: string, historyReadable: boolean): string {
+  const lookup = historyReadable ? ` ${COMPACTED_HISTORY_TOOL_NAME} reads the earlier messages word for word.` : '';
   return (
     `${SUMMARY_MESSAGE_OPENING}\nThe earlier part of this conversation, summarized. ` +
-    `The messages after this one continue it. ${COMPACTED_HISTORY_TOOL_NAME} reads the earlier messages ` +
-    `word for word.\n\n${breakTag(summary, SUMMARY_TAG)}\n</${SUMMARY_TAG}>`
+    `The messages after this one continue it.${lookup}\n\n${breakTag(summary, SUMMARY_TAG)}\n</${SUMMARY_TAG}>`
   );
 }
 

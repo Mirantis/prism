@@ -11,9 +11,8 @@
  * lifecycles differ in the way that matters: an attachment is referenced by a DB
  * row, so its reaper works from a live set and needs boot reconciliation, while
  * nothing points at a spill. A spill's entire lifecycle is its mtime against the
- * TTL, plus a best-effort delete when the message that named it goes away. That is
- * simpler, and folding it into a live-set reaper would only make it look
- * complicated.
+ * TTL. That is simpler, and folding it into a live-set reaper would only make it
+ * look complicated.
  *
  * The agent reads a saved copy with `shell_exec`, so the notice carries the file's
  * path and the agent brings its own tool — `jq` for the JSON these payloads
