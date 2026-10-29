@@ -114,8 +114,8 @@ export const IDLE_COMPACTION_MIN_TOKENS = 200_000;
 
 /**
  * How long a chat conversation sits idle before it is compacted: just inside a
- * one-hour cache, which the summary then reads. On a five-minute cache it reads
- * the thread cold, which still costs less than the write its next turn would pay.
+ * one-hour cache, which the summary then reads. On a shorter cache it reads the
+ * thread cold, which costs at most the write its next turn would pay.
  */
 export const IDLE_COMPACTION_DELAY_MS = 54 * 60 * 1000;
 

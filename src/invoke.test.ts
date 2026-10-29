@@ -2680,7 +2680,33 @@ describe('invoke', () => {
       expect(later.messages[1]).toMatchObject({ content: 'skip the tests' });
     });
 
-    it('carries steering messages into the early-stopping summary call', async () => {
+    it("sends the provider's request-level cache options on the turn, the early stop and the compaction fork", async () => {
+    const cacheRequest = { openai: { promptCacheOptions: { ttl: '12h' } } };
+    mockCreateBedrockProvider.mockReturnValue(Object.assign(() => 'model-instance', {
+      cachePoint: () => ({}),
+      cacheRequest: () => cacheRequest,
+    }));
+    mockGetAgentContext.mockResolvedValue(createTestAgentContext({
+      recentMessages: [{ id: 'm1', role: 'USER', content: 'go', externalMessageId: null, internalStep: false }],
+    }));
+    mockContextUsageRecord.mockReturnValue({
+      threadId: 'thread-1', modelId: 'model-x', usedTokens: 190_000, windowTokens: 200_000, usedPercent: 95,
+    });
+    let calls = 0;
+    mockGenerateText.mockImplementation(async () => {
+      calls += 1;
+      if (calls > 1) return { text: 'summary', steps: [{ text: 'summary', toolCalls: [], toolResults: [] }] };
+      return { text: '', steps: Array.from({ length: 100 }, () => ({ text: '', toolCalls: [], toolResults: [] })) };
+    });
+
+    await invoke(createTestInvokeRequest({ threadId: 'thread-1' }));
+
+    expect(mockGenerateText.mock.calls[0][0].providerOptions).toBe(cacheRequest);
+    expect(mockGenerateText.mock.calls[1][0].providerOptions).toBe(cacheRequest);
+    expect(mockMaybeAutoCompact.mock.calls.at(-1)?.[0].cacheRequest).toBe(cacheRequest);
+  });
+
+  it('carries steering messages into the early-stopping summary call', async () => {
       // The summary call replays `summarizeSteps`, which only collapses the
       // model's own steps — without the injections the summary would answer the
       // original prompt and silently ignore what the user said since.

@@ -15,7 +15,7 @@ import { callModel } from './lib/model-call';
 import { config } from './config';
 import { logger } from './logger';
 import { createProvider, missingProviderSettings } from './lib/llm-providers/create-provider';
-import { cacheTtlFor, mergeProviderOptions, type DeferredToolProtocol } from './lib/llm-providers/llm-provider';
+import { cacheRequestOptions, cacheTtlFor, mergeProviderOptions, type DeferredToolProtocol } from './lib/llm-providers/llm-provider';
 import { collectTools, withToolsCacheControl } from './lib/tool-collection';
 import { summaryToolOptions, toolLedgerService, type AnchoredToolChange } from './services/tool-ledger.service';
 import { createPendingFileWrites } from './lib/pending-file-writes';
@@ -311,6 +311,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
 
     const model = provider(modelId);
     const cachePoint = provider.cachePoint(modelId, cacheTtlFor(request.mode));
+    const cacheRequest = cacheRequestOptions(provider, modelId, cacheTtlFor(request.mode));
     const toolChangeProtocol = provider.toolChanges?.(modelId);
     const deferredToolProtocol = provider.deferredTools?.(modelId);
 
@@ -532,6 +533,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       modelId,
       model,
       cachePoint,
+      cacheRequest,
       system: modelRequest.cachedSystem,
       tools: modelRequest.cachedTools,
       declaredTools: modelRequest.summaryDeclaresTools,
@@ -569,6 +571,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       tools: Object.keys(modelRequest.cachedTools).length > 0 ? modelRequest.cachedTools : undefined,
       toolChoice: 'auto',
       maxOutputTokens: MAX_OUTPUT_TOKENS,
+      providerOptions: cacheRequest,
       stopWhen: stepCountIs(STEP_LIMIT),
       abortSignal: request.abortSignal,
       ...turnTelemetry(`invoke-${request.mode}`),
@@ -773,6 +776,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
           messages: summaryMessages,
           ...modelRequest.summaryTools,
           maxOutputTokens: MAX_OUTPUT_TOKENS,
+          providerOptions: cacheRequest,
           abortSignal: request.abortSignal,
           ...turnTelemetry('invoke-early-stopping'),
           },
