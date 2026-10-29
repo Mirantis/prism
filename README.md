@@ -259,7 +259,8 @@ see [docs/webhooks.md](docs/webhooks.md).
 Through a delivery service, the other agents of a project can send the agent
 messages. Each one shows in the web conversation under "{name} · Agent",
 and the agent answers it as a colleague's request, never as your approval. The
-agent knows which other agents exist and what each one does. See
+platform that hosts the agent provides the tools to find and message other
+agents. See
 [docs/agent-messages.md](docs/agent-messages.md).
 
 ### Voice meetings
