@@ -1209,6 +1209,7 @@ What the operator sets on `docker run`:
 | `MODELS_DEV_URL` | Opt in to refreshing the model-window catalog from a registry once at startup (e.g. `https://models.dev/api.json`); unset = no outbound call, bundled catalog only | — (disabled) |
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-compact a thread when context occupancy reaches this percent of the model's window; `0` disables | `90` |
 | `COMPACTION_TAIL_MESSAGES` | Newest messages kept out of compaction (sent verbatim) | `6` |
+| `HEARTBEAT_INTERVAL_MS` | Heartbeat interval written into a new agent row; a stored interval wins. Outside `MIN_HEARTBEAT_INTERVAL_MS`–`MAX_HEARTBEAT_INTERVAL_MS` (1 minute–1 week) or not an integer, it warns and uses the default | `28800000` (8 h) |
 | `ATTACHMENT_TTL_HOURS` | How long attachment content (the media file under `<data dir>/media`) is kept before the hourly sweep deletes it; the metadata stub survives, so history keeps showing the file as *content expired*. A non-positive or unparseable value falls back to the default | `168` (7 days) |
 | `TOOL_OUTPUT_TTL_HOURS` | How long the saved whole copy of an oversized tool result is kept under `<data dir>/tool-outputs`. Same defensive parse. Compaction also reclaims eagerly: a compacted message never re-enters the context, so the ids it carried are unreachable | `168` (7 days) |
 | `OPENAI_API_KEY` | Chat/embedding credential and legacy direct-voice fallback. Managed Realtime uses its own resolved endpoint/key; see [voice configuration](docs/configuration.md#voice-meetings). | — |

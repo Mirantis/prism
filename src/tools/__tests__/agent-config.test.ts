@@ -220,6 +220,12 @@ describe('getAgentConfigTools', () => {
       ).rejects.toThrow('>= 60000ms');
     });
 
+    it('validates heartbeatIntervalMs maximum', async () => {
+      await expect(
+        tools.update_settings.execute({ setting: 'heartbeatIntervalMs', value: 604_800_001 }),
+      ).rejects.toThrow('<= 604800000ms');
+    });
+
     it('starts a fresh interval when heartbeatIntervalMs changes', async () => {
       await tools.update_settings.execute({ setting: 'heartbeatIntervalMs', value: 120000 });
       expect(mockHeartbeatService.startHeartbeat).toHaveBeenCalledWith(testAgent, 'new-interval');

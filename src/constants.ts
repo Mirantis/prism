@@ -4,8 +4,11 @@ export const MAX_OUTPUT_TOKENS = 16000;
 /** Heartbeat interval of a new agent when `HEARTBEAT_INTERVAL_MS` is unset or invalid: 8 h. */
 export const DEFAULT_HEARTBEAT_INTERVAL_MS = 28_800_000;
 
-/** The shortest heartbeat interval `update_settings` and `HEARTBEAT_INTERVAL_MS` accept. */
+/** The shortest heartbeat interval an agent may have: 1 minute. */
 export const MIN_HEARTBEAT_INTERVAL_MS = 60_000;
+
+/** The longest heartbeat interval an agent may have: 1 week. */
+export const MAX_HEARTBEAT_INTERVAL_MS = 7 * 24 * 60 * 60_000;
 
 /**
  * Max size of a single shared file (web upload or a file a channel received).
