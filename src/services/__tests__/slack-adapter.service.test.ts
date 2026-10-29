@@ -462,6 +462,7 @@ describe('Requirement: a Socket Mode connection that stays down is rebuilt', () 
     await onMessage({
       message: { user: 'U_HUMAN', text: 'are you there?', channel: 'D001', channel_type: 'im', ts: '1710000000.000100' },
       say: vi.fn(),
+      context: {},
     });
 
     expect(handleDmMessage).toHaveBeenCalledWith(
@@ -474,6 +475,7 @@ describe('Requirement: a Socket Mode connection that stays down is rebuilt', () 
       '1710000000.000100',
       undefined,
       [],
+      undefined,
     );
   });
 
@@ -847,7 +849,7 @@ describe('Requirement: Adapter telemetry', () => {
       null,
       expect.objectContaining({
         'slack.connection.id': 'conn-001',
-        'slack.socket_mode': 'false',
+        'slack.mode': 'post-only',
       }),
     );
   });

@@ -875,6 +875,10 @@ The tree under `src/` and each file's header comment describe the modules, and
   included, and on the `/api/ws` handshake. On a loopback bind it requires a loopback `Host`
   unless the request states `X-Forwarded-Host`, which closes DNS rebinding.
 - The Teams SDK validates the Bot Framework JWT before the handler runs.
+- Routed Slack mode's `SLACK_PORT` listener serves `POST /agents/slack/router`
+  alone and refuses a request without the ingress's
+  `x-nexus-webhook-verified: 1`. `docs/slack-router-protocol.md` is the router's
+  contract.
 - An outbound read (`lib/public-url.ts`) connects only to public internet
   addresses, and every DNS answer is checked.
 - `lib/tool-output-store.ts` keeps no database row; the file's mtime is its

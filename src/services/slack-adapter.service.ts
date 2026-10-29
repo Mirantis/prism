@@ -1,12 +1,14 @@
 /**
  * Slack Adapter Service (Agent-Runtime)
  *
- * Implements ChannelAdapter for Slack message delivery using Bolt SDK with Socket Mode.
+ * Implements ChannelAdapter for Slack message delivery using Bolt SDK.
  * Handles incoming Slack messages and routes them through the local conversation engine.
  *
  * Key features:
- * - Socket Mode for real-time bidirectional communication
- * - One Bolt app per connected workspace
+ * - Socket Mode for a Slack app of the agent's own; in routed mode a router
+ *   delivers the events of a shared Slack app (`slack-router.service.ts`), and
+ *   every Slack call goes through `SLACK_API_URL`
+ * - One Bolt app per connected workspace, whichever way its events arrive
  * - Message delivery via DM channel (personal mode) or Slack channel (team mode)
  * - Incoming message handling via local conversationEngineService.chat()
  * - Channel support for team agent participation
@@ -16,7 +18,7 @@ import { App, LogLevel, SayFn, SocketModeReceiver } from '@slack/bolt';
 import type { ChatPostMessageResponse, WebClient } from '@slack/web-api';
 import { logger } from '../logger';
 import prisma from '../lib/prisma';
-import { ThreadSource } from '@prisma/client';
+import { ConversationThread, ThreadSource } from '@prisma/client';
 import {
   ChannelAdapter,
   ChannelContext,
@@ -50,6 +52,7 @@ import { slackHeartbeatTriggerService } from './slack-heartbeat-trigger.service'
 import { heartbeatService } from './heartbeat.service';
 import { conversationService } from './conversation.service';
 import { conversationEngineService } from './conversation-engine.service';
+import { agentWorkspaceService } from './agent-workspace.service';
 import {
   loadGateAgent,
   threadReplyClassifierService,
@@ -60,10 +63,19 @@ import {
 import { SlackThreadProvider } from './providers/slack-thread.provider';
 import { getSlackHeartbeatThrottleQueue } from '../queues/slack-heartbeat-throttle-queue';
 import { getActiveSlackConnections, getSlackConnection } from '../lib/slack-source';
+import { clearSlackConfig, reloadSlackConfig, slackMode } from '../lib/slack-config';
 import { attachmentService, detectMediaType, classifyMediaType, threadScopedFileId } from './attachment.service';
 import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB, MAX_ATTACHMENTS_PER_MESSAGE } from '../constants';
 import { slackFileSource } from './slack-file-source';
-import { BOUNDED_SLACK_CLIENT_OPTIONS, stripBodyToken } from '../lib/slack-web-client';
+import { mayReceiveSlackToken, slackClientOptions, stripBodyToken } from '../lib/slack-web-client';
+import { HandedEventReceiver } from './slack-handed-receiver';
+import { slackRouterService, type SlackRouterHandlers } from './slack-router.service';
+import {
+  toBoltBody,
+  type RoutedLink,
+  type SlackEnvelope,
+  type SlackRoute,
+} from './slack-router-envelope';
 import { getProxyDispatcher } from '../lib/proxy-dispatcher';
 import { config } from '../config';
 import {
@@ -97,6 +109,18 @@ const SLACK_TS = /^\d+\.\d+$/;
 /** How long a send waits for the boot's Socket Mode start, which has no time limit of its own. */
 const SEND_CONNECT_WAIT_MS = 30_000;
 
+/** A user-group handle at the start of a message, which addresses an agent in routed mode. */
+const LEADING_USER_GROUP = /^<!subteam\^[A-Z0-9]+(?:\|[^>]*)?>/;
+
+/** A user-group handle anywhere in a message, with its `@handle` label when Slack gives one. */
+const USER_GROUP = /<!subteam\^[A-Z0-9]+(?:\|([^>]*))?>/g;
+
+/** The sender tag a stored channel message starts with (`buildSenderTaggedContent`). */
+const SENDER_TAG = /^<@[^>]+>: /;
+
+/** The most messages read from a Slack thread the agent joins in routed mode. */
+const JOINED_THREAD_READ_LIMIT = 200;
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -119,6 +143,28 @@ type SlackUserInfo = { real_name?: string; name?: string; is_bot?: boolean };
 const USER_INFO_TTL_MS = 5 * 60 * 1000;
 
 /**
+ * A Slack event the router delivered, as the Bolt listeners see it in their
+ * context. `route` says how the router addressed it to this agent. `handOff`
+ * ends the event's record just before its message is stored, by `chat()` or as
+ * an unanswered thread reply, so a restart during the turn resumes the turn
+ * from the stored message and does not handle the event again. A crash between
+ * those two writes loses the event.
+ */
+interface RoutedEvent {
+  route: SlackRoute;
+  handOff: () => void;
+}
+
+/** A message of a Slack thread the agent joins in routed mode. */
+interface JoinedThreadMessage {
+  ts: string;
+  user?: string;
+  bot_id?: string;
+  username?: string;
+  text?: string;
+}
+
+/**
  * The participation rule's verdict. `respond` passes the message on to the
  * thread classifier; `react` puts 👀 on a message addressed to another person.
  */
@@ -135,6 +181,8 @@ export interface SlackApp {
   teamName: string;
   isSocketMode: boolean;
   botUserId: string;
+  /** The receiver the router's events are handed to, in routed mode. */
+  routedReceiver?: HandedEventReceiver;
 }
 
 /** The fields of a Slack file object, on a message event or in a thread read, that the runtime reads. */
@@ -174,6 +222,25 @@ function gateText(message: GateMessage): string {
   return [message.text, message.files?.length ? describeSharedFiles(message.files) : ''].filter(Boolean).join(' ');
 }
 
+/**
+ * A routed message's text without the app's mentions and the user-group handle
+ * at its start: the router has already addressed it to this agent. A handle
+ * elsewhere names an agent, so it stays as its plain `@handle`.
+ */
+function withoutAddress(text: string, botUserId: string): string {
+  return text
+    .replace(new RegExp(`<@${botUserId}>`, 'g'), '')
+    .trim()
+    .replace(LEADING_USER_GROUP, '')
+    .trim()
+    .replace(USER_GROUP, (_markup, label: string | undefined) => label ?? '');
+}
+
+/** Whether a message tags somebody other than the bot, which addresses it to them. */
+function tagsSomebodyElse(text: string, botUserId: string): boolean {
+  return [...text.matchAll(/<@([A-Z0-9]+)>/g)].some((match) => match[1] !== botUserId);
+}
+
 // ============================================================================
 // Slack Adapter Service
 // ============================================================================
@@ -191,6 +258,10 @@ class SlackAdapterService implements ChannelAdapter {
    * is not here belongs to an app that was replaced or shut down.
    */
   private sockets = new Map<string, SocketHandle>();
+  /** A routed reconnect in progress, which concurrent callers share. */
+  private connecting?: Promise<void>;
+  /** The reads of joined Slack threads in progress, by stored thread id (routed mode). */
+  private joinedThreadReads = new Map<string, Promise<void>>();
 
   // Reads the live Slack thread; used here to await read-consistency. Created
   // lazily (not in a field initializer) because SlackThreadProvider imports
@@ -622,6 +693,15 @@ class SlackAdapterService implements ChannelAdapter {
   }
 
   private async conversationMembers(slackApp: SlackApp, target: LinkedTarget): Promise<Set<string>> {
+    // A DM's members are the bot and the person it is with. A routed proxy
+    // lists members of linked channels only.
+    if (target.kind === 'dm') {
+      const dm = await prisma.slackMapping.findFirst({
+        where: { dmChannelId: target.conversationId },
+        select: { slackUserId: true },
+      });
+      return new Set([slackApp.botUserId, ...(dm?.slackUserId ? [dm.slackUserId] : [])]);
+    }
     const members = new Set<string>();
     let cursor: string | undefined;
     try {
@@ -637,7 +717,7 @@ class SlackAdapterService implements ChannelAdapter {
     } catch (error: unknown) {
       if ((error as { data?: { error?: string } }).data?.error === 'missing_scope') {
         throw new SendRefusedError(
-          `The Slack app cannot read who is in ${describeTarget(target)}: it needs the channels:read scope, groups:read for a private channel, and im:read for a DM. Ask the operator to add the scope.`,
+          `The Slack app cannot read who is in ${describeTarget(target)}: it needs the channels:read scope, and groups:read for a private channel. Ask the operator to add the scope.`,
           'missing_scope',
         );
       }
@@ -778,7 +858,7 @@ class SlackAdapterService implements ChannelAdapter {
   async threadDestination(threadId: string, originChannelId?: string): Promise<ChannelDestination> {
     const thread = await prisma.conversationThread.findUnique({
       where: { id: threadId },
-      select: { externalThreadId: true, externalChannelId: true, threadSource: true, userId: true, agentId: true },
+      select: { externalThreadId: true, externalChannelId: true, userId: true, agentId: true },
     });
     let channelId = originChannelId ?? thread?.externalChannelId ?? undefined;
     if (!channelId && thread) {
@@ -800,11 +880,11 @@ class SlackAdapterService implements ChannelAdapter {
     return {
       channelId,
       channelLabel: channelId ? slackChannelLabel(channelId) : undefined,
-      // Only SLACK-sourced threads keep a real thread_ts in externalThreadId.
-      // A top-level DM thread is DATABASE-sourced and stores its `D…` channel
-      // id there, which is no thread_ts, so it resumes top-level in the DM.
+      // A Slack thread's conversation keeps its thread_ts in externalThreadId.
+      // A top-level DM's conversation stores its `D…` channel id there, which
+      // is no thread_ts, so it resumes top-level in the DM.
       channelThreadId:
-        thread?.threadSource === ThreadSource.SLACK ? (thread.externalThreadId ?? undefined) : undefined,
+        thread?.externalThreadId && SLACK_TS.test(thread.externalThreadId) ? thread.externalThreadId : undefined,
     };
   }
 
@@ -834,12 +914,19 @@ class SlackAdapterService implements ChannelAdapter {
    * Initialize Slack adapter
    *
    * Loads all active Slack connections from the database and creates
-   * Bolt apps with Socket Mode for each workspace.
+   * Bolt apps for each workspace. In routed mode the router's listener opens
+   * first, so a `connected` envelope reaches an agent that is in no workspace.
    */
   async initialize(): Promise<void> {
     logger.info('Initializing Slack adapter...');
 
     try {
+      if (config.slackBotToken && slackMode() === 'routed') {
+        await slackRouterService.start(this.routerHandlers()).catch((error: unknown) => {
+          logger.error({ err: error, port: config.slackPort }, 'Could not open the Slack router listener');
+        });
+      }
+
       // Source of truth: env `SLACK_BOT_TOKEN` (validated by slack-config).
       // An empty list is the not-configured case.
       const connections = await getActiveSlackConnections();
@@ -882,6 +969,8 @@ class SlackAdapterService implements ChannelAdapter {
    */
   async shutdown(): Promise<void> {
     logger.info('Shutting down Slack adapter...');
+
+    await slackRouterService.stop();
 
     // Stop the Socket Mode apps first: a stopped client reports `disconnected`,
     // which re-arms a watch and fails a reconnect that waits for hello.
@@ -938,11 +1027,12 @@ class SlackAdapterService implements ChannelAdapter {
     // App token is global (from environment), not per-workspace
     const appToken = process.env.SLACK_APP_TOKEN;
 
-    // Determine if Socket Mode is available
-    const isSocketMode = Boolean(appToken);
+    const mode = slackMode();
+    const isSocketMode = mode === 'socket';
     const logLevel = process.env.NODE_ENV === 'production' ? LogLevel.WARN : LogLevel.INFO;
 
-    // Create Bolt app. clientOptions forwards to the internal WebClient:
+    // Create Bolt app. clientOptions (`slackClientOptions`) forwards to the
+    // internal WebClient:
     //   - `fetch: stripBodyToken`: drops the `token` field
     //     from outbound bodies so bot-token auth flows only via
     //     `Authorization` header — required when the bot token is a
@@ -952,6 +1042,7 @@ class SlackAdapterService implements ChannelAdapter {
     //     ~30 minutes of them, for every post. `app.start()` still waits on
     //     `apps.connections.open` under the SDK's own `timeout: 0`, which is
     //     why `initialize()` does not wait for it.
+    //   - `slackApiUrl` from `SLACK_API_URL`, when set.
     //
     // The receiver's `installerOptions.clientOptions` is deliberately *not* those
     // bounds. `SocketModeReceiver` hands that field straight to
@@ -968,20 +1059,32 @@ class SlackAdapterService implements ChannelAdapter {
     //
     // The adapter builds the receiver itself, so the socket watch can read the
     // lifecycle events of its client, and a stop can retire its requests.
+    // Without an app token the receiver opens no connection: in routed mode
+    // the router's events are handed to it, and a post-only app gets none.
     //
     // `botId` and `botUserId` come from the boot's `auth.test`. Without them the
     // App constructor runs its own `auth.test`, and a failure of that call is an
     // unhandled rejection, which ends the process during an outage.
     const socketFetch = retirableFetch(stripBodyToken);
     const receiver = appToken
-      ? new SocketModeReceiver({ appToken, logLevel, installerOptions: { clientOptions: { fetch: socketFetch.fetch } } })
+      ? new SocketModeReceiver({
+          appToken,
+          logLevel,
+          installerOptions: {
+            clientOptions: {
+              fetch: socketFetch.fetch,
+              ...(config.slackApiUrl ? { slackApiUrl: config.slackApiUrl } : {}),
+            },
+          },
+        })
       : undefined;
+    const handedReceiver = receiver ? undefined : new HandedEventReceiver();
     const app = new App({
       token: botToken,
       botId: connection.botId,
       botUserId: connection.botUserId,
-      ...(receiver && { socketMode: true, receiver }),
-      clientOptions: { ...BOUNDED_SLACK_CLIENT_OPTIONS, fetch: stripBodyToken },
+      ...(receiver ? { socketMode: true, receiver } : { receiver: handedReceiver }),
+      clientOptions: slackClientOptions(),
       logLevel,
     });
 
@@ -1041,6 +1144,8 @@ class SlackAdapterService implements ChannelAdapter {
         return rebuild;
       }
       logger.info('Slack Socket Mode connected: %s', connection.teamName);
+    } else if (mode === 'routed') {
+      logger.info('Slack connection %s receives its events from the router', connection.teamName);
     } else {
       logger.warn('Slack connection %s - Socket Mode not available (no app token)', connection.teamName);
     }
@@ -1051,12 +1156,13 @@ class SlackAdapterService implements ChannelAdapter {
       teamName: connection.teamName,
       isSocketMode,
       botUserId: connection.botUserId,
+      ...(mode === 'routed' ? { routedReceiver: handedReceiver } : {}),
     });
 
     trackEvent('slack connection added', null, {
       ...(config.agentId ? { 'agent.id': config.agentId } : {}),
       'slack.connection.id': connectionId,
-      'slack.socket_mode': String(isSocketMode),
+      'slack.mode': mode,
     });
   }
 
@@ -1076,6 +1182,234 @@ class SlackAdapterService implements ChannelAdapter {
     });
   }
 
+  // ==========================================================================
+  // Routed mode
+  // ==========================================================================
+
+  /** What the router service does with each kind of envelope. */
+  private routerHandlers(): SlackRouterHandlers {
+    return {
+      connect: async (teamId) => {
+        await this.reconnect();
+        return this.apps.has(teamId);
+      },
+      disconnect: () => this.disconnectRouted(),
+      link: (teamId, link) => this.applyLink(teamId, link),
+      ready: async (teamId) => {
+        if (!this.apps.has(teamId)) await this.reconnect();
+        return this.apps.has(teamId);
+      },
+      handle: (envelope, handOff) => this.handleRouted(envelope, handOff),
+    };
+  }
+
+  /**
+   * Validate the token through the proxy again, and start the app of the
+   * workspace it is bound to in place of the app running. Concurrent calls
+   * share one attempt.
+   */
+  private reconnect(): Promise<void> {
+    this.connecting ??= (async () => {
+      const connection = await reloadSlackConfig();
+      for (const teamId of this.apps.keys()) {
+        if (teamId !== connection?.teamId) this.apps.delete(teamId);
+      }
+      if (connection) await this.initializeConnection(connection.id);
+    })().finally(() => {
+      this.connecting = undefined;
+    });
+    return this.connecting;
+  }
+
+  /** The router reported the agent removed from its workspace. Its links stay. */
+  private async disconnectRouted(): Promise<void> {
+    await this.connecting?.catch(() => undefined);
+    clearSlackConfig();
+    const workspaces = this.apps.size;
+    this.apps.clear();
+    logger.info('Slack disconnected by the router; waiting for the agent to be added again');
+    trackEvent('slack connection disconnected', null, {
+      ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+      'slack.workspaces': String(workspaces),
+    });
+  }
+
+  /** A person's DM or a channel, linked to the agent or unlinked, as the router reports it. */
+  private async applyLink(teamId: string, link: RoutedLink): Promise<void> {
+    const agent = await agentWorkspaceService.getAgent();
+    if (link.type === 'dm') {
+      if (link.op === 'add') {
+        await slackMappingService.upsertUserMapping(teamId, link.slackUserId, link.personId, agent.id, link.dmChannelId);
+      } else {
+        await slackMappingService.removeUserMapping(teamId, link.slackUserId);
+      }
+    } else if (link.op === 'add') {
+      const channelName = (await this.getChannelName(link.channelId, teamId)) ?? link.channelId;
+      await slackMappingService.upsertChannelMapping(teamId, link.channelId, agent.id, channelName, link.personId);
+    } else {
+      await slackMappingService.removeChannelMapping(link.channelId);
+    }
+    await this.rebuildUserCache();
+    trackEvent('slack link changed', link.personId, {
+      'agent.id': agent.id,
+      'slack.link.type': link.type,
+      'slack.link.op': link.op,
+    });
+  }
+
+  /** Run a routed Slack event through the workspace app's listeners. */
+  private async handleRouted(envelope: SlackEnvelope, handOff: () => void): Promise<void> {
+    const receiver = this.apps.get(envelope.teamId)?.routedReceiver;
+    if (!receiver) {
+      logger.warn({ eventId: envelope.eventId }, 'A routed Slack event arrived after its workspace was disconnected');
+      return;
+    }
+    const routed: RoutedEvent = { route: envelope.route, handOff };
+    await receiver.dispatch(toBoltBody(envelope), { routed });
+  }
+
+  /**
+   * The stored thread of a routed message. The first time the agent is in a
+   * Slack thread that already has messages, one `conversations.replies` call
+   * stores them, so the agent reads what was said before it joined.
+   */
+  private async storedThread(
+    owner: { userId: string; agentId: string },
+    channelId: string,
+    threadTs: string,
+    messageTs: string,
+    teamId: string,
+  ): Promise<ConversationThread> {
+    const thread = await conversationService.getOrCreateThreadByExternalId(owner.userId, owner.agentId, threadTs, {
+      source: ThreadSource.DATABASE,
+      channelId,
+    });
+    if (threadTs === messageTs) return thread;
+    // Two messages of a new thread can arrive together; the second waits for
+    // the first one's read.
+    let read = this.joinedThreadReads.get(thread.id);
+    if (!read) {
+      read = this.readJoinedThread(thread.id, channelId, threadTs, messageTs, teamId).finally(() => {
+        this.joinedThreadReads.delete(thread.id);
+      });
+      this.joinedThreadReads.set(thread.id, read);
+    }
+    await read;
+    return thread;
+  }
+
+  /**
+   * Store the messages of a Slack thread from before `messageTs`, once, when
+   * the stored thread has none. The agent's own posts keep their stored text;
+   * another agent's post is stored as a message from its sender.
+   */
+  private async readJoinedThread(
+    threadId: string,
+    channelId: string,
+    threadTs: string,
+    messageTs: string,
+    teamId: string,
+  ): Promise<void> {
+    if ((await conversationService.getRecentMessages(threadId, 1)).length > 0) return;
+    const slackApp = this.apps.get(teamId);
+    if (!slackApp) return;
+
+    let earlier: JoinedThreadMessage[];
+    try {
+      const reply = await slackApp.app.client.conversations.replies({
+        channel: channelId,
+        ts: threadTs,
+        limit: JOINED_THREAD_READ_LIMIT,
+      });
+      earlier = ((reply.messages ?? []) as JoinedThreadMessage[]).filter((m) => Number(m.ts) < Number(messageTs));
+    } catch (error: unknown) {
+      logger.warn(
+        { err: error, channel: channelId, threadTs },
+        'Could not read the Slack thread the agent joined; it starts without the earlier messages',
+      );
+      return;
+    }
+
+    const own = await prisma.conversationMessage.findMany({
+      where: { role: 'AGENT', externalMessageId: { in: earlier.map((m) => m.ts) } },
+      select: { externalMessageId: true, content: true, triggeredBy: true, triggerName: true },
+    });
+    const ownByTs = new Map(own.map((m) => [m.externalMessageId, m]));
+    for (const message of earlier) {
+      const mine = ownByTs.get(message.ts);
+      if (mine) {
+        await conversationService.addMessage(threadId, {
+          role: 'AGENT',
+          content: mine.content,
+          triggeredBy: mine.triggeredBy,
+          ...(mine.triggerName ? { triggerName: mine.triggerName } : {}),
+        });
+        continue;
+      }
+      const text = await this.resolveMentions(message.text ?? '', teamId);
+      const senderId = message.bot_id ?? message.user;
+      if (!text || !senderId) continue;
+      const senderName = message.bot_id
+        ? message.username
+        : await this.getUserInfo(senderId, teamId).then((info) => info?.real_name || info?.name);
+      await conversationService.addMessage(threadId, {
+        role: 'USER',
+        content: this.buildSenderTaggedContent(senderId, senderName, text),
+        triggeredBy: 'USER_INPUT',
+        senderExternalId: senderId,
+        senderName,
+      });
+    }
+  }
+
+  /**
+   * The participation verdict for a thread reply the router did not address
+   * to the agent. The router sends such a reply only from a thread the agent
+   * takes part in, so the verdict is `react` when the reply tags somebody
+   * else, else `respond`. The transcript is the stored thread.
+   */
+  private async storedThreadGate(
+    threadId: string,
+    arriving: Required<Pick<GateMessage, 'user' | 'text' | 'ts'>> & Pick<GateMessage, 'files'>,
+    botUserId: string,
+  ): Promise<{ result: ThreadParticipation; messages: GateMessage[] }> {
+    const history = await conversationService.getRecentMessages(threadId, THREAD_TRANSCRIPT_LINES - 1);
+    const messages: GateMessage[] = history.map((m) =>
+      m.role === 'AGENT'
+        ? { user: botUserId, text: m.content }
+        : { user: m.senderExternalId ?? undefined, username: m.senderName ?? undefined, text: m.content.replace(SENDER_TAG, '') },
+    );
+    messages.push(arriving);
+    const action = tagsSomebodyElse(arriving.text, botUserId) ? 'react' : 'respond';
+    return { result: { action }, messages };
+  }
+
+  /** Store a routed thread reply the agent does not answer. */
+  private async storeUnanswered(
+    threadId: string,
+    slackUserId: string,
+    text: string,
+    teamId: string,
+    routed: RoutedEvent | undefined,
+  ): Promise<void> {
+    const sender = await this.getUserInfo(slackUserId, teamId);
+    const senderName = sender?.real_name || sender?.name;
+    const content = this.buildSenderTaggedContent(slackUserId, senderName, await this.resolveMentions(text, teamId));
+    routed?.handOff();
+    await conversationService.addMessage(threadId, {
+      role: 'USER',
+      content,
+      triggeredBy: 'USER_INPUT',
+      senderExternalId: slackUserId,
+      senderName,
+    });
+  }
+
+  /** The agent's name, which Slack-facing text uses for the product. */
+  private async agentName(): Promise<string> {
+    return (await agentWorkspaceService.getAgent()).name;
+  }
+
   /**
    * Set up message handler for incoming Slack DM messages
    */
@@ -1083,7 +1417,8 @@ class SlackAdapterService implements ChannelAdapter {
     logger.info('Setting up message handler for team %s, bot %s', teamId, botUserId);
 
     // Handle direct messages to the bot
-    app.message(async ({ message, say }) => {
+    app.message(async ({ message, say, context }) => {
+      const routed = context.routed as RoutedEvent | undefined;
       try {
         logger.info('RAW Slack message received');
 
@@ -1128,7 +1463,8 @@ class SlackAdapterService implements ChannelAdapter {
       }
 
       const slackUserId: string = msg.user;
-      const messageText: string = (msg.text || '').trim();
+      const rawText = (msg.text || '').trim();
+      const messageText: string = routed ? withoutAddress(rawText, botUserId) : rawText;
       const channelId: string = msg.channel;
       const files: SlackFileMeta[] = hasFiles ? msg.files! : [];
 
@@ -1139,11 +1475,11 @@ class SlackAdapterService implements ChannelAdapter {
         return;
       }
 
-      // Route based on channel type
-      if (msg.channel_type === 'im') {
+      // Route based on channel type, or on the router's route
+      if (routed ? routed.route === 'dm' : msg.channel_type === 'im') {
         logger.info('Routing to DM handler');
         // DM message - existing logic
-        await this.handleDmMessage(connectionId, slackUserId, messageText, channelId, say, teamId, msg.ts, msg.thread_ts, files);
+        await this.handleDmMessage(connectionId, slackUserId, messageText, channelId, say, teamId, msg.ts, msg.thread_ts, files, routed);
       } else {
         logger.info('Routing to channel handler');
         // Channel message - route to channel handler
@@ -1157,7 +1493,8 @@ class SlackAdapterService implements ChannelAdapter {
           say,
           botUserId,
           teamId,
-          files
+          files,
+          routed,
         );
       }
       } catch (error) {
@@ -1191,7 +1528,8 @@ class SlackAdapterService implements ChannelAdapter {
     teamId: string,
     eventTs?: string,
     threadTs?: string,
-    files: SlackFileMeta[] = []
+    files: SlackFileMeta[] = [],
+    routed?: RoutedEvent,
   ): Promise<void> {
     logger.info('Slack DM from %s', slackUserId);
 
@@ -1202,7 +1540,8 @@ class SlackAdapterService implements ChannelAdapter {
       const mapping = await slackMappingService.findUserMapping(connectionId, slackUserId);
 
       if (!mapping) {
-        const code = this.parseLinkCode(messageText);
+        // In routed mode the router links accounts, so no message is a code.
+        const code = !routed && this.parseLinkCode(messageText);
         if (code) {
           // Verify directly using local service (agent-runtime owns verification)
           const result = await this.verifyDmLinkCode(code, slackUserId, dmChannelId);
@@ -1222,8 +1561,11 @@ class SlackAdapterService implements ChannelAdapter {
           slackUserId,
           connectionId,
         );
+        const agentName = await this.agentName();
         await say(
-          "👋 Hi! I don't recognize you yet.\n\nTo link your Prism Agent account:\n1. Go to *Settings → Channels* in the web app\n2. Click *Link Account* under Slack\n3. Send me the 6-character code you receive"
+          routed
+            ? `👋 Hi! I don't recognize you yet. Link your Slack account to ${agentName}, then send your message again.`
+            : `👋 Hi! I don't recognize you yet.\n\nTo link your Slack account to ${agentName}:\n1. Go to *Settings → Channels* in the web app\n2. Click *Link Account* under Slack\n3. Send me the 6-character code you receive`
         );
         return;
       }
@@ -1277,13 +1619,21 @@ class SlackAdapterService implements ChannelAdapter {
       //     returning the parent message + all replies straight from Slack.
       //     Without this the parent lives on the top-level ConversationThread
       //     row and is invisible to the threaded turn's context builder.
-      const threadKey = threadTs ?? dmChannelId;
-      const dmThread = await conversationService.getOrCreateThreadByExternalId(
-        mapping.lensUserId!,
-        mapping.agentId,
-        threadKey,
-        threadTs ? { source: ThreadSource.SLACK, channelId: dmChannelId } : undefined,
-      );
+      //     In routed mode the thread's history is stored instead
+      //     (`storedThread`).
+      const owner = { userId: mapping.lensUserId!, agentId: mapping.agentId };
+      const dmThread =
+        threadTs && routed
+          ? await this.storedThread(owner, dmChannelId, threadTs, eventTs ?? threadTs, teamId)
+          : await conversationService.getOrCreateThreadByExternalId(
+              owner.userId,
+              owner.agentId,
+              threadTs ?? dmChannelId,
+              threadTs ? { source: ThreadSource.SLACK, channelId: dmChannelId } : undefined,
+            );
+
+      // chat() stores the message next (see RoutedEvent).
+      routed?.handOff();
 
       // Route through local conversation engine (direct call).
       // metadata.channel='slack' scopes delivery to Slack only; channelThreadId
@@ -1332,9 +1682,12 @@ class SlackAdapterService implements ChannelAdapter {
     say: SayFn,
     botUserId: string,
     teamId: string,
-    files: SlackFileMeta[] = []
+    files: SlackFileMeta[] = [],
+    routed?: RoutedEvent,
   ): Promise<void> {
-    const isMentioned = messageText.includes(`<@${botUserId}>`);
+    // A router says whether it addressed the message to this agent, by a
+    // mention, a user group or the agent's name.
+    const isMentioned = routed ? routed.route === 'mention' : messageText.includes(`<@${botUserId}>`);
 
     // File-only messages reach the queue paths below with empty text — those
     // paths never download files, so describe them instead of enqueueing ''
@@ -1368,7 +1721,8 @@ class SlackAdapterService implements ChannelAdapter {
     if (!mapping) {
       // Only an unlinked channel takes a link code. Strip the bot mention first
       // so "@Bot ABC123" is detected as a code.
-      const code = this.parseLinkCode(messageText.replace(new RegExp(`<@${botUserId}>`, 'g'), ''));
+      // In routed mode the router links channels, so no message is a code.
+      const code = !routed && this.parseLinkCode(messageText.replace(new RegExp(`<@${botUserId}>`, 'g'), ''));
       if (code) {
         logger.info('Received potential verification code in channel %s', channelId);
         const result = await this.verifyAndLinkChannel(code, channelId, slackUserId, teamId);
@@ -1386,8 +1740,9 @@ class SlackAdapterService implements ChannelAdapter {
       }
 
       logger.info('Slack channel %s is not linked to an agent — message not handled', channelId);
-      // Channel not linked — if the bot was @mentioned, prompt the user to link
-      if (isMentioned) {
+      // Channel not linked — if the bot was @mentioned, prompt the user to link.
+      // A routed agent may post only in its linked channels.
+      if (isMentioned && !routed) {
         await say("I'm not activated in this channel yet.\n\nPlease enter a verification code from your agent settings to link me.");
       }
       return;
@@ -1403,6 +1758,7 @@ class SlackAdapterService implements ChannelAdapter {
       return;
     }
     const userId = mapping.lensUserId;
+    const owner = { userId, agentId: mapping.agentId };
 
     logger.info(
       'Slack channel message from %s in %s (threadTs=%s, isMentioned=%s, botUserId=%s, text=%s)',
@@ -1428,12 +1784,19 @@ class SlackAdapterService implements ChannelAdapter {
     if (threadTs && !isMentioned) {
       // `conversations.replies` is eventually consistent, so the gate is given
       // the message it must judge rather than relying on the read to hold it.
-      const { result, messages } = await this.isBotInThread(
-        channelId,
-        threadTs,
-        mapping.connection.teamId,
-        { user: slackUserId, text: messageText, ts: messageTs, files },
-      );
+      // In routed mode the gate reads the stored thread instead.
+      const arriving = { user: slackUserId, text: messageText, ts: messageTs, files };
+      const stored = routed
+        ? await this.storedThread(owner, channelId, threadTs, messageTs, mapping.connection.teamId)
+        : undefined;
+      const { result, messages } = stored
+        ? await this.storedThreadGate(stored.id, arriving, botUserId)
+        : await this.isBotInThread(channelId, threadTs, mapping.connection.teamId, arriving);
+      // A stored thread keeps a reply the agent does not answer, so the next
+      // turn and the next classification read it.
+      const keepUnanswered = async (): Promise<void> => {
+        if (stored) await this.storeUnanswered(stored.id, slackUserId, queueText, mapping.connection.teamId, routed);
+      };
 
       if (result.action === 'ignore') {
         logger.info(
@@ -1446,6 +1809,7 @@ class SlackAdapterService implements ChannelAdapter {
 
       if (result.action === 'react') {
         await this.addReaction(channelId, messageTs, mapping.connection.teamId, 'eyes');
+        await keepUnanswered();
         logger.info(
           'Channel message not answered: thread message addressed to another person, reacted (agent=%s, channel=%s)',
           mapping.agentId,
@@ -1458,6 +1822,7 @@ class SlackAdapterService implements ChannelAdapter {
       const llmResult = await this.classifyThreadMessage(messages, botUserId, mapping.agentId, mapping.connection.teamId);
 
       if (llmResult.action === 'ignore') {
+        await keepUnanswered();
         logger.info(
           'Channel message not answered: LLM classifier decided to ignore thread message (agent=%s, channel=%s)',
           mapping.agentId,
@@ -1484,9 +1849,11 @@ class SlackAdapterService implements ChannelAdapter {
       });
 
       // Get or create thread bound to this Slack thread
-      const thread = await conversationService.getOrCreateThreadByExternalId(
-        userId, mapping.agentId, slackThreadId, { source: ThreadSource.SLACK, channelId }
-      );
+      const thread = routed
+        ? await this.storedThread(owner, channelId, slackThreadId, messageTs, mapping.connection.teamId)
+        : await conversationService.getOrCreateThreadByExternalId(
+            userId, mapping.agentId, slackThreadId, { source: ThreadSource.SLACK, channelId }
+          );
 
       // Add participant tracking
       const userInfo = await this.getUserInfo(slackUserId, mapping.connection.teamId);
@@ -1515,8 +1882,12 @@ class SlackAdapterService implements ChannelAdapter {
       // on the user's turn rather than the bot's previous reply (which Bedrock
       // rejects: "the conversation must end with a user message"). Throws on
       // timeout — surfaced to the user by the catch below — so we never respond
-      // to stale context.
-      await this.slackThreadProvider.waitForExternalMessage(thread.id, messageTs);
+      // to stale context. A routed thread's history is stored, so it waits for
+      // nothing.
+      if (!routed) await this.slackThreadProvider.waitForExternalMessage(thread.id, messageTs);
+
+      // chat() stores the message next (see RoutedEvent).
+      routed?.handOff();
 
       // Route through local conversation engine (direct call)
       await conversationEngineService.chat({
@@ -1724,11 +2095,12 @@ class SlackAdapterService implements ChannelAdapter {
    */
   private setupChannelEventHandlers(app: App, connectionId: string, botUserId: string): void {
     // Handle bot joining a channel
-    app.event('member_joined_channel', async ({ event, client }) => {
+    app.event('member_joined_channel', async ({ event, client, context }) => {
       const evt = event as { user: string; channel: string };
 
-      // Only handle when the bot itself joins
-      if (evt.user !== botUserId) {
+      // Only handle when the bot itself joins. A routed bot is linked by the
+      // router, so it asks for no code.
+      if (evt.user !== botUserId || context.routed) {
         return;
       }
 
@@ -1798,14 +2170,14 @@ class SlackAdapterService implements ChannelAdapter {
     });
 
     if (!verification) {
-      return { success: false, message: 'That code is not valid. Generate a new code in Prism Agent, under Settings → Channels.' };
+      return { success: false, message: `That code is not valid. Generate a new code for ${await this.agentName()} under Settings → Channels.` };
     }
 
     if (new Date() > verification.expiresAt) {
       await prisma.slackVerificationCode.delete({
         where: { code_type: { code: upperCode, type: 'DM' } },
       }).catch(() => {});
-      return { success: false, message: 'That code has expired. Generate a new code in Prism Agent, under Settings → Channels.' };
+      return { success: false, message: `That code has expired. Generate a new code for ${await this.agentName()} under Settings → Channels.` };
     }
 
     // Check if this Slack user is already linked to someone
@@ -1820,7 +2192,7 @@ class SlackAdapterService implements ChannelAdapter {
       if (existingSlackLink.lensUserId === verification.lensUserId) {
         return { success: false, message: 'Your Slack account is already linked to another agent. Unlink it first from that agent\'s settings.' };
       }
-      return { success: false, message: 'This Slack account is already linked to another Prism Agent user.' };
+      return { success: false, message: `This Slack account is already linked to another user of ${await this.agentName()}.` };
     }
 
     // Atomic: create mapping + consume code
@@ -1893,14 +2265,14 @@ class SlackAdapterService implements ChannelAdapter {
     });
 
     if (!verification) {
-      return { success: false, message: 'That code is not valid. Generate a new code in Prism Agent, under Settings → Channels.' };
+      return { success: false, message: `That code is not valid. Generate a new code for ${await this.agentName()} under Settings → Channels.` };
     }
 
     if (new Date() > verification.expiresAt) {
       await prisma.slackVerificationCode.delete({
         where: { code_type: { code: upperCode, type: 'CHANNEL' } },
       }).catch(() => {});
-      return { success: false, message: 'That code has expired. Generate a new code in Prism Agent, under Settings → Channels.' };
+      return { success: false, message: `That code has expired. Generate a new code for ${await this.agentName()} under Settings → Channels.` };
     }
 
     // Check if this channel is already linked
@@ -1977,10 +2349,8 @@ class SlackAdapterService implements ChannelAdapter {
       // addressed to that person. Only this message is read: a tag earlier in
       // the thread is addressed to somebody else and leaves a later message
       // aimed at the bot answerable.
-      for (const match of arriving.text.matchAll(/<@([A-Z0-9]+)>/g)) {
-        if (match[1] !== slackApp.botUserId) {
-          return { result: { action: 'react' }, messages };
-        }
+      if (tagsSomebodyElse(arriving.text, slackApp.botUserId)) {
+        return { result: { action: 'react' }, messages };
       }
 
       // Bot is participating and the message is not addressed elsewhere — pass to LLM
@@ -2182,6 +2552,13 @@ class SlackAdapterService implements ChannelAdapter {
         const storedKey = ctx.threadScoped && ctx.threadId ? threadScopedFileId(ctx.threadId, file.id) : file.id;
         if (await attachmentService.existsByExternalFileId(storedKey)) {
           logger.info('[SlackAdapter] file %s already stored; skipping', file.id);
+          continue;
+        }
+
+        // The download carries the bot token, so it goes to Slack or the Slack API proxy only.
+        if (!mayReceiveSlackToken(source.url)) {
+          logger.warn({ fileId: file.id }, '[SlackAdapter] file download URL is not on Slack or the Slack API proxy; not fetched');
+          failures.push({ filename, reason: 'its download address is not on Slack' });
           continue;
         }
 

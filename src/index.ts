@@ -55,6 +55,7 @@ import { messageDeliveryService } from './services/message-delivery.service';
 import { conversationService, type MessageStored } from './services/conversation.service';
 import { slackMessageQueueService } from './services/slack-message-queue.service';
 import { SlackThreadProvider } from './services/providers/slack-thread.provider';
+import { slackRouterService } from './services/slack-router.service';
 import { ThreadSource } from '@prisma/client';
 import { pluginMcpService } from './services/plugin-mcp.service';
 import { closeMCPClients } from './lib/mcp-client';
@@ -356,6 +357,7 @@ const initialize = async () => {
       cron: (items, givenUp) => cronSchedulerService.resume(items, givenUp),
       heartbeat: (items, givenUp) => heartbeatService.resume(items, givenUp),
       monitor: (items, givenUp) => getMonitorManager().resume(items, givenUp),
+      'routed-event': (items) => slackRouterService.resume(items),
     });
 
     // Boot keeps the schedule the last run set, so a restart cannot defer a

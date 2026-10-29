@@ -8,10 +8,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Prisma } from '@prisma/client';
 
 const { mockPrisma, mockTrackEvent } = vi.hoisted(() => ({
   mockPrisma: {
     pendingWork: {
+      create: vi.fn(),
       upsert: vi.fn(),
       updateMany: vi.fn(),
       deleteMany: vi.fn(),
@@ -47,6 +49,7 @@ function resumers(): Record<PendingWorkKind, PendingWorkResumer & ReturnType<typ
     'coding-task': vi.fn().mockResolvedValue(undefined),
     cron: vi.fn().mockResolvedValue(undefined),
     heartbeat: vi.fn().mockResolvedValue(undefined),
+    'routed-event': vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -79,6 +82,26 @@ describe('PendingWorkService', () => {
       mockPrisma.pendingWork.upsert.mockRejectedValueOnce(new Error('disk full'));
 
       await expect(service.begin('webhook', 'run-1', {})).rejects.toThrow('disk full');
+    });
+
+    it('claims work that arrives more than once only the first time', async () => {
+      mockPrisma.pendingWork.create
+        .mockResolvedValueOnce({})
+        .mockRejectedValueOnce(
+          new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: 'test' }),
+        );
+
+      expect(await service.claim('routed-event', 'evt-1', { eventId: 'evt-1' })).toBe(true);
+      expect(await service.claim('routed-event', 'evt-1', { eventId: 'evt-1' })).toBe(false);
+      expect(mockPrisma.pendingWork.create).toHaveBeenCalledWith({
+        data: { kind: 'routed-event', key: 'evt-1', payload: { eventId: 'evt-1' } },
+      });
+    });
+
+    it('lets a claim fail when the row cannot be written', async () => {
+      mockPrisma.pendingWork.create.mockRejectedValueOnce(new Error('disk full'));
+
+      await expect(service.claim('routed-event', 'evt-1', {})).rejects.toThrow('disk full');
     });
 
     it('deletes the row of each piece of work that ended, once', async () => {

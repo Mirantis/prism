@@ -5,7 +5,7 @@
  * so tests don't hit the network.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mocks created via vi.hoisted so vi.mock below can reference them.
 const { mockAuthTest, mockBotsInfo } = vi.hoisted(() => ({
@@ -25,11 +25,37 @@ vi.mock('../config', () => ({
   config: {
     slackBotToken: undefined as string | undefined,
     slackExpectedAppId: undefined as string | undefined,
+    slackApiUrl: undefined as string | undefined,
   },
 }));
 
 import { config } from '../config';
-import { getSlackConfig, __resetSlackConfigForTests } from './slack-config';
+import {
+  clearSlackConfig,
+  getSlackConfig,
+  reloadSlackConfig,
+  slackMode,
+  __resetSlackConfigForTests,
+} from './slack-config';
+
+/** What `@slack/web-api` throws for a Slack error answer. */
+function slackError(code: string): Error {
+  return Object.assign(new Error(`An API error occurred: ${code}`), { data: { ok: false, error: code } });
+}
+
+const AUTH = { team_id: 'T123', team: 'Test Team', user_id: 'UBOT', bot_id: 'B123' };
+
+/** Run each test of the block without the developer's own app token. */
+function withoutAppToken(): void {
+  const appToken = process.env.SLACK_APP_TOKEN;
+  beforeEach(() => {
+    delete process.env.SLACK_APP_TOKEN;
+  });
+  afterEach(() => {
+    if (appToken === undefined) delete process.env.SLACK_APP_TOKEN;
+    else process.env.SLACK_APP_TOKEN = appToken;
+  });
+}
 
 describe('slack-config', () => {
   beforeEach(() => {
@@ -147,5 +173,80 @@ describe('slack-config', () => {
     mockAuthTest.mockResolvedValue({ team_id: 'T123', team: 'Test' });
 
     await expect(getSlackConfig()).rejects.toThrow(/bot ID/);
+  });
+
+  it('fails on a refused token when no router binds it', async () => {
+    (config as { slackBotToken?: string }).slackBotToken = 'xoxb-TEST';
+    mockAuthTest.mockRejectedValue(slackError('invalid_auth'));
+
+    await expect(getSlackConfig()).rejects.toThrow(/invalid_auth/);
+  });
+
+  describe('routed mode', () => {
+    withoutAppToken();
+
+    beforeEach(() => {
+      (config as { slackBotToken?: string }).slackBotToken = '__nexus_cred:proxy__';
+      (config as { slackApiUrl?: string }).slackApiUrl = 'https://api.example.test/slack/api/';
+    });
+
+    afterEach(() => {
+      (config as { slackApiUrl?: string }).slackApiUrl = undefined;
+    });
+
+    it.each(['invalid_auth', 'not_authed'])(
+      'waits for the router while the proxy answers %s',
+      async (code) => {
+        mockAuthTest.mockRejectedValue(slackError(code));
+
+        expect(await getSlackConfig()).toBeNull();
+        expect(await getSlackConfig()).toBeNull();
+        expect(mockAuthTest).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it('fails on any other error, so a later call tries again', async () => {
+      mockAuthTest.mockRejectedValueOnce(slackError('ratelimited')).mockResolvedValueOnce(AUTH);
+
+      await expect(getSlackConfig()).rejects.toThrow(/ratelimited/);
+      expect((await getSlackConfig())?.teamId).toBe('T123');
+    });
+
+    it('validates the token again when the router reports the agent connected, and forgets it on disconnect', async () => {
+      mockAuthTest.mockRejectedValueOnce(slackError('invalid_auth')).mockResolvedValueOnce(AUTH);
+
+      expect(await getSlackConfig()).toBeNull();
+      expect((await reloadSlackConfig())?.teamId).toBe('T123');
+      expect((await getSlackConfig())?.teamId).toBe('T123');
+
+      clearSlackConfig();
+      expect(await getSlackConfig()).toBeNull();
+      expect(mockAuthTest).toHaveBeenCalledTimes(2);
+    });
+  });
+});
+
+describe('slackMode', () => {
+  withoutAppToken();
+
+  afterEach(() => {
+    (config as { slackApiUrl?: string }).slackApiUrl = undefined;
+  });
+
+  it('is Socket Mode with an app token, whatever else is set', () => {
+    process.env.SLACK_APP_TOKEN = 'xapp-test';
+    (config as { slackApiUrl?: string }).slackApiUrl = 'https://api.example.test/slack/api/';
+
+    expect(slackMode()).toBe('socket');
+  });
+
+  it('is routed with a Slack API URL and no app token', () => {
+    (config as { slackApiUrl?: string }).slackApiUrl = 'https://api.example.test/slack/api/';
+
+    expect(slackMode()).toBe('routed');
+  });
+
+  it('only posts with neither', () => {
+    expect(slackMode()).toBe('post-only');
   });
 });
