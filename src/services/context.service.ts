@@ -56,6 +56,7 @@ class ContextService {
     if (includeConversation && resolvedThreadId) {
       const threadContext = await conversationService.getThreadContext(resolvedThreadId);
       context.conversationSummary = threadContext.compactionSummary;
+      context.compactedHistoryReadable = threadContext.threadSource === ThreadSource.DATABASE;
       context.recentMessages = await this.attachFiles(resolvedThreadId, threadContext.threadSource, threadContext.messages);
     }
 

@@ -23,7 +23,10 @@ const PAGE_SIZE = 20;
  */
 const PAGE_CHARS = 20_000;
 
-/** Each tool result in a page is cut to this many characters, around the query's match when there is one. */
+/**
+ * Each message text, tool input and tool result in a page is cut to this many
+ * characters, around the query's match when there is one, so every page fits the budget.
+ */
 const OUTPUT_CHARS = 2_000;
 
 export function getConversationHistoryTools(threadId: string, workspaceRoot?: string): Record<string, Tool> {
@@ -76,14 +79,14 @@ function toEntry(message: CompactedMessage, query: string | undefined, workspace
   return {
     from: authorOf(message),
     at: message.createdAt.toISOString(),
-    text: message.content,
+    text: clip(message.content, query),
     ...(Array.isArray(message.toolCalls) && message.toolCalls.length > 0
       ? {
           toolCalls: message.toolCalls.map((call) => {
             const { tool: name, input, output, truncated } = (call ?? {}) as StoredCall;
             return {
               tool: name,
-              input,
+              input: typeof input === 'string' ? clip(input, query) : clipJson(input, query),
               output: clip(output, query),
               // The saved whole result, which the shell reads; its notice in `output` may be cut away.
               ...(truncated?.spillId ? { savedAt: toolOutputPath(truncated.spillId, workspaceRoot) } : {}),
@@ -101,7 +104,14 @@ interface StoredCall {
   truncated?: { spillId?: string };
 }
 
-/** The first `OUTPUT_CHARS` of a long result, or the window around the query's first match in it. */
+/** A tool input given as an object, cut as text when its JSON is long. */
+function clipJson(input: unknown, query: string | undefined): unknown {
+  if (input === undefined) return input;
+  const json = JSON.stringify(input);
+  return json.length <= OUTPUT_CHARS ? input : clip(json, query);
+}
+
+/** The first `OUTPUT_CHARS` of a long text, or the window around the query's first match in it. */
 function clip(output: unknown, query: string | undefined): unknown {
   if (typeof output !== 'string' || output.length <= OUTPUT_CHARS) return output;
   const match = query ? output.toLowerCase().indexOf(query.toLowerCase()) : -1;

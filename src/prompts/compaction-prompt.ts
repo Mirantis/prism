@@ -9,9 +9,6 @@
  * present earlier in the message array as the summary message `context-builder.ts`
  * injects, and the fold-in rule below merges it into the new, complete summary
  * that replaces it.
- *
- * An operator steers the summary with a `## Compact Instructions` section in the Agent
- * Guide, which the summary request receives in its system prompt.
  */
 export const COMPACTION_PROMPT = `Summarize this conversation so the summary can replace the full history for a future assistant that has seen none of it. Produce only the summary, structured exactly as follows:
 
@@ -54,5 +51,4 @@ Rules:
 - Record only what happened. No speculation or invented rationale; mark unknowns as unknown.
 - Capture what tool calls did and what they returned; the compacted history will not include them.
 - If a previous conversation summary appears above, fold its still-relevant content into this summary — it will be discarded.
-- If your Agent Guide has a "## Compact Instructions" section, follow it.
 - Never mention this summary, the compaction, or that earlier context is gone.`;

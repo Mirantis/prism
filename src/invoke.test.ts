@@ -149,7 +149,7 @@ vi.mock('./tools/skills/index', () => ({
 }));
 
 vi.mock('./services/conversation.service', () => ({
-  conversationService: { addMessage: mockAddMessage },
+  conversationService: { addMessage: mockAddMessage, getThreadSource: async () => 'DATABASE' },
 }));
 
 vi.mock('./prompts/context-builder', async (importOriginal) => ({

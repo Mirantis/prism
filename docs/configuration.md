@@ -505,8 +505,8 @@ defines**.
 | `MODELS_DEV_URL` | Refresh the model-window catalog from a registry once at startup. Unset means no outbound call, bundled catalog only. | — (disabled) |
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-[compact](compaction.md) a conversation when its context occupancy reaches this percent of the model's window. `0` disables auto-compaction; out-of-range values fall back to the default. | `90` |
 | `COMPACTION_TAIL_MESSAGES` | At most this many of the newest messages stay out of compaction and remain in the context verbatim. A long latest reply stays whole when it fits. `0` summarizes everything. | `6` |
+| `IDLE_COMPACTION` | `off` stops [compacting](compaction.md) a large conversation while it sits idle, which runs with recent Claude models on Amazon Bedrock. Choose `off` to keep threshold compaction but never summarize a conversation only because it paused. | on |
 | `HEARTBEAT_INTERVAL_MS` | Heartbeat interval, in milliseconds, of an agent created after you set it. An agent keeps the interval it already has. A value that is not an integer from `60000` (1 minute) to `604800000` (1 week) logs a warning and the default applies. | `28800000` (8 hours) |
-| `IDLE_COMPACTION` | `off` stops [compacting](compaction.md) a large conversation while it sits idle. Choose `off` when you prefer the whole conversation over a lower cost after long pauses. | on |
 | `DISABLE_UPDATER` | Set to `1` (or `true`) to turn off [automatic updates](installation.md#automatic-updates): the hourly check, the auto-install, and the `prism update` command. | — (updater on for native installs) |
 
 The mantle **chat and classification** variables deliberately do **not** fall

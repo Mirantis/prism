@@ -61,7 +61,7 @@ import { COMPACTION_PROMPT } from '../prompts/compaction-prompt';
 import { MIN_PLAUSIBLE_CONTEXT } from '../lib/model-catalog';
 import { contextWindowFor } from '../lib/context-window';
 import { createProvider } from '../lib/llm-providers/create-provider';
-import { cacheTtlMs, type CachePointFragment } from '../lib/llm-providers/llm-provider';
+import { cacheTtlMs, ONE_HOUR_MS, type CachePointFragment } from '../lib/llm-providers/llm-provider';
 
 import { collectTools, withToolsCacheControl } from '../lib/tool-collection';
 import { withToolOutputCapture } from '../lib/tool-output-limiter';
@@ -195,8 +195,8 @@ class CompactionService {
    */
   private readonly idleTimers = new Map<string, NodeJS.Timeout>();
 
-  /** When each thread was last used by an invocation or a compaction, for `compactIdle`. */
-  private readonly lastUse = new Map<string, number>();
+  /** Threads whose idle compaction waits on the thread's lock; `cancelIdle` withdraws one. */
+  private readonly idleQueued = new Set<string>();
 
   /** Whether any compaction is currently running. */
   hasInFlight(): boolean {
@@ -216,7 +216,6 @@ class CompactionService {
    */
   maybeAutoCompact(fork: AutoCompactFork): void {
     try {
-      this.cancelIdle(fork.threadId);
       const threshold = config.compactionThresholdPercent;
       if (threshold === null) return; // disabled by operator
       if (fork.snapshot.usedPercent < threshold) return;
@@ -271,7 +270,7 @@ class CompactionService {
 
   /** Drops a conversation's idle timer: it has moved on, or is being compacted now. */
   cancelIdle(threadId: string): void {
-    this.lastUse.set(threadId, Date.now());
+    this.idleQueued.delete(threadId);
     const timer = this.idleTimers.get(threadId);
     if (!timer) return;
     clearTimeout(timer);
@@ -282,13 +281,13 @@ class CompactionService {
     this.idleTimers.delete(fork.threadId);
     if (this.inFlight.has(fork.threadId)) return;
     this.inFlight.add(fork.threadId);
-    const firedAt = Date.now();
+    this.idleQueued.add(fork.threadId);
     void threadTurnService
       .run(fork.threadId, async () => {
-        // A turn that claimed the thread before the timer fired ran first, and the
-        // fork no longer describes the thread. That turn found this job in flight, so
-        // it armed no timer and ran no threshold check; its next turn does both.
-        if ((this.lastUse.get(fork.threadId) ?? 0) >= firedAt) return;
+        // A turn that claimed the thread before the timer fired withdrew this job, and
+        // the fork no longer describes the thread. That turn found the job in flight,
+        // so it armed no timer and ran no threshold check; its next turn does both.
+        if (!this.idleQueued.delete(fork.threadId)) return;
         await this.runAutoCompaction(fork, 'idle');
       })
       .catch((err) => {
@@ -309,7 +308,6 @@ class CompactionService {
    */
   maybeCompactAfterOverflow(fork: CompactionFork): void {
     try {
-      this.cancelIdle(fork.threadId);
       if (config.compactionThresholdPercent === null) return; // operator disabled auto-compaction
       if (splitTail(fork.contextRows).compactable.length === 0) return;
       if (this.inFlight.has(fork.threadId)) return;
@@ -337,8 +335,9 @@ class CompactionService {
    */
   async compactNow(input: { userId: string; agentId: string; threadId: string }): Promise<void> {
     const { userId, agentId, threadId } = input;
-    this.cancelIdle(threadId);
+    // A queued idle compaction does what was asked, so it is left to run.
     if (this.inFlight.has(threadId)) return; // one already queued/running is enough
+    this.cancelIdle(threadId);
     this.inFlight.add(threadId);
     try {
       await threadTurnService.run(threadId, async () => {
@@ -823,7 +822,6 @@ class CompactionService {
 }
 
 const CHARS_PER_TOKEN = 4;
-const ONE_HOUR_MS = 60 * 60 * 1000;
 
 /** A context's rows as the commit marks them. */
 export function toForkRows(

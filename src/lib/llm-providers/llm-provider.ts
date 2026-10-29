@@ -133,7 +133,8 @@ export const BEDROCK_CACHE_POINT: CachePointFragment = {
 };
 
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
-const ONE_HOUR_MS = 60 * 60 * 1000;
+/** The lifetime a one-hour breakpoint asks for. */
+export const ONE_HOUR_MS = 60 * 60 * 1000;
 
 /**
  * How long a cache written through `fragment` stays warm without a read: an hour

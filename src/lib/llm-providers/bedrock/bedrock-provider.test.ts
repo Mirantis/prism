@@ -141,6 +141,17 @@ describe('createBedrockProvider', () => {
     });
   });
 
+  it('asks for a one-hour entry only on a Claude family a live call checked', () => {
+    const provider = createBedrockProvider();
+    const oneHour = { anthropic: { cacheControl: { type: 'ephemeral', ttl: '1h' } } };
+    const fiveMinutes = { anthropic: { cacheControl: { type: 'ephemeral' } } };
+
+    expect(provider.cachePoint('global.anthropic.claude-opus-5-5', '1h')).toEqual(oneHour);
+    expect(provider.cachePoint('us.anthropic.claude-sonnet-4-5-20250929-v1:0', '1h')).toEqual(oneHour);
+    expect(provider.cachePoint('us.anthropic.claude-haiku-4-5-20251001-v1:0', '1h')).toEqual(fiveMinutes);
+    expect(provider.cachePoint('global.anthropic.claude-opus-5-5', '5m')).toEqual(fiveMinutes);
+  });
+
   it('gives no Converse model a breakpoint — one that cannot cache rejects the request', () => {
     // A Bedrock model without prompt-cache support answers a request that has a
     // `cachePoint` block with "You invoked an unsupported model or your request

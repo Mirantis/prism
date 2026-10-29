@@ -1082,6 +1082,7 @@ describe('idle compaction', () => {
 
     expect(queued).toHaveLength(1);
     expect(mockGenerateText).not.toHaveBeenCalled();
+    expect(compactionService.hasInFlight()).toBe(false);
   });
 
   it('is cancelled when a threshold compaction of the thread starts', () => {

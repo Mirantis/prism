@@ -20,6 +20,8 @@ import { hasComputerForMode } from '../services/computer/supported';
 import type { ComputerUse } from '../services/computer/computer-access';
 import { getMemoryTools } from '../tools/memory';
 import { getConversationHistoryTools } from '../tools/conversation-history';
+import { conversationService } from '../services/conversation.service';
+import { ThreadSource } from '@prisma/client';
 import { getCronTools } from '../tools/cron';
 import { getGoalTools } from '../tools/goals';
 import { getAgentConfigTools } from '../tools/agent-config';
@@ -160,8 +162,11 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
       input.registerAttachmentInjection,
     ),
     ...getWebFetchTools(input.userId, input.agentId),
-    // Every run bound to a thread gets it, so the thread keeps one tool list across its modes.
-    ...(input.threadId ? getConversationHistoryTools(input.threadId, input.workspaceRoot) : {}),
+    // Every run bound to a stored thread gets it, so the thread keeps one tool list across
+    // its modes. A thread read live from a channel keeps its compacted messages there.
+    ...(input.threadId && (await conversationService.getThreadSource(input.threadId)) === ThreadSource.DATABASE
+      ? getConversationHistoryTools(input.threadId, input.workspaceRoot)
+      : {}),
     // Progressive disclosure: the `skill` tool loads a skill's full SKILL.md
     // body on demand. workspaceRoot merges the repo's skills with the global
     // ones. Empty (and omitted) when no skills are available.

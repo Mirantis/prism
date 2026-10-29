@@ -109,6 +109,20 @@ export function createBedrockProvider(baseURL?: string): LlmProvider {
 const CONVERSE_PROMPT_CACHE_FAMILIES: readonly string[] = [];
 
 /**
+ * Claude families on Bedrock that a live call showed accept a one-hour cache
+ * breakpoint, and read it back with a five-minute one. Matched inside the model id,
+ * like the list above. Any other Claude gets the five-minute breakpoint, so a
+ * model that refused the field cannot fail every chat turn.
+ */
+const ONE_HOUR_CACHE_FAMILIES: readonly string[] = [
+  'claude-opus-5',
+  'claude-sonnet-5-5',
+  'claude-haiku-5-5',
+  'claude-opus-4-7',
+  'claude-sonnet-4-5',
+];
+
+/**
  * The prompt-cache breakpoint fragment for one Bedrock model.
  *
  * Dispatched like the model itself, because the breakpoint belongs to the
@@ -121,7 +135,10 @@ const CONVERSE_PROMPT_CACHE_FAMILIES: readonly string[] = [];
  * instead of failing every turn.
  */
 function promptCacheFragment(modelId: string, ttl?: CacheTtl): CachePointFragment {
-  if (isAnthropicModelId(modelId)) return ttl === '1h' ? ANTHROPIC_CACHE_POINT_1H : ANTHROPIC_CACHE_POINT;
+  if (isAnthropicModelId(modelId)) {
+    const oneHour = ttl === '1h' && ONE_HOUR_CACHE_FAMILIES.some((family) => modelId.includes(family));
+    return oneHour ? ANTHROPIC_CACHE_POINT_1H : ANTHROPIC_CACHE_POINT;
+  }
   const knownToCache = CONVERSE_PROMPT_CACHE_FAMILIES.some((family) => modelId.includes(family));
   return knownToCache ? BEDROCK_CACHE_POINT : NO_CACHE_POINT;
 }

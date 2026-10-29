@@ -49,6 +49,12 @@ export interface AgentContext {
   lockedIn: boolean;
   isBootstrapPhase: boolean;
   conversationSummary: string | null;
+  /**
+   * Whether the messages the summary replaced are stored rows that
+   * `read_compacted_history` reads. A thread read live from a channel keeps them
+   * in the channel instead.
+   */
+  compactedHistoryReadable?: boolean;
   recentMessages: ConversationMessage[];
   /** Where a heartbeat, scheduled-task or webhook run may post (see InvokeRequest). */
   postingCeiling?: PostingCeiling;
