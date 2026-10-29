@@ -27,7 +27,12 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { config, isGatewayEndpoint } from '../../../config';
 import { logger } from '../../../logger';
-import { ANTHROPIC_CACHE_POINT, ANTHROPIC_THINKING_OFF, type LlmProvider } from '../llm-provider';
+import {
+  ANTHROPIC_THINKING_OFF,
+  anthropicCachePoint,
+  type CacheTtl,
+  type LlmProvider,
+} from '../llm-provider';
 
 export function createAzureProvider(baseURL?: string): LlmProvider {
   const gatewayServesIt = isGatewayEndpoint(baseURL);
@@ -56,7 +61,7 @@ export function createAzureProvider(baseURL?: string): LlmProvider {
     // caveat above), so ask the SDK for the tool-based JSON path rather than
     // Anthropic's native `output_config.format`.
     structuredOutputOptions: { anthropic: { structuredOutputMode: 'jsonTool' } },
-    cachePoint: () => ANTHROPIC_CACHE_POINT,
+    cachePoint: (_modelId: string, ttl?: CacheTtl) => anthropicCachePoint(ttl),
     // The default classification model, Haiku 5.5, rejects an explicit temperature
     // and can think unasked.
     classificationProviderOptions: ANTHROPIC_THINKING_OFF,

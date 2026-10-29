@@ -180,14 +180,19 @@ export const ANTHROPIC_CACHE_POINT: CachePointFragment = {
   anthropic: { cacheControl: { type: 'ephemeral' } },
 };
 
-/**
- * The same breakpoint asking for a one-hour entry. Declared only by a vendor
- * where a live call showed the API accepts it, which is Bedrock's Claude branch: a
- * field the API refuses fails every request that carries it.
- */
+/** The same breakpoint asking for a one-hour entry. */
 export const ANTHROPIC_CACHE_POINT_1H: CachePointFragment = {
   anthropic: { cacheControl: { type: 'ephemeral', ttl: '1h' } },
 };
+
+/**
+ * The Anthropic breakpoint for `ttl`, which every vendor that sends Anthropic's
+ * cacheControl declares. The operator who sets `CHAT_CACHE_TTL` checks that the
+ * model accepts the lifetime.
+ */
+export function anthropicCachePoint(ttl?: CacheTtl): CachePointFragment {
+  return ttl === '1h' ? ANTHROPIC_CACHE_POINT_1H : ANTHROPIC_CACHE_POINT;
+}
 
 /** The fragment Bedrock's Converse surface reads. */
 export const BEDROCK_CACHE_POINT: CachePointFragment = {
@@ -224,9 +229,9 @@ export type LlmProvider = ((modelId: string) => LanguageModel) & {
    * the SDK drops an unrecognized namespace silently — so the choice belongs
    * beside the dispatcher that picks the protocol, not at the call site.
    *
-   * `ttl` asks for a one-hour entry. A vendor or model where that is not known to
-   * be accepted returns its five-minute fragment, so `cacheTtlMs` of the result is
-   * what the request really asks for.
+   * `ttl` is the lifetime the breakpoint asks for. A vendor that sends Anthropic's
+   * breakpoint sends it as given; one without breakpoints returns the empty
+   * fragment, which `cacheTtlMs` reads as five minutes.
    */
   cachePoint: (modelId: string, ttl?: CacheTtl) => CachePointFragment;
   /**
