@@ -155,6 +155,26 @@ describe('read_compacted_history', () => {
     expect(call.savedAt).toBe('/data/tool-outputs/spill-1');
   });
 
+  it('cuts a long tool input around a query that holds quotes', async () => {
+    const content = `${'x'.repeat(5_000)}say "deploy-7f3a" now${'y'.repeat(5_000)}`;
+    mockList.mockResolvedValue({
+      messages: [{
+        role: 'AGENT',
+        content: 'wrote it',
+        toolCalls: [{ tool: 'shell_write', input: { path: 'a', content }, output: 'ok' }],
+        internalStep: false,
+        createdAt: at,
+      }],
+      more: false,
+    });
+
+    const result = await run({ query: '"deploy-7f3a"' });
+    const input = (result.messages as Array<{ toolCalls: Array<{ input: string }> }>)[0].toolCalls[0].input;
+
+    expect(input).toContain('\\"deploy-7f3a\\"');
+    expect(input).toContain('Call again with another query');
+  });
+
   it('says when nothing matches', async () => {
     mockList.mockResolvedValue({ messages: [], more: false });
 

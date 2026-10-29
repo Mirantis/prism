@@ -105,11 +105,11 @@ interface StoredCall {
   truncated?: { spillId?: string };
 }
 
-/** A tool input given as an object, cut as text when its JSON is long. */
+/** A tool input given as an object, cut as text when its JSON is long, around the query as JSON writes it. */
 function clipJson(input: unknown, query: string | undefined): unknown {
   if (input === undefined) return input;
   const json = JSON.stringify(input);
-  return json.length <= OUTPUT_CHARS ? input : clip(json, query);
+  return json.length <= OUTPUT_CHARS ? input : clip(json, query && JSON.stringify(query).slice(1, -1));
 }
 
 /** The first `OUTPUT_CHARS` of a long text, or the window around the query's first match in it. */

@@ -93,6 +93,14 @@ describe('contextUsageService', () => {
       expect(seen).toHaveLength(0);
     });
 
+    it('still persists the measurement of a model whose window is unknown', async () => {
+      contextUsageService.record(baseInput({ modelId: 'my-custom-deploy', inputTokens: 250_000 }));
+
+      await contextUsageService.finalize({ threadId: 'thread-1' });
+
+      expect(mockSetThreadContextUsage).toHaveBeenCalledWith('thread-1', 250_000, 'my-custom-deploy');
+    });
+
     it('emits once per changed integer percentage, not once per step', () => {
       const seen = captureEmissions();
 
@@ -218,7 +226,7 @@ describe('contextUsageService', () => {
       expect(mockSetThreadContextUsage).toHaveBeenCalledWith('thread-1', 50_000, MODEL);
     });
 
-    it('returns null and does nothing when the window is unknown', () => {
+    it('persists the estimate but returns null and emits nothing when the window is unknown', () => {
       const seen = captureEmissions();
       const snapshot = contextUsageService.applyEstimate({
         userId: 'user-1',
@@ -228,7 +236,7 @@ describe('contextUsageService', () => {
       });
       expect(snapshot).toBeNull();
       expect(seen).toHaveLength(0);
-      expect(mockSetThreadContextUsage).not.toHaveBeenCalled();
+      expect(mockSetThreadContextUsage).toHaveBeenCalledWith('thread-1', 50_000, 'my-custom-deploy');
     });
 
     it('does not disturb per-turn tracked state', async () => {
