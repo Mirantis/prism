@@ -791,7 +791,7 @@ class ConversationService {
           ...(after ? { cursor: { id: after }, skip: 1 } : {}),
         });
         for (const message of batch) {
-          const text = `${message.content}\n${message.toolCalls ? JSON.stringify(message.toolCalls) : ''}`;
+          const text = [message.content, ...stringsIn(message.toolCalls)].join('\n');
           if (text.toLowerCase().includes(needle)) matches.push(message);
         }
         if (batch.length < COMPACTED_SEARCH_BATCH) break;
@@ -828,6 +828,15 @@ class ConversationService {
       'thread.id': threadId,
     });
   }
+}
+
+/** Every key and value a stored tool call holds, as written, not as `JSON.stringify` escapes them. */
+function stringsIn(value: unknown): string[] {
+  if (typeof value === 'string') return [value];
+  if (typeof value === 'number' || typeof value === 'boolean') return [String(value)];
+  if (Array.isArray(value)) return value.flatMap(stringsIn);
+  if (value && typeof value === 'object') return Object.entries(value).flatMap(([key, item]) => [key, ...stringsIn(item)]);
+  return [];
 }
 
 // Export singleton instance
