@@ -69,7 +69,9 @@ explaining how to link, rather than answering.
 1. In the Web UI **Channels** page, click **Add channel** to generate a
    **channel link code**.
 2. Invite the agent to the Slack channel.
-3. Post the code in the channel. The agent confirms it's now connected.
+3. Post the code in the channel. The agent confirms it's now connected. If the
+   agent does not answer, post the code again with an @mention of the agent to
+   see why it was refused.
 
 You can link **multiple channels** to the agent — click **Add channel** again
 for each one; linked channels appear in a table on the Channels page, each with
