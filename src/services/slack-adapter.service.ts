@@ -1104,12 +1104,10 @@ class SlackAdapterService implements ChannelAdapter {
       const mapping = await slackMappingService.findUserMapping(connectionId, slackUserId);
 
       if (!mapping) {
-        // Check if this looks like a verification code (6 hex chars, possibly with formatting)
-        // Strip common Slack formatting: *bold*, _italic_, ~strike~
-        const strippedText = messageText.replace(/[*_~`]/g, '').trim();
-        if (this.isVerificationCode(strippedText)) {
+        const code = this.parseLinkCode(messageText);
+        if (code) {
           // Verify directly using local service (agent-runtime owns verification)
-          const result = await this.verifyDmLinkCode(strippedText.toUpperCase(), slackUserId, dmChannelId);
+          const result = await this.verifyDmLinkCode(code, slackUserId, dmChannelId);
 
           if (result.success) {
             await say(`✅ ${result.message}`);
@@ -1272,13 +1270,10 @@ class SlackAdapterService implements ChannelAdapter {
     if (!mapping) {
       // Only an unlinked channel takes a link code. Strip the bot mention first
       // so "@Bot ABC123" is detected as a code.
-      const strippedText = messageText
-        .replace(new RegExp(`<@${botUserId}>`, 'g'), '')
-        .replace(/[*_~`]/g, '')
-        .trim();
-      if (this.isVerificationCode(strippedText)) {
+      const code = this.parseLinkCode(messageText.replace(new RegExp(`<@${botUserId}>`, 'g'), ''));
+      if (code) {
         logger.info('Received potential verification code in channel %s', channelId);
-        const result = await this.verifyAndLinkChannel(strippedText.toUpperCase(), channelId, slackUserId, teamId);
+        const result = await this.verifyAndLinkChannel(code, channelId, slackUserId, teamId);
         // A six-hex message without a mention is often not a code at all, such as a short commit SHA.
         if (!result.success && !isMentioned) {
           logger.info('Verification code rejected in channel %s without a bot mention — no reply: %s', channelId, result.message);
@@ -1683,10 +1678,12 @@ class SlackAdapterService implements ChannelAdapter {
   }
 
   /**
-   * Check if this looks like a verification code
+   * The link code in a message, uppercased, or null. Slack formatting
+   * (*bold*, _italic_, ~strike~, `code`) around the code is ignored.
    */
-  private isVerificationCode(text: string): boolean {
-    return /^[A-Fa-f0-9]{6}$/.test(text?.trim() || '');
+  private parseLinkCode(text: string): string | null {
+    const stripped = text.replace(/[*_~`]/g, '').trim();
+    return /^[A-Fa-f0-9]{6}$/.test(stripped) ? stripped.toUpperCase() : null;
   }
 
   /**
@@ -1778,6 +1775,7 @@ class SlackAdapterService implements ChannelAdapter {
 
       return { success: false, message: result.message || 'Invalid or expired code' };
     } catch (error: unknown) {
+      logger.error({ err: error, channelId }, 'Channel link verification failed');
       const errMsg = error instanceof Error ? error.message : String(error);
       return { success: false, message: `Verification failed: ${errMsg}` };
     }
