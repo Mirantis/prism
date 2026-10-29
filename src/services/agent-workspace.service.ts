@@ -217,6 +217,7 @@ class AgentWorkspaceService {
           visionMd: fill(docs.visionMd),
           agentMd: fill(docs.agentMd),
           currentSessionId: uuidv4(),
+          heartbeatIntervalMs: config.heartbeatIntervalMs,
           // Seed model overrides from ~/.prism/settings.json when present; null
           // leaves the agent on the env-default model (resolveEffectiveModel).
           model: config.agentDefaults?.model ?? null,

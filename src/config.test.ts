@@ -400,6 +400,30 @@ describe('config', () => {
     });
   });
 
+  describe('HEARTBEAT_INTERVAL_MS', () => {
+    it('defaults to 8 hours when unset, without a warning', async () => {
+      delete process.env.HEARTBEAT_INTERVAL_MS;
+      mockWarn.mockClear();
+      expect((await loadConfig()).heartbeatIntervalMs).toBe(28_800_000);
+      expect(mockWarn).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('HEARTBEAT_INTERVAL_MS'));
+    });
+
+    it.each([['7200000', 7_200_000], ['60000', 60_000]])('uses %s', async (value, expected) => {
+      process.env.HEARTBEAT_INTERVAL_MS = value;
+      expect((await loadConfig()).heartbeatIntervalMs).toBe(expected);
+    });
+
+    it.each(['59999', '0', '-5', '1.5', 'abc', '2h'])('warns and uses 8 hours for %s', async (value) => {
+      process.env.HEARTBEAT_INTERVAL_MS = value;
+      mockWarn.mockClear();
+      expect((await loadConfig()).heartbeatIntervalMs).toBe(28_800_000);
+      expect(mockWarn).toHaveBeenCalledWith(
+        expect.objectContaining({ configured: value }),
+        expect.stringContaining('HEARTBEAT_INTERVAL_MS'),
+      );
+    });
+  });
+
   describe('TOOL_RISK_GATE_MODE', () => {
     it('defaults to off when unset', async () => {
       delete process.env.TOOL_RISK_GATE_MODE;

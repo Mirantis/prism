@@ -113,6 +113,7 @@ vi.mock('../logger', () => ({
 // ---------------------------------------------------------------------------
 
 import { heartbeatService } from './heartbeat.service';
+import { config } from '../config';
 
 /**
  * A channel that queues messages for the heartbeat. Each test lists the messages;
@@ -253,6 +254,22 @@ describe('HeartbeatService', () => {
       // SHOULD fire at 8 hours
       await vi.advanceTimersByTimeAsync(28_800_000 - 60_000);
       expect(mockInvoke).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to the configured interval, and a stored interval wins over it', () => {
+      const prev = config.heartbeatIntervalMs;
+      config.heartbeatIntervalMs = 7_200_000;
+      const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+      try {
+        heartbeatService.startHeartbeat(createAgent({ heartbeatIntervalMs: 0 }), 'keep-schedule');
+        expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 7_200_000);
+        setTimeoutSpy.mockClear();
+        heartbeatService.startHeartbeat(createAgent({ heartbeatIntervalMs: 3_600_000 }), 'keep-schedule');
+        expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 3_600_000);
+      } finally {
+        config.heartbeatIntervalMs = prev;
+        setTimeoutSpy.mockRestore();
+      }
     });
 
     it('skips starting when agent has heartbeatStatus STOPPED', () => {
