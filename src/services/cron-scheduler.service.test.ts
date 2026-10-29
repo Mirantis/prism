@@ -1327,6 +1327,17 @@ describe('CronSchedulerService', () => {
         expect(mockInvoke.mock.calls[1][0].lastSend).toEqual({ messages: SENT_LINE, at: expect.any(Number) });
       });
 
+      it('tells the next run to read what the last run sent before it posts', async () => {
+        mockInvoke.mockResolvedValueOnce(SENT);
+
+        const run = scheduleAndCapture();
+        await run();
+        await run();
+
+        expect(mockInvoke.mock.calls[0][0].prompt).toBe(scheduledRunPrompt('Generate the daily report.'));
+        expect(mockInvoke.mock.calls[1][0].prompt).toContain('Before you post, read "Messages This Task Sent".');
+      });
+
       it('keeps the record through a run that ends with no text', async () => {
         mockInvoke.mockResolvedValueOnce(SENT).mockResolvedValueOnce(reported(''));
 

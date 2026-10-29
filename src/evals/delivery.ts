@@ -37,7 +37,10 @@ export type Ceiling =
 /** A message an earlier run sent, which the next run is told about. */
 export interface EarlierMessage {
   text: string;
+  /** Zero reads as "just now". */
   hoursAgo: number;
+  /** Where it went. The default is the user's DM. */
+  place?: Place;
 }
 
 export interface AutonomousRun {
@@ -114,30 +117,32 @@ function sendStubs(ceiling: PostingCeiling, sent: Posted[]) {
   };
 }
 
-function runPrompt(run: AutonomousRun): string {
+function runPrompt(run: AutonomousRun, lastSend: TaskLastSend | undefined): string {
   if (run.mode === 'heartbeat') return heartbeatService['buildHeartbeatPrompt']();
   if (run.mode === 'webhook') return renderWebhookTurnPrompt(run.instruction, run.payload ?? {}, 'unknown', 'deploy-events');
-  return scheduledRunPrompt(run.instruction);
+  return scheduledRunPrompt(run.instruction, lastSend);
 }
 
 /** What the run is told an earlier run sent, as the scheduler and the heartbeat record it. */
 function lastSendOf(earlier: EarlierMessage | undefined): TaskLastSend | undefined {
   if (!earlier) return undefined;
   const at = Date.now() - earlier.hoursAgo * 3_600_000;
-  return { messages: `- To slack:D0ANA0001: ${earlier.text}`, at };
+  const target = earlier.place === 'web chat' ? WEB_CHAT_TARGET : LINKED.find((t) => t.place === (earlier.place ?? 'DM'))?.key;
+  return { messages: `- To ${target}: ${earlier.text}`, at };
 }
 
 /** Run one heartbeat, scheduled-task or webhook run and report every place a message reached. */
 export async function runAutonomous(run: AutonomousRun): Promise<Outcome> {
   const ceiling = await postingCeiling(run.ceiling ?? { deliverTo: 'all' });
   const reached: Posted[] = [];
+  const lastSend = run.mode === 'webhook' ? undefined : lastSendOf(run.earlier);
 
   const trace = await runTurn({
     mode: run.mode,
-    prompt: runPrompt(run),
+    prompt: runPrompt(run, lastSend),
     maxSteps: run.maxSteps ?? 6,
     postingCeiling: ceiling,
-    lastSend: run.mode === 'webhook' ? undefined : lastSendOf(run.earlier),
+    lastSend,
     context: run.mode === 'heartbeat' && run.instruction ? { heartbeatMd: run.instruction } : {},
     stubs: {
       ...sendStubs(ceiling, reached),
