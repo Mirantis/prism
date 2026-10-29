@@ -742,6 +742,9 @@ class CronSchedulerService {
         : undefined;
 
       sentCalls = result.toolCalls;
+      // DEBUG AGENT-355, never merged: what the run did with that prompt.
+      logger.info(`[AGENT-355-TRACE] "${task.name}" tools ${JSON.stringify(result.toolCalls.map((c) => ({ tool: c.tool, input: c.input, success: c.success })))}`);
+      logger.info(`[AGENT-355-TRACE] "${task.name}" final ${JSON.stringify((result.steps[result.steps.length - 1]?.text ?? '').trim())}`);
       const sent = !boundThreadId && this.noteSends(task, result.toolCalls);
 
       // Budget exceeded — notify user and record the attempt

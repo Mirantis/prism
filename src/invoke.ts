@@ -370,6 +370,13 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       declared?.toolChanges,
     );
 
+    // DEBUG AGENT-355, never merged: what a scheduled-task run is told about its earlier sends.
+    if (request.mode === 'cron') {
+      const record = systemParts.find((p) => p.text.includes('# Messages This Task Sent'))?.text ?? null;
+      logger.info(`[AGENT-355-TRACE] record ${JSON.stringify(record)}`);
+      logger.info(`[AGENT-355-TRACE] prompt ${JSON.stringify(request.prompt)}`);
+    }
+
     // `guard` is shared by every `warnOnTrailingAssistant` call in this invocation, and
     // the function sets it once it has reported. A 100-step turn checks the array at
     // each step, so without it one bad turn would emit a hundred identical events.
