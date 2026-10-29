@@ -98,6 +98,20 @@ const webhookPublicUrl =
   (webhookPortName && ingressOrigin(webhookPortName))?.replace(/\/+$/, '') || null;
 const awsRegion = process.env.AWS_REGION || 'us-east-1';
 
+/**
+ * `SLACK_API_URL`: the Slack Web API base URL every Slack client calls. The
+ * SDK appends the method name to it, so it ends with `/`. An invalid URL stops
+ * startup, since every Slack call would fail later.
+ */
+function readSlackApiUrl(): string | undefined {
+  const value = process.env.SLACK_API_URL?.trim();
+  if (!value) return undefined;
+  if (!URL.canParse(value) || !/^https?:$/.test(new URL(value).protocol)) {
+    throw new Error(`SLACK_API_URL must be an http(s) URL, got "${value}"`);
+  }
+  return value.endsWith('/') ? value : `${value}/`;
+}
+
 // Which vendor the runtime talks to. One provider per container (matching one
 // AGENT_ID per container). Anything unrecognized falls back to the default,
 // `bedrock`, so an unset/typo'd value never silently breaks a Bedrock
@@ -1110,6 +1124,11 @@ export const config = {
   // Slack — bot token + optional app-id safety check.
   slackBotToken: process.env.SLACK_BOT_TOKEN,
   slackExpectedAppId: process.env.SLACK_EXPECTED_APP_ID,
+  // A Slack Web API proxy in front of slack.com. With the bot token and no app
+  // token it also selects routed mode, where a router delivers Slack events.
+  slackApiUrl: readSlackApiUrl(),
+  // Routed mode's listener, which serves POST /agents/slack/router and nothing else.
+  slackPort: parseInt(process.env.SLACK_PORT || '3980', 10),
 
   // Microsoft Teams — a Single Tenant Entra app registration behind an Azure
   // Bot resource. TEAMS_APP_PASSWORD is the client secret, or on Mirantis Agent Platform the

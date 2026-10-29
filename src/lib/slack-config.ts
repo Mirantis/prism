@@ -9,11 +9,31 @@
  *
  * If `SLACK_EXPECTED_APP_ID` is set, the bot token's `app_id` must match.
  * Unset means "any app accepted".
+ *
+ * In routed mode the token belongs to a proxy, which binds it to a workspace
+ * when the agent is added to Slack. Until then `auth.test` answers
+ * `invalid_auth`, and the connection stays absent until the router reports the
+ * agent connected (`reloadSlackConfig`).
  */
 
 import { config } from '../config';
 import { logger } from '../logger';
 import { SlackWebClient } from './slack-web-client';
+
+/**
+ * How Slack events reach this runtime: over a Socket Mode connection of the
+ * app's own, from a router through the `slack` listener, or not at all, which
+ * leaves a bot token that only posts.
+ */
+export type SlackMode = 'socket' | 'routed' | 'post-only';
+
+export function slackMode(): SlackMode {
+  if (process.env.SLACK_APP_TOKEN) return 'socket';
+  return config.slackApiUrl ? 'routed' : 'post-only';
+}
+
+/** The `auth.test` errors of a proxy token that is not bound to a workspace yet. */
+const UNBOUND_TOKEN_ERRORS = new Set(['invalid_auth', 'not_authed']);
 
 export interface SlackConnectionRecord {
   id: string;
@@ -48,7 +68,17 @@ async function loadFromEnv(): Promise<SlackConnectionRecord | null> {
   // the shared default here: this is a JSON round trip with the port waiting on
   // it, not the file upload the default is sized for.
   const client = new SlackWebClient(botToken, { timeout: 10_000 });
-  const authResult = await client.auth.test({});
+  let authResult: Awaited<ReturnType<typeof client.auth.test>>;
+  try {
+    authResult = await client.auth.test({});
+  } catch (error: unknown) {
+    const code = (error as { data?: { error?: string } }).data?.error;
+    if (slackMode() === 'routed' && code && UNBOUND_TOKEN_ERRORS.has(code)) {
+      logger.info('[SlackConfig] the agent is not in a Slack workspace yet; Slack waits for the router');
+      return null;
+    }
+    throw error;
+  }
   const teamId = authResult.team_id || '';
   const teamName = authResult.team || 'Unknown Workspace';
   const botUserId = authResult.user_id || 'unknown';
@@ -94,7 +124,8 @@ async function loadFromEnv(): Promise<SlackConnectionRecord | null> {
 
 /**
  * Get the env-sourced Slack connection, cached after first successful load.
- * Returns `null` when `SLACK_BOT_TOKEN` is unset (Slack disabled).
+ * Returns `null` when `SLACK_BOT_TOKEN` is unset (Slack disabled), or while a
+ * routed agent is in no Slack workspace.
  * Throws on validation failure so startup fails loudly.
  */
 export async function getSlackConfig(): Promise<SlackConnectionRecord | null> {
@@ -111,6 +142,17 @@ export async function getSlackConfig(): Promise<SlackConnectionRecord | null> {
     });
 
   return inflight;
+}
+
+/** Validate the token again: the router reported the agent added to a workspace. */
+export function reloadSlackConfig(): Promise<SlackConnectionRecord | null> {
+  cached = undefined;
+  return getSlackConfig();
+}
+
+/** Forget the connection: the router reported the agent removed from its workspace. */
+export function clearSlackConfig(): void {
+  cached = null;
 }
 
 /**

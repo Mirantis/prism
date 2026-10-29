@@ -15,7 +15,7 @@
  * so the next boot does not deliver it again.
  */
 
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { config } from '../config';
 import { logger } from '../logger';
@@ -24,9 +24,10 @@ import { trackEvent } from '../lib/telemetry';
 /**
  * Each kind of work that survives a restart, by the service that owns it, in
  * the order the boot gives it back: a resumed reply or run can poll a coding
- * task, so the tasks come back first.
+ * task, so the tasks come back first. A routed event comes back last, since it
+ * can start an exchange on a thread whose interrupted reply resumes before it.
  */
-export const PENDING_WORK_KINDS = ['coding-task', 'chat', 'webhook', 'cron', 'heartbeat', 'monitor'] as const;
+export const PENDING_WORK_KINDS = ['coding-task', 'chat', 'webhook', 'cron', 'heartbeat', 'monitor', 'routed-event'] as const;
 export type PendingWorkKind = (typeof PENDING_WORK_KINDS)[number];
 
 /**
@@ -104,6 +105,22 @@ export class PendingWorkService {
         return true;
       }),
     );
+  }
+
+  /**
+   * `begin` for work its sender can deliver more than once: records it unless a
+   * row for it is already there, and answers whether this call recorded it.
+   */
+  async claim(kind: PendingWorkKind, key: string, payload: object): Promise<boolean> {
+    try {
+      await this.write(kind, [key], () =>
+        prisma.pendingWork.create({ data: { kind, key, payload: payload as Prisma.InputJsonValue } }),
+      );
+      return true;
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') return false;
+      throw err;
+    }
   }
 
   /** Replace what the owner needs to continue the work, e.g. once a session id is known. */

@@ -37,6 +37,8 @@ How you talk to the agent.
   own: how to connect, send messages and catch up after a dropped connection.
 - **[Computer link protocol](computer-link-protocol.md)** — for writing the client
   that connects a computer of yours, so the agent can use it.
+- **[Slack router protocol](slack-router-protocol.md)** — for running a shared
+  Slack app for many agents: what the router sends and what the API proxy answers.
 - **[Terminal UI](terminal-ui.md)** — the `prism` TUI for chatting and managing
   the agent from the shell, including slash commands, the `--resume` picker, and
   the schedules/config panels.

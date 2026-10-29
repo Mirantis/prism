@@ -3,8 +3,8 @@
  *
  * Pins the text a user reads while linking a Slack account or channel, on the
  * live adapter path: the DM code handler (`handleDmMessage`) and the channel
- * code handler (`handleChannelMessage`). A rename that misses one of these
- * strings fails here instead of shipping.
+ * code handler (`handleChannelMessage`). The text names the agent. A rename
+ * that misses one of these strings fails here instead of shipping.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -13,7 +13,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mocks (hoisted)
 // ============================================================================
 
-const { mockPrisma, mockSlackMappingService, mockIsHeartbeatTriggerChannel } = vi.hoisted(() => ({
+const { mockPrisma, mockSlackMappingService, mockIsHeartbeatTriggerChannel, mockGetAgent } = vi.hoisted(() => ({
+  mockGetAgent: vi.fn(),
   mockPrisma: {
     slackVerificationCode: { findUnique: vi.fn(), delete: vi.fn() },
     slackMapping: { findFirst: vi.fn(), findUnique: vi.fn(), create: vi.fn() },
@@ -40,6 +41,10 @@ vi.mock('../conversation.service', () => ({
 
 vi.mock('../conversation-engine.service', () => ({
   conversationEngineService: { chat: vi.fn() },
+}));
+
+vi.mock('../agent-workspace.service', () => ({
+  agentWorkspaceService: { getAgent: mockGetAgent },
 }));
 
 vi.mock('../slack-heartbeat-trigger.service', () => ({
@@ -105,7 +110,7 @@ function verificationCode(type: 'DM' | 'CHANNEL', overrides: Record<string, unkn
 }
 
 // Access private methods for testing.
-function handleDmMessage(say: ReturnType<typeof vi.fn>, text = CODE) {
+function handleDmMessage(say: ReturnType<typeof vi.fn>, text = CODE, routed?: { route: string; handOff: () => void }) {
   return (slackAdapterService as any).handleDmMessage(
     CONN_ID,
     SLACK_USER,
@@ -115,6 +120,8 @@ function handleDmMessage(say: ReturnType<typeof vi.fn>, text = CODE) {
     TEAM_ID,
     MESSAGE_TS,
     undefined,
+    [],
+    routed,
   );
 }
 
@@ -148,6 +155,7 @@ describe('Slack DM linking copy', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     say = vi.fn().mockResolvedValue(undefined);
+    mockGetAgent.mockResolvedValue({ id: AGENT_ID, name: 'Atlas' });
     mockPrisma.$transaction.mockResolvedValue([]);
     mockPrisma.slackVerificationCode.delete.mockResolvedValue({});
     mockPrisma.slackMapping.findFirst.mockResolvedValue(null);
@@ -182,7 +190,7 @@ describe('Slack DM linking copy', () => {
     await handleDmMessage(say);
 
     expect(postedText(say)).toBe(
-      '❌ That code is not valid. Generate a new code in Prism Agent, under Settings → Channels.',
+      '❌ That code is not valid. Generate a new code for Atlas under Settings → Channels.',
     );
   });
 
@@ -194,7 +202,7 @@ describe('Slack DM linking copy', () => {
     await handleDmMessage(say);
 
     expect(postedText(say)).toBe(
-      '❌ That code has expired. Generate a new code in Prism Agent, under Settings → Channels.',
+      '❌ That code has expired. Generate a new code for Atlas under Settings → Channels.',
     );
   });
 
@@ -211,22 +219,42 @@ describe('Slack DM linking copy', () => {
     await handleDmMessage(say);
 
     expect(postedText(say)).toBe(
-      '❌ This Slack account is already linked to another Prism Agent user.',
+      '❌ This Slack account is already linked to another user of Atlas.',
     );
   });
 
-  it('prompts an unlinked user to link a Prism Agent account', async () => {
+  it('prompts an unlinked user to link their Slack account to the agent', async () => {
     mockSlackMappingService.findUserMapping.mockResolvedValue(null);
 
     await handleDmMessage(say, 'hello there');
 
     expect(postedText(say)).toBe(
       "👋 Hi! I don't recognize you yet.\n\n" +
-        'To link your Prism Agent account:\n' +
+        'To link your Slack account to Atlas:\n' +
         '1. Go to *Settings → Channels* in the web app\n' +
         '2. Click *Link Account* under Slack\n' +
         '3. Send me the 6-character code you receive',
     );
+  });
+
+  // A routed agent's links come from the router, so the prompt asks for no code.
+  it('asks an unlinked person to link their Slack account when the router delivered the DM', async () => {
+    mockSlackMappingService.findUserMapping.mockResolvedValue(null);
+
+    await handleDmMessage(say, 'hello there', { route: 'dm', handOff: vi.fn() });
+
+    expect(postedText(say)).toBe(
+      "👋 Hi! I don't recognize you yet. Link your Slack account to Atlas, then send your message again.",
+    );
+  });
+
+  it('reads no link code in a DM the router delivered', async () => {
+    mockSlackMappingService.findUserMapping.mockResolvedValue(null);
+
+    await handleDmMessage(say, CODE, { route: 'dm', handOff: vi.fn() });
+
+    expect(mockPrisma.slackVerificationCode.findUnique).not.toHaveBeenCalled();
+    expect(postedText(say)).toContain("I don't recognize you yet.");
   });
 });
 
@@ -236,6 +264,7 @@ describe('Slack channel linking copy', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     say = vi.fn().mockResolvedValue(undefined);
+    mockGetAgent.mockResolvedValue({ id: AGENT_ID, name: 'Atlas' });
     mockPrisma.$transaction.mockResolvedValue([]);
     mockPrisma.slackVerificationCode.delete.mockResolvedValue({});
     mockPrisma.slackMapping.findUnique.mockResolvedValue(null);
@@ -260,7 +289,7 @@ describe('Slack channel linking copy', () => {
     await handleChannelMessage(say, `<@U_BOT_123> ${CODE}`);
 
     expect(postedText(say)).toBe(
-      '❌ That code is not valid. Generate a new code in Prism Agent, under Settings → Channels.',
+      '❌ That code is not valid. Generate a new code for Atlas under Settings → Channels.',
     );
   });
 
@@ -272,7 +301,7 @@ describe('Slack channel linking copy', () => {
     await handleChannelMessage(say, `<@U_BOT_123> ${CODE}`);
 
     expect(postedText(say)).toBe(
-      '❌ That code has expired. Generate a new code in Prism Agent, under Settings → Channels.',
+      '❌ That code has expired. Generate a new code for Atlas under Settings → Channels.',
     );
   });
 });

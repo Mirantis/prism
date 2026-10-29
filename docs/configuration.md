@@ -137,6 +137,8 @@ grouped per platform.
 | `SLACK_BOT_TOKEN` | Slack bot token (`xoxb-…`). Enables the Slack adapter; validated via `auth.test` on boot. |
 | `SLACK_APP_TOKEN` | Slack app-level token (`xapp-…`) for Socket Mode. |
 | `SLACK_EXPECTED_APP_ID` | Optional safety check — the bot token's app ID must match this if set. |
+| `SLACK_API_URL` | The Slack API proxy of a [shared Slack app](slack.md#a-shared-slack-app). With `SLACK_BOT_TOKEN` and no `SLACK_APP_TOKEN`, the agent gets its Slack messages from the shared app's router. |
+| `SLACK_PORT` | The port the shared Slack app's router delivers to. Default `3980`. |
 | `TEAMS_APP_ID` | Microsoft Teams: the Entra app registration's client ID. All three Teams variables must be set to enable the adapter. |
 | `TEAMS_APP_PASSWORD` | Microsoft Teams: the app registration's client secret. On Mirantis Agent Platform, the placeholder of an OAuth client credentials credential ([Teams](teams.md)). |
 | `TEAMS_APP_TENANT_ID` | Microsoft Teams: the Entra tenant of the app registration. |

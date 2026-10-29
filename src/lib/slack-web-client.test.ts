@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SlackWebClient, stripBodyToken } from './slack-web-client';
+import { config } from '../config';
+import { mayReceiveSlackToken, SlackWebClient, stripBodyToken } from './slack-web-client';
+
+const API_PROXY = 'https://api.example.test/slack/api/';
+
+function useApiProxy(url: string | undefined): void {
+  (config as { slackApiUrl?: string }).slackApiUrl = url;
+}
 
 function okResponse(): Response {
   return new Response(JSON.stringify({ ok: true }), {
@@ -56,5 +63,56 @@ describe('SlackWebClient', () => {
     const sent = fetchMock.mock.calls[0][1]!.body as FormData;
     expect(sent.has('token')).toBe(false);
     expect(sent.get('channels')).toBe('C0EXAMPLE');
+  });
+});
+
+describe('SLACK_API_URL', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    useApiProxy(undefined);
+  });
+
+  it('sends every Web API call to the Slack API proxy', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) => okResponse());
+    vi.stubGlobal('fetch', fetchMock);
+    useApiProxy(API_PROXY);
+
+    await new SlackWebClient('__nexus_cred:proxy__').chat.postMessage({ channel: 'C0EXAMPLE', text: 'hello' });
+
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.example.test/slack/api/chat.postMessage');
+  });
+
+  it('sends them to Slack when it is unset', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) => okResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    await new SlackWebClient('xoxb-test').chat.postMessage({ channel: 'C0EXAMPLE', text: 'hello' });
+
+    expect(fetchMock.mock.calls[0][0]).toBe('https://slack.com/api/chat.postMessage');
+  });
+});
+
+describe('mayReceiveSlackToken', () => {
+  afterEach(() => useApiProxy(undefined));
+
+  it.each([
+    ['https://files.slack.com/files-pri/T0-F0/report.pdf', true],
+    ['https://slack.com/api/files.info', true],
+    ['http://files.slack.com/files-pri/T0-F0/report.pdf', false],
+    ['https://files.slack.com.example.test/report.pdf', false],
+    ['https://api.example.test/slack/files/F0EXAMPLE', false],
+    ['not a url', false],
+  ])('without a proxy, %s → %s', (url, expected) => {
+    expect(mayReceiveSlackToken(url)).toBe(expected);
+  });
+
+  it.each([
+    ['https://api.example.test/slack/files/F0EXAMPLE', true],
+    ['https://files.slack.com/files-pri/T0-F0/report.pdf', true],
+    ['https://other.example.test/slack/files/F0EXAMPLE', false],
+    ['http://api.example.test/slack/files/F0EXAMPLE', false],
+  ])('with the proxy, %s → %s', (url, expected) => {
+    useApiProxy(API_PROXY);
+    expect(mayReceiveSlackToken(url)).toBe(expected);
   });
 });

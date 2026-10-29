@@ -21,6 +21,7 @@
  * and that passes unchanged.
  */
 import { type FetchFunction, WebClient, WebClientOptions } from '@slack/web-api';
+import { config } from '../config';
 
 function isFormEncoded(headers: Record<string, string> | undefined): boolean {
   return Object.entries(headers ?? {}).some(
@@ -85,8 +86,34 @@ export const BOUNDED_SLACK_CLIENT_OPTIONS: WebClientOptions = {
   },
 };
 
+/**
+ * The options of every Slack Web API client this runtime builds: the bounded
+ * policy above, the body-token strip, and `SLACK_API_URL` when it is set.
+ */
+export function slackClientOptions(): WebClientOptions {
+  return {
+    ...BOUNDED_SLACK_CLIENT_OPTIONS,
+    fetch: stripBodyToken,
+    ...(config.slackApiUrl ? { slackApiUrl: config.slackApiUrl } : {}),
+  };
+}
+
+/**
+ * Whether a request to `url` may carry the bot token: Slack's own hosts over
+ * HTTPS, and the `SLACK_API_URL` origin.
+ */
+export function mayReceiveSlackToken(url: string): boolean {
+  if (!URL.canParse(url)) return false;
+  const target = new URL(url);
+  if (config.slackApiUrl && target.origin === new URL(config.slackApiUrl).origin) return true;
+  return (
+    target.protocol === 'https:' &&
+    (target.hostname === 'slack.com' || target.hostname.endsWith('.slack.com'))
+  );
+}
+
 export class SlackWebClient extends WebClient {
   constructor(token?: string, opts?: WebClientOptions) {
-    super(token, { ...BOUNDED_SLACK_CLIENT_OPTIONS, ...opts, fetch: stripBodyToken });
+    super(token, { ...slackClientOptions(), ...opts, fetch: stripBodyToken });
   }
 }

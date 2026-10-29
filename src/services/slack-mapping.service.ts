@@ -132,6 +132,11 @@ class SlackMappingService {
     });
   }
 
+  /** Delete the user mapping of a Slack user, if there is one. */
+  async removeUserMapping(connectionId: string, slackUserId: string): Promise<void> {
+    await prisma.slackMapping.deleteMany({ where: { connectionId, slackUserId } });
+  }
+
   /**
    * Update DM channel ID for a user mapping
    */
@@ -215,6 +220,34 @@ class SlackMappingService {
         dmChannelId: null,
       },
     });
+  }
+
+  /** Create a channel mapping, or point an existing one at this agent and person. */
+  async upsertChannelMapping(
+    connectionId: string,
+    channelId: string,
+    agentId: string,
+    channelName: string,
+    lensUserId: string,
+  ): Promise<SlackMapping> {
+    return prisma.slackMapping.upsert({
+      where: { slackChannelId: channelId },
+      update: { connectionId, agentId, slackChannelName: channelName, lensUserId },
+      create: {
+        connectionId,
+        agentId,
+        slackChannelId: channelId,
+        slackChannelName: channelName,
+        lensUserId,
+        slackUserId: null,
+        dmChannelId: null,
+      },
+    });
+  }
+
+  /** Delete a channel's mapping, if there is one. */
+  async removeChannelMapping(channelId: string): Promise<void> {
+    await prisma.slackMapping.deleteMany({ where: { slackChannelId: channelId } });
   }
 
   /**

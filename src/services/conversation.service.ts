@@ -380,8 +380,8 @@ class ConversationService {
   /**
    * Get or create a conversation thread bound to a specific external thread ID,
    * for a channel where each of its threads maps to its own conversation.
-   * `live` marks a thread whose history the channel keeps: it is read through
-   * the provider registered for `live.source`.
+   * `live` records the channel the thread is in and where its history is read:
+   * through the provider registered for `live.source`, or from the database.
    */
   async getOrCreateThreadByExternalId(
     userId: string,
