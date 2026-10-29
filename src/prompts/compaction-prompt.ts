@@ -9,14 +9,7 @@
  * present earlier in the message array as the summary message `context-builder.ts`
  * injects, and the fold-in rule below merges it into the new, complete summary
  * that replaces it.
- *
- * The operator steers it without a setting: a `## Compact Instructions` section in
- * the Agent Guide reaches the request in the system prompt it shares with the turn.
  */
-
-/** The last section of a summary. Its bullets go to long-term memory, not into the thread. */
-export const FACTS_HEADING = '## Facts to remember';
-
 export const COMPACTION_PROMPT = `Summarize this conversation so the summary can replace the full history for a future assistant that has seen none of it. Produce only the summary, structured exactly as follows:
 
 ## Goal
@@ -49,17 +42,13 @@ export const COMPACTION_PROMPT = `Summarize this conversation so the summary can
 ## Relevant Files
 - \`path/to/file\` — role in the task, and whether it was modified
 
-${FACTS_HEADING}
-- At most 10 lasting facts worth keeping beyond this conversation: user preferences, decisions, and facts about the user's environment. One self-contained line each. Leave out what a previous conversation summary above already states, and anything that only matters to the task in progress. Otherwise "none".
-
 Rules:
 - Write for a reader with none of this conversation's context; assume no shared knowledge.
-- Keep every section and heading, even when the content is "none". Keep ${FACTS_HEADING} last.
+- Keep every section and heading, even when the content is "none".
 - Stay under 2,000 words. When space runs short, drop resolved detail before unresolved detail.
 - Terse bullets, not prose. No preamble, no closing remarks.
 - Reproduce paths, symbols, commands, error strings, URLs, versions, and identifiers verbatim — never paraphrase, abbreviate, or reconstruct from memory.
 - Record only what happened. No speculation or invented rationale; mark unknowns as unknown.
 - Capture what tool calls did and what they returned; the compacted history will not include them.
 - If a previous conversation summary appears above, fold its still-relevant content into this summary — it will be discarded.
-- If your Agent Guide has a "## Compact Instructions" section, follow it.
 - Never mention this summary, the compaction, or that earlier context is gone.`;

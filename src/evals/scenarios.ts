@@ -22,7 +22,6 @@ import { heartbeatService } from '../services/heartbeat.service';
 import type { PostingCeiling } from '../services/delivery-target.service';
 import { scheduledRunPrompt } from '../prompts/scheduled-run-prompt';
 import { ALERT_THE_USER } from '../tools/computer';
-import { FACTS_HEADING } from '../prompts/compaction-prompt';
 import type { AttachmentMeta } from '../services/attachment.service';
 
 export interface Grade {
@@ -737,27 +736,33 @@ const DEPLOY_VERBATIM = [
   'checkout-db-2026-10',
   'shop-staging',
 ];
-const SUMMARY_HEADINGS = ['## Goal', '## User Requests', '## Next Steps', FACTS_HEADING];
+const SUMMARY_HEADINGS = ['## Goal', '## User Requests', '## Next Steps'];
 
 export const SCENARIOS: Scenario[] = [
   {
     id: 'compaction.keeps-details',
     expect:
       'A summary keeps the error code, path and secret name verbatim, keeps every section, states that the ' +
-      'redeploy is still to do, records the production restriction, and stays under 2,000 words.',
+      'redeploy is still to do, records the production restriction and the kustomize preference, and stays ' +
+      'under 2,000 words.',
     grader: 'reply text',
     run: async () => {
       const summary = await summarizeThread(DEPLOY_SESSION);
       const missing = [...DEPLOY_VERBATIM, ...SUMMARY_HEADINGS].filter((s) => !summary.includes(s));
       const words = summary.split(/\s+/).filter(Boolean).length;
-      const facts = summary.slice(summary.indexOf(FACTS_HEADING));
-      const pass =
-        missing.length === 0 &&
-        words < 2_000 &&
-        /redeploy/i.test(summary.slice(summary.indexOf('## Next Steps'))) &&
-        /production/i.test(summary) &&
-        /kustomize/i.test(facts);
-      return { pass, detail: `missing: [${missing.join(', ')}] | ${words} words | ${clip(summary, 300)}` };
+      const checks = {
+        verbatim: missing.length === 0,
+        length: words < 2_000,
+        // The open step is the redeploy, however the summary words it.
+        redeployNext: /redeploy|re-deploy|apply -k|roll ?out/i.test(summary.slice(summary.indexOf('## Next Steps'))),
+        production: /production/i.test(summary),
+        kustomize: /kustomize/i.test(summary),
+      };
+      const failed = Object.entries(checks).filter(([, ok]) => !ok).map(([name]) => name);
+      return {
+        pass: failed.length === 0,
+        detail: `failed: [${failed.join(', ')}] missing: [${missing.join(', ')}] | ${words} words | ${clip(summary.slice(summary.indexOf('## Next Steps')), 300)}`,
+      };
     },
   },
   ...DELIVERY_SCENARIOS,
