@@ -568,6 +568,18 @@ describe('Requirement: Channel message mention detection', () => {
 
       expect(mockSay).toHaveBeenCalledWith('❌ That code is not valid.');
     });
+
+    it('reads a code wrapped in Slack formatting and uppercases it', async () => {
+      await handleChannelMessage(
+        CONNECTION_ID, CHANNEL_ID, SLACK_USER_ID,
+        `<@${BOT_USER_ID}> *cafe12*`,
+        undefined, MESSAGE_TS, mockSay, BOT_USER_ID, TEAM_ID
+      );
+
+      expect((slackAdapterService as any).verifyAndLinkChannel).toHaveBeenCalledWith(
+        'CAFE12', CHANNEL_ID, SLACK_USER_ID, TEAM_ID,
+      );
+    });
   });
 
   describe('Scenario: Missing lensUserId on mapping', () => {
