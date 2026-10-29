@@ -47,8 +47,14 @@ interface RecordInput {
   outputTokens?: number;
 }
 
+/**
+ * A thread's latest measurement, stored for every model: idle compaction reads the
+ * size after a restart. `snapshot` is null when the model's window is unknown.
+ */
 interface TrackedThread {
-  snapshot: ContextUsageSnapshot;
+  modelId: string;
+  usedTokens: number;
+  snapshot: ContextUsageSnapshot | null;
 }
 
 class ContextUsageService {
@@ -75,12 +81,11 @@ class ContextUsageService {
 
     const usedTokens = input.inputTokens + (input.outputTokens ?? 0);
     const snapshot = buildContextSnapshot(input.threadId, input.modelId, usedTokens);
+    const previous = this.tracked.get(input.threadId);
+    this.tracked.set(input.threadId, { modelId: input.modelId, usedTokens, snapshot });
     if (!snapshot) return null;
 
-    const previous = this.tracked.get(input.threadId);
-    this.tracked.set(input.threadId, { snapshot });
-
-    if (previous?.snapshot.usedPercent !== snapshot.usedPercent) {
+    if (previous?.snapshot?.usedPercent !== snapshot.usedPercent) {
       this.events.emit('usage', { userId: input.userId, ...snapshot } satisfies ContextUsageEvent);
     }
 
@@ -89,24 +94,18 @@ class ContextUsageService {
 
   /**
    * Persist the turn's final measurement. One write per turn rather than per step.
-   * Fail-soft: this is a display metric, so a DB error is logged and swallowed
-   * rather than surfacing in the user's turn.
+   * The meter, Auto tier selection and idle compaction after a restart read it. A DB
+   * error is logged and swallowed, since the next turn writes the column again.
    */
   async finalize(input: { threadId: string }): Promise<void> {
     const tracked = this.tracked.get(input.threadId);
     this.tracked.delete(input.threadId);
     if (!tracked) return;
 
-    const { snapshot } = tracked;
-
     try {
-      await conversationService.setThreadContextUsage(
-        snapshot.threadId,
-        snapshot.usedTokens,
-        snapshot.modelId
-      );
+      await conversationService.setThreadContextUsage(input.threadId, tracked.usedTokens, tracked.modelId);
     } catch (err) {
-      logger.error({ err, threadId: snapshot.threadId }, '[ContextUsage] failed to persist snapshot');
+      logger.error({ err, threadId: input.threadId }, '[ContextUsage] failed to persist snapshot');
     }
   }
 
@@ -140,8 +139,8 @@ class ContextUsageService {
    * under the thread mutex, so no turn is in flight for this thread and there
    * is no entry to reconcile.
    *
-   * Returns null (and does nothing) when the model's window is unknown — never
-   * a made-up percent.
+   * When the model's window is unknown it persists the estimate, emits nothing and
+   * returns null. It never reports a made-up percent.
    */
   applyEstimate(input: {
     userId: string;
@@ -150,15 +149,14 @@ class ContextUsageService {
     usedTokens: number;
   }): ContextUsageSnapshot | null {
     const snapshot = buildContextSnapshot(input.threadId, input.modelId, input.usedTokens);
+    void conversationService
+      .setThreadContextUsage(input.threadId, input.usedTokens, input.modelId)
+      .catch((err) => {
+        logger.error({ err, threadId: input.threadId }, '[ContextUsage] failed to persist estimate');
+      });
     if (!snapshot) return null;
 
     this.events.emit('usage', { userId: input.userId, ...snapshot } satisfies ContextUsageEvent);
-    void conversationService
-      .setThreadContextUsage(snapshot.threadId, snapshot.usedTokens, snapshot.modelId)
-      .catch((err) => {
-        logger.error({ err, threadId: snapshot.threadId }, '[ContextUsage] failed to persist estimate');
-      });
-
     return snapshot;
   }
 }

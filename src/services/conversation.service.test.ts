@@ -1336,4 +1336,15 @@ describe('listCompactedMessages', () => {
     expect(page.messages.map((m) => m.content)).toEqual(['The PODS crashed', 'ran it']);
     expect(page.more).toBe(false);
   });
+
+  it('matches quotes, backslashes and newlines in a tool call as written', async () => {
+    mockPrisma.conversationMessage.findMany.mockResolvedValue([
+      row('read the error', [{ tool: 'shell_exec', input: { command: 'cat C:\\data\\log' }, output: 'Error: "db" not found\nexit 1' }]),
+    ]);
+
+    for (const query of ['"db" not found', 'C:\\data', 'not found\nexit']) {
+      const page = await conversationService.listCompactedMessages('t1', { query, offset: 0, limit: 5 });
+      expect(page.messages.map((m) => m.content)).toEqual(['read the error']);
+    }
+  });
 });
