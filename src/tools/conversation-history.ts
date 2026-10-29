@@ -35,7 +35,8 @@ export function getConversationHistoryTools(threadId: string, workspaceRoot?: st
       description:
         'Read the earlier messages of this conversation that its summary replaced, oldest first, ' +
         'with their tool calls and results. Use it when you need an exact detail the summary does ' +
-        'not give: a command, an error, a value, what the user said word for word.',
+        'not give: a command, an error, a value, what the user said word for word. Long texts are ' +
+        'cut; give a query to see the part around a match.',
       inputSchema: z.object({
         query: z
           .string()
@@ -117,5 +118,10 @@ function clip(output: unknown, query: string | undefined): unknown {
   const match = query ? output.toLowerCase().indexOf(query.toLowerCase()) : -1;
   const start = match > OUTPUT_CHARS / 2 ? Math.min(match - OUTPUT_CHARS / 4, output.length - OUTPUT_CHARS) : 0;
   const shown = output.slice(start, start + OUTPUT_CHARS);
-  return `${start > 0 ? `[From character ${start}.]\n` : ''}${shown}\n[${OUTPUT_CHARS} of ${output.length} characters shown.]`;
+  const rest = match !== -1
+    ? 'Call again with another query to see the part around its match.'
+    : query
+      ? 'Your query occurs elsewhere in this message, not in this text. Call again with a query that occurs in this text to see the part around it.'
+      : 'The rest may hold what you need. Call again with a query to see the part around its first match.';
+  return `${start > 0 ? `[From character ${start}.]\n` : ''}${shown}\n[Cut: ${OUTPUT_CHARS} of ${output.length} characters shown. ${rest}]`;
 }
