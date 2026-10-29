@@ -155,7 +155,7 @@ public HTTPS (see [Microsoft Teams](teams.md#the-public-messaging-endpoint)).
 | `PRISM_PLUGINS_DIR` | Override the [plugins](plugins.md) directory specifically, when the agent's commands run on this machine. | `<data dir>/plugins` |
 | `ATTACHMENT_TTL_HOURS` | How long shared-file content is kept before the hourly sweep deletes it. The conversation keeps a *content expired* stub. See [Tools](tools.md#attachments). | `168` (7 days) |
 | `TOOL_RISK_GATE_MODE` | Fast-model pre-execution evaluation for sensitive [tool calls](tools.md#risk-gate): `off`, `observe`, or `enforce`. | `off` |
-| `TOOL_OUTPUT_TTL_HOURS` | How long the saved copy of an oversized tool result is kept before the hourly sweep deletes it, so the agent can search the part it wasn't shown. Copies are also deleted once the conversation they belong to has been compacted away. See [Tools](tools.md#large-tool-outputs). | `168` (7 days) |
+| `TOOL_OUTPUT_TTL_HOURS` | How long the saved copy of an oversized tool result is kept before the hourly sweep deletes it, so the agent can search the part it wasn't shown. See [Tools](tools.md#large-tool-outputs). | `168` (7 days) |
 | `THREAD_MODE` | `single` gives the agent one conversation, which every client opens and which scheduled tasks, goals and heartbeats post into. See [one conversation](web-ui.md#one-conversation). | `multi` |
 
 Set `CODING_AGENT` to `claude-code` or `codex` to choose the default coding agent.
@@ -508,6 +508,7 @@ defines**.
 | `TOOL_SEARCH` | `auto` loads [MCP and plugin tools](tools.md#many-mcp-tools) on demand when their definitions are larger than `TOOL_SEARCH_THRESHOLD_PERCENT` of the model's window. `off` sends every tool in full. On a model that cannot load tools on demand, every tool is sent in full. | `auto` |
 | `TOOL_SEARCH_THRESHOLD_PERCENT` | The share of the model's window, in percent, above which `TOOL_SEARCH=auto` loads tools on demand. An invalid value logs a warning and the default applies. | `2` |
 | `HEARTBEAT_INTERVAL_MS` | Heartbeat interval, in milliseconds, of an agent created after you set it. An agent keeps the interval it already has. A value that is not an integer from `60000` (1 minute) to `604800000` (1 week) logs a warning and the default applies. | `28800000` (8 hours) |
+| `IDLE_COMPACTION` | `off` stops [compacting](compaction.md) a large conversation while it sits idle. Choose `off` when you prefer the whole conversation over a lower cost after long pauses. | on |
 | `DISABLE_UPDATER` | Set to `1` (or `true`) to turn off [automatic updates](installation.md#automatic-updates): the hourly check, the auto-install, and the `prism update` command. | — (updater on for native installs) |
 
 The mantle **chat and classification** variables deliberately do **not** fall

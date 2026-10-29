@@ -110,7 +110,8 @@ see a gap, reconnect and resume from the last `seq` you applied.
   conversation's context is, compaction progress, the agent's computer, and
   runtime updates.
   - When `compaction` reports `completed`, reload the open conversation. Older
-    messages have changed.
+    messages have changed. `idle: true` marks a conversation compacted while it
+    sat idle.
   - `computer` lists every computer the agent can use in `computers`, as
     `GET /agents/computers` does.
 

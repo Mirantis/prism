@@ -39,9 +39,11 @@ import { logger } from '../../../logger';
 import { createSharedBedrockOptions, isAnthropicModelId } from '../bedrock-shared';
 import {
   ANTHROPIC_CACHE_POINT,
+  ANTHROPIC_CACHE_POINT_1H,
   ANTHROPIC_THINKING_OFF,
   BEDROCK_CACHE_POINT,
   NO_CACHE_POINT,
+  type CacheTtl,
   type CachePointFragment,
   type LlmProvider,
 } from '../llm-provider';
@@ -124,8 +126,8 @@ const CONVERSE_PROMPT_CACHE_FAMILIES: readonly string[] = [];
  * family is on the list above, so a model whose support is unknown runs uncached
  * instead of failing every turn.
  */
-function promptCacheFragment(modelId: string): CachePointFragment {
-  if (isAnthropicModelId(modelId)) return ANTHROPIC_CACHE_POINT;
+function promptCacheFragment(modelId: string, ttl?: CacheTtl): CachePointFragment {
+  if (isAnthropicModelId(modelId)) return ttl === '1h' ? ANTHROPIC_CACHE_POINT_1H : ANTHROPIC_CACHE_POINT;
   const knownToCache = CONVERSE_PROMPT_CACHE_FAMILIES.some((family) => modelId.includes(family));
   return knownToCache ? BEDROCK_CACHE_POINT : NO_CACHE_POINT;
 }

@@ -18,6 +18,11 @@ scrollback; compaction only changes what the model sees.
 - **Manually.** Run **`/compact`** in the web chat or the terminal UI to
   compact the current conversation at any time. If there is nothing to compact
   yet, the command says so.
+- **While idle.** A large conversation that you leave for about an hour is
+  compacted shortly before the agent's prompt cache for it expires, so your
+  next message is answered from the summary without re-reading the whole
+  thread. A conversation you come back to within the hour keeps every message.
+  Set `IDLE_COMPACTION=off` to turn this off.
 - **On overflow.** A single turn can outgrow the window outright (the provider
   rejects the request as too long). That rejection triggers a recovery
   compaction immediately: the runtime summarizes the history — shrinking the
@@ -36,6 +41,10 @@ appears in the chat and the context meter drops.
   state, next steps, relevant files) and keeps exact paths, commands, error
   strings and identifiers. It also records what tool calls did and returned,
   because the compacted context contains no raw tool calls.
+- When the summary leaves out a detail, the agent reads the original messages
+  with its compacted-history tool.
+- To steer what summaries keep, add a `## Compact Instructions` section to the
+  [Agent Guide](agent-identity.md#the-seven-documents).
 
 ## Repeated compactions
 
@@ -57,6 +66,7 @@ newer replies afterwards. The Slack channel itself is never modified.
 |----------|---------|---------|
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-compact at this percent of the model's window; `0` disables auto-compaction | `90` |
 | `COMPACTION_TAIL_MESSAGES` | At most this many of the newest messages are kept out of compaction, except that a long latest reply stays whole when it fits | `6` |
+| `IDLE_COMPACTION` | `off` stops compacting large conversations while they sit idle | on |
 
 Auto-compaction works best when the model's context window is known; see
 **[Context-window size](configuration.md#context-window-size)**. For a model

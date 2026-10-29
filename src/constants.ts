@@ -105,6 +105,16 @@ export const COMPACTION_TAIL_MESSAGES = 6;
  */
 export const COMPACTION_TAIL_TOKENS = 30_000;
 
+/**
+ * A chat conversation at least this large is compacted when it sits idle until its
+ * one-hour prompt cache is about to expire, so the next turn re-writes a summary
+ * instead of the whole thread. Below it, the re-write costs less than the summary.
+ */
+export const IDLE_COMPACTION_MIN_TOKENS = 200_000;
+
+/** The share of the cache lifetime an idle conversation waits before it is compacted. */
+export const IDLE_COMPACTION_TTL_SHARE = 0.9;
+
 // ============================================================================
 // Updates
 // ============================================================================

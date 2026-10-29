@@ -3,8 +3,8 @@
  * mode runs one of the agent's tiers, labelled per turn by the classification
  * model. A failed or unknown label runs the largest tier. A thread keeps its
  * tier while that model's prompt cache is warm: it moves up on any turn, and
- * down only on its first turn, the first turn after compaction, or after
- * `PROMPT_CACHE_TTL_MS` without a call.
+ * down only on its first turn, the first turn after compaction, or once that
+ * model's cache has expired: an hour after a chat turn, five minutes after any other.
  */
 
 import { config } from '../config';
@@ -12,7 +12,7 @@ import { logger } from '../logger';
 import { callModel } from './model-call';
 import { getGateRequest } from './classification';
 import { langfuseTelemetry } from './telemetry';
-import { PROMPT_CACHE_TTL_MS, type LlmProvider } from './llm-providers/llm-provider';
+import { cacheTtlFor, cacheTtlMs, type LlmProvider } from './llm-providers/llm-provider';
 import { contextWindowFor } from './context-window';
 import { escapeAngles } from './prompt-fence';
 import { resolveEffectiveModel, resolveScopedModel } from '../services/agent-workspace.service';
@@ -140,7 +140,8 @@ async function heldTier(
   };
   const tier = MODEL_TIERS.find((t) => tiers[t] && sentId(tiers[t] as string) === last.model);
   if (!tier) return null;
-  return { tier, warm: Date.now() - last.createdAt.getTime() < PROMPT_CACHE_TTL_MS };
+  const ttl = cacheTtlMs(provider.cachePoint(last.model, cacheTtlFor(last.purpose)));
+  return { tier, warm: Date.now() - last.createdAt.getTime() < ttl };
 }
 
 /**
