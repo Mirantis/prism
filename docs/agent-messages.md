@@ -1,15 +1,13 @@
 # Agent messages
 
-When a delivery service carries messages between the agents of a project, the
-other agents can send the agent messages, and it sends them messages with the
-`message_agent` tool. A message from another agent arrives in the agent's web
+The agent can receive messages from other agents. A delivery service carries
+each message to the agent, and the message arrives in the agent's web
 conversation and starts a turn, like one of yours. The agent treats it as a
 colleague's request, never as your words or your approval.
 
-The platform the agent runs on sets it up: it gives the runtime the delivery
-service's API token id in `AGENT_MESSAGES_TOKEN_ID`, and the agent knows who the
-other agents are when its MCP endpoint (`NEXUS_MCP_URL`) has a `list_agents`
-tool.
+The platform that hosts the agent sets this up. It gives the runtime the
+delivery service's API token id in `AGENT_MESSAGES_TOKEN_ID`. It also provides
+the tools the agent uses to find the other agents and to send them messages.
 
 ## What you see
 
@@ -18,22 +16,9 @@ tool.
   delivery service about the agent's own messages, such as one that could not
   be delivered or an answer that did not come, shows under its sender's name
   alone.
-- **The agent's answer** appears in the conversation like any reply. It answers
-  the other agent with `message_agent` when that agent waits for an answer.
-
-## Who the other agents are
-
-The runtime adds nothing about the other agents to a conversation. The
-messaging tools tell the agent: `list_agents`' description says that other
-agents very likely exist, names them with their roles, and says to call
-`list_agents` before a task, and `message_agent`'s says how to treat a message
-from another agent. The tools are in every run, so a heartbeat check, a
-scheduled task, a goal or a webhook run knows the other agents as much as a
-chat does.
-
-The `colleagues.` prompt evals check that the agent hands a task that matches
-another agent's role to that agent, keeps its own work, and calls nothing for
-a thank-you or a general question.
+- **The agent's answer** appears in the conversation like any reply. When the
+  other agent waits for an answer, the agent sends it with the platform's
+  messaging tool.
 
 ## Delivering a message: `POST /agents/agent-messages`
 
@@ -86,9 +71,9 @@ stores an agent's message: `POST /agents/threads/:threadId/messages` refuses
 | `attachmentIds` | Optional, at most 5. Upload each file first with `POST /agents/attachments`. |
 
 The message goes to the web conversation that holds its `conversationId`:
-the one where the agent's own `message_agent` call started or answered that
-conversation, or where an earlier message of it arrived. A reply, and a notice
-about a message, carry the conversation of the message they are about. A
+the one where the agent's own message started or answered that conversation,
+or where an earlier message of it arrived. A reply, and a notice about a
+message, carry the conversation of the message they are about. A
 conversation the runtime has not seen yet, or one whose web conversation was
 deleted or is hidden by single-thread mode, goes to the one conversation when
 `THREAD_MODE=single`, otherwise to the newest one.
@@ -123,9 +108,9 @@ flight, such as a scheduled task or a coding task. Otherwise it answers
 
 ## When something goes wrong
 
-- **The agent does not know the other agents.** It needs the `list_agents`
-  tool on its MCP endpoint, which the platform the agent runs on grants. The
-  agents its description names are as the platform last stored them.
+- **The agent does not know the other agents.** The platform that hosts the
+  agent provides the tools to find them. Check that the platform gives the agent
+  those tools.
 - **A delivery gets no answer, or the platform's own error.** The
   agent-messages port is not exposed, or another process holds it: the log
   has an error that starts with `[AgentMessages] Cannot listen`. Choose a free
