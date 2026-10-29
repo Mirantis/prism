@@ -692,10 +692,10 @@ class CronSchedulerService {
         boundThreadId && (await conversationService.writableThreadId(boundThreadId)) === boundThreadId ? boundThreadId : null;
       const target = { deliverTo: task.deliverTo, channelIds: parseCommaList(task.channelIds) };
 
+      const lastSend = boundThreadId ? undefined : await this.lastSendOf(task);
       // Invoke LLM directly (in-process). A bound task runs against its thread so
       // it sees the conversation history (see includeConversation in invoke.ts)
       // and can re-schedule another "wait" to keep polling in-thread.
-      const lastSend = boundThreadId ? undefined : await this.lastSendOf(task);
       const result = await invoke({
         userId: task.userId,
         agentId: task.agentId,
