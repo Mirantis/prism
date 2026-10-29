@@ -141,8 +141,9 @@ export const ANTHROPIC_THINKING_OFF: ProviderOptionsFragment = {
 export type AnthropicCachePoint = { anthropic: { cacheControl: { type: 'ephemeral'; ttl?: '1h' } } };
 
 /**
- * How long a request asks its cache entries to stay warm. `1h` costs 2× input on
- * the write instead of 1.25×, so it pays only where people pause between turns.
+ * How long a request asks its cache entries to stay warm. `1h` asks for the vendor's
+ * longer lifetime, whose writes cost more (2× input instead of 1.25× on Claude), so
+ * it pays only where people pause between turns.
  */
 export type CacheTtl = '5m' | '1h';
 
@@ -203,11 +204,25 @@ const FIVE_MINUTES_MS = 5 * 60 * 1000;
 const ONE_HOUR_MS = 60 * 60 * 1000;
 
 /**
- * How long a cache written through `fragment` stays warm without a read: an hour
- * for a breakpoint that asks for one, else the providers' default of five minutes.
+ * How long an entry a request of `ttl` writes for `modelId` stays warm without a
+ * read: what the vendor declares, else an hour for a breakpoint that asks for one,
+ * else five minutes.
  */
-export function cacheTtlMs(fragment: CachePointFragment): number {
+export function cacheTtlMs(provider: LlmProvider, modelId: string, ttl: CacheTtl): number {
+  const declared = provider.cacheTtlMs?.(modelId, ttl);
+  if (declared !== undefined) return declared;
+  const fragment = provider.cachePoint(modelId, ttl);
   return 'anthropic' in fragment && fragment.anthropic.cacheControl.ttl === '1h' ? ONE_HOUR_MS : FIVE_MINUTES_MS;
+}
+
+/** The request-level `providerOptions` a request of `ttl` sends; `write: false` asks for no new entry. */
+export function cacheRequestOptions(
+  provider: LlmProvider,
+  modelId: string,
+  ttl: CacheTtl,
+  write = true,
+): ProviderOptionsFragment {
+  return provider.cacheRequest?.(modelId, ttl, write) ?? {};
 }
 
 /**
@@ -231,9 +246,19 @@ export type LlmProvider = ((modelId: string) => LanguageModel) & {
    *
    * `ttl` is the lifetime the breakpoint asks for. A vendor that sends Anthropic's
    * breakpoint sends it as given; one without breakpoints returns the empty
-   * fragment, which `cacheTtlMs` reads as five minutes.
+   * fragment and states any lifetime through `cacheRequest` and `cacheTtlMs`.
    */
   cachePoint: (modelId: string, ttl?: CacheTtl) => CachePointFragment;
+  /**
+   * Request-level `providerOptions` for a vendor whose cache lifetime is a setting
+   * of the request rather than of a breakpoint; undefined when `cachePoint` says
+   * everything. `write: false` asks for a request that reads and writes no entry,
+   * where the vendor can send one. Every request of a thread sends the same `ttl`,
+   * since an entry of another lifetime replaces the thread's entry instead of reading it.
+   */
+  cacheRequest?: (modelId: string, ttl: CacheTtl, write: boolean) => ProviderOptionsFragment;
+  /** How long an entry stays warm, for a vendor whose lifetime `cachePoint` does not show. */
+  cacheTtlMs?: (modelId: string, ttl: CacheTtl) => number;
   /**
    * Whether one model gets a prompt-cache breakpoint on this vendor, for the
    * startup line to report; undefined when the vendor has nothing to say and
