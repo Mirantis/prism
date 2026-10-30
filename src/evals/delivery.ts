@@ -41,6 +41,8 @@ export interface EarlierMessage {
   hoursAgo: number;
   /** Where it went. The default is the user's DM. */
   place?: Place;
+  /** What a later run that sent nothing reported. */
+  laterReport?: string;
 }
 
 export interface AutonomousRun {
@@ -128,7 +130,11 @@ function lastSendOf(earlier: EarlierMessage | undefined): TaskLastSend | undefin
   if (!earlier) return undefined;
   const at = Date.now() - earlier.hoursAgo * 3_600_000;
   const target = earlier.place === 'web chat' ? WEB_CHAT_TARGET : LINKED.find((t) => t.place === (earlier.place ?? 'DM'))?.key;
-  return { messages: `- To ${target}: ${earlier.text}`, at };
+  return {
+    messages: `- To ${target}: ${earlier.text}`,
+    at,
+    ...(earlier.laterReport && { latestReport: { text: earlier.laterReport, at } }),
+  };
 }
 
 /** Run one heartbeat, scheduled-task or webhook run and report every place a message reached. */
