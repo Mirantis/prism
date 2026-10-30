@@ -16,7 +16,7 @@ import { scheduledRunPrompt } from '../prompts/scheduled-run-prompt';
 import { WEB_CHAT_TARGET, type LinkedTarget } from '../services/channel-adapter.interface';
 import { deliveryTargetService, type PostingCeiling } from '../services/delivery-target.service';
 import { outboundMessageService } from '../services/outbound-message.service';
-import type { TaskLastSend } from '../types';
+import type { HeartbeatTrigger, TaskLastSend } from '../types';
 
 /** A place a message can reach. A linked channel is named `#name`. */
 export type Place = 'web chat' | 'DM' | '#platform-team' | '#releases' | '#general';
@@ -53,6 +53,8 @@ export interface AutonomousRun {
   payload?: Record<string, unknown>;
   ceiling?: Ceiling;
   earlier?: EarlierMessage;
+  /** The channel messages that started a heartbeat. */
+  triggers?: HeartbeatTrigger[];
   /** What `shell_exec` prints, per command. */
   shell?: (command: string) => string;
   /** Results for other named tools. */
@@ -120,6 +122,7 @@ function sendStubs(ceiling: PostingCeiling, sent: Posted[]) {
 }
 
 function runPrompt(run: AutonomousRun, lastSend: TaskLastSend | undefined): string {
+  if (run.mode === 'heartbeat' && run.triggers) return heartbeatService['buildTriggeredHeartbeatPrompt'](run.triggers);
   if (run.mode === 'heartbeat') return heartbeatService['buildHeartbeatPrompt']();
   if (run.mode === 'webhook') return renderWebhookTurnPrompt(run.instruction, run.payload ?? {}, 'unknown', 'deploy-events');
   return scheduledRunPrompt(run.instruction, lastSend);
@@ -149,6 +152,7 @@ export async function runAutonomous(run: AutonomousRun): Promise<Outcome> {
     maxSteps: run.maxSteps ?? 6,
     postingCeiling: ceiling,
     lastSend,
+    heartbeatTriggers: run.triggers,
     context: run.mode === 'heartbeat' && run.instruction ? { heartbeatMd: run.instruction } : {},
     stubs: {
       ...sendStubs(ceiling, reached),

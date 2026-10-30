@@ -29,7 +29,7 @@ import { buildTurnRequest } from '../invoke';
 import { COMPUTER_INSTRUCTIONS } from '../prompts/computer-prompt';
 import { getComputerTools } from '../tools/computer';
 import type { ConversationMessage } from '../prompts/context-builder';
-import type { AgentContext, InvokeRequest, TaskLastSend } from '../types';
+import type { AgentContext, HeartbeatTrigger, InvokeRequest, TaskLastSend } from '../types';
 import type { ChatPlatform } from '../services/channel-adapter.interface';
 import { slackChannelLabel } from '../utils/slack-formatter';
 import { teamsChannelLabel } from '../utils/teams-formatter';
@@ -166,7 +166,8 @@ interface TurnInput {
   /** Fields a run's service sets on the agent's context, such as the heartbeat's checks. */
   context?: Partial<AgentContext>;
   /** Where a heartbeat, unbound scheduled-task or webhook run may post, as its service sets it. */
-  postingCeiling?: PostingCeiling;
+  postingCeiling?: PostingCeiling;  /** The channel messages that started a heartbeat. */
+  heartbeatTriggers?: HeartbeatTrigger[];
 }
 
 export interface ToolCallRecord {
@@ -223,6 +224,7 @@ export async function runTurn(input: TurnInput): Promise<TurnTrace> {
     agentId,
     mode: input.mode,
     prompt: input.prompt ?? '',
+    ...(input.heartbeatTriggers ? { heartbeatTriggers: input.heartbeatTriggers } : {}),
     ...(input.channel ? { channelLabel: CHANNEL_LABEL[input.channel.platform](input.channel.name) } : {}),
   };
   const { systemParts: parts, messages } = await buildTurnRequest(context, request, subagents);
