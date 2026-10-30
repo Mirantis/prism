@@ -16,7 +16,7 @@ const { Given, When, Then } = createBdd();
 // The runtime's own classification model, and its chat model (`.env.e2e`).
 const SMALL_TEST_MODEL = 'global.anthropic.claude-haiku-5-5';
 const LARGE_TEST_MODEL =
-  process.env.BEDROCK_MODEL_ID || 'global.anthropic.claude-sonnet-4-5-20250929-v1:0';
+  process.env.BEDROCK_MODEL_ID || 'global.anthropic.claude-sonnet-5-5';
 
 const TEST_MODELS: Record<string, string> = { small: SMALL_TEST_MODEL, large: LARGE_TEST_MODEL };
 

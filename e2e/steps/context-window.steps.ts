@@ -18,8 +18,7 @@ import { HomePage } from '../pages/home.page';
 import { DEFAULT_AGENT_ID } from '../fixtures/test-data';
 // The same vendored catalog the runtime resolves windows from. Read here rather
 // than hardcoding a number: the e2e agent's model is whatever the environment
-// configures (a Sonnet with a 200k window at the time of writing, not the 1M
-// Opus default), so a literal would silently encode the wrong denominator.
+// configures, so a literal would silently encode the wrong denominator.
 import modelLimits from '../../src/lib/model-limits.generated.json';
 
 const { Given, When, Then } = createBdd();
