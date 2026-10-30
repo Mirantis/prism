@@ -201,8 +201,9 @@ Answer with exactly one word: YES or NO.
 
 Answer YES when it is addressed to ${agentName}:
 
-- The name used to speak *to* it, together with something meant for it. Accept a name
-  mispronounced or half-swallowed, since people say names quickly.
+- The name used to speak *to* it, together with something meant for it, in any
+  language. Accept a name mispronounced or half-swallowed, since people say names
+  quickly.
 - Or a direct question, answer or instruction that plainly continues an exchange
   ${agentName} is already in — the next question after ${agentName} has just spoken,
   someone asking whether it found something it was just asked to look for, or a

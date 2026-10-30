@@ -26,4 +26,10 @@ describe('getVoiceChatInstructions', () => {
       expect(text).toMatch(/do not call the tool yet/);
     },
   );
+
+  it("speaks the user's language", () => {
+    const text = flat(getVoiceChatInstructions({ ...base, responseMode: 'open' }));
+    expect(text).toContain('Speak the language your user speaks, and switch when they switch.');
+    expect(text).not.toMatch(/English only/);
+  });
 });

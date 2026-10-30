@@ -15,6 +15,13 @@ describe('getMeetingInstructions', () => {
     expect(text).toContain('Google Meet');
   });
 
+  it('speaks the language of the meeting, and answers a person in theirs', () => {
+    const text = flat(getMeetingInstructions(base));
+    expect(text).toContain('Speak the language the meeting is held in.');
+    expect(text).toContain('When someone speaks to you in another language, answer them in theirs.');
+    expect(text).not.toMatch(/English only/);
+  });
+
   it('asks for speech, not formatting', () => {
     // Markdown has no spoken form; the model has to be told once, clearly.
     const text = getMeetingInstructions(base);

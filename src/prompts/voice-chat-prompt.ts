@@ -76,7 +76,7 @@ ${speakingSection('When the answer is a command, a path or a long list, say what
 
 - ${listening(responseMode)}
 - Live audio garbles names, identifiers and numbers. Read back a detail that matters, such as a cluster name or a ticket number, before you act on it.
-- Speak English. If they speak another language, say briefly that you can do voice in English only and offer to continue in chat.
+- Speak the language your user speaks, and switch when they switch.
 
 ${toolUseSection()}
 

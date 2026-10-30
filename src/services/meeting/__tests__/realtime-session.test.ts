@@ -170,7 +170,7 @@ describe('RealtimeSession configuration', () => {
     expect('transcription' in update.session.audio.input).toBe(false);
   });
 
-  it('transcribes when the log is going to carry it', async () => {
+  it('transcribes when the log contains the words', async () => {
     const restore = config.meetingTranscriptLogging;
     (config as { meetingTranscriptLogging: string }).meetingTranscriptLogging = 'full';
     try {
@@ -179,11 +179,9 @@ describe('RealtimeSession configuration', () => {
         session: Record<string, any>;
       };
 
-      // Language is pinned rather than auto-detected: left to itself the transcriber
-      // drifted to German, Korean and Bulgarian inside one English call.
+      // No language: a call can be in any language, and the transcriber detects it.
       expect(update.session.audio.input.transcription).toEqual({
         model: 'gpt-realtime-whisper',
-        language: 'en',
       });
     } finally {
       (config as { meetingTranscriptLogging: string }).meetingTranscriptLogging = restore;

@@ -38,6 +38,8 @@ the runtime's voice frames on the chat connection —
 `src/services/voice/socket-audio.ts` and
 `src/services/websocket-gateway.service.ts` define them.
 
+The agent speaks the language you speak, and switches when you do.
+
 ## The agent's computer
 
 Press **Talk** on the Web UI's **Computer** page to discuss the live desktop.
