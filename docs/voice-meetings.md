@@ -241,8 +241,8 @@ guessing. So a call where it answers nothing at all, even to its name, is a
 different problem from one where it ignores a single sentence. `gate_failed` in the
 `meeting ended` event counts it.
 
-**English only, for now.** It is told to say so and to offer to continue in a chat
-session, which has no such limit.
+**It speaks the language of the meeting.** When someone speaks to it in another
+language, it answers them in theirs.
 
 **You can interrupt it.** Start talking and it stops — humans have the floor. A
 short "mm-hm" or a cough won't cut it off mid-sentence; a real interjection will,

@@ -503,18 +503,14 @@ export class RealtimeSession extends EventEmitter {
             // gain from deciding this per utterance.
             //
             // `gpt-live-transcribe` accepts `keywords`, which is how the agent's
-            // name and the room's roster are given to it. The previous default,
-            // `gpt-realtime-whisper`, supports neither `keywords` nor `prompt` in GA
-            // Realtime sessions, so there was no way to tell it which word mattered.
-            // Pinned to English rather than auto-detected. Left to itself the
-            // transcriber drifts language mid-call — one real meeting came back
-            // with German, Korean and Bulgarian renderings of English speech.
-            // Voice meetings are English-only today, and the prompt says so.
+            // name and the room's roster are given to it. The transcriber detects the
+            // language, because a call can be in any language. Detection can render
+            // some utterances in the wrong language in `[Meeting:Heard]`, which is the
+            // only reader of this transcript.
             ...(config.meetingTranscriptLogging === 'full'
               ? {
                   transcription: {
                     model: config.openaiTranscriptionModel,
-                    language: 'en',
                     ...(this.options.agentName ? { keywords: [this.options.agentName] } : {}),
                   },
                 }
@@ -1322,7 +1318,6 @@ export class RealtimeSession extends EventEmitter {
           input: {
             transcription: {
               model: config.openaiTranscriptionModel,
-              language: 'en',
               keywords,
             },
           },

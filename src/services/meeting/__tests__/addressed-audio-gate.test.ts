@@ -91,6 +91,11 @@ describe('what the gate asks', () => {
     expect(prompt).toMatch(/spoken to\s+Emma/);
   });
 
+  it('counts the name and a request in any language', () => {
+    const prompt = buildAddressedGatePrompt(room).replace(/\s+/g, ' ');
+    expect(prompt).toContain('together with something meant for it, in any language.');
+  });
+
   it('will not let a display name pose as an instruction', () => {
     const prompt = buildAddressedGatePrompt({
       agentName: 'Prism',

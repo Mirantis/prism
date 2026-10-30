@@ -45,7 +45,7 @@ ${speakingSection("When the answer is a command, a path or a long list, say what
 ${responseMode === 'open' ? '' : `- ${NOT_FOR_YOU}\n`}- ${listeningNote(responseMode)}
 - The audio has no speaker labels, so never guess a name: call \`meeting_speaker\` whenever a name matters. It tells you who said what you are answering, who is talking now and who is in the call; if it cannot tell, say so or ask.
 - Live audio garbles names, identifiers and numbers. Read back a detail that matters, such as a cluster name or a ticket number, before you act on it.
-- Speak English. Working out whether a sentence was meant for you is reliable in English only, so if someone speaks another language, say briefly that you can do voice in English only and offer to continue in a chat session.
+- Speak the language the meeting is held in. When someone speaks to you in another language, answer them in theirs.
 
 ${toolUseSection('`meeting_speaker` is the exception: it answers at once, and "let me check who that was" before you answer someone sounds broken, so call it without a line.')}
 
