@@ -25,7 +25,7 @@ import prisma from '../lib/prisma';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { formatTimeAgo } from '../prompts/context-builder';
-import { ChannelTriggerMessage, HeartbeatTrigger, InvokeStep, type InvokeResponse, type TaskLastSend, type ToolCallRecord } from '../types';
+import { ChannelTriggerMessage, HeartbeatTrigger, type TriggerPlace, InvokeStep, type InvokeResponse, type TaskLastSend, type ToolCallRecord } from '../types';
 import { heartbeatDelayMs, heartbeatDueAt } from './heartbeat-schedule';
 import type { ChatPlatform } from './channel-adapter.interface';
 
@@ -130,6 +130,8 @@ interface HeartbeatResult {
 export interface PendingTriggerMessages {
   messages: ChannelTriggerMessage[];
   ids: string[];
+  /** The channel the messages were posted in. */
+  place?: TriggerPlace;
 }
 
 /**
@@ -471,10 +473,10 @@ class HeartbeatService {
       // trigger. They are removed when this run ends, so a restart before then keeps them.
       const triggers: HeartbeatTrigger[] = [];
       for (const source of this.triggerSources) {
-        const { messages, ids } = await source.pending(state.agentId);
+        const { messages, ids, place } = await source.pending(state.agentId);
         if (messages.length === 0) continue;
         logger.info(`[Heartbeat] Picked up ${messages.length} pending ${source.platform} message(s) during timer heartbeat`);
-        triggers.push({ platform: source.platform, messages });
+        triggers.push({ platform: source.platform, ...(place && { place }), messages });
         read.push({ source, ids });
       }
       const triggered = triggers.length > 0;

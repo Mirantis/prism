@@ -317,6 +317,14 @@ describe('system prompt text', () => {
     expect(prompt).toContain('seeing increased error rates');
   });
 
+  it('a triggered heartbeat names the channel the messages came from and answers there', async () => {
+    const messages = [{ sender: 'Alice', text: 'ALERT: production deployment failed', timestamp: new Date().toISOString() }];
+    const place = { target: 'slack:C0REL0001', name: '#releases' };
+    const prompt = await promptText(createTestAgentContext(), 'heartbeat', [{ platform: 'Slack', place, messages }]);
+    expect(prompt).toContain('Posted in #releases (`slack:C0REL0001`) since your last heartbeat:');
+    expect(prompt).toContain('Act on what they report or ask for, and post your answer in #releases, also when no checks are configured');
+  });
+
   it('heartbeat mode omits the messages section when no channel triggered it', async () => {
     const context = createTestAgentContext();
     expect(await promptText(context, 'heartbeat', [])).not.toContain('(triggering this heartbeat)');

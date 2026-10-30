@@ -587,6 +587,40 @@ const DELIVERY_SCENARIOS: Scenario[] = [
     reachedNothing,
   ),
   deliveryScenario(
+    'delivery.heartbeat-channel-alert',
+    'A heartbeat that a channel message started, with no configured checks, answers an alert that asks for action in that channel.',
+    {
+      mode: 'heartbeat',
+      instruction: '',
+      triggers: [
+        {
+          platform: 'Slack',
+          place: { target: 'slack:C0REL0001', name: '#releases' },
+          messages: [
+            { sender: 'Ana Example', text: 'ALERT: production deployment failed at 14:32 UTC, action required', timestamp: new Date().toISOString() },
+          ],
+        },
+      ],
+    },
+    (o) => reachedOnly(o, '#releases'),
+  ),
+  deliveryScenario(
+    'delivery.heartbeat-channel-chatter',
+    'A heartbeat that a channel message started posts nothing for a message that reports nothing and asks for nothing.',
+    {
+      mode: 'heartbeat',
+      instruction: '',
+      triggers: [
+        {
+          platform: 'Slack',
+          place: { target: 'slack:C0REL0001', name: '#releases' },
+          messages: [{ sender: 'Ana Example', text: 'Thanks everyone, have a good weekend!', timestamp: new Date().toISOString() }],
+        },
+      ],
+    },
+    reachedNothing,
+  ),
+  deliveryScenario(
     'delivery.heartbeat-finding',
     'A heartbeat check that finds a rollback reaches the user.',
     {

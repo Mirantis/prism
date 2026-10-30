@@ -73,7 +73,15 @@ export interface ChannelTriggerMessage {
 export interface HeartbeatTrigger {
   /** How the prompt names the channel's platform. */
   platform: string;
+  /** The channel the messages were posted in, as send_message names it. */
+  place?: TriggerPlace;
   messages: ChannelTriggerMessage[];
+}
+
+/** A channel that started the heartbeat: its send_message target and its name. */
+export interface TriggerPlace {
+  target: string;
+  name: string;
 }
 
 export interface InvokeRequest {

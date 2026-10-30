@@ -76,6 +76,8 @@ activity**. Designate a Slack channel as a heartbeat trigger (from the
 that channel wake the heartbeat with those messages as context. This lets the
 agent react to real-time events between scheduled runs.
 
+- The agent answers in that channel a message that reports a problem or asks
+  for something, also when no checks are configured.
 - A per-channel **throttle** caps how often this can fire, so a busy channel
   doesn't trigger the agent constantly.
 - Messages are **queued and drained atomically**, so nothing is lost — even if

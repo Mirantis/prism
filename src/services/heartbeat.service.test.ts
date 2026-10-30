@@ -1691,6 +1691,20 @@ describe('HeartbeatService', () => {
       );
     });
 
+    it("passes the channel a source names with its messages", async () => {
+      const place = { target: 'slack:C0REL0001', name: '#releases' };
+      const pending = vi.spyOn(triggerSource, 'pending').mockResolvedValueOnce({ ids: ['pending-0'], messages: [channelMsg('deploy failed')], place });
+      mockInvoke.mockResolvedValue({ response: 'Seen.', toolCalls: [], steps: [{ text: 'Seen.', toolCalls: [] }] });
+
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockInvoke).toHaveBeenCalledWith(
+        expect.objectContaining({ heartbeatTriggers: [{ platform: 'Slack', place, messages: [channelMsg('deploy failed')] }] }),
+      );
+      pending.mockRestore();
+    });
+
     it('reads messages from DB and passes them into invoke', async () => {
       mockPendingTriggerMessages.mockResolvedValueOnce([channelMsg('deploy failed')]);
       mockInvoke.mockResolvedValue({

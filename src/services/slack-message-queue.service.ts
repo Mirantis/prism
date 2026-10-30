@@ -36,9 +36,14 @@ class SlackMessageQueueService implements HeartbeatTriggerSource {
     if (rows.length > 0) {
       logger.info(`[SlackMessageQueue] ${rows.length} message(s) pending for agent ${agentId.substring(0, 8)}`);
     }
+    // An agent has one trigger channel, and every queued message came from it.
+    const trigger = rows.length > 0 ? await prisma.slackHeartbeatTrigger.findUnique({ where: { agentId } }) : null;
     return {
       ids: rows.map((row) => row.id),
       messages: rows.map((row) => ({ sender: row.sender, text: row.text, timestamp: row.timestamp })),
+      ...(trigger && {
+        place: { target: `slack:${trigger.slackChannelId}`, name: `#${trigger.slackChannelName ?? trigger.slackChannelId}` },
+      }),
     };
   }
 
