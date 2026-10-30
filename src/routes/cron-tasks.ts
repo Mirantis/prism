@@ -126,7 +126,7 @@ router.post('/cron-tasks', async (req: Request, res: Response) => {
       return;
     }
 
-    const { cronExpression, isOneShot, nextRunAt } = parseSchedule(schedule);
+    const { cronExpression, isOneShot, nextRunAt } = parseSchedule(schedule, { timezone: cronSchedulerService.timezone });
     if (!isOneShot && !cron.validate(cronExpression)) {
       rejectField(res, 'schedule', `Invalid cron expression: ${cronExpression}`);
       return;

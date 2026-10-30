@@ -72,7 +72,7 @@ export function getCronTools(
         channelIds: channelIdsParam.optional(),
       }),
       execute: async ({ name, schedule, instruction, continueInThread, deliverTo, channelIds }) => {
-        const { cronExpression, isOneShot, nextRunAt } = parseSchedule(schedule);
+        const { cronExpression, isOneShot, nextRunAt } = parseSchedule(schedule, { timezone: cronSchedulerService.timezone });
 
         if (!isOneShot && !cron.validate(cronExpression)) {
           throw new Error(`Invalid cron expression: ${cronExpression}`);

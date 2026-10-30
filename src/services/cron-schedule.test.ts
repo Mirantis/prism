@@ -35,4 +35,30 @@ describe('parseSchedule', () => {
       expect(nodeCron.validate(cronExpression), phrase).toBe(true);
     }
   });
+
+  describe('"at H[:MM]" in the agent\'s time zone', () => {
+    const at = (schedule: string, timezone: string, now: string): string | undefined =>
+      parseSchedule(schedule, { timezone, now: new Date(now) }).nextRunAt?.toISOString();
+
+    it('runs when the zone\'s clock shows the time, whatever zone the process is in', () => {
+      // 12:00 in Helsinki (UTC+2), so 3pm is later the same day.
+      expect(at('at 3pm', 'Europe/Helsinki', '2026-10-30T10:00:00Z')).toBe('2026-10-30T13:00:00.000Z');
+      expect(at('at 9:30am', 'America/New_York', '2026-10-30T12:00:00Z')).toBe('2026-10-30T13:30:00.000Z');
+    });
+
+    it('moves to the next day when the time has passed in the zone', () => {
+      // 16:00 in Helsinki.
+      expect(at('at 3pm', 'Europe/Helsinki', '2026-10-30T14:00:00Z')).toBe('2026-10-31T13:00:00.000Z');
+    });
+
+    it('takes the date from the zone, not from UTC', () => {
+      // 00:30 on Oct 31 in Helsinki, while UTC is still on Oct 30.
+      expect(at('at 1am', 'Europe/Helsinki', '2026-10-30T22:30:00Z')).toBe('2026-10-30T23:00:00.000Z');
+    });
+
+    it('uses the offset in force at the run time on a daylight-saving change day', () => {
+      // 23:00 on Oct 24 in Helsinki (UTC+3). The clocks go back to UTC+2 at 04:00 on Oct 25.
+      expect(at('at 9am', 'Europe/Helsinki', '2026-10-24T20:00:00Z')).toBe('2026-10-25T07:00:00.000Z');
+    });
+  });
 });

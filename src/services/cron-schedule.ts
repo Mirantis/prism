@@ -5,12 +5,45 @@
  * read a schedule the same way without importing each other.
  */
 
+/** The wall-clock fields of `instant` in `timezone`. */
+function wallClock(instant: number, timezone: string): { year: number; month: number; day: number; utcMs: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+  }).formatToParts(new Date(instant));
+  const field = (type: Intl.DateTimeFormatPartTypes): number => Number(parts.find((p) => p.type === type)!.value);
+  const [year, month, day] = [field('year'), field('month'), field('day')];
+  return { year, month, day, utcMs: Date.UTC(year, month - 1, day, field('hour'), field('minute'), field('second')) };
+}
+
+/**
+ * The instant at which `timezone` shows the given date and time. The zone's offset is read
+ * at a first guess and again at the result, so a time on a daylight-saving change day gets
+ * the offset in force at that time.
+ */
+function zonedInstant(year: number, month: number, day: number, hour: number, minute: number, timezone: string): Date {
+  const asUtc = Date.UTC(year, month - 1, day, hour, minute);
+  const offsetAt = (instant: number): number => wallClock(instant, timezone).utcMs - Math.floor(instant / 1000) * 1000;
+  const guess = asUtc - offsetAt(asUtc);
+  return new Date(asUtc - offsetAt(guess));
+}
+
 /**
  * Parse human-readable schedule into a cron expression.
  * Supports: "in X minutes", "at 3pm", "every 2 hours", "every hour", "every day",
- * "every day at 9am", raw cron.
+ * "every day at 9am", raw cron. "at 3pm" is read in `timezone`, an IANA name: the next
+ * time that zone's clock shows 3pm.
  */
-export function parseSchedule(schedule: string): {
+export function parseSchedule(
+  schedule: string,
+  { timezone = 'UTC', now = new Date() }: { timezone?: string; now?: Date } = {},
+): {
   cronExpression: string;
   isOneShot: boolean;
   nextRunAt: Date | null;
@@ -30,7 +63,7 @@ export function parseSchedule(schedule: string): {
     return {
       cronExpression: schedule,
       isOneShot: true,
-      nextRunAt: new Date(Date.now() + ms),
+      nextRunAt: new Date(now.getTime() + ms),
     };
   }
 
@@ -43,12 +76,10 @@ export function parseSchedule(schedule: string): {
     if (ampm === 'pm' && hour !== 12) hour += 12;
     if (ampm === 'am' && hour === 12) hour = 0;
 
-    const now = new Date();
-    const target = new Date(now);
-    target.setHours(hour, minute, 0, 0);
-
+    const today = wallClock(now.getTime(), timezone);
+    let target = zonedInstant(today.year, today.month, today.day, hour, minute, timezone);
     if (target <= now) {
-      target.setDate(target.getDate() + 1);
+      target = zonedInstant(today.year, today.month, today.day + 1, hour, minute, timezone);
     }
 
     return {
