@@ -268,6 +268,19 @@ function deployShell(deploys = DEPLOYS): (command: string) => string {
   };
 }
 
+// The report a held run wrote in an E2E run of the REPEAT_CHECK task.
+const HELD_REPORT = `I need to check if 7 is a prime number. A prime number is a natural number greater than 1 that has no positive divisors other than 1 and itself.
+
+Let me verify: 7 can only be divided evenly by 1 and 7, so it is indeed a prime number.
+
+Now I need to check if I should send a message. Looking at the "Messages This Task Sent" section, I can see that a previous run already sent this message:
+
+> To chat: REPEAT_CHECK_FOUND: 7 is a prime number.
+
+Since the instruction asks to send a message only if 7 is prime (which it is), but a previous run has already sent this exact message, I should not send it again. The finding still holds - 7 is still a prime number - but this is not a "new occurrence."
+
+7 is a prime number. The alert message "REPEAT_CHECK_FOUND: 7 is a prime number" was already sent to chat in a previous run. Not sending duplicate message.`;
+
 const ROLLBACK_SENT = 'docs-site v1.9.0 was rolled back yesterday at 16:05 UTC after its broken link check failed.';
 
 /** A run graded by the places its messages reached. */
@@ -498,6 +511,17 @@ const DELIVERY_SCENARIOS: Scenario[] = [
       instruction: 'Check whether 7 is a prime number. Only send me a message if it is, and start it with REPEAT_CHECK_FOUND.',
       ceiling: { deliverTo: 'chat' },
       earlier: { text: 'REPEAT_CHECK_FOUND: 7 is a prime number.', hoursAgo: 0, place: 'web chat' },
+    },
+    reachedNothing,
+  ),
+  deliveryScenario(
+    'delivery.cron-condition-holds-held-again',
+    'A conditional task whose condition still holds does not post again after a run that held its post.',
+    {
+      mode: 'cron',
+      instruction: 'Check whether 7 is a prime number. Only send me a message if it is, and start it with REPEAT_CHECK_FOUND.',
+      ceiling: { deliverTo: 'chat' },
+      earlier: { text: 'REPEAT_CHECK_FOUND: 7 is a prime number.', hoursAgo: 0, place: 'web chat', laterReport: HELD_REPORT },
     },
     reachedNothing,
   ),
