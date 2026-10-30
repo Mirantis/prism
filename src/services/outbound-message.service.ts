@@ -23,6 +23,7 @@ import {
 } from './channel-adapter.interface';
 import type { PostingCeiling } from './delivery-target.service';
 import { trackEvent } from '../lib/telemetry';
+import { visibleText } from '../lib/visible-text';
 import { logger } from '../logger';
 import type { ToolCallRecord } from '../types';
 
@@ -127,7 +128,7 @@ class OutboundMessageService {
       run.threadId !== undefined && (await conversationService.getThreadSource(threadId)) !== ThreadSource.DATABASE;
     const postedToWebChat = sentMessageList(run.toolCalls).some(({ target }) => target === WEB_CHAT_TARGET);
     const { message } = await conversationService.addMessage(threadId, {
-      content: run.content.trim() ? run.content : WITHHELD_RUN_TEXT,
+      content: visibleText(run.content) ? run.content : WITHHELD_RUN_TEXT,
       role: 'AGENT',
       triggeredBy: run.triggeredBy,
       triggerName: run.triggerName,

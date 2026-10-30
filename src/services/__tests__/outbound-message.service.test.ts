@@ -417,6 +417,15 @@ describe('Requirement: a withheld run that sent a message stays in history', () 
     );
   });
 
+  it('stores the placeholder text when the final message is only invisible characters', async () => {
+    await outboundMessageService.keepWithheldRun({ ...run, content: '\u200B', toolCalls: [toolCall({})] });
+
+    expect(mockConversationService.addMessage).toHaveBeenCalledWith(
+      'thread-latest',
+      expect.objectContaining({ content: WITHHELD_RUN_TEXT }),
+    );
+  });
+
   it('stores the record as an internal row when the run posted into web chat, where the post already shows', async () => {
     const posted = toolCall({ input: JSON.stringify({ target: 'chat', text: 'Release v2 is out.' }) });
 

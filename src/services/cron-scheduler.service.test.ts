@@ -1741,6 +1741,32 @@ describe('CronSchedulerService', () => {
       );
     });
 
+    it('publishes nothing for a thread-bound reply of a lone zero-width space', async () => {
+      mockCronValidate.mockReturnValue(false);
+      const toolCalls = [{ tool: 'schedule_task', input: '{}', output: 'ok', success: true, timestamp: '2025-01-15T12:00:00Z' }];
+      mockInvoke.mockResolvedValue({ response: '\u200B', toolCalls, steps: [{ text: '\u200B', toolCalls }] });
+
+      cronSchedulerService.scheduleTask(
+        createCronTask({
+          id: 'wait-invisible',
+          schedule: 'in 1 minute',
+          nextRunAt: new Date(Date.now() + 60_000).toISOString(),
+          threadId: 'thread-bound',
+          originChannel: 'websocket',
+        }),
+      );
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(mockInvoke).toHaveBeenCalled();
+      expect(mockPublish).not.toHaveBeenCalled();
+      expect(mockKeepWithheldRun).toHaveBeenCalledWith(expect.objectContaining({ threadId: 'thread-bound' }));
+      expect(mockTrackEvent).toHaveBeenCalledWith(
+        'cron task executed',
+        'user-abc-123',
+        expect.objectContaining({ 'cron.result': 'silent' }),
+      );
+    });
+
     it('deletes a one-shot whose run posted nothing', async () => {
       mockCronValidate.mockReturnValue(false);
 
