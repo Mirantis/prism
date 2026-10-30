@@ -31,6 +31,7 @@ import { outboundMessageService, sentMessageList, sentMessages, WITHHELD_RUN_TEX
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { isTimezone } from '../lib/timezone';
+import { visibleText } from '../lib/visible-text';
 import type { ToolRiskGateErrorCode } from '../lib/tool-risk-gate';
 import { trackEvent } from '../lib/telemetry';
 import { scheduledRunPrompt } from '../prompts/scheduled-run-prompt';
@@ -594,8 +595,9 @@ class CronSchedulerService {
   /** A later run's result, so the next run reads whether the finding still held. An empty result says nothing. */
   private noteReport(task: BackendCronTask, body: string): void {
     const entry = this.lastSend.get(task.id);
-    if (!entry || entry.instruction !== task.instruction || !body.trim() || !this.isCurrent(task)) return;
-    this.lastSend.set(task.id, { ...entry, record: { ...entry.record, latestReport: { text: body.trim(), at: Date.now() } } });
+    const text = visibleText(body);
+    if (!entry || entry.instruction !== task.instruction || !text || !this.isCurrent(task)) return;
+    this.lastSend.set(task.id, { ...entry, record: { ...entry.record, latestReport: { text, at: Date.now() } } });
   }
 
   /** Whether the task is still scheduled with the instruction this run had. */
@@ -720,7 +722,7 @@ class CronSchedulerService {
       // people, so it ends, as a run again after the restart would send it twice.
       // From here the run delivers, so a shutdown that starts later lets it end.
       if (pendingWorkService.shutdownSignal.aborted) {
-        const stoppedText = (result.steps[result.steps.length - 1]?.text ?? '').trim() || WITHHELD_RUN_TEXT;
+        const stoppedText = visibleText(result.steps[result.steps.length - 1]?.text ?? '') || WITHHELD_RUN_TEXT;
         await outboundMessageService.keepWithheldRun({
           agentId: task.agentId,
           userId: task.userId,
@@ -774,7 +776,7 @@ class CronSchedulerService {
 
       // Use only the last step's text (the final summary), not intermediate step texts
       const lastStep = result.steps[result.steps.length - 1];
-      const responseText = (lastStep?.text ?? '').trim();
+      const responseText = visibleText(lastStep?.text ?? '');
       const body = responseText || result.response;
       // A failed run's text is the error, not a finding.
       if (!boundThreadId && !sent && !result.error) this.noteReport(task, body);
