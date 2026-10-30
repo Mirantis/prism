@@ -833,6 +833,8 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
             userId: request.userId,
             agentId,
             threadId: request.threadId,
+            provider,
+            modelId,
             usedTokens: triggerSnapshot.usedTokens,
           });
         }
