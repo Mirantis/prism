@@ -53,7 +53,7 @@ import { logger } from '../logger';
 import {
   COMPACTION_TAIL_TOKENS,
   IDLE_COMPACTION_MIN_TOKENS,
-  IDLE_COMPACTION_DELAY_MS,
+  IDLE_COMPACTION_CACHE_SHARE,
   MAX_OUTPUT_TOKENS,
 } from '../constants';
 import { COMPACTION_PROMPT } from '../prompts/compaction-prompt';
@@ -66,6 +66,7 @@ import {
   cacheTtlMs,
   NO_CACHE_POINT,
   type CachePointFragment,
+  type LlmProvider,
   type ProviderOptionsFragment,
 } from '../lib/llm-providers/llm-provider';
 import { llmCallService, type LlmCallPurpose } from './llm-call.service';
@@ -252,21 +253,20 @@ class CompactionService {
   }
 
   /**
-   * Idle path. After a chat turn, a conversation of at least
-   * `IDLE_COMPACTION_MIN_TOKENS` is compacted once it has sat idle for
-   * `IDLE_COMPACTION_DELAY_MS`. On a one-hour cache that reads the turn's warm
-   * prefix; on a shorter one it reads the thread cold, which still costs less than
-   * the write the next turn would pay for the whole thread. Any later invocation of
-   * the thread cancels the timer. The due time comes from stored data
+   * Idle path. After a chat turn under `CHAT_CACHE_TTL=1h`, a conversation of at
+   * least `IDLE_COMPACTION_MIN_TOKENS` is compacted once it has sat idle for most of
+   * its cache's lifetime, so the summary reads the turn's warm prefix. Any later
+   * invocation of the thread cancels the timer. The due time comes from stored data
    * (`restoreIdle`), so a restart re-arms it. Synchronous, never throws.
    */
-  armIdle(input: IdleInput & { usedTokens: number }): void {
+  armIdle(input: IdleInput & { provider: LlmProvider; modelId: string; usedTokens: number }): void {
     this.cancelIdle(input.threadId);
-    if (!config.idleCompaction || config.compactionThresholdPercent === null) return;
-    if (input.usedTokens < IDLE_COMPACTION_MIN_TOKENS) return;
+    if (!idleCompactionArmed() || input.usedTokens < IDLE_COMPACTION_MIN_TOKENS) return;
+    const delayMs = idleDelayMs(input.provider, input.modelId);
+    if (delayMs === null) return;
     // Measured from the turn's end; the cache clock started at its last request, at
     // most a few minutes earlier, which the delay leaves room for.
-    this.scheduleIdle({ userId: input.userId, agentId: input.agentId, threadId: input.threadId, after: new Date() }, IDLE_COMPACTION_DELAY_MS);
+    this.scheduleIdle({ userId: input.userId, agentId: input.agentId, threadId: input.threadId, after: new Date() }, delayMs);
   }
 
   /**
@@ -276,7 +276,8 @@ class CompactionService {
    * time is compacted at once.
    */
   async restoreIdle(): Promise<void> {
-    if (!config.idleCompaction || config.compactionThresholdPercent === null) return;
+    if (!idleCompactionArmed()) return;
+    const provider = createProvider();
     const candidates = await conversationService.listIdleCompactionCandidates(
       IDLE_COMPACTION_MIN_TOKENS,
       new Date(Date.now() - IDLE_RESTORE_WINDOW_MS),
@@ -285,7 +286,9 @@ class CompactionService {
       const last = await llmCallService.newestThreadCall(thread.id, THREAD_TURN_PURPOSES);
       if (last?.purpose !== 'chat') continue;
       if (thread.compactedAt && thread.compactedAt >= last.createdAt) continue;
-      const dueAt = last.createdAt.getTime() + IDLE_COMPACTION_DELAY_MS;
+      const delayMs = idleDelayMs(provider, last.model);
+      if (delayMs === null) continue;
+      const dueAt = last.createdAt.getTime() + delayMs;
       this.scheduleIdle(
         { userId: thread.userId, agentId: thread.agentId, threadId: thread.id, after: last.createdAt },
         Math.max(0, dueAt - Date.now()),
@@ -903,6 +906,25 @@ interface IdleInput {
   userId: string;
   agentId: string;
   threadId: string;
+}
+
+/**
+ * Whether idle compaction runs: it and threshold compaction are on, and chat turns
+ * ask for the one-hour cache. A five-minute cache has expired long before a person
+ * who paused comes back, so there is no warm prefix for the summary to read.
+ */
+function idleCompactionArmed(): boolean {
+  return config.idleCompaction && config.compactionThresholdPercent !== null && config.chatCacheTtl === '1h';
+}
+
+/**
+ * How long a chat conversation on `modelId` sits idle before it is compacted, or
+ * null when the vendor keeps the cache no longer under `1h` than by default.
+ */
+function idleDelayMs(provider: LlmProvider, modelId: string): number | null {
+  const lifetimeMs = cacheTtlMs(provider, modelId, '1h');
+  if (lifetimeMs <= cacheTtlMs(provider, modelId, '5m')) return null;
+  return IDLE_COMPACTION_CACHE_SHARE * lifetimeMs;
 }
 
 /** A pending idle compaction, and the time after which a call on the thread cancels it. */

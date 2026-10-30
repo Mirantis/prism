@@ -1047,7 +1047,8 @@ describe('idle compaction', () => {
     userId: 'user-1',
     agentId: 'agent-1',
     threadId: THREAD,
-    cachePoint: oneHourCache,
+    provider: mockCreateProvider(),
+    modelId: 'stored-model',
     usedTokens: 250_000,
     ...overrides,
   });
@@ -1066,6 +1067,12 @@ describe('idle compaction', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
+    mockConfig.chatCacheTtl = '1h';
+    const provider = mockCreateProvider();
+    (provider.cachePoint as ReturnType<typeof vi.fn>).mockImplementation((_id: string, ttl?: string) =>
+      ttl === '1h' ? oneHourCache : { anthropic: { cacheControl: { type: 'ephemeral' } } },
+    );
+    mockCreateProvider.mockReturnValue(provider);
     mockGetAgentContext.mockResolvedValue(context);
     mockNewestThreadCall.mockResolvedValue(null);
     mockListIdleCandidates.mockResolvedValue([]);
@@ -1129,6 +1136,24 @@ describe('idle compaction', () => {
     expect(compactionService.hasInFlight()).toBe(false);
   });
 
+  it('arms nothing when chat turns use the five-minute cache', () => {
+    mockConfig.chatCacheTtl = '5m';
+    compactionService.armIdle(turn());
+
+    vi.advanceTimersByTime(2 * HOUR);
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it('arms nothing on a vendor whose cache lasts no longer under 1h', () => {
+    // An empty breakpoint and no declared lifetime: five minutes either way.
+    const provider = mockCreateProvider();
+    (provider.cachePoint as ReturnType<typeof vi.fn>).mockReturnValue({});
+    compactionService.armIdle(turn({ provider }));
+
+    vi.advanceTimersByTime(2 * HOUR);
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
   it('arms nothing for a conversation under the size floor', () => {
     compactionService.armIdle(turn({ usedTokens: 150_000 }));
 
@@ -1137,7 +1162,7 @@ describe('idle compaction', () => {
   });
 
   it('writes no cache entry for a summary whose cache has expired', async () => {
-    // The default provider stub answers a five-minute breakpoint, long expired after the last turn.
+    // The one-hour cache expired an hour before the timer fired, as after a long restart.
     compactionService.armIdle(turn());
     mockNewestThreadCall.mockResolvedValue({ purpose: 'chat', model: 'm', createdAt: new Date(Date.now() - 2 * HOUR) });
 
@@ -1148,12 +1173,6 @@ describe('idle compaction', () => {
   });
 
   it('keeps the breakpoints while a one-hour cache is still warm', async () => {
-    const provider = mockCreateProvider();
-    (provider.cachePoint as ReturnType<typeof vi.fn>).mockImplementation((_id: string, ttl?: string) =>
-      ttl === '1h' ? oneHourCache : { anthropic: { cacheControl: { type: 'ephemeral' } } },
-    );
-    mockCreateProvider.mockReturnValue(provider);
-    mockConfig.chatCacheTtl = '1h';
     compactionService.armIdle(turn());
 
     await fire(0.9 * HOUR);
@@ -1174,10 +1193,12 @@ describe('idle compaction', () => {
       mockConfig.chatCacheTtl = '1h';
     });
 
-    it('sends the chat turns\' lifetime while their cache is warm', async () => {
-      compactionService.armIdle(turn({ cachePoint: {} }));
+    it("waits for most of the vendor's lifetime, then sends it while the cache is warm", async () => {
+      compactionService.armIdle(turn());
 
-      await fire(0.9 * HOUR);
+      vi.advanceTimersByTime(HOUR);
+      expect(mockRun).not.toHaveBeenCalled();
+      await fire(0.9 * 12 * HOUR - HOUR);
 
       expect(mockGenerateText.mock.calls[0][0].providerOptions).toEqual({
         openai: { promptCacheOptions: { ttl: '12h' } },
@@ -1185,10 +1206,10 @@ describe('idle compaction', () => {
     });
 
     it('asks for no entry once that cache has expired', async () => {
-      compactionService.armIdle(turn({ cachePoint: {} }));
+      compactionService.armIdle(turn());
       mockNewestThreadCall.mockResolvedValue({ purpose: 'chat', model: 'm', createdAt: new Date(Date.now() - 13 * HOUR) });
 
-      await fire(0.9 * HOUR);
+      await fire(0.9 * 12 * HOUR);
 
       expect(mockGenerateText.mock.calls[0][0].providerOptions).toEqual({
         openai: { promptCacheOptions: { mode: 'explicit' } },
@@ -1209,7 +1230,9 @@ describe('idle compaction', () => {
     const chatCall = (agoMs: number) => ({ purpose: 'chat', model: 'stored-model', createdAt: new Date(Date.now() - agoMs) });
     const provider = mockCreateProvider();
     beforeEach(() => {
-      (provider.cachePoint as ReturnType<typeof vi.fn>).mockReturnValue(oneHourCache);
+      (provider.cachePoint as ReturnType<typeof vi.fn>).mockImplementation((_id: string, ttl?: string) =>
+        ttl === '1h' ? oneHourCache : { anthropic: { cacheControl: { type: 'ephemeral' } } },
+      );
       mockCreateProvider.mockReturnValue(provider);
       mockListIdleCandidates.mockResolvedValue([candidate]);
     });
@@ -1247,6 +1270,25 @@ describe('idle compaction', () => {
 
       vi.advanceTimersByTime(2 * HOUR);
       expect(mockRun).not.toHaveBeenCalled();
+    });
+
+    it('restores nothing when chat turns use the five-minute cache', async () => {
+      mockConfig.chatCacheTtl = '5m';
+      await compactionService.restoreIdle();
+
+      expect(mockListIdleCandidates).not.toHaveBeenCalled();
+    });
+
+    it("waits out the rest of the newest call's lifetime on its vendor", async () => {
+      Object.assign(provider, { cacheTtlMs: (_id: string, ttl: string) => (ttl === '1h' ? 12 * HOUR : HOUR / 2) });
+      mockNewestThreadCall.mockResolvedValue(chatCall(2 * HOUR));
+      await compactionService.restoreIdle();
+
+      vi.advanceTimersByTime(0.9 * 12 * HOUR - 2 * HOUR - 1);
+      expect(mockRun).not.toHaveBeenCalled();
+      await fire(1);
+      expect(mockGenerateText).toHaveBeenCalledTimes(1);
+      delete (provider as { cacheTtlMs?: unknown }).cacheTtlMs;
     });
   });
 });

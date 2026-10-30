@@ -18,14 +18,13 @@ scrollback; compaction only changes what the model sees.
 - **Manually.** Run **`/compact`** in the web chat or the terminal UI to
   compact the current conversation at any time. If there is nothing to compact
   yet, the command says so.
-- **While idle.** A conversation of about 200,000 tokens or more that you leave
-  for about an hour is compacted, so your next message starts from the summary
-  instead of the whole thread. A conversation you come back to within the hour
-  keeps every message. A restart of the agent in between keeps the compaction
-  scheduled. Set `IDLE_COMPACTION=off` to turn it off;
-  `COMPACTION_THRESHOLD_PERCENT=0` turns it off as well. A threshold low enough to
-  compact conversations before they reach that size leaves nothing to compact
-  while idle.
+- **While idle.** With `CHAT_CACHE_TTL=1h`, a conversation of about 200,000
+  tokens or more that you leave until shortly before its prompt cache expires is
+  compacted, so your next message starts from the summary instead of the whole
+  thread. That is about an hour on Claude and about 11 hours on OpenAI. A
+  conversation you come back to sooner keeps every message. A restart of the agent
+  in between keeps the compaction scheduled. Set `IDLE_COMPACTION=off` to keep the
+  longer cache without it; `COMPACTION_THRESHOLD_PERCENT=0` turns it off as well.
 - **On overflow.** A single turn can outgrow the window outright (the provider
   rejects the request as too long). That rejection triggers a recovery
   compaction immediately: the runtime summarizes the history — shrinking the
@@ -67,7 +66,7 @@ newer replies afterwards. The Slack channel itself is never modified.
 |----------|---------|---------|
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-compact at this percent of the model's window; `0` disables auto-compaction | `90` |
 | `COMPACTION_TAIL_MESSAGES` | At most this many of the newest messages are kept out of compaction, except that a long latest reply stays whole when it fits | `6` |
-| `IDLE_COMPACTION` | `off` stops compacting large conversations while they sit idle | on |
+| `IDLE_COMPACTION` | `off` stops compacting large conversations while they sit idle under `CHAT_CACHE_TTL=1h` | on |
 | `CHAT_CACHE_TTL` | `1h` asks the provider to keep a chat's prompt cache for an hour instead of five minutes, and on OpenAI for 12 hours instead of 30 minutes. It pays when people come back within that time, and costs more when they work in short bursts with long breaks | `5m` |
 
 Auto-compaction works best when the model's context window is known; see

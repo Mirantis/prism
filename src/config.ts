@@ -1205,7 +1205,8 @@ export const config = {
   compactionTailMessages,
 
   // Whether a large chat conversation is compacted before its one-hour cache
-  // expires. IDLE_COMPACTION=off turns it off; threshold compaction stays.
+  // expires, under CHAT_CACHE_TTL=1h. IDLE_COMPACTION=off turns it off; threshold
+  // compaction stays.
   idleCompaction,
 
   // How long a chat turn asks the provider to keep its prompt cache. `1h` writes
