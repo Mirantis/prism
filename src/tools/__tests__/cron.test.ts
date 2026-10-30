@@ -138,22 +138,48 @@ describe('cron tools', () => {
   });
 
   it.each([
-    ['Europe/Helsinki', 'Oct 30, 2026, 9:00 AM GMT+2'],
+    ['Europe/Helsinki', '2026-10-30T07:00:00Z', 'Oct 30, 2026, 9:00 AM GMT+2'],
     // A North American zone has a short name (EDT), and the message gives the offset instead.
-    ['America/New_York', 'Oct 30, 2026, 3:00 AM GMT-4'],
-  ])("states the next run in the agent's time zone (%s)", async (timezone, when) => {
+    ['America/New_York', '2026-10-30T13:00:00Z', 'Oct 30, 2026, 9:00 AM GMT-4'],
+  ])("states the next run in the agent's time zone (%s)", async (timezone, nextRunAt, when) => {
     mockScheduler.timezone = timezone;
     mockScheduler.updateTask.mockResolvedValue({
       status: 'updated',
-      task: { id: 'task-1', name: 'Daily Report', schedule: '0 9 * * *', nextRunAt: new Date('2026-10-30T07:00:00Z') },
+      task: { id: 'task-1', name: 'Standup note', schedule: 'at 9am', nextRunAt: new Date(nextRunAt) },
     });
 
-    const result = await tools.update_scheduled_task.execute({ taskId: 'task-1', schedule: 'every day at 9am' });
+    const result = await tools.update_scheduled_task.execute({ taskId: 'task-1', schedule: 'at 9am' });
 
     expect(result).toMatchObject({
-      message: `Updated "Daily Report" to run at ${when}`,
-      nextRunAt: '2026-10-30T07:00:00.000Z',
+      message: `Updated "Standup note" to run at ${when}`,
+      nextRunAt: new Date(nextRunAt).toISOString(),
     });
+  });
+
+  it("schedules \"at 3pm\" for 3pm on the agent's clock", async () => {
+    vi.useFakeTimers({ now: new Date('2026-10-30T10:00:00Z'), toFake: ['Date'] });
+    try {
+      mockPrisma.cronTask.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+        id: 'task-3',
+        agentId: 'agent-1',
+        userId: 'user-1',
+        isActive: true,
+        lastRunAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        ...data,
+      }));
+
+      const result = await tools.schedule_task.execute({ name: 'Call back', schedule: 'at 3pm', instruction: 'remind me' });
+
+      // 12:00 in Helsinki, so the run is 15:00 there the same day.
+      expect(result).toMatchObject({
+        message: 'Scheduled "Call back" to run at Oct 30, 2026, 3:00 PM GMT+2',
+        nextRunAt: '2026-10-30T13:00:00.000Z',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('update_scheduled_task returns a refused edit as an error', async () => {

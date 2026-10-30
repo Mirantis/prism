@@ -439,7 +439,7 @@ class CronSchedulerService {
 
       let timing = { schedule: task.schedule, nextRunAt: task.nextRunAt };
       if (schedule !== undefined) {
-        const { cronExpression, isOneShot, nextRunAt } = parseSchedule(schedule);
+        const { cronExpression, isOneShot, nextRunAt } = parseSchedule(schedule, { timezone: this.zone });
         if (!isOneShot && !cron.validate(cronExpression)) {
           return { status: 'invalid', field: 'schedule', error: `Invalid cron expression: ${cronExpression}` };
         }
