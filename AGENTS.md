@@ -1279,18 +1279,17 @@ only `inboundMessageService` sets it, for the agent-message route.
   as `requestFromAnotherAgent`, which its rules say authorizes nothing, instead
   of `initialUserPrompt`. Its reply is an ordinary chat reply (`USER_INPUT`) in
   the web conversation.
-- **The other agents** are in the messaging tools' descriptions, not in the
-  conversation: `list_agents`' names them and says to call it before a task,
-  `message_agent`'s says how to treat their messages. The runtime adds no
-  roster, so the system prompt and the history are the same with or without
-  other agents. `src/evals/colleague-scenarios.ts` measures what the agent
-  does with those descriptions.
+- **The other agents** are the hosting platform's to describe: it provides the
+  tools to find them and to message them. The runtime adds no roster, so the
+  system prompt and the history are the same with or without other agents.
+  `src/evals/colleague-scenarios.ts` measures what the agent does with such
+  tools.
 - **Who may post** is the delivery service alone, as the ingress names it: a
   person the ingress names gets 403, and otherwise `x-forwarded-token-id` must
   equal `AGENT_MESSAGES_TOKEN_ID` (`config.agentMessagesTokenId`, compared in
   constant time), or the request gets 401; unset, every delivery gets 503. The
   ingress drops a caller's own copy of the header, so it is trustworthy only
-  for requests through the ingress. The runtime itself never calls `list_agents`.
+  for requests through the ingress.
 - **Its own port.** `POST /agents/agent-messages` is served by
   `createAgentMessagesApp` (`server.ts`) on `AGENT_MESSAGES_PORT` (default
   3005, on `PRISM_HOST`), with a 1 MB JSON body limit and nothing else: no
