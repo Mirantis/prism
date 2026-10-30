@@ -4,9 +4,17 @@
       "context": 1000000,
       "output": 128000
     },
+    "anthropic.claude-fable-5-1": {
+      "context": 1000000,
+      "output": 128000
+    },
     "anthropic.claude-haiku-4-5-20251001-v1:0": {
       "context": 200000,
       "output": 64000
+    },
+    "anthropic.claude-haiku-5-5": {
+      "context": 1000000,
+      "output": 128000
     },
     "anthropic.claude-opus-4-1-20250805-v1:0": {
       "context": 200000,
@@ -42,17 +50,33 @@
     },
     "anthropic.claude-sonnet-4-6": {
       "context": 1000000,
-      "output": 64000
+      "output": 128000
     },
     "anthropic.claude-sonnet-5": {
       "context": 1000000,
       "output": 128000
     },
+    "anthropic.claude-sonnet-5-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "apac.anthropic.claude-sonnet-4-20250514-v1:0": {
+      "context": 200000,
+      "output": 64000
+    },
     "au.anthropic.claude-haiku-4-5-20251001-v1:0": {
       "context": 200000,
       "output": 64000
     },
+    "au.anthropic.claude-haiku-5-5": {
+      "context": 1000000,
+      "output": 128000
+    },
     "au.anthropic.claude-opus-4-6-v1": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "au.anthropic.claude-opus-4-7": {
       "context": 1000000,
       "output": 128000
     },
@@ -80,6 +104,10 @@
       "context": 1000000,
       "output": 128000
     },
+    "au.anthropic.claude-sonnet-5-5": {
+      "context": 1000000,
+      "output": 128000
+    },
     "eu.anthropic.claude-fable-5": {
       "context": 1000000,
       "output": 128000
@@ -87,6 +115,10 @@
     "eu.anthropic.claude-haiku-4-5-20251001-v1:0": {
       "context": 200000,
       "output": 64000
+    },
+    "eu.anthropic.claude-haiku-5-5": {
+      "context": 1000000,
+      "output": 128000
     },
     "eu.anthropic.claude-opus-4-5-20251101-v1:0": {
       "context": 200000,
@@ -112,15 +144,23 @@
       "context": 1000000,
       "output": 128000
     },
+    "eu.anthropic.claude-sonnet-4-20250514-v1:0": {
+      "context": 200000,
+      "output": 64000
+    },
     "eu.anthropic.claude-sonnet-4-5-20250929-v1:0": {
       "context": 200000,
       "output": 64000
     },
     "eu.anthropic.claude-sonnet-4-6": {
       "context": 1000000,
-      "output": 64000
+      "output": 128000
     },
     "eu.anthropic.claude-sonnet-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "eu.anthropic.claude-sonnet-5-5": {
       "context": 1000000,
       "output": 128000
     },
@@ -128,9 +168,17 @@
       "context": 1000000,
       "output": 128000
     },
+    "global.anthropic.claude-fable-5-1": {
+      "context": 1000000,
+      "output": 128000
+    },
     "global.anthropic.claude-haiku-4-5-20251001-v1:0": {
       "context": 200000,
       "output": 64000
+    },
+    "global.anthropic.claude-haiku-5-5": {
+      "context": 1000000,
+      "output": 128000
     },
     "global.anthropic.claude-opus-4-5-20251101-v1:0": {
       "context": 200000,
@@ -156,21 +204,45 @@
       "context": 1000000,
       "output": 128000
     },
+    "global.anthropic.claude-sonnet-4-20250514-v1:0": {
+      "context": 200000,
+      "output": 64000
+    },
     "global.anthropic.claude-sonnet-4-5-20250929-v1:0": {
       "context": 200000,
       "output": 64000
     },
     "global.anthropic.claude-sonnet-4-6": {
       "context": 1000000,
-      "output": 64000
+      "output": 128000
     },
     "global.anthropic.claude-sonnet-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "global.anthropic.claude-sonnet-5-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "in.anthropic.claude-haiku-4-5-20251001-v1:0": {
+      "context": 200000,
+      "output": 64000
+    },
+    "in.anthropic.claude-opus-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "in.anthropic.claude-sonnet-5": {
       "context": 1000000,
       "output": 128000
     },
     "jp.anthropic.claude-haiku-4-5-20251001-v1:0": {
       "context": 200000,
       "output": 64000
+    },
+    "jp.anthropic.claude-haiku-5-5": {
+      "context": 1000000,
+      "output": 128000
     },
     "jp.anthropic.claude-opus-4-7": {
       "context": 1000000,
@@ -194,7 +266,7 @@
     },
     "jp.anthropic.claude-sonnet-4-6": {
       "context": 1000000,
-      "output": 64000
+      "output": 128000
     },
     "jp.anthropic.claude-sonnet-5": {
       "context": 1000000,
@@ -204,9 +276,17 @@
       "context": 1000000,
       "output": 128000
     },
+    "us.anthropic.claude-fable-5-1": {
+      "context": 1000000,
+      "output": 128000
+    },
     "us.anthropic.claude-haiku-4-5-20251001-v1:0": {
       "context": 200000,
       "output": 64000
+    },
+    "us.anthropic.claude-haiku-5-5": {
+      "context": 1000000,
+      "output": 128000
     },
     "us.anthropic.claude-opus-4-1-20250805-v1:0": {
       "context": 200000,
@@ -236,15 +316,23 @@
       "context": 1000000,
       "output": 128000
     },
+    "us.anthropic.claude-sonnet-4-20250514-v1:0": {
+      "context": 200000,
+      "output": 64000
+    },
     "us.anthropic.claude-sonnet-4-5-20250929-v1:0": {
       "context": 200000,
       "output": 64000
     },
     "us.anthropic.claude-sonnet-4-6": {
       "context": 1000000,
-      "output": 64000
+      "output": 128000
     },
     "us.anthropic.claude-sonnet-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "us.anthropic.claude-sonnet-5-5": {
       "context": 1000000,
       "output": 128000
     }
@@ -254,17 +342,21 @@
       "context": 1000000,
       "output": 128000
     },
+    "claude-fable-5-1": {
+      "context": 1000000,
+      "output": 128000
+    },
     "claude-haiku-4-5": {
       "context": 200000,
       "output": 64000
     },
-    "claude-mythos-5": {
+    "claude-haiku-5-5": {
       "context": 1000000,
       "output": 128000
     },
-    "claude-opus-4-1": {
-      "context": 200000,
-      "output": 32000
+    "claude-mythos-5": {
+      "context": 1000000,
+      "output": 128000
     },
     "claude-opus-4-5": {
       "context": 200000,
@@ -299,6 +391,10 @@
       "output": 64000
     },
     "claude-sonnet-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "claude-sonnet-5-5": {
       "context": 1000000,
       "output": 128000
     }
@@ -372,17 +468,9 @@
       "context": 400000,
       "output": 128000
     },
-    "gpt-5.2-chat-latest": {
-      "context": 128000,
-      "output": 16384
-    },
     "gpt-5.2-pro": {
       "context": 400000,
       "output": 128000
-    },
-    "gpt-5.3-chat-latest": {
-      "context": 128000,
-      "output": 16384
     },
     "gpt-5.3-codex": {
       "context": 400000,
@@ -432,6 +520,34 @@
       "context": 1050000,
       "output": 128000
     },
+    "gpt-6-astra": {
+      "context": 1050000,
+      "output": 128000
+    },
+    "gpt-6-luna": {
+      "context": 1050000,
+      "output": 128000
+    },
+    "gpt-6-sol": {
+      "context": 1050000,
+      "output": 128000
+    },
+    "gpt-6.1-sol": {
+      "context": 1050000,
+      "output": 128000
+    },
+    "gpt-6.1-terra": {
+      "context": 1050000,
+      "output": 128000
+    },
+    "gpt-daybreak-blue-latest": {
+      "context": 1050000,
+      "output": 128000
+    },
+    "gpt-daybreak-red-latest": {
+      "context": 400000,
+      "output": 128000
+    },
     "gpt-realtime-2.1": {
       "context": 128000,
       "output": 32000
@@ -466,6 +582,10 @@
       "context": 1000000,
       "output": 128000
     },
+    "claude-fable-5-1": {
+      "context": 1000000,
+      "output": 128000
+    },
     "claude-haiku-4-5": {
       "context": 200000,
       "output": 64000
@@ -473,6 +593,10 @@
     "claude-haiku-4-5-20251001": {
       "context": 200000,
       "output": 64000
+    },
+    "claude-haiku-5-5": {
+      "context": 1000000,
+      "output": 128000
     },
     "claude-opus-4-5": {
       "context": 200000,
@@ -503,11 +627,11 @@
       "output": 128000
     },
     "claude-sonnet-4-5": {
-      "context": 1000000,
+      "context": 200000,
       "output": 64000
     },
     "claude-sonnet-4-5-20250929": {
-      "context": 1000000,
+      "context": 200000,
       "output": 64000
     },
     "claude-sonnet-4-6": {
@@ -515,6 +639,10 @@
       "output": 128000
     },
     "claude-sonnet-5": {
+      "context": 1000000,
+      "output": 128000
+    },
+    "claude-sonnet-5-5": {
       "context": 1000000,
       "output": 128000
     }
