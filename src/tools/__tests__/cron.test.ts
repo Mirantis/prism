@@ -22,6 +22,7 @@ const { mockPrisma, mockScheduler, mockTrackEvent } = vi.hoisted(() => ({
     scheduleTask: vi.fn(),
     updateTask: vi.fn(),
     unscheduleTask: vi.fn(),
+    timezone: 'Europe/Helsinki',
   },
   mockTrackEvent: vi.fn(),
 }));
@@ -61,6 +62,7 @@ describe('cron tools', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockScheduler.timezone = 'Europe/Helsinki';
     tools = getCronTools('user-1', 'agent-1', 'heartbeat') as unknown as Record<string, { execute: ToolExecute }>;
   });
 
@@ -133,6 +135,25 @@ describe('cron tools', () => {
     expect(result).toMatchObject({ success: true, taskId: 'task-1', schedule: '0 9 * * *', nextRunAt: null });
     // The scheduler owns the 'cron task updated' event.
     expect(mockTrackEvent).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['Europe/Helsinki', 'Oct 30, 2026, 9:00 AM GMT+2'],
+    // A North American zone has a short name (EDT), and the message gives the offset instead.
+    ['America/New_York', 'Oct 30, 2026, 3:00 AM GMT-4'],
+  ])("states the next run in the agent's time zone (%s)", async (timezone, when) => {
+    mockScheduler.timezone = timezone;
+    mockScheduler.updateTask.mockResolvedValue({
+      status: 'updated',
+      task: { id: 'task-1', name: 'Daily Report', schedule: '0 9 * * *', nextRunAt: new Date('2026-10-30T07:00:00Z') },
+    });
+
+    const result = await tools.update_scheduled_task.execute({ taskId: 'task-1', schedule: 'every day at 9am' });
+
+    expect(result).toMatchObject({
+      message: `Updated "Daily Report" to run at ${when}`,
+      nextRunAt: '2026-10-30T07:00:00.000Z',
+    });
   });
 
   it('update_scheduled_task returns a refused edit as an error', async () => {
