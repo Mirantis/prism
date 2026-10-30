@@ -26,6 +26,19 @@ const channelIdsParam = z
   .array(z.string())
   .describe('Linked channel ids of the deliverTo channel to post to, instead of its default destination');
 
+/** A run time in the agent's time zone, with its UTC offset, such as "Oct 30, 2026, 4:00 PM GMT+2". */
+function formatRunTime(date: Date): string {
+  return date.toLocaleString('en-US', {
+    timeZone: cronSchedulerService.timezone,
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'shortOffset',
+  });
+}
+
 export function getCronTools(
   userId: string,
   agentId: string,
@@ -109,7 +122,7 @@ export function getCronTools(
         }
 
         const when = task.nextRunAt
-          ? `to run at ${task.nextRunAt.toLocaleString()}`
+          ? `to run at ${formatRunTime(task.nextRunAt)}`
           : `with schedule: ${task.schedule}`;
         return {
           success: true,
@@ -170,7 +183,7 @@ export function getCronTools(
 
         const { task } = result;
         const when = task.nextRunAt
-          ? `to run at ${task.nextRunAt.toLocaleString()}`
+          ? `to run at ${formatRunTime(task.nextRunAt)}`
           : `with schedule: ${task.schedule}`;
         return {
           success: true,

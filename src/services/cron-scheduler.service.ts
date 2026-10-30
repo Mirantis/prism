@@ -191,7 +191,7 @@ function hasRiskBlockedCall(toolCalls: ToolCallRecord[]): boolean {
 class CronSchedulerService {
   private scheduledJobs: Map<string, ScheduledJob> = new Map();
   /** The zone every recurring schedule is read in: the agent's setting, set at boot and on change. */
-  private timezone = 'UTC';
+  private zone = 'UTC';
 
   /**
    * Per unbound task, what its last sending run sent and what the newest run
@@ -240,6 +240,11 @@ class CronSchedulerService {
     return rows.map(toBackendCronTask);
   }
 
+  /** The zone every recurring schedule is read in, as an IANA name. */
+  get timezone(): string {
+    return this.zone;
+  }
+
   /**
    * Read every recurring schedule in this zone from now on. A running job is replaced, so its
    * next tick moves with the zone; the task's instruction is unchanged, so its delivery
@@ -251,7 +256,7 @@ class CronSchedulerService {
     if (!accepted) {
       logger.error(`[CronScheduler] Unknown time zone "${timezone}"; recurring tasks run in UTC`);
     }
-    this.timezone = accepted ? timezone : 'UTC';
+    this.zone = accepted ? timezone : 'UTC';
     for (const scheduled of [...this.scheduledJobs.values()]) {
       if (scheduled.isOneShot) continue;
       scheduled.job.stop();
@@ -298,7 +303,7 @@ class CronSchedulerService {
       async () => {
         await this.executeTask(task);
       },
-      { timezone: this.timezone },
+      { timezone: this.zone },
     );
     this.scheduledJobs.set(task.id, { task, job, isOneShot: false });
     if (opts.atBoot && missedRun(task, job) && !this.givesUp(task)) {
