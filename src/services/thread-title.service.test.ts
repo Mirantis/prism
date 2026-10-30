@@ -43,6 +43,8 @@ describe('threadTitleService.generateAndSave', () => {
     const content: string = call.messages[0].content;
     expect(content.startsWith('<message>\nmigrate the authentication layer\n</message>\n\n')).toBe(true);
     expect(content.split('\n').at(-1)).toMatch(/title/i);
+    // The task line is English, so it names the language the title is in.
+    expect(content.split('\n').at(-1)).toMatch(/in the language the message is written in\.$/);
   });
 
   it('keeps only the first line when the model goes on to answer the message', async () => {

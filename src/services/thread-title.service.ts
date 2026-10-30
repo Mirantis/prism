@@ -72,7 +72,7 @@ async function generateThreadTitle(threadId: string, message: string): Promise<s
       messages: [
         {
           role: 'user' as const,
-          content: `<message>\n${text}\n</message>\n\nWrite a title of at most ${TITLE_WORDS} words for this message.`,
+          content: `<message>\n${text}\n</message>\n\nWrite a title of at most ${TITLE_WORDS} words for this message, in the language the message is written in.`,
         },
       ],
       maxOutputTokens: 24,

@@ -48,6 +48,14 @@ Feature: Recents conversation list
     And I should see an agent response in the conversation
     Then the Recents title of the conversation mentions "instruction"
 
+  Scenario: A conversation is titled in the language of its first message
+    When I navigate to the agent chat page
+    And I type "Wie backe ich einen Apfelkuchen ohne Eier?" in the chat input
+    And I send the message
+    And I should see an agent response in the conversation
+    # The placeholder is the first three words, and an English title would say "apple pie".
+    Then the Recents title of the conversation mentions "kuchen"
+
   Scenario: Clicking a Recents row opens that thread
     Given an older conversation thread rooted at "/work/project-one" containing "hello from project one"
     And a conversation thread rooted at "/work/project-two"
