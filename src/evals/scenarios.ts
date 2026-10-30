@@ -268,6 +268,9 @@ function deployShell(deploys = DEPLOYS): (command: string) => string {
   };
 }
 
+const TIDY_UP_INSTRUCTION =
+  'Call list_scheduled_tasks. Then call delete_scheduled_task for the task named spare-check and for the task named tidy-up. Then reply with exactly TIDY_UP_OK and nothing else.';
+
 // The report a held run wrote in an E2E run of the REPEAT_CHECK task.
 const HELD_REPORT = `I need to check if 7 is a prime number. A prime number is a natural number greater than 1 that has no positive divisors other than 1 and itself.
 
@@ -366,14 +369,35 @@ const DELIVERY_SCENARIOS: Scenario[] = [
     'A task that does tool work and then asks to "reply with exactly" a word posts that word.',
     {
       mode: 'cron',
-      instruction:
-        'Call list_scheduled_tasks. Then call delete_scheduled_task for the task named spare-check and for the task named tidy-up. Then reply with exactly TIDY_UP_OK and nothing else.',
+      instruction: TIDY_UP_INSTRUCTION,
       stubs: {
+        // The output list_scheduled_tasks gave this task in an E2E run.
         list_scheduled_tasks: () => ({
           success: true,
+          count: 2,
           tasks: [
-            { id: 'task-spare', name: 'spare-check', schedule: 'once in 30 minutes', isActive: true },
-            { id: 'task-tidy', name: 'tidy-up', schedule: 'once now', isActive: true },
+            {
+              id: 'task-spare',
+              name: 'spare-check',
+              schedule: 'in 30 minutes',
+              instruction: 'Reply with exactly SPARE_RAN and nothing else.',
+              isActive: true,
+              deliverTo: 'all',
+              channelIds: [],
+              nextRunAt: '2026-10-30T09:30:51.192Z',
+              lastRunAt: null,
+            },
+            {
+              id: 'task-tidy',
+              name: 'tidy-up',
+              schedule: 'in 20 seconds',
+              instruction: TIDY_UP_INSTRUCTION,
+              isActive: true,
+              deliverTo: 'all',
+              channelIds: [],
+              nextRunAt: '2026-10-30T09:01:11.193Z',
+              lastRunAt: null,
+            },
           ],
         }),
         delete_scheduled_task: (input) => ({ success: true, message: `Deleted task ${String(input.taskId)}` }),
