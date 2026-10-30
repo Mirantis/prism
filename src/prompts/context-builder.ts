@@ -820,16 +820,19 @@ function getHeartbeatContextInstructions(
 ): string | null {
   const sections: string[] = [];
 
-  for (const { platform, messages } of triggers) {
+  for (const { platform, place, messages } of triggers) {
+    const where = place ? `${place.name} (\`${place.target}\`)` : `the monitored ${platform} channel`;
     sections.push(`### Recent ${platform} Messages (triggering this heartbeat)`);
-    sections.push(`Posted in the monitored ${platform} channel since your last heartbeat:`);
+    sections.push(`Posted in ${where} since your last heartbeat:`);
     sections.push('');
     for (const msg of messages) {
       const ago = formatTimeAgo(new Date(msg.timestamp).getTime());
       sections.push(`- **${msg.sender}** (${ago}): "${msg.text}"`);
     }
     sections.push('');
-    sections.push('Use them as context for your checks.');
+    sections.push(
+      `These messages started this heartbeat. Act on what they report or ask for, and post your answer${place ? ` in ${place.name}` : ''}, also when no checks are configured and when the author already knows what the message says. Post nothing for a message that reports nothing and asks for nothing.`,
+    );
   }
 
   return sections.length > 0 ? sections.join('\n') : null;
