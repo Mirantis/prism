@@ -1493,8 +1493,16 @@ describe('buildConversationHistory with tool-change announcements', () => {
 });
 
 describe('the sender of a person\'s message', () => {
-  const historyOf = (row: Pick<ConversationMessage, 'content' | 'senderExternalId' | 'senderName'>) =>
-    buildConversationHistory(createTestAgentContext({ recentMessages: [{ id: '1', role: 'USER', ...row }] })).messages[0];
+  const historyOf = (row: Pick<ConversationMessage, 'content' | 'senderExternalId' | 'senderName'>, senderTags = true) =>
+    buildConversationHistory(createTestAgentContext({ recentMessages: [{ id: '1', role: 'USER', ...row }] }), [], undefined, senderTags)
+      .messages[0];
+
+  it('keeps a web message as it is in a turn without sender tags', () => {
+    expect(historyOf({ content: 'deploy it', senderExternalId: 'user-7', senderName: 'Ana Example' }, false)).toEqual({
+      role: 'user',
+      content: 'deploy it',
+    });
+  });
 
   it('puts the stored sender before a web message', () => {
     expect(historyOf({ content: 'deploy it', senderExternalId: 'user-7', senderName: 'Ana Example' })).toEqual({
@@ -1510,6 +1518,10 @@ describe('the sender of a person\'s message', () => {
 
   it('keeps a message without a stored sender as it is', () => {
     expect(historyOf({ content: 'hi', senderExternalId: null, senderName: null })).toEqual({ role: 'user', content: 'hi' });
+  });
+
+  it('leaves a message without text untagged, as history renders it', () => {
+    expect(withSenderTag('', 'user-7', 'Ana Example')).toBe('');
   });
 
   it('drops the characters that would break the tag from the name', () => {

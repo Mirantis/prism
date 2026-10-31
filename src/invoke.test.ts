@@ -994,6 +994,13 @@ describe('invoke', () => {
     expect(stablePart!.content).toContain('channel instructions');
   });
 
+  it('renders sender tags in history only for a turn with a channel label', async () => {
+    await invoke(createTestInvokeRequest({ channelLabel: 'the channel **#general**' }));
+    await invoke(createTestInvokeRequest());
+
+    expect(mockBuildConversationHistory.mock.calls.map((call) => call[3])).toEqual([true, false]);
+  });
+
   it('appends task tool instructions to the stable part when agent has subagents', async () => {
     mockGetSubagents.mockResolvedValue([
       { id: 'sub-1', name: 'Research Bot', description: 'Researches topics' },
@@ -2962,9 +2969,12 @@ describe('invoke', () => {
       mockBuildConversationHistory.mockClear();
       const third = await turn(['u1', 'r1', 'u2', 'r2', 'u3'], { lockedIn: true });
 
-      expect(mockBuildConversationHistory).toHaveBeenCalledWith(expect.anything(), [
-        { afterRowId: 'u2', message: removal('memory_write') },
-      ], undefined);
+      expect(mockBuildConversationHistory).toHaveBeenCalledWith(
+        expect.anything(),
+        [{ afterRowId: 'u2', message: removal('memory_write') }],
+        undefined,
+        false,
+      );
       expect(third.messages.filter((m: StepMessage) => m.role === 'system')).toEqual([removal('memory_write')]);
     });
 
