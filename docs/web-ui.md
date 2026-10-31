@@ -84,8 +84,9 @@ The main conversation surface.
   send. It cancels the in-flight turn.
 - **Several tabs, browsers or devices.** Every open chat shows the same
   conversation as it happens: your messages, other people's messages with their
-  names, and whether the agent is working. Any of them can stop the agent. A chat
-  that lost its connection catches up when it reconnects.
+  names, and whether the agent is working. The agent also knows who wrote each
+  message. Any of them can stop the agent. A chat that lost its connection
+  catches up when it reconnects.
 - **Waiting.** The agent works on one conversation at a time. A message sent to
   another conversation meanwhile shows as waiting, and is answered next.
 - **A message that could not be sent** is marked in the conversation, with

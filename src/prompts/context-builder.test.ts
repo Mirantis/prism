@@ -27,6 +27,8 @@ import {
   buildConversationHistory,
   SUMMARY_MESSAGE_OPENING,
   buildSteeringMessage,
+  withSenderTag,
+  type ConversationMessage,
 } from './context-builder';
 vi.mock('../lib/has-binary', () => ({ missingBinary: vi.fn(async () => null) }));
 vi.mock('../services/meeting/browser-stack', async (original) => ({
@@ -1487,6 +1489,31 @@ describe('buildConversationHistory with tool-change announcements', () => {
 
     expect(history.messages.map((m) => m.role)).toEqual(['user', 'user']);
     expect(history.trailingToolChanges).toHaveLength(1);
+  });
+});
+
+describe('the sender of a person\'s message', () => {
+  const historyOf = (row: Pick<ConversationMessage, 'content' | 'senderExternalId' | 'senderName'>) =>
+    buildConversationHistory(createTestAgentContext({ recentMessages: [{ id: '1', role: 'USER', ...row }] })).messages[0];
+
+  it('puts the stored sender before a web message', () => {
+    expect(historyOf({ content: 'deploy it', senderExternalId: 'user-7', senderName: 'Ana Example' })).toEqual({
+      role: 'user',
+      content: '<@user-7:Ana Example>: deploy it',
+    });
+  });
+
+  it('keeps a message that already starts with its sender tag as it is', () => {
+    const content = '<@aad-1:Jane Doe>: what broke?';
+    expect(historyOf({ content, senderExternalId: 'aad-1', senderName: 'Jane Doe' })).toEqual({ role: 'user', content });
+  });
+
+  it('keeps a message without a stored sender as it is', () => {
+    expect(historyOf({ content: 'hi', senderExternalId: null, senderName: null })).toEqual({ role: 'user', content: 'hi' });
+  });
+
+  it('drops the characters that would break the tag from the name', () => {
+    expect(withSenderTag('ok', 'user-7', 'Ana <Ex:ample>')).toBe('<@user-7:Ana Example>: ok');
   });
 });
 

@@ -589,6 +589,25 @@ class ConversationService {
     return (await this.withHiddenStepToolCalls(threadId, messages)).map(withSender);
   }
 
+  /**
+   * Whether two or more people wrote in the thread. Every row counts, compacted
+   * ones too, and no row is deleted, so once true it stays true.
+   */
+  async hasSeveralSenders(threadId: string): Promise<boolean> {
+    const senders = await prisma.conversationMessage.findMany({
+      where: {
+        threadId,
+        role: MessageRole.USER,
+        triggeredBy: MessageTrigger.USER_INPUT,
+        senderExternalId: { not: null },
+      },
+      distinct: ['senderExternalId'],
+      select: { senderExternalId: true },
+      take: 2,
+    });
+    return senders.length > 1;
+  }
+
   /** The oldest message of a stored thread, internal steps left out: in a channel thread, the first one the agent saw. */
   async getFirstMessage(threadId: string): Promise<ConversationMessage | null> {
     return prisma.conversationMessage.findFirst({

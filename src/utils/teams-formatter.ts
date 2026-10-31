@@ -66,7 +66,7 @@ export function formatTeamsMessage(
 export function teamsChannelLabel(channelName: string): string {
   return (
     `the Microsoft Teams channel **${channelName}**, where you see this thread from the message ` +
-    'that first mentioned you, and where you address people by name, because Teams shows a ' +
-    'token as text'
+    'that first mentioned you, where you address people by name, because Teams shows a ' +
+    'token as text, and where you suggest a direct message for sensitive data'
   );
 }
