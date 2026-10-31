@@ -7,7 +7,7 @@
 
 import { threadGateAction } from './harness';
 import type { Scenario } from './scenarios';
-import { THREAD_TRANSCRIPT_LINES, type GateAgent, type ThreadLine } from '../services/thread-reply-classifier.service';
+import type { GateAgent, ThreadLine } from '../services/thread-reply-classifier.service';
 import type { ChatPlatform } from '../services/channel-adapter.interface';
 
 interface Member {
@@ -43,14 +43,13 @@ const ATLAS: GateAgent = {
 
 /**
  * What the adapter hands the classifier, or null when its participation rule
- * leaves the message without a classification: the agent posted in the messages
- * the classifier reads, or in Teams the message that brought it in is one of them.
+ * leaves the message without a classification. Slack classifies a thread the
+ * agent posted in; Teams classifies every reply in a reply chain it has a thread
+ * for, which every case here has.
  */
 function gateInput(gateCase: GateCase): ThreadLine[] | null {
   const before = gateCase.thread.slice(0, -1);
-  const recent = before.slice(-THREAD_TRANSCRIPT_LINES);
-  const rootInView = gateCase.platform === 'teams' && before.length <= THREAD_TRANSCRIPT_LINES;
-  if (!recent.some(([author]) => author === 'agent') && !rootInView) return null;
+  if (gateCase.platform === 'slack' && !before.some(([author]) => author === 'agent')) return null;
   return gateCase.thread.map(([author, text]) => ({
     author: author === 'agent' ? { kind: 'agent', name: ATLAS.name } : { kind: MEMBERS[author].kind, name: MEMBERS[author].name },
     text,

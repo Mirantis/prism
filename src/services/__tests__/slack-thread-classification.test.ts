@@ -226,16 +226,14 @@ describe('Slack thread classification', () => {
       await expect(gate(ARRIVING)).resolves.toMatchObject({ result: { action: 'respond' } });
     });
 
-    it('answers when the bot posted in the ten messages before this one', async () => {
-      armThread(reads(PARENT, BOT_REPLY, ...chatter(9)));
+    it('hands the classifier a thread the bot last posted in more than ten messages ago', async () => {
+      armThread(reads(PARENT, BOT_REPLY, ...chatter(12)));
 
-      await expect(gate(ARRIVING)).resolves.toMatchObject({ result: { action: 'respond' } });
-    });
+      const { result, messages } = await gate(ARRIVING);
+      expect(result).toEqual({ action: 'respond' });
+      await classify(messages);
 
-    it('ignores a thread the bot last posted in more than ten messages ago', async () => {
-      armThread(reads(PARENT, BOT_REPLY, ...chatter(10)));
-
-      await expect(gate(ARRIVING)).resolves.toMatchObject({ result: { action: 'ignore' } });
+      expect(mockGenerateObject).toHaveBeenCalledTimes(1);
     });
 
     it('ignores a thread the bot never posted in', async () => {

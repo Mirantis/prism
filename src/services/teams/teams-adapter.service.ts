@@ -751,12 +751,7 @@ class TeamsAdapterService implements ChannelAdapter {
     });
   }
 
-  /**
-   * The reply chain's root, its recent history and the arriving reply, for the
-   * classifier. The agent takes part when it posted in the messages the
-   * classifier reads, or when the message that brought it into the chain is
-   * one of them; otherwise the reply needs a mention.
-   */
+  /** The reply chain's root, its recent history and the arriving reply, for the classifier. */
   private async classifyReply(
     threadId: string,
     agentId: string,
@@ -768,8 +763,6 @@ class TeamsAdapterService implements ChannelAdapter {
       conversationService.getRecentMessages(threadId, THREAD_TRANSCRIPT_LINES),
     ]);
     const history = recent.filter((m) => m.role === 'USER' || m.role === 'AGENT');
-    if (!history.some((m) => m.role === 'AGENT' || m.id === root?.id)) return { action: 'ignore' };
-
     const agent = await loadGateAgent();
     const rows = root && !history.some((m) => m.id === root.id) ? [root, ...history] : history;
     const lines: ThreadLine[] = rows.map((m) => ({
