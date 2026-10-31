@@ -99,10 +99,10 @@ switching to a DM link, and vice-versa.
   on one of the agent's DM messages; the agent keeps that thread's context and
   replies back inside the same thread.
 - **Channels.** It responds when **@mentioned** and when you reply within a
-  thread it's already part of. When a thread it participated in gets a new
-  message, a quick classifier decides whether to **reply** or stay quiet, so it
-  doesn't talk over the channel. A reply that @mentions another person gets a 👀
-  reaction instead. The agent knows **which channel** it's replying in (the
+  thread where it posted in the last 10 messages. For such a reply, a quick
+  classifier decides whether to **reply** or stay quiet, so it doesn't talk over
+  the channel. In an older thread, @mention it. A reply that @mentions another
+  person gets a 👀 reaction instead. The agent knows **which channel** it's replying in (the
   channel name is part of its context), so it can behave differently across
   linked channels.
 - **Threads.** Each Slack thread maps to a conversation thread in

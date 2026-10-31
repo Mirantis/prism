@@ -589,6 +589,14 @@ class ConversationService {
     return (await this.withHiddenStepToolCalls(threadId, messages)).map(withSender);
   }
 
+  /** The oldest message of a stored thread, internal steps left out: in a channel thread, the first one the agent saw. */
+  async getFirstMessage(threadId: string): Promise<ConversationMessage | null> {
+    return prisma.conversationMessage.findFirst({
+      where: { threadId, internalStep: false },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+  }
+
   /**
    * The messages a client is shown, each agent message with the tool calls of
    * the concise-mode steps its turn hid, ahead of its own. A client acts on some

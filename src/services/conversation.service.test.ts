@@ -612,6 +612,18 @@ describe('ConversationService', () => {
   // (getThreadContext) keeps them so replay fidelity is unchanged.
   // ==========================================================================
 
+  describe('getFirstMessage', () => {
+    it('reads the oldest message that is not an internal step', async () => {
+      mockPrisma.conversationMessage.findFirst.mockResolvedValue({ id: 'm-1' });
+
+      await expect(conversationService.getFirstMessage('thread-1')).resolves.toEqual({ id: 'm-1' });
+      expect(mockPrisma.conversationMessage.findFirst).toHaveBeenCalledWith({
+        where: { threadId: 'thread-1', internalStep: false },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      });
+    });
+  });
+
   describe('internal-step visibility (DATABASE threads)', () => {
     it('getThread hides internal steps from client history', async () => {
       const threadId = 'thread-db';

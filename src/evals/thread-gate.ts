@@ -2,26 +2,24 @@
  * Hand-labelled threads for the thread reply gate: a reply in a Slack or Teams
  * thread that does not mention the agent, and whether the agent answers it. Each
  * case runs the adapter's participation rule and then the classifier, as the
- * adapter hands the thread over. All names and ids are invented.
+ * adapter hands the thread over. All names are invented.
  */
 
 import { threadGateAction } from './harness';
 import type { Scenario } from './scenarios';
-import { THREAD_TRANSCRIPT_LINES, type ThreadLine } from '../services/thread-reply-classifier.service';
+import { THREAD_TRANSCRIPT_LINES, type GateAgent, type ThreadLine } from '../services/thread-reply-classifier.service';
 import type { ChatPlatform } from '../services/channel-adapter.interface';
 
 interface Member {
   kind: 'person' | 'bot';
   name: string;
-  /** The id each platform gives the member. */
-  ids: Record<ChatPlatform, string>;
 }
 
 const MEMBERS = {
-  ana: { kind: 'person', name: 'Ana Example', ids: { slack: 'U01ANA0001', teams: '6f1c2d3e-0000-4000-8000-00000000a001' } },
-  ben: { kind: 'person', name: 'Ben Example', ids: { slack: 'U02BEN0002', teams: '6f1c2d3e-0000-4000-8000-00000000b002' } },
-  triage: { kind: 'bot', name: 'Triage Bot', ids: { slack: 'U0TRIAGE01', teams: '28:7a0e0000-0000-4000-8000-0000000000t1' } },
-  billing: { kind: 'bot', name: 'Billing Bot', ids: { slack: 'U0BILLING1', teams: '28:7a0e0000-0000-4000-8000-0000000000b1' } },
+  ana: { kind: 'person', name: 'Ana Example' },
+  ben: { kind: 'person', name: 'Ben Example' },
+  triage: { kind: 'bot', name: 'Triage Bot' },
+  billing: { kind: 'bot', name: 'Billing Bot' },
 } satisfies Record<string, Member>;
 
 type Author = 'agent' | keyof typeof MEMBERS;
@@ -37,18 +35,24 @@ interface GateCase {
   thread: Line[];
 }
 
+/** The agent every case decides for, with a role written the way an onboarded Soul opens. */
+const ATLAS: GateAgent = {
+  name: 'Atlas',
+  role: "## Role\nYou deploy the platform team's services and watch CI on main.",
+};
+
 /**
  * What the adapter hands the classifier, or null when its participation rule
- * leaves the message without a classification. Slack classifies a thread the
- * agent posted in; Teams classifies every reply in a reply chain it has a thread
- * for, which every case here has.
+ * leaves the message without a classification: the agent posted in the messages
+ * the classifier reads, or in Teams the message that brought it in is one of them.
  */
 function gateInput(gateCase: GateCase): ThreadLine[] | null {
   const before = gateCase.thread.slice(0, -1);
-  if (gateCase.platform === 'slack' && !before.some(([author]) => author === 'agent')) return null;
+  const recent = before.slice(-THREAD_TRANSCRIPT_LINES);
+  const rootInView = gateCase.platform === 'teams' && before.length <= THREAD_TRANSCRIPT_LINES;
+  if (!recent.some(([author]) => author === 'agent') && !rootInView) return null;
   return gateCase.thread.map(([author, text]) => ({
-    fromBot: author === 'agent',
-    author: author === 'agent' ? '' : gateCase.platform === 'slack' ? MEMBERS[author].ids.slack : MEMBERS[author].name,
+    author: author === 'agent' ? { kind: 'agent', name: ATLAS.name } : { kind: MEMBERS[author].kind, name: MEMBERS[author].name },
     text,
   }));
 }
@@ -60,7 +64,7 @@ function scenario(gateCase: GateCase): Scenario {
     grader: 'gate verdict',
     run: async () => {
       const lines = gateInput(gateCase);
-      const action = lines ? await threadGateAction(gateCase.platform, lines) : 'ignore';
+      const action = lines ? await threadGateAction(gateCase.platform, ATLAS, lines) : 'ignore';
       return { pass: action === gateCase.label, detail: lines ? action : `${action} (participation rule)` };
     },
   };
