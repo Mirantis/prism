@@ -70,6 +70,45 @@ function systemPrompt(platformName: string): string {
   ].join('\n');
 }
 
+interface ClassifyInput {
+  platform: ThreadPlatform;
+  agentId: string;
+  lines: ThreadLine[];
+}
+
+/** The classifier's verdict on the last line. Throws when the model call fails. */
+export async function decideThreadAction(input: ClassifyInput): Promise<ThreadAction> {
+  const { lines, platform } = input;
+  const transcript = lines
+    .slice(-THREAD_TRANSCRIPT_LINES)
+    .map((line) => `${line.fromBot ? '[Bot]' : `[User:${line.author}]`}: ${line.text}`)
+    .join('\n');
+
+  // One provider build for both the model and its structured-output
+  // options. Whatever the active vendor needs is forwarded as-is. Getting it
+  // wrong is invisible: `classify` answers `respond` on a failure, so the bot
+  // would answer every threaded message instead of ignoring any.
+  const { model, providerOptions, samplingParams } = getClassificationRequest();
+
+  const { object } = await callModelForObject({ purpose: `${platform.channel}-thread-gate` }, {
+    model,
+    schema: threadClassificationSchema,
+    // temperature: 0 on the vendors that accept it, omitted elsewhere.
+    ...samplingParams,
+    providerOptions,
+    // Traced by nobody, and stated rather than left to a default: once a
+    // telemetry integration is registered every call is traced with its
+    // prompt recorded, and this prompt is a transcript of a chat channel.
+    experimental_telemetry: { isEnabled: false },
+    system: systemPrompt(platform.name),
+    prompt: transcript,
+  });
+
+  // The prompt's label is `no_reply`, not `ignore`: with `ignore` the model
+  // left more questions to the bot unanswered.
+  return { action: object.action === 'respond' ? 'respond' : 'ignore' };
+}
+
 class ThreadReplyClassifierService {
   /**
    * Owns each platform's `<channel> thread classification failed` event. Worth
@@ -77,49 +116,17 @@ class ThreadReplyClassifierService {
    * failed call answers `respond`, so a classifier that has stopped working
    * looks exactly like a chatty bot and shows up nowhere else.
    */
-  async classify(input: {
-    platform: ThreadPlatform;
-    agentId: string;
-    lines: ThreadLine[];
-  }): Promise<ThreadAction> {
-    const { agentId, lines, platform } = input;
+  async classify(input: ClassifyInput): Promise<ThreadAction> {
     try {
-      const transcript = lines
-        .slice(-THREAD_TRANSCRIPT_LINES)
-        .map((line) => `${line.fromBot ? '[Bot]' : `[User:${line.author}]`}: ${line.text}`)
-        .join('\n');
-
-      // One provider build for both the model and its structured-output
-      // options. Whatever the active vendor needs is forwarded as-is. Getting it
-      // wrong is invisible: the catch below answers `respond`, so the bot would
-      // answer every threaded message instead of ignoring any.
-      const { model, providerOptions, samplingParams } = getClassificationRequest();
-
-      const { object } = await callModelForObject({ purpose: `${platform.channel}-thread-gate` }, {
-        model,
-        schema: threadClassificationSchema,
-        // temperature: 0 on the vendors that accept it, omitted elsewhere.
-        ...samplingParams,
-        providerOptions,
-        // Traced by nobody, and stated rather than left to a default: once a
-        // telemetry integration is registered every call is traced with its
-        // prompt recorded, and this prompt is a transcript of a chat channel.
-        experimental_telemetry: { isEnabled: false },
-        system: systemPrompt(platform.name),
-        prompt: transcript,
-      });
-
-      // The prompt's label is `no_reply`, not `ignore`: with `ignore` the model
-      // left more questions to the bot unanswered.
-      return { action: object.action === 'respond' ? 'respond' : 'ignore' };
+      return await decideThreadAction(input);
     } catch (error) {
       // Under `err`, not interpolated into the message: a string built from
       // `error.message` is the one shape the redacting serializer cannot see.
       logger.warn({ err: error }, 'Thread classification failed, falling back to respond');
       // Props stay to ids, the active model and the error's shape, never the
       // transcript or the message text the classifier ran on.
-      trackEvent(`${platform.channel} thread classification failed`, null, {
-        'agent.id': agentId,
+      trackEvent(`${input.platform.channel} thread classification failed`, null, {
+        'agent.id': input.agentId,
         'llm.provider': config.llmProvider,
         'llm.classification_model': config.classificationModelId,
         ...errorShape(error),
