@@ -291,7 +291,7 @@ export function formatNotification(
 export function slackChannelLabel(channelName: string): string {
   return (
     `the team Slack channel **#${channelName.replace(/^#/, '')}**, where you see the messages of ` +
-    'the thread you reply in, and where you mention someone by writing their token as it ' +
-    'appears, so Slack notifies them'
+    'the thread you reply in, where you mention someone by writing their token as it ' +
+    'appears, so Slack notifies them, and where you suggest a direct message for sensitive data'
   );
 }

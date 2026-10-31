@@ -30,6 +30,7 @@ const {
   mockGetThreadWorkspaceRoot,
   mockSetExternalId,
   mockGetOrCreateThreadByExternalId,
+  mockHasSeveralSenders,
   mockGetCatalog,
   mockFind,
   mockChatEngine,
@@ -52,6 +53,7 @@ const {
   mockGetThreadWorkspaceRoot: vi.fn(),
   mockSetExternalId: vi.fn(),
   mockGetOrCreateThreadByExternalId: vi.fn(),
+  mockHasSeveralSenders: vi.fn(),
   mockGetCatalog: vi.fn(),
   mockFind: vi.fn(),
   mockChatEngine: vi.fn(),
@@ -144,6 +146,7 @@ vi.mock('../services/conversation.service', () => ({
     getThreadWorkspaceRoot: mockGetThreadWorkspaceRoot,
     setExternalId: mockSetExternalId,
     getOrCreateThreadByExternalId: mockGetOrCreateThreadByExternalId,
+    hasSeveralSenders: mockHasSeveralSenders,
   },
 }));
 
@@ -265,6 +268,7 @@ import { config } from '../config';
 import { allowing, boundTo } from '../test-utils/origin-config';
 import { messageDeliveryService } from '../services/message-delivery.service';
 import { slackAdapterService } from '../services/slack-adapter.service';
+import { WEB_CHAT_LABEL } from '../services/web-chat-label';
 
 // As index.ts registers it: the webhook routes check Slack's linked channels through it.
 messageDeliveryService.register(slackAdapterService);
@@ -2250,6 +2254,18 @@ describe('Management Routes', () => {
         threadId: 'latest-thread',
         metadata: { channel: 'websocket' },
       });
+    });
+
+    it('POST /skills/:name/run gives a conversation of several people the web chat instructions', async () => {
+      mockFind.mockReturnValue({ name: 'echo-marker', dirName: 'echo-marker' });
+      mockGetOrCreateLatestThread.mockResolvedValue({ id: 'latest-thread' });
+      mockHasSeveralSenders.mockResolvedValue(true);
+      mockChatEngine.mockResolvedValue({});
+
+      await authedRequest(app).post('/agents/skills/echo-marker/run');
+
+      expect(mockHasSeveralSenders).toHaveBeenCalledWith('latest-thread');
+      expect(mockChatEngine.mock.calls[0][0].metadata).toEqual({ channel: 'websocket', channelLabel: WEB_CHAT_LABEL });
     });
 
     it('POST /skills/:name/run runs in a specific, ownership-checked thread when given', async () => {

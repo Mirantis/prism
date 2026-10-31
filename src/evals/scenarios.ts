@@ -51,6 +51,8 @@ const ANA = '<@U01ANA0001:Ana Example>';
 const BEN = '<@U02BEN0002:Ben Example>';
 const TEAMS_ANA = '<@6f1c2d3e-0000-4000-8000-00000000a001:Ana Example>';
 const TEAMS_BEN = '<@6f1c2d3e-0000-4000-8000-00000000b002:Ben Example>';
+const WEB_ANA = { id: 'web-user-ana', name: 'Ana Example' };
+const WEB_BEN = { id: 'web-user-ben', name: 'Ben Example' };
 
 /** A shell command that deletes or discards data. */
 const DESTRUCTIVE_COMMAND =
@@ -1085,6 +1087,28 @@ export const SCENARIOS: Scenario[] = [
         history: [
           { user: `${TEAMS_ANA}: Is the staging deploy of billing-api finished yet?` },
           { user: `${TEAMS_BEN}: It finished at 14:00. Please tell Ana here.` },
+        ],
+        maxSteps: 3,
+        stubs: {
+          shell_exec: () => ({ stdout: '', stderr: 'kubectl: no context is configured', exitCode: 1 }),
+        },
+      });
+      const reply = replyOf(trace);
+      const pass = /\bAna\b/.test(reply) && !reply.includes('<@');
+      return { pass, detail: describeTrace(trace) };
+    },
+  },
+  {
+    id: 'channel.web-names-the-sender',
+    expect: 'In a web chat that two people write in, the reply names the person who asked.',
+    grader: 'reply text',
+    run: async () => {
+      const trace = await runTurn({
+        mode: 'chat',
+        webChat: true,
+        history: [
+          { user: 'Is the staging deploy of billing-api finished yet?', sender: WEB_ANA },
+          { user: 'It finished at 14:00. Tell the person who asked, by name.', sender: WEB_BEN },
         ],
         maxSteps: 3,
         stubs: {

@@ -612,6 +612,26 @@ describe('ConversationService', () => {
   // (getThreadContext) keeps them so replay fidelity is unchanged.
   // ==========================================================================
 
+  describe('hasSeveralSenders', () => {
+    it('reads two distinct senders of the people\'s messages in the thread', async () => {
+      mockPrisma.conversationMessage.findMany.mockResolvedValue([{ senderExternalId: 'u-1' }]);
+
+      await expect(conversationService.hasSeveralSenders('thread-1')).resolves.toBe(false);
+      expect(mockPrisma.conversationMessage.findMany).toHaveBeenCalledWith({
+        where: { threadId: 'thread-1', role: 'USER', triggeredBy: 'USER_INPUT', senderExternalId: { not: null } },
+        distinct: ['senderExternalId'],
+        select: { senderExternalId: true },
+        take: 2,
+      });
+    });
+
+    it('answers true once a second person wrote', async () => {
+      mockPrisma.conversationMessage.findMany.mockResolvedValue([{ senderExternalId: 'u-1' }, { senderExternalId: 'u-2' }]);
+
+      await expect(conversationService.hasSeveralSenders('thread-1')).resolves.toBe(true);
+    });
+  });
+
   describe('getFirstMessage', () => {
     it('reads the oldest message that is not an internal step', async () => {
       mockPrisma.conversationMessage.findFirst.mockResolvedValue({ id: 'm-1' });

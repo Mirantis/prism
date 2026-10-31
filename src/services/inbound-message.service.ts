@@ -43,6 +43,8 @@ import {
 } from '../protocol/chat-protocol';
 import type { AgentMessageOrigin, ResumedReply } from '../types';
 import { agentMessageOrigin } from '../prompts/agent-message-prompt';
+import { withSenderTag } from '../prompts/context-builder';
+import { webChatLabel } from './web-chat-label';
 
 export interface InboundMessage {
   /** The client's id for the message, which becomes the row's. */
@@ -376,7 +378,7 @@ class InboundMessageService {
       // A turn is under way. One on this message's own thread reads it at its next
       // step, which is how a correction mid-answer steers the work.
       const offered = await conversationEngineService.chat({
-        ...this.chatInput(waiting),
+        ...(await this.chatInput(waiting)),
         steerOnly: true,
       });
       if (offered.steered) return false;
@@ -403,7 +405,7 @@ class InboundMessageService {
     // how the turn ended rather than arriving before it is known.
     const endHold = conversationThreadActivityService.beginThread(threadId, config.ownerUserId);
     try {
-      await conversationEngineService.chat(this.chatInput(waiting));
+      await conversationEngineService.chat(await this.chatInput(waiting));
     } catch (error) {
       // Through the serializer, which redacts; every client gets a sentence
       // instead, since an exception can carry request content or internals.
@@ -420,17 +422,22 @@ class InboundMessageService {
     if (next) void this.run(next);
   }
 
-  private chatInput(waiting: Waiting) {
+  private async chatInput(waiting: Waiting) {
     const { message } = waiting;
+    const channelLabel = await webChatLabel(message.threadId);
+    const sender = senderInput(message);
     return {
       agentId: config.agentId as string,
       userId: config.ownerUserId,
-      message: message.content,
+      // Tagged the way history renders the stored row, so a message handed to a
+      // running turn reads the same there as on every later turn.
+      message: withSenderTag(message.content, message.sender?.id, message.sender?.name),
       threadId: message.threadId,
       attachmentIds: message.attachmentIds,
       stored: { id: message.id, titleSet: waiting.titleSet },
       ...(waiting.resumed ? { resumed: waiting.resumed } : {}),
-      ...senderInput(message),
+      ...sender,
+      ...(channelLabel ? { metadata: { ...sender.metadata, channelLabel } } : {}),
     };
   }
 

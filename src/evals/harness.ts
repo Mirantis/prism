@@ -43,6 +43,7 @@ import type { ChatPlatform } from '../services/channel-adapter.interface';
 import { slackChannelLabel } from '../utils/slack-formatter';
 import { teamsChannelLabel } from '../utils/teams-formatter';
 import { planToolSearch } from '../lib/tool-search/plan';
+import { WEB_CHAT_LABEL } from '../services/web-chat-label';
 
 export const EVAL_USER_ID = 'eval-user';
 /** The agent every scenario runs as: the one `AGENT_ID` names, which `run.ts` sets. */
@@ -142,7 +143,7 @@ export async function withSampleAccounting<T>(
 
 /** One stored message of the thread a scenario starts from. */
 export type HistoryEntry =
-  | { user: string; attachments?: AttachmentMeta[] }
+  | { user: string; attachments?: AttachmentMeta[]; sender?: { id: string; name: string } }
   /** A message from another agent of the project. */
   | { fromAgent: AgentMessageOrigin; text: string }
   | {
@@ -163,6 +164,8 @@ interface TurnInput {
   prompt?: string;
   /** A channel turn instead of a direct message. */
   channel?: { name: string; platform: ChatPlatform };
+  /** A web chat turn in a conversation that several people wrote in. */
+  webChat?: boolean;
   /** Run as the agent that has a subagent, so the Task tool and its block are sent. */
   withSubagent?: boolean;
   /** Results for named tools. Any other tool returns a plain success. */
@@ -247,6 +250,7 @@ export async function runTurn(input: TurnInput): Promise<TurnTrace> {
     prompt: input.prompt ?? '',
     ...(input.heartbeatTriggers ? { heartbeatTriggers: input.heartbeatTriggers } : {}),
     ...(input.channel ? { channelLabel: CHANNEL_LABEL[input.channel.platform](input.channel.name) } : {}),
+    ...(input.webChat ? { channelLabel: WEB_CHAT_LABEL } : {}),
   };
   const { systemParts: parts, messages } = await buildTurnRequest(context, request, subagents, undefined, toolSearch);
   const systemParts =
@@ -319,7 +323,14 @@ function defaultStub(name: string): ToolStub {
 function toStoredMessage(entry: HistoryEntry, index: number): ConversationMessage {
   const id = `eval-message-${index + 1}`;
   if ('user' in entry) {
-    return { id, role: 'USER', content: entry.user, attachments: entry.attachments };
+    return {
+      id,
+      role: 'USER',
+      content: entry.user,
+      attachments: entry.attachments,
+      senderExternalId: entry.sender?.id ?? null,
+      senderName: entry.sender?.name ?? null,
+    };
   }
   if ('fromAgent' in entry) {
     return { id, role: 'USER', content: entry.text, ...agentMessageColumns(entry.fromAgent) };

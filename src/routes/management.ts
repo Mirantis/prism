@@ -79,6 +79,7 @@ import { conversationService, type MessageInput } from '../services/conversation
 import { MESSAGE_TRIGGERS, messageDeliveryService } from '../services/message-delivery.service';
 import { isChatPlatform } from '../services/channel-adapter.interface';
 import { conversationEngineService, type ChatInput } from '../services/conversation-engine.service';
+import { webChatLabel } from '../services/web-chat-label';
 import { skillCatalogService } from '../services/skill-catalog.service';
 import { pluginCatalogService } from '../services/plugin-catalog.service';
 import { pluginMcpService } from '../services/plugin-mcp.service';
@@ -1819,7 +1820,7 @@ router.post('/skills/:name/run', async (req: Request, res: Response) => {
         agentId: config.agentId,
         message: directive,
         threadId,
-        metadata: { channel: 'websocket' },
+        metadata: { channel: 'websocket', channelLabel: await webChatLabel(threadId) },
       })
       .catch((err) => logger.error({ err }, '[Management] skill run failed'));
 

@@ -717,6 +717,21 @@ export function buildUserMessage(msg: ConversationMessage): ModelMessage | null 
 }
 
 /**
+ * A person's message as the model reads it: after the sender's `<@ID:Name>`
+ * tag, the form the channel prompt describes. A channel that stores the tag in
+ * the content already has it, so the content is kept as it is then.
+ */
+export function withSenderTag(
+  content: string,
+  senderId: string | null | undefined,
+  senderName: string | null | undefined,
+): string {
+  if (!senderId || !senderName || content.startsWith(`<@${senderId}`)) return content;
+  const name = senderName.replace(/[<>:\x00-\x1f]/g, '').trim();
+  return name ? `<@${senderId}:${name}>: ${content}` : content;
+}
+
+/**
  * Turn a USER message + its attachment metadata into AI SDK content parts.
  *
  * Attachment bytes are never inlined here. Each attachment renders as a
@@ -727,11 +742,13 @@ export function buildUserMessage(msg: ConversationMessage): ModelMessage | null 
  * that names the sender.
  */
 function buildUserContentParts(msg: ConversationMessage): UserContentPart[] {
+  const origin = agentMessageOrigin(msg);
+  // Another agent's row holds its sender in the same columns, and renders inside its own tag.
+  const content = origin ? msg.content : withSenderTag(msg.content, msg.senderExternalId, msg.senderName);
   const texts = [
-    ...(msg.content?.trim() ? [msg.content] : []),
+    ...(msg.content?.trim() ? [content] : []),
     ...(msg.attachments ?? []).map(attachmentStub),
   ];
-  const origin = agentMessageOrigin(msg);
   if (origin && texts.length > 0) {
     return [{ type: 'text', text: renderAgentMessage(origin, texts.join('\n')) }];
   }

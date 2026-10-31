@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 
-const { mockPrisma, mockEngine, mockConfig, mockEndWork, mockWritableThreadId } = vi.hoisted(() => ({
+const { mockPrisma, mockEngine, mockConfig, mockEndWork, mockWritableThreadId, mockHasSeveralSenders } = vi.hoisted(() => ({
   mockPrisma: {
     conversationThread: { findUnique: vi.fn() },
     conversationMessage: { findUnique: vi.fn(), findFirst: vi.fn() },
@@ -15,6 +15,7 @@ const { mockPrisma, mockEngine, mockConfig, mockEndWork, mockWritableThreadId } 
   mockConfig: { agentId: 'agent-1' as string | undefined, ownerUserId: 'owner-1' },
   mockEndWork: vi.fn(),
   mockWritableThreadId: vi.fn(),
+  mockHasSeveralSenders: vi.fn(),
 }));
 
 vi.mock('../../lib/prisma', () => ({ default: mockPrisma }));
@@ -26,7 +27,11 @@ vi.mock('../conversation-engine.service', async () => {
 vi.mock('../../config', () => ({ config: mockConfig }));
 vi.mock('../../lib/telemetry', () => ({ trackEvent: vi.fn() }));
 vi.mock('../conversation.service', () => ({
-  conversationService: { clientThreadFilter: async () => ({}), writableThreadId: mockWritableThreadId },
+  conversationService: {
+    clientThreadFilter: async () => ({}),
+    writableThreadId: mockWritableThreadId,
+    hasSeveralSenders: mockHasSeveralSenders,
+  },
 }));
 vi.mock('../message-delivery.service', () => ({ messageDeliveryService: { showInConversation: vi.fn() } }));
 vi.mock('../pending-work.service', () => ({ pendingWorkService: { end: mockEndWork } }));
@@ -36,6 +41,7 @@ import { eventStreamService } from '../event-stream.service';
 import { conversationThreadActivityService } from '../conversation-thread-activity.service';
 import { trackEvent } from '../../lib/telemetry';
 import type { ChatTurnEnd } from '../conversation-engine.service';
+import { WEB_CHAT_LABEL } from '../web-chat-label';
 
 const THREAD_A = 'thread-a';
 const THREAD_B = 'thread-b';
@@ -106,6 +112,34 @@ describe('InboundMessageService', () => {
     mockEngine.chat.mockImplementation(exchange());
     mockEngine.cancel.mockReturnValue(false);
     mockWritableThreadId.mockImplementation(async (threadId: string) => threadId);
+    mockHasSeveralSenders.mockResolvedValue(false);
+  });
+
+  describe('Scenario: who wrote it', () => {
+    it('hands the turn the message after its sender tag, without the channel instructions for one person', async () => {
+      await inboundMessageService.accept(inbound('m-1'));
+      await settle();
+
+      const input = mockEngine.chat.mock.calls[0][0];
+      expect(input.message).toBe('<@user-ada-1:Ada Lovelace>: hello');
+      expect(input.metadata).not.toHaveProperty('channelLabel');
+      expect(mockHasSeveralSenders).toHaveBeenCalledWith(THREAD_A);
+    });
+
+    it('gives the turn the web chat instructions once a second person wrote in the conversation', async () => {
+      mockHasSeveralSenders.mockResolvedValue(true);
+
+      await inboundMessageService.accept(inbound('m-1'));
+      await settle();
+
+      expect(mockEngine.chat.mock.calls[0][0].metadata).toMatchObject({ channelLabel: WEB_CHAT_LABEL });
+    });
+
+    it('stores the text as the person wrote it', async () => {
+      await inboundMessageService.accept(inbound('m-1'));
+
+      expect(mockEngine.acceptUserMessage.mock.calls[0][0].message).toBe('hello');
+    });
   });
 
   describe('Scenario: storing first', () => {
@@ -347,7 +381,7 @@ describe('InboundMessageService', () => {
       const first = heldTurn();
       mockEngine.chat.mockImplementation((input: ChatCall) => {
         if (input.threadId === THREAD_A) return first.run(input);
-        return exchange(input.message === 'second' ? { error: { type: 'generic' } } : {})(input);
+        return exchange(input.message.endsWith(': second') ? { error: { type: 'generic' } } : {})(input);
       });
 
       await inboundMessageService.accept(inbound('m-1', THREAD_A));
