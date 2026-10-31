@@ -49,7 +49,13 @@ import { slackHeartbeatTriggerService } from './slack-heartbeat-trigger.service'
 import { heartbeatService } from './heartbeat.service';
 import { conversationService } from './conversation.service';
 import { conversationEngineService } from './conversation-engine.service';
-import { threadReplyClassifierService, ThreadAction } from './thread-reply-classifier.service';
+import {
+  loadGateAgent,
+  threadReplyClassifierService,
+  ThreadAction,
+  THREAD_TRANSCRIPT_LINES,
+  type ThreadAuthor,
+} from './thread-reply-classifier.service';
 import { SlackThreadProvider } from './providers/slack-thread.provider';
 import { getSlackHeartbeatThrottleQueue } from '../queues/slack-heartbeat-throttle-queue';
 import { getActiveSlackConnections, getSlackConnection } from '../lib/slack-source';
@@ -93,8 +99,21 @@ const SEND_CONNECT_WAIT_MS = 30_000;
 // Types
 // ============================================================================
 
-/** The fields of a thread message the gate reads. */
-type GateMessage = { user?: string; text?: string; ts?: string };
+/** The fields of a thread message the gate reads. A bot's message has `bot_id`. */
+type GateMessage = {
+  user?: string;
+  text?: string;
+  ts?: string;
+  bot_id?: string;
+  bot_profile?: { name?: string };
+  username?: string;
+};
+
+/** The fields of `users.info` the adapter reads. */
+type SlackUserInfo = { real_name?: string; name?: string; is_bot?: boolean };
+
+/** How long a `users.info` answer is reused. */
+const USER_INFO_TTL_MS = 5 * 60 * 1000;
 
 /**
  * The participation rule's verdict. `respond` passes the message on to the
@@ -225,6 +244,8 @@ class SlackAdapterService implements ChannelAdapter {
 
   /** Cache of user connections for quick lookup */
   private userConnectionCache: Map<string, Set<string>> = new Map(); // lensUserId -> teamIds
+  /** `users.info` answers by `<teamId>:<userId>`, so the thread gate names a thread's members without a call each time. */
+  private userInfoCache = new Map<string, { user: SlackUserInfo; expiresAt: number }>();
 
   /**
    * Deliver a message to the user via Slack DM or channel
@@ -1358,7 +1379,7 @@ class SlackAdapterService implements ChannelAdapter {
       }
 
       // result.action === 'respond' — double-check with LLM
-      const llmResult = await this.classifyThreadMessage(messages, botUserId, mapping.agentId);
+      const llmResult = await this.classifyThreadMessage(messages, botUserId, mapping.agentId, mapping.connection.teamId);
 
       if (llmResult.action === 'ignore') {
         logger.info(
@@ -1851,7 +1872,7 @@ class SlackAdapterService implements ChannelAdapter {
     channelId: string,
     threadTs: string,
     teamId: string,
-    arriving: Required<GateMessage>,
+    arriving: Required<Pick<GateMessage, 'user' | 'text' | 'ts'>>,
   ): Promise<{ result: ThreadParticipation; messages: GateMessage[] }> {
     const slackApp = this.apps.get(teamId);
     if (!slackApp) return { result: { action: 'ignore' }, messages: [] };
@@ -1870,16 +1891,12 @@ class SlackAdapterService implements ChannelAdapter {
       const at = fetched.findIndex((m) => m.ts === arriving.ts);
       const messages = at === -1 ? [...fetched, arriving] : fetched.slice(0, at + 1);
 
-      let lastBotIndex = -1;
-      for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].user === slackApp.botUserId) {
-          lastBotIndex = i;
-          break;
-        }
-      }
-
-      // Bot never posted in this thread
-      if (lastBotIndex === -1) return { result: { action: 'ignore' }, messages };
+      // The bot takes part when it posted in the messages before this one that
+      // the classifier reads; otherwise only a mention gets an answer. A thread
+      // past the read's 100 messages counts the first page only, a trade for
+      // reading it in one call.
+      const recent = messages.slice(-(THREAD_TRANSCRIPT_LINES + 1), -1);
+      if (!recent.some((m) => m.user === slackApp.botUserId)) return { result: { action: 'ignore' }, messages };
 
       // The arriving message tags somebody other than the bot, so it is
       // addressed to that person. Only this message is read: a tag earlier in
@@ -1902,21 +1919,33 @@ class SlackAdapterService implements ChannelAdapter {
 
   /**
    * Second pass after the heuristic: the shared classifier decides whether the
-   * bot responds to or ignores the last message of `messages`.
+   * bot responds to or ignores the last message of `messages`, which starts at
+   * the thread root. Each author and mention is named, and a bot is told from a
+   * person by the message's `bot_id` or the user's `is_bot`.
    */
-  private classifyThreadMessage(
+  private async classifyThreadMessage(
     messages: GateMessage[],
     botUserId: string,
     agentId: string,
+    teamId: string,
   ): Promise<ThreadAction> {
+    const agent = await loadGateAgent();
+    // The root and the messages the classifier reads, so only those are named.
+    const read = [...messages.slice(0, 1), ...messages.slice(1).slice(-(THREAD_TRANSCRIPT_LINES + 1))];
+    const authorOf = async (m: GateMessage): Promise<ThreadAuthor> => {
+      if (m.user === botUserId) return { kind: 'agent', name: agent.name };
+      const info = m.user ? await this.getUserInfo(m.user, teamId) : null;
+      const name = m.bot_profile?.name || m.username || info?.real_name || info?.name || m.user || 'unknown';
+      return { kind: m.bot_id || info?.is_bot ? 'bot' : 'person', name };
+    };
+    const lines = await Promise.all(
+      read.map(async (m) => ({ author: await authorOf(m), text: await this.resolveMentions(m.text ?? '', teamId) })),
+    );
     return threadReplyClassifierService.classify({
       platform: { channel: this.name, name: 'Slack' },
       agentId,
-      lines: messages.map((m) => ({
-        fromBot: m.user === botUserId,
-        author: m.user ?? 'unknown',
-        text: m.text ?? '',
-      })),
+      agent,
+      lines,
     });
   }
 
@@ -2002,13 +2031,19 @@ class SlackAdapterService implements ChannelAdapter {
   /**
    * Get user info from Slack
    */
-  private async getUserInfo(slackUserId: string, teamId: string): Promise<{ real_name?: string; name?: string } | null> {
+  private async getUserInfo(slackUserId: string, teamId: string): Promise<SlackUserInfo | null> {
     const slackApp = this.apps.get(teamId);
     if (!slackApp) return null;
 
+    const key = `${teamId}:${slackUserId}`;
+    const cached = this.userInfoCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.user;
+
     try {
       const result = await slackApp.app.client.users.info({ user: slackUserId });
-      return result.user as { real_name?: string; name?: string } | undefined ?? null;
+      const user = (result.user as SlackUserInfo | undefined) ?? null;
+      if (user) this.userInfoCache.set(key, { user, expiresAt: Date.now() + USER_INFO_TTL_MS });
+      return user;
     } catch {
       return null;
     }

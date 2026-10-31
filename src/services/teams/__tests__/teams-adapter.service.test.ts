@@ -63,6 +63,7 @@ const {
       getOrCreateThreadByExternalId: vi.fn(),
       findThreadByExternalId: vi.fn(),
       getRecentMessages: vi.fn(),
+      getFirstMessage: vi.fn(),
       addMessage: vi.fn(),
     },
     mockChat: vi.fn(),
@@ -128,6 +129,7 @@ vi.mock('../teams-attachments', async (importOriginal) => ({
 }));
 vi.mock('../../thread-reply-classifier.service', () => ({
   threadReplyClassifierService: { classify: mockClassify },
+  loadGateAgent: async () => ({ name: 'Atlas', role: 'You deploy the platform services.' }),
   THREAD_TRANSCRIPT_LINES: 10,
 }));
 vi.mock('../../../config', () => ({
@@ -815,16 +817,29 @@ describe('TeamsAdapterService', () => {
         channelName: 'Incidents',
       });
       mockConversationService.findThreadByExternalId.mockResolvedValue({ id: 'thread-1' });
-      mockConversationService.getRecentMessages.mockResolvedValue([
-        {
-          role: 'USER',
-          content: '<@aad-user-1:Jane Doe>: what broke the build?',
-          senderExternalId: 'aad-user-1',
-          senderName: 'Jane Doe',
-        },
-        { role: 'AGENT', content: 'A failing lint rule.', senderExternalId: null, senderName: null },
-      ]);
+      mockConversationService.getFirstMessage.mockResolvedValue(ROOT);
+      mockConversationService.getRecentMessages.mockResolvedValue([ROOT, AGENT_REPLY]);
     });
+
+    const ROOT = {
+      id: 'm-root',
+      role: 'USER',
+      content: '<@aad-user-1:Jane Doe>: what broke the build?',
+      senderExternalId: 'aad-user-1',
+      senderName: 'Jane Doe',
+    };
+    const AGENT_REPLY = { id: 'm-agent', role: 'AGENT', content: 'A failing lint rule.', senderExternalId: null, senderName: null };
+
+    /** `count` stored replies between people, after the root and the agent's reply. */
+    function chatter(count: number) {
+      return Array.from({ length: count }, (_, i) => ({
+        id: `m-${i}`,
+        role: 'USER',
+        content: `<@aad-user-2:Sam Roe>: aside ${i}`,
+        senderExternalId: 'aad-user-2',
+        senderName: 'Sam Roe',
+      }));
+    }
 
     it('answers a reply in a chain it answered in when the classifier says respond', async () => {
       mockClassify.mockResolvedValue({ action: 'respond' });
@@ -836,13 +851,15 @@ describe('TeamsAdapterService', () => {
         'agent-1',
         '19:chan@thread.tacv2;messageid=1755000000000'
       );
+      expect(mockConversationService.getRecentMessages).toHaveBeenCalledWith('thread-1', 10);
       expect(mockClassify).toHaveBeenCalledWith({
         platform: { channel: 'teams', name: 'Microsoft Teams' },
         agentId: 'agent-1',
+        agent: { name: 'Atlas', role: 'You deploy the platform services.' },
         lines: [
-          { fromBot: false, author: 'Jane Doe', text: 'what broke the build?' },
-          { fromBot: true, author: 'unknown', text: 'A failing lint rule.' },
-          { fromBot: false, author: 'Jane Doe', text: 'what time is it?' },
+          { author: { kind: 'person', name: 'Jane Doe' }, text: 'what broke the build?' },
+          { author: { kind: 'agent', name: 'Atlas' }, text: 'A failing lint rule.' },
+          { author: { kind: 'person', name: 'Jane Doe' }, text: 'what time is it?' },
         ],
       });
       expect(send).toHaveBeenCalledTimes(1);
@@ -874,6 +891,42 @@ describe('TeamsAdapterService', () => {
       expect(mockChat).not.toHaveBeenCalled();
       expect(send).not.toHaveBeenCalled();
       expect(lastApp().reply).not.toHaveBeenCalled();
+    });
+
+    it('puts the root first when it is older than the rows read, and marks a bot account', async () => {
+      mockClassify.mockResolvedValue({ action: 'ignore' });
+      const bot = { id: 'm-bot', role: 'USER', content: 'Opened OPS-1.', senderExternalId: '28:app-9', senderName: 'Triage Bot' };
+      mockConversationService.getRecentMessages.mockResolvedValue([AGENT_REPLY, bot, ...chatter(8)]);
+
+      await receive(channelActivity(REPLY));
+
+      const { lines } = mockClassify.mock.calls[0][0];
+      expect(lines[0]).toEqual({ author: { kind: 'person', name: 'Jane Doe' }, text: 'what broke the build?' });
+      expect(lines[2]).toEqual({ author: { kind: 'bot', name: 'Triage Bot' }, text: 'Opened OPS-1.' });
+      expect(lines).toHaveLength(12);
+    });
+
+    it('classifies a reply while the message that brought the agent in is one of the rows read', async () => {
+      mockClassify.mockResolvedValue({ action: 'respond' });
+      mockConversationService.getRecentMessages.mockResolvedValue([ROOT, ...chatter(3)]);
+
+      await receive(channelActivity(REPLY));
+
+      expect(mockClassify).toHaveBeenCalledTimes(1);
+    });
+
+    it('stores a reply without a turn when the agent is not in the last ten messages', async () => {
+      mockConversationService.getRecentMessages.mockResolvedValue(chatter(10));
+
+      const { send } = await receive(channelActivity(REPLY));
+
+      expect(mockClassify).not.toHaveBeenCalled();
+      expect(mockConversationService.addMessage).toHaveBeenCalledWith(
+        'thread-1',
+        expect.objectContaining({ role: 'USER', content: '<@aad-user-1:Jane Doe>: what time is it?' })
+      );
+      expect(mockChat).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalled();
     });
 
     it('leaves a reply that mentions somebody else to them', async () => {

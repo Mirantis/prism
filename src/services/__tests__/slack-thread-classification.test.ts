@@ -36,8 +36,15 @@ vi.mock('@slack/bolt', () => ({
 }));
 
 import { slackAdapterService } from '../slack-adapter.service';
+import { agentWorkspaceService } from '../agent-workspace.service';
 
-type ThreadMessage = { user?: string; text?: string; ts?: string };
+type ThreadMessage = {
+  user?: string;
+  text?: string;
+  ts?: string;
+  bot_id?: string;
+  bot_profile?: { name?: string };
+};
 type ArrivingMessage = { user: string; text: string; ts: string };
 
 /** `classifyThreadMessage` is private; exercise it through the instance. */
@@ -48,9 +55,10 @@ function classify(messages: ThreadMessage[]): Promise<{ action: string }> {
         m: ThreadMessage[],
         botUserId: string,
         agentId: string,
+        teamId: string,
       ): Promise<{ action: string }>;
     }
-  ).classifyThreadMessage(messages, 'BOT1', 'agent-1');
+  ).classifyThreadMessage(messages, 'BOT1', 'agent-1', 'T1');
 }
 
 /** `isBotInThread` is private too; same route. */
@@ -70,11 +78,29 @@ function gate(arriving: ArrivingMessage): Promise<{
   ).isBotInThread('C1', '100.0', 'T1', arriving);
 }
 
+/** The workspace's people and bot users, as `users.info` answers for them. */
+const USERS: Record<string, { real_name?: string; name?: string; is_bot?: boolean }> = {
+  U1: { real_name: 'Ana Example' },
+  U2: { real_name: 'Ben Example' },
+  BOT1: { real_name: 'Atlas', is_bot: true },
+  UDEPLOY: { name: 'deploy-bot', is_bot: true },
+};
+
+let usersInfo: ReturnType<typeof vi.fn>;
+
 /** Install a fake Bolt app whose `conversations.replies` is `replies`. */
 function armThread(replies: ReturnType<typeof vi.fn>): void {
-  (slackAdapterService as unknown as { apps: Map<string, unknown> }).apps = new Map([
-    ['T1', { app: { client: { conversations: { replies } } }, botUserId: 'BOT1' }],
+  usersInfo = vi.fn(async ({ user }: { user: string }) => ({ user: USERS[user] }));
+  const adapter = slackAdapterService as unknown as { apps: Map<string, unknown>; userInfoCache: Map<string, unknown> };
+  adapter.apps = new Map([
+    ['T1', { app: { client: { conversations: { replies }, users: { info: usersInfo } } }, botUserId: 'BOT1' }],
   ]);
+  adapter.userInfoCache.clear();
+}
+
+/** People talking among themselves, `count` messages after the thread root. */
+function chatter(count: number, from = 400): ThreadMessage[] {
+  return Array.from({ length: count }, (_, i) => ({ user: 'U2', text: `aside ${i}`, ts: `${from + i}.0` }));
 }
 
 /** What the Slack read returns, oldest first. */
@@ -107,6 +133,10 @@ describe('Slack thread classification', () => {
     // The shared config mock (test-utils/setup.ts) carries neither field.
     config.llmProvider = 'bedrock-mantle';
     config.classificationModelId = 'anthropic.claude-haiku-4-5';
+    vi.spyOn(agentWorkspaceService, 'getAgent').mockResolvedValue({
+      name: 'Atlas',
+      soulMd: 'You deploy the platform services.',
+    } as Awaited<ReturnType<typeof agentWorkspaceService.getAgent>>);
   });
 
   describe('the transcript the gate judges', () => {
@@ -125,7 +155,46 @@ describe('Slack thread classification', () => {
       await classify(messages);
 
       const { prompt } = mockGenerateObject.mock.calls[0][0];
-      expect(prompt.split('\n').at(-1)).toBe('[User:U1]: Approved - you can merge 194');
+      expect(prompt.split('\n')).toEqual([
+        '[Person: Ana Example]: hey <@BOT1:Atlas> can you open the PR?',
+        '[You: Atlas]: Opened PR 194.',
+        '[Person: Ana Example]: Approved - you can merge 194',
+      ]);
+    });
+
+    it('names another bot by its profile and marks it a bot', async () => {
+      armThread(reads());
+
+      await classify([
+        PARENT,
+        BOT_REPLY,
+        { user: 'UDEPLOY', bot_id: 'B9', bot_profile: { name: 'Deploy Bot' }, text: 'v2 is out', ts: '250.0' },
+        ARRIVING,
+      ]);
+
+      const { prompt } = mockGenerateObject.mock.calls[0][0];
+      expect(prompt.split('\n')[2]).toBe('[Bot: Deploy Bot]: v2 is out');
+    });
+
+    it('asks users.info once per person while the answer is fresh', async () => {
+      armThread(reads());
+      await classify([PARENT, BOT_REPLY, ARRIVING]);
+      const calls = usersInfo.mock.calls.length;
+
+      await classify([PARENT, BOT_REPLY, ARRIVING]);
+
+      expect(calls).toBeGreaterThan(0);
+      expect(usersInfo.mock.calls.length).toBe(calls);
+    });
+
+    it('keeps the thread root in a thread longer than the window', async () => {
+      armThread(reads());
+
+      await classify([PARENT, ...chatter(8), BOT_REPLY, ...chatter(4, 600), ARRIVING]);
+
+      const lines = mockGenerateObject.mock.calls[0][0].prompt.split('\n');
+      expect(lines[0]).toBe('[Person: Ana Example]: hey <@BOT1:Atlas> can you open the PR?');
+      expect(lines).toHaveLength(12);
     });
 
     it('does not duplicate the arriving message when the read already holds it', async () => {
@@ -155,6 +224,18 @@ describe('Slack thread classification', () => {
       armThread(reads(PARENT, BOT_REPLY));
 
       await expect(gate(ARRIVING)).resolves.toMatchObject({ result: { action: 'respond' } });
+    });
+
+    it('answers when the bot posted in the ten messages before this one', async () => {
+      armThread(reads(PARENT, BOT_REPLY, ...chatter(9)));
+
+      await expect(gate(ARRIVING)).resolves.toMatchObject({ result: { action: 'respond' } });
+    });
+
+    it('ignores a thread the bot last posted in more than ten messages ago', async () => {
+      armThread(reads(PARENT, BOT_REPLY, ...chatter(10)));
+
+      await expect(gate(ARRIVING)).resolves.toMatchObject({ result: { action: 'ignore' } });
     });
 
     it('ignores a thread the bot never posted in', async () => {

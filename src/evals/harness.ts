@@ -25,7 +25,7 @@ import type { AttachmentMeta } from '../services/attachment.service';
 import { contextService } from '../services/context.service';
 import type { PostingCeiling } from '../services/delivery-target.service';
 import { llmCallService } from '../services/llm-call.service';
-import { decideThreadAction, type ThreadLine } from '../services/thread-reply-classifier.service';
+import { decideThreadAction, type GateAgent, type ThreadLine } from '../services/thread-reply-classifier.service';
 import { buildTurnRequest } from '../invoke';
 import { COMPUTER_INSTRUCTIONS } from '../prompts/computer-prompt';
 import { getComputerTools } from '../tools/computer';
@@ -423,10 +423,15 @@ const PLATFORM_NAME: Record<ChatPlatform, string> = { slack: 'Slack', teams: 'Mi
  * The thread reply classifier's verdict on the last of `lines`. Throws when the
  * call fails, since the adapters answer a failure with `respond`.
  */
-export async function threadGateAction(platform: ChatPlatform, lines: ThreadLine[]): Promise<'respond' | 'ignore'> {
+export async function threadGateAction(
+  platform: ChatPlatform,
+  agent: GateAgent,
+  lines: ThreadLine[],
+): Promise<'respond' | 'ignore'> {
   const { action } = await decideThreadAction({
     platform: { channel: platform, name: PLATFORM_NAME[platform] },
     agentId: EVAL_AGENT_ID,
+    agent,
     lines,
   });
   return action;

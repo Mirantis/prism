@@ -36,8 +36,10 @@ import { teamsMappingService } from './teams-mapping.service';
 import { conversationService } from '../conversation.service';
 import { conversationEngineService } from '../conversation-engine.service';
 import {
+  loadGateAgent,
   threadReplyClassifierService,
   ThreadAction,
+  ThreadAuthor,
   ThreadLine,
   THREAD_TRANSCRIPT_LINES,
 } from '../thread-reply-classifier.service';
@@ -749,27 +751,46 @@ class TeamsAdapterService implements ChannelAdapter {
     });
   }
 
-  /** The reply chain's stored history plus the arriving reply, for the classifier. */
+  /**
+   * The reply chain's root, its recent history and the arriving reply, for the
+   * classifier. The agent takes part when it posted in the messages the
+   * classifier reads, or when the message that brought it into the chain is
+   * one of them; otherwise the reply needs a mention.
+   */
   private async classifyReply(
     threadId: string,
     agentId: string,
     sender: { id: string; name?: string },
     text: string
   ): Promise<ThreadAction> {
-    const history = await conversationService.getRecentMessages(threadId, THREAD_TRANSCRIPT_LINES - 1);
-    const lines: ThreadLine[] = history
-      .filter((m) => m.role === 'USER' || m.role === 'AGENT')
-      .map((m) => ({
-        fromBot: m.role === 'AGENT',
-        author: m.senderName ?? m.senderExternalId ?? 'unknown',
-        text: m.role === 'USER' ? this.stripSenderTag(m.content) : m.content,
-      }));
-    lines.push({ fromBot: false, author: sender.name ?? sender.id, text });
+    const [root, recent] = await Promise.all([
+      conversationService.getFirstMessage(threadId),
+      conversationService.getRecentMessages(threadId, THREAD_TRANSCRIPT_LINES),
+    ]);
+    const history = recent.filter((m) => m.role === 'USER' || m.role === 'AGENT');
+    if (!history.some((m) => m.role === 'AGENT' || m.id === root?.id)) return { action: 'ignore' };
+
+    const agent = await loadGateAgent();
+    const rows = root && !history.some((m) => m.id === root.id) ? [root, ...history] : history;
+    const lines: ThreadLine[] = rows.map((m) => ({
+      author:
+        m.role === 'AGENT'
+          ? { kind: 'agent', name: agent.name }
+          : this.authorOf(m.senderExternalId ?? 'unknown', m.senderName ?? undefined),
+      text: m.role === 'USER' ? this.stripSenderTag(m.content) : m.content,
+    }));
+    lines.push({ author: this.authorOf(sender.id, sender.name), text });
     return threadReplyClassifierService.classify({
       platform: { channel: this.name, name: 'Microsoft Teams' },
       agentId,
+      agent,
       lines,
     });
+  }
+
+  /** A Bot Framework bot's account id is `28:<app id>`; a person's is their Entra object id. */
+  private authorOf(id: string, name: string | undefined): ThreadAuthor {
+    return { kind: id.startsWith('28:') ? 'bot' : 'person', name: name ?? id };
   }
 
   /** One turn in the reply chain rooted at `rootMessageId`. */
