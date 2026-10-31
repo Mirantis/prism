@@ -46,10 +46,7 @@ export interface ThreadPlatform {
   name: string;
 }
 
-/**
- * The messages before the judged one that the classifier reads. An agent that
- * has not posted in that many messages answers only when it is named.
- */
+/** The messages before the judged one that the classifier reads, after the thread root. */
 export const THREAD_TRANSCRIPT_LINES = 10;
 
 /** The most of the Soul that the classifier reads as the agent's role. */

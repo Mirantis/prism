@@ -1891,12 +1891,8 @@ class SlackAdapterService implements ChannelAdapter {
       const at = fetched.findIndex((m) => m.ts === arriving.ts);
       const messages = at === -1 ? [...fetched, arriving] : fetched.slice(0, at + 1);
 
-      // The bot takes part when it posted in the messages before this one that
-      // the classifier reads; otherwise only a mention gets an answer. A thread
-      // past the read's 100 messages counts the first page only, a trade for
-      // reading it in one call.
-      const recent = messages.slice(-(THREAD_TRANSCRIPT_LINES + 1), -1);
-      if (!recent.some((m) => m.user === slackApp.botUserId)) return { result: { action: 'ignore' }, messages };
+      // Bot never posted in this thread
+      if (!messages.some((m) => m.user === slackApp.botUserId)) return { result: { action: 'ignore' }, messages };
 
       // The arriving message tags somebody other than the bot, so it is
       // addressed to that person. Only this message is read: a tag earlier in

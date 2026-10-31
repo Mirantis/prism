@@ -906,27 +906,14 @@ describe('TeamsAdapterService', () => {
       expect(lines).toHaveLength(12);
     });
 
-    it('classifies a reply while the message that brought the agent in is one of the rows read', async () => {
-      mockClassify.mockResolvedValue({ action: 'respond' });
-      mockConversationService.getRecentMessages.mockResolvedValue([ROOT, ...chatter(3)]);
+    it('classifies a reply when the agent last posted more than ten rows ago', async () => {
+      mockClassify.mockResolvedValue({ action: 'ignore' });
+      mockConversationService.getRecentMessages.mockResolvedValue(chatter(10));
 
       await receive(channelActivity(REPLY));
 
       expect(mockClassify).toHaveBeenCalledTimes(1);
-    });
-
-    it('stores a reply without a turn when the agent is not in the last ten messages', async () => {
-      mockConversationService.getRecentMessages.mockResolvedValue(chatter(10));
-
-      const { send } = await receive(channelActivity(REPLY));
-
-      expect(mockClassify).not.toHaveBeenCalled();
-      expect(mockConversationService.addMessage).toHaveBeenCalledWith(
-        'thread-1',
-        expect.objectContaining({ role: 'USER', content: '<@aad-user-1:Jane Doe>: what time is it?' })
-      );
-      expect(mockChat).not.toHaveBeenCalled();
-      expect(send).not.toHaveBeenCalled();
+      expect(mockClassify.mock.calls[0][0].lines.some((line: { author: { kind: string } }) => line.author.kind === 'agent')).toBe(false);
     });
 
     it('leaves a reply that mentions somebody else to them', async () => {

@@ -161,8 +161,7 @@ switching to a personal link, and vice-versa.
 - **Channels.** The agent answers when you **@mention** it. In a thread it has
   answered in, or under a message it sent to the channel, it also answers a
   reply that asks it for something, with or without a mention, and leaves
-  replies meant for other people alone. When it has not posted in the last 10
-  messages of the thread, @mention it. It reads those replies as part of the
+  replies meant for other people alone. It reads those replies as part of the
   thread. The agent knows **which channel** it's replying in (the channel name
   is part of its context).
 - **Threads.** The agent replies **in the thread** of the message that
