@@ -116,23 +116,25 @@ describe('InboundMessageService', () => {
   });
 
   describe('Scenario: who wrote it', () => {
-    it('hands the turn the message after its sender tag, without the channel instructions for one person', async () => {
+    it('hands a one-person conversation the message as it is, without the channel instructions', async () => {
       await inboundMessageService.accept(inbound('m-1'));
       await settle();
 
       const input = mockEngine.chat.mock.calls[0][0];
-      expect(input.message).toBe('<@user-ada-1:Ada Lovelace>: hello');
+      expect(input.message).toBe('hello');
       expect(input.metadata).not.toHaveProperty('channelLabel');
       expect(mockHasSeveralSenders).toHaveBeenCalledWith(THREAD_A);
     });
 
-    it('gives the turn the web chat instructions once a second person wrote in the conversation', async () => {
+    it('gives the turn the web chat instructions and the sender tag once a second person wrote', async () => {
       mockHasSeveralSenders.mockResolvedValue(true);
 
       await inboundMessageService.accept(inbound('m-1'));
       await settle();
 
-      expect(mockEngine.chat.mock.calls[0][0].metadata).toMatchObject({ channelLabel: WEB_CHAT_LABEL });
+      const input = mockEngine.chat.mock.calls[0][0];
+      expect(input.metadata).toMatchObject({ channelLabel: WEB_CHAT_LABEL });
+      expect(input.message).toBe('<@user-ada-1:Ada Lovelace>: hello');
     });
 
     it('stores the text as the person wrote it', async () => {
@@ -381,7 +383,7 @@ describe('InboundMessageService', () => {
       const first = heldTurn();
       mockEngine.chat.mockImplementation((input: ChatCall) => {
         if (input.threadId === THREAD_A) return first.run(input);
-        return exchange(input.message.endsWith(': second') ? { error: { type: 'generic' } } : {})(input);
+        return exchange(input.message === 'second' ? { error: { type: 'generic' } } : {})(input);
       });
 
       await inboundMessageService.accept(inbound('m-1', THREAD_A));

@@ -539,11 +539,13 @@ async function buildPluginsSection(): Promise<string> {
  *
  * `replayToolCall` gives a stored call the form this request sends, when that
  * differs from the stored text: a tool load replays as the vendor's load result.
+ * With `senderTags`, a person's message follows its sender's tag.
  */
 export function buildConversationHistory(
   context: AgentContext,
   toolChanges: AnchoredToolChange[] = [],
   replayToolCall?: ToolSearchPlan['replayToolCall'],
+  senderTags = false,
 ): { messages: ModelMessage[]; trailingToolChanges: ModelMessage[] } {
   const messages: ModelMessage[] = [];
   const rowIds = new Set(context.recentMessages.map((msg) => msg.id));
@@ -575,7 +577,7 @@ export function buildConversationHistory(
   // Add recent messages (only user and assistant, skip system and empty messages)
   for (const msg of context.recentMessages) {
     if (msg.role === 'USER') {
-      const message = buildUserMessage(msg);
+      const message = buildUserMessage(msg, senderTags);
       if (message) push(message);
     } else if (msg.role === 'AGENT') {
       if (msg.triggerName) push(webhookEventTurn(msg.triggerName));
@@ -705,10 +707,10 @@ export function buildSteeringMessage(msg: SteeringMessage): ModelMessage {
 
 /**
  * A user row as history renders it: its text and a stub per attachment, or null
- * when it has neither.
+ * when it has neither. With `senderTags`, the text follows its sender's tag.
  */
-export function buildUserMessage(msg: ConversationMessage): ModelMessage | null {
-  const parts = buildUserContentParts(msg);
+export function buildUserMessage(msg: ConversationMessage, senderTags = false): ModelMessage | null {
+  const parts = buildUserContentParts(msg, senderTags);
   if (parts.length === 0) return null;
   // Keep the plain-string form when there's just text, rather than wrapping
   // every turn in a content array of one part.
@@ -717,16 +719,17 @@ export function buildUserMessage(msg: ConversationMessage): ModelMessage | null 
 }
 
 /**
- * A person's message as the model reads it: after the sender's `<@ID:Name>`
- * tag, the form the channel prompt describes. A channel that stores the tag in
- * the content already has it, so the content is kept as it is then.
+ * A person's message as the model reads it in a conversation several people
+ * talk in: after the sender's `<@ID:Name>` tag, the form the channel prompt
+ * describes. A channel that stores the tag in the content already has it, so
+ * the content is kept as it is then.
  */
 export function withSenderTag(
   content: string,
   senderId: string | null | undefined,
   senderName: string | null | undefined,
 ): string {
-  if (!senderId || !senderName || content.startsWith(`<@${senderId}`)) return content;
+  if (!content.trim() || !senderId || !senderName || content.startsWith(`<@${senderId}`)) return content;
   const name = senderName.replace(/[<>:\x00-\x1f]/g, '').trim();
   return name ? `<@${senderId}:${name}>: ${content}` : content;
 }
@@ -741,10 +744,11 @@ export function withSenderTag(
  * A message from another agent is one part: its text and stubs inside the tag
  * that names the sender.
  */
-function buildUserContentParts(msg: ConversationMessage): UserContentPart[] {
+function buildUserContentParts(msg: ConversationMessage, senderTags = false): UserContentPart[] {
   const origin = agentMessageOrigin(msg);
   // Another agent's row holds its sender in the same columns, and renders inside its own tag.
-  const content = origin ? msg.content : withSenderTag(msg.content, msg.senderExternalId, msg.senderName);
+  const content =
+    senderTags && !origin ? withSenderTag(msg.content, msg.senderExternalId, msg.senderName) : msg.content;
   const texts = [
     ...(msg.content?.trim() ? [content] : []),
     ...(msg.attachments ?? []).map(attachmentStub),

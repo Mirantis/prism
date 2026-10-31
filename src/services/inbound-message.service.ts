@@ -429,9 +429,9 @@ class InboundMessageService {
     return {
       agentId: config.agentId as string,
       userId: config.ownerUserId,
-      // Tagged the way history renders the stored row, so a message handed to a
-      // running turn reads the same there as on every later turn.
-      message: withSenderTag(message.content, message.sender?.id, message.sender?.name),
+      // Tagged the way a turn with the channel instructions renders the stored
+      // row, so a message handed to a running turn reads the same there as later.
+      message: channelLabel ? withSenderTag(message.content, message.sender?.id, message.sender?.name) : message.content,
       threadId: message.threadId,
       attachmentIds: message.attachmentIds,
       stored: { id: message.id, titleSet: waiting.titleSet },

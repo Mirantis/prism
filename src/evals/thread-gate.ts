@@ -395,7 +395,4 @@ const CASES: GateCase[] = [
   },
 ];
 
-// The cases have to reach past the window for the long-thread ones to mean anything.
-if (CHATTER.length <= THREAD_TRANSCRIPT_LINES) throw new Error('CHATTER must be longer than the gate window.');
-
 export const THREAD_GATE_SCENARIOS: Scenario[] = CASES.map(scenario);

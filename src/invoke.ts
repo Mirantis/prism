@@ -116,7 +116,9 @@ export async function buildTurnRequest(
   }
 
   // Messages are already ModelMessage[] with structured tool call/result pairs
-  const history = buildConversationHistory(context, toolChanges, toolSearch?.replayToolCall);
+  // The channel prompt explains the sender tags, so a turn without it reads none.
+  const senderTags = Boolean(request.channelLabel);
+  const history = buildConversationHistory(context, toolChanges, toolSearch?.replayToolCall, senderTags);
   const messages: ModelMessage[] = history.messages;
 
   // Chat: prompt is already in history (conversation engine stores it before invoke).
@@ -127,14 +129,14 @@ export async function buildTurnRequest(
   // those are restated in order, files included (see InvokeRequest).
   // A follow-up also restates the messages handed to it after the previous reply,
   // which it reads as history, so the newest instruction stays last.
-  const restated = request.mode === 'chat' && !request.appendPrompt ? restatedAfterReply(context, request.promptMessageId) : [];
+  const restated = request.mode === 'chat' && !request.appendPrompt ? restatedAfterReply(context, request.promptMessageId, senderTags) : [];
   if (restated.length > 0) {
     messages.push(...restated);
   } else if (request.mode !== 'chat' || request.appendPrompt || messages.length === 0) {
     messages.push({ role: 'user' as const, content: request.prompt });
   }
   if (request.mode === 'chat' && request.appendPrompt) {
-    messages.push(...restatedAfterFollowUp(context, request.appendedMessageIds ?? []));
+    messages.push(...restatedAfterFollowUp(context, request.appendedMessageIds ?? [], senderTags));
   }
   if (request.afterRestart) messages.push({ role: 'user' as const, content: RESUMED_RUN_NOTICE });
 
@@ -145,7 +147,11 @@ export async function buildTurnRequest(
  * The user rows from the prompt's row on, as history renders them, when the
  * history ends on an agent row stored after the prompt's row; otherwise none.
  */
-function restatedAfterReply(context: AgentContext, promptMessageId: string | undefined): ModelMessage[] {
+function restatedAfterReply(
+  context: AgentContext,
+  promptMessageId: string | undefined,
+  senderTags: boolean,
+): ModelMessage[] {
   if (!promptMessageId) return [];
   const rows = context.recentMessages;
   const at = rows.findIndex((row) => row.id === promptMessageId);
@@ -153,7 +159,7 @@ function restatedAfterReply(context: AgentContext, promptMessageId: string | und
   return rows
     .slice(at)
     .filter((row) => row.role === 'USER')
-    .flatMap((row) => buildUserMessage(row) ?? []);
+    .flatMap((row) => buildUserMessage(row, senderTags) ?? []);
 }
 
 /**
@@ -161,7 +167,11 @@ function restatedAfterReply(context: AgentContext, promptMessageId: string | und
  * follow-up's appended prompt, as history renders them; none when history
  * has none of those rows, as a thread provider that gives rows its own ids reads it.
  */
-function restatedAfterFollowUp(context: AgentContext, appendedMessageIds: ReadonlyArray<string>): ModelMessage[] {
+function restatedAfterFollowUp(
+  context: AgentContext,
+  appendedMessageIds: ReadonlyArray<string>,
+  senderTags: boolean,
+): ModelMessage[] {
   const rows = context.recentMessages;
   if (!rows.some((row) => appendedMessageIds.includes(row.id))) return [];
   let after = rows.length;
@@ -169,7 +179,7 @@ function restatedAfterFollowUp(context: AgentContext, appendedMessageIds: Readon
   return rows
     .slice(after)
     .filter((row) => row.role === 'USER')
-    .flatMap((row) => buildUserMessage(row) ?? []);
+    .flatMap((row) => buildUserMessage(row, senderTags) ?? []);
 }
 
 /**
