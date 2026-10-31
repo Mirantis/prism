@@ -18,6 +18,7 @@ import {
   type TurnTrace,
 } from './harness';
 import { placesOf, reachedUser, runAutonomous, type AutonomousRun, type Outcome, type Place } from './delivery';
+import { THREAD_GATE_SCENARIOS } from './thread-gate';
 import { jsonSchema, tool } from 'ai';
 import type { ModelTier } from '../lib/model-selection';
 import { getDefaultWorkspaceFiles } from '../templates/default-workspace';
@@ -803,6 +804,7 @@ export const SCENARIOS: Scenario[] = [
     },
   },
   ...DELIVERY_SCENARIOS,
+  ...THREAD_GATE_SCENARIOS,
   {
     id: 'delivery.cron-bound-continuation',
     expect: 'A task that continues a conversation answers in its reply and posts nothing with send_message.',
