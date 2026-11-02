@@ -28,10 +28,18 @@ import { runtimeStateService, SINGLE_THREAD } from './runtime-state.service';
 // The pure derivation, not contextUsageService — that service imports this
 // module, so depending on it here would be a cycle.
 import { buildContextSnapshot, type ContextUsageSnapshot } from '../lib/context-window';
-/** A message a compaction summary replaced, as the history tool reads it. */
-export type CompactedMessage = Pick<ConversationMessage, 'role' | 'content' | 'toolCalls' | 'internalStep' | 'createdAt'>;
+/** A message a compaction summary replaced, and its index among the thread's compacted messages, oldest first. */
+export type CompactedMessage = Pick<ConversationMessage, 'role' | 'content' | 'toolCalls' | 'internalStep' | 'createdAt'> & {
+  position: number;
+};
 
 const COMPACTED_SEARCH_BATCH = 200;
+
+/** The order that defines a compacted message's position, and the fields a read returns. */
+const COMPACTED_READ = {
+  select: { id: true, role: true, content: true, toolCalls: true, internalStep: true, createdAt: true },
+  orderBy: [{ createdAt: 'asc' as const }, { id: 'asc' as const }],
+};
 
 // ============================================================================
 // Types
@@ -733,6 +741,8 @@ class ConversationService {
    * One page of the messages a compaction summary replaced, oldest first, and
    * whether more follow. `query` keeps the messages whose text or tool calls hold
    * it, ignoring case. Internal steps are included, since they hold tool calls.
+   * `offset` counts the messages the page skips: without a query it is the first
+   * message's position.
    *
    * The search reads the thread's compacted rows in batches and matches in code:
    * the tool calls are a JSON array, which no Prisma filter on SQLite searches. Each
@@ -743,29 +753,33 @@ class ConversationService {
     threadId: string,
     options: { query?: string; offset: number; limit: number },
   ): Promise<{ messages: CompactedMessage[]; more: boolean }> {
-    const where = { threadId, isCompacted: true };
-    const select = { id: true, role: true, content: true, toolCalls: true, internalStep: true, createdAt: true } as const;
-    const orderBy = [{ createdAt: 'asc' as const }, { id: 'asc' as const }];
     const want = options.offset + options.limit + 1;
 
     let found: CompactedMessage[];
     if (!options.query) {
-      found = await prisma.conversationMessage.findMany({ where, select, orderBy, skip: options.offset, take: options.limit + 1 });
+      const rows = await prisma.conversationMessage.findMany({
+        ...COMPACTED_READ,
+        where: { threadId, isCompacted: true },
+        skip: options.offset,
+        take: options.limit + 1,
+      });
+      found = rows.map((row, i) => ({ ...row, position: options.offset + i }));
     } else {
       const needle = options.query.toLowerCase();
       const matches: CompactedMessage[] = [];
       let after: string | undefined;
+      let position = 0;
       while (matches.length < want) {
         const batch = await prisma.conversationMessage.findMany({
-          where,
-          select,
-          orderBy,
+          ...COMPACTED_READ,
+          where: { threadId, isCompacted: true },
           take: COMPACTED_SEARCH_BATCH,
           ...(after ? { cursor: { id: after }, skip: 1 } : {}),
         });
         for (const message of batch) {
           const text = [message.content, ...stringsIn(message.toolCalls)].join('\n');
-          if (text.toLowerCase().includes(needle)) matches.push(message);
+          if (text.toLowerCase().includes(needle)) matches.push({ ...message, position });
+          position += 1;
         }
         if (batch.length < COMPACTED_SEARCH_BATCH) break;
         after = batch[batch.length - 1].id;
@@ -773,6 +787,17 @@ class ConversationService {
       found = matches.slice(options.offset);
     }
     return { messages: found.slice(0, options.limit), more: found.length > options.limit };
+  }
+
+  /** The compacted message at `position`, or null past the last one. */
+  async getCompactedMessage(threadId: string, position: number): Promise<CompactedMessage | null> {
+    const [row] = await prisma.conversationMessage.findMany({
+      ...COMPACTED_READ,
+      where: { threadId, isCompacted: true },
+      skip: position,
+      take: 1,
+    });
+    return row ? { ...row, position } : null;
   }
 
   /** The threads idle compaction may have to finish after a restart: large, and used since `since`. */

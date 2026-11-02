@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { mockList } = vi.hoisted(() => ({ mockList: vi.fn() }));
+const { mockGet } = vi.hoisted(() => ({ mockGet: vi.fn() }));
 vi.mock('../../services/conversation.service', () => ({
-  conversationService: { listCompactedMessages: mockList },
+  conversationService: { listCompactedMessages: mockList, getCompactedMessage: mockGet },
 }));
 vi.mock('../../lib/tool-output-store', () => ({
   toolOutputPath: (id: string, root?: string) => `${root ?? '/data'}/tool-outputs/${id}`,
@@ -19,18 +20,20 @@ const at = new Date('2026-10-01T09:00:00.000Z');
 describe('read_compacted_history', () => {
   beforeEach(() => {
     mockList.mockReset();
+    mockGet.mockReset();
   });
 
   it("reads the turn's own thread, one page at a time", async () => {
     mockList.mockResolvedValue({
       messages: [
-        { role: 'USER', content: 'Deploy to staging.', toolCalls: null, internalStep: false, createdAt: at },
+        { role: 'USER', content: 'Deploy to staging.', toolCalls: null, internalStep: false, createdAt: at, position: 31 },
         {
           role: 'AGENT',
           content: 'It failed.',
           toolCalls: [{ tool: 'shell_exec', input: { command: 'kubectl get pods' }, output: 'CrashLoopBackOff', rendered: true }],
           internalStep: false,
           createdAt: at,
+          position: 32,
         },
       ],
       more: true,
@@ -41,8 +44,9 @@ describe('read_compacted_history', () => {
     expect(mockList).toHaveBeenCalledWith('thread-1', { query: 'crash', offset: 20, limit: 20 });
     expect(result).toEqual({
       messages: [
-        { from: 'user', at: '2026-10-01T09:00:00.000Z', text: 'Deploy to staging.' },
+        { position: 31, from: 'user', at: '2026-10-01T09:00:00.000Z', text: 'Deploy to staging.' },
         {
+          position: 32,
           from: 'you',
           at: '2026-10-01T09:00:00.000Z',
           text: 'It failed.',
@@ -105,30 +109,16 @@ describe('read_compacted_history', () => {
     expect(JSON.stringify(result).length).toBeLessThan(6_000);
   });
 
-  it('says when the query matched elsewhere in the message and not in a cut result', async () => {
-    mockList.mockResolvedValue({
-      messages: [
-        { role: 'USER', content: 'Find the build id', toolCalls: [{ tool: 't', output: 'q'.repeat(5_000) }], internalStep: false, createdAt: at },
-      ],
-      more: false,
-    });
-
-    const result = await run({ query: 'build id' });
-    const output = (result.messages as Array<{ toolCalls: Array<{ output: string }> }>)[0].toolCalls[0].output;
-
-    expect(output).toMatch(/Your query occurs elsewhere in this message, not in this text\./);
-  });
-
   it('cuts a long tool result inside a page', async () => {
     mockList.mockResolvedValue({
-      messages: [{ role: 'AGENT', content: '', toolCalls: [{ tool: 't', output: 'y'.repeat(5_000) }], internalStep: false, createdAt: at }],
+      messages: [{ role: 'AGENT', content: '', toolCalls: [{ tool: 't', output: 'y'.repeat(5_000) }], internalStep: false, createdAt: at, position: 7 }],
       more: false,
     });
 
     const result = await run({});
     const output = (result.messages as Array<{ toolCalls: Array<{ output: string }> }>)[0].toolCalls[0].output;
 
-    expect(output).toMatch(/^y{2000}\n\[Cut: 2000 of 5000 characters shown\. The rest may hold what you need\. Call again with a query/);
+    expect(output).toBe(`${'y'.repeat(2000)}\n[Cut: 2000 of 5000 characters shown. Call with position 7 to read this message in full.]`);
   });
 
   it("shows the window around the query's match and where the whole result is saved", async () => {
@@ -141,6 +131,7 @@ describe('read_compacted_history', () => {
           toolCalls: [{ tool: 'shell_exec', output, truncated: { spillId: 'spill-1' } }],
           internalStep: false,
           createdAt: at,
+          position: 3,
         },
       ],
       more: false,
@@ -151,7 +142,7 @@ describe('read_compacted_history', () => {
 
     expect(call.output).toContain('OOMKilled pod-7');
     expect(call.output).toMatch(/^\[From character \d+\.\]/);
-    expect(call.output).toMatch(/Call again with another query to see the part around its match\.\]$/);
+    expect(call.output).toMatch(/Call with position \d+ to read this message in full\.\]$/);
     expect(call.savedAt).toBe('/data/tool-outputs/spill-1');
   });
 
@@ -172,7 +163,40 @@ describe('read_compacted_history', () => {
     const input = (result.messages as Array<{ toolCalls: Array<{ input: string }> }>)[0].toolCalls[0].input;
 
     expect(input).toContain('\\"deploy-7f3a\\"');
-    expect(input).toContain('Call again with another query');
+    expect(input).toContain('to read this message in full');
+  });
+
+  it('reads one message in full, a page at a time, with its saved result named', async () => {
+    const output = 'z'.repeat(30_000);
+    mockGet.mockResolvedValue({
+      role: 'AGENT',
+      content: 'Ran the build.',
+      toolCalls: [{ tool: 'shell_exec', input: '{"command":"make"}', output, truncated: { spillId: 'spill-2' } }],
+      internalStep: false,
+      createdAt: at,
+      position: 12,
+    });
+
+    const first = await run({ position: 12, query: 'ignored', offset: 5 });
+
+    expect(mockGet).toHaveBeenCalledWith('thread-1', 12);
+    expect(mockList).not.toHaveBeenCalled();
+    expect(first).toMatchObject({ position: 12, from: 'you', start: 0, nextStart: 20_000 });
+    expect(first.text).toMatch(/^Ran the build\.\n\n\[Tool call: shell_exec\]\n\n\[Input\]\n\{"command":"make"\}\n\n\[Output\]\n/);
+
+    const second = await run({ position: 12, start: first.nextStart });
+    const total = first.characters as number;
+
+    expect(second).toMatchObject({ start: 20_000, characters: total });
+    expect(second).not.toHaveProperty('nextStart');
+    expect((first.text as string) + (second.text as string)).toHaveLength(total);
+    expect(second.text).toMatch(/\[Saved whole result: \/data\/tool-outputs\/spill-2\]$/);
+  });
+
+  it('says when no message has the position', async () => {
+    mockGet.mockResolvedValue(null);
+
+    await expect(run({ position: 99 })).resolves.toEqual({ note: 'No earlier message at position 99.' });
   });
 
   it('says when nothing matches', async () => {

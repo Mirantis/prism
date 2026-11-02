@@ -47,8 +47,9 @@ Manage long-term memory. See **[Memory](memory.md)** for the full picture.
 
 **Read compacted history** — read the earlier messages of the conversation that
 a [compaction](compaction.md) summary replaced, with their tool calls and
-results, or search them for a word. The agent uses it when the summary leaves
-out a detail it needs.
+results, or search them for a word. A search shows the part of a long message
+around the match, and the agent can then read the messages around it or the
+whole message. The agent uses it when the summary leaves out a detail it needs.
 
 ## Self-management
 
