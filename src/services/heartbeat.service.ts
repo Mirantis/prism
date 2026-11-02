@@ -86,6 +86,9 @@ function withReports(record: Omit<HeartbeatSendRecord, 'reports'>, reports: Hear
  */
 export type HeartbeatSchedule = 'keep-schedule' | 'new-interval';
 
+/** The prompt a timed heartbeat runs with; its checks are in the system prompt. */
+export const HEARTBEAT_PROMPT = 'Perform your heartbeat check now.';
+
 interface HeartbeatState {
   userId: string;
   agentId: string;
@@ -729,13 +732,13 @@ class HeartbeatService {
   }
 
   private buildHeartbeatPrompt(): string {
-    return 'Perform your heartbeat check now.';
+    return HEARTBEAT_PROMPT;
   }
 
   private buildTriggeredHeartbeatPrompt(triggers: HeartbeatTrigger[]): string {
     const platforms = triggers.map((trigger) => trigger.platform).join(' and ');
     const channels = triggers.length > 1 ? 'channels' : 'channel';
-    return `Perform your heartbeat check now. This heartbeat was triggered by new messages in the monitored ${platforms} ${channels}.`;
+    return `${HEARTBEAT_PROMPT} This heartbeat was triggered by new messages in the monitored ${platforms} ${channels}.`;
   }
 
   /**

@@ -1523,7 +1523,7 @@ A channel that starts the heartbeat with its own messages is a `HeartbeatTrigger
 
 ### Default Heartbeat Template
 
-The default `heartbeatMd` contains only headers and comments (no active checks). A heartbeat without checks runs like any other: the agent makes the LLM call, and the heartbeat system prompt tells it to post nothing.
+The default `heartbeatMd` contains only headers and comments (no active checks). The agent always runs the LLM call, but when no checks are configured the heartbeat system prompt tells it to post nothing.
 
 ## Empty Message Filtering
 

@@ -35,6 +35,7 @@ import {
 } from '../prompts/context-builder';
 import { COMPACTION_PROMPT } from '../prompts/compaction-prompt';
 import { scheduledRunPrompt } from '../prompts/scheduled-run-prompt';
+import { HEARTBEAT_PROMPT } from '../services/heartbeat.service';
 import { agentMessageColumns } from '../prompts/agent-message-prompt';
 import type { AgentContext, AgentMessageOrigin, HeartbeatTrigger, InvokeRequest, TaskLastSend } from '../types';
 import type { ChatPlatform } from '../services/channel-adapter.interface';
@@ -429,9 +430,6 @@ export async function judge(rubric: string, reply: string): Promise<boolean> {
   if (answer !== 'YES' && answer !== 'NO') throw new Error(`The grader answered "${result.text.trim()}".`);
   return answer === 'YES';
 }
-
-/** A timed heartbeat's prompt (`heartbeat.service.ts`); the classifier reads its checks instead. */
-const HEARTBEAT_PROMPT = 'Perform your heartbeat check now.';
 
 /**
  * The tier Auto model selection picks for a request, offered `tiers`, with
