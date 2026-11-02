@@ -111,12 +111,13 @@ describe('createOpenAiProvider', () => {
 });
 
 describe('deferred tools', () => {
-  it.each(['gpt-5.6-sol', 'gpt-6-luna', 'gpt-6.1-terra', 'gpt-6.2-sol', 'gpt-7'])('defers tools on %s', (modelId) => {
+  // An id that names no GPT version defers; a refusal sends the request again in full.
+  it.each(['gpt-5.6-sol', 'gpt-6-luna', 'gpt-6.1-terra', 'gpt-6.2-sol', 'gpt-7', 'gpt-oss-120b', 'o3'])('defers tools on %s', (modelId) => {
     expect(createOpenAiProvider().deferredTools?.(modelId)).toBe(OPENAI_DEFERRED_TOOLS);
   });
 
   // gpt-5.5 rejects a client tool search; gpt-5.4 takes one only without stored responses.
-  it.each(['gpt-5.5', 'gpt-5.4', 'gpt-5', 'gpt-4.1', 'gpt-4o', 'gpt-oss-120b'])('defers no tool on %s', (modelId) => {
+  it.each(['gpt-5.5', 'gpt-5.4', 'gpt-5', 'gpt-4.1', 'gpt-4o'])('defers no tool on %s', (modelId) => {
     expect(createOpenAiProvider().deferredTools?.(modelId)).toBeUndefined();
   });
 });

@@ -18,35 +18,28 @@ import { bareModelId } from './tool-changes';
 export const LOAD_TOOLS_NAME = 'load_tools';
 
 /**
- * The oldest version of each family measured to load a deferred tool and to
- * replay that load from stored history: Claude 4.7 through 5.5 on Bedrock's
- * Anthropic Messages path, and GPT 5.6 through 6.1 under `store: true`. A later
- * version defers without a code change; gpt-5.5 and gpt-5.4 fail the replay.
+ * Every Claude and GPT model defers unless its id names a version known to
+ * refuse: Claude before 4, which predates the Claude 4 naming, and GPT before
+ * 5.6, where gpt-5.5 and gpt-5.4 fail to replay a load. A model whose API refuses anyway gets its
+ * turn's request again with every tool in full (`invoke.ts`), and from then on
+ * every tool in full.
  */
-const CLAUDE_FLOOR: Version = [4, 7];
-const GPT_FLOOR: Version = [5, 6];
-
-type Version = readonly [major: number, minor: number];
-
-/** `claude-opus-4-7`, `claude-opus-5`; a date suffix is not a minor version. */
-const CLAUDE_VERSION = /^claude-[a-z]+-(\d+)(?:-(\d{1,2})(?!\d))?/;
-/** `gpt-5.6-sol`, `gpt-6-luna`. */
+const CLAUDE_BEFORE_4 = /^claude-(?:\d|instant|v\d)/;
+/** `gpt-5.5`, `gpt-4o`; `gpt-oss` names no version. */
 const GPT_VERSION = /^gpt-(\d+)(?:\.(\d+))?(?![\d.])/;
-
-function atLeast(modelId: string, pattern: RegExp, floor: Version): boolean {
-  const match = pattern.exec(modelId);
-  if (!match) return false;
-  const major = Number(match[1]);
-  const minor = Number(match[2] ?? 0);
-  return major > floor[0] || (major === floor[0] && minor >= floor[1]);
-}
+const GPT_FLOOR = [5, 6] as const;
 
 export function supportsAnthropicDeferredTools(modelId: string): boolean {
-  return atLeast(bareModelId(modelId), CLAUDE_VERSION, CLAUDE_FLOOR);
+  const bare = bareModelId(modelId);
+  return bare.startsWith('claude-') && !CLAUDE_BEFORE_4.test(bare);
 }
 
 export function supportsOpenAiDeferredTools(modelId: string): boolean {
-  return atLeast(modelId, GPT_VERSION, GPT_FLOOR);
+  const match = GPT_VERSION.exec(modelId);
+  if (!match) return true;
+  const major = Number(match[1]);
+  const minor = Number(match[2] ?? 0);
+  return major > GPT_FLOOR[0] || (major === GPT_FLOOR[0] && minor >= GPT_FLOOR[1]);
 }
 
 const refusingModels = new Set<string>();

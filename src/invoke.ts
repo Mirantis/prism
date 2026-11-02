@@ -15,7 +15,7 @@ import { callModel } from './lib/model-call';
 import { config } from './config';
 import { logger } from './logger';
 import { createProvider, missingProviderSettings } from './lib/llm-providers/create-provider';
-import { mergeProviderOptions } from './lib/llm-providers/llm-provider';
+import { mergeProviderOptions, type DeferredToolProtocol } from './lib/llm-providers/llm-provider';
 import { collectTools, withToolsCacheControl } from './lib/tool-collection';
 import { summaryToolOptions, toolLedgerService, type AnchoredToolChange } from './services/tool-ledger.service';
 import { createPendingFileWrites } from './lib/pending-file-writes';
@@ -358,68 +358,11 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       userId: request.userId,
       agentId: request.agentId,
     });
-    // Above the threshold the MCP tools go deferred, behind `load_tools` and the
-    // catalog. `load_tools` is added after the gate: the tool it loads is gated
-    // on each call.
-    const toolSearch = await planToolSearch({
-      tools: gatedTools,
-      deferrable,
-      protocol: deferredToolProtocol,
-      modelId,
-      telemetry: { userId: request.userId, agentId: request.agentId, mode: request.mode },
-    });
-    // A request that replays the conversation sends the conversation's declared
-    // tool list, so the tools block stays the same when the tool set changes
-    // (see tool-ledger.service.ts).
-    const declared = toolChangeProtocol && request.threadId && includeConversation
-      ? await toolLedgerService.declare({
-          threadId: request.threadId,
-          modelId,
-          protocol: toolChangeProtocol,
-          available: toolSearch.tools,
-          rowIds: context.recentMessages.map((row) => row.id),
-        })
-      : undefined;
-    const cachedTools = withToolsCacheControl(
-      declared?.tools ?? toolSearch.tools,
-      cachePoint,
-      declared?.deferred,
-    );
-    // The catalog and the replayed loads follow the tools block the request sends.
-    const toolSearchPrompt = declared
-      ? await toolSearch.promptFor(declared.tools, declared.deferred)
-      : toolSearch;
-    // A summary request keeps the tools block when history names a declared or
-    // loaded tool, or the API refuses the request. The Anthropic SDK drops the
-    // block under tool choice 'none', so there the summary runs under 'auto' and
-    // refuses every call; the OpenAI SDK keeps it under 'none'.
-    const summaryDeclaresTools = Boolean(declared) || toolSearch.summaryDeclaresTools;
-    const summaryTools = summaryDeclaresTools
-      ? summaryToolOptions(cachedTools)
-      : toolSearch.active
-        ? { tools: cachedTools, toolChoice: 'none' as const }
-        : {};
-
-    // 6-7. Build the system prompt parts and the messages
-    const { systemParts, messages, toolChangeMessages } = await buildTurnRequest(
-      context,
-      request,
-      subagents,
-      declared?.toolChanges,
-      toolSearchPrompt,
-    );
-
     // `guard` is shared by every `warnOnTrailingAssistant` call in this invocation, and
     // the function sets it once it has reported. A 100-step turn checks the array at
     // each step, so without it one bad turn would emit a hundred identical events.
     const guard = { reported: false };
     const guardContext = { agentId, userId: request.userId, mode: request.mode, guard };
-
-    // Checked before the recall is appended, so it judges the history the thread
-    // actually has. The recall is an unconditional trailing user turn, which makes any
-    // assistant-terminated array provider-valid — checking after it would be the
-    // silent fix-up this function exists to refuse.
-    warnOnTrailingAssistant(messages, { ...guardContext, stage: 'initial' });
 
     // A new conversation opens with what the agent recorded in the hours before it,
     // then every turn gets what its message matched in the memory store. Each block is
@@ -444,7 +387,6 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       ...(recalled ? [recalledMemoryContent(recalled)] : []),
     ];
     for (const content of memoryBlocks) {
-      messages.push({ role: 'user', content });
       if (!recordingThreadId) continue;
       // Best effort: a turn must not fail because a block could not be recorded.
       // The block is in this request either way; only the replay is lost.
@@ -458,26 +400,90 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
         .catch((err) => logger.warn({ err }, 'Failed to record a memory block of the turn'));
     }
 
-    // Prompt caching: system prompt parts marked cacheable get cache breakpoints.
-    // [0] stable prefix — identity, soul, important memories, instructions. The one
-    // system breakpoint: the dynamic part behind it carries only the date, and a
-    // change there still hits this one.
-    //
-    // Bedrock allows 4. The Anthropic Messages path spends 3: this, the last message
-    // (via prepareStep) and the last tool. On Converse the fragment is empty for
-    // every model, so it spends 0.
-    const cachedSystem: SystemModelMessage[] = systemParts.map((part) => ({
-      role: 'system' as const,
-      content: part.text,
-      ...(part.cacheable ? { providerOptions: cachePoint } : {}),
-    }));
-    // Last message breakpoint is handled by prepareStep below (re-applied each step
-    // as messages grow during tool use). No need to set it here — that would leave a
-    // stale breakpoint on the original last message, wasting a slot on step 2+.
+    // The tools, system prompt and messages of one model request. A turn builds a
+    // second one, with no deferred tools, when the API refuses the first (see `fail`).
+    const buildModelRequest = async (protocol: DeferredToolProtocol | undefined) => {
+      // Above the threshold the MCP tools go deferred, behind `load_tools` and the
+      // catalog. `load_tools` is added after the gate: the tool it loads is gated
+      // on each call.
+      const toolSearch = await planToolSearch({
+        tools: gatedTools,
+        deferrable,
+        protocol,
+        modelId,
+        telemetry: { userId: request.userId, agentId, mode: request.mode },
+      });
+      // A request that replays the conversation sends the conversation's declared
+      // tool list, so the tools block stays the same when the tool set changes
+      // (see tool-ledger.service.ts).
+      const declared = toolChangeProtocol && request.threadId && includeConversation
+        ? await toolLedgerService.declare({
+            threadId: request.threadId,
+            modelId,
+            protocol: toolChangeProtocol,
+            available: toolSearch.tools,
+            rowIds: context.recentMessages.map((row) => row.id),
+          })
+        : undefined;
+      const cachedTools = withToolsCacheControl(
+        declared?.tools ?? toolSearch.tools,
+        cachePoint,
+        declared?.deferred,
+      );
+      // The catalog and the replayed loads follow the tools block the request sends.
+      const toolSearchPrompt = declared
+        ? await toolSearch.promptFor(declared.tools, declared.deferred)
+        : toolSearch;
+      // A summary request keeps the tools block when history names a declared or
+      // loaded tool, or the API refuses the request. The Anthropic SDK drops the
+      // block under tool choice 'none', so there the summary runs under 'auto' and
+      // refuses every call; the OpenAI SDK keeps it under 'none'.
+      const summaryDeclaresTools = Boolean(declared) || toolSearch.summaryDeclaresTools;
+      const summaryTools = summaryDeclaresTools
+        ? summaryToolOptions(cachedTools)
+        : toolSearch.active
+          ? { tools: cachedTools, toolChoice: 'none' as const }
+          : {};
 
-    logger.info(
-      `${context.agentName} in ${request.mode} mode: ${Object.keys(cachedTools).length} tool(s), ${messages.length} message(s)`
-    );
+      // 6-7. Build the system prompt parts and the messages
+      const { systemParts, messages, toolChangeMessages } = await buildTurnRequest(
+        context,
+        request,
+        subagents,
+        declared?.toolChanges,
+        toolSearchPrompt,
+      );
+
+      // Checked before the recall is appended, so it judges the history the thread
+      // actually has. The recall is an unconditional trailing user turn, which makes any
+      // assistant-terminated array provider-valid — checking after it would be the
+      // silent fix-up this function exists to refuse.
+      warnOnTrailingAssistant(messages, { ...guardContext, stage: 'initial' });
+      for (const content of memoryBlocks) messages.push({ role: 'user', content });
+
+      // Prompt caching: system prompt parts marked cacheable get cache breakpoints.
+      // [0] stable prefix — identity, soul, important memories, instructions. The one
+      // system breakpoint: the dynamic part behind it carries only the date, and a
+      // change there still hits this one.
+      //
+      // Bedrock allows 4. The Anthropic Messages path spends 3: this, the last message
+      // (via prepareStep) and the last tool. On Converse the fragment is empty for
+      // every model, so it spends 0.
+      const cachedSystem: SystemModelMessage[] = systemParts.map((part) => ({
+        role: 'system' as const,
+        content: part.text,
+        ...(part.cacheable ? { providerOptions: cachePoint } : {}),
+      }));
+      // Last message breakpoint is handled by prepareStep below (re-applied each step
+      // as messages grow during tool use). No need to set it here — that would leave a
+      // stale breakpoint on the original last message, wasting a slot on step 2+.
+
+      logger.info(
+        `${context.agentName} in ${request.mode} mode: ${Object.keys(cachedTools).length} tool(s), ${messages.length} message(s)`
+      );
+      return { toolSearch, declared, cachedTools, summaryDeclaresTools, summaryTools, messages, toolChangeMessages, cachedSystem };
+    };
+    let modelRequest = await buildModelRequest(deferredToolProtocol);
 
     // LLM-call tracing; one metadata set reused across this turn's calls.
     const turnTelemetry = (functionId: string) =>
@@ -514,22 +520,41 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       modelId,
       model,
       cachePoint,
-      system: cachedSystem,
-      tools: cachedTools,
-      declaredTools: summaryDeclaresTools,
-      messages,
+      system: modelRequest.cachedSystem,
+      tools: modelRequest.cachedTools,
+      declaredTools: modelRequest.summaryDeclaresTools,
+      messages: modelRequest.messages,
       injections: injections.map((i) => i.message),
       contextRows: toForkRows(context.recentMessages),
     });
 
 
-    callModel({ purpose: request.mode, threadId: request.threadId, agentId: request.agentId }, {
+    // The turn's finished steps, and whether its first request was refused with
+    // deferred tools and sent again with every tool in full.
+    let stepsFinished = 0;
+    let retriedInFull = false;
+    let refusedDeferral = false;
+    // The request sent in full was answered: the model sends every tool in full
+    // from now on.
+    const confirmDeferralRefusal = () => {
+      if (!refusedDeferral) return;
+      refusedDeferral = false;
+      if (!recordDeferralRefusal(modelId)) return;
+      logger.warn(`Model ${modelId} refuses deferred tools; sending every tool in full until restart`);
+      trackEvent('tool search refused', request.userId, {
+        'agent.id': agentId,
+        'invoke.mode': request.mode,
+        'llm.model': modelId,
+      });
+    };
+
+    const send = (): Promise<void> => callModel({ purpose: request.mode, threadId: request.threadId, agentId: request.agentId }, {
       model,
-      system: cachedSystem,
-      messages: [...messages, ...toolChangeMessages],
+      system: modelRequest.cachedSystem,
+      messages: [...modelRequest.messages, ...modelRequest.toolChangeMessages],
       // The SDK refuses a system message inside `messages` without this.
-      ...(declared ? { allowSystemInMessages: true } : {}),
-      tools: Object.keys(cachedTools).length > 0 ? cachedTools : undefined,
+      ...(modelRequest.declared ? { allowSystemInMessages: true } : {}),
+      tools: Object.keys(modelRequest.cachedTools).length > 0 ? modelRequest.cachedTools : undefined,
       toolChoice: 'auto',
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       stopWhen: stepCountIs(STEP_LIMIT),
@@ -549,7 +574,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
         // On the first step the turn's tool-change announcements close the
         // array, and no user turn may follow one, so an injection goes before them.
         const insertAt = responseMessages.length === 0
-          ? base.length - toolChangeMessages.length
+          ? base.length - modelRequest.toolChangeMessages.length
           : base.length;
 
         // Async so the steering source can load a mid-turn message's files
@@ -601,6 +626,8 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
         return { messages: merged };
       },
       onStepFinish: (step) => {
+        stepsFinished++;
+        confirmDeferralRefusal();
         // Convert SDK step to InvokeStep and push to channel.
         //
         // What is stored is the *model-facing* view, not the raw execute() return:
@@ -688,6 +715,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
         });
       },
    }).then(async (result) => {
+      confirmDeferralRefusal();
       // A refusal ends the turn with no text, no tool calls and no error, so
       // nothing downstream has anything to publish. Checked across every step
       // rather than on the final one: a turn that spoke before it declined has
@@ -717,7 +745,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
         // that hit the limit — no prepareStep ran after it, so it would
         // otherwise vanish from the summary call.
         const summaryMessages: ModelMessage[] = [
-          ...messages,
+          ...modelRequest.messages,
           ...injections.map((i) => i.message),
           ...pendingAttachmentInjections.splice(0),
           { role: 'assistant' as const, content: assistantText },
@@ -729,9 +757,9 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
           { purpose: 'early-stopping', threadId: request.threadId, agentId: request.agentId },
           {
           model,
-          system: cachedSystem,
+          system: modelRequest.cachedSystem,
           messages: summaryMessages,
-          ...summaryTools,
+          ...modelRequest.summaryTools,
           maxOutputTokens: MAX_OUTPUT_TOKENS,
           abortSignal: request.abortSignal,
           ...turnTelemetry('invoke-early-stopping'),
@@ -786,7 +814,9 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       }
 
       channel.close();
-    }).catch((error) => {
+    });
+
+    const fail = (error: unknown): Promise<void> | void => {
       // User-initiated cancellation: the caller aborted our signal, so
       // generateText rejected with an AbortError. Close the stream quietly —
       // already-completed steps were already pushed and stay delivered; we
@@ -809,16 +839,22 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
         );
         compactionService.maybeCompactAfterOverflow(compactionForkBase(request.threadId));
       }
-      // A model the deferral rule admits but whose API refuses deferred tools
-      // gets every tool in full from the next request on. Any 400 counts, since
-      // the APIs word that refusal differently; a wrong match costs the saving only.
-      if (toolSearch.active && isRejectedRequestError(error) && recordDeferralRefusal(modelId)) {
-        logger.warn({ err: error }, `Model ${modelId} refused deferred tools; sending every tool in full`);
-        trackEvent('tool search refused', request.userId, {
-          'agent.id': request.agentId,
-          'invoke.mode': request.mode,
-          'llm.model': modelId,
-        });
+      // A turn's first request refused with deferred tools is sent again with
+      // every tool in full. Any 400 counts, since the APIs word that refusal
+      // differently; the second answer is what records the model. Only a request
+      // before the first step is sent again, since a step's tools have run.
+      if (!retriedInFull && stepsFinished === 0 && modelRequest.toolSearch.active && isRejectedRequestError(error)) {
+        logger.warn({ err: error }, `Model ${modelId} refused a request that deferred tools; sending it with every tool in full`);
+        retriedInFull = true;
+        return buildModelRequest(undefined)
+          .then((next) => {
+            // Steering messages the refused request took are sent at its tail.
+            next.messages.push(...injections.splice(0).map((i) => i.message));
+            modelRequest = next;
+            refusedDeferral = true;
+            return send();
+          })
+          .catch(fail);
       }
       // Surface the error as a friendly step so consumers don't need a
       // separate error-handling path. buildErrorStep is the single
@@ -826,7 +862,8 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       computerUse.failed = true;
       channel.push(buildErrorStep(error));
       channel.close();
-    });
+    };
+    void send().catch(fail);
 
     // Yield steps as they arrive. Errors from generateText surface as a
     // final friendly step (with optional structured `error` metadata) via
@@ -846,7 +883,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       // A stop during routing reads as a fallback, so a canceled turn reports no reason.
       ...(wasCanceled ? {} : { 'llm.tier_reason': turnModel.reason }),
       ...(turnModel.tier ? { 'llm.tier': turnModel.tier } : {}),
-      'tools.deferred': String(toolSearch.deferred.length),
+      'tools.deferred': String(modelRequest.toolSearch.deferred.length),
     });
 
   } finally {
