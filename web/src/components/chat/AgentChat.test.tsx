@@ -96,8 +96,8 @@ vi.mock('@/api/runtime-client', () => ({
 
 vi.mock('@tanstack/react-router', () => ({ useNavigate: () => vi.fn() }));
 
-// Render messages as plain `id:threadId[:delivery]` tokens so the test can assert what's
-// on screen without pulling in the full message/markdown renderer.
+// Render messages as plain `id:threadId[:delivery]` tokens, and their contents in a second
+// span, so a test can assert what's on screen without the full message/markdown renderer.
 vi.mock('./ChatMessageList', () => ({
   default: ({
     messages,
@@ -114,6 +114,7 @@ vi.mock('./ChatMessageList', () => ({
       <span data-testid="rows">
         {messages.map((m) => [m.id, m.threadId, m.delivery].filter(Boolean).join(':')).join(',')}
       </span>
+      <span data-testid="texts">{messages.map((m) => m.content).join('\n')}</span>
       {messages
         .filter((m) => m.delivery === 'failed')
         .map((m) => (
@@ -249,6 +250,18 @@ describe('AgentChat', () => {
 
     await waitFor(() => expect(rows()).toEqual(['m1:t1']));
     expect(mockGetThread).toHaveBeenCalledTimes(loads);
+  });
+
+  it('notes a compaction that ran while the conversation sat idle', async () => {
+    await renderChat();
+
+    event('compaction', { threadId: 't1', status: 'completed', trigger: 'auto', messagesCompacted: 4, idle: true });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('texts').textContent).toContain(
+        'Conversation compacted while idle — 4 older messages summarized.',
+      ),
+    );
   });
 
   it('orders the thread by time and keeps an unsent message last until its copy arrives', async () => {
