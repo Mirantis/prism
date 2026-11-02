@@ -18,39 +18,58 @@ import { bareModelId } from './tool-changes';
 export const LOAD_TOOLS_NAME = 'load_tools';
 
 /**
- * Claude models measured to load a deferred tool through a `tool_reference`
- * and call it, on Bedrock's Anthropic Messages path. Matched on the bare id.
+ * The oldest version of each family measured to load a deferred tool and to
+ * replay that load from stored history: Claude 4.7 through 5.5 on Bedrock's
+ * Anthropic Messages path, and GPT 5.6 through 6.1 under `store: true`. A later
+ * version defers without a code change; gpt-5.5 and gpt-5.4 fail the replay.
  */
-const ANTHROPIC_DEFERRED_MODELS = new Set([
-  'claude-opus-5-5',
-  'claude-opus-5',
-  'claude-opus-4-8',
-  'claude-opus-4-7',
-  'claude-sonnet-5-5',
-  'claude-haiku-5-5',
-]);
+const CLAUDE_FLOOR: Version = [4, 7];
+const GPT_FLOOR: Version = [5, 6];
 
-/**
- * OpenAI models measured to load a deferred tool through a client-executed
- * `tool_search` and to replay that load from stored history under `store: true`.
- */
-const OPENAI_DEFERRED_MODELS = new Set([
-  'gpt-5.6-sol',
-  'gpt-5.6-terra',
-  'gpt-5.6-luna',
-  'gpt-6-sol',
-  'gpt-6-luna',
-  'gpt-6-astra',
-  'gpt-6.1-sol',
-  'gpt-6.1-terra',
-]);
+type Version = readonly [major: number, minor: number];
+
+/** `claude-opus-4-7`, `claude-opus-5`; a date suffix is not a minor version. */
+const CLAUDE_VERSION = /^claude-[a-z]+-(\d+)(?:-(\d{1,2})(?!\d))?/;
+/** `gpt-5.6-sol`, `gpt-6-luna`. */
+const GPT_VERSION = /^gpt-(\d+)(?:\.(\d+))?(?![\d.])/;
+
+function atLeast(modelId: string, pattern: RegExp, floor: Version): boolean {
+  const match = pattern.exec(modelId);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2] ?? 0);
+  return major > floor[0] || (major === floor[0] && minor >= floor[1]);
+}
 
 export function supportsAnthropicDeferredTools(modelId: string): boolean {
-  return ANTHROPIC_DEFERRED_MODELS.has(bareModelId(modelId));
+  return atLeast(bareModelId(modelId), CLAUDE_VERSION, CLAUDE_FLOOR);
 }
 
 export function supportsOpenAiDeferredTools(modelId: string): boolean {
-  return OPENAI_DEFERRED_MODELS.has(modelId);
+  return atLeast(modelId, GPT_VERSION, GPT_FLOOR);
+}
+
+const refusingModels = new Set<string>();
+
+/**
+ * A provider's `deferredTools`: the protocol on a model the rule admits, until
+ * the API refuses a request that deferred tools on that model.
+ */
+export function deferredToolsWhen(
+  admits: (modelId: string) => boolean,
+  protocol: DeferredToolProtocol,
+): (modelId: string) => DeferredToolProtocol | undefined {
+  return (modelId) => (admits(modelId) && !refusingModels.has(modelId) ? protocol : undefined);
+}
+
+/**
+ * Sends every tool in full to `modelId` until the process restarts. True when
+ * the model was deferring until now.
+ */
+export function recordDeferralRefusal(modelId: string): boolean {
+  if (refusingModels.has(modelId)) return false;
+  refusingModels.add(modelId);
+  return true;
 }
 
 type ToolResultOutput = ToolResultPart['output'];

@@ -876,8 +876,7 @@ and refuses every call, because under `none` the SDK sends no tools block.
 
 #### Deferred tools
 
-On a model whose provider declares `deferredTools` (the allowlists in
-`lib/llm-providers/deferred-tools.ts`, each measured live),
+On a model whose provider declares `deferredTools`,
 `lib/tool-search/plan.ts` sends the MCP and plugin tools (`deferrable` from
 `collectTools`) with `defer_loading` when their definitions exceed
 `TOOL_SEARCH_THRESHOLD_PERCENT` of the window, estimated at two characters per
@@ -894,6 +893,14 @@ after the tool left the set names only the tools still declared. The deferral
 flag is part of the ledger's signature, so a change in it is a changed
 definition. The Realtime API has no deferral: a voice session declares the
 deferred tools itself, with a `session.update`, once a load names them.
+
+A provider declares it by version, not by model id
+(`lib/llm-providers/deferred-tools.ts`): Claude from 4.7 and GPT from 5.6, the
+oldest versions measured to load a tool and replay the load, so a new release
+defers with no code change. When the API refuses a request that deferred tools
+with a 400, `invokeStream` records the model (`recordDeferralRefusal`) and every
+later request to it sends every tool in full until the process restarts. That
+turn fails; the next one replays its loads as text.
 
 ## Key Services
 

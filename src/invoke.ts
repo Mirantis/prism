@@ -56,7 +56,12 @@ import { AgentContext, InvokeError, InvokeRequest, InvokeResponse, InvokeStep, T
 import { foldStepUsage, toStepUsage } from './lib/step-usage';
 import { STEP_LIMIT, MAX_OUTPUT_TOKENS, COMPACTION_FALLBACK_WINDOW_TOKENS } from './constants';
 import { EARLY_STOPPING_PROMPT } from './prompts/early-stopping-prompt';
-import { buildErrorStep, buildRefusalStep, isContextOverflowError } from './lib/llm-errors';
+import {
+  buildErrorStep,
+  buildRefusalStep,
+  isContextOverflowError,
+  isRejectedRequestError,
+} from './lib/llm-errors';
 import { agentStatusService } from './services/agent-status.service';
 import { programStatusService, type TurnEnding } from './services/program-status.service';
 import { TURN_FAILED, turnError } from './protocol/chat-protocol';
@@ -66,6 +71,7 @@ import {
 } from './services/conversation-thread-activity.service';
 import { trackEvent, langfuseTelemetry } from './lib/telemetry';
 import { planToolSearch, type ToolSearchPrompt } from './lib/tool-search/plan';
+import { recordDeferralRefusal } from './lib/llm-providers/deferred-tools';
 import { AsyncChannel } from './utils/async-channel';
 import { RESUMED_RUN_NOTICE } from './prompts/resume-prompt';
 
@@ -802,6 +808,17 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
           `[Compaction] turn overflowed the context window for thread ${request.threadId}; triggering recovery compaction`,
         );
         compactionService.maybeCompactAfterOverflow(compactionForkBase(request.threadId));
+      }
+      // A model the deferral rule admits but whose API refuses deferred tools
+      // gets every tool in full from the next request on. Any 400 counts, since
+      // the APIs word that refusal differently; a wrong match costs the saving only.
+      if (toolSearch.active && isRejectedRequestError(error) && recordDeferralRefusal(modelId)) {
+        logger.warn({ err: error }, `Model ${modelId} refused deferred tools; sending every tool in full`);
+        trackEvent('tool search refused', request.userId, {
+          'agent.id': request.agentId,
+          'invoke.mode': request.mode,
+          'llm.model': modelId,
+        });
       }
       // Surface the error as a friendly step so consumers don't need a
       // separate error-handling path. buildErrorStep is the single

@@ -260,7 +260,12 @@ vi.mock('./services/program-status.service', () => ({
 
 import { invoke, invokeStream, extractAttachmentIds } from './invoke';
 import { ANTHROPIC_TOOL_CHANGES } from './lib/llm-providers/tool-changes';
-import { ANTHROPIC_DEFERRED_TOOLS, LOAD_TOOLS_NAME, OPENAI_DEFERRED_TOOLS } from './lib/llm-providers/deferred-tools';
+import {
+  ANTHROPIC_DEFERRED_TOOLS,
+  LOAD_TOOLS_NAME,
+  OPENAI_DEFERRED_TOOLS,
+  deferredToolsWhen,
+} from './lib/llm-providers/deferred-tools';
 import { withToolOutputCapture } from './lib/tool-output-limiter';
 import { withToolsCacheControl } from './lib/tool-collection';
 import { config } from './config';
@@ -3039,6 +3044,33 @@ describe('invoke', () => {
         expect(summary.toolChoice).toBe('none');
         expect(summary.tools).toBe(request.tools);
         expect(Object.keys(summary.tools)).toContain(LOAD_TOOLS_NAME);
+      } finally {
+        Object.assign(config, saved);
+      }
+    });
+
+    it('sends every tool in full after the API refuses a request that deferred them', async () => {
+      const saved = { ...config };
+      Object.assign(config, { contextWindowTokens: 100_000, toolSearch: 'auto', toolSearchThresholdPercent: 2 });
+      mockCreateBedrockProvider.mockReturnValue(Object.assign(() => 'model-instance', {
+        cachePoint: () => ({}),
+        deferredTools: deferredToolsWhen(() => true, OPENAI_DEFERRED_TOOLS),
+      }));
+      mockGetMCPTools.mockResolvedValue({
+        create_issue: { description: 'Create an issue.'.padEnd(10_000, '.'), inputSchema: z.object({}) },
+      });
+      mockGenerateText.mockRejectedValueOnce(Object.assign(new Error('Bad Request'), { statusCode: 400 }));
+
+      try {
+        const refused = await turn(['u1']);
+        const next = await turn(['u1', 'r1', 'u2']);
+
+        expect(Object.keys(refused.tools)).toContain(LOAD_TOOLS_NAME);
+        expect(Object.keys(next.tools)).not.toContain(LOAD_TOOLS_NAME);
+        expect(next.tools.create_issue.providerOptions?.openai?.deferLoading).toBeUndefined();
+        expect(mockTrackEvent).toHaveBeenCalledWith('tool search refused', expect.any(String), expect.objectContaining({
+          'llm.model': 'anthropic.claude-3-sonnet-20240229-v1:0',
+        }));
       } finally {
         Object.assign(config, saved);
       }

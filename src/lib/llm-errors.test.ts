@@ -15,6 +15,7 @@ import {
   getSpendingLimitDetail,
   getErrorDetail,
   isContextOverflowError,
+  isRejectedRequestError,
   logSpendingLimitWarning,
   buildErrorStep,
 } from './llm-errors';
@@ -325,5 +326,21 @@ describe('isContextOverflowError', () => {
     ).toBe(false);
     expect(isContextOverflowError(null)).toBe(false);
     expect(isContextOverflowError('prompt is too long')).toBe(false);
+  });
+});
+
+describe('isRejectedRequestError', () => {
+  it('matches a 400, also behind the retry wrapper', () => {
+    const rejected = Object.assign(new Error('Bad Request'), { statusCode: 400 });
+    expect(isRejectedRequestError(rejected)).toBe(true);
+    expect(isRejectedRequestError({ lastError: rejected })).toBe(true);
+  });
+
+  it('leaves out a 400 for an oversized request and every other status', () => {
+    expect(isRejectedRequestError(
+      Object.assign(new Error('Input is too long for requested model.'), { statusCode: 400 }),
+    )).toBe(false);
+    expect(isRejectedRequestError(Object.assign(new Error('Too Many Requests'), { status: 429 }))).toBe(false);
+    expect(isRejectedRequestError(new Error('Model timeout'))).toBe(false);
   });
 });
