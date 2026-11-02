@@ -15,6 +15,7 @@ vi.mock('../config', () => ({
     otelApiKey: '',
     deploymentEnvironment: 'development',
     serviceVersion: '',
+    productName: '',
   },
 }));
 
@@ -56,5 +57,10 @@ describe('telemetry (enabled, but SERVICE_VERSION unset)', () => {
     // Other resource attributes still flow through.
     expect(attrs['service.name']).toBe('prism-agent-runtime');
     expect(attrs['deployment.environment.name']).toBe('development');
+  });
+
+  it('omits product.name from the OTel resource when not configured', () => {
+    const attrs = loggerProviderArgs[0]?.resource?.attributes ?? {};
+    expect(attrs).not.toHaveProperty('product.name');
   });
 });
