@@ -15,10 +15,19 @@ const { Given, When, Then } = createBdd();
 
 // The runtime's own classification model, and its chat model (`.env.e2e`).
 const SMALL_TEST_MODEL = 'global.anthropic.claude-haiku-5-5';
-const LARGE_TEST_MODEL =
+const CHAT_TEST_MODEL =
   process.env.BEDROCK_MODEL_ID || 'global.anthropic.claude-sonnet-5-5';
+// Beside a medium tier, the chat model is the medium one and the large tier a
+// model no other tier uses, so a medium turn is told apart from a large one.
+const LARGE_BESIDE_MEDIUM_TEST_MODEL = 'global.anthropic.claude-opus-5-5';
 
-const TEST_MODELS: Record<string, string> = { small: SMALL_TEST_MODEL, large: LARGE_TEST_MODEL };
+// The tier each scenario's turn is asserted on. Small and large are the
+// two-tier scenario's; medium is the three-tier scenario's.
+const TEST_MODELS: Record<string, string> = {
+  small: SMALL_TEST_MODEL,
+  medium: CHAT_TEST_MODEL,
+  large: CHAT_TEST_MODEL,
+};
 
 /** The model the newest chat turn's last call went to. */
 async function lastTurnModel(): Promise<string | undefined> {
@@ -31,9 +40,23 @@ async function lastTurnModel(): Promise<string | undefined> {
 
 Given('the agent chooses between the small and the large test models', async ({ page }) => {
   const res = await page.request.patch('/agents/model-selection', {
-    data: { mode: 'auto', small: SMALL_TEST_MODEL, large: LARGE_TEST_MODEL },
+    data: { mode: 'auto', small: SMALL_TEST_MODEL, large: CHAT_TEST_MODEL },
   });
   expect(res.ok()).toBe(true);
+});
+
+Given('the agent chooses between the small, the medium and the large test models', async ({ page }) => {
+  const res = await page.request.patch('/agents/model-selection', {
+    data: {
+      mode: 'auto',
+      small: SMALL_TEST_MODEL,
+      medium: CHAT_TEST_MODEL,
+      large: LARGE_BESIDE_MEDIUM_TEST_MODEL,
+    },
+  });
+  expect(res.ok()).toBe(true);
+  // A chat model that is also the small or the large one could not tell the tiers apart.
+  expect([SMALL_TEST_MODEL, LARGE_BESIDE_MEDIUM_TEST_MODEL]).not.toContain(CHAT_TEST_MODEL);
 });
 
 When('I turn on Auto model selection', async ({ page }) => {
@@ -44,7 +67,7 @@ When('I turn on Auto model selection', async ({ page }) => {
 
 When('I enter the small and the large test models', async ({ page }) => {
   await page.getByRole('textbox', { name: 'Small model ID' }).fill(SMALL_TEST_MODEL);
-  await page.getByRole('textbox', { name: 'Large model ID' }).fill(LARGE_TEST_MODEL);
+  await page.getByRole('textbox', { name: 'Large model ID' }).fill(CHAT_TEST_MODEL);
 });
 
 When('I save the Auto models', async ({ page }) => {
@@ -76,7 +99,7 @@ Then('the profile shows Auto model selection', async ({ page }) => {
   await expect(page.getByRole('form', { name: 'Auto models' })).toBeHidden();
   await expect(page.getByRole('radio', { name: 'Auto' })).toHaveAttribute('aria-checked', 'true');
   await expect(page.getByText(SMALL_TEST_MODEL, { exact: true })).toBeVisible();
-  await expect(page.getByText(LARGE_TEST_MODEL, { exact: true })).toBeVisible();
+  await expect(page.getByText(CHAT_TEST_MODEL, { exact: true })).toBeVisible();
 });
 
 Then('the stored model mode is Auto', async () => {
