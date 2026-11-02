@@ -137,6 +137,16 @@ describe('ToolLedgerService', () => {
     expect(third.toolChanges).toHaveLength(1);
   });
 
+  it('replaces a definition that a tool search stops deferring', async () => {
+    const ledger = new ToolLedgerService();
+    const deferred = { ...tool('B'), providerOptions: { anthropic: { deferLoading: true } } } as Tool;
+    await declare(ledger, { a: tool('A'), b: deferred }, ['u1']);
+
+    const second = await declare(ledger, { a: tool('A'), b: tool('B') }, ['u1', 'r1', 'u2']);
+
+    expect(second.tools.b.providerOptions).toBeUndefined();
+  });
+
   it('folds the announcements of compacted rows into their net change at the start', async () => {
     const ledger = new ToolLedgerService();
     await declare(ledger, { a: tool('A'), b: tool('B'), c: tool('C') }, ['u1']);

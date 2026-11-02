@@ -46,6 +46,7 @@ import {
   type LlmProvider,
 } from '../llm-provider';
 import { converseToolImages } from './converse-tool-images';
+import { ANTHROPIC_DEFERRED_TOOLS, supportsAnthropicDeferredTools } from '../deferred-tools';
 import { ANTHROPIC_TOOL_CHANGES, supportsToolChanges } from '../tool-changes';
 
 /**
@@ -84,6 +85,8 @@ export function createBedrockProvider(baseURL?: string): LlmProvider {
     // Messages branch; Converse never gets one.
     toolChanges: (modelId: string) =>
       supportsToolChanges(modelId) ? ANTHROPIC_TOOL_CHANGES : undefined,
+    deferredTools: (modelId: string) =>
+      supportsAnthropicDeferredTools(modelId) ? ANTHROPIC_DEFERRED_TOOLS : undefined,
   });
 }
 

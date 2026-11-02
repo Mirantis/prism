@@ -39,6 +39,27 @@ describe('prepareVoiceChatTools', () => {
     expect(base.ran).toEqual([]);
   });
 
+  it('follows the base declarations when a load adds to them, and keeps their identity otherwise', () => {
+    let declarations = [{ name: 'memory_search', description: '', parameters: {} }];
+    const base: PreparedTools = {
+      get declarations() {
+        return declarations;
+      },
+      count: 2,
+      execute: async () => '',
+    };
+    const tools = prepareVoiceChatTools(base, set(['computer_screen']));
+    const before = tools.declarations;
+    expect(tools.declarations).toBe(before);
+    // The base counts its deferred tool, as the meeting path does.
+    expect(tools.count).toBe(3);
+
+    declarations = [...declarations, { name: 'gh__create_issue', description: '', parameters: {} }];
+
+    expect(tools.declarations).not.toBe(before);
+    expect(tools.declarations.map((d) => d.name)).toEqual(['memory_search', 'gh__create_issue', 'computer_screen']);
+  });
+
   it('adds the computer declarations used by a real voice session', () => {
     const base = set(['memory_search', ...MEETING_TOOL_NAMES]);
     const tools = prepareVoiceChatTools(base, set(computerNames));

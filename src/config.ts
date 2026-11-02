@@ -6,6 +6,7 @@ import {
   TOOL_OUTPUT_TTL_HOURS,
   COMPACTION_TAIL_MESSAGES,
   COMPACTION_THRESHOLD_PERCENT,
+  TOOL_SEARCH_THRESHOLD_PERCENT,
   DEFAULT_HEARTBEAT_INTERVAL_MS,
   GOAL_MAX_TURNS,
   MAX_HEARTBEAT_INTERVAL_MS,
@@ -749,6 +750,27 @@ const compactionThresholdPercent: number | null =
       ? rawCompactionThreshold
       : COMPACTION_THRESHOLD_PERCENT;
 
+// TOOL_SEARCH: `auto` (the default) defers the MCP tools above the threshold;
+// `off` sends every tool whole. Any other value runs `auto`, and index.ts warns.
+const rawToolSearch = (process.env.TOOL_SEARCH ?? '').trim().toLowerCase();
+const toolSearch: 'auto' | 'off' = rawToolSearch === 'off' ? 'off' : 'auto';
+const invalidToolSearch = ['', 'auto', 'off'].includes(rawToolSearch) ? null : rawToolSearch;
+
+// A percent of the model's window, 0 to 100; 0 defers whenever a tool can be
+// deferred. Anything else takes the default, and index.ts warns.
+const rawToolSearchThreshold = (process.env.TOOL_SEARCH_THRESHOLD_PERCENT ?? '').trim();
+const parsedToolSearchThreshold = Number(rawToolSearchThreshold);
+const validToolSearchThreshold =
+  rawToolSearchThreshold !== '' &&
+  Number.isFinite(parsedToolSearchThreshold) &&
+  parsedToolSearchThreshold >= 0 &&
+  parsedToolSearchThreshold <= 100;
+const toolSearchThresholdPercent = validToolSearchThreshold
+  ? parsedToolSearchThreshold
+  : TOOL_SEARCH_THRESHOLD_PERCENT;
+const invalidToolSearchThreshold =
+  rawToolSearchThreshold === '' || validToolSearchThreshold ? null : rawToolSearchThreshold;
+
 // Tail size: 0 is legal (compact everything; the rebuilt context is just the
 // summary message plus the next user message); junk/negative falls back.
 const rawCompactionTail = parseInt(process.env.COMPACTION_TAIL_MESSAGES ?? '', 10);
@@ -1192,6 +1214,13 @@ export const config = {
   // means disabled (COMPACTION_THRESHOLD_PERCENT=0); otherwise 1–100, default
   // COMPACTION_THRESHOLD_PERCENT (90).
   compactionThresholdPercent,
+
+  // TOOL_SEARCH and TOOL_SEARCH_THRESHOLD_PERCENT; the invalid values are kept
+  // for the startup warning.
+  toolSearch,
+  invalidToolSearch,
+  toolSearchThresholdPercent,
+  invalidToolSearchThreshold,
   heartbeatIntervalMs: resolveHeartbeatIntervalMs(),
 
   // Newest messages excluded from compaction and kept verbatim in the context.

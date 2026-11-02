@@ -262,6 +262,10 @@ export default defineConfig({
         // otherwise run the whole suite with one conversation. The @single-thread
         // job sets it.
         THREAD_MODE: process.env.THREAD_MODE || 'multi',
+        // Pinned for the same reason, at the default. The @tool-search job sets 0,
+        // which defers the demo plugin's MCP tool.
+        TOOL_SEARCH: 'auto',
+        TOOL_SEARCH_THRESHOLD_PERCENT: process.env.TOOL_SEARCH_THRESHOLD_PERCENT || '2',
         // The exec image tag the runtime asks for. The container-mode job sets
         // it to the image it built; every other run leaves it unset.
         ...(process.env.SERVICE_VERSION ? { SERVICE_VERSION: process.env.SERVICE_VERSION } : {}),

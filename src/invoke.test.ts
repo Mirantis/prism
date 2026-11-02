@@ -260,10 +260,12 @@ vi.mock('./services/program-status.service', () => ({
 
 import { invoke, invokeStream, extractAttachmentIds } from './invoke';
 import { ANTHROPIC_TOOL_CHANGES } from './lib/llm-providers/tool-changes';
+import { ANTHROPIC_DEFERRED_TOOLS, LOAD_TOOLS_NAME, OPENAI_DEFERRED_TOOLS } from './lib/llm-providers/deferred-tools';
 import { withToolOutputCapture } from './lib/tool-output-limiter';
 import { withToolsCacheControl } from './lib/tool-collection';
 import { config } from './config';
 import { Tool } from 'ai';
+import { z } from 'zod';
 
 type StepMessage = { role: string; content?: unknown; providerOptions?: unknown };
 type PrepareStep = (options: {
@@ -2090,6 +2092,7 @@ describe('invoke', () => {
         'llm.model': expect.any(String),
         'llm.model_mode': 'fixed',
         'llm.tier_reason': 'fixed',
+        'tools.deferred': '0',
       });
     });
 
@@ -2954,8 +2957,91 @@ describe('invoke', () => {
 
       expect(mockBuildConversationHistory).toHaveBeenCalledWith(expect.anything(), [
         { afterRowId: 'u2', message: removal('memory_write') },
-      ]);
+      ], undefined);
       expect(third.messages.filter((m: StepMessage) => m.role === 'system')).toEqual([removal('memory_write')]);
+    });
+
+    it('keeps the catalog and the replayed loads of a deferred tool the turn no longer offers', async () => {
+      const saved = { ...config };
+      Object.assign(config, { contextWindowTokens: 100_000, toolSearch: 'auto', toolSearchThresholdPercent: 2 });
+      mockCreateBedrockProvider.mockReturnValue(Object.assign(() => 'model-instance', {
+        cachePoint: () => CACHE_POINT,
+        toolChanges: () => ANTHROPIC_TOOL_CHANGES,
+        deferredTools: () => ANTHROPIC_DEFERRED_TOOLS,
+      }));
+      const mcpTool = (description: string) => ({
+        description: description.padEnd(5_000, '.'),
+        inputSchema: z.object({}),
+        execute: async () => 'done',
+      });
+      const createIssue = mcpTool('Create an issue.');
+      const sendEmail = mcpTool('Send an email.');
+      // The turn appends the catalog to the stable part, so each turn gets parts of its own.
+      mockBuildSystemPromptParts.mockImplementation(async () => [
+        { text: 'stable system prompt', cacheable: true },
+        { text: 'dynamic system prompt', cacheable: false },
+      ]);
+      const storedLoad = {
+        id: 'call-1',
+        tool: LOAD_TOOLS_NAME,
+        input: { names: ['send_email'] },
+        output: JSON.stringify({ loaded: ['send_email'], unmatched: [], suggestions: [] }),
+      };
+      const sent = async (rowIds: string[]) => {
+        mockBuildConversationHistory.mockClear();
+        const request = await turn(rowIds);
+        const replay = mockBuildConversationHistory.mock.calls[0][2];
+        return { catalog: request.system[0].content as string, load: replay(storedLoad) };
+      };
+
+      try {
+        mockGetMCPTools.mockResolvedValue({ create_issue: createIssue, send_email: sendEmail });
+        const first = await sent(['u1']);
+        mockGetMCPTools.mockResolvedValue({ create_issue: createIssue });
+        const second = await sent(['u1', 'r1', 'u2']);
+
+        expect(first.catalog).toContain('- send_email: Send an email.');
+        expect(second.catalog).toBe(first.catalog);
+        expect(second.load).toEqual(first.load);
+        expect(second.load.output).toEqual({
+          type: 'content',
+          value: [{ type: 'custom', providerOptions: { anthropic: { type: 'tool-reference', toolName: 'send_email' } } }],
+        });
+      } finally {
+        Object.assign(config, saved);
+      }
+    });
+
+    it('keeps the early-stop summary on none where the SDK sends the tools under it', async () => {
+      const saved = { ...config };
+      Object.assign(config, { contextWindowTokens: 100_000, toolSearch: 'auto', toolSearchThresholdPercent: 2 });
+      mockCreateBedrockProvider.mockReturnValue(Object.assign(() => 'model-instance', {
+        cachePoint: () => ({}),
+        deferredTools: () => OPENAI_DEFERRED_TOOLS,
+      }));
+      mockGetMCPTools.mockResolvedValue({
+        create_issue: { description: 'Create an issue.'.padEnd(10_000, '.'), inputSchema: z.object({}) },
+      });
+      const steps = Array.from({ length: 100 }, (_, i) => ({
+        text: '',
+        toolCalls: [{ toolCallId: `tc-${i}`, toolName: 'memory_search', input: {} }],
+        toolResults: [{ toolCallId: `tc-${i}`, output: 'ok' }],
+      }));
+      mockGenerateText
+        .mockResolvedValueOnce({ text: '', steps })
+        .mockResolvedValueOnce({ text: 'Summary.', steps: [{ text: 'Summary.', toolCalls: [], toolResults: [] }] });
+
+      try {
+        const request = await turn(['u1']);
+        const summary = mockGenerateText.mock.calls[1][0];
+
+        // A refused load_tools call on OpenAI would answer with an output the API pairs with nothing.
+        expect(summary.toolChoice).toBe('none');
+        expect(summary.tools).toBe(request.tools);
+        expect(Object.keys(summary.tools)).toContain(LOAD_TOOLS_NAME);
+      } finally {
+        Object.assign(config, saved);
+      }
     });
 
     it('starts a new list for a thread it has no record of, as after a restart', async () => {
@@ -3121,6 +3207,15 @@ describe('withToolsCacheControl', () => {
 
     expect((result.b as Record<string, unknown>).providerOptions).toEqual(cachePoint);
     expect((result.c as Record<string, unknown>).providerOptions).toBeUndefined();
+  });
+
+  it('puts the breakpoint on the last tool a load_tools call has not deferred', () => {
+    const deferred = { anthropic: { deferLoading: true } };
+    const tools = { a: { description: 'a' }, b: { description: 'b', providerOptions: deferred } };
+    const result = withToolsCacheControl(tools as any as Record<string, Tool>, cachePoint);
+
+    expect((result.a as Record<string, unknown>).providerOptions).toEqual(cachePoint);
+    expect((result.b as Record<string, unknown>).providerOptions).toEqual(deferred);
   });
 
   it('does not mutate the original tools object', () => {

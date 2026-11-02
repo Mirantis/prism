@@ -21,6 +21,7 @@ vi.mock('@ai-sdk/openai', () => ({
 }));
 
 import { createOpenAiProvider, missingOpenAiSettings } from './openai-provider';
+import { OPENAI_DEFERRED_TOOLS } from '../deferred-tools';
 
 describe('createOpenAiProvider', () => {
   beforeEach(() => {
@@ -106,6 +107,17 @@ describe('createOpenAiProvider', () => {
 
   it('declares empty gate sampling params — GPT-5.x rejects or strips temperature', () => {
     expect(createOpenAiProvider().classificationSamplingParams).toEqual({});
+  });
+});
+
+describe('deferred tools', () => {
+  it('defers tools on the measured GPT-5.6 models', () => {
+    expect(createOpenAiProvider().deferredTools?.('gpt-5.6-sol')).toBe(OPENAI_DEFERRED_TOOLS);
+  });
+
+  // gpt-5.5 rejects a client tool search; gpt-5.4 takes one only without stored responses.
+  it.each(['gpt-5.5', 'gpt-5.4', 'gpt-4.1'])('defers no tool on %s', (modelId) => {
+    expect(createOpenAiProvider().deferredTools?.(modelId)).toBeUndefined();
   });
 });
 

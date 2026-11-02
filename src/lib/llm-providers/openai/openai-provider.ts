@@ -29,6 +29,7 @@
 
 import { config, isGatewayEndpoint } from '../../../config';
 import { logger } from '../../../logger';
+import { OPENAI_DEFERRED_TOOLS, supportsOpenAiDeferredTools } from '../deferred-tools';
 import { createOpenAiCompatibleProvider } from '../openai-compatible';
 import type { LlmProvider } from '../llm-provider';
 
@@ -36,13 +37,17 @@ export function createOpenAiProvider(baseURL?: string): LlmProvider {
   const gatewayServesIt = isGatewayEndpoint(baseURL);
   logger.info({ routing: gatewayServesIt ? 'nexus' : 'direct' }, 'Creating OpenAI provider');
 
-  return createOpenAiCompatibleProvider({
+  const provider = createOpenAiCompatibleProvider({
     // On the gateway the real key is injected on the outbound leg, so no local
     // key is needed — but the SDK insists on one, so fall back to a decoy (the
     // same pattern as the Azure and mantle factories).
     apiKey: config.openaiApiKey || (gatewayServesIt ? 'nexus-managed' : undefined),
     // undefined → the SDK's own default, https://api.openai.com/v1.
     baseURL,
+  });
+  return Object.assign(provider, {
+    deferredTools: (modelId: string) =>
+      supportsOpenAiDeferredTools(modelId) ? OPENAI_DEFERRED_TOOLS : undefined,
   });
 }
 

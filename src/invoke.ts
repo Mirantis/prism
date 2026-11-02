@@ -65,6 +65,7 @@ import {
   type ThreadActivity,
 } from './services/conversation-thread-activity.service';
 import { trackEvent, langfuseTelemetry } from './lib/telemetry';
+import { planToolSearch, type ToolSearchPrompt } from './lib/tool-search/plan';
 import { AsyncChannel } from './utils/async-channel';
 import { RESUMED_RUN_NOTICE } from './prompts/resume-prompt';
 
@@ -81,6 +82,7 @@ export async function buildTurnRequest(
   request: InvokeRequest,
   subagents: ReadonlyArray<{ name: string; description: string }>,
   toolChanges?: AnchoredToolChange[],
+  toolSearch?: ToolSearchPrompt,
 ): Promise<{ systemParts: SystemPromptPart[]; messages: ModelMessage[]; toolChangeMessages: ModelMessage[] }> {
   // Stable vs dynamic parts, for granular caching
   const systemParts = await buildSystemPromptParts(
@@ -103,8 +105,12 @@ export async function buildTurnRequest(
     );
   }
 
+  if (toolSearch?.catalog && stablePart) {
+    stablePart.text += '\n\n' + toolSearch.catalog;
+  }
+
   // Messages are already ModelMessage[] with structured tool call/result pairs
-  const history = buildConversationHistory(context, toolChanges);
+  const history = buildConversationHistory(context, toolChanges, toolSearch?.replayToolCall);
   const messages: ModelMessage[] = history.messages;
 
   // Chat: prompt is already in history (conversation engine stores it before invoke).
@@ -288,6 +294,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
     const model = provider(modelId);
     const cachePoint = provider.cachePoint(modelId);
     const toolChangeProtocol = provider.toolChanges?.(modelId);
+    const deferredToolProtocol = provider.deferredTools?.(modelId);
 
     // Queue for messages a tool asks to append to the running conversation,
     // for content a tool result cannot carry and that must arrive as a user
@@ -303,7 +310,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
     const pendingFileWrites = createPendingFileWrites();
 
     // 4. Collect tools (see lib/tool-collection.ts).
-    const { tools, subagents } = await collectTools({
+    const { tools, subagents, deferrable } = await collectTools({
       userId: request.userId,
       agentId: request.agentId,
       threadId: request.threadId,
@@ -345,6 +352,16 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       userId: request.userId,
       agentId: request.agentId,
     });
+    // Above the threshold the MCP tools go deferred, behind `load_tools` and the
+    // catalog. `load_tools` is added after the gate: the tool it loads is gated
+    // on each call.
+    const toolSearch = await planToolSearch({
+      tools: gatedTools,
+      deferrable,
+      protocol: deferredToolProtocol,
+      modelId,
+      telemetry: { userId: request.userId, agentId: request.agentId, mode: request.mode },
+    });
     // A request that replays the conversation sends the conversation's declared
     // tool list, so the tools block stays the same when the tool set changes
     // (see tool-ledger.service.ts).
@@ -353,15 +370,29 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
           threadId: request.threadId,
           modelId,
           protocol: toolChangeProtocol,
-          available: gatedTools,
+          available: toolSearch.tools,
           rowIds: context.recentMessages.map((row) => row.id),
         })
       : undefined;
     const cachedTools = withToolsCacheControl(
-      declared?.tools ?? gatedTools,
+      declared?.tools ?? toolSearch.tools,
       cachePoint,
       declared?.deferred,
     );
+    // The catalog and the replayed loads follow the tools block the request sends.
+    const toolSearchPrompt = declared
+      ? await toolSearch.promptFor(declared.tools, declared.deferred)
+      : toolSearch;
+    // A summary request keeps the tools block when history names a declared or
+    // loaded tool, or the API refuses the request. The Anthropic SDK drops the
+    // block under tool choice 'none', so there the summary runs under 'auto' and
+    // refuses every call; the OpenAI SDK keeps it under 'none'.
+    const summaryDeclaresTools = Boolean(declared) || toolSearch.summaryDeclaresTools;
+    const summaryTools = summaryDeclaresTools
+      ? summaryToolOptions(cachedTools)
+      : toolSearch.active
+        ? { tools: cachedTools, toolChoice: 'none' as const }
+        : {};
 
     // 6-7. Build the system prompt parts and the messages
     const { systemParts, messages, toolChangeMessages } = await buildTurnRequest(
@@ -369,6 +400,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       request,
       subagents,
       declared?.toolChanges,
+      toolSearchPrompt,
     );
 
     // `guard` is shared by every `warnOnTrailingAssistant` call in this invocation, and
@@ -478,7 +510,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       cachePoint,
       system: cachedSystem,
       tools: cachedTools,
-      declaredTools: Boolean(declared),
+      declaredTools: summaryDeclaresTools,
       messages,
       injections: injections.map((i) => i.message),
       contextRows: toForkRows(context.recentMessages),
@@ -693,7 +725,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
           model,
           system: cachedSystem,
           messages: summaryMessages,
-          ...(declared ? summaryToolOptions(cachedTools) : {}),
+          ...summaryTools,
           maxOutputTokens: MAX_OUTPUT_TOKENS,
           abortSignal: request.abortSignal,
           ...turnTelemetry('invoke-early-stopping'),
@@ -797,6 +829,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       // A stop during routing reads as a fallback, so a canceled turn reports no reason.
       ...(wasCanceled ? {} : { 'llm.tier_reason': turnModel.reason }),
       ...(turnModel.tier ? { 'llm.tier': turnModel.tier } : {}),
+      'tools.deferred': String(toolSearch.deferred.length),
     });
 
   } finally {

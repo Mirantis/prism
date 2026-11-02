@@ -16,7 +16,7 @@
  * `generateText()` accepts, which is all any consumer here needs.
  */
 
-import type { LanguageModel, SystemModelMessage } from 'ai';
+import type { LanguageModel, SystemModelMessage, Tool, ToolResultPart } from 'ai';
 
 /**
  * A `providerOptions` fragment — vendor namespace → option bag.
@@ -49,6 +49,13 @@ export function mergeProviderOptions<T extends Record<string, object>>(
   return merged as T;
 }
 
+/** Whether a tool is sent deferred, in any vendor's `providerOptions`. */
+export function isDeferredTool(tool: Tool): boolean {
+  return Object.values(tool.providerOptions ?? {}).some(
+    (options) => (options as { deferLoading?: unknown } | undefined)?.deferLoading === true,
+  );
+}
+
 /** One tool that became available, or stopped being available, between two turns. */
 export type ToolChange = {
   type: 'tool_addition' | 'tool_removal';
@@ -64,6 +71,60 @@ export interface ToolChangeProtocol {
   deferredTool: ProviderOptionsFragment;
   /** The system message that announces `changes`. */
   announce: (changes: ToolChange[]) => SystemModelMessage;
+}
+
+/** What one `load_tools` call asks for: exact names, a keyword query, or both. */
+export interface ToolLoadRequest {
+  names?: string[];
+  query?: string;
+}
+
+/** What the runtime answered to one `load_tools` call. It is the call's stored result. */
+export interface ToolLoad {
+  loaded: string[];
+  unmatched: string[];
+  /** Deferred tool names near the unmatched ones. */
+  suggestions: string[];
+}
+
+/** A deferred tool's definition, for a vendor whose load result defines the tool. */
+export interface DeferredToolDefinition {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+/** The runtime search that a vendor's `load_tools` tool calls. */
+export interface ToolLoader {
+  description: string;
+  load: (request: ToolLoadRequest) => ToolLoad;
+  definition: (name: string) => DeferredToolDefinition | undefined;
+}
+
+/**
+ * How one model loads a tool whose schema the request sends deferred: the
+ * provider keeps the tool out of the model's context until a `load_tools`
+ * result names it.
+ */
+export interface DeferredToolProtocol {
+  /** `providerOptions` for a tool sent deferred. */
+  deferredTool: ProviderOptionsFragment;
+  /** The `load_tools` tool on this vendor. */
+  loadTool: (loader: ToolLoader) => Tool;
+  /**
+   * Whether the SDK sends the tools block under tool choice 'none'. A request
+   * that replays a load has to declare the tools the load names.
+   */
+  keepsToolsUnderNone: boolean;
+  /**
+   * A stored `load_tools` call as a later request sends it. `result.loaded`
+   * names only tools that request declares, since a result that names an
+   * undeclared tool fails the request.
+   */
+  replay: (
+    call: { id: string; input: unknown; result: ToolLoad },
+    loader: ToolLoader,
+  ) => { id: string; input: unknown; output: ToolResultPart['output'] };
 }
 
 /**
@@ -162,6 +223,12 @@ export type LlmProvider = ((modelId: string) => LanguageModel) & {
    * model, and a model without support rejects the whole request.
    */
   toolChanges?: (modelId: string) => ToolChangeProtocol | undefined;
+  /**
+   * How one model loads a deferred tool, or undefined when it loads none, and
+   * every tool is then sent whole. An allowlist keyed on the model, since each
+   * entry is measured live.
+   */
+  deferredTools?: (modelId: string) => DeferredToolProtocol | undefined;
   /**
    * A check the vendor runs once at startup, logging what the operator has to
    * fix; undefined when the vendor has nothing to verify. It never rejects.

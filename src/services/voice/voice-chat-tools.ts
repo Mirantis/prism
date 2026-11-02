@@ -20,21 +20,27 @@ export function prepareVoiceChatTools(
   computer: PreparedTools | null,
 ): PreparedTools {
   const meetingNames = new Set<string>(MEETING_TOOL_NAMES);
-  const tools = new Map(
-    base.declarations
-      .filter((declaration) => !meetingNames.has(declaration.name))
-      .map((declaration) => [declaration.name, { declaration, owner: base }]),
-  );
-  for (const declaration of computer?.declarations ?? []) {
-    tools.set(declaration.name, { declaration, owner: computer! });
-  }
+  const computerNames = new Set((computer?.declarations ?? []).map((declaration) => declaration.name));
+  const baseNames = () =>
+    base.declarations.filter((d) => !meetingNames.has(d.name) && !computerNames.has(d.name));
+  // Rebuilt only when a load changes the base set, so an unchanged set keeps its identity.
+  let source = base.declarations;
+  let declarations = [...baseNames(), ...(computer?.declarations ?? [])];
   return {
-    declarations: [...tools.values()].map(({ declaration }) => declaration),
-    count: tools.size,
+    get declarations() {
+      if (base.declarations !== source) {
+        source = base.declarations;
+        declarations = [...baseNames(), ...(computer?.declarations ?? [])];
+      }
+      return declarations;
+    },
+    // The base's count includes its deferred tools; the meeting and computer tools are never deferred.
+    count: base.count - (base.declarations.length - baseNames().length) + (computer?.count ?? 0),
+    ...(base.catalog ? { catalog: base.catalog } : {}),
     execute: (name, argumentsJson) => {
-      const tool = tools.get(name);
-      if (!tool) return Promise.resolve(JSON.stringify({ error: `Unknown tool: ${name}` }));
-      return tool.owner.execute(name, argumentsJson);
+      if (computerNames.has(name)) return computer!.execute(name, argumentsJson);
+      if (meetingNames.has(name)) return Promise.resolve(JSON.stringify({ error: `Unknown tool: ${name}` }));
+      return base.execute(name, argumentsJson);
     },
   };
 }

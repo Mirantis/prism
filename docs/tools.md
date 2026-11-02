@@ -310,6 +310,14 @@ Beyond the built-in tools, the runtime can connect to an external **MCP** server
 the agent. When connected, those tools appear to the agent alongside the
 built-in ones and it can use them the same way.
 
+### Many MCP tools
+
+When the MCP and plugin tools would take more than a small share of the model's
+context, the agent gets a short list of them and loads a tool's full definition
+when it needs that tool. A tool it loaded stays loaded for the rest of the
+conversation. Set `TOOL_SEARCH=off` to send every tool in full; see
+[configuration](configuration.md#models).
+
 ## Large tool outputs
 
 Every tool result the agent reads is capped, built-in and MCP alike, so one

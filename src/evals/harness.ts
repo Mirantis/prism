@@ -39,6 +39,7 @@ import type { AgentContext, AgentMessageOrigin, HeartbeatTrigger, InvokeRequest,
 import type { ChatPlatform } from '../services/channel-adapter.interface';
 import { slackChannelLabel } from '../utils/slack-formatter';
 import { teamsChannelLabel } from '../utils/teams-formatter';
+import { planToolSearch } from '../lib/tool-search/plan';
 
 export const EVAL_USER_ID = 'eval-user';
 /** The agent every scenario runs as: the one `AGENT_ID` names, which `run.ts` sets. */
@@ -215,7 +216,7 @@ export async function runTurn(input: TurnInput): Promise<TurnTrace> {
   const provider = createProvider();
   const cachePoint = provider.cachePoint(modelId);
 
-  const { tools, subagents } = await collectTools({
+  const collected = await collectTools({
     userId: EVAL_USER_ID,
     agentId,
     mode: input.mode,
@@ -226,6 +227,15 @@ export async function runTurn(input: TurnInput): Promise<TurnTrace> {
     },
     lockedIn: context.lockedIn,
   });
+  const { subagents } = collected;
+  const toolSearch = await planToolSearch({
+    tools: collected.tools,
+    deferrable: collected.deferrable,
+    protocol: provider.deferredTools?.(modelId),
+    modelId,
+    telemetry: { userId: EVAL_USER_ID, agentId, mode: input.mode },
+  });
+  const { tools } = toolSearch;
 
   const request: InvokeRequest = {
     userId: EVAL_USER_ID,
@@ -235,7 +245,7 @@ export async function runTurn(input: TurnInput): Promise<TurnTrace> {
     ...(input.heartbeatTriggers ? { heartbeatTriggers: input.heartbeatTriggers } : {}),
     ...(input.channel ? { channelLabel: CHANNEL_LABEL[input.channel.platform](input.channel.name) } : {}),
   };
-  const { systemParts: parts, messages } = await buildTurnRequest(context, request, subagents);
+  const { systemParts: parts, messages } = await buildTurnRequest(context, request, subagents, undefined, toolSearch);
   const systemParts =
     input.computer && !parts.some((part) => part.text.includes(COMPUTER_INSTRUCTIONS))
       ? [{ text: COMPUTER_INSTRUCTIONS, cacheable: false }, ...parts]

@@ -16,6 +16,8 @@
 import { asSchema, type Tool } from 'ai';
 import { logger } from '../../logger';
 import { renderAndSpill } from '../../lib/tool-output-limiter';
+import { describeLoad, LOAD_TOOLS_NAME } from '../../lib/llm-providers/deferred-tools';
+import type { ToolLoad } from '../../lib/llm-providers/llm-provider';
 import type { RealtimeFunctionTool } from '../meeting/realtime-session';
 
 /**
@@ -37,9 +39,12 @@ export const MAX_TOOL_RESULT_CHARS = 12_000;
 
 /** A tool set a Realtime session can be given, and the way to run what it calls. */
 export interface PreparedTools {
-  declarations: RealtimeFunctionTool[];
+  /** The tools declared now; a `load_tools` call adds the ones it loads. */
+  readonly declarations: RealtimeFunctionTool[];
   count: number;
   execute: (name: string, argumentsJson: string) => Promise<string>;
+  /** The `# Tool Catalog` section the instructions end with, when tools are deferred. */
+  catalog?: string;
 }
 
 export interface RealtimeToolsOptions {
@@ -47,6 +52,9 @@ export interface RealtimeToolsOptions {
   label: string;
   /** What a truncated result tells the model to do with the part it cannot see. */
   truncationGuidance: string;
+  /** Tools declared only once a `load_tools` call names them. */
+  deferred?: ReadonlySet<string>;
+  catalog?: string;
 }
 
 /**
@@ -68,18 +76,33 @@ export function prepareRealtimeTools(
     usable[name] = tool;
   }
 
-  const declarations: RealtimeFunctionTool[] = Object.entries(usable).map(([name, tool]) => ({
+  const all: RealtimeFunctionTool[] = Object.entries(usable).map(([name, tool]) => ({
     name,
     description: describeTool(tool) ?? name,
     // asSchema normalizes both shapes the codebase produces: zod schemas from the
     // built-in tools and pre-wrapped JSON Schema from MCP and the task tool.
     parameters: asSchema(tool.inputSchema).jsonSchema as Record<string, unknown>,
   }));
+  const deferred = new Set(options.deferred);
+  let declarations = all.filter((declaration) => !deferred.has(declaration.name));
+
+  const load = (result: ToolLoad): string => {
+    const added = result.loaded.filter((name) => deferred.delete(name));
+    if (added.length > 0) {
+      declarations = all.filter((declaration) => !deferred.has(declaration.name));
+    }
+    return describeLoad(result);
+  };
 
   return {
-    declarations,
-    count: declarations.length,
-    execute: (name, argumentsJson) => executeTool(usable, name, argumentsJson, options),
+    get declarations() {
+      return declarations;
+    },
+    count: all.length,
+    ...(options.catalog ? { catalog: options.catalog } : {}),
+    execute: (name, argumentsJson) => deferred.has(name)
+      ? Promise.resolve(JSON.stringify({ error: `Load ${name} with ${LOAD_TOOLS_NAME} first.` }))
+      : executeTool(usable, name, argumentsJson, options, name === LOAD_TOOLS_NAME ? load : undefined),
   };
 }
 
@@ -108,6 +131,7 @@ async function executeTool(
   name: string,
   argumentsJson: string,
   options: RealtimeToolsOptions,
+  render?: (result: ToolLoad) => string,
 ): Promise<string> {
   const tool = tools[name];
   if (!tool || typeof tool.execute !== 'function') {
@@ -133,6 +157,7 @@ async function executeTool(
       abortSignal: new AbortController().signal,
       context: undefined,
     });
+    if (render) return render(result as ToolLoad);
     // The same store chat uses, so a call's saved outputs are read back the same
     // way and swept by the same janitor.
     const rendered = await renderAndSpill(result, {

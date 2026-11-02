@@ -25,8 +25,11 @@
  * `prompts/meeting-prompt.ts`.
  */
 
+import { config } from '../../config';
 import { logger } from '../../logger';
 import { collectTools } from '../../lib/tool-collection';
+import { REALTIME_DEFERRED_TOOLS } from '../../lib/llm-providers/deferred-tools';
+import { planToolSearch } from '../../lib/tool-search/plan';
 import { prepareRealtimeTools, type PreparedTools } from '../voice/realtime-tools';
 
 /**
@@ -67,7 +70,7 @@ export interface MeetingToolBridgeInput {
 export async function prepareMeetingTools(
   input: MeetingToolBridgeInput,
 ): Promise<PreparedTools> {
-  const { tools } = await collectTools({
+  const { tools, deferrable } = await collectTools({
     userId: input.userId,
     agentId: input.agentId,
     threadId: input.threadId,
@@ -86,10 +89,24 @@ export async function prepareMeetingTools(
     },
   });
 
-  const prepared = prepareRealtimeTools(tools, {
+  // The session context is small, so the MCP tools wait for a `load_tools` call
+  // on the same terms as a chat turn's.
+  const toolSearch = await planToolSearch({
+    tools,
+    deferrable,
+    protocol: REALTIME_DEFERRED_TOOLS,
+    modelId: config.openaiRealtimeModel,
+    telemetry: { userId: input.userId, agentId: input.agentId, mode: 'meeting' },
+  });
+  const prepared = prepareRealtimeTools(toolSearch.tools, {
     label: 'Meeting',
     truncationGuidance: VOICE_TRUNCATION_GUIDANCE,
+    deferred: new Set(toolSearch.deferred),
+    catalog: toolSearch.catalog,
   });
-  logger.info(`[Meeting] Collected ${prepared.count} tool(s) for a live session`);
+  logger.info(
+    `[Meeting] Collected ${prepared.count} tool(s) for a live session` +
+      (toolSearch.active ? `, ${toolSearch.deferred.length} deferred` : ''),
+  );
   return prepared;
 }

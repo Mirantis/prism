@@ -114,6 +114,21 @@ describe('collectTools name precedence', () => {
     expect((await collect()).share_file).toBeDefined();
   });
 
+  it('offers the platform and plugin tools for deferral, and no built-in', async () => {
+    mockGetMCPTools.mockResolvedValue({ kubectl_get: foreignTool('from-platform') });
+    mockGetPluginTools.mockResolvedValue({ notes__db__query: foreignTool('from-plugin') });
+
+    const { deferrable } = await collectTools({
+      userId: 'user-1',
+      agentId: 'agent-1',
+      mode: 'chat',
+      lockedIn: false,
+      taskInvoker: vi.fn(),
+    });
+
+    expect(deferrable.sort()).toEqual(['kubectl_get', 'notes__db__query']);
+  });
+
   it('still registers a platform tool whose name nothing else claims', async () => {
     mockGetMCPTools.mockResolvedValue({ kubectl_get: foreignTool('from-platform') });
 

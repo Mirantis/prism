@@ -23,7 +23,7 @@ const TOOL_CHANGE_MODELS = new Set(['claude-opus-5-5', 'claude-opus-4-8', 'claud
  * vendor prefix. An inference-profile ARN names the profile in its last path
  * segment.
  */
-function bareModelId(modelId: string): string {
+export function bareModelId(modelId: string): string {
   return modelId
     .slice(modelId.lastIndexOf('/') + 1)
     .replace(/^(?:(?:us-gov|us|eu|apac|jp|au|ca|global)\.)?(?:anthropic\.)?/i, '');

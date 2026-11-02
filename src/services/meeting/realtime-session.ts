@@ -218,6 +218,18 @@ const PROBE_RESPONSE_TTL_MS = 120_000;
  */
 const CONVERSATION_ITEM_LIMIT = 40;
 
+function toolsConfig(tools: RealtimeFunctionTool[]) {
+  return {
+    tools: tools.map((t) => ({
+      type: 'function',
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters,
+    })),
+    tool_choice: 'auto',
+  };
+}
+
 export interface RealtimeSessionOptions {
   /** The agent's system prompt — Soul, User, Agent Guide, memory, and the rest. */
   instructions: string;
@@ -383,8 +395,11 @@ export class RealtimeSession extends EventEmitter {
    */
   private readonly pendingCreates: PendingCreate[] = [];
 
+  private tools: RealtimeFunctionTool[];
+
   constructor(private readonly options: RealtimeSessionOptions) {
     super();
+    this.tools = options.tools;
   }
 
   /** Open the socket and configure the session. Resolves once configured. */
@@ -521,19 +536,19 @@ export class RealtimeSession extends EventEmitter {
             ...(this.options.voice ? { voice: this.options.voice } : {}),
           },
         },
-        ...(this.options.tools.length > 0
-          ? {
-              tools: this.options.tools.map((t) => ({
-                type: 'function',
-                name: t.name,
-                description: t.description,
-                parameters: t.parameters,
-              })),
-              tool_choice: 'auto',
-            }
-          : {}),
+        ...(this.tools.length > 0 ? toolsConfig(this.tools) : {}),
       },
     });
+  }
+
+  /**
+   * Replace the tools the model can call, mid-call. A partial `session.update`
+   * merges, so the rest of the session is unchanged; a reconnect sends these too.
+   */
+  setTools(tools: RealtimeFunctionTool[]): void {
+    this.tools = tools;
+    if (!this.isOpen) return;
+    this.send({ type: 'session.update', session: { type: 'realtime', ...toolsConfig(tools) } });
   }
 
   private handleMessage(data: WebSocket.RawData): void {
