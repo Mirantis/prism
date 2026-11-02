@@ -29,6 +29,10 @@ routes deliveries apart from the API, and the listener has no browser access:
 no CORS, no Web UI. It listens on the same interface as the API (`PRISM_HOST`).
 `GET /agents/state` stays on the main port.
 
+The port is opened only when `AGENT_MESSAGES_TOKEN_ID` is set: without it no
+delivery could be accepted, so the runtime does not listen at all. The variable
+is read at startup, so setting it takes a restart.
+
 The ingress admits more than the delivery service, such as the people
 of the project, their API tokens and the other agents themselves. It names the
 API token each caller used in `x-forwarded-token-id`, and drops any copy the
@@ -38,8 +42,7 @@ caller sent, so the runtime takes a delivery on the ingress's word:
   `x-forwarded-user-id`) is refused with `403`.
 - Otherwise `x-forwarded-token-id` must be `AGENT_MESSAGES_TOKEN_ID`, the id of
   the delivery service's API token, compared in constant time. Any other caller,
-  or one with no token id, gets `401`. Until `AGENT_MESSAGES_TOKEN_ID` is set,
-  every delivery gets `503`, so the service sends it again once it is.
+  or one with no token id, gets `401`.
 
 The header is trustworthy only for a request that came through the ingress:
 a caller that reaches the port some other way can write it.
@@ -85,7 +88,7 @@ deleted or is hidden by single-thread mode, goes to the one conversation when
 | `401` `{"error"}` | The ingress names no API token, or another one than `AGENT_MESSAGES_TOKEN_ID`. |
 | `403` `{"error"}` | The ingress names a person. |
 | `409` | The `id` belongs to another message: a person's, or another sender's or message id's. |
-| `503` `{"error"}` | The agent is still starting, or `AGENT_MESSAGES_TOKEN_ID` is not set. Send it again later. |
+| `503` `{"error"}` | The agent is still starting. Send it again later. |
 
 On the [chat socket](websocket-protocol.md), the message is a `USER` message with
 `triggeredBy: "AGENT_MESSAGE"`, the sender's `senderId` and `senderName`, and
@@ -111,13 +114,16 @@ flight, such as a scheduled task or a coding task. Otherwise it answers
 - **The agent does not know the other agents.** The platform that hosts the
   agent provides the tools to find them. Check that the platform gives the agent
   those tools.
-- **A delivery gets no answer, or the platform's own error.** The
-  agent-messages port is not exposed, or another process holds it: the log
-  has an error that starts with `[AgentMessages] Cannot listen`. Choose a free
-  `AGENT_MESSAGES_PORT` and restart.
-- **A delivery answers `503`.** The agent is still starting, or
-  `AGENT_MESSAGES_TOKEN_ID` is not set in its environment. The delivery service
-  sends the message again. The log has a warning that starts with
+- **A delivery gets no answer, or the platform's own error.** One of these:
+  - `AGENT_MESSAGES_TOKEN_ID` is not set, so the port is not open. The log
+    says `[AgentMessages] AGENT_MESSAGES_TOKEN_ID is not set` at startup. Set
+    it and restart.
+  - The agent-messages port is not exposed.
+  - Another process holds the port. The log has an error that starts with
+    `[AgentMessages] Cannot listen`. Choose a free `AGENT_MESSAGES_PORT` and
+    restart.
+- **A delivery answers `503`.** The agent is still starting. The delivery
+  service sends the message again. The log has a warning that starts with
   `[AgentMessages]`.
 - **A delivery answers `401`.** The ingress named no API token, or another one
   than `AGENT_MESSAGES_TOKEN_ID`: the variable holds the wrong id, or the request

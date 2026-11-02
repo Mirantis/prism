@@ -1287,16 +1287,18 @@ only `inboundMessageService` sets it, for the agent-message route.
 - **Who may post** is the delivery service alone, as the ingress names it: a
   person the ingress names gets 403, and otherwise `x-forwarded-token-id` must
   equal `AGENT_MESSAGES_TOKEN_ID` (`config.agentMessagesTokenId`, compared in
-  constant time), or the request gets 401; unset, every delivery gets 503. The
+  constant time), or the request gets 401. The
   ingress drops a caller's own copy of the header, so it is trustworthy only
   for requests through the ingress.
 - **Its own port.** `POST /agents/agent-messages` is served by
   `createAgentMessagesApp` (`server.ts`) on `AGENT_MESSAGES_PORT` (default
   3005, on `PRISM_HOST`), with a 1 MB JSON body limit and nothing else: no
   origin guard, no CORS, no other route. `createApp` does not mount it, so the
-  main port answers 404. `index.ts` opens it after the API and closes it with
-  the webhook receiver on shutdown; a port that cannot be opened is logged and
-  the runtime keeps running.
+  main port answers 404. `createAgentMessagesServer` gives no server when
+  `AGENT_MESSAGES_TOKEN_ID` is unset, so the port is not opened at all.
+  Otherwise `index.ts` opens it after the API and closes it with the webhook
+  receiver on shutdown; a port that cannot be opened is logged and the runtime
+  keeps running.
 - **`GET /agents/state`** (`routes/agent-state.ts`) answers `working` or `idle`
   from `isAgentIdle`.
 
