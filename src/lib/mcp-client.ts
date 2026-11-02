@@ -110,8 +110,12 @@ function uncache(url: string, stale: Promise<MCPClient>): void {
   if (clients.get(url) === stale) clients.delete(url);
 }
 
-/** The tools agent messages run on, by the last `__` segment of their name. */
-const AGENT_MESSAGING_TOOLS: ReadonlySet<string> = new Set(['list_agents', 'message_agent']);
+/**
+ * The platform's tool for messaging other agents, by the last `__` segment of
+ * its name: the runtime keeps the conversation each call starts
+ * (`agent-conversation.service.ts`).
+ */
+const AGENT_MESSAGING_TOOLS: ReadonlySet<string> = new Set(['message_agent']);
 
 /**
  * The agent messaging tool each name the model was shown stands for, from the
