@@ -162,6 +162,19 @@ describe('Slack thread classification', () => {
       ]);
     });
 
+    it("names a mention of the bot with the agent's name", async () => {
+      armThread(reads());
+      // The Slack app has a name of its own, which the gate must not read as a stranger.
+      usersInfo.mockImplementation(async ({ user }: { user: string }) => ({
+        user: user === 'BOT1' ? { real_name: 'Prism Bot', is_bot: true } : USERS[user],
+      }));
+
+      await classify([PARENT, BOT_REPLY, ARRIVING]);
+
+      const { prompt } = mockGenerateObject.mock.calls[0][0];
+      expect(prompt.split('\n')[0]).toBe('[Person: Ana Example]: hey <@BOT1:Atlas> can you open the PR?');
+    });
+
     it('names another bot by its profile and marks it a bot', async () => {
       armThread(reads());
 

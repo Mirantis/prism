@@ -1,8 +1,8 @@
 /**
  * Hand-labelled threads for the thread reply gate: a reply in a Slack or Teams
  * thread that does not mention the agent, and whether the agent answers it. Each
- * case runs the adapter's participation rule and then the classifier, as the
- * adapter hands the thread over. All names are invented.
+ * case applies the adapters' participation rule, restated in `gateInput`, and
+ * then runs the classifier on the thread. All names are invented.
  */
 
 import { threadGateAction } from './harness';
