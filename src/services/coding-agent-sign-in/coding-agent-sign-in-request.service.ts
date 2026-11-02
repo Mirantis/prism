@@ -27,6 +27,9 @@ export interface CodingAgentSignInRequest {
 /** Whose subscription the person signs in to. */
 export const PROVIDERS: Record<CodingAgentName, string> = { 'claude-code': 'Claude', codex: 'ChatGPT' };
 
+/** The name each coding agent is shown with. */
+export const NAMES: Record<CodingAgentName, string> = { 'claude-code': 'Claude Code', codex: 'Codex' };
+
 export interface SignInCaller {
   agentId: string;
   userId: string;
@@ -76,7 +79,7 @@ class CodingAgentSignInRequestService {
     await messageDeliveryService.publish(
       caller.userId,
       caller.threadId,
-      `Sign in to ${provider} so coding tasks run on your own subscription. Enter the sign-in code only where this link opens, never in chat.\n\n${link}`,
+      `Sign in to ${provider} to run ${NAMES[agent]} on your own plan. Enter the sign-in code only where this link opens, never in chat.\n\n${link}`,
       'USER_INPUT',
       { blocks: [request], channelContext },
     );
@@ -146,7 +149,7 @@ class CodingAgentSignInRequestService {
         userId,
         agentId,
         threadId,
-        message: `I signed in to ${PROVIDERS[request.agent]} for coding tasks.`,
+        message: `I signed in to ${PROVIDERS[request.agent]}.`,
         metadata: {
           channel: context.channel,
           channelId: context.channelId,

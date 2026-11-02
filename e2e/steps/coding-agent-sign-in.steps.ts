@@ -47,7 +47,7 @@ Given('{string} is not signed in to a subscription', async ({ page }, name: stri
 
 When('I start signing {string} in', async ({ page }, name: string) => {
   const row = page.getByRole('listitem', { name });
-  await expect(row).toContainText(/Uses the deployment's models|Signed out\. Coding tasks fail until you sign in again\./);
+  await expect(row).toContainText(/Uses the deployment's models|Signed out\. Its work fails until you sign in again\./);
   await row.getByRole('button', { name: 'Sign in' }).click();
 });
 
@@ -65,11 +65,8 @@ When('I open the link the agent sends for the {string} sign-in', async ({ page }
 
 async function expectClaudeCodeStep(page: Page): Promise<string> {
   const dialog = signInDialog(page, 'Claude');
-  await expect(dialog).toContainText('Your agent is paused until you finish.');
-  await expect(dialog).toContainText(
-    'Open the sign-in page, sign in to your Claude account, then paste the code it shows.',
-    { timeout: SIGN_IN_TIMEOUT },
-  );
+  await expect(dialog).toContainText("Open Claude's sign-in page.", { timeout: SIGN_IN_TIMEOUT });
+  await expect(dialog).toContainText('Paste the code it shows.');
   const link = dialog.getByRole('link', { name: 'Open sign-in' });
   await expect(link).toHaveAttribute('href', /^https:\/\//);
   await expect(link).toHaveAttribute('target', '_blank');
@@ -80,19 +77,19 @@ async function expectClaudeCodeStep(page: Page): Promise<string> {
 
 Then('the Claude sign-in asks for the code from its sign-in page', async ({ page }) => {
   signInUrl = await expectClaudeCodeStep(page);
+  await expect(signInDialog(page, 'Claude')).not.toContainText('Your agent is paused until you finish.');
 });
 
+// The link is the one the agent sends when it asks, so the agent waits for the sign-in.
 Then('the Claude sign-in asks for the code from the same sign-in page', async ({ page }) => {
   expect(await expectClaudeCodeStep(page)).toBe(signInUrl);
+  await expect(signInDialog(page, 'Claude')).toContainText('Your agent is paused until you finish.');
 });
 
 Then('the ChatGPT sign-in shows a code to enter on its sign-in page', async ({ page }) => {
   const dialog = signInDialog(page, 'ChatGPT');
-  await expect(dialog).toContainText('Your agent is paused until you finish.');
-  await expect(dialog).toContainText(
-    'Open the sign-in page, sign in to your ChatGPT account, and enter this code:',
-    { timeout: SIGN_IN_TIMEOUT },
-  );
+  await expect(dialog).toContainText("Open ChatGPT's sign-in page.", { timeout: SIGN_IN_TIMEOUT });
+  await expect(dialog).toContainText('Enter this code:');
   await expect(dialog.getByTestId('coding-agent-user-code')).toHaveText(/\S/);
   await expect(dialog.getByRole('link', { name: 'Open sign-in' })).toHaveAttribute('href', /^https:\/\//);
   await expect(dialog).toContainText("Waiting for you to finish on OpenAI's page…");

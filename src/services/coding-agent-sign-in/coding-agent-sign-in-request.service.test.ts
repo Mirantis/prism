@@ -70,7 +70,9 @@ describe('codingAgentSignInRequestService', () => {
     expect(repeated).toBe(false);
     const text = delivery.publish.mock.calls[0][2] as string;
     expect(text).toContain(`(https://agent.example.com/coding-agents?agent=claude-code&sign-in=${request.id})`);
-    expect(text).toContain('never in chat');
+    expect(text).toMatch(
+      /^Sign in to Claude to run Claude Code on your own plan\. Enter the sign-in code only where this link opens, never in chat\.\n\n\[Sign in to Claude\]/,
+    );
     expect(text).not.toMatch(/claude\.(ai|com)/);
   });
 
@@ -91,8 +93,8 @@ describe('codingAgentSignInRequestService', () => {
     expect(status.filter((b) => b.agent === 'claude-code').map((b) => b.status)).toEqual(['signed_in', 'signed_in']);
     expect(status.find((b) => b.agent === 'codex')?.status).toBe('waiting');
     expect(engine.chat.mock.calls.map(([input]) => [input.threadId, input.message]).sort()).toEqual([
-      ['thread-1', 'I signed in to Claude for coding tasks.'],
-      ['thread-2', 'I signed in to Claude for coding tasks.'],
+      ['thread-1', 'I signed in to Claude.'],
+      ['thread-2', 'I signed in to Claude.'],
     ]);
     expect(delivery.showInConversation).toHaveBeenCalledTimes(2);
 

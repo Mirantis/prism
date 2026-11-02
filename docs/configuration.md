@@ -199,10 +199,10 @@ Claude Code tasks can run on your Claude Pro, Max, Team or Enterprise
 subscription, while the agent itself keeps its `LLM_PROVIDER`. In the web UI, open
 **Profile → Coding agents** and press **Sign in** next to Claude Code. The dialog
 links to Claude's sign-in page; sign in there, paste the code it shows into
-**Code**, and press **Sign in**. The agent is paused until you finish, and the row
-then shows your plan and email. When a coding task needs the
-subscription first, the agent asks in chat with a **Sign in** card that opens the
-same dialog, and it carries on by itself once you are signed in. **Sign out** sends
+**Code**, and press **Sign in**. The row then shows your plan and email. When a
+coding task needs the subscription first, the agent asks in chat with a
+**Sign in to Claude** card that opens the same dialog; the agent is paused until
+you finish, and it carries on by itself once you are signed in. **Sign out** sends
 coding tasks back to the deployment's models.
 
 Use your own subscription only on an agent nobody else uses. Anthropic's
@@ -240,9 +240,9 @@ Codex tasks can run on your ChatGPT subscription, while the agent itself keeps i
 **Sign in** next to Codex. The dialog shows a one-time code; open the sign-in page,
 sign in to your ChatGPT account and enter the code there. The dialog sees by
 itself when OpenAI confirms the sign-in, and the row then shows your plan and
-email. As with Claude Code, the agent is paused until you finish, a coding task
-that needs the subscription asks in chat with a **Sign in** card, and
-**Sign out** sends coding tasks back to the deployment's models. OpenAI's
+email. As with Claude Code, a coding task that needs the subscription asks in
+chat with a **Sign in to ChatGPT** card and the agent is paused until you finish,
+and **Sign out** sends coding tasks back to the deployment's models. OpenAI's
 [terms](https://openai.com/policies/row-terms-of-use/) also let only the
 subscriber use it, so sign in only on an agent nobody else uses.
 

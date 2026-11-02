@@ -50,10 +50,13 @@ describe('ChatCodingAgentSignIn', () => {
     });
     renderCard(block);
 
-    expect(screen.getByLabelText('Coding agent sign-in')).toHaveTextContent('Sign in to ChatGPT for coding tasks');
-    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    const card = screen.getByRole('button', { name: /^Sign in to ChatGPT/ });
+    expect(card).toHaveTextContent('Sign in to ChatGPTRun Codex on your own ChatGPT plan');
+    fireEvent.click(card);
 
-    expect(await screen.findByRole('dialog', { name: 'Sign in to ChatGPT' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'Sign in to ChatGPT' })).toHaveTextContent(
+      'Your agent is paused until you finish.',
+    );
     expect(await screen.findByTestId('coding-agent-user-code')).toHaveTextContent('ABCD-1234');
     expect(api.startCodingAgentSignIn).toHaveBeenCalledExactlyOnceWith('codex');
   });
@@ -61,7 +64,9 @@ describe('ChatCodingAgentSignIn', () => {
   it('shows a finished sign-in with nothing to do', () => {
     renderCard({ ...block, agent: 'claude-code', status: 'signed_in' });
 
-    expect(screen.getByRole('status', { name: 'Coding agent sign-in' })).toHaveTextContent('Signed in to Claude');
+    expect(screen.getByRole('status', { name: 'Coding agent sign-in' })).toHaveTextContent(
+      'Signed in to ClaudeClaude Code runs on your Claude plan',
+    );
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 });
