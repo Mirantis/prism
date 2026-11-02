@@ -16,9 +16,11 @@
  * runtime's own, given in a config file written for each task (`mcp-config.ts`).
  */
 
-import { claudeCodeEnvironment, hasClaudeCodeCredentials } from './credentials';
-import { readSavedLogin, subscriptionEnvironment, SUBSCRIPTION_SETTINGS } from './authenticated-home';
+import { hasClaudeCodeCredentials } from './credentials';
+import { claudeCodeLaunchEnvironment } from './environment';
+import { readSavedLogin, SUBSCRIPTION_SETTINGS } from './authenticated-home';
 import { usesSubscription } from '../subscription-switch';
+import { notSignedInMessage } from '../subscription';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
 import { runCli } from '../cli-run';
@@ -90,12 +92,10 @@ export function createClaudeCodeAgent(environment?: ExecutionEnvironment): Codin
         // Asked on every run, so a sign-in or a sign-out applies to the next task.
         // Anything but a subscription login fails the task, which then bills nothing.
         if (subscription && (await readSavedLogin(target, task.env, home, signal)) !== 'subscription') {
-          throw new Error(
-            'Claude Code is set to use your Claude subscription, and nobody is signed in to it: sign in again from Coding agents',
-          );
+          throw new Error(notSignedInMessage('claude-code'));
         }
         signal.throwIfAborted();
-        const env = subscription ? subscriptionEnvironment(task.env) : claudeCodeEnvironment(task.env);
+        const env = claudeCodeLaunchEnvironment(task.env, subscription);
         const launch = (mcpConfigPath?: string): CodingAgentRun =>
           runCli(
             {

@@ -17,6 +17,7 @@ import { logger } from './logger';
 import { resolveRealtimeConfiguration } from './lib/managed-realtime';
 import { isLoopbackHostname } from './lib/loopback-host';
 import { type OriginPattern, parseOriginPatterns } from './lib/origin-patterns';
+import { subscriptionForcedIn } from './lib/coding-agents/subscription';
 
 /**
  * Centralized configuration — single place for all env var reads.
@@ -842,10 +843,10 @@ if (!isValidCodingAgent) {
 
 // CLAUDE_CODE_SUBSCRIPTION=true runs every Claude Code task on the Claude
 // subscription signed in to the CLI's home, and on nothing else.
-const claudeCodeSubscription = process.env.CLAUDE_CODE_SUBSCRIPTION?.trim().toLowerCase() === 'true';
+const claudeCodeSubscription = subscriptionForcedIn(process.env, 'claude-code');
 // CODEX_SUBSCRIPTION=true runs every Codex task on the ChatGPT subscription
 // signed in to the CLI's home, and on nothing else.
-const codexSubscription = process.env.CODEX_SUBSCRIPTION?.trim().toLowerCase() === 'true';
+const codexSubscription = subscriptionForcedIn(process.env, 'codex');
 // CLAUDE_CODE_SKIP_PERMISSIONS=true runs every Claude Code edit task with its
 // permission checks off; a plan task stays in plan mode.
 const claudeCodeSkipPermissions = process.env.CLAUDE_CODE_SKIP_PERMISSIONS?.trim().toLowerCase() === 'true';

@@ -88,16 +88,23 @@ export async function readSavedLogin(
   } catch {
     return 'none';
   }
-  const run = await probeCli(environment, 'claude', ['auth', 'status', '--json'], {
+  const run = await probeCli(environment, 'claude', AUTH_STATUS_ARGS, {
     env: { ...subscriptionEnvironment(env), CLAUDE_CONFIG_DIR: configDir },
     signal,
   });
+  return savedLoginFromStatus(run.stdout, run.exitCode);
+}
+
+export const AUTH_STATUS_ARGS = ['auth', 'status', '--json'];
+
+/** The saved login `claude auth status --json` printed. Throws when it printed no status. */
+export function savedLoginFromStatus(stdout: string, exitCode: number | null): SavedLogin {
   // The CLI exits 1 with the same JSON when nobody is signed in.
   let status: AuthStatus;
   try {
-    status = JSON.parse(run.stdout) as AuthStatus;
+    status = JSON.parse(stdout) as AuthStatus;
   } catch {
-    throw new Error(`claude auth status exited with ${run.exitCode} and no status`);
+    throw new Error(`claude auth status exited with ${exitCode} and no status`);
   }
   if (status.loggedIn !== true) return 'none';
   return status.authMethod === 'claude.ai' && status.subscriptionType ? 'subscription' : 'other';
