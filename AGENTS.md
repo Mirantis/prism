@@ -880,7 +880,7 @@ and refuses every call, because under `none` the SDK sends no tools block.
 |---------|------|---------|
 | **invokeStream** | `invoke.ts` | Streaming primitive: builds context, collects tools, calls `generateText()` with step limit and early stopping, yields each `InvokeStep` as `onStepFinish` fires. Errors are yielded as friendly steps (via `buildErrorStep`) rather than thrown. Bridges the SDK's push-based callback into async iteration via `utils/async-channel.ts`. |
 | **invoke** | `invoke.ts` | Thin aggregating wrapper around `invokeStream()`: drains the step stream into a single `InvokeResponse`. Used by callers that need the full result before acting (heartbeat, cron, subagent/task tool). |
-| **selectTurnModel** | `lib/model-routing.ts` | The one owner of which model a turn runs on. Fixed mode runs the per-mode model columns. Auto mode runs one of the agent's small / medium / large tiers (`resolveModelSelection` merges the columns with `MODEL_MODE` and `AUTO_MODEL_*`), labelled by the classification model with `purpose: 'model-routing'`. A failed or unknown label runs large; a tier whose window cannot hold the thread plus the incoming request is not offered. A thread holds its tier while the newest invoke row of it in `llm_calls` is younger than `PROMPT_CACHE_TTL_MS`: up on any turn, down only on a first turn, after compaction or past the TTL, since a switch reads the whole thread cold on the incoming model |
+| **selectTurnModel** | `lib/model-routing.ts` | The one owner of which model a turn runs on. Fixed mode runs the per-mode model columns. Auto mode runs one of the agent's small / medium / large tiers (`resolveModelSelection` merges the columns with `MODEL_MODE` and `AUTO_MODEL_*`), labelled by the classification model with `purpose: 'model-routing'`. With a medium tier offered, medium is the everyday tier and the classifier's default when unsure, and large is kept for the hardest turns; without it, unsure means large. A failed or unknown label runs large; a tier whose window cannot hold the thread plus the incoming request is not offered. A thread holds its tier while the newest invoke row of it in `llm_calls` is younger than `PROMPT_CACHE_TTL_MS`: up on any turn, down only on a first turn, after compaction or past the TTL, since a switch reads the whole thread cold on the incoming model |
 | **ConversationEngineService** | `services/conversation-engine.service.ts` | Chat flow orchestration: thread management, iterates `invokeStream()` directly and publishes each text-bearing step the moment it arrives, delivers via local `messageDeliveryService` |
 | **MessageDeliveryService** | `services/message-delivery.service.ts` | Unified message publish: stores via `conversationService`, delivers via channel adapters (channel-scoped for user messages, broadcast for autonomous) |
 | **DeliveryTargetService** | `services/delivery-target.service.ts` | `ceiling`, the one owner of where a heartbeat, unbound scheduled-task or webhook run may post (`DELIVER_TARGETS`, plus chosen linked channels); delivers a message the runtime posts for such a run (a failure, a budget notice, a deliver-only template) to that target; checks a channel list a write gives |
@@ -1173,7 +1173,7 @@ What the operator sets on `docker run`:
 | `TEAMS_PORT` | Port of the Teams bot endpoint's own listener, which serves `POST /agents/teams/messages` and nothing else — the port to publish | `3979` |
 | `LLM_PROVIDER` | LLM vendor: `bedrock`, `azure`, `bedrock-mantle`, `openai`, `openrouter`, `anthropic`, or `litellm` (one per container). Any other value runs `bedrock` and logs a startup warning | `bedrock` |
 | `MODEL_MODE` | Model selection for an agent that has not chosen one: `fixed` or `auto` (`lib/model-routing.ts`). With `auto`, `AUTO_MODEL_SMALL` and `AUTO_MODEL_LARGE` are required, and boot fails without them | `fixed` |
-| `AUTO_MODEL_SMALL` / `AUTO_MODEL_MEDIUM` / `AUTO_MODEL_LARGE` | Auto tiers for an agent that has not set its own. Medium is optional; with it unset the classifier chooses between small and large | — |
+| `AUTO_MODEL_SMALL` / `AUTO_MODEL_MEDIUM` / `AUTO_MODEL_LARGE` | Auto tiers for an agent that has not set its own. Medium is optional; with it unset the classifier chooses between small and large, and with it set medium runs everyday work | — |
 | `CODING_AGENT` | Default coding agent: `claude-code` or `codex`. Each task may override it with `agent`. | Claude credentials first, then an OpenAI key, else `claude-code` |
 | `CLAUDE_CODE_MODEL_SMALL` | Model for the Claude Code small tier | `haiku` (Bedrock: `global.anthropic.claude-haiku-5-5`) |
 | `CLAUDE_CODE_MODEL_MEDIUM` | Model for the Claude Code medium tier | `sonnet` (Bedrock: `global.anthropic.claude-sonnet-5-5`) |
@@ -1523,7 +1523,7 @@ A channel that starts the heartbeat with its own messages is a `HeartbeatTrigger
 
 ### Default Heartbeat Template
 
-The default `heartbeatMd` contains only headers and comments (no active checks). The agent always runs the LLM call, but when no checks are configured the heartbeat system prompt tells it to post nothing.
+The default `heartbeatMd` contains only headers and comments (no active checks). A heartbeat without checks runs like any other: the agent makes the LLM call, and the heartbeat system prompt tells it to post nothing.
 
 ## Empty Message Filtering
 

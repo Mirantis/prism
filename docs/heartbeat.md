@@ -25,6 +25,11 @@ the heartbeat its own model — useful for running routine checks on a cheaper
 model. Set it from the **[Web UI → Profile](web-ui.md#profile)** or the
 **[Terminal UI](terminal-ui.md#slash-commands)** (`/heartbeat-model <id>`); leave
 it empty to use the main model.
+In **[Auto](configuration.md#auto-model-selection)** mode the checks choose the
+tier instead, and routine checks run on the medium model when one is set.
+
+A heartbeat without checks runs like any other: the agent makes the model call,
+and the heartbeat system prompt tells it to post nothing.
 
 ## Cadence
 

@@ -34,6 +34,7 @@ import {
   type ConversationMessage,
 } from '../prompts/context-builder';
 import { COMPACTION_PROMPT } from '../prompts/compaction-prompt';
+import { scheduledRunPrompt } from '../prompts/scheduled-run-prompt';
 import { agentMessageColumns } from '../prompts/agent-message-prompt';
 import type { AgentContext, AgentMessageOrigin, HeartbeatTrigger, InvokeRequest, TaskLastSend } from '../types';
 import type { ChatPlatform } from '../services/channel-adapter.interface';
@@ -137,7 +138,7 @@ export async function withSampleAccounting<T>(
 // ---------------------------------------------------------------------------
 
 /** One stored message of the thread a scenario starts from. */
-type HistoryEntry =
+export type HistoryEntry =
   | { user: string; attachments?: AttachmentMeta[] }
   /** A message from another agent of the project. */
   | { fromAgent: AgentMessageOrigin; text: string }
@@ -429,16 +430,26 @@ export async function judge(rubric: string, reply: string): Promise<boolean> {
   return answer === 'YES';
 }
 
+/** A timed heartbeat's prompt (`heartbeat.service.ts`); the classifier reads its checks instead. */
+const HEARTBEAT_PROMPT = 'Perform your heartbeat check now.';
+
 /**
- * The tier Auto model selection picks for a chat request, offered `tiers`, with
- * `history` as the thread so far. Throws when the classifier call fails, since a
- * failure runs the large tier and would pass a scenario that expects it.
+ * The tier Auto model selection picks for a request, offered `tiers`, with
+ * `history` as the thread so far. A chat request is the prompt; a scheduled one
+ * is wrapped as for a task without a thread; a heartbeat's is its checks,
+ * which the classifier reads in place of the fixed heartbeat prompt. Throws
+ * when the classifier call fails, since a failure runs the large tier and would
+ * pass a scenario that expects it.
  */
 export async function routeTier(
-  prompt: string,
-  options: { history?: HistoryEntry[]; tiers?: ModelTier[] } = {},
+  request: string,
+  options: { history?: HistoryEntry[]; tiers?: ModelTier[]; mode?: 'chat' | 'heartbeat' | 'cron' } = {},
 ): Promise<ModelTier> {
-  const context = await agentContext([...(options.history ?? []), { user: prompt }]);
+  const mode = options.mode ?? 'chat';
+  const prompt =
+    mode === 'heartbeat' ? HEARTBEAT_PROMPT : mode === 'cron' ? scheduledRunPrompt(request) : request;
+  const context = await agentContext([...(options.history ?? []), ...(mode === 'chat' ? [{ user: prompt }] : [])]);
+  if (mode === 'heartbeat') context.heartbeatMd = request;
   const offered = options.tiers ?? ['small', 'large'];
   const tierModel = (tier: ModelTier) => `eval-${tier}-model`;
   context.modelSelection = {
@@ -451,7 +462,7 @@ export async function routeTier(
   };
   const choice = await selectTurnModel(
     context,
-    { mode: 'chat', prompt, userId: EVAL_USER_ID, agentId: EVAL_AGENT_ID },
+    { mode, prompt, userId: EVAL_USER_ID, agentId: EVAL_AGENT_ID },
     createProvider(),
   );
   if (choice.reason !== 'classified' || !choice.tier) {

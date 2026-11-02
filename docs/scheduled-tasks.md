@@ -75,6 +75,9 @@ only when something happens sends it again only when it happens again.
 Scheduled runs use the agent's main model by default, but you can give them
 their own model from the **[Web UI → Profile](web-ui.md#profile)** or the
 **[Terminal UI](terminal-ui.md#slash-commands)** (`/cron-model <id>`).
+In **[Auto](configuration.md#auto-model-selection)** mode the instruction
+chooses the tier instead, and routine tasks run on the medium model when one
+is set.
 
 ## Waiting: continue in the same conversation
 
