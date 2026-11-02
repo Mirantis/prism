@@ -72,14 +72,31 @@ export async function readCodexLogin(
   codexHome: string,
   signal?: AbortSignal,
 ): Promise<SavedCodexLogin> {
-  const run = await probeCli(environment, 'codex', ['login', 'status', '-c', 'cli_auth_credentials_store="file"'], {
+  const run = await probeCli(environment, 'codex', LOGIN_STATUS_ARGS, {
     env: { ...subscriptionEnvironment(env), CODEX_HOME: codexHome },
     signal,
   });
-  // Codex 0.163 writes the status to stderr, and exits 1 when nobody is signed in.
-  const status = `${run.stdout}\n${run.stderr}`;
-  if (/^Logged in using ChatGPT$/m.test(status)) return 'chatgpt';
-  if (/^Logged in using /m.test(status)) return 'other';
-  if (/^Not logged in$/m.test(status)) return 'none';
-  throw new Error(`codex login status exited with ${run.exitCode} and no status`);
+  return codexLoginFromStatus(`${run.stdout}\n${run.stderr}`, run.exitCode);
 }
+
+export const LOGIN_STATUS_ARGS = ['login', 'status', '-c', 'cli_auth_credentials_store="file"'];
+
+/** The saved login `codex login status` printed. Throws when it printed no status. */
+export function codexLoginFromStatus(output: string, exitCode: number | null): SavedCodexLogin {
+  // Codex 0.163 writes the status to stderr, and exits 1 when nobody is signed in.
+  if (/^Logged in using ChatGPT$/m.test(output)) return 'chatgpt';
+  if (/^Logged in using /m.test(output)) return 'other';
+  if (/^Not logged in$/m.test(output)) return 'none';
+  throw new Error(`codex login status exited with ${exitCode} and no status`);
+}
+
+/**
+ * The config a Codex run on the subscription takes: OpenAI's own provider, so
+ * the home's `config.toml` can't move it to one that bills the deployment, and
+ * the ChatGPT login saved in the home's file store, and no other.
+ */
+export const SUBSCRIPTION_CONFIG_ARGS = [
+  '-c', 'model_provider="openai"',
+  '-c', 'forced_login_method="chatgpt"',
+  '-c', 'cli_auth_credentials_store="file"',
+];

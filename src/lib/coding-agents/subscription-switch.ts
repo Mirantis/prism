@@ -13,8 +13,9 @@
 import { config, CODING_AGENTS, type CodingAgentName } from '../../config';
 import { logger } from '../../logger';
 import { runtimeStateService } from '../../services/runtime-state.service';
+import { subscriptionKey } from './subscription';
 
-export const subscriptionKey = (agent: CodingAgentName) => `codingAgentSubscription:${agent}`;
+export { subscriptionKey } from './subscription';
 
 const signedIn = new Set<CodingAgentName>();
 

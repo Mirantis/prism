@@ -1103,6 +1103,8 @@ src/
 │   │   ├── get-coding-agent.ts # Selector: `config.codingAgent` → adapter, one instance per agent so the adapter that prepared the home runs every task; a `Record` so a config name without an adapter fails to compile
 │   │   ├── bedrock-credentials.ts # Shared AWS credential detection
 │   │   ├── subscription-switch.ts # Whether an agent's tasks run on the subscription in its CLI's home: on after a sign-in from Coding agents, off after sign-out (`runtime_state`, held in memory from boot), or held on by `CLAUDE_CODE_SUBSCRIPTION` / `CODEX_SUBSCRIPTION`
+│   │   ├── subscription.ts     # What tasks and the desktop's terminal share about the switch: its `runtime_state` key, the env flags that hold it on, the not-signed-in message. Imports no config
+│   │   ├── terminal.ts         # `claude` / `codex` in the desktop's terminal: the switch read from the database opened read-only, and the env and args a task would get (`--settings`, the ChatGPT login), with a login check before a session. Imports no config
 │   │   ├── codex/
 │   │   │   ├── credentials.ts             # Which credential a task uses; for `CODEX_SUBSCRIPTION`, the home's saved login (`codex login status`) and `subscriptionEnvironment`
 │   │   │   └── codex-agent.ts             # Codex CLI adapter. With the subscription on (`subscription-switch.ts`), each run asks the home for its login first: a ChatGPT login runs the task with `forced_login_method="chatgpt"`, and anything else fails it

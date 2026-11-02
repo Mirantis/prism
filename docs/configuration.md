@@ -269,6 +269,10 @@ run in a container, a conversation you
 start with `prism` inside a repository runs its tasks on this machine, so sign in on
 this machine as well.
 
+In the Prism image, `claude` and `codex` in the agent's desktop terminal follow the
+same setting as tasks: with it on, a session starts only once you are signed in,
+and `claude auth login` or `codex login` signs you in from there too.
+
 ### What a coding task may do
 
 Claude Code runs an edit task in its

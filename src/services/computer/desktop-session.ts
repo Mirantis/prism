@@ -10,25 +10,60 @@
  */
 
 import { execFile, spawn, type ChildProcess } from 'child_process';
+import fs from 'fs';
+import path from 'path';
 import { promisify } from 'util';
 import { logger } from '../../logger';
+import { resolveDataDir } from '../../lib/data-dir';
+import { WRAPPERS_ENV } from '../../lib/coding-agents/terminal';
 import { getExecutionEnvironment } from '../../lib/execution-environments/get-execution-environment';
 
+/** The built `scripts/coding-agent-exec.ts`; absent under tsx and in the packaged binary. */
+const EXEC_ENTRY = path.resolve(__dirname, '..', '..', 'scripts', 'coding-agent-exec.js');
+
 /**
- * The coding agents' homes, so `claude` or `codex` in the desktop's terminal
- * share the login a sign-in from Coding agents saved for tasks. Only when tasks
- * run in this container: a docker environment's homes are paths in another one.
+ * `claude` and `codex` in the desktop's terminal: the homes a sign-in from
+ * Coding agents saved the login to, and wrappers first on the PATH that apply
+ * the subscription switch the way tasks do. Only when tasks run in this
+ * container: a docker environment's homes are paths in another one.
  */
-export function codingAgentHomesEnv(): Record<string, string> {
+export function codingAgentTerminalEnv(
+  entry = EXEC_ENTRY,
+  wrappersDir = path.join(resolveDataDir(), 'coding-agent-bin'),
+): Record<string, string> {
   try {
     const environment = getExecutionEnvironment();
     if (environment.id !== 'local') return {};
     const { claudeHome, codexHome } = environment.paths();
-    return { CLAUDE_CONFIG_DIR: claudeHome, CODEX_HOME: codexHome };
+    return { CLAUDE_CONFIG_DIR: claudeHome, CODEX_HOME: codexHome, ...codingAgentWrappers(entry, wrappersDir) };
   } catch (err) {
     logger.debug({ err }, "[VoiceChat] No coding agent homes for the desktop's terminal");
     return {};
   }
+}
+
+const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+
+/**
+ * Writes the `claude` and `codex` wrappers, each an exec of `coding-agent-exec`,
+ * and returns the PATH that finds them first. Nothing without the built entry.
+ */
+function codingAgentWrappers(entry: string, dir: string): Record<string, string> {
+  if (!fs.existsSync(entry)) return {};
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    for (const command of ['claude', 'codex']) {
+      const target = path.join(dir, command);
+      // Renamed into place, so a terminal starting one never reads half a file.
+      const staged = `${target}.${process.pid}.tmp`;
+      fs.writeFileSync(staged, `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(entry)} ${command} "$@"\n`, { mode: 0o755 });
+      fs.renameSync(staged, target);
+    }
+  } catch (err) {
+    logger.warn({ err }, "[VoiceChat] Could not write the desktop terminal's coding agent wrappers");
+    return {};
+  }
+  return { PATH: `${dir}${path.delimiter}${process.env.PATH ?? ''}`, [WRAPPERS_ENV]: dir };
 }
 
 const run = promisify(execFile);
@@ -74,7 +109,7 @@ export class DesktopSession {
 
     const proc = spawn('startxfce4', [], {
       stdio: ['ignore', 'ignore', 'pipe'],
-      env: { ...process.env, ...codingAgentHomesEnv(), ...this.env, ...this.busEnv },
+      env: { ...process.env, ...codingAgentTerminalEnv(), ...this.env, ...this.busEnv },
     });
     proc.on('error', (err) => logger.warn({ err }, '[VoiceChat] Desktop failed to start'));
     proc.on('exit', (code, signal) => {
@@ -99,7 +134,7 @@ export class DesktopSession {
    */
   async startDock(): Promise<void> {
     // The dock starts the terminal too.
-    const env = { ...process.env, ...codingAgentHomesEnv(), ...this.env, ...this.busEnv };
+    const env = { ...process.env, ...codingAgentTerminalEnv(), ...this.env, ...this.busEnv };
     const dock = this.dock;
     this.dock = null;
     await endProcess(dock);

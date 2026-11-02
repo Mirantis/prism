@@ -15,10 +15,12 @@ import {
   hasSavedCodexLogin,
   readCodexLogin,
   subscriptionEnvironment,
+  SUBSCRIPTION_CONFIG_ARGS,
   type CodexAuthMethod,
 } from './credentials';
 import { deferredRun } from '../deferred-run';
 import { usesSubscription } from '../subscription-switch';
+import { notSignedInMessage } from '../subscription';
 import {
   getExecutionEnvironment,
   getExecutionEnvironmentFor,
@@ -80,7 +82,7 @@ export function createCodexAgent(environment?: ExecutionEnvironment): CodingAgen
           // Anything but a ChatGPT login fails the task, which then bills nothing.
           const login = await readCodexLogin(runIn, task.env, home, signal);
           if (login !== 'chatgpt') {
-            throw new Error('Codex is set to use your ChatGPT subscription, and nobody is signed in to it: sign in again from Coding agents');
+            throw new Error(notSignedInMessage('codex'));
           }
           signal.throwIfAborted();
           return launch(subscriptionEnvironment(task.env));
@@ -128,15 +130,14 @@ function buildArgs(task: CodingAgentTask, authMethod: CodexAuthMethod | undefine
     args.push('-c', 'model_provider="amazon-bedrock"');
     if (!task.modelTier) args.push('-c', 'model="openai.gpt-5.6-terra"');
     args.push('-c', `model_providers.amazon-bedrock.aws.region=${JSON.stringify(bedrockRegion(task.env))}`);
+  } else if (authMethod === 'subscription') {
+    // A repository's `.codex/config.toml` cannot move the task off this login:
+    // Codex 0.163 ignores its `model_provider`, `model_providers` and `profiles`.
+    args.push(...SUBSCRIPTION_CONFIG_ARGS);
   } else {
     args.push('-c', 'model_provider="openai"');
     if (authMethod === 'api') args.push('-c', 'forced_login_method="api"');
     if (authMethod === 'saved') args.push('-c', 'cli_auth_credentials_store="file"');
-    // A repository's `.codex/config.toml` cannot move the task off this login:
-    // Codex 0.163 ignores its `model_provider`, `model_providers` and `profiles`.
-    if (authMethod === 'subscription') {
-      args.push('-c', 'forced_login_method="chatgpt"', '-c', 'cli_auth_credentials_store="file"');
-    }
   }
   // An omitted tier or effort must emit no selection flag here, preserving
   // deployment configuration and the existing Bedrock default above. Keep
