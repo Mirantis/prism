@@ -111,8 +111,8 @@ describe('createOpenAiProvider', () => {
 });
 
 describe('deferred tools', () => {
-  it('defers tools on the measured GPT-5.6 models', () => {
-    expect(createOpenAiProvider().deferredTools?.('gpt-5.6-sol')).toBe(OPENAI_DEFERRED_TOOLS);
+  it.each(['gpt-5.6-sol', 'gpt-6-sol', 'gpt-6.1-terra'])('defers tools on the measured model %s', (modelId) => {
+    expect(createOpenAiProvider().deferredTools?.(modelId)).toBe(OPENAI_DEFERRED_TOOLS);
   });
 
   // gpt-5.5 rejects a client tool search; gpt-5.4 takes one only without stored responses.

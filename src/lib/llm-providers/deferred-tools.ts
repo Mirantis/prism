@@ -34,7 +34,16 @@ const ANTHROPIC_DEFERRED_MODELS = new Set([
  * OpenAI models measured to load a deferred tool through a client-executed
  * `tool_search` and to replay that load from stored history under `store: true`.
  */
-const OPENAI_DEFERRED_MODELS = new Set(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']);
+const OPENAI_DEFERRED_MODELS = new Set([
+  'gpt-5.6-sol',
+  'gpt-5.6-terra',
+  'gpt-5.6-luna',
+  'gpt-6-sol',
+  'gpt-6-luna',
+  'gpt-6-astra',
+  'gpt-6.1-sol',
+  'gpt-6.1-terra',
+]);
 
 export function supportsAnthropicDeferredTools(modelId: string): boolean {
   return ANTHROPIC_DEFERRED_MODELS.has(bareModelId(modelId));
