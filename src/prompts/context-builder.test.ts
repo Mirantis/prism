@@ -1792,6 +1792,15 @@ describe('a message from another agent', () => {
     });
   });
 
+  it('gets no person tag in a turn that tags senders', () => {
+    const context = createTestAgentContext({ recentMessages: [{ ...stored, content: 'Check CI.' }] });
+
+    const { content } = buildConversationHistory(context, [], undefined, true).messages[0] as { content: string };
+
+    expect(content.startsWith(FROM_AGENT + '<agent-message from=')).toBe(true);
+    expect(content.endsWith('>\nCheck CI.\n</agent-message>')).toBe(true);
+  });
+
   it('keeps its attachment stubs inside the tag', () => {
     const context = createTestAgentContext({
       recentMessages: [
