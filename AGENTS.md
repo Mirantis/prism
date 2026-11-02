@@ -349,6 +349,10 @@ person or a real customer environment. Tests, fixtures, docs and PR assets use
 invented values. Real secrets stay in `.env` and in the deployment, which
 `.gitignore` keeps out of the tree.
 
+Name no real product that runs this runtime, in code, comments, tests, docs,
+commit messages or PR descriptions. Use an invented name, such as
+`example-product`.
+
 ## Telemetry
 
 Every new **user-facing feature must also emit product telemetry** for its key
