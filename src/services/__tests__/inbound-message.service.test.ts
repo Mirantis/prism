@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 
-const { mockPrisma, mockEngine, mockConfig, mockEndWork } = vi.hoisted(() => ({
+const { mockPrisma, mockEngine, mockConfig, mockEndWork, mockWritableThreadId } = vi.hoisted(() => ({
   mockPrisma: {
     conversationThread: { findUnique: vi.fn() },
     conversationMessage: { findUnique: vi.fn(), findFirst: vi.fn() },
@@ -14,6 +14,7 @@ const { mockPrisma, mockEngine, mockConfig, mockEndWork } = vi.hoisted(() => ({
   },
   mockConfig: { agentId: 'agent-1' as string | undefined, ownerUserId: 'owner-1' },
   mockEndWork: vi.fn(),
+  mockWritableThreadId: vi.fn(),
 }));
 
 vi.mock('../../lib/prisma', () => ({ default: mockPrisma }));
@@ -24,7 +25,9 @@ vi.mock('../conversation-engine.service', async () => {
 });
 vi.mock('../../config', () => ({ config: mockConfig }));
 vi.mock('../../lib/telemetry', () => ({ trackEvent: vi.fn() }));
-vi.mock('../conversation.service', () => ({ conversationService: { clientThreadFilter: async () => ({}) } }));
+vi.mock('../conversation.service', () => ({
+  conversationService: { clientThreadFilter: async () => ({}), writableThreadId: mockWritableThreadId },
+}));
 vi.mock('../message-delivery.service', () => ({ messageDeliveryService: { showInConversation: vi.fn() } }));
 vi.mock('../pending-work.service', () => ({ pendingWorkService: { end: mockEndWork } }));
 
@@ -102,6 +105,7 @@ describe('InboundMessageService', () => {
     }));
     mockEngine.chat.mockImplementation(exchange());
     mockEngine.cancel.mockReturnValue(false);
+    mockWritableThreadId.mockImplementation(async (threadId: string) => threadId);
   });
 
   describe('Scenario: storing first', () => {
@@ -599,6 +603,7 @@ describe('InboundMessageService: a message from another agent', () => {
       titleSet: null,
     }));
     mockEngine.chat.mockImplementation(exchange());
+    mockWritableThreadId.mockImplementation(async (threadId: string) => threadId);
   });
 
   it('stores it as that agent’s and runs its turn knowing where it came from', async () => {
@@ -644,6 +649,17 @@ describe('InboundMessageService: a message from another agent', () => {
     expect(mockEngine.chat).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'Can you check CI?', agentMessage: origin, stored: { id: 'd-1', titleSet: null } }),
     );
+  });
+
+  it('confirms but does not run a delivery stored in a thread single-thread mode now hides', async () => {
+    mockPrisma.conversationMessage.findUnique.mockResolvedValue(agentRow('d-1', THREAD_A));
+    mockWritableThreadId.mockImplementation(async () => THREAD_B);
+
+    const acceptance = await inboundMessageService.accept(fromAgent('d-1', THREAD_B));
+    await settle();
+
+    expect(acceptance).toMatchObject({ duplicate: true, queued: false, message: { threadId: THREAD_A } });
+    expect(mockEngine.chat).not.toHaveBeenCalled();
   });
 
   it.each([
