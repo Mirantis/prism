@@ -1353,7 +1353,45 @@ describe('listCompactedMessages', () => {
     expect(mockPrisma.conversationMessage.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { threadId: 't1', isCompacted: true }, skip: 4, take: 3 }),
     );
-    expect(page).toEqual({ messages: [row('a'), row('b')], more: true });
+    expect(page).toEqual({ messages: [{ ...row('a'), position: 4 }, { ...row('b'), position: 5 }], more: true });
+  });
+
+  it("gives each match its position among the thread's compacted messages", async () => {
+    mockPrisma.conversationMessage.findMany.mockResolvedValueOnce([row('one'), row('two pods'), row('three'), row('pods four')]);
+
+    const page = await conversationService.listCompactedMessages('t1', { query: 'pods', offset: 0, limit: 5 });
+
+    expect(page.messages.map((m) => m.position)).toEqual([1, 3]);
+  });
+
+  it('counts positions across search batches', async () => {
+    const first = Array.from({ length: 200 }, (_, i) => ({ ...row(i === 3 ? 'pods' : 'x'), id: `m${i}` }));
+    mockPrisma.conversationMessage.findMany
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce([{ ...row('y'), id: 'm200' }, { ...row('pods again'), id: 'm201' }]);
+
+    const page = await conversationService.listCompactedMessages('t1', { query: 'pods', offset: 0, limit: 5 });
+
+    expect(page.messages.map((m) => m.position)).toEqual([3, 201]);
+    expect(mockPrisma.conversationMessage.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ cursor: { id: 'm199' }, skip: 1 }),
+    );
+  });
+
+  it('reads one compacted message by position, in the same order', async () => {
+    mockPrisma.conversationMessage.findMany.mockResolvedValueOnce([row('third')]);
+
+    const message = await conversationService.getCompactedMessage('t1', 2);
+
+    expect(mockPrisma.conversationMessage.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { threadId: 't1', isCompacted: true },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        skip: 2,
+        take: 1,
+      }),
+    );
+    expect(message).toEqual({ ...row('third'), position: 2 });
   });
 
   it('matches text and tool calls, ignoring case', async () => {
