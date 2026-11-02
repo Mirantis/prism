@@ -79,7 +79,7 @@
     "undici": "^7.29.1",
     "uuid": "^14.0.3",
     "ws": "^8.22.0",
-    "zod": "^4.6.5"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.3",
@@ -112,6 +112,13 @@
     "smol-toml": "^1.9.1",
     "@prisma/adapter-better-sqlite3": {
       "better-sqlite3": "$better-sqlite3"
-    }
+    },
+    "@microsoft/teams.apps": {
+      "@azure/msal-node": "^7.1.0"
+    },
+    "@ts-morph/common": {
+      "minimatch": "^11.0.1"
+    },
+    "markdown-it": "^15.0.3"
   }
 }
