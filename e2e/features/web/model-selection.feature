@@ -27,3 +27,12 @@ Feature: Auto model selection
     When I ask "Write a TypeScript function that parses ISO 8601 durations, with unit tests, and explain each edge case."
     Then the turn ran on the large test model
     And each turn's routing call is recorded
+
+  # With a medium model set, the classifier once sent this request to the large model; it
+  # now runs on the medium one.
+  # @slow: the "I ask" step waits up to 240 s, which fits only under the @slow test timeout.
+  @slow
+  Scenario: Everyday work runs on the medium model when one is set
+    Given the agent chooses between the small, the medium and the large test models
+    When I ask "Plan my week: I have a client call on Monday, a report due on Wednesday and two interviews on Thursday. Suggest when to prepare for each."
+    Then the turn ran on the medium test model
