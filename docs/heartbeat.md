@@ -28,9 +28,6 @@ it empty to use the main model.
 In **[Auto](configuration.md#auto-model-selection)** mode the checks choose the
 tier instead, and routine checks run on the medium model when one is set.
 
-A heartbeat without checks runs like any other: the agent makes the model call,
-and the heartbeat system prompt tells it to post nothing.
-
 ## Cadence
 
 - **Default interval:** every **8 hours**.

@@ -76,12 +76,11 @@ const DEFAULT_MEMORY_MD = `## Important Decisions
 
 /**
  * Default Heartbeat Instructions - What to check during periodic heartbeats
- * Starts with no checks - user must configure monitoring preferences. Every
- * heartbeat still runs a model call; with no checks it posts nothing.
+ * Starts minimal - user must configure monitoring preferences
  */
 const DEFAULT_HEARTBEAT_MD = `# Heartbeat Instructions
 
-# No checks yet. Every heartbeat still runs, and posts nothing until checks are added.
+# Keep this file empty (or with only headers/comments) to skip heartbeat checks.
 # Add tasks below when you want the agent to check something periodically.
 `;
 
