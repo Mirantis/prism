@@ -30,7 +30,7 @@ import { computerRouter } from './routes/computer';
 import { computersRouter } from './routes/computers';
 import path from 'path';
 import fs from 'fs';
-import type { Server } from 'http';
+import { createServer, type Server } from 'http';
 import { config } from './config';
 import { logger } from './logger';
 import { managementRouter } from './routes/management';
@@ -135,6 +135,16 @@ export function createAgentMessagesApp() {
   app.use(express.json({ limit: '1mb' }));
   app.use('/agents', agentMessagesRouter);
   return app;
+}
+
+/**
+ * The agent-messages server, or none when `AGENT_MESSAGES_TOKEN_ID` is unset:
+ * no delivery could be accepted then, so the port is not opened at all. The
+ * variable is set before the runtime starts, so setting it takes a restart.
+ */
+export function createAgentMessagesServer(): Server | undefined {
+  if (!config.agentMessagesTokenId) return undefined;
+  return createServer(createAgentMessagesApp());
 }
 
 /**

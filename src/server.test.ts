@@ -7,7 +7,9 @@ vi.mock('./services/webhook.service', () => ({
   webhookService: { handleInbound: mockHandleInbound },
 }));
 
-import { createAgentMessagesApp, createApp } from './server';
+import { Server } from 'http';
+import { config } from './config';
+import { createAgentMessagesApp, createAgentMessagesServer, createApp } from './server';
 import { createWebhookApp } from './services/webhook-receiver.service';
 
 describe('GET /health', () => {
@@ -105,6 +107,23 @@ describe('agent messages', () => {
     expect((await request(app).get('/agents/state')).status).toBe(404);
     expect((await request(app).get('/health')).status).toBe(404);
     expect((await request(app).post('/agents/webhooks/alerts').send({})).status).toBe(404);
+  });
+
+  it('get no port at all without AGENT_MESSAGES_TOKEN_ID', () => {
+    expect(config.agentMessagesTokenId).toBeFalsy();
+    expect(createAgentMessagesServer()).toBeUndefined();
+  });
+
+  it('get their own server once AGENT_MESSAGES_TOKEN_ID is set', () => {
+    const before = config.agentMessagesTokenId;
+    (config as { agentMessagesTokenId: string | null }).agentMessagesTokenId = 'tok_delivery';
+    try {
+      const server = createAgentMessagesServer();
+      expect(server).toBeInstanceOf(Server);
+      expect(server!.listening).toBe(false);
+    } finally {
+      (config as { agentMessagesTokenId: string | null | undefined }).agentMessagesTokenId = before;
+    }
   });
 
   it('give a browser no CORS permission', async () => {

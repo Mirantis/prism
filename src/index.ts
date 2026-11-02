@@ -24,7 +24,7 @@ if (dotenvLoadInfo.error) {
 } else {
   logger.info('[dotenv] injected %d env var(s) from %s', dotenvLoadInfo.loadedCount, dotenvLoadInfo.path);
 }
-import { createAgentMessagesApp, createApp, listenForAgentMessages, listenOn } from './server';
+import { createAgentMessagesServer, createApp, listenForAgentMessages, listenOn } from './server';
 import { webhookReceiverService } from './services/webhook-receiver.service';
 import { webhookService } from './services/webhook.service';
 import { pendingWorkService } from './services/pending-work.service';
@@ -92,8 +92,9 @@ void refreshModelCatalog().catch((err) => {
 
 const app = createApp();
 const httpServer = createServer(app);
-// Other agents' messages, on a port of their own (`AGENT_MESSAGES_PORT`).
-const agentMessagesServer = createServer(createAgentMessagesApp());
+// Other agents' messages, on a port of their own (`AGENT_MESSAGES_PORT`), and
+// only when `AGENT_MESSAGES_TOKEN_ID` says who may deliver them.
+const agentMessagesServer = createAgentMessagesServer();
 
 let fileJanitorTimer: NodeJS.Timeout | undefined;
 
@@ -380,7 +381,11 @@ const getServer = async () => {
 
  await webhookReceiverService.initialize();
  listenOn(httpServer);
- listenForAgentMessages(agentMessagesServer);
+ if (agentMessagesServer) {
+   listenForAgentMessages(agentMessagesServer);
+ } else {
+   logger.info('[AgentMessages] AGENT_MESSAGES_TOKEN_ID is not set, so the agent-messages port stays closed');
+ }
  return httpServer;
 };
 
@@ -411,8 +416,8 @@ const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResp
   // A delivery starts an agent run, so deliveries stop with the timers.
   await webhookReceiverService.shutdown();
   // So does another agent's message, which starts a turn too.
-  agentMessagesServer.close();
-  agentMessagesServer.closeAllConnections();
+  agentMessagesServer?.close();
+  agentMessagesServer?.closeAllConnections();
   if (fileJanitorTimer) clearInterval(fileJanitorTimer);
   // A SIGTERM early in boot would otherwise leave the catalog fetch holding a
   // socket, so server.close() waits and the 5s force-exit below fires.
