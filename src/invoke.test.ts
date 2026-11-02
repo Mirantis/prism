@@ -105,8 +105,7 @@ vi.mock('./lib/llm-providers/create-provider', () => ({
   createProvider: mockCreateBedrockProvider,
 }));
 
-vi.mock('./lib/mcp-client', async (importOriginal) => ({
-  soleAgentMessagingTool: (await importOriginal<typeof import('./lib/mcp-client')>()).soleAgentMessagingTool,
+vi.mock('./lib/mcp-client', () => ({
   getMCPTools: mockGetMCPTools,
 }));
 
@@ -1193,51 +1192,27 @@ describe('invoke', () => {
     ]);
   });
 
-  describe('message_agent', () => {
-    const MESSAGE_AGENT = 'hub__agent-directory__message_agent';
-    const CONVERSATION = '0f0f0f0f-0000-4000-8000-0000000000c1';
-
-    // A goal or a bound scheduled task delegates as a chat turn does, and the
-    // answer can arrive while the step still runs.
-    it.each(['chat', 'goal', 'cron'] as const)('keeps the conversation a %s run starts in its thread before the call returns', async (mode) => {
-      runtimeState.clear();
-      mockGetMCPTools.mockResolvedValue({
-        [MESSAGE_AGENT]: {
-          description: 'Message another agent of the project.',
-          inputSchema: { type: 'object' },
-          execute: async () => ({ content: [{ type: 'text', text: `{"conversationId":"${CONVERSATION}"}\nSent to the Writer.` }] }),
-        },
-      });
-      let keptOnReturn: string | undefined;
-      mockGenerateText.mockImplementation(async (opts: { tools: Record<string, { execute: (a: unknown, o: unknown) => Promise<unknown> }> }) => {
-        await opts.tools[MESSAGE_AGENT]!.execute({}, { toolCallId: 'c1', messages: [] });
-        keptOnReturn = runtimeState.get(`agentConversation:${CONVERSATION}`);
-        return { text: 'Asked the Writer.', steps: [{ text: 'Asked the Writer.', toolCalls: [], toolResults: [] }] };
-      });
-
-      await invoke(createTestInvokeRequest({ mode, threadId: 'thread-delegating' }));
-
-      expect(keptOnReturn).toBe('thread-delegating');
+  // The runtime knows no platform tool: a tool that messages other agents runs
+  // like any other, and nothing is kept from its answer.
+  it('keeps no conversation from a platform tool that messages other agents', async () => {
+    runtimeState.clear();
+    const conversation = '0f0f0f0f-0000-4000-8000-0000000000c1';
+    const messageAgent = 'hub__agent-directory__message_agent';
+    mockGetMCPTools.mockResolvedValue({
+      [messageAgent]: {
+        description: 'Message another agent of the project.',
+        inputSchema: { type: 'object' },
+        execute: async () => ({ content: [{ type: 'text', text: `{"conversationId":"${conversation}"}\nSent to the Writer.` }] }),
+      },
+    });
+    mockGenerateText.mockImplementation(async (opts: { tools: Record<string, { execute: (a: unknown, o: unknown) => Promise<unknown> }> }) => {
+      await opts.tools[messageAgent]!.execute({}, { toolCallId: 'c1', messages: [] });
+      return { text: 'Asked the Writer.', steps: [{ text: 'Asked the Writer.', toolCalls: [], toolResults: [] }] };
     });
 
-    it("keeps no conversation when another server offers a message_agent too, whatever either answers", async () => {
-      runtimeState.clear();
-      const other = 'hub__other-framework__message_agent';
-      const answer = async () => ({ content: [{ type: 'text', text: `{"conversationId":"${CONVERSATION}"}\nSent.` }] });
-      mockGetMCPTools.mockResolvedValue({
-        [MESSAGE_AGENT]: { description: 'Message another agent of the project.', inputSchema: { type: 'object' }, execute: answer },
-        [other]: { description: 'Message an agent.', inputSchema: { type: 'object' }, execute: answer },
-      });
-      mockGenerateText.mockImplementation(async (opts: { tools: Record<string, { execute: (a: unknown, o: unknown) => Promise<unknown> }> }) => {
-        await opts.tools[MESSAGE_AGENT]!.execute({}, { toolCallId: 'c1', messages: [] });
-        await opts.tools[other]!.execute({}, { toolCallId: 'c2', messages: [] });
-        return { text: 'Asked.', steps: [{ text: 'Asked.', toolCalls: [], toolResults: [] }] };
-      });
+    await invoke(createTestInvokeRequest({ threadId: 'thread-delegating' }));
 
-      await invoke(createTestInvokeRequest({ threadId: 'thread-delegating' }));
-
-      expect(runtimeState.has(`agentConversation:${CONVERSATION}`)).toBe(false);
-    });
+    expect(runtimeState.has(`agentConversation:${conversation}`)).toBe(false);
   });
 
   describe('tool-result persistence', () => {

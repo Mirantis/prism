@@ -48,7 +48,6 @@ import {
   unwrapToolOutput,
 } from './lib/tool-output-limiter';
 import { withToolLifecycleEvents } from './lib/tool-lifecycle';
-import { agentConversationService } from './services/agent-conversation.service';
 import {
   isToolRiskGateError,
   withToolRiskGate,
@@ -321,21 +320,18 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       lockedIn: context.lockedIn,
     });
 
-    // 5. Wrap tools with the conversations `message_agent` starts, lifecycle
-    // events, output capture, the optional pre-execution risk gate, and cache
-    // control. The order carries three invariants that have to hold together:
+    // 5. Wrap tools with lifecycle events, output capture, the optional
+    // pre-execution risk gate, and cache control. The order carries two
+    // invariants that have to hold together:
     //
-    //  - `message_agent` innermost, so its conversation is kept in the run's
-    //    thread before its result returns, while the step may still run;
-    //  - lifecycle next, so the "is running <tool>…" indicator clears when
+    //  - lifecycle innermost, so the "is running <tool>…" indicator clears when
     //    the tool itself finishes rather than after the saved copy is written;
     //  - the gate outside lifecycle, so a rejected call never claims the
     //    underlying tool started running.
     //
     // The gate sits outside the capture too, which needs no argument: a rejected
     // call produces no result, so there is nothing to cut or save.
-    const sendingTools = agentConversationService.withSentConversations(tools, request.threadId);
-    const observedTools = withToolLifecycleEvents(sendingTools, request.onToolEvent);
+    const observedTools = withToolLifecycleEvents(tools, request.onToolEvent);
     const limitedTools = withToolOutputCapture(observedTools, {
       workspaceRoot: request.workspaceRoot,
     });

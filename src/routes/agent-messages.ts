@@ -123,9 +123,10 @@ router.post('/agent-messages', async (req: Request, res: Response) => {
   }
 
   try {
-    // The web conversation that holds the conversation between agents, such as the
-    // one whose message_agent call this answers. A new one goes to the one
-    // conversation in single-thread mode, else to the newest.
+    // The web conversation an earlier message of this conversation between
+    // agents arrived in. One the runtime has not seen, an answer to the agent's
+    // own message included, goes to the one conversation in single-thread mode,
+    // else to the newest.
     const threadId =
       (await agentConversationService.threadFor(body.conversationId, agentId)) ??
       (await conversationService.getOrCreateLatestThread(agentId, config.ownerUserId)).id;

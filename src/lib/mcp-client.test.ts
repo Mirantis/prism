@@ -5,9 +5,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-// The module the agent messaging tool tests share; the getMCPTools tests load fresh copies.
-import { isAgentMessagingTool, soleAgentMessagingTool } from './mcp-client';
-import { toModelToolName } from './tool-names';
 
 const { mockCreateMCPClient } = vi.hoisted(() => ({
   mockCreateMCPClient: vi.fn(),
@@ -189,46 +186,5 @@ describe('closeMCPClients', () => {
     await collection;
 
     expect(client.close).toHaveBeenCalled();
-  });
-});
-
-describe('isAgentMessagingTool', () => {
-  it('reads a tool by its last segment, whatever prefix the endpoint gives it', () => {
-    expect(isAgentMessagingTool('hub__agent-directory__message_agent', 'message_agent')).toBe(true);
-    expect(isAgentMessagingTool('message_agent', 'message_agent')).toBe(true);
-    expect(isAgentMessagingTool('hub__agent-directory__message_agent', 'send_email')).toBe(false);
-    expect(isAgentMessagingTool('hub__github__message_agents', 'message_agent')).toBe(false);
-    expect(isAgentMessagingTool('hub__message_agent__send', 'message_agent')).toBe(false);
-  });
-
-  it('names the one tool in a set that is the tool, and none when two servers offer it', () => {
-    expect(soleAgentMessagingTool(['memory_search', 'hub__agent-directory__message_agent'], 'message_agent')).toBe(
-      'hub__agent-directory__message_agent',
-    );
-    expect(soleAgentMessagingTool(['memory_search'], 'message_agent')).toBeNull();
-    expect(
-      soleAgentMessagingTool(['hub__agent-directory__message_agent', 'hub__other-framework__message_agent'], 'message_agent'),
-    ).toBeNull();
-  });
-
-  it.each([
-    ['a letter', 'a1c3e5f7-2b4d-4f6a-8c0e-1d3f5a7c9e2b'],
-    ['a digit', '9e2b4d6f-8a0c-4e2a-b4c6-d8e0f2a4c6e8'],
-  ])('knows the name the model is shown for a listed tool whose uuid starts with %s', async (_, uuid) => {
-    const serverName = `${uuid}__agent-directory__message_agent`;
-    const modelName = toModelToolName(serverName);
-    // The tools block shortens the name past the tool's own segment.
-    expect(modelName).not.toContain('message_agent');
-    const mcp = await load();
-    expect(mcp.isAgentMessagingTool(modelName, 'message_agent')).toBe(false);
-
-    mockCreateMCPClient.mockResolvedValueOnce(
-      fakeClient(async () => ({ [serverName]: { description: 'Message an agent' }, memory_search: {} })),
-    );
-    await mcp.getMCPTools({ url: MCP_URL });
-
-    expect(mcp.isAgentMessagingTool(modelName, 'message_agent')).toBe(true);
-    expect(mcp.isAgentMessagingTool(modelName, 'send_email')).toBe(false);
-    expect(mcp.isAgentMessagingTool(toModelToolName('memory_search'), 'message_agent')).toBe(false);
   });
 });
