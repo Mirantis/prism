@@ -18,7 +18,7 @@ const { mockPrisma, mockEngine, mockConfig, mockEndWork, mockWritableThreadId, m
   mockHasSeveralSenders: vi.fn(),
 }));
 
-vi.mock('../../lib/prisma', () => ({ default: mockPrisma }));
+vi.mock('../../lib/prisma', () => ({ default: mockPrisma, prisma: mockPrisma }));
 vi.mock('../conversation-engine.service', async () => {
   const { EventEmitter } = await import('node:events');
   mockEngine.events = new EventEmitter();
@@ -133,7 +133,7 @@ describe('InboundMessageService', () => {
       await settle();
 
       const input = mockEngine.chat.mock.calls[0][0];
-      expect(input.metadata).toMatchObject({ channelLabel: WEB_CHAT_LABEL });
+      await expect(input.channelLabelFor(THREAD_A)).resolves.toBe(WEB_CHAT_LABEL);
       expect(input.message).toBe('<@user-ada-1:Ada Lovelace>: hello');
     });
 

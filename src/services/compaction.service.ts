@@ -68,6 +68,8 @@ import {
   SUMMARY_MESSAGE_OPENING,
 } from '../prompts/context-builder';
 import { getTaskToolInstructions } from '../prompts/task-tool-prompt';
+import { getChannelBehaviorInstructions } from '../prompts/channel-prompt';
+import { messageDeliveryService } from './message-delivery.service';
 import { isContextOverflowError } from '../lib/llm-errors';
 import { agentWorkspaceService } from './agent-workspace.service';
 import { compactionModel } from '../lib/model-routing';
@@ -346,10 +348,16 @@ class CompactionService {
           undefined,
           thread?.workspaceRoot ?? undefined,
         );
-        // Mirror invoke.ts: task-tool instructions ride the stable part, and
-        // cacheable parts carry the Anthropic breakpoints — without them this
-        // request neither reads nor refreshes the shared prefix.
+        // Mirror invoke.ts: task-tool instructions, and a shared web chat's
+        // channel instructions, ride the stable part, and cacheable parts carry
+        // the Anthropic breakpoints — without them this request neither reads nor
+        // refreshes the shared prefix. The thread records no origin channel, so
+        // its label comes as for a continuation.
+        const { channelLabel } = await messageDeliveryService.threadContext(threadId);
         const stablePart = systemParts.find((p) => p.cacheable);
+        if (channelLabel && stablePart) {
+          stablePart.text += '\n\n' + getChannelBehaviorInstructions(channelLabel);
+        }
         if (subagents.length > 0 && stablePart) {
           stablePart.text += '\n\n' + getTaskToolInstructions(
             subagents.map((s) => ({ name: s.name, description: s.description })),
@@ -364,7 +372,12 @@ class CompactionService {
           content: part.text,
           ...(part.cacheable ? { providerOptions: cachePoint } : {}),
         }));
-        const history = buildConversationHistory(context, declared?.toolChanges, toolSearchPrompt.replayToolCall);
+        const history = buildConversationHistory(
+          context,
+          declared?.toolChanges,
+          toolSearchPrompt.replayToolCall,
+          Boolean(channelLabel),
+        );
         const messages: ModelMessage[] = [
           ...history.messages,
           { role: 'user' as const, content: COMPACTION_PROMPT, providerOptions: cachePoint },

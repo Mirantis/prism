@@ -107,6 +107,12 @@ vi.mock('../prompts/context-builder', () => ({
   buildConversationHistory: mockBuildConversationHistory,
   SUMMARY_MESSAGE_OPENING: '<conversation-summary>',
 }));
+const { mockThreadContext } = vi.hoisted(() => ({ mockThreadContext: vi.fn() }));
+vi.mock('./message-delivery.service', () => ({ messageDeliveryService: { threadContext: mockThreadContext } }));
+// A thread with no channel label, unless a test gives one.
+beforeEach(() => {
+  mockThreadContext.mockImplementation(async (threadId: string) => ({ channel: 'websocket', threadId }));
+});
 vi.mock('../prompts/task-tool-prompt', () => ({
   getTaskToolInstructions: (subs: { name: string }[]) => `TASK TOOLS: ${subs.map((s) => s.name).join(',')}`,
 }));
@@ -657,6 +663,19 @@ describe('compactNow (manual)', () => {
     expect(mockTrackEvent).not.toHaveBeenCalledWith('compaction failed', expect.anything(), expect.anything());
   });
 
+  it("gives a shared conversation's summary the senders and the channel instructions", async () => {
+    mockGetAgentContext.mockResolvedValue(makeContext(8));
+    mockThreadContext.mockResolvedValue({ channel: 'websocket', threadId: THREAD, channelLabel: 'the web chat' });
+
+    await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD });
+
+    expect(mockThreadContext).toHaveBeenCalledWith(THREAD);
+    expect(mockBuildConversationHistory.mock.calls[0][3]).toBe(true);
+    const stable = mockGenerateText.mock.calls[0][0].system[0].content as string;
+    expect(stable).toContain('## Channel Participation');
+    expect(stable).toContain('You are in the web chat.');
+  });
+
   it('rebuilds the context with chat parity: same tools, toolChoice none, cache breakpoints', async () => {
     mockGetAgentContext.mockResolvedValue(makeContext(8));
     const events = captureEvents();
@@ -771,9 +790,12 @@ describe('compactNow (manual)', () => {
     expect(Object.keys(request.tools)).toEqual(['shell', 'browse']);
     expect(request.toolChoice).toBe('auto');
     expect(request.allowSystemInMessages).toBe(true);
-    expect(mockBuildConversationHistory).toHaveBeenCalledWith(expect.anything(), [
-      { afterRowId: 'm1', message: removal },
-    ], undefined);
+    expect(mockBuildConversationHistory).toHaveBeenCalledWith(
+      expect.anything(),
+      [{ afterRowId: 'm1', message: removal }],
+      undefined,
+      false,
+    );
     expect(request.messages.slice(-2)).toEqual([
       {
         role: 'user',

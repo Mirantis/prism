@@ -425,7 +425,6 @@ class InboundMessageService {
   private async chatInput(waiting: Waiting) {
     const { message } = waiting;
     const channelLabel = await webChatLabel(message.threadId);
-    const sender = senderInput(message);
     return {
       agentId: config.agentId as string,
       userId: config.ownerUserId,
@@ -436,8 +435,8 @@ class InboundMessageService {
       attachmentIds: message.attachmentIds,
       stored: { id: message.id, titleSet: waiting.titleSet },
       ...(waiting.resumed ? { resumed: waiting.resumed } : {}),
-      ...sender,
-      ...(channelLabel ? { metadata: { ...sender.metadata, channelLabel } } : {}),
+      ...senderInput(message),
+      channelLabelFor: webChatLabel,
     };
   }
 

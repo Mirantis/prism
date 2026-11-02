@@ -1820,7 +1820,8 @@ router.post('/skills/:name/run', async (req: Request, res: Response) => {
         agentId: config.agentId,
         message: directive,
         threadId,
-        metadata: { channel: 'websocket', channelLabel: await webChatLabel(threadId) },
+        metadata: { channel: 'websocket' },
+        channelLabelFor: webChatLabel,
       })
       .catch((err) => logger.error({ err }, '[Management] skill run failed'));
 
