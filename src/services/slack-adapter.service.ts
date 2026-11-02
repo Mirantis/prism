@@ -1936,9 +1936,11 @@ class SlackAdapterService implements ChannelAdapter {
       const name = m.bot_profile?.name || m.username || info?.real_name || info?.name || m.user || 'unknown';
       return { kind: m.bot_id || info?.is_bot ? 'bot' : 'person', name };
     };
-    const lines = await Promise.all(
-      read.map(async (m) => ({ author: await authorOf(m), text: await this.resolveMentions(m.text ?? '', teamId) })),
-    );
+    // A mention of the bot names the agent, as the agent's own lines do.
+    const agentMention = `<@${botUserId}:${agent.name.replace(/[<>:\x00-\x1f]/g, '').trim() || botUserId}>`;
+    const textOf = (m: GateMessage) =>
+      this.resolveMentions((m.text ?? '').replaceAll(`<@${botUserId}>`, agentMention), teamId);
+    const lines = await Promise.all(read.map(async (m) => ({ author: await authorOf(m), text: await textOf(m) })));
     return threadReplyClassifierService.classify({
       platform: { channel: this.name, name: 'Slack' },
       agentId,
