@@ -321,31 +321,20 @@ describe('POST /agents/agent-messages', () => {
     const ASKED = 'c3d4e5f6-0718-4293-a415-c6d7e8f9a0b2';
     const STARTED = 'd4e5f607-1829-4304-b526-d7e8f9a0b1c3';
 
-    it('takes the answer to a message the agent sent in the conversation it sent it from', async () => {
-      const asked = await database.client!.conversationThread.create({ data: { agentId: AGENT_ID, userId: OWNER } });
-      // The agent's message_agent call there started conversation ASKED. The
-      // endpoint's name for the tool is long enough that the model is shown a
-      // shortened one, and the tool is offered under that.
-      const { noteAgentMessagingTools } = await import('../lib/mcp-client');
-      const { toModelToolName } = await import('../lib/tool-names');
-      const serverName = '0b6e1c2a-5d1f-4c3e-9a7b-2f8d4e6a1c3b__agent-directory__message_agent';
-      noteAgentMessagingTools([serverName]);
-      const { agentConversationService } = await import('../services/agent-conversation.service');
-      const name = toModelToolName(serverName);
-      const answer = `{"messageId":"${ASKED}","conversationId":"${ASKED}","delivered":["Researcher"],"waiting":[]}\nResearcher has it.`;
-      const tools = agentConversationService.withSentConversations(
-        { [name]: { description: 'd', inputSchema: { type: 'object' }, execute: async () => ({ content: [{ type: 'text', text: answer }] }) } as never },
-        asked.id,
-      );
-      await (tools[name] as unknown as { execute: (args: unknown, options: unknown) => Promise<unknown> }).execute({}, {});
+    it('takes the answer to a message the agent sent in the newest conversation, as any it has not seen', async () => {
+      // The agent asked in this conversation; the runtime does not read what it
+      // sent, so the conversation between agents is new to it.
+      await database.client!.conversationThread.create({
+        data: { agentId: AGENT_ID, userId: OWNER, createdAt: new Date(Date.now() - 60_000) },
+      });
       // The person started a newer conversation since.
-      await database.client!.conversationThread.create({ data: { agentId: AGENT_ID, userId: OWNER } });
+      const newest = await database.client!.conversationThread.create({ data: { agentId: AGENT_ID, userId: OWNER } });
 
       const res = await post(delivery({ id: REPLY, conversationId: ASKED, expectsReply: false }));
 
       expect(res.status).toBe(202);
-      expect(res.body.threadId).toBe(asked.id);
-      await replyStored(asked.id);
+      expect(res.body.threadId).toBe(newest.id);
+      await replyStored(newest.id);
     });
 
     it('takes a new conversation in the newest one, and the rest of it there too', async () => {

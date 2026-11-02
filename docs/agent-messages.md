@@ -73,13 +73,15 @@ stores an agent's message: `POST /agents/threads/:threadId/messages` refuses
 | `expectsReply` | Optional, `false` by default. |
 | `attachmentIds` | Optional, at most 5. Upload each file first with `POST /agents/attachments`. |
 
-The message goes to the web conversation that holds its `conversationId`:
-the one where the agent's own message started or answered that conversation,
-or where an earlier message of it arrived. A reply, and a notice about a
-message, carry the conversation of the message they are about. A
-conversation the runtime has not seen yet, or one whose web conversation was
-deleted or is hidden by single-thread mode, goes to the one conversation when
-`THREAD_MODE=single`, otherwise to the newest one.
+The message goes to the web conversation where an earlier message of its
+`conversationId` arrived. A reply, and a notice about a message, carry the
+conversation of the message they are about. A conversation the runtime has
+not seen yet goes to the one conversation when `THREAD_MODE=single`,
+otherwise to the newest one, and so does one whose web conversation was
+deleted or is hidden by single-thread mode. The runtime does not read what
+the agent sends to other agents, so an answer to the agent's own message is a
+conversation it has not seen: with several conversations, it arrives in the
+newest one, which may not be the one the agent asked from.
 
 | Status | Meaning |
 |--------|---------|

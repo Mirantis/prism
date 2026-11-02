@@ -14,7 +14,6 @@
 import { experimental_createMCPClient as createVercelMCPClient } from '@ai-sdk/mcp';
 import { Tool } from 'ai';
 import { logger } from '../logger';
-import { toModelToolName } from './tool-names';
 
 type MCPToolSet = Record<string, Tool>;
 type MCPClient = Awaited<ReturnType<typeof createVercelMCPClient>>;
@@ -55,7 +54,7 @@ export async function getMCPTools({ url }: MCPConnectionConfig): Promise<MCPTool
   }
 
   try {
-    return listed(await client.tools());
+    return (await client.tools()) as MCPToolSet;
   } catch (error) {
     logger.warn({ err: error }, `[MCPClient] Listing tools at ${url} failed; connecting again`);
     uncache(url, cached);
@@ -63,18 +62,12 @@ export async function getMCPTools({ url }: MCPConnectionConfig): Promise<MCPTool
 
   const fresh = connect(url);
   try {
-    return listed(await (await fresh).tools());
+    return (await (await fresh).tools()) as MCPToolSet;
   } catch (error) {
     logger.error({ err: error }, `[MCPClient] Failed to connect to ${url}`);
     uncache(url, fresh);
     return {};
   }
-}
-
-/** A listing's tools, once the names of its agent messaging tools are kept. */
-function listed(tools: object): MCPToolSet {
-  noteAgentMessagingTools(Object.keys(tools));
-  return tools as MCPToolSet;
 }
 
 /** Close every cached client, a connect in flight included. Bounded. */
@@ -108,56 +101,4 @@ function connect(url: string): Promise<MCPClient> {
 
 function uncache(url: string, stale: Promise<MCPClient>): void {
   if (clients.get(url) === stale) clients.delete(url);
-}
-
-/**
- * The platform's tool for messaging other agents, by the last `__` segment of
- * its name: the runtime keeps the conversation each call starts
- * (`agent-conversation.service.ts`).
- */
-const AGENT_MESSAGING_TOOLS: ReadonlySet<string> = new Set(['message_agent']);
-
-/**
- * The agent messaging tool each name the model was shown stands for, from the
- * listings so far. The tools block shortens a name past 64 characters
- * (`toModelToolName`), and a long prefix such as `<uuid>__<server>__` costs the
- * name its last segment, so the name a call was recorded under can't be read
- * for the tool.
- */
-const agentMessagingToolByModelName = new Map<string, string>();
-
-/** Keep the name the model is shown for each agent messaging tool in a listing. */
-export function noteAgentMessagingTools(names: Iterable<string>): void {
-  for (const name of names) {
-    const tool = name.split('__').at(-1);
-    if (tool && AGENT_MESSAGING_TOOLS.has(tool)) agentMessagingToolByModelName.set(toModelToolName(name), tool);
-  }
-}
-
-/**
- * Whether `name` is the agent messaging tool `tool`, by the name the endpoint
- * gives it or by the one the model was shown. The endpoint may put prefixes of
- * its own in front, such as the server's name, so only the last `__` segment of
- * its name is compared.
- */
-export function isAgentMessagingTool(name: string, tool: string): boolean {
-  if (name.split('__').at(-1) === tool) return true;
-  return agentMessagingToolByModelName.get(name) === tool;
-}
-
-/**
- * The one name in `names` that is the agent messaging tool `tool`, or null when
- * none is or more than one is. Only the last segment of a name says which tool it
- * is, so any server on the endpoint can offer one that matches. With two, the
- * runtime can't tell the platform's own from another server's, and trusting
- * either would let that server decide which conversations are kept, so it uses
- * neither.
- */
-export function soleAgentMessagingTool(names: Iterable<string>, tool: string): string | null {
-  const matches = [...names].filter((name) => isAgentMessagingTool(name, tool));
-  if (matches.length > 1) {
-    logger.warn({ tool, matches }, '[MCPClient] More than one tool is an agent messaging tool; using none of them');
-    return null;
-  }
-  return matches[0] ?? null;
 }
