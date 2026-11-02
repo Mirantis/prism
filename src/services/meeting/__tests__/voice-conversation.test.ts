@@ -670,3 +670,47 @@ describe('taking captured audio in', () => {
     expect(appends(sent)).toHaveLength(0);
   });
 });
+
+describe('ending with a written answer', () => {
+  it('asks the whole call, then closes without reporting a lost session', async () => {
+    const lost: string[] = [];
+    const { h, send, sent } = await speakingHarness(MEETING_SAMPLE_RATE, {
+      responseMode: 'open',
+      onSessionLost: (reason) => lost.push(reason),
+    });
+    active = h;
+
+    const answer = h.conversation.stopWithText({ instructions: 'Summarize the call.', deadlineMs: 1_000 });
+    await settle();
+
+    const request = probeSent(sent)!;
+    expect(request.response.instructions).toBe('Summarize the call.');
+    // No input, so the model reads every item of the call.
+    expect(request.response.input).toBeUndefined();
+    send({
+      type: 'response.done',
+      response: {
+        id: 'r-summary',
+        status: 'completed',
+        metadata: request.response.metadata,
+        output: [{ content: [{ text: 'You asked about the deploy.' }] }],
+      },
+    });
+
+    await expect(answer).resolves.toBe('You asked about the deploy.');
+    await settle();
+    expect(lost).toEqual([]);
+    await expect(h.conversation.stopWithText({ instructions: 'again', deadlineMs: 100 })).resolves.toBeNull();
+  });
+
+  it('answers no utterance that closes while it writes', async () => {
+    const { h, send, sent } = await speakingHarness(MEETING_SAMPLE_RATE, { responseMode: 'open' });
+    active = h;
+
+    void h.conversation.stopWithText({ instructions: 'Summarize the call.', deadlineMs: 1_000 });
+    send({ type: 'input_audio_buffer.committed', item_id: 'item-late' });
+    await settle();
+
+    expect(spokenRequests(sent)).toHaveLength(0);
+  });
+});

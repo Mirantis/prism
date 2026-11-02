@@ -20,7 +20,12 @@
 
 import { createBdd } from 'playwright-bdd';
 import { expect, type Page } from '@playwright/test';
+import * as dbHelper from '../support/db-helper';
+import { DEFAULT_AGENT_ID } from '../fixtures/test-data';
+import { HomePage } from '../pages/home.page';
+import { MOCK_CALL_SUMMARY } from '../support/mock-call-summary';
 import {
+  EXCHANGE_TIMEOUT_MS,
   MICROPHONE_MS,
   describeBrowser,
   describeExchange,
@@ -173,4 +178,44 @@ Then('the composer cannot record a voice message during the call', async ({ page
 Then('voice used the managed Azure endpoint and credential', async () => {
   const state = await readState();
   expect(state.managedHandshakes).toBeGreaterThan(getBaseline().managedHandshakes);
+});
+
+/** The newest conversation, which the scenario seeded or the call continued. */
+async function latestThread() {
+  const thread = await dbHelper.getPrisma().conversationThread.findFirst({
+    where: { agentId: DEFAULT_AGENT_ID, externalThreadId: null },
+    orderBy: { createdAt: 'desc' },
+  });
+  expect(thread, 'no conversation was found for the agent').not.toBeNull();
+  return thread!;
+}
+
+When('I open my latest conversation', async ({ page }) => {
+  await new HomePage(page).goto(`/chat/${(await latestThread()).id}`);
+});
+
+Then('the voice session opened with the conversation holding {string}', async ({ page }, held: string) => {
+  // The opening item the voice model received, which is the only place the history goes.
+  await waitForModel(
+    `the opening item holding the conversation line "${held}"`,
+    (state) => /<conversation-so-far>[\s\S]*<\/conversation-so-far>/.test(state.contextText) && state.contextText.includes(held),
+    describeScreen(page),
+  );
+});
+
+Then('the conversation shows a summary of the call', async ({ page }) => {
+  // The voice model was asked for the summary after the call ended, from the call's own session.
+  await waitForModel(
+    'the voice model being asked for the summary of the call',
+    (state) => state.summariesRequested > getBaseline().summariesRequested,
+    describeScreen(page),
+  );
+  await expect(page.getByText(MOCK_CALL_SUMMARY)).toBeVisible({ timeout: EXCHANGE_TIMEOUT_MS });
+
+  // Stored in the conversation, so the next text turn reads it.
+  const thread = await latestThread();
+  const stored = await dbHelper.getPrisma().conversationMessage.findMany({
+    where: { threadId: thread.id, role: 'AGENT', content: { startsWith: 'Voice call summary:' } },
+  });
+  expect(stored.map((m) => m.content)).toEqual([`Voice call summary:\n\n${MOCK_CALL_SUMMARY}`]);
 });
