@@ -4,7 +4,7 @@
  * model. A failed or unknown label runs the largest tier. A thread keeps its
  * tier while that model's prompt cache is warm: it moves up on any turn, and
  * down only on its first turn, the first turn after compaction, or once that
- * model's cache has expired: an hour after a chat turn, five minutes after any other.
+ * model's cache has expired, after the lifetime its vendor gives the newest call.
  */
 
 import { config } from '../config';
