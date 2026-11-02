@@ -9,7 +9,7 @@
  */
 
 import type { ModelMessage, Tool } from 'ai';
-import { mergeProviderOptions, type CachePointFragment } from './llm-providers/llm-provider';
+import { isDeferredTool, mergeProviderOptions, type CachePointFragment } from './llm-providers/llm-provider';
 import { config } from '../config';
 import { logger } from '../logger';
 import { getMCPTools } from './mcp-client';
@@ -116,6 +116,8 @@ export interface CollectedTools {
   tools: Record<string, Tool>;
   /** Returned so callers can also render the task-tool system instructions. */
   subagents: Awaited<ReturnType<typeof agentWorkspaceService.getSubagents>>;
+  /** The MCP tools, which a request may send deferred. A built-in never is. */
+  deferrable: string[];
 }
 
 /**
@@ -246,20 +248,23 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
   // slot would hand the model a tool the mode had just taken away.
   const reservedNames = new Set([...Object.keys(builtInTools), 'Task']);
   const tools = capToolNames(filteredTools, 'collect', reservedNames);
+  // Matched on the tool object, since capping can rename a tool.
+  const mcpTools = new Set<Tool>([...Object.values(nexusTools), ...Object.values(pluginTools)]);
+  const deferrable = Object.keys(tools).filter((name) => mcpTools.has(tools[name]));
 
   logger.info(
     `Collected ${Object.keys(builtInTools).length} built-in + ${Object.keys(nexusTools).length} platform MCP + ${Object.keys(pluginTools).length} plugin MCP tool(s); ${subagents.length} subagent(s)`,
   );
 
-  return { tools, subagents };
+  return { tools, subagents, deferrable };
 }
 
 /**
  * Mark the last tool with the provider's cache breakpoint. Tools are stable per
  * agent, so a checkpoint here is the cheapest one to keep warm.
  *
- * A `deferred` tool is skipped: the API refuses a breakpoint on a tool that
- * loads only when a tool change names it. The breakpoint merges into the tool's
+ * A deferred tool is skipped, whether the set names it or its `providerOptions`
+ * defer it: the API refuses a breakpoint on a tool that is not loaded. The breakpoint merges into the tool's
  * own `providerOptions`.
  *
  * It reaches the wire on the Anthropic Messages path only. Bedrock's Converse
@@ -277,7 +282,9 @@ export function withToolsCacheControl(
   cachePoint: CachePointFragment,
   deferred: ReadonlySet<string> = new Set(),
 ): Record<string, Tool> {
-  const lastKey = Object.keys(tools).filter((name) => !deferred.has(name)).at(-1);
+  const lastKey = Object.keys(tools)
+    .filter((name) => !deferred.has(name) && !isDeferredTool(tools[name]))
+    .at(-1);
   if (lastKey === undefined) return tools;
 
   const result: Record<string, Tool> = {};

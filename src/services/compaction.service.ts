@@ -76,6 +76,7 @@ import { contextService } from './context.service';
 import { contextUsageService, type ContextUsageSnapshot } from './context-usage.service';
 import { threadTurnService } from './thread-turn.service';
 import { trackEvent, langfuseTelemetry } from '../lib/telemetry';
+import { planToolSearch } from '../lib/tool-search/plan';
 
 /**
  * One row of the summarized context, as it stood when the request was built.
@@ -113,7 +114,11 @@ export interface CompactionFork {
   system: SystemModelMessage[];
   /** cachedTools — what the summarize call declares (see `declaredTools`). */
   tools: Record<string, Tool>;
-  /** Whether `tools` is the conversation's declared list (tool-ledger.service.ts). */
+  /**
+   * Whether the summary request has to send `tools` under tool choice 'auto':
+   * a declared list (tool-ledger.service.ts), or deferred tools that history
+   * loads on a vendor whose SDK drops the block under 'none'.
+   */
   declaredTools: boolean;
   /** History as sent, summary message included, without the turn's trailing tool-change announcements. */
   messages: ModelMessage[];
@@ -303,8 +308,11 @@ class CompactionService {
         // block must match byte-for-byte or the request misses the
         // tools+stable-system cache prefix chat turns keep warm. The Task
         // invoker can never run under toolChoice 'none'.
-        const { tools, subagents } = declared
-          ? { tools: declared.tools, subagents: await agentWorkspaceService.getSubagents(agentId) }
+        // A declared list is the tools block itself, but deferred tools still
+        // need the collected set for the catalog and the replayed loads.
+        const deferredToolProtocol = provider.deferredTools?.(modelId);
+        const collected = declared && !deferredToolProtocol
+          ? undefined
           : await collectTools({
               userId,
               agentId,
@@ -314,12 +322,20 @@ class CompactionService {
               taskInvoker: neverInvoke,
               lockedIn: context.lockedIn,
             });
+        const subagents = collected?.subagents ?? await agentWorkspaceService.getSubagents(agentId);
         // Nothing executes here (`toolChoice: 'none'`), so saving is off — the
         // wrap exists only so this request's tools block is built exactly like a
         // chat turn's, which is what the provider's cache prefix is keyed on.
+        const toolSearch = await planToolSearch({
+          tools: collected ? withToolOutputCapture(collected.tools, { spill: false }) : {},
+          deferrable: collected?.deferrable ?? [],
+          protocol: deferredToolProtocol,
+          modelId,
+          telemetry: { userId, agentId, mode: 'compaction' },
+        });
         // A declared list is already the tools block the chat turns send.
         const cachedTools = withToolsCacheControl(
-          declared ? tools : withToolOutputCapture(tools, { spill: false }),
+          declared ? declared.tools : toolSearch.tools,
           cachePoint,
           declared?.deferred,
         );
@@ -339,12 +355,16 @@ class CompactionService {
             subagents.map((s) => ({ name: s.name, description: s.description })),
           );
         }
+        const toolSearchPrompt = declared
+          ? await toolSearch.promptFor(declared.tools, declared.deferred)
+          : toolSearch;
+        if (toolSearchPrompt.catalog && stablePart) stablePart.text += '\n\n' + toolSearchPrompt.catalog;
         const system: SystemModelMessage[] = systemParts.map((part) => ({
           role: 'system' as const,
           content: part.text,
           ...(part.cacheable ? { providerOptions: cachePoint } : {}),
         }));
-        const history = buildConversationHistory(context, declared?.toolChanges);
+        const history = buildConversationHistory(context, declared?.toolChanges, toolSearchPrompt.replayToolCall);
         const messages: ModelMessage[] = [
           ...history.messages,
           { role: 'user' as const, content: COMPACTION_PROMPT, providerOptions: cachePoint },
@@ -355,7 +375,7 @@ class CompactionService {
           model,
           system,
           messages,
-          ...(declared
+          ...(declared || toolSearch.summaryDeclaresTools
             ? summaryToolOptions(cachedTools)
             : Object.keys(cachedTools).length > 0
               ? { tools: cachedTools, toolChoice: 'none' as const }

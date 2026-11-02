@@ -201,6 +201,10 @@ const initialize = async () => {
           ? { promptCache: provider.promptCacheState(config.chatModelId) }
           : {}),
         toolChanges: provider.toolChanges?.(config.chatModelId) ? 'on' : 'off',
+        toolSearch:
+          config.toolSearch === 'auto' && provider.deferredTools?.(config.chatModelId)
+            ? `auto (${config.toolSearchThresholdPercent}%)`
+            : 'off',
       },
       '[Startup] LLM provider',
     );
@@ -238,6 +242,19 @@ const initialize = async () => {
       logger.warn(
         { configuredMode: config.invalidThreadMode, effectiveMode: config.threadMode },
         '[Startup] invalid THREAD_MODE; using multi',
+      );
+    }
+
+    if (config.invalidToolSearch) {
+      logger.warn(
+        { configured: config.invalidToolSearch, effective: config.toolSearch },
+        '[Startup] invalid TOOL_SEARCH; using auto',
+      );
+    }
+    if (config.invalidToolSearchThreshold) {
+      logger.warn(
+        { configured: config.invalidToolSearchThreshold, effective: config.toolSearchThresholdPercent },
+        '[Startup] invalid TOOL_SEARCH_THRESHOLD_PERCENT; using the default',
       );
     }
 

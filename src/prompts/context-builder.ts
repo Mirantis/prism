@@ -29,6 +29,7 @@ import {
   type AgentMessageColumns,
 } from './agent-message-prompt';
 import type { AgentMessageOrigin } from '../types';
+import type { ToolSearchPlan } from '../lib/tool-search/plan';
 
 // Minimal type for conversation messages (matches Prisma's shape).
 // toolCalls uses Prisma's Json? type (any JSON value); parseToolCalls() validates at runtime.
@@ -535,10 +536,14 @@ async function buildPluginsSection(): Promise<string> {
  * first such place after its row. The ones that find none come back in
  * `trailingToolChanges`, and the caller sends them last, after the turn's own
  * user messages.
+ *
+ * `replayToolCall` gives a stored call the form this request sends, when that
+ * differs from the stored text: a tool load replays as the vendor's load result.
  */
 export function buildConversationHistory(
   context: AgentContext,
   toolChanges: AnchoredToolChange[] = [],
+  replayToolCall?: ToolSearchPlan['replayToolCall'],
 ): { messages: ModelMessage[]; trailingToolChanges: ModelMessage[] } {
   const messages: ModelMessage[] = [];
   const rowIds = new Set(context.recentMessages.map((msg) => msg.id));
@@ -574,7 +579,20 @@ export function buildConversationHistory(
       if (message) push(message);
     } else if (msg.role === 'AGENT') {
       if (msg.triggerName) push(webhookEventTurn(msg.triggerName));
-      const toolCalls = parseToolCalls(msg);
+      const toolCalls = parseToolCalls(msg).map((tc) => {
+        const replayed = replayToolCall?.({
+          id: tc.id,
+          tool: tc.tool,
+          input: tc.parsedInput,
+          output: tc.output,
+        });
+        return {
+          id: replayed?.id ?? tc.id,
+          tool: tc.tool,
+          input: replayed ? replayed.input : tc.parsedInput,
+          output: replayed?.output ?? { type: 'text' as const, value: tc.output },
+        };
+      });
 
       if (toolCalls.length > 0) {
         // Build assistant message with tool-call content blocks (+ text if present)
@@ -587,14 +605,14 @@ export function buildConversationHistory(
             type: 'tool-call',
             toolCallId: tc.id,
             toolName: tc.tool,
-            input: tc.parsedInput,
+            input: tc.input,
           });
         }
         push({ role: 'assistant', content: assistantParts } satisfies AssistantModelMessage);
 
         // Build tool message with tool-result content blocks.
         //
-        // `tc.output` is replayed verbatim on purpose — it is the exact text the
+        // A stored text output is replayed verbatim on purpose — it is the exact text the
         // model saw when the call ran, rendered and cut at execute time by
         // `lib/tool-output-limiter`. Do not "helpfully" render it again here: the
         // bytes would then depend on today's budget rather than the turn's, so a
@@ -604,7 +622,7 @@ export function buildConversationHistory(
           type: 'tool-result' as const,
           toolCallId: tc.id,
           toolName: tc.tool,
-          output: { type: 'text' as const, value: tc.output },
+          output: tc.output,
         }));
         push({ role: 'tool', content: toolResultParts } satisfies ToolModelMessage);
       } else if (msg.content?.trim()) {

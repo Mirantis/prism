@@ -85,6 +85,14 @@ export const GOAL_TURN_DELAY_MS = 200;
 export const COMPACTION_THRESHOLD_PERCENT = 90;
 
 /**
+ * Send the platform and plugin MCP tools deferred, behind `load_tools`, when
+ * their definitions take more than this percent of the model's window.
+ * Env-overridable via `config.toolSearchThresholdPercent`
+ * (TOOL_SEARCH_THRESHOLD_PERCENT).
+ */
+export const TOOL_SEARCH_THRESHOLD_PERCENT = 2;
+
+/**
  * At most this many of the newest messages stay out of compaction, verbatim in the context,
  * so the conversation keeps its immediate continuity. Env-overridable via
  * `config.compactionTailMessages` (COMPACTION_TAIL_MESSAGES).

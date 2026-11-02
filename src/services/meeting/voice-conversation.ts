@@ -240,9 +240,11 @@ export class VoiceConversation {
   private stopped = false;
 
   constructor(private readonly options: VoiceConversationOptions) {
+    const { catalog } = options.tools;
+    this.declaredTools = options.tools.declarations;
     this.session = new RealtimeSession({
-      instructions: options.instructions,
-      tools: options.tools.declarations,
+      instructions: catalog ? `${options.instructions}\n\n${catalog}` : options.instructions,
+      tools: this.declaredTools,
       model: options.model,
       voice: options.voice,
       agentName: options.agentName,
@@ -491,10 +493,18 @@ export class VoiceConversation {
   }
 
   private toolRuns = new Set<Promise<unknown>>();
+  /** The declarations the session has; a `load_tools` call replaces them. */
+  private declaredTools: PreparedTools['declarations'];
 
   private async runTool(callId: string, name: string, argumentsJson: string): Promise<void> {
     const output = await this.options.tools.execute(name, argumentsJson);
     if (this.stopped) return;
+    // Declared before the result, so the response it asks for can call what loaded.
+    const { declarations } = this.options.tools;
+    if (declarations !== this.declaredTools) {
+      this.declaredTools = declarations;
+      this.session.setTools(declarations);
+    }
     this.session.sendFunctionOutput(callId, output);
   }
 

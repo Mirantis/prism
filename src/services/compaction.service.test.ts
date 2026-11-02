@@ -773,7 +773,7 @@ describe('compactNow (manual)', () => {
     expect(request.allowSystemInMessages).toBe(true);
     expect(mockBuildConversationHistory).toHaveBeenCalledWith(expect.anything(), [
       { afterRowId: 'm1', message: removal },
-    ]);
+    ], undefined);
     expect(request.messages.slice(-2)).toEqual([
       {
         role: 'user',

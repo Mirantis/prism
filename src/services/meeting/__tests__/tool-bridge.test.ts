@@ -8,10 +8,11 @@ import { z } from 'zod';
 
 const mockCollectTools = vi.fn();
 vi.mock('../../../lib/tool-collection', () => ({
-  collectTools: (...args: unknown[]) => mockCollectTools(...args),
+  collectTools: async (...args: unknown[]) => ({ deferrable: [], ...(await mockCollectTools(...args)) }),
 }));
 
 const { prepareMeetingTools } = await import('../tool-bridge');
+const { config } = await import('../../../config');
 
 beforeEach(() => {
   mockCollectTools.mockReset();
@@ -138,6 +139,43 @@ describe('prepareMeetingTools', () => {
 
     expect(execute).toHaveBeenCalledWith({ limit: 5 }, expect.objectContaining({ toolCallId: expect.any(String) }));
     expect(JSON.parse(output)).toEqual({ count: 2, tasks: ['a', 'b'] });
+  });
+
+  it('declares a deferred tool once a load_tools call names it', async () => {
+    const createIssue = vi.fn().mockResolvedValue({ id: 7 });
+    mockCollectTools.mockResolvedValue({
+      tools: {
+        list_tasks: tool({ description: 'List', inputSchema: z.object({}), execute: vi.fn() }),
+        gh__create_issue: tool({
+          description: 'Create a GitHub issue. ' + 'x'.repeat(2_000),
+          inputSchema: jsonSchema({ type: 'object', properties: { title: { type: 'string' } } }),
+          execute: createIssue,
+        }),
+      },
+      deferrable: ['gh__create_issue'],
+      subagents: [],
+    });
+    const savedWindow = config.contextWindowTokens;
+    config.contextWindowTokens = 10_000;
+    try {
+      const prepared = await prepareMeetingTools({ userId: 'u1', agentId: 'a1', lockedIn: false });
+      const before = prepared.declarations;
+
+      expect(before.map((d) => d.name)).toEqual(['list_tasks', 'load_tools']);
+      expect(prepared.catalog).toContain('gh__create_issue');
+      expect(JSON.parse(await prepared.execute('gh__create_issue', '{"title":"t"}'))).toEqual({
+        error: 'Load gh__create_issue with load_tools first.',
+      });
+      expect(createIssue).not.toHaveBeenCalled();
+
+      await prepared.execute('load_tools', '{"names":["gh__create_issue"]}');
+
+      expect(prepared.declarations).not.toBe(before);
+      expect(prepared.declarations.map((d) => d.name)).toEqual(['list_tasks', 'gh__create_issue', 'load_tools']);
+      expect(JSON.parse(await prepared.execute('gh__create_issue', '{"title":"t"}'))).toEqual({ id: 7 });
+    } finally {
+      config.contextWindowTokens = savedWindow;
+    }
   });
 
   it('treats empty arguments as an empty object', async () => {

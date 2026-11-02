@@ -1019,6 +1019,44 @@ describe('buildConversationHistory', () => {
     });
   });
 
+  it('replays a tool load in the form the request gives it, and other calls as stored text', () => {
+    const loadResult = { type: 'content' as const, value: [{ type: 'text' as const, text: 'loaded' }] };
+    const context = createTestAgentContext({
+      recentMessages: [
+        { id: '1', role: 'USER', content: 'open an issue' },
+        {
+          id: 'msg-load',
+          role: 'AGENT',
+          content: null,
+          toolCalls: [
+            { tool: 'load_tools', input: '{"query":"issue"}', output: '{"loaded":["gh__create_issue"]}', success: true, timestamp: '2026-01-01T00:00:00Z' },
+            { tool: 'list_pods', input: '{}', output: '[]', success: true, timestamp: '2026-01-01T00:00:00Z' },
+          ],
+        },
+      ],
+    });
+    const replay = vi.fn((call: { id: string; tool: string }) =>
+      call.tool === 'load_tools' ? { id: 'tsc_1', input: { arguments: {} }, output: loadResult } : undefined,
+    );
+
+    const messages = buildConversationHistory(context, [], replay).messages;
+
+    expect(replay).toHaveBeenCalledWith({
+      id: 'msg-load-tc-0',
+      tool: 'load_tools',
+      input: { query: 'issue' },
+      output: '{"loaded":["gh__create_issue"]}',
+    });
+    expect(messages[1].content).toEqual([
+      { type: 'tool-call', toolCallId: 'tsc_1', toolName: 'load_tools', input: { arguments: {} } },
+      { type: 'tool-call', toolCallId: 'msg-load-tc-1', toolName: 'list_pods', input: {} },
+    ]);
+    expect(messages[2].content).toEqual([
+      { type: 'tool-result', toolCallId: 'tsc_1', toolName: 'load_tools', output: loadResult },
+      { type: 'tool-result', toolCallId: 'msg-load-tc-1', toolName: 'list_pods', output: { type: 'text', value: '[]' } },
+    ]);
+  });
+
   it('replays a stored over-long tool name under the name the tools block carries', () => {
     // A name a 128-character provider (Azure, bedrock-mantle) accepted and
     // stored is replayed on every later turn — including on Bedrock, whose cap

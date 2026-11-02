@@ -874,6 +874,27 @@ tools, because the API refuses a breakpoint on one. A summary request (a
 compaction, the early-stop summary) declares the list under tool choice `auto`
 and refuses every call, because under `none` the SDK sends no tools block.
 
+#### Deferred tools
+
+On a model whose provider declares `deferredTools` (the allowlists in
+`lib/llm-providers/deferred-tools.ts`, each measured live),
+`lib/tool-search/plan.ts` sends the MCP and plugin tools (`deferrable` from
+`collectTools`) with `defer_loading` when their definitions exceed
+`TOOL_SEARCH_THRESHOLD_PERCENT` of the window, estimated at two characters per
+token. A built-in is never deferred. The model sees a bounded `# Tool Catalog`
+at the end of the stable system part, and loads a tool with `load_tools` (names
+or a BM25 query over the deferred set, `lib/tool-search/tool-index.ts`), whose result is
+the vendor's load: `tool_reference` parts on Anthropic, a client
+`tool_search_output` on OpenAI. The provider then serves the full definition and
+the model calls the real tool by its real name, so the risk gate and every other
+wrapper run as for an eager tool. A load stays in history, and
+`buildConversationHistory` replays it in the vendor's form (`replayToolCall`),
+so a loaded tool stays loaded and the prefix stays the same; a load replayed
+after the tool left the set names only the tools still declared. The deferral
+flag is part of the ledger's signature, so a change in it is a changed
+definition. The Realtime API has no deferral: a voice session declares the
+deferred tools itself, with a `session.update`, once a load names them.
+
 ## Key Services
 
 | Service | File | Purpose |
@@ -1052,6 +1073,7 @@ src/
 │   │   ├── bedrock-mantle/
 │   │   │   └── bedrock-mantle-provider.ts # Bedrock Mantle factory (Anthropic Messages surface only; bare model IDs): `createBedrockMantleProvider(baseURL?)`
 │   │   ├── tool-changes.ts     # The models that take mid-conversation tool changes, and the Anthropic fragments for one
+│   │   ├── deferred-tools.ts   # The models that load tools on demand, and each vendor's deferral, `load_tools` and replay (Anthropic, OpenAI, Realtime)
 │   │   ├── openai-compatible.ts # The OpenAI-shaped provider object both OpenAI-surface vendors are built from: Responses dispatcher, empty cache point, the three GPT-5.x gate declarations
 │   │   ├── openai/
 │   │   │   └── openai-provider.ts # OpenAI factory (Responses API; pins gate calls to reasoningEffort 'none'): `createOpenAiProvider(baseURL?)`
@@ -1116,6 +1138,7 @@ src/
 │   ├── public-url.ts           # Which addresses an outbound read may reach: the public internet only, every DNS answer checked when the connection resolves it
 │   ├── html-to-markdown.ts     # A page's main text as markdown (domino builds the tree, Readability on linkedom, then turndown), else its whole body
 │   ├── teams-config.ts         # Env-sourced Teams connection singleton (no network validation — the SDK validates on initialize)
+│   ├── tool-search/            # Deferred tools: whether a request defers (`plan.ts`), the `# Tool Catalog` (`catalog.ts`), the `load_tools` search (`tool-index.ts`)
 │   ├── tool-output-store.ts    # The saved whole copy of an oversized tool result under `<data dir>/tool-outputs`: write/read/remove, TTL reaper. The notice hands the agent the path and it reads the file with the shell. No DB row, so mtime is the whole lifecycle
 │   ├── program-status.ts       # OSC 7501 report encoding: base64 `msg`/`title` cut to the specification's limits
 │   ├── prisma.ts               # Prisma client singleton (runtime database)
@@ -1215,6 +1238,8 @@ What the operator sets on `docker run`:
 | `CONTEXT_WINDOW_TOKENS` | Input-context window assumed for the context-usage indicator; only needed for a model the catalog doesn't know | derived from the model ID |
 | `MODELS_DEV_URL` | Opt in to refreshing the model-window catalog from a registry once at startup (e.g. `https://models.dev/api.json`); unset = no outbound call, bundled catalog only | — (disabled) |
 | `COMPACTION_THRESHOLD_PERCENT` | Auto-compact a thread when context occupancy reaches this percent of the model's window; `0` disables | `90` |
+| `TOOL_SEARCH` | `auto` or `off`. `auto` sends the MCP and plugin tools deferred, with a `load_tools` tool and a `# Tool Catalog`, when their definitions exceed `TOOL_SEARCH_THRESHOLD_PERCENT` of the window and the provider declares `deferredTools` for the model (see **Deferred tools**). Any other value runs `auto` with a startup warning | `auto` |
+| `TOOL_SEARCH_THRESHOLD_PERCENT` | The share of the window, in percent, past which `TOOL_SEARCH=auto` defers. An invalid value warns and uses the default | `2` |
 | `COMPACTION_TAIL_MESSAGES` | At most this many of the newest messages are kept out of compaction (sent verbatim), together about 30K tokens and starting on a user message; the newest exchange stays whole past the cap when it fits | `6` |
 | `HEARTBEAT_INTERVAL_MS` | Heartbeat interval written into a new agent row; a stored interval wins. Outside `MIN_HEARTBEAT_INTERVAL_MS`–`MAX_HEARTBEAT_INTERVAL_MS` (1 minute–1 week) or not an integer, it warns and uses the default | `28800000` (8 h) |
 | `ATTACHMENT_TTL_HOURS` | How long attachment content (the media file under `<data dir>/media`) is kept before the hourly sweep deletes it; the metadata stub survives, so history keeps showing the file as *content expired*. A non-positive or unparseable value falls back to the default | `168` (7 days) |

@@ -21,6 +21,7 @@
 
 import { asSchema, stepCountIs, type SystemModelMessage, type Tool } from 'ai';
 import {
+  isDeferredTool,
   mergeProviderOptions,
   type ToolChange,
   type ToolChangeProtocol,
@@ -84,7 +85,7 @@ function wireDefinition(tool: Tool): Tool {
 async function wireSignature(tool: Tool): Promise<string> {
   const { type, description, inputExamples, strict } = tool as Record<string, unknown>;
   const schema = await asSchema(tool.inputSchema).jsonSchema;
-  return JSON.stringify([type, description, schema, inputExamples, strict]);
+  return JSON.stringify([type, description, schema, inputExamples, strict, isDeferredTool(tool)]);
 }
 
 function refusal(name: string): Tool['execute'] {

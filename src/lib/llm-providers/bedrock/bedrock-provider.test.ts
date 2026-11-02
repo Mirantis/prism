@@ -41,6 +41,7 @@ vi.mock('@aws-sdk/credential-provider-node', () => ({
 
 import { createBedrockProvider } from './bedrock-provider';
 import { ANTHROPIC_TOOL_CHANGES } from '../tool-changes';
+import { ANTHROPIC_DEFERRED_TOOLS } from '../deferred-tools';
 
 describe('createBedrockProvider', () => {
   beforeEach(() => {
@@ -188,5 +189,21 @@ describe('createBedrockProvider', () => {
     'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/a1b2c3d4e5f6',
   ])('sends no tool change to %s', (modelId) => {
     expect(createBedrockProvider().toolChanges?.(modelId)).toBeUndefined();
+  });
+
+  it.each([
+    'global.anthropic.claude-opus-5-5',
+    'us.anthropic.claude-opus-4-7',
+    'global.anthropic.claude-haiku-5-5',
+  ])('defers tools on %s', (modelId) => {
+    expect(createBedrockProvider().deferredTools?.(modelId)).toBe(ANTHROPIC_DEFERRED_TOOLS);
+  });
+
+  it.each([
+    'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+    'us.xai.grok-4.6',
+    'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/a1b2c3d4e5f6',
+  ])('defers no tool on %s', (modelId) => {
+    expect(createBedrockProvider().deferredTools?.(modelId)).toBeUndefined();
   });
 });

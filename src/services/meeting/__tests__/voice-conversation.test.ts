@@ -670,3 +670,49 @@ describe('taking captured audio in', () => {
     expect(appends(sent)).toHaveLength(0);
   });
 });
+
+describe('deferred tools', () => {
+  const declaration = (name: string) => ({ name, description: name, parameters: {} });
+
+  it('declares what a load_tools call loaded before it sends the call\'s output', async () => {
+    let declarations = [declaration('load_tools')];
+    const tools = {
+      get declarations() {
+        return declarations;
+      },
+      count: 2,
+      catalog: '# Tool Catalog\n- gh__create_issue',
+      execute: vi.fn(async () => {
+        declarations = [declaration('gh__create_issue'), declaration('load_tools')];
+        return 'Loaded gh__create_issue.';
+      }),
+    };
+    const { h, send, sent } = await speakingHarness(MEETING_SAMPLE_RATE, { tools });
+    active = h;
+    await settle();
+
+    const configured = sent.find((e) => e.type === 'session.update') as Record<string, any>;
+    expect(configured.session.instructions).toContain('# Tool Catalog\n- gh__create_issue');
+
+    send({
+      type: 'response.function_call_arguments.done',
+      call_id: 'call-1',
+      name: 'load_tools',
+      arguments: '{"names":["gh__create_issue"]}',
+    });
+    await settle();
+
+    const update = sent.findIndex(
+      (e) => e.type === 'session.update' && (e as Record<string, any>).session.tools?.length === 2,
+    );
+    const output = sent.findIndex(
+      (e) => e.type === 'conversation.item.create' && (e as Record<string, any>).item.type === 'function_call_output',
+    );
+    expect(update).toBeGreaterThan(-1);
+    expect(output).toBeGreaterThan(update);
+    expect((sent[update] as Record<string, any>).session.tools.map((t: { name: string }) => t.name)).toEqual([
+      'gh__create_issue',
+      'load_tools',
+    ]);
+  });
+});
