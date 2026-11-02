@@ -894,13 +894,14 @@ flag is part of the ledger's signature, so a change in it is a changed
 definition. The Realtime API has no deferral: a voice session declares the
 deferred tools itself, with a `session.update`, once a load names them.
 
-A provider declares it by version, not by model id
-(`lib/llm-providers/deferred-tools.ts`): Claude from 4.7 and GPT from 5.6, the
-oldest versions measured to load a tool and replay the load, so a new release
-defers with no code change. When the API refuses a request that deferred tools
-with a 400, `invokeStream` records the model (`recordDeferralRefusal`) and every
-later request to it sends every tool in full until the process restarts. That
-turn fails; the next one replays its loads as text.
+A provider declares it for every Claude or GPT model whose id names no version
+known to refuse (`lib/llm-providers/deferred-tools.ts`): Claude before 4, and GPT
+before 5.6, where gpt-5.5 and gpt-5.4 fail to replay a load. A new release defers
+with no code change. When the API refuses a turn's first request with a 400 and
+the request deferred tools, `invokeStream` sends it again with every tool in full.
+When that request is answered, it records the model (`recordDeferralRefusal`),
+and every later request to it sends every tool in full until the process
+restarts; loads replay as text.
 
 ## Key Services
 

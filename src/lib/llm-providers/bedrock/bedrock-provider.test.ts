@@ -197,14 +197,18 @@ describe('createBedrockProvider', () => {
     'global.anthropic.claude-haiku-5-5',
     'global.anthropic.claude-opus-6',
     'global.anthropic.claude-sonnet-6-1',
+    // Unmeasured Claude 4 models defer too; a refusal sends the request again in full.
+    'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+    'us.anthropic.claude-opus-4-20250514-v1:0',
   ])('defers tools on %s', (modelId) => {
     expect(createBedrockProvider().deferredTools?.(modelId)).toBe(ANTHROPIC_DEFERRED_TOOLS);
   });
 
   it.each([
-    'us.anthropic.claude-haiku-4-5-20251001-v1:0',
-    'us.anthropic.claude-opus-4-20250514-v1:0',
     'anthropic.claude-3-5-sonnet-20241022-v2:0',
+    'anthropic.claude-v2:1',
+    'anthropic.claude-instant-v1',
+    // Converse models.
     'us.xai.grok-4.6',
     'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/a1b2c3d4e5f6',
   ])('defers no tool on %s', (modelId) => {

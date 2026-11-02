@@ -4,7 +4,7 @@
  * Core invocation logic with heavy mocking of external dependencies.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { RESUMED_RUN_NOTICE } from './prompts/resume-prompt';
 import { createTestInvokeRequest, createTestAgentContext } from './test-utils/factories';
 import { attachmentService } from './services/attachment.service';
@@ -2898,10 +2898,11 @@ describe('invoke', () => {
     /** One turn on the thread, with history rows of these ids; returns its request. */
     async function turn(
       rowIds: string[],
-      options: { lockedIn?: boolean; request?: Parameters<typeof createTestInvokeRequest>[0] } = {},
+      options: { lockedIn?: boolean; model?: string; request?: Parameters<typeof createTestInvokeRequest>[0] } = {},
     ) {
       mockGetAgentContext.mockResolvedValue(createTestAgentContext({
         lockedIn: options.lockedIn ?? false,
+        ...(options.model ? { model: options.model } : {}),
         recentMessages: rowIds.map((id, i) => ({
           id,
           role: i % 2 === 0 ? 'USER' : 'AGENT',
@@ -2911,9 +2912,10 @@ describe('invoke', () => {
         })),
       }));
       mockGenerateText.mockClear();
-      await invoke(createTestInvokeRequest({ threadId, ...options.request }));
+      lastResult = await invoke(createTestInvokeRequest({ threadId, ...options.request }));
       return mockGenerateText.mock.calls[0][0];
     }
+    let lastResult: Awaited<ReturnType<typeof invoke>>;
 
     it("declares the first turn's tools and lets the request hold system messages", async () => {
       const request = await turn(['u1']);
@@ -3049,31 +3051,81 @@ describe('invoke', () => {
       }
     });
 
-    it('sends every tool in full after the API refuses a request that deferred them', async () => {
-      const saved = { ...config };
-      Object.assign(config, { contextWindowTokens: 100_000, toolSearch: 'auto', toolSearchThresholdPercent: 2 });
-      mockCreateBedrockProvider.mockReturnValue(Object.assign(() => 'model-instance', {
-        cachePoint: () => ({}),
-        deferredTools: deferredToolsWhen(() => true, OPENAI_DEFERRED_TOOLS),
-      }));
-      mockGetMCPTools.mockResolvedValue({
-        create_issue: { description: 'Create an issue.'.padEnd(10_000, '.'), inputSchema: z.object({}) },
-      });
-      mockGenerateText.mockRejectedValueOnce(Object.assign(new Error('Bad Request'), { statusCode: 400 }));
+    describe('when the API refuses a request that deferred tools', () => {
+      const badRequest = () => Object.assign(new Error('Bad Request'), { statusCode: 400 });
+      let saved: typeof config;
 
-      try {
-        const refused = await turn(['u1']);
-        const next = await turn(['u1', 'r1', 'u2']);
+      beforeEach(() => {
+        saved = { ...config };
+        Object.assign(config, { contextWindowTokens: 100_000, toolSearch: 'auto', toolSearchThresholdPercent: 2 });
+        mockCreateBedrockProvider.mockReturnValue(Object.assign(() => 'model-instance', {
+          cachePoint: () => ({}),
+          deferredTools: deferredToolsWhen(() => true, OPENAI_DEFERRED_TOOLS),
+        }));
+        mockGetMCPTools.mockResolvedValue({
+          create_issue: { description: 'Create an issue.'.padEnd(10_000, '.'), inputSchema: z.object({}) },
+        });
+      });
+
+      afterEach(() => {
+        Object.assign(config, saved);
+      });
+
+      // The refusal latch is process-wide, so each test runs a model of its own.
+      it('sends the request again in full in the same turn, and every later one', async () => {
+        const model = 'refuses-deferral-once';
+        mockGenerateText.mockRejectedValueOnce(badRequest());
+
+        const refused = await turn(['u1'], { model });
+        const retry = mockGenerateText.mock.calls[1][0];
+        const next = await turn(['u1', 'r1', 'u2'], { model });
 
         expect(Object.keys(refused.tools)).toContain(LOAD_TOOLS_NAME);
+        expect(Object.keys(retry.tools)).not.toContain(LOAD_TOOLS_NAME);
+        expect(retry.tools.create_issue.providerOptions?.openai?.deferLoading).toBeUndefined();
         expect(Object.keys(next.tools)).not.toContain(LOAD_TOOLS_NAME);
-        expect(next.tools.create_issue.providerOptions?.openai?.deferLoading).toBeUndefined();
         expect(mockTrackEvent).toHaveBeenCalledWith('tool search refused', expect.any(String), expect.objectContaining({
-          'llm.model': 'anthropic.claude-3-sonnet-20240229-v1:0',
+          'llm.model': model,
         }));
-      } finally {
-        Object.assign(config, saved);
-      }
+      });
+
+      it('answers the turn from the request sent in full', async () => {
+        mockGenerateText.mockRejectedValueOnce(badRequest());
+
+        await turn(['u1'], { model: 'refuses-deferral-answers' });
+
+        expect(mockGenerateText).toHaveBeenCalledTimes(2);
+        expect(lastResult.error).toBeUndefined();
+      });
+
+      it('keeps deferring when the request sent in full is refused too', async () => {
+        const model = 'refuses-every-request';
+        mockGenerateText.mockRejectedValueOnce(badRequest()).mockRejectedValueOnce(badRequest());
+
+        await turn(['u1'], { model });
+        const failed = lastResult;
+        const next = await turn(['u1', 'r1', 'u2'], { model });
+
+        expect(failed.error?.type).toBe('generic');
+        expect(Object.keys(next.tools)).toContain(LOAD_TOOLS_NAME);
+        expect(mockTrackEvent).not.toHaveBeenCalledWith('tool search refused', expect.anything(), expect.anything());
+      });
+
+      it('fails a turn whose refusal follows a finished step', async () => {
+        const model = 'refuses-after-a-step';
+        mockGenerateText.mockImplementationOnce(async (opts: { onStepFinish: (step: unknown) => void }) => {
+          opts.onStepFinish({ text: 'working', toolCalls: [], toolResults: [] });
+          throw badRequest();
+        });
+
+        const first = await turn(['u1'], { model });
+        const failed = lastResult;
+        const next = await turn(['u1', 'r1', 'u2'], { model });
+
+        expect(Object.keys(first.tools)).toContain(LOAD_TOOLS_NAME);
+        expect(failed.error?.type).toBe('generic');
+        expect(Object.keys(next.tools)).toContain(LOAD_TOOLS_NAME);
+      });
     });
 
     it('starts a new list for a thread it has no record of, as after a restart', async () => {
