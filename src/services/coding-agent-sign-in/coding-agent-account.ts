@@ -47,9 +47,14 @@ export function cliInstalled(environment: ExecutionEnvironment, agent: CodingAge
   return answer;
 }
 
-/** "max" as "Max", "plus" as "Plus". */
-const planName = (prefix: string, type: unknown) =>
-  typeof type === 'string' && type ? `${prefix} ${type[0].toUpperCase()}${type.slice(1)}` : prefix;
+/**
+ * The plan the login names, "max" as "Claude Max". A login that names none is
+ * "ChatGPT plan": no plan is assumed.
+ */
+export const planName = (prefix: string, type: unknown) =>
+  typeof type === 'string' && type.trim()
+    ? `${prefix} ${type.trim()[0].toUpperCase()}${type.trim().slice(1)}`
+    : `${prefix} plan`;
 
 /** The subscription signed in to the home, or null when none is. Never throws. */
 export async function readAccount(
