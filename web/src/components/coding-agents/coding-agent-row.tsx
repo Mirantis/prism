@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { runtimeApi } from '@/api/runtime-client';
 import { CODING_AGENT_PROVIDER, CODING_AGENTS_QUERY_KEY } from '@/lib/coding-agents';
 import type { CodingAgentSummary } from '@/types';
+import { CodingAgentMark } from './coding-agent-mark';
 
 /** One coding agent on the Profile page: what its coding tasks run on, and how to change it. */
 export function CodingAgentRow({
@@ -43,7 +44,7 @@ export function CodingAgentRow({
       ? "Uses the deployment's models"
       : row.account
         ? `Your ${row.account.plan} · ${row.account.email}`
-        : 'Signed out. Coding tasks fail until you sign in again.';
+        : 'Signed out. Its work fails until you sign in again.';
 
   let action: React.ReactNode = null;
   if (row.available && row.subscription && row.account) {
@@ -61,7 +62,11 @@ export function CodingAgentRow({
   }
 
   return (
-    <li aria-label={row.name} className="flex flex-wrap items-center gap-3 rounded-xl bg-muted/15 p-3.5 ring-1 ring-border ring-inset">
+    <li
+      aria-label={row.name}
+      className="flex items-center gap-3 rounded-xl bg-muted/15 p-3.5 ring-1 ring-border ring-inset"
+    >
+      <CodingAgentMark agent={row.agent} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="text-sm font-medium">{row.name}</span>
         <span className="text-sm break-words text-muted-foreground">{status}</span>
@@ -76,7 +81,7 @@ export function CodingAgentRow({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Sign out of {provider}?</AlertDialogTitle>
-            <AlertDialogDescription>Coding tasks go back to the deployment's models.</AlertDialogDescription>
+            <AlertDialogDescription>{row.name} goes back to the deployment's models.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>

@@ -94,7 +94,7 @@ describe('ChatMessage', () => {
       userMessage({
         role: 'AGENT',
         content:
-          'Claude Code needs your Claude subscription. [Sign in to Claude](https://agent.example.com/coding-agents?agent=claude-code&sign-in=3b241101-e2bb-4255-8caf-4136c566a962)',
+          'Sign in to Claude to run Claude Code on your own plan. Enter the sign-in code only where this link opens, never in chat.\n\n[Sign in to Claude](https://agent.example.com/coding-agents?agent=claude-code&sign-in=3b241101-e2bb-4255-8caf-4136c566a962)',
         blocks: [
           {
             type: 'coding_agent_sign_in',
@@ -107,7 +107,9 @@ describe('ChatMessage', () => {
       ADA,
     );
 
-    expect(screen.getByLabelText('Coding agent sign-in').textContent).toContain('Sign in to Claude for coding tasks');
+    expect(screen.getByLabelText('Coding agent sign-in').textContent).toContain(
+      'Run Claude Code on your own Claude plan',
+    );
     expect(screen.queryByRole('link', { name: 'Sign in to Claude' })).toBeNull();
   });
 });

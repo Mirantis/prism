@@ -8,8 +8,7 @@ import { CODING_AGENTS_QUERY_KEY } from '@/lib/coding-agents';
 import type { CodingAgentId } from '@/types';
 import { CodingAgentRow } from './coding-agent-row';
 import { CodingAgentSignInDialog } from './coding-agent-sign-in-dialog';
-
-const LINK = 'underline underline-offset-4 hover:text-foreground';
+import { CodingAgentTerms } from './coding-agent-terms';
 
 /**
  * The Profile page's coding agents, each signed in to the person's own subscription or on
@@ -26,8 +25,11 @@ export function CodingAgentsCard({
     queryKey: CODING_AGENTS_QUERY_KEY,
     queryFn: () => runtimeApi.codingAgents(),
   });
-  // The dialog resumes the sign-in under way for the agent, or starts one.
-  const [dialog, setDialog] = useState<CodingAgentId | null>(signIn?.agent ?? null);
+  // The dialog resumes the sign-in under way for the agent, or starts one. A link opens it
+  // for an agent that asked in chat and waits.
+  const [dialog, setDialog] = useState<{ agent: CodingAgentId; paused: boolean } | null>(
+    signIn ? { agent: signIn.agent, paused: true } : null,
+  );
 
   return (
     <Card>
@@ -36,6 +38,10 @@ export function CodingAgentsCard({
           <Code className="size-4 text-muted-foreground" />
           Coding agents
         </CardTitle>
+        <p className="max-w-3xl text-sm text-foreground/70">
+          Your agent hands longer, multi-step work to a coding agent: research, documents, slides, spreadsheets,
+          analysis and code. It runs on the deployment's models, or on your own Claude or ChatGPT plan when you sign in.
+        </p>
       </CardHeader>
       <CardContent className="space-y-3">
         {error ? (
@@ -48,7 +54,7 @@ export function CodingAgentsCard({
               <CodingAgentRow
                 key={row.agent}
                 row={row}
-                onSignIn={() => setDialog(row.agent)}
+                onSignIn={() => setDialog({ agent: row.agent, paused: false })}
               />
             ))}
           </ul>
@@ -56,20 +62,13 @@ export function CodingAgentsCard({
           <Skeleton className="h-16" />
         )}
         <p className="text-xs leading-relaxed text-muted-foreground">
-          Use your own Claude or ChatGPT subscription only on an agent nobody else uses.{' '}
-          <a className={LINK} href="https://code.claude.com/docs/en/legal-and-compliance" target="_blank" rel="noopener noreferrer">
-            Anthropic's
-          </a>{' '}
-          and{' '}
-          <a className={LINK} href="https://openai.com/policies/row-terms-of-use/" target="_blank" rel="noopener noreferrer">
-            OpenAI's
-          </a>{' '}
-          terms let only the subscriber use it, and a shared agent can get your account blocked.
+          <CodingAgentTerms />
         </p>
       </CardContent>
       {dialog && (
         <CodingAgentSignInDialog
-          agent={dialog}
+          agent={dialog.agent}
+          paused={dialog.paused}
           onClose={() => {
             setDialog(null);
             onSignInClosed?.();

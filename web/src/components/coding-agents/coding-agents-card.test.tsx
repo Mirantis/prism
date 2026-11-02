@@ -59,6 +59,11 @@ describe('CodingAgentsCard', () => {
     ]);
     renderCard();
 
+    expect(
+      screen.getByText(
+        "Your agent hands longer, multi-step work to a coding agent: research, documents, slides, spreadsheets, analysis and code. It runs on the deployment's models, or on your own Claude or ChatGPT plan when you sign in.",
+      ),
+    ).toBeInTheDocument();
     const claudeRow = await screen.findByRole('listitem', { name: 'Claude Code' });
     expect(claudeRow).toHaveTextContent("Uses the deployment's models");
     expect(within(claudeRow).getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
@@ -78,7 +83,7 @@ describe('CodingAgentsCard', () => {
     expect(claudeRow).toHaveTextContent('Your Claude Max · sam@example.com');
     expect(within(claudeRow).getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
     const codexRow = screen.getByRole('listitem', { name: 'Codex' });
-    expect(codexRow).toHaveTextContent('Signed out. Coding tasks fail until you sign in again.');
+    expect(codexRow).toHaveTextContent('Signed out. Its work fails until you sign in again.');
     expect(within(codexRow).getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
   });
 
@@ -107,7 +112,7 @@ describe('CodingAgentsCard', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
     const confirm = await screen.findByRole('alertdialog', { name: 'Sign out of Claude?' });
-    expect(confirm).toHaveTextContent("Coding tasks go back to the deployment's models.");
+    expect(confirm).toHaveTextContent("Claude Code goes back to the deployment's models.");
     fireEvent.click(within(confirm).getByRole('button', { name: 'Sign out' }));
 
     await waitFor(() =>
@@ -126,6 +131,7 @@ describe('CodingAgentsCard', () => {
 
     expect(await screen.findByRole('dialog', { name: 'Sign in to Claude' })).toBeInTheDocument();
     expect(await screen.findByLabelText('Code')).toBeInTheDocument();
+    expect(screen.queryByText('Your agent is paused until you finish.')).not.toBeInTheDocument();
     expect(api.startCodingAgentSignIn).toHaveBeenCalledExactlyOnceWith('claude-code');
   });
 
@@ -147,6 +153,7 @@ describe('CodingAgentsCard', () => {
     renderCard({ signIn: { agent: 'claude-code' }, onSignInClosed });
 
     expect(await screen.findByLabelText('Code')).toBeInTheDocument();
+    expect(screen.getByText('Your agent is paused until you finish.')).toBeInTheDocument();
     expect(api.startCodingAgentSignIn).toHaveBeenCalledExactlyOnceWith('claude-code');
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
 

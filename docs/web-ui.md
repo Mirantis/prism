@@ -283,9 +283,9 @@ The agent's identity and runtime controls.
 - **Coding agents.** One row each for Claude Code and Codex shows whether its
   coding tasks use the deployment's models or your own subscription, with the
   plan and email you signed in with. **Sign in** opens a dialog that links to
-  Claude's or OpenAI's sign-in page; the agent is paused until you finish.
-  **Sign out** sends coding tasks back to the deployment's models. A link the
-  agent sends in chat to ask you to sign in opens this page with the dialog open.
+  Claude's or OpenAI's sign-in page. **Sign out** sends coding tasks back to the
+  deployment's models. A link the agent sends in chat to ask you to sign in opens
+  this page with the dialog open, and the agent is paused until you finish.
   See **[Configuration → Coding tasks on a Claude subscription](configuration.md#coding-tasks-on-a-claude-subscription)**
   and **[Codex tasks on a ChatGPT subscription](configuration.md#codex-tasks-on-a-chatgpt-subscription)**.
 - **Backup & restore.** **Export** downloads a `.prism` snapshot of the entire

@@ -6,6 +6,12 @@ export const CODING_AGENT_PROVIDER: Record<CodingAgentId, string> = {
   codex: 'ChatGPT',
 };
 
+/** The company whose page each subscription signs in on. */
+export const CODING_AGENT_COMPANY: Record<CodingAgentId, string> = { 'claude-code': 'Anthropic', codex: 'OpenAI' };
+
+/** Each coding agent's name, for where its row from the runtime is not at hand. */
+export const CODING_AGENT_NAME: Record<CodingAgentId, string> = { 'claude-code': 'Claude Code', codex: 'Codex' };
+
 export const CODING_AGENTS_QUERY_KEY = ['coding-agents'] as const;
 
 /** The search of a link that opens a coding agent's sign-in: `?agent=…&sign-in=…`. */

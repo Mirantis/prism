@@ -26,6 +26,7 @@ vi.mock('../../lib/coding-agents/get-coding-agent', () => ({
 }));
 vi.mock('./coding-agent-sign-in-request.service', () => ({
   codingAgentSignInRequestService: { signedIn: mocks.signedIn },
+  NAMES: { 'claude-code': 'Claude Code', codex: 'Codex' },
 }));
 vi.mock('./coding-agent-account', () => ({
   homeOf: (_env: unknown, agent: string) => `/data/${agent}`,

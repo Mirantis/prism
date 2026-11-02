@@ -42,12 +42,12 @@ function row(agent: CodingAgentId, plan: string): CodingAgentSummary {
   };
 }
 
-function renderDialog(agent: CodingAgentId) {
+function renderDialog(agent: CodingAgentId, { paused = false } = {}) {
   const onClose = vi.fn();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <CodingAgentSignInDialog agent={agent} onClose={onClose} />
+      <CodingAgentSignInDialog agent={agent} paused={paused} onClose={onClose} />
     </QueryClientProvider>,
   );
   return { onClose };
@@ -68,9 +68,15 @@ describe('CodingAgentSignInDialog', () => {
     api.codingAgents.mockResolvedValue([row('claude-code', 'Claude Max')]);
     const { onClose } = renderDialog('claude-code');
 
-    expect(await screen.findByRole('dialog', { name: 'Sign in to Claude' })).toBeInTheDocument();
-    expect(await screen.findByText('Open the sign-in page, sign in to your Claude account, then paste the code it shows.')).toBeInTheDocument();
-    expect(screen.getByText('Your agent is paused until you finish.')).toBeInTheDocument();
+    const dialog = await screen.findByRole('dialog', { name: 'Sign in to Claude' });
+    expect(dialog).toHaveAccessibleDescription(
+      "Claude Code does your agent's multi-step work: research, documents, slides, spreadsheets, analysis and code. Signed in, it runs on your own Claude plan instead of the deployment's models.",
+    );
+    expect(await screen.findByText("Open Claude's sign-in page.")).toBeInTheDocument();
+    expect(screen.getByText('Sign in and allow access.')).toBeInTheDocument();
+    expect(screen.getByText('Paste the code it shows.')).toBeInTheDocument();
+    expect(dialog).toHaveTextContent("You sign in on Anthropic's own page. Your password never reaches this app.");
+    expect(screen.queryByText('Your agent is paused until you finish.')).not.toBeInTheDocument();
     const link = screen.getByRole('link', { name: 'Open sign-in' });
     expect(link).toHaveAttribute('href', 'https://claude.example.com/oauth/authorize?code=true');
     expect(link).toHaveAttribute('target', '_blank');
@@ -81,7 +87,7 @@ describe('CodingAgentSignInDialog', () => {
     fireEvent.change(screen.getByLabelText('Code'), { target: { value: ' code-123 ' } });
     fireEvent.click(submit);
 
-    expect(await screen.findByText('Signed in. Coding tasks now use your Claude Max.')).toBeInTheDocument();
+    expect(await screen.findByText('Signed in. Claude Code now runs on your Claude Max.')).toBeInTheDocument();
     expect(api.sendClaudeSignInCode).toHaveBeenCalledWith('attempt-1', 'code-123');
     fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     expect(onClose).toHaveBeenCalled();
@@ -153,11 +159,16 @@ describe('CodingAgentSignInDialog', () => {
       .mockResolvedValueOnce(waiting)
       .mockResolvedValueOnce({ ...waiting, status: 'signed_in' });
     api.codingAgents.mockResolvedValue([row('codex', 'ChatGPT Plus')]);
-    renderDialog('codex');
+    renderDialog('codex', { paused: true });
 
-    expect(await screen.findByRole('dialog', { name: 'Sign in to ChatGPT' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'Sign in to ChatGPT' })).toHaveTextContent(
+      "You sign in on OpenAI's own page. Your password never reaches this app.",
+    );
     expect(await screen.findByTestId('coding-agent-user-code')).toHaveTextContent('ABCD-1234');
-    expect(screen.getByText('Open the sign-in page, sign in to your ChatGPT account, and enter this code:')).toBeInTheDocument();
+    expect(screen.getByText("Open ChatGPT's sign-in page.")).toBeInTheDocument();
+    expect(screen.getByText('Enter this code:')).toBeInTheDocument();
+    expect(screen.getByText("Allow access. This updates when you're done.")).toBeInTheDocument();
+    expect(screen.getByText('Your agent is paused until you finish.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Copy code' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open sign-in' })).toHaveAttribute('href', 'https://auth.example.com/codex/device');
     expect(screen.getByText("Waiting for you to finish on OpenAI's page…")).toBeInTheDocument();
@@ -167,7 +178,7 @@ describe('CodingAgentSignInDialog', () => {
     expect(api.codingAgentSignIn).toHaveBeenCalledTimes(1);
     await act(() => vi.advanceTimersByTimeAsync(3000));
 
-    expect(await screen.findByText('Signed in. Coding tasks now use your ChatGPT Plus.')).toBeInTheDocument();
+    expect(await screen.findByText('Signed in. Codex now runs on your ChatGPT Plus.')).toBeInTheDocument();
     expect(api.codingAgentSignIn).toHaveBeenCalledTimes(2);
     expect(screen.queryByText('Your agent is paused until you finish.')).not.toBeInTheDocument();
   });

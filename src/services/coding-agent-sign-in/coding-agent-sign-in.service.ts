@@ -21,7 +21,7 @@ import { getCodingAgent } from '../../lib/coding-agents/get-coding-agent';
 import { setSubscription, usesSubscription } from '../../lib/coding-agents/subscription-switch';
 import { startCliSignIn, type CliSignIn } from './cli-sign-in';
 import { cliInstalled, homeOf, readAccount, signOutCli, type SubscriptionAccount } from './coding-agent-account';
-import { codingAgentSignInRequestService } from './coding-agent-sign-in-request.service';
+import { codingAgentSignInRequestService, NAMES } from './coding-agent-sign-in-request.service';
 
 export type AttemptStatus = 'waiting' | 'checking' | 'signed_in' | 'failed' | 'expired';
 
@@ -48,8 +48,6 @@ export interface CodingAgentRow {
 export class SignInUnavailableError extends Error {}
 /** A code for an attempt that is not waiting for one. */
 export class SignInClosedError extends Error {}
-
-const NAMES: Record<CodingAgentName, string> = { 'claude-code': 'Claude Code', codex: 'Codex' };
 
 /** The hosts a sign-in and the tasks after it reach, named when one fails. */
 const HOSTS: Record<CodingAgentName, string> = {
