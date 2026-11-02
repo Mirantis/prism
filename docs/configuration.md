@@ -538,7 +538,11 @@ and scheduled-task models; switching back to **Fixed** restores them.
 Set the models and choose **Auto** in the **Models** card on the Profile
 page; `/model-mode auto|fixed` in the TUI switches between the two.
 Auto needs a small and a large model. Leave the medium model empty to choose
-between those two only. To make Auto the default for a deployment, set:
+between those two only: a turn that is more than a short answer or one obvious
+step then runs on the large model. With a medium model set, it runs everyday
+work, heartbeats and scheduled tasks included, and the large model runs only the
+work the medium model would likely fail at. To make Auto the default for a
+deployment, set:
 
 | Variable | Purpose | Default |
 |----------|---------|---------|

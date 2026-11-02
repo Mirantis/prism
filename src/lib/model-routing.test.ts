@@ -139,6 +139,22 @@ describe('selectTurnModel', () => {
     const system = mockCallModel.mock.calls[0][1].system as string;
     expect(system).toContain('Answer with exactly one word: SMALL, LARGE.');
     expect(system).not.toContain('MEDIUM');
+    expect(system).toContain('When unsure, answer LARGE.');
+    expect(system).toContain('LARGE: multi-step tool work');
+  });
+
+  it('makes medium the everyday tier when it is set, and keeps large for the hardest work', async () => {
+    label('MEDIUM');
+
+    await selectTurnModel(autoContext(), request, provider);
+
+    const system = mockCallModel.mock.calls[0][1].system as string;
+    expect(system).toContain('Answer with exactly one word: SMALL, MEDIUM, LARGE.');
+    expect(system).toContain('MEDIUM: most work');
+    expect(system).toContain('LARGE: only the most demanding work');
+    expect(system).toContain('Choose LARGE only when MEDIUM would likely fail.');
+    expect(system).toContain('When unsure, answer MEDIUM.');
+    expect(system).not.toContain('When unsure, answer LARGE.');
   });
 
   it('runs the fixed model when Auto lacks a required tier', async () => {
