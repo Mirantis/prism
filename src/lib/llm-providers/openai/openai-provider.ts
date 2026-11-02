@@ -29,7 +29,11 @@
 
 import { config, isGatewayEndpoint } from '../../../config';
 import { logger } from '../../../logger';
-import { OPENAI_DEFERRED_TOOLS, supportsOpenAiDeferredTools } from '../deferred-tools';
+import {
+  OPENAI_DEFERRED_TOOLS,
+  deferredToolsWhen,
+  supportsOpenAiDeferredTools,
+} from '../deferred-tools';
 import { createOpenAiCompatibleProvider } from '../openai-compatible';
 import type { LlmProvider } from '../llm-provider';
 
@@ -46,8 +50,7 @@ export function createOpenAiProvider(baseURL?: string): LlmProvider {
     baseURL,
   });
   return Object.assign(provider, {
-    deferredTools: (modelId: string) =>
-      supportsOpenAiDeferredTools(modelId) ? OPENAI_DEFERRED_TOOLS : undefined,
+    deferredTools: deferredToolsWhen(supportsOpenAiDeferredTools, OPENAI_DEFERRED_TOOLS),
   });
 }
 

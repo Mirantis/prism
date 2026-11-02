@@ -170,6 +170,18 @@ export function isContextOverflowError(error: unknown): boolean {
 }
 
 /**
+ * Check if the API refused the request itself (400) for a reason other than
+ * its size. Unwraps the SDK's `lastError` retry wrapper.
+ */
+export function isRejectedRequestError(error: unknown): boolean {
+  const unwrapped = (error && typeof error === 'object' && 'lastError' in error)
+    ? (error as { lastError: unknown }).lastError
+    : error;
+  if (!unwrapped || typeof unwrapped !== 'object') return false;
+  return getStatusCode(unwrapped as Record<string, unknown>) === 400 && !isContextOverflowError(unwrapped);
+}
+
+/**
  * Build a friendly InvokeStep from a runtime error.
  *
  * The single place that turns an LLM/runtime error into user-facing text.

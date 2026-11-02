@@ -11,7 +11,9 @@ import {
   ANTHROPIC_DEFERRED_TOOLS,
   LOAD_TOOLS_NAME,
   OPENAI_DEFERRED_TOOLS,
+  deferredToolsWhen,
   describeLoad,
+  recordDeferralRefusal,
 } from './deferred-tools';
 import { mergeProviderOptions, type ToolLoad, type ToolLoader } from './llm-provider';
 
@@ -61,6 +63,19 @@ function history(replayed: { id: string; input: unknown; output: unknown }): Mod
 }
 
 const load: ToolLoad = { loaded: [ISSUE_TOOL], unmatched: [], suggestions: [] };
+
+describe('deferredToolsWhen', () => {
+  it('stops deferring on a model once its API refuses deferred tools', () => {
+    const deferredTools = deferredToolsWhen((modelId) => modelId.startsWith('refusing-'), OPENAI_DEFERRED_TOOLS);
+
+    expect(deferredTools('refusing-a')).toBe(OPENAI_DEFERRED_TOOLS);
+    expect(deferredTools('other')).toBeUndefined();
+    expect(recordDeferralRefusal('refusing-a')).toBe(true);
+    expect(recordDeferralRefusal('refusing-a')).toBe(false);
+    expect(deferredTools('refusing-a')).toBeUndefined();
+    expect(deferredTools('refusing-b')).toBe(OPENAI_DEFERRED_TOOLS);
+  });
+});
 
 describe('ANTHROPIC_DEFERRED_TOOLS', () => {
   const answer = {
