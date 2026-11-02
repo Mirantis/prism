@@ -1158,6 +1158,16 @@ describe('idle compaction', () => {
     expect(compactionService.hasInFlight()).toBe(false);
   });
 
+  it('skips a timer when a compaction committed after the turn', async () => {
+    compactionService.armIdle(turn());
+    mockPrisma.conversationThread.findUnique.mockResolvedValueOnce({ compactedAt: new Date(Date.now() + 1_000) });
+
+    await fire(0.9 * HOUR);
+
+    expect(mockGenerateText).not.toHaveBeenCalled();
+    expect(compactionService.hasInFlight()).toBe(false);
+  });
+
   it('arms nothing when chat turns use the five-minute cache', () => {
     mockConfig.chatCacheTtl = '5m';
     compactionService.armIdle(turn());
@@ -1284,6 +1294,17 @@ describe('idle compaction', () => {
 
       vi.advanceTimersByTime(2 * HOUR);
       expect(mockRun).not.toHaveBeenCalled();
+    });
+
+    it('compacts a conversation whose summary a restart stopped before its commit', async () => {
+      // An earlier compaction committed before the last turn; the idle summary after it never did.
+      mockListIdleCandidates.mockResolvedValue([{ ...candidate, compactedAt: new Date(Date.now() - 3 * HOUR) }]);
+      mockNewestThreadCall.mockResolvedValue(chatCall(2 * HOUR));
+      await compactionService.restoreIdle();
+
+      expect(mockNewestThreadCall).toHaveBeenCalledWith(THREAD, expect.not.arrayContaining(['compaction']));
+      await fire(0);
+      expect(mockGenerateText).toHaveBeenCalledTimes(1);
     });
 
     it('leaves a conversation whose newest call was not a chat turn', async () => {

@@ -36,6 +36,8 @@ export interface RuntimeTestEnv {
   prismEnv: NodeJS.ProcessEnv;
   /** Handle to the running agent-runtime process — pass to startPrism for log tailing in error messages. */
   runtime: RuntimeHandle;
+  /** Stop the runtime and start it again on the same database, env and port, as a deploy does. */
+  restart(): Promise<void>;
   /** Stop the runtime and remove the temp dir. Safe to call multiple times. */
   cleanup(): Promise<void>;
 }
@@ -118,13 +120,19 @@ export async function setupRuntime(opts: SetupOptions = {}): Promise<RuntimeTest
   const prismEnv = { ...baseEnv, ...(opts.prismEnvOverrides ?? {}) };
 
   let cleaned = false;
-  return {
+  const testEnv: RuntimeTestEnv = {
     tempDir,
     dbPath,
     port,
     agentMessagesPort,
     prismEnv,
     runtime,
+    async restart() {
+      await runtime.kill();
+      runtime = startRuntime({ env: runtimeEnv });
+      testEnv.runtime = runtime;
+      await runtime.waitForReady(60_000);
+    },
     async cleanup() {
       if (cleaned) return;
       cleaned = true;
@@ -140,6 +148,7 @@ export async function setupRuntime(opts: SetupOptions = {}): Promise<RuntimeTest
       }
     },
   };
+  return testEnv;
 }
 
 /**

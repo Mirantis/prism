@@ -331,6 +331,12 @@ class CompactionService {
         // with a person's message, seconds later at least.
         const last = await llmCallService.newestThreadCall(due.threadId, THREAD_TURN_PURPOSES);
         if (last && last.createdAt.getTime() > due.after.getTime() + STALE_TOLERANCE_MS) return;
+        // A compaction committed since then, by the threshold or a person, did the job.
+        const thread = await prisma.conversationThread.findUnique({
+          where: { id: due.threadId },
+          select: { compactedAt: true },
+        });
+        if (thread?.compactedAt && thread.compactedAt > due.after) return;
         await this.compactRebuilt(due, 'auto', 'idle', last?.createdAt ?? due.after);
       })
       .catch((err) => {
@@ -927,8 +933,12 @@ const STALE_TOLERANCE_MS = 5_000;
 /** How far back `restoreIdle` looks for a conversation someone still uses. */
 const IDLE_RESTORE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-/** The calls that use a conversation; a newer one than an idle timer's means it moved on. */
-const THREAD_TURN_PURPOSES: readonly LlmCallPurpose[] = ['chat', 'cron', 'goal', 'webhook', 'compaction'];
+/**
+ * The turns that use a conversation; a newer one than an idle timer's means it moved on.
+ * A compaction is known by the thread's `compactedAt`, which its commit writes, so a
+ * summary call that a restart stopped before its commit leaves the conversation due.
+ */
+const THREAD_TURN_PURPOSES: readonly LlmCallPurpose[] = ['chat', 'cron', 'goal', 'webhook'];
 
 interface IdleInput {
   userId: string;
