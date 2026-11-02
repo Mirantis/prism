@@ -290,7 +290,11 @@ class InboundMessageService {
     trackReceived(inbound, true);
 
     let queued = this.announced.get(inbound.threadId) === 'queued';
-    if (!this.hasWork(inbound.threadId) && !(await this.hasAnswer(existing))) {
+    if (
+      !this.hasWork(inbound.threadId) &&
+      !(await this.hasAnswer(existing)) &&
+      (await this.turnReadsThread(existing))
+    ) {
       logger.info('Message %s was stored but never answered; scheduling it now', existing.id);
       queued = await this.scheduleStored({ message: inbound, titleSet: null });
     }
@@ -298,6 +302,16 @@ class InboundMessageService {
     // has seen it yet. Clients replace a message they already have.
     await messageDeliveryService.showInConversation(config.ownerUserId, existing);
     return { message: existing, seq: eventStreamService.seq, queued, duplicate: true };
+  }
+
+  /**
+   * A turn reads the thread that holds the message. Single-thread mode hides every other
+   * web thread and answers in the one conversation, which does not hold it.
+   */
+  private async turnReadsThread(message: ConversationMessage): Promise<boolean> {
+    if ((await conversationService.writableThreadId(message.threadId)) === message.threadId) return true;
+    logger.info('Not answering message %s: single-thread mode hides thread %s', message.id, message.threadId);
+    return false;
   }
 
   /** Only this agent's web conversations that clients may see take messages from the socket. */
