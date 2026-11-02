@@ -2,8 +2,8 @@
  * Agent State Route
  *
  * GET /agents/state — `{"state": "working" | "idle"}`: working while a turn runs
- * or waits, or other work is in flight (`services/agent-activity.ts`). The other
- * agents of the project read it through the delivery service's `list_agents`.
+ * or waits, or other work is in flight (`services/agent-activity.ts`), so the
+ * platform can show whether the agent is busy.
  */
 
 import { Router, Request, Response } from 'express';

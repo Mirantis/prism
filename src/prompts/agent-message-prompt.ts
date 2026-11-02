@@ -5,7 +5,7 @@
  * replayed bytes stay the ones the model first read.
  *
  * A fixed sentence before the tag says who wrote it. It is the only framing the
- * runtime adds: the longer guidance is in `message_agent`'s description.
+ * runtime adds: any longer guidance is the platform's, in its tools.
  */
 
 import { escapeAngles } from '../lib/prompt-fence';

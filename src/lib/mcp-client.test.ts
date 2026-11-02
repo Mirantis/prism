@@ -196,7 +196,7 @@ describe('isAgentMessagingTool', () => {
   it('reads a tool by its last segment, whatever prefix the endpoint gives it', () => {
     expect(isAgentMessagingTool('hub__agent-directory__message_agent', 'message_agent')).toBe(true);
     expect(isAgentMessagingTool('message_agent', 'message_agent')).toBe(true);
-    expect(isAgentMessagingTool('hub__agent-directory__message_agent', 'list_agents')).toBe(false);
+    expect(isAgentMessagingTool('hub__agent-directory__message_agent', 'send_email')).toBe(false);
     expect(isAgentMessagingTool('hub__github__message_agents', 'message_agent')).toBe(false);
     expect(isAgentMessagingTool('hub__message_agent__send', 'message_agent')).toBe(false);
   });
@@ -228,7 +228,7 @@ describe('isAgentMessagingTool', () => {
     await mcp.getMCPTools({ url: MCP_URL });
 
     expect(mcp.isAgentMessagingTool(modelName, 'message_agent')).toBe(true);
-    expect(mcp.isAgentMessagingTool(modelName, 'list_agents')).toBe(false);
+    expect(mcp.isAgentMessagingTool(modelName, 'send_email')).toBe(false);
     expect(mcp.isAgentMessagingTool(toModelToolName('memory_search'), 'message_agent')).toBe(false);
   });
 });
