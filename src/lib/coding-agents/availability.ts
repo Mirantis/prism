@@ -68,6 +68,16 @@ async function detect(): Promise<void> {
   );
 }
 
+/**
+ * Ask again after a sign-in, which can make an agent available. A changed
+ * answer changes the tool descriptions, so the next turn writes the prompt
+ * cache's prefix once more.
+ */
+export function redetectCodingAgents(): Promise<void> {
+  probe = null;
+  return ensureCodingAgentsDetected();
+}
+
 /** Test-only: forget the probe so the next call runs it again. */
 export function __resetCodingAgentDetectionForTests(): void {
   probe = null;

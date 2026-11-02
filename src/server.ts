@@ -27,6 +27,7 @@
 
 import express from 'express';
 import { computerRouter } from './routes/computer';
+import { codingAgentsRouter } from './routes/coding-agents';
 import { computersRouter } from './routes/computers';
 import path from 'path';
 import fs from 'fs';
@@ -69,6 +70,9 @@ export function createApp() {
   app.use('/agents', slackRouter);
   app.use('/agents', teamsRouter);
   app.use('/agents', computerRouter);
+
+  // The coding agents' subscriptions (/agents/coding-agents)
+  app.use('/agents', codingAgentsRouter);
 
   // The agent's computers, its own and remote ones (/agents/computers)
   app.use('/agents', computersRouter);

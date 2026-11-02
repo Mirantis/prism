@@ -88,4 +88,26 @@ describe('ChatMessage', () => {
     expect(onRetry).toHaveBeenCalledWith('58aa0353-ebdb-421b-ad49-75f443341eb7');
     expect(onEdit).toHaveBeenCalledWith('58aa0353-ebdb-421b-ad49-75f443341eb7');
   });
+
+  it('shows a coding agent sign-in request as its card, in place of the link in its text', () => {
+    renderMessage(
+      userMessage({
+        role: 'AGENT',
+        content:
+          'Claude Code needs your Claude subscription. [Sign in to Claude](https://agent.example.com/coding-agents?agent=claude-code&sign-in=3b241101-e2bb-4255-8caf-4136c566a962)',
+        blocks: [
+          {
+            type: 'coding_agent_sign_in',
+            id: '3b241101-e2bb-4255-8caf-4136c566a962',
+            agent: 'claude-code',
+            status: 'waiting',
+          },
+        ],
+      }),
+      ADA,
+    );
+
+    expect(screen.getByLabelText('Coding agent sign-in').textContent).toContain('Sign in to Claude for coding tasks');
+    expect(screen.queryByRole('link', { name: 'Sign in to Claude' })).toBeNull();
+  });
 });

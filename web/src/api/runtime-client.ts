@@ -3,6 +3,9 @@ import type {
   AgentDetails,
   AgentSummary,
   Attachment,
+  CodingAgentId,
+  CodingAgentSignIn,
+  CodingAgentSummary,
   ConversationMessage,
   ConversationThread,
   CronTask,
@@ -138,6 +141,22 @@ export const runtimeApi = {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),
+
+  // Coding agents, and signing one in to the person's own subscription
+  codingAgents: () =>
+    request<{ agents: CodingAgentSummary[] }>('/agents/coding-agents').then((r) => r.agents),
+  startCodingAgentSignIn: (agent: CodingAgentId) =>
+    request<CodingAgentSignIn>(`/agents/coding-agents/${agent}/sign-in`, { method: 'POST' }),
+  codingAgentSignIn: (agent: CodingAgentId, id: string) =>
+    request<CodingAgentSignIn>(`/agents/coding-agents/${agent}/sign-in/${encodeURIComponent(id)}`),
+  // Answers once the code is checked, with the sign-in `signed_in` or `failed`.
+  sendClaudeSignInCode: (id: string, code: string) =>
+    request<CodingAgentSignIn>(
+      `/agents/coding-agents/claude-code/sign-in/${encodeURIComponent(id)}/code`,
+      { method: 'POST', body: JSON.stringify({ code }) },
+    ),
+  signOutCodingAgent: (agent: CodingAgentId) =>
+    request<CodingAgentSummary>(`/agents/coding-agents/${agent}/sign-out`, { method: 'POST' }),
 
   // Verbose (delivery mode)
   updateVerbose: (verbose: boolean) =>

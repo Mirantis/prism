@@ -326,7 +326,7 @@ describe('the ChatGPT subscription', () => {
     AWS_BEARER_TOKEN_BEDROCK: 'test-bedrock-key',
   };
   const NO_LOGIN =
-    'Codex failed to start: CODEX_SUBSCRIPTION is on, and the Codex home /home/.codex has no ChatGPT login: sign in to it with codex login';
+    'Codex failed to start: Codex is set to use your ChatGPT subscription, and nobody is signed in to it: sign in again from Coding agents';
 
   it('asks nothing and keeps the API key while CODEX_SUBSCRIPTION is off', async () => {
     const { agent, launches, asked } = subscriptionHarness(CHATGPT);

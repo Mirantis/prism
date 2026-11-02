@@ -605,3 +605,53 @@ export interface ComputerStatus {
   /** On the chat socket's `computer` frame: every computer the agent has. */
   computers?: ComputerSummary[];
 }
+
+/** A coding agent a person can sign in to their own subscription. */
+export type CodingAgentId = 'claude-code' | 'codex';
+
+export type CodingAgentSignInStatus = 'waiting' | 'checking' | 'signed_in' | 'failed' | 'expired';
+
+/** One sign-in to a coding agent's subscription, as the runtime reports it. */
+export interface CodingAgentSignIn {
+  id: string;
+  agent: CodingAgentId;
+  status: CodingAgentSignInStatus;
+  /** The page the person signs in on. */
+  url: string | null;
+  /** The code the person enters on that page; Codex only. */
+  userCode: string | null;
+  expiresAt: string;
+  error: string | null;
+}
+
+/** One row of `GET /agents/coding-agents`. */
+export interface CodingAgentSummary {
+  agent: CodingAgentId;
+  name: string;
+  /** The coding agent's CLI is installed where the agent's commands run. */
+  available: boolean;
+  /** Coding tasks run on the person's subscription, not on the deployment's models. */
+  subscription: boolean;
+  account: { plan: string; email: string } | null;
+  /** A sign-in that is still open. */
+  attempt: CodingAgentSignIn | null;
+}
+
+/** A chat message block: the agent asks the person to sign a coding agent in. */
+export interface CodingAgentSignInBlock {
+  type: 'coding_agent_sign_in';
+  /** The sign-in's id. */
+  id: string;
+  agent: CodingAgentId;
+  status: 'waiting' | 'signed_in';
+}
+
+export function codingAgentSignInBlocks(message: ConversationMessage): CodingAgentSignInBlock[] {
+  return message.blocks?.filter(
+    (block): block is CodingAgentSignInBlock =>
+      block !== null &&
+      typeof block === 'object' &&
+      'type' in block &&
+      block.type === 'coding_agent_sign_in',
+  ) ?? [];
+}

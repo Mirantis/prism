@@ -103,7 +103,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ripgrep \
         poppler-utils \
         tesseract-ocr \
-        fonts-liberation fontconfig \
+        fonts-liberation fonts-dejavu-core fontconfig \
         iptables \
         chromium xvfb pulseaudio pulseaudio-utils \
         xfce4 xfce4-terminal plank libglib2.0-bin \
@@ -279,6 +279,12 @@ RUN chmod +x ./start.sh
 
 # Set environment
 ENV NODE_ENV=production
+# The desktop's terminal starts with no locale otherwise, and Claude Code's
+# interface draws as boxes. fonts-dejavu-core above has the glyphs it uses.
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+# The image brings the coding agents' CLIs up to date; their own updaters can't
+# write to the global install and only fail.
+ENV DISABLE_AUTOUPDATER=1
 ENV PORT=3003
 ENV WEBHOOK_PORT=3004
 ENV AGENT_MESSAGES_PORT=3005

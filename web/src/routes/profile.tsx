@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
@@ -43,6 +43,8 @@ import { VerbosityField } from '@/components/profile/verbosity-field';
 import { LockedInField } from '@/components/profile/locked-in-field';
 import { DocumentWorkspace } from '@/components/profile/document-workspace';
 import { HeartbeatDeliveryField } from '@/components/profile/heartbeat-delivery-field';
+import { CodingAgentsCard } from '@/components/coding-agents/coding-agents-card';
+import { codingAgentSignInSearch } from '@/lib/coding-agents';
 import { Page } from '@/components/layout/page';
 import { PageHeader } from '@/components/layout/page-header';
 import { StatusPill } from '@/components/shared/status-pill';
@@ -59,12 +61,15 @@ const SECTIONS = [
 ] as const;
 
 export const Route = createFileRoute('/profile')({
+  validateSearch: codingAgentSignInSearch,
   component: ProfilePage,
 });
 
 function ProfilePage() {
   const agent = useAgent();
   const [restoreOpen, setRestoreOpen] = useState(false);
+  const search = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
 
   const { data: details, isLoading } = useQuery({
     queryKey: ['agent-details', agent.agentId],
@@ -135,6 +140,14 @@ function ProfilePage() {
       <ModelSettingsCard />
 
       <StatusPanel details={details} isLoading={isLoading} />
+
+      <CodingAgentsCard
+        key={`${search.agent}:${search['sign-in']}`}
+        signIn={search.agent && { agent: search.agent }}
+        onSignInClosed={
+          search.agent ? () => void navigate({ search: {}, replace: true, resetScroll: false }) : undefined
+        }
+      />
 
       <Card>
         <CardHeader>

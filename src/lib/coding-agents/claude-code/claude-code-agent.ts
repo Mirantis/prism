@@ -2,8 +2,8 @@
  * Claude Code as a coding agent.
  *
  * Runs the `claude` CLI with `--output-format stream-json` and reads its NDJSON
- * stream back as the neutral events of `CodingAgent`. With
- * `CLAUDE_CODE_SUBSCRIPTION` on, every task runs on the Claude subscription
+ * stream back as the neutral events of `CodingAgent`. With the subscription on
+ * (`subscription-switch.ts`), every task runs on the Claude subscription
  * signed in to the CLI's home. Otherwise auth inherits from the runtime's
  * environment: the CLI picks up the same Bedrock or Anthropic credentials the
  * agent itself uses.
@@ -18,6 +18,7 @@
 
 import { claudeCodeEnvironment, hasClaudeCodeCredentials } from './credentials';
 import { readSavedLogin, subscriptionEnvironment, SUBSCRIPTION_SETTINGS } from './authenticated-home';
+import { usesSubscription } from '../subscription-switch';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
 import { runCli } from '../cli-run';
@@ -85,12 +86,12 @@ export function createClaudeCodeAgent(environment?: ExecutionEnvironment): Codin
       const target = environment ?? getExecutionEnvironmentFor(task.workdir);
       const home = target.paths().claudeHome;
       return deferredRun(task.taskId, DISPLAY_NAME, async (signal) => {
-        const subscription = config.claudeCodeSubscription;
+        const subscription = usesSubscription('claude-code');
         // Asked on every run, so a sign-in or a sign-out applies to the next task.
         // Anything but a subscription login fails the task, which then bills nothing.
         if (subscription && (await readSavedLogin(target, task.env, home, signal)) !== 'subscription') {
           throw new Error(
-            `CLAUDE_CODE_SUBSCRIPTION is on, and the Claude home ${home} has no subscription login: sign in to it with claude auth login`,
+            'Claude Code is set to use your Claude subscription, and nobody is signed in to it: sign in again from Coding agents',
           );
         }
         signal.throwIfAborted();

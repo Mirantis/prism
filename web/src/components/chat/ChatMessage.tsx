@@ -1,5 +1,6 @@
 import { ChatComputerHelp } from '@/components/computer/chat-computer-help';
-import { computerHelpBlocks } from '@/types';
+import { ChatCodingAgentSignIn } from '@/components/coding-agents/chat-coding-agent-sign-in';
+import { codingAgentSignInBlocks, computerHelpBlocks } from '@/types';
 import { memo } from 'react';
 import { CopyButton } from '@/components/shared/copy-button';
 import AgentAvatar from './agent-avatar';
@@ -163,6 +164,9 @@ const ChatMessage = memo(function ChatMessage({
   }
 
   const help = computerHelpBlocks(message);
+  const signIns = codingAgentSignInBlocks(message);
+  // A request's card says what its text says, so the text is not shown beside it.
+  const hasCard = help.length > 0 || signIns.length > 0;
   return (
     <div className={`group flex gap-3 ${ENTER}`} data-message-role="agent" data-message-id={message.id}>
       <AgentAvatar className="mt-0.5" />
@@ -173,7 +177,7 @@ const ChatMessage = memo(function ChatMessage({
         </div>
         {/* A bubble like every other participant's, the full width of the column so
             tables and code keep their room. */}
-        {help.length === 0 && message.content.trim() && (
+        {!hasCard && message.content.trim() && (
           <div className="overflow-hidden rounded-2xl rounded-tl-md bg-muted px-4 py-3 text-[15px] leading-relaxed break-words text-foreground [&_:not(pre)>code]:bg-background/70">
             <ChatMarkdown content={message.content} />
           </div>
@@ -181,9 +185,12 @@ const ChatMessage = memo(function ChatMessage({
         {help.map((item) => (
           <ChatComputerHelp key={item.id} help={item} onOpen={onOpenComputerHelp} />
         ))}
+        {signIns.map((block) => (
+          <ChatCodingAgentSignIn key={block.id} block={block} />
+        ))}
         <AttachmentChips message={message} />
         {message.toolCalls && message.toolCalls.length > 0 && <ChatToolCalls toolCalls={message.toolCalls} />}
-        {help.length === 0 && message.content.trim() && (
+        {!hasCard && message.content.trim() && (
           // Shown on hover and on keyboard focus, so it stays out of the way of reading; always
           // shown on a touch screen, which has no hover.
           <div className="-ml-1.5 flex h-7 items-center opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
