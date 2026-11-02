@@ -25,6 +25,10 @@ export interface VoiceChatInstructionsInput {
   computer: { desktop: { width: number; height: number } | null } | null;
   /** Whether this client can share its own screen with the agent. */
   userScreen: boolean;
+  /** Whether the call continues a text conversation. */
+  conversation: boolean;
+  /** Whether a summary of the call is added to that conversation when it ends. */
+  summary: boolean;
 }
 
 function listening(mode: VoiceChatInstructionsInput['responseMode']): string {
@@ -56,8 +60,11 @@ function computerSection(desktop: { width: number; height: number } | null): str
 - When a chat turn is already using the computer, let it work: talk about its screen with \`computer_screen\`, and pass your user's instructions on with \`computer_instruct\`.`;
 }
 
+const CONTINUES_CONVERSATION =
+  '- This call continues your text conversation with them. When the session opens with that conversation, pick up from it as you would in chat, rather than starting over.\n';
+
 export function getVoiceChatInstructions(input: VoiceChatInstructionsInput): string {
-  const { agentName, responseMode, computer, userScreen } = input;
+  const { agentName, responseMode, computer, userScreen, conversation, summary } = input;
   const sections = [
     userScreen ? userScreenSection(computer !== null) : '',
     computer ? computerSection(computer.desktop) : '',
@@ -82,9 +89,18 @@ ${toolUseSection()}
 
 ## This chat
 
-- Only your voice leaves this chat. No transcript is written, and you have no tool here to send a message or a file, so never promise to send something afterwards. When something has to outlive the chat, schedule the work with \`schedule_task\`, whose result arrives in their chat session, or ask them to ask again in chat.
+${conversation ? CONTINUES_CONVERSATION : ''}- ${summary ? 'Only your voice leaves this chat while it runs. When it ends, a short summary of it is added to your text conversation, but no transcript is kept' : 'Only your voice leaves this chat. No transcript is written'}, and you have no tool here to send a message or a file, so never promise to send something afterwards. When something has to outlive the chat, schedule the work with \`schedule_task\`, whose result arrives in their chat session, or ask them to ask again in chat.
 - This is not a meeting: you cannot join a call, post into one or say who is speaking from here.
 - This is your user, so act on what they ask as you would in chat, with one exception. When they ask for anything that deletes, deploys, spends money, grants access or changes your own configuration (your name, your Soul or another workspace document, your settings), do not call the tool yet: say what you would do, ask for a "yes", and act only after you hear it. Live audio garbles, and a spoken instruction leaves no written record to check.
 ${sections.join('\n')}
 `.trim();
 }
+
+/** The whole answer the summary request gives when the call holds nothing worth keeping. */
+export const NO_CALL_SUMMARY = 'NOTHING';
+
+/** Asked of the call's own session once the user hangs up; the answer is stored in the text conversation. */
+export const VOICE_CALL_SUMMARY_INSTRUCTIONS = `The voice call has ended. Write a short summary of it for your text conversation with the user, as yourself and addressed to them ("You asked…", "I checked…").
+Cover what they asked, what you found or did, any decision, and anything left open.
+Use at most five short sentences or bullets, in plain text, and write the summary alone.
+If nothing of substance was said, answer exactly ${NO_CALL_SUMMARY}.`;

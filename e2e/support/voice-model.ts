@@ -36,6 +36,8 @@ export interface MockState {
   recordingImages: number;
   recordingAudioMs: number;
   dictationsTranscribed: number;
+  /** Requests for the summary of a call. */
+  summariesRequested: number;
   /** The text-only items the newest session was given, joined by newlines. */
   contextText: string;
 }
@@ -53,6 +55,7 @@ let baseline: MockState = {
   recordingImages: 0,
   recordingAudioMs: 0,
   dictationsTranscribed: 0,
+  summariesRequested: 0,
   contextText: '',
 };
 

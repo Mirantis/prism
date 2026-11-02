@@ -20,7 +20,20 @@ vi.mock('../../../config', () => ({
     realtimeProvider: 'azure',
     realtimeSource: 'managed',
     databaseUrl: 'file::memory:',
+    threadMode: 'multi',
   },
+}));
+
+const conversationService = {
+  writableThreadId: vi.fn(async (threadId: string) => threadId),
+  findLatestWebThread: vi.fn(async (): Promise<{ id: string } | null> => ({ id: 'the-conversation' })),
+  getThreadSource: vi.fn(async (): Promise<string | undefined> => 'DATABASE'),
+};
+vi.mock('../../conversation.service', () => ({ conversationService }));
+
+const publish = vi.fn(async () => ({}));
+vi.mock('../../message-delivery.service', () => ({
+  messageDeliveryService: { publish: (...args: unknown[]) => publish(...args) },
 }));
 
 vi.mock('../voice-instructions', () => ({
@@ -51,6 +64,12 @@ const conversations: FakeConversation[] = [];
 class FakeConversation {
   readonly pushAudio = vi.fn();
   readonly stop = vi.fn();
+  /** What the session answers when asked for the call's summary. */
+  static summary: Promise<string | null> | string | null = 'You asked about the deploy. I checked it.';
+  readonly stopWithText = vi.fn(async () => {
+    this.stop();
+    return FakeConversation.summary;
+  });
   readonly start = vi.fn(async () => {});
   readonly notify = vi.fn();
   readonly showRecording = vi.fn(() => true);
@@ -60,7 +79,7 @@ class FakeConversation {
   readonly sampleRate?: number;
   readonly responseMode?: string;
   readonly onSessionLost?: (reason: string) => void;
-  readonly statistics = {
+  statistics = {
     responses: 2,
     toolCalls: 1,
     interruptions: 0,
@@ -131,6 +150,8 @@ const { voiceChatService } = await import('../voice-chat.service');
 const { computerService } = await import('../../computer/computer.service');
 const { voiceSessionLock } = await import('../voice-session-lock');
 const { buildVoiceInstructions } = await import('../voice-instructions');
+const { prepareMeetingTools } = await import('../../meeting/tool-bridge');
+const { config } = await import('../../../config');
 
 /** A signal that records everything the service says and sends to the client. */
 function fakeSignal() {
@@ -180,7 +201,15 @@ beforeEach(() => {
   FakeComputer.failToOpen = null;
   FakeComputer.hasDesktop = true;
   trackEvent.mockClear();
+  publish.mockClear();
+  FakeConversation.summary = 'You asked about the deploy. I checked it.';
+  (config as { threadMode: string }).threadMode = 'multi';
+  conversationService.writableThreadId.mockClear();
+  conversationService.findLatestWebThread.mockClear();
+  conversationService.getThreadSource.mockClear();
+  conversationService.getThreadSource.mockResolvedValue('DATABASE');
   vi.mocked(buildVoiceInstructions).mockClear();
+  vi.mocked(prepareMeetingTools).mockClear();
 });
 
 afterEach(async () => {
@@ -434,6 +463,149 @@ describe('ending a session', () => {
   });
 });
 
+describe('the conversation a call continues', () => {
+  it('is the thread the client started the call from', async () => {
+    await startSession();
+
+    expect(conversationService.writableThreadId).toHaveBeenCalledWith('thread-1');
+    expect(vi.mocked(buildVoiceInstructions).mock.calls[0]![0].call).toMatchObject({ threadId: 'thread-1', summarized: true });
+    expect(vi.mocked(prepareMeetingTools).mock.calls[0]![0]).toMatchObject({ threadId: 'thread-1' });
+  });
+
+  it('is the one conversation in single-thread mode, even when the client names none', async () => {
+    (config as { threadMode: string }).threadMode = 'single';
+    await voiceChatService.start({ userId: 'user-1', agentId: 'agent-1', signal: fakeSignal() });
+
+    expect(conversationService.findLatestWebThread).toHaveBeenCalledWith('agent-1', 'user-1');
+    expect(vi.mocked(buildVoiceInstructions).mock.calls[0]![0].call).toMatchObject({ threadId: 'the-conversation' });
+    expect(vi.mocked(prepareMeetingTools).mock.calls[0]![0]).toMatchObject({ threadId: 'the-conversation' });
+  });
+
+  it('is none in multi-thread mode when the client names none', async () => {
+    await voiceChatService.start({ userId: 'user-1', agentId: 'agent-1', signal: fakeSignal() });
+
+    expect(conversationService.findLatestWebThread).not.toHaveBeenCalled();
+    expect(vi.mocked(buildVoiceInstructions).mock.calls[0]![0].call).toMatchObject({ threadId: undefined });
+  });
+});
+
+describe('the summary of a call', () => {
+  const summaryOutcome = (): unknown =>
+    trackEvent.mock.calls.find(([name]) => name === 'voice chat ended')?.[2]?.summary;
+
+  it('is stored in the conversation when the user hangs up', async () => {
+    const { signal, conversation } = await startSession();
+    await voiceChatService.stop();
+
+    expect(conversation.stopWithText).toHaveBeenCalledWith(
+      expect.objectContaining({ instructions: expect.stringContaining('voice call has ended') }),
+    );
+    expect(publish).toHaveBeenCalledWith(
+      'user-1',
+      'thread-1',
+      'Voice call summary:\n\nYou asked about the deploy. I checked it.',
+      'USER_INPUT',
+      { channelContext: { channel: 'websocket', threadId: 'thread-1' } },
+    );
+    expect(signal.state).toHaveBeenCalledWith('ended');
+    expect(summaryOutcome()).toBe('stored');
+  });
+
+  it('tells the client the call ended before the summary is written, and keeps the voice until it is', async () => {
+    let answer!: (text: string) => void;
+    FakeConversation.summary = new Promise<string>((resolve) => { answer = resolve; });
+    const { signal } = await startSession();
+
+    const ending = voiceChatService.stop();
+    await vi.waitFor(() => expect(signal.state).toHaveBeenCalledWith('ended'));
+    expect(voiceSessionLock.holder).toBe('voice-chat');
+
+    const redial = fakeSignal();
+    await voiceChatService.start({ userId: 'user-1', agentId: 'agent-1', signal: redial });
+    expect(redial.error).toHaveBeenCalledWith(expect.stringContaining('still writing up the last voice chat'));
+
+    answer('You asked about the deploy.');
+    await ending;
+    expect(publish).toHaveBeenCalled();
+    expect(voiceSessionLock.holder).toBeNull();
+  });
+
+  it('is not written when the user never spoke', async () => {
+    const { conversation } = await startSession();
+    conversation.statistics = { ...conversation.statistics, utterances: 0 };
+    await voiceChatService.stop();
+
+    expect(conversation.stopWithText).not.toHaveBeenCalled();
+    expect(conversation.stop).toHaveBeenCalled();
+    expect(summaryOutcome()).toBe('skipped');
+  });
+
+  it.each([
+    ['the model session dies', 'error'],
+    ['the client drops', 'disconnected'],
+  ] as const)('is not written when %s', async (_, status) => {
+    const { conversation } = await startSession();
+    await voiceChatService.stop('it went away', status);
+
+    expect(conversation.stopWithText).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('is not written when the runtime shuts down', async () => {
+    const { conversation } = await startSession();
+    await voiceChatService.shutdown();
+
+    expect(conversation.stopWithText).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('is not written to a conversation another channel stores', async () => {
+    // That conversation is read from its channel, so a row stored here would never reach the agent.
+    conversationService.getThreadSource.mockResolvedValue('SLACK');
+    const { conversation } = await startSession();
+    // So the agent does not promise one during the call.
+    expect(vi.mocked(buildVoiceInstructions).mock.calls[0]![0].call).toMatchObject({ summarized: false });
+    await voiceChatService.stop();
+
+    expect(conversation.stopWithText).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('is not written when the call has no conversation', async () => {
+    await startWithComputer();
+    await voiceChatService.stop();
+
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('is not written when the model answers that nothing was said', async () => {
+    FakeConversation.summary = 'NOTHING';
+    await startSession();
+    await voiceChatService.stop();
+
+    expect(publish).not.toHaveBeenCalled();
+    expect(summaryOutcome()).toBe('skipped');
+  });
+
+  it('is reported failed when the model gives no answer in time', async () => {
+    FakeConversation.summary = null;
+    await startSession();
+    await voiceChatService.stop();
+
+    expect(publish).not.toHaveBeenCalled();
+    expect(summaryOutcome()).toBe('failed');
+  });
+
+  it('is reported failed when it cannot be stored', async () => {
+    publish.mockRejectedValueOnce(new Error('database is locked'));
+    await startSession();
+    await voiceChatService.stop();
+
+    expect(summaryOutcome()).toBe('failed');
+    expect(voiceSessionLock.holder).toBeNull();
+  });
+});
+
 /**
  * The session the Computer page's endpoint asks for. Everything here is a second branch
  * through `start()`, and the computer is a set of processes, so what it costs to get one
@@ -473,7 +645,7 @@ describe('a session with a computer', () => {
 
     expect(buildVoiceInstructions).toHaveBeenCalledWith(
       expect.objectContaining({
-        call: { kind: 'voice-chat', computer: { desktop: { width: 1280, height: 720 } }, userScreen: true },
+        call: { kind: 'voice-chat', computer: { desktop: { width: 1280, height: 720 } }, userScreen: true, summarized: false },
       }),
     );
   });
@@ -487,7 +659,7 @@ describe('a session with a computer', () => {
     expect(signal.state).toHaveBeenCalledWith('live', { desktop: false });
     expect(buildVoiceInstructions).toHaveBeenCalledWith(
       expect.objectContaining({
-        call: { kind: 'voice-chat', computer: { desktop: null }, userScreen: true },
+        call: { kind: 'voice-chat', computer: { desktop: null }, userScreen: true, summarized: false },
       }),
     );
   });

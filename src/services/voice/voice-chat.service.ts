@@ -10,8 +10,10 @@
  * socket sends its audio on the socket it already has. The Computer page has a socket of its own,
  * because it also carries a computer's screen, and asks for that computer here.
  *
- * The session is the whole of what a call is here — nothing is persisted. No transcript,
- * no thread message, no tool-call row: what the user hears is what the call produced.
+ * A call continues the text conversation it was started from: the session opens with
+ * the end of that conversation, and when the user hangs up, the model writes a short
+ * summary of the call into it. Nothing else is persisted: no transcript and no tool-call
+ * row.
  *
  * Signalling is somebody else's job. This service is handed a `VoiceChatSignal` to talk
  * back through, so the socket the client is on stays somebody else's to own.
@@ -22,6 +24,7 @@
  * one.
  */
 
+import { ThreadSource } from '@prisma/client';
 import { logger } from '../../logger';
 import { config } from '../../config';
 import { trackEvent } from '../../lib/telemetry';
@@ -40,6 +43,9 @@ import { computerHelpService } from '../computer/computer-help.service';
 import type { ComputerUse } from '../computer/computer-access';
 import type { ScreenFrame } from '../computer/picture-stream';
 import { buildVoiceInstructions } from './voice-instructions';
+import { conversationService } from '../conversation.service';
+import { messageDeliveryService } from '../message-delivery.service';
+import { NO_CALL_SUMMARY, VOICE_CALL_SUMMARY_INSTRUCTIONS } from '../../prompts/voice-chat-prompt';
 import { voiceSessionLock } from './voice-session-lock';
 import {
   isAudioFrameUsable,
@@ -172,7 +178,10 @@ export type VoiceListeningMode = 'open' | 'addressed';
 export interface StartVoiceChatInput {
   userId: string;
   agentId: string;
-  /** The thread the call was started from, for the tools that take one. */
+  /**
+   * The thread the call was started from. In single-thread mode the call continues the
+   * one conversation whatever this says.
+   */
   threadId?: string;
   /** Defaults to `open` — a client that says nothing is holding a phone to its ear. */
   mode?: VoiceListeningMode;
@@ -211,6 +220,17 @@ export interface StartVoiceChatInput {
  */
 export type VoiceChatEndStatus = 'completed' | 'disconnected' | 'error';
 
+/** The first line of the message a call's summary is stored as. */
+export const VOICE_CALL_SUMMARY_HEADING = 'Voice call summary:';
+
+/**
+ * How long the session may take to write the summary. The client is told the call ended
+ * before this starts, and the voice stays taken until it is over.
+ */
+const SUMMARY_DEADLINE_MS = 15_000;
+
+type SummaryOutcome = 'stored' | 'skipped' | 'failed';
+
 class VoiceChatService {
   private state: 'idle' | 'starting' | 'live' | 'ending' = 'idle';
   /**
@@ -228,6 +248,8 @@ class VoiceChatService {
   private recordingClient: string | null = null;
   private signal: VoiceChatSignal | null = null;
   private userId: string | null = null;
+  /** The stored conversation the call continues, which its summary is written to. */
+  private summaryThreadId: string | null = null;
   private startedAt: number | null = null;
   /** Held for the ending event: the gate numbers below mean nothing without it. */
   private mode: VoiceListeningMode = 'open';
@@ -262,7 +284,9 @@ class VoiceChatService {
       input.signal.error(
         voiceSessionLock.holder === 'meeting'
           ? `I'm in a meeting call right now. That has to end before I can talk here.`
-          : `There is already a voice chat running. End that one first.`,
+          : this.state === 'ending'
+            ? `I'm still writing up the last voice chat. Try again in a few seconds.`
+            : `There is already a voice chat running. End that one first.`,
       );
       return false;
     }
@@ -325,12 +349,19 @@ class VoiceChatService {
         stage = 'session';
       }
 
+      const threadId = await conversationFor(input);
+      const summaryThreadId =
+        threadId && (await conversationService.getThreadSource(threadId)) === ThreadSource.DATABASE
+          ? threadId
+          : null;
       const { instructions, agentName, lockedIn, openingContext } = await buildVoiceInstructions({
         userId: input.userId,
         agentId: input.agentId,
         responseMode: mode,
         call: {
           kind: 'voice-chat',
+          threadId,
+          summarized: summaryThreadId !== null,
           computer: computer
             ? { desktop: computer.hasDesktop ? { width: computer.width, height: computer.height } : null }
             : null,
@@ -343,7 +374,7 @@ class VoiceChatService {
       const agentTools = await prepareMeetingTools({
         userId: input.userId,
         agentId: input.agentId,
-        threadId: input.threadId,
+        threadId,
         lockedIn,
       });
       const tools = prepareVoiceChatTools(
@@ -404,6 +435,7 @@ class VoiceChatService {
         : null;
       this.signal = input.signal;
       this.userId = input.userId;
+      this.summaryThreadId = summaryThreadId;
       this.startedAt = Date.now();
       this.mode = mode;
       this.startedFrom = surface;
@@ -588,14 +620,20 @@ class VoiceChatService {
   async shutdown(): Promise<void> {
     if (this.state === 'idle') return;
     logger.info('[VoiceChat] Shutting down — ending the live session');
-    await this.stop('the runtime is shutting down');
+    // No summary: it would hold the exit for as long as the model takes to write it.
+    await this.end(this.epoch, 'completed', 'the runtime is shutting down', false);
   }
 
   /**
    * The one ending, used by the client's stop, a client that went away, a Realtime session
    * that died and process shutdown alike.
    */
-  private async end(epoch: number, status: VoiceChatEndStatus, reason: string): Promise<void> {
+  private async end(
+    epoch: number,
+    status: VoiceChatEndStatus,
+    reason: string,
+    summarize = status === 'completed',
+  ): Promise<void> {
     if (epoch !== this.epoch || this.state === 'idle' || this.state === 'ending') return;
 
     // Everything after this belongs to a session that is over: `ending` and the bumped
@@ -603,13 +641,30 @@ class VoiceChatService {
     // while the transport closes, from becoming a second ending.
     this.state = 'ending';
     this.epoch += 1;
-    const { conversation, transport, computer, computerUse, signal, userId, startedAt, mode, startedFrom } = this;
+    const {
+      conversation, transport, computer, computerUse, signal, userId, summaryThreadId, startedAt, mode, startedFrom,
+    } = this;
     this.clearPublished();
 
     logger.info({ status, reason }, '[VoiceChat] Session ended');
 
     try {
-      conversation?.stop();
+      const stats = conversation?.statistics;
+      // Only an ending the user chose leaves a summary: a session that died or a client
+      // that dropped has no open session to ask, or no user who decided the call was over.
+      const summary =
+        summarize && conversation && userId && summaryThreadId && (stats?.utterances ?? 0) > 0
+          ? {
+              // Caught at once: the transport and the computer close before it is awaited.
+              text: conversation.stopWithText(SUMMARY_REQUEST).catch((err: unknown) => {
+                logger.warn({ err }, '[VoiceChat] The call summary request failed');
+                return null;
+              }),
+              userId,
+              threadId: summaryThreadId,
+            }
+          : null;
+      if (!summary) conversation?.stop();
       await transport?.close().catch((err: unknown) => {
         logger.warn({ err }, '[VoiceChat] The transport would not close');
       });
@@ -630,8 +685,11 @@ class VoiceChatService {
       if (status !== 'completed') signal?.error(reason);
       signal?.state('ended');
 
+      const summaryOutcome: SummaryOutcome = summary
+        ? await storeSummary(summary.text, summary.userId, summary.threadId)
+        : 'skipped';
+
       if (userId && startedAt) {
-        const stats = conversation?.statistics;
         trackEvent('voice chat ended', userId, {
           inference_provider: config.realtimeProvider ?? 'unknown',
           inference_source: config.realtimeSource,
@@ -656,6 +714,7 @@ class VoiceChatService {
           gate_failed: String(stats?.gateFailed ?? 0),
           // The mean, which is what `meeting ended` emits under this key.
           gate_latency_ms: String(meanGateLatencyMs(stats)),
+          summary: summaryOutcome,
         });
       }
     } finally {
@@ -677,6 +736,7 @@ class VoiceChatService {
     this.recordingClient = null;
     this.signal = null;
     this.userId = null;
+    this.summaryThreadId = null;
     this.startedAt = null;
   }
 
@@ -684,6 +744,43 @@ class VoiceChatService {
   private markIdle(): void {
     this.state = 'idle';
     voiceSessionLock.release('voice-chat');
+  }
+}
+
+const SUMMARY_REQUEST = {
+  instructions: VOICE_CALL_SUMMARY_INSTRUCTIONS,
+  deadlineMs: SUMMARY_DEADLINE_MS,
+  // A few sentences, with room for the reasoning before them.
+  maxOutputTokens: 1_000,
+  reasoningEffort: 'low',
+} satisfies Parameters<VoiceConversation['stopWithText']>[0];
+
+/**
+ * The conversation a call continues. Single-thread mode has one, whatever the client
+ * sent; otherwise it is the thread the client started the call from, or none.
+ */
+async function conversationFor(input: StartVoiceChatInput): Promise<string | undefined> {
+  if (input.threadId) return conversationService.writableThreadId(input.threadId);
+  if (config.threadMode !== 'single') return undefined;
+  return (await conversationService.findLatestWebThread(input.agentId, input.userId))?.id;
+}
+
+/** Store the call's summary in the conversation it continues, and show it to web clients. */
+async function storeSummary(text: Promise<string | null>, userId: string, threadId: string): Promise<SummaryOutcome> {
+  try {
+    const summary = (await text)?.trim();
+    if (!summary) {
+      logger.warn('[VoiceChat] The call summary did not arrive');
+      return 'failed';
+    }
+    if (summary === NO_CALL_SUMMARY) return 'skipped';
+    await messageDeliveryService.publish(userId, threadId, `${VOICE_CALL_SUMMARY_HEADING}\n\n${summary}`, 'USER_INPUT', {
+      channelContext: { channel: 'websocket', threadId },
+    });
+    return 'stored';
+  } catch (err) {
+    logger.warn({ err }, '[VoiceChat] Could not store the call summary');
+    return 'failed';
   }
 }
 
