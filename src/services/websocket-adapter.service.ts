@@ -7,9 +7,10 @@
  */
 
 import type { ConversationMessage } from '@prisma/client';
-import { ChannelAdapter, ChannelContext, DeliverableMessage } from './channel-adapter.interface';
+import { ChannelAdapter, ChannelContext, ChannelDestination, DeliverableMessage } from './channel-adapter.interface';
 import { eventStreamService } from './event-stream.service';
 import { inboundMessageService } from './inbound-message.service';
+import { webChatLabel } from './web-chat-label';
 import type { MessageEventPayload } from '../protocol/chat-protocol';
 import { agentMessageKind } from '../lib/agent-message-kind';
 import type { ResumedReply } from '../types';
@@ -60,6 +61,11 @@ class WebSocketAdapterService implements ChannelAdapter {
    */
   async isUserConnected(_userId: string): Promise<boolean> {
     return true;
+  }
+
+  /** A turn that continues a web conversation gets the label a chat turn on it gets. */
+  async threadDestination(threadId: string): Promise<ChannelDestination> {
+    return { channelLabel: await webChatLabel(threadId) };
   }
 
   /** The socket answers one message at a time, so a resumed reply waits its turn there. */

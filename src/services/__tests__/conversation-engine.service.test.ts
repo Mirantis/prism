@@ -1259,6 +1259,25 @@ describe('Requirement: Conversation Engine', () => {
       expect(followUp.appendedMessageIds).toEqual([expect.any(String)]);
     });
 
+    it('reads the channel label again for a follow-up turn', async () => {
+      // A second person writes during the first turn: that turn started without
+      // the label, and the follow-up that answers the new message has it.
+      const held = heldTurn();
+      mockInvokeStream.mockImplementationOnce(held.generator).mockImplementation(instantTurn);
+      const labels = ['', 'the web chat'];
+      const channelLabelFor = vi.fn(async () => labels.shift() || undefined);
+
+      const first = conversationEngineService.chat(steerInput('review the PR', { channelLabelFor }));
+      await held.running;
+      await conversationEngineService.chat(steerInput('<@ben:Ben>: and check CI too'));
+      held.release();
+      await first;
+
+      expect(channelLabelFor).toHaveBeenCalledTimes(2);
+      expect(channelLabelFor).toHaveBeenCalledWith(steerThread);
+      expect(mockInvokeStream.mock.calls.map((call) => call[0].channelLabel)).toEqual([undefined, 'the web chat']);
+    });
+
     it('coalesces several late messages into a single follow-up', async () => {
       const held = heldTurn();
       mockInvokeStream.mockImplementationOnce(held.generator).mockImplementation(instantTurn);

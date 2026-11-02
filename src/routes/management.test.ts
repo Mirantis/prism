@@ -72,6 +72,7 @@ const {
   },
   mockPrisma: {
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
+    conversationThread: { findUnique: vi.fn() },
     slackVerificationCode: {
       findUnique: vi.fn(),
       create: vi.fn(),
@@ -2253,6 +2254,7 @@ describe('Management Routes', () => {
         message: 'Use the "echo-marker" skill.',
         threadId: 'latest-thread',
         metadata: { channel: 'websocket' },
+        channelLabelFor: expect.any(Function),
       });
     });
 
@@ -2260,12 +2262,14 @@ describe('Management Routes', () => {
       mockFind.mockReturnValue({ name: 'echo-marker', dirName: 'echo-marker' });
       mockGetOrCreateLatestThread.mockResolvedValue({ id: 'latest-thread' });
       mockHasSeveralSenders.mockResolvedValue(true);
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({ externalThreadId: null });
       mockChatEngine.mockResolvedValue({});
 
       await authedRequest(app).post('/agents/skills/echo-marker/run');
 
+      const { channelLabelFor } = mockChatEngine.mock.calls[0][0];
+      await expect(channelLabelFor('latest-thread')).resolves.toBe(WEB_CHAT_LABEL);
       expect(mockHasSeveralSenders).toHaveBeenCalledWith('latest-thread');
-      expect(mockChatEngine.mock.calls[0][0].metadata).toEqual({ channel: 'websocket', channelLabel: WEB_CHAT_LABEL });
     });
 
     it('POST /skills/:name/run runs in a specific, ownership-checked thread when given', async () => {

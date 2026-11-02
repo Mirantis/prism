@@ -96,6 +96,12 @@ export interface ChatInput {
    * own agent-message route sets it: `metadata` can come from a request body.
    */
   agentMessage?: AgentMessageOrigin;
+  /**
+   * The shared-channel label of the thread, read again before each turn of the
+   * exchange, so a follow-up turn sees a person who first wrote during the turn
+   * before it. Takes precedence over `metadata.channelLabel`.
+   */
+  channelLabelFor?: (threadId: string) => Promise<string | undefined>;
   metadata?: {
     /** The `name` of the adapter the message came through; the reply goes back there. */
     channel?: ChannelName;
@@ -596,6 +602,9 @@ Answer with one word: WORTHY or SKIP.`;
           let runtimeNotices = input.runtimeNotices;
 
           for (;;) {
+            const turnMetadata = input.channelLabelFor
+              ? { ...metadata, channelLabel: await input.channelLabelFor(threadId) }
+              : metadata;
             const streamed = await this.streamTurn({
               userId,
               agentId,
@@ -608,7 +617,7 @@ Answer with one word: WORTHY or SKIP.`;
               promptMessageId,
               verbose,
               channelContext,
-              metadata,
+              metadata: turnMetadata,
               runtimeNotices,
               abortSignal,
               onToolEvent: input.onToolEvent,
