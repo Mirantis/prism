@@ -168,6 +168,56 @@ Given('a compacted conversation whose summary leaves out the build id from a dep
   await new HomePage(page).navigate();
 });
 
+/** Three warnings far apart in one long log: a search shows the part around the first alone. */
+const WARNING_STEPS = [41, 212, 377];
+const WARNING_LOG = Array.from({ length: 400 }, (_, i) =>
+  WARNING_STEPS.includes(i) ? `step ${i}: WARN disk usage high on node-${i % 5}` : `step ${i}: ok (payments-api rollout, replica ${i % 3})`,
+).join('\n');
+
+Given('a compacted conversation whose summary leaves out three warnings spread through a deploy log', async ({ page }) => {
+  const threadId = await dbHelper.createThread(DEFAULT_AGENT_ID, {
+    title: 'Deploy warnings',
+    messages: [
+      { role: 'USER', content: 'Read yesterday\'s deploy log of payments-api and tell me if it went fine.' },
+      {
+        role: 'AGENT',
+        content: 'The rollout finished.',
+        toolCalls: [{ tool: 'shell_exec', input: '{"command":"cat deploy.log"}', output: WARNING_LOG, rendered: true }],
+      },
+      { role: 'USER', content: 'Thanks.' },
+      { role: 'AGENT', content: 'You are welcome.' },
+    ],
+  });
+  const prisma = dbHelper.getPrisma();
+  await prisma.conversationMessage.updateMany({ where: { threadId }, data: { isCompacted: true } });
+  await prisma.conversationThread.update({
+    where: { id: threadId },
+    data: {
+      compactionSummary:
+        '## Goal\n- Check whether yesterday\'s payments-api deploy went fine.\n\n' +
+        '## Current State\n- Done: read the deploy log with shell_exec; the rollout finished.',
+      compactedAt: new Date(),
+    },
+  });
+  await new HomePage(page).navigate();
+});
+
+Then('the agent read a compacted message in full', async () => {
+  const thread = await latestThread();
+  const readsInFull = (r: { toolCalls: unknown }) =>
+    ((r.toolCalls ?? []) as Array<{ tool?: string; input?: unknown }>).some((call) => {
+      if (call.tool !== 'read_compacted_history') return false;
+      const input = typeof call.input === 'string' ? JSON.parse(call.input) : call.input;
+      return typeof (input as { position?: unknown })?.position === 'number';
+    });
+  const rows = await pollUntil(
+    () => dbHelper.getPrisma().conversationMessage.findMany({ where: { threadId: thread.id, role: 'AGENT' } }),
+    (found) => found.some(readsInFull),
+    120_000,
+  );
+  expect(rows.some(readsInFull)).toBe(true);
+});
+
 Then('the agent read the compacted history', async () => {
   const thread = await latestThread();
   const rows = await pollUntil(

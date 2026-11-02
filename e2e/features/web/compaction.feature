@@ -23,6 +23,15 @@ Feature: Manual conversation compaction
     Then the agent reply contains "bld-7f3a9c2e"
     And the agent read the compacted history
 
+  Scenario: The agent reads a long compacted message in full
+    Given a compacted conversation whose summary leaves out three warnings spread through a deploy log
+    When I type "List the step numbers of every warning in the deploy log you read earlier." in the chat input
+    And I send the message
+    Then the agent reply contains "41"
+    And the agent reply contains "212"
+    And the agent reply contains "377"
+    And the agent read a compacted message in full
+
   Scenario: The full history stays visible after compaction
     Given a conversation seeded with 10 messages
     When I type "/compact" in the chat input
