@@ -248,3 +248,21 @@ describe('compacted-history tool', () => {
     expect((await collect()).tools).not.toHaveProperty('read_compacted_history');
   });
 });
+
+describe('collectTools coding agent sign-in', () => {
+  beforeEach(() => {
+    mockGetSubagents.mockResolvedValue([]);
+    mockGetMCPTools.mockResolvedValue({});
+    mockGetPluginTools.mockResolvedValue({});
+  });
+
+  it('offers the sign-in in a chat, where a person is there to sign in', async () => {
+    const { tools } = await collectTools({ userId: 'user', agentId: 'agent', mode: 'chat', threadId: 'thread-1', lockedIn: false, taskInvoker: vi.fn() });
+    expect(tools.coding_agent_sign_in).toBeDefined();
+  });
+
+  it.each(['heartbeat', 'cron', 'webhook', 'goal', 'meeting', 'subagent'])('offers no sign-in in %s', async (mode) => {
+    const { tools } = await collectTools({ userId: 'user', agentId: 'agent', mode, threadId: 'thread-1', lockedIn: false, taskInvoker: vi.fn() });
+    expect(tools.coding_agent_sign_in).toBeUndefined();
+  });
+});

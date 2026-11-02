@@ -18,6 +18,7 @@ import {
   type CodexAuthMethod,
 } from './credentials';
 import { deferredRun } from '../deferred-run';
+import { usesSubscription } from '../subscription-switch';
 import {
   getExecutionEnvironment,
   getExecutionEnvironmentFor,
@@ -50,7 +51,7 @@ export function createCodexAgent(environment?: ExecutionEnvironment): CodingAgen
       return Boolean(codexAuthMethod(env, savedLogin));
     },
     run: (task) => {
-      const subscription = config.codexSubscription;
+      const subscription = usesSubscription('codex');
       const authMethod: CodexAuthMethod | undefined = subscription
         ? 'subscription'
         : codexAuthMethod(task.env, savedLogin);
@@ -79,7 +80,7 @@ export function createCodexAgent(environment?: ExecutionEnvironment): CodingAgen
           // Anything but a ChatGPT login fails the task, which then bills nothing.
           const login = await readCodexLogin(runIn, task.env, home, signal);
           if (login !== 'chatgpt') {
-            throw new Error(`CODEX_SUBSCRIPTION is on, and the Codex home ${home} has no ChatGPT login: sign in to it with codex login`);
+            throw new Error('Codex is set to use your ChatGPT subscription, and nobody is signed in to it: sign in again from Coding agents');
           }
           signal.throwIfAborted();
           return launch(subscriptionEnvironment(task.env));

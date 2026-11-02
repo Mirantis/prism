@@ -1017,6 +1017,7 @@ src/
 │   │   ├── transcript-log.ts   # Whether a log line may carry an utterance at all (`MEETING_TRANSCRIPT_LOGGING`)
 │   │   ├── resampler.ts        # 48k⇄24k pcm16 with anti-alias FIR
 │   │   └── openai-endpoint.ts  # Managed or direct Realtime WebSocket transport
+│   ├── coding-agent-sign-in/   # Signing a coding agent in to the user's own Claude or ChatGPT subscription: one attempt per agent driving `claude auth login` / `codex login --device-auth` (cli-sign-in.ts), the account and sign-out (coding-agent-account.ts), and the chat card with the turn after it (coding-agent-sign-in-request.service.ts). The code goes to the CLI's stdin only
 │   ├── computer/               # The agent's computers: its own desktop and remote ones
 │   │   ├── computer.ts         # The `Computer` contract the tools, viewers and help act on
 │   │   ├── computer.service.ts # The set of computers, picking one per call, summaries, the turn notice
@@ -1048,6 +1049,7 @@ src/
 │   ├── agent-config.ts         # Agent config tools (soul, user, memory, heartbeat, vision, settings)
 │   ├── cron.ts                 # Cron task tools (schedule, list, edit, delete)
 │   ├── goals.ts                # Goal tools (create, get)
+│   ├── coding-agent-sign-in.ts # coding_agent_sign_in (chat only): posts the card that signs a coding agent in to the user's own subscription
 │   ├── attachments.ts          # hydrate_attachment (stored bytes → workspace file) + view_attachment (image/PDF into the turn) + `reapScratchDirs`
 │   ├── share-file.ts           # Deliver a workspace file to the user as an attachment
 │   ├── meeting.ts              # Voice meetings (join, leave, set the microphone, status, speaker, read and send chat)
@@ -1060,6 +1062,7 @@ src/
 │   ├── agent-messages.ts       # POST /agents/agent-messages on AGENT_MESSAGES_PORT: another agent's message, stored and scheduled (403 for a person)
 │   ├── agent-state.ts          # GET /agents/state: working or idle
 │   ├── cron-tasks.ts           # Scheduled tasks: list, create, edit, delete; each write re-registers the task
+│   ├── coding-agents.ts        # The coding agents' subscriptions: list, sign in (start, read, Claude's code), sign out (/agents/coding-agents)
 │   ├── document-revisions.ts   # Per identity document: the write, the history, one revision with its content, and the restore
 │   └── model-selection.ts      # Fixed or Auto model selection and the three Auto tiers (GET/PATCH /agents/model-selection)
 ├── utils/
@@ -1099,15 +1102,16 @@ src/
 │   │   ├── deferred-run.ts     # `deferredRun()`: a run whose process starts after async work; a stop before then aborts that work, and a failure is the closing `result`
 │   │   ├── get-coding-agent.ts # Selector: `config.codingAgent` → adapter, one instance per agent so the adapter that prepared the home runs every task; a `Record` so a config name without an adapter fails to compile
 │   │   ├── bedrock-credentials.ts # Shared AWS credential detection
+│   │   ├── subscription-switch.ts # Whether an agent's tasks run on the subscription in its CLI's home: on after a sign-in from Coding agents, off after sign-out (`runtime_state`, held in memory from boot), or held on by `CLAUDE_CODE_SUBSCRIPTION` / `CODEX_SUBSCRIPTION`
 │   │   ├── codex/
 │   │   │   ├── credentials.ts             # Which credential a task uses; for `CODEX_SUBSCRIPTION`, the home's saved login (`codex login status`) and `subscriptionEnvironment`
-│   │   │   └── codex-agent.ts             # Codex CLI adapter. With `CODEX_SUBSCRIPTION` on, each run asks the home for its login first: a ChatGPT login runs the task with `forced_login_method="chatgpt"`, and anything else fails it
+│   │   │   └── codex-agent.ts             # Codex CLI adapter. With the subscription on (`subscription-switch.ts`), each run asks the home for its login first: a ChatGPT login runs the task with `forced_login_method="chatgpt"`, and anything else fails it
 │   │   └── claude-code/
 │   │       ├── authenticated-home.ts # The home's saved login (`claude auth status`, run in the execution environment): a claude.ai subscription, another login, or none; `subscriptionEnvironment`, the env without the variables that outrank it; and `SUBSCRIPTION_SETTINGS`, the `--settings` that restate them, so a repository's `.claude/settings.json` cannot bring one back
 │   │       ├── credentials.ts # Claude CLI authentication settings
 │   │       ├── home.ts        # Where the CLI keeps its state, resolved off the env the CLI will run with
 │   │       ├── mcp-config.ts  # The task's MCP servers as a `--mcp-config` file: written 0600 in a temp dir of its own, removed before the run's stream ends
-│   │       └── claude-code-agent.ts # The Claude Code adapter: `claude -p --output-format stream-json …` argv (task mode → permission mode, plan-only instruction), the stream-json parser with the result line's `permission_denials`, and the `<DATA>/.claude` home with `CLAUDE_CONFIG_DIR` and the skills symlink. With `CLAUDE_CODE_SUBSCRIPTION` on, each run asks the home for its login first: a claude.ai subscription runs the task with `subscriptionEnvironment` and `SUBSCRIPTION_SETTINGS` (`forceLoginMethod: claudeai`, the provider switches and keys restated empty), and anything else fails it
+│   │       └── claude-code-agent.ts # The Claude Code adapter: `claude -p --output-format stream-json …` argv (task mode → permission mode, plan-only instruction), the stream-json parser with the result line's `permission_denials`, and the `<DATA>/.claude` home with `CLAUDE_CONFIG_DIR` and the skills symlink. With the subscription on (`subscription-switch.ts`), each run asks the home for its login first: a claude.ai subscription runs the task with `subscriptionEnvironment` and `SUBSCRIPTION_SETTINGS` (`forceLoginMethod: claudeai`, the provider switches and keys restated empty), and anything else fails it
 │   ├── execution-environments/ # Where a command runs and what filesystem it sees, plus the shared contract and the selector
 │   │   ├── execution-environment.ts # The contract: `runShell` / `runProgram` returning an `ExecProcess` (`ended` for exit accounting, `closed` once the pipes drain), `ExecutionFiles`, and `paths()` — the agent's directories in this environment
 │   │   ├── exec-stdio-transport.ts # MCP stdio over `runProgram`, so a plugin's server runs where its files are
@@ -1210,12 +1214,12 @@ What the operator sets on `docker run`:
 | `CLAUDE_CODE_MODEL_SMALL` | Model for the Claude Code small tier | `haiku` (Bedrock: `global.anthropic.claude-haiku-5-5`) |
 | `CLAUDE_CODE_MODEL_MEDIUM` | Model for the Claude Code medium tier | `sonnet` (Bedrock: `global.anthropic.claude-sonnet-5-5`) |
 | `CLAUDE_CODE_MODEL_LARGE` | Model for the Claude Code large tier | `opus` |
-| `CLAUDE_CODE_SUBSCRIPTION` | `true` runs every Claude Code task on the Claude subscription signed in to the CLI's home, and fails a task while none is | off |
+| `CLAUDE_CODE_SUBSCRIPTION` | `true` runs every Claude Code task on the Claude subscription signed in to the CLI's home, and fails a task while none is. A sign-in from Profile → Coding agents turns this on without it | off |
 | `CLAUDE_CODE_SKIP_PERMISSIONS` | `true` runs every Claude Code edit task with `--dangerously-skip-permissions` instead of auto mode; a plan task stays in `plan` | off |
 | `CODEX_MODEL_SMALL` | Model for the Codex small tier | `gpt-5.6-luna` (Bedrock: `openai.gpt-5.6-luna`) |
 | `CODEX_MODEL_MEDIUM` | Model for the Codex medium tier | `gpt-5.6-terra` (Bedrock: `openai.gpt-5.6-terra`) |
 | `CODEX_MODEL_LARGE` | Model for the Codex large tier | `gpt-5.6-sol` (Bedrock: `openai.gpt-5.6-sol`) |
-| `CODEX_SUBSCRIPTION` | `true` runs every Codex task on the ChatGPT login saved in the CLI's home, and fails a task while none is | off |
+| `CODEX_SUBSCRIPTION` | `true` runs every Codex task on the ChatGPT login saved in the CLI's home, and fails a task while none is. A sign-in from Profile → Coding agents turns this on without it | off |
 | `EMBEDDING_PROVIDER` | Memory-embedding vendor, decoupled from the chat vendor: `bedrock`, `azure-openai`, `openai`, `openrouter`, or `none` (embeddings off). Unset or unrecognized derives the chat vendor's default. The model still comes from the selected vendor's `*_EMBEDDING_MODEL_ID` var | derived from `LLM_PROVIDER` (anthropic: `openai` with `OPENAI_API_KEY` or `NEXUS_API_URL`, else `none`) |
 | `AWS_BEARER_TOKEN_BEDROCK` | Bedrock API key; on Bedrock selected over SigV4 when set, on mantle sent as `x-api-key` and **required** direct | — |
 | `AWS_REGION` | AWS region for Bedrock and for the mantle host | `us-east-1` |

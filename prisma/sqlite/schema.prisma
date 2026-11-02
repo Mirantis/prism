@@ -837,6 +837,8 @@ model UpdateAttempt {
 /// rather than anything about the agent. `lastExecutionEnvironment` holds
 /// `local` or `docker`. `singleThread` holds the id of single-thread mode's one
 /// conversation, so no later write to another thread moves it.
+/// `codingAgentSubscription:<agent>` holds `on` while that coding agent's tasks
+/// run on the user's own subscription (`lib/coding-agents/subscription-switch.ts`).
 ///
 /// The table exists to make the storage migration run once per change of environment.
 /// That migration copies only what the destination lacks, so repeating it would

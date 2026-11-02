@@ -71,6 +71,7 @@ import {
 import { ensureDataDirs } from './lib/data-dir';
 import { getCodingAgent } from './lib/coding-agents/get-coding-agent';
 import { ensureCodingAgentsDetected } from './lib/coding-agents/availability';
+import { loadSubscriptionSwitches } from './lib/coding-agents/subscription-switch';
 import { getProcessManager } from './tools/shell/process-manager';
 import { getAgentTaskManager } from './tools/shell/agent-task-manager';
 import { cancelModelCatalogRefresh, refreshModelCatalog } from './lib/model-catalog';
@@ -156,6 +157,7 @@ const initialize = async () => {
     // environment, so it is asked here rather than derived at import — and
     // after the line above, so it is asked of the environment that won.
     await ensureCodingAgentsDetected();
+    await loadSubscriptionSwitches();
     for (const name of config.availableCodingAgents) {
       const codingAgent = getCodingAgent(name);
       const home = await codingAgent.prepareHome();

@@ -177,12 +177,12 @@ Omitted parameters keep the deployment's model and effort behavior.
 | `CLAUDE_CODE_MODEL_SMALL` | Model for the Claude Code small tier | `haiku` (Bedrock: `global.anthropic.claude-haiku-5-5`) |
 | `CLAUDE_CODE_MODEL_MEDIUM` | Model for the Claude Code medium tier | `sonnet` (Bedrock: `global.anthropic.claude-sonnet-5-5`) |
 | `CLAUDE_CODE_MODEL_LARGE` | Model for the Claude Code large tier | `opus` |
-| `CLAUDE_CODE_SUBSCRIPTION` | `true` runs every Claude Code task on your Claude subscription. See [Coding tasks on a Claude subscription](#coding-tasks-on-a-claude-subscription). | off |
+| `CLAUDE_CODE_SUBSCRIPTION` | `true` runs every Claude Code task on the Claude subscription signed in by hand. See [Coding tasks on a Claude subscription](#coding-tasks-on-a-claude-subscription). | off |
 | `CLAUDE_CODE_SKIP_PERMISSIONS` | `true` runs every Claude Code edit task with Claude Code's permission checks off. See [What a coding task may do](#what-a-coding-task-may-do). | off |
 | `CODEX_MODEL_SMALL` | Model for the Codex small tier | `gpt-5.6-luna` (Bedrock: `openai.gpt-5.6-luna`) |
 | `CODEX_MODEL_MEDIUM` | Model for the Codex medium tier | `gpt-5.6-terra` (Bedrock: `openai.gpt-5.6-terra`) |
 | `CODEX_MODEL_LARGE` | Model for the Codex large tier | `gpt-5.6-sol` (Bedrock: `openai.gpt-5.6-sol`) |
-| `CODEX_SUBSCRIPTION` | `true` runs every Codex task on your ChatGPT subscription. See [Codex tasks on a ChatGPT subscription](#codex-tasks-on-a-chatgpt-subscription). | off |
+| `CODEX_SUBSCRIPTION` | `true` runs every Codex task on the ChatGPT subscription signed in by hand. See [Codex tasks on a ChatGPT subscription](#codex-tasks-on-a-chatgpt-subscription). | off |
 
 Set each tier to a model your account can serve; set all three overrides to keep a model
 out of every tier. Blank overrides log a warning and use the default.
@@ -196,9 +196,21 @@ default is used instead.
 ### Coding tasks on a Claude subscription
 
 Claude Code tasks can run on your Claude Pro, Max, Team or Enterprise
-subscription, while the agent itself keeps its `LLM_PROVIDER`. Sign in once with
-the command for where the agent's commands run, then set
-`CLAUDE_CODE_SUBSCRIPTION=true` and restart the agent:
+subscription, while the agent itself keeps its `LLM_PROVIDER`. In the web UI, open
+**Profile → Coding agents** and press **Sign in** next to Claude Code. The dialog
+links to Claude's sign-in page; sign in there, paste the code it shows into
+**Code**, and press **Sign in**. The agent is paused until you finish, and the row
+then shows your plan and email. When a coding task needs the
+subscription first, the agent asks in chat with a **Sign in** card that opens the
+same dialog, and it carries on by itself once you are signed in. **Sign out** sends
+coding tasks back to the deployment's models.
+
+Use your own subscription only on an agent nobody else uses. Anthropic's
+[terms](https://code.claude.com/docs/en/legal-and-compliance) let only the
+subscriber use it, and a shared agent can get your account blocked.
+
+To sign in by hand instead, run the command for where the agent's commands run,
+then set `CLAUDE_CODE_SUBSCRIPTION=true` and restart the agent:
 
 | Where commands run | Command |
 | ------------------ | ------- |
@@ -224,7 +236,17 @@ repository runs its tasks on this machine, so sign in on this machine as well.
 ### Codex tasks on a ChatGPT subscription
 
 Codex tasks can run on your ChatGPT subscription, while the agent itself keeps its
-`LLM_PROVIDER`. Sign in once with the command for where the agent's commands run,
+`LLM_PROVIDER`. In the web UI, open **Profile → Coding agents** and press
+**Sign in** next to Codex. The dialog shows a one-time code; open the sign-in page,
+sign in to your ChatGPT account and enter the code there. The dialog sees by
+itself when OpenAI confirms the sign-in, and the row then shows your plan and
+email. As with Claude Code, the agent is paused until you finish, a coding task
+that needs the subscription asks in chat with a **Sign in** card, and
+**Sign out** sends coding tasks back to the deployment's models. OpenAI's
+[terms](https://openai.com/policies/row-terms-of-use/) also let only the
+subscriber use it, so sign in only on an agent nobody else uses.
+
+To sign in by hand instead, run the command for where the agent's commands run,
 then set `CODEX_SUBSCRIPTION=true` and restart the agent:
 
 | Where commands run | Command |

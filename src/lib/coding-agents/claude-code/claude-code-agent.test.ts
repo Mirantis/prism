@@ -212,7 +212,7 @@ describe('run: the Claude subscription', () => {
   };
   const SIGNED_OUT = '{"loggedIn":false,"authMethod":"none","apiProvider":"firstParty"}';
   const NO_SUBSCRIPTION =
-    'Claude Code failed to start: CLAUDE_CODE_SUBSCRIPTION is on, and the Claude home /workspace/.claude has no subscription login: sign in to it with claude auth login';
+    'Claude Code failed to start: Claude Code is set to use your Claude subscription, and nobody is signed in to it: sign in again from Coding agents';
 
   it("keeps the deployment's credentials and asks nothing while CLAUDE_CODE_SUBSCRIPTION is off", async () => {
     const { run, launched, asked } = start({ env }, SUBSCRIPTION_STATUS);

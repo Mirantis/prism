@@ -12,6 +12,24 @@
 import { execFile, spawn, type ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import { logger } from '../../logger';
+import { getExecutionEnvironment } from '../../lib/execution-environments/get-execution-environment';
+
+/**
+ * The coding agents' homes, so `claude` or `codex` in the desktop's terminal
+ * share the login a sign-in from Coding agents saved for tasks. Only when tasks
+ * run in this container: a docker environment's homes are paths in another one.
+ */
+export function codingAgentHomesEnv(): Record<string, string> {
+  try {
+    const environment = getExecutionEnvironment();
+    if (environment.id !== 'local') return {};
+    const { claudeHome, codexHome } = environment.paths();
+    return { CLAUDE_CONFIG_DIR: claudeHome, CODEX_HOME: codexHome };
+  } catch (err) {
+    logger.debug({ err }, "[VoiceChat] No coding agent homes for the desktop's terminal");
+    return {};
+  }
+}
 
 const run = promisify(execFile);
 
@@ -56,7 +74,7 @@ export class DesktopSession {
 
     const proc = spawn('startxfce4', [], {
       stdio: ['ignore', 'ignore', 'pipe'],
-      env: { ...process.env, ...this.env, ...this.busEnv },
+      env: { ...process.env, ...codingAgentHomesEnv(), ...this.env, ...this.busEnv },
     });
     proc.on('error', (err) => logger.warn({ err }, '[VoiceChat] Desktop failed to start'));
     proc.on('exit', (code, signal) => {
@@ -80,7 +98,8 @@ export class DesktopSession {
    * is the size it will be shown at, and again each time that size changes.
    */
   async startDock(): Promise<void> {
-    const env = { ...process.env, ...this.env, ...this.busEnv };
+    // The dock starts the terminal too.
+    const env = { ...process.env, ...codingAgentHomesEnv(), ...this.env, ...this.busEnv };
     const dock = this.dock;
     this.dock = null;
     await endProcess(dock);
