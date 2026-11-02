@@ -5,7 +5,9 @@
  * The runtime discovers its managed Azure endpoint from environment variables. It speaks only the part of the protocol the runtime uses: the session is
  * created, the audio the runtime appends is counted, a turn boundary is announced
  * once enough of it has arrived, and a requested response answers with a steady
- * tone. Nothing here is a model — the words are never read.
+ * tone. A text request that names no items asks about the whole call, which is how
+ * the runtime asks for a call's summary, and it answers with a fixed summary. Nothing
+ * here is a model — the words are never read.
  *
  * A session configured with no turn detection is a dictation. It announces no turns, and
  * a commit answers with a transcript that states how much speech the buffer held, so a
@@ -25,6 +27,7 @@ import http from 'http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { MOCK_REALTIME_PORT } from './mock-realtime-port';
 import { MANAGED_VOICE_KEY, MANAGED_VOICE_PATH } from './managed-voice';
+import { MOCK_CALL_SUMMARY } from './mock-call-summary';
 
 /** pcm16 mono at the rate the Realtime API speaks, in both directions. */
 const SAMPLE_RATE = 24_000;
@@ -51,6 +54,8 @@ const state = {
   recordingAudioMs: 0,
   /** Dictation buffers committed and answered with a transcript. */
   dictationsTranscribed: 0,
+  /** Requests for a written answer about the whole call, which is the call's summary. */
+  summariesRequested: 0,
   /** The text-only items the newest session was given, joined by newlines. */
   contextText: '',
 };
@@ -98,6 +103,7 @@ wss.on('connection', (ws: WebSocket) => {
       audio?: string;
       event_id?: string;
       item?: unknown;
+      response?: { output_modalities?: string[]; input?: unknown; metadata?: Record<string, unknown> };
       session?: { audio?: { input?: { turn_detection?: unknown } } };
     };
     try {
@@ -136,6 +142,12 @@ wss.on('connection', (ws: WebSocket) => {
         announcedMs = heardMs;
         announceTurn(ws, `item_mock_${++turns}`, heardMs);
       }
+      return;
+    }
+
+    if (event.type === 'response.create' && event.response?.output_modalities?.includes('text') && !event.response.input) {
+      state.summariesRequested += 1;
+      answerWithText(ws, `resp_mock_${++responses}`, event.response.metadata, MOCK_CALL_SUMMARY);
       return;
     }
 
@@ -237,6 +249,16 @@ function answerWithTone(ws: WebSocket, responseId: string): void {
   send(ws, { type: 'response.output_audio.done', response_id: responseId, item_id: itemId });
   send(ws, { type: 'response.done', response: { id: responseId, status: 'completed' } });
   log(`answered ${responseId} with ${TONE_MS}ms of tone`);
+}
+
+/** Answer an out-of-band text request, echoing its metadata as the real API does. */
+function answerWithText(ws: WebSocket, responseId: string, metadata: Record<string, unknown> | undefined, text: string): void {
+  send(ws, { type: 'response.created', response: { id: responseId, metadata } });
+  send(ws, {
+    type: 'response.done',
+    response: { id: responseId, status: 'completed', metadata, output: [{ content: [{ text }] }] },
+  });
+  log(`answered ${responseId} with text`);
 }
 
 /** `sampleCount` samples of a continuous sine, starting at sample `from`. */

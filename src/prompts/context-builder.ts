@@ -383,7 +383,7 @@ function memoryBlockContent(tag: string, entries: string): string {
  * from anywhere cannot close the block it is wrapped in. Case-insensitive, and it
  * matches internal whitespace too, since a model reads tag case and spacing loosely.
  */
-function breakTag(text: string, tag: string): string {
+export function breakTag(text: string, tag: string): string {
   return text.replace(new RegExp(`<(\\s*\\/?\\s*)${tag}`, 'gi'), `<\u200b$1${tag}`);
 }
 

@@ -4,16 +4,17 @@
  *
  * Same pipeline `invoke()` uses, so Soul, User, Agent Guide, Memory and Skills all carry
  * over — that is what makes the voice the agent rather than a generic assistant wearing
- * its name. Conversation history is left out: a call is its own context, and a whole
- * thread would bloat a session that pays per audio token. What the agent recorded in
- * the hours before the call opens the session, so a call picks up where the last
- * conversation stopped.
+ * its name. A voice chat opens with the end of the text conversation it continues, in
+ * words only, since the session pays per token. What the agent recorded in the hours
+ * before the call follows it, so a call picks up where the last conversation stopped.
  *
  * Every session owner builds its instructions here, so a meeting and a voice chat differ
  * in what they pass and nowhere else.
  */
 
+import { ThreadSource } from '@prisma/client';
 import { contextService } from '../context.service';
+import { conversationService } from '../conversation.service';
 import {
   buildRecentMemories,
   buildSystemPromptParts,
@@ -21,6 +22,7 @@ import {
 } from '../../prompts/context-builder';
 import { getMeetingInstructions } from '../../prompts/meeting-prompt';
 import { getVoiceChatInstructions } from '../../prompts/voice-chat-prompt';
+import { voiceHistoryContent } from '../../prompts/voice-history';
 import type { ResponseMode } from '../meeting/response-policy';
 
 /**
@@ -37,6 +39,10 @@ export type VoiceCall =
       computer: { desktop: { width: number; height: number } | null } | null;
       /** Whether this client can share its own screen with the agent. */
       userScreen: boolean;
+      /** The conversation the call continues, already resolved for the thread mode. */
+      threadId?: string;
+      /** Whether the call's summary is stored in that conversation when it ends. */
+      summarized?: boolean;
     };
 
 export interface VoiceInstructionsInput {
@@ -57,9 +63,10 @@ export interface VoiceInstructions {
   /** From the same context, so the tool set matches the prompt built beside it. */
   lockedIn: boolean;
   /**
-   * What the agent recorded shortly before the call, in the fenced form a chat turn
-   * gets, or null when nothing is recent. It holds text the agent stored from whatever
-   * it read, so the session receives it as a user item and never as instructions.
+   * The end of the conversation a voice chat continues, then what the agent recorded
+   * shortly before the call, each fenced, or null when there is neither. Both hold text
+   * from outside the prompt, so the session receives them as a user item and never as
+   * instructions.
    */
   openingContext: string | null;
 }
@@ -70,7 +77,7 @@ export async function buildVoiceInstructions(input: VoiceInstructionsInput): Pro
     includeConversation: false,
   });
   const parts = await buildSystemPromptParts(context, 'meeting');
-  // A session reads no history, so it always opens a conversation.
+  // The context holds no conversation, so the recent memories are always offered.
   const recent = await buildRecentMemories(context);
   const call =
     input.call.kind === 'meeting'
@@ -86,11 +93,26 @@ export async function buildVoiceInstructions(input: VoiceInstructionsInput): Pro
           responseMode: input.responseMode === 'addressed' ? 'addressed' : 'open',
           computer: input.call.computer,
           userScreen: input.call.userScreen,
+          conversation: input.call.threadId !== undefined,
+          summary: input.call.summarized === true,
         });
+  const history = input.call.kind === 'voice-chat' && input.call.threadId
+    ? await conversationHistory(input.call.threadId)
+    : null;
+  const opening = [history, recent ? recentMemoryContent(recent.text) : null].filter((part) => part !== null);
   return {
     instructions: [parts.map((p) => p.text).join('\n\n---\n\n'), call].join('\n\n---\n\n'),
     agentName: context.agentName,
     lockedIn: context.lockedIn,
-    openingContext: recent ? recentMemoryContent(recent.text) : null,
+    openingContext: opening.length > 0 ? opening.join('') : null,
   };
+}
+
+async function conversationHistory(threadId: string): Promise<string | null> {
+  const thread = await conversationService.getThreadContext(threadId);
+  return voiceHistoryContent({
+    compactionSummary: thread.compactionSummary,
+    messages: thread.messages,
+    historyReadable: thread.threadSource === ThreadSource.DATABASE,
+  });
 }

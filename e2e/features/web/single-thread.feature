@@ -25,3 +25,14 @@ Feature: One conversation
     Then the runtime answers with the conversation holding "hello from project one"
     And the runtime lists that conversation alone
     And the database holds 1 conversation thread
+
+  Scenario: A voice call continues the one conversation
+    Given an older conversation thread rooted at "/work/project-one" containing "The rollout codename is MAPLEKESTREL4"
+    And the voice model has heard nothing yet
+    When I navigate to the agent chat page
+    Then I should see the message "The rollout codename is MAPLEKESTREL4" in the conversation
+    When I start a voice chat from the chat header
+    Then the chat shows the call is live
+    And the voice session opened with the conversation holding "User: The rollout codename is MAPLEKESTREL4"
+    When I end the voice chat
+    Then the voice model has no session open

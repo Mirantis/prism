@@ -5,9 +5,13 @@ answers, and its tools run while you speak. Where
 [voice meetings](voice-meetings.md) put the agent in a Google Meet call, a voice
 chat is a direct conversation between the agent and one client.
 
-**Nothing about the call is written down.** There is no transcript, and no
-message appears in the thread. What you hear is all the call produces. To speak a
-message into the thread instead, use [dictation](dictation.md).
+**A call continues the conversation you start it from.** The agent hears the
+recent messages of that conversation, so you can pick up where you left off. In
+[one-conversation mode](web-ui.md#one-conversation) that is always the one conversation.
+
+When you hang up after speaking, the agent adds a short **Voice call summary**
+to that conversation, so the chat knows what was said. There is no transcript.
+To speak a message into the thread instead, use [dictation](dictation.md).
 
 ## What you need
 

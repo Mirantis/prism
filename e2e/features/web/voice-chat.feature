@@ -27,3 +27,19 @@ Feature: Voice chat in the browser
     When I reload the chat page
     And I start a voice chat from the chat header
     Then the chat shows the call is live
+
+  Scenario: A call continues the conversation it starts from and leaves a summary in it
+    Given I have a conversation with the following messages:
+      | role  | content                                  |
+      | USER  | The rollout codename is MAPLEKESTREL4    |
+      | AGENT | Noted, the rollout codename is MAPLEKESTREL4. |
+    And the voice model has heard nothing yet
+    When I open my latest conversation
+    And I start a voice chat from the chat header
+    Then the chat shows the call is live
+    And the voice session opened with the conversation holding "User: The rollout codename is MAPLEKESTREL4"
+    # The summary is written only for a call where the user spoke.
+    And the agent's voice is playing in the browser
+    When I end the voice chat
+    Then the conversation shows a summary of the call
+    And the voice model has no session open

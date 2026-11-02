@@ -43,6 +43,7 @@ import { Downsampler, Upsampler, MEETING_SAMPLE_RATE, REALTIME_SAMPLE_RATE } fro
 import {
   RealtimeSession,
   type RealtimeSessionOptions,
+  type OutOfBandRequest,
   type RecordingSegment,
 } from './realtime-session';
 import { AudioPlayback, type PlaybackSink } from './audio-playback';
@@ -342,6 +343,8 @@ export class VoiceConversation {
     });
 
     this.session.on('functionCall', (call) => {
+      // A response still finishing after the call ended must not act for a user who left.
+      if (this.stopped) return;
       this.toolCalls += 1;
       const run = this.runTool(call.callId, call.name, call.argumentsJson);
       this.toolRuns.add(run);
@@ -355,6 +358,7 @@ export class VoiceConversation {
     // nothing back for a later boundary, and cannot produce two verdicts for one
     // sentence.
     this.session.on('utteranceCommitted', (itemId) => {
+      if (this.stopped) return;
       const decision = this.responsePolicy.onUtteranceCommitted(itemId);
       // Only a turn the policy actually accepted moves this. A duplicated commit
       // for an earlier utterance is answered `ignore`, and letting it set the marker
@@ -766,9 +770,32 @@ export class VoiceConversation {
   /** Tear down the session, playback timer and pending barge-in timer. */
   stop(): void {
     if (this.stopped) return;
+    this.silence();
+    this.session.close();
+  }
+
+  /**
+   * Stop the conversation, ask the model one text question about it, then close.
+   *
+   * The agent is cut off and its tools and answers end before the question is asked, so
+   * the user hears nothing more while the answer is written. Answers null when the
+   * session is already stopped or does not answer by the deadline.
+   */
+  async stopWithText(request: Pick<OutOfBandRequest, 'instructions' | 'deadlineMs' | 'maxOutputTokens' | 'reasoningEffort'>): Promise<string | null> {
+    if (this.stopped) return null;
+    this.stopSpeaking();
+    this.silence();
+    try {
+      // No `input`, so the answer reads the whole call.
+      return await this.session.requestOutOfBandText(request);
+    } finally {
+      this.session.close();
+    }
+  }
+
+  private silence(): void {
     this.stopped = true;
     this.bargeIn.dispose();
     this.playback.dispose();
-    this.session.close();
   }
 }
