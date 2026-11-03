@@ -1,13 +1,15 @@
 /**
  * What the desktop terminal's `claude` and `codex` run: the wrappers that
  * `desktop-session.ts` puts first on the desktop's PATH exec
- * `node coding-agent-exec.js <claude|codex> [args…]`.
+ * `node coding-agent-exec.js --wrappers <dir> <claude|codex> [args…]`.
  *
  * It reads the subscription switch from the runtime's database, read-only,
  * builds the environment the way a task does, and runs the real binary from
- * the rest of the PATH. With the switch on and nobody signed in it refuses,
- * as a task does, rather than run on the deployment's models. When the
- * database can't be read it says so and runs as with the switch off.
+ * the PATH without the wrappers' directory. With the switch on and nobody
+ * signed in it refuses, as a task does, rather than run on the deployment's
+ * models. When the database can't be read it runs as with the switch on: on
+ * the subscription signed in, or not at all. Only a switch read as off runs on
+ * the deployment's models.
  */
 
 import { spawn, spawnSync, type StdioOptions } from 'node:child_process';
@@ -21,7 +23,7 @@ import {
   terminalLaunch,
   terminalUsesSubscription,
   TERMINAL_COMMANDS,
-  WRAPPERS_ENV,
+  unreadableSwitchMessage,
 } from '../lib/coding-agents/terminal';
 
 const LOGIN_CHECK_TIMEOUT_MS = 30_000;
@@ -36,24 +38,24 @@ export async function main(
   env: NodeJS.ProcessEnv,
   io: Io = { stdio: 'inherit', stderr: (line) => process.stderr.write(`${line}\n`) },
 ): Promise<number> {
-  const [command, ...args] = argv;
-  if (!isTerminalCommand(command)) {
-    io.stderr('usage: coding-agent-exec <claude|codex> [args…]');
+  const [flag, wrappers, command, ...args] = argv;
+  if (flag !== '--wrappers' || !wrappers || !isTerminalCommand(command)) {
+    io.stderr('usage: coding-agent-exec --wrappers <dir> <claude|codex> [args…]');
     return 2;
   }
   const agent = TERMINAL_COMMANDS[command];
-  const wrappers = env[WRAPPERS_ENV];
-  const { [WRAPPERS_ENV]: _wrappers, ...rest } = env;
   const childEnv: NodeJS.ProcessEnv = {
-    ...rest,
+    ...env,
     PATH: (env.PATH ?? '').split(path.delimiter).filter((dir) => dir && dir !== wrappers).join(path.delimiter),
   };
 
-  let subscription = false;
+  let subscription: boolean;
+  let unreadable: Error | undefined;
   try {
     subscription = terminalUsesSubscription(env, agent);
   } catch (err) {
-    io.stderr(`${command}: could not read the Coding agents setting (${(err as Error).message}); using the deployment's models`);
+    subscription = true;
+    unreadable = err as Error;
   }
   const launch = terminalLaunch(command, args, childEnv, subscription);
 
@@ -68,7 +70,7 @@ export async function main(
       return 127;
     }
     if (!signedInToSubscription(command, { stdout: status.stdout ?? '', stderr: status.stderr ?? '', exitCode: status.status })) {
-      io.stderr(notSignedInMessage(agent));
+      io.stderr(unreadable ? unreadableSwitchMessage(command, unreadable) : notSignedInMessage(agent));
       return 1;
     }
   }

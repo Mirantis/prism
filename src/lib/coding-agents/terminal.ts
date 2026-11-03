@@ -22,9 +22,6 @@ import { subscriptionForcedIn, subscriptionKey } from './subscription';
 
 export type TerminalCommand = 'claude' | 'codex';
 
-/** The wrappers' directory, which `coding-agent-exec` looks the real binary up without. */
-export const WRAPPERS_ENV = 'PRISM_CODING_AGENT_WRAPPERS';
-
 export const TERMINAL_COMMANDS: Record<TerminalCommand, CodingAgentName> = {
   claude: 'claude-code',
   codex: 'codex',
@@ -34,7 +31,12 @@ export function isTerminalCommand(value: string | undefined): value is TerminalC
   return value === 'claude' || value === 'codex';
 }
 
-/** Claude Code 2.1's subcommands: none of them is a session, so none takes `--settings`. */
+/**
+ * Claude Code 2.1's subcommands: none of them is a session, so none takes `--settings`.
+ * A subcommand missing here runs as a session: it gets `--settings` and needs
+ * the subscription signed in. Update the list from `claude --help` when the
+ * image's Claude Code adds one.
+ */
 const CLAUDE_SUBCOMMANDS = new Set([
   'agents', 'attach', 'auth', 'auto-mode', 'doctor', 'gateway', 'import', 'install', 'logs', 'mcp',
   'plugin', 'plugins', 'purge', 'respawn', 'rm', 'setup-token', 'stop', 'kill', 'ultrareview',
@@ -94,6 +96,12 @@ export function signedInToSubscription(
   } catch {
     return false;
   }
+}
+
+/** Why the terminal refuses when it can't read the switch and no subscription is signed in. */
+export function unreadableSwitchMessage(command: TerminalCommand, err: Error): string {
+  const subscription = command === 'claude' ? 'Claude subscription' : 'ChatGPT subscription';
+  return `${command}: could not read the Coding agents setting (${err.message}), and no ${subscription} is signed in: sign in from Coding agents`;
 }
 
 /**

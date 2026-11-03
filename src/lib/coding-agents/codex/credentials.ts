@@ -4,8 +4,12 @@ import type { ExecutionEnvironment } from '../../execution-environments/executio
 import { hasBedrockCredentials } from '../bedrock-credentials';
 import { probeCli } from '../cli-probe';
 
-/** The variables Codex 0.163 takes a credential from, each of which outranks a saved login. */
-const OUTRANKS_SAVED_LOGIN = new Set(['CODEX_API_KEY', 'OPENAI_API_KEY', 'CODEX_ACCESS_TOKEN']);
+/**
+ * Kept out of a run on the subscription: the variables Codex 0.163 takes a
+ * credential from, each of which outranks a saved login, and the deployment's
+ * OpenAI-compatible gateway, which must not receive the login's token.
+ */
+const LEAVES_THE_SUBSCRIPTION = new Set(['CODEX_API_KEY', 'OPENAI_API_KEY', 'CODEX_ACCESS_TOKEN', 'OPENAI_BASE_URL']);
 
 /** How a Codex task authenticates. */
 export type CodexAuthMethod = 'api' | 'saved' | 'bedrock' | 'subscription';
@@ -52,9 +56,9 @@ export function codexAuthMethod(
   return undefined;
 }
 
-/** `env` without the variables that outrank the home's saved login. */
+/** `env` without the variables that outrank the home's saved login or move its endpoint. */
 export function subscriptionEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return Object.fromEntries(Object.entries(env).filter(([key]) => !OUTRANKS_SAVED_LOGIN.has(key)));
+  return Object.fromEntries(Object.entries(env).filter(([key]) => !LEAVES_THE_SUBSCRIPTION.has(key)));
 }
 
 /**
@@ -91,12 +95,16 @@ export function codexLoginFromStatus(output: string, exitCode: number | null): S
 }
 
 /**
- * The config a Codex run on the subscription takes: OpenAI's own provider, so
- * the home's `config.toml` can't move it to one that bills the deployment, and
- * the ChatGPT login saved in the home's file store, and no other.
+ * The config a Codex run on the subscription takes: OpenAI's own provider at
+ * ChatGPT's own endpoints, so the home's `config.toml` can't move it to one
+ * that bills the deployment or receives the login's token, and the ChatGPT
+ * login saved in the home's file store, and no other. Codex takes an empty
+ * `openai_base_url` as unset, which for a ChatGPT login is ChatGPT's endpoint.
  */
 export const SUBSCRIPTION_CONFIG_ARGS = [
   '-c', 'model_provider="openai"',
+  '-c', 'openai_base_url=""',
+  '-c', 'chatgpt_base_url="https://chatgpt.com/backend-api/"',
   '-c', 'forced_login_method="chatgpt"',
   '-c', 'cli_auth_credentials_store="file"',
 ];
