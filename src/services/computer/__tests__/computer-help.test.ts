@@ -54,6 +54,7 @@ vi.mock('../../message-delivery.service', () => ({
     publish: vi.fn(),
     showInConversation: vi.fn(),
     threadContext: vi.fn(async (threadId: string) => ({ channel: 'websocket', threadId })),
+    opensWebUiLinks: (channel?: string) => Boolean(config.publicUrl) || channel === 'websocket',
   },
 }));
 vi.mock('../../goal.service', () => ({

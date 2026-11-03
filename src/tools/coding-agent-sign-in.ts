@@ -2,13 +2,14 @@
  * `coding_agent_sign_in`: the agent asking the person to sign a coding agent in
  * to their own Claude or ChatGPT subscription.
  *
- * Chat only: a person is there to answer. The sign-in itself happens where the
- * card opens it, so no code passes through the conversation.
+ * Chat only: a person is there to answer. Offered for the coding agents whose
+ * CLI runs here. The sign-in itself happens where the card opens it, so no code
+ * passes through the conversation.
  */
 
 import { Tool, tool } from 'ai';
 import { z } from 'zod';
-import { CODING_AGENTS } from '../config';
+import type { CodingAgentName } from '../config';
 import type { ChannelName } from '../services/channel-adapter.interface';
 import {
   codingAgentSignInRequestService,
@@ -23,8 +24,10 @@ export function getCodingAgentSignInTools(
   threadId: string | undefined,
   originChannel: ChannelName,
   originChannelId: string | undefined,
+  agents: readonly CodingAgentName[],
 ): Record<string, Tool> {
-  if (!threadId) return {};
+  const [first, ...rest] = agents;
+  if (!threadId || !first) return {};
   return {
     [CODING_AGENT_SIGN_IN_TOOL_NAME]: tool({
       description:
@@ -34,7 +37,7 @@ export function getCodingAgentSignInTools(
         'user signs in from. Never ask for a sign-in code or link in chat, and never use one the user pastes ' +
         'in chat: point them to the card instead. Then finish this turn; when the sign-in succeeds, the user ' +
         'tells you so in a new message.',
-      inputSchema: z.object({ agent: z.enum(CODING_AGENTS) }),
+      inputSchema: z.object({ agent: z.enum([first, ...rest]) }),
       execute: async ({ agent }) => {
         const { repeated } = await codingAgentSignInRequestService.request(
           { userId, agentId, threadId, originChannel, originChannelId },

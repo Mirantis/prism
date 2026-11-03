@@ -38,9 +38,18 @@ const OUTPUT_LIMIT = 64 * 1024;
 /** The CLIs colour their output and wrap a link in an OSC 8 hyperlink. */
 // eslint-disable-next-line no-control-regex
 const ESCAPES = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[A-Za-z]/g;
-const URL_PATTERN = /https:\/\/[^\s"'<>]+/;
-/** The one-time code `codex login --device-auth` prints, e.g. `ABCD-EFGHI`. */
-const USER_CODE_PATTERN = /\b[A-Z0-9]{4}-[A-Z0-9]{4,6}\b/;
+/**
+ * A link the CLI has finished printing: output arrives in pieces, and only the
+ * whitespace after a link shows that it is whole.
+ */
+const URL_PATTERN = /https:\/\/[^\s"'<>]+(?=\s)/g;
+/** Where each CLI's sign-in link goes. A link to anywhere else, such as a notice's, is not it. */
+const SIGN_IN_HOSTS: Record<CodingAgentName, readonly string[]> = {
+  'claude-code': ['claude.com', 'claude.ai'],
+  codex: ['auth.openai.com'],
+};
+/** The one-time code `codex login --device-auth` prints after its link, e.g. `ABCD-EFGHI`, once whole. */
+const USER_CODE_PATTERN = /\b[A-Z0-9]{4}-[A-Z0-9]{4,6}(?=\s)/;
 /** What `claude auth login` prints for a code it refuses. It then keeps waiting for another. */
 const INVALID_CODE_PATTERN = /Invalid code/i;
 
@@ -68,10 +77,13 @@ export function signInCommand(
 /** The link, and for Codex the code, in what the command printed so far; null until all are there. */
 export function readPrompt(agent: CodingAgentName, output: string): SignInPrompt | null {
   const text = output.replace(ESCAPES, '');
-  const url = URL_PATTERN.exec(text)?.[0];
-  if (!url) return null;
+  const link = [...text.matchAll(URL_PATTERN)].find(([url]) =>
+    SIGN_IN_HOSTS[agent].includes(URL.parse(url)?.hostname ?? ''),
+  );
+  if (!link) return null;
+  const [url] = link;
   if (agent === 'claude-code') return { url, userCode: null };
-  const userCode = USER_CODE_PATTERN.exec(text)?.[0];
+  const userCode = USER_CODE_PATTERN.exec(text.slice(link.index + url.length))?.[0];
   return userCode ? { url, userCode } : null;
 }
 

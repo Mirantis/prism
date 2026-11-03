@@ -25,11 +25,8 @@ export function CodingAgentsCard({
     queryKey: CODING_AGENTS_QUERY_KEY,
     queryFn: () => runtimeApi.codingAgents(),
   });
-  // The dialog resumes the sign-in under way for the agent, or starts one. A link opens it
-  // for an agent that asked in chat and waits.
-  const [dialog, setDialog] = useState<{ agent: CodingAgentId; paused: boolean } | null>(
-    signIn ? { agent: signIn.agent, paused: true } : null,
-  );
+  // The dialog resumes the sign-in under way for the agent, or starts one.
+  const [dialog, setDialog] = useState<CodingAgentId | null>(signIn?.agent ?? null);
 
   return (
     <Card>
@@ -51,11 +48,7 @@ export function CodingAgentsCard({
         ) : agents ? (
           <ul className="grid gap-3 md:grid-cols-2">
             {agents.map((row) => (
-              <CodingAgentRow
-                key={row.agent}
-                row={row}
-                onSignIn={() => setDialog({ agent: row.agent, paused: false })}
-              />
+              <CodingAgentRow key={row.agent} row={row} onSignIn={() => setDialog(row.agent)} />
             ))}
           </ul>
         ) : (
@@ -67,8 +60,7 @@ export function CodingAgentsCard({
       </CardContent>
       {dialog && (
         <CodingAgentSignInDialog
-          agent={dialog.agent}
-          paused={dialog.paused}
+          agent={dialog}
           onClose={() => {
             setDialog(null);
             onSignInClosed?.();

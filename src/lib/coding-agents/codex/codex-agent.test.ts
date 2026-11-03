@@ -357,7 +357,8 @@ describe('the ChatGPT subscription', () => {
         CODEX_HOME: '/home/.codex',
       });
       expect(args).toEqual(expect.arrayContaining([
-        'model_provider="openai"', 'forced_login_method="chatgpt"', 'cli_auth_credentials_store="file"',
+        'model_provider="openai"', 'openai_base_url=""', 'chatgpt_base_url="https://chatgpt.com/backend-api/"',
+        'forced_login_method="chatgpt"', 'cli_auth_credentials_store="file"',
       ]));
       expect(args).not.toContain('model_provider="amazon-bedrock"');
       expect(args[args.indexOf('--model') + 1]).toBe('gpt-5.6-terra');
@@ -402,6 +403,32 @@ describe('the ChatGPT subscription', () => {
         const events = await Array.fromAsync(createCodexAgent().run({ ...task, workdir: '/repo', env }).events);
         expect(events.at(-1)).toMatchObject({ stopReason: 'end_turn' });
         expect(homes).toEqual(['/host/.codex', '/host/.codex']);
+      } finally {
+        forPath.environment = null;
+        __setExecutionEnvironmentForTests(null);
+      }
+    });
+
+    it("names the command that signs in the host's home when a task on the host finds nobody signed in", async () => {
+      forPath.environment = fakeExecutionEnvironment({
+        paths: { codexHome: '/host/.codex' },
+        runProgram: () => {
+          const child = new FakeChild();
+          child.stderr.write('Not logged in\n');
+          process.nextTick(() => child.finish(0));
+          return child.asExecProcess();
+        },
+      });
+      __setExecutionEnvironmentForTests(fakeExecutionEnvironment({ servesPath: () => false }));
+      try {
+        const events = await Array.fromAsync(createCodexAgent().run({ ...task, workdir: '/repo', env }).events);
+        expect(events.at(-1)).toMatchObject({
+          stopReason: 'error',
+          message: expect.stringContaining(
+            "on this computer, where this conversation's folder is. Coding agents signs in elsewhere: sign in by running " +
+              "`CODEX_HOME='/host/.codex' codex login -c 'cli_auth_credentials_store=\"file\"'`",
+          ),
+        });
       } finally {
         forPath.environment = null;
         __setExecutionEnvironmentForTests(null);

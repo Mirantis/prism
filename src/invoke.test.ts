@@ -148,6 +148,12 @@ vi.mock('./tools/skills/index', () => ({
   getSkillTools: mockGetSkillTools,
 }));
 
+// Both CLIs, whether or not this machine has them, so the sign-in tool is offered.
+vi.mock('./services/coding-agent-sign-in/coding-agent-account', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./services/coding-agent-sign-in/coding-agent-account')>()),
+  installedClis: async () => ['claude-code', 'codex'],
+}));
+
 vi.mock('./services/conversation.service', () => ({
   conversationService: { addMessage: mockAddMessage, getThreadSource: async () => 'DATABASE' },
 }));

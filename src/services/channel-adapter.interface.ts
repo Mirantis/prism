@@ -138,6 +138,12 @@ export interface ChannelAdapter {
   readonly showsWholeConversation?: boolean;
 
   /**
+   * True when the channel opens a link relative to the web UI, so a message
+   * can link a page of it even when the agent has no public address.
+   */
+  readonly opensWebUiLinks?: boolean;
+
+  /**
    * Where an autonomous message continues a stored thread that started in this
    * channel: a scheduled task or a goal that resumes the conversation, or a
    * computer help request. `originChannelId` is the conversation the thread

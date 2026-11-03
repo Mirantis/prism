@@ -30,10 +30,11 @@ describe('coding agents routes', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('lists the coding agents', async () => {
-    service.list.mockResolvedValue([{ agent: 'codex' }]);
+    const row = { agent: 'codex', name: 'Codex', available: true, subscription: true, forced: true, account: null, attempt: null };
+    service.list.mockResolvedValue([row]);
     const res = await request(app).get('/agents/coding-agents');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ agents: [{ agent: 'codex' }] });
+    expect(res.body).toEqual({ agents: [row] });
   });
 
   it('starts a sign-in', async () => {

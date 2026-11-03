@@ -23,6 +23,7 @@ import {
 } from './channel-adapter.interface';
 import { conversationService } from './conversation.service';
 import { attachmentService } from './attachment.service';
+import { config } from '../config';
 import { logger } from '../logger';
 import type { ToolCallRecord } from '../types';
 
@@ -103,6 +104,16 @@ export class MessageDeliveryService {
   /** The registered adapter named `name`. */
   getAdapter(name: string): ChannelAdapter | undefined {
     return this.adapters.find((adapter) => adapter.name === name);
+  }
+
+  /**
+   * Whether a message delivered in `channel` can link a page of the web UI:
+   * always when the agent has a public address, else when the channel opens
+   * links relative to the web UI. No channel is a broadcast, which some
+   * channels cannot open.
+   */
+  opensWebUiLinks(channel?: string): boolean {
+    return Boolean(config.publicUrl) || Boolean(channel && this.getAdapter(channel)?.opensWebUiLinks);
   }
 
   /**

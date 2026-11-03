@@ -94,7 +94,7 @@ describe('ChatMessage', () => {
       userMessage({
         role: 'AGENT',
         content:
-          'Sign in to Claude to run Claude Code on your own plan. Enter the sign-in code only where this link opens, never in chat.\n\n[Sign in to Claude](https://agent.example.com/coding-agents?agent=claude-code&sign-in=3b241101-e2bb-4255-8caf-4136c566a962)',
+          'Sign in to Claude to run Claude Code on your own plan. Enter the sign-in code only where this link opens, never in chat.\n\n[Sign in to Claude](https://agent.example.com/coding-agents?agent=claude-code)',
         blocks: [
           {
             type: 'coding_agent_sign_in',

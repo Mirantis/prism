@@ -52,11 +52,12 @@ describe('ChatCodingAgentSignIn', () => {
 
     const card = screen.getByRole('button', { name: /^Sign in to ChatGPT/ });
     expect(card).toHaveTextContent('Sign in to ChatGPTRun Codex on your own ChatGPT plan');
+    expect(screen.getByRole('region', { name: 'Coding agent sign-in' })).toHaveTextContent(
+      'Never paste a sign-in code into chat.',
+    );
     fireEvent.click(card);
 
-    expect(await screen.findByRole('dialog', { name: 'Sign in to ChatGPT' })).toHaveTextContent(
-      'Your agent is paused until you finish.',
-    );
+    expect(await screen.findByRole('dialog', { name: 'Sign in to ChatGPT' })).toBeInTheDocument();
     expect(await screen.findByTestId('coding-agent-user-code')).toHaveTextContent('ABCD-1234');
     expect(api.startCodingAgentSignIn).toHaveBeenCalledExactlyOnceWith('codex');
   });
@@ -68,5 +69,6 @@ describe('ChatCodingAgentSignIn', () => {
       'Signed in to ClaudeClaude Code runs on your Claude plan',
     );
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.queryByText('Never paste a sign-in code into chat.')).not.toBeInTheDocument();
   });
 });

@@ -12,11 +12,13 @@ import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import type { Tool } from 'ai';
+import type { z } from 'zod';
 
-const { mockGetMCPTools, mockGetPluginTools, mockGetSubagents } = vi.hoisted(() => ({
+const { mockGetMCPTools, mockGetPluginTools, mockGetSubagents, mockInstalledClis } = vi.hoisted(() => ({
   mockGetMCPTools: vi.fn(),
   mockGetPluginTools: vi.fn(),
   mockGetSubagents: vi.fn(),
+  mockInstalledClis: vi.fn(async () => ['claude-code', 'codex']),
 }));
 
 vi.mock('./mcp-client', () => ({ getMCPTools: mockGetMCPTools }));
@@ -32,6 +34,10 @@ vi.mock('../services/agent-workspace.service', () => ({
   agentWorkspaceService: { getSubagents: mockGetSubagents },
 }));
 
+vi.mock('../services/coding-agent-sign-in/coding-agent-account', async (original) => ({
+  ...(await original<typeof import('../services/coding-agent-sign-in/coding-agent-account')>()),
+  installedClis: mockInstalledClis,
+}));
 vi.mock('./has-binary', () => ({ missingBinary: vi.fn(async () => null) }));
 vi.mock('../services/meeting/browser-stack', async (original) => ({
   ...(await original<typeof import('../services/meeting/browser-stack')>()),
@@ -259,6 +265,20 @@ describe('collectTools coding agent sign-in', () => {
   it('offers the sign-in in a chat, where a person is there to sign in', async () => {
     const { tools } = await collectTools({ userId: 'user', agentId: 'agent', mode: 'chat', threadId: 'thread-1', lockedIn: false, taskInvoker: vi.fn() });
     expect(tools.coding_agent_sign_in).toBeDefined();
+  });
+
+  it('offers the sign-in only for the coding agents whose CLI runs here', async () => {
+    mockInstalledClis.mockResolvedValueOnce(['codex']);
+    const { tools } = await collectTools({ userId: 'user', agentId: 'agent', mode: 'chat', threadId: 'thread-1', lockedIn: false, taskInvoker: vi.fn() });
+    const schema = tools.coding_agent_sign_in.inputSchema as z.ZodType;
+    expect(schema.safeParse({ agent: 'codex' }).success).toBe(true);
+    expect(schema.safeParse({ agent: 'claude-code' }).success).toBe(false);
+  });
+
+  it('offers no sign-in when no coding agent CLI runs here', async () => {
+    mockInstalledClis.mockResolvedValueOnce([]);
+    const { tools } = await collectTools({ userId: 'user', agentId: 'agent', mode: 'chat', threadId: 'thread-1', lockedIn: false, taskInvoker: vi.fn() });
+    expect(tools.coding_agent_sign_in).toBeUndefined();
   });
 
   it.each(['heartbeat', 'cron', 'webhook', 'goal', 'meeting', 'subagent'])('offers no sign-in in %s', async (mode) => {

@@ -37,17 +37,18 @@ function row(agent: CodingAgentId, plan: string): CodingAgentSummary {
     name: agent === 'codex' ? 'Codex' : 'Claude Code',
     available: true,
     subscription: true,
+    forced: false,
     account: { plan, email: 'sam@example.com' },
     attempt: null,
   };
 }
 
-function renderDialog(agent: CodingAgentId, { paused = false } = {}) {
+function renderDialog(agent: CodingAgentId) {
   const onClose = vi.fn();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <CodingAgentSignInDialog agent={agent} paused={paused} onClose={onClose} />
+      <CodingAgentSignInDialog agent={agent} onClose={onClose} />
     </QueryClientProvider>,
   );
   return { onClose };
@@ -76,7 +77,6 @@ describe('CodingAgentSignInDialog', () => {
     expect(screen.getByText('Sign in and allow access.')).toBeInTheDocument();
     expect(screen.getByText('Paste the code it shows.')).toBeInTheDocument();
     expect(dialog).toHaveTextContent("You sign in on Anthropic's own page. Your password never reaches this app.");
-    expect(screen.queryByText('Your agent is paused until you finish.')).not.toBeInTheDocument();
     const link = screen.getByRole('link', { name: 'Open sign-in' });
     expect(link).toHaveAttribute('href', 'https://claude.example.com/oauth/authorize?code=true');
     expect(link).toHaveAttribute('target', '_blank');
@@ -159,7 +159,7 @@ describe('CodingAgentSignInDialog', () => {
       .mockResolvedValueOnce(waiting)
       .mockResolvedValueOnce({ ...waiting, status: 'signed_in' });
     api.codingAgents.mockResolvedValue([row('codex', 'ChatGPT Plus')]);
-    renderDialog('codex', { paused: true });
+    renderDialog('codex');
 
     expect(await screen.findByRole('dialog', { name: 'Sign in to ChatGPT' })).toHaveTextContent(
       "You sign in on OpenAI's own page. Your password never reaches this app.",
@@ -168,7 +168,6 @@ describe('CodingAgentSignInDialog', () => {
     expect(screen.getByText("Open ChatGPT's sign-in page.")).toBeInTheDocument();
     expect(screen.getByText('Enter this code:')).toBeInTheDocument();
     expect(screen.getByText("Allow access. This updates when you're done.")).toBeInTheDocument();
-    expect(screen.getByText('Your agent is paused until you finish.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Copy code' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open sign-in' })).toHaveAttribute('href', 'https://auth.example.com/codex/device');
     expect(screen.getByText("Waiting for you to finish on OpenAI's page…")).toBeInTheDocument();
@@ -180,7 +179,6 @@ describe('CodingAgentSignInDialog', () => {
 
     expect(await screen.findByText('Signed in. Codex now runs on your ChatGPT Plus.')).toBeInTheDocument();
     expect(api.codingAgentSignIn).toHaveBeenCalledTimes(2);
-    expect(screen.queryByText('Your agent is paused until you finish.')).not.toBeInTheDocument();
   });
 
   it('shows a sign-in being checked', async () => {

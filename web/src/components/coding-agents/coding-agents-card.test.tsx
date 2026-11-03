@@ -23,6 +23,7 @@ const claude: CodingAgentSummary = {
   name: 'Claude Code',
   available: true,
   subscription: false,
+  forced: false,
   account: null,
   attempt: null,
 };
@@ -85,6 +86,7 @@ describe('CodingAgentsCard', () => {
     const codexRow = screen.getByRole('listitem', { name: 'Codex' });
     expect(codexRow).toHaveTextContent('Signed out. Its work fails until you sign in again.');
     expect(within(codexRow).getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+    expect(within(codexRow).getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
   });
 
   it('links the terms that limit a subscription to its subscriber', async () => {
@@ -121,6 +123,25 @@ describe('CodingAgentsCard', () => {
     expect(api.signOutCodingAgent).toHaveBeenCalledExactlyOnceWith('claude-code');
   });
 
+  it('warns that a sign-out leaves work failing when the deployment holds the subscription on', async () => {
+    const forced = { ...claude, subscription: true, forced: true };
+    api.codingAgents.mockResolvedValue([
+      { ...forced, account: { plan: 'Claude Max', email: 'sam@example.com' } },
+      { ...codex, ...forced, agent: 'codex' as const, name: 'Codex' },
+    ]);
+    renderCard();
+
+    const codexRow = await screen.findByRole('listitem', { name: 'Codex' });
+    expect(within(codexRow).getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+    expect(within(codexRow).queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole('listitem', { name: 'Claude Code' })).getByRole('button', { name: 'Sign out' }));
+    const confirm = await screen.findByRole('alertdialog', { name: 'Sign out of Claude?' });
+    expect(confirm).toHaveTextContent(
+      'The deployment always runs Claude Code on your subscription, so its work fails until you sign in again.',
+    );
+    expect(confirm).not.toHaveTextContent("deployment's models");
+  });
+
   it('starts a sign-in from a row', async () => {
     api.codingAgents.mockResolvedValue([claude, codex]);
     api.startCodingAgentSignIn.mockResolvedValue(waiting);
@@ -131,7 +152,6 @@ describe('CodingAgentsCard', () => {
 
     expect(await screen.findByRole('dialog', { name: 'Sign in to Claude' })).toBeInTheDocument();
     expect(await screen.findByLabelText('Code')).toBeInTheDocument();
-    expect(screen.queryByText('Your agent is paused until you finish.')).not.toBeInTheDocument();
     expect(api.startCodingAgentSignIn).toHaveBeenCalledExactlyOnceWith('claude-code');
   });
 
@@ -153,7 +173,6 @@ describe('CodingAgentsCard', () => {
     renderCard({ signIn: { agent: 'claude-code' }, onSignInClosed });
 
     expect(await screen.findByLabelText('Code')).toBeInTheDocument();
-    expect(screen.getByText('Your agent is paused until you finish.')).toBeInTheDocument();
     expect(api.startCodingAgentSignIn).toHaveBeenCalledExactlyOnceWith('claude-code');
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
 

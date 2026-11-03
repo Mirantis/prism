@@ -51,7 +51,8 @@ export function ChatCodingAgentSignIn({ block }: { block: CodingAgentSignInBlock
           className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
         />
       </button>
-      {open && <CodingAgentSignInDialog agent={block.agent} paused onClose={() => setOpen(false)} />}
+      <p className="mt-1.5 px-1 text-xs text-muted-foreground">Never paste a sign-in code into chat.</p>
+      {open && <CodingAgentSignInDialog agent={block.agent} onClose={() => setOpen(false)} />}
     </section>
   );
 }

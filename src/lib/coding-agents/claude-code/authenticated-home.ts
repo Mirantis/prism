@@ -57,11 +57,12 @@ export const SUBSCRIPTION_SETTINGS = JSON.stringify({
  */
 export type SavedLogin = 'subscription' | 'other' | 'none';
 
-/** The fields of `claude auth status --json` this reads; the rest name the account. */
-interface AuthStatus {
+/** The fields of `claude auth status --json` that are read. */
+export interface AuthStatus {
   loggedIn?: boolean;
   authMethod?: string;
   subscriptionType?: string | null;
+  email?: string;
 }
 
 /** `env` without the variables that outrank the home's saved login. */
@@ -74,8 +75,7 @@ export function subscriptionEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessE
  * where the binary and its home are. It runs with `subscriptionEnvironment`, so
  * the answer is about the home alone.
  *
- * Throws when the CLI gives no answer. Only the parsed fields are read: the
- * CLI's output names the account, so none of it reaches a message.
+ * Throws when the CLI gives no answer.
  */
 export async function readSavedLogin(
   environment: ExecutionEnvironment,
@@ -83,22 +83,41 @@ export async function readSavedLogin(
   configDir: string,
   signal?: AbortSignal,
 ): Promise<SavedLogin> {
+  return (await readAuthStatus(environment, env, configDir, signal)).login;
+}
+
+/**
+ * `readSavedLogin` with the status it was read from. The status names the
+ * account, so only the person's own screen shows it: never a message, a log or
+ * telemetry.
+ */
+export async function readAuthStatus(
+  environment: ExecutionEnvironment,
+  env: NodeJS.ProcessEnv,
+  configDir: string,
+  signal?: AbortSignal,
+): Promise<{ login: SavedLogin; status: AuthStatus }> {
   try {
     await environment.files.stat(configDir);
   } catch {
-    return 'none';
+    return { login: 'none', status: {} };
   }
   const run = await probeCli(environment, 'claude', AUTH_STATUS_ARGS, {
     env: { ...subscriptionEnvironment(env), CLAUDE_CONFIG_DIR: configDir },
     signal,
   });
-  return savedLoginFromStatus(run.stdout, run.exitCode);
+  return parseAuthStatus(run.stdout, run.exitCode);
 }
 
 export const AUTH_STATUS_ARGS = ['auth', 'status', '--json'];
 
 /** The saved login `claude auth status --json` printed. Throws when it printed no status. */
 export function savedLoginFromStatus(stdout: string, exitCode: number | null): SavedLogin {
+  return parseAuthStatus(stdout, exitCode).login;
+}
+
+/** `savedLoginFromStatus` with the status it was read from. */
+export function parseAuthStatus(stdout: string, exitCode: number | null): { login: SavedLogin; status: AuthStatus } {
   // The CLI exits 1 with the same JSON when nobody is signed in.
   let status: AuthStatus;
   try {
@@ -106,6 +125,7 @@ export function savedLoginFromStatus(stdout: string, exitCode: number | null): S
   } catch {
     throw new Error(`claude auth status exited with ${exitCode} and no status`);
   }
-  if (status.loggedIn !== true) return 'none';
-  return status.authMethod === 'claude.ai' && status.subscriptionType ? 'subscription' : 'other';
+  if (status.loggedIn !== true) return { login: 'none', status };
+  const login = status.authMethod === 'claude.ai' && status.subscriptionType ? 'subscription' : 'other';
+  return { login, status };
 }

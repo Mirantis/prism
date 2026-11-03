@@ -59,7 +59,7 @@ When('I close the sign-in', async ({ page }) => {
 When('I open the link the agent sends for the {string} sign-in', async ({ page }, name: string) => {
   const row = await codingAgent(page, name);
   expect(row.attempt, `${name} has an open sign-in`).not.toBeNull();
-  await page.goto(`/coding-agents?agent=${row.agent}&sign-in=${row.attempt!.id}`);
+  await page.goto(`/coding-agents?${new URLSearchParams({ agent: row.agent }).toString()}`);
   await expect(page).toHaveURL(/\/profile\?/);
 });
 
@@ -77,13 +77,10 @@ async function expectClaudeCodeStep(page: Page): Promise<string> {
 
 Then('the Claude sign-in asks for the code from its sign-in page', async ({ page }) => {
   signInUrl = await expectClaudeCodeStep(page);
-  await expect(signInDialog(page, 'Claude')).not.toContainText('Your agent is paused until you finish.');
 });
 
-// The link is the one the agent sends when it asks, so the agent waits for the sign-in.
 Then('the Claude sign-in asks for the code from the same sign-in page', async ({ page }) => {
   expect(await expectClaudeCodeStep(page)).toBe(signInUrl);
-  await expect(signInDialog(page, 'Claude')).toContainText('Your agent is paused until you finish.');
 });
 
 Then('the ChatGPT sign-in shows a code to enter on its sign-in page', async ({ page }) => {

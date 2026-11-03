@@ -6,11 +6,14 @@
  * message, a log or telemetry.
  */
 
-import type { CodingAgentName } from '../../config';
+import { CODING_AGENTS, type CodingAgentName } from '../../config';
 import { logger } from '../../logger';
 import type { ExecutionEnvironment } from '../../lib/execution-environments/execution-environment';
 import { probeCli } from '../../lib/coding-agents/cli-probe';
-import { subscriptionEnvironment as claudeSubscriptionEnvironment } from '../../lib/coding-agents/claude-code/authenticated-home';
+import {
+  readAuthStatus,
+  subscriptionEnvironment as claudeSubscriptionEnvironment,
+} from '../../lib/coding-agents/claude-code/authenticated-home';
 import { subscriptionEnvironment as codexSubscriptionEnvironment } from '../../lib/coding-agents/codex/credentials';
 
 export interface SubscriptionAccount {
@@ -47,6 +50,12 @@ export function cliInstalled(environment: ExecutionEnvironment, agent: CodingAge
   return answer;
 }
 
+/** The coding agents whose CLI runs here, in `CODING_AGENTS` order. */
+export async function installedClis(environment: ExecutionEnvironment): Promise<CodingAgentName[]> {
+  const runs = await Promise.all(CODING_AGENTS.map((agent) => cliInstalled(environment, agent)));
+  return CODING_AGENTS.filter((_, i) => runs[i]);
+}
+
 /**
  * The plan the login names, "max" as "Claude Max". A login that names none is
  * "ChatGPT plan": no plan is assumed.
@@ -70,22 +79,8 @@ export async function readAccount(
 }
 
 async function readClaudeAccount(environment: ExecutionEnvironment): Promise<SubscriptionAccount | null> {
-  try {
-    await environment.files.stat(environment.paths().claudeHome);
-  } catch {
-    return null;
-  }
-  const run = await probeCli(environment, 'claude', ['auth', 'status', '--json'], {
-    env: cliEnvironment(environment, 'claude-code'),
-  });
-  // The CLI exits 1 with the same JSON when nobody is signed in.
-  const status = JSON.parse(run.stdout) as {
-    loggedIn?: boolean;
-    authMethod?: string;
-    email?: string;
-    subscriptionType?: string | null;
-  };
-  if (status.loggedIn !== true || status.authMethod !== 'claude.ai' || !status.subscriptionType) return null;
+  const { login, status } = await readAuthStatus(environment, environment.baseEnv(), environment.paths().claudeHome);
+  if (login !== 'subscription') return null;
   return { plan: planName('Claude', status.subscriptionType), email: status.email ?? '' };
 }
 

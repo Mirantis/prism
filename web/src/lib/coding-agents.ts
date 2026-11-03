@@ -14,15 +14,11 @@ export const CODING_AGENT_NAME: Record<CodingAgentId, string> = { 'claude-code':
 
 export const CODING_AGENTS_QUERY_KEY = ['coding-agents'] as const;
 
-/** The search of a link that opens a coding agent's sign-in: `?agent=…&sign-in=…`. */
+/** The search of a link that opens a coding agent's sign-in: `?agent=…`. Other parameters are dropped. */
 export interface CodingAgentSignInSearch {
   agent?: CodingAgentId;
-  'sign-in'?: string;
 }
 
 export function codingAgentSignInSearch(search: Record<string, unknown>): CodingAgentSignInSearch {
-  const agent = search.agent === 'claude-code' || search.agent === 'codex' ? search.agent : undefined;
-  if (!agent) return {};
-  const id = search['sign-in'];
-  return typeof id === 'string' && id ? { agent, 'sign-in': id } : { agent };
+  return search.agent === 'claude-code' || search.agent === 'codex' ? { agent: search.agent } : {};
 }

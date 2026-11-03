@@ -14,6 +14,7 @@ import { config, type CodingAgentName } from '../../config';
 import { logger } from '../../logger';
 import { trackEvent } from '../../lib/telemetry';
 import type { ChannelName } from '../channel-adapter.interface';
+import type { ChatInput } from '../conversation-engine.service';
 
 export interface CodingAgentSignInRequest {
   type: 'coding_agent_sign_in';
@@ -38,9 +39,9 @@ export interface SignInCaller {
   originChannelId?: string;
 }
 
-/** The web UI's sign-in for `agent`, opened from request `id`. */
-export function signInLink(agent: CodingAgentName, id: string): string {
-  const suffix = `coding-agents?${new URLSearchParams({ agent, 'sign-in': id }).toString()}`;
+/** The web UI's sign-in for `agent`. */
+export function signInLink(agent: CodingAgentName): string {
+  const suffix = `coding-agents?${new URLSearchParams({ agent }).toString()}`;
   return config.publicUrl ? `${config.publicUrl.replace(/\/$/, '')}/${suffix}` : `/${suffix}`;
 }
 
@@ -73,8 +74,8 @@ class CodingAgentSignInRequestService {
     );
     const provider = PROVIDERS[agent];
     const link =
-      config.publicUrl || channelContext.channel === 'websocket'
-        ? `[Sign in to ${provider}](${signInLink(agent, request.id)})`
+      messageDeliveryService.opensWebUiLinks(channelContext.channel)
+        ? `[Sign in to ${provider}](${signInLink(agent)})`
         : `Sign in from Coding agents in the agent's settings.`;
     await messageDeliveryService.publish(
       caller.userId,
@@ -109,13 +110,23 @@ class CodingAgentSignInRequestService {
 
   /**
    * Marks every request waiting for `agent` signed in and continues each
-   * conversation that asked, once.
+   * conversation that asked, once. Each continuation is stored, owed an
+   * answer, before its card is marked, so a restart in between continues it
+   * at boot, and a later confirmation stores it no more.
    */
   async signedIn(agentId: string, userId: string, agent: CodingAgentName): Promise<void> {
     const waiting = (await this.waiting(agentId, userId)).filter((item) => item.agent === agent);
     const { messageDeliveryService } = await import('../message-delivery.service');
-    const continued = new Set<string>();
-    for (const { threadId, messageId, ...request } of waiting) {
+    const { conversationEngineService } = await import('../conversation-engine.service');
+    const continuations: ChatInput[] = [];
+    const threads = new Set<string>();
+    for (const request of waiting) {
+      if (threads.has(request.threadId)) continue;
+      threads.add(request.threadId);
+      const continuation = await this.acceptContinuation(agentId, userId, request.threadId, request);
+      if (continuation) continuations.push(continuation);
+    }
+    for (const { threadId: _threadId, messageId, ...request } of waiting) {
       const updated: CodingAgentSignInRequest = { ...request, status: 'signed_in' };
       const result = await prisma.conversationMessage.updateMany({
         where: { id: messageId, blocks: WAITING },
@@ -125,18 +136,26 @@ class CodingAgentSignInRequestService {
       const row = await prisma.conversationMessage.findUnique({ where: { id: messageId } });
       // The card is part of the transcript, so every open client shows it signed in.
       if (row) await messageDeliveryService.showInConversation(userId, row);
-      if (continued.has(threadId)) continue;
-      continued.add(threadId);
-      await this.continueConversation(agentId, userId, threadId, updated);
+    }
+    for (const continuation of continuations) {
+      void conversationEngineService
+        .chat(continuation)
+        .catch((error) => logger.error({ err: error }, '[CodingAgents] Continuation after sign-in failed'));
     }
   }
 
-  private async continueConversation(
+  /**
+   * Stores the person's word that they signed in, owed an answer, under the
+   * request's id, and returns the turn that answers it. Null when an earlier
+   * confirmation stored it: that one, or the boot after it, answers it.
+   */
+  private async acceptContinuation(
     agentId: string,
     userId: string,
     threadId: string,
     request: CodingAgentSignInRequest,
-  ): Promise<void> {
+  ): Promise<ChatInput | null> {
+    if (await prisma.conversationMessage.findUnique({ where: { id: request.id }, select: { id: true } })) return null;
     const { messageDeliveryService } = await import('../message-delivery.service');
     const { conversationEngineService } = await import('../conversation-engine.service');
     const context = await messageDeliveryService.threadContext(
@@ -144,20 +163,19 @@ class CodingAgentSignInRequestService {
       request.originChannel,
       request.originChannelId,
     );
-    void conversationEngineService
-      .chat({
-        userId,
-        agentId,
-        threadId,
-        message: `I signed in to ${PROVIDERS[request.agent]}.`,
-        metadata: {
-          channel: context.channel,
-          channelId: context.channelId,
-          channelThreadId: context.channelThreadId,
-          channelLabel: context.channelLabel,
-        },
-      })
-      .catch((error) => logger.error({ err: error }, '[CodingAgents] Continuation after sign-in failed'));
+    const input = {
+      userId,
+      agentId,
+      message: `I signed in to ${PROVIDERS[request.agent]}.`,
+      metadata: {
+        channel: context.channel,
+        channelId: context.channelId,
+        channelThreadId: context.channelThreadId,
+        channelLabel: context.channelLabel,
+      },
+    };
+    const { titleSet } = await conversationEngineService.acceptUserMessage(input, threadId, request.id);
+    return { ...input, threadId, stored: { id: request.id, titleSet } };
   }
 }
 

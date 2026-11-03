@@ -4,7 +4,9 @@
  *
  * One attempt per coding agent at a time, held in memory: starting another
  * ends the one before, so an old link or code can never complete a newer
- * sign-in, and a restart ends them all. The code Claude shows goes from the
+ * sign-in, and a restart ends them all. A confirmation and a sign-out of one
+ * coding agent run one after the other, and an attempt that a sign-out or a
+ * newer attempt ended turns nothing on. The code Claude shows goes from the
  * person's sheet to the CLI's stdin. Nothing stores, logs or shows it to a
  * model.
  */
@@ -18,10 +20,10 @@ import { readSavedLogin } from '../../lib/coding-agents/claude-code/authenticate
 import { readCodexLogin } from '../../lib/coding-agents/codex/credentials';
 import { redetectCodingAgents } from '../../lib/coding-agents/availability';
 import { getCodingAgent } from '../../lib/coding-agents/get-coding-agent';
-import { setSubscription, usesSubscription } from '../../lib/coding-agents/subscription-switch';
+import { setSubscription, subscriptionForced, usesSubscription } from '../../lib/coding-agents/subscription-switch';
 import { startCliSignIn, type CliSignIn } from './cli-sign-in';
 import { cliInstalled, homeOf, readAccount, signOutCli, type SubscriptionAccount } from './coding-agent-account';
-import { codingAgentSignInRequestService, NAMES } from './coding-agent-sign-in-request.service';
+import { codingAgentSignInRequestService, NAMES, PROVIDERS } from './coding-agent-sign-in-request.service';
 
 export type AttemptStatus = 'waiting' | 'checking' | 'signed_in' | 'failed' | 'expired';
 
@@ -40,6 +42,8 @@ export interface CodingAgentRow {
   name: string;
   available: boolean;
   subscription: boolean;
+  /** The deployment's environment holds the subscription on, so a sign-out leaves it on. */
+  forced: boolean;
   account: SubscriptionAccount | null;
   attempt: SignInAttempt | null;
 }
@@ -70,13 +74,20 @@ interface Running {
   cli: CliSignIn;
   startedAt: number;
   timer: NodeJS.Timeout;
+  /** Its outcome is counted: finished, replaced or signed out. */
+  closed: boolean;
 }
+
+/** How an attempt ended without a status of its own. */
+type EndReason = 'replaced' | 'signed_out';
 
 /** The CLI module seam, replaced in tests. */
 export const signInDeps = { startCliSignIn, readAccount, signOutCli, cliInstalled, readSavedLogin, readCodexLogin };
 
 class CodingAgentSignInService {
   private running = new Map<CodingAgentName, Running>();
+  /** The last confirmation or sign-out of each coding agent; the next one waits for it. */
+  private settling = new Map<CodingAgentName, Promise<void>>();
 
   async list(): Promise<CodingAgentRow[]> {
     return Promise.all(CODING_AGENTS.map((agent) => this.row(agent)));
@@ -92,7 +103,7 @@ class CodingAgentSignInService {
     // A finished attempt is read by its id; the row lists only one still under way.
     const running = this.running.get(agent)?.attempt;
     const attempt = running && (running.status === 'waiting' || running.status === 'checking') ? running : null;
-    return { agent, name: NAMES[agent], available, subscription, account, attempt };
+    return { agent, name: NAMES[agent], available, subscription, forced: subscriptionForced(agent), account, attempt };
   }
 
   get(agent: CodingAgentName, id: string): SignInAttempt | null {
@@ -111,7 +122,7 @@ class CodingAgentSignInService {
     await environment.files.mkdir(home).catch(() => {});
     // No await from here to `running.set`, so two starts at once can't both
     // find the slot empty and leave one CLI that nothing ends.
-    this.end(agent);
+    this.end(agent, 'replaced');
     const cli = signInDeps.startCliSignIn(environment, agent, home);
     const startedAt = Date.now();
     const attempt: SignInAttempt = {
@@ -125,7 +136,7 @@ class CodingAgentSignInService {
     };
     const timer = setTimeout(() => this.expire(agent, attempt.id), ATTEMPT_TTL_MS);
     timer.unref?.();
-    const running: Running = { attempt, cli, startedAt, timer };
+    const running: Running = { attempt, cli, startedAt, timer, closed: false };
     this.running.set(agent, running);
     trackEvent('coding agent sign-in started', config.ownerUserId, { 'coding_agent.name': agent });
 
@@ -139,6 +150,8 @@ class CodingAgentSignInService {
       ]);
       Object.assign(attempt, { status: 'waiting', url: prompt.url, userCode: prompt.userCode });
     } catch (err) {
+      // A newer attempt or a sign-out ended this one, and counted it.
+      if (this.running.get(agent) !== running) return attempt;
       logger.warn({ err, agent }, '[CodingAgents] Sign-in showed no link');
       this.finish(running, 'failed', failedMessage(agent));
       return attempt;
@@ -183,41 +196,73 @@ class CodingAgentSignInService {
 
   /** Signs the CLI out and puts coding tasks back on the deployment's models. */
   async signOut(agent: CodingAgentName): Promise<CodingAgentRow> {
-    this.end(agent);
-    await signInDeps.signOutCli(getExecutionEnvironment(), agent);
-    await setSubscription(agent, false);
+    // Ended before the wait, so a confirmation in flight finds its attempt gone.
+    this.end(agent, 'signed_out');
+    await this.serialize(agent, async () => {
+      await signInDeps.signOutCli(getExecutionEnvironment(), agent);
+      await setSubscription(agent, false);
+      // A coding agent that only the login made available is not available now.
+      await redetectCodingAgents();
+    });
     trackEvent('coding agent signed out', config.ownerUserId, { 'coding_agent.name': agent });
     return this.row(agent);
   }
 
-  /** Whether the CLI's home now holds the subscription the person signed in to. */
-  private async confirm(running: Running): Promise<void> {
-    const { agent } = running.attempt;
-    const environment = getExecutionEnvironment();
-    const home = homeOf(environment, agent);
-    try {
-      const signedIn =
-        agent === 'claude-code'
-          ? (await signInDeps.readSavedLogin(environment, environment.baseEnv(), home)) === 'subscription'
-          : (await signInDeps.readCodexLogin(environment, environment.baseEnv(), home)) === 'chatgpt';
-      if (!signedIn) {
-        this.finish(running, 'failed', `That account has no ${agent === 'claude-code' ? 'Claude' : 'ChatGPT'} subscription.`);
-        return;
-      }
-      await setSubscription(agent, true);
-    } catch (err) {
-      logger.warn({ err, agent }, '[CodingAgents] Could not confirm the sign-in');
-      this.finish(running, 'failed', failedMessage(agent));
-      return;
-    }
-    this.finish(running, 'signed_in', null);
-    void this.afterSignIn(agent);
+  /** Runs `work` after the agent's earlier confirmation or sign-out has settled. */
+  private serialize(agent: CodingAgentName, work: () => Promise<void>): Promise<void> {
+    const run = (this.settling.get(agent) ?? Promise.resolve()).then(work);
+    this.settling.set(agent, run.catch(() => {}));
+    return run;
   }
 
-  private async afterSignIn(agent: CodingAgentName): Promise<void> {
+  /** Whether the CLI's home now holds the subscription the person signed in to. */
+  private confirm(running: Running): Promise<void> {
+    const { agent } = running.attempt;
+    const current = () => this.running.get(agent) === running;
+    return this.serialize(agent, async () => {
+      if (!current()) return;
+      let error: string | null = null;
+      try {
+        // One more try: a probe that times out says nothing about the login.
+        const signedIn = await this.readSubscription(agent).catch(() => this.readSubscription(agent));
+        if (!signedIn) error = `That account has no ${PROVIDERS[agent]} subscription.`;
+      } catch (err) {
+        logger.warn({ err, agent }, '[CodingAgents] Could not confirm the sign-in');
+        error = failedMessage(agent);
+      }
+      if (error) {
+        // With the switch off, a login left in the home would run tasks on a plan the row never shows.
+        if (current() && !usesSubscription(agent)) {
+          await signInDeps.signOutCli(getExecutionEnvironment(), agent).catch((err: unknown) => {
+            logger.warn({ err, agent }, '[CodingAgents] Could not remove the unconfirmed login');
+          });
+        }
+        this.finish(running, 'failed', error);
+        return;
+      }
+      if (!current()) return;
+      await setSubscription(agent, true);
+      if (!current()) return;
+      this.finish(running, 'signed_in', null);
+      void this.serialize(agent, () => this.afterSignIn(running));
+    });
+  }
+
+  private async readSubscription(agent: CodingAgentName): Promise<boolean> {
+    const environment = getExecutionEnvironment();
+    const home = homeOf(environment, agent);
+    return agent === 'claude-code'
+      ? (await signInDeps.readSavedLogin(environment, environment.baseEnv(), home)) === 'subscription'
+      : (await signInDeps.readCodexLogin(environment, environment.baseEnv(), home)) === 'chatgpt';
+  }
+
+  private async afterSignIn(running: Running): Promise<void> {
+    const { agent } = running.attempt;
     try {
       await redetectCodingAgents();
       if (config.availableCodingAgents.includes(agent)) await getCodingAgent(agent).prepareHome();
+      // A sign-out since then continues no conversation.
+      if (this.running.get(agent) !== running) return;
       if (config.agentId) {
         await codingAgentSignInRequestService.signedIn(config.agentId, config.ownerUserId, agent);
       }
@@ -233,19 +278,27 @@ class CodingAgentSignInService {
   }
 
   /** Ends the agent's attempt, if one is running, without a trace in its status. */
-  private end(agent: CodingAgentName): void {
+  private end(agent: CodingAgentName, reason: EndReason): void {
     const running = this.running.get(agent);
     if (!running) return;
     this.running.delete(agent);
     clearTimeout(running.timer);
     running.cli.kill();
+    this.track(running, reason);
   }
 
   private finish(running: Running, status: AttemptStatus, error: string | null): void {
-    if (['signed_in', 'failed', 'expired'].includes(running.attempt.status)) return;
+    if (running.closed) return;
     Object.assign(running.attempt, { status, error });
     clearTimeout(running.timer);
     if (status !== 'signed_in') running.cli.kill();
+    this.track(running, status);
+  }
+
+  /** Counts the attempt's outcome, once. */
+  private track(running: Running, status: AttemptStatus | EndReason): void {
+    if (running.closed) return;
+    running.closed = true;
     trackEvent('coding agent sign-in finished', config.ownerUserId, {
       'coding_agent.name': running.attempt.agent,
       status,
