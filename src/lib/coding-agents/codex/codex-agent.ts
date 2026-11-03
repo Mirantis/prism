@@ -82,7 +82,9 @@ export function createCodexAgent(environment?: ExecutionEnvironment): CodingAgen
           // Anything but a ChatGPT login fails the task, which then bills nothing.
           const login = await readCodexLogin(runIn, task.env, home, signal);
           if (login !== 'chatgpt') {
-            throw new Error(notSignedInMessage('codex'));
+            // A folder outside the deployment's environment runs here, on a home Coding agents doesn't sign in.
+            const hostHome = task.workdir && !getExecutionEnvironment().servesPath(task.workdir) ? home : undefined;
+            throw new Error(notSignedInMessage('codex', hostHome));
           }
           signal.throwIfAborted();
           return launch(subscriptionEnvironment(task.env));

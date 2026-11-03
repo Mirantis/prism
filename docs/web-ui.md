@@ -284,8 +284,10 @@ The agent's identity and runtime controls.
   coding tasks use the deployment's models or your own subscription, with the
   plan and email you signed in with. **Sign in** opens a dialog that links to
   Claude's or OpenAI's sign-in page. **Sign out** sends coding tasks back to the
-  deployment's models. A link the agent sends in chat to ask you to sign in opens
-  this page with the dialog open, and the agent is paused until you finish.
+  deployment's models. With `CLAUDE_CODE_SUBSCRIPTION` or `CODEX_SUBSCRIPTION`
+  set, **Sign out** only removes the login, and tasks fail until you sign in
+  again. A link the agent sends in chat to ask you to sign in opens this page
+  with the dialog open.
   See **[Configuration → Coding tasks on a Claude subscription](configuration.md#coding-tasks-on-a-claude-subscription)**
   and **[Codex tasks on a ChatGPT subscription](configuration.md#codex-tasks-on-a-chatgpt-subscription)**.
 - **Backup & restore.** **Export** downloads a `.prism` snapshot of the entire

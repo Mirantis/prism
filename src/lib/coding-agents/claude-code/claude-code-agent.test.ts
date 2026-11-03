@@ -285,6 +285,33 @@ describe('run: the Claude subscription', () => {
       }
     });
 
+    it("names the command that signs in the host's home when a task on the host finds nobody signed in", async () => {
+      forPath.environment = fakeExecutionEnvironment({
+        paths: { claudeHome: "/host/o'neil/.claude" },
+        files: { stat: async () => DIR_STAT },
+        runProgram: () => {
+          const child = new FakeChild();
+          child.emitLine(SIGNED_OUT);
+          process.nextTick(() => child.finish(1));
+          return child.asExecProcess();
+        },
+      });
+      __setExecutionEnvironmentForTests(fakeExecutionEnvironment({ servesPath: () => false }));
+      try {
+        const events = await Array.fromAsync(createClaudeCodeAgent().run({ ...baseTask, workdir: '/repo', env }).events);
+        expect(events.at(-1)).toMatchObject({
+          stopReason: 'error',
+          message: expect.stringContaining(
+            "nobody is signed in to it on this computer, where this conversation's folder is. Coding agents signs in " +
+              "elsewhere: sign in by running `CLAUDE_CONFIG_DIR='/host/o'\\''neil/.claude' claude auth login --claudeai`",
+          ),
+        });
+      } finally {
+        forPath.environment = null;
+        __setExecutionEnvironmentForTests(null);
+      }
+    });
+
     it('asks again for every task, so a sign-in applies to the next one', async () => {
       let status = SIGNED_OUT;
       const launches: string[][] = [];

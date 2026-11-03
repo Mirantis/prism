@@ -25,6 +25,14 @@ describe('readPrompt', () => {
   it('waits for the code Codex prints after its link', () => {
     expect(readPrompt('codex', CODEX_OUTPUT.slice(0, CODEX_OUTPUT.indexOf('2.')))).toBeNull();
   });
+
+  it('skips a link the CLI prints before its sign-in link', () => {
+    const notice = 'A new version is out: https://github.com/example/releases\n';
+    expect(readPrompt('claude-code', notice + CLAUDE_OUTPUT)?.url).toBe(
+      'https://claude.com/cai/oauth/authorize?code=true&client_id=test',
+    );
+    expect(readPrompt('codex', notice + CODEX_OUTPUT)?.url).toBe('https://auth.openai.com/codex/device');
+  });
 });
 
 describe('signInCommand', () => {
@@ -70,6 +78,21 @@ describe('startCliSignIn', () => {
     child.stderr.write('Invalid code. Please make sure the full code was copied.\n');
     await expect(sign.ended).resolves.toBe('invalid_code');
     expect(child.killed).toBe(true);
+  });
+
+  it.each([
+    ['claude-code', CLAUDE_OUTPUT, '&client_id'],
+    ['codex', CODEX_OUTPUT, '/device'],
+    ['codex', CODEX_OUTPUT, 'CODE1'],
+  ] as const)('reads %s\'s prompt whole when the output arrives cut before %s', async (agent, output, cut) => {
+    const { child, sign } = start(agent);
+    let settled = false;
+    void sign.prompt.then(() => (settled = true));
+    child.stdout.write(output.slice(0, output.lastIndexOf(cut)));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    child.stdout.write(output.slice(output.lastIndexOf(cut)));
+    await expect(sign.prompt).resolves.toEqual(readPrompt(agent, output));
   });
 
   it('rejects the prompt when the command ends before its link', async () => {

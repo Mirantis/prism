@@ -7,7 +7,6 @@ import {
   ExternalLink,
   Loader2,
   LockKeyhole,
-  Pause,
   TriangleAlert,
   UserRound,
   type LucideIcon,
@@ -97,18 +96,9 @@ function Note({ icon: Icon, children }: { icon: LucideIcon; children: React.Reac
 
 /**
  * Sign a coding agent in to the person's own subscription: resume the sign-in under way for
- * `agent`, or start one. Mounted while open. `paused` says the agent waits for it, as it does
- * when it asked in chat.
+ * `agent`, or start one. Mounted while open.
  */
-export function CodingAgentSignInDialog({
-  agent,
-  paused = false,
-  onClose,
-}: {
-  agent: CodingAgentId;
-  paused?: boolean;
-  onClose: () => void;
-}) {
+export function CodingAgentSignInDialog({ agent, onClose }: { agent: CodingAgentId; onClose: () => void }) {
   const queryClient = useQueryClient();
   const provider = CODING_AGENT_PROVIDER[agent];
   const name = CODING_AGENT_NAME[agent];
@@ -393,7 +383,6 @@ export function CodingAgentSignInDialog({
           <Note icon={LockKeyhole}>
             You sign in on {CODING_AGENT_COMPANY[agent]}'s own page. Your password never reaches this app.
           </Note>
-          {paused && !signedIn && <Note icon={Pause}>Your agent is paused until you finish.</Note>}
           <Note icon={UserRound}>
             <CodingAgentTerms />
           </Note>

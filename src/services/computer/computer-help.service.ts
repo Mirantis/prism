@@ -183,7 +183,7 @@ class ComputerHelpService {
             use.originChannelId,
           );
       const link =
-        config.publicUrl || channelContext?.channel === 'websocket'
+        messageDeliveryService.opensWebUiLinks(channelContext?.channel)
           ? `[Open Computer](${computerLink(help.id, help.computerId)})`
           : 'Open Computer in the Prism Web UI.';
       await messageDeliveryService.publish(

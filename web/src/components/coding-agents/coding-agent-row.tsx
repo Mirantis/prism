@@ -46,20 +46,30 @@ export function CodingAgentRow({
         ? `Your ${row.account.plan} · ${row.account.email}`
         : 'Signed out. Its work fails until you sign in again.';
 
-  let action: React.ReactNode = null;
-  if (row.available && row.subscription && row.account) {
-    action = (
-      <Button size="sm" variant="outline" onClick={() => setConfirming(true)}>
-        Sign out
-      </Button>
-    );
-  } else if (row.available) {
-    action = (
-      <Button size="sm" onClick={onSignIn}>
-        Sign in
-      </Button>
-    );
-  }
+  const signOutButton = (
+    <Button size="sm" variant="outline" onClick={() => setConfirming(true)}>
+      Sign out
+    </Button>
+  );
+  const signInButton = (
+    <Button size="sm" onClick={onSignIn}>
+      Sign in
+    </Button>
+  );
+  // Signed out with the switch still on: sign in again, or sign out to go back to the deployment's
+  // models, unless the deployment holds the switch on.
+  const canSignOut = row.subscription && (row.account !== null || !row.forced);
+  const canSignIn = !row.subscription || row.account === null;
+  const action = !row.available ? null : canSignOut && canSignIn ? (
+    <div className="flex shrink-0 gap-2">
+      {signOutButton}
+      {signInButton}
+    </div>
+  ) : canSignOut ? (
+    signOutButton
+  ) : (
+    signInButton
+  );
 
   return (
     <li
@@ -81,7 +91,11 @@ export function CodingAgentRow({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Sign out of {provider}?</AlertDialogTitle>
-            <AlertDialogDescription>{row.name} goes back to the deployment's models.</AlertDialogDescription>
+            <AlertDialogDescription>
+              {row.forced
+                ? `The deployment always runs ${row.name} on your subscription, so its work fails until you sign in again.`
+                : `${row.name} goes back to the deployment's models.`}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>

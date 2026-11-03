@@ -142,7 +142,7 @@ function ProfilePage() {
       <StatusPanel details={details} isLoading={isLoading} />
 
       <CodingAgentsCard
-        key={`${search.agent}:${search['sign-in']}`}
+        key={search.agent}
         signIn={search.agent && { agent: search.agent }}
         onSignInClosed={
           search.agent ? () => void navigate({ search: {}, replace: true, resetScroll: false }) : undefined

@@ -201,13 +201,15 @@ subscription, while the agent itself keeps its `LLM_PROVIDER`. In the web UI, op
 links to Claude's sign-in page; sign in there, paste the code it shows into
 **Code**, and press **Sign in**. The row then shows your plan and email. When a
 coding task needs the subscription first, the agent asks in chat with a
-**Sign in to Claude** card that opens the same dialog; the agent is paused until
-you finish, and it carries on by itself once you are signed in. **Sign out** sends
-coding tasks back to the deployment's models.
+**Sign in to Claude** card that opens the same dialog, and the agent carries on by
+itself once you are signed in. **Sign out** sends coding tasks back to the deployment's
+models.
 
 Use your own subscription only on an agent nobody else uses. Anthropic's
 [terms](https://code.claude.com/docs/en/legal-and-compliance) let only the
-subscriber use it, and a shared agent can get your account blocked.
+subscriber use it, and a shared agent can get your account blocked. The agent's
+own shell can read the saved login, `<data dir>/.claude/.credentials.json` or
+`<data dir>/.codex/auth.json`, so a prompt-injected task can copy your token.
 
 To sign in by hand instead, run the command for where the agent's commands run,
 then set `CLAUDE_CODE_SUBSCRIPTION=true` and restart the agent:
@@ -228,7 +230,8 @@ that says so. The
 names the subscription serves, such as `sonnet`, not Bedrock IDs. When the
 subscription reaches its usage limit, tasks fail with Claude Code's message until
 the limit resets. To go back to the agent's credentials, remove the variable and
-restart the agent.
+restart the agent. While the variable is set, **Sign out** leaves tasks failing
+until you sign in again.
 
 When commands run in a container, a conversation you start with `prism` inside a
 repository runs its tasks on this machine, so sign in on this machine as well.
@@ -241,8 +244,8 @@ Codex tasks can run on your ChatGPT subscription, while the agent itself keeps i
 sign in to your ChatGPT account and enter the code there. The dialog sees by
 itself when OpenAI confirms the sign-in, and the row then shows your plan and
 email. As with Claude Code, a coding task that needs the subscription asks in
-chat with a **Sign in to ChatGPT** card and the agent is paused until you finish,
-and **Sign out** sends coding tasks back to the deployment's models. OpenAI's
+chat with a **Sign in to ChatGPT** card, and **Sign out** sends coding tasks back
+to the deployment's models. OpenAI's
 [terms](https://openai.com/policies/row-terms-of-use/) also let only the
 subscriber use it, so sign in only on an agent nobody else uses.
 
@@ -262,7 +265,8 @@ Codex task fails with a message that says so. The `CODEX_MODEL_*` overrides appl
 to these tasks too, so set them to models your plan serves, not Bedrock IDs. When
 the subscription reaches its usage limit, tasks fail with Codex's message until the
 limit resets. To go back to the agent's credentials, remove the variable and
-restart the agent.
+restart the agent. While the variable is set, **Sign out** leaves tasks failing
+until you sign in again.
 
 To send tasks to Codex by default, set `CODING_AGENT=codex` as well. When commands
 run in a container, a conversation you
@@ -270,8 +274,9 @@ start with `prism` inside a repository runs its tasks on this machine, so sign i
 this machine as well.
 
 In the Prism image, `claude` and `codex` in the agent's desktop terminal follow the
-same setting as tasks: with it on, a session starts only once you are signed in,
-and `claude auth login` or `codex login` signs you in from there too.
+same setting as tasks: with it on, a session starts only once you are signed in.
+While the setting is on, `claude auth login` or `codex login` in the terminal
+replaces the saved login. A terminal sign-in never turns the setting on.
 
 ### What a coding task may do
 

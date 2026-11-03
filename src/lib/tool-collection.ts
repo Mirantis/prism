@@ -28,6 +28,8 @@ import { getCodingAgentSignInTools } from '../tools/coding-agent-sign-in';
 import { getAgentConfigTools } from '../tools/agent-config';
 import { getShellTools } from '../tools/shell/index';
 import { ensureCodingAgentsDetected } from './coding-agents/availability';
+import { installedClis } from '../services/coding-agent-sign-in/coding-agent-account';
+import { getExecutionEnvironment } from './execution-environments/get-execution-environment';
 import { getShareFileTools, SHARE_FILE_TOOL_NAME } from '../tools/share-file';
 import { getSendMessageTools } from '../tools/send-message';
 import { SEND_MESSAGE_TOOL_NAME } from '../services/outbound-message.service';
@@ -135,15 +137,22 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
   // the tools block has to be byte-identical from turn to turn for the prompt
   // cache. Memoized, so only a turn that beats boot to it pays anything.
   await ensureCodingAgentsDetected();
+  // Asked once per process, so the sign-in's agent list stays the same too.
+  const signInAgents = input.mode === 'chat' ? await installedClis(getExecutionEnvironment()) : [];
   const builtInTools: Record<string, Tool> = {
     ...getMemoryTools(input.userId, input.agentId),
     ...(hasComputerForMode(input.mode) ? getComputerTools(input.computerUse, undefined, input.mode) : {}),
     ...getCronTools(input.userId, input.agentId, input.mode, input.threadId, originChannel, input.originChannelId),
     ...getGoalTools(input.userId, input.agentId, input.threadId, originChannel, input.originChannelId),
     // A person is there to sign in only in chat.
-    ...(input.mode === 'chat'
-      ? getCodingAgentSignInTools(input.userId, input.agentId, input.threadId, originChannel, input.originChannelId)
-      : {}),
+    ...getCodingAgentSignInTools(
+      input.userId,
+      input.agentId,
+      input.threadId,
+      originChannel,
+      input.originChannelId,
+      signInAgents,
+    ),
     ...getAgentConfigTools(),
     ...getShellTools(input.workspaceRoot, input.pendingFileWrites),
     // Same workspaceRoot as the shell tools: write-then-share has to agree on what

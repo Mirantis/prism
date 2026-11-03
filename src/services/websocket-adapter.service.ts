@@ -44,6 +44,7 @@ export function messageEventPayload(message: DeliverableMessage): MessageEventPa
 class WebSocketAdapterService implements ChannelAdapter {
   readonly name = 'websocket';
   readonly showsWholeConversation = true;
+  readonly opensWebUiLinks = true;
 
   async deliver(userId: string, message: DeliverableMessage, _channelContext?: ChannelContext): Promise<void> {
     try {

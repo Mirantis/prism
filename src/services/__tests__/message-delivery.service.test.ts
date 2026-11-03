@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ConversationMessage } from '@prisma/client';
 import { ChannelAdapter } from '../channel-adapter.interface';
 import { MessageDeliveryService } from '../message-delivery.service';
+import { config } from '../../config';
 
 // Mock conversation service
 const mockAddMessage = vi.fn();
@@ -420,6 +421,32 @@ describe('MessageDeliveryService', () => {
 
     it('continues a thread with no stored origin in the chat socket', async () => {
       expect(await service.threadContext('thread-1', null)).toEqual({ channel: 'websocket', threadId: 'thread-1' });
+    });
+  });
+
+  describe('opensWebUiLinks', () => {
+    const publicUrl = config.publicUrl;
+    afterEach(() => {
+      config.publicUrl = publicUrl;
+    });
+
+    it('links the web UI only in a channel that opens its links, while the agent has no public address', () => {
+      config.publicUrl = undefined;
+      service.register({ ...createMockAdapter('web'), opensWebUiLinks: true });
+      service.register(createMockAdapter('chat'));
+
+      expect([service.opensWebUiLinks('web'), service.opensWebUiLinks('chat'), service.opensWebUiLinks()]).toEqual([
+        true,
+        false,
+        false,
+      ]);
+    });
+
+    it('links the web UI in every channel once the agent has a public address', () => {
+      config.publicUrl = 'https://agent.example.com';
+      service.register(createMockAdapter('chat'));
+
+      expect([service.opensWebUiLinks('chat'), service.opensWebUiLinks()]).toEqual([true, true]);
     });
   });
 

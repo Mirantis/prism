@@ -632,6 +632,8 @@ export interface CodingAgentSummary {
   available: boolean;
   /** Coding tasks run on the person's subscription, not on the deployment's models. */
   subscription: boolean;
+  /** The deployment holds the subscription on, so a sign-out leaves it on. */
+  forced: boolean;
   account: { plan: string; email: string } | null;
   /** A sign-in that is still open. */
   attempt: CodingAgentSignIn | null;
@@ -640,7 +642,7 @@ export interface CodingAgentSummary {
 /** A chat message block: the agent asks the person to sign a coding agent in. */
 export interface CodingAgentSignInBlock {
   type: 'coding_agent_sign_in';
-  /** The sign-in's id. */
+  /** The request's id. */
   id: string;
   agent: CodingAgentId;
   status: 'waiting' | 'signed_in';

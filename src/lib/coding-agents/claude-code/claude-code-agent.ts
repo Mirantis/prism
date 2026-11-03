@@ -92,7 +92,9 @@ export function createClaudeCodeAgent(environment?: ExecutionEnvironment): Codin
         // Asked on every run, so a sign-in or a sign-out applies to the next task.
         // Anything but a subscription login fails the task, which then bills nothing.
         if (subscription && (await readSavedLogin(target, task.env, home, signal)) !== 'subscription') {
-          throw new Error(notSignedInMessage('claude-code'));
+          // A folder outside the deployment's environment runs here, on a home Coding agents doesn't sign in.
+          const hostHome = task.workdir && !getExecutionEnvironment().servesPath(task.workdir) ? home : undefined;
+          throw new Error(notSignedInMessage('claude-code', hostHome));
         }
         signal.throwIfAborted();
         const env = claudeCodeLaunchEnvironment(task.env, subscription);
