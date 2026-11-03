@@ -15,7 +15,6 @@ import path from 'path';
 import { promisify } from 'util';
 import { logger } from '../../logger';
 import { resolveDataDir } from '../../lib/data-dir';
-import { WRAPPERS_ENV } from '../../lib/coding-agents/terminal';
 import { getExecutionEnvironment } from '../../lib/execution-environments/get-execution-environment';
 
 /** The built `scripts/coding-agent-exec.ts`; absent under tsx and in the packaged binary. */
@@ -45,8 +44,9 @@ export function codingAgentTerminalEnv(
 const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
 
 /**
- * Writes the `claude` and `codex` wrappers, each an exec of `coding-agent-exec`,
- * and returns the PATH that finds them first. Nothing without the built entry.
+ * Writes the `claude` and `codex` wrappers, each an exec of `coding-agent-exec`
+ * given their directory, and returns the PATH that finds them first. Nothing
+ * without the built entry.
  */
 function codingAgentWrappers(entry: string, dir: string): Record<string, string> {
   if (!fs.existsSync(entry)) return {};
@@ -56,14 +56,15 @@ function codingAgentWrappers(entry: string, dir: string): Record<string, string>
       const target = path.join(dir, command);
       // Renamed into place, so a terminal starting one never reads half a file.
       const staged = `${target}.${process.pid}.tmp`;
-      fs.writeFileSync(staged, `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(entry)} ${command} "$@"\n`, { mode: 0o755 });
+      const exec = [process.execPath, entry, '--wrappers', dir, command].map(shellQuote).join(' ');
+      fs.writeFileSync(staged, `#!/bin/sh\nexec ${exec} "$@"\n`, { mode: 0o755 });
       fs.renameSync(staged, target);
     }
   } catch (err) {
     logger.warn({ err }, "[VoiceChat] Could not write the desktop terminal's coding agent wrappers");
     return {};
   }
-  return { PATH: `${dir}${path.delimiter}${process.env.PATH ?? ''}`, [WRAPPERS_ENV]: dir };
+  return { PATH: `${dir}${path.delimiter}${process.env.PATH ?? ''}` };
 }
 
 const run = promisify(execFile);

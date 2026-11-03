@@ -281,7 +281,7 @@ RUN chmod +x ./start.sh
 ENV NODE_ENV=production
 # The desktop's terminal starts with no locale otherwise, and Claude Code's
 # interface draws as boxes. fonts-dejavu-core above has the glyphs it uses.
-ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+ENV LANG=C.UTF-8
 # The image brings the coding agents' CLIs up to date; their own updaters can't
 # write to the global install and only fail.
 ENV DISABLE_AUTOUPDATER=1

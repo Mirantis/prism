@@ -192,7 +192,10 @@ to clear.
   or a service, not through hand-written SQL strings. Raw SQL is for schema
   DDL, migrations, database bootstrap (`lib/sqlite-bootstrap.ts`), and the
   narrow primitives Prisma cannot express — the `sqlite-vec` vector search in
-  `services/memory-store.ts`. Each such site is a named exception.
+  `services/memory-store.ts` — and the read-only `runtime_state` read of the
+  subscription switch in `lib/coding-agents/terminal.ts`, which the desktop
+  terminal's wrapper (`scripts/coding-agent-exec.ts`) runs as a separate
+  process that does not start Prisma. Each such site is a named exception.
 - **Lean code.** Cover what production really produces: real states, tagged
   upgrade paths, security boundaries, and the contracts of the dependencies you
   call. Public input, hostile input and malformed input you have actually

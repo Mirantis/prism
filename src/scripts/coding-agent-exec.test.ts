@@ -4,6 +4,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SUBSCRIPTION_SETTINGS } from '../lib/coding-agents/claude-code/authenticated-home';
+import { SUBSCRIPTION_CONFIG_ARGS } from '../lib/coding-agents/codex/credentials';
 import { notSignedInMessage } from '../lib/coding-agents/subscription';
 import { main } from './coding-agent-exec';
 
@@ -14,6 +15,13 @@ import { main } from './coding-agent-exec';
 const FAKE_CLAUDE = `#!/bin/sh
 if [ "$1" = auth ] && [ "$2" = status ]; then printf '%s' "$FAKE_STATUS"; exit 0; fi
 printf '%s\\n' "bedrock=$CLAUDE_CODE_USE_BEDROCK" "$@" > "$FAKE_OUT"
+exit 7
+`;
+
+/** A fake `codex`, as `claude` above: `login status` answers on stderr, as Codex does. */
+const FAKE_CODEX = `#!/bin/sh
+if [ "$1" = login ] && [ "$2" = status ]; then printf '%s\\n' "$FAKE_STATUS" >&2; exit 0; fi
+printf '%s\\n' "key=$OPENAI_API_KEY" "$@" > "$FAKE_OUT"
 exit 7
 `;
 
@@ -33,8 +41,12 @@ describe('coding-agent-exec', () => {
     fs.mkdirSync(bin);
     fs.mkdirSync(wrappers);
     fs.writeFileSync(path.join(bin, 'claude'), FAKE_CLAUDE, { mode: 0o755 });
-    // Found first on the PATH, as the wrapper is: it must not run itself.
-    fs.writeFileSync(path.join(wrappers, 'claude'), '#!/bin/sh\nexit 99\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(bin, 'codex'), FAKE_CODEX, { mode: 0o755 });
+    // Found first on the PATH, as the wrapper is, and named by the argument
+    // alone: it must not run itself.
+    for (const command of ['claude', 'codex']) {
+      fs.writeFileSync(path.join(wrappers, command), '#!/bin/sh\nexit 99\n', { mode: 0o755 });
+    }
     const file = path.join(dir, 'agent.db');
     const db = new Database(file);
     db.exec('CREATE TABLE runtime_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updatedAt INTEGER)');
@@ -51,11 +63,11 @@ describe('coding-agent-exec', () => {
     db.close();
   };
 
-  const run = (args: string[], env: NodeJS.ProcessEnv = {}) =>
-    main(['claude', ...args], {
+  const run = (args: string[], env: NodeJS.ProcessEnv = {}, command = 'claude') =>
+    main(['--wrappers', wrappers, command, ...args], {
       PATH: `${wrappers}${path.delimiter}${bin}${path.delimiter}/usr/bin${path.delimiter}/bin`,
-      PRISM_CODING_AGENT_WRAPPERS: wrappers,
       CLAUDE_CODE_USE_BEDROCK: '1',
+      OPENAI_API_KEY: 'sk-test',
       DATABASE_URL: databaseUrl,
       FAKE_OUT: out,
       ...env,
@@ -89,11 +101,29 @@ describe('coding-agent-exec', () => {
     expect(recorded()).toEqual(['bedrock=', 'auth', 'login']);
   });
 
-  it("says so and uses the deployment's models when the setting can't be read", async () => {
-    expect(await run([], { DATABASE_URL: `file:${path.join(dir, 'gone.db')}` })).toBe(7);
-    expect(recorded()).toEqual(['bedrock=1']);
+  it("runs on the subscription signed in when the setting can't be read, and refuses with nobody signed in", async () => {
+    const gone = `file:${path.join(dir, 'gone.db')}`;
+    const status = JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', subscriptionType: 'max' });
+    expect(await run(['-p', 'hi'], { DATABASE_URL: gone, FAKE_STATUS: status })).toBe(7);
+    expect(recorded()).toEqual(['bedrock=', '--settings', SUBSCRIPTION_SETTINGS, '-p', 'hi']);
+    expect(errors).toEqual([]);
+
+    fs.rmSync(out);
+    expect(await run([], { DATABASE_URL: gone, FAKE_STATUS: JSON.stringify({ loggedIn: false }) })).toBe(1);
+    expect(fs.existsSync(out)).toBe(false);
     expect(errors).toHaveLength(1);
-    expect(errors[0]).toMatch(/^claude: could not read the Coding agents setting .*; using the deployment's models$/);
+    expect(errors[0]).toMatch(/^claude: could not read the Coding agents setting \(.+\), and no Claude subscription is signed in: sign in from Coding agents$/);
+  });
+
+  it("does the same for codex when the setting can't be read", async () => {
+    const gone = `file:${path.join(dir, 'gone.db')}`;
+    expect(await run(['exec', 'hi'], { DATABASE_URL: gone, FAKE_STATUS: 'Logged in using ChatGPT' }, 'codex')).toBe(7);
+    expect(recorded()).toEqual(['key=', ...SUBSCRIPTION_CONFIG_ARGS, 'exec', 'hi']);
+
+    fs.rmSync(out);
+    expect(await run(['exec', 'hi'], { DATABASE_URL: gone, FAKE_STATUS: 'Not logged in' }, 'codex')).toBe(1);
+    expect(fs.existsSync(out)).toBe(false);
+    expect(errors).toEqual([expect.stringMatching(/^codex: could not read the Coding agents setting .*no ChatGPT subscription is signed in/)]);
   });
 
   it('answers 127 when the real binary is not installed', async () => {

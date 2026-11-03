@@ -32,7 +32,7 @@ describe('codingAgentTerminalEnv', () => {
     });
   });
 
-  it('puts wrappers first on the PATH that run the entry with the command and its arguments', () => {
+  it("puts wrappers first on the PATH that run the entry with their directory, the command and its arguments", () => {
     environment.id = 'local';
     const dir = tempDir();
     // Stands in for the built coding-agent-exec: prints what it was given.
@@ -43,10 +43,9 @@ describe('codingAgentTerminalEnv', () => {
     const env = codingAgentTerminalEnv(entry, wrappers);
 
     expect(env.PATH.split(path.delimiter)[0]).toBe(wrappers);
-    expect(env.PRISM_CODING_AGENT_WRAPPERS).toBe(wrappers);
     for (const command of ['claude', 'codex']) {
       const printed = execFileSync(path.join(wrappers, command), ['-p', "it's here"], { encoding: 'utf8' });
-      expect(JSON.parse(printed)).toEqual([command, '-p', "it's here"]);
+      expect(JSON.parse(printed)).toEqual(['--wrappers', wrappers, command, '-p', "it's here"]);
     }
   });
 

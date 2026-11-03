@@ -135,12 +135,13 @@ describe('the saved Codex login', () => {
       .rejects.toThrow(/^codex login status exited with 0 and no status$/);
   });
 
-  it('keeps every variable but the credentials that outrank the login', () => {
+  it("keeps every variable but the credentials that outrank the login and the deployment's gateway", () => {
     expect(subscriptionEnvironment({
       PATH: '/bin',
       OPENAI_API_KEY: 'test-key',
       CODEX_API_KEY: 'test-key',
       CODEX_ACCESS_TOKEN: 'test-token',
+      OPENAI_BASE_URL: 'https://gateway.example.test/v1',
       AWS_BEARER_TOKEN_BEDROCK: 'test-token',
       OPENAI_MODEL_ID: 'gpt-5.6-sol',
     })).toEqual({ PATH: '/bin', AWS_BEARER_TOKEN_BEDROCK: 'test-token', OPENAI_MODEL_ID: 'gpt-5.6-sol' });
