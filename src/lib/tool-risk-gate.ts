@@ -48,9 +48,9 @@ const MAX_AGENT_GUIDE_CHARS = 8_000;
  * status checks and note-taking. Unknown tools, including Nexus MCP tools, are
  * evaluated by default.
  *
- * The two terminators — `coding_agent_stop` and `shell_kill` — are here for a
- * blunter reason than latency: a gate that can refuse "stop the runaway task"
- * is worse than no gate at that moment. They end work the agent itself started
+ * The terminators — `coding_agent_stop`, `shell_kill` and `monitor_stop` — are
+ * here for a blunter reason than latency: a gate that can refuse "stop the
+ * runaway task" is worse than no gate at that moment. They end work the agent itself started
  * and can cause none of the harms this list guards against, and they are the
  * counterparts to the drain/poll tools already exempt beside them.
  *
@@ -76,6 +76,7 @@ const ALWAYS_ALLOWED_TOOL_NAMES = new Set([
   'coding_agent_stop',
   'shell_stdout',
   'shell_kill',
+  'monitor_stop',
 ]);
 
 const toolRiskDecisionSchema = z.object({

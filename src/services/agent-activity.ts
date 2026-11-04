@@ -27,7 +27,9 @@ import { threadTurnService } from './thread-turn.service';
  *   moment its turn is scheduled;
  * - a `shell_spawn` child or a `coding_agent` task, started by one tool call
  *   and polled from later turns — killing one leaves the agent's next status
- *   poll with nothing to report.
+ *   poll with nothing to report;
+ * - a `monitor`, which waits for its command's output long after the turn
+ *   that started it.
  */
 export async function isAgentIdle(): Promise<boolean> {
   if (
@@ -46,14 +48,16 @@ export async function isAgentIdle(): Promise<boolean> {
   // WebSocket gateway, and the shell tool modules and the voice chat's tool
   // set have no business in that import graph. A caller that never asks never
   // loads them.
-  const [{ getProcessManager }, { getAgentTaskManager }, { voiceChatService }] = await Promise.all([
+  const [{ getProcessManager }, { getAgentTaskManager }, { getMonitorManager }, { voiceChatService }] = await Promise.all([
     import('../tools/shell/process-manager'),
     import('../tools/shell/agent-task-manager'),
+    import('../tools/shell/monitor-manager'),
     import('./voice/voice-chat.service'),
   ]);
   return (
     getProcessManager().runningCount() === 0 &&
     getAgentTaskManager().runningCount() === 0 &&
+    getMonitorManager().runningCount() === 0 &&
     !voiceChatService.isLive
   );
 }

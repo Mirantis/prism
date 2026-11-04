@@ -202,7 +202,7 @@ Available agent values: ${availableAgents}. Default agent: ${config.codingAgent}
 function getMonitorTools(workspace: string, notify: TaskNotificationTarget): Record<string, Tool> {
   return {
     monitor: tool({
-      description: `Start a monitor: a shell command whose stdout lines are events. Each line it prints reaches this conversation as a task notification that starts a new turn, so you can end your turn and react when something happens. Lines printed within ${BATCH_MS} ms of each other arrive as one notification. The monitor ends when the command exits (one last notification, with the exit code), when timeoutMs passes (default 5 minutes, at most 30, with one last notification: start it again if the watch is still needed), or when it prints more than ${MAX_NOTIFICATIONS_PER_MINUTE} times a minute.
+      description: `Start a monitor: a shell command whose stdout lines are events. Each line it prints reaches this conversation as a task notification that starts a new turn, so you can end your turn and react when something happens. Lines printed within ${BATCH_MS} ms of the first arrive as one notification. The monitor ends when the command exits (one last notification, with the exit code), when timeoutMs passes (default 5 minutes, at most 30, with one last notification: start it again if the watch is still needed), or when it prints more than ${MAX_NOTIFICATIONS_PER_MINUTE} times a minute.
 
 Use it instead of a sleep, a polling loop or a scheduled check whenever you wait for something to happen:
 - One notification per occurrence: a command that runs until the deadline, such as \`tail -f app.log | grep --line-buffered ERROR\`.

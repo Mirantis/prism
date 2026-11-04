@@ -3,11 +3,15 @@
  *
  * A monitor runs a shell command in the agent's execution environment and turns
  * each line the command prints on stdout into an event for the chat conversation
- * that started it (`taskNotificationService`). Lines that arrive within
- * `BATCH_MS` of each other go out as one notification, in order. The watch ends
+ * that started it (`taskNotificationService`). The lines that arrive within
+ * `BATCH_MS` of the first go out as one notification, in order, so a command
+ * that never pauses still sends one every `BATCH_MS`. stderr is read and
+ * dropped, so a full pipe never blocks the command. The watch ends
  * when the command exits, when its deadline passes, when it prints more often
  * than `MAX_NOTIFICATIONS_PER_MINUTE`, or when the agent stops it. Every end but
- * the agent's own stop sends one last notice.
+ * the agent's own stop sends one last notice, stored under the monitor's id, so
+ * it reaches the conversation once. A command that ignores SIGTERM gets SIGKILL
+ * after `KILL_GRACE_MS`.
  *
  * A monitor is pending work from its start until its last notice is stored. A
  * restart stops the command, so the next boot stops a process a crash left
@@ -37,6 +41,8 @@ export const MAX_NOTIFICATIONS_PER_MINUTE = 12;
 const MAX_LINE_CHARS = 2_000;
 const PIPE_DRAIN_MS = 1_000;
 const MAX_BATCH_LINES = 50;
+/** How long a stopped command gets to honour SIGTERM before SIGKILL. */
+export const KILL_GRACE_MS = 2_000;
 
 export interface MonitorParams {
   command: string;
@@ -52,17 +58,22 @@ interface MonitorWork {
   notify: TaskNotificationTarget;
   /** The command's process, which the next boot stops when a crash left it running. */
   process?: ProcessMark;
+  /** Events sent so far, which the notice after a restart reports. */
+  events?: number;
 }
 
 interface Monitor {
   id: string;
   params: MonitorParams;
   proc: ExecProcess;
+  work: MonitorWork;
   startedAt: number;
   events: number;
   /** Text after the last newline, which becomes a line once its newline arrives. */
   partial: string;
+  /** At most `MAX_BATCH_LINES`; the lines past them are only counted. */
   batch: string[];
+  droppedLines: number;
   batchTimer?: NodeJS.Timeout;
   deadline: NodeJS.Timeout;
   /** When recent notifications went out, for the rate limit. */
@@ -71,25 +82,37 @@ interface Monitor {
   reason?: MonitorEndReason;
   /** Set by `monitor_stop`: the agent stopped it, so no notice goes out. */
   stoppedByAgent?: boolean;
+  /** Set once the process has exited. */
+  exited?: boolean;
+  /** Set once the watch has ended: later output is dropped. */
+  ended?: boolean;
 }
 
 class MonitorManager {
   private monitors = new Map<string, Monitor>();
+  /** Starts waiting for their pending-work row, which hold a slot already. */
+  private starting = 0;
   /** Notifications go out one at a time, so a conversation reads them in the order printed. */
   private queue: Promise<void> = Promise.resolve();
 
   runningCount(): number {
-    return this.monitors.size;
+    return this.starting + this.monitors.size;
   }
 
   async start(params: MonitorParams): Promise<string> {
-    if (this.monitors.size >= MAX_MONITORS) {
+    // A step's tool calls run in parallel, so the slot is taken before the await.
+    if (this.runningCount() >= MAX_MONITORS) {
       throw new Error(`At most ${MAX_MONITORS} monitors run at once. Stop one with monitor_stop first.`);
     }
     const id = randomUUID();
     const work: MonitorWork = { description: params.description, notify: params.notify };
-    // Before the command: a restart in between finds the row and tells the conversation.
-    await pendingWorkService.begin('monitor', id, work);
+    this.starting++;
+    try {
+      // Before the command: a restart in between finds the row and tells the conversation.
+      await pendingWorkService.begin('monitor', id, { ...work });
+    } finally {
+      this.starting--;
+    }
 
     const environment = getExecutionEnvironmentFor(params.workdir);
     const proc = environment.runShell(params.command, {
@@ -102,22 +125,32 @@ class MonitorManager {
       id,
       params,
       proc,
+      work,
       startedAt: Date.now(),
       events: 0,
       partial: '',
       batch: [],
+      droppedLines: 0,
       deadline: setTimeout(() => this.halt(monitor, 'timeout'), timeoutMs).unref(),
       sent: [],
     };
     this.monitors.set(id, monitor);
-    if (proc.mark) pendingWorkService.update('monitor', id, { ...work, process: proc.mark });
+    if (proc.mark) {
+      work.process = proc.mark;
+      pendingWorkService.update('monitor', id, { ...work });
+    }
 
     proc.stdout?.setEncoding('utf8');
     proc.stdout?.on('data', (chunk: string) => this.read(monitor, chunk));
+    // Only stdout is an event. Unread, stderr would fill its pipe and block the command.
+    proc.stderr?.resume();
     // The last lines can still be in the pipe when the process exits. A grandchild
     // that inherited the pipe can hold it open, so the wait for it is short.
     void proc.ended
-      .then(() => Promise.race([proc.closed, new Promise((resolve) => setTimeout(resolve, PIPE_DRAIN_MS).unref())]))
+      .then(() => {
+        monitor.exited = true;
+        return Promise.race([proc.closed, new Promise((resolve) => setTimeout(resolve, PIPE_DRAIN_MS).unref())]);
+      })
       .then(() => this.end(monitor));
 
     trackEvent('monitor started', params.notify.userId, {
@@ -135,7 +168,7 @@ class MonitorManager {
     const monitor = this.monitors.get(monitorId);
     if (!monitor) return false;
     monitor.stoppedByAgent = true;
-    monitor.proc.kill('SIGTERM');
+    this.terminate(monitor);
     return true;
   }
 
@@ -150,8 +183,15 @@ class MonitorManager {
     }
     for (const item of items) {
       const work = item.payload as unknown as MonitorWork;
-      const text = renderMonitorEnd({ monitorId: item.key, description: work.description, reason: 'restart', events: 0 });
-      await this.deliver(work.notify, text).then(
+      const events = work.events ?? 0;
+      trackEvent('monitor ended', work.notify.userId, {
+        'agent.id': work.notify.agentId,
+        'monitor.id': item.key,
+        'monitor.reason': 'restart',
+        'monitor.events': String(events),
+      });
+      const text = renderMonitorEnd({ monitorId: item.key, description: work.description, reason: 'restart', events });
+      await this.deliver(work.notify, text, item.key).then(
         () => pendingWorkService.end('monitor', item.key),
         (err) => logger.error({ err, monitorId: item.key }, '[Monitor] Could not report the monitor a restart stopped'),
       );
@@ -169,17 +209,25 @@ class MonitorManager {
   // ---------- internal ----------
 
   private read(monitor: Monitor, chunk: string): void {
+    if (monitor.ended) return;
     const lines = (monitor.partial + chunk).split('\n');
-    monitor.partial = lines.pop() ?? '';
+    // A line with no newline yet keeps only what an event shows of it, plus one
+    // character so the cut is marked.
+    monitor.partial = (lines.pop() ?? '').slice(0, MAX_LINE_CHARS + 1);
     const full = lines.map((line) => line.replace(/\r$/, '')).filter((line) => line.trim() !== '');
     if (full.length === 0) return;
-    monitor.batch.push(...full);
-    clearTimeout(monitor.batchTimer);
-    monitor.batchTimer = setTimeout(() => this.flush(monitor), BATCH_MS).unref();
+    const room = Math.max(0, MAX_BATCH_LINES - monitor.batch.length);
+    monitor.batch.push(...full.slice(0, room));
+    monitor.droppedLines += Math.max(0, full.length - room);
+    // From the batch's first line, so a command that never pauses still sends events.
+    monitor.batchTimer ??= setTimeout(() => this.flush(monitor), BATCH_MS).unref();
   }
 
   private flush(monitor: Monitor): void {
     clearTimeout(monitor.batchTimer);
+    monitor.batchTimer = undefined;
+    const dropped = monitor.droppedLines;
+    monitor.droppedLines = 0;
     if (monitor.batch.length === 0 || monitor.stoppedByAgent || monitor.reason === 'too-many-events') {
       monitor.batch = [];
       return;
@@ -193,11 +241,12 @@ class MonitorManager {
     }
     monitor.sent.push(now);
     monitor.events++;
-    const lines = monitor.batch.splice(0).map((line) =>
+    monitor.work.events = monitor.events;
+    pendingWorkService.update('monitor', monitor.id, { ...monitor.work });
+    const shown = monitor.batch.splice(0).map((line) =>
       line.length > MAX_LINE_CHARS ? `${line.slice(0, MAX_LINE_CHARS)}…` : line,
     );
-    const shown = lines.slice(0, MAX_BATCH_LINES);
-    if (lines.length > shown.length) shown.push(`[${lines.length - shown.length} more lines]`);
+    if (dropped > 0) shown.push(`[${dropped} more lines]`);
     const text = renderMonitorEvent({ monitorId: monitor.id, description: monitor.params.description, lines: shown });
     void this.deliver(monitor.params.notify, text).catch((err) =>
       logger.error({ err, monitorId: monitor.id }, '[Monitor] Could not send an event'),
@@ -208,12 +257,26 @@ class MonitorManager {
   private halt(monitor: Monitor, reason: MonitorEndReason): void {
     if (monitor.reason || monitor.stoppedByAgent) return;
     monitor.reason = reason;
+    this.terminate(monitor);
+  }
+
+  /** SIGTERM, then SIGKILL for a command still running after the grace period. */
+  private terminate(monitor: Monitor): void {
     monitor.proc.kill('SIGTERM');
+    setTimeout(() => {
+      if (!monitor.exited) monitor.proc.kill('SIGKILL');
+    }, KILL_GRACE_MS).unref();
   }
 
   private end(monitor: Monitor): void {
+    monitor.ended = true;
     clearTimeout(monitor.deadline);
     this.monitors.delete(monitor.id);
+    // A child that still holds stdout prints nothing more into this watch.
+    monitor.proc.stdout?.removeAllListeners('data');
+    monitor.proc.stdout?.destroy();
+    monitor.proc.stderr?.destroy();
+    monitor.proc.kill('SIGKILL');
     // A shutdown leaves the row, and the next boot reports the end.
     if (pendingWorkService.shutdownSignal.aborted) return;
     if (monitor.partial.trim() !== '') monitor.batch.push(monitor.partial);
@@ -242,18 +305,19 @@ class MonitorManager {
       events: monitor.events,
       exitCode: monitor.proc.exitCode,
     });
-    void this.deliver(notify, text).then(
+    void this.deliver(notify, text, monitor.id).then(
       () => pendingWorkService.end('monitor', monitor.id),
       (err) => logger.error({ err, monitorId: monitor.id }, '[Monitor] Could not report the end of a monitor'),
     );
   }
 
-  private deliver(target: TaskNotificationTarget, text: string): Promise<void> {
+  /** `messageId` makes the delivery idempotent: a stored id is not stored again. */
+  private deliver(target: TaskNotificationTarget, text: string, messageId: string = randomUUID()): Promise<void> {
     const next = this.queue.then(async () => {
       // Imported at the call: the service reaches the conversation engine, whose
       // tool collection imports this module.
       const { taskNotificationService } = await import('../../services/task-notification.service');
-      await taskNotificationService.deliver(target, randomUUID(), text);
+      await taskNotificationService.deliver(target, messageId, text);
     });
     this.queue = next.catch(() => undefined);
     return next;
