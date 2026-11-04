@@ -64,6 +64,7 @@ import {
   DEFAULT_MAX_TURNS,
   MAX_BUFFER_SIZE,
   MAX_CONCURRENT,
+  NOTIFICATION_RESULT_MAX_CHARS,
 } from '../agent-task-manager';
 
 vi.mock('../../../lib/telemetry', () => ({ trackEvent: vi.fn() }));
@@ -950,6 +951,47 @@ describe('a task started in a chat conversation', () => {
     await flush();
 
     expect(mockDeliver).toHaveBeenCalledWith(target, 'task-1', expect.stringContaining('Done.'));
+  });
+
+  it('cuts a long result in the report, and a poll after it reads the whole result', async () => {
+    const long = `${'a'.repeat(40_000)}THE END`;
+    const { taskId } = await manager.startTask({ prompt: 'write the report', notify: target });
+    getRun().emit({ type: 'text', text: long });
+    getRun().finish({ stopReason: 'end_turn', turns: 4, message: 'ok' });
+    await flush();
+
+    const text = mockDeliver.mock.calls[0][2] as string;
+    expect(text.length).toBeLessThan(NOTIFICATION_RESULT_MAX_CHARS + 2_000);
+    expect(text).toContain('INCOMPLETE OUTPUT');
+    expect(text).toContain(`coding_agent_status with taskId "${taskId}" returns the whole result.`);
+    expect(text).toContain('THE END');
+    await expect(manager.readStatus(taskId)).resolves.toMatchObject({ result: long });
+  });
+
+  it('reports a task the boot cannot continue as failed, then stops owing it', async () => {
+    const tasks = new AgentTaskManager(() => {
+      throw new Error('Coding agent "codex" is unavailable.');
+    });
+    mockDeliver.mockImplementationOnce(async () => {
+      expect(mockEndWork).not.toHaveBeenCalled();
+    });
+
+    await tasks.resume([
+      { key: 'task-codex', payload: { params: { prompt: 'a', agent: 'codex', notify: target } }, attempts: 1, createdAt: new Date() },
+    ]);
+
+    expect(mockDeliver).toHaveBeenCalledWith(target, 'task-codex', expect.stringContaining('stop-reason="error"'));
+    expect(mockDeliver.mock.calls[0][2]).toContain('Coding agent "codex" is unavailable.');
+    expect(mockEndWork).toHaveBeenCalledWith('coding-task', 'task-codex');
+  });
+
+  it('reports a task the restarts gave up as failed', async () => {
+    await manager.resume([], [
+      { key: 'task-loop', payload: { params: { prompt: 'fix the build', agent: 'claude-code', notify: target } }, attempts: 4, createdAt: new Date() },
+    ]);
+
+    expect(mockDeliver).toHaveBeenCalledWith(target, 'task-loop', expect.stringContaining('stop-reason="error"'));
+    expect(mockDeliver.mock.calls[0][2]).toContain('given up');
   });
 
   it('leaves a task without a conversation to its polls', async () => {
