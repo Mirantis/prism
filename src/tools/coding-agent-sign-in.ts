@@ -34,9 +34,12 @@ export function getCodingAgentSignInTools(
         'Ask the user to sign a coding agent in to their own subscription, so its coding tasks run on it: ' +
         'claude-code on their Claude plan, codex on their ChatGPT plan. Call it when the user asks for that, ' +
         'or when a coding task failed because nobody is signed in to the subscription. It posts a card the ' +
-        'user signs in from. Never ask for a sign-in code or link in chat, and never use one the user pastes ' +
-        'in chat: point them to the card instead. Then finish this turn; when the sign-in succeeds, the user ' +
-        'tells you so in a new message.',
+        'user signs in from. Never write a sign-in link yourself, never ask for a sign-in code or link in chat, ' +
+        'and never use one the user pastes in chat: point them to the card instead. Then finish this turn. ' +
+        'When the sign-in succeeds, a new message says "I signed in to Claude." or "I signed in to ChatGPT.". ' +
+        'It is sent only after the runtime has checked the saved login and switched coding tasks to it, so ' +
+        'treat it as confirmed. Do not check it with `claude auth status` or `codex login status` in the ' +
+        "shell: the shell runs on the deployment's own settings and home, so it never shows the subscription.",
       inputSchema: z.object({ agent: z.enum([first, ...rest]) }),
       execute: async ({ agent }) => {
         const { repeated } = await codingAgentSignInRequestService.request(
