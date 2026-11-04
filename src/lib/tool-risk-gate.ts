@@ -22,6 +22,8 @@ import type { PromptSource } from '../types';
 import { logger } from '../logger';
 import { isDefaultAgentGuide } from '../templates/default-workspace';
 import { getClassificationRequest } from './classification';
+import { isMemoryBlockContent } from '../prompts/memory-block-tags';
+import { RESUMED_REPLY_NOTICE } from '../prompts/resume-prompt';
 import { langfuseTelemetry, trackEvent } from './telemetry';
 
 const RISK_EVALUATION_TIMEOUT_MS = 10_000;
@@ -507,7 +509,6 @@ function warnIfPolicyTruncated(agentGuide: string | undefined, policy: ResolvedP
   );
 }
 
-/** Ask the configured Haiku-class model for one bounded structured decision. */
 /** The evidence field that holds the turn's prompt, named for who wrote it. */
 const PROMPT_FIELD: Record<PromptSource, string> = {
   person: 'initialUserPrompt',
@@ -515,6 +516,7 @@ const PROMPT_FIELD: Record<PromptSource, string> = {
   task: 'taskNotification',
 };
 
+/** Ask the configured Haiku-class model for one bounded structured decision. */
 export async function evaluateToolRisk(
   input: ToolRiskEvaluationInput,
 ): Promise<ToolRiskDecision> {
@@ -580,8 +582,8 @@ export async function evaluateToolRisk(
  * `initialPrompt` is already its own evidence field, and it also sits in the
  * message array — chat leaves it there as history, and every other mode appends
  * it (see `invokeStream`). Sending it twice spent up to 4,000 characters of a
- * 6,000-character field restating what the classifier had already read, so the
- * trailing copy is dropped.
+ * 6,000-character field restating what the classifier had already read, so it is
+ * dropped wherever it sits: a chat turn's memory blocks follow it.
  *
  * What remains is prior conversation on the same thread. In a chat turn that is
  * the user still talking. In a heartbeat or cron run it may be days old and was
@@ -594,11 +596,15 @@ function earlierThreadMessages(messages: ModelMessage[], initialPrompt: string):
     .map(userMessageText)
     .filter(Boolean);
 
-  const trimmed =
-    texts[texts.length - 1] === initialPrompt ? texts.slice(0, -1) : texts;
+  // A chat turn stores its memory blocks, and a restart its resume notice, as USER
+  // rows after the message. Neither is the user talking, and three of them would
+  // push the user's request out of the window.
+  const earlier = texts.filter(
+    (text) => text !== initialPrompt && text !== RESUMED_REPLY_NOTICE && !isMemoryBlockContent(text),
+  );
 
   return truncateForClassification(
-    trimmed.slice(-3).join('\n\n--- next user message ---\n\n'),
+    earlier.slice(-3).join('\n\n--- next user message ---\n\n'),
     MAX_EARLIER_MESSAGES_CHARS,
   );
 }

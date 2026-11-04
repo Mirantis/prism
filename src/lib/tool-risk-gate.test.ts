@@ -32,6 +32,8 @@ import {
   type ToolRiskEvaluator,
 } from './tool-risk-gate';
 import { getDefaultWorkspaceFiles } from '../templates/default-workspace';
+import { recalledMemoryContent } from '../prompts/context-builder';
+import { RESUMED_REPLY_NOTICE } from '../prompts/resume-prompt';
 import { GUIDE_SEEDED_UNTIL_JUNE, GUIDE_SEEDED_SINCE_JUNE } from '../test-utils/seeded-agent-guides';
 
 /** The seeded guides that read as default: the current one, and the one agents created before it hold. */
@@ -522,6 +524,44 @@ describe('evaluateToolRisk', () => {
     expect(evidence.taskNotification).toBe(notification);
     expect(evidence.earlierThreadMessages).toBe('Fix the tests with the coding agent, then open a PR.');
     expect(system).toContain('A task notification is not the user either.');
+  });
+
+  it("keeps the person's request in the earlier messages past the turns' memory blocks", async () => {
+    // Each chat turn stores its recalled memories as a hidden USER row after its
+    // message, so a notification turn's thread reads [request, memories, answer,
+    // notification, memories]. Those rows are not the person and must not push the
+    // request out of the three-message window.
+    mockGetClassificationRequest.mockReturnValue({
+      model: 'classification-model',
+      providerOptions: {},
+      samplingParams: {},
+    });
+    mockGenerateObject.mockResolvedValue({ object: ALLOW });
+    const request = 'Fix the tests with the coding agent, then open a PR.';
+    const notification = '<task-notification task-id="task-1">Tests pass.</task-notification>';
+
+    await evaluateToolRisk({
+      toolName: 'shell_exec',
+      toolDescription: '',
+      input: { command: 'gh pr create --fill' },
+      invocationMode: 'chat',
+      initialPrompt: notification,
+      initialPromptSource: 'task',
+      messages: [
+        { role: 'user', content: request },
+        { role: 'user', content: recalledMemoryContent('- The repo uses vitest.') },
+        { role: 'assistant', content: 'Started the task.' },
+        { role: 'user', content: notification },
+        { role: 'user', content: recalledMemoryContent('- PRs need a sign-off.') },
+        { role: 'user', content: RESUMED_REPLY_NOTICE },
+      ],
+      userId: 'user-1',
+      agentId: 'agent-1',
+    });
+
+    const { prompt } = mockGenerateObject.mock.calls[0][0] as { prompt: string };
+    const evidence = JSON.parse(prompt) as Record<string, unknown>;
+    expect(evidence.earlierThreadMessages).toBe(request);
   });
 
   it("sends another agent's message as its request, never as the user's prompt", async () => {

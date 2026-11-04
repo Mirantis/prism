@@ -470,6 +470,54 @@ describe('InboundMessageService', () => {
     });
   });
 
+  describe('Scenario: a task notification the runtime stored', () => {
+    const notificationRow = (id: string, threadId = THREAD_A) => ({
+      ...row(id, threadId, '<task-notification task-id="task-1">Tests pass.</task-notification>'),
+      triggeredBy: 'TASK_NOTIFICATION',
+      internalStep: true,
+    });
+
+    it("waits behind another conversation's turn, and its turn reads it as the task's", async () => {
+      const first = heldTurn();
+      mockEngine.chat.mockImplementationOnce(first.run);
+      await inboundMessageService.accept(inbound('m-1', THREAD_B));
+      await settle();
+
+      inboundMessageService.answerStored(notificationRow('task-1') as never);
+      await settle();
+
+      expect(inboundMessageService.turns()).toEqual(expect.arrayContaining([{ threadId: THREAD_A, state: 'queued' }]));
+      first.finish();
+      await vi.waitFor(() =>
+        expect(mockEngine.chat).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            threadId: THREAD_A,
+            stored: { id: 'task-1', titleSet: null },
+            metadata: { channel: 'websocket' },
+            taskNotification: { taskId: 'task-1' },
+          }),
+        ),
+      );
+    });
+
+    it('resumes one a restart interrupted as the task\'s, not the person\'s', async () => {
+      inboundMessageService.resume(notificationRow('task-1') as never, {
+        messageIds: ['task-1'],
+        unsaved: [],
+        unsentAttachmentIds: [],
+      });
+      await settle();
+
+      expect(mockEngine.chat).toHaveBeenCalledWith(
+        expect.objectContaining({
+          stored: { id: 'task-1', titleSet: null },
+          resumed: { messageIds: ['task-1'], unsaved: [], unsentAttachmentIds: [] },
+          taskNotification: { taskId: 'task-1' },
+        }),
+      );
+    });
+  });
+
   describe('Scenario: a reply a restart interrupted', () => {
     it('continues it in its turn, for every message it owes', async () => {
       const first = heldTurn();

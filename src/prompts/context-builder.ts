@@ -30,6 +30,7 @@ import {
   type AgentMessageColumns,
 } from './agent-message-prompt';
 import type { AgentMessageOrigin } from '../types';
+import { memoryBlockOpening, RECALLED_TAG, RECENT_TAG } from './memory-block-tags';
 import type { ToolSearchPlan } from '../lib/tool-search/plan';
 
 // Minimal type for conversation messages (matches Prisma's shape).
@@ -338,12 +339,6 @@ export async function buildRecentMemories(context: AgentContext): Promise<Memory
   return block.text ? block : null;
 }
 
-const RECALLED_TAG = 'recalled-memories';
-const RECENT_TAG = 'recent-memories';
-
-function memoryBlockOpening(tag: string): string {
-  return `\n\nContext:\n<${tag}>\n`;
-}
 
 /**
  * The stored and sent form of a memory block — one string, so the two cannot drift.

@@ -910,6 +910,18 @@ describe('a task started in a chat conversation', () => {
     expect(mockDeliver).not.toHaveBeenCalled();
   });
 
+  it('reports nothing for a task stopped after its run ended and before its finalize', async () => {
+    // The run has exited, so stopTask does not flag the stop and awaits the finalize,
+    // which must not report what the stop call is about to hand back.
+    const { taskId } = await manager.startTask({ prompt: 'upgrade React', notify: target });
+    getRun().finish({ stopReason: 'end_turn', turns: 3, message: 'THE REAL FINAL RESULT' });
+    const status = await manager.stopTask(taskId);
+    await flush();
+
+    expect(status.result).toBe('THE REAL FINAL RESULT');
+    expect(mockDeliver).not.toHaveBeenCalled();
+  });
+
   it('keeps the task for the next boot when the report cannot be stored', async () => {
     mockDeliver.mockRejectedValue(new Error('database is locked'));
     const { taskId } = await manager.startTask({ prompt: 'upgrade React', notify: target });

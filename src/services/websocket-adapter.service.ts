@@ -74,6 +74,11 @@ class WebSocketAdapterService implements ChannelAdapter {
     inboundMessageService.resume(message, resumed);
   }
 
+  /** A message the runtime stored waits its turn there too. */
+  answerStored(message: ConversationMessage): void {
+    inboundMessageService.answerStored(message);
+  }
+
   async initialize(): Promise<void> {
     logger.info('WebSocket adapter ready');
   }
