@@ -43,3 +43,33 @@ Feature: Coding sub-agent
     And no reply is an error
     And the stored tool calls include "coding_agent" and "coding_agent_status"
     And the stored tool calls do not include "demo__probe__plugin_mcp_probe"
+
+  # @slow: a real Claude Code run on Bedrock that takes at least 30 seconds, and
+  # the two model turns around it. The task's end, not a timer, starts the second.
+  # The shell computes the marker's number, so only the task's output holds it.
+  @slow
+  Scenario: A finished coding task reports back without a wait
+    When I navigate to the agent chat page
+    And I type "Ask the coding agent, in edit mode with maxTurns 5, to run the shell command `sleep 30 && echo NOTIFY-RESULT-$((4100+82))` and to reply with exactly what it printed. Then tell me what it printed." in the chat input
+    And I send the message
+    Then the chat composer should be ready for input again
+    And the coding task's result reaches the conversation as a task notification
+    And an agent reply after the task notification contains "NOTIFY-RESULT-4182" within 60 seconds
+    And the agent set no timer for the coding task
+    And no reply is an error
+
+  # @slow: a real Claude Code run on Bedrock that takes at least 90 seconds, and
+  # three model turns. Waiting inside a turn would hold the question until then.
+  @slow
+  Scenario: The agent answers a question while a coding task runs
+    When I navigate to the agent chat page
+    And I type "Ask the coding agent, in edit mode with maxTurns 5, to run the shell command `sleep 90 && echo NOTIFY-LATE-$((5500+21))` and to reply with exactly what it printed. Then tell me what it printed." in the chat input
+    And I send the message
+    Then the chat composer should be ready for input again
+    When I type "While that runs: what is 17 times 3? Reply with the number only." in the chat input
+    And I send the message
+    Then the agent reply contains "51"
+    And the reply with "51" came before the task notification
+    And the coding task's result reaches the conversation as a task notification
+    And an agent reply after the task notification contains "NOTIFY-LATE-5521" within 60 seconds
+    And no reply is an error

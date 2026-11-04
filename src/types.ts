@@ -96,11 +96,11 @@ export interface InvokeRequest {
   mode: 'chat' | 'heartbeat' | 'cron' | 'subagent' | 'goal' | 'webhook';
   prompt: string;
   /**
-   * `prompt` holds only messages from other agents of the project, nothing the
-   * person wrote. The tool risk gate then reads it as theirs, which authorizes
-   * nothing, instead of as the person's request.
+   * Who wrote `prompt`; absent is the person. The tool risk gate reads a prompt
+   * from other agents or a task notification as authorizing nothing, instead of
+   * as the person's request.
    */
-  promptFromAgent?: boolean;
+  promptSource?: PromptSource;
   threadId?: string;
   /** Override the agent's persisted verbose flag for this invocation. */
   verbose?: boolean;
@@ -248,6 +248,21 @@ export interface TaskLastSend {
   /** The heartbeat's results of the runs since the oldest send in `messages`, newest first. */
   reports?: Array<{ text: string; at: number }>;
 }
+
+/**
+ * The runtime's report that background work the agent started in a conversation
+ * has ended. It is never the person's words.
+ */
+export interface TaskNotificationOrigin {
+  /** The background task's id, which is also the id of the stored notification. */
+  taskId: string;
+}
+
+/**
+ * Who wrote a turn's prompt: the person, other agents of the project, or the
+ * runtime in a task notification.
+ */
+export type PromptSource = 'person' | 'agent' | 'task';
 
 /**
  * Where a message from another agent of the project came from. It is a

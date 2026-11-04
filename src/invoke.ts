@@ -365,7 +365,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       mode: config.toolRiskGateMode,
       invocationMode: request.mode,
       initialPrompt: request.prompt,
-      initialPromptFromAgent: request.promptFromAgent === true,
+      initialPromptSource: request.promptSource,
       // Read as policy by the classifier, not as evidence — see the gate.
       agentGuide: context.agentMd,
       userId: request.userId,

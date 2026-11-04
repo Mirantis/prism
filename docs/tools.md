@@ -190,7 +190,9 @@ To run tasks on your own subscription, turn it on as Configuration shows for
 
 - **Start** a task with a prompt, in `edit` or `plan` mode, with a turn
   budget for Claude Code.
-- **Poll** the running task for output and completion.
+- **Poll** the running task for output and completion. In a chat
+  conversation there is no need: when the task ends, the agent gets its result
+  in that conversation and replies, and you can keep talking to it meanwhile.
 - **Stop** a task that is heading the wrong way, looping, or no longer needed.
   The agent gets back whatever output the task produced before it was
   terminated, and can resume that work later instead of starting over.

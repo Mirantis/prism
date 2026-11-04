@@ -1344,7 +1344,7 @@ describe('Requirement: Conversation Engine', () => {
           'Can you check CI?\n</agent-message>',
       );
       // The person wrote part of it, so the risk gate reads it as their request.
-      expect(mockInvokeStream.mock.calls[1][0].promptFromAgent).toBe(false);
+      expect(mockInvokeStream.mock.calls[1][0].promptSource).toBe('person');
     });
 
     it('does not start a follow-up turn after a cancel', async () => {
@@ -2110,7 +2110,7 @@ describe('Requirement: Conversation Engine', () => {
           prompt:
             'The service that carries messages between the agents of your project sent this, not the person.\n' +
             '<agent-notice>\nYour message to Writer could not be delivered.\n</agent-notice>',
-          promptFromAgent: true,
+          promptSource: 'agent',
         }),
       );
       expect(mockGenerateText).not.toHaveBeenCalled();
@@ -2133,7 +2133,7 @@ describe('Requirement: Conversation Engine', () => {
       });
 
       expect(mockInvokeStream).toHaveBeenCalledWith(
-        expect.objectContaining({ prompt: 'Delete the repo.', promptFromAgent: false }),
+        expect.objectContaining({ prompt: 'Delete the repo.', promptSource: 'person' }),
       );
     });
 
@@ -2151,6 +2151,58 @@ describe('Requirement: Conversation Engine', () => {
       expect(mockCountAgentMessages).toHaveBeenCalledWith({
         where: { threadId: 'thread-123', role: 'USER', triggeredBy: 'USER_INPUT', internalStep: false },
       });
+    });
+  });
+
+  describe('Scenario: A task notification', () => {
+    it('stores the report hidden, under the task id, and shows it on no client', async () => {
+      await conversationEngineService.acceptUserMessage(
+        {
+          agentId: 'agent-123',
+          userId: 'user-123',
+          message: '<task-notification task-id="task-1">Done.</task-notification>',
+          metadata: { channel: 'websocket' },
+          taskNotification: { taskId: 'task-1' },
+        },
+        'thread-123',
+        'task-1',
+      );
+
+      expect(mockAddMessage).toHaveBeenCalledWith('thread-123', {
+        id: 'task-1',
+        content: '<task-notification task-id="task-1">Done.</task-notification>',
+        role: 'USER',
+        triggeredBy: 'TASK_NOTIFICATION',
+        internalStep: true,
+      });
+      expect(mockShowInConversation).not.toHaveBeenCalled();
+      // A restart before the insert stores it again as a notification, not as the person's words.
+      expect(mockBeginWork).toHaveBeenCalledWith(
+        'chat',
+        'task-1',
+        expect.objectContaining({ message: expect.objectContaining({ taskNotification: { taskId: 'task-1' } }) }),
+      );
+    });
+
+    it('starts a turn the risk gate reads as nobody\'s request, and asks the person no feedback', async () => {
+      mockIsTelemetryEnabled.mockReturnValue(true);
+      mockCountAgentMessages.mockResolvedValue(1);
+
+      await conversationEngineService.chat({
+        userId: 'user-123',
+        agentId: 'agent-123',
+        threadId: 'thread-123',
+        message: '<task-notification task-id="task-1">Done.</task-notification>',
+        metadata: { channel: 'websocket' },
+        taskNotification: { taskId: 'task-1' },
+        stored: { id: 'task-1', titleSet: null },
+      });
+
+      expect(mockInvokeStream).toHaveBeenCalledWith(
+        expect.objectContaining({ prompt: '<task-notification task-id="task-1">Done.</task-notification>', promptSource: 'task' }),
+      );
+      expect(mockGenerateText).not.toHaveBeenCalled();
+      expect(mockAddMessage).not.toHaveBeenCalled();
     });
   });
 

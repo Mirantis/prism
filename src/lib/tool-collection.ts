@@ -159,7 +159,21 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
       ? getAskQuestionsTools(input.userId, input.agentId, input.threadId, originChannel, input.originChannelId)
       : {}),
     ...getAgentConfigTools(),
-    ...getShellTools(input.workspaceRoot, input.pendingFileWrites),
+    // A task started in a chat conversation reports its end there, and the agent ends
+    // its turn meanwhile. Every other run polls for the result.
+    ...getShellTools(
+      input.workspaceRoot,
+      input.pendingFileWrites,
+      input.mode === 'chat' && input.threadId
+        ? {
+            threadId: input.threadId,
+            agentId: input.agentId,
+            userId: input.userId,
+            originChannel,
+            ...(input.originChannelId ? { originChannelId: input.originChannelId } : {}),
+          }
+        : undefined,
+    ),
     // Same workspaceRoot as the shell tools: write-then-share has to agree on what
     // a relative path means, and the write/read sequencing compares resolved paths.
     ...getShareFileTools(input.workspaceRoot, input.pendingFileWrites),
