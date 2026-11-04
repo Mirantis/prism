@@ -650,15 +650,18 @@ async function deliverNotification(target: TaskNotificationTarget, taskId: strin
 /**
  * The notification of an ended task. A result over `NOTIFICATION_RESULT_MAX_CHARS`
  * is cut, and saved whole beside the shell of the task's workdir, where the agent
- * reads it after a restart too.
+ * reads it after a restart too. The notice names that workdir: a task whose
+ * workdir the conversation's container cannot see runs on the host, so a
+ * `shell_exec` without it would look in the container and find no file.
  */
 async function notificationText(outcome: CodingTaskOutcome, workdir?: string): Promise<string> {
   if (outcome.result.length <= NOTIFICATION_RESULT_MAX_CHARS) return renderCodingTaskNotification(outcome);
   let saved = 'The whole result could not be saved.';
   try {
     const spill = await writeToolOutput(outcome.result, workdir);
+    const shell = workdir ? `shell_exec in workdir ${JSON.stringify(workdir)}` : 'shell_exec';
     saved =
-      `The whole result is saved at ${spill.path}. Read only what you need from it with shell_exec, ` +
+      `The whole result is saved at ${spill.path}. Read only what you need from it with ${shell}, ` +
       'using grep or sed.';
   } catch (err) {
     logger.warn({ err, taskId: outcome.taskId }, '[AgentTask] Could not save the whole result of a task');

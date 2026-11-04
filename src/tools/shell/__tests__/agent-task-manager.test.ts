@@ -972,6 +972,8 @@ describe('a task started in a chat conversation', () => {
     expect(text.length).toBeLessThan(NOTIFICATION_RESULT_MAX_CHARS + 2_000);
     expect(text).toContain('INCOMPLETE OUTPUT');
     expect(text).toContain('The whole result is saved at /data/tool-outputs/spill-1.');
+    // shell_exec picks its environment from its workdir, so the notice names the one that saved the copy.
+    expect(text).toContain('with shell_exec in workdir "/work/repo", using grep or sed.');
     expect(text).toContain('THE END');
     // Saved before the report is stored, beside the task's shell, so no restart or eviction loses it.
     expect(mockWriteToolOutput).toHaveBeenCalledWith(long, '/work/repo');
