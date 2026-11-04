@@ -43,7 +43,7 @@
  */
 
 import { logger } from '../logger';
-import type { AgentMessageOrigin } from '../types';
+import type { AgentMessageOrigin, TaskNotificationOrigin } from '../types';
 
 /**
  * A message waiting to reach the turn that owns a thread.
@@ -59,6 +59,8 @@ export interface PendingMessage {
   attachmentIds: string[];
   /** Set when another agent sent it, so the turn reads it as that agent's. */
   agentMessage?: AgentMessageOrigin;
+  /** Set when the runtime wrote it to report a task that ended, so it is nobody's request. */
+  taskNotification?: TaskNotificationOrigin;
 }
 
 /** One claim's messages, oldest first. */

@@ -21,8 +21,18 @@ import { questionCardService, type ClosedInChat } from './question-cards/questio
 import { ASK_QUESTIONS_TOOL_NAME } from './question-cards/question-card-schema';
 import { RESUMED_REPLY_NOTICE } from '../prompts/resume-prompt';
 import { agentMessageColumns, renderAgentMessage } from '../prompts/agent-message-prompt';
+import { TASK_NOTIFICATION_COLUMNS } from '../prompts/task-notification-prompt';
 import { invokeStream } from '../invoke';
-import { ToolCallRecord, InvokeStep, InvokeError, ResumedReply, UIBlock, type AgentMessageOrigin } from '../types';
+import {
+  ToolCallRecord,
+  InvokeStep,
+  InvokeError,
+  ResumedReply,
+  UIBlock,
+  type AgentMessageOrigin,
+  type PromptSource,
+  type TaskNotificationOrigin,
+} from '../types';
 import type { ConversationMessage as HistoryRow, SteeringMessage } from '../prompts/context-builder';
 import type { ToolLifecycleListener } from '../lib/tool-lifecycle';
 import { logger } from '../logger';
@@ -105,6 +115,12 @@ export interface ChatInput {
    */
   runtimeWritten?: true;
   /**
+   * Set when the runtime wrote the message to report that a coding task the agent
+   * started in this conversation ended. `message` is the rendered notification,
+   * stored hidden from clients. Only `taskNotificationService` sets it.
+   */
+  taskNotification?: TaskNotificationOrigin;
+  /**
    * The shared-channel label of the thread, read again before each turn of the
    * exchange, so a follow-up turn sees a person who first wrote during the turn
    * before it. Takes precedence over `metadata.channelLabel`.
@@ -171,7 +187,7 @@ export interface ChatWork {
    * The message itself until its row is stored, so the boot stores it when a
    * restart came first. `acceptUserMessage` writes it.
    */
-  message?: Pick<ChatInput, 'message' | 'attachmentIds' | 'agentMessage' | 'runtimeWritten'>;
+  message?: Pick<ChatInput, 'message' | 'attachmentIds' | 'agentMessage' | 'runtimeWritten' | 'taskNotification'>;
   /**
    * The tool calls the turn has made that no stored message holds yet: a step's
    * calls are stored with the next text step. A resumed exchange stores them
@@ -203,10 +219,13 @@ export async function attachmentsHeldByChatWork(): Promise<string[]> {
  * insert lands stores it at boot.
  */
 export function chatWorkFor(
-  input: Pick<ChatInput, 'agentId' | 'userId' | 'message' | 'attachmentIds' | 'metadata' | 'agentMessage' | 'runtimeWritten'>,
+  input: Pick<
+    ChatInput,
+    'agentId' | 'userId' | 'message' | 'attachmentIds' | 'metadata' | 'agentMessage' | 'runtimeWritten' | 'taskNotification'
+  >,
   threadId: string,
 ): ChatWork {
-  const { agentId, userId, message, metadata, attachmentIds, agentMessage, runtimeWritten } = input;
+  const { agentId, userId, message, metadata, attachmentIds, agentMessage, runtimeWritten, taskNotification } = input;
   return {
     threadId,
     agentId,
@@ -217,6 +236,7 @@ export function chatWorkFor(
       attachmentIds,
       ...(agentMessage ? { agentMessage } : {}),
       ...(runtimeWritten ? { runtimeWritten } : {}),
+      ...(taskNotification ? { taskNotification } : {}),
     },
   };
 }
@@ -232,6 +252,15 @@ function cut(text: string): string {
 /** A message as a turn's prompt holds it: another agent's inside the tag that names that agent. */
 function promptText(text: string, origin: AgentMessageOrigin | undefined): string {
   return origin ? renderAgentMessage(origin, text) : text;
+}
+
+/**
+ * Who wrote the messages a turn answers: the person when any of them is theirs,
+ * else other agents when any is theirs, else the runtime.
+ */
+function promptSourceOf(messages: ReadonlyArray<Pick<PendingMessage, 'agentMessage' | 'taskNotification'>>): PromptSource {
+  if (messages.some((m) => !m.agentMessage && !m.taskNotification)) return 'person';
+  return messages.some((m) => m.agentMessage) ? 'agent' : 'task';
 }
 
 /** A call's input with each long string in it cut, so it stays JSON and replays with its arguments. */
@@ -437,6 +466,7 @@ Answer with one word: WORTHY or SKIP.`;
       text: message,
       attachmentIds: input.attachmentIds ?? [],
       ...(agentOrigin ? { agentMessage: agentOrigin } : {}),
+      ...(input.taskNotification ? { taskNotification: input.taskNotification } : {}),
     };
     // A reply a restart interrupted is never handed over: what its exchange stores
     // and delivers first belongs to that exchange alone, so it waits for the thread.
@@ -626,7 +656,7 @@ Answer with one word: WORTHY or SKIP.`;
           let prompt = promptText(message, agentOrigin);
           let appendPrompt = false;
           // Feedback is the person's to give, on a reply to something they asked.
-          let fromPerson = !agentOrigin;
+          let promptSource = promptSourceOf([pending]);
           let appendedMessageIds: string[] = [];
           // A resumed exchange stores rows after its message on purpose, and its
           // history ends on the resume notice.
@@ -647,7 +677,7 @@ Answer with one word: WORTHY or SKIP.`;
               workspaceRoot,
               prompt,
               appendPrompt,
-              fromPerson,
+              promptSource,
               appendedMessageIds,
               promptMessageId,
               verbose,
@@ -702,7 +732,7 @@ Answer with one word: WORTHY or SKIP.`;
             // message rows, so the follow-up's context build picks them up.
             prompt = leftover.map((p) => promptText(p.text, p.agentMessage)).join('\n\n');
             appendPrompt = true;
-            fromPerson = leftover.some((p) => !p.agentMessage);
+            promptSource = promptSourceOf(leftover);
             appendedMessageIds = leftover.map((p) => p.id);
             promptMessageId = undefined;
             runtimeNotices = undefined;
@@ -772,15 +802,19 @@ Answer with one word: WORTHY or SKIP.`;
    * id — see `MessageInput.id`.
    */
   async acceptUserMessage(
-    input: Pick<ChatInput, 'agentId' | 'userId' | 'message' | 'attachmentIds' | 'metadata' | 'agentMessage' | 'runtimeWritten'>,
+    input: Pick<
+      ChatInput,
+      'agentId' | 'userId' | 'message' | 'attachmentIds' | 'metadata' | 'agentMessage' | 'runtimeWritten' | 'taskNotification'
+    >,
     threadId: string,
     id?: string,
   ): Promise<{ message: ConversationMessage; titleSet: string | null }> {
-    const { agentId, userId, message, metadata, agentMessage } = input;
+    const { agentId, userId, message, metadata, agentMessage, taskNotification } = input;
     const messageId = id ?? randomUUID();
 
     // Owed an answer from before it is stored until the exchange that answers it
-    // ends, so no restart in between loses it.
+    // ends, so no restart in between loses it. The row holds the message until
+    // then, so a restart before the insert lands stores it at boot.
     await pendingWorkService.begin('chat', messageId, chatWorkFor(input, threadId));
 
     // The message text arrives already prefixed with the sender's mention
@@ -790,7 +824,9 @@ Answer with one word: WORTHY or SKIP.`;
       id: messageId,
       content: message,
       role: 'USER' as const,
-      ...(agentMessage
+      ...(taskNotification
+        ? TASK_NOTIFICATION_COLUMNS
+        : agentMessage
         ? agentMessageColumns(agentMessage)
         : {
             triggeredBy: 'USER_INPUT' as const,
@@ -800,7 +836,7 @@ Answer with one word: WORTHY or SKIP.`;
     };
     // A reply the person typed stands in for the answers to any card still waiting.
     // The reply and the card's new status commit together, and clients see the card after that.
-    const typed = !agentMessage && !input.runtimeWritten;
+    const typed = !agentMessage && !taskNotification && !input.runtimeWritten;
     let closedCards: ClosedInChat[] = [];
     const { message: userMessage, titleSet } = typed
       ? await conversationService.addMessage(threadId, row, async (tx) => {
@@ -832,7 +868,7 @@ Answer with one word: WORTHY or SKIP.`;
     // on every device — the sender's included, which reads the copy as the
     // confirmation that it was stored. Any other channel shows the message
     // itself.
-    if (origin?.showsWholeConversation) {
+    if (origin?.showsWholeConversation && !taskNotification) {
       await messageDeliveryService.showInConversation(userId, userMessage);
     }
 
@@ -882,8 +918,8 @@ Answer with one word: WORTHY or SKIP.`;
     prompt: string;
     /** Restate `prompt` as the trailing user message (coalesced follow-up). */
     appendPrompt: boolean;
-    /** The turn answers the person, not only other agents, so the person may rate it. */
-    fromPerson: boolean;
+    /** Who wrote the messages the turn answers. Only a turn that answers the person may be rated. */
+    promptSource: PromptSource;
     appendedMessageIds: string[];
     /** Snapshot taken once inside the lock; gates intermediate delivery. */
     verbose: boolean;
@@ -921,7 +957,7 @@ Answer with one word: WORTHY or SKIP.`;
       agentId,
       mode: 'chat',
       prompt,
-      promptFromAgent: !params.fromPerson,
+      promptSource: params.promptSource,
       appendPrompt: params.appendPrompt,
       appendedMessageIds: params.appendedMessageIds,
       promptMessageId: params.promptMessageId,
@@ -1001,7 +1037,7 @@ Answer with one word: WORTHY or SKIP.`;
     // Stream is done. The buffered step (if any) is the LAST text step:
     // attach the accumulated blocks and the feedback decision here.
     if (bufferedStep) {
-      const includeFeedback = params.fromPerson && await this.shouldShowFeedback(
+      const includeFeedback = params.promptSource === 'person' && await this.shouldShowFeedback(
         threadId, prompt, bufferedStep.text, userId, agentId, params.abortSignal,
       );
       agentMessage = await messageDeliveryService.publish(

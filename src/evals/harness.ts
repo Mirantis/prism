@@ -39,7 +39,8 @@ import { COMPACTION_PROMPT } from '../prompts/compaction-prompt';
 import { scheduledRunPrompt } from '../prompts/scheduled-run-prompt';
 import { HEARTBEAT_PROMPT } from '../services/heartbeat.service';
 import { agentMessageColumns } from '../prompts/agent-message-prompt';
-import type { AgentContext, AgentMessageOrigin, HeartbeatTrigger, InvokeRequest, TaskLastSend } from '../types';
+import { TASK_NOTIFICATION_COLUMNS } from '../prompts/task-notification-prompt';
+import type { AgentContext, AgentMessageOrigin, HeartbeatTrigger, InvokeRequest, PromptSource, TaskLastSend } from '../types';
 import type { ChatPlatform } from '../services/channel-adapter.interface';
 import { slackChannelLabel } from '../utils/slack-formatter';
 import { teamsChannelLabel } from '../utils/teams-formatter';
@@ -147,6 +148,8 @@ export type HistoryEntry =
   | { user: string; attachments?: AttachmentMeta[]; sender?: { id: string; name: string } }
   /** A message from another agent of the project. */
   | { fromAgent: AgentMessageOrigin; text: string }
+  /** The runtime's report that a coding task ended, as the engine stores it. */
+  | { taskNotification: string }
   | {
       agent: string;
       toolCalls?: { tool: string; input: unknown; output: unknown }[];
@@ -340,6 +343,9 @@ function toStoredMessage(entry: HistoryEntry, index: number): ConversationMessag
   if ('fromAgent' in entry) {
     return { id, role: 'USER', content: entry.text, ...agentMessageColumns(entry.fromAgent) };
   }
+  if ('taskNotification' in entry) {
+    return { id, role: 'USER', content: entry.taskNotification, ...TASK_NOTIFICATION_COLUMNS };
+  }
   return {
     id,
     role: 'AGENT',
@@ -365,8 +371,10 @@ function toStoredMessage(entry: HistoryEntry, index: number): ConversationMessag
 export async function toolRiskDecision(input: {
   mode: 'chat' | 'heartbeat';
   prompt: string;
-  /** The prompt is another agent's message, as a turn on one sends it. */
-  promptFromAgent?: boolean;
+  /** Who wrote the prompt, as a turn's engine sets it; absent is the person. */
+  promptSource?: PromptSource;
+  /** The person's earlier messages in the thread, oldest first. */
+  earlier?: string[];
   tool: string;
   input: Record<string, unknown>;
 }): Promise<'allow' | 'block'> {
@@ -389,8 +397,8 @@ export async function toolRiskDecision(input: {
     input: input.input,
     invocationMode: input.mode,
     initialPrompt: input.prompt,
-    initialPromptFromAgent: input.promptFromAgent === true,
-    messages: [{ role: 'user', content: input.prompt }],
+    initialPromptSource: input.promptSource,
+    messages: [...(input.earlier ?? []), input.prompt].map((content) => ({ role: 'user' as const, content })),
     agentGuide: context.agentMd,
     userId: EVAL_USER_ID,
     agentId: EVAL_AGENT_ID,

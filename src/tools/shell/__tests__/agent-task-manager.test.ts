@@ -13,13 +13,22 @@ const { mockBeginWork, mockUpdateWork, mockSettleWork, mockEndWork, mockStopLeft
   mockStopLeftover: vi.fn(),
 }));
 
+const { shutdown } = vi.hoisted(() => ({ shutdown: new AbortController() }));
+
 vi.mock('../../../services/pending-work.service', () => ({
   pendingWorkService: {
     begin: mockBeginWork,
     update: mockUpdateWork,
     settle: mockSettleWork,
     end: mockEndWork,
+    shutdownSignal: shutdown.signal,
   },
+}));
+
+const { mockDeliver } = vi.hoisted(() => ({ mockDeliver: vi.fn() }));
+
+vi.mock('../../../services/task-notification.service', () => ({
+  taskNotificationService: { deliver: mockDeliver },
 }));
 
 const { mockReadPluginConfigs, mockConfiguredServers } = vi.hoisted(() => ({
@@ -846,5 +855,97 @@ describe('AgentTaskManager', () => {
       });
       expect(() => getRun()).toThrow('run not started yet');
     });
+  });
+});
+
+describe('a task started in a chat conversation', () => {
+  const target = { threadId: 'thread-1', agentId: 'agent-1', userId: 'user-1', originChannel: 'websocket' };
+  let manager: AgentTaskManager;
+  let getRun: () => FakeRun;
+
+  beforeEach(() => {
+    ({ manager, getRun } = makeManager());
+    mockBeginWork.mockResolvedValue(undefined);
+    mockDeliver.mockReset().mockResolvedValue(undefined);
+    mockEndWork.mockClear();
+  });
+
+  it('reports how it ended to that conversation, and the report holds the result', async () => {
+    const { taskId } = await manager.startTask({ prompt: 'upgrade React', notify: target });
+    getRun().emit({ type: 'session', sessionId: 'session-9' });
+    getRun().emit({ type: 'text', text: 'Upgraded; 0 type errors.' });
+    getRun().finish({ stopReason: 'end_turn', turns: 7, message: 'ok' });
+    await flush();
+
+    expect(mockDeliver).toHaveBeenCalledWith(target, taskId, expect.any(String));
+    const text = mockDeliver.mock.calls[0][2] as string;
+    expect(text).toContain(`<task-notification task-id="${taskId}" agent="claude-code" stop-reason="end_turn" turns="7" session-id="session-9">`);
+    expect(text).toContain('Upgraded; 0 type errors.');
+    // The stored report replaces the task: a restart keeps nothing, and a poll after it reads the same end.
+    expect(mockEndWork).toHaveBeenCalledWith('coding-task', taskId);
+    await expect(manager.readStatus(taskId)).resolves.toMatchObject({
+      completed: true,
+      stopReason: 'end_turn',
+      turns: 7,
+      sessionId: 'session-9',
+      result: 'Upgraded; 0 type errors.',
+    });
+  });
+
+  it('reports nothing for a task whose result a poll already handed out', async () => {
+    const { taskId } = await manager.startTask({ prompt: 'upgrade React', notify: target });
+    const poll = manager.readStatus(taskId, 1_000);
+    getRun().finish(SUCCESS);
+    expect((await poll).completed).toBe(true);
+    await flush();
+
+    expect(mockDeliver).not.toHaveBeenCalled();
+  });
+
+  it('reports nothing for a task the agent stopped, which answered in the stop', async () => {
+    const { taskId } = await manager.startTask({ prompt: 'upgrade React', notify: target });
+    await manager.stopTask(taskId);
+    await flush();
+
+    expect(mockDeliver).not.toHaveBeenCalled();
+  });
+
+  it('keeps the task for the next boot when the report cannot be stored', async () => {
+    mockDeliver.mockRejectedValue(new Error('database is locked'));
+    const { taskId } = await manager.startTask({ prompt: 'upgrade React', notify: target });
+    getRun().finish(SUCCESS);
+    await flush();
+
+    expect(mockDeliver).toHaveBeenCalledTimes(1);
+    expect(mockEndWork).not.toHaveBeenCalled();
+    expect(mockSettleWork).toHaveBeenLastCalledWith('coding-task', taskId, expect.objectContaining({
+      params: expect.objectContaining({ notify: target }),
+      finished: expect.objectContaining({ stopReason: 'end_turn' }),
+    }));
+  });
+
+  it('sends the report a restart held back', async () => {
+    await manager.resume([
+      {
+        key: 'task-1',
+        payload: {
+          params: { prompt: 'upgrade React', agent: 'claude-code', notify: target },
+          finished: { stopReason: 'end_turn', turns: 2, result: 'Done.' },
+        },
+        attempts: 1,
+      } as never,
+    ]);
+    await flush();
+
+    expect(mockDeliver).toHaveBeenCalledWith(target, 'task-1', expect.stringContaining('Done.'));
+  });
+
+  it('leaves a task without a conversation to its polls', async () => {
+    const { taskId } = await manager.startTask({ prompt: 'upgrade React' });
+    getRun().finish(SUCCESS);
+    await flush();
+
+    expect(mockDeliver).not.toHaveBeenCalled();
+    expect((await manager.readStatus(taskId)).result).toBe('ok');
   });
 });

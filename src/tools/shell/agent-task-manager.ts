@@ -16,6 +16,11 @@
  * The boot relaunches a task a restart stopped, resuming its session when one
  * was reported, and keeps the result of a task that ended unread. A relaunch
  * first stops the process a crash left running, so two runs never share a session.
+ *
+ * A task started in a chat conversation reports how it ended to that
+ * conversation (`taskNotificationService`), and the stored report is how the
+ * agent reads the result. A task the agent stopped, or whose result it already
+ * read with `coding_agent_status`, reports nothing.
  */
 import { randomUUID } from 'crypto';
 import { config, type CodingAgentName } from '../../config';
@@ -36,6 +41,8 @@ import { stopLeftoverProcess } from '../../lib/execution-environments/leftover-p
 import { pluginMcpService } from '../../services/plugin-mcp.service';
 import { pendingWorkService, type PendingWorkItem } from '../../services/pending-work.service';
 import { RESUMED_CODING_TASK_PROMPT } from '../../prompts/resume-prompt';
+import { renderCodingTaskNotification } from '../../prompts/task-notification-prompt';
+import type { TaskNotificationTarget } from '../../services/task-notification.service';
 
 export const MAX_CONCURRENT = 3;
 export const DEFAULT_WAIT_MS = 5_000;
@@ -58,6 +65,8 @@ export interface AgentTaskParams {
   maxTurns?: number;
   sessionId?: string;
   debug?: boolean;
+  /** The conversation the task reports to when it ends. Absent: the agent polls for the result. */
+  notify?: TaskNotificationTarget;
 }
 
 export interface AgentTaskStatus {
@@ -107,13 +116,19 @@ interface TaskEntry {
   params: CodingTaskWork['params'];
   /** Set by stopTask so drive()'s finalize reports 'stopped', not 'error'. */
   stopping?: boolean;
+  /** Set when a poll has handed out how the task ended, so no notification repeats it. */
+  resultRead?: boolean;
   /** The drive() promise, so stopTask can await the final drain. */
   driver?: Promise<void>;
 }
 
 export class AgentTaskManager {
   private tasks = new Map<string, TaskEntry>();
-  private reaped = new Set<string>();
+  /**
+   * Forgotten tasks: the final status of one a notification reported, which a poll
+   * after it gets again, or null for one a poll or a stop handed out.
+   */
+  private reaped = new Map<string, AgentTaskStatus | null>();
   /** Starts waiting for their pending-work row, which hold a slot already. */
   private starting = 0;
 
@@ -194,6 +209,7 @@ export class AgentTaskManager {
         waiters: [],
         reading: false,
       });
+      this.report(taskId);
       return;
     }
     const agent = this.resolveAgent(work.params.agent);
@@ -272,17 +288,13 @@ export class AgentTaskManager {
       entry.state.result = 'Coding task failed while reading output.';
       this.record(taskId, entry);
       this.notify(entry);
+      this.report(taskId);
     });
   }
 
   async readStatus(taskId: string, waitMs?: number): Promise<AgentTaskStatus> {
     const entry = this.tasks.get(taskId);
-    if (!entry) {
-      if (this.reaped.has(taskId)) {
-        throw new Error(`Task ${taskId} has already ended and been cleaned up`);
-      }
-      throw new Error(`Unknown task: ${taskId}`);
-    }
+    if (!entry) return this.ended(taskId);
     if (entry.reading) {
       throw new Error(`Task ${taskId} already has a pending read`);
     }
@@ -330,12 +342,7 @@ export class AgentTaskManager {
    */
   async stopTask(taskId: string): Promise<AgentTaskStatus> {
     const entry = this.tasks.get(taskId);
-    if (!entry) {
-      if (this.reaped.has(taskId)) {
-        throw new Error(`Task ${taskId} has already ended and been cleaned up`);
-      }
-      throw new Error(`Unknown task: ${taskId}`);
-    }
+    if (!entry) return this.ended(taskId);
 
     if (!entry.state.completed) {
       // A run that has already exited is mid-finalize, not running: its result
@@ -395,9 +402,18 @@ export class AgentTaskManager {
 
   // ---------- internal ----------
 
+  /** How a forgotten task ended, when a notification reported it; otherwise why the id is unknown. */
+  private ended(taskId: string): AgentTaskStatus {
+    const reaped = this.reaped.get(taskId);
+    if (reaped) return reaped;
+    if (reaped === null) throw new Error(`Task ${taskId} has already ended and been cleaned up`);
+    throw new Error(`Unknown task: ${taskId}`);
+  }
+
   private drainAndMaybeReap(taskId: string, entry: TaskEntry): AgentTaskStatus {
     const status = drainTask(entry.state);
     if (!entry.state.completed) return status;
+    entry.resultRead = true;
     // A read that hands out output keeps the entry for the poll after it. The
     // agent has read how the task ended either way, so no restart keeps it.
     if (status.output === '') this.reap(taskId);
@@ -405,15 +421,18 @@ export class AgentTaskManager {
     return status;
   }
 
-  /** Forget a task, remembering the id so a later poll can say why it's gone. */
-  private reap(taskId: string): void {
+  /**
+   * Forget a task, remembering the id so a later poll can say why it's gone, and
+   * the final status a notification reported, which that poll gets again.
+   */
+  private reap(taskId: string, reported: AgentTaskStatus | null = null): void {
     this.tasks.delete(taskId);
     // The agent has read how the task ended, so no restart needs to keep it.
     pendingWorkService.end('coding-task', taskId);
-    this.reaped.add(taskId);
+    this.reaped.set(taskId, reported);
     // Keep the reaped set from growing without bound.
     if (this.reaped.size > MAX_CONCURRENT * 10) {
-      const first = this.reaped.values().next().value;
+      const first = this.reaped.keys().next().value;
       if (first !== undefined) this.reaped.delete(first);
     }
   }
@@ -439,6 +458,39 @@ export class AgentTaskManager {
     const waiters = entry.waiters;
     entry.waiters = [];
     for (const w of waiters) w();
+  }
+
+  /**
+   * Send how an ended task went to the conversation that started it, then forget
+   * the task: the stored report holds its result. Nothing goes out for a task
+   * whose result a poll handed out or a waiting poll is about to, nor while the
+   * process shuts down, which leaves the task's row for the next boot to report.
+   * A poll that reads the result while the report is being stored tells the
+   * agent twice: a rare race, traded for polls that take no lock.
+   */
+  private report(taskId: string): void {
+    const entry = this.tasks.get(taskId);
+    const target = entry?.params.notify;
+    if (!entry || !target || entry.resultRead || entry.reading || pendingWorkService.shutdownSignal.aborted) return;
+    const { state } = entry;
+    const text = renderCodingTaskNotification({
+      taskId,
+      agent: state.agent,
+      stopReason: state.stopReason ?? 'error',
+      turns: state.turns,
+      sessionId: state.sessionId,
+      result: state.result ?? '',
+    });
+    void (async () => {
+      // Imported at the call: the service reaches the conversation engine, whose
+      // tool collection imports this module.
+      const { taskNotificationService } = await import('../../services/task-notification.service');
+      await taskNotificationService.deliver(target, taskId, text);
+      if (this.tasks.get(taskId) === entry) this.reap(taskId, drainTask(entry.state));
+    })().catch((err) => {
+      // The row keeps the result, so the next boot sends the report again.
+      logger.error({ err, taskId }, '[AgentTask] Could not send the task notification');
+    });
   }
 
   private async drive(taskId: string, entry: TaskEntry, agent: CodingAgent, run: CodingAgentRun): Promise<void> {
@@ -516,6 +568,8 @@ export class AgentTaskManager {
     this.record(taskId, entry);
     this.notify(entry);
     logger.info({ taskId, stopReason, turns: outcome.turns }, '[AgentTask] completed');
+    // A task the agent stopped answered in that call.
+    if (!entry.stopping) this.report(taskId);
   }
 }
 

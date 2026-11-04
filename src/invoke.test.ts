@@ -1139,7 +1139,7 @@ describe('invoke', () => {
         mode: 'observe',
         invocationMode: 'cron',
         initialPrompt: 'check deployment',
-        initialPromptFromAgent: false,
+        initialPromptSource: undefined,
         agentGuide: '',
         userId: 'user-test-456',
         agentId: 'agent-test-123',
@@ -1151,11 +1151,11 @@ describe('invoke', () => {
     mockGetShellTools.mockReturnValue({ shell_exec: { description: 'exec' } });
     config.toolRiskGateMode = 'enforce';
 
-    await invoke(createTestInvokeRequest({ promptFromAgent: true }));
+    await invoke(createTestInvokeRequest({ promptSource: 'agent' }));
 
     expect(mockWithToolRiskGate).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ initialPromptFromAgent: true }),
+      expect.objectContaining({ initialPromptSource: 'agent' }),
     );
   });
 

@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { config, CODING_AGENTS } from '../../config';
 import { resolvePath } from './workspace';
 import { AgentTaskParams, getAgentTaskManager } from './agent-task-manager';
+import type { TaskNotificationTarget } from '../../services/task-notification.service';
 
 /**
  * Built per tool-set rather than once at module load: which agents are
@@ -85,6 +86,7 @@ export const codingAgentStopInput = z.object({
 export async function runCodingAgent(
   input: z.infer<ReturnType<typeof buildCodingAgentInput>>,
   workspace: string,
+  notify?: TaskNotificationTarget,
 ) {
   const workdir = input.workdir ? resolvePath(workspace, input.workdir) : workspace;
   const params: AgentTaskParams = {
@@ -98,9 +100,15 @@ export async function runCodingAgent(
     maxTurns: input.maxTurns,
     sessionId: input.sessionId,
     debug: input.debug,
+    ...(notify ? { notify } : {}),
   };
-  return getAgentTaskManager().startTask(params);
+  const started = await getAgentTaskManager().startTask(params);
+  return notify ? { ...started, next: NOTIFIED_TASK_NEXT } : started;
 }
+
+/** What the agent does after starting a task whose result comes back as a task notification. */
+export const NOTIFIED_TASK_NEXT =
+  'End your turn now unless you have other work. The result arrives in this conversation as a task notification when the task ends.';
 
 export async function runCodingAgentStatus(input: z.infer<typeof codingAgentStatusInput>) {
   return getAgentTaskManager().readStatus(input.taskId, input.waitMs);
