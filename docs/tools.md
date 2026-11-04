@@ -203,6 +203,14 @@ names each action they refused. A Codex task runs without Codex's sandbox and ca
 write anywhere its user can; a Codex plan task is read-only by instruction only. See
 [Configuration](configuration.md#what-a-coding-task-may-do).
 
+## Monitors
+
+In a chat, ask the agent to tell you when something happens, such as an error
+in a log, a service coming up or a job ending, and it watches for it in the
+background while you keep talking. It replies the moment the event happens. A
+watch stops after 5 minutes unless you ask for longer, up to 30 minutes, and the
+agent can start it again.
+
 ## Reading web pages
 
 Give the agent the address of a public page and it reads the page's text without

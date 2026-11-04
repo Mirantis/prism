@@ -17,6 +17,8 @@ import {
 import { resolvePath } from './workspace';
 import type { PendingFileWrites } from '../../lib/pending-file-writes';
 import type { TaskNotificationTarget } from '../../services/task-notification.service';
+import { monitorInput, monitorStopInput, runMonitor, runMonitorStop } from './monitor';
+import { BATCH_MS, MAX_MONITORS, MAX_NOTIFICATIONS_PER_MINUTE } from './monitor-manager';
 import {
   runCodingAgent,
   runCodingAgentStatus,
@@ -190,6 +192,32 @@ Available agent values: ${availableAgents}. Default agent: ${config.codingAgent}
         'Send a signal to a running process. Default SIGTERM; pass SIGKILL for force-kill, SIGINT for Ctrl-C semantics, SIGHUP for hangup. Returns { ok: true } if the signal was delivered to a running process, { ok: false } if the process was already gone.',
       inputSchema: shellKillInput,
       execute: async (input) => runShellKill(input),
+    }),
+
+    // A monitor reports to a chat conversation, so only a chat turn has one.
+    ...(taskNotifications ? getMonitorTools(workspace, taskNotifications) : {}),
+  };
+}
+
+function getMonitorTools(workspace: string, notify: TaskNotificationTarget): Record<string, Tool> {
+  return {
+    monitor: tool({
+      description: `Start a monitor: a shell command whose stdout lines are events. Each line it prints reaches this conversation as a task notification that starts a new turn, so you can end your turn and react when something happens. Lines printed within ${BATCH_MS} ms of each other arrive as one notification. The monitor ends when the command exits (one last notification, with the exit code), when timeoutMs passes (default 5 minutes, at most 30, with one last notification: start it again if the watch is still needed), or when it prints more than ${MAX_NOTIFICATIONS_PER_MINUTE} times a minute.
+
+Use it instead of a sleep, a polling loop or a scheduled check whenever you wait for something to happen:
+- One notification per occurrence: a command that runs until the deadline, such as \`tail -f app.log | grep --line-buffered ERROR\`.
+- One notification when a condition holds: a command that exits then, such as \`until curl -sf https://host/health; do sleep 5; done; echo healthy\`.
+
+Every stage of a pipe must flush each line, or the lines wait in its buffer: grep needs --line-buffered, awk needs fflush(). Match the failures as well as the success you wait for (Error|FAIL|Traceback|exited), because a monitor that stays silent looks the same as one still waiting. Only stdout is an event: add 2>&1 to see a command's errors. Poll a remote API at most every 30 seconds. Returns { monitorId }; stop a monitor with monitor_stop. At most ${MAX_MONITORS} run at once.`,
+      inputSchema: monitorInput,
+      execute: async (input) => runMonitor(input, workspace, notify),
+    }),
+
+    monitor_stop: tool({
+      description:
+        'Stop a monitor you no longer need. No notification follows. Returns { ok: true } if it was running, { ok: false } if it had already ended.',
+      inputSchema: monitorStopInput,
+      execute: async (input) => runMonitorStop(input),
     }),
   };
 }

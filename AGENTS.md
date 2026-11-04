@@ -992,6 +992,13 @@ restart resumes it there as a task notification too.
   stored row is not stored again, so a restart in between reports it once.
 - **Read once.** A task stopped with `coding_agent_stop`, or whose result a poll
   handed out or is waiting to, reports nothing. Other runs still poll.
+- **Monitors.** In a chat turn the `monitor` tool runs a command
+  (`tools/shell/monitor-manager.ts`) whose stdout lines become notifications
+  through the same service: lines within 200 ms are one, at most 12 a minute,
+  then the command is stopped. Its exit, its deadline (5 minutes by default, 30
+  at most) and that stop each send one last notice; `monitor_stop` sends none. A
+  `monitor` row keeps it from its start to its last notice, so the boot after a
+  restart stops a command a crash left running and reports that the watch ended.
 
 ### Turn Steering (mid-turn messages)
 

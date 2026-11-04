@@ -77,6 +77,7 @@ import { ensureCodingAgentsDetected } from './lib/coding-agents/availability';
 import { loadSubscriptionSwitches } from './lib/coding-agents/subscription-switch';
 import { getProcessManager } from './tools/shell/process-manager';
 import { getAgentTaskManager } from './tools/shell/agent-task-manager';
+import { getMonitorManager } from './tools/shell/monitor-manager';
 import { cancelModelCatalogRefresh, refreshModelCatalog } from './lib/model-catalog';
 import { createProvider, missingProviderSettings } from './lib/llm-providers/create-provider';
 import { runBackfill } from './scripts/backfill-embeddings';
@@ -352,6 +353,7 @@ const initialize = async () => {
       'coding-task': (items, givenUp) => getAgentTaskManager().resume(items, givenUp),
       cron: (items, givenUp) => cronSchedulerService.resume(items, givenUp),
       heartbeat: (items, givenUp) => heartbeatService.resume(items, givenUp),
+      monitor: (items, givenUp) => getMonitorManager().resume(items, givenUp),
     });
 
     // Boot keeps the schedule the last run set, so a restart cannot defer a
@@ -472,6 +474,7 @@ const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResp
   // container, which is why `start()` removes a stale one by name.
   getProcessManager().killAll();
   getAgentTaskManager().killAll();
+  getMonitorManager().killAll();
   await getExecutionEnvironment().shutdown();
 
   webSocketGatewayService.closeAll();
