@@ -994,11 +994,14 @@ restart resumes it there as a task notification too.
   handed out or is waiting to, reports nothing. Other runs still poll.
 - **Monitors.** In a chat turn the `monitor` tool runs a command
   (`tools/shell/monitor-manager.ts`) whose stdout lines become notifications
-  through the same service: lines within 200 ms are one, at most 12 a minute,
-  then the command is stopped. Its exit, its deadline (5 minutes by default, 30
-  at most) and that stop each send one last notice; `monitor_stop` sends none. A
-  `monitor` row keeps it from its start to its last notice, so the boot after a
-  restart stops a command a crash left running and reports that the watch ended.
+  through the same service: lines within 200 ms of the first are one, at most
+  12 a minute, then the command is stopped (SIGKILL if SIGTERM does not end it
+  within 2 s). Its exit, its deadline (5 minutes by default, 30 at most) and
+  that stop each send one last notice, stored under the monitor id;
+  `monitor_stop` sends none. A `monitor` row keeps it, with its event count,
+  from its start to its last notice, so the boot after a restart stops a command
+  a crash left running and reports that the watch ended. A running monitor keeps
+  the agent from idle, so the updater waits for it.
 
 ### Turn Steering (mid-turn messages)
 
