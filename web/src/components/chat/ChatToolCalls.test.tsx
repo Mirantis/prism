@@ -36,6 +36,21 @@ describe('ChatToolCalls', () => {
     expect(screen.getByText(/cut — 30\.0K of 500\.0K chars/)).toBeTruthy();
   });
 
+  it('lists a program call, not the calls the program made', () => {
+    render(
+      <ChatToolCalls
+        toolCalls={[
+          call({ tool: 'run_program', output: '3 files' }),
+          call({ parentTool: 'run_program' }),
+          call({ parentTool: 'run_program', success: false }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText('1 tool used')).toBeTruthy();
+    expect(screen.queryByText(/failed/)).toBeNull();
+  });
+
   it('says nothing about a cut when the result was delivered whole', () => {
     render(<ChatToolCalls toolCalls={[call()]} />);
     expandAll();

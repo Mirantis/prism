@@ -375,8 +375,10 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
     // `run_program` calls the gated tools without the output capture, so a program
     // filters a whole result; the program's own output is captured instead. It is
     // not gated itself, since every call it makes is. The calls a program makes go
-    // into the step's record after the program's own (see `onStepFinish`).
-    const programCalls = new Map<string, ProgramCall[]>();
+    // into the step's record after the program's own (see `onStepFinish`). Each is
+    // kept as its record, built when the call ends, so a raw result is not held for
+    // the rest of the program.
+    const programCalls = new Map<string, { records: ToolCallRecord[]; attachmentIds: string[] }>();
     const programTool = withToolOutputCapture(
       withToolLifecycleEvents(
         {
@@ -386,8 +388,11 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
             invocationMode: request.mode,
             pendingWrites: pendingFileWrites,
             onCall: (call) => {
-              const calls = programCalls.get(call.parentCallId) ?? [];
-              calls.push(call);
+              const calls = programCalls.get(call.parentCallId) ?? { records: [], attachmentIds: [] };
+              calls.records.push(programCallRecord(call));
+              if ('output' in call) {
+                calls.attachmentIds.push(...extractAttachmentIds([call], [{ toolCallId: call.toolCallId, output: call.output }]));
+              }
               programCalls.set(call.parentCallId, calls);
             },
           }),
@@ -678,7 +683,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
         // made replay a different rendering besides, since JSON.stringify keeps an
         // MCP envelope and its escaping while the model was shown the joined text.
         const stepToolCalls: ToolCallRecord[] = [];
-        const innerCalls: ProgramCall[] = [];
+        const innerAttachmentIds: string[] = [];
         for (const tc of step.toolCalls) {
           const tr = step.toolResults.find((r) => r.toolCallId === tc.toolCallId);
           const riskErrorPart = step.content?.find(
@@ -725,18 +730,15 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
           const inner = programCalls.get(tc.toolCallId);
           if (inner) {
             programCalls.delete(tc.toolCallId);
-            stepToolCalls.push(...inner.map((call) => programCallRecord(call, tc.toolName)));
-            innerCalls.push(...inner);
+            stepToolCalls.push(...inner.records);
+            innerAttachmentIds.push(...inner.attachmentIds);
           }
         }
 
         const blocks = extractBlocks(step.text);
         const attachmentIds = [
           ...extractAttachmentIds(step.toolCalls, step.toolResults),
-          ...extractAttachmentIds(
-            innerCalls,
-            innerCalls.flatMap((call) => ('output' in call ? [{ toolCallId: call.toolCallId, output: call.output }] : [])),
-          ),
+          ...innerAttachmentIds,
         ];
         const usage = toStepUsage(modelId, step.usage);
         const inputTokens = step.usage?.inputTokens;
@@ -1163,7 +1165,7 @@ export function extractAttachmentIds(
  * call's: the model-facing view of the result, or the gate's summary of a refusal
  * so that `hasRiskBlockedCall` finds it.
  */
-function programCallRecord(call: ProgramCall, parentTool: string): ToolCallRecord {
+function programCallRecord(call: ProgramCall): ToolCallRecord {
   const rendered = 'output' in call ? renderToolResultDetailed(call.output, { toolName: call.toolName }) : undefined;
   const riskError = isToolRiskGateError(call.error) ? call.error : undefined;
   return {
@@ -1183,7 +1185,7 @@ function programCallRecord(call: ProgramCall, parentTool: string): ToolCallRecor
     timestamp: new Date().toISOString(),
     ...(rendered ? { rendered: true as const } : {}),
     ...(rendered?.truncation ? { truncated: rendered.truncation } : {}),
-    parentTool,
+    parentTool: PROGRAM_TOOL_NAME,
   };
 }
 

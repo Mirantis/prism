@@ -972,6 +972,15 @@ describe('splitTail', () => {
     expect(request.fromUser).toBe(true);
   });
 
+  it('sizes a row by the tool calls replay sends, not the calls a program made', () => {
+    const program = { tool: 'run_program', input: '{}', output: 'one line' };
+    const inner = { tool: 'web_fetch', input: '{}', output: 'x'.repeat(30_000), parentTool: 'run_program' };
+    const [withInner] = toForkRows([{ id: 'a1', role: 'AGENT', content: 'done', toolCalls: [program, inner] }]);
+    const [alone] = toForkRows([{ id: 'a1', role: 'AGENT', content: 'done', toolCalls: [program] }]);
+
+    expect(withInner.contentChars).toBe(alone.contentChars);
+  });
+
   it('summarizes everything with a tail of 0', () => {
     mockConfig.compactionTailMessages = 0;
     const rows = [row('u0', true), row('a0', false)];

@@ -996,8 +996,14 @@ export function toForkRows(
     externalMessageId: m.externalMessageId ?? null,
     internalStep: m.internalStep ?? false,
     fromUser: m.role === 'USER' && !m.internalStep,
-    contentChars: m.content.length + (m.toolCalls ? JSON.stringify(m.toolCalls).length : 0),
+    contentChars: m.content.length + (m.toolCalls ? JSON.stringify(replayedToolCalls(m.toolCalls)).length : 0),
   }));
+}
+
+/** The tool calls replay sends: a call a program made is left out, as `parseToolCalls` leaves it out. */
+function replayedToolCalls(toolCalls: unknown): unknown {
+  if (!Array.isArray(toolCalls)) return toolCalls;
+  return toolCalls.filter((call) => typeof (call as { parentTool?: unknown } | null)?.parentTool !== 'string');
 }
 
 /**

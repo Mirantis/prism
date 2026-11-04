@@ -9,9 +9,13 @@ interface ChatToolCallsProps {
   toolCalls: ToolCallRecord[];
 }
 
-/** The tools a reply used, folded into one chip that opens into the calls themselves. */
-export default function ChatToolCalls({ toolCalls }: ChatToolCallsProps) {
+/**
+ * The tools a reply used, folded into one chip that opens into the calls themselves.
+ * A call a program made is left out: its program's call shows the program and its output.
+ */
+export default function ChatToolCalls({ toolCalls: allCalls }: ChatToolCallsProps) {
   const [open, setOpen] = useState(false);
+  const toolCalls = allCalls.filter((tc) => tc.parentTool === undefined);
   if (toolCalls.length === 0) return null;
   const failCount = toolCalls.filter((tc) => !tc.success).length;
   return (

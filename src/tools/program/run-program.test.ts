@@ -109,6 +109,26 @@ describe('run_program', () => {
     expect(output).toContain('pod-a\npod-b\npod-a\ncluster unreachable');
   });
 
+  it('reports an MCP error result once, as a failed call', async () => {
+    const calls: ProgramCall[] = [];
+    const broken = {
+      ...tool({
+        description: 'MCP.',
+        inputSchema: z.object({}),
+        execute: async () => ({ content: [{ type: 'text', text: 'cluster unreachable' }], isError: true }),
+      }),
+      toModelOutput: () => ({ type: 'text', value: '' }),
+    } as Tool;
+    const program = createProgramTool(
+      { broken },
+      { userId: 'u', agentId: 'a', invocationMode: 'chat', onCall: (call) => calls.push(call) },
+    );
+    await execute(program, `try { await tools.broken(); } catch {}`);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).not.toHaveProperty('output');
+    expect(calls[0].error).toEqual(new Error('cluster unreachable'));
+  });
+
   it('says so when the output was cut at the print cap, and keeps the return value', async () => {
     const program = createProgramTool(inventoryTools(), { userId: 'u', agentId: 'a', invocationMode: 'chat' });
     const output = await execute(

@@ -61,9 +61,9 @@ export interface ProgramCall {
   toolCallId: string;
   toolName: string;
   input: unknown;
-  /** The tool's result, when it returned one. */
+  /** The tool's result, when the call succeeded. */
   output?: unknown;
-  /** What the call threw, when it threw: a refusal by the risk gate included. */
+  /** Why the call failed: what it threw, a refusal by the risk gate included, or an MCP error result. */
   error?: unknown;
 }
 
@@ -102,20 +102,31 @@ export function createProgramTool(tools: Record<string, Tool>, options: ProgramT
             callIndex++;
             const toolCallId = `${parentCallId}:${callIndex}`;
             const callOptions = { ...executionOptions, toolCallId, abortSignal: signal };
+            const report = (outcome: { output: unknown } | { error: unknown }) =>
+              options.onCall?.({ parentCallId, toolCallId, toolName: name, input: parsed, ...outcome });
+            let output: unknown;
             try {
               // As the SDK does for a direct call: a write registers here, and a
               // reader announces itself, before the call executes.
               await target.onInputAvailable?.({ ...callOptions, input: parsed });
-              const output: unknown = await target.execute(parsed, callOptions);
-              options.onCall?.({ parentCallId, toolCallId, toolName: name, input: parsed, output });
-              return programValue(output);
+              output = await target.execute(parsed, callOptions);
             } catch (error) {
-              options.onCall?.({ parentCallId, toolCallId, toolName: name, input: parsed, error });
+              report({ error });
               throw error;
             } finally {
               // A refused write never reaches its own settle.
               options.pendingWrites?.settle(toolCallId);
             }
+            // An MCP error result is a failed call, reported once as its error.
+            let value: unknown;
+            try {
+              value = programValue(output);
+            } catch (error) {
+              report({ error });
+              throw error;
+            }
+            report({ output });
+            return value;
           },
         });
       } catch (err) {
