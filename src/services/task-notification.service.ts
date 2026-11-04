@@ -8,6 +8,11 @@
  * its own starts. The agent therefore ends its turn after it starts a task, and
  * the person can talk to it while the task runs.
  *
+ * A channel that answers its messages in a queue of its own (the web socket's
+ * one turn at a time) takes the stored report into that queue, the way it takes
+ * a reply a restart interrupted, so the report waits behind another
+ * conversation's turn like a person's message would.
+ *
  * The task keeps its result until the report is stored, and the report is
  * stored at most once per task, so a restart in between sends it again exactly
  * once. From the store on, the report is a message owed an answer, which the
@@ -20,6 +25,7 @@ import { trackEvent } from '../lib/telemetry';
 import { conversationEngineService, type ChatInput } from './conversation-engine.service';
 import { conversationService } from './conversation.service';
 import { messageDeliveryService } from './message-delivery.service';
+import type { ChannelName } from './channel-adapter.interface';
 
 /** The conversation a task reports to, as the turn that started the task found it. */
 export interface TaskNotificationTarget {
@@ -27,7 +33,7 @@ export interface TaskNotificationTarget {
   agentId: string;
   userId: string;
   /** The channel the conversation's messages come from, as `collectTools` names it. */
-  originChannel?: string;
+  originChannel?: ChannelName;
   originChannelId?: string;
 }
 
@@ -53,9 +59,22 @@ class TaskNotificationService {
         channelLabel: context.channelLabel,
       },
     };
-    await conversationEngineService.acceptUserMessage(input, threadId, taskId);
-
     const telemetry = { 'agent.id': target.agentId, 'thread.id': threadId, 'task.id': taskId };
+    let stored: Awaited<ReturnType<typeof conversationEngineService.acceptUserMessage>>;
+    try {
+      stored = await conversationEngineService.acceptUserMessage(input, threadId, taskId);
+    } catch (err) {
+      // Rethrown: the task keeps its result, and the next boot reports it again.
+      trackEvent('task notification delivered', target.userId, { ...telemetry, 'notification.delivery': 'failed' });
+      throw err;
+    }
+
+    const queue = messageDeliveryService.getAdapter(context.channel);
+    if (queue?.answerStored) {
+      queue.answerStored(stored.message);
+      trackEvent('task notification delivered', target.userId, { ...telemetry, 'notification.delivery': 'queued' });
+      return;
+    }
     void conversationEngineService
       .chat({ ...input, threadId, stored: { id: taskId, titleSet: null } })
       .then((response) => {

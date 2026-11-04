@@ -118,6 +118,11 @@ interface TaskEntry {
   stopping?: boolean;
   /** Set when a poll has handed out how the task ended, so no notification repeats it. */
   resultRead?: boolean;
+  /**
+   * Set when coding_agent_stop is called, also on a run that had already exited:
+   * the stop call answers with the result, so no notification repeats it.
+   */
+  stopCalled?: boolean;
   /** The drive() promise, so stopTask can await the final drain. */
   driver?: Promise<void>;
 }
@@ -343,6 +348,7 @@ export class AgentTaskManager {
   async stopTask(taskId: string): Promise<AgentTaskStatus> {
     const entry = this.tasks.get(taskId);
     if (!entry) return this.ended(taskId);
+    entry.stopCalled = true;
 
     if (!entry.state.completed) {
       // A run that has already exited is mid-finalize, not running: its result
@@ -463,15 +469,28 @@ export class AgentTaskManager {
   /**
    * Send how an ended task went to the conversation that started it, then forget
    * the task: the stored report holds its result. Nothing goes out for a task
-   * whose result a poll handed out or a waiting poll is about to, nor while the
-   * process shuts down, which leaves the task's row for the next boot to report.
+   * whose result a poll handed out or a waiting poll is about to, nor for one the
+   * agent stopped, whose stop call answers with the result, nor while the process
+   * shuts down, which leaves the task's row for the next boot to report.
    * A poll that reads the result while the report is being stored tells the
-   * agent twice: a rare race, traded for polls that take no lock.
+   * agent twice: a rare race, traded for polls that take no lock. A restart
+   * after a stopped task's result is recorded and before its stop call returns
+   * reports it at the next boot: that stop call never answered, so the report
+   * is the agent's only word of how the task ended.
    */
   private report(taskId: string): void {
     const entry = this.tasks.get(taskId);
     const target = entry?.params.notify;
-    if (!entry || !target || entry.resultRead || entry.reading || pendingWorkService.shutdownSignal.aborted) return;
+    if (
+      !entry ||
+      !target ||
+      entry.resultRead ||
+      entry.reading ||
+      entry.stopCalled ||
+      pendingWorkService.shutdownSignal.aborted
+    ) {
+      return;
+    }
     const { state } = entry;
     const text = renderCodingTaskNotification({
       taskId,
@@ -568,8 +587,7 @@ export class AgentTaskManager {
     this.record(taskId, entry);
     this.notify(entry);
     logger.info({ taskId, stopReason, turns: outcome.turns }, '[AgentTask] completed');
-    // A task the agent stopped answered in that call.
-    if (!entry.stopping) this.report(taskId);
+    this.report(taskId);
   }
 }
 

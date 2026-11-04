@@ -41,8 +41,9 @@ import {
   type TurnOutcome,
   type TurnState,
 } from '../protocol/chat-protocol';
-import type { AgentMessageOrigin, ResumedReply } from '../types';
+import type { AgentMessageOrigin, ResumedReply, TaskNotificationOrigin } from '../types';
 import { agentMessageOrigin } from '../prompts/agent-message-prompt';
+import { taskNotificationOrigin } from '../prompts/task-notification-prompt';
 import { withSenderTag } from '../prompts/context-builder';
 import { webChatLabel } from './web-chat-label';
 
@@ -62,6 +63,8 @@ export interface InboundMessage {
   agentMessage?: AgentMessageOrigin;
   /** The runtime wrote it in the person's name, so it leaves a waiting question card open. */
   runtimeWritten?: true;
+  /** Set on the runtime's report that a coding task ended, which only a stored row carries. */
+  taskNotification?: TaskNotificationOrigin;
 }
 
 export interface Acceptance {
@@ -92,6 +95,9 @@ function outcomeOf({ cancelled, error }: ChatTurnEnd): { outcome: TurnOutcome; e
  */
 function senderInput(message: InboundMessage) {
   if (message.agentMessage) return { metadata: { channel: 'websocket' as const }, agentMessage: message.agentMessage };
+  if (message.taskNotification) {
+    return { metadata: { channel: 'websocket' as const }, taskNotification: message.taskNotification };
+  }
   return {
     metadata: {
       channel: 'websocket' as const,
@@ -120,6 +126,21 @@ function trackReceived(message: InboundMessage, duplicate: boolean): void {
     'chat.duplicate': String(duplicate),
     'chat.attachments': String(message.attachmentIds.length),
   });
+}
+
+/** A stored row as the queue holds it. The row keeps who sent it; the turn reads the sender from there. */
+function storedInbound(message: ConversationMessage): InboundMessage {
+  const agentMessage = agentMessageOrigin(message);
+  const taskNotification = taskNotificationOrigin(message);
+  return {
+    id: message.id,
+    threadId: message.threadId,
+    content: message.content,
+    attachmentIds: [],
+    sender: null,
+    ...(agentMessage ? { agentMessage } : {}),
+    ...(taskNotification ? { taskNotification } : {}),
+  };
 }
 
 interface Waiting {
@@ -200,19 +221,16 @@ class InboundMessageService {
    * message, behind the ones accepted before it.
    */
   resume(message: ConversationMessage, resumed: ResumedReply): void {
-    const agentMessage = agentMessageOrigin(message);
-    void this.scheduleStored({
-      message: {
-        id: message.id,
-        threadId: message.threadId,
-        content: message.content,
-        attachmentIds: [],
-        sender: null,
-        ...(agentMessage ? { agentMessage } : {}),
-      },
-      titleSet: null,
-      resumed,
-    });
+    void this.scheduleStored({ message: storedInbound(message), titleSet: null, resumed });
+  }
+
+  /**
+   * Answer a message the runtime stored itself, such as a task notification: a
+   * turn running on its thread reads it at its next step, and otherwise it waits
+   * like any message, behind the ones accepted before it.
+   */
+  answerStored(message: ConversationMessage): void {
+    void this.scheduleStored({ message: storedInbound(message), titleSet: null });
   }
 
   /** Every conversation with work queued or running, for a client that just connected. */

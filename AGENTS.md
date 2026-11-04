@@ -980,12 +980,14 @@ of waiting. When the task ends, `agent-task-manager.ts` renders the result
 (`prompts/task-notification-prompt.ts`) and `taskNotificationService` stores it as
 a hidden USER row under the task's id. The row is then answered like a message:
 handed to a turn running on the thread, or answered by a turn of its own. A
-blocking wait inside the turn takes no hand-over until the tool call returns, so
-the person could not talk to the agent while the task runs.
+channel with a queue of its own (`ChannelAdapter.answerStored`, the web socket's)
+takes the row into it, so it waits behind another conversation's turn, and a
+restart resumes it there as a task notification too.
 
 - **Not the person's.** The turn's `promptSource` is `task`: no feedback prompt,
   and the risk gate reads it as `taskNotification`, which authorizes nothing,
-  with the person's request in its earlier messages.
+  with the person's request in its earlier messages. Those leave out the turns'
+  memory blocks and resume notices, which are not the person talking.
 - **Once per task.** The task keeps its result until the row is stored, and a
   stored row is not stored again, so a restart in between reports it once.
 - **Read once.** A task stopped with `coding_agent_stop`, or whose result a poll

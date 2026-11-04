@@ -4,6 +4,8 @@ const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
   writableThreadId: vi.fn(),
   threadContext: vi.fn(),
+  getAdapter: vi.fn(),
+  answerStored: vi.fn(),
   acceptUserMessage: vi.fn(),
   chat: vi.fn(),
   trackEvent: vi.fn(),
@@ -11,7 +13,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../../lib/prisma', () => ({ default: { conversationMessage: { findUnique: mocks.findUnique } } }));
 vi.mock('../conversation.service', () => ({ conversationService: { writableThreadId: mocks.writableThreadId } }));
-vi.mock('../message-delivery.service', () => ({ messageDeliveryService: { threadContext: mocks.threadContext } }));
+vi.mock('../message-delivery.service', () => ({ messageDeliveryService: { threadContext: mocks.threadContext, getAdapter: mocks.getAdapter } }));
 vi.mock('../conversation-engine.service', () => ({
   conversationEngineService: { acceptUserMessage: mocks.acceptUserMessage, chat: mocks.chat },
 }));
@@ -19,7 +21,13 @@ vi.mock('../../lib/telemetry', () => ({ trackEvent: mocks.trackEvent }));
 
 import { taskNotificationService } from '../task-notification.service';
 
-const target = { threadId: 'thread-1', agentId: 'agent-1', userId: 'user-1', originChannel: 'slack', originChannelId: 'C1' };
+const target = {
+  threadId: 'thread-1',
+  agentId: 'agent-1',
+  userId: 'user-1',
+  originChannel: 'slack' as const,
+  originChannelId: 'C1',
+};
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 describe('taskNotificationService.deliver', () => {
@@ -36,6 +44,7 @@ describe('taskNotificationService.deliver', () => {
     });
     mocks.acceptUserMessage.mockResolvedValue({ message: { id: 'task-1' }, titleSet: null });
     mocks.chat.mockResolvedValue({ steered: false });
+    mocks.getAdapter.mockReturnValue({});
   });
 
   it('stores the report under the task id in its conversation, then answers it there', async () => {
@@ -83,10 +92,30 @@ describe('taskNotificationService.deliver', () => {
     }));
   });
 
-  it('fails without starting a turn when the report cannot be stored', async () => {
+  it('fails without starting a turn when the report cannot be stored, and says so', async () => {
     mocks.acceptUserMessage.mockRejectedValue(new Error('database is locked'));
 
     await expect(taskNotificationService.deliver(target, 'task-1', 'REPORT')).rejects.toThrow('database is locked');
     expect(mocks.chat).not.toHaveBeenCalled();
+    expect(mocks.trackEvent).toHaveBeenCalledWith('task notification delivered', 'user-1', expect.objectContaining({
+      'task.id': 'task-1',
+      'notification.delivery': 'failed',
+    }));
+  });
+
+  it("hands the stored report to the queue of a channel that has one, such as the web chat's", async () => {
+    mocks.threadContext.mockResolvedValue({ channel: 'websocket', threadId: 'thread-1', channelLabel: 'web chat' });
+    mocks.getAdapter.mockReturnValue({ answerStored: mocks.answerStored });
+    const stored = { id: 'task-1', threadId: 'thread-1', triggeredBy: 'TASK_NOTIFICATION' };
+    mocks.acceptUserMessage.mockResolvedValue({ message: stored, titleSet: null });
+
+    await taskNotificationService.deliver({ ...target, originChannel: 'websocket' }, 'task-1', 'REPORT');
+
+    expect(mocks.getAdapter).toHaveBeenCalledWith('websocket');
+    expect(mocks.answerStored).toHaveBeenCalledWith(stored);
+    expect(mocks.chat).not.toHaveBeenCalled();
+    expect(mocks.trackEvent).toHaveBeenCalledWith('task notification delivered', 'user-1', expect.objectContaining({
+      'notification.delivery': 'queued',
+    }));
   });
 });

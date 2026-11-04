@@ -171,6 +171,13 @@ export interface ChannelAdapter {
    */
   continueReply?(message: ConversationMessage, resumed: ResumedReply): void;
 
+  /**
+   * Answer a message the runtime stored in one of this channel's conversations,
+   * such as a task notification, for a channel that answers its messages in a
+   * queue of its own. A channel without it starts the answer's turn at once.
+   */
+  answerStored?(message: ConversationMessage): void;
+
   /** The ids of the agent's linked shared channels, which a webhook or a scheduled task can choose to post to. */
   linkedChannelIds?(agentId: string): Promise<string[]>;
 
