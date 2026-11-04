@@ -20,7 +20,8 @@
  * A task started in a chat conversation reports how it ended to that
  * conversation (`taskNotificationService`), and the stored report is how the
  * agent reads the result. A task the agent stopped, or whose result it already
- * read with `coding_agent_status`, reports nothing.
+ * read with `coding_agent_status`, reports nothing. A task the boot drops reports
+ * that it failed.
  */
 import { randomUUID } from 'crypto';
 import { config, type CodingAgentName } from '../../config';
@@ -43,6 +44,7 @@ import { pendingWorkService, type PendingWorkItem } from '../../services/pending
 import { RESUMED_CODING_TASK_PROMPT } from '../../prompts/resume-prompt';
 import { renderCodingTaskNotification } from '../../prompts/task-notification-prompt';
 import type { TaskNotificationTarget } from '../../services/task-notification.service';
+import { truncateHeadTail } from '../../lib/tool-output-limiter';
 
 export const MAX_CONCURRENT = 3;
 export const DEFAULT_WAIT_MS = 5_000;
@@ -53,6 +55,11 @@ export const MAX_BUFFER_SIZE = 1024 * 1024; // 1 MiB
  * the stop itself. Covers the adapter's graceful-then-forced termination.
  */
 export const STOP_WAIT_MS = 2_500;
+/**
+ * The most of a task's result a notification includes. The report is replayed in
+ * every later turn of its conversation, and `coding_agent_status` hands out the rest.
+ */
+export const NOTIFICATION_RESULT_MAX_CHARS = 30_000;
 
 export interface AgentTaskParams {
   agent?: CodingAgentName;
@@ -177,10 +184,11 @@ export class AgentTaskManager {
   async resume(items: PendingWorkItem[], givenUp: PendingWorkItem[] = []): Promise<void> {
     // The bound gave these up, so nothing relaunches them, and no poll can reach a run left behind.
     for (const item of givenUp) {
-      const { process } = item.payload as unknown as CodingTaskWork;
-      if (process && (await stopLeftoverProcess(process))) {
+      const work = item.payload as unknown as CodingTaskWork;
+      if (work.process && (await stopLeftoverProcess(work.process))) {
         logger.warn({ taskId: item.key }, '[AgentTask] Stopped the run of a task the restarts gave up');
       }
+      await this.reportFailure(item.key, work, 'The runtime restarted too many times while this task ran, so the task was given up.');
     }
     // A relaunch gives the task the plugins' MCP servers, which no turn has read yet at boot.
     if (items.some((item) => !(item.payload as unknown as CodingTaskWork).finished)) {
@@ -192,6 +200,12 @@ export class AgentTaskManager {
       } catch (err) {
         // An agent whose credentials a restart removed cannot continue its task.
         logger.error({ err, taskId: item.key }, '[AgentTask] Could not continue a task a restart stopped');
+        const reason = err instanceof Error ? err.message : String(err);
+        await this.reportFailure(
+          item.key,
+          item.payload as unknown as CodingTaskWork,
+          `The task could not continue after the runtime restarted: ${reason}`,
+        );
         pendingWorkService.end('coding-task', item.key);
       }
     }
@@ -498,18 +512,37 @@ export class AgentTaskManager {
       stopReason: state.stopReason ?? 'error',
       turns: state.turns,
       sessionId: state.sessionId,
-      result: state.result ?? '',
+      result: notificationResult(taskId, state.result ?? ''),
     });
     void (async () => {
-      // Imported at the call: the service reaches the conversation engine, whose
-      // tool collection imports this module.
-      const { taskNotificationService } = await import('../../services/task-notification.service');
-      await taskNotificationService.deliver(target, taskId, text);
+      await deliverNotification(target, taskId, text);
       if (this.tasks.get(taskId) === entry) this.reap(taskId, drainTask(entry.state));
     })().catch((err) => {
       // The row keeps the result, so the next boot sends the report again.
       logger.error({ err, taskId }, '[AgentTask] Could not send the task notification');
     });
+  }
+
+  /**
+   * Tell the conversation that started a task the boot drops that the task failed,
+   * since the agent ended its turn and waits for the report. A failed send is logged:
+   * the task's row ends either way.
+   */
+  private async reportFailure(taskId: string, work: CodingTaskWork, reason: string): Promise<void> {
+    const target = work.params.notify;
+    if (!target) return;
+    const text = renderCodingTaskNotification({
+      taskId,
+      agent: work.params.agent,
+      stopReason: 'error',
+      sessionId: work.sessionId,
+      result: reason,
+    });
+    try {
+      await deliverNotification(target, taskId, text);
+    } catch (err) {
+      logger.error({ err, taskId }, '[AgentTask] Could not send the notification of a task the boot dropped');
+    }
   }
 
   private async drive(taskId: string, entry: TaskEntry, agent: CodingAgent, run: CodingAgentRun): Promise<void> {
@@ -589,6 +622,23 @@ export class AgentTaskManager {
     logger.info({ taskId, stopReason, turns: outcome.turns }, '[AgentTask] completed');
     this.report(taskId);
   }
+}
+
+async function deliverNotification(target: TaskNotificationTarget, taskId: string, text: string): Promise<void> {
+  // Imported at the call: the service reaches the conversation engine, whose
+  // tool collection imports this module.
+  const { taskNotificationService } = await import('../../services/task-notification.service');
+  await taskNotificationService.deliver(target, taskId, text);
+}
+
+/** A task's result cut to `NOTIFICATION_RESULT_MAX_CHARS`, with where to read the whole of it. */
+function notificationResult(taskId: string, result: string): string {
+  if (result.length <= NOTIFICATION_RESULT_MAX_CHARS) return result;
+  return truncateHeadTail(
+    result,
+    NOTIFICATION_RESULT_MAX_CHARS,
+    `coding_agent_status with taskId "${taskId}" returns the whole result.`,
+  );
 }
 
 function describeRefusals(displayName: string, refusals: CodingAgentRefusal[]): string {
