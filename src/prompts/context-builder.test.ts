@@ -1133,6 +1133,32 @@ describe('buildConversationHistory', () => {
     expect(JSON.stringify(messages)).not.toContain('totalChars');
   });
 
+  it('replays the program call and leaves out the calls the program made', () => {
+    const call = (tool: string, output: string, parentTool?: string) => ({
+      tool,
+      input: '{}',
+      output,
+      success: true,
+      timestamp: '2026-01-01T00:00:00Z',
+      rendered: true,
+      ...(parentTool ? { parentTool } : {}),
+    });
+    const context = createTestAgentContext({
+      recentMessages: [
+        {
+          id: 'msg-1',
+          role: 'AGENT',
+          content: '',
+          toolCalls: [call('run_program', '91'), call('shell_exec', '1', 'run_program'), call('shell_exec', '4', 'run_program')],
+        },
+      ],
+    });
+
+    const messages = buildConversationHistory(context).messages;
+    expect((messages[0].content as Array<{ toolName: string }>).map((part) => part.toolName)).toEqual(['run_program']);
+    expect((messages[1].content as Array<{ toolName: string }>).map((part) => part.toolName)).toEqual(['run_program']);
+  });
+
   it('caps a legacy tool result that was stored uncapped', () => {
     // Rows written before results were persisted as the model-facing view hold the
     // raw output. Without this they replay at full size on every later turn.

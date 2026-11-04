@@ -808,6 +808,8 @@ function parseToolCalls(msg: ConversationMessage): Array<{
   for (let i = 0; i < msg.toolCalls.length; i++) {
     const tc = msg.toolCalls[i] as Record<string, unknown> | null | undefined;
     if (!tc || typeof tc.tool !== 'string' || !tc.tool) continue;
+    // A call made inside a program: the model saw only the program's output.
+    if (typeof tc.parentTool === 'string') continue;
 
     let parsedInput: unknown = {};
     try {

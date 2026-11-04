@@ -28,6 +28,7 @@ import type { PostingCeiling } from '../services/delivery-target.service';
 import { llmCallService } from '../services/llm-call.service';
 import { decideThreadAction, type GateAgent, type ThreadLine } from '../services/thread-reply-classifier.service';
 import { buildTurnRequest } from '../invoke';
+import { createProgramTool, PROGRAM_TOOL_NAME, type ProgramCall } from '../tools/program/run-program';
 import { COMPUTER_INSTRUCTIONS } from '../prompts/computer-prompt';
 import { getComputerTools } from '../tools/computer';
 import {
@@ -259,6 +260,7 @@ export async function runTurn(input: TurnInput): Promise<TurnTrace> {
       ? [{ text: COMPUTER_INSTRUCTIONS, cacheable: false }, ...parts]
       : parts;
   const turnTools = { ...tools, ...(input.computer ? getComputerTools() : {}), ...input.extraTools };
+  const programCalls: ProgramCall[] = [];
 
   const result = await callModel(
     { purpose: input.mode, agentId },
@@ -270,7 +272,7 @@ export async function runTurn(input: TurnInput): Promise<TurnTrace> {
         ...(part.cacheable ? { providerOptions: cachePoint } : {}),
       })),
       messages,
-      tools: withToolsCacheControl(withToolOutputCapture(stubTools(turnTools, input.stubs ?? {})), cachePoint),
+      tools: withToolsCacheControl(withToolOutputCapture(withProgramTool(stubTools(turnTools, input.stubs ?? {}), agentId, input.mode, programCalls)), cachePoint),
       toolChoice: 'auto',
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       providerOptions: cacheRequestOptions(provider, modelId, cacheTtlFor(input.mode)),
@@ -279,15 +281,39 @@ export async function runTurn(input: TurnInput): Promise<TurnTrace> {
   );
 
   return {
+    // A call made inside a program counts as a call of its `run_program`'s step, so a
+    // grader sees a delete or a write whichever way the model made it.
     calls: result.steps.flatMap((step, index) =>
-      step.toolCalls.map((call) => ({
-        tool: call.toolName,
-        input: (call.input ?? {}) as Record<string, unknown>,
-        step: index + 1,
-      })),
+      step.toolCalls.flatMap((call) => [
+        { tool: call.toolName, input: (call.input ?? {}) as Record<string, unknown>, step: index + 1 },
+        ...programCalls
+          .filter((inner) => inner.parentCallId === call.toolCallId)
+          .map((inner) => ({ tool: inner.toolName, input: (inner.input ?? {}) as Record<string, unknown>, step: index + 1 })),
+      ]),
     ),
     text: result.text,
     finished: result.finishReason !== 'tool-calls',
+  };
+}
+
+/**
+ * The tools with `run_program` over them, as `invokeStream` adds it. Its calls go to the
+ * stubs, and each one is added to `calls`.
+ */
+function withProgramTool(
+  tools: Record<string, Tool>,
+  agentId: string,
+  mode: TurnInput['mode'],
+  calls: ProgramCall[],
+): Record<string, Tool> {
+  return {
+    ...tools,
+    [PROGRAM_TOOL_NAME]: createProgramTool(tools, {
+      userId: EVAL_USER_ID,
+      agentId,
+      invocationMode: mode,
+      onCall: (call) => calls.push(call),
+    }),
   };
 }
 

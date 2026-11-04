@@ -1056,6 +1056,7 @@ src/
 │   ├── attachments.ts          # hydrate_attachment (stored bytes → workspace file) + view_attachment (image/PDF into the turn) + `reapScratchDirs`
 │   ├── share-file.ts           # Deliver a workspace file to the user as an attachment
 │   ├── meeting.ts              # Voice meetings (join, leave, set the microphone, status, speaker, read and send chat)
+│   ├── program/                # run_program: a model-written JavaScript program in QuickJS that calls the other tools (invoke.ts adds it)
 │   ├── shell/                  # shell_exec/read/write/edit, spawn+stdio, coding_agent (+ the task manager behind it)
 │   ├── skills/                 # The `skill` tool (loads a SKILL.md body on demand)
 │   └── web/                    # web_fetch: one GET of a public page from the runtime process, HTML as markdown

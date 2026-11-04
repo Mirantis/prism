@@ -91,6 +91,7 @@ import { contextService } from './context.service';
 import { contextUsageService, type ContextUsageSnapshot } from './context-usage.service';
 import { threadTurnService } from './thread-turn.service';
 import { trackEvent, langfuseTelemetry } from '../lib/telemetry';
+import { createProgramTool, PROGRAM_TOOL_NAME } from '../tools/program/run-program';
 import { planToolSearch } from '../lib/tool-search/plan';
 
 /**
@@ -466,8 +467,17 @@ class CompactionService {
     // Nothing executes here, so saving is off — the wrap exists only so this
     // request's tools block is built exactly like a chat turn's, which is what the
     // provider's cache prefix is keyed on.
+    // `run_program` too, which invoke.ts adds after the collected tools.
     const toolSearch = await planToolSearch({
-      tools: collected ? withToolOutputCapture(collected.tools, { spill: false }) : {},
+      tools: collected
+        ? withToolOutputCapture(
+            {
+              ...collected.tools,
+              [PROGRAM_TOOL_NAME]: createProgramTool(collected.tools, { userId, agentId, invocationMode: 'chat' }),
+            },
+            { spill: false },
+          )
+        : {},
       deferrable: collected?.deferrable ?? [],
       protocol: deferredToolProtocol,
       modelId,

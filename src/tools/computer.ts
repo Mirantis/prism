@@ -19,6 +19,7 @@ import type { ComputerUse } from '../services/computer/computer-access';
 import type { ModelChannel } from '../services/computer/agent-computer';
 import { DEFAULT_SCREEN, pictureFor } from '../services/computer/screen-size';
 import { renderToolResult } from '../lib/tool-output-limiter';
+import { withModelOnlyOutput } from './program/model-only';
 
 const pictures = new WeakMap<object, string[]>();
 
@@ -132,7 +133,7 @@ export function getComputerTools(
     // The browser tool is the runtime's own browser. A run on a runtime that has only remote
     // computers uses a computer's browser through its desktop.
     if (name === 'computer_browse' && named && !hasComputer()) continue;
-    result[name] = {
+    result[name] = withModelOnlyOutput({
       ...original,
       execute: (input, options) => selection.run(computerNamed(input), () => original.execute!(input, options)),
       toModelOutput: async ({ output }: { output: unknown }): Promise<ToolResultOutput> => {
@@ -152,10 +153,10 @@ export function getComputerTools(
           ],
         };
       },
-    } as Tool;
+    } as Tool);
   }
   const screenOutput = result.computer_screen.toModelOutput;
-  result.computer_screen = tool({
+  result.computer_screen = withModelOnlyOutput(tool({
     description:
       'Inspect your current desktop and browser. Inspect it again after navigation or user help. During human takeover, set userRequested only when the user explicitly asks you to inspect the screen. Automatic inspection waits for hand-back. While the user completes a help request, every inspection waits for hand-back.',
     inputSchema: z.object({
@@ -189,7 +190,7 @@ export function getComputerTools(
       return output;
     },
     toModelOutput: screenOutput,
-  });
+  }));
   result.computer_help = tool({
     description:
       'When computer work is blocked by a step only the user can complete, ask them for help, such as signing in, solving a CAPTCHA, or approving a device. Call it immediately; do not wait for the user to ask you to request help, and pass tab for the tab that needs help. Set credentials for any sign-in screen — one asking for a username and a password, for the username alone, or for the password alone — and the user is asked for their username and password where they are, and the runtime types both in, screen by screen. Never ask for either in chat, never offer to try one, and never report the sign-in and stop for instructions: make the call. A CAPTCHA, a device approval, or a second factor leaves credentials false. Preserves this help request and releases the computer for independent work. Explain what the user needs to do. ' +

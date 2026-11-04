@@ -287,6 +287,12 @@ export interface ToolCallRecord {
   rendered?: true;
   /** Present only when the model-facing view was cut. */
   truncated?: ToolOutputTruncation;
+  /**
+   * Set on a call a program made inside `run_program`: the tool that ran it. The
+   * model never made this call itself, so replay leaves it out; the record keeps it
+   * for everything else that reads what the run did.
+   */
+  parentTool?: string;
 }
 
 export interface InvokeError {

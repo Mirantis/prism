@@ -29,6 +29,14 @@ a job it may do without asking. Where the guide says nothing, the built-in
 rules apply. See [Configuration](configuration.md#tool-risk-gate) for what a
 rule in the guide can override.
 
+## Programs
+
+When a task needs many tool calls, such as a loop over a list or a search across
+pages, the agent can write a short JavaScript program that makes the calls and
+prints only the result. The chat shows one **run_program** call that contains the
+program and its output, and the Activity page also lists each call the program made.
+Each call in the program goes through the risk gate in the same way as a direct call.
+
 ## Memory
 
 Manage long-term memory. See **[Memory](memory.md)** for the full picture.

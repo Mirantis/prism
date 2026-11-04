@@ -752,8 +752,9 @@ describe('invoke', () => {
       const callArgs = mockGenerateText.mock.calls[0][0];
       // 3 memory + 4 cron + 1 agent-config + 1 shell + 1 share_file + 2 goal + 1 skill
       // + 2 attachment (hydrate_attachment, view_attachment) + 1 web_fetch
-      // + 2 message (send_message, list_message_targets)
-      expect(Object.keys(callArgs.tools)).toHaveLength(18);
+      // + 2 message (send_message, list_message_targets) + run_program
+      expect(Object.keys(callArgs.tools)).toHaveLength(19);
+      expect(Object.keys(callArgs.tools)).toContain('run_program');
       expect(Object.keys(callArgs.tools)).toContain('send_message');
       expect(Object.keys(callArgs.tools)).toContain('share_file');
       expect(Object.keys(callArgs.tools)).toContain('web_fetch');
