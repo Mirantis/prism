@@ -30,6 +30,7 @@ import { scheduledRunPrompt } from '../prompts/scheduled-run-prompt';
 import { renderAgentMessage } from '../prompts/agent-message-prompt';
 import { renderCodingTaskNotification } from '../prompts/task-notification-prompt';
 import { NOTIFIED_TASK_NEXT } from '../tools/shell/coding-agent';
+import { MONITOR_NEXT } from '../tools/shell/monitor';
 import { ALERT_THE_USER } from '../tools/computer';
 import { attachmentRefId, findImageRefs, isLocalPath } from '../lib/inline-images';
 import type { AttachmentMeta } from '../services/attachment.service';
@@ -150,6 +151,19 @@ function waitsWell(trace: TurnTrace): boolean {
   const scheduled = trace.calls.some((c) => c.tool === 'schedule_task');
   const polls = trace.calls.filter((c) => c.tool === 'coding_agent_status').length;
   return trace.finished && !sleeps && !scheduled && polls <= 1;
+}
+
+/** What `monitor` answers when it starts a watch. */
+const MONITOR_STARTED = { monitorId: 'monitor-eval-1', next: MONITOR_NEXT };
+
+/** The command of the turn's `monitor` call, or '' when it started none. */
+function monitorCommand(trace: TurnTrace): string {
+  return String(trace.calls.find((c) => c.tool === 'monitor')?.input.command ?? '');
+}
+
+/** The turn set a timer instead of a watch: a shell `sleep` or a scheduled task. */
+function setsTimer(trace: TurnTrace): boolean {
+  return trace.calls.some((c) => c.tool === 'schedule_task' || /\bsleep\b/.test(commandOf(c)));
 }
 
 function expectTier(tier: string, expected: string): Grade {
@@ -1979,6 +1993,56 @@ export const SCENARIOS: Scenario[] = [
       const asked = trace.calls.some((c) => c.tool === 'coding_agent_status' || c.tool === 'coding_agent');
       const reported = /\b23\b/.test(trace.text) && /19/.test(trace.text);
       return { pass: waitsWell(trace) && !asked && reported, detail: describeTrace(trace) };
+    },
+  },
+
+  // ---- Monitors ----------------------------------------------------------
+  {
+    id: 'monitor.reports-each-occurrence',
+    expect: 'A request to hear about every matching log line starts a monitor on that log and ends the turn.',
+    grader: 'tool call',
+    run: async () => {
+      const trace = await runTurn({
+        mode: 'chat',
+        history: [{ user: 'Watch /var/log/payments/app.log and tell me every time an ERROR line appears there during the next half hour.' }],
+        maxSteps: 6,
+        stubs: { monitor: () => MONITOR_STARTED },
+      });
+      const command = monitorCommand(trace);
+      const pass = command.includes('app.log') && command.includes('ERROR') && trace.finished && !setsTimer(trace);
+      return { pass, detail: describeTrace(trace) };
+    },
+  },
+  {
+    id: 'monitor.waits-for-a-condition',
+    expect: 'A request to hear when a condition holds starts a monitor whose command ends when it does.',
+    grader: 'tool call',
+    run: async () => {
+      const trace = await runTurn({
+        mode: 'chat',
+        history: [{ user: 'The staging deploy is rolling out now. Tell me as soon as https://staging.example.test/health answers 200.' }],
+        maxSteps: 6,
+        stubs: { monitor: () => MONITOR_STARTED },
+      });
+      const command = monitorCommand(trace);
+      const pass = /\b(until|while)\b/.test(command) && command.includes('staging.example.test') && trace.finished && !setsTimer(trace);
+      return { pass, detail: describeTrace(trace) };
+    },
+  },
+  {
+    id: 'monitor.watches-every-outcome',
+    expect: "A watch for a job's end also matches its failure, not only its success.",
+    grader: 'tool call',
+    run: async () => {
+      const trace = await runTurn({
+        mode: 'chat',
+        history: [{ user: 'Tell me when the nightly build log at ~/ci/nightly.log shows that the build is done.' }],
+        maxSteps: 6,
+        stubs: { monitor: () => MONITOR_STARTED },
+      });
+      const command = monitorCommand(trace);
+      const pass = command.includes('nightly.log') && /fail|error/i.test(command) && trace.finished && !setsTimer(trace);
+      return { pass, detail: describeTrace(trace) };
     },
   },
 

@@ -26,7 +26,7 @@ import { trackEvent } from '../lib/telemetry';
  * the order the boot gives it back: a resumed reply or run can poll a coding
  * task, so the tasks come back first.
  */
-export const PENDING_WORK_KINDS = ['coding-task', 'chat', 'webhook', 'cron', 'heartbeat'] as const;
+export const PENDING_WORK_KINDS = ['coding-task', 'chat', 'webhook', 'cron', 'heartbeat', 'monitor'] as const;
 export type PendingWorkKind = (typeof PENDING_WORK_KINDS)[number];
 
 /**

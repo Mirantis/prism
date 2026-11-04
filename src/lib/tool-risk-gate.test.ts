@@ -703,9 +703,9 @@ describe('evaluateToolRisk', () => {
     });
 
     const { system } = mockGenerateObject.mock.calls[0][0] as { system: string };
-    expect(system).toHaveLength(8_224);
+    expect(system).toHaveLength(8_277);
     expect(createHash('sha256').update(system).digest('hex').slice(0, 16)).toBe(
-      'e9de6b554af74646',
+      '41b23e77aaf788b1',
     );
   });
 

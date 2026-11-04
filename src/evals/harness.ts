@@ -54,6 +54,7 @@ export const EVAL_AGENT_ID = config.agentId as string;
 const PARENT_AGENT_ID = '0e7a1000-0000-4000-8000-000000000002';
 const SUBAGENT_ID = '0e7a1000-0000-4000-8000-000000000003';
 export const SUBAGENT_NAME = 'investigator';
+const EVAL_THREAD_ID = '0e7a1000-0000-4000-8000-000000000004';
 
 /** How each chat platform's adapter names a channel in the system prompt. */
 const CHANNEL_LABEL: Record<ChatPlatform, (channelName: string) => string> = {
@@ -232,7 +233,8 @@ export async function runTurn(input: TurnInput): Promise<TurnTrace> {
     userId: EVAL_USER_ID,
     agentId,
     mode: input.mode,
-    threadId: input.threadId,
+    // A chat turn always has its conversation, which the chat-only tools report to.
+    threadId: input.threadId ?? (input.mode === 'chat' ? EVAL_THREAD_ID : undefined),
     originChannel: input.channel?.platform ?? 'websocket',
     postingCeiling: input.postingCeiling,
     taskInvoker: async () => {
