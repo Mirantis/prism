@@ -44,6 +44,13 @@ vi.mock('../../../lib/execution-environments/leftover-process', () => ({
   stopLeftoverProcess: mockStopLeftover,
 }));
 
+const { mockWriteToolOutput } = vi.hoisted(() => ({ mockWriteToolOutput: vi.fn() }));
+
+vi.mock('../../../lib/tool-output-store', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../lib/tool-output-store')>()),
+  writeToolOutput: mockWriteToolOutput,
+}));
+
 import { config } from '../../../config';
 import { trackEvent } from '../../../lib/telemetry';
 import { RESUMED_CODING_TASK_PROMPT } from '../../../prompts/resume-prompt';
@@ -953,9 +960,10 @@ describe('a task started in a chat conversation', () => {
     expect(mockDeliver).toHaveBeenCalledWith(target, 'task-1', expect.stringContaining('Done.'));
   });
 
-  it('cuts a long result in the report, and a poll after it reads the whole result', async () => {
+  it('cuts a long result in the report, and saves the whole result in a file it names', async () => {
+    mockWriteToolOutput.mockReset().mockResolvedValue({ id: 'spill-1', path: '/data/tool-outputs/spill-1', bytes: 1, capped: false });
     const long = `${'a'.repeat(40_000)}THE END`;
-    const { taskId } = await manager.startTask({ prompt: 'write the report', notify: target });
+    const { taskId } = await manager.startTask({ prompt: 'write the report', workdir: '/work/repo', notify: target });
     getRun().emit({ type: 'text', text: long });
     getRun().finish({ stopReason: 'end_turn', turns: 4, message: 'ok' });
     await flush();
@@ -963,9 +971,22 @@ describe('a task started in a chat conversation', () => {
     const text = mockDeliver.mock.calls[0][2] as string;
     expect(text.length).toBeLessThan(NOTIFICATION_RESULT_MAX_CHARS + 2_000);
     expect(text).toContain('INCOMPLETE OUTPUT');
-    expect(text).toContain(`coding_agent_status with taskId "${taskId}" returns the whole result.`);
+    expect(text).toContain('The whole result is saved at /data/tool-outputs/spill-1.');
     expect(text).toContain('THE END');
-    await expect(manager.readStatus(taskId)).resolves.toMatchObject({ result: long });
+    // Saved before the report is stored, beside the task's shell, so no restart or eviction loses it.
+    expect(mockWriteToolOutput).toHaveBeenCalledWith(long, '/work/repo');
+    expect(mockDeliver).toHaveBeenCalledWith(target, taskId, expect.any(String));
+  });
+
+  it('still reports a long result whose whole copy cannot be saved', async () => {
+    mockWriteToolOutput.mockReset().mockRejectedValue(new Error('disk full'));
+    const { taskId } = await manager.startTask({ prompt: 'write the report', notify: target });
+    getRun().emit({ type: 'text', text: `${'a'.repeat(40_000)}THE END` });
+    getRun().finish({ stopReason: 'end_turn', turns: 4, message: 'ok' });
+    await flush();
+
+    expect(mockDeliver).toHaveBeenCalledWith(target, taskId, expect.stringContaining('The whole result could not be saved.'));
+    expect(mockEndWork).toHaveBeenCalledWith('coding-task', taskId);
   });
 
   it('reports a task the boot cannot continue as failed, then stops owing it', async () => {
@@ -992,6 +1013,27 @@ describe('a task started in a chat conversation', () => {
 
     expect(mockDeliver).toHaveBeenCalledWith(target, 'task-loop', expect.stringContaining('stop-reason="error"'));
     expect(mockDeliver.mock.calls[0][2]).toContain('given up');
+  });
+
+  it('reports a finished task the restarts gave up with its own result', async () => {
+    await manager.resume([], [
+      {
+        key: 'task-done',
+        payload: {
+          params: { prompt: 'fix the build', agent: 'claude-code', notify: target },
+          sessionId: 'session-3',
+          finished: { stopReason: 'end_turn', turns: 5, result: 'Build fixed.' },
+        },
+        attempts: 4,
+        createdAt: new Date(),
+      },
+    ]);
+
+    const text = mockDeliver.mock.calls[0][2] as string;
+    expect(text).toContain('<task-notification task-id="task-done" agent="claude-code" stop-reason="end_turn" turns="5" session-id="session-3">');
+    expect(text).toContain('Build fixed.');
+    expect(text).not.toContain('given up');
+    expect(mockStopLeftover).not.toHaveBeenCalled();
   });
 
   it('leaves a task without a conversation to its polls', async () => {
