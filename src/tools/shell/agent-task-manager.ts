@@ -42,9 +42,10 @@ import { stopLeftoverProcess } from '../../lib/execution-environments/leftover-p
 import { pluginMcpService } from '../../services/plugin-mcp.service';
 import { pendingWorkService, type PendingWorkItem } from '../../services/pending-work.service';
 import { RESUMED_CODING_TASK_PROMPT } from '../../prompts/resume-prompt';
-import { renderCodingTaskNotification } from '../../prompts/task-notification-prompt';
+import { renderCodingTaskNotification, type CodingTaskOutcome } from '../../prompts/task-notification-prompt';
 import type { TaskNotificationTarget } from '../../services/task-notification.service';
 import { truncateHeadTail } from '../../lib/tool-output-limiter';
+import { writeToolOutput } from '../../lib/tool-output-store';
 
 export const MAX_CONCURRENT = 3;
 export const DEFAULT_WAIT_MS = 5_000;
@@ -57,7 +58,8 @@ export const MAX_BUFFER_SIZE = 1024 * 1024; // 1 MiB
 export const STOP_WAIT_MS = 2_500;
 /**
  * The most of a task's result a notification includes. The report is replayed in
- * every later turn of its conversation, and `coding_agent_status` hands out the rest.
+ * every later turn of its conversation, so a longer result is saved whole as a
+ * tool output file, which the notification names.
  */
 export const NOTIFICATION_RESULT_MAX_CHARS = 30_000;
 
@@ -185,6 +187,12 @@ export class AgentTaskManager {
     // The bound gave these up, so nothing relaunches them, and no poll can reach a run left behind.
     for (const item of givenUp) {
       const work = item.payload as unknown as CodingTaskWork;
+      // A task that finished keeps its result: only the report of it failed.
+      if (work.finished) {
+        const { stopReason, turns, result } = work.finished;
+        await this.sendReport(item.key, work, { stopReason: stopReason ?? 'error', turns, result: result ?? '' });
+        continue;
+      }
       if (work.process && (await stopLeftoverProcess(work.process))) {
         logger.warn({ taskId: item.key }, '[AgentTask] Stopped the run of a task the restarts gave up');
       }
@@ -506,16 +514,16 @@ export class AgentTaskManager {
       return;
     }
     const { state } = entry;
-    const text = renderCodingTaskNotification({
+    const outcome: CodingTaskOutcome = {
       taskId,
       agent: state.agent,
       stopReason: state.stopReason ?? 'error',
       turns: state.turns,
       sessionId: state.sessionId,
-      result: notificationResult(taskId, state.result ?? ''),
-    });
+      result: state.result ?? '',
+    };
     void (async () => {
-      await deliverNotification(target, taskId, text);
+      await deliverNotification(target, taskId, await notificationText(outcome, entry.params.workdir));
       if (this.tasks.get(taskId) === entry) this.reap(taskId, drainTask(entry.state));
     })().catch((err) => {
       // The row keeps the result, so the next boot sends the report again.
@@ -525,20 +533,28 @@ export class AgentTaskManager {
 
   /**
    * Tell the conversation that started a task the boot drops that the task failed,
-   * since the agent ended its turn and waits for the report. A failed send is logged:
-   * the task's row ends either way.
+   * since the agent ended its turn and waits for the report.
    */
-  private async reportFailure(taskId: string, work: CodingTaskWork, reason: string): Promise<void> {
+  private reportFailure(taskId: string, work: CodingTaskWork, reason: string): Promise<void> {
+    return this.sendReport(taskId, work, { stopReason: 'error', result: reason });
+  }
+
+  /**
+   * Send the report of a task the boot drops to the conversation that started it.
+   * A failed send is logged: the task's row ends either way.
+   */
+  private async sendReport(
+    taskId: string,
+    work: CodingTaskWork,
+    outcome: Pick<CodingTaskOutcome, 'stopReason' | 'turns' | 'result'>,
+  ): Promise<void> {
     const target = work.params.notify;
     if (!target) return;
-    const text = renderCodingTaskNotification({
-      taskId,
-      agent: work.params.agent,
-      stopReason: 'error',
-      sessionId: work.sessionId,
-      result: reason,
-    });
     try {
+      const text = await notificationText(
+        { taskId, agent: work.params.agent, sessionId: work.sessionId, ...outcome },
+        work.params.workdir,
+      );
       await deliverNotification(target, taskId, text);
     } catch (err) {
       logger.error({ err, taskId }, '[AgentTask] Could not send the notification of a task the boot dropped');
@@ -631,14 +647,24 @@ async function deliverNotification(target: TaskNotificationTarget, taskId: strin
   await taskNotificationService.deliver(target, taskId, text);
 }
 
-/** A task's result cut to `NOTIFICATION_RESULT_MAX_CHARS`, with where to read the whole of it. */
-function notificationResult(taskId: string, result: string): string {
-  if (result.length <= NOTIFICATION_RESULT_MAX_CHARS) return result;
-  return truncateHeadTail(
-    result,
-    NOTIFICATION_RESULT_MAX_CHARS,
-    `coding_agent_status with taskId "${taskId}" returns the whole result.`,
-  );
+/**
+ * The notification of an ended task. A result over `NOTIFICATION_RESULT_MAX_CHARS`
+ * is cut, and saved whole beside the shell of the task's workdir, where the agent
+ * reads it after a restart too.
+ */
+async function notificationText(outcome: CodingTaskOutcome, workdir?: string): Promise<string> {
+  if (outcome.result.length <= NOTIFICATION_RESULT_MAX_CHARS) return renderCodingTaskNotification(outcome);
+  let saved = 'The whole result could not be saved.';
+  try {
+    const spill = await writeToolOutput(outcome.result, workdir);
+    saved =
+      `The whole result is saved at ${spill.path}. Read only what you need from it with shell_exec, ` +
+      'using grep or sed.';
+  } catch (err) {
+    logger.warn({ err, taskId: outcome.taskId }, '[AgentTask] Could not save the whole result of a task');
+  }
+  const result = truncateHeadTail(outcome.result, NOTIFICATION_RESULT_MAX_CHARS, saved);
+  return renderCodingTaskNotification({ ...outcome, result });
 }
 
 function describeRefusals(displayName: string, refusals: CodingAgentRefusal[]): string {
