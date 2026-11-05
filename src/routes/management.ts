@@ -90,7 +90,7 @@ import {
   getExecutionEnvironment,
 } from '../lib/execution-environments/get-execution-environment';
 import { compactionService } from '../services/compaction.service';
-import { attachmentService, detectMediaType, classifyMediaType, isInlineSafeMediaType } from '../services/attachment.service';
+import { attachmentService, detectMediaType, classifyMediaType } from '../services/attachment.service';
 import {
   MAX_FILE_SIZE_BYTES,
   MAX_FILE_SIZE_MB,
@@ -535,8 +535,7 @@ router.post('/attachments', uploadAttachmentFile, async (req: Request, res: Resp
 /**
  * GET /agents/attachments/:id
  * Stream a stored file's bytes back for download/preview. `inline` lets the
- * browser preview the magic-sniffed images and PDFs; the web UI's `<a download>`
- * still forces a save.
+ * browser preview images/PDFs; the web UI's `<a download>` still forces a save.
  */
 router.get('/attachments/:id', async (req: Request<{ id: string }>, res: Response) => {
   try {
@@ -551,8 +550,9 @@ router.get('/attachments/:id', async (req: Request<{ id: string }>, res: Respons
       res.status(410).json({ error: 'Attachment content expired' });
       return;
     }
-    // Inline only for the types `detectMediaType` assigns from magic bytes; every other type is a download.
-    const isPreviewable = isInlineSafeMediaType(att.mediaType);
+    // Inline only types a browser renders without running script under nosniff; the rest download.
+    const category = classifyMediaType(att.mediaType);
+    const isPreviewable = category === 'image' || category === 'pdf';
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Type', isPreviewable ? att.mediaType : 'application/octet-stream');
     res.setHeader('Content-Disposition', contentDisposition(isPreviewable ? 'inline' : 'attachment', att.filename));
