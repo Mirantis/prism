@@ -42,7 +42,7 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { config, isGatewayEndpoint } from '../../../config';
 import { logger } from '../../../logger';
-import { isAnthropicModelId } from '../bedrock-shared';
+import { isAnthropicModelId } from '../bedrock-model-id';
 import { anthropicCachePoint, type CacheTtl, type LlmProvider } from '../llm-provider';
 
 /**

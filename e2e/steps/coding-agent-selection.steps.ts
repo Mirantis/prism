@@ -1,13 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createBdd } from 'playwright-bdd';
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { HomePage } from '../pages/home.page';
 import { DEFAULT_AGENT_ID, E2E_WORKSPACE } from '../fixtures/test-data';
 import { hasClaudeCodeCredentials } from '../../src/lib/coding-agents/claude-code/credentials';
 import { readSavedLogin } from '../../src/lib/coding-agents/claude-code/authenticated-home';
 import { getExecutionEnvironment } from '../../src/lib/execution-environments/get-execution-environment';
 import { codexAuthMethod, readCodexLogin } from '../../src/lib/coding-agents/codex/credentials';
+import { isAnthropicModelId } from '../../src/lib/llm-providers/bedrock-model-id';
 import { getPrisma } from '../support/db-helper';
 import type { ToolCallRecord } from '../../src/types';
 
@@ -111,17 +112,31 @@ Given('Codex has a saved ChatGPT login', async () => {
   test.skip(login !== 'chatgpt', needs);
 });
 
-When('I ask a Claude Code task how it is signed in', async ({ page }) => {
+async function askHowClaudeCodeIsSignedIn(page: Page, model?: string): Promise<void> {
   test.setTimeout(240_000);
   const home = new HomePage(page);
   await home.navigate();
   await home.typeMessage(
-    'Use coding_agent with agent="claude-code" in edit mode, giving it this prompt: ' +
+    `Use coding_agent with agent="claude-code"${model ? ` and model="${model}"` : ''} in edit mode, giving it this prompt: ` +
     'Run the shell command `claude auth status --json` and reply with only the value of its authMethod field. ' +
     'Poll coding_agent_status until completed. Reply with one line only: AUTH=<the result>.',
   );
   await home.sendMessage();
   await home.waitForStreamComplete(180_000);
+}
+
+When('I ask a Claude Code task how it is signed in', async ({ page }) => {
+  await askHowClaudeCodeIsSignedIn(page);
+});
+
+// The runtime Playwright starts inherits this process's env (see the README on a stopped runtime).
+Given("Claude Code's small model is a Bedrock ID", async () => {
+  test.skip(!isAnthropicModelId(process.env.CLAUDE_CODE_MODEL_SMALL ?? ''),
+    'Needs CLAUDE_CODE_MODEL_SMALL set to a Bedrock ID, such as eu.anthropic.claude-haiku-5-5.');
+});
+
+When('I ask a Claude Code task on the {string} model how it is signed in', async ({ page }, model: string) => {
+  await askHowClaudeCodeIsSignedIn(page, model);
 });
 
 Then('the coding task is signed in with {string}', async ({}, method: string) => {

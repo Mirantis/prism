@@ -32,7 +32,8 @@ To test a saved login, start with a stopped test runtime and run
 The Codex home must contain a valid, writable `auth.json` from `codex login`.
 To test a Claude subscription, sign a Claude home in with
 `CLAUDE_CONFIG_DIR=/path/to/claude-home claude auth login`, then run
-`CLAUDE_CONFIG_DIR=/path/to/claude-home CLAUDE_CODE_SUBSCRIPTION=true npm run test --workspace=prism-agent-e2e -- --grep @claude-subscription`.
+`CLAUDE_CONFIG_DIR=/path/to/claude-home CLAUDE_CODE_SUBSCRIPTION=true CLAUDE_CODE_MODEL_SMALL=eu.anthropic.claude-haiku-5-5 npm run test --workspace=prism-agent-e2e -- --grep @claude-subscription`.
+The Bedrock ID in `CLAUDE_CODE_MODEL_SMALL` checks that a model tier still runs on the subscription; without it that scenario is skipped.
 To test a ChatGPT subscription, sign a Codex home in with
 `CODEX_HOME=/path/to/codex-home codex login`, then run
 `CODEX_HOME=/path/to/codex-home CODEX_SUBSCRIPTION=true npm run test --workspace=prism-agent-e2e -- --grep @codex-subscription`.

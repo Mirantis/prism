@@ -57,12 +57,3 @@ export function createSharedBedrockOptions() {
     },
   };
 }
-
-/**
- * Returns true when `modelId` is an Anthropic Claude model on Bedrock — bare
- * (`anthropic.claude-…`), regional inference profile (`us.anthropic.…`,
- * `eu.anthropic.…`, …), or an ARN containing `/anthropic.…`.
- */
-export function isAnthropicModelId(modelId: string): boolean {
-  return /^anthropic\.|\.anthropic\./i.test(modelId);
-}

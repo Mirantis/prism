@@ -82,6 +82,17 @@ describe('config', () => {
     });
   }
 
+  it.each([
+    ['small', 'eu.anthropic.claude-haiku-5-5', 'haiku'],
+    ['medium', 'eu.anthropic.claude-sonnet-5-5', 'sonnet'],
+    ['medium', 'anthropic.claude-sonnet-5-5', 'sonnet'],
+    ['large', 'arn:aws:bedrock:eu-west-1:123456789012:inference-profile/eu.anthropic.claude-opus-5-5', 'opus'],
+  ] as const)('keeps a Bedrock ID for the claude-code %s tier on Bedrock only', async (tier, model, alias) => {
+    process.env.LLM_PROVIDER = 'anthropic';
+    process.env['CLAUDE_CODE_MODEL_' + tier.toUpperCase()] = model;
+    expect((await loadConfig()).codingAgentModels['claude-code'][tier]).toEqual({ default: alias, bedrock: model });
+  });
+
   describe('public Web UI address', () => {
     beforeEach(() => {
       delete process.env.PRISM_PUBLIC_URL;

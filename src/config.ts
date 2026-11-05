@@ -18,6 +18,7 @@ import { resolveRealtimeConfiguration } from './lib/managed-realtime';
 import { isLoopbackHostname } from './lib/loopback-host';
 import { type OriginPattern, parseOriginPatterns } from './lib/origin-patterns';
 import { subscriptionForcedIn } from './lib/coding-agents/subscription';
+import { isAnthropicModelId } from './lib/llm-providers/bedrock-model-id';
 
 /**
  * Centralized configuration — single place for all env var reads.
@@ -873,23 +874,28 @@ const codingAgentModelOverrides = {
   },
 };
 
+/**
+ * One Claude Code tier: an override that is a Bedrock ID serves Bedrock only,
+ * because the Anthropic API and a Claude subscription refuse it; the same agent
+ * can run its tasks on either, so the other backend keeps its own default.
+ */
+function claudeCodeTier(override: string | undefined, defaults: { default: string; bedrock: string }) {
+  return {
+    default: override !== undefined && !isAnthropicModelId(override) ? override : defaults.default,
+    bedrock: override ?? defaults.bedrock,
+  };
+}
+
 const codingAgentModels = {
   // Keyed by the backend Claude Code itself runs on, which its own credentials
   // decide. On Bedrock the `haiku` and `sonnet` aliases resolve to older releases,
   // which cannot run Claude Code's auto permission mode and so refuse every edit.
   'claude-code': {
-    small: {
-      default: codingAgentModelOverrides['claude-code'].small ?? 'haiku',
-      bedrock: codingAgentModelOverrides['claude-code'].small ?? 'global.anthropic.claude-haiku-5-5',
-    },
-    medium: {
-      default: codingAgentModelOverrides['claude-code'].medium ?? 'sonnet',
-      bedrock: codingAgentModelOverrides['claude-code'].medium ?? 'global.anthropic.claude-sonnet-5-5',
-    },
-    large: {
-      default: codingAgentModelOverrides['claude-code'].large ?? 'opus',
-      bedrock: codingAgentModelOverrides['claude-code'].large ?? 'opus',
-    },
+    small: claudeCodeTier(codingAgentModelOverrides['claude-code'].small,
+      { default: 'haiku', bedrock: 'global.anthropic.claude-haiku-5-5' }),
+    medium: claudeCodeTier(codingAgentModelOverrides['claude-code'].medium,
+      { default: 'sonnet', bedrock: 'global.anthropic.claude-sonnet-5-5' }),
+    large: claudeCodeTier(codingAgentModelOverrides['claude-code'].large, { default: 'opus', bedrock: 'opus' }),
   },
   // Reuse the repository's model choices: luna is the fast classification model,
   // sol is the main model, and terra is the Codex adapter's existing Bedrock default.
