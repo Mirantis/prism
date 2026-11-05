@@ -26,16 +26,7 @@ export const PROGRAM_LIMITS: SandboxLimits = {
   cpuBudgetMs: 30_000,
 };
 
-const DESCRIPTION = `Run a JavaScript program that calls your other tools. Use it when a task needs several tool calls, a loop over many items, or results filtered before you read them: one program replaces many separate tool calls.
-
-The code is the body of an async function, so use \`await\` and \`return\` at the top level. Each tool is an async function on \`tools\`, named as in your tool list, that takes the same input object and resolves with the tool's result:
-
-const files = await tools.shell_exec({ command: 'ls src' });
-const results = await Promise.all(names.map((name) => tools.memory_search({ query: name })));
-
-A call rejects with an Error when the tool fails or is refused, and the program can catch it. Run independent calls together with Promise.all. Only what the program prints with console.log and the value it returns come back to you, so print the facts you need, not whole results.
-
-The program runs in an isolated interpreter: no require, filesystem, network or timers, and it reaches the outside only through \`tools\`. ${PROGRAM_LIMITS.maxToolCalls} tool calls and ${PROGRAM_LIMITS.timeoutMs / 60_000} minutes per run. Tools that return images, and run_program itself, are not on \`tools\`.`;
+const DESCRIPTION = `Run JavaScript that calls your other tools in one step. Use it instead of one call per step when you already know the inputs of several calls: several searches, lookups or updates, or one call per item of a list. Call a tool with \`await tools.<name>(input)\`, which returns its result or throws; \`Promise.all\` runs calls in parallel. The code is an async function body. Only console.log output and the returned value come back, so print just what you need. No require, filesystem, network or timers. At most ${PROGRAM_LIMITS.maxToolCalls} calls and ${PROGRAM_LIMITS.timeoutMs / 60_000} minutes.`;
 
 export const programInput = z.object({
   code: z.string().describe('The JavaScript program: the body of an async function.'),
