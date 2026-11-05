@@ -136,6 +136,43 @@ describe('Slack router listener', () => {
     expect(h.handle).toHaveBeenCalledTimes(1);
   });
 
+  it('answers a retry sent during the first attempt with that attempt\'s outcome', async () => {
+    const envelope = message();
+    let finishReady!: (ready: boolean) => void;
+    h.ready.mockImplementationOnce(() => new Promise<boolean>((resolve) => (finishReady = resolve)));
+
+    const first = post(envelope);
+    await vi.waitFor(() => expect(h.ready).toHaveBeenCalledTimes(1));
+    const retry = post({ ...envelope, sentAt: new Date().toISOString() });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    finishReady(false);
+
+    expect(await first).toMatchObject({ status: 503 });
+    expect(await retry).toMatchObject({ status: 503 });
+    expect(h.ready).toHaveBeenCalledTimes(1);
+    expect(mockPendingWork.claim).not.toHaveBeenCalled();
+
+    expect(await post(envelope)).toMatchObject({ status: 200 });
+    expect(h.handle).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers a retry sent during an attempt that fails with the failure', async () => {
+    const envelope = message();
+    let failClaim!: (error: Error) => void;
+    mockPendingWork.claim.mockImplementationOnce(() => new Promise((_resolve, reject) => (failClaim = reject)));
+
+    const first = post(envelope);
+    await vi.waitFor(() => expect(mockPendingWork.claim).toHaveBeenCalledTimes(1));
+    const retry = post(envelope);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    failClaim(new Error('database is locked'));
+
+    expect(await first).toMatchObject({ status: 500 });
+    expect(await retry).toMatchObject({ status: 500 });
+    expect(await post(envelope)).toMatchObject({ status: 200 });
+    expect(h.handle).toHaveBeenCalledTimes(1);
+  });
+
   it('answers an event recorded before a restart without handling it again', async () => {
     mockPendingWork.claim.mockResolvedValue(false);
 

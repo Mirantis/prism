@@ -50,7 +50,7 @@ import { trackEvent } from '../lib/telemetry';
 import { slackMessageQueueService } from './slack-message-queue.service';
 import { slackHeartbeatTriggerService } from './slack-heartbeat-trigger.service';
 import { heartbeatService } from './heartbeat.service';
-import { conversationService } from './conversation.service';
+import { conversationService, type MessageInput } from './conversation.service';
 import { conversationEngineService } from './conversation-engine.service';
 import { agentWorkspaceService } from './agent-workspace.service';
 import {
@@ -223,17 +223,19 @@ function gateText(message: GateMessage): string {
 }
 
 /**
- * A routed message's text without the app's mentions and the user-group handle
- * at its start: the router has already addressed it to this agent. A handle
- * elsewhere names an agent, so it stays as its plain `@handle`.
+ * A routed message's text without the app's mentions. On a `mention` or `dm`
+ * the user-group handle at its start addressed it to this agent, so it goes
+ * too. Any other handle names an agent, so it stays as its plain `@handle`:
+ * a `thread_reply` reaches this agent because it takes part in the thread, and
+ * a handle at its start addresses the reply to another agent.
  */
-function withoutAddress(text: string, botUserId: string): string {
-  return text
-    .replace(new RegExp(`<@${botUserId}>`, 'g'), '')
-    .trim()
-    .replace(LEADING_USER_GROUP, '')
-    .trim()
-    .replace(USER_GROUP, (_markup, label: string | undefined) => label ?? '');
+function withoutAddress(text: string, botUserId: string, route: SlackRoute): string {
+  const withoutMentions = text.replace(new RegExp(`<@${botUserId}>`, 'g'), '').trim();
+  const addressed = route === 'mention' || route === 'dm';
+  return (addressed ? withoutMentions.replace(LEADING_USER_GROUP, '').trim() : withoutMentions).replace(
+    USER_GROUP,
+    (_markup, label: string | undefined) => label ?? '',
+  );
 }
 
 /** Whether a message tags somebody other than the bot, which addresses it to them. */
@@ -1335,10 +1337,14 @@ class SlackAdapterService implements ChannelAdapter {
       select: { externalMessageId: true, content: true, triggeredBy: true, triggerName: true },
     });
     const ownByTs = new Map(own.map((m) => [m.externalMessageId, m]));
+    // Every sender is looked up before anything is stored, and the messages are
+    // stored together, so a restart in between leaves none of them and the
+    // replayed event reads the thread again.
+    const messages: MessageInput[] = [];
     for (const message of earlier) {
       const mine = ownByTs.get(message.ts);
       if (mine) {
-        await conversationService.addMessage(threadId, {
+        messages.push({
           role: 'AGENT',
           content: mine.content,
           triggeredBy: mine.triggeredBy,
@@ -1352,7 +1358,7 @@ class SlackAdapterService implements ChannelAdapter {
       const senderName = message.bot_id
         ? message.username
         : await this.getUserInfo(senderId, teamId).then((info) => info?.real_name || info?.name);
-      await conversationService.addMessage(threadId, {
+      messages.push({
         role: 'USER',
         content: this.buildSenderTaggedContent(senderId, senderName, text),
         triggeredBy: 'USER_INPUT',
@@ -1360,6 +1366,7 @@ class SlackAdapterService implements ChannelAdapter {
         senderName,
       });
     }
+    await conversationService.addMessages(threadId, messages);
   }
 
   /**
@@ -1464,7 +1471,7 @@ class SlackAdapterService implements ChannelAdapter {
 
       const slackUserId: string = msg.user;
       const rawText = (msg.text || '').trim();
-      const messageText: string = routed ? withoutAddress(rawText, botUserId) : rawText;
+      const messageText: string = routed ? withoutAddress(rawText, botUserId, routed.route) : rawText;
       const channelId: string = msg.channel;
       const files: SlackFileMeta[] = hasFiles ? msg.files! : [];
 

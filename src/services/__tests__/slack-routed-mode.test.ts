@@ -36,6 +36,7 @@ const {
     getOrCreateThreadByExternalId: vi.fn(),
     getRecentMessages: vi.fn(),
     addMessage: vi.fn(),
+    addMessages: vi.fn(),
   },
   mockChat: vi.fn(),
   mockClassify: vi.fn(),
@@ -165,6 +166,7 @@ beforeEach(() => {
   mockConversationService.getOrCreateThreadByExternalId.mockResolvedValue({ id: 'thread-1' });
   mockConversationService.getRecentMessages.mockResolvedValue([{ id: 'm1', role: 'AGENT', content: 'Earlier reply.' }]);
   mockConversationService.addMessage.mockResolvedValue({ message: {}, titleSet: null });
+  mockConversationService.addMessages.mockResolvedValue(undefined);
   mockChat.mockResolvedValue({});
   mockPrisma.conversationMessage.findMany.mockResolvedValue([]);
 });
@@ -273,30 +275,53 @@ describe('A Slack thread the agent joins', () => {
 
     expect(replies).toHaveBeenCalledTimes(1);
     expect(replies).toHaveBeenCalledWith({ channel: CHANNEL, ts: THREAD_TS, limit: 200 });
-    expect(mockConversationService.addMessage.mock.calls).toEqual([
-      ['thread-1', { role: 'AGENT', content: 'Disk usage is at **91%**.', triggeredBy: 'HEARTBEAT' }],
+    expect(mockConversationService.addMessages.mock.calls).toEqual([
       [
         'thread-1',
-        {
-          role: 'USER',
-          content: '<@B0BOT:Sales>: Not mine to fix.',
-          triggeredBy: 'USER_INPUT',
-          senderExternalId: 'B0BOT',
-          senderName: 'Sales',
-        },
-      ],
-      [
-        'thread-1',
-        {
-          role: 'USER',
-          content: '<@U0BOB:Bob>: who owns this?',
-          triggeredBy: 'USER_INPUT',
-          senderExternalId: 'U0BOB',
-          senderName: 'Bob',
-        },
+        [
+          { role: 'AGENT', content: 'Disk usage is at **91%**.', triggeredBy: 'HEARTBEAT' },
+          {
+            role: 'USER',
+            content: '<@B0BOT:Sales>: Not mine to fix.',
+            triggeredBy: 'USER_INPUT',
+            senderExternalId: 'B0BOT',
+            senderName: 'Sales',
+          },
+          {
+            role: 'USER',
+            content: '<@U0BOB:Bob>: who owns this?',
+            triggeredBy: 'USER_INPUT',
+            senderExternalId: 'U0BOB',
+            senderName: 'Bob',
+          },
+        ],
       ],
     ]);
     expect(mockChat).toHaveBeenCalled();
+  });
+
+  it('stores none of the earlier messages until every sender is looked up', async () => {
+    const replies = connectedApp();
+    replies.mockResolvedValue({
+      messages: [
+        { ts: THREAD_TS, user: 'U0BOB', text: 'disk is full' },
+        { ts: '1761732040.000100', user: 'U0CAROL', text: 'who owns this?' },
+        { ts: MESSAGE_TS, user: ALICE, text: 'can you clean it up?' },
+      ],
+    });
+    adapter.getUserInfo = vi
+      .fn()
+      .mockResolvedValueOnce({ real_name: 'Bob' })
+      .mockRejectedValueOnce(new Error('process stopped'));
+    mockConversationService.getRecentMessages.mockResolvedValueOnce([]);
+    const event = routed('mention');
+
+    await channelMessage('can you clean it up?', THREAD_TS, event).catch(() => undefined);
+
+    expect(adapter.getUserInfo).toHaveBeenCalledTimes(2);
+    expect(mockConversationService.addMessages).not.toHaveBeenCalled();
+    expect(mockConversationService.addMessage).not.toHaveBeenCalled();
+    expect(event.handOff).not.toHaveBeenCalled();
   });
 
   it('reads nothing when the stored thread already has messages', async () => {
@@ -315,6 +340,7 @@ describe('A Slack thread the agent joins', () => {
     await channelMessage('can you clean it up?', THREAD_TS, routed('mention'));
 
     expect(mockConversationService.addMessage).not.toHaveBeenCalled();
+    expect(mockConversationService.addMessages).not.toHaveBeenCalled();
     expect(mockChat).toHaveBeenCalled();
   });
 });
@@ -395,6 +421,21 @@ describe('The routed message handler', () => {
     });
 
     expect(handleChannelMessage.mock.calls[0][3]).toBe('can @ops-agent and @sales both check this?');
+    handleChannelMessage.mockRestore();
+  });
+
+  it('keeps the handle that starts a thread reply, which addresses another agent', async () => {
+    const app = await routedApp();
+    const handleChannelMessage = vi.spyOn(adapter, 'handleChannelMessage').mockResolvedValue(undefined);
+    const [onMessage] = app.message.mock.calls[0];
+
+    await onMessage({
+      message: { user: ALICE, text: '<!subteam^S0OTHER|@other-agent> deploy this', channel: CHANNEL, ts: MESSAGE_TS, thread_ts: THREAD_TS },
+      say: vi.fn(),
+      context: { routed: routed('thread_reply') },
+    });
+
+    expect(handleChannelMessage.mock.calls[0][3]).toBe('@other-agent deploy this');
     handleChannelMessage.mockRestore();
   });
 

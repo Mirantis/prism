@@ -39,6 +39,7 @@ const { mockPrisma } = vi.hoisted(() => ({
     messageAttachment: {
       findMany: vi.fn(),
     },
+    $transaction: vi.fn(),
   },
 }));
 
@@ -568,6 +569,42 @@ describe('ConversationService', () => {
 
       expect(mockPrisma.conversationThread.updateMany).not.toHaveBeenCalled();
       expect(result.titleSet).toBeNull();
+    });
+  });
+
+  describe('addMessages', () => {
+    it('stores every message in one transaction, in order, before now', async () => {
+      mockPrisma.conversationThread.update.mockReturnValue('update-thread');
+      mockPrisma.conversationMessage.create.mockImplementation(({ data }: any) => data);
+      mockPrisma.$transaction.mockImplementation(async (operations: unknown[]) => [createTestThread(), ...operations.slice(1)]);
+      mockPrisma.conversationThread.updateMany.mockResolvedValue({ count: 1 });
+      const before = Date.now();
+
+      await conversationService.addMessages('thread-1', [
+        { role: 'AGENT', content: 'Disk usage is at 91%.', triggeredBy: 'HEARTBEAT' },
+        { role: 'USER', content: 'who owns this disk?', triggeredBy: 'USER_INPUT', senderExternalId: 'U0BOB' },
+      ]);
+
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+      const [operations] = mockPrisma.$transaction.mock.calls[0];
+      expect(operations[0]).toBe('update-thread');
+      const rows = operations.slice(1) as Array<{ content: string; createdAt: Date; threadId: string }>;
+      expect(rows.map((row) => row.content)).toEqual(['Disk usage is at 91%.', 'who owns this disk?']);
+      expect(rows.every((row) => row.threadId === 'thread-1')).toBe(true);
+      expect(rows[0].createdAt.getTime()).toBeLessThan(rows[1].createdAt.getTime());
+      expect(rows[1].createdAt.getTime()).toBeLessThan(Date.now());
+      expect(rows[0].createdAt.getTime()).toBeGreaterThanOrEqual(before - 2);
+      expect(mockPrisma.conversationThread.updateMany).toHaveBeenCalledWith({
+        where: { id: 'thread-1', title: null },
+        data: { title: 'who owns this' },
+      });
+      expect(mockTrackEvent).toHaveBeenCalledTimes(2);
+    });
+
+    it('stores nothing for no messages', async () => {
+      await conversationService.addMessages('thread-1', []);
+
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
     });
   });
 
