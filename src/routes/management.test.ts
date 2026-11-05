@@ -2100,8 +2100,28 @@ describe('Management Routes', () => {
 
       expect(res.status).toBe(200);
       expect(res.headers['content-type']).toContain('image/png');
+      expect(res.headers['content-disposition']).toMatch(/^inline;/);
       expect(res.headers['content-disposition']).toContain('pic.png');
       expect(Buffer.from(res.body)).toEqual(bytes);
+    });
+
+    it('GET /agents/attachments/:id serves a declared image type without magic bytes as a download', async () => {
+      // An SVG stored under the type its uploader declared.
+      const bytes = Buffer.from('<?xml version="1.0" encoding="ISO-8859-1"?><svg onload="alert(1)">\xe9</svg>', 'latin1');
+      mockAttachmentGetById.mockResolvedValue({
+        id: 'att-svg',
+        filename: 'x.svg',
+        mediaType: 'image/svg+xml',
+        storagePath: 'att-svg-x.svg',
+      });
+      mockAttachmentLoadBytes.mockResolvedValue(bytes);
+
+      const res = await authedRequest(app).get('/agents/attachments/att-svg');
+
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toBe('application/octet-stream');
+      expect(res.headers['content-disposition']).toMatch(/^attachment;/);
+      expect(res.headers['x-content-type-options']).toBe('nosniff');
     });
 
     it('GET /agents/attachments/:id returns 404 when not found', async () => {
