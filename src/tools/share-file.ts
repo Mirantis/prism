@@ -250,6 +250,7 @@ async function awaitPendingWrites(
   const outcome = await pendingWrites.waitFor(fullPath, {
     timeoutMs: deps.pendingWriteTimeoutMs ?? PENDING_WRITE_TIMEOUT_MS,
     abortSignal: deps.abortSignal,
+    callerId: toolCallId,
   });
   if (outcome.status === 'none') return null;
 

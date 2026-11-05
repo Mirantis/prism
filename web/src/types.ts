@@ -19,6 +19,8 @@ export interface ToolCallRecord {
   success: boolean;
   /** Present only when that view was cut. */
   truncated?: ToolOutputTruncation;
+  /** Set on a call a program made: the tool that ran the program. */
+  parentTool?: string;
 }
 
 export type AttachmentCategory = 'image' | 'pdf' | 'text' | 'unreadable';

@@ -63,8 +63,9 @@ export interface WorkingIndicatorHandle {
   end(): Promise<void>;
   /**
    * Set the live working phrase ("is running kubectl…"); `null` reverts to the
-   * default text. Pushed to Slack immediately when the text changes. No-op
-   * without a status thread or after end().
+   * default text. Pushed to Slack as soon as the thread's previous status call
+   * is done; changes made while a push waits are coalesced into it, so only the
+   * latest text is sent. No-op without a status thread or after end().
    */
   setText(text: string | null): void;
 }
@@ -129,6 +130,14 @@ interface StatusEntry {
    * transient failure disables the cue for one turn only.
    */
   statusFailed: boolean;
+  /**
+   * A text push is queued on the thread's op chain and has not started yet. It
+   * sends {@link text} as it is when it starts, so a change made meanwhile rides
+   * along instead of queuing a call of its own. A program making hundreds of
+   * quick tool calls flips the text twice per call; without this every flip was
+   * a Slack call, and the final clear waited behind all of them.
+   */
+  pushQueued: boolean;
 }
 
 /** Returned by begin() after stopAll(): shows nothing, ends as a no-op. */
@@ -203,8 +212,15 @@ export class SlackWorkingIndicator {
         const next = text ?? WORKING_STATUS_TEXT;
         if (next === entry.text) return;
         entry.text = next;
-        void this.runStatusOp(key, 'assistant.threads.setStatus', () =>
-          this.ops.setStatus(teamId, channelId, statusThreadTs, next));
+        if (entry.pushQueued) return; // the queued push will send this text
+        entry.pushQueued = true;
+        void this.runStatusOp(key, 'assistant.threads.setStatus', async () => {
+          entry.pushQueued = false;
+          // The turn ended while this waited (its clear is queued behind), or the
+          // initial set failed and the thread is on the reaction fallback.
+          if (this.statusEntries.get(key) !== entry || entry.statusFailed) return;
+          await this.ops.setStatus(teamId, channelId, statusThreadTs, entry.text);
+        });
       },
       end: async () => {
         if (ended) return;
@@ -293,6 +309,7 @@ export class SlackWorkingIndicator {
       text: WORKING_STATUS_TEXT,
       statusOk,
       statusFailed: false,
+      pushQueued: false,
     };
     this.statusEntries.set(key, entry);
     // Log the outcome once per entry (not per push — a long turn should not

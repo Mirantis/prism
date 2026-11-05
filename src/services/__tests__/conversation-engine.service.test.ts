@@ -1814,6 +1814,17 @@ describe('Requirement: Conversation Engine', () => {
         expect(JSON.parse(kept)).toEqual({ command: `${'x'.repeat(4_000)}…`, timeoutMs: 60_000 });
       });
 
+      it('keeps a program call on the row, not the calls the program made', async () => {
+        const program = { tool: 'run_program', input: '{"code":"…"}', output: 'done', success: true, timestamp: 't' };
+        const inner = Array.from({ length: 25 }, () => ({ ...program, tool: 'shell_exec', parentTool: 'run_program' }));
+        mockInvokeStream.mockReturnValueOnce(streamFromSteps([{ text: '', toolCalls: [program, ...inner] }]));
+
+        await conversationEngineService.chat(steerInput('count the logs'));
+
+        const kept = (mockUpdateWork.mock.calls[0][2] as { unsaved: Array<{ tool: string }> }).unsaved;
+        expect(kept.map((u) => u.tool)).toEqual(['run_program']);
+      });
+
       it('stores the tool calls the interrupted turn made as history before the resumed turn', async () => {
         // The resumed turn reads them as its own tool calls and results, and the
         // rows give them up, so a second resume does not store them again.

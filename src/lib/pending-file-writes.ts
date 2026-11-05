@@ -39,12 +39,19 @@ export type PendingWaitOutcome =
 export interface PendingFileWrites {
   /**
    * Record a write the model has asked for, to `fullPath` or, without one, to any
-   * file. Called from a write tool's `onInputAvailable`, which the SDK runs for
+   * file. With `outsideCallersOnly` it holds only callers outside every program:
+   * `run_program` registers so, because the calls inside a program register their
+   * own writes, and two programs that each wait on the other would never end. Called from a write tool's `onInputAvailable`, which the SDK runs for
    * every call in the step before any of them executes — registering from
    * `execute` instead would defeat the point, since concurrent siblings have no
    * ordering between them.
    */
-  register(toolCallId: string | undefined, toolName: string, fullPath?: string): void;
+  register(
+    toolCallId: string | undefined,
+    toolName: string,
+    fullPath?: string,
+    options?: { outsideCallersOnly?: boolean },
+  ): void;
   /** Release a registered write. Called from the write tool's `execute` finally. */
   settle(toolCallId: string | undefined): void;
   /**
@@ -57,11 +64,14 @@ export interface PendingFileWrites {
   wasAnnounced(toolCallId: string | undefined): boolean;
   /**
    * Wait for the unsettled writes that can change `fullPath`: the ones to that
-   * exact string, and the ones with no path.
+   * exact string, and the ones with no path. A call made inside another call has
+   * the id `<outer id>:<n>` (`run_program`), and does not wait for the call it is
+   * part of, which cannot end before it does, nor for a write registered with
+   * `outsideCallersOnly`.
    */
   waitFor(
     fullPath: string,
-    options: { timeoutMs: number; abortSignal?: AbortSignal },
+    options: { timeoutMs: number; abortSignal?: AbortSignal; callerId?: string },
   ): Promise<PendingWaitOutcome>;
   /**
    * Drop everything. Releases outstanding waiters first so none of them hang —
@@ -75,6 +85,8 @@ interface PendingWrite {
   toolName: string;
   /** Undefined when the write can change any file. */
   fullPath?: string;
+  /** Held only by callers outside every program. */
+  outsideCallersOnly: boolean;
   done: Promise<'settled' | 'cleared'>;
   resolve: (how: 'settled' | 'cleared') => void;
 }
@@ -84,7 +96,7 @@ export function createPendingFileWrites(): PendingFileWrites {
   const announced = new Set<string>();
 
   return {
-    register(toolCallId, toolName, fullPath) {
+    register(toolCallId, toolName, fullPath, options) {
       if (!toolCallId) return;
       announced.add(toolCallId);
       // A duplicate id would mean the SDK announced one call twice; keep the
@@ -94,7 +106,13 @@ export function createPendingFileWrites(): PendingFileWrites {
       const done = new Promise<'settled' | 'cleared'>((r) => {
         resolve = r;
       });
-      writes.set(toolCallId, { toolName, fullPath, done, resolve });
+      writes.set(toolCallId, {
+        toolName,
+        fullPath,
+        outsideCallersOnly: options?.outsideCallersOnly ?? false,
+        done,
+        resolve,
+      });
     },
 
     settle(toolCallId) {
@@ -115,9 +133,12 @@ export function createPendingFileWrites(): PendingFileWrites {
     },
 
     async waitFor(fullPath, options) {
-      const matching = [...writes.values()].filter(
-        (w) => w.fullPath === undefined || w.fullPath === fullPath,
-      );
+      const { callerId } = options;
+      const insideProgram = callerId?.includes(':') ?? false;
+      const matching = [...writes.entries()]
+        .filter(([id, w]) => !callerId?.startsWith(`${id}:`) && !(insideProgram && w.outsideCallersOnly))
+        .map(([, w]) => w)
+        .filter((w) => w.fullPath === undefined || w.fullPath === fullPath);
       if (matching.length === 0) return { status: 'none' };
 
       const toolNames = matching.map((w) => w.toolName);

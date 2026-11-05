@@ -420,6 +420,49 @@ describe('SlackWorkingIndicator', () => {
     expect(ops.removeReaction).not.toHaveBeenCalled();
   });
 
+  it('coalesces text changes made while a status call is in flight into one push of the latest text', async () => {
+    let resolveSet!: () => void;
+    ops.setStatus.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { resolveSet = resolve; }),
+    );
+    const handle = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, statusThreadTs: THREAD_TS,
+    });
+
+    // A program's quick tool calls flip the phrase on every start and end.
+    for (let i = 0; i < 500; i++) {
+      handle.setText(toolStatusText(['run_program', 'shell_stdout']));
+      handle.setText(toolStatusText(['run_program']));
+    }
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ops.setStatus).toHaveBeenCalledTimes(1); // the initial set, still in flight
+
+    resolveSet();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ops.setStatus).toHaveBeenCalledTimes(2);
+    expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, 'is running run_program…');
+
+    await handle.end();
+    expect(ops.setStatus).toHaveBeenCalledTimes(3);
+    expect(ops.setStatus).toHaveBeenLastCalledWith(TEAM, CHANNEL, THREAD_TS, '');
+  });
+
+  it('drops a queued text push when the turn ends before it starts', async () => {
+    let resolveSet!: () => void;
+    ops.setStatus.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { resolveSet = resolve; }),
+    );
+    const handle = await indicator.begin({
+      teamId: TEAM, channelId: CHANNEL, statusThreadTs: THREAD_TS,
+    });
+    handle.setText(toolStatusText(['kubectl']));
+    const ending = handle.end();
+    resolveSet();
+    await ending;
+
+    expect(ops.setStatus.mock.calls.map((call) => call[3])).toEqual([WORKING_STATUS_TEXT, '']);
+  });
+
   it('serializes status calls per thread so a clear cannot overtake an in-flight set', async () => {
     let resolveSet!: () => void;
     ops.setStatus.mockImplementationOnce(
@@ -476,10 +519,14 @@ describe('createToolStatusListener', () => {
     });
     const listener = createToolStatusListener(handle);
 
+    // Flush the per-key op chain after each event: changes made while a push
+    // waits are coalesced, and this test reads every phrase.
     listener({ type: 'started', toolName: 'kubectl' });
+    await vi.advanceTimersByTimeAsync(0);
     listener({ type: 'started', toolName: 'pwd' });
+    await vi.advanceTimersByTimeAsync(0);
     listener({ type: 'completed', toolName: 'kubectl' }); // pwd still runs
-    await vi.advanceTimersByTimeAsync(0); // flush the per-key op chain
+    await vi.advanceTimersByTimeAsync(0);
 
     expect(ops.setStatus.mock.calls.map((c) => c[3])).toEqual([
       WORKING_STATUS_TEXT,

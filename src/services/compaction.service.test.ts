@@ -712,7 +712,9 @@ describe('compactNow (manual)', () => {
     expect(mockCollectTools).toHaveBeenCalledWith(
       expect.objectContaining({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD, mode: 'chat' }),
     );
-    expect(request.tools).toEqual({ shell: { description: 'sh' } });
+    // `run_program` too, which a chat turn adds after the collected tools.
+    expect(Object.keys(request.tools)).toEqual(['shell', 'run_program']);
+    expect(request.tools.shell).toEqual({ description: 'sh' });
     expect(request.toolChoice).toBe('none');
     // Resolved against the model this compaction actually runs, not the agent's
     // stored default — the two differ under a mode override, and a breakpoint
@@ -798,11 +800,11 @@ describe('compactNow (manual)', () => {
 
     const request = mockGenerateText.mock.calls[0][0];
     expect(mockCollectTools).toHaveBeenCalled();
-    expect(Object.keys(request.tools)).toEqual(['shell']);
+    expect(Object.keys(request.tools)).toEqual(['shell', 'run_program']);
     expect(request.toolChoice).toBe('auto');
     // The record it leaves is the baseline the next chat turn would have declared.
     const record = toolLedgerService.peek({ threadId: 'thread-after-restart', modelId: 'stored-model', protocol: ANTHROPIC_TOOL_CHANGES });
-    expect(Object.keys(record?.tools ?? {})).toEqual(['shell']);
+    expect(Object.keys(record?.tools ?? {})).toEqual(['shell', 'run_program']);
     expect(record?.toolChanges).toEqual([]);
     expect(record?.deferred.size).toBe(0);
   });
@@ -854,15 +856,15 @@ describe('compactNow (manual)', () => {
     ]);
   });
 
-  it('omits tools and toolChoice when the chat tool set is empty', async () => {
+  it('sends only run_program when the chat tool set is empty, as a chat turn does', async () => {
     mockGetAgentContext.mockResolvedValue(makeContext(8));
     mockCollectTools.mockResolvedValue({ tools: {}, subagents: [] });
 
     await compactionService.compactNow({ userId: 'user-1', agentId: 'agent-1', threadId: THREAD });
 
     const request = mockGenerateText.mock.calls[0][0];
-    expect(request.tools).toBeUndefined();
-    expect(request.toolChoice).toBeUndefined();
+    expect(Object.keys(request.tools)).toEqual(['run_program']);
+    expect(request.toolChoice).toBe('none');
   });
 
   it('emits failed (never throws) when the summarize call rejects', async () => {
@@ -968,6 +970,15 @@ describe('splitTail', () => {
 
     expect(recall.fromUser).toBe(false);
     expect(request.fromUser).toBe(true);
+  });
+
+  it('sizes a row by the tool calls replay sends, not the calls a program made', () => {
+    const program = { tool: 'run_program', input: '{}', output: 'one line' };
+    const inner = { tool: 'web_fetch', input: '{}', output: 'x'.repeat(30_000), parentTool: 'run_program' };
+    const [withInner] = toForkRows([{ id: 'a1', role: 'AGENT', content: 'done', toolCalls: [program, inner] }]);
+    const [alone] = toForkRows([{ id: 'a1', role: 'AGENT', content: 'done', toolCalls: [program] }]);
+
+    expect(withInner.contentChars).toBe(alone.contentChars);
   });
 
   it('summarizes everything with a tail of 0', () => {

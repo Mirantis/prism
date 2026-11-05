@@ -23,6 +23,7 @@ import { MAX_FILE_SIZE_BYTES } from '../constants';
 import { resolveWorkspace } from '../lib/execution-environments/workspace';
 import type { DirEntry } from '../lib/execution-environments/execution-environment';
 import { trackEvent } from '../lib/telemetry';
+import { withModelOnlyOutput } from './program/model-only';
 
 /** The filesystem holding a path, so a hydrated file is one the thread's shell can read. */
 function files(forPath: string) {
@@ -402,7 +403,7 @@ export function getAttachmentTools(
       execute: async (input) =>
         runHydrateAttachment(input, userId, agentId, threadId, workspaceRoot),
     }),
-    view_attachment: {
+    view_attachment: withModelOnlyOutput({
       ...tool({
         description:
           'Look at an image or read a PDF attachment without writing it to disk. ' +
@@ -453,6 +454,6 @@ export function getAttachmentTools(
           ],
         };
       },
-    },
+    }),
   };
 }

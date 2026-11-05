@@ -35,6 +35,7 @@ import { getSendMessageTools } from '../tools/send-message';
 import { SEND_MESSAGE_TOOL_NAME } from '../services/outbound-message.service';
 import { getAttachmentTools } from '../tools/attachments';
 import { getWebFetchTools } from '../tools/web/web-fetch';
+import { PROGRAM_TOOL_NAME } from '../tools/program/run-program';
 import { getSkillTools } from '../tools/skills/index';
 import {
   getMeetingTools,
@@ -221,7 +222,7 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
   const merged: Record<string, Tool> = { ...builtInTools };
   const mergeWithoutOverriding = (tools: Record<string, Tool>, source: string): void => {
     for (const [name, tool] of Object.entries(tools)) {
-      if (name in merged) {
+      if (name in merged || name === PROGRAM_TOOL_NAME) {
         logger.warn(`[${source}] dropping tool "${name}" — that name is already taken`);
         continue;
       }
@@ -264,11 +265,11 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
   // compaction, and the voice-meeting bridge, which re-declares these same keys
   // to the Realtime API under the same limit.
   //
-  // Every built-in name is reserved, `Task` included, and the set is taken
+  // Every built-in name is reserved, `Task` and the program tool invoke.ts adds included, and the set is taken
   // before the filters rather than after: a mode that withheld `share_file`
   // leaves its name unclaimed, and a remote `share.file` sanitizing into that
   // slot would hand the model a tool the mode had just taken away.
-  const reservedNames = new Set([...Object.keys(builtInTools), 'Task']);
+  const reservedNames = new Set([...Object.keys(builtInTools), 'Task', PROGRAM_TOOL_NAME]);
   const tools = capToolNames(filteredTools, 'collect', reservedNames);
   // Matched on the tool object, since capping can rename a tool.
   const mcpTools = new Set<Tool>([...Object.values(nexusTools), ...Object.values(pluginTools)]);

@@ -19,9 +19,11 @@ import {
 } from './harness';
 import { placesOf, reachedUser, runAutonomous, type AutonomousRun, type Outcome, type Place } from './delivery';
 import { THREAD_GATE_SCENARIOS } from './thread-gate';
-import { jsonSchema, tool } from 'ai';
+import { jsonSchema, tool, type Tool } from 'ai';
 import type { ModelTier } from '../lib/model-selection';
 import { getDefaultWorkspaceFiles } from '../templates/default-workspace';
+import { dataTools, PROGRAM_TASKS, type ProgramTask } from './program-tasks';
+import { PROGRAM_TOOL_NAME } from '../tools/program/run-program';
 import { COLLEAGUE_SCENARIOS } from './colleague-scenarios';
 import { HEARTBEAT_PROMPT } from '../services/heartbeat.service';
 import type { PostingCeiling } from '../services/delivery-target.service';
@@ -725,6 +727,42 @@ const DELIVERY_SCENARIOS: Scenario[] = [
   ),
 ];
 
+/** Each tool's own `execute` as its stub, so the seeded data answers the calls. */
+function stubsOf(tools: Record<string, Tool>): Record<string, (input: Record<string, unknown>) => unknown> {
+  return Object.fromEntries(
+    Object.entries(tools).map(([name, t]) => [name, (input) => t.execute!(input as never, { toolCallId: name, messages: [], context: undefined })]),
+  );
+}
+
+/** Numbers in a reply may have thousands separators, and names any case. */
+function normalizeAnswer(text: string): string {
+  return text.replace(/(\d),(?=\d{3}\b)/g, '$1').toLowerCase();
+}
+
+function programScenario(task: ProgramTask): Scenario {
+  return {
+    id: `program.${task.name}`,
+    expect: task.program
+      ? 'A task of many tool calls is answered correctly with run_program.'
+      : 'A one-call lookup is answered correctly with a direct call, without run_program.',
+    grader: 'tool call',
+    run: async () => {
+      const tools = dataTools();
+      const trace = await runTurn({
+        mode: 'chat',
+        history: [{ user: task.prompt }],
+        extraTools: tools,
+        stubs: stubsOf(tools),
+        maxSteps: 12,
+      });
+      const reply = normalizeAnswer(replyOf(trace));
+      const correct = task.expect.every((fragment) => reply.includes(fragment.toLowerCase()));
+      const usedProgram = trace.calls.some((call) => call.tool === PROGRAM_TOOL_NAME);
+      return { pass: correct && usedProgram === task.program, detail: describeTrace(trace) };
+    },
+  };
+}
+
 /** A working session whose details a summary has to carry word for word. All values are invented. */
 const DEPLOY_SESSION = [
   { user: 'Our checkout-api deploy to staging fails. Never touch the production cluster while we debug this.' },
@@ -779,6 +817,7 @@ const DEPLOY_VERBATIM = [
 const SUMMARY_HEADINGS = ['## Goal', '## User Requests', '## Next Steps'];
 
 export const SCENARIOS: Scenario[] = [
+  ...PROGRAM_TASKS.map(programScenario),
   {
     id: 'compaction.keeps-details',
     expect:

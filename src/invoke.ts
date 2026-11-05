@@ -48,6 +48,7 @@ import {
   unwrapToolOutput,
 } from './lib/tool-output-limiter';
 import { withToolLifecycleEvents } from './lib/tool-lifecycle';
+import { createProgramTool, PROGRAM_TOOL_NAME, type ProgramCall } from './tools/program/run-program';
 import {
   isToolRiskGateError,
   withToolRiskGate,
@@ -361,7 +362,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
     const limitedTools = withToolOutputCapture(observedTools, {
       workspaceRoot: request.workspaceRoot,
     });
-    const gatedTools = withToolRiskGate(limitedTools, {
+    const riskGateOptions = {
       mode: config.toolRiskGateMode,
       invocationMode: request.mode,
       initialPrompt: request.prompt,
@@ -370,7 +371,37 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       agentGuide: context.agentMd,
       userId: request.userId,
       agentId: request.agentId,
-    });
+    };
+    // `run_program` calls the gated tools without the output capture, so a program
+    // filters a whole result; the program's own output is captured instead. It is
+    // not gated itself, since every call it makes is. The calls a program makes go
+    // into the step's record after the program's own (see `onStepFinish`). Each is
+    // kept as its record, built when the call ends, so a raw result is not held for
+    // the rest of the program.
+    const programCalls = new Map<string, { records: ToolCallRecord[]; attachmentIds: string[] }>();
+    const programTool = withToolOutputCapture(
+      withToolLifecycleEvents(
+        {
+          [PROGRAM_TOOL_NAME]: createProgramTool(withToolRiskGate(observedTools, riskGateOptions), {
+            userId: request.userId,
+            agentId: request.agentId,
+            invocationMode: request.mode,
+            pendingWrites: pendingFileWrites,
+            onCall: (call) => {
+              const calls = programCalls.get(call.parentCallId) ?? { records: [], attachmentIds: [] };
+              calls.records.push(programCallRecord(call));
+              if ('output' in call) {
+                calls.attachmentIds.push(...extractAttachmentIds([call], [{ toolCallId: call.toolCallId, output: call.output }]));
+              }
+              programCalls.set(call.parentCallId, calls);
+            },
+          }),
+        },
+        request.onToolEvent,
+      ),
+      { workspaceRoot: request.workspaceRoot },
+    );
+    const gatedTools = { ...withToolRiskGate(limitedTools, riskGateOptions), ...programTool };
     // `guard` is shared by every `warnOnTrailingAssistant` call in this invocation, and
     // the function sets it once it has reported. A 100-step turn checks the array at
     // each step, so without it one bad turn would emit a hundred identical events.
@@ -652,6 +683,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
         // made replay a different rendering besides, since JSON.stringify keeps an
         // MCP envelope and its escaping while the model was shown the joined text.
         const stepToolCalls: ToolCallRecord[] = [];
+        const innerAttachmentIds: string[] = [];
         for (const tc of step.toolCalls) {
           const tr = step.toolResults.find((r) => r.toolCallId === tc.toolCallId);
           const riskErrorPart = step.content?.find(
@@ -695,10 +727,19 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
             ...(rendered ? { rendered: true as const } : {}),
             ...(rendered?.truncation ? { truncated: rendered.truncation } : {}),
           });
+          const inner = programCalls.get(tc.toolCallId);
+          if (inner) {
+            programCalls.delete(tc.toolCallId);
+            stepToolCalls.push(...inner.records);
+            innerAttachmentIds.push(...inner.attachmentIds);
+          }
         }
 
         const blocks = extractBlocks(step.text);
-        const attachmentIds = extractAttachmentIds(step.toolCalls, step.toolResults);
+        const attachmentIds = [
+          ...extractAttachmentIds(step.toolCalls, step.toolResults),
+          ...innerAttachmentIds,
+        ];
         const usage = toStepUsage(modelId, step.usage);
         const inputTokens = step.usage?.inputTokens;
         const outputTokens = step.usage?.outputTokens;
@@ -1117,6 +1158,35 @@ export function extractAttachmentIds(
     }
   }
   return ids;
+}
+
+/**
+ * The record of a call a program made, built as `onStepFinish` builds a direct
+ * call's: the model-facing view of the result, or the gate's summary of a refusal
+ * so that `hasRiskBlockedCall` finds it.
+ */
+function programCallRecord(call: ProgramCall): ToolCallRecord {
+  const rendered = 'output' in call ? renderToolResultDetailed(call.output, { toolName: call.toolName }) : undefined;
+  const riskError = isToolRiskGateError(call.error) ? call.error : undefined;
+  return {
+    tool: call.toolName,
+    input: JSON.stringify(call.input),
+    output: rendered
+      ? rendered.text
+      : riskError
+        ? JSON.stringify({
+            error: riskError.message,
+            code: riskError.code,
+            risk: riskError.risk,
+            category: riskError.category,
+          })
+        : '',
+    success: Boolean(rendered),
+    timestamp: new Date().toISOString(),
+    ...(rendered ? { rendered: true as const } : {}),
+    ...(rendered?.truncation ? { truncated: rendered.truncation } : {}),
+    parentTool: PROGRAM_TOOL_NAME,
+  };
 }
 
 /**

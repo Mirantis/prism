@@ -189,7 +189,11 @@ export async function attachmentsHeldByChatWork(): Promise<string[]> {
   });
 }
 
-/** How much of an unsaved tool call the pending-work row keeps: the newest calls, each cut. */
+/**
+ * How much of an unsaved tool call the pending-work row keeps: the newest calls the
+ * model made, each cut. A call a program made is left out, since replay shows the
+ * model only the program and its output.
+ */
 const UNSAVED_MAX_CALLS = 20;
 const UNSAVED_MAX_CHARS = 4_000;
 
@@ -517,6 +521,7 @@ Answer with one word: WORTHY or SKIP.`;
     // resumed turn reads its history, and delivers the files it shared.
     const recordUnsaved = (key: string) => (calls: ToolCallRecord[], attachmentIds: string[]) => {
       const unsaved = calls
+        .filter((call) => call.parentTool === undefined)
         .slice(-UNSAVED_MAX_CALLS)
         .map((call) => ({ ...call, input: cutInput(call.input), output: cut(call.output) }));
       pendingWorkService.update('chat', key, {
