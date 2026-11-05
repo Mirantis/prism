@@ -6,9 +6,14 @@
  * (`services/slack-router.service.ts`) serves this route alone, on
  * `SLACK_PORT`.
  *
- * The ingress in front verifies the router's signature and adds
- * `x-nexus-webhook-verified: 1`. A request without that header is refused
- * before its body is read.
+ * The ingress in front verifies the router's signature, removes any
+ * `x-nexus-webhook-verified` the caller sent, and adds
+ * `x-nexus-webhook-verified: 1`; a Lens Agents `webhook` port does all three.
+ * A request without that header is refused before its body is read.
+ *
+ * The header proves nothing on its own: anyone who reaches `SLACK_PORT` past
+ * the ingress can send it. Only the ingress may reach the port, so it must not
+ * be published without one (docs/slack-router-protocol.md, "The ingress").
  */
 
 import express, { type NextFunction, type Request, type Response } from 'express';

@@ -22,6 +22,7 @@
  */
 import { type FetchFunction, WebClient, WebClientOptions } from '@slack/web-api';
 import { config } from '../config';
+import { slackMode } from './slack-config';
 
 function isFormEncoded(headers: Record<string, string> | undefined): boolean {
   return Object.entries(headers ?? {}).some(
@@ -99,13 +100,15 @@ export function slackClientOptions(): WebClientOptions {
 }
 
 /**
- * Whether a request to `url` may carry the bot token: Slack's own hosts over
- * HTTPS, and the `SLACK_API_URL` origin.
+ * Whether a request to `url` may carry the bot token: the `SLACK_API_URL`
+ * origin, and Slack's own hosts over HTTPS. In routed mode the token is the
+ * proxy's and the agent does not reach Slack, so only the proxy's origin.
  */
 export function mayReceiveSlackToken(url: string): boolean {
   if (!URL.canParse(url)) return false;
   const target = new URL(url);
   if (config.slackApiUrl && target.origin === new URL(config.slackApiUrl).origin) return true;
+  if (slackMode() === 'routed') return false;
   return (
     target.protocol === 'https:' &&
     (target.hostname === 'slack.com' || target.hostname.endsWith('.slack.com'))

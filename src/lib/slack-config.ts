@@ -48,6 +48,13 @@ export interface SlackConnectionRecord {
 
 let cached: SlackConnectionRecord | null | undefined;
 let inflight: Promise<SlackConnectionRecord | null> | undefined;
+/**
+ * Bumped by every reload and clear. A load started before the bump neither
+ * fills the cache nor answers its callers with its own record: a `disconnected`
+ * envelope that lands while boot's `auth.test` is still out must not be undone
+ * when that call returns.
+ */
+let generation = 0;
 
 async function loadFromEnv(): Promise<SlackConnectionRecord | null> {
   const botToken = config.slackBotToken;
@@ -132,27 +139,39 @@ export async function getSlackConfig(): Promise<SlackConnectionRecord | null> {
   if (cached !== undefined) return cached;
   if (inflight) return inflight;
 
-  inflight = loadFromEnv()
-    .then((record) => {
+  const started = generation;
+  const load: Promise<SlackConnectionRecord | null> = loadFromEnv().then(
+    (record) => {
+      // A reload or a clear came after this load started: the newer state wins.
+      if (started !== generation) return getSlackConfig();
       cached = record;
-      return record;
-    })
-    .finally(() => {
       inflight = undefined;
-    });
+      return record;
+    },
+    (error: unknown) => {
+      if (started !== generation) return getSlackConfig();
+      inflight = undefined;
+      throw error;
+    },
+  );
+  inflight = load;
 
-  return inflight;
+  return load;
 }
 
 /** Validate the token again: the router reported the agent added to a workspace. */
 export function reloadSlackConfig(): Promise<SlackConnectionRecord | null> {
+  generation++;
   cached = undefined;
+  inflight = undefined;
   return getSlackConfig();
 }
 
 /** Forget the connection: the router reported the agent removed from its workspace. */
 export function clearSlackConfig(): void {
+  generation++;
   cached = null;
+  inflight = undefined;
 }
 
 /**
@@ -160,6 +179,7 @@ export function clearSlackConfig(): void {
  * @internal
  */
 export function __resetSlackConfigForTests(): void {
+  generation++;
   cached = undefined;
   inflight = undefined;
 }
