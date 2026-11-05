@@ -202,6 +202,11 @@ export function detectMediaType(buffer: Buffer, filename: string, declaredMime?:
   return isImageOrPdfType(resolved) ? 'application/octet-stream' : resolved;
 }
 
+/** True for the media types `detectMediaType` assigns from magic bytes alone, the ones a response may serve inline. */
+export function isInlineSafeMediaType(mediaType: string): boolean {
+  return isImageOrPdfType(mediaType);
+}
+
 /** True for image media types Bedrock natively accepts as image content parts. */
 export function isBedrockImageType(mediaType: string): boolean {
   return IMAGE_MEDIA_TYPES.has(mediaType);
