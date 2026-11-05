@@ -38,6 +38,11 @@ describe('normaliseAgentName', () => {
     ['a zero-width space', 'At\u200Blas'],
     ['a bidirectional override', 'At\u202Elas'],
     ['a tag character', 'Atlas\u{E0041}'],
+    ['a Hangul filler, which counts as a letter', '\u3164'],
+    ['a combining grapheme joiner, which counts as a mark', 'At\u034Flas'],
+    ['a variation selector, which counts as a mark', 'At\uFE0Flas'],
+    ['a zero-width non-joiner', 'At\u200Clas'],
+    ['a soft hyphen', 'At\u00ADlas'],
     ['a mark with no letter', '\u0301Atlas'],
     // NFC composes the first mark into Ź; four more still stack.
     ['stacked marks', 'Z\u0301\u0302\u0303\u0304\u0306algo'],

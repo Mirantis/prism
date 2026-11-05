@@ -22,6 +22,7 @@ import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { config } from '../config';
 import { MAX_HEARTBEAT_INTERVAL_MS, MIN_HEARTBEAT_INTERVAL_MS } from '../constants';
+import { AGENT_NAME_RULE } from '../lib/agent-name';
 
 /** Shared input schema for workspace-file update tools (dual-mode: full replace or targeted edits). */
 const workspaceFileInputSchema = z.object({
@@ -114,9 +115,9 @@ export function getAgentConfigTools(): Record<string, Tool> {
       description:
         "Rename this agent. Use only when the user explicitly asks you to change your name. The new name is persisted and picked up on the next chat turn.",
       inputSchema: z.object({
-        // No length or character limit here: `renameAgent` answers a name
-        // outside the rule with the rule itself, which the agent can act on.
-        name: z.string().min(1).describe("The new name for this agent: 1–64 characters, only letters, digits, spaces and - ' . &."),
+        // `renameAgent` checks the name and answers one outside the rule, an
+        // empty one included, with the rule itself, which the agent can act on.
+        name: z.string().describe(`The new name for this agent. ${AGENT_NAME_RULE}`),
       }),
       execute: async ({ name }) => {
         try {

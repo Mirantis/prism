@@ -46,7 +46,7 @@ or **Enter** to complete the selection, then **Enter** to run.
 | `/attach` | `<path>` | Stage a file (≤10 MB) to send with the next message. Offers path completion. |
 | `/detach` | — | Remove all staged attachments. |
 | `/save` | `[dir\|file]` | Save files shared by the agent's most recent message to disk (current dir by default). |
-| `/rename` | `<name>` | Rename the agent (1–64 characters: letters, digits, spaces and `- ' . &`). |
+| `/rename` | `<name>` | Rename the agent (up to 64 characters of letters, digits, spaces and `- ' . &`). |
 | `/model` | `<id>` \| `reset` | Set the agent's model, or reset to the server default. |
 | `/heartbeat-model` | `<id>` \| `reset` | Set the heartbeat model, or `reset` to inherit the main model. |
 | `/cron-model` | `<id>` \| `reset` | Set the scheduled-task model, or `reset` to inherit the main model. |

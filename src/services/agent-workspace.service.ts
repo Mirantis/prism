@@ -352,20 +352,14 @@ class AgentWorkspaceService {
   }
 
   /**
-   * Rename the agent. Shared by the management `PATCH /agents/:agentId/name`
+   * Rename the agent. Shared by the management `PATCH /agents/name`
    * endpoint and the `rename_self` agent tool so trim/validate/persist live
    * in one place. Resolves the single agent via `getAgent()` (which throws
    * if it's missing). Throws `ValidationError` for bad input.
    */
   async renameAgent(name: unknown): Promise<AgentWorkspace> {
-    const trimmed = typeof name === 'string' ? name.trim() : '';
-    if (!trimmed) {
-      throw new ValidationError('name must be a non-empty string');
-    }
-    // Held to the rule for names (`lib/agent-name.ts`): an agent talked into
-    // a name that holds an instruction would send it to everything that
-    // shows the name.
-    const normalised = normaliseAgentName(trimmed);
+    // Held to the rule for names (`lib/agent-name.ts`), an empty name included.
+    const normalised = normaliseAgentName(typeof name === 'string' ? name : '');
     if (!normalised) {
       throw new ValidationError(AGENT_NAME_RULE);
     }

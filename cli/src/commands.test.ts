@@ -353,14 +353,16 @@ describe('/rename validation', () => {
     expect(out).toMatch(/usage/i);
   });
 
-  it('a 65-character name returns an error and makes no api call', async () => {
+  it('leaves the length to the runtime, which measures it after normalising the name', async () => {
+    // 62 letters, two spaces and a letter normalise to 64 characters, which the runtime accepts.
     const api = stubApi();
-    const long = 'x'.repeat(65);
+    const name = `${'x'.repeat(62)}  B`;
+    api.setName.mockResolvedValue({ name: `${'x'.repeat(62)} B` });
     const out = await cmd('/rename').run(
-      makeCtx({ rawArgs: long, api: api as unknown as ApiClient }),
+      makeCtx({ rawArgs: name, api: api as unknown as ApiClient }),
     );
-    expect(api.setName).not.toHaveBeenCalled();
-    expect(out).toMatch(/too long/i);
+    expect(api.setName).toHaveBeenCalledWith(name);
+    expect(out).toContain('Renamed to');
   });
 
   it('a valid name calls setName and confirms', async () => {

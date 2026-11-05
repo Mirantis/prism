@@ -19,6 +19,12 @@ Feature: Agent Configuration
     When I navigate to the agent detail page
     Then I should see the heartbeat interval "Every 8h"
 
+  Scenario: The name editor shows the rule for a name it refuses
+    When I navigate to the profile page
+    And I rename the agent to "Ops (EU)" on the profile page
+    Then the name editor shows "Use a name of up to 64 characters, with letters, digits and spaces. It may also contain - ' . and &."
+    And the stored agent name is unchanged
+
   Scenario: Edit the agent guide and save it
     When I navigate to the profile page
     Then the agent guide editor shows the stored guide

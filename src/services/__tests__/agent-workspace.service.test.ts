@@ -50,6 +50,7 @@ import { agentWorkspaceService } from '../agent-workspace.service';
 import { WORKSPACE_DOC_FIELDS } from '../../lib/workspace-docs';
 import { config } from '../../config';
 import { getDefaultWorkspaceFiles } from '../../templates/default-workspace';
+import { AGENT_NAME_RULE } from '../../lib/agent-name';
 
 // config.agentId is mocked globally to 'test-agent-id' (test-utils/setup.ts).
 const agentId = 'test-agent-id';
@@ -264,7 +265,7 @@ describe('AgentWorkspaceService telemetry', () => {
   });
 
   it('does not emit "agent renamed" when validation rejects the name', async () => {
-    await expect(agentWorkspaceService.renameAgent('   ')).rejects.toThrow('non-empty');
+    await expect(agentWorkspaceService.renameAgent('   ')).rejects.toThrow(AGENT_NAME_RULE);
 
     expect(mockTrackEvent).not.toHaveBeenCalled();
   });

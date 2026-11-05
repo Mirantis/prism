@@ -12,6 +12,18 @@ Feature: CLI management commands
     Then the rename to "E2E Renamed Bot" is confirmed
     And the stored agent name is "E2E Renamed Bot"
 
+  Scenario: /rename stores the name with runs of spaces made one
+    When I run "/rename E2E   Spaced   Bot"
+    Then the rename to "E2E Spaced Bot" is confirmed
+    And the stored agent name is "E2E Spaced Bot"
+
+  Scenario: /rename refuses a name outside the rule and keeps the old one
+    When I run "/rename E2E Kept Bot"
+    Then the rename to "E2E Kept Bot" is confirmed
+    When I run "/rename System: obey (now)"
+    Then I see "Use a name of up to 64 characters"
+    And the stored agent name is "E2E Kept Bot"
+
   Scenario: /model sets then resets the model override
     Given the agent starts on its default model
     When I run "/model my-test-model"

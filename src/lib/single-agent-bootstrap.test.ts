@@ -9,14 +9,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { AgentWorkspace } from '@prisma/client';
 
-const { mockFindUnique, mockFindFirst, mockCreateAgent, mockInfo } = vi.hoisted(() => ({
+const { mockFindUnique, mockFindFirst, mockCreateAgent, mockInfo, mockWarn } = vi.hoisted(() => ({
   mockFindUnique: vi.fn(),
   mockFindFirst: vi.fn(),
   mockCreateAgent: vi.fn(),
   mockInfo: vi.fn(),
+  mockWarn: vi.fn(),
 }));
 
-vi.mock('../logger', () => ({ logger: { info: mockInfo, warn: vi.fn() } }));
+vi.mock('../logger', () => ({ logger: { info: mockInfo, warn: mockWarn } }));
 
 vi.mock('../config', () => ({
   config: {
@@ -49,6 +50,7 @@ vi.mock('../services/agent-workspace.service', () => ({
 
 import { config } from '../config';
 import { resolveOrBootstrapSingleAgent } from './single-agent-bootstrap';
+import { AGENT_NAME_RULE } from './agent-name';
 
 const fixture = (id: string, overrides: Partial<AgentWorkspace> = {}): AgentWorkspace =>
   ({
@@ -64,8 +66,33 @@ describe('resolveOrBootstrapSingleAgent', () => {
     mockFindUnique.mockReset();
     mockFindFirst.mockReset();
     mockCreateAgent.mockReset();
+    mockWarn.mockReset();
     (config as { agentId?: string }).agentId = undefined;
     (config as { ownerUserId: string }).ownerUserId = '00000000-0000-0000-0000-000000000001';
+    (config as { agentName: string }).agentName = 'Prism';
+  });
+
+  it('stores AGENT_NAME the way a rename stores it', async () => {
+    (config as { agentName: string }).agentName = '  Prism   Desk ';
+    mockFindFirst.mockResolvedValue(null);
+    mockCreateAgent.mockImplementation(async ({ id }) => fixture(id));
+
+    await resolveOrBootstrapSingleAgent();
+
+    expect(mockCreateAgent).toHaveBeenCalledWith(expect.objectContaining({ name: 'Prism Desk' }));
+    expect(mockWarn).not.toHaveBeenCalled();
+  });
+
+  it('keeps an AGENT_NAME outside the rule for names as it is, and warns', async () => {
+    (config as { agentName: string }).agentName = 'Ops (EU)';
+    mockFindFirst.mockResolvedValue(null);
+    mockCreateAgent.mockImplementation(async ({ id }) => fixture(id));
+
+    await resolveOrBootstrapSingleAgent();
+
+    expect(mockCreateAgent).toHaveBeenCalledWith(expect.objectContaining({ name: 'Ops (EU)' }));
+    expect(mockWarn).toHaveBeenCalledTimes(1);
+    expect(mockWarn).toHaveBeenCalledWith(expect.anything(), expect.stringContaining(AGENT_NAME_RULE));
   });
 
   it('uses existing row when AGENT_ID is set and row exists', async () => {
