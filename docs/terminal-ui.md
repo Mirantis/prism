@@ -75,7 +75,7 @@ complete the selection, then **Enter** to run. The available commands:
 | `/attach <path>` | Stage a file (≤10 MB) to send with your next message; offers path completion |
 | `/detach` | Remove all staged attachments |
 | `/save [dir\|file]` | Save files the agent shared in its last message to disk |
-| `/rename <name>` | Rename the agent (1–64 characters) |
+| `/rename <name>` | Rename the agent (1–64 characters: letters, digits, spaces and `- ' . &`) |
 | `/model <id\|reset>` | Set the agent's model, or `reset` to the server default |
 | `/heartbeat-model <id\|reset>` | Set the heartbeat model, or `reset` to inherit the main model |
 | `/cron-model <id\|reset>` | Set the scheduled-task model, or `reset` to inherit the main model |

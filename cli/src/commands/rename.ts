@@ -3,10 +3,10 @@ import type { SlashCommand } from './types.js';
 
 export const renameCommand: SlashCommand = {
   name: '/rename',
-  description: 'Rename the agent (1-64 chars)',
+  description: "Rename the agent (1-64 characters: letters, digits, spaces and - ' . &)",
   run: async (ctx) => {
     const name = ctx.rawArgs;
-    if (name.length === 0) return 'Usage: /rename <new name> (1-64 chars).';
+    if (name.length === 0) return "Usage: /rename <new name> (1-64 characters: letters, digits, spaces and - ' . &).";
     if (name.length > 64) return 'Name too long — keep it to 64 characters or fewer.';
     try {
       const result = await ctx.api.setName(name);
