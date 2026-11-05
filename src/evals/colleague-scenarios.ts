@@ -284,16 +284,29 @@ export const COLLEAGUE_SCENARIOS: Scenario[] = [
       });
       const sent = trace.calls.find((c) => c.tool === MESSAGE_AGENT && c.input.replyTo === WRITER_ASKS.messageId);
       if (!sent) return { pass: false, detail: describe(trace) };
+      // Both questions show the judge the message that was sent: the first fails a
+      // turn that sends Writer no bullets (only "OK", say), and the second compares
+      // the reply with the real bullets instead of a guess at them. Asked as one
+      // "both hold" question, the classification model answered NO to replies that
+      // it graded correctly when asked each part on its own.
+      const sentText = `The AI agent sent another agent this message:\n<sent>\n${String(sent.input.message ?? '').trim()}\n</sent>\n`;
       const reply = replyOf(trace).trim();
+      const holdsBullets = await judge(
+        sentText + 'Does the sent message contain bullet points on what is new in release 4.2, written for customers?',
+        reply,
+      );
       const repeats =
+        holdsBullets &&
         reply !== '' &&
         (await judge(
-          'An AI agent wrote three bullet points for another agent and sent them to it. The reply above is what the ' +
-            'agent then wrote to the person it works for. Does the reply repeat the bullet points themselves, ' +
-            'rather than only say that they were sent?',
+          sentText +
+            'The reply above is what the AI agent then wrote to the person it works for. Does the reply repeat ' +
+            'those bullet points? A reply that says the bullets were sent and names their topics in one sentence ' +
+            'does not repeat them; one that gives them as a list, or one by one in their own wording, does.',
           reply,
         ));
-      return { pass: !repeats, detail: describe(trace) };
+      const verdict = !holdsBullets ? 'sent no bullets' : repeats ? 'reply repeats the bullets' : 'ok';
+      return { pass: holdsBullets && !repeats, detail: `${verdict} | ${describe(trace)}` };
     },
   },
   {
