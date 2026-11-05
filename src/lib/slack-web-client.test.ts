@@ -106,13 +106,33 @@ describe('mayReceiveSlackToken', () => {
     expect(mayReceiveSlackToken(url)).toBe(expected);
   });
 
-  it.each([
-    ['https://api.example.test/slack/files/F0EXAMPLE', true],
-    ['https://files.slack.com/files-pri/T0-F0/report.pdf', true],
-    ['https://other.example.test/slack/files/F0EXAMPLE', false],
-    ['http://api.example.test/slack/files/F0EXAMPLE', false],
-  ])('with the proxy, %s → %s', (url, expected) => {
-    useApiProxy(API_PROXY);
-    expect(mayReceiveSlackToken(url)).toBe(expected);
+  describe('with the proxy', () => {
+    const appToken = process.env.SLACK_APP_TOKEN;
+    afterEach(() => {
+      if (appToken === undefined) delete process.env.SLACK_APP_TOKEN;
+      else process.env.SLACK_APP_TOKEN = appToken;
+    });
+
+    it.each([
+      ['https://api.example.test/slack/files/F0EXAMPLE', true],
+      ['https://files.slack.com/files-pri/T0-F0/report.pdf', true],
+      ['https://other.example.test/slack/files/F0EXAMPLE', false],
+      ['http://api.example.test/slack/files/F0EXAMPLE', false],
+    ])('in Socket Mode, %s → %s', (url, expected) => {
+      process.env.SLACK_APP_TOKEN = 'xapp-test';
+      useApiProxy(API_PROXY);
+      expect(mayReceiveSlackToken(url)).toBe(expected);
+    });
+
+    it.each([
+      ['https://api.example.test/slack/files/F0EXAMPLE', true],
+      ['https://files.slack.com/files-pri/T0-F0/report.pdf', false],
+      ['https://slack.com/api/files.info', false],
+      ['http://api.example.test/slack/files/F0EXAMPLE', false],
+    ])('in routed mode, only the proxy: %s → %s', (url, expected) => {
+      delete process.env.SLACK_APP_TOKEN;
+      useApiProxy(API_PROXY);
+      expect(mayReceiveSlackToken(url)).toBe(expected);
+    });
   });
 });

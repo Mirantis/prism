@@ -444,6 +444,21 @@ describe('Router connection changes and links', () => {
     expect(adapter.apps.has(TEAM)).toBe(true);
   });
 
+  it('keeps the running app when `connected` or an event names its workspace again', async () => {
+    mockReloadSlackConfig.mockResolvedValue(connection);
+    mockGetSlackConnection.mockResolvedValue(connection);
+    const handlers = adapter.routerHandlers();
+    await handlers.connect(TEAM);
+    const running = adapter.apps.get(TEAM);
+    mockTrackEvent.mockClear();
+
+    expect(await handlers.connect(TEAM)).toBe(true);
+    expect(await handlers.ready('T0OTHER')).toBe(false);
+
+    expect(adapter.apps.get(TEAM)).toBe(running);
+    expect(mockTrackEvent).not.toHaveBeenCalledWith('slack connection added', null, expect.anything());
+  });
+
   it('stays idle while the proxy token is bound to no workspace', async () => {
     mockReloadSlackConfig.mockResolvedValue(null);
 

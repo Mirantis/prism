@@ -223,6 +223,34 @@ describe('slack-config', () => {
       expect(await getSlackConfig()).toBeNull();
       expect(mockAuthTest).toHaveBeenCalledTimes(2);
     });
+
+    it('stays disconnected when the router disconnects the agent while boot validates the token', async () => {
+      let answer!: (auth: typeof AUTH) => void;
+      mockAuthTest.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+
+      const boot = getSlackConfig();
+      clearSlackConfig();
+      answer(AUTH);
+
+      expect(await boot).toBeNull();
+      expect(await getSlackConfig()).toBeNull();
+      expect(mockAuthTest).toHaveBeenCalledTimes(1);
+    });
+
+    it('answers a load that a reload overtook with the reload\'s record', async () => {
+      let answer!: (auth: typeof AUTH) => void;
+      mockAuthTest
+        .mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))
+        .mockResolvedValueOnce({ ...AUTH, team_id: 'T456' });
+
+      const boot = getSlackConfig();
+      const reload = reloadSlackConfig();
+      answer(AUTH);
+
+      expect((await reload)?.teamId).toBe('T456');
+      expect((await boot)?.teamId).toBe('T456');
+      expect((await getSlackConfig())?.teamId).toBe('T456');
+    });
   });
 });
 

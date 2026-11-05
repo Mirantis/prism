@@ -61,6 +61,12 @@ class SlackRouterService {
    * time each was accepted. Kept in memory: an event whose record ended before
    * a restart is handled again when it arrives after the restart, which takes a
    * lost answer and a restart inside the router's retry window.
+   *
+   * For `link`, `connected` and `disconnected` this map is the only dedupe. An
+   * `add` sent again after a restart, inside the five-minute `sentAt` window,
+   * is applied again even when a `remove` of the same link was accepted after
+   * it. The protocol asks the router not to send a link envelope again once a
+   * later one for the same DM or channel was accepted.
    */
   private readonly seen = new Map<string, number>();
 

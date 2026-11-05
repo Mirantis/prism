@@ -105,6 +105,11 @@ scheduled task. Send one when a person links or unlinks a DM or a channel:
 `personId` is your id for the person who made the link. Adding a link that
 exists, or removing one that does not, is a `200`.
 
+Send the `link` envelopes of one DM or channel one at a time, in order, and do
+not send one again after a later one for the same DM or channel was accepted.
+The agent remembers accepted event ids in memory only, so after a restart an
+older `add` sent again would undo a later `remove`.
+
 ## `slack`
 
 A Slack event or a button press, for this agent:
@@ -126,6 +131,10 @@ A Slack event or a button press, for this agent:
 | `channel_event` | `member_joined_channel` or `member_left_channel`. | `event` |
 | `action` | A press of a button the agent posted. | `block_actions` |
 
+Send one envelope per Slack message. A post that mentions the app reaches you
+twice, as a `message` event and as an `app_mention` event with different event
+ids; deliver only one of them, or the agent answers twice.
+
 `person` is the person who sent it, or `null` when they have no account with
 you. `payload` is in Slack's own shape. The agent reads these fields:
 
@@ -137,7 +146,7 @@ you. `payload` is in Slack's own shape. The agent reads these fields:
   `message.blocks`, and `actions` with `action_id`, `block_id` and `value`.
 
 Put a file's URLs on your proxy's origin. The agent sends its token only there,
-or to Slack itself over HTTPS.
+and does not fetch a file whose URL is on Slack's own hosts.
 
 Send only messages from people. The agent stores what it posts, so it needs no
 copy of its own messages.

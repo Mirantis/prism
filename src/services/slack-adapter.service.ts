@@ -1205,8 +1205,8 @@ class SlackAdapterService implements ChannelAdapter {
 
   /**
    * Validate the token through the proxy again, and start the app of the
-   * workspace it is bound to in place of the app running. Concurrent calls
-   * share one attempt.
+   * workspace it is bound to in place of the app running. An app that already
+   * runs for that workspace stays. Concurrent calls share one attempt.
    */
   private reconnect(): Promise<void> {
     this.connecting ??= (async () => {
@@ -1214,7 +1214,7 @@ class SlackAdapterService implements ChannelAdapter {
       for (const teamId of this.apps.keys()) {
         if (teamId !== connection?.teamId) this.apps.delete(teamId);
       }
-      if (connection) await this.initializeConnection(connection.id);
+      if (connection && !this.apps.has(connection.teamId)) await this.initializeConnection(connection.id);
     })().finally(() => {
       this.connecting = undefined;
     });
