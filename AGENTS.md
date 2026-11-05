@@ -1084,7 +1084,8 @@ src/
 │   ├── llm-providers/          # One folder per chat vendor, plus the shared contract and the selector
 │   │   ├── llm-provider.ts     # Shared `LlmProvider` type: the callable `(modelId) => LanguageModel` contract every vendor factory returns, plus each vendor's `cachePoint` fragment (the Anthropic breakpoint, Converse's own `BEDROCK_CACHE_POINT`, or the empty `NO_CACHE_POINT` — which covers both a vendor that caches without breakpoints and a model whose support is unknown) and the optional `structuredOutputOptions` / `classificationProviderOptions` it declares. The startup log reads this contract for the configured model, so no caller names a vendor to report prompt caching
 │   │   ├── create-provider.ts  # Unified LLM provider factory: picks vendor (bedrock/azure/bedrock-mantle/openai/openrouter/anthropic/litellm), passes each its optional gateway baseURL (anthropic is direct-only, no argument); `missingProviderSettings()`, the variables the selected vendor still needs, which the invoke preflight names to the user
-│   │   ├── bedrock-shared.ts   # bedrock-runtime plumbing both AWS vendors (and the bedrock embedding provider) need: AWS credential resolution, `isAnthropicModelId()`
+│   │   ├── bedrock-model-id.ts # `isAnthropicModelId()`: whether a model ID is Claude on Bedrock; import-free so `config.ts` can use it
+│   │   ├── bedrock-shared.ts   # bedrock-runtime plumbing both AWS vendors (and the bedrock embedding provider) need: AWS credential resolution
 │   │   ├── bedrock/
 │   │   │   └── bedrock-provider.ts # AWS Bedrock provider factory: `createBedrockProvider(baseURL?)` (direct, or gateway-routed when baseURL set). Owns which model gets a prompt-cache breakpoint: Claude on the Anthropic Messages branch always, a Converse family only when it is on `CONVERSE_PROMPT_CACHE_FAMILIES` — empty, since no source the runtime can read names one, and a `cachePoint` block on a model without support fails every turn
 │   │   ├── azure/
@@ -1220,9 +1221,7 @@ What the operator sets on `docker run`:
 | `MODEL_MODE` | Model selection for an agent that has not chosen one: `fixed` or `auto` (`lib/model-routing.ts`). With `auto`, `AUTO_MODEL_SMALL` and `AUTO_MODEL_LARGE` are required, and boot fails without them | `fixed` |
 | `AUTO_MODEL_SMALL` / `AUTO_MODEL_MEDIUM` / `AUTO_MODEL_LARGE` | Auto tiers for an agent that has not set its own. Medium is optional; with it unset the classifier chooses between small and large, and with it set medium runs everyday work | — |
 | `CODING_AGENT` | Default coding agent: `claude-code` or `codex`. Each task may override it with `agent`. | Claude credentials first, then an OpenAI key, else `claude-code` |
-| `CLAUDE_CODE_MODEL_SMALL` | Model for the Claude Code small tier | `haiku` (Bedrock: `global.anthropic.claude-haiku-5-5`) |
-| `CLAUDE_CODE_MODEL_MEDIUM` | Model for the Claude Code medium tier | `sonnet` (Bedrock: `global.anthropic.claude-sonnet-5-5`) |
-| `CLAUDE_CODE_MODEL_LARGE` | Model for the Claude Code large tier | `opus` |
+| `CLAUDE_CODE_MODEL_SMALL` / `CLAUDE_CODE_MODEL_MEDIUM` / `CLAUDE_CODE_MODEL_LARGE` | Models for the Claude Code tiers. A Bedrock ID applies only to tasks that run on Bedrock; tasks on an API key or the subscription keep the default | `haiku` / `sonnet` / `opus` (Bedrock: `global.anthropic.claude-haiku-5-5` / `global.anthropic.claude-sonnet-5-5` / `opus`) |
 | `CLAUDE_CODE_SUBSCRIPTION` | `true` runs every Claude Code task on the Claude subscription signed in to the CLI's home, and fails a task while none is. A sign-in from Profile → Coding agents turns this on without it | off |
 | `CLAUDE_CODE_SKIP_PERMISSIONS` | `true` runs every Claude Code edit task with `--dangerously-skip-permissions` instead of auto mode; a plan task stays in `plan` | off |
 | `CODEX_MODEL_SMALL` | Model for the Codex small tier | `gpt-5.6-luna` (Bedrock: `openai.gpt-5.6-luna`) |

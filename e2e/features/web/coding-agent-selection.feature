@@ -41,6 +41,17 @@ Feature: Coding agent delegation
     When I ask a Claude Code task how it is signed in
     Then the coding task is signed in with "claude.ai"
 
+  # A Bedrock-ID override serves Bedrock only; on the subscription the tier
+  # runs its default alias, which the claude.ai login accepts.
+  @claude-subscription
+  Scenario: Run a coding task on a saved Claude subscription with a model tier
+    Given I am logged in
+    And I have a personal agent
+    And Claude Code has a saved subscription login
+    And Claude Code's small model is a Bedrock ID
+    When I ask a Claude Code task on the "small" model how it is signed in
+    Then the coding task is signed in with "claude.ai"
+
   # With CODEX_SUBSCRIPTION=true the runtime holds OpenAI keys the API refuses,
   # so the task can succeed only on the saved ChatGPT login.
   @codex-subscription

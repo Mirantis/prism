@@ -184,6 +184,10 @@ Omitted parameters keep the deployment's model and effort behavior.
 | `CODEX_MODEL_LARGE` | Model for the Codex large tier | `gpt-5.6-sol` (Bedrock: `openai.gpt-5.6-sol`) |
 | `CODEX_SUBSCRIPTION` | `true` runs every Codex task on the ChatGPT subscription signed in by hand. See [Codex tasks on a ChatGPT subscription](#codex-tasks-on-a-chatgpt-subscription). | off |
 
+A `CLAUDE_CODE_MODEL_*` value that is a Bedrock ID, such as
+`eu.anthropic.claude-haiku-5-5`, applies only to tasks that run on Bedrock. Tasks
+on an Anthropic API key or a Claude subscription run the tier's default instead.
+
 Set each tier to a model your account can serve; set all three overrides to keep a model
 out of every tier. Blank overrides log a warning and use the default.
 
@@ -225,9 +229,9 @@ the code back if the command asks for it. Claude Code then uses the subscription
 none of the agent's API keys or cloud credentials. A repository's own
 `.claude/settings.json` cannot switch a task to another provider or key either.
 While no subscription is signed in, every Claude Code task fails with a message
-that says so. The
-`CLAUDE_CODE_MODEL_*` overrides apply to these tasks too, so set them to model
-names the subscription serves, such as `sonnet`, not Bedrock IDs. When the
+that says so. A
+`CLAUDE_CODE_MODEL_*` alias or model name, such as `sonnet`, applies to these tasks
+too; a Bedrock ID does not (see [Core](#core)). When the
 subscription reaches its usage limit, tasks fail with Claude Code's message until
 the limit resets. To go back to the agent's credentials, remove the variable and
 restart the agent. While the variable is set, **Sign out** leaves tasks failing

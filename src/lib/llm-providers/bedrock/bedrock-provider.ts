@@ -36,7 +36,8 @@ import { createBedrockAnthropic } from '@ai-sdk/amazon-bedrock/anthropic';
 import { wrapLanguageModel } from 'ai';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
-import { createSharedBedrockOptions, isAnthropicModelId } from '../bedrock-shared';
+import { createSharedBedrockOptions } from '../bedrock-shared';
+import { isAnthropicModelId } from '../bedrock-model-id';
 import {
   ANTHROPIC_THINKING_OFF,
   anthropicCachePoint,
