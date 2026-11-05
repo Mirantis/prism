@@ -245,7 +245,7 @@ Alertmanager/PagerDuty/GitHub configs.
 
 The agent's identity and runtime controls.
 
-- **Name.** Edit the agent's display name (1–64 characters) inline.
+- **Name.** Edit the agent's display name inline: 1–64 characters, only letters, digits, spaces and `- ' . &`.
 - **Models.** **Fixed** runs every turn on one model; **Reset to default**
   returns it to the runtime default. **Heartbeats** and **Scheduled tasks** can
   each use their own model; leave one empty to use the chat model. **Auto** runs

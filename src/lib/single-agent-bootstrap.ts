@@ -22,6 +22,7 @@ import { logger } from '../logger';
 import { prisma } from './prisma';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
 import { readWorkspaceSeed } from './workspace-seed';
+import { AGENT_NAME_RULE, normaliseAgentName } from './agent-name';
 
 export async function resolveOrBootstrapSingleAgent(): Promise<AgentWorkspace> {
   const agent = await resolve();
@@ -55,6 +56,11 @@ async function resolve(): Promise<AgentWorkspace> {
 }
 
 async function bootstrap(id: string): Promise<AgentWorkspace> {
+  // The operator's name is trusted, but one outside the rule for names is one
+  // the agent could not give itself, and a host that copies it may refuse it.
+  if (!normaliseAgentName(config.agentName)) {
+    logger.warn({ name: config.agentName }, `[SingleAgent] AGENT_NAME does not follow the rule for names: ${AGENT_NAME_RULE}`);
+  }
   const documents = readWorkspaceSeed(config.workspaceSeedDir);
   const agent = await agentWorkspaceService.createAgent({
     id,

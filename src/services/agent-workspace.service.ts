@@ -24,6 +24,7 @@ import { logger } from '../logger';
 import { config } from '../config';
 import { DocumentWriteActor, DocumentWriteMethod, WorkspaceDocField } from '../lib/workspace-docs';
 import type { WorkspaceSeed } from '../lib/workspace-seed';
+import { AGENT_NAME_RULE, normaliseAgentName } from '../lib/agent-name';
 import { documentRevisionService } from './document-revision.service';
 
 // Format-only validation for the per-agent model override. Letters/digits and
@@ -179,7 +180,6 @@ export class ValidationError extends Error {
   }
 }
 
-const AGENT_NAME_MAX = 64;
 
 // ============================================================================
 // Agent Service
@@ -362,13 +362,17 @@ class AgentWorkspaceService {
     if (!trimmed) {
       throw new ValidationError('name must be a non-empty string');
     }
-    if (trimmed.length > AGENT_NAME_MAX) {
-      throw new ValidationError(`name must be ≤ ${AGENT_NAME_MAX} chars`);
+    // Held to the rule for names (`lib/agent-name.ts`): an agent talked into
+    // a name that holds an instruction would send it to everything that
+    // shows the name.
+    const normalised = normaliseAgentName(trimmed);
+    if (!normalised) {
+      throw new ValidationError(AGENT_NAME_RULE);
     }
     const agent = await this.getAgent();
     const updated = await prisma.agentWorkspace.update({
       where: { id: agent.id },
-      data: { name: trimmed },
+      data: { name: normalised },
     });
     trackEvent('agent renamed', null, {
       'agent.id': updated.id,

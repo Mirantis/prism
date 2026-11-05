@@ -187,7 +187,7 @@ router.get('/me', async (_req: Request, res: Response) => {
 /**
  * PATCH /agents/name
  * Rename the agent. Body: { name: string }.
- * Validates 1-64 chars (trimmed). The new name is read by
+ * Holds the name to the rule for names (`lib/agent-name.ts`). The new name is read by
  * `contextService.buildContext()` on the next `invoke()` so the agent
  * picks up its new identity on the next chat turn.
  */

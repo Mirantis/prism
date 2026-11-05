@@ -114,7 +114,9 @@ export function getAgentConfigTools(): Record<string, Tool> {
       description:
         "Rename this agent. Use only when the user explicitly asks you to change your name. The new name is persisted and picked up on the next chat turn.",
       inputSchema: z.object({
-        name: z.string().min(1).max(64).describe('The new name for this agent (1–64 chars).'),
+        // No length or character limit here: `renameAgent` answers a name
+        // outside the rule with the rule itself, which the agent can act on.
+        name: z.string().min(1).describe("The new name for this agent: 1–64 characters, only letters, digits, spaces and - ' . &."),
       }),
       execute: async ({ name }) => {
         try {
