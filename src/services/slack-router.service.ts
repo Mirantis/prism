@@ -8,7 +8,8 @@
  * envelope before the router gets its answer.
  *
  * - An envelope sent more than five minutes from this clock, or one whose
- *   `eventId` was accepted before, is answered and not applied.
+ *   `eventId` was accepted before, is answered and not applied. A retry that
+ *   arrives while the first attempt still runs gets that attempt's answer.
  * - A link or a connection change is applied before the answer, so the
  *   router's retry covers a failure.
  * - A Slack event is recorded in `pending_work` before the answer and handled
@@ -69,6 +70,11 @@ class SlackRouterService {
    * later one for the same DM or channel was accepted.
    */
   private readonly seen = new Map<string, number>();
+  /**
+   * The attempts still being applied, by event id. An id moves to `seen` only
+   * once its attempt is accepted, so a failed attempt leaves the retry open.
+   */
+  private readonly inFlight = new Map<string, Promise<RouterOutcome>>();
 
   /** Open the listener, which hands each envelope it accepts to `handlers`. */
   async start(handlers: SlackRouterHandlers): Promise<void> {
@@ -126,14 +132,21 @@ class SlackRouterService {
       logger.info({ eventId: envelope.eventId }, '[SlackRouter] Dropped an envelope accepted before');
       return 'dropped';
     }
-    this.seen.set(envelope.eventId, Date.now());
+    // A retry sent while the first attempt still runs gets that attempt's
+    // answer, so a failure of the first attempt still reaches the router.
+    const running = this.inFlight.get(envelope.eventId);
+    if (running) {
+      logger.info({ eventId: envelope.eventId }, '[SlackRouter] Answering a retry with the attempt still running');
+      return running;
+    }
+    const attempt = this.apply(envelope, handlers);
+    this.inFlight.set(envelope.eventId, attempt);
     try {
-      const outcome = await this.apply(envelope, handlers);
-      if (outcome === 'unavailable') this.seen.delete(envelope.eventId);
+      const outcome = await attempt;
+      if (outcome === 'accepted' || outcome === 'dropped') this.seen.set(envelope.eventId, Date.now());
       return outcome;
-    } catch (error) {
-      this.seen.delete(envelope.eventId);
-      throw error;
+    } finally {
+      this.inFlight.delete(envelope.eventId);
     }
   }
 

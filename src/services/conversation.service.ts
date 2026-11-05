@@ -137,6 +137,37 @@ export interface ThreadWithMessages extends ConversationThread {
 // Conversation Service
 // ============================================================================
 
+/** The row of a message `input` adds to `threadId`. */
+function messageData(threadId: string, input: MessageInput): Prisma.ConversationMessageUncheckedCreateInput {
+  return {
+    ...(input.id ? { id: input.id } : {}),
+    threadId,
+    role: input.role,
+    content: input.content,
+    triggeredBy: input.triggeredBy,
+    triggerName: input.triggerName,
+    toolCalls: input.toolCalls as Prisma.InputJsonValue | undefined,
+    blocks: input.blocks as Prisma.InputJsonValue | undefined,
+    senderExternalId: input.senderExternalId,
+    senderName: input.senderName,
+    externalMessageId: input.externalMessageId,
+    internalStep: input.internalStep,
+  };
+}
+
+function trackMessageAdded(agentId: string | null | undefined, threadId: string, input: MessageInput): void {
+  trackEvent('message added', null, {
+    ...(agentId ? { 'agent.id': agentId } : {}),
+    'thread.id': threadId,
+    'message.role': input.role,
+    'message.triggered_by': input.triggeredBy,
+    // Internal rows are written by the runtime, not sent by anyone. Without this a
+    // recalling chat turn adds a second `role=USER` count and every message-volume
+    // metric steps at deploy for a reason that is not user behaviour.
+    'message.internal': String(Boolean(input.internalStep)),
+  });
+}
+
 class ConversationService {
   /**
    * Emits `'thread'` ({@link ThreadCreated}) when a web thread is created, and
@@ -532,20 +563,7 @@ class ConversationService {
     /** A write that commits with the new row, or not at all. */
     withMessage?: (tx: Prisma.TransactionClient) => Promise<void>,
   ): Promise<{ message: ConversationMessage; titleSet: string | null }> {
-    const data = {
-      ...(input.id ? { id: input.id } : {}),
-      threadId,
-      role: input.role,
-      content: input.content,
-      triggeredBy: input.triggeredBy,
-      triggerName: input.triggerName,
-      toolCalls: input.toolCalls as Prisma.InputJsonValue | undefined,
-      blocks: input.blocks as Prisma.InputJsonValue | undefined,
-      senderExternalId: input.senderExternalId,
-      senderName: input.senderName,
-      externalMessageId: input.externalMessageId,
-      internalStep: input.internalStep,
-    };
+    const data = messageData(threadId, input);
     const message = withMessage
       ? await prisma.$transaction(async (tx) => {
           const created = await tx.conversationMessage.create({ data });
@@ -560,26 +578,54 @@ class ConversationService {
       data: { updatedAt: new Date() },
     });
 
-    trackEvent('message added', null, {
-      ...(thread?.agentId ? { 'agent.id': thread.agentId } : {}),
-      'thread.id': threadId,
-      'message.role': input.role,
-      'message.triggered_by': input.triggeredBy,
-      // Internal rows are written by the runtime, not sent by anyone. Without this a
-      // recalling chat turn adds a second `role=USER` count and every message-volume
-      // metric steps at deploy for a reason that is not user behaviour.
-      'message.internal': String(Boolean(input.internalStep)),
-    });
-    if (thread) {
-      this.events.emit('message', {
-        userId: thread.userId,
-        agentId: thread.agentId,
-        threadId,
-        triggeredBy: input.triggeredBy,
-      } satisfies MessageStored);
-    }
+    trackMessageAdded(thread?.agentId, threadId, input);
+    if (thread) this.emitMessageStored(thread, threadId, input);
+    const titleSet = await this.titleFromFirstMessage(threadId, input);
+    return { message, titleSet };
+  }
 
-    // Name the thread after the user's first message (first 3 words, capped).
+  /** Emit `'message'` ({@link MessageStored}) for a message just stored in `thread`. */
+  private emitMessageStored(
+    thread: { userId: string; agentId: string },
+    threadId: string,
+    input: MessageInput,
+  ): void {
+    this.events.emit('message', {
+      userId: thread.userId,
+      agentId: thread.agentId,
+      threadId,
+      triggeredBy: input.triggeredBy,
+    } satisfies MessageStored);
+  }
+
+  /**
+   * Add several messages to a thread in one transaction, so either all of them
+   * are stored or none is. The rows keep the given order: each is dated a
+   * millisecond after the one before it, and the last a millisecond before now.
+   */
+  async addMessages(threadId: string, inputs: MessageInput[]): Promise<void> {
+    if (inputs.length === 0) return;
+    const now = Date.now();
+    const [thread] = await prisma.$transaction([
+      prisma.conversationThread.update({ where: { id: threadId }, data: { updatedAt: new Date(now) } }),
+      ...inputs.map((input, index) =>
+        prisma.conversationMessage.create({
+          data: { ...messageData(threadId, input), createdAt: new Date(now - inputs.length + index) },
+        }),
+      ),
+    ]);
+    for (const input of inputs) trackMessageAdded(thread?.agentId, threadId, input);
+    // One event for the batch: listeners (compaction) look at the thread, not the row.
+    if (thread) this.emitMessageStored(thread, threadId, inputs[inputs.length - 1]);
+    const titled = inputs.find((input) => input.role === 'USER' && !input.internalStep && deriveThreadTitle(input.content));
+    if (titled) await this.titleFromFirstMessage(threadId, titled);
+  }
+
+  /**
+   * Name the thread after the user's first message (first 3 words, capped).
+   * Returns the title when this message set it, else null.
+   */
+  private async titleFromFirstMessage(threadId: string, input: MessageInput): Promise<string | null> {
     // `title: null` makes this atomic and one-shot — it fires only for the very
     // first user message with text and is a no-op for every later message.
     // `count > 0` means this call actually set it, so callers can broadcast it.
@@ -598,8 +644,7 @@ class ConversationService {
         if (res.count > 0) titleSet = title;
       }
     }
-
-    return { message, titleSet };
+    return titleSet;
   }
 
   /**
