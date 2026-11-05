@@ -27,6 +27,9 @@ import { isLangfuseEnabled } from './langfuse';
 // tsconfig (`moduleResolution: node10`) can't follow via subpath. The attribute
 // name is stable per the OTel spec, so we inline the literal.
 const ATTR_DEPLOYMENT_ENVIRONMENT_NAME = 'deployment.environment.name';
+// Not an OTel semantic convention: the product that launched this agent, set by
+// that product's recipe. `service.*` stays the runtime's own name for every product.
+const ATTR_PRODUCT_NAME = 'product.name';
 
 let provider: LoggerProvider | null = null;
 let otelLogger: Logger | null = null;
@@ -44,11 +47,13 @@ export function initTelemetry(): void {
   // Resource attributes describe the *emitter* of every event on this stream.
   // `service.version` identifies the deployed build so events can be broken
   // down by version and regressions correlated to specific releases.
+  // `product.name` separates the agents a product launched from the others.
   const resource = resourceFromAttributes({
     [ATTR_SERVICE_NAME]: 'prism-agent-runtime',
     [ATTR_SERVICE_NAMESPACE]: 'prism-agent',
     [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: config.deploymentEnvironment,
     ...(config.serviceVersion ? { [ATTR_SERVICE_VERSION]: config.serviceVersion } : {}),
+    ...(config.productName ? { [ATTR_PRODUCT_NAME]: config.productName } : {}),
   });
 
   const headers: Record<string, string> = {};

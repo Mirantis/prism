@@ -1125,6 +1125,10 @@ export const config = {
   otelApiKey: process.env.OTEL_EXPORTER_OTLP_API_KEY || '',
   // Identifies the deployment for OTel resource routing (production | staging | development)
   deploymentEnvironment: process.env.DEPLOYMENT_ENVIRONMENT || 'development',
+  // The product this agent belongs to, emitted as the OTel `product.name` resource
+  // attribute so one product's events can be filtered from the shared store. A
+  // product's launch recipe sets it; empty omits the attribute.
+  productName: process.env.PRODUCT_NAME || '',
   // Build identifier emitted as the OTel `service.version` resource attribute.
   // Baked into published images at build time via the `SERVICE_VERSION` Docker
   // ARG/ENV — release-production.yml passes the release tag (e.g.
