@@ -173,7 +173,7 @@ function nightlyStatus(build: number, result: 'FAILED' | 'PASSED'): string {
   return `nightly #${build}: ${result}${result === 'FAILED' ? ' (integration tests)' : ''}, finished ${lastNightly()} UTC\n`;
 }
 
-function sentMessage(trace: TurnTrace): boolean {
+export function sentMessage(trace: TurnTrace): boolean {
   return trace.calls.some((c) => c.tool === 'send_message');
 }
 
@@ -298,10 +298,10 @@ const DEPLOYS = [
 /** The same day with a second rollback, a worse state than `DEPLOYS`. */
 const DEPLOYS_TWO_ROLLBACKS = `${DEPLOYS}\nbilling-api  v2.14.1  rolled back  18:30 UTC (error rate above 5%)`;
 
-const DEPLOY_SOURCE = 'Read them with `deployctl history --since yesterday`.';
+export const DEPLOY_SOURCE = 'Read them with `deployctl history --since yesterday`.';
 
 /** A shell that prints `deploys` for `deployctl` and the clock for `date`. */
-function deployShell(deploys = DEPLOYS): (command: string) => string {
+export function deployShell(deploys = DEPLOYS): (command: string) => string {
   return (command) => {
     if (command.includes('deployctl')) return `${deploys}\n`;
     if (/\bdate\b/.test(command)) return `${utcNow()}\n`;
