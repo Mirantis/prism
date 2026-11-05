@@ -716,7 +716,7 @@ describe('Management Routes', () => {
         .patch('/agents/name')
         .send({});
       expect(res.status).toBe(400);
-      expect(res.body.error).toContain('non-empty');
+      expect(res.body.error).toBe(AGENT_NAME_RULE);
     });
 
     it('returns 400 when name is empty / only whitespace', async () => {

@@ -199,7 +199,9 @@ function AgentNameField() {
   });
 
   const trimmed = name.trim();
-  const valid = trimmed.length > 0 && trimmed.length <= 64;
+  // The runtime measures the length after it normalises the name, and answers
+  // a name outside the rule with the rule.
+  const valid = trimmed.length > 0;
 
   return (
     <div className="flex flex-col gap-0.5">
@@ -218,7 +220,6 @@ function AgentNameField() {
                 setError(null);
               }
             }}
-            maxLength={64}
             className="h-7 w-[240px] px-2 py-1 text-sm"
             aria-label="Agent name"
             autoFocus

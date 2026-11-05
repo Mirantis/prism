@@ -57,6 +57,13 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     Step('I run {string}', async (_ctx, line: string) => {
       await dispatch(line);
     });
+    Step('the rename to {string} is confirmed', async (_ctx, name: string) => {
+      await session.waitForFrame(`Renamed to "${name}"`, 10_000);
+    });
+    Step('the stored agent name is {string}', async (_ctx, name: string) => {
+      const me = await runtimeRequest<{ name: string }>(env.port, 'GET', '/agents/me');
+      expect(me.name).toBe(name);
+    });
     Step('I see {string}', async (_ctx, text: string) => {
       // waitForFrame accepts a plain string (substring match), so on-screen
       // text with regex-special characters needs no escaping.
@@ -68,14 +75,16 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     // Covered entirely by the shared "I run" / "I see" steps.
   });
 
-  Scenario('/rename updates the agent name preserving spaces', ({ Then, And }) => {
-    Then('the rename to {string} is confirmed', async (_ctx, name: string) => {
-      await session.waitForFrame(`Renamed to "${name}"`, 10_000);
-    });
-    And('the stored agent name is {string}', async (_ctx, name: string) => {
-      const me = await runtimeRequest<{ name: string }>(env.port, 'GET', '/agents/me');
-      expect(me.name).toBe(name);
-    });
+  Scenario('/rename updates the agent name preserving spaces', () => {
+    // Covered by the shared rename steps.
+  });
+
+  Scenario('/rename stores the name with runs of spaces made one', () => {
+    // Covered by the shared rename steps.
+  });
+
+  Scenario('/rename refuses a name outside the rule and keeps the old one', () => {
+    // Covered by the shared rename steps and "I see".
   });
 
   Scenario('/model sets then resets the model override', ({ Given, Then, And, When }) => {

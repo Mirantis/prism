@@ -56,16 +56,17 @@ async function resolve(): Promise<AgentWorkspace> {
 }
 
 async function bootstrap(id: string): Promise<AgentWorkspace> {
-  // The operator's name is trusted, but one outside the rule for names is one
-  // the agent could not give itself, and a host that copies it may refuse it.
-  if (!normaliseAgentName(config.agentName)) {
+  // Stored the way a rename stores it. A name outside the rule is the
+  // operator's to keep, as it is, but one the agent could not give itself.
+  const name = normaliseAgentName(config.agentName);
+  if (!name) {
     logger.warn({ name: config.agentName }, `[SingleAgent] AGENT_NAME does not follow the rule for names: ${AGENT_NAME_RULE}`);
   }
   const documents = readWorkspaceSeed(config.workspaceSeedDir);
   const agent = await agentWorkspaceService.createAgent({
     id,
     userId: config.ownerUserId,
-    name: config.agentName,
+    name: name ?? config.agentName,
     agentType: 'AGENT',
     teamName: config.teamName,
     documents,

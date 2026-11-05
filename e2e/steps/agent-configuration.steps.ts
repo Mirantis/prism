@@ -269,3 +269,33 @@ Then('the restored version matches the current document', async ({ page }) => {
 When('I open the {string} tab', async ({ page }, label: string) => {
   await page.getByRole('tab', { name: label, exact: true }).click();
 });
+
+// ---------------------------------------------------------------------------
+// The agent's name (Profile page → Name)
+// ---------------------------------------------------------------------------
+
+/** The name the agent had before the scenario renamed it, read from the runtime. */
+let nameBeforeRename: string | undefined;
+
+async function storedAgentName(page: Page): Promise<string> {
+  const res = await page.request.get('/agents/me');
+  expect(res.ok()).toBeTruthy();
+  return (await res.json()).name as string;
+}
+
+When('I rename the agent to {string} on the profile page', async ({ page }, name: string) => {
+  nameBeforeRename = await storedAgentName(page);
+  await page.getByRole('button', { name: 'Edit agent name' }).click();
+  const input = page.getByRole('textbox', { name: 'Agent name' });
+  await input.fill(name);
+  await input.locator('..').getByRole('button', { name: 'Save', exact: true }).click();
+});
+
+Then('the name editor shows {string}', async ({ page }, text: string) => {
+  await expect(page.getByText(text, { exact: true })).toBeVisible();
+});
+
+Then('the stored agent name is unchanged', async ({ page }) => {
+  expect(nameBeforeRename).toBeDefined();
+  expect(await storedAgentName(page)).toBe(nameBeforeRename);
+});

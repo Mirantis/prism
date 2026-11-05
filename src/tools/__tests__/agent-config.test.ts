@@ -37,6 +37,7 @@ vi.mock('../../lib/telemetry', () => ({
 }));
 
 import { getAgentConfigTools } from '../agent-config';
+import { AGENT_NAME_RULE } from '../../lib/agent-name';
 
 function createTestAgentWorkspace(overrides: Record<string, unknown> = {}) {
   return {
@@ -132,7 +133,7 @@ describe('getAgentConfigTools', () => {
         error?: string;
       };
       expect(result.success).toBe(false);
-      expect(result.error).toContain('empty');
+      expect(result.error).toContain(AGENT_NAME_RULE);
       expect(mockPrisma.agentWorkspace.update).not.toHaveBeenCalled();
     });
 
