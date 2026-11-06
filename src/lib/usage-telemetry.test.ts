@@ -184,13 +184,54 @@ describe('reportClosedHours', () => {
     expect(eventFor(H12, CHAT_MODEL)).toBeDefined();
   });
 
-  it('reports at most the last 24 closed hours in one pass', async () => {
+  it('reports at most the last 24 closed hours on the first pass, with no mark stored', async () => {
     await recordCall(H12 - 25 * HOUR + 1000, CHAT_MODEL);
     await recordCall(H12 - 24 * HOUR + 1000, CHAT_MODEL);
 
     await reportAt(NOW);
 
     expect(events().map((e) => e['usage.period_start'])).toEqual([new Date(H12 - 24 * HOUR).toISOString()]);
+  });
+
+  it('reports every hour after the mark, however long the runtime was stopped', async () => {
+    await db().runtimeState.create({ data: { key: LLM_USAGE_REPORTED_THROUGH, value: '2026-11-06T10:00:00.000Z' } });
+    await recordCall(H10 + 1000, CHAT_MODEL);
+    await recordCall(H10 + 26 * HOUR + 1000, CHAT_MODEL);
+
+    await reportAt(H10 + 30 * HOUR + 5 * 60 * 1000);
+
+    expect(events().map((e) => e['usage.period_start'])).toEqual([
+      '2026-11-06T10:00:00.000Z',
+      '2026-11-07T12:00:00.000Z',
+    ]);
+    expect(await storedMark()).toBe('2026-11-07T16:00:00.000Z');
+  });
+
+  it('keeps the mark at the last window the collector accepted', async () => {
+    await db().runtimeState.create({ data: { key: LLM_USAGE_REPORTED_THROUGH, value: '2026-11-06T10:00:00.000Z' } });
+    await recordCall(H10 + 1000, CHAT_MODEL);
+    await recordCall(H10 + 26 * HOUR + 1000, CHAT_MODEL);
+    mockFlushTelemetry.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+
+    await reportAt(H10 + 30 * HOUR + 5 * 60 * 1000);
+
+    expect(await storedMark()).toBe('2026-11-07T10:00:00.000Z');
+  });
+
+  it('starts no second pass while one is running', async () => {
+    await recordCall(H10 + 1000, CHAT_MODEL);
+    let accept!: (accepted: boolean) => void;
+    mockFlushTelemetry.mockImplementationOnce(() => new Promise<boolean>((resolve) => (accept = resolve)));
+
+    vi.setSystemTime(NOW);
+    const first = reportClosedHours(OWNER);
+    await vi.waitFor(() => expect(mockFlushTelemetry).toHaveBeenCalledTimes(1));
+    await reportClosedHours(OWNER);
+    accept(true);
+    await first;
+
+    expect(events()).toHaveLength(1);
+    expect(mockFlushTelemetry).toHaveBeenCalledTimes(1);
   });
 
   it('reports the owner, with a subagent call counted under it, and no other agent', async () => {
@@ -246,7 +287,7 @@ describe('reportClosedHours', () => {
     expect(await storedMark()).toBe('2026-11-06T12:00:00.000Z');
   });
 
-  it('keeps the mark when telemetry shut down during the pass, and sends the hour again', async () => {
+  it('keeps the mark when the collector did not accept the events, and sends the hour again', async () => {
     await recordCall(H10 + 1000, CHAT_MODEL);
     mockFlushTelemetry.mockResolvedValueOnce(false);
 
