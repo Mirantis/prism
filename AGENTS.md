@@ -72,8 +72,8 @@ to clear.
   Code's managed settings.
 - **Execution environments stay generic.** Where a command runs and what
   filesystem it sees is an `ExecutionEnvironment` (`lib/execution-environments/`,
-  chosen by `get-execution-environment.ts`, which derives it rather than reading
-  a setting). Every process the agent starts goes through `runShell` or
+  chosen by `get-execution-environment.ts`). Every process the agent starts
+  goes through `runShell` or
   `runProgram`, which hand it to `agentProcesses`, so a secure takeover stops
   it in either environment. A read or write goes through `env.files` when the
   agent's own commands have to see the same bytes: the workspace, the attachment
