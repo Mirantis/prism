@@ -1,0 +1,27 @@
+src/lib/coding-agents/availability.ts -> runtime/src/lib/coding_agents/availability.rs (84 lines) tests: src/lib/coding-agents/availability.test.ts
+src/lib/coding-agents/bedrock-credentials.ts -> runtime/src/lib/coding_agents/bedrock_credentials.rs (53 lines) tests: src/lib/coding-agents/bedrock-credentials.test.ts
+src/lib/coding-agents/claude-code/authenticated-home.ts -> runtime/src/lib/coding_agents/claude_code/authenticated_home.rs (131 lines) tests: src/lib/coding-agents/claude-code/authenticated-home.test.ts
+src/lib/coding-agents/claude-code/claude-code-agent.ts -> runtime/src/lib/coding_agents/claude_code/claude_code_agent.rs (256 lines) tests: src/lib/coding-agents/claude-code/claude-code-agent.test.ts
+src/lib/coding-agents/claude-code/credentials.ts -> runtime/src/lib/coding_agents/claude_code/credentials.rs (19 lines) tests: src/lib/coding-agents/claude-code/credentials.test.ts
+src/lib/coding-agents/claude-code/environment.ts -> runtime/src/lib/coding_agents/claude_code/environment.rs (38 lines)
+src/lib/coding-agents/claude-code/home.ts -> runtime/src/lib/coding_agents/claude_code/home.rs (19 lines)
+src/lib/coding-agents/claude-code/mcp-config.ts -> runtime/src/lib/coding_agents/claude_code/mcp_config.rs (131 lines) tests: src/lib/coding-agents/claude-code/mcp-config.test.ts
+src/lib/coding-agents/cli-probe.ts -> runtime/src/lib/coding_agents/cli_probe.rs (38 lines)
+src/lib/coding-agents/cli-run.ts -> runtime/src/lib/coding_agents/cli_run.rs (162 lines) tests: src/lib/coding-agents/cli-run.test.ts
+src/lib/coding-agents/codex/codex-agent.ts -> runtime/src/lib/coding_agents/codex/codex_agent.rs (191 lines) tests: src/lib/coding-agents/codex/codex-agent.test.ts
+src/lib/coding-agents/codex/credentials.ts -> runtime/src/lib/coding_agents/codex/credentials.rs (110 lines) tests: src/lib/coding-agents/codex/credentials.test.ts
+src/lib/coding-agents/coding-agent.ts -> runtime/src/lib/coding_agents/coding_agent.rs (132 lines)
+src/lib/coding-agents/deferred-run.ts -> runtime/src/lib/coding_agents/deferred_run.rs (64 lines)
+src/lib/coding-agents/get-coding-agent.ts -> runtime/src/lib/coding_agents/get_coding_agent.rs (25 lines) tests: src/lib/coding-agents/get-coding-agent.test.ts
+src/lib/coding-agents/shared-skills-home.ts -> runtime/src/lib/coding_agents/shared_skills_home.rs (62 lines)
+src/lib/coding-agents/subscription-switch.ts -> runtime/src/lib/coding_agents/subscription_switch.rs (47 lines) tests: src/lib/coding-agents/subscription-switch.test.ts
+src/lib/coding-agents/terminal.ts -> runtime/src/lib/coding_agents/terminal.rs (126 lines) tests: src/lib/coding-agents/terminal.test.ts
+src/scripts/coding-agent-exec.ts -> runtime/src/scripts/coding_agent_exec.rs (108 lines) tests: src/scripts/coding-agent-exec.test.ts
+src/services/coding-agent-sign-in/cli-sign-in.ts -> runtime/src/services/coding_agent_sign_in/cli_sign_in.rs (147 lines) tests: src/services/coding-agent-sign-in/cli-sign-in.test.ts
+src/services/coding-agent-sign-in/coding-agent-account.ts -> runtime/src/services/coding_agent_sign_in/coding_agent_account.rs (118 lines) tests: src/services/coding-agent-sign-in/coding-agent-account.test.ts
+src/services/coding-agent-sign-in/coding-agent-sign-in-request.service.ts -> runtime/src/services/coding_agent_sign_in/coding_agent_sign_in_request_service.rs (182 lines) tests: src/services/coding-agent-sign-in/coding-agent-sign-in-request.service.test.ts
+src/services/coding-agent-sign-in/coding-agent-sign-in.service.ts -> runtime/src/services/coding_agent_sign_in/coding_agent_sign_in_service.rs (310 lines) tests: src/services/coding-agent-sign-in/coding-agent-sign-in.service.test.ts
+src/tools/coding-agent-sign-in.ts -> runtime/src/tools/coding_agent_sign_in.rs (55 lines)
+src/tools/shell/agent-task-manager.ts -> runtime/src/tools/shell/agent_task_manager.rs (560 lines)
+src/tools/shell/coding-agent.ts -> runtime/src/tools/shell/coding_agent.rs (111 lines)
+src/tools/shell/index.ts -> runtime/src/tools/shell/mod.rs (193 lines)
