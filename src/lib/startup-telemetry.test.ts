@@ -16,7 +16,8 @@ const {
   mockConfig: { databaseUrl: 'file::memory:' } as Record<string, unknown>,
 }));
 
-vi.mock('./telemetry', () => ({
+vi.mock('./telemetry', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./telemetry')>()),
   trackEvent: mockTrackEvent,
   isTelemetryEnabled: mockIsTelemetryEnabled,
 }));

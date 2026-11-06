@@ -11,7 +11,7 @@ vi.mock('../logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { initTelemetry, trackEvent, shutdownTelemetry } from './telemetry';
+import { initTelemetry, trackEvent, shutdownTelemetry, flushTelemetry } from './telemetry';
 
 const deploymentId = vi.fn(async () => 'deployment-1');
 
@@ -33,6 +33,11 @@ describe('telemetry (disabled — no OTEL_EXPORTER_OTLP_ENDPOINT)', () => {
   it('trackEvent with null userId does not throw', () => {
     initTelemetry(deploymentId);
     expect(() => trackEvent('message feedback', null, { 'feedback.rating': 'up' })).not.toThrow();
+  });
+
+  it('flushTelemetry reports that nothing can be delivered', async () => {
+    initTelemetry(deploymentId);
+    await expect(flushTelemetry()).resolves.toBe(false);
   });
 
   it('shutdownTelemetry resolves without error', async () => {

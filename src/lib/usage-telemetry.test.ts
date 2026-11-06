@@ -8,24 +8,28 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import { openMigratedDatabase, type MigratedDatabase } from '../test-utils/migrated-database';
 
-const { database, mockTrackEvent, mockIsTelemetryEnabled, mockConfig } = vi.hoisted(() => ({
+const { database, mockTrackEvent, mockIsTelemetryEnabled, mockFlushTelemetry, mockConfig } = vi.hoisted(() => ({
   database: { client: undefined as PrismaClient | undefined },
   mockTrackEvent: vi.fn(),
   mockIsTelemetryEnabled: vi.fn(),
+  mockFlushTelemetry: vi.fn(),
   mockConfig: {} as Record<string, unknown>,
 }));
 
 vi.mock('./prisma', () => ({
   prisma: new Proxy({}, { get: (_target, key) => Reflect.get(database.client!, key) }),
 }));
-vi.mock('./telemetry', () => ({
+// The real `llmRouting`, so the routing under test is the one `agent started` sends.
+vi.mock('./telemetry', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./telemetry')>()),
   trackEvent: mockTrackEvent,
   isTelemetryEnabled: mockIsTelemetryEnabled,
+  flushTelemetry: mockFlushTelemetry,
 }));
 vi.mock('../config', () => ({ config: mockConfig }));
 
 import { reportClosedHours, startUsageTelemetry } from './usage-telemetry';
-import { llmRouting } from './startup-telemetry';
+import { llmRouting } from './telemetry';
 import { LLM_USAGE_REPORTED_THROUGH } from '../services/runtime-state.service';
 
 const OWNER = 'agent-1';
@@ -45,6 +49,17 @@ let opened: MigratedDatabase;
 
 function db(): PrismaClient {
   return database.client!;
+}
+
+/** One pass, run at the given moment. */
+async function reportAt(at: number): Promise<void> {
+  vi.setSystemTime(at);
+  await reportClosedHours(OWNER);
+}
+
+async function storedMark(): Promise<string | undefined> {
+  const row = await db().runtimeState.findUnique({ where: { key: LLM_USAGE_REPORTED_THROUGH } });
+  return row?.value;
 }
 
 async function recordCall(
@@ -87,6 +102,9 @@ beforeEach(async () => {
     nexusChatBaseUrl: null,
   });
   mockIsTelemetryEnabled.mockReturnValue(true);
+  mockFlushTelemetry.mockResolvedValue(true);
+  // Only the clock: the database driver keeps its real timers.
+  vi.useFakeTimers({ toFake: ['Date'] });
 });
 
 afterEach(async () => {
@@ -102,7 +120,7 @@ describe('reportClosedHours', () => {
     // A call the provider reported no usage for is still a call.
     await recordCall(H11 + 1000, GATE_MODEL);
 
-    await reportClosedHours(OWNER, NOW);
+    await reportAt(NOW);
 
     expect(events()).toHaveLength(3);
     expect(eventFor(H10, CHAT_MODEL)).toEqual({
@@ -130,7 +148,7 @@ describe('reportClosedHours', () => {
   it('puts a call made on the hour into the hour it starts', async () => {
     await recordCall(H11, CHAT_MODEL, { inputTokens: 10 });
 
-    await reportClosedHours(OWNER, NOW);
+    await reportAt(NOW);
 
     expect(events()).toHaveLength(1);
     expect(eventFor(H11, CHAT_MODEL)).toMatchObject({ 'usage.input_tokens': '10' });
@@ -140,28 +158,28 @@ describe('reportClosedHours', () => {
     await recordCall(H11 + 1000, CHAT_MODEL);
     await recordCall(H12 + 1000, CHAT_MODEL);
 
-    await reportClosedHours(OWNER, H12 + 30 * 1000);
+    await reportAt(H12 + 30 * 1000);
     expect(events()).toEqual([]);
 
-    await reportClosedHours(OWNER, H12 + 61 * 1000);
+    await reportAt(H12 + 61 * 1000);
     expect(events().map((e) => e['usage.period_start'])).toEqual(['2026-11-06T11:00:00.000Z']);
   });
 
   it('reports each hour once across passes and restarts', async () => {
     await recordCall(H10 + 1000, CHAT_MODEL);
 
-    await reportClosedHours(OWNER, NOW);
+    await reportAt(NOW);
     expect(await db().runtimeState.findUnique({ where: { key: LLM_USAGE_REPORTED_THROUGH } })).toMatchObject({
       value: '2026-11-06T12:00:00.000Z',
     });
 
     // The same hour again, in this process or the next one, sends nothing.
-    await reportClosedHours(OWNER, NOW + 10 * 60 * 1000);
+    await reportAt(NOW + 10 * 60 * 1000);
     expect(events()).toHaveLength(1);
 
     // A call in the hour after is sent once that hour is closed.
     await recordCall(H12 + 1000, CHAT_MODEL);
-    await reportClosedHours(OWNER, H12 + HOUR + 2 * 60 * 1000);
+    await reportAt(H12 + HOUR + 2 * 60 * 1000);
     expect(events()).toHaveLength(2);
     expect(eventFor(H12, CHAT_MODEL)).toBeDefined();
   });
@@ -170,7 +188,7 @@ describe('reportClosedHours', () => {
     await recordCall(H12 - 25 * HOUR + 1000, CHAT_MODEL);
     await recordCall(H12 - 24 * HOUR + 1000, CHAT_MODEL);
 
-    await reportClosedHours(OWNER, NOW);
+    await reportAt(NOW);
 
     expect(events().map((e) => e['usage.period_start'])).toEqual([new Date(H12 - 24 * HOUR).toISOString()]);
   });
@@ -180,7 +198,7 @@ describe('reportClosedHours', () => {
     await recordCall(H10 + 2000, CHAT_MODEL, { inputTokens: 5 }, OWNER, SUBAGENT);
     await recordCall(H10 + 3000, CHAT_MODEL, { inputTokens: 999 }, OTHER_AGENT);
 
-    await reportClosedHours(OWNER, NOW);
+    await reportAt(NOW);
 
     expect(events()).toHaveLength(1);
     expect(eventFor(H10, CHAT_MODEL)).toMatchObject({
@@ -198,7 +216,7 @@ describe('reportClosedHours', () => {
     Object.assign(mockConfig, settings);
     await recordCall(H10 + 1000, CHAT_MODEL);
 
-    await reportClosedHours(OWNER, NOW);
+    await reportAt(NOW);
 
     expect(eventFor(H10, CHAT_MODEL)).toMatchObject({
       'usage.provider': settings.llmProvider,
@@ -208,16 +226,59 @@ describe('reportClosedHours', () => {
   });
 
   it('sends nothing for hours with no calls, and still moves the mark', async () => {
-    await reportClosedHours(OWNER, NOW);
+    await reportAt(NOW);
 
     expect(mockTrackEvent).not.toHaveBeenCalled();
     expect(await db().runtimeState.findUnique({ where: { key: LLM_USAGE_REPORTED_THROUGH } })).not.toBeNull();
   });
 
+  it('moves the mark only after the events left the buffer', async () => {
+    await recordCall(H10 + 1000, CHAT_MODEL);
+    mockFlushTelemetry.mockImplementationOnce(async () => {
+      expect(mockTrackEvent).toHaveBeenCalledTimes(1);
+      expect(await storedMark()).toBeUndefined();
+      return true;
+    });
+
+    await reportAt(NOW);
+
+    expect(mockFlushTelemetry).toHaveBeenCalledTimes(1);
+    expect(await storedMark()).toBe('2026-11-06T12:00:00.000Z');
+  });
+
+  it('keeps the mark when telemetry shut down during the pass, and sends the hour again', async () => {
+    await recordCall(H10 + 1000, CHAT_MODEL);
+    mockFlushTelemetry.mockResolvedValueOnce(false);
+
+    await reportAt(NOW);
+    expect(await storedMark()).toBeUndefined();
+
+    await reportAt(NOW);
+    expect(events().map((e) => e['usage.period_start'])).toEqual([
+      '2026-11-06T10:00:00.000Z',
+      '2026-11-06T10:00:00.000Z',
+    ]);
+    expect(await storedMark()).toBe('2026-11-06T12:00:00.000Z');
+  });
+
+  it('keeps the mark when the calls cannot be read, and the next pass sends those hours', async () => {
+    await recordCall(H11 + 1000, CHAT_MODEL);
+    await db().runtimeState.create({ data: { key: LLM_USAGE_REPORTED_THROUGH, value: '2026-11-06T11:00:00.000Z' } });
+    vi.spyOn(db().llmCall, 'findMany').mockRejectedValueOnce(new Error('database is locked'));
+
+    await reportAt(NOW);
+    expect(mockTrackEvent).not.toHaveBeenCalled();
+    expect(await storedMark()).toBe('2026-11-06T11:00:00.000Z');
+
+    await reportAt(NOW);
+    expect(events().map((e) => e['usage.period_start'])).toEqual(['2026-11-06T11:00:00.000Z']);
+  });
+
   it('does not reject when the database cannot be read', async () => {
     await db().$executeRawUnsafe('DROP TABLE runtime_state');
 
-    await expect(reportClosedHours(OWNER, NOW)).resolves.toBeUndefined();
+    vi.setSystemTime(NOW);
+    await expect(reportClosedHours(OWNER)).resolves.toBeUndefined();
     expect(mockTrackEvent).not.toHaveBeenCalled();
   });
 });
@@ -228,13 +289,12 @@ describe('startUsageTelemetry', () => {
     await recordCall(H10 + 1000, CHAT_MODEL);
 
     expect(startUsageTelemetry(OWNER)).toBeUndefined();
-    await new Promise((resolve) => setTimeout(resolve, 50));
 
     expect(mockTrackEvent).not.toHaveBeenCalled();
     expect(await db().runtimeState.count()).toBe(0);
   });
 
-  it('reports at once and then every hour', async () => {
+  it('reports at once, and each hour a few minutes after it closes', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
     vi.setSystemTime(NOW);
     await recordCall(H10 + 1000, CHAT_MODEL);
@@ -243,7 +303,9 @@ describe('startUsageTelemetry', () => {
     await vi.waitFor(() => expect(events()).toHaveLength(1));
 
     await recordCall(H12 + 1000, CHAT_MODEL);
-    await vi.advanceTimersByTimeAsync(HOUR);
+    await vi.advanceTimersByTimeAsync(HOUR - 5 * 60 * 1000);
+    expect(events()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
     await vi.waitFor(() => expect(events()).toHaveLength(2));
     expect(eventFor(H12, CHAT_MODEL)).toBeDefined();
 

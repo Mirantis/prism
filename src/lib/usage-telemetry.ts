@@ -5,25 +5,26 @@
  * calls, one event per closed UTC hour and model, read from `llm_calls`. Each
  * event covers `[period_start, period_end)` and carries counts only.
  *
- * `runtime_state` keeps the end of the last hour reported, so a restart neither
- * repeats an hour nor skips one. A pass reports every closed hour after that,
- * at most `MAX_CATCH_UP_HOURS`. A crash between the events and the write of
- * that mark sends the same hours again, with the same period start.
+ * `runtime_state` keeps the end of the last hour reported, written after the
+ * events left the buffer. A pass reports every closed hour after that, at most
+ * `MAX_CATCH_UP_HOURS`. A crash before the write sends the same hours again,
+ * with the same period start. An export that still fails after the exporter's
+ * retries loses those hours.
  *
- * One process uses one vendor and one route, so provider and routing are read
- * from config when an hour is reported. After a restart that changed
- * `LLM_PROVIDER` or `NEXUS_API_URL`, the hours not yet reported carry the new
- * values; a column per call would need a schema migration for those few hours.
+ * Provider and routing are read from config when an hour is reported, since one
+ * process uses one vendor and one route. Hours reported after a restart that
+ * changed `LLM_PROVIDER` or `NEXUS_API_URL` carry the new values.
  */
 
 import { config } from '../config';
 import { logger } from '../logger';
 import { prisma } from './prisma';
-import { isTelemetryEnabled, trackEvent } from './telemetry';
-import { llmRouting } from './startup-telemetry';
+import { flushTelemetry, isTelemetryEnabled, llmRouting, trackEvent } from './telemetry';
 import { LLM_USAGE_REPORTED_THROUGH, runtimeStateService } from '../services/runtime-state.service';
 
 const HOUR_MS = 60 * 60 * 1000;
+/** How often a pass runs, so an hour goes out a few minutes after it closes. */
+const PASS_INTERVAL_MS = 5 * 60 * 1000;
 /** How long after its end an hour is read, so a call recorded just before the boundary is in. */
 const SETTLE_MS = 60 * 1000;
 /** The most closed hours one pass reports, which bounds the rows it reads. */
@@ -50,9 +51,9 @@ function startOfHour(ms: number): number {
  * The rows are the owner's alone, since a subagent's calls are recorded against
  * the owner.
  */
-export async function reportClosedHours(agentId: string, now: number = Date.now()): Promise<void> {
+export async function reportClosedHours(agentId: string): Promise<void> {
   try {
-    const end = startOfHour(now - SETTLE_MS);
+    const end = startOfHour(Date.now() - SETTLE_MS);
     const reportedThrough = await runtimeStateService.get(LLM_USAGE_REPORTED_THROUGH);
     const start = Math.max(
       reportedThrough ? Date.parse(reportedThrough) : -Infinity,
@@ -113,6 +114,8 @@ export async function reportClosedHours(agentId: string, now: number = Date.now(
       });
     }
 
+    // False once telemetry has shut down, which drops the records: the next boot sends them.
+    if (!(await flushTelemetry())) return;
     await runtimeStateService.set(LLM_USAGE_REPORTED_THROUGH, new Date(end).toISOString());
   } catch (err) {
     logger.warn({ err }, '[UsageTelemetry] could not report LLM usage');
@@ -120,14 +123,14 @@ export async function reportClosedHours(agentId: string, now: number = Date.now(
 }
 
 /**
- * Report now, then every hour. Returns the timer so the caller can clear it on
- * shutdown; it is unref'd, so it never holds the process open. Returns
- * undefined, and reads nothing, when telemetry is off.
+ * Report now, then every `PASS_INTERVAL_MS`. Returns the timer so the caller can
+ * clear it on shutdown; it is unref'd, so it never holds the process open.
+ * Returns undefined, and reads nothing, when telemetry is off.
  */
 export function startUsageTelemetry(agentId: string): NodeJS.Timeout | undefined {
   if (!isTelemetryEnabled()) return undefined;
   void reportClosedHours(agentId);
-  const timer = setInterval(() => void reportClosedHours(agentId), HOUR_MS);
-  timer.unref?.();
+  const timer = setInterval(() => void reportClosedHours(agentId), PASS_INTERVAL_MS);
+  timer.unref();
   return timer;
 }
