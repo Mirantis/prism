@@ -672,18 +672,18 @@ describe('HeartbeatService', () => {
       });
     });
 
-    it('restores only the sends of the last three intervals', async () => {
+    it('restores only the sends of the last three intervals when they span more than a day', async () => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
       storeHeartbeatRows([
-        { content: 'Posted the disk alert.', createdAt: new Date('2025-01-15T08:00:00Z'), toolCalls: [sendTo('#oncall', 'Disk is 95% full.')] },
-        { content: 'Posted the build failure.', createdAt: new Date('2025-01-14T11:00:00Z'), toolCalls: [SEND] },
+        { content: 'Posted the disk alert.', createdAt: new Date('2025-01-14T06:00:00Z'), toolCalls: [sendTo('#oncall', 'Disk is 95% full.')] },
+        { content: 'Posted the build failure.', createdAt: new Date('2025-01-13T23:00:00Z'), toolCalls: [SEND] },
       ]);
 
-      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      heartbeatService.startHeartbeat(createAgent({ heartbeatIntervalMs: 12 * 60 * 60_000 }), 'keep-schedule');
       await vi.advanceTimersByTimeAsync(0);
       await heartbeatService.triggerHeartbeat();
 
-      expect(mockInvoke.mock.calls[0][0].lastSend.messages).toBe('- To #oncall (4h ago): Disk is 95% full.');
+      expect(mockInvoke.mock.calls[0][0].lastSend.messages).toBe('- To #oncall (1d ago): Disk is 95% full.');
     });
 
     it('restores no send made before the newest revision of the Heartbeat document', async () => {
@@ -710,7 +710,7 @@ describe('HeartbeatService', () => {
       expect(mockInvoke.mock.calls[1][0].lastSend).toBeUndefined();
     });
 
-    it('restores no record when every send is older than three intervals', async () => {
+    it('restores no record when every send is older than a day', async () => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
       storeHeartbeatRows([
         { content: 'Posted the build failure.', createdAt: new Date('2025-01-14T11:00:00Z'), toolCalls: [SEND] },
@@ -735,6 +735,27 @@ describe('HeartbeatService', () => {
       await heartbeatService.triggerHeartbeat();
 
       expect(mockInvoke.mock.calls[0][0].lastSend.messages).toBe('- To chat (20h ago): New email from the landlord.');
+    });
+
+    it('restores a send from just inside the last day and none from just outside it', async () => {
+      vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
+      storeHeartbeatRows([
+        { content: 'Posted the inbox summary.', createdAt: new Date('2025-01-14T12:01:00Z'), toolCalls: [sendTo('chat', 'New email from the landlord.')] },
+        { content: 'Posted the calendar reminder.', createdAt: new Date('2025-01-14T11:59:00Z'), toolCalls: [sendTo('chat', 'Dentist at 15:00.')] },
+      ]);
+
+      heartbeatService.startHeartbeat(createAgent({ heartbeatIntervalMs: 2 * 60 * 60_000 }), 'keep-schedule');
+      await vi.advanceTimersByTimeAsync(0);
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockInvoke.mock.calls[0][0].lastSend.messages).toBe('- To chat (23h ago): New email from the landlord.');
+    });
+
+    it('reads at most 200 stored heartbeat messages at a restart', async () => {
+      heartbeatService.startHeartbeat(createAgent(), 'keep-schedule');
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mockFindHeartbeatRows).toHaveBeenCalledWith(expect.objectContaining({ take: 200 }));
     });
 
     it('restores every send of the last day when the day holds many heartbeat messages', async () => {

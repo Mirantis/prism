@@ -46,7 +46,7 @@ later. Changing the interval starts a new interval from that moment.
 A heartbeat posts a message only when a check finds something you need to know,
 and a check that finds nothing stays silent. The next heartbeat sees what the
 earlier ones posted, and posts again only for a new finding or a change. After a
-restart, the heartbeat still knows what it posted in at least the last day.
+restart, the record of what the heartbeat posted covers at least the last day.
 
 **May post to** under Heartbeat Status on the [Profile page](web-ui.md) sets
 where a heartbeat may post: every linked channel and web chat (the default), web

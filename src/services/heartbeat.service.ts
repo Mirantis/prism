@@ -2,8 +2,8 @@
  * Heartbeat Service (Agent-Runtime)
  *
  * Manages the always-on heartbeat system for personal agents.
- * Invokes the LLM directly (in-process) and communicates with
- * the backend via the internal REST API.
+ * Invokes the LLM directly (in-process) and keeps the heartbeat's status and
+ * schedule on the agent's row in the embedded SQLite database.
  *
  * Key design principles:
  * - The interval is measured from the last run, not from the timer's creation,
@@ -38,9 +38,10 @@ const HEARTBEAT_BUDGET_NOTICE =
   "This heartbeat check stopped: your organization's AI spending limit has been reached.";
 
 /**
- * The most stored heartbeat messages a restart reads, newest first, to restore the
- * send record. The record keeps `HEARTBEAT_SENDS` distinct sends, so a window cut
- * at this cap loses a send only when its newest messages hold fewer distinct sends.
+ * How many stored heartbeat messages a restart reads at most, newest first, to
+ * restore the send record. The record keeps `HEARTBEAT_SENDS` distinct sends, so
+ * the cap loses a send only when the newest 200 messages hold fewer than
+ * `HEARTBEAT_SENDS` distinct sends.
  */
 const SEND_RECORD_MAX_ROWS = 200;
 
@@ -207,8 +208,8 @@ class HeartbeatService {
   }
 
   startHeartbeat(agent: AgentWorkspace, schedule: HeartbeatSchedule): void {
-    // Heartbeat enablement is persisted in the backend DB.
-    // If the agent is marked STOPPED, we don't start a timer on runtime startup.
+    // The heartbeat status is stored on the agent's row, so an agent marked
+    // STOPPED gets no timer when the runtime starts.
     if (agent.heartbeatStatus === 'STOPPED') {
       logger.info(`[Heartbeat] Not starting (status: STOPPED)`);
       return;
