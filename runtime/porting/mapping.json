@@ -1,0 +1,4020 @@
+{
+ "src/config.ts": {
+  "imports": [
+   "src/constants.ts",
+   "src/lib/coding-agents/subscription.ts",
+   "src/lib/environment.ts",
+   "src/lib/llm-providers/bedrock-model-id.ts",
+   "src/lib/loopback-host.ts",
+   "src/lib/managed-realtime.ts",
+   "src/lib/origin-patterns.ts",
+   "src/lib/prism-settings.ts",
+   "src/logger.ts"
+  ],
+  "level": 2,
+  "lines": 1283,
+  "module": "crate::config",
+  "rust": "runtime/src/config.rs"
+ },
+ "src/constants.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 160,
+  "module": "crate::constants",
+  "rust": "runtime/src/constants.rs"
+ },
+ "src/index.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/attachment-boot.ts",
+   "src/lib/coding-agents/availability.ts",
+   "src/lib/coding-agents/get-coding-agent.ts",
+   "src/lib/coding-agents/subscription-switch.ts",
+   "src/lib/data-dir.ts",
+   "src/lib/execution-environments/get-execution-environment.ts",
+   "src/lib/execution-environments/storage-migration.ts",
+   "src/lib/file-janitor.ts",
+   "src/lib/langfuse.ts",
+   "src/lib/llm-providers/create-provider.ts",
+   "src/lib/mcp-client.ts",
+   "src/lib/model-catalog.ts",
+   "src/lib/prisma.ts",
+   "src/lib/single-agent-bootstrap.ts",
+   "src/lib/startup-telemetry.ts",
+   "src/lib/telemetry.ts",
+   "src/lib/tool-collection.ts",
+   "src/logger.ts",
+   "src/queues/slack-heartbeat-throttle-queue.ts",
+   "src/scripts/backfill-embeddings.ts",
+   "src/server.ts",
+   "src/services/compaction.service.ts",
+   "src/services/computer/computer-endpoint.ts",
+   "src/services/computer/computer.service.ts",
+   "src/services/computer/remote/computer-link-endpoint.ts",
+   "src/services/computer/remote/remote-computer.service.ts",
+   "src/services/computer/supported.ts",
+   "src/services/conversation.service.ts",
+   "src/services/cron-scheduler.service.ts",
+   "src/services/goal.service.ts",
+   "src/services/heartbeat.service.ts",
+   "src/services/meeting/meeting-bot.service.ts",
+   "src/services/message-delivery.service.ts",
+   "src/services/pending-work.service.ts",
+   "src/services/plugin-catalog.service.ts",
+   "src/services/plugin-mcp.service.ts",
+   "src/services/program-status.service.ts",
+   "src/services/providers/slack-thread.provider.ts",
+   "src/services/resume-replies.ts",
+   "src/services/session-manager.service.ts",
+   "src/services/slack-adapter.service.ts",
+   "src/services/slack-message-queue.service.ts",
+   "src/services/teams/teams-adapter.service.ts",
+   "src/services/update/update.service.ts",
+   "src/services/voice/voice-chat.service.ts",
+   "src/services/webhook-receiver.service.ts",
+   "src/services/webhook.service.ts",
+   "src/services/websocket-adapter.service.ts",
+   "src/services/websocket-gateway.service.ts",
+   "src/tools/shell/agent-task-manager.ts",
+   "src/tools/shell/process-manager.ts"
+  ],
+  "level": 17,
+  "lines": 511,
+  "module": "crate::index",
+  "rust": "runtime/src/index.rs"
+ },
+ "src/invoke.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/constants.ts",
+   "src/lib/llm-errors.ts",
+   "src/lib/llm-providers/create-provider.ts",
+   "src/lib/llm-providers/deferred-tools.ts",
+   "src/lib/llm-providers/llm-provider.ts",
+   "src/lib/model-call.ts",
+   "src/lib/model-routing.ts",
+   "src/lib/pending-file-writes.ts",
+   "src/lib/step-usage.ts",
+   "src/lib/telemetry.ts",
+   "src/lib/tool-collection.ts",
+   "src/lib/tool-lifecycle.ts",
+   "src/lib/tool-output-limiter.ts",
+   "src/lib/tool-risk-gate.ts",
+   "src/lib/tool-search/plan.ts",
+   "src/logger.ts",
+   "src/prompts/channel-prompt.ts",
+   "src/prompts/computer-prompt.ts",
+   "src/prompts/context-builder.ts",
+   "src/prompts/early-stopping-prompt.ts",
+   "src/prompts/resume-prompt.ts",
+   "src/prompts/task-tool-prompt.ts",
+   "src/protocol/chat-protocol.ts",
+   "src/services/agent-status.service.ts",
+   "src/services/agent-workspace.service.ts",
+   "src/services/compaction.service.ts",
+   "src/services/computer/computer-help.service.ts",
+   "src/services/computer/computer.service.ts",
+   "src/services/computer/supported.ts",
+   "src/services/context-usage.service.ts",
+   "src/services/context.service.ts",
+   "src/services/conversation-thread-activity.service.ts",
+   "src/services/conversation.service.ts",
+   "src/services/program-status.service.ts",
+   "src/services/tool-ledger.service.ts",
+   "src/tools/share-file.ts",
+   "src/types.ts",
+   "src/utils/async-channel.ts"
+  ],
+  "level": 9,
+  "lines": 1138,
+  "module": "crate::invoke",
+  "rust": "runtime/src/invoke.rs"
+ },
+ "src/lib/agent-mcp-servers.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/coding-agents/coding-agent.ts",
+   "src/lib/execution-environments/get-execution-environment.ts",
+   "src/lib/tool-names.ts",
+   "src/services/plugin-mcp.service.ts"
+  ],
+  "level": 9,
+  "lines": 43,
+  "module": "crate::lib::agent_mcp_servers",
+  "rust": "runtime/src/lib/agent_mcp_servers.rs"
+ },
+ "src/lib/agent-message-kind.ts": {
+  "imports": [
+   "src/protocol/chat-protocol.ts"
+  ],
+  "level": 9,
+  "lines": 12,
+  "module": "crate::lib::agent_message_kind",
+  "rust": "runtime/src/lib/agent_message_kind.rs"
+ },
+ "src/lib/agent-name.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 70,
+  "module": "crate::lib::agent_name",
+  "rust": "runtime/src/lib/agent_name.rs"
+ },
+ "src/lib/agent-processes.ts": {
+  "imports": [
+   "src/lib/execution-environments/execution-environment.ts"
+  ],
+  "level": 1,
+  "lines": 153,
+  "module": "crate::lib::agent_processes",
+  "rust": "runtime/src/lib/agent_processes.rs"
+ },
+ "src/lib/apply-edit.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 111,
+  "module": "crate::lib::apply_edit",
+  "rust": "runtime/src/lib/apply_edit.rs"
+ },
+ "src/lib/attachment-boot.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/logger.ts",
+   "src/services/attachment.service.ts"
+  ],
+  "level": 10,
+  "lines": 63,
+  "module": "crate::lib::attachment_boot",
+  "rust": "runtime/src/lib/attachment_boot.rs"
+ },
+ "src/lib/classification.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/llm-providers/create-provider.ts",
+   "src/lib/llm-providers/llm-provider.ts"
+  ],
+  "level": 8,
+  "lines": 81,
+  "module": "crate::lib::classification",
+  "rust": "runtime/src/lib/classification.rs"
+ },
+ "src/lib/coding-agents/availability.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/coding-agents/claude-code/claude-code-agent.ts",
+   "src/lib/coding-agents/codex/codex-agent.ts",
+   "src/lib/coding-agents/coding-agent.ts",
+   "src/lib/execution-environments/get-execution-environment.ts",
+   "src/logger.ts"
+  ],
+  "level": 9,
+  "lines": 84,
+  "module": "crate::lib::coding_agents::availability",
+  "rust": "runtime/src/lib/coding_agents/availability.rs"
+ },
+ "src/lib/coding-agents/bedrock-credentials.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 53,
+  "module": "crate::lib::coding_agents::bedrock_credentials",
+  "rust": "runtime/src/lib/coding_agents/bedrock_credentials.rs"
+ },
+ "src/lib/coding-agents/claude-code/authenticated-home.ts": {
+  "imports": [
+   "src/lib/coding-agents/cli-probe.ts",
+   "src/lib/execution-environments/execution-environment.ts"
+  ],
+  "level": 4,
+  "lines": 131,
+  "module": "crate::lib::coding_agents::claude_code::authenticated_home",
+  "rust": "runtime/src/lib/coding_agents/claude_code/authenticated_home.rs"
+ },
+ "src/lib/coding-agents/claude-code/claude-code-agent.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/coding-agents/claude-code/authenticated-home.ts",
+   "src/lib/coding-agents/claude-code/credentials.ts",
+   "src/lib/coding-agents/claude-code/environment.ts",
+   "src/lib/coding-agents/claude-code/mcp-config.ts",
+   "src/lib/coding-agents/cli-run.ts",
+   "src/lib/coding-agents/coding-agent.ts",
+   "src/lib/coding-agents/deferred-run.ts",
+   "src/lib/coding-agents/shared-skills-home.ts",
+   "src/lib/coding-agents/subscription-switch.ts",
+   "src/lib/coding-agents/subscription.ts",
+   "src/lib/execution-environments/execution-environment.ts",
+   "src/lib/execution-environments/get-execution-environment.ts",
+   "src/logger.ts"
+  ],
+  "level": 9,
+  "lines": 256,
+  "module": "crate::lib::coding_agents::claude_code::claude_code_agent",
+  "rust": "runtime/src/lib/coding_agents/claude_code/claude_code_agent.rs"
+ },
+ "src/lib/coding-agents/claude-code/credentials.ts": {
+  "imports": [
+   "src/lib/coding-agents/claude-code/authenticated-home.ts",
+   "src/lib/coding-agents/claude-code/environment.ts",
+   "src/lib/execution-environments/get-execution-environment.ts"
+  ],
+  "level": 9,
+  "lines": 19,
+  "module": "crate::lib::coding_agents::claude_code::credentials",
+  "rust": "runtime/src/lib/coding_agents/claude_code/credentials.rs"
+ },
+ "src/lib/coding-agents/claude-code/environment.ts": {
+  "imports": [
+   "src/lib/coding-agents/bedrock-credentials.ts",
+   "src/lib/coding-agents/claude-code/authenticated-home.ts"
+  ],
+  "level": 5,
+  "lines": 38,
+  "module": "crate::lib::coding_agents::claude_code::environment",
+  "rust": "runtime/src/lib/coding_agents/claude_code/environment.rs"
+ },
+ "src/lib/coding-agents/claude-code/home.ts": {
+  "imports": [
+   "src/lib/data-dir.ts"
+  ],
+  "level": 1,
+  "lines": 19,
+  "module": "crate::lib::coding_agents::claude_code::home",
+  "rust": "runtime/src/lib/coding_agents/claude_code/home.rs"
+ },
+ "src/lib/coding-agents/claude-code/mcp-config.ts": {
+  "imports": [
+   "src/lib/coding-agents/coding-agent.ts",
+   "src/lib/execution-environments/execution-environment.ts",
+   "src/logger.ts"
+  ],
+  "level": 4,
+  "lines": 131,
+  "module": "crate::lib::coding_agents::claude_code::mcp_config",
+  "rust": "runtime/src/lib/coding_agents/claude_code/mcp_config.rs"
+ },
+ "src/lib/coding-agents/cli-probe.ts": {
+  "imports": [
+   "src/lib/execution-environments/capture.ts",
+   "src/lib/execution-environments/execution-environment.ts"
+  ],
+  "level": 3,
+  "lines": 38,
+  "module": "crate::lib::coding_agents::cli_probe",
+  "rust": "runtime/src/lib/coding_agents/cli_probe.rs"
+ },
+ "src/lib/coding-agents/cli-run.ts": {
+  "imports": [
+   "src/lib/coding-agents/coding-agent.ts",
+   "src/lib/execution-environments/execution-environment.ts",
+   "src/lib/execution-environments/get-execution-environment.ts",
+   "src/logger.ts",
+   "src/utils/async-channel.ts"
+  ],
+  "level": 9,
+  "lines": 162,
+  "module": "crate::lib::coding_agents::cli_run",
+  "rust": "runtime/src/lib/coding_agents/cli_run.rs"
+ },
+ "src/lib/coding-agents/codex/codex-agent.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/coding-agents/bedrock-credentials.ts",
+   "src/lib/coding-agents/cli-run.ts",
+   "src/lib/coding-agents/codex/credentials.ts",
+   "src/lib/coding-agents/coding-agent.ts",
+   "src/lib/coding-agents/deferred-run.ts",
+   "src/lib/coding-agents/shared-skills-home.ts",
+   "src/lib/coding-agents/subscription-switch.ts",
+   "src/lib/coding-agents/subscription.ts",
+   "src/lib/execution-environments/execution-environment.ts",
+   "src/lib/execution-environments/get-execution-environment.ts",
+   "src/lib/telemetry.ts"
+  ],
+  "level": 9,
+  "lines": 191,
+  "module": "crate::lib::coding_agents::codex::codex_agent",
+  "rust": "runtime/src/lib/coding_agents/codex/codex_agent.rs"
+ },
+ "src/lib/coding-agents/codex/credentials.ts": {
+  "imports": [
+   "src/lib/coding-agents/bedrock-credentials.ts",
+   "src/lib/coding-agents/cli-probe.ts",
+   "src/lib/data-dir.ts",
+   "src/lib/execution-environments/execution-environment.ts"
+  ],
+  "level": 4,
+  "lines": 110,
+  "module": "crate::lib::coding_agents::codex::credentials",
+  "rust": "runtime/src/lib/coding_agents/codex/credentials.rs"
+ },
+ "src/lib/coding-agents/coding-agent.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/execution-environments/execution-environment.ts"
+  ],
+  "level": 3,
+  "lines": 132,
+  "module": "crate::lib::coding_agents::coding_agent",
+  "rust": "runtime/src/lib/coding_agents/coding_agent.rs"
+ },
+ "src/lib/coding-agents/deferred-run.ts": {
+  "imports": [
+   "src/lib/coding-agents/coding-agent.ts",
+   "src/logger.ts",
+   "src/utils/async-channel.ts"
+  ],
+  "level": 4,
+  "lines": 64,
+  "module": "crate::lib::coding_agents::deferred_run",
+  "rust": "runtime/src/lib/coding_agents/deferred_run.rs"
+ },
+ "src/lib/coding-agents/get-coding-agent.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/coding-agents/claude-code/claude-code-agent.ts",
+   "src/lib/coding-agents/codex/codex-agent.ts",
+   "src/lib/coding-agents/coding-agent.ts"
+  ],
+  "level": 9,
+  "lines": 25,
+  "module": "crate::lib::coding_agents::get_coding_agent",
+  "rust": "runtime/src/lib/coding_agents/get_coding_agent.rs"
+ },
+ "src/lib/coding-agents/shared-skills-home.ts": {
+  "imports": [
+   "src/lib/coding-agents/coding-agent.ts",
+   "src/lib/execution-environments/execution-environment.ts"
+  ],
+  "level": 4,
+  "lines": 62,
+  "module": "crate::lib::coding_agents::shared_skills_home",
+  "rust": "runtime/src/lib/coding_agents/shared_skills_home.rs"
+ },
+ "src/lib/coding-agents/subscription-switch.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/coding-agents/subscription.ts",
+   "src/logger.ts",
+   "src/services/runtime-state.service.ts"
+  ],
+  "level": 5,
+  "lines": 47,
+  "module": "crate::lib::coding_agents::subscription_switch",
+  "rust": "runtime/src/lib/coding_agents/subscription_switch.rs"
+ },
+ "src/lib/coding-agents/subscription.ts": {
+  "imports": [
+   "src/config.ts"
+  ],
+  "level": 2,
+  "lines": 42,
+  "module": "crate::lib::coding_agents::subscription",
+  "rust": "runtime/src/lib/coding_agents/subscription.rs"
+ },
+ "src/lib/coding-agents/terminal.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/coding-agents/claude-code/authenticated-home.ts",
+   "src/lib/coding-agents/claude-code/environment.ts",
+   "src/lib/coding-agents/codex/credentials.ts",
+   "src/lib/coding-agents/subscription.ts",
+   "src/lib/sqlite-path.ts"
+  ],
+  "level": 6,
+  "lines": 126,
+  "module": "crate::lib::coding_agents::terminal",
+  "rust": "runtime/src/lib/coding_agents/terminal.rs"
+ },
+ "src/lib/context-window.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/model-catalog.ts"
+  ],
+  "level": 6,
+  "lines": 157,
+  "module": "crate::lib::context_window",
+  "rust": "runtime/src/lib/context_window.rs"
+ },
+ "src/lib/data-dir.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 144,
+  "module": "crate::lib::data_dir",
+  "rust": "runtime/src/lib/data_dir.rs"
+ },
+ "src/lib/embedding-providers/azure-openai-embedding-provider.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/embedding-providers/embedding-provider.ts"
+  ],
+  "level": 5,
+  "lines": 40,
+  "module": "crate::lib::embedding_providers::azure_openai_embedding_provider",
+  "rust": "runtime/src/lib/embedding_providers/azure_openai_embedding_provider.rs"
+ },
+ "src/lib/embedding-providers/bedrock-embedding-provider.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/embedding-providers/embedding-provider.ts",
+   "src/lib/llm-providers/bedrock-shared.ts"
+  ],
+  "level": 5,
+  "lines": 25,
+  "module": "crate::lib::embedding_providers::bedrock_embedding_provider",
+  "rust": "runtime/src/lib/embedding_providers/bedrock_embedding_provider.rs"
+ },
+ "src/lib/embedding-providers/create-embedding-provider.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/embedding-providers/azure-openai-embedding-provider.ts",
+   "src/lib/embedding-providers/bedrock-embedding-provider.ts",
+   "src/lib/embedding-providers/embedding-provider.ts",
+   "src/lib/embedding-providers/openai-embedding-provider.ts",
+   "src/lib/embedding-providers/openrouter-embedding-provider.ts"
+  ],
+  "level": 6,
+  "lines": 40,
+  "module": "crate::lib::embedding_providers::create_embedding_provider",
+  "rust": "runtime/src/lib/embedding_providers/create_embedding_provider.rs"
+ },
+ "src/lib/embedding-providers/embedding-provider.ts": {
+  "imports": [
+   "src/lib/llm-providers/llm-provider.ts"
+  ],
+  "level": 4,
+  "lines": 37,
+  "module": "crate::lib::embedding_providers::embedding_provider",
+  "rust": "runtime/src/lib/embedding_providers/embedding_provider.rs"
+ },
+ "src/lib/embedding-providers/openai-embedding-provider.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/embedding-providers/embedding-provider.ts"
+  ],
+  "level": 5,
+  "lines": 26,
+  "module": "crate::lib::embedding_providers::openai_embedding_provider",
+  "rust": "runtime/src/lib/embedding_providers/openai_embedding_provider.rs"
+ },
+ "src/lib/embedding-providers/openrouter-embedding-provider.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/embedding-providers/embedding-provider.ts"
+  ],
+  "level": 5,
+  "lines": 34,
+  "module": "crate::lib::embedding_providers::openrouter_embedding_provider",
+  "rust": "runtime/src/lib/embedding_providers/openrouter_embedding_provider.rs"
+ },
+ "src/lib/environment.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 21,
+  "module": "crate::lib::environment",
+  "rust": "runtime/src/lib/environment.rs"
+ },
+ "src/lib/execution-environments/capture.ts": {
+  "imports": [
+   "src/lib/agent-processes.ts",
+   "src/lib/execution-environments/execution-environment.ts"
+  ],
+  "level": 2,
+  "lines": 181,
+  "module": "crate::lib::execution_environments::capture",
+  "rust": "runtime/src/lib/execution_environments/capture.rs"
+ },
+ "src/lib/execution-environments/docker/container-lost.ts": {
+  "imports": [
+   "src/logger.ts"
+  ],
+  "level": 2,
+  "lines": 43,
+  "module": "crate::lib::execution_environments::docker::container_lost",
+  "rust": "runtime/src/lib/execution_environments/docker/container_lost.rs"
+ },
+ "src/lib/execution-environments/docker/container.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/execution-environments/docker/engine.ts",
+   "src/lib/execution-environments/docker/volumes.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts"
+  ],
+  "level": 8,
+  "lines": 151,
+  "module": "crate::lib::execution_environments::docker::container",
+  "rust": "runtime/src/lib/execution_environments/docker/container.rs"
+ },
+ "src/lib/execution-environments/docker/detect.ts": {
+  "imports": [
+   "src/lib/execution-environments/docker/engine.ts",
+   "src/lib/execution-environments/execution-environment.ts",
+   "src/lib/has-binary.ts",
+   "src/logger.ts",
+   "src/services/runtime-state.service.ts"
+  ],
+  "level": 8,
+  "lines": 116,
+  "module": "crate::lib::execution_environments::docker::detect",
+  "rust": "runtime/src/lib/execution_environments/docker/detect.rs"
+ },
+ "src/lib/execution-environments/docker/docker-copy.ts": {
+  "imports": [
+   "src/lib/execution-environments/docker/docker-environment.ts",
+   "src/lib/execution-environments/docker/engine.ts",
+   "src/lib/execution-environments/docker/volumes.ts",
+   "src/logger.ts"
+  ],
+  "level": 10,
+  "lines": 104,
+  "module": "crate::lib::execution_environments::docker::docker_copy",
+  "rust": "runtime/src/lib/execution_environments/docker/docker_copy.rs"
+ },
+ "src/lib/execution-environments/docker/docker-env.ts": {
+  "imports": [
+   "src/services/channel-adapter.interface.ts"
+  ],
+  "level": 9,
+  "lines": 88,
+  "module": "crate::lib::execution_environments::docker::docker_env",
+  "rust": "runtime/src/lib/execution_environments/docker/docker_env.rs"
+ },
+ "src/lib/execution-environments/docker/docker-environment.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/agent-processes.ts",
+   "src/lib/data-dir.ts",
+   "src/lib/execution-environments/docker/container.ts",
+   "src/lib/execution-environments/docker/docker-env.ts",
+   "src/lib/execution-environments/docker/docker-files.ts",
+   "src/lib/execution-environments/docker/docker-process.ts",
+   "src/lib/execution-environments/docker/volumes.ts",
+   "src/lib/execution-environments/execution-environment.ts"
+  ],
+  "level": 9,
+  "lines": 117,
+  "module": "crate::lib::execution_environments::docker::docker_environment",
+  "rust": "runtime/src/lib/execution_environments/docker/docker_environment.rs"
+ },
+ "src/lib/execution-environments/docker/docker-files.ts": {
+  "imports": [
+   "src/lib/execution-environments/docker/container-lost.ts",
+   "src/lib/execution-environments/docker/engine.ts",
+   "src/lib/execution-environments/execution-environment.ts",
+   "src/lib/execution-environments/local/local-process.ts",
+   "src/logger.ts"
+  ],
+  "level": 8,
+  "lines": 215,
+  "module": "crate::lib::execution_environments::docker::docker_files",
+  "rust": "runtime/src/lib/execution_environments/docker/docker_files.rs"
+ },
+ "src/lib/execution-environments/docker/docker-process.ts": {
+  "imports": [
+   "src/lib/execution-environments/docker/container-lost.ts",
+   "src/lib/execution-environments/docker/engine.ts",
+   "src/lib/execution-environments/execution-environment.ts",
+   "src/lib/execution-environments/local/local-process.ts",
+   "src/logger.ts"
+  ],
+  "level": 8,
+  "lines": 213,
+  "module": "crate::lib::execution_environments::docker::docker_process",
+  "rust": "runtime/src/lib/execution_environments/docker/docker_process.rs"
+ },
+ "src/lib/execution-environments/docker/engine.ts": {
+  "imports": [
+   "src/lib/execution-environments/capture.ts",
+   "src/lib/execution-environments/execution-environment.ts",
+   "src/lib/execution-environments/local/local-environment.ts"
+  ],
+  "level": 7,
+  "lines": 67,
+  "module": "crate::lib::execution_environments::docker::engine",
+  "rust": "runtime/src/lib/execution_environments/docker/engine.rs"
+ },
+ "src/lib/execution-environments/docker/volumes.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 93,
+  "module": "crate::lib::execution_environments::docker::volumes",
+  "rust": "runtime/src/lib/execution_environments/docker/volumes.rs"
+ },
+ "src/lib/execution-environments/exec-stdio-transport.ts": {
+  "imports": [
+   "src/lib/execution-environments/execution-environment.ts",
+   "src/logger.ts"
+  ],
+  "level": 2,
+  "lines": 109,
+  "module": "crate::lib::execution_environments::exec_stdio_transport",
+  "rust": "runtime/src/lib/execution_environments/exec_stdio_transport.rs"
+ },
+ "src/lib/execution-environments/execution-environment.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 173,
+  "module": "crate::lib::execution_environments::execution_environment",
+  "rust": "runtime/src/lib/execution_environments/execution_environment.rs"
+ },
+ "src/lib/execution-environments/get-execution-environment.ts": {
+  "imports": [
+   "src/lib/execution-environments/docker/detect.ts",
+   "src/lib/execution-environments/docker/docker-environment.ts",
+   "src/lib/execution-environments/execution-environment.ts",
+   "src/lib/execution-environments/local/local-environment.ts",
+   "src/logger.ts"
+  ],
+  "level": 9,
+  "lines": 156,
+  "module": "crate::lib::execution_environments::get_execution_environment",
+  "rust": "runtime/src/lib/execution_environments/get_execution_environment.rs"
+ },
+ "src/lib/execution-environments/leftover-process.ts": {
+  "imports": [
+   "src/lib/execution-environments/execution-environment.ts"
+  ],
+  "level": 1,
+  "lines": 42,
+  "module": "crate::lib::execution_environments::leftover_process",
+  "rust": "runtime/src/lib/execution_environments/leftover_process.rs"
+ },
+ "src/lib/execution-environments/local/local-env.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 26,
+  "module": "crate::lib::execution_environments::local::local_env",
+  "rust": "runtime/src/lib/execution_environments/local/local_env.rs"
+ },
+ "src/lib/execution-environments/local/local-environment.ts": {
+  "imports": [
+   "src/lib/agent-processes.ts",
+   "src/lib/execution-environments/execution-environment.ts",
+   "src/lib/execution-environments/local/local-env.ts",
+   "src/lib/execution-environments/local/local-files.ts",
+   "src/lib/execution-environments/local/local-paths.ts",
+   "src/lib/execution-environments/local/local-process.ts",
+   "src/lib/execution-environments/local/local-workspace.ts"
+  ],
+  "level": 6,
+  "lines": 37,
+  "module": "crate::lib::execution_environments::local::local_environment",
+  "rust": "runtime/src/lib/execution_environments/local/local_environment.rs"
+ },
+ "src/lib/execution-environments/local/local-files.ts": {
+  "imports": [
+   "src/lib/execution-environments/execution-environment.ts"
+  ],
+  "level": 1,
+  "lines": 98,
+  "module": "crate::lib::execution_environments::local::local_files",
+  "rust": "runtime/src/lib/execution_environments/local/local_files.rs"
+ },
+ "src/lib/execution-environments/local/local-paths.ts": {
+  "imports": [
+   "src/lib/coding-agents/claude-code/home.ts",
+   "src/lib/coding-agents/codex/credentials.ts",
+   "src/lib/data-dir.ts",
+   "src/lib/execution-environments/execution-environment.ts"
+  ],
+  "level": 5,
+  "lines": 25,
+  "module": "crate::lib::execution_environments::local::local_paths",
+  "rust": "runtime/src/lib/execution_environments/local/local_paths.rs"
+ },
+ "src/lib/execution-environments/local/local-process.ts": {
+  "imports": [
+   "src/lib/execution-environments/execution-environment.ts"
+  ],
+  "level": 1,
+  "lines": 117,
+  "module": "crate::lib::execution_environments::local::local_process",
+  "rust": "runtime/src/lib/execution_environments/local/local_process.rs"
+ },
+ "src/lib/execution-environments/local/local-workspace.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 37,
+  "module": "crate::lib::execution_environments::local::local_workspace",
+  "rust": "runtime/src/lib/execution_environments/local/local_workspace.rs"
+ },
+ "src/lib/execution-environments/storage-migration.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/coding-agents/claude-code/home.ts",
+   "src/lib/coding-agents/codex/credentials.ts",
+   "src/lib/execution-environments/docker/docker-copy.ts",
+   "src/lib/execution-environments/docker/docker-environment.ts",
+   "src/lib/execution-environments/docker/docker-files.ts",
+   "src/lib/execution-environments/execution-environment.ts",
+   "src/lib/execution-environments/get-execution-environment.ts",
+   "src/lib/execution-environments/local/local-environment.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/services/runtime-state.service.ts"
+  ],
+  "level": 11,
+  "lines": 271,
+  "module": "crate::lib::execution_environments::storage_migration",
+  "rust": "runtime/src/lib/execution_environments/storage_migration.rs"
+ },
+ "src/lib/execution-environments/workspace.ts": {
+  "imports": [
+   "src/lib/execution-environments/get-execution-environment.ts"
+  ],
+  "level": 9,
+  "lines": 14,
+  "module": "crate::lib::execution_environments::workspace",
+  "rust": "runtime/src/lib/execution_environments/workspace.rs"
+ },
+ "src/lib/file-janitor.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/media-store.ts",
+   "src/lib/prisma.ts",
+   "src/lib/tool-output-store.ts",
+   "src/logger.ts",
+   "src/services/attachment.service.ts",
+   "src/services/conversation-engine.service.ts",
+   "src/tools/attachments.ts"
+  ],
+  "level": 10,
+  "lines": 89,
+  "module": "crate::lib::file_janitor",
+  "rust": "runtime/src/lib/file_janitor.rs"
+ },
+ "src/lib/has-binary.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 34,
+  "module": "crate::lib::has_binary",
+  "rust": "runtime/src/lib/has_binary.rs"
+ },
+ "src/lib/html-to-markdown.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 131,
+  "module": "crate::lib::html_to_markdown",
+  "rust": "runtime/src/lib/html_to_markdown.rs"
+ },
+ "src/lib/inference-gate.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 70,
+  "module": "crate::lib::inference_gate",
+  "rust": "runtime/src/lib/inference_gate.rs"
+ },
+ "src/lib/langfuse.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/logger.ts"
+  ],
+  "level": 3,
+  "lines": 63,
+  "module": "crate::lib::langfuse",
+  "rust": "runtime/src/lib/langfuse.rs"
+ },
+ "src/lib/last-response-text.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 8,
+  "module": "crate::lib::last_response_text",
+  "rust": "runtime/src/lib/last_response_text.rs"
+ },
+ "src/lib/llm-errors.ts": {
+  "imports": [
+   "src/logger.ts",
+   "src/types.ts"
+  ],
+  "level": 9,
+  "lines": 255,
+  "module": "crate::lib::llm_errors",
+  "rust": "runtime/src/lib/llm_errors.rs"
+ },
+ "src/lib/llm-providers/anthropic/anthropic-provider.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/llm-providers/llm-provider.ts",
+   "src/logger.ts"
+  ],
+  "level": 4,
+  "lines": 100,
+  "module": "crate::lib::llm_providers::anthropic::anthropic_provider",
+  "rust": "runtime/src/lib/llm_providers/anthropic/anthropic_provider.rs"
+ },
+ "src/lib/llm-providers/azure/azure-provider.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/llm-providers/llm-provider.ts",
+   "src/logger.ts"
+  ],
+  "level": 4,
+  "lines": 83,
+  "module": "crate::lib::llm_providers::azure::azure_provider",
+  "rust": "runtime/src/lib/llm_providers/azure/azure_provider.rs"
+ },
+ "src/lib/llm-providers/bedrock-mantle/bedrock-mantle-provider.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/llm-providers/bedrock-model-id.ts",
+   "src/lib/llm-providers/llm-provider.ts",
+   "src/logger.ts"
+  ],
+  "level": 4,
+  "lines": 150,
+  "module": "crate::lib::llm_providers::bedrock_mantle::bedrock_mantle_provider",
+  "rust": "runtime/src/lib/llm_providers/bedrock_mantle/bedrock_mantle_provider.rs"
+ },
+ "src/lib/llm-providers/bedrock-model-id.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 11,
+  "module": "crate::lib::llm_providers::bedrock_model_id",
+  "rust": "runtime/src/lib/llm_providers/bedrock_model_id.rs"
+ },
+ "src/lib/llm-providers/bedrock-shared.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/logger.ts"
+  ],
+  "level": 3,
+  "lines": 59,
+  "module": "crate::lib::llm_providers::bedrock_shared",
+  "rust": "runtime/src/lib/llm_providers/bedrock_shared.rs"
+ },
+ "src/lib/llm-providers/bedrock/bedrock-provider.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/llm-providers/bedrock-model-id.ts",
+   "src/lib/llm-providers/bedrock-shared.ts",
+   "src/lib/llm-providers/bedrock/converse-tool-images.ts",
+   "src/lib/llm-providers/deferred-tools.ts",
+   "src/lib/llm-providers/llm-provider.ts",
+   "src/lib/llm-providers/tool-changes.ts",
+   "src/logger.ts"
+  ],
+  "level": 6,
+  "lines": 133,
+  "module": "crate::lib::llm_providers::bedrock::bedrock_provider",
+  "rust": "runtime/src/lib/llm_providers/bedrock/bedrock_provider.rs"
+ },
+ "src/lib/llm-providers/bedrock/converse-tool-images.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 46,
+  "module": "crate::lib::llm_providers::bedrock::converse_tool_images",
+  "rust": "runtime/src/lib/llm_providers/bedrock/converse_tool_images.rs"
+ },
+ "src/lib/llm-providers/create-provider.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/llm-providers/anthropic/anthropic-provider.ts",
+   "src/lib/llm-providers/azure/azure-provider.ts",
+   "src/lib/llm-providers/bedrock-mantle/bedrock-mantle-provider.ts",
+   "src/lib/llm-providers/bedrock/bedrock-provider.ts",
+   "src/lib/llm-providers/litellm/litellm-provider.ts",
+   "src/lib/llm-providers/llm-provider.ts",
+   "src/lib/llm-providers/openai/openai-provider.ts",
+   "src/lib/llm-providers/openrouter/openrouter-provider.ts"
+  ],
+  "level": 7,
+  "lines": 106,
+  "module": "crate::lib::llm_providers::create_provider",
+  "rust": "runtime/src/lib/llm_providers/create_provider.rs"
+ },
+ "src/lib/llm-providers/deferred-tools.ts": {
+  "imports": [
+   "src/lib/llm-providers/llm-provider.ts",
+   "src/lib/llm-providers/tool-changes.ts"
+  ],
+  "level": 5,
+  "lines": 179,
+  "module": "crate::lib::llm_providers::deferred_tools",
+  "rust": "runtime/src/lib/llm_providers/deferred_tools.rs"
+ },
+ "src/lib/llm-providers/litellm/litellm-provider.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/llm-providers/llm-provider.ts",
+   "src/logger.ts"
+  ],
+  "level": 4,
+  "lines": 99,
+  "module": "crate::lib::llm_providers::litellm::litellm_provider",
+  "rust": "runtime/src/lib/llm_providers/litellm/litellm_provider.rs"
+ },
+ "src/lib/llm-providers/llm-provider.ts": {
+  "imports": [
+   "src/config.ts"
+  ],
+  "level": 3,
+  "lines": 341,
+  "module": "crate::lib::llm_providers::llm_provider",
+  "rust": "runtime/src/lib/llm_providers/llm_provider.rs"
+ },
+ "src/lib/llm-providers/openai-compatible.ts": {
+  "imports": [
+   "src/lib/llm-providers/llm-provider.ts"
+  ],
+  "level": 4,
+  "lines": 71,
+  "module": "crate::lib::llm_providers::openai_compatible",
+  "rust": "runtime/src/lib/llm_providers/openai_compatible.rs"
+ },
+ "src/lib/llm-providers/openai/openai-provider.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/llm-providers/deferred-tools.ts",
+   "src/lib/llm-providers/llm-provider.ts",
+   "src/lib/llm-providers/openai-compatible.ts",
+   "src/logger.ts"
+  ],
+  "level": 6,
+  "lines": 82,
+  "module": "crate::lib::llm_providers::openai::openai_provider",
+  "rust": "runtime/src/lib/llm_providers/openai/openai_provider.rs"
+ },
+ "src/lib/llm-providers/openrouter/openrouter-provider.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/llm-providers/llm-provider.ts",
+   "src/lib/llm-providers/openai-compatible.ts",
+   "src/logger.ts"
+  ],
+  "level": 5,
+  "lines": 61,
+  "module": "crate::lib::llm_providers::openrouter::openrouter_provider",
+  "rust": "runtime/src/lib/llm_providers/openrouter/openrouter_provider.rs"
+ },
+ "src/lib/llm-providers/tool-changes.ts": {
+  "imports": [
+   "src/lib/llm-providers/llm-provider.ts"
+  ],
+  "level": 4,
+  "lines": 43,
+  "module": "crate::lib::llm_providers::tool_changes",
+  "rust": "runtime/src/lib/llm_providers/tool_changes.rs"
+ },
+ "src/lib/locked-in.ts": {
+  "imports": [
+   "src/lib/telemetry.ts"
+  ],
+  "level": 5,
+  "lines": 55,
+  "module": "crate::lib::locked_in",
+  "rust": "runtime/src/lib/locked_in.rs"
+ },
+ "src/lib/log-redaction.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 192,
+  "module": "crate::lib::log_redaction",
+  "rust": "runtime/src/lib/log_redaction.rs"
+ },
+ "src/lib/loopback-host.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 42,
+  "module": "crate::lib::loopback_host",
+  "rust": "runtime/src/lib/loopback_host.rs"
+ },
+ "src/lib/managed-realtime.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 119,
+  "module": "crate::lib::managed_realtime",
+  "rust": "runtime/src/lib/managed_realtime.rs"
+ },
+ "src/lib/mcp-client.ts": {
+  "imports": [
+   "src/logger.ts"
+  ],
+  "level": 2,
+  "lines": 104,
+  "module": "crate::lib::mcp_client",
+  "rust": "runtime/src/lib/mcp_client.rs"
+ },
+ "src/lib/media-store.ts": {
+  "imports": [
+   "src/lib/data-dir.ts"
+  ],
+  "level": 1,
+  "lines": 159,
+  "module": "crate::lib::media_store",
+  "rust": "runtime/src/lib/media_store.rs"
+ },
+ "src/lib/model-call.ts": {
+  "imports": [
+   "src/lib/inference-gate.ts",
+   "src/services/llm-call.service.ts"
+  ],
+  "level": 9,
+  "lines": 100,
+  "module": "crate::lib::model_call",
+  "rust": "runtime/src/lib/model_call.rs"
+ },
+ "src/lib/model-catalog.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/proxy-dispatcher.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts"
+  ],
+  "level": 5,
+  "lines": 428,
+  "module": "crate::lib::model_catalog",
+  "rust": "runtime/src/lib/model_catalog.rs"
+ },
+ "src/lib/model-routing.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/classification.ts",
+   "src/lib/context-window.ts",
+   "src/lib/llm-providers/llm-provider.ts",
+   "src/lib/model-call.ts",
+   "src/lib/model-selection.ts",
+   "src/lib/prompt-fence.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/services/agent-workspace.service.ts",
+   "src/services/conversation.service.ts",
+   "src/services/llm-call.service.ts",
+   "src/types.ts"
+  ],
+  "level": 9,
+  "lines": 263,
+  "module": "crate::lib::model_routing",
+  "rust": "runtime/src/lib/model_routing.rs"
+ },
+ "src/lib/model-selection.ts": {
+  "imports": [
+   "src/config.ts"
+  ],
+  "level": 3,
+  "lines": 43,
+  "module": "crate::lib::model_selection",
+  "rust": "runtime/src/lib/model_selection.rs"
+ },
+ "src/lib/origin-guard.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/loopback-host.ts",
+   "src/lib/origin-patterns.ts",
+   "src/logger.ts"
+  ],
+  "level": 3,
+  "lines": 162,
+  "module": "crate::lib::origin_guard",
+  "rust": "runtime/src/lib/origin_guard.rs"
+ },
+ "src/lib/origin-patterns.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 98,
+  "module": "crate::lib::origin_patterns",
+  "rust": "runtime/src/lib/origin_patterns.rs"
+ },
+ "src/lib/pending-file-writes.ts": {
+  "imports": [
+   "src/logger.ts"
+  ],
+  "level": 2,
+  "lines": 171,
+  "module": "crate::lib::pending_file_writes",
+  "rust": "runtime/src/lib/pending_file_writes.rs"
+ },
+ "src/lib/prism-settings.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 91,
+  "module": "crate::lib::prism_settings",
+  "rust": "runtime/src/lib/prism_settings.rs"
+ },
+ "src/lib/prisma-adapter.ts": {
+  "imports": [
+   "src/lib/sqlite-path.ts"
+  ],
+  "level": 1,
+  "lines": 97,
+  "module": "crate::lib::prisma_adapter",
+  "rust": "runtime/src/lib/prisma_adapter.rs"
+ },
+ "src/lib/prisma.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/prisma-adapter.ts"
+  ],
+  "level": 3,
+  "lines": 17,
+  "module": "crate::lib::prisma",
+  "rust": "runtime/src/lib/prisma.rs"
+ },
+ "src/lib/program-status.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 43,
+  "module": "crate::lib::program_status",
+  "rust": "runtime/src/lib/program_status.rs"
+ },
+ "src/lib/prompt-fence.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 14,
+  "module": "crate::lib::prompt_fence",
+  "rust": "runtime/src/lib/prompt_fence.rs"
+ },
+ "src/lib/proxy-dispatcher.ts": {
+  "imports": [
+   "src/logger.ts"
+  ],
+  "level": 2,
+  "lines": 47,
+  "module": "crate::lib::proxy_dispatcher",
+  "rust": "runtime/src/lib/proxy_dispatcher.rs"
+ },
+ "src/lib/public-url.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 123,
+  "module": "crate::lib::public_url",
+  "rust": "runtime/src/lib/public_url.rs"
+ },
+ "src/lib/raw-body.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 31,
+  "module": "crate::lib::raw_body",
+  "rust": "runtime/src/lib/raw_body.rs"
+ },
+ "src/lib/single-agent-bootstrap.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/agent-name.ts",
+   "src/lib/prisma.ts",
+   "src/lib/workspace-seed.ts",
+   "src/logger.ts",
+   "src/services/agent-workspace.service.ts"
+  ],
+  "level": 7,
+  "lines": 80,
+  "module": "crate::lib::single_agent_bootstrap",
+  "rust": "runtime/src/lib/single_agent_bootstrap.rs"
+ },
+ "src/lib/slack-config.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/slack-web-client.ts",
+   "src/logger.ts"
+  ],
+  "level": 3,
+  "lines": 123,
+  "module": "crate::lib::slack_config",
+  "rust": "runtime/src/lib/slack_config.rs"
+ },
+ "src/lib/slack-source.ts": {
+  "imports": [
+   "src/lib/slack-config.ts"
+  ],
+  "level": 4,
+  "lines": 25,
+  "module": "crate::lib::slack_source",
+  "rust": "runtime/src/lib/slack_source.rs"
+ },
+ "src/lib/slack-web-client.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 92,
+  "module": "crate::lib::slack_web_client",
+  "rust": "runtime/src/lib/slack_web_client.rs"
+ },
+ "src/lib/sqlite-bootstrap.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/embedding-providers/embedding-provider.ts",
+   "src/lib/sqlite-path.ts",
+   "src/logger.ts"
+  ],
+  "level": 5,
+  "lines": 157,
+  "module": "crate::lib::sqlite_bootstrap",
+  "rust": "runtime/src/lib/sqlite_bootstrap.rs"
+ },
+ "src/lib/sqlite-path.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 33,
+  "module": "crate::lib::sqlite_path",
+  "rust": "runtime/src/lib/sqlite_path.rs"
+ },
+ "src/lib/startup-telemetry.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/execution-environments/get-execution-environment.ts",
+   "src/lib/model-catalog.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/services/agent-workspace.service.ts",
+   "src/services/plugin-catalog.service.ts",
+   "src/services/skill-catalog.service.ts"
+  ],
+  "level": 10,
+  "lines": 105,
+  "module": "crate::lib::startup_telemetry",
+  "rust": "runtime/src/lib/startup_telemetry.rs"
+ },
+ "src/lib/step-usage.ts": {
+  "imports": [
+   "src/types.ts"
+  ],
+  "level": 9,
+  "lines": 84,
+  "module": "crate::lib::step_usage",
+  "rust": "runtime/src/lib/step_usage.rs"
+ },
+ "src/lib/task-tool.ts": {
+  "imports": [
+   "src/logger.ts",
+   "src/services/agent-workspace.service.ts",
+   "src/types.ts"
+  ],
+  "level": 9,
+  "lines": 94,
+  "module": "crate::lib::task_tool",
+  "rust": "runtime/src/lib/task_tool.rs"
+ },
+ "src/lib/teams-config.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/logger.ts"
+  ],
+  "level": 3,
+  "lines": 66,
+  "module": "crate::lib::teams_config",
+  "rust": "runtime/src/lib/teams_config.rs"
+ },
+ "src/lib/telemetry.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/langfuse.ts",
+   "src/logger.ts"
+  ],
+  "level": 4,
+  "lines": 192,
+  "module": "crate::lib::telemetry",
+  "rust": "runtime/src/lib/telemetry.rs"
+ },
+ "src/lib/timezone.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 9,
+  "module": "crate::lib::timezone",
+  "rust": "runtime/src/lib/timezone.rs"
+ },
+ "src/lib/token-bucket.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 33,
+  "module": "crate::lib::token_bucket",
+  "rust": "runtime/src/lib/token_bucket.rs"
+ },
+ "src/lib/tool-collection.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/coding-agents/availability.ts",
+   "src/lib/execution-environments/get-execution-environment.ts",
+   "src/lib/llm-providers/llm-provider.ts",
+   "src/lib/mcp-client.ts",
+   "src/lib/pending-file-writes.ts",
+   "src/lib/task-tool.ts",
+   "src/lib/tool-names.ts",
+   "src/logger.ts",
+   "src/services/agent-workspace.service.ts",
+   "src/services/coding-agent-sign-in/coding-agent-account.ts",
+   "src/services/computer/computer-access.ts",
+   "src/services/computer/supported.ts",
+   "src/services/conversation.service.ts",
+   "src/services/outbound-message.service.ts",
+   "src/services/plugin-mcp.service.ts",
+   "src/tools/agent-config.ts",
+   "src/tools/attachments.ts",
+   "src/tools/coding-agent-sign-in.ts",
+   "src/tools/computer.ts",
+   "src/tools/conversation-history.ts",
+   "src/tools/cron.ts",
+   "src/tools/goals.ts",
+   "src/tools/meeting.ts",
+   "src/tools/memory.ts",
+   "src/tools/send-message.ts",
+   "src/tools/share-file.ts",
+   "src/tools/shell/index.ts",
+   "src/tools/skills/index.ts",
+   "src/tools/web/web-fetch.ts",
+   "src/types.ts"
+  ],
+  "level": 9,
+  "lines": 472,
+  "module": "crate::lib::tool_collection",
+  "rust": "runtime/src/lib/tool_collection.rs"
+ },
+ "src/lib/tool-lifecycle.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 59,
+  "module": "crate::lib::tool_lifecycle",
+  "rust": "runtime/src/lib/tool_lifecycle.rs"
+ },
+ "src/lib/tool-names.ts": {
+  "imports": [
+   "src/logger.ts"
+  ],
+  "level": 2,
+  "lines": 135,
+  "module": "crate::lib::tool_names",
+  "rust": "runtime/src/lib/tool_names.rs"
+ },
+ "src/lib/tool-output-limiter.ts": {
+  "imports": [
+   "src/lib/tool-output-store.ts",
+   "src/logger.ts",
+   "src/types.ts"
+  ],
+  "level": 9,
+  "lines": 503,
+  "module": "crate::lib::tool_output_limiter",
+  "rust": "runtime/src/lib/tool_output_limiter.rs"
+ },
+ "src/lib/tool-output-store.ts": {
+  "imports": [
+   "src/lib/execution-environments/execution-environment.ts",
+   "src/lib/execution-environments/get-execution-environment.ts",
+   "src/lib/execution-environments/workspace.ts"
+  ],
+  "level": 9,
+  "lines": 195,
+  "module": "crate::lib::tool_output_store",
+  "rust": "runtime/src/lib/tool_output_store.rs"
+ },
+ "src/lib/tool-risk-gate.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/classification.ts",
+   "src/lib/model-call.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/templates/default-workspace.ts"
+  ],
+  "level": 9,
+  "lines": 634,
+  "module": "crate::lib::tool_risk_gate",
+  "rust": "runtime/src/lib/tool_risk_gate.rs"
+ },
+ "src/lib/tool-search/catalog.ts": {
+  "imports": [
+   "src/lib/llm-providers/deferred-tools.ts",
+   "src/lib/llm-providers/llm-provider.ts"
+  ],
+  "level": 6,
+  "lines": 102,
+  "module": "crate::lib::tool_search::catalog",
+  "rust": "runtime/src/lib/tool_search/catalog.rs"
+ },
+ "src/lib/tool-search/plan.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/context-window.ts",
+   "src/lib/llm-providers/deferred-tools.ts",
+   "src/lib/llm-providers/llm-provider.ts",
+   "src/lib/telemetry.ts",
+   "src/lib/tool-search/catalog.ts",
+   "src/lib/tool-search/tool-index.ts"
+  ],
+  "level": 7,
+  "lines": 198,
+  "module": "crate::lib::tool_search::plan",
+  "rust": "runtime/src/lib/tool_search/plan.rs"
+ },
+ "src/lib/tool-search/tool-index.ts": {
+  "imports": [
+   "src/lib/llm-providers/llm-provider.ts"
+  ],
+  "level": 4,
+  "lines": 136,
+  "module": "crate::lib::tool_search::tool_index",
+  "rust": "runtime/src/lib/tool_search/tool_index.rs"
+ },
+ "src/lib/visible-text.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 10,
+  "module": "crate::lib::visible_text",
+  "rust": "runtime/src/lib/visible_text.rs"
+ },
+ "src/lib/webhook-signature.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 151,
+  "module": "crate::lib::webhook_signature",
+  "rust": "runtime/src/lib/webhook_signature.rs"
+ },
+ "src/lib/workspace-docs.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 60,
+  "module": "crate::lib::workspace_docs",
+  "rust": "runtime/src/lib/workspace_docs.rs"
+ },
+ "src/lib/workspace-seed.ts": {
+  "imports": [
+   "src/lib/workspace-docs.ts",
+   "src/logger.ts"
+  ],
+  "level": 2,
+  "lines": 44,
+  "module": "crate::lib::workspace_seed",
+  "rust": "runtime/src/lib/workspace_seed.rs"
+ },
+ "src/logger.ts": {
+  "imports": [
+   "src/lib/environment.ts",
+   "src/lib/log-redaction.ts"
+  ],
+  "level": 1,
+  "lines": 19,
+  "module": "crate::logger",
+  "rust": "runtime/src/logger.rs"
+ },
+ "src/prompts/agent-message-prompt.ts": {
+  "imports": [
+   "src/lib/prompt-fence.ts",
+   "src/types.ts"
+  ],
+  "level": 9,
+  "lines": 69,
+  "module": "crate::prompts::agent_message_prompt",
+  "rust": "runtime/src/prompts/agent_message_prompt.rs"
+ },
+ "src/prompts/channel-prompt.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 26,
+  "module": "crate::prompts::channel_prompt",
+  "rust": "runtime/src/prompts/channel_prompt.rs"
+ },
+ "src/prompts/compaction-prompt.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 54,
+  "module": "crate::prompts::compaction_prompt",
+  "rust": "runtime/src/prompts/compaction_prompt.rs"
+ },
+ "src/prompts/computer-prompt.ts": {
+  "imports": [
+   "src/services/computer/computer-help.service.ts"
+  ],
+  "level": 9,
+  "lines": 41,
+  "module": "crate::prompts::computer_prompt",
+  "rust": "runtime/src/prompts/computer_prompt.rs"
+ },
+ "src/prompts/context-builder.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/execution-environments/get-execution-environment.ts",
+   "src/lib/tool-names.ts",
+   "src/lib/tool-output-limiter.ts",
+   "src/lib/tool-search/plan.ts",
+   "src/prompts/agent-message-prompt.ts",
+   "src/prompts/computer-prompt.ts",
+   "src/prompts/webhook-prompt-tags.ts",
+   "src/services/attachment.service.ts",
+   "src/services/channel-adapter.interface.ts",
+   "src/services/computer/supported.ts",
+   "src/services/delivery-target.service.ts",
+   "src/services/memory-manager.service.ts",
+   "src/services/plugin-catalog.service.ts",
+   "src/services/skill-catalog.service.ts",
+   "src/services/tool-ledger.service.ts",
+   "src/tools/conversation-history.ts",
+   "src/types.ts"
+  ],
+  "level": 9,
+  "lines": 1138,
+  "module": "crate::prompts::context_builder",
+  "rust": "runtime/src/prompts/context_builder.rs"
+ },
+ "src/prompts/early-stopping-prompt.ts": {
+  "imports": [
+   "src/constants.ts"
+  ],
+  "level": 1,
+  "lines": 3,
+  "module": "crate::prompts::early_stopping_prompt",
+  "rust": "runtime/src/prompts/early_stopping_prompt.rs"
+ },
+ "src/prompts/goal-prompt.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 60,
+  "module": "crate::prompts::goal_prompt",
+  "rust": "runtime/src/prompts/goal_prompt.rs"
+ },
+ "src/prompts/meeting-prompt.ts": {
+  "imports": [
+   "src/prompts/voice-delivery-prompt.ts"
+  ],
+  "level": 1,
+  "lines": 64,
+  "module": "crate::prompts::meeting_prompt",
+  "rust": "runtime/src/prompts/meeting_prompt.rs"
+ },
+ "src/prompts/resume-prompt.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 25,
+  "module": "crate::prompts::resume_prompt",
+  "rust": "runtime/src/prompts/resume_prompt.rs"
+ },
+ "src/prompts/scheduled-run-prompt.ts": {
+  "imports": [
+   "src/types.ts"
+  ],
+  "level": 9,
+  "lines": 16,
+  "module": "crate::prompts::scheduled_run_prompt",
+  "rust": "runtime/src/prompts/scheduled_run_prompt.rs"
+ },
+ "src/prompts/task-tool-prompt.ts": {
+  "imports": [
+   "src/lib/task-tool.ts"
+  ],
+  "level": 9,
+  "lines": 13,
+  "module": "crate::prompts::task_tool_prompt",
+  "rust": "runtime/src/prompts/task_tool_prompt.rs"
+ },
+ "src/prompts/voice-chat-prompt.ts": {
+  "imports": [
+   "src/prompts/voice-delivery-prompt.ts"
+  ],
+  "level": 1,
+  "lines": 106,
+  "module": "crate::prompts::voice_chat_prompt",
+  "rust": "runtime/src/prompts/voice_chat_prompt.rs"
+ },
+ "src/prompts/voice-delivery-prompt.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 52,
+  "module": "crate::prompts::voice_delivery_prompt",
+  "rust": "runtime/src/prompts/voice_delivery_prompt.rs"
+ },
+ "src/prompts/voice-history.ts": {
+  "imports": [
+   "src/prompts/context-builder.ts",
+   "src/tools/conversation-history.ts"
+  ],
+  "level": 9,
+  "lines": 55,
+  "module": "crate::prompts::voice_history",
+  "rust": "runtime/src/prompts/voice_history.rs"
+ },
+ "src/prompts/webhook-prompt-tags.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 6,
+  "module": "crate::prompts::webhook_prompt_tags",
+  "rust": "runtime/src/prompts/webhook_prompt_tags.rs"
+ },
+ "src/protocol/chat-protocol.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/constants.ts",
+   "src/types.ts"
+  ],
+  "level": 9,
+  "lines": 295,
+  "module": "crate::protocol::chat_protocol",
+  "rust": "runtime/src/protocol/chat_protocol.rs"
+ },
+ "src/queues/slack-heartbeat-throttle-queue.ts": {
+  "imports": [
+   "src/logger.ts",
+   "src/services/heartbeat.service.ts",
+   "src/services/slack-heartbeat-trigger.service.ts",
+   "src/services/slack-message-queue.service.ts"
+  ],
+  "level": 11,
+  "lines": 102,
+  "module": "crate::queues::slack_heartbeat_throttle_queue",
+  "rust": "runtime/src/queues/slack_heartbeat_throttle_queue.rs"
+ },
+ "src/routes/activity.ts": {
+  "imports": [
+   "src/logger.ts",
+   "src/services/llm-usage.service.ts",
+   "src/services/tool-call-history.service.ts",
+   "src/services/webhook-run.service.ts"
+  ],
+  "level": 12,
+  "lines": 105,
+  "module": "crate::routes::activity",
+  "rust": "runtime/src/routes/activity.rs"
+ },
+ "src/routes/agent-guide.ts": {
+  "imports": [
+   "src/logger.ts",
+   "src/services/agent-workspace.service.ts"
+  ],
+  "level": 7,
+  "lines": 55,
+  "module": "crate::routes::agent_guide",
+  "rust": "runtime/src/routes/agent_guide.rs"
+ },
+ "src/routes/agent-messages.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/logger.ts",
+   "src/protocol/chat-protocol.ts",
+   "src/services/agent-conversation.service.ts",
+   "src/services/conversation.service.ts",
+   "src/services/inbound-message.service.ts"
+  ],
+  "level": 12,
+  "lines": 168,
+  "module": "crate::routes::agent_messages",
+  "rust": "runtime/src/routes/agent_messages.rs"
+ },
+ "src/routes/agent-state.ts": {
+  "imports": [
+   "src/services/agent-activity.ts"
+  ],
+  "level": 11,
+  "lines": 18,
+  "module": "crate::routes::agent_state",
+  "rust": "runtime/src/routes/agent_state.rs"
+ },
+ "src/routes/coding-agents.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/logger.ts",
+   "src/services/coding-agent-sign-in/coding-agent-sign-in.service.ts"
+  ],
+  "level": 11,
+  "lines": 75,
+  "module": "crate::routes::coding_agents",
+  "rust": "runtime/src/routes/coding_agents.rs"
+ },
+ "src/routes/computer.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/services/computer/computer-help.service.ts",
+   "src/services/computer/computer.service.ts"
+  ],
+  "level": 10,
+  "lines": 100,
+  "module": "crate::routes::computer",
+  "rust": "runtime/src/routes/computer.rs"
+ },
+ "src/routes/computers.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/logger.ts",
+   "src/services/computer/computer-help.service.ts",
+   "src/services/computer/computer-session.ts",
+   "src/services/computer/computer.service.ts",
+   "src/services/computer/remote/link-protocol.ts",
+   "src/services/computer/remote/remote-computer.service.ts"
+  ],
+  "level": 10,
+  "lines": 188,
+  "module": "crate::routes::computers",
+  "rust": "runtime/src/routes/computers.rs"
+ },
+ "src/routes/cron-tasks.ts": {
+  "imports": [
+   "src/lib/prisma.ts",
+   "src/logger.ts",
+   "src/services/agent-workspace.service.ts",
+   "src/services/cron-schedule.ts",
+   "src/services/cron-scheduler.service.ts",
+   "src/services/delivery-target.service.ts"
+  ],
+  "level": 10,
+  "lines": 236,
+  "module": "crate::routes::cron_tasks",
+  "rust": "runtime/src/routes/cron_tasks.rs"
+ },
+ "src/routes/document-revisions.ts": {
+  "imports": [
+   "src/lib/prisma.ts",
+   "src/lib/workspace-docs.ts",
+   "src/logger.ts",
+   "src/services/agent-workspace.service.ts",
+   "src/services/document-revision.service.ts",
+   "src/services/heartbeat.service.ts"
+  ],
+  "level": 10,
+  "lines": 182,
+  "module": "crate::routes::document_revisions",
+  "rust": "runtime/src/routes/document_revisions.rs"
+ },
+ "src/routes/heartbeat-delivery.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/services/agent-status.service.ts"
+  ],
+  "level": 10,
+  "lines": 49,
+  "module": "crate::routes::heartbeat_delivery",
+  "rust": "runtime/src/routes/heartbeat_delivery.rs"
+ },
+ "src/routes/locked-in.ts": {
+  "imports": [
+   "src/logger.ts",
+   "src/services/agent-workspace.service.ts"
+  ],
+  "level": 7,
+  "lines": 44,
+  "module": "crate::routes::locked_in",
+  "rust": "runtime/src/routes/locked_in.rs"
+ },
+ "src/routes/management.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/constants.ts",
+   "src/lib/execution-environments/get-execution-environment.ts",
+   "src/lib/prisma.ts",
+   "src/lib/telemetry.ts",
+   "src/lib/webhook-signature.ts",
+   "src/logger.ts",
+   "src/services/agent-archive.service.ts",
+   "src/services/agent-workspace.service.ts",
+   "src/services/attachment.service.ts",
+   "src/services/channel-adapter.interface.ts",
+   "src/services/compaction.service.ts",
+   "src/services/computer/supported.ts",
+   "src/services/conversation-engine.service.ts",
+   "src/services/conversation.service.ts",
+   "src/services/delivery-target.service.ts",
+   "src/services/goal.service.ts",
+   "src/services/heartbeat.service.ts",
+   "src/services/message-delivery.service.ts",
+   "src/services/plugin-catalog.service.ts",
+   "src/services/plugin-mcp-config.ts",
+   "src/services/plugin-mcp.service.ts",
+   "src/services/skill-catalog.service.ts",
+   "src/services/web-chat-label.ts",
+   "src/services/webhook-receiver.service.ts",
+   "src/services/webhook.service.ts"
+  ],
+  "level": 15,
+  "lines": 1956,
+  "module": "crate::routes::management",
+  "rust": "runtime/src/routes/management.rs"
+ },
+ "src/routes/messages.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/constants.ts",
+   "src/logger.ts",
+   "src/services/attachment.service.ts",
+   "src/services/conversation.service.ts"
+  ],
+  "level": 10,
+  "lines": 72,
+  "module": "crate::routes::messages",
+  "rust": "runtime/src/routes/messages.rs"
+ },
+ "src/routes/model-selection.ts": {
+  "imports": [
+   "src/logger.ts",
+   "src/services/agent-workspace.service.ts"
+  ],
+  "level": 7,
+  "lines": 43,
+  "module": "crate::routes::model_selection",
+  "rust": "runtime/src/routes/model_selection.rs"
+ },
+ "src/routes/slack.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/prisma.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/services/conversation.service.ts",
+   "src/services/heartbeat.service.ts",
+   "src/services/slack-adapter.service.ts",
+   "src/services/slack-heartbeat-trigger.service.ts",
+   "src/services/slack-mapping.service.ts",
+   "src/services/slack-message-queue.service.ts"
+  ],
+  "level": 13,
+  "lines": 870,
+  "module": "crate::routes::slack",
+  "rust": "runtime/src/routes/slack.rs"
+ },
+ "src/routes/teams.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/prisma.ts",
+   "src/lib/teams-config.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/services/teams/teams-mapping.service.ts"
+  ],
+  "level": 5,
+  "lines": 278,
+  "module": "crate::routes::teams",
+  "rust": "runtime/src/routes/teams.rs"
+ },
+ "src/routes/threads.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/context-window.ts",
+   "src/logger.ts",
+   "src/services/conversation.service.ts",
+   "src/utils/git-branch.ts"
+  ],
+  "level": 11,
+  "lines": 106,
+  "module": "crate::routes::threads",
+  "rust": "runtime/src/routes/threads.rs"
+ },
+ "src/routes/update.ts": {
+  "imports": [
+   "src/logger.ts",
+   "src/services/update/update.service.ts"
+  ],
+  "level": 12,
+  "lines": 83,
+  "module": "crate::routes::update",
+  "rust": "runtime/src/routes/update.rs"
+ },
+ "src/routes/webhook.ts": {
+  "imports": [
+   "src/lib/raw-body.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/services/webhook.service.ts"
+  ],
+  "level": 13,
+  "lines": 97,
+  "module": "crate::routes::webhook",
+  "rust": "runtime/src/routes/webhook.rs"
+ },
+ "src/scripts/apply-pending-import.ts": {
+  "imports": [
+   "src/lib/sqlite-path.ts"
+  ],
+  "level": 1,
+  "lines": 45,
+  "module": "crate::scripts::apply_pending_import",
+  "rust": "runtime/src/scripts/apply_pending_import.rs"
+ },
+ "src/scripts/backfill-embeddings.ts": {
+  "imports": [
+   "src/lib/log-redaction.ts",
+   "src/lib/prisma.ts",
+   "src/services/embedding.service.ts"
+  ],
+  "level": 8,
+  "lines": 130,
+  "module": "crate::scripts::backfill_embeddings",
+  "rust": "runtime/src/scripts/backfill_embeddings.rs"
+ },
+ "src/scripts/coding-agent-exec.ts": {
+  "imports": [
+   "src/lib/coding-agents/subscription.ts",
+   "src/lib/coding-agents/terminal.ts"
+  ],
+  "level": 7,
+  "lines": 108,
+  "module": "crate::scripts::coding_agent_exec",
+  "rust": "runtime/src/scripts/coding_agent_exec.rs"
+ },
+ "src/sea/migrate.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 86,
+  "module": "crate::sea::migrate",
+  "rust": "runtime/src/sea/migrate.rs"
+ },
+ "src/server.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/origin-guard.ts",
+   "src/logger.ts",
+   "src/routes/activity.ts",
+   "src/routes/agent-guide.ts",
+   "src/routes/agent-messages.ts",
+   "src/routes/agent-state.ts",
+   "src/routes/coding-agents.ts",
+   "src/routes/computer.ts",
+   "src/routes/computers.ts",
+   "src/routes/cron-tasks.ts",
+   "src/routes/document-revisions.ts",
+   "src/routes/heartbeat-delivery.ts",
+   "src/routes/locked-in.ts",
+   "src/routes/management.ts",
+   "src/routes/messages.ts",
+   "src/routes/model-selection.ts",
+   "src/routes/slack.ts",
+   "src/routes/teams.ts",
+   "src/routes/threads.ts",
+   "src/routes/update.ts"
+  ],
+  "level": 16,
+  "lines": 183,
+  "module": "crate::server",
+  "rust": "runtime/src/server.rs"
+ },
+ "src/services/agent-activity.ts": {
+  "imports": [
+   "src/services/agent-status.service.ts",
+   "src/services/compaction.service.ts",
+   "src/services/conversation-thread-activity.service.ts",
+   "src/services/cron-scheduler.service.ts",
+   "src/services/goal.service.ts",
+   "src/services/meeting/meeting-bot.service.ts",
+   "src/services/thread-turn.service.ts",
+   "src/services/voice/voice-chat.service.ts",
+   "src/tools/shell/agent-task-manager.ts",
+   "src/tools/shell/process-manager.ts"
+  ],
+  "level": 10,
+  "lines": 59,
+  "module": "crate::services::agent_activity",
+  "rust": "runtime/src/services/agent_activity.rs"
+ },
+ "src/services/agent-archive.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/sqlite-bootstrap.ts",
+   "src/lib/sqlite-path.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts"
+  ],
+  "level": 6,
+  "lines": 225,
+  "module": "crate::services::agent_archive_service",
+  "rust": "runtime/src/services/agent_archive_service.rs"
+ },
+ "src/services/agent-conversation.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/prisma.ts",
+   "src/services/conversation.service.ts",
+   "src/services/runtime-state.service.ts"
+  ],
+  "level": 10,
+  "lines": 49,
+  "module": "crate::services::agent_conversation_service",
+  "rust": "runtime/src/services/agent_conversation_service.rs"
+ },
+ "src/services/agent-status.service.ts": {
+  "imports": [
+   "src/lib/prisma.ts",
+   "src/services/delivery-target.service.ts",
+   "src/types.ts"
+  ],
+  "level": 9,
+  "lines": 123,
+  "module": "crate::services::agent_status_service",
+  "rust": "runtime/src/services/agent_status_service.rs"
+ },
+ "src/services/agent-workspace.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/agent-name.ts",
+   "src/lib/model-selection.ts",
+   "src/lib/prisma.ts",
+   "src/lib/telemetry.ts",
+   "src/lib/workspace-docs.ts",
+   "src/lib/workspace-seed.ts",
+   "src/logger.ts",
+   "src/services/document-revision.service.ts",
+   "src/templates/default-workspace.ts"
+  ],
+  "level": 6,
+  "lines": 720,
+  "module": "crate::services::agent_workspace_service",
+  "rust": "runtime/src/services/agent_workspace_service.rs"
+ },
+ "src/services/attachment.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/constants.ts",
+   "src/lib/media-store.ts",
+   "src/lib/prisma.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/services/channel-adapter.interface.ts"
+  ],
+  "level": 9,
+  "lines": 645,
+  "module": "crate::services::attachment_service",
+  "rust": "runtime/src/services/attachment_service.rs"
+ },
+ "src/services/channel-adapter.interface.ts": {
+  "imports": [
+   "src/services/attachment.service.ts",
+   "src/types.ts"
+  ],
+  "level": 9,
+  "lines": 236,
+  "module": "crate::services::channel_adapter_interface",
+  "rust": "runtime/src/services/channel_adapter_interface.rs"
+ },
+ "src/services/coding-agent-sign-in/cli-sign-in.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/coding-agents/claude-code/authenticated-home.ts",
+   "src/lib/coding-agents/codex/credentials.ts",
+   "src/lib/execution-environments/execution-environment.ts"
+  ],
+  "level": 5,
+  "lines": 147,
+  "module": "crate::services::coding_agent_sign_in::cli_sign_in",
+  "rust": "runtime/src/services/coding_agent_sign_in/cli_sign_in.rs"
+ },
+ "src/services/coding-agent-sign-in/coding-agent-account.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/coding-agents/claude-code/authenticated-home.ts",
+   "src/lib/coding-agents/cli-probe.ts",
+   "src/lib/coding-agents/codex/credentials.ts",
+   "src/lib/execution-environments/execution-environment.ts",
+   "src/logger.ts"
+  ],
+  "level": 5,
+  "lines": 118,
+  "module": "crate::services::coding_agent_sign_in::coding_agent_account",
+  "rust": "runtime/src/services/coding_agent_sign_in/coding_agent_account.rs"
+ },
+ "src/services/coding-agent-sign-in/coding-agent-sign-in-request.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/prisma.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/services/channel-adapter.interface.ts",
+   "src/services/conversation-engine.service.ts",
+   "src/services/message-delivery.service.ts"
+  ],
+  "level": 9,
+  "lines": 182,
+  "module": "crate::services::coding_agent_sign_in::coding_agent_sign_in_request_service",
+  "rust": "runtime/src/services/coding_agent_sign_in/coding_agent_sign_in_request_service.rs"
+ },
+ "src/services/coding-agent-sign-in/coding-agent-sign-in.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/coding-agents/availability.ts",
+   "src/lib/coding-agents/claude-code/authenticated-home.ts",
+   "src/lib/coding-agents/codex/credentials.ts",
+   "src/lib/coding-agents/get-coding-agent.ts",
+   "src/lib/coding-agents/subscription-switch.ts",
+   "src/lib/execution-environments/get-execution-environment.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/services/coding-agent-sign-in/cli-sign-in.ts",
+   "src/services/coding-agent-sign-in/coding-agent-account.ts",
+   "src/services/coding-agent-sign-in/coding-agent-sign-in-request.service.ts"
+  ],
+  "level": 10,
+  "lines": 310,
+  "module": "crate::services::coding_agent_sign_in::coding_agent_sign_in_service",
+  "rust": "runtime/src/services/coding_agent_sign_in/coding_agent_sign_in_service.rs"
+ },
+ "src/services/compaction.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/constants.ts",
+   "src/lib/context-window.ts",
+   "src/lib/llm-errors.ts",
+   "src/lib/llm-providers/create-provider.ts",
+   "src/lib/llm-providers/llm-provider.ts",
+   "src/lib/model-call.ts",
+   "src/lib/model-catalog.ts",
+   "src/lib/model-routing.ts",
+   "src/lib/prisma.ts",
+   "src/lib/task-tool.ts",
+   "src/lib/telemetry.ts",
+   "src/lib/tool-collection.ts",
+   "src/lib/tool-output-limiter.ts",
+   "src/lib/tool-search/plan.ts",
+   "src/logger.ts",
+   "src/prompts/channel-prompt.ts",
+   "src/prompts/compaction-prompt.ts",
+   "src/prompts/context-builder.ts",
+   "src/prompts/task-tool-prompt.ts",
+   "src/services/agent-workspace.service.ts",
+   "src/services/context-usage.service.ts",
+   "src/services/context.service.ts",
+   "src/services/conversation.service.ts",
+   "src/services/llm-call.service.ts",
+   "src/services/message-delivery.service.ts",
+   "src/services/thread-turn.service.ts",
+   "src/services/tool-ledger.service.ts"
+  ],
+  "level": 9,
+  "lines": 1090,
+  "module": "crate::services::compaction_service",
+  "rust": "runtime/src/services/compaction_service.rs"
+ },
+ "src/services/computer/agent-computer.ts": {
+  "imports": [
+   "src/lib/data-dir.ts",
+   "src/lib/has-binary.ts",
+   "src/logger.ts",
+   "src/services/computer/computer-tools.ts",
+   "src/services/computer/desktop-control.ts",
+   "src/services/computer/desktop-input.ts",
+   "src/services/computer/desktop-session.ts",
+   "src/services/computer/desktop-windows.ts",
+   "src/services/computer/picture-stream.ts",
+   "src/services/computer/screen-elements.ts",
+   "src/services/computer/screen-size.ts",
+   "src/services/computer/screen-text.ts",
+   "src/services/computer/secure-window.ts",
+   "src/services/computer/sign-in-form.ts",
+   "src/services/computer/supported.ts",
+   "src/services/computer/video-stream.ts",
+   "src/services/meeting/audio-stack.ts",
+   "src/services/meeting/browser-control.ts",
+   "src/services/meeting/browser-stack.ts"
+  ],
+  "level": 9,
+  "lines": 790,
+  "module": "crate::services::computer::agent_computer",
+  "rust": "runtime/src/services/computer/agent_computer.rs"
+ },
+ "src/services/computer/computer-access.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/services/channel-adapter.interface.ts",
+   "src/services/computer/secure-guard.ts"
+  ],
+  "level": 9,
+  "lines": 343,
+  "module": "crate::services::computer::computer_access",
+  "rust": "runtime/src/services/computer/computer_access.rs"
+ },
+ "src/services/computer/computer-endpoint.ts": {
+  "imports": [
+   "src/lib/origin-guard.ts",
+   "src/logger.ts",
+   "src/services/computer/computer-session.ts",
+   "src/services/computer/computer.service.ts",
+   "src/services/computer/picture-stream.ts",
+   "src/services/voice/voice-chat.service.ts",
+   "src/services/websocket-upgrades.ts"
+  ],
+  "level": 10,
+  "lines": 263,
+  "module": "crate::services::computer::computer_endpoint",
+  "rust": "runtime/src/services/computer/computer_endpoint.rs"
+ },
+ "src/services/computer/computer-help.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/prisma.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/services/channel-adapter.interface.ts",
+   "src/services/computer/computer-access.ts",
+   "src/services/computer/computer-session.ts",
+   "src/services/computer/computer.service.ts",
+   "src/services/conversation-engine.service.ts",
+   "src/services/conversation.service.ts",
+   "src/services/goal.service.ts",
+   "src/services/message-delivery.service.ts",
+   "src/services/voice/voice-chat.service.ts"
+  ],
+  "level": 9,
+  "lines": 456,
+  "module": "crate::services::computer::computer_help_service",
+  "rust": "runtime/src/services/computer/computer_help_service.rs"
+ },
+ "src/services/computer/computer-session.ts": {
+  "imports": [
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/services/computer/agent-computer.ts",
+   "src/services/computer/computer-access.ts",
+   "src/services/computer/computer.ts",
+   "src/services/computer/picture-stream.ts",
+   "src/services/computer/sign-in-form.ts",
+   "src/services/computer/supported.ts"
+  ],
+  "level": 9,
+  "lines": 307,
+  "module": "crate::services::computer::computer_session",
+  "rust": "runtime/src/services/computer/computer_session.rs"
+ },
+ "src/services/computer/computer-tools.ts": {
+  "imports": [
+   "src/services/computer/desktop-control.ts",
+   "src/services/meeting/browser-control.ts"
+  ],
+  "level": 3,
+  "lines": 327,
+  "module": "crate::services::computer::computer_tools",
+  "rust": "runtime/src/services/computer/computer_tools.rs"
+ },
+ "src/services/computer/computer.service.ts": {
+  "imports": [
+   "src/services/computer/agent-computer.ts",
+   "src/services/computer/computer-access.ts",
+   "src/services/computer/computer-session.ts",
+   "src/services/computer/computer.ts",
+   "src/services/computer/remote/computer-link.ts",
+   "src/services/computer/remote/link-protocol.ts",
+   "src/services/computer/remote/remote-computer.service.ts",
+   "src/services/computer/remote/remote-computer.ts",
+   "src/services/computer/screen-size.ts",
+   "src/services/computer/supported.ts"
+  ],
+  "level": 9,
+  "lines": 310,
+  "module": "crate::services::computer::computer_service",
+  "rust": "runtime/src/services/computer/computer_service.rs"
+ },
+ "src/services/computer/computer.ts": {
+  "imports": [
+   "src/services/computer/agent-computer.ts",
+   "src/services/computer/computer-tools.ts",
+   "src/services/computer/picture-stream.ts",
+   "src/services/computer/sign-in-form.ts"
+  ],
+  "level": 9,
+  "lines": 38,
+  "module": "crate::services::computer::computer",
+  "rust": "runtime/src/services/computer/computer.rs"
+ },
+ "src/services/computer/desktop-control.ts": {
+  "imports": [
+   "src/services/computer/screen-size.ts"
+  ],
+  "level": 1,
+  "lines": 199,
+  "module": "crate::services::computer::desktop_control",
+  "rust": "runtime/src/services/computer/desktop_control.rs"
+ },
+ "src/services/computer/desktop-input.ts": {
+  "imports": [
+   "src/logger.ts"
+  ],
+  "level": 2,
+  "lines": 386,
+  "module": "crate::services::computer::desktop_input",
+  "rust": "runtime/src/services/computer/desktop_input.rs"
+ },
+ "src/services/computer/desktop-session.ts": {
+  "imports": [
+   "src/lib/data-dir.ts",
+   "src/lib/execution-environments/get-execution-environment.ts",
+   "src/logger.ts"
+  ],
+  "level": 9,
+  "lines": 212,
+  "module": "crate::services::computer::desktop_session",
+  "rust": "runtime/src/services/computer/desktop_session.rs"
+ },
+ "src/services/computer/desktop-windows.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 87,
+  "module": "crate::services::computer::desktop_windows",
+  "rust": "runtime/src/services/computer/desktop_windows.rs"
+ },
+ "src/services/computer/h264.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 84,
+  "module": "crate::services::computer::h264",
+  "rust": "runtime/src/services/computer/h264.rs"
+ },
+ "src/services/computer/picture-stream.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 32,
+  "module": "crate::services::computer::picture_stream",
+  "rust": "runtime/src/services/computer/picture_stream.rs"
+ },
+ "src/services/computer/remote/computer-link-endpoint.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/origin-guard.ts",
+   "src/lib/prisma.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/services/computer/computer-help.service.ts",
+   "src/services/computer/computer.service.ts",
+   "src/services/computer/remote/computer-link.ts",
+   "src/services/computer/remote/link-protocol.ts",
+   "src/services/computer/remote/remote-computer.service.ts",
+   "src/services/computer/remote/remote-computer.ts",
+   "src/services/websocket-upgrades.ts"
+  ],
+  "level": 10,
+  "lines": 280,
+  "module": "crate::services::computer::remote::computer_link_endpoint",
+  "rust": "runtime/src/services/computer/remote/computer_link_endpoint.rs"
+ },
+ "src/services/computer/remote/computer-link.ts": {
+  "imports": [
+   "src/services/computer/remote/link-protocol.ts"
+  ],
+  "level": 1,
+  "lines": 189,
+  "module": "crate::services::computer::remote::computer_link",
+  "rust": "runtime/src/services/computer/remote/computer_link.rs"
+ },
+ "src/services/computer/remote/link-protocol.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 166,
+  "module": "crate::services::computer::remote::link_protocol",
+  "rust": "runtime/src/services/computer/remote/link_protocol.rs"
+ },
+ "src/services/computer/remote/remote-computer.service.ts": {
+  "imports": [
+   "src/lib/prisma.ts",
+   "src/lib/telemetry.ts",
+   "src/services/computer/remote/link-protocol.ts"
+  ],
+  "level": 5,
+  "lines": 175,
+  "module": "crate::services::computer::remote::remote_computer_service",
+  "rust": "runtime/src/services/computer/remote/remote_computer_service.rs"
+ },
+ "src/services/computer/remote/remote-computer.ts": {
+  "imports": [
+   "src/lib/has-binary.ts",
+   "src/logger.ts",
+   "src/services/computer/agent-computer.ts",
+   "src/services/computer/computer-tools.ts",
+   "src/services/computer/computer.ts",
+   "src/services/computer/desktop-control.ts",
+   "src/services/computer/desktop-input.ts",
+   "src/services/computer/desktop-windows.ts",
+   "src/services/computer/picture-stream.ts",
+   "src/services/computer/remote/computer-link.ts",
+   "src/services/computer/remote/link-protocol.ts",
+   "src/services/computer/screen-elements.ts",
+   "src/services/computer/screen-size.ts",
+   "src/services/computer/screen-text.ts"
+  ],
+  "level": 9,
+  "lines": 749,
+  "module": "crate::services::computer::remote::remote_computer",
+  "rust": "runtime/src/services/computer/remote/remote_computer.rs"
+ },
+ "src/services/computer/screen-elements.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 138,
+  "module": "crate::services::computer::screen_elements",
+  "rust": "runtime/src/services/computer/screen_elements.rs"
+ },
+ "src/services/computer/screen-size.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 73,
+  "module": "crate::services::computer::screen_size",
+  "rust": "runtime/src/services/computer/screen_size.rs"
+ },
+ "src/services/computer/screen-text.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 189,
+  "module": "crate::services::computer::screen_text",
+  "rust": "runtime/src/services/computer/screen_text.rs"
+ },
+ "src/services/computer/secure-guard.ts": {
+  "imports": [
+   "src/lib/agent-processes.ts",
+   "src/lib/inference-gate.ts"
+  ],
+  "level": 2,
+  "lines": 23,
+  "module": "crate::services::computer::secure_guard",
+  "rust": "runtime/src/services/computer/secure_guard.rs"
+ },
+ "src/services/computer/secure-window.ts": {
+  "imports": [
+   "src/logger.ts",
+   "src/services/computer/sign-in-form.ts",
+   "src/utils/with-timeout.ts"
+  ],
+  "level": 3,
+  "lines": 99,
+  "module": "crate::services::computer::secure_window",
+  "rust": "runtime/src/services/computer/secure_window.rs"
+ },
+ "src/services/computer/sign-in-form.ts": {
+  "imports": [
+   "src/logger.ts",
+   "src/utils/with-timeout.ts"
+  ],
+  "level": 2,
+  "lines": 339,
+  "module": "crate::services::computer::sign_in_form",
+  "rust": "runtime/src/services/computer/sign_in_form.rs"
+ },
+ "src/services/computer/supported.ts": {
+  "imports": [
+   "src/lib/has-binary.ts",
+   "src/logger.ts",
+   "src/services/computer/remote/remote-computer.service.ts",
+   "src/services/meeting/audio-stack.ts",
+   "src/services/meeting/browser-stack.ts"
+  ],
+  "level": 6,
+  "lines": 79,
+  "module": "crate::services::computer::supported",
+  "rust": "runtime/src/services/computer/supported.rs"
+ },
+ "src/services/computer/video-stream.ts": {
+  "imports": [
+   "src/logger.ts",
+   "src/services/computer/h264.ts",
+   "src/services/computer/picture-stream.ts"
+  ],
+  "level": 2,
+  "lines": 177,
+  "module": "crate::services::computer::video_stream",
+  "rust": "runtime/src/services/computer/video_stream.rs"
+ },
+ "src/services/context-usage.service.ts": {
+  "imports": [
+   "src/lib/context-window.ts",
+   "src/logger.ts",
+   "src/services/conversation.service.ts"
+  ],
+  "level": 9,
+  "lines": 164,
+  "module": "crate::services::context_usage_service",
+  "rust": "runtime/src/services/context_usage_service.rs"
+ },
+ "src/services/context.service.ts": {
+  "imports": [
+   "src/lib/model-selection.ts",
+   "src/services/agent-workspace.service.ts",
+   "src/services/attachment.service.ts",
+   "src/services/conversation.service.ts",
+   "src/types.ts"
+  ],
+  "level": 9,
+  "lines": 106,
+  "module": "crate::services::context_service",
+  "rust": "runtime/src/services/context_service.rs"
+ },
+ "src/services/conversation-engine.service.ts": {
+  "imports": [
+   "src/invoke.ts",
+   "src/lib/classification.ts",
+   "src/lib/model-call.ts",
+   "src/lib/prisma.ts",
+   "src/lib/telemetry.ts",
+   "src/lib/tool-lifecycle.ts",
+   "src/logger.ts",
+   "src/prompts/agent-message-prompt.ts",
+   "src/prompts/context-builder.ts",
+   "src/prompts/resume-prompt.ts",
+   "src/services/agent-workspace.service.ts",
+   "src/services/attachment.service.ts",
+   "src/services/channel-adapter.interface.ts",
+   "src/services/conversation-thread-activity.service.ts",
+   "src/services/conversation.service.ts",
+   "src/services/message-delivery.service.ts",
+   "src/services/pending-work.service.ts",
+   "src/services/thread-title.service.ts",
+   "src/services/thread-turn.service.ts",
+   "src/types.ts"
+  ],
+  "level": 9,
+  "lines": 1006,
+  "module": "crate::services::conversation_engine_service",
+  "rust": "runtime/src/services/conversation_engine_service.rs"
+ },
+ "src/services/conversation-thread-activity.service.ts": {
+  "imports": [
+   "src/logger.ts",
+   "src/services/conversation.service.ts",
+   "src/types.ts"
+  ],
+  "level": 9,
+  "lines": 107,
+  "module": "crate::services::conversation_thread_activity_service",
+  "rust": "runtime/src/services/conversation_thread_activity_service.rs"
+ },
+ "src/services/conversation.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/agent-message-kind.ts",
+   "src/lib/context-window.ts",
+   "src/lib/prisma.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/protocol/chat-protocol.ts",
+   "src/services/attachment.service.ts",
+   "src/services/providers/database-thread.provider.ts",
+   "src/services/runtime-state.service.ts",
+   "src/services/thread-provider.interface.ts",
+   "src/utils/thread-title.ts"
+  ],
+  "level": 9,
+  "lines": 868,
+  "module": "crate::services::conversation_service",
+  "rust": "runtime/src/services/conversation_service.rs"
+ },
+ "src/services/cron-schedule.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 124,
+  "module": "crate::services::cron_schedule",
+  "rust": "runtime/src/services/cron_schedule.rs"
+ },
+ "src/services/cron-scheduler.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/invoke.ts",
+   "src/lib/prisma.ts",
+   "src/lib/telemetry.ts",
+   "src/lib/timezone.ts",
+   "src/lib/tool-risk-gate.ts",
+   "src/lib/visible-text.ts",
+   "src/logger.ts",
+   "src/prompts/scheduled-run-prompt.ts",
+   "src/services/channel-adapter.interface.ts",
+   "src/services/conversation.service.ts",
+   "src/services/cron-schedule.ts",
+   "src/services/delivery-target.service.ts",
+   "src/services/message-delivery.service.ts",
+   "src/services/outbound-message.service.ts",
+   "src/services/pending-work.service.ts",
+   "src/types.ts"
+  ],
+  "level": 9,
+  "lines": 870,
+  "module": "crate::services::cron_scheduler_service",
+  "rust": "runtime/src/services/cron_scheduler_service.rs"
+ },
+ "src/services/delivery-target.service.ts": {
+  "imports": [
+   "src/logger.ts",
+   "src/services/channel-adapter.interface.ts",
+   "src/services/conversation.service.ts",
+   "src/services/message-delivery.service.ts",
+   "src/services/outbound-message.service.ts"
+  ],
+  "level": 9,
+  "lines": 238,
+  "module": "crate::services::delivery_target_service",
+  "rust": "runtime/src/services/delivery_target_service.rs"
+ },
+ "src/services/document-revision.service.ts": {
+  "imports": [
+   "src/lib/prisma.ts",
+   "src/lib/telemetry.ts",
+   "src/lib/workspace-docs.ts",
+   "src/logger.ts"
+  ],
+  "level": 5,
+  "lines": 246,
+  "module": "crate::services::document_revision_service",
+  "rust": "runtime/src/services/document_revision_service.rs"
+ },
+ "src/services/embedding.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/embedding-providers/create-embedding-provider.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/services/memory-manager.service.ts",
+   "src/services/memory-store.ts"
+  ],
+  "level": 7,
+  "lines": 117,
+  "module": "crate::services::embedding_service",
+  "rust": "runtime/src/services/embedding_service.rs"
+ },
+ "src/services/event-stream.service.ts": {
+  "imports": [
+   "src/protocol/chat-protocol.ts"
+  ],
+  "level": 9,
+  "lines": 142,
+  "module": "crate::services::event_stream_service",
+  "rust": "runtime/src/services/event_stream_service.rs"
+ },
+ "src/services/goal.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/constants.ts",
+   "src/invoke.ts",
+   "src/lib/classification.ts",
+   "src/lib/model-call.ts",
+   "src/lib/prisma.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/prompts/context-builder.ts",
+   "src/prompts/goal-prompt.ts",
+   "src/services/channel-adapter.interface.ts",
+   "src/services/computer/computer-help.service.ts",
+   "src/services/computer/supported.ts",
+   "src/services/conversation-thread-activity.service.ts",
+   "src/services/conversation.service.ts",
+   "src/services/message-delivery.service.ts",
+   "src/services/outbound-message.service.ts",
+   "src/services/program-status.service.ts",
+   "src/services/thread-turn.service.ts",
+   "src/types.ts"
+  ],
+  "level": 9,
+  "lines": 616,
+  "module": "crate::services::goal_service",
+  "rust": "runtime/src/services/goal_service.rs"
+ },
+ "src/services/heartbeat-schedule.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 63,
+  "module": "crate::services::heartbeat_schedule",
+  "rust": "runtime/src/services/heartbeat_schedule.rs"
+ },
+ "src/services/heartbeat.service.ts": {
+  "imports": [
+   "src/invoke.ts",
+   "src/lib/last-response-text.ts",
+   "src/lib/prisma.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/prompts/context-builder.ts",
+   "src/services/agent-status.service.ts",
+   "src/services/channel-adapter.interface.ts",
+   "src/services/delivery-target.service.ts",
+   "src/services/document-revision.service.ts",
+   "src/services/heartbeat-schedule.ts",
+   "src/services/outbound-message.service.ts",
+   "src/services/pending-work.service.ts",
+   "src/types.ts"
+  ],
+  "level": 9,
+  "lines": 862,
+  "module": "crate::services::heartbeat_service",
+  "rust": "runtime/src/services/heartbeat_service.rs"
+ },
+ "src/services/inbound-message.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/prisma.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/prompts/agent-message-prompt.ts",
+   "src/prompts/context-builder.ts",
+   "src/protocol/chat-protocol.ts",
+   "src/services/conversation-engine.service.ts",
+   "src/services/conversation-thread-activity.service.ts",
+   "src/services/conversation.service.ts",
+   "src/services/event-stream.service.ts",
+   "src/services/message-delivery.service.ts",
+   "src/services/pending-work.service.ts",
+   "src/services/web-chat-label.ts",
+   "src/types.ts"
+  ],
+  "level": 11,
+  "lines": 479,
+  "module": "crate::services::inbound_message_service",
+  "rust": "runtime/src/services/inbound_message_service.rs"
+ },
+ "src/services/llm-call.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/prisma.ts",
+   "src/lib/step-usage.ts",
+   "src/logger.ts",
+   "src/services/channel-adapter.interface.ts"
+  ],
+  "level": 9,
+  "lines": 152,
+  "module": "crate::services::llm_call_service",
+  "rust": "runtime/src/services/llm_call_service.rs"
+ },
+ "src/services/llm-usage.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/prisma.ts"
+  ],
+  "level": 4,
+  "lines": 128,
+  "module": "crate::services::llm_usage_service",
+  "rust": "runtime/src/services/llm_usage_service.rs"
+ },
+ "src/services/meeting/addressed-audio-gate.ts": {
+  "imports": [
+   "src/logger.ts",
+   "src/services/meeting/realtime-session.ts",
+   "src/services/meeting/transcript-log.ts"
+  ],
+  "level": 5,
+  "lines": 345,
+  "module": "crate::services::meeting::addressed_audio_gate",
+  "rust": "runtime/src/services/meeting/addressed_audio_gate.rs"
+ },
+ "src/services/meeting/audio-playback.ts": {
+  "imports": [
+   "src/logger.ts",
+   "src/services/meeting/resampler.ts"
+  ],
+  "level": 2,
+  "lines": 347,
+  "module": "crate::services::meeting::audio_playback",
+  "rust": "runtime/src/services/meeting/audio_playback.rs"
+ },
+ "src/services/meeting/audio-stack.ts": {
+  "imports": [
+   "src/logger.ts",
+   "src/services/meeting/audio-playback.ts",
+   "src/services/meeting/resampler.ts"
+  ],
+  "level": 3,
+  "lines": 492,
+  "module": "crate::services::meeting::audio_stack",
+  "rust": "runtime/src/services/meeting/audio_stack.rs"
+ },
+ "src/services/meeting/barge-in.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 130,
+  "module": "crate::services::meeting::barge_in",
+  "rust": "runtime/src/services/meeting/barge_in.rs"
+ },
+ "src/services/meeting/browser-control.ts": {
+  "imports": [
+   "src/logger.ts",
+   "src/utils/with-timeout.ts"
+  ],
+  "level": 2,
+  "lines": 325,
+  "module": "crate::services::meeting::browser_control",
+  "rust": "runtime/src/services/meeting/browser_control.rs"
+ },
+ "src/services/meeting/browser-stack.ts": {
+  "imports": [
+   "src/lib/data-dir.ts",
+   "src/logger.ts",
+   "src/services/meeting/browser-tabs.ts",
+   "src/utils/with-timeout.ts"
+  ],
+  "level": 2,
+  "lines": 567,
+  "module": "crate::services::meeting::browser_stack",
+  "rust": "runtime/src/services/meeting/browser_stack.rs"
+ },
+ "src/services/meeting/browser-tabs.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 103,
+  "module": "crate::services::meeting::browser_tabs",
+  "rust": "runtime/src/services/meeting/browser_tabs.rs"
+ },
+ "src/services/meeting/gate-stats.ts": {
+  "imports": [
+   "src/services/meeting/voice-conversation.ts"
+  ],
+  "level": 9,
+  "lines": 28,
+  "module": "crate::services::meeting::gate_stats",
+  "rust": "runtime/src/services/meeting/gate_stats.rs"
+ },
+ "src/services/meeting/meeting-bot.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/services/meeting/audio-stack.ts",
+   "src/services/meeting/browser-control.ts",
+   "src/services/meeting/browser-stack.ts",
+   "src/services/meeting/gate-stats.ts",
+   "src/services/meeting/meeting-provider.interface.ts",
+   "src/services/meeting/providers/google-meet/index.ts",
+   "src/services/meeting/resampler.ts",
+   "src/services/meeting/response-policy.ts",
+   "src/services/meeting/tool-bridge.ts",
+   "src/services/meeting/voice-conversation.ts",
+   "src/services/voice/realtime-tools.ts",
+   "src/services/voice/voice-instructions.ts",
+   "src/services/voice/voice-session-lock.ts",
+   "src/utils/with-timeout.ts"
+  ],
+  "level": 9,
+  "lines": 2424,
+  "module": "crate::services::meeting::meeting_bot_service",
+  "rust": "runtime/src/services/meeting/meeting_bot_service.rs"
+ },
+ "src/services/meeting/meeting-provider.interface.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 422,
+  "module": "crate::services::meeting::meeting_provider_interface",
+  "rust": "runtime/src/services/meeting/meeting_provider_interface.rs"
+ },
+ "src/services/meeting/openai-endpoint.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/logger.ts"
+  ],
+  "level": 3,
+  "lines": 134,
+  "module": "crate::services::meeting::openai_endpoint",
+  "rust": "runtime/src/services/meeting/openai_endpoint.rs"
+ },
+ "src/services/meeting/providers/google-meet/index.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/data-dir.ts",
+   "src/logger.ts",
+   "src/services/meeting/meeting-provider.interface.ts",
+   "src/services/meeting/providers/google-meet/participants.ts",
+   "src/services/meeting/providers/google-meet/sign-in.ts",
+   "src/utils/with-timeout.ts"
+  ],
+  "level": 4,
+  "lines": 1940,
+  "module": "crate::services::meeting::providers::google_meet",
+  "rust": "runtime/src/services/meeting/providers/google_meet/mod.rs"
+ },
+ "src/services/meeting/providers/google-meet/participants.ts": {
+  "imports": [
+   "src/logger.ts",
+   "src/services/meeting/meeting-provider.interface.ts",
+   "src/utils/with-timeout.ts"
+  ],
+  "level": 2,
+  "lines": 487,
+  "module": "crate::services::meeting::providers::google_meet::participants",
+  "rust": "runtime/src/services/meeting/providers/google_meet/participants.rs"
+ },
+ "src/services/meeting/providers/google-meet/sign-in.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/logger.ts"
+  ],
+  "level": 3,
+  "lines": 397,
+  "module": "crate::services::meeting::providers::google_meet::sign_in",
+  "rust": "runtime/src/services/meeting/providers/google_meet/sign_in.rs"
+ },
+ "src/services/meeting/realtime-session.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/inference-gate.ts",
+   "src/logger.ts",
+   "src/services/meeting/audio-playback.ts",
+   "src/services/meeting/openai-endpoint.ts",
+   "src/services/meeting/resampler.ts"
+  ],
+  "level": 4,
+  "lines": 1364,
+  "module": "crate::services::meeting::realtime_session",
+  "rust": "runtime/src/services/meeting/realtime_session.rs"
+ },
+ "src/services/meeting/resampler.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 193,
+  "module": "crate::services::meeting::resampler",
+  "rust": "runtime/src/services/meeting/resampler.rs"
+ },
+ "src/services/meeting/response-policy.ts": {
+  "imports": [
+   "src/lib/inference-gate.ts",
+   "src/logger.ts"
+  ],
+  "level": 2,
+  "lines": 275,
+  "module": "crate::services::meeting::response_policy",
+  "rust": "runtime/src/services/meeting/response_policy.rs"
+ },
+ "src/services/meeting/tool-bridge.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/invoke.ts",
+   "src/lib/llm-providers/deferred-tools.ts",
+   "src/lib/tool-collection.ts",
+   "src/lib/tool-search/plan.ts",
+   "src/logger.ts",
+   "src/services/voice/realtime-tools.ts"
+  ],
+  "level": 9,
+  "lines": 112,
+  "module": "crate::services::meeting::tool_bridge",
+  "rust": "runtime/src/services/meeting/tool_bridge.rs"
+ },
+ "src/services/meeting/transcript-log.ts": {
+  "imports": [
+   "src/config.ts"
+  ],
+  "level": 3,
+  "lines": 64,
+  "module": "crate::services::meeting::transcript_log",
+  "rust": "runtime/src/services/meeting/transcript_log.rs"
+ },
+ "src/services/meeting/voice-conversation.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/logger.ts",
+   "src/services/meeting/addressed-audio-gate.ts",
+   "src/services/meeting/audio-playback.ts",
+   "src/services/meeting/barge-in.ts",
+   "src/services/meeting/meeting-provider.interface.ts",
+   "src/services/meeting/realtime-session.ts",
+   "src/services/meeting/resampler.ts",
+   "src/services/meeting/response-policy.ts",
+   "src/services/meeting/transcript-log.ts",
+   "src/services/voice/realtime-tools.ts"
+  ],
+  "level": 9,
+  "lines": 801,
+  "module": "crate::services::meeting::voice_conversation",
+  "rust": "runtime/src/services/meeting/voice_conversation.rs"
+ },
+ "src/services/memory-manager.service.ts": {
+  "imports": [
+   "src/lib/prisma.ts",
+   "src/logger.ts",
+   "src/services/embedding.service.ts"
+  ],
+  "level": 7,
+  "lines": 417,
+  "module": "crate::services::memory_manager_service",
+  "rust": "runtime/src/services/memory_manager_service.rs"
+ },
+ "src/services/memory-store.ts": {
+  "imports": [
+   "src/lib/prisma.ts",
+   "src/lib/sqlite-bootstrap.ts",
+   "src/logger.ts",
+   "src/services/memory-manager.service.ts"
+  ],
+  "level": 7,
+  "lines": 167,
+  "module": "crate::services::memory_store",
+  "rust": "runtime/src/services/memory_store.rs"
+ },
+ "src/services/message-delivery.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/logger.ts",
+   "src/services/attachment.service.ts",
+   "src/services/channel-adapter.interface.ts",
+   "src/services/conversation.service.ts",
+   "src/types.ts"
+  ],
+  "level": 9,
+  "lines": 365,
+  "module": "crate::services::message_delivery_service",
+  "rust": "runtime/src/services/message_delivery_service.rs"
+ },
+ "src/services/outbound-message.service.ts": {
+  "imports": [
+   "src/lib/telemetry.ts",
+   "src/lib/visible-text.ts",
+   "src/logger.ts",
+   "src/services/channel-adapter.interface.ts",
+   "src/services/conversation.service.ts",
+   "src/services/delivery-target.service.ts",
+   "src/services/message-delivery.service.ts",
+   "src/types.ts"
+  ],
+  "level": 9,
+  "lines": 311,
+  "module": "crate::services::outbound_message_service",
+  "rust": "runtime/src/services/outbound_message_service.rs"
+ },
+ "src/services/pending-work.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/prisma.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts"
+  ],
+  "level": 5,
+  "lines": 216,
+  "module": "crate::services::pending_work_service",
+  "rust": "runtime/src/services/pending_work_service.rs"
+ },
+ "src/services/plugin-catalog.service.ts": {
+  "imports": [
+   "src/lib/execution-environments/execution-environment.ts",
+   "src/lib/execution-environments/get-execution-environment.ts",
+   "src/logger.ts"
+  ],
+  "level": 9,
+  "lines": 416,
+  "module": "crate::services::plugin_catalog_service",
+  "rust": "runtime/src/services/plugin_catalog_service.rs"
+ },
+ "src/services/plugin-mcp-config.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 393,
+  "module": "crate::services::plugin_mcp_config",
+  "rust": "runtime/src/services/plugin_mcp_config.rs"
+ },
+ "src/services/plugin-mcp.service.ts": {
+  "imports": [
+   "src/lib/execution-environments/exec-stdio-transport.ts",
+   "src/lib/execution-environments/get-execution-environment.ts",
+   "src/lib/tool-names.ts",
+   "src/logger.ts",
+   "src/services/plugin-catalog.service.ts",
+   "src/services/plugin-mcp-config.ts"
+  ],
+  "level": 9,
+  "lines": 474,
+  "module": "crate::services::plugin_mcp_service",
+  "rust": "runtime/src/services/plugin_mcp_service.rs"
+ },
+ "src/services/program-status.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/prisma.ts",
+   "src/lib/program-status.ts",
+   "src/logger.ts",
+   "src/protocol/chat-protocol.ts",
+   "src/services/compaction.service.ts",
+   "src/services/computer/computer-help.service.ts",
+   "src/services/computer/computer.service.ts",
+   "src/services/conversation-thread-activity.service.ts",
+   "src/services/event-stream.service.ts",
+   "src/services/message-delivery.service.ts"
+  ],
+  "level": 9,
+  "lines": 170,
+  "module": "crate::services::program_status_service",
+  "rust": "runtime/src/services/program_status_service.rs"
+ },
+ "src/services/providers/database-thread.provider.ts": {
+  "imports": [
+   "src/lib/prisma.ts",
+   "src/services/thread-provider.interface.ts"
+  ],
+  "level": 4,
+  "lines": 77,
+  "module": "crate::services::providers::database_thread_provider",
+  "rust": "runtime/src/services/providers/database_thread_provider.rs"
+ },
+ "src/services/providers/slack-thread.provider.ts": {
+  "imports": [
+   "src/lib/prisma.ts",
+   "src/lib/slack-source.ts",
+   "src/services/slack-adapter.service.ts",
+   "src/services/thread-provider.interface.ts",
+   "src/utils/poll-until.ts"
+  ],
+  "level": 12,
+  "lines": 522,
+  "module": "crate::services::providers::slack_thread_provider",
+  "rust": "runtime/src/services/providers/slack_thread_provider.rs"
+ },
+ "src/services/resume-replies.ts": {
+  "imports": [
+   "src/lib/prisma.ts",
+   "src/logger.ts",
+   "src/prompts/agent-message-prompt.ts",
+   "src/services/attachment.service.ts",
+   "src/services/conversation-engine.service.ts",
+   "src/services/conversation.service.ts",
+   "src/services/message-delivery.service.ts",
+   "src/services/pending-work.service.ts"
+  ],
+  "level": 10,
+  "lines": 110,
+  "module": "crate::services::resume_replies",
+  "rust": "runtime/src/services/resume_replies.rs"
+ },
+ "src/services/runtime-state.service.ts": {
+  "imports": [
+   "src/lib/prisma.ts"
+  ],
+  "level": 4,
+  "lines": 31,
+  "module": "crate::services::runtime_state_service",
+  "rust": "runtime/src/services/runtime_state_service.rs"
+ },
+ "src/services/session-manager.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/prisma.ts",
+   "src/logger.ts",
+   "src/services/conversation.service.ts"
+  ],
+  "level": 10,
+  "lines": 374,
+  "module": "crate::services::session_manager_service",
+  "rust": "runtime/src/services/session_manager_service.rs"
+ },
+ "src/services/skill-catalog.service.ts": {
+  "imports": [
+   "src/lib/execution-environments/execution-environment.ts",
+   "src/lib/execution-environments/get-execution-environment.ts",
+   "src/logger.ts",
+   "src/services/plugin-catalog.service.ts"
+  ],
+  "level": 9,
+  "lines": 307,
+  "module": "crate::services::skill_catalog_service",
+  "rust": "runtime/src/services/skill_catalog_service.rs"
+ },
+ "src/services/slack-adapter.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/constants.ts",
+   "src/lib/prisma.ts",
+   "src/lib/proxy-dispatcher.ts",
+   "src/lib/slack-source.ts",
+   "src/lib/slack-web-client.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/queues/slack-heartbeat-throttle-queue.ts",
+   "src/services/attachment.service.ts",
+   "src/services/channel-adapter.interface.ts",
+   "src/services/conversation-engine.service.ts",
+   "src/services/conversation.service.ts",
+   "src/services/heartbeat.service.ts",
+   "src/services/providers/slack-thread.provider.ts",
+   "src/services/slack-heartbeat-trigger.service.ts",
+   "src/services/slack-mapping.service.ts",
+   "src/services/slack-message-queue.service.ts",
+   "src/services/slack-socket-retire.ts",
+   "src/services/slack-socket-watchdog.ts",
+   "src/services/slack-working-indicator.ts",
+   "src/services/thread-reply-classifier.service.ts",
+   "src/utils/slack-formatter.ts"
+  ],
+  "level": 12,
+  "lines": 2503,
+  "module": "crate::services::slack_adapter_service",
+  "rust": "runtime/src/services/slack_adapter_service.rs"
+ },
+ "src/services/slack-heartbeat-trigger.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/prisma.ts",
+   "src/lib/telemetry.ts"
+  ],
+  "level": 5,
+  "lines": 196,
+  "module": "crate::services::slack_heartbeat_trigger_service",
+  "rust": "runtime/src/services/slack_heartbeat_trigger_service.rs"
+ },
+ "src/services/slack-mapping.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/prisma.ts",
+   "src/lib/slack-source.ts"
+  ],
+  "level": 5,
+  "lines": 392,
+  "module": "crate::services::slack_mapping_service",
+  "rust": "runtime/src/services/slack_mapping_service.rs"
+ },
+ "src/services/slack-message-queue.service.ts": {
+  "imports": [
+   "src/lib/prisma.ts",
+   "src/logger.ts",
+   "src/services/heartbeat.service.ts",
+   "src/types.ts"
+  ],
+  "level": 10,
+  "lines": 56,
+  "module": "crate::services::slack_message_queue_service",
+  "rust": "runtime/src/services/slack_message_queue_service.rs"
+ },
+ "src/services/slack-socket-retire.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 62,
+  "module": "crate::services::slack_socket_retire",
+  "rust": "runtime/src/services/slack_socket_retire.rs"
+ },
+ "src/services/slack-socket-watchdog.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 53,
+  "module": "crate::services::slack_socket_watchdog",
+  "rust": "runtime/src/services/slack_socket_watchdog.rs"
+ },
+ "src/services/slack-working-indicator.ts": {
+  "imports": [
+   "src/lib/tool-lifecycle.ts",
+   "src/logger.ts"
+  ],
+  "level": 2,
+  "lines": 352,
+  "module": "crate::services::slack_working_indicator",
+  "rust": "runtime/src/services/slack_working_indicator.rs"
+ },
+ "src/services/teams/teams-adapter.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/constants.ts",
+   "src/lib/prisma.ts",
+   "src/lib/proxy-dispatcher.ts",
+   "src/lib/teams-config.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/services/attachment.service.ts",
+   "src/services/channel-adapter.interface.ts",
+   "src/services/conversation-engine.service.ts",
+   "src/services/conversation.service.ts",
+   "src/services/teams/teams-attachments.ts",
+   "src/services/teams/teams-mapping.service.ts",
+   "src/services/thread-reply-classifier.service.ts",
+   "src/utils/teams-formatter.ts"
+  ],
+  "level": 11,
+  "lines": 1237,
+  "module": "crate::services::teams::teams_adapter_service",
+  "rust": "runtime/src/services/teams/teams_adapter_service.rs"
+ },
+ "src/services/teams/teams-attachments.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/constants.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/services/attachment.service.ts"
+  ],
+  "level": 10,
+  "lines": 300,
+  "module": "crate::services::teams::teams_attachments",
+  "rust": "runtime/src/services/teams/teams_attachments.rs"
+ },
+ "src/services/teams/teams-mapping.service.ts": {
+  "imports": [
+   "src/lib/prisma.ts"
+  ],
+  "level": 4,
+  "lines": 277,
+  "module": "crate::services::teams::teams_mapping_service",
+  "rust": "runtime/src/services/teams/teams_mapping_service.rs"
+ },
+ "src/services/thread-provider.interface.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 61,
+  "module": "crate::services::thread_provider_interface",
+  "rust": "runtime/src/services/thread_provider_interface.rs"
+ },
+ "src/services/thread-reply-classifier.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/classification.ts",
+   "src/lib/model-call.ts",
+   "src/lib/prompt-fence.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/services/agent-workspace.service.ts",
+   "src/services/channel-adapter.interface.ts"
+  ],
+  "level": 10,
+  "lines": 198,
+  "module": "crate::services::thread_reply_classifier_service",
+  "rust": "runtime/src/services/thread_reply_classifier_service.rs"
+ },
+ "src/services/thread-title.service.ts": {
+  "imports": [
+   "src/lib/classification.ts",
+   "src/lib/model-call.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/services/conversation.service.ts"
+  ],
+  "level": 9,
+  "lines": 143,
+  "module": "crate::services::thread_title_service",
+  "rust": "runtime/src/services/thread_title_service.rs"
+ },
+ "src/services/thread-turn.service.ts": {
+  "imports": [
+   "src/logger.ts",
+   "src/types.ts"
+  ],
+  "level": 9,
+  "lines": 365,
+  "module": "crate::services::thread_turn_service",
+  "rust": "runtime/src/services/thread_turn_service.rs"
+ },
+ "src/services/tool-call-history.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/prisma.ts",
+   "src/services/message-delivery.service.ts",
+   "src/types.ts"
+  ],
+  "level": 10,
+  "lines": 273,
+  "module": "crate::services::tool_call_history_service",
+  "rust": "runtime/src/services/tool_call_history_service.rs"
+ },
+ "src/services/tool-ledger.service.ts": {
+  "imports": [
+   "src/lib/llm-providers/llm-provider.ts"
+  ],
+  "level": 4,
+  "lines": 249,
+  "module": "crate::services::tool_ledger_service",
+  "rust": "runtime/src/services/tool_ledger_service.rs"
+ },
+ "src/services/update/apply.ts": {
+  "imports": [
+   "src/constants.ts",
+   "src/logger.ts"
+  ],
+  "level": 2,
+  "lines": 348,
+  "module": "crate::services::update::apply",
+  "rust": "runtime/src/services/update/apply.rs"
+ },
+ "src/services/update/ghcr.ts": {
+  "imports": [
+   "src/constants.ts",
+   "src/logger.ts"
+  ],
+  "level": 2,
+  "lines": 114,
+  "module": "crate::services::update::ghcr",
+  "rust": "runtime/src/services/update/ghcr.rs"
+ },
+ "src/services/update/update.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/constants.ts",
+   "src/lib/prisma.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/services/agent-activity.ts",
+   "src/services/update/apply.ts",
+   "src/services/update/ghcr.ts"
+  ],
+  "level": 11,
+  "lines": 431,
+  "module": "crate::services::update::update_service",
+  "rust": "runtime/src/services/update/update_service.rs"
+ },
+ "src/services/voice/dictation-session.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/services/meeting/openai-endpoint.ts",
+   "src/services/meeting/resampler.ts",
+   "src/services/voice/socket-audio.ts"
+  ],
+  "level": 5,
+  "lines": 313,
+  "module": "crate::services::voice::dictation_session",
+  "rust": "runtime/src/services/voice/dictation_session.rs"
+ },
+ "src/services/voice/realtime-tools.ts": {
+  "imports": [
+   "src/lib/llm-providers/deferred-tools.ts",
+   "src/lib/llm-providers/llm-provider.ts",
+   "src/lib/tool-output-limiter.ts",
+   "src/logger.ts",
+   "src/services/meeting/realtime-session.ts"
+  ],
+  "level": 9,
+  "lines": 174,
+  "module": "crate::services::voice::realtime_tools",
+  "rust": "runtime/src/services/voice/realtime_tools.rs"
+ },
+ "src/services/voice/screen-recording.ts": {
+  "imports": [
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/services/meeting/realtime-session.ts",
+   "src/services/meeting/resampler.ts"
+  ],
+  "level": 5,
+  "lines": 218,
+  "module": "crate::services::voice::screen_recording",
+  "rust": "runtime/src/services/voice/screen_recording.rs"
+ },
+ "src/services/voice/socket-audio.ts": {
+  "imports": [
+   "src/logger.ts",
+   "src/services/meeting/audio-playback.ts",
+   "src/services/meeting/resampler.ts"
+  ],
+  "level": 3,
+  "lines": 136,
+  "module": "crate::services::voice::socket_audio",
+  "rust": "runtime/src/services/voice/socket_audio.rs"
+ },
+ "src/services/voice/voice-chat-tools.ts": {
+  "imports": [
+   "src/services/voice/realtime-tools.ts",
+   "src/tools/meeting.ts"
+  ],
+  "level": 9,
+  "lines": 46,
+  "module": "crate::services::voice::voice_chat_tools",
+  "rust": "runtime/src/services/voice/voice_chat_tools.rs"
+ },
+ "src/services/voice/voice-chat.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/prompts/voice-chat-prompt.ts",
+   "src/services/computer/agent-computer.ts",
+   "src/services/computer/computer-access.ts",
+   "src/services/computer/computer-help.service.ts",
+   "src/services/computer/computer.service.ts",
+   "src/services/computer/picture-stream.ts",
+   "src/services/conversation.service.ts",
+   "src/services/meeting/gate-stats.ts",
+   "src/services/meeting/tool-bridge.ts",
+   "src/services/meeting/voice-conversation.ts",
+   "src/services/message-delivery.service.ts",
+   "src/services/voice/realtime-tools.ts",
+   "src/services/voice/screen-recording.ts",
+   "src/services/voice/socket-audio.ts",
+   "src/services/voice/voice-chat-tools.ts",
+   "src/services/voice/voice-instructions.ts",
+   "src/services/voice/voice-session-lock.ts",
+   "src/tools/computer.ts"
+  ],
+  "level": 9,
+  "lines": 787,
+  "module": "crate::services::voice::voice_chat_service",
+  "rust": "runtime/src/services/voice/voice_chat_service.rs"
+ },
+ "src/services/voice/voice-instructions.ts": {
+  "imports": [
+   "src/prompts/context-builder.ts",
+   "src/prompts/meeting-prompt.ts",
+   "src/prompts/voice-chat-prompt.ts",
+   "src/prompts/voice-history.ts",
+   "src/services/context.service.ts",
+   "src/services/conversation.service.ts",
+   "src/services/meeting/response-policy.ts"
+  ],
+  "level": 9,
+  "lines": 118,
+  "module": "crate::services::voice::voice_instructions",
+  "rust": "runtime/src/services/voice/voice_instructions.rs"
+ },
+ "src/services/voice/voice-session-lock.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 39,
+  "module": "crate::services::voice::voice_session_lock",
+  "rust": "runtime/src/services/voice/voice_session_lock.rs"
+ },
+ "src/services/web-chat-label.ts": {
+  "imports": [
+   "src/lib/prisma.ts",
+   "src/services/conversation.service.ts"
+  ],
+  "level": 10,
+  "lines": 25,
+  "module": "crate::services::web_chat_label",
+  "rust": "runtime/src/services/web_chat_label.rs"
+ },
+ "src/services/webhook-receiver.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/prisma.ts",
+   "src/lib/raw-body.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/routes/webhook.ts",
+   "src/services/agent-workspace.service.ts"
+  ],
+  "level": 14,
+  "lines": 128,
+  "module": "crate::services::webhook_receiver_service",
+  "rust": "runtime/src/services/webhook_receiver_service.rs"
+ },
+ "src/services/webhook-run.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/prisma.ts",
+   "src/logger.ts",
+   "src/services/tool-call-history.service.ts",
+   "src/types.ts"
+  ],
+  "level": 11,
+  "lines": 276,
+  "module": "crate::services::webhook_run_service",
+  "rust": "runtime/src/services/webhook_run_service.rs"
+ },
+ "src/services/webhook.service.ts": {
+  "imports": [
+   "src/invoke.ts",
+   "src/lib/prisma.ts",
+   "src/lib/prompt-fence.ts",
+   "src/lib/telemetry.ts",
+   "src/lib/webhook-signature.ts",
+   "src/logger.ts",
+   "src/prompts/webhook-prompt-tags.ts",
+   "src/services/agent-workspace.service.ts",
+   "src/services/delivery-target.service.ts",
+   "src/services/message-delivery.service.ts",
+   "src/services/outbound-message.service.ts",
+   "src/services/pending-work.service.ts",
+   "src/services/webhook-run.service.ts"
+  ],
+  "level": 12,
+  "lines": 573,
+  "module": "crate::services::webhook_service",
+  "rust": "runtime/src/services/webhook_service.rs"
+ },
+ "src/services/websocket-adapter.service.ts": {
+  "imports": [
+   "src/lib/agent-message-kind.ts",
+   "src/logger.ts",
+   "src/protocol/chat-protocol.ts",
+   "src/services/channel-adapter.interface.ts",
+   "src/services/event-stream.service.ts",
+   "src/services/inbound-message.service.ts",
+   "src/services/web-chat-label.ts",
+   "src/types.ts"
+  ],
+  "level": 12,
+  "lines": 87,
+  "module": "crate::services::websocket_adapter_service",
+  "rust": "runtime/src/services/websocket_adapter_service.rs"
+ },
+ "src/services/websocket-gateway.service.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/origin-guard.ts",
+   "src/lib/telemetry.ts",
+   "src/lib/token-bucket.ts",
+   "src/logger.ts",
+   "src/protocol/chat-protocol.ts",
+   "src/services/compaction.service.ts",
+   "src/services/computer/computer-help.service.ts",
+   "src/services/computer/computer.service.ts",
+   "src/services/context-usage.service.ts",
+   "src/services/conversation.service.ts",
+   "src/services/event-stream.service.ts",
+   "src/services/inbound-message.service.ts",
+   "src/services/meeting/openai-endpoint.ts",
+   "src/services/meeting/resampler.ts",
+   "src/services/thread-title.service.ts",
+   "src/services/update/update.service.ts",
+   "src/services/voice/dictation-session.ts",
+   "src/services/voice/socket-audio.ts",
+   "src/services/voice/voice-chat.service.ts",
+   "src/services/websocket-upgrades.ts"
+  ],
+  "level": 12,
+  "lines": 896,
+  "module": "crate::services::websocket_gateway_service",
+  "rust": "runtime/src/services/websocket_gateway_service.rs"
+ },
+ "src/services/websocket-upgrades.ts": {
+  "imports": [
+   "src/logger.ts"
+  ],
+  "level": 2,
+  "lines": 56,
+  "module": "crate::services::websocket_upgrades",
+  "rust": "runtime/src/services/websocket_upgrades.rs"
+ },
+ "src/templates/default-workspace.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 171,
+  "module": "crate::templates::default_workspace",
+  "rust": "runtime/src/templates/default_workspace.rs"
+ },
+ "src/tools/agent-config.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/constants.ts",
+   "src/lib/agent-name.ts",
+   "src/lib/apply-edit.ts",
+   "src/lib/locked-in.ts",
+   "src/lib/prisma.ts",
+   "src/lib/telemetry.ts",
+   "src/lib/timezone.ts",
+   "src/lib/workspace-docs.ts",
+   "src/logger.ts",
+   "src/services/agent-workspace.service.ts",
+   "src/services/cron-scheduler.service.ts",
+   "src/services/heartbeat.service.ts"
+  ],
+  "level": 9,
+  "lines": 287,
+  "module": "crate::tools::agent_config",
+  "rust": "runtime/src/tools/agent_config.rs"
+ },
+ "src/tools/attachments.ts": {
+  "imports": [
+   "src/constants.ts",
+   "src/lib/execution-environments/execution-environment.ts",
+   "src/lib/execution-environments/get-execution-environment.ts",
+   "src/lib/execution-environments/workspace.ts",
+   "src/lib/media-store.ts",
+   "src/lib/telemetry.ts",
+   "src/services/attachment.service.ts"
+  ],
+  "level": 9,
+  "lines": 458,
+  "module": "crate::tools::attachments",
+  "rust": "runtime/src/tools/attachments.rs"
+ },
+ "src/tools/coding-agent-sign-in.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/services/channel-adapter.interface.ts",
+   "src/services/coding-agent-sign-in/coding-agent-sign-in-request.service.ts"
+  ],
+  "level": 9,
+  "lines": 55,
+  "module": "crate::tools::coding_agent_sign_in",
+  "rust": "runtime/src/tools/coding_agent_sign_in.rs"
+ },
+ "src/tools/computer.ts": {
+  "imports": [
+   "src/lib/tool-output-limiter.ts",
+   "src/services/computer/agent-computer.ts",
+   "src/services/computer/computer-access.ts",
+   "src/services/computer/computer-help.service.ts",
+   "src/services/computer/computer-session.ts",
+   "src/services/computer/computer-tools.ts",
+   "src/services/computer/computer.service.ts",
+   "src/services/computer/computer.ts",
+   "src/services/computer/remote/remote-computer.service.ts",
+   "src/services/computer/screen-size.ts",
+   "src/services/computer/supported.ts",
+   "src/services/conversation-engine.service.ts",
+   "src/services/message-delivery.service.ts"
+  ],
+  "level": 9,
+  "lines": 316,
+  "module": "crate::tools::computer",
+  "rust": "runtime/src/tools/computer.rs"
+ },
+ "src/tools/conversation-history.ts": {
+  "imports": [
+   "src/lib/tool-output-store.ts",
+   "src/services/conversation.service.ts"
+  ],
+  "level": 9,
+  "lines": 177,
+  "module": "crate::tools::conversation_history",
+  "rust": "runtime/src/tools/conversation_history.rs"
+ },
+ "src/tools/cron.ts": {
+  "imports": [
+   "src/lib/prisma.ts",
+   "src/logger.ts",
+   "src/services/channel-adapter.interface.ts",
+   "src/services/cron-schedule.ts",
+   "src/services/cron-scheduler.service.ts",
+   "src/services/delivery-target.service.ts"
+  ],
+  "level": 9,
+  "lines": 222,
+  "module": "crate::tools::cron",
+  "rust": "runtime/src/tools/cron.rs"
+ },
+ "src/tools/goals.ts": {
+  "imports": [
+   "src/constants.ts",
+   "src/logger.ts",
+   "src/services/channel-adapter.interface.ts",
+   "src/services/goal.service.ts"
+  ],
+  "level": 9,
+  "lines": 102,
+  "module": "crate::tools::goals",
+  "rust": "runtime/src/tools/goals.rs"
+ },
+ "src/tools/meeting.ts": {
+  "imports": [
+   "src/lib/has-binary.ts",
+   "src/logger.ts",
+   "src/services/meeting/audio-stack.ts",
+   "src/services/meeting/browser-stack.ts",
+   "src/services/meeting/meeting-bot.service.ts",
+   "src/services/meeting/openai-endpoint.ts"
+  ],
+  "level": 9,
+  "lines": 363,
+  "module": "crate::tools::meeting",
+  "rust": "runtime/src/tools/meeting.rs"
+ },
+ "src/tools/memory.ts": {
+  "imports": [
+   "src/lib/locked-in.ts",
+   "src/lib/telemetry.ts",
+   "src/services/agent-workspace.service.ts",
+   "src/services/memory-manager.service.ts"
+  ],
+  "level": 8,
+  "lines": 148,
+  "module": "crate::tools::memory",
+  "rust": "runtime/src/tools/memory.rs"
+ },
+ "src/tools/send-message.ts": {
+  "imports": [
+   "src/services/channel-adapter.interface.ts",
+   "src/services/delivery-target.service.ts",
+   "src/services/message-delivery.service.ts",
+   "src/services/outbound-message.service.ts"
+  ],
+  "level": 9,
+  "lines": 106,
+  "module": "crate::tools::send_message",
+  "rust": "runtime/src/tools/send_message.rs"
+ },
+ "src/tools/share-file.ts": {
+  "imports": [
+   "src/constants.ts",
+   "src/lib/execution-environments/execution-environment.ts",
+   "src/lib/execution-environments/get-execution-environment.ts",
+   "src/lib/execution-environments/workspace.ts",
+   "src/lib/pending-file-writes.ts",
+   "src/logger.ts",
+   "src/services/attachment.service.ts",
+   "src/tools/shell/workspace.ts"
+  ],
+  "level": 9,
+  "lines": 319,
+  "module": "crate::tools::share_file",
+  "rust": "runtime/src/tools/share_file.rs"
+ },
+ "src/tools/shell/agent-task-manager.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/agent-mcp-servers.ts",
+   "src/lib/coding-agents/coding-agent.ts",
+   "src/lib/coding-agents/get-coding-agent.ts",
+   "src/lib/execution-environments/execution-environment.ts",
+   "src/lib/execution-environments/get-execution-environment.ts",
+   "src/lib/execution-environments/leftover-process.ts",
+   "src/lib/telemetry.ts",
+   "src/logger.ts",
+   "src/prompts/resume-prompt.ts",
+   "src/services/pending-work.service.ts",
+   "src/services/plugin-mcp.service.ts"
+  ],
+  "level": 9,
+  "lines": 560,
+  "module": "crate::tools::shell::agent_task_manager",
+  "rust": "runtime/src/tools/shell/agent_task_manager.rs"
+ },
+ "src/tools/shell/coding-agent.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/tools/shell/agent-task-manager.ts",
+   "src/tools/shell/workspace.ts"
+  ],
+  "level": 9,
+  "lines": 111,
+  "module": "crate::tools::shell::coding_agent",
+  "rust": "runtime/src/tools/shell/coding_agent.rs"
+ },
+ "src/tools/shell/config.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 16,
+  "module": "crate::tools::shell::config",
+  "rust": "runtime/src/tools/shell/config.rs"
+ },
+ "src/tools/shell/edit.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 125,
+  "module": "crate::tools::shell::edit",
+  "rust": "runtime/src/tools/shell/edit.rs"
+ },
+ "src/tools/shell/exec.ts": {
+  "imports": [
+   "src/lib/execution-environments/capture.ts",
+   "src/lib/execution-environments/get-execution-environment.ts",
+   "src/tools/shell/config.ts",
+   "src/tools/shell/workspace.ts"
+  ],
+  "level": 9,
+  "lines": 115,
+  "module": "crate::tools::shell::exec",
+  "rust": "runtime/src/tools/shell/exec.rs"
+ },
+ "src/tools/shell/files.ts": {
+  "imports": [
+   "src/lib/execution-environments/get-execution-environment.ts",
+   "src/tools/shell/edit.ts",
+   "src/tools/shell/format.ts",
+   "src/tools/shell/workspace.ts"
+  ],
+  "level": 9,
+  "lines": 149,
+  "module": "crate::tools::shell::files",
+  "rust": "runtime/src/tools/shell/files.rs"
+ },
+ "src/tools/shell/format.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 43,
+  "module": "crate::tools::shell::format",
+  "rust": "runtime/src/tools/shell/format.rs"
+ },
+ "src/tools/shell/index.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/execution-environments/workspace.ts",
+   "src/lib/pending-file-writes.ts",
+   "src/tools/shell/coding-agent.ts",
+   "src/tools/shell/exec.ts",
+   "src/tools/shell/files.ts",
+   "src/tools/shell/spawn.ts",
+   "src/tools/shell/workspace.ts"
+  ],
+  "level": 9,
+  "lines": 193,
+  "module": "crate::tools::shell",
+  "rust": "runtime/src/tools/shell/mod.rs"
+ },
+ "src/tools/shell/process-manager.ts": {
+  "imports": [
+   "src/lib/execution-environments/capture.ts",
+   "src/lib/execution-environments/execution-environment.ts",
+   "src/lib/execution-environments/get-execution-environment.ts",
+   "src/logger.ts"
+  ],
+  "level": 9,
+  "lines": 233,
+  "module": "crate::tools::shell::process_manager",
+  "rust": "runtime/src/tools/shell/process_manager.rs"
+ },
+ "src/tools/shell/spawn.ts": {
+  "imports": [
+   "src/tools/shell/process-manager.ts",
+   "src/tools/shell/workspace.ts"
+  ],
+  "level": 9,
+  "lines": 100,
+  "module": "crate::tools::shell::spawn",
+  "rust": "runtime/src/tools/shell/spawn.rs"
+ },
+ "src/tools/shell/workspace.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 48,
+  "module": "crate::tools::shell::workspace",
+  "rust": "runtime/src/tools/shell/workspace.rs"
+ },
+ "src/tools/skills/index.ts": {
+  "imports": [
+   "src/services/skill-catalog.service.ts"
+  ],
+  "level": 9,
+  "lines": 58,
+  "module": "crate::tools::skills",
+  "rust": "runtime/src/tools/skills/mod.rs"
+ },
+ "src/tools/web/web-fetch.ts": {
+  "imports": [
+   "src/config.ts",
+   "src/lib/html-to-markdown.ts",
+   "src/lib/public-url.ts",
+   "src/lib/telemetry.ts"
+  ],
+  "level": 5,
+  "lines": 350,
+  "module": "crate::tools::web::web_fetch",
+  "rust": "runtime/src/tools/web/web_fetch.rs"
+ },
+ "src/types.ts": {
+  "imports": [
+   "src/lib/model-selection.ts",
+   "src/lib/tool-lifecycle.ts",
+   "src/prompts/context-builder.ts",
+   "src/services/channel-adapter.interface.ts",
+   "src/services/delivery-target.service.ts"
+  ],
+  "level": 9,
+  "lines": 349,
+  "module": "crate::types",
+  "rust": "runtime/src/types.rs"
+ },
+ "src/utils/async-channel.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 53,
+  "module": "crate::utils::async_channel",
+  "rust": "runtime/src/utils/async_channel.rs"
+ },
+ "src/utils/git-branch.ts": {
+  "imports": [
+   "src/lib/execution-environments/capture.ts",
+   "src/lib/execution-environments/get-execution-environment.ts"
+  ],
+  "level": 10,
+  "lines": 34,
+  "module": "crate::utils::git_branch",
+  "rust": "runtime/src/utils/git_branch.rs"
+ },
+ "src/utils/poll-until.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 44,
+  "module": "crate::utils::poll_until",
+  "rust": "runtime/src/utils/poll_until.rs"
+ },
+ "src/utils/slack-formatter.ts": {
+  "imports": [
+   "src/utils/text-chunker.ts"
+  ],
+  "level": 1,
+  "lines": 297,
+  "module": "crate::utils::slack_formatter",
+  "rust": "runtime/src/utils/slack_formatter.rs"
+ },
+ "src/utils/teams-formatter.ts": {
+  "imports": [
+   "src/utils/text-chunker.ts"
+  ],
+  "level": 1,
+  "lines": 72,
+  "module": "crate::utils::teams_formatter",
+  "rust": "runtime/src/utils/teams_formatter.rs"
+ },
+ "src/utils/text-chunker.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 87,
+  "module": "crate::utils::text_chunker",
+  "rust": "runtime/src/utils/text_chunker.rs"
+ },
+ "src/utils/thread-title.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 17,
+  "module": "crate::utils::thread_title",
+  "rust": "runtime/src/utils/thread_title.rs"
+ },
+ "src/utils/with-timeout.ts": {
+  "imports": [],
+  "level": 0,
+  "lines": 25,
+  "module": "crate::utils::with_timeout",
+  "rust": "runtime/src/utils/with_timeout.rs"
+ }
+}
