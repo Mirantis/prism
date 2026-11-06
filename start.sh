@@ -2,32 +2,20 @@
 # Agent Runtime startup orchestrator (invoked via `CMD ["./start.sh"]`).
 #
 # Responsibilities:
-#   1. Default DATABASE_URL BEFORE the prisma CLI runs. Node's
-#      `src/config.ts` has the same default but it loads after
-#      `prisma migrate deploy`, which finds no database URL when the
-#      operator doesn't pre-set it. Mirrors the runtime default so
-#      an unconfigured `docker run` still works.
+#   1. Default DATABASE_URL, the same default the runtime has, so the
+#      pending-import step below finds the database an unconfigured
+#      `docker run` uses.
 #   2. Hand the sandbox's TLS-interception CAs to Chromium as managed
 #      enterprise policy — the browser cannot see them any other way.
 #      No-op outside a sandbox.
-#   3. Apply Prisma migrations.
-#   4. Apply any pending `.prism` import via
-#      `dist/scripts/apply-pending-import.js` BEFORE prisma migrate
-#      deploy / server open the SQLite file. Shared with the
-#      `dev:single` npm script (which runs the same code via tsx) —
-#      single source of truth for the swap, no race with
-#      `prisma migrate deploy` opening the stale DB.
-#   5. Exec the Node server as PID 1 (after the migrate step so signal
-#      handling + crash semantics match a clean process tree). The server
+#   3. Apply any pending `.prism` import (`prism-server apply-pending-import`)
+#      before the runtime opens the SQLite file.
+#   4. Exec the runtime as PID 1, so signal handling and crash semantics
+#      match a clean process tree. The runtime migrates the database and
 #      runs the embedding backfill itself, so this script forks nothing
 #      that outlives it.
-#
-# Direct path to the workspace-hoisted prisma binary — avoids `npx`'s
-# startup registry round-trip.
 
 set -e
-
-PRISMA=/app/node_modules/.bin/prisma
 
 : "${DATABASE_URL:=file:/data/agent.db}"
 export DATABASE_URL
@@ -112,7 +100,6 @@ else
   fi
 fi
 
-node dist/scripts/apply-pending-import.js
-"$PRISMA" migrate deploy --schema=prisma/sqlite/schema.prisma
+/app/prism-server apply-pending-import
 
-exec node dist/index.js
+exec /app/prism-server

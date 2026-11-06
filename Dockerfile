@@ -1,9 +1,27 @@
 # Prism Agent Dockerfile
 # Multi-stage build for smaller production image.
 #
-# Base: node:26.12.1-bookworm-slim (glibc).
+# Base: node:26.12.1-bookworm-slim (glibc). The runtime is the Rust `prism-server`
+# binary; Node stays for the terminal UI and the coding agents' CLIs.
 
-# Stage 1: Build
+# Stage 1: the runtime binary. Built on the same Debian release as the runner, so
+# it links against the same glibc. The database migrations are compiled in.
+FROM rust:1.94.0-bookworm AS runtime-builder
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends cmake && rm -rf /var/lib/apt/lists/*
+
+COPY prisma/sqlite/migrations ./prisma/sqlite/migrations
+COPY runtime ./runtime
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/build/runtime/target \
+    cd runtime \
+ && cargo build --release --locked --bin prism-server \
+ && cp target/release/prism-server /build/prism-server
+
+# Stage 2: the web UI and the terminal UI.
 FROM node:26.12.1-bookworm-slim AS builder
 
 WORKDIR /app
@@ -17,25 +35,7 @@ COPY cli/package.json ./cli/
 # Skip husky install in Docker
 ENV HUSKY=0
 
-# Opt out of Prisma CLI telemetry (checkpoint pings on generate/migrate).
-ENV CHECKPOINT_DISABLE=1
-
-# openssl is needed by Prisma's engines on Debian slim (not shipped by default).
-RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
-
 RUN npm ci --ignore-scripts
-
-# Copy source for the runtime
-COPY src ./src
-COPY prisma ./prisma
-COPY prisma.config.ts ./
-COPY tsconfig.json ./
-
-# Generate the Prisma client. Skipped by --ignore-scripts above, so do it explicitly.
-RUN npx prisma generate --schema=prisma/sqlite/schema.prisma
-
-# Build runtime TypeScript
-RUN npx tsc
 
 # Build the web bundle from the workspace.
 COPY web ./web
@@ -54,11 +54,7 @@ WORKDIR /app
 # Skip husky install in Docker
 ENV HUSKY=0
 
-# Opt out of Prisma CLI telemetry (checkpoint pings on generate/migrate).
-# ENV (not build-only ARG) so it also covers the runtime migrate in start.sh.
-ENV CHECKPOINT_DISABLE=1
-
-# openssl for Prisma; wget for the healthcheck probe.
+# openssl for the agent's shell tools; wget for the healthcheck probe.
 # git/ca-certificates/curl/libatomic1/gcc/libc-dev/make/zstd are baked
 # into the upstream Lens Agents shell sandbox image — needed by `gh`'s git
 # interop, by mise's install + plugin compile path, and by tools that
@@ -247,17 +243,12 @@ RUN --mount=type=cache,target=/home/node/.cache/pip,uid=1000,gid=1000 \
 ENV PATH="/home/node/.local/share/mise/shims:/home/node/.local/bin:${PATH}"
 USER root
 
-# Copy the Prisma schema and generate the client for runtime
-COPY prisma ./prisma
-COPY prisma.config.ts ./
-RUN npx prisma generate --schema=prisma/sqlite/schema.prisma
+# The runtime, which migrates the database itself at boot.
+COPY --from=runtime-builder /build/prism-server ./prism-server
 
-# Copy built application
-COPY --from=builder /app/dist ./dist
-
-# Copy the built Web UI bundle. Server.ts serves `web/dist` via
-# `express.static` for non-API routes.
+# The built Web UI bundle, which the runtime serves for non-API routes.
 COPY --from=builder /app/web/dist ./web/dist
+ENV PRISM_WEB_DIR=/app/web/dist
 
 # prism CLI: Ink-based TUI for talking to this runtime. Bundled so an
 # operator can `docker exec -it <container> prism` and connect over the
@@ -271,9 +262,7 @@ RUN chmod +x /app/cli/dist/index.js \
 # directory so `docker run <image> cat /app/LICENSE` finds them.
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES ./
 
-# Startup orchestrator. The pending-import preflight is compiled into
-# `dist/scripts/apply-pending-import.js` by the builder stage above —
-# same code path the `dev:single` npm script runs via tsx.
+# Startup orchestrator: promotes a staged `.prism` restore, then runs the runtime.
 COPY start.sh ./
 RUN chmod +x ./start.sh
 
@@ -384,7 +373,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 
 # Drop the runtime user from root → node. The agent has no root-requiring
 # runtime path: port 3003 is unprivileged, /data is already chown'd to
-# node above, and the generated Prisma client + dist layers are 0755/0644.
+# node above, and the runtime binary and dist layers are 0755/0644.
 USER node
 
 
@@ -396,7 +385,7 @@ USER node
 # 4 after one call, 8 after two). The same applies to anything the agent
 # double-forks from its shell tools, so this fixes a latent leak beyond meetings.
 #
-# tini forwards signals to start.sh, so the graceful-shutdown path (SIGTERM ->
-# node -> service teardown) is unchanged.
+# tini forwards signals to start.sh, which execs the runtime, so the graceful-shutdown
+# path (SIGTERM -> prism-server -> service teardown) is unchanged.
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["./start.sh"]

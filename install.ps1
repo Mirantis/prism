@@ -3,8 +3,8 @@
 # Prism Agent installer (Windows).
 #
 # The PowerShell counterpart of install.sh. Installs the `prism` (terminal UI)
-# and `prism-server` (agent runtime) binaries plus the server's sidecar
-# (node_modules\, web\) into %USERPROFILE%\.prism, puts `prism` on the user
+# and `prism-server` (agent runtime) binaries plus the web UI (web\) into
+# %USERPROFILE%\.prism, puts `prism` on the user
 # PATH, and registers `prism-server` to run always via a "PrismServer"
 # scheduled task (the Windows analog of the launchd/systemd user services the
 # bash installer creates -- it runs at logon, restarts on failure, and needs
@@ -12,7 +12,7 @@
 #
 # Run via the one-liner:
 #   irm https://raw.githubusercontent.com/lensapp/prism-agent/main/install.ps1 | iex
-# or from a built checkout (after scripts/build-sea.mjs + collect-natives.mjs),
+# or from a built checkout (after scripts/build-binaries.sh),
 # or point $env:PRISM_DIST at a directory containing the artifacts.
 #
 # No dependencies are installed: Windows 10/11 ship PowerShell with everything
@@ -81,8 +81,7 @@ try {
   # whether this install uses it, then creates the root it settled on.
   $workspaceRoot = Join-Path $PrismHome 'workspace'
 
-  # Stop the server so nothing maps prism-server.exe or the native addons under
-  # node_modules\. `prism.exe` is deliberately left alone: a self-update is
+  # Stop the server so nothing maps prism-server.exe. `prism.exe` is deliberately left alone: a self-update is
   # normally driven *by* it -- `prism update` polls the runtime for minutes, and
   # the TUI's /update runs inside it -- so killing it would kill the poller
   # mid-update.
@@ -93,15 +92,15 @@ try {
   # Activate by renaming rather than copying over the target. Windows refuses to
   # overwrite a mapped executable, and `prism.exe` is usually mapped here, but it
   # allows *renaming* one -- the running process keeps the handle to the file
-  # under its new name. Copying also had no rollback: `Remove-Item node_modules`
-  # followed by a failing `Copy-Item` left the install with no native sidecar and
-  # a scheduled task restarting a binary that cannot boot.
+  # under its new name. Copying also had no rollback: a failing `Copy-Item` after
+  # the old entry was removed left a scheduled task restarting a binary that
+  # cannot boot.
   #
   # So: stage every entry beside its target, then rename the old ones aside and
   # the new ones in. A failure during the renames puts back what was moved.
   $stamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
   $trash = Join-Path $PrismHome ".update-trash-$stamp"
-  $entries = @('prism.exe', 'prism-server.exe', 'node_modules', 'web')
+  $entries = @('prism.exe', 'prism-server.exe', 'web')
 
   # Stage first: a failure here has touched nothing that is live.
   $staged = @{}
@@ -136,13 +135,17 @@ try {
     throw
   }
 
+  # The node_modules\ sidecar an earlier runtime loaded; this one needs none.
+  $sidecar = Join-Path $PrismHome 'node_modules'
+  if (Test-Path $sidecar) { Move-Item -Path $sidecar -Destination (Join-Path $trash 'node_modules') -Force }
+
   # Only reached once every entry is in place; the old copies are dead weight.
   # `prism.exe` may still be mapped by the process driving this update, so its
   # old inode can refuse deletion until that exits -- hence best-effort.
   Remove-Item -Recurse -Force $trash -ErrorAction SilentlyContinue
 
   # License, attribution and third-party notices. Guarded like install.sh -- a dist
-  # built by build-sea.mjs + collect-natives.mjs alone has none, and
+  # built without scripts/build-binaries.sh has none, and
   # $ErrorActionPreference = 'Stop' makes an unguarded copy of a missing file throw.
   # A release archive always has them: the cp in scripts/build-binaries.sh runs
   # under `set -e`, and scripts/smoke-sea.mjs checks all three on four platforms.
