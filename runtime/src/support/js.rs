@@ -31,6 +31,43 @@ pub fn byte_index16(text: &str, pos: usize) -> usize {
     text.len()
 }
 
+/// Whether `ch` is whitespace to `String.prototype.trim`: ECMAScript WhiteSpace and
+/// LineTerminator, which include U+FEFF and exclude U+0085, unlike `char::is_whitespace`.
+pub fn is_js_whitespace(ch: char) -> bool {
+    matches!(
+        ch,
+        '\t' | '\n'
+            | '\u{000B}'
+            | '\u{000C}'
+            | '\r'
+            | ' '
+            | '\u{00A0}'
+            | '\u{1680}'
+            | '\u{2000}'..='\u{200A}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '\u{202F}'
+            | '\u{205F}'
+            | '\u{3000}'
+            | '\u{FEFF}'
+    )
+}
+
+/// `string.trim()`.
+pub fn trim(text: &str) -> &str {
+    text.trim_matches(is_js_whitespace)
+}
+
+/// `string.trimStart()`.
+pub fn trim_start(text: &str) -> &str {
+    text.trim_start_matches(is_js_whitespace)
+}
+
+/// `string.trimEnd()`.
+pub fn trim_end(text: &str) -> &str {
+    text.trim_end_matches(is_js_whitespace)
+}
+
 /// A number as `JSON.stringify` writes it: an integral value has no fraction.
 pub fn number(value: f64) -> Value {
     if value.is_finite() && value.fract() == 0.0 && value.abs() < 9.007_199_254_740_992e15 {

@@ -1,0 +1,477 @@
+{
+ "variables": {
+  "date": "(?<=Today's date \\(UTC\\): )\\d{4}-\\d{2}-\\d{2} \\(\\w+\\)",
+  "time": "\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z|\\d{1,2}\\/\\d{1,2}\\/\\d{4}, \\d{1,2}:\\d{2}:\\d{2}(?:\\s[AP]M)?|[A-Z][a-z]{2} \\d{1,2}, \\d{4}, \\d{1,2}:\\d{2}\\s[AP]M GMT(?:[+-]\\d{1,2}(?::\\d{2})?)?",
+  "tmp": "\\/tmp\\/[\\w.-]+",
+  "uuid": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+ },
+ "secondPrompt": [
+  {
+   "role": "system",
+   "content": "You are kind. Today's date (UTC): 2026-11-06 (Friday)",
+   "providerOptions": {
+    "anthropic": {
+     "cacheControl": {
+      "type": "ephemeral"
+     }
+    }
+   }
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "see /tmp/abc.def/x and 0f8fad5b-d9cb-469f-a165-70867728950e"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "text",
+     "text": "ok"
+    },
+    {
+     "type": "tool-call",
+     "toolCallId": "p1",
+     "toolName": "raw",
+     "input": {
+      "n": 1.5
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "content": [
+    {
+     "type": "tool-result",
+     "toolCallId": "p1",
+     "toolName": "raw",
+     "output": {
+      "type": "content",
+      "value": [
+       {
+        "type": "text",
+        "text": "shot"
+       },
+       {
+        "type": "file",
+        "data": {
+         "type": "data",
+         "data": "iVBORw0KGgo="
+        },
+        "mediaType": "image/jpeg"
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "pdf"
+    },
+    {
+     "type": "file",
+     "mediaType": "application/pdf",
+     "filename": "a.pdf",
+     "data": {
+      "type": "data",
+      "data": "JVBERi0="
+     },
+     "providerOptions": {
+      "bedrock": {
+       "citations": {
+        "enabled": true
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "text",
+     "text": "hi"
+    },
+    {
+     "type": "tool-call",
+     "toolCallId": "c1",
+     "toolName": "weather",
+     "input": {
+      "city": 1
+     }
+    },
+    {
+     "type": "tool-call",
+     "toolCallId": "c2",
+     "toolName": "nope",
+     "input": {}
+    },
+    {
+     "type": "tool-call",
+     "toolCallId": "c3",
+     "toolName": "boom",
+     "input": {}
+    },
+    {
+     "type": "tool-call",
+     "toolCallId": "c4",
+     "toolName": "weather",
+     "input": {
+      "city": "x",
+      "unit": "c"
+     }
+    },
+    {
+     "type": "tool-call",
+     "toolCallId": "c5",
+     "toolName": "weather",
+     "input": {}
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "content": [
+    {
+     "type": "tool-result",
+     "toolCallId": "c1",
+     "toolName": "weather",
+     "output": {
+      "type": "error-text",
+      "value": "AI_InvalidToolInputError: Invalid input for tool weather: AI_TypeValidationError: Type validation failed: Value: {\"city\":1}.\nError message: [\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"city\"\n    ],\n    \"message\": \"Invalid input: expected string, received number\"\n  }\n]"
+     }
+    },
+    {
+     "type": "tool-result",
+     "toolCallId": "c2",
+     "toolName": "nope",
+     "output": {
+      "type": "error-text",
+      "value": "AI_NoSuchToolError: Model tried to call unavailable tool 'nope'. Available tools: weather, boom, raw."
+     }
+    },
+    {
+     "type": "tool-result",
+     "toolCallId": "c3",
+     "toolName": "boom",
+     "output": {
+      "type": "error-text",
+      "value": "Error: kaboom"
+     }
+    },
+    {
+     "type": "tool-result",
+     "toolCallId": "c4",
+     "toolName": "weather",
+     "output": {
+      "type": "json",
+      "value": {
+       "ok": {
+        "city": "x",
+        "unit": "c"
+       },
+       "at": "2026-11-06T10:00:00.000Z"
+      }
+     }
+    },
+    {
+     "type": "tool-result",
+     "toolCallId": "c5",
+     "toolName": "weather",
+     "output": {
+      "type": "error-text",
+      "value": "AI_InvalidToolInputError: Invalid input for tool weather: AI_JSONParseError: JSON parsing failed: Text: {\"city\":.\nError message: SyntaxError: Unexpected end of JSON input"
+     }
+    }
+   ]
+  }
+ ],
+ "firstOptionsSorted": {
+  "maxOutputTokens": 16000,
+  "prompt": [
+   {
+    "content": "You are kind. Today's date (UTC): 2026-11-06 (Friday)",
+    "providerOptions": {
+     "anthropic": {
+      "cacheControl": {
+       "type": "ephemeral"
+      }
+     }
+    },
+    "role": "system"
+   },
+   {
+    "content": [
+     {
+      "text": "see /tmp/abc.def/x and 0f8fad5b-d9cb-469f-a165-70867728950e",
+      "type": "text"
+     }
+    ],
+    "role": "user"
+   },
+   {
+    "content": [
+     {
+      "text": "ok",
+      "type": "text"
+     },
+     {
+      "input": {
+       "n": 1.5
+      },
+      "toolCallId": "p1",
+      "toolName": "raw",
+      "type": "tool-call"
+     }
+    ],
+    "role": "assistant"
+   },
+   {
+    "content": [
+     {
+      "output": {
+       "type": "content",
+       "value": [
+        {
+         "text": "shot",
+         "type": "text"
+        },
+        {
+         "data": {
+          "data": "iVBORw0KGgo=",
+          "type": "data"
+         },
+         "mediaType": "image/jpeg",
+         "type": "file"
+        }
+       ]
+      },
+      "toolCallId": "p1",
+      "toolName": "raw",
+      "type": "tool-result"
+     }
+    ],
+    "role": "tool"
+   },
+   {
+    "content": [
+     {
+      "text": "pdf",
+      "type": "text"
+     },
+     {
+      "data": {
+       "data": "JVBERi0=",
+       "type": "data"
+      },
+      "filename": "a.pdf",
+      "mediaType": "application/pdf",
+      "providerOptions": {
+       "bedrock": {
+        "citations": {
+         "enabled": true
+        }
+       }
+      },
+      "type": "file"
+     }
+    ],
+    "role": "user"
+   }
+  ],
+  "providerOptions": {
+   "anthropic": {
+    "thinking": {
+     "type": "adaptive"
+    }
+   },
+   "bedrock": {
+    "9": 2,
+    "10": 1,
+    "a": 4,
+    "b": 3
+   }
+  },
+  "temperature": 0.7,
+  "toolChoice": {
+   "type": "auto"
+  },
+  "tools": [
+   {
+    "description": "w",
+    "inputSchema": {
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false,
+     "properties": {
+      "city": {
+       "type": "string"
+      },
+      "unit": {
+       "default": "c",
+       "type": "string"
+      }
+     },
+     "required": [
+      "city"
+     ],
+     "type": "object"
+    },
+    "name": "weather",
+    "type": "function"
+   },
+   {
+    "inputSchema": {
+     "$schema": "http://json-schema.org/draft-07/schema#",
+     "additionalProperties": false,
+     "properties": {},
+     "type": "object"
+    },
+    "name": "boom",
+    "type": "function"
+   },
+   {
+    "description": "r",
+    "inputSchema": {
+     "properties": {
+      "n": {
+       "type": "number"
+      }
+     },
+     "type": "object"
+    },
+    "name": "raw",
+    "providerOptions": {
+     "anthropic": {
+      "deferLoading": true
+     }
+    },
+    "type": "function"
+   }
+  ]
+ },
+ "keys": [
+  {
+   "key": "54327d76b1523ccc8159c534226f95cf77c94f13d9b0100a1cb198185249d1a9",
+   "bindings": {}
+  },
+  {
+   "key": "8c5ee49ab4ff2635969580fd84f220712b030e336b0dbfabe01a6e8ab6d2ada9",
+   "bindings": {}
+  }
+ ],
+ "bindings": [
+  [
+   [
+    "2026-11-06 (Friday)",
+    "«date:1»"
+   ],
+   [
+    "/tmp/abc.def",
+    "«tmp:1»"
+   ],
+   [
+    "0f8fad5b-d9cb-469f-a165-70867728950e",
+    "«uuid:1»"
+   ]
+  ],
+  [
+   [
+    "2026-11-06 (Friday)",
+    "«date:1»"
+   ],
+   [
+    "2026-11-06T10:00:00.000Z",
+    "«time:1»"
+   ],
+   [
+    "/tmp/abc.def",
+    "«tmp:1»"
+   ],
+   [
+    "0f8fad5b-d9cb-469f-a165-70867728950e",
+    "«uuid:1»"
+   ]
+  ]
+ ],
+ "steps": 2,
+ "totalUsage": {
+  "inputTokens": 6,
+  "inputTokenDetails": {
+   "noCacheTokens": 6
+  },
+  "outputTokens": 8,
+  "outputTokenDetails": {
+   "textTokens": 8
+  },
+  "totalTokens": 14
+ },
+ "toolCalls": [
+  {
+   "type": "tool-call",
+   "toolCallId": "c1",
+   "toolName": "weather",
+   "input": {
+    "city": 1
+   },
+   "dynamic": true,
+   "invalid": true
+  },
+  {
+   "type": "tool-call",
+   "toolCallId": "c2",
+   "toolName": "nope",
+   "input": {},
+   "dynamic": true,
+   "invalid": true
+  },
+  {
+   "type": "tool-call",
+   "toolCallId": "c3",
+   "toolName": "boom",
+   "input": {}
+  },
+  {
+   "type": "tool-call",
+   "toolCallId": "c4",
+   "toolName": "weather",
+   "input": {
+    "city": "x",
+    "unit": "c"
+   }
+  },
+  {
+   "type": "tool-call",
+   "toolCallId": "c5",
+   "toolName": "weather",
+   "input": "{\"city\":",
+   "dynamic": true,
+   "invalid": true
+  }
+ ],
+ "responseMessages": [
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "text",
+     "text": "done"
+    }
+   ]
+  }
+ ],
+ "plainKeys": [
+  "9bc1f1d871631dc1d189d17dd83243e6d1aea41857205187e3c37ae80d369af5",
+  "ef46563144c50719f2cb5fb1b10285e9667d70663d52dc2a3eaf504ebbffe900",
+  "bd4434a35d457928692f9ee2a801e9660a0f2bccea1f156752917b81e525f2e0"
+ ]
+}
