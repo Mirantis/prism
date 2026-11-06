@@ -8,9 +8,10 @@
  * Key design principles:
  * - The interval is measured from the last run, not from the timer's creation,
  *   so a restart or a re-registration cannot defer a check
- * - Classification gate LLM (Haiku) decides DELIVER/SUPPRESS after each heartbeat
- * - 24h duplicate suppression for exact-match alerts
- * - Fail-open: if the gate call fails, deliver the message
+ * - The agent posts with `send_message`; the runtime posts only a result the
+ *   agent could not post
+ * - Each run reads what earlier runs sent, and the prompt tells the agent to
+ *   post again only for a new finding
  */
 
 import { invoke } from '../invoke';
@@ -36,14 +37,21 @@ import type { ChatPlatform } from './channel-adapter.interface';
 const HEARTBEAT_BUDGET_NOTICE =
   "This heartbeat check stopped: your organization's AI spending limit has been reached.";
 
-/** How many stored heartbeat messages a restart reads to restore the send record. */
-const SEND_RECORD_ROWS = 20;
+/**
+ * The most stored heartbeat messages a restart reads, newest first, to restore the
+ * send record. The record keeps `HEARTBEAT_SENDS` distinct sends, so a window cut
+ * at this cap loses a send only when its newest messages hold fewer distinct sends.
+ */
+const SEND_RECORD_MAX_ROWS = 200;
 
 /** How a heartbeat run ended: it posted, posted nothing, or ended in an error the runtime delivered. */
 type HeartbeatOutcome = 'posted' | 'silent' | 'error';
 
 /** How many heartbeat intervals back a restart reads sends into the send record. */
 const HEARTBEAT_SEND_RESTORE_INTERVALS = 3;
+
+/** The shortest window a restart reads sends from, so a daily check does not repeat after a restart. */
+const HEARTBEAT_SEND_RESTORE_MIN_MS = 24 * 60 * 60_000;
 
 /** How many sends the send record keeps, and how many run results. */
 const HEARTBEAT_SENDS = 10;
@@ -101,11 +109,10 @@ interface HeartbeatState {
   consecutiveErrors: number;
   /**
    * What earlier runs sent, and what the newest run reported. A run reads no
-   * history, so this tells it about earlier sends. It is separate from the
-   * delivered alert the duplicate check compares against.
+   * history, so this tells it about earlier sends.
    */
   lastSend: HeartbeatSendRecord | null;
-  /** The restore of the last alert and the send record. Every run waits for it. */
+  /** The restore of the send record. Every run waits for it. */
   restored: Promise<void>;
 }
 
@@ -211,8 +218,8 @@ class HeartbeatService {
     const now = Date.now();
 
     // Re-registration keeps the live state object: a run in flight writes its
-    // own fields to it, and the alert history behind the 24h duplicate check
-    // belongs to the agent rather than to the timer.
+    // own fields to it, and the send record belongs to the agent rather than
+    // to the timer.
     const state = this.heartbeatState ?? this.registerState(agent, intervalMs, now);
     state.intervalMs = intervalMs;
     if (schedule === 'new-interval') {
@@ -262,32 +269,35 @@ class HeartbeatService {
 
   /**
    * The send record holds the sends and results of the runs of the last
-   * `HEARTBEAT_SEND_RESTORE_INTERVALS` intervals after the newest revision of the
-   * Heartbeat document, read from the stored heartbeat rows of the web threads.
-   * The trades: a run that posted nothing is not stored, so the record can miss a
-   * report that a condition cleared; a send older than the window is sent again;
-   * and a document written straight into the database has no revision, so
-   * earlier sends are read as made under it.
+   * `HEARTBEAT_SEND_RESTORE_INTERVALS` intervals, or of the last day when that is
+   * longer, after the newest revision of the Heartbeat document, read from the
+   * stored heartbeat rows of the web threads. The trades: a run that posted
+   * nothing is not stored, so the record can miss a report that a condition
+   * cleared; a send older than the window is sent again; and a document written
+   * straight into the database has no revision, so earlier sends are read as
+   * made under it.
    */
   private async restoreSendRecord(state: HeartbeatState, checks: string): Promise<void> {
     try {
+      const edited = await documentRevisionService.newest(prisma, state.agentId, 'heartbeatMd');
+      const windowMs = Math.max(HEARTBEAT_SEND_RESTORE_INTERVALS * state.intervalMs, HEARTBEAT_SEND_RESTORE_MIN_MS);
+      const since = Math.max(Date.now() - windowMs, edited?.createdAt.getTime() ?? 0);
       const rows = await prisma.conversationMessage.findMany({
-        where: { role: 'AGENT', triggeredBy: 'HEARTBEAT', thread: { agentId: state.agentId, externalThreadId: null } },
+        where: {
+          role: 'AGENT',
+          triggeredBy: 'HEARTBEAT',
+          createdAt: { gte: new Date(since) },
+          thread: { agentId: state.agentId, externalThreadId: null },
+        },
         orderBy: { createdAt: 'desc' },
-        take: SEND_RECORD_ROWS,
+        take: SEND_RECORD_MAX_ROWS,
         select: { content: true, createdAt: true, toolCalls: true },
       });
-      const edited = await documentRevisionService.newest(prisma, state.agentId, 'heartbeatMd');
-      const since = Math.max(
-        Date.now() - HEARTBEAT_SEND_RESTORE_INTERVALS * state.intervalMs,
-        edited?.createdAt.getTime() ?? 0,
-      );
       const sends = rows.map((row) => sentMessageList((row.toolCalls as ToolCallRecord[] | null) ?? []));
       let record: HeartbeatSendRecord | null = null;
       // Oldest first and in a live run's order, so a newer copy of a send replaces an older one.
       for (let i = rows.length - 1; i >= 0; i--) {
         const at = rows[i].createdAt.getTime();
-        if (at < since) continue;
         record = mergeSends(record, sends[i], at, checks);
         // A live run records no result for a run without a reply or one stopped by the spending limit.
         const text = rows[i].content.trim();

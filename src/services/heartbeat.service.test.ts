@@ -191,6 +191,20 @@ function checksRow(heartbeatMd: string, heartbeatDeliverTo = 'all', heartbeatCha
   return { heartbeatMd, heartbeatDeliverTo, heartbeatChannelIds };
 }
 
+/** A stored heartbeat message, as the restore selects it. */
+type HeartbeatRow = { content: string; createdAt: Date; toolCalls: unknown[] | null };
+
+/** Store heartbeat rows that the restore's query reads as the database does: in its window, newest first, at most `take`. */
+function storeHeartbeatRows(rows: HeartbeatRow[]): void {
+  mockFindHeartbeatRows.mockImplementation(
+    async ({ where, take }: { where: { createdAt: { gte: Date } }; take: number }) =>
+      rows
+        .filter((row) => row.createdAt >= where.createdAt.gte)
+        .sort((x, y) => y.createdAt.getTime() - x.createdAt.getTime())
+        .slice(0, take),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -512,7 +526,7 @@ describe('HeartbeatService', () => {
 
     it('restores the results of the runs since the oldest kept send after a restart', async () => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
-      mockFindHeartbeatRows.mockResolvedValue([
+      storeHeartbeatRows([
         { content: 'Paged #oncall about the API error rate.', createdAt: new Date('2025-01-15T11:30:00Z'), toolCalls: [sendTo('#oncall', 'API error rate 12%.')] },
         { content: 'All systems healthy.', createdAt: new Date('2025-01-15T11:00:00Z'), toolCalls: null },
         { content: 'This run sent a message and ended with no reply.', createdAt: new Date('2025-01-15T10:45:00Z'), toolCalls: [sendTo('#ops', 'db-2 disk 91%.')] },
@@ -577,7 +591,7 @@ describe('HeartbeatService', () => {
 
     it('drops a restored record when the Heartbeat document changed since the restart', async () => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
-      mockFindHeartbeatRows.mockResolvedValue([
+      storeHeartbeatRows([
         { content: 'Posted the build failure.', createdAt: new Date('2025-01-15T11:00:00Z'), toolCalls: [SEND] },
       ]);
 
@@ -639,7 +653,7 @@ describe('HeartbeatService', () => {
 
     it('restores the record from the stored messages after a restart', async () => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
-      mockFindHeartbeatRows.mockResolvedValue([
+      storeHeartbeatRows([
         { content: 'Build #812 is still failing.', createdAt: new Date('2025-01-15T11:30:00Z'), toolCalls: null },
         { content: 'Posted the build failure to #ops.', createdAt: new Date('2025-01-15T11:00:00Z'), toolCalls: [SEND] },
       ]);
@@ -660,7 +674,7 @@ describe('HeartbeatService', () => {
 
     it('restores only the sends of the last three intervals', async () => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
-      mockFindHeartbeatRows.mockResolvedValue([
+      storeHeartbeatRows([
         { content: 'Posted the disk alert.', createdAt: new Date('2025-01-15T08:00:00Z'), toolCalls: [sendTo('#oncall', 'Disk is 95% full.')] },
         { content: 'Posted the build failure.', createdAt: new Date('2025-01-14T11:00:00Z'), toolCalls: [SEND] },
       ]);
@@ -680,7 +694,7 @@ describe('HeartbeatService', () => {
       await heartbeatService.triggerHeartbeat();
       heartbeatService.stopHeartbeat();
 
-      mockFindHeartbeatRows.mockResolvedValue([
+      storeHeartbeatRows([
         { content: 'Posted the build failure.', createdAt: new Date('2025-01-15T11:00:00Z'), toolCalls: [SEND] },
       ]);
       mockNewestRevision.mockResolvedValue({ createdAt: new Date('2025-01-15T11:30:00Z') });
@@ -698,7 +712,7 @@ describe('HeartbeatService', () => {
 
     it('restores no record when every send is older than three intervals', async () => {
       vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
-      mockFindHeartbeatRows.mockResolvedValue([
+      storeHeartbeatRows([
         { content: 'Posted the build failure.', createdAt: new Date('2025-01-14T11:00:00Z'), toolCalls: [SEND] },
       ]);
 
@@ -707,6 +721,42 @@ describe('HeartbeatService', () => {
       await heartbeatService.triggerHeartbeat();
 
       expect(mockInvoke.mock.calls[0][0].lastSend).toBeUndefined();
+    });
+
+    it('restores the sends of the last day on a short interval', async () => {
+      vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
+      storeHeartbeatRows([
+        { content: 'Posted the inbox summary.', createdAt: new Date('2025-01-14T16:00:00Z'), toolCalls: [sendTo('chat', 'New email from the landlord.')] },
+        { content: 'Posted the calendar reminder.', createdAt: new Date('2025-01-14T10:00:00Z'), toolCalls: [sendTo('chat', 'Dentist at 15:00.')] },
+      ]);
+
+      heartbeatService.startHeartbeat(createAgent({ heartbeatIntervalMs: 2 * 60 * 60_000 }), 'keep-schedule');
+      await vi.advanceTimersByTimeAsync(0);
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockInvoke.mock.calls[0][0].lastSend.messages).toBe('- To chat (20h ago): New email from the landlord.');
+    });
+
+    it('restores every send of the last day when the day holds many heartbeat messages', async () => {
+      vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
+      const hour = 60 * 60_000;
+      const repeated = Array.from({ length: 23 }, (_, i) => ({
+        content: 'Posted the build status.',
+        createdAt: new Date(Date.now() - (i + 1) * hour),
+        toolCalls: [SEND],
+      }));
+      storeHeartbeatRows([
+        ...repeated,
+        { content: 'Posted the inbox summary.', createdAt: new Date(Date.now() - 23.5 * hour), toolCalls: [sendTo('chat', 'New email from the landlord.')] },
+      ]);
+
+      heartbeatService.startHeartbeat(createAgent({ heartbeatIntervalMs: 2 * hour }), 'keep-schedule');
+      await vi.advanceTimersByTimeAsync(0);
+      await heartbeatService.triggerHeartbeat();
+
+      expect(mockInvoke.mock.calls[0][0].lastSend.messages).toBe(
+        ['- To #ops (1h ago): Build #812 failed.', '- To chat (23h ago): New email from the landlord.'].join('\n'),
+      );
     });
   });
 
