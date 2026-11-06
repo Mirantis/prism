@@ -25,6 +25,17 @@ import { skillCatalogService } from '../services/skill-catalog.service';
 import { pluginCatalogService } from '../services/plugin-catalog.service';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
 
+/**
+ * Whether the selected vendor's gateway chat mount is set: `nexus` or `direct`.
+ * This is the deployment's shape, not where a request lands: an explicit
+ * `*_BASE_URL` can point off the gateway host, and the `[Startup] LLM provider`
+ * log reports that endpoint and its source. Every product event that reports
+ * routing reads it here, so the events agree.
+ */
+export function llmRouting(): 'nexus' | 'direct' {
+  return config.nexusChatBaseUrl ? 'nexus' : 'direct';
+}
+
 export async function trackAgentStarted(
   agent: Pick<AgentWorkspace, 'id' | 'userId' | 'webhooksEnabled' | 'lockedIn'>,
   opts: { cronTasks: number },
@@ -44,11 +55,7 @@ export async function trackAgentStarted(
     trackEvent('agent started', agent.userId, {
       'agent.id': agent.id,
       'llm.provider': config.llmProvider,
-      // Whether the selected vendor's gateway chat mount is set. This is the
-      // deployment's shape, not where a request lands: an explicit `*_BASE_URL`
-      // can point off the gateway host, and the `[Startup] LLM provider` log
-      // reports that endpoint and its source.
-      'llm.routing': config.nexusChatBaseUrl ? 'nexus' : 'direct',
+      'llm.routing': llmRouting(),
       'llm.chat_model': config.chatModelId,
       'llm.classification_model': config.classificationModelId,
       // Read synchronously — the boot-time models.dev refresh may not have settled

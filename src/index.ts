@@ -33,6 +33,7 @@ import { resumeReplies } from './services/resume-replies';
 import { initLangfuse, shutdownLangfuse } from './lib/langfuse';
 import { initTelemetry, shutdownTelemetry } from './lib/telemetry';
 import { trackAgentStarted } from './lib/startup-telemetry';
+import { startUsageTelemetry } from './lib/usage-telemetry';
 import { heartbeatService } from './services/heartbeat.service';
 import { meetingBotService } from './services/meeting/meeting-bot.service';
 import { voiceChatService } from './services/voice/voice-chat.service';
@@ -100,6 +101,7 @@ const httpServer = createServer(app);
 const agentMessagesServer = createAgentMessagesServer();
 
 let fileJanitorTimer: NodeJS.Timeout | undefined;
+let usageTelemetryTimer: NodeJS.Timeout | undefined;
 
 // Register channel adapters for unified message delivery
 // Note: Must be registered BEFORE server starts accepting connections
@@ -387,6 +389,10 @@ const initialize = async () => {
     // and expired saved tool outputs now, then hourly (see lib/file-janitor.ts).
     fileJanitorTimer = await startFileJanitor();
 
+    // Report the agent's token use for each closed hour now, then hourly (see
+    // lib/usage-telemetry.ts). Nothing runs without an OTLP endpoint.
+    usageTelemetryTimer = startUsageTelemetry(agent.id);
+
     // Embed the memory entries that have no vector yet. In-process and
     // best-effort: it never blocks startup, and a failure costs a log line.
     void runBackfill().catch((err) => {
@@ -444,6 +450,7 @@ const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResp
   agentMessagesServer?.close();
   agentMessagesServer?.closeAllConnections();
   if (fileJanitorTimer) clearInterval(fileJanitorTimer);
+  if (usageTelemetryTimer) clearInterval(usageTelemetryTimer);
   // A SIGTERM early in boot would otherwise leave the catalog fetch holding a
   // socket, so server.close() waits and the 5s force-exit below fires.
   cancelModelCatalogRefresh();
