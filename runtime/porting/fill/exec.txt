@@ -1,0 +1,34 @@
+src/lib/agent-processes.ts -> runtime/src/lib/agent_processes.rs (153 lines) tests: src/lib/agent-processes.test.ts
+src/lib/apply-edit.ts -> runtime/src/lib/apply_edit.rs (111 lines)
+src/lib/execution-environments/capture.ts -> runtime/src/lib/execution_environments/capture.rs (181 lines)
+src/lib/execution-environments/docker/container-lost.ts -> runtime/src/lib/execution_environments/docker/container_lost.rs (43 lines) tests: src/lib/execution-environments/docker/container-lost.test.ts
+src/lib/execution-environments/docker/container.ts -> runtime/src/lib/execution_environments/docker/container.rs (151 lines)
+src/lib/execution-environments/docker/detect.ts -> runtime/src/lib/execution_environments/docker/detect.rs (116 lines) tests: src/lib/execution-environments/docker/detect.test.ts
+src/lib/execution-environments/docker/docker-copy.ts -> runtime/src/lib/execution_environments/docker/docker_copy.rs (104 lines)
+src/lib/execution-environments/docker/docker-env.ts -> runtime/src/lib/execution_environments/docker/docker_env.rs (88 lines) tests: src/lib/execution-environments/docker/docker-env.test.ts
+src/lib/execution-environments/docker/docker-environment.ts -> runtime/src/lib/execution_environments/docker/docker_environment.rs (117 lines) tests: src/lib/execution-environments/docker/docker-environment.test.ts
+src/lib/execution-environments/docker/docker-files.ts -> runtime/src/lib/execution_environments/docker/docker_files.rs (215 lines) tests: src/lib/execution-environments/docker/docker-files.test.ts
+src/lib/execution-environments/docker/docker-process.ts -> runtime/src/lib/execution_environments/docker/docker_process.rs (213 lines) tests: src/lib/execution-environments/docker/docker-process.test.ts
+src/lib/execution-environments/docker/engine.ts -> runtime/src/lib/execution_environments/docker/engine.rs (67 lines)
+src/lib/execution-environments/docker/volumes.ts -> runtime/src/lib/execution_environments/docker/volumes.rs (93 lines) tests: src/lib/execution-environments/docker/volumes.test.ts
+src/lib/execution-environments/execution-environment.ts -> runtime/src/lib/execution_environments/execution_environment.rs (173 lines)
+src/lib/execution-environments/get-execution-environment.ts -> runtime/src/lib/execution_environments/get_execution_environment.rs (156 lines) tests: src/lib/execution-environments/get-execution-environment.test.ts
+src/lib/execution-environments/leftover-process.ts -> runtime/src/lib/execution_environments/leftover_process.rs (42 lines) tests: src/lib/execution-environments/leftover-process.test.ts
+src/lib/execution-environments/local/local-env.ts -> runtime/src/lib/execution_environments/local/local_env.rs (26 lines) tests: src/lib/execution-environments/local/local-env.test.ts
+src/lib/execution-environments/local/local-environment.ts -> runtime/src/lib/execution_environments/local/local_environment.rs (37 lines) tests: src/lib/execution-environments/local/local-environment.test.ts
+src/lib/execution-environments/local/local-files.ts -> runtime/src/lib/execution_environments/local/local_files.rs (98 lines)
+src/lib/execution-environments/local/local-paths.ts -> runtime/src/lib/execution_environments/local/local_paths.rs (25 lines)
+src/lib/execution-environments/local/local-process.ts -> runtime/src/lib/execution_environments/local/local_process.rs (117 lines)
+src/lib/execution-environments/local/local-workspace.ts -> runtime/src/lib/execution_environments/local/local_workspace.rs (37 lines) tests: src/lib/execution-environments/local/local-workspace.test.ts
+src/lib/execution-environments/storage-migration.ts -> runtime/src/lib/execution_environments/storage_migration.rs (271 lines) tests: src/lib/execution-environments/storage-migration.test.ts
+src/lib/execution-environments/workspace.ts -> runtime/src/lib/execution_environments/workspace.rs (14 lines)
+src/lib/has-binary.ts -> runtime/src/lib/has_binary.rs (34 lines)
+src/tools/shell/config.ts -> runtime/src/tools/shell/config.rs (16 lines)
+src/tools/shell/edit.ts -> runtime/src/tools/shell/edit.rs (125 lines)
+src/tools/shell/exec.ts -> runtime/src/tools/shell/exec.rs (115 lines)
+src/tools/shell/files.ts -> runtime/src/tools/shell/files.rs (149 lines)
+src/tools/shell/format.ts -> runtime/src/tools/shell/format.rs (43 lines)
+src/tools/shell/process-manager.ts -> runtime/src/tools/shell/process_manager.rs (233 lines)
+src/tools/shell/spawn.ts -> runtime/src/tools/shell/spawn.rs (100 lines)
+src/tools/shell/workspace.ts -> runtime/src/tools/shell/workspace.rs (48 lines)
+src/utils/git-branch.ts -> runtime/src/utils/git_branch.rs (34 lines) tests: src/utils/git-branch.test.ts
