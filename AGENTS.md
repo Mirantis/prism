@@ -440,7 +440,8 @@ somebody adds a caller.
   main path flat. A function reads best in four stages, in order: gather the
   inputs, normalize them, decide, then act.
 - **Group by purpose.** Related files sit in one folder, and a file that has
-  taken on two jobs splits into one file per job (see **File Organization**).
+  taken on two jobs splits into one file per job (the tree under `src/` shows
+  the grouping).
 - **Never edit `node_modules`.** Fix the source, pin the dependency, or add an
   npm override. An edit there is invisible in review, dies on the next install,
   and hits every other worktree at once, because a worktree's `node_modules` is
@@ -542,121 +543,38 @@ After:  esbuild receives `playwright-core` as a prebuilt bundle ...
 
 ## Deployment shape
 
-One `AGENT_ID` per container, embedded SQLite + sqlite-vec at
-`file:/data/agent.db`. The image is `ghcr.io/lensapp/prism-agent`, published
-under five tag families: `latest` and `vYYYY.M.DDHHMMSS` (production),
-`canary` (every merge to `main`), a commit-SHA tag from both release workflows,
-and `pr-<n>-<branch-slug>` from `docker-build.yml` on every pull request that
-rebuilds the image (a branch whose name slugifies to nothing leaves `pr-<n>`).
-That tag moves with each such push and `pr-image-cleanup.yml` deletes every
-`pr-<n>`-prefixed tag when the PR closes. A fork's PR builds the image and
-pushes nothing — its token is read-only. Slack creds come from env
-(`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`), validated via `auth.test` on boot; may
-be platform credential sentinels (`__nexus_cred:<uuid>__`) rewritten by the MITM
-proxy.
+One `AGENT_ID` per container, with embedded SQLite and sqlite-vec at
+`file:/data/agent.db`, and one LLM provider per container (`LLM_PROVIDER`).
+`docs/docker.md` lists the image tags. `docs/configuration.md` (Provider
+selection, Credentials, Models, Memory embeddings, Voice) and the headers in
+`lib/llm-providers/` describe each vendor. These rules hold across vendors:
 
-One LLM provider per container, selected by `LLM_PROVIDER` (`bedrock`
-default, `azure`, `bedrock-mantle`, `openai`, `openrouter`, `anthropic`, or
-`litellm`). `bedrock`, `azure`, `bedrock-mantle` and `anthropic` serve
-**Claude**; `openai` serves OpenAI models, `openrouter` whatever vendor its
-`vendor/model` id names, and `litellm` whatever an operator's alias routes to.
-**Bedrock** via Bearer API key (`AWS_BEARER_TOKEN_BEDROCK`) — the SDK
-auto-selects Bearer over SigV4 when set. **Azure = Claude via Microsoft
-Foundry**: chat/classification
-speak the Anthropic Messages API at
-`https://{AZURE_RESOURCE_NAME}.services.ai.azure.com/anthropic/v1/messages`
-with `AZURE_API_KEY` sent as `x-api-key` (may be a `__nexus_cred:<uuid>__`
-sentinel); model IDs are Foundry deployment names (defaults
-`claude-opus-5` / `claude-haiku-5-5`). Azure embeddings come from an
-Azure OpenAI `text-embedding-3` deployment on the same resource
-(default `text-embedding-3-small`; fails open if the deployment is
-absent, or set `AZURE_EMBEDDING_MODEL_ID=''` to skip).
-**Bedrock Mantle** is AWS's second inference endpoint, a *separate provider*
-rather than a Bedrock variant because it serves neither InvokeModel nor
-Converse: chat/classification speak the Anthropic Messages API at
-`https://bedrock-mantle.{AWS_REGION}.api.aws/anthropic/v1/messages`, reusing
-`AWS_BEARER_TOKEN_BEDROCK` as `x-api-key` (**required** direct — there is no
-SigV4 path on that surface). Its model IDs are **bare** Bedrock IDs (defaults
-`anthropic.claude-opus-5` / `anthropic.claude-haiku-4-5`) since
-mantle has no cross-region inference profiles; the provider strips a `us.`/
-`eu.`/`global.` prefix off per-agent overrides rather than 400ing. Mantle
-serves no embedding models, so memory embeddings stay on Titan over
-bedrock-runtime (`BEDROCK_MANTLE_EMBEDDING_MODEL_ID=''` to skip).
-**OpenAI** is the one vendor not serving Claude: chat/classification speak the
-OpenAI Responses API (defaults `gpt-5.6-sol` / `gpt-5.6-luna`) and embeddings
-`text-embedding-3-small` truncated to 1024 dims (`OPENAI_EMBEDDING_MODEL_ID=''`
-to skip) — one surface, one key (`OPENAI_API_KEY`, shared with voice meetings;
-may be a `__nexus_cred:<uuid>__` sentinel since it only rides a header). The
-provider declares `classificationProviderOptions: { openai: { reasoningEffort:
-'none' } }` plus empty gate sampling params — the gates omit `temperature` on
-OpenAI rather than track which model/SDK combination accepts it — so their
-tiny token budgets stay valid on a GPT-5.x classification model, and the empty
-cache-point fragment (OpenAI prompt caching is automatic — no breakpoints).
-**OpenRouter** is a reseller: one key reaches hundreds of models across dozens
-of vendors, direct at `https://openrouter.ai/api/v1` with `OPENROUTER_API_KEY`
-(spelled out because the SDK's default is api.openai.com, where a
-`vendor/model` id does not resolve) or through the gateway, which holds the key
-like every other vendor. Its API is OpenAI-compatible — it serves `/responses`
-alongside `/chat/completions` — so it and `openai` are both built from
-`lib/llm-providers/openai-compatible.ts` — the Responses dispatcher, the empty
-cache point and the three GPT-5.x gate declarations — while each keeps its own
-factory for what differs: the mount, the credential, the startup log line, and
-model ids that must be `vendor/model` (defaults `openai/gpt-5.6-sol` /
-`openai/gpt-5.6-luna`). Embeddings default to **off**: OpenRouter routes
-several vendors' embedding models whose native dimensionalities differ, while
-the index is fixed at 1024, so no id is right by default
-(`OPENROUTER_EMBEDDING_MODEL_ID=openai/text-embedding-3-small` turns them on).
-The gate declarations and the empty cache point are written for the GPT-5.x
-defaults; a `vendor/model` naming Anthropic or Gemini runs uncached, since
-their caching needs explicit markers the OpenAI SDK cannot send.
-**Anthropic** is the first-party API: chat/classification speak the Anthropic
-Messages API direct to `api.anthropic.com` (or `ANTHROPIC_BASE_URL`) with
-`ANTHROPIC_API_KEY` sent as `x-api-key` (may be a `__nexus_cred:<uuid>__`
-sentinel); model IDs are bare first-party names (defaults `claude-opus-5` /
-`claude-haiku-5-5`). It is the one **direct-only** vendor — no gateway mount
-serves api.anthropic.com, so the key is always required and `nexusChatBaseUrl`
-resolves to null even with `NEXUS_API_URL` set. Anthropic serves no embedding
-models; under it the embedding provider defaults to `openai` when
-`OPENAI_API_KEY` is set or the gateway can hold the key (`NEXUS_API_URL`
-set), else `none`.
-**LiteLLM** is an operator's own LiteLLM proxy, spoken to in the Anthropic
-Messages format: direct at `LITELLM_BASE_URL` with `LITELLM_API_KEY` as
-`x-api-key`, or through the gateway's LiteLLM backend, which meters it by the
-cost LiteLLM reports. Lens Agents' Prism template passes the project's backend
-id through as `LLM_PROVIDER`, so this name matches the gateway's. Model ids are
-the operator's aliases, defaulting to the first-party names of the default
-models (`claude-opus-5-5` / `claude-haiku-5-5`), and the provider's
-`startupCheck` logs the proxy's model list when either alias is not served. An alias can route to a
-non-Anthropic upstream, so structured output uses `jsonTool` and the gates send
-no temperature. Embeddings default to `none`.
-Memory embeddings are their own feature (`lib/embedding-providers/`), selected
-by `EMBEDDING_PROVIDER` (`bedrock` | `azure-openai` | `openai` | `openrouter`
-| `none`; unset derives the chat vendor's default) — decoupled from
-`LLM_PROVIDER` so a chat vendor without embedding models borrows another's,
-and a future embedding vendor (e.g. Voyage AI) lands without touching chat
-code. Every provider but anthropic can run direct or through the Lens Agents
-LLM gateway — routing is automatic when `NEXUS_API_URL` is set
-(`…/llm/bedrock/{region}` for Bedrock; Azure chat rides
-`…/llm/azure/anthropic/v1` and Azure embeddings
-`…/llm/azure/openai/v1`; mantle chat rides
-`…/llm/bedrock-mantle/anthropic/{region}/v1` while its embeddings stay on the
-bedrock mount; openai chat, classification and embeddings all ride
-`…/llm/openai/v1`, a gateway backend; openrouter rides
-`…/llm/openrouter/openai/v1` — a distinct mount because the managed-inference
-gate 403s a path whose backend is not the one the project's policy selected;
-litellm rides `…/llm/litellm/anthropic/v1` for the same reason;
-the gateway holds the platform credentials, so no local LLM key is needed on that path). Voice Realtime resolves its endpoint and credential independently: explicit
-voice settings, capability-based managed discovery (`lib/managed-realtime.ts`),
-then eligible direct OpenAI credentials. Managed selection is primary first, then
-authored provider order; OpenAI and Azure support Realtime. Chat compatibility
-alone does not qualify OpenRouter or Mantle for voice. Endpoint and credential
-are selected together, and connection errors never trigger provider failover.
-`config.ts` resolves each vendor's endpoint once, in this order: the explicit
-`*_BASE_URL`, else the gateway mount, else the vendor's own host. A factory
-receives that endpoint and chooses nothing. The keyless path follows an origin
-comparison (`isGatewayEndpoint`) rather than the presence of `NEXUS_API_URL`: an
-endpoint on the gateway host sends a decoy key, since the gateway injects the
-real one, and an endpoint anywhere else needs a local key.
+- A fork's PR builds the image and pushes nothing, because its token is
+  read-only. `pr-image-cleanup.yml` deletes the `pr-<n>` tags when the PR
+  closes.
+- `config.ts` resolves each vendor's endpoint once: the explicit `*_BASE_URL`,
+  else the gateway mount, else the vendor's own host. A factory receives that
+  endpoint and chooses nothing.
+- The keyless path follows an origin comparison (`isGatewayEndpoint`), not the
+  presence of `NEXUS_API_URL`. An endpoint on the gateway host sends a decoy
+  key, since the gateway injects the real one. An endpoint anywhere else needs a
+  local key.
+- openrouter and litellm each have a distinct gateway mount, because the
+  managed-inference gate answers 403 for a path whose backend is not the one
+  the project's policy selected.
+- `anthropic` is the one direct-only vendor, and its key is always required.
+  Mantle requires `AWS_BEARER_TOKEN_BEDROCK` direct, since that surface has no
+  SigV4 path, and it strips a `us.` / `eu.` / `global.` prefix off a per-agent
+  model rather than return a 400.
+- LiteLLM structured output uses `jsonTool`, since an alias can route to a
+  non-Anthropic upstream. OpenRouter model ids are `vendor/model`.
+- Lens Agents' Prism template passes the project's backend id through as
+  `LLM_PROVIDER`, so a provider name matches the gateway's.
+- Memory embeddings are their own seam (`EMBEDDING_PROVIDER`,
+  `lib/embedding-providers/`), so a chat vendor without embedding models borrows
+  another's, and a new embedding vendor changes no chat code.
+- Voice Realtime selects its endpoint and credential together, and a connection
+  error never triggers provider failover.
 
 ## SEA binaries — Node 22 pin
 
@@ -830,8 +748,8 @@ locally.
    clients — the bundled web SPA and `prism-cli` (not a backend): chat and
    thread/message CRUD, heartbeat start/stop/trigger + status, cron
    schedule/unschedule, Slack link/verification codes + mapping queries and
-   mutations, and skills list/run. The Slack-specific endpoints are
-   detailed in the "Management API Endpoints (for Slack)" table below.
+   mutations, and skills list/run. The Slack and Teams routes are listed
+   under **Management API Endpoints** below.
 
 ### Tools
 
@@ -910,273 +828,60 @@ When that request is answered, it records the model (`recordDeferralRefusal`),
 and every later request to it sends every tool in full until the process
 restarts; loads replay as text.
 
-## Key Services
+## Owners and seams
 
-| Service | File | Purpose |
-|---------|------|---------|
-| **invokeStream** | `invoke.ts` | Streaming primitive: builds context, collects tools, calls `generateText()` with step limit and early stopping, yields each `InvokeStep` as `onStepFinish` fires. Errors are yielded as friendly steps (via `buildErrorStep`) rather than thrown. Bridges the SDK's push-based callback into async iteration via `utils/async-channel.ts`. |
-| **invoke** | `invoke.ts` | Thin aggregating wrapper around `invokeStream()`: drains the step stream into a single `InvokeResponse`. Used by callers that need the full result before acting (heartbeat, cron, subagent/task tool). |
-| **selectTurnModel** | `lib/model-routing.ts` | The one owner of which model a turn runs on. Fixed mode runs the per-mode model columns. Auto mode runs one of the agent's small / medium / large tiers (`resolveModelSelection` merges the columns with `MODEL_MODE` and `AUTO_MODEL_*`), labelled by the classification model with `purpose: 'model-routing'`. With a medium tier offered, medium is the everyday tier and the classifier's default when unsure, and large is kept for the hardest turns; without it, unsure means large. A failed or unknown label runs large; a tier whose window cannot hold the thread plus the incoming request is not offered. A thread holds its tier while the newest invoke row of it in `llm_calls` is younger than its cache's lifetime (`cacheTtlMs`). Up on any turn, down only on a first turn, after compaction or past that, since a switch reads the whole thread cold on the incoming model |
-| **ConversationEngineService** | `services/conversation-engine.service.ts` | Chat flow orchestration: thread management, iterates `invokeStream()` directly and publishes each text-bearing step the moment it arrives, delivers via local `messageDeliveryService` |
-| **MessageDeliveryService** | `services/message-delivery.service.ts` | Unified message publish: stores via `conversationService`, delivers via channel adapters (channel-scoped for user messages, broadcast for autonomous) |
-| **DeliveryTargetService** | `services/delivery-target.service.ts` | `ceiling`, the one owner of where a heartbeat, unbound scheduled-task or webhook run may post (`DELIVER_TARGETS`, plus chosen linked channels); delivers a message the runtime posts for such a run (a failure, a budget notice, a deliver-only template) to that target; checks a channel list a write gives |
-| **ThreadTurnService** | `services/thread-turn.service.ts` | The one per-thread primitive: every model invocation on a thread serializes on its mutex (FIFO — chat turns and goal turns alike), and a chat turn *claims* the thread, so a message arriving from the claim until the exchange ends is handed to that turn instead of starting a second one. Channel-agnostic — transports go through the engine, never here directly |
-| **ContextService** | `services/context.service.ts` | Builds agent context from local database: agent data via `agentWorkspaceService.getAgentById()` and conversation history via Prisma |
-| **ConversationService** | `services/conversation.service.ts` | Thread and message CRUD via Prisma, pluggable thread providers (the database by default, a live-read provider per `ThreadSource` that a channel registers in `index.ts`) |
-| **AgentWorkspaceService** | `services/agent-workspace.service.ts` | Agent CRUD, ownership validation, platform token management, subagent relationships. `writeWorkspaceDoc` is the one write path for an identity document — column plus revision in one transaction — and `rollbackWorkspaceDoc` the restore |
-| **DocumentRevisionService** | `services/document-revision.service.ts` | Identity-document revisions: append one per accepted write, the history of one document (with the drift verdict), one revision's content, and the seed rows a new agent gets. Bounded at `MAX_REVISIONS_PER_DOCUMENT` (500) per document, trimmed in the insert's transaction |
-| **AgentStatusService** | `services/agent-status.service.ts` | Direct Prisma writes for agent fields (heartbeat schedule, heartbeat status) |
-| **HeartbeatService** | `services/heartbeat.service.ts` | Always-on monitoring loop with in-process timers, full-text duplicate suppression, Slack-triggered heartbeats. The interval is measured from the last run (see **Heartbeat Design → Schedule**) |
-| **CronSchedulerService** | `services/cron-scheduler.service.ts` | Scheduled task execution using node-cron and setTimeout; reads every recurring schedule in the agent's time zone (`useTimezone`, set at boot and by the settings tool, which re-registers the running jobs); manages cron task state directly via Prisma (list, edit, update run timestamps, delete); an edit and a one-shot's start take the same per-task lock, and an edit of a one-shot that has started is refused; skips a tick that would overlap a still-running execution of the same task; an unbound run reaches people only through what the agent posts with `send_message` inside the task's ceiling, and the runtime posts only a run that ended in an error or a risk-blocked call; a bound run replies in its conversation, and an empty reply is not delivered |
-| **SlackAdapterService** | `services/slack-adapter.service.ts` | Full Slack implementation: Bolt apps, Socket Mode, message handling, verification codes |
-| **SlackMappingService** | `services/slack-mapping.service.ts` | SlackMapping CRUD for user and channel mappings via Prisma |
-| **ThreadReplyClassifierService** | `services/thread-reply-classifier.service.ts` | Respond or ignore for a reply without a mention, in a chat thread the bot takes part in. Each adapter owns its participation rule and hands over the thread's lines with each author's name and kind; the classifier reads the root, the window before the judged line and the agent's name and role. One structured-output call on the classification model, tracing off, fail-open to `respond`; owns each platform's `<platform> thread classification failed` event and `<platform>-thread-gate` purpose |
-| **TeamsAdapterService** | `services/teams/teams-adapter.service.ts` | Microsoft Teams channel adapter on the Teams SDK (`@microsoft/teams.apps`). Inbound: Azure Bot Service POSTs activities to `/agents/teams/messages` on a listener of its own (`TEAMS_PORT`, default 3979, bound to `PRISM_HOST`) that serves that route alone, so it is the one port a deployment publishes — a Lens Agents `public` port has no path filter. The adapter hands an `http.Server` to `ExpressAdapter` and listens on it itself, since `app.start()` binds every interface; the SDK validates the Bot Framework JWT before the handler runs. The handler acks fast (fire-and-forget; the typing cue goes out once the adapter knows it answers) because a Prism turn runs minutes against Bot Framework's ~15s window; every reply is a **proactive send** addressed by a stored conversation id (`app.send`/`app.reply` — never a persisted serviceUrl, which is attacker-suppliable). Channel activities carry the thread root as a `;messageid=` suffix on `conversation.id`: stripped for mapping storage/lookup, kept as the reply thread root. The manifest's `ChannelMessage.Read.Group` permission makes Teams deliver every channel message: one that @mentions the bot (a mention entity naming `recipient.id`) runs a turn, a reply in a reply chain that already has a thread row goes to `threadReplyClassifierService` (stored in the thread when it is not answered, so the next turn and the next classification read it), and every other message is ignored. Broadcast = all DM mappings + the one main channel (flagged-else-oldest). Inbound files go through `teams-attachments.ts`, one credential per source: a personal-chat file's pre-authenticated SharePoint `downloadUrl` gets none, a pasted image gets the bot token (Bot Framework attachment hosts only) or the Graph token (`hostedContents` only), and a channel file goes through Graph `/shares`, which needs an admin-granted `Files.Read.All`; every failed read becomes a runtime notice and the turn runs anyway. Outbound files are download links to `/agents/attachments/:id` at `config.publicUrl`, else `localhost:PORT`. v1 defers Adaptive Cards/feedback, file uploads into Teams, reactions, group chats, and a live thread provider (threads stay `ThreadSource.DATABASE` — Teams pushes every activity, so no Slack-style read-consistency wait) |
-| **TeamsMappingService** | `services/teams/teams-mapping.service.ts` | TeamsMapping CRUD for user and channel mappings via Prisma (mirror of SlackMappingService; both mapping kinds persist the conversation id proactive sends are addressed to) |
-| **SlackMessageQueueService** | `services/slack-message-queue.service.ts` | Pending Slack messages for heartbeat triggers: read by the heartbeat that answers them, removed when that heartbeat ends |
-| **PendingWorkService** | `services/pending-work.service.ts` | `pending_work`: the work the agent accepted and has not finished (`coding-task`, `chat`, `webhook`, `cron`, `heartbeat`). `begin` before the work starts, `end` when it ends, `finish` when its result reached the user. At boot `interrupted` reads the rows before the channels connect, and `resumeAll` gives each owner its rows back, at most `MAX_RESUME_ATTEMPTS` (3) boots per row, and the rows past that bound, which the owner closes. `shutdown()` aborts `shutdownSignal` and freezes `update`, `settle` and `end`, so the work a shutdown stops is continued as it stood |
-| **SlackHeartbeatTriggerService** | `services/slack-heartbeat-trigger.service.ts` | CRUD for per-agent Slack heartbeat trigger config, atomic claim logic |
-| **SessionManagerService** | `services/session-manager.service.ts` | Daily session resets, idle timeout management |
-| **ToolLedgerService** | `services/tool-ledger.service.ts` | Each conversation's declared tool list and its tool-change announcements, in memory per thread and model (see **Declared tools**) |
-| **MemoryManagerService** | `services/memory-manager.service.ts` | Two-layer memory: daily append-only logs + curated long-term key-value store |
-| **ComputerService** | `services/computer/computer.service.ts` | Every computer the agent can use: the runtime's own desktop (`local`) and the registered remote computers, each a `ComputerSession`. Picks the computer a tool call names, or the run's default; moves an invocation's ownership when it switches computer; owns `ComputerSummary` (the REST list and the chat `computer` event) and the per-turn computers notice. Removing a computer retires its access gate, so the runs on it fail at their next step without their turns being cancelled |
-| **RemoteComputerService** | `services/computer/remote/remote-computer.service.ts` | `remote_computers` CRUD with an in-memory copy, since the tools block reads whether any exist on every turn; adding again with the same `installationId` returns the same computer. Owns `computer added` / `computer removed` |
-| **ComputerLinkEndpoint** | `services/computer/remote/computer-link-endpoint.ts` | `/api/computer-link`: the origin rule, `?computer=` lookup (404 when unknown), `initialize` with the version check, pings, the person's `local.hold` / `local.release` (secure while a help request waits on that computer), and `computer.state` to the client. Owns `computer connected` / `computer disconnected` |
-| **MeetingBotService** | `services/meeting/meeting-bot.service.ts` | Live voice meetings, one call at a time: a Chromium signed into a Google account on a virtual display with PulseAudio devices, joined to an OpenAI Realtime session that runs as the agent with its system prompt and its `meeting`-mode tools (`tool-bridge.ts`). Everything platform-specific, from sign-in and admission to the participants panel and the call's chat, sits behind `MeetingProvider` in `providers/google-meet/`, so a new platform is one folder. In a group call `addressed-audio-gate.ts` asks the same Realtime session whether each utterance was said to the agent, and fails closed. Nothing about a call is stored in a conversation thread, and speech reaches the log only when `MEETING_TRANSCRIPT_LOGGING` is `full` |
-| **VoiceChatService** | `services/voice/voice-chat.service.ts` | A voice conversation with one client and no meeting: the same `VoiceConversation` core, with pcm16 audio as binary frames on the chat WebSocket (`socket-audio.ts`), so a call works wherever chat works, the installed binary included. The client picks `open` (answer every utterance) or `addressed` (the meeting gate) on `voice_start`, and the gateway refuses any other mode. `voice-session-lock.ts` allows one voice session at a time across this service and `MeetingBotService`, and the call reads the recent messages of the conversation it starts from (the single conversation in `single` thread mode). A call that ends with the session open and the user having spoken stores one "Voice call summary:" message in that conversation, written by the call's own Realtime session; the lock is held until it is stored or `SUMMARY_DEADLINE_MS` (15 s) passes. Dictation (`dictation-session.ts`) shares the socket but not the lock: a transcription-only Realtime session that turns speech into a message |
-| **PluginCatalogService** | `services/plugin-catalog.service.ts` | Discovers Agent Plugins under `<DATA>/plugins`, validates each `plugin.json`, records per-plugin diagnostics |
-| **PluginMcpService** | `services/plugin-mcp.service.ts` | Connects each plugin's MCP servers (lazily, once per server), qualifies and orders their tools, closes them at shutdown |
-| **WebSocketGatewayService** | `services/websocket-gateway.service.ts` | The chat socket, protocol v2 (`protocol/chat-protocol.ts`, `docs/websocket-protocol.md`): the `hello`/`welcome` handshake and resume, validated requests answered `ack`/`nack`, connection limits, and voice and dictation on the same socket |
-| **EventStreamService** | `services/event-stream.service.ts` | The numbered stream every chat client reads, and the bounded window a reconnecting client is replayed from |
-| **InboundMessageService** | `services/inbound-message.service.ts` | A chat message from the socket, or another agent's message from `POST /agents/agent-messages`: stored under the sender's id first, confirmed, then answered one turn at a time for the agent; and each conversation's `queued`/`running`/`idle` state. A delivery sent again is the same message in whichever conversation holds it, and its turn is scheduled from the stored row; an id that names another sender's message, or another message id, is refused |
-| **AgentConversationService** | `services/agent-conversation.service.ts` | Which web conversation holds each conversation between agents: `runtime_state` `agentConversation:<conversationId>`, set by each delivery. A delivery goes there while a client can still write to it, else to the one conversation or the newest |
-| **isAgentIdle** | `services/agent-activity.ts` | Whether nothing runs or waits: model calls, live exchanges, working threads, cron, goals, compaction, meetings, voice, and processes a tool started. The updater defers to it, and `GET /agents/state` reports it |
-| **ProgramStatusService** | `services/program-status.service.ts` | The agent's state as OSC 7501 reports on stdout, for LNS and terminals, and `clear` at process exit |
-| **WebSocketAdapterService** | `services/websocket-adapter.service.ts` | ChannelAdapter for WebSocket delivery, calls local gateway directly |
-| **BackendClient** | `lib/backend-client.ts` | Typed HTTP client for backend internal REST API: access control (`canAccessAgent()`) + SlackConnection read-only access (`getActiveSlackConnections()`, `getSlackConnection()`) |
+The tree under `src/` and each file's header comment describe the modules, and
+`docs/` describes the features. These owners and seams hold across the tree:
 
-## File Organization
-
-```
-src/
-├── index.ts                    # Entry point: start server, init heartbeats & cron
-├── server.ts                   # Express app: /invoke, /health, /agents/* routes
-├── config.ts                   # Centralized env var config
-├── invoke.ts                   # Unified LLM invocation: `invokeStream()` (streaming generator) + `invoke()` (drain wrapper)
-├── constants.ts                # Shared constants (STEP_LIMIT, MAX_OUTPUT_TOKENS)
-├── types.ts                    # Request/response types (ChatRequest, InvokeRequest, InvokeStep with optional InvokeError, etc.)
-├── services/
-│   ├── conversation-engine.service.ts # Chat flow orchestration: thread mgmt, iterates invokeStream() with per-step publish, local message delivery
-│   ├── message-delivery.service.ts # Unified message publish: store + channel-scoped or broadcast delivery
-│   ├── delivery-target.service.ts # A webhook's or a scheduled task's configured target: all, chat, a channel (or chosen linked channels of it), none
-│   ├── thread-turn.service.ts  # Per-thread mutex + mid-turn inbox (turn steering, coalesced follow-ups)
-│   ├── agent-activity.ts       # `isAgentIdle`: whether nothing runs or waits (the updater, `GET /agents/state`)
-│   ├── agent-workspace.service.ts # Agent CRUD, ownership validation, platform tokens, subagents; `writeWorkspaceDoc` / `rollbackWorkspaceDoc`, the one write path for an identity document
-│   ├── document-revision.service.ts # Identity-document revisions: record, history (with drift), read one, restore, 500-per-document bound
-│   ├── agent-status.service.ts  # Direct Prisma writes for agent fields (heartbeat schedule/status)
-│   ├── websocket-gateway.service.ts # The chat socket: handshake, resume, requests, limits, voice and dictation
-│   ├── websocket-adapter.service.ts # ChannelAdapter for WebSocket, calls local gateway
-│   ├── channel-adapter.interface.ts # Channel adapter contract (ChannelAdapter interface)
-│   ├── context.service.ts      # Builds agent context (agent data from backend + conversation from DB)
-│   ├── llm-usage.service.ts    # Token spend: aggregates `llm_calls` over a window
-│   ├── tool-call-history.service.ts # Pages stored tool calls out of the toolCalls column
-│   ├── webhook-run.service.ts  # One `webhook_runs` row per accepted webhook event: queued, running, its result, the message it delivered
-│   ├── llm-call.service.ts     # Writes one `llm_calls` row per model call (fire-and-forget)
-│   ├── conversation.service.ts # Thread/message CRUD via Prisma, pluggable thread providers
-│   ├── attachment.service.ts   # All MessageAttachment DB access + media-type detection; content as files (lib/media-store.ts), metadata stubs to the model
-│   ├── heartbeat.service.ts    # Heartbeat timer management, execution, and Slack-triggered heartbeats
-│   ├── heartbeat-schedule.ts   # When the next heartbeat is due and how long to sleep for it (pure)
-│   ├── cron-scheduler.service.ts # Cron job scheduling and execution, and `updateTask`, the one task edit
-│   ├── cron-schedule.ts        # Schedule text to a cron expression or a one-shot time (pure)
-│   ├── slack-adapter.service.ts   # Full Slack implementation: Bolt apps, Socket Mode, message handling
-│   ├── slack-mapping.service.ts   # SlackMapping CRUD for user & channel mappings via Prisma
-│   ├── thread-reply-classifier.service.ts # Respond or ignore for an unmentioned thread reply (Slack and Teams)
-│   ├── teams/                  # Microsoft Teams channel (mirrors the Slack services)
-│   │   ├── teams-adapter.service.ts # SDK webhook mounted on our Express app, proactive sends
-│   │   ├── teams-attachments.ts # Inbound files: which URL, which credential, what a failed read becomes
-│   │   └── teams-mapping.service.ts # TeamsMapping CRUD for user & channel mappings via Prisma
-│   ├── slack-message-queue.service.ts # Pending Slack messages, removed once the heartbeat that read them ends
-│   ├── pending-work.service.ts # Accepted, unfinished work that a restart continues: begin, end, resume at boot
-│   ├── resume-replies.ts       # The `chat` owner's boot step: one resumed exchange per thread that was owed a reply
-│   ├── slack-heartbeat-trigger.service.ts # CRUD for per-agent Slack heartbeat trigger config, atomic claim logic
-│   ├── session-manager.service.ts # Daily session resets, idle timeout management
-│   ├── tool-ledger.service.ts  # Each conversation's declared tool list and its tool-change announcements
-│   ├── program-status.service.ts # The agent's state as OSC 7501 reports on stdout
-│   ├── memory-manager.service.ts  # Two-layer memory system (daily logs + curated key-value store)
-│   ├── meeting/                # Live voice meetings (OpenAI Realtime API)
-│   │   ├── meeting-bot.service.ts    # Lifecycle owner: one call at a time, teardown, telemetry
-│   │   ├── meeting-provider.interface.ts # The only platform-specific seam (Teams/Zoom later)
-│   │   ├── providers/google-meet/    # Everything Google-specific lives here
-│   │   │   ├── index.ts        # The provider: join, admission, participants, leave
-│   │   │   ├── participants.ts # Who is here and who is talking, off the panel (per-viewer)
-│   │   │   ├── with-timeout.ts # Deadline for a read from a live page, shared by the probes
-│   │   │   └── sign-in.ts      # Google account auth (never throws; `force` skips the probe)
-│   │   ├── audio-stack.ts      # Per-meeting Xvfb + PulseAudio null-sinks + parec/pacat
-│   │   ├── browser-stack.ts    # A browser on a virtual display. No auth — that's the provider's
-│   │   ├── voice-conversation.ts # Wires session + playback + barge-in + policy + tools
-│   │   ├── realtime-session.ts # Realtime WebSocket protocol (semantic VAD, truncation)
-│   │   ├── tool-bridge.ts      # collectTools('meeting') → Realtime function tools
-│   │   ├── audio-playback.ts   # Paced playback + accurate played-ms for truncation
-│   │   ├── barge-in.ts         # Yield the floor to humans, tolerate backchannels
-│   │   ├── response-policy.ts  # Whether to answer at all: open room vs gate it
-│   │   ├── gate-stats.ts      # Numbers derived from the gate counters, shared by both owners
-│   │   ├── addressed-audio-gate.ts # "Was that said to me?" — asked of the audio, one word back
-│   │   ├── transcript-log.ts   # Whether a log line may carry an utterance at all (`MEETING_TRANSCRIPT_LOGGING`)
-│   │   ├── resampler.ts        # 48k⇄24k pcm16 with anti-alias FIR
-│   │   └── openai-endpoint.ts  # Managed or direct Realtime WebSocket transport
-│   ├── coding-agent-sign-in/   # Signing a coding agent in to the user's own Claude or ChatGPT subscription: one attempt per agent driving `claude auth login` / `codex login --device-auth` (cli-sign-in.ts), the account and sign-out (coding-agent-account.ts), and the chat card with the turn after it (coding-agent-sign-in-request.service.ts). The code goes to the CLI's stdin only
-│   ├── computer/               # The agent's computers: its own desktop and remote ones
-│   │   ├── computer.ts         # The `Computer` contract the tools, viewers and help act on
-│   │   ├── computer.service.ts # The set of computers, picking one per call, summaries, the turn notice
-│   │   ├── computer-session.ts # One computer: access, viewers, screen stream, takeover
-│   │   ├── agent-computer.ts   # The runtime's own desktop and browser
-│   │   └── remote/             # Computers that link in on `/api/computer-link`
-│   │       ├── link-protocol.ts      # Schemas, close codes and frame tags of the link
-│   │       ├── computer-link.ts      # JSON-RPC 2.0 over one link, with deadlines
-│   │       ├── computer-link-endpoint.ts # The upgrade, `initialize`, liveness, the person at the computer
-│   │       ├── remote-computer.ts    # `Computer` over a link: coordinates, OCR, viewer input
-│   │       └── remote-computer.service.ts # The `remote_computers` rows, cached in memory
-│   ├── voice/                  # A voice conversation with one client, on the chat socket
-│   │   ├── voice-chat.service.ts    # Lifecycle owner: one session, teardown, telemetry
-│   │   ├── socket-audio.ts     # Audio in and out as binary frames, pcm16 mono 24 kHz
-│   │   ├── voice-session-lock.ts # The one voice, shared with the meeting owner
-│   │   ├── dictation-session.ts # Speech to a message: a transcription-only Realtime session
-│   │   └── voice-instructions.ts # System prompt + agent name for a voice session
-│   ├── skill-catalog.service.ts   # Agent Skills discovery (workspace, global, plugin roots)
-│   ├── plugin-catalog.service.ts  # Agent Plugins discovery + plugin.json validation
-│   ├── plugin-mcp-config.ts       # mcp.json parsing/validation (pure; no SDK, no I/O)
-│   ├── plugin-mcp.service.ts      # Plugin MCP connections, tool naming, shutdown
-│   ├── thread-provider.interface.ts # ThreadMessageProvider abstraction
-│   └── providers/
-│       ├── database-thread.provider.ts # Default: reads messages from PostgreSQL
-│       └── slack-thread.provider.ts    # Slack: reads messages via local Bolt apps (direct Slack API)
-├── tools/                      # Built-in AI SDK tools (no MCP round trip)
-│   ├── memory.ts               # Memory tools (search, write, delete)
-│   ├── conversation-history.ts # read_compacted_history: the messages a compaction summary replaced, for any thread-bound run
-│   ├── agent-config.ts         # Agent config tools (soul, user, memory, heartbeat, vision, settings)
-│   ├── cron.ts                 # Cron task tools (schedule, list, edit, delete)
-│   ├── goals.ts                # Goal tools (create, get)
-│   ├── coding-agent-sign-in.ts # coding_agent_sign_in (chat only): posts the card that signs a coding agent in to the user's own subscription
-│   ├── attachments.ts          # hydrate_attachment (stored bytes → workspace file) + view_attachment (image/PDF into the turn) + `reapScratchDirs`
-│   ├── share-file.ts           # Deliver a workspace file to the user as an attachment
-│   ├── meeting.ts              # Voice meetings (join, leave, set the microphone, status, speaker, read and send chat)
-│   ├── shell/                  # shell_exec/read/write/edit, spawn+stdio, coding_agent (+ the task manager behind it)
-│   ├── skills/                 # The `skill` tool (loads a SKILL.md body on demand)
-│   └── web/                    # web_fetch: one GET of a public page from the runtime process, HTML as markdown
-├── routes/
-│   ├── management.ts           # Management API for backend to push heartbeat/slack-heartbeat-trigger events
-│   ├── activity.ts             # Activity page reads: token totals, paged tool calls, paged webhook runs
-│   ├── agent-messages.ts       # POST /agents/agent-messages on AGENT_MESSAGES_PORT: another agent's message, stored and scheduled (403 for a person)
-│   ├── agent-state.ts          # GET /agents/state: working or idle
-│   ├── cron-tasks.ts           # Scheduled tasks: list, create, edit, delete; each write re-registers the task
-│   ├── coding-agents.ts        # The coding agents' subscriptions: list, sign in (start, read, Claude's code), sign out (/agents/coding-agents)
-│   ├── document-revisions.ts   # Per identity document: the write, the history, one revision with its content, and the restore
-│   └── model-selection.ts      # Fixed or Auto model selection and the three Auto tiers (GET/PATCH /agents/model-selection)
-├── utils/
-│   ├── async-channel.ts        # Bridges SDK push-based onStepFinish into async iteration (used by invokeStream)
-│   ├── slack-formatter.ts      # Slack message formatting utilities (mrkdwn conversion)
-│   ├── teams-formatter.ts      # Teams message formatting (markdown; tables pass through, unlike Slack)
-│   └── text-chunker.ts         # Channel-agnostic long-text chunking shared by both formatters
-├── lib/
-│   ├── attachment-boot.ts      # Boot-time attachment storage reconciliation, in order: missing media files → content expiry → legacy BLOB backfill
-│   ├── backend-client.ts       # HTTP client for backend internal REST API
-│   ├── workspace-docs.ts       # The seven identity-document columns, their labels, and the actor/method words a revision is described with
-│   ├── llm-providers/          # One folder per chat vendor, plus the shared contract and the selector
-│   │   ├── llm-provider.ts     # Shared `LlmProvider` type: the callable `(modelId) => LanguageModel` contract every vendor factory returns, plus each vendor's `cachePoint` fragment (the Anthropic breakpoint, Converse's own `BEDROCK_CACHE_POINT`, or the empty `NO_CACHE_POINT` — which covers both a vendor that caches without breakpoints and a model whose support is unknown) and the optional `structuredOutputOptions` / `classificationProviderOptions` it declares. The startup log reads this contract for the configured model, so no caller names a vendor to report prompt caching
-│   │   ├── create-provider.ts  # Unified LLM provider factory: picks vendor (bedrock/azure/bedrock-mantle/openai/openrouter/anthropic/litellm), passes each its optional gateway baseURL (anthropic is direct-only, no argument); `missingProviderSettings()`, the variables the selected vendor still needs, which the invoke preflight names to the user
-│   │   ├── bedrock-model-id.ts # `isAnthropicModelId()`: whether a model ID is Claude on Bedrock; import-free so `config.ts` can use it
-│   │   ├── bedrock-shared.ts   # bedrock-runtime plumbing both AWS vendors (and the bedrock embedding provider) need: AWS credential resolution
-│   │   ├── bedrock/
-│   │   │   └── bedrock-provider.ts # AWS Bedrock provider factory: `createBedrockProvider(baseURL?)` (direct, or gateway-routed when baseURL set). Owns which model gets a prompt-cache breakpoint: Claude on the Anthropic Messages branch always, a Converse family only when it is on `CONVERSE_PROMPT_CACHE_FAMILIES` — empty, since no source the runtime can read names one, and a `cachePoint` block on a model without support fails every turn
-│   │   ├── azure/
-│   │   │   └── azure-provider.ts   # Azure provider factory (Claude via MS Foundry, Anthropic Messages API): `createAzureProvider(baseURL?)`
-│   │   ├── bedrock-mantle/
-│   │   │   └── bedrock-mantle-provider.ts # Bedrock Mantle factory (Anthropic Messages surface only; bare model IDs): `createBedrockMantleProvider(baseURL?)`
-│   │   ├── tool-changes.ts     # The models that take mid-conversation tool changes, and the Anthropic fragments for one
-│   │   ├── deferred-tools.ts   # The models that load tools on demand, and each vendor's deferral, `load_tools` and replay (Anthropic, OpenAI, Realtime)
-│   │   ├── openai-compatible.ts # The OpenAI-shaped provider object both OpenAI-surface vendors are built from: Responses dispatcher, empty cache point, the three GPT-5.x gate declarations
-│   │   ├── openai/
-│   │   │   └── openai-provider.ts # OpenAI factory (Responses API; pins gate calls to reasoningEffort 'none'): `createOpenAiProvider(baseURL?)`
-│   │   ├── openrouter/
-│   │   │   └── openrouter-provider.ts # OpenRouter factory (same OpenAI surface; direct at openrouter.ai or the gateway mount, `vendor/model` ids): `createOpenRouterProvider(baseURL?)`
-│   │   ├── anthropic/
-│   │   │   └── anthropic-provider.ts # First-party Anthropic API factory (api.anthropic.com; direct-only, bare model IDs): `createAnthropicProvider()`
-│   │   └── litellm/
-│   │       └── litellm-provider.ts # An operator's LiteLLM proxy (Anthropic Messages surface; aliases pass through; startup model check): `createLiteLlmProvider(baseURL?)`
-│   ├── coding-agents/          # One folder per coding agent, plus the shared contract and the selector (`CODING_AGENT` and per-task `agent`)
-│   │   ├── coding-agent.ts     # The `CodingAgent` contract: `id`, `displayName`, `prepareHome()` and `run(task)`, which returns a `CodingAgentRun` (an event stream of `text` / `session` / `result` with the actions the agent's checks refused, `exited`, `started`, `stop()`). States what the runtime needs and nothing about how an agent is launched
-│   │   ├── cli-run.ts          # `runCli()`: the process plumbing a CLI-shaped adapter calls — spawn, stdout lines through the adapter's parser, exit wait, the closing `result` when the agent reported none, SIGTERM→SIGKILL stop
-│   │   ├── cli-probe.ts        # `probeCli()`: one short, timed run of an agent's CLI for its answer, such as a login status
-│   │   ├── deferred-run.ts     # `deferredRun()`: a run whose process starts after async work; a stop before then aborts that work, and a failure is the closing `result`
-│   │   ├── get-coding-agent.ts # Selector: `config.codingAgent` → adapter, one instance per agent so the adapter that prepared the home runs every task; a `Record` so a config name without an adapter fails to compile
-│   │   ├── bedrock-credentials.ts # Shared AWS credential detection
-│   │   ├── subscription-switch.ts # Whether an agent's tasks run on the subscription in its CLI's home: on after a sign-in from Coding agents, off after sign-out (`runtime_state`, held in memory from boot), or held on by `CLAUDE_CODE_SUBSCRIPTION` / `CODEX_SUBSCRIPTION`
-│   │   ├── subscription.ts     # What tasks and the desktop's terminal share about the switch: its `runtime_state` key, the env flags that hold it on, the not-signed-in message. Imports no config
-│   │   ├── terminal.ts         # `claude` / `codex` in the desktop's terminal: the switch read from the database opened read-only, and the env and args a task would get (`--settings`, the ChatGPT login), with a login check before a session. Imports no config
-│   │   ├── codex/
-│   │   │   ├── credentials.ts             # Which credential a task uses; for `CODEX_SUBSCRIPTION`, the home's saved login (`codex login status`) and `subscriptionEnvironment`
-│   │   │   └── codex-agent.ts             # Codex CLI adapter. With the subscription on (`subscription-switch.ts`), each run asks the home for its login first: a ChatGPT login runs the task with `forced_login_method="chatgpt"`, and anything else fails it
-│   │   └── claude-code/
-│   │       ├── authenticated-home.ts # The home's saved login (`claude auth status`, run in the execution environment): a claude.ai subscription, another login, or none; `subscriptionEnvironment`, the env without the variables that outrank it; and `SUBSCRIPTION_SETTINGS`, the `--settings` that restate them, so a repository's `.claude/settings.json` cannot bring one back
-│   │       ├── credentials.ts # Claude CLI authentication settings
-│   │       ├── home.ts        # Where the CLI keeps its state, resolved off the env the CLI will run with
-│   │       ├── mcp-config.ts  # The task's MCP servers as a `--mcp-config` file: written 0600 in a temp dir of its own, removed before the run's stream ends
-│   │       └── claude-code-agent.ts # The Claude Code adapter: `claude -p --output-format stream-json …` argv (task mode → permission mode, plan-only instruction), the stream-json parser with the result line's `permission_denials`, and the `<DATA>/.claude` home with `CLAUDE_CONFIG_DIR` and the skills symlink. With the subscription on (`subscription-switch.ts`), each run asks the home for its login first: a claude.ai subscription runs the task with `subscriptionEnvironment` and `SUBSCRIPTION_SETTINGS` (`forceLoginMethod: claudeai`, the provider switches and keys restated empty), and anything else fails it
-│   ├── execution-environments/ # Where a command runs and what filesystem it sees, plus the shared contract and the selector
-│   │   ├── execution-environment.ts # The contract: `runShell` / `runProgram` returning an `ExecProcess` (`ended` for exit accounting, `closed` once the pipes drain), `ExecutionFiles`, and `paths()` — the agent's directories in this environment
-│   │   ├── exec-stdio-transport.ts # MCP stdio over `runProgram`, so a plugin's server runs where its files are
-│   │   ├── get-execution-environment.ts # Selector: derives the environment (no setting), one instance per process
-│   │   ├── capture.ts         # The one bounded, timed, cancellable run — `shell_exec` and every probe format their own result out of it
-│   │   ├── leftover-process.ts # Stops a host process group a crashed runtime left running, by its `ProcessMark`
-│   │   ├── storage-migration.ts # Moves the agent's files when the deployment changes environment, either way
-│   │   ├── workspace.ts       # `resolveWorkspace`: the single owner of the per-thread-vs-default fallback
-│   │   ├── local/             # Commands as children of this process, on the filesystem it sees
-│   │   └── docker/            # Commands in a container, and its storage in named volumes
-│   │       ├── detect.ts      # Which environment serves this deployment, in four steps
-│   │       ├── engine.ts      # The `docker` CLI, always run on the host
-│   │       ├── container.ts   # The container's lifetime, which is the runtime's
-│   │       ├── container-lost.ts # One warning when the engine says the container is gone
-│   │       ├── volumes.ts     # The named volumes, their container paths, and `servesPath`
-│   │       ├── docker-files.ts # `ExecutionFiles` over `docker exec`, one call per operation
-│   │       ├── docker-copy.ts # `docker cp` in and out, opening a container for the volumes when none runs
-│   │       ├── docker-env.ts  # What a command inherits; a longer deny-list than local's
-│   │       └── docker-process.ts # `docker exec` under `setsid --wait`, and the pid-file kill
-│   ├── embedding-providers/    # Memory-embedding vendors, a feature of their own decoupled from the chat provider (`EMBEDDING_PROVIDER`)
-│   │   ├── embedding-provider.ts # Shared `EmbeddingProvider` type: `model(modelId)` + the vendor's `providerOptions` fragment carrying the 1024-dim truncation target; `EMBEDDING_DIMENSIONS`
-│   │   ├── create-embedding-provider.ts # Embedding selector: picks vendor (bedrock/azure-openai/openai/openrouter) off `config.embeddingProvider`, passes each its own gateway mount; `none` → null
-│   │   ├── bedrock-embedding-provider.ts # Titan on bedrock-runtime (serves bedrock and bedrock-mantle deployments)
-│   │   ├── azure-openai-embedding-provider.ts # text-embedding-3 deployment on the Foundry resource's Azure OpenAI surface
-│   │   ├── openai-embedding-provider.ts # text-embedding-3 on the OpenAI API
-│   │   └── openrouter-embedding-provider.ts # OpenAI SDK at openrouter.ai (`vendor/model` ids; off by default)
-│   ├── classification.ts       # Classification-gate request factories (`getGateRequest()` for the generateText gates, `getClassificationRequest()` for generateObject) — model + the active vendor's merged `providerOptions`
-│   ├── file-janitor.ts         # Hourly sweep of the durable file stores: orphaned uploads, stale hydrate scratch dirs, over-TTL attachment content, stray media files, over-TTL saved tool outputs
-│   ├── llm-errors.ts           # Single owner of LLM/runtime error → user-facing text (`buildErrorStep`, budget detection)
-│   ├── log-redaction.ts        # The global pino `err` serializer: an allow-list, so no SDK request/response body is ever logged
-│   ├── mcp-client.ts           # MCP tool fetching from MCP servers; which tools are the agent messaging tools (`list_agents`, `message_agent`, by their last name segment)
-│   ├── agent-mcp-servers.ts    # The MCP servers the runtime connects for the agent, as the neutral list a coding task gets
-│   ├── model-call.ts           # The only module calling `generateText`/`generateObject`; records every call's usage
-│   ├── model-routing.ts        # Which model a turn runs on: Fixed, or an Auto tier with the warm-cache hold rule
-│   ├── step-usage.ts           # Token usage: SDK usage → the recorded shape, and folding a turn's steps for the invocation total
-│   ├── media-store.ts          # Attachment bytes as files under `<data dir>/media`: write/read/remove, filename sanitizing, stray-file reaper
-│   ├── public-url.ts           # Which addresses an outbound read may reach: the public internet only, every DNS answer checked when the connection resolves it
-│   ├── html-to-markdown.ts     # A page's main text as markdown (domino builds the tree, Readability on linkedom, then turndown), else its whole body
-│   ├── teams-config.ts         # Env-sourced Teams connection singleton (no network validation — the SDK validates on initialize)
-│   ├── tool-search/            # Deferred tools: whether a request defers (`plan.ts`), the `# Tool Catalog` (`catalog.ts`), the `load_tools` search (`tool-index.ts`)
-│   ├── tool-output-store.ts    # The saved whole copy of an oversized tool result under `<data dir>/tool-outputs`: write/read/remove, TTL reaper. The notice hands the agent the path and it reads the file with the shell. No DB row, so mtime is the whole lifecycle
-│   ├── program-status.ts       # OSC 7501 report encoding: base64 `msg`/`title` cut to the specification's limits
-│   ├── prisma.ts               # Prisma client singleton (runtime database)
-│   ├── prisma-adapter.ts       # The SQLite driver adapter every Prisma client opens the database with
-│   └── tool-names.ts           # Single owner of what a tool may be *called* for a model: charset, no leading digit, 64-char cap (`toModelToolName`, `capToolNames`)
-├── evals/                      # Prompt eval set (`npm run eval:prompts`): scenarios graded on the real prompt, tools and gates
-├── prisma/
-│   └── schema.prisma           # Prisma schema for runtime PostgreSQL database
-└── prompts/
-    ├── context-builder.ts      # System prompt and message construction
-    ├── agent-message-prompt.ts # Another agent's message as the model reads it: `<agent-message …>` or `<agent-notice>`, escaped
-    ├── channel-prompt.ts       # Team-channel behavior instructions, naming the channel as its adapter words it
-    ├── early-stopping-prompt.ts # Prompt for summarizing when step limit is reached
-    └── resume-prompt.ts        # What a model continuing interrupted work is told: the chat notice, the run notice, the coding-task prompt
-```
+- In the runtime, `lib/model-call.ts` is the only module that calls
+  `generateText` / `generateObject`, and it records each call's usage.
+- `selectTurnModel` (`lib/model-routing.ts`) is the one owner of which model a
+  turn runs on. A failed or unknown label runs large. Without a medium tier,
+  unsure means large; with one, unsure means medium.
+- `deliveryTargetService.ceiling` is the one owner of where a heartbeat, unbound
+  scheduled-task or webhook run may post.
+- `cronSchedulerService.updateTask` is the one task edit.
+- `resolveWorkspace` (`lib/execution-environments/workspace.ts`) is the single
+  owner of the per-thread-versus-default workspace fallback.
+- `get-coding-agent.ts` keeps one adapter instance per agent, so the adapter
+  that prepared the home runs every task. It is a `Record`, so a configured name
+  without an adapter fails to compile.
+- `lib/coding-agents/subscription.ts` and `terminal.ts` import no config.
+- `bedrock-model-id.ts` imports nothing, so `config.ts` can use it.
+- A Converse family gets a prompt-cache breakpoint only from
+  `CONVERSE_PROMPT_CACHE_FAMILIES`, because a `cachePoint` block on a model
+  without support fails every turn.
+- Everything platform-specific in a meeting sits behind `MeetingProvider`, and
+  Google code stays in `providers/google-meet/`, so a new platform is one
+  folder. The addressed-audio gate fails closed. No meeting data goes into a
+  conversation thread.
+- `voice-session-lock.ts` allows one voice session at a time across voice chat
+  and meetings; dictation does not take it.
+- One emitter per event: `remoteComputerService` emits `computer added` /
+  `computer removed`, `computerLinkEndpoint` emits `computer connected` /
+  `computer disconnected`, and `threadReplyClassifierService` emits
+  `<platform> thread classification failed`. `computerService` owns
+  `ComputerSummary` (the REST list and the chat `computer` event).
+- Removing a computer retires its access gate: runs on it fail at their next
+  step, and their turns are not cancelled.
+- The Teams bot endpoint has a listener of its own that serves one route,
+  because a Lens Agents `public` port has no path filter. The handler acks at
+  once, since a turn runs minutes against Bot Framework's ~15 s window. Every
+  reply is a proactive send to a stored conversation id, never to a persisted
+  `serviceUrl`, which a caller can forge.
+- A coding-agent sign-in sends the code to the CLI's stdin only. A coding task's
+  MCP config is written 0600 in its own temp dir and removed before the run's
+  stream ends. The subscription `--settings` restate the overriding variables,
+  so a repository's `.claude/settings.json` cannot bring one back.
+- `lib/origin-guard.ts` runs ahead of every route, `/health` included, and on
+  the `/api/ws` handshake. On a loopback bind it requires a loopback `Host`
+  unless the request states `X-Forwarded-Host`, which closes DNS rebinding.
+- The Teams SDK validates the Bot Framework JWT before the handler runs.
+- An outbound read (`lib/public-url.ts`) reaches the public internet only, and
+  every DNS answer is checked.
+- `lib/tool-output-store.ts` keeps no database row; the file's mtime is its
+  whole lifecycle. Compaction keeps those files, since `read_compacted_history`
+  returns the notices that name them.
 
 ## Startup Sequence
 
@@ -1197,96 +902,13 @@ On shutdown, `pendingWorkService.shutdown()` runs first: the work in flight stop
 
 ## Environment Variables
 
-What the operator sets on `docker run`:
+`docs/configuration.md` lists the operator variables and their defaults,
+`.env.example` is the annotated template, and `src/config.ts` reads them.
+`SERVICE_VERSION` is set by the workflows under `.github/workflows/`.
 
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `PORT` | Agent runtime server port | `3003` |
-| `AGENT_MESSAGES_PORT` | Port of the agent-messages listener (`createAgentMessagesApp`), which serves `POST /agents/agent-messages` alone, on the `PRISM_HOST` interface; the main port does not serve it. Must be a port number different from `PORT` and `WEBHOOK_PORT`, or startup stops. Always open; a taken port is logged and the rest of the runtime runs | `3005` |
-| `WEBHOOK_PORT` | Port of the webhook listener (`createWebhookApp`), which serves `POST /agents/webhooks/:name` alone, on the `PRISM_HOST` interface. A literal default, not derived from `PORT`. The receiver service opens the port only while enabled; disabling closes connections and the listener. A taken port reports an error and preserves the saved setting for the next restart | `3004` |
-| `PRISM_HOST` | Interface the HTTP server binds. Loopback by default, and `lib/origin-guard.ts` then requires a loopback `Host` plus a loopback or absent `Origin` on every request — the guard is app-wide, `/health` included, and covers the `/api/ws` handshake — which is what closes DNS rebinding. A request stating `X-Forwarded-Host` is exempt from the loopback-`Host` rule (that is a proxy in front, a header no browser can state) and is held to the origin rules alone. A non-loopback bind relaxes that to an `Origin` matching the request's own `Host` or its first `X-Forwarded-Host` value, since the exposed address is the operator's to choose. The image sets `0.0.0.0`, which a published port needs | `127.0.0.1` (`0.0.0.0` in the image) |
-| `PRISM_ALLOWED_ORIGINS` | Origin patterns (`lib/origin-patterns.ts`: `scheme://host[:port]` or `scheme://host:*`) that `lib/origin-guard.ts` admits after the loopback-`Host` rule and ahead of its same-host, `X-Forwarded-Host` and loopback-`Origin` checks, on the HTTP routes and both WebSocket handshakes. A listed origin gets `Access-Control-Allow-Origin` (its canonical `URL.origin`) on every response, and its preflight a 204 allowing `GET, HEAD, POST, PUT, PATCH, DELETE` (mirrored by the Nexus sandbox ingress); with any list set, every response has `Vary: Origin`. The loopback decision normalizes `PRISM_HOST` through the URL parser (`127.1`, `::ffff:127.0.0.1`, `localhost.` count), while `listen` gets the value as written. An invalid entry, or any entry on a loopback `PRISM_HOST`, stops startup in `config.ts`: the list is for a runtime behind an authenticating proxy | empty |
-| `PRISM_PROGRAM_STATUS` | `on` or `off`: whether the runtime writes the agent's state to stdout as OSC 7501 reports (`services/program-status.service.ts`). Any other value reports when stdout is a TTY | `on` when stdout is a TTY |
-| `THREAD_MODE` | `multi` or `single`. `single` gives the agent one web conversation, stored in `runtime_state` (`conversationService.findLatestWebThread`); with none stored it is the web thread the person wrote in last. Every web-thread create, list and read answers with it, a chat turn or a publish that names another web thread goes to it, the other web threads are hidden from clients, and the session manager schedules no resets. Clients read it from `welcome.threadMode` and `GET /agents/me`. Any other value runs `multi` with a startup warning | `multi` |
-| `AGENT_ID` | UUID of the one `AgentWorkspace` this container owns | bootstrapped on first boot |
-| `DATABASE_URL` | SQLite URL for the runtime DB | `file:/data/agent.db` |
-| `NEXUS_API_URL` | Lens Agents server URL (LLM proxy + MCP tools) | — |
-| `SLACK_BOT_TOKEN` | xoxb- token; enables the Slack adapter | — (Slack disabled) |
-| `SLACK_APP_TOKEN` | xapp- token for Socket Mode | — |
-| `TEAMS_APP_ID` | Entra app registration client id; with the password + tenant, enables the Teams adapter | — (Teams disabled) |
-| `TEAMS_APP_PASSWORD` | Entra client secret, or on Lens Agents the `__nexus_cred:…__` sentinel of an OAuth client-credentials credential: the sandbox proxy answers the SDK's token request with a placeholder token and injects the real bot token on `smba.trafficmanager.net`. It has to be that credential type, since the grant sends the secret in the POST body and the proxy rewrites headers only | — |
-| `TEAMS_APP_TENANT_ID` | Entra tenant of the app registration | — |
-| `TEAMS_PORT` | Port of the Teams bot endpoint's own listener, which serves `POST /agents/teams/messages` and nothing else — the port to publish | `3979` |
-| `LLM_PROVIDER` | LLM vendor: `bedrock`, `azure`, `bedrock-mantle`, `openai`, `openrouter`, `anthropic`, or `litellm` (one per container). Any other value runs `bedrock` and logs a startup warning | `bedrock` |
-| `MODEL_MODE` | Model selection for an agent that has not chosen one: `fixed` or `auto` (`lib/model-routing.ts`). With `auto`, `AUTO_MODEL_SMALL` and `AUTO_MODEL_LARGE` are required, and boot fails without them | `fixed` |
-| `AUTO_MODEL_SMALL` / `AUTO_MODEL_MEDIUM` / `AUTO_MODEL_LARGE` | Auto tiers for an agent that has not set its own. Medium is optional; with it unset the classifier chooses between small and large, and with it set medium runs everyday work | — |
-| `CODING_AGENT` | Default coding agent: `claude-code` or `codex`. Each task may override it with `agent`. | Claude credentials first, then an OpenAI key, else `claude-code` |
-| `CLAUDE_CODE_MODEL_SMALL` / `CLAUDE_CODE_MODEL_MEDIUM` / `CLAUDE_CODE_MODEL_LARGE` | Models for the Claude Code tiers. A Bedrock ID applies only to tasks that run on Bedrock; tasks on an API key or the subscription keep the default | `haiku` / `sonnet` / `opus` (Bedrock: `global.anthropic.claude-haiku-5-5` / `global.anthropic.claude-sonnet-5-5` / `opus`) |
-| `CLAUDE_CODE_SUBSCRIPTION` | `true` runs every Claude Code task on the Claude subscription signed in to the CLI's home, and fails a task while none is. A sign-in from Profile → Coding agents turns this on without it | off |
-| `CLAUDE_CODE_SKIP_PERMISSIONS` | `true` runs every Claude Code edit task with `--dangerously-skip-permissions` instead of auto mode; a plan task stays in `plan` | off |
-| `CODEX_MODEL_SMALL` | Model for the Codex small tier | `gpt-5.6-luna` (Bedrock: `openai.gpt-5.6-luna`) |
-| `CODEX_MODEL_MEDIUM` | Model for the Codex medium tier | `gpt-5.6-terra` (Bedrock: `openai.gpt-5.6-terra`) |
-| `CODEX_MODEL_LARGE` | Model for the Codex large tier | `gpt-5.6-sol` (Bedrock: `openai.gpt-5.6-sol`) |
-| `CODEX_SUBSCRIPTION` | `true` runs every Codex task on the ChatGPT login saved in the CLI's home, and fails a task while none is. A sign-in from Profile → Coding agents turns this on without it | off |
-| `EMBEDDING_PROVIDER` | Memory-embedding vendor, decoupled from the chat vendor: `bedrock`, `azure-openai`, `openai`, `openrouter`, or `none` (embeddings off). Unset or unrecognized derives the chat vendor's default. The model still comes from the selected vendor's `*_EMBEDDING_MODEL_ID` var | derived from `LLM_PROVIDER` (anthropic: `openai` with `OPENAI_API_KEY` or `NEXUS_API_URL`, else `none`) |
-| `AWS_BEARER_TOKEN_BEDROCK` | Bedrock API key; on Bedrock selected over SigV4 when set, on mantle sent as `x-api-key` and **required** direct | — |
-| `AWS_REGION` | AWS region for Bedrock and for the mantle host | `us-east-1` |
-| `AWS_ACCESS_KEY_ID` | AWS SigV4 credentials | — |
-| `AWS_SECRET_ACCESS_KEY` | AWS SigV4 credentials | — |
-| `BEDROCK_MODEL_ID` | AWS Bedrock model ID | `global.anthropic.claude-opus-5-5` |
-| `BEDROCK_CLASSIFICATION_MODEL_ID` | Bedrock model for the classification gates (tool risk, model routing, thread replies, goal completion) | `global.anthropic.claude-haiku-5-5` |
-| `AZURE_RESOURCE_NAME` / `AZURE_API_KEY` | Foundry resource + key (Claude via Microsoft Foundry; used when `LLM_PROVIDER=azure`) | — |
-| `AZURE_MODEL_ID` / `AZURE_CLASSIFICATION_MODEL_ID` | Foundry Claude deployment names (chat / classification gate) | `claude-opus-5` / `claude-haiku-5-5` |
-| `AZURE_EMBEDDING_MODEL_ID` | Azure OpenAI `text-embedding-3` deployment for memory embeddings (fail-open if absent; `''` to skip) | `text-embedding-3-small` |
-| `AZURE_FOUNDRY_BASE_URL` | Override the Foundry chat endpoint; outranks the gateway mount | derived from resource |
-| `AZURE_API_VERSION` | Azure OpenAI API version (embeddings only) | SDK default (`preview`) |
-| `BEDROCK_MANTLE_MODEL_ID` / `BEDROCK_MANTLE_CLASSIFICATION_MODEL_ID` | **Bare** Bedrock IDs for mantle (chat / classification gate); no fallback to the prefixed `BEDROCK_*` vars | `anthropic.claude-opus-5` / `anthropic.claude-haiku-4-5` |
-| `BEDROCK_MANTLE_EMBEDDING_MODEL_ID` | Memory embeddings under mantle — Titan on bedrock-runtime, since mantle serves none (`''` to skip) | `amazon.titan-embed-text-v2:0` |
-| `BEDROCK_MANTLE_BASE_URL` | Override the mantle chat endpoint; outranks the gateway mount | derived from region |
-| `OPENAI_MODEL_ID` / `OPENAI_CLASSIFICATION_MODEL_ID` | OpenAI model IDs (chat / classification gate). The provider pins gate calls to `reasoningEffort: 'none'` and omits their `temperature`, keeping the gates' tiny token budgets valid on GPT-5.x | `gpt-5.6-sol` / `gpt-5.6-luna` |
-| `OPENAI_EMBEDDING_MODEL_ID` | Memory embeddings under openai — a `text-embedding-3` model truncated to 1024 dims (`''` to skip) | `text-embedding-3-small` |
-| `OPENROUTER_MODEL_ID` / `OPENROUTER_CLASSIFICATION_MODEL_ID` | OpenRouter model IDs (chat / classification gate). Every id is `vendor/model`; the defaults mirror the OpenAI tiers so the shared provider's GPT-5.x parameter handling stays valid | `openai/gpt-5.6-sol` / `openai/gpt-5.6-luna` |
-| `OPENROUTER_EMBEDDING_MODEL_ID` | Memory embeddings under openrouter — **off by default**: the vendors it routes differ in native dimensionality and the index is fixed at 1024 (`openai/text-embedding-3-small` truncates to it) | `''` (disabled) |
-| `OPENROUTER_API_KEY` | OpenRouter API key, sent as a bearer header. Required direct; not needed through the gateway. May be a `__nexus_cred:<uuid>__` sentinel since it only rides a header | — |
-| `OPENROUTER_BASE_URL` | Override the OpenRouter chat/embeddings endpoint (must serve the Responses API); outranks the gateway mount | `https://openrouter.ai/api/v1` |
-| `OPENAI_BASE_URL` | Override the chat/embeddings endpoint (must serve the Responses API; does not move the Realtime socket — `OPENAI_REALTIME_URL` does); outranks the gateway mount | SDK default (`https://api.openai.com/v1`) |
-| `ANTHROPIC_API_KEY` | First-party Anthropic API key, sent as `x-api-key`; **always required** under `LLM_PROVIDER=anthropic` (direct-only — no Nexus mount). May be a `__nexus_cred:<uuid>__` sentinel | — |
-| `ANTHROPIC_MODEL_ID` / `ANTHROPIC_CLASSIFICATION_MODEL_ID` | Bare first-party model IDs (chat / classification gate) | `claude-opus-5` / `claude-haiku-5-5` |
-| `ANTHROPIC_BASE_URL` | Override the direct chat endpoint (must end at `/v1`) | SDK default (`https://api.anthropic.com/v1`) |
-| `LITELLM_BASE_URL` | The operator's LiteLLM proxy, normalised to end at `/v1`; outranks the gateway mount. Direct mode needs it, since a proxy has no public host | — |
-| `LITELLM_API_KEY` | LiteLLM key, sent as `x-api-key`. Required direct, where a model call without it fails before any request; not needed through the gateway. May be a `__nexus_cred:<uuid>__` sentinel | — |
-| `LITELLM_MODEL_ID` / `LITELLM_CLASSIFICATION_MODEL_ID` | The proxy's aliases (chat / classification gate). Classification should be Claude or non-reasoning, since the gates allow a few output tokens | `claude-opus-5-5` / `claude-haiku-5-5` |
-| `CONTEXT_WINDOW_TOKENS` | Input-context window assumed for the context-usage indicator; only needed for a model the catalog doesn't know | derived from the model ID |
-| `MODELS_DEV_URL` | Opt in to refreshing the model-window catalog from a registry once at startup (e.g. `https://models.dev/api.json`); unset = no outbound call, bundled catalog only | — (disabled) |
-| `COMPACTION_THRESHOLD_PERCENT` | Auto-compact a thread when context occupancy reaches this percent of the model's window; `0` disables | `90` |
-| `IDLE_COMPACTION` | `off` stops idle compaction, which runs only under `CHAT_CACHE_TTL=1h` on a vendor whose cache lasts longer for it: a chat conversation of at least `IDLE_COMPACTION_MIN_TOKENS` (200K) is compacted after `IDLE_COMPACTION_CACHE_SHARE` (0.9) of its cache's lifetime idle (`cacheTtlMs`: 54 min on Claude, about 11 h on OpenAI), so the summary reads the warm prefix. A summary whose cache expired anyway, as after a long restart, asks for no entry, since nothing reuses its prefix. The due time comes from `llm_calls` and the thread, so boot (`restoreIdle`) re-arms it, and compacts at once a conversation written to in the last day that is past due | on |
-| `CHAT_CACHE_TTL` | `5m` or `1h`: the prompt-cache lifetime a chat turn asks for; every other mode asks for five minutes. Each vendor maps it in its `cachePoint(modelId, ttl)`, or in `cacheRequest` where the lifetime is a request option: on openai, `1h` sends `promptCacheOptions.ttl: '12h'` and the default sends nothing (a 30-minute entry). openrouter ignores it. Every request of a chat thread, its summaries included, asks for the same lifetime. The operator checks that the model accepts the lifetime. Auto model selection holds a chat thread's tier for the same lifetime | `5m` |
-| `TOOL_SEARCH` | `auto` or `off`. `auto` sends the MCP and plugin tools deferred, with a `load_tools` tool and a `# Tool Catalog`, when their definitions exceed `TOOL_SEARCH_THRESHOLD_PERCENT` of the window and the provider declares `deferredTools` for the model (see **Deferred tools**). Any other value runs `auto` with a startup warning | `auto` |
-| `TOOL_SEARCH_THRESHOLD_PERCENT` | The share of the window, in percent, past which `TOOL_SEARCH=auto` defers. An invalid value warns and uses the default | `2` |
-| `COMPACTION_TAIL_MESSAGES` | At most this many of the newest messages are kept out of compaction (sent verbatim), together about 30K tokens and starting on a user message; the newest exchange stays whole past the cap when it fits | `6` |
-| `HEARTBEAT_INTERVAL_MS` | Heartbeat interval written into a new agent row; a stored interval wins. Outside `MIN_HEARTBEAT_INTERVAL_MS`–`MAX_HEARTBEAT_INTERVAL_MS` (1 minute–1 week) or not an integer, it warns and uses the default | `28800000` (8 h) |
-| `ATTACHMENT_TTL_HOURS` | How long attachment content (the media file under `<data dir>/media`) is kept before the hourly sweep deletes it; the metadata stub survives, so history keeps showing the file as *content expired*. A non-positive or unparseable value falls back to the default | `168` (7 days) |
-| `TOOL_OUTPUT_TTL_HOURS` | How long the saved whole copy of an oversized tool result is kept under `<data dir>/tool-outputs`. Same defensive parse. Compaction keeps them, since `read_compacted_history` returns the notices that name them | `168` (7 days) |
-| `OPENAI_API_KEY` | Chat/embedding credential and legacy direct-voice fallback. Managed Realtime uses its own resolved endpoint/key; see [voice configuration](docs/configuration.md#voice-meetings). | — |
-| `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. Pinned to a snapshot rather than the moving `gpt-realtime` alias, so a new snapshot cannot change turn-taking under a live deployment | `gpt-realtime-2.1` |
-| `OPENAI_REALTIME_URL` | Explicit voice WebSocket endpoint; opts out of managed discovery. Otherwise discover a Realtime-capable managed endpoint, then direct OpenAI with an eligible credential. | managed or direct voice |
-| `OPENAI_REALTIME_API_KEY` | Credential for an explicit voice endpoint or direct fallback. Managed discovery keeps its own matching key; standalone direct voice can use `OPENAI_API_KEY`. | derived |
-| `OPENAI_REALTIME_VOICE` | Voice name | `marin` |
-| `OPENAI_REALTIME_REASONING_EFFORT` | How hard the in-meeting model thinks before answering or picking a tool (`minimal`…`xhigh`). The Realtime API's own default is `low` — right for a voice agent that reads out an order status, wrong for one holding shell, kubectl and its own configuration, so this defaults to `high`. Paid for in latency, which in a call is silence in a room: `[Meeting:Latency]` logs the level in force beside the figure so levels can be compared. `''` sends no setting and takes the API default | `high` |
-| `OPENAI_TRANSCRIPTION_MODEL` | Transcriber kept **only so a call can be read back in the log** — never fed to the model, and no decision waits on it since the addressed question is judged from the audio. Requested only when `MEETING_TRANSCRIPT_LOGGING` is `full`, since it bills per minute of audio — a small fraction of the Realtime audio rate for the same minute. Read once at connect, since an utterance already past cannot be transcribed retroactively. `gpt-live-transcribe` because it accepts `keywords`, which is how the agent's name and the room's roster are seeded; a model without them still works, but names in the log are likelier to be wrong | `gpt-live-transcribe` |
-| `OPENAI_NOISE_REDUCTION` | Server-side noise reduction over meeting audio before turn detection and transcription see it (`off` \| `near_field` \| `far_field`). **Off by default**, which is not the obvious choice: `far_field` describes the humans' microphones, not this input — what arrives is Meet's mixed output, already suppressed, echo-cancelled and levelled per participant, so reducing again is a second pass over a cleaned mix. Under `far_field` a live agent went minutes without reacting to a person in the room while answering the other agent's much louder synthesized voice — an adaptive floor lifted by loud speech suppresses a quieter human as noise. Side by side on the same room, reduction off registered seven utterances to `far_field`'s two. Mishearing is recoverable; not hearing is not. `near_field` is untested — try it before `far_field` if a room proves too noisy | `off` |
-| `GOOGLE_BOT_EMAIL` / `GOOGLE_BOT_PASSWORD` | Google account the meeting bot signs in as. **Effectively required** — Meet auto-denies automated anonymous guests (`CreateMeetingDevice` 403, host never prompted). Profile persisted under `<DATA>/meeting-browser-profile`. The password **cannot** be a `__nexus_cred:…__` sentinel, unlike every other secret here: sentinels are rewritten on the wire and only work for a header, while this is typed into a sign-in form over TLS to Google — the runtime needs the real value in memory. Google Meet exposes no bot or service-account API, so a real browser signed into a real account is the only way in; use a dedicated account | — |
-| `MEETING_TRANSCRIPT_LOGGING` | Whether a call's speech may reach the log (`off` \| `full`), read at log time by `services/meeting/transcript-log.ts`. `off` writes the verdict, item id, how long the decision took and the roster *count*; `full` adds a second line per utterance (`[Meeting:Heard]`) carrying the sentence, plus the roster and anything the model said beyond its one word. The two lines are separate because transcription lands after the decision; `item=` pairs them. **Off by default** — a call is unauthenticated third-party speech and the log outlives it. A variable rather than a log level so that raising verbosity for an unrelated problem cannot start recording the room as a side effect. Unrecognised values (including `''`) fall back to `off`. Nothing here reaches product telemetry at either setting, and nothing reaches Langfuse either: the addressed decision builds no prompt out of anyone's words | `off` |
-| `MEETING_TIMEOUT_MINUTES` | Hard cap on one call | `60` |
-| `MEETING_ADMISSION_TIMEOUT_SECONDS` | How long to wait to be admitted from the waiting room, counted from when the join request goes in (reaching the lobby is budgeted separately) | `300` |
-| `LANGFUSE_SECRET_KEY` | Langfuse secret key (optional, enables LLM tracing) | — |
-| `LANGFUSE_PUBLIC_KEY` | Langfuse public key | — |
-| `LANGFUSE_BASE_URL` | Langfuse server URL | `http://localhost:3100` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/HTTP collector for product telemetry (unset/empty = disabled) | baked into published images via `vars.OTEL_EXPORTER_OTLP_ENDPOINT`; empty otherwise |
-| `OTEL_EXPORTER_OTLP_API_KEY` | Collector auth, sent as `x-api-key` header | baked into published images as a file (`/app/.otel-api-key`, exported by `start.sh`) from `secrets.OTEL_EXPORTER_OTLP_API_KEY`; empty otherwise |
-| `DEPLOYMENT_ENVIRONMENT` | Tags OTel records (production \| staging \| development) | `production` in published images, `development` otherwise |
-| `SERVICE_VERSION` | Build identifier emitted as the OTel `service.version` resource attribute | release tag (e.g. `v2026.6.18060952`) for release-production.yml; `canary-<sha>` for release-canary.yml; the image tag (`pr-<n>-<slug>`) for docker-build.yml; empty otherwise |
-| `PRODUCT_NAME` | Tags OTel records with the `product.name` resource attribute | — (omitted) |
+A `__nexus_cred:<uuid>__` sentinel works only in a header, because the proxy
+rewrites headers only. So `TEAMS_APP_PASSWORD` must be an OAuth
+client-credentials credential, and `GOOGLE_BOT_PASSWORD` must be the real value.
 
 ## Chat Flow
 
@@ -1599,44 +1221,11 @@ The agent-runtime owns the full Slack adapter implementation. It manages Bolt ap
 2. Agent-runtime's `conversationEngineService.chat()` handles thread management + LLM invocation locally
 3. Response delivered via local `messageDeliveryService` -> local `slackAdapterService` -> local Bolt apps
 
-### Management API Endpoints (for Slack)
+### Management API Endpoints
 
-| Endpoint | Purpose |
-|----------|---------|
-| `POST /agents/slack/add-connection` | Initialize a Slack workspace connection (start Bolt app) |
-| `DELETE /agents/slack/remove-connection` | Disconnect a Slack workspace (stop Bolt app) |
-| `GET /agents/slack/channel-name` | Get the display name for a Slack channel |
-| `GET /agents/:agentId/slack-link-status` | Check DM + channel mapping status for an agent |
-| `GET /agents/:agentId/slack-channel-mappings` | List channel mappings for an agent |
-| `GET /agents/slack/channel-mapping/:channelId` | Find a specific channel mapping |
-| `DELETE /agents/slack/channel-mapping/:channelId` | Delete a channel mapping |
-| `DELETE /agents/:agentId/slack/dm-mapping` | Delete DM mapping for an agent |
-| `GET /agents/:agentId/slack-connection-id` | Find connectionId via SlackMapping for an agent |
-
-### Management API Endpoints (for Teams)
-
-| Endpoint | Purpose |
-|----------|---------|
-| `POST /agents/teams/messages` | The Bot Framework messaging endpoint, on `TEAMS_PORT` rather than the runtime port (registered on the Azure Bot resource; JWT-validated by the Teams SDK) |
-| `GET /agents/teams/workspaces` | The configured Teams connection (empty when Teams is disabled) |
-| `GET /agents/teams-link-status` | Check DM + channel mapping status |
-| `GET /agents/teams-channel-mappings` | List channel mappings (with the effective main channel) |
-| `POST /agents/teams/create-verification-code` | Generate a 6-hex DM/CHANNEL link code |
-| `DELETE /agents/teams/dm-mapping` | Delete the DM mapping(s) |
-| `DELETE /agents/teams/channel-mapping/:conversationId` | Delete a channel mapping (URI-encoded conversation id) |
-| `PUT /agents/teams/channel-mapping/:conversationId/main` | Flag the main channel |
-
-### Key Files
-
-- `services/slack-adapter.service.ts` - Full implementation with Bolt apps, Socket Mode, message handling
-- `services/channel-adapter.interface.ts` - Channel adapter contract
-- `services/slack-mapping.service.ts` - SlackMapping CRUD for user and channel mappings
-- `utils/slack-formatter.ts` - Slack message formatting (mrkdwn conversion)
-- `services/providers/slack-thread.provider.ts` - Reads thread messages directly from Slack API via local Bolt apps
-
-### Dependencies
-
-- `@slack/bolt` - Bolt SDK for Slack app framework and Socket Mode
+The Slack and Teams management routes are in `src/routes/slack.ts` and
+`src/routes/teams.ts`, one JSDoc per route. The Teams messaging endpoint is
+`POST /agents/teams/messages` on `TEAMS_PORT`.
 
 ## WebSocket Gateway
 
@@ -1652,10 +1241,8 @@ The agent-runtime owns the chat socket, `/api/ws`, which the web UI, the TUI and
 
 ### WebSocket Key Files
 
-- `services/websocket-gateway.service.ts` - connections, handshake, requests, limits, voice and dictation
-- `services/event-stream.service.ts` - the numbered stream and its replay window
-- `services/inbound-message.service.ts` - storing, confirming and scheduling a sent message; turn state
-- `services/websocket-adapter.service.ts` - ChannelAdapter implementation, publishes into the stream
+Files: `services/websocket-gateway.service.ts`, `event-stream.service.ts`,
+`inbound-message.service.ts`, `websocket-adapter.service.ts`.
 
 ## Agent Guide (agentMd)
 
