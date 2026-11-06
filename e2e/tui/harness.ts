@@ -14,6 +14,7 @@ import { createRequire } from 'node:module';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as pty from 'node-pty';
 import stripAnsi from 'strip-ansi';
+import { PRISM_SERVER_BIN, assertRuntimeBuilt, llmCacheEnv } from '../support/runtime-command';
 
 const AGENT_RUNTIME_DIR = path.resolve(import.meta.dirname, '../..');
 export const PRISM_CLI_DIR = path.resolve(import.meta.dirname, '../../cli');
@@ -22,9 +23,6 @@ export const PRISM_CLI_DIR = path.resolve(import.meta.dirname, '../../cli');
 // node-pty when the env's PATH has been substituted, so we point at
 // the node binary that's already running this process.
 const TSX_CLI = createRequire(import.meta.url).resolve('tsx/cli');
-// Loaded into each runtime ahead of its entry, so its chat and classification calls go through the
-// e2e LLM cache.
-const LLM_CACHE_MODULE = path.resolve(import.meta.dirname, '../support/llm-cache.ts');
 
 /**
  * Budget for a CLI's *first* frame — the `waitForFrame(/Prism/, …)` every spec
@@ -92,12 +90,14 @@ export function startRuntime(opts: StartRuntimeOptions): RuntimeHandle {
     throw new Error('startRuntime requires opts.env.PORT to be a valid port number');
   }
 
+  assertRuntimeBuilt();
   const child: ChildProcess = spawn(
-    process.execPath,
-    [TSX_CLI, '--import', LLM_CACHE_MODULE, 'src/index.ts'],
+    PRISM_SERVER_BIN,
+    [],
     {
       cwd: AGENT_RUNTIME_DIR,
-      env: sanitizeEnv(opts.env) as NodeJS.ProcessEnv,
+      // Every chat and classification call goes through the e2e LLM cache.
+      env: sanitizeEnv({ ...opts.env, ...llmCacheEnv() }) as NodeJS.ProcessEnv,
       // Pipe so we can capture pino output for error messages without
       // polluting vitest's reporter.
       stdio: ['ignore', 'pipe', 'pipe'],
