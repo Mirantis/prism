@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * Build a Node.js Single Executable Application (SEA) for one target.
+ * Build the `prism` terminal UI as a Node.js Single Executable Application (SEA).
  *
- *   node scripts/build-sea.mjs prism         # the Ink TUI — fully self-contained
- *   node scripts/build-sea.mjs prism-server  # the runtime — needs the sidecar
- *                                            # lib/ + web/ from collect-natives.mjs
+ *   node scripts/build-sea.mjs prism
  *
- * ink 7 + yoga + the runtime's deps use top-level await, which esbuild cannot
+ * The runtime, `prism-server`, is the Rust binary built from `runtime/`.
+ *
+ * ink 7 + yoga use top-level await, which esbuild cannot
  * emit to CommonJS — and a SEA's `main` is run as CommonJS, not ESM. So we
  * bundle to ESM, embed that bundle as a SEA *asset*, and make the SEA's CJS
  * main a tiny stub that extracts the asset to a temp file and dynamic-imports
@@ -24,15 +24,13 @@ import {
   rmSync,
   chmodSync,
   readFileSync,
-  readdirSync,
-  statSync,
 } from 'node:fs';
 import path from 'node:path';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const target = process.argv[2];
-if (target !== 'prism' && target !== 'prism-server') {
-  console.error('usage: node scripts/build-sea.mjs <prism|prism-server>');
+if (target !== 'prism') {
+  console.error('usage: node scripts/build-sea.mjs prism');
   process.exit(1);
 }
 
@@ -66,11 +64,6 @@ const TARGETS = {
     entry: 'cli/src/index.tsx',
     external: [...UNBUNDLABLE],
   },
-  'prism-server': {
-    entry: 'src/sea/server-entry.ts',
-    // Native addons + sidecar-loaded modules + pino's worker-thread transport.
-    external: ['better-sqlite3', '@prisma/client', 'sqlite-vec', 'pino-pretty', ...UNBUNDLABLE],
-  },
 };
 const cfg = TARGETS[target];
 
@@ -84,27 +77,6 @@ const stubOptional = {
       contents: 'export default { initialize() {}, connectToDevTools() {} };',
       loader: 'js',
     }));
-  },
-};
-
-// esbuild plugin: inline prisma/sqlite/migrations/*/migration.sql as the
-// default export of `virtual:migrations`, so prism-server can replay them
-// at boot without the Prisma CLI (see src/sea/migrate.ts).
-const virtualMigrations = {
-  name: 'virtual-migrations',
-  setup(b) {
-    b.onResolve({ filter: /^virtual:migrations$/ }, (args) => ({ path: args.path, namespace: 'virtual-migrations' }));
-    b.onLoad({ filter: /.*/, namespace: 'virtual-migrations' }, () => {
-      const dir = path.join(ROOT, 'prisma', 'sqlite', 'migrations');
-      const names = readdirSync(dir)
-        .filter((n) => statSync(path.join(dir, n)).isDirectory())
-        .sort();
-      const migrations = names.map((name) => ({
-        name,
-        sql: readFileSync(path.join(dir, name, 'migration.sql'), 'utf8'),
-      }));
-      return { contents: `export default ${JSON.stringify(migrations)};`, loader: 'js' };
-    });
   },
 };
 
@@ -151,7 +123,7 @@ await build({
   outfile: bundlePath,
   external: cfg.external,
   define: { 'process.env.PRISM_VERSION': JSON.stringify(version) },
-  plugins: [stubOptional, virtualMigrations, inlineWebpDecoder],
+  plugins: [stubOptional, inlineWebpDecoder],
   // ESM output: give esbuild's `__require` shim a real require + provide the
   // CJS globals bundled deps expect (signal-exit etc. `require('assert')`).
   banner: {
@@ -167,31 +139,9 @@ await build({
   logLevel: 'info',
 });
 
-// 2. CJS stub: extract the ESM bundle (a SEA asset) and dynamic-import it.
-//    prism is self-contained (per-process temp dir). prism-server must extract
-//    NEXT TO the executable so its external bare imports resolve from the
-//    sidecar node_modules/ that ships alongside it; concurrent starts (service
-//    restart overlap, two processes) write to a per-PID/nonce tmp file first
-//    and atomically rename into place, so no caller ever observes a partial
-//    bundle.
-const extractBlock =
-  target === 'prism-server'
-    ? `const dir = path.dirname(process.execPath);
-const finalFile = path.join(dir, '.prism-server.runtime.mjs');
-const tmpFile = path.join(
-  dir,
-  '.prism-server.runtime.' + process.pid + '.' + Math.random().toString(36).slice(2, 8) + '.tmp',
-);
-fs.writeFileSync(tmpFile, Buffer.from(getAsset('main.mjs')));
-let file = finalFile;
-try {
-  fs.renameSync(tmpFile, finalFile);
-} catch {
-  // Windows can refuse to replace an in-use dest; our tmpFile is fully
-  // written and resolves externals from the same directory, so use it.
-  file = tmpFile;
-}`
-    : `const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'prism-sea-')), 'main.mjs');
+// 2. CJS stub: extract the ESM bundle (a SEA asset) to a per-process temp dir and
+//    dynamic-import it.
+const extractBlock = `const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'prism-sea-')), 'main.mjs');
 fs.writeFileSync(file, Buffer.from(getAsset('main.mjs')));`;
 
 writeFileSync(

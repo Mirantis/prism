@@ -73,6 +73,17 @@ one does. The crate must compile for `x86_64-pc-windows-msvc`: put Unix-only API
 process; a signal other than a kill is ignored as Node ignores it). `nix` is a
 Unix-only dependency.
 
+## One binary, several entry points
+
+`runtime/src/main.rs` (coordinator) dispatches: `--version`, `apply-pending-import`,
+`coding-agent-exec …`, `backfill-embeddings`, else the runtime. A release build
+applies the standalone defaults of `src/sea/server-entry.ts` first
+(`sea::server_entry`). Where TypeScript runs one of its built scripts as a separate
+process (`node dist/scripts/coding-agent-exec.js …`, e.g. the desktop terminal's
+`claude`/`codex` wrappers in `desktop-session.ts`), Rust runs the current executable
+with the subcommand (`std::env::current_exe()` + `coding-agent-exec`), and the
+wrappers are always written, since the entry always exists.
+
 ## Smaller points
 
 - `types::SteeringSource` returns `anyhow::Result`; a failed read is logged as the
