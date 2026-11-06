@@ -30,6 +30,8 @@ const ATTR_DEPLOYMENT_ENVIRONMENT_NAME = 'deployment.environment.name';
 // Not an OTel semantic convention: the product that launched this agent, set by
 // that product's recipe. `service.*` stays the runtime's own name for every product.
 const ATTR_PRODUCT_NAME = 'product.name';
+// The persisted id of this install, the attribute name Lens Agents uses for its own.
+const ATTR_DEPLOYMENT_ID = 'deployment.id';
 
 let provider: LoggerProvider | null = null;
 let otelLogger: Logger | null = null;
@@ -38,7 +40,11 @@ export function isTelemetryEnabled(): boolean {
   return Boolean(config.otelEndpoint);
 }
 
-export function initTelemetry(): void {
+/**
+ * Start the exporter. `deploymentId` is called only when an endpoint is set, so
+ * a runtime without telemetry stores no id.
+ */
+export function initTelemetry(deploymentId: () => Promise<string | undefined>): void {
   if (!config.otelEndpoint) {
     logger.info('[Telemetry] Not configured (no OTEL_EXPORTER_OTLP_ENDPOINT), skipping');
     return;
@@ -48,7 +54,11 @@ export function initTelemetry(): void {
   // `service.version` identifies the deployed build so events can be broken
   // down by version and regressions correlated to specific releases.
   // `product.name` separates the agents a product launched from the others.
+  // `deployment.id` separates one install from another and stays the same across
+  // restarts. It is read from the database, so it is a promise the exporter
+  // waits for before the first batch leaves.
   const resource = resourceFromAttributes({
+    [ATTR_DEPLOYMENT_ID]: deploymentId(),
     [ATTR_SERVICE_NAME]: 'prism-agent-runtime',
     [ATTR_SERVICE_NAMESPACE]: 'prism-agent',
     [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: config.deploymentEnvironment,

@@ -47,7 +47,7 @@ import { initTelemetry } from './telemetry';
 describe('telemetry (enabled, but SERVICE_VERSION unset)', () => {
   beforeEach(() => {
     loggerProviderArgs.length = 0;
-    initTelemetry();
+    initTelemetry(async () => 'deployment-1');
   });
 
   it('omits service.version from the OTel resource when not configured', () => {

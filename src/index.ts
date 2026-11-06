@@ -27,6 +27,7 @@ if (dotenvLoadInfo.error) {
 import { createAgentMessagesServer, createApp, listenForAgentMessages, listenOn } from './server';
 import { webhookReceiverService } from './services/webhook-receiver.service';
 import { webhookService } from './services/webhook.service';
+import { runtimeStateService } from './services/runtime-state.service';
 import { pendingWorkService } from './services/pending-work.service';
 import { resumeReplies } from './services/resume-replies';
 import { initLangfuse, shutdownLangfuse } from './lib/langfuse';
@@ -85,7 +86,7 @@ process.title = 'prism-agent';
 initLangfuse();
 
 // Initialize product telemetry (OTEL Logs → Collector → S3)
-initTelemetry();
+initTelemetry(() => runtimeStateService.deploymentId());
 
 // Refresh the model-window catalog in the background; lookups use the bundle until it lands.
 void refreshModelCatalog().catch((err) => {
