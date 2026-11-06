@@ -1,3 +1,12 @@
+//! The runtime's HTTP route modules, one area per file.
+//!
+//! Each module exposes `pub fn router() -> axum::Router`. Its routes carry their
+//! full paths (`/agents/cron-tasks`, not `/cron-tasks`), and `server.rs` combines
+//! the routers with `Router::merge` in the order `src/server.ts` mounts them. The
+//! routers hold no state: the services they call are statics. Two routers must not
+//! register the same method and path, and a path parameter at one position has the
+//! same name in every route that has a parameter there.
+
 // @generated-modules-start
 pub mod activity;
 pub mod agent_guide;
