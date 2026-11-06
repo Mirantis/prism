@@ -13,23 +13,30 @@ vi.mock('../logger', () => ({
 
 import { initTelemetry, trackEvent, shutdownTelemetry } from './telemetry';
 
+const deploymentId = vi.fn(async () => 'deployment-1');
+
 describe('telemetry (disabled — no OTEL_EXPORTER_OTLP_ENDPOINT)', () => {
   it('initTelemetry does not throw', () => {
-    expect(() => initTelemetry()).not.toThrow();
+    expect(() => initTelemetry(deploymentId)).not.toThrow();
+  });
+
+  it('does not read or create a deployment id', () => {
+    initTelemetry(deploymentId);
+    expect(deploymentId).not.toHaveBeenCalled();
   });
 
   it('trackEvent is a no-op when not configured', () => {
-    initTelemetry();
+    initTelemetry(deploymentId);
     expect(() => trackEvent('message feedback', 'user-123', { 'feedback.rating': 'up' })).not.toThrow();
   });
 
   it('trackEvent with null userId does not throw', () => {
-    initTelemetry();
+    initTelemetry(deploymentId);
     expect(() => trackEvent('message feedback', null, { 'feedback.rating': 'up' })).not.toThrow();
   });
 
   it('shutdownTelemetry resolves without error', async () => {
-    initTelemetry();
+    initTelemetry(deploymentId);
     await expect(shutdownTelemetry()).resolves.toBeUndefined();
   });
 });

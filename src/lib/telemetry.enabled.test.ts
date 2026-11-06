@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { loggerProviderArgs } = vi.hoisted(() => ({
-  loggerProviderArgs: [] as Array<{ resource?: { attributes?: Record<string, unknown> } }>,
+  loggerProviderArgs: [] as Array<{
+    resource?: { attributes?: Record<string, unknown>; waitForAsyncAttributes?: () => Promise<void> };
+  }>,
 }));
 
 vi.mock('../config', () => ({
@@ -24,7 +26,7 @@ vi.mock('@opentelemetry/exporter-logs-otlp-http', () => ({
 
 vi.mock('@opentelemetry/sdk-logs', () => ({
   LoggerProvider: class MockLoggerProvider {
-    constructor(args: { resource?: { attributes?: Record<string, unknown> } }) {
+    constructor(args: (typeof loggerProviderArgs)[number]) {
       loggerProviderArgs.push(args);
     }
     getLogger() {
@@ -42,7 +44,7 @@ import { initTelemetry } from './telemetry';
 describe('telemetry (enabled path)', () => {
   beforeEach(() => {
     loggerProviderArgs.length = 0;
-    initTelemetry();
+    initTelemetry(async () => 'deployment-1');
   });
 
   it('attaches deployment.environment.name to the OTel resource', () => {
@@ -57,6 +59,12 @@ describe('telemetry (enabled path)', () => {
     expect(loggerProviderArgs).toHaveLength(1);
     const attrs = loggerProviderArgs[0]?.resource?.attributes ?? {};
     expect(attrs['service.version']).toBe('v2026.6.18060952');
+  });
+
+  it('attaches the deployment id to the OTel resource once it is read', async () => {
+    const resource = loggerProviderArgs[0]?.resource;
+    await resource?.waitForAsyncAttributes?.();
+    expect(resource?.attributes?.['deployment.id']).toBe('deployment-1');
   });
 
   it('attaches product.name to the OTel resource when configured', () => {
