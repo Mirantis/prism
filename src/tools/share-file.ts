@@ -28,7 +28,6 @@
  * the inbound upload limit.
  */
 
-import type { FileStat } from '../lib/execution-environments/execution-environment';
 import * as path from 'path';
 import { Tool, tool } from 'ai';
 import { z } from 'zod';
@@ -50,7 +49,7 @@ import {
   detectMediaType,
   classifyMediaType,
 } from '../services/attachment.service';
-import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB } from '../constants';
+import { readSettledFile } from '../lib/read-settled-file';
 
 export const shareFileInput = z.object({
   path: z
@@ -92,19 +91,6 @@ export interface ShareFileDeps {
 }
 
 /**
- * Whether the file changed across a read: either it no longer matches the bytes
- * just read, or its mtime has moved on from the stat taken before that read.
- * Both halves matter — an edit that keeps the length is still a different file.
- */
-function moved(
-  before: FileStat,
-  after: FileStat,
-  data: Buffer,
-): boolean {
-  return after.size !== data.length || after.mtimeMs !== before.mtimeMs;
-}
-
-/**
  * How long to wait for a sibling write before refusing to share. Covers the
  * write itself plus the tool risk gate's own pre-execute model call, which can
  * delay a write's `fs.writeFile` by up to `RISK_EVALUATION_TIMEOUT_MS` after this
@@ -134,67 +120,9 @@ export async function runShareFile(
   const barrier = await awaitPendingWrites(fullPath, deps);
   if (barrier) return barrier;
 
-  let stat: FileStat;
-  try {
-    stat = await files(fullPath).stat(fullPath);
-  } catch {
-    return { success: false, error: `File not found: ${input.path}` };
-  }
-  if (stat.isDirectory) {
-    return { success: false, error: `${input.path} is a directory — share a single file.` };
-  }
-  if (stat.size === 0) {
-    return { success: false, error: `File is empty: ${input.path}` };
-  }
-  if (stat.size > MAX_FILE_SIZE_BYTES) {
-    return {
-      success: false,
-      error: `File too large (${(stat.size / (1024 * 1024)).toFixed(1)} MB) — max ${MAX_FILE_SIZE_MB} MB.`,
-    };
-  }
-
-  // Read, then confirm the file did not move under the read. The barrier covers
-  // the writes in this step; this catches the writers that outlive their call
-  // (`coding_agent`, `shell_spawn`) in the one window where they are observable
-  // at all. One retry: a second change means something is still writing, and
-  // guessing which revision the reply describes is exactly the mistake being fixed.
-  let data: Buffer;
-  try {
-    let before = stat;
-    data = await files(fullPath).readBytes(fullPath);
-    let after = await files(fullPath).stat(fullPath);
-    if (moved(before, after, data)) {
-      before = after;
-      data = await files(fullPath).readBytes(fullPath);
-      after = await files(fullPath).stat(fullPath);
-      // Compare against the stat taken just before the retry, and on mtime as
-      // well as size — a same-size edit is still a different revision, and size
-      // alone would let one through.
-      if (moved(before, after, data)) {
-        return {
-          success: false,
-          error:
-            `Not shared: ${input.path} is changing while it is read, so the attachment ` +
-            `would not match what you describe. Wait for the write to finish, then share it.`,
-        };
-      }
-    }
-  } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : String(err) };
-  }
-
-  // Re-check the guards against the bytes actually read. The stat above can be
-  // stale by now — a background writer may have grown the file past the cap or
-  // truncated it to nothing — and `data` is what goes into the media store.
-  if (data.length === 0) {
-    return { success: false, error: `File is empty: ${input.path}` };
-  }
-  if (data.length > MAX_FILE_SIZE_BYTES) {
-    return {
-      success: false,
-      error: `File too large (${(data.length / (1024 * 1024)).toFixed(1)} MB) — max ${MAX_FILE_SIZE_MB} MB.`,
-    };
-  }
+  const read = await readSettledFile(files(fullPath), fullPath, input.path);
+  if (!read.ok) return { success: false, error: read.error };
+  const { data } = read;
 
   const filename = (input.filename?.trim() || path.basename(fullPath)) || 'file';
   const mediaType = detectMediaType(data, filename);
@@ -302,11 +230,14 @@ export function getShareFileTools(
     [SHARE_FILE_TOOL_NAME]: tool({
       description:
         'Share a file from your workspace with the user as a downloadable attachment. ' +
-        'Use this whenever the user asks for a file, report, export, document, image, or generated artifact — ' +
+        'Use this whenever the user asks for a file, report, export, document, or generated artifact — ' +
         'first create it on disk (e.g. with shell_write_file or shell_exec), then call share_file with its path. ' +
         'Announcing a file you have not shared yet leaves the user with nothing to open. ' +
         'The file is delivered as a download in the web/CLI chat and uploaded natively to Slack. ' +
-        'Max 10 MB per file. Do not paste large file contents into your reply or invent download links — use this tool.',
+        'Max 10 MB per file. Do not paste large file contents into your reply or invent download links — use this tool. ' +
+        'To show an image (PNG, JPEG, GIF or WebP) inside your reply instead, write ![description](path) where it belongs: ' +
+        'the path of an image file, or attachment:<id> for an image in this conversation. That needs no share_file call. ' +
+        'When your reply explains an image, such as a chart, show it inline; share it as a file when the user wants a file to keep.',
       inputSchema: shareFileInput,
       // Announce this call so it can tell "no pending writes" from "the hook that
       // records them never ran". See `awaitPendingWrites`.

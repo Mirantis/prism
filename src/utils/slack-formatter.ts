@@ -12,6 +12,7 @@
  */
 
 import { splitContent } from './text-chunker';
+import { attachmentRefId, findImageRefs, replaceImageRefs } from '../lib/inline-images';
 
 // Slack Block Kit types
 interface MarkdownBlock {
@@ -49,10 +50,18 @@ interface ActionsBlock {
   elements: ButtonElement[];
 }
 
-export type SlackBlock = MarkdownBlock | SectionBlock | ContextBlock | ActionsBlock;
+/** An image the bot uploaded, named by its Slack file id. */
+interface ImageBlock {
+  type: 'image';
+  slack_file: { id: string };
+  alt_text: string;
+}
+
+export type SlackBlock = MarkdownBlock | SectionBlock | ContextBlock | ActionsBlock | ImageBlock;
 
 // Individual block text limit
 const BLOCK_TEXT_LIMIT = 3000;
+const ALT_TEXT_LIMIT = 2000;
 
 // ============================================================================
 // Feedback buttons (👍 / 👎 on agent responses)
@@ -157,6 +166,43 @@ export interface FormatSlackMessageOptions {
    * The caller is responsible for gating (length / cadence / terminal-only).
    */
   feedbackMessageId?: string;
+  /**
+   * Attachment id → Slack file id of the images the text places, each shown as
+   * an image block at its place. Any other `attachment:` image reads as its
+   * description.
+   */
+  images?: ReadonlyMap<string, string>;
+}
+
+type TextOrImage = { text: string } | { image: ImageBlock };
+
+/** The content as text pieces and the image blocks between them. */
+function splitAtImages(content: string, images: ReadonlyMap<string, string> | undefined): TextOrImage[] {
+  const refs = findImageRefs(content).filter((ref) => attachmentRefId(ref.target) !== null);
+  const parts: TextOrImage[] = [];
+  let at = 0;
+  for (const ref of refs) {
+    const fileId = images?.get(attachmentRefId(ref.target)!);
+    if (!fileId) continue;
+    parts.push({ text: describeImages(content.slice(at, ref.start)) });
+    parts.push({
+      image: {
+        type: 'image',
+        slack_file: { id: fileId },
+        alt_text: (ref.alt.trim() || 'image').slice(0, ALT_TEXT_LIMIT),
+      },
+    });
+    at = ref.end;
+  }
+  parts.push({ text: describeImages(content.slice(at)) });
+  return parts;
+}
+
+/** Each `attachment:` image as its description, which Slack's markdown can show. */
+function describeImages(content: string): string {
+  return replaceImageRefs(content, findImageRefs(content), (ref) =>
+    attachmentRefId(ref.target) === null ? null : ref.alt,
+  );
 }
 
 /**
@@ -192,23 +238,16 @@ export function formatSlackMessage(
   // Convert tables to text format (markdown blocks don't support tables)
   const processedContent = convertTablesToText(content);
 
-  // Split into chunks if content is too long
-  if (processedContent.length > 0 && processedContent.length <= BLOCK_TEXT_LIMIT) {
-    // Single markdown block
-    blocks.push({
-      type: 'markdown',
-      text: processedContent,
-    });
-  } else if (processedContent.length > BLOCK_TEXT_LIMIT) {
-    // Split by paragraphs/sections to stay within limits
-    const sections = splitContent(processedContent, BLOCK_TEXT_LIMIT);
-
-    for (const section of sections) {
-      if (section.trim()) {
-        blocks.push({
-          type: 'markdown',
-          text: section,
-        });
+  for (const part of splitAtImages(processedContent, options?.images)) {
+    if ('image' in part) {
+      blocks.push(part.image);
+    } else if (part.text.length > 0 && part.text.length <= BLOCK_TEXT_LIMIT) {
+      // Single markdown block
+      if (part.text.trim()) blocks.push({ type: 'markdown', text: part.text });
+    } else if (part.text.length > BLOCK_TEXT_LIMIT) {
+      // Split by paragraphs/sections to stay within limits
+      for (const section of splitContent(part.text, BLOCK_TEXT_LIMIT)) {
+        if (section.trim()) blocks.push({ type: 'markdown', text: section });
       }
     }
   }
@@ -226,7 +265,7 @@ export function formatSlackMessage(
   if (blocks.length === 0 || (blocks.length === 1 && blocks[0].type === 'context')) {
     blocks.push({
       type: 'markdown',
-      text: content || '(empty message)',
+      text: describeImages(content) || '(empty message)',
     });
   }
 
@@ -250,7 +289,7 @@ export function formatSlackMessage(
   }
 
   return {
-    text: content, // Fallback plain text for notifications
+    text: describeImages(content), // Fallback plain text for notifications
     blocks,
   };
 }

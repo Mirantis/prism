@@ -13,6 +13,7 @@
  */
 
 import { App, LogLevel, SayFn, SocketModeReceiver } from '@slack/bolt';
+import type { ChatPostMessageResponse, WebClient } from '@slack/web-api';
 import { logger } from '../logger';
 import prisma from '../lib/prisma';
 import { ThreadSource } from '@prisma/client';
@@ -326,30 +327,34 @@ class SlackAdapterService implements ChannelAdapter {
         }
 
         try {
-          const formatted = await this.prepareOutboundMessage(
-            message.content,
-            connection.teamId,
-            message.triggeredBy || undefined,
-            (message.toolCalls as Array<{ tool: string }>) ?? undefined,
-            includeFeedback ? { feedbackMessageId: message.id } : undefined,
-          );
-
-          const dmResponse = await slackApp.app.client.chat.postMessage({
-            channel: mapping.dmChannelId,
-            // Reply into the DM thread if the incoming message was in one;
-            // undefined posts the reply top-level (existing behavior).
-            thread_ts: channelContext?.channelThreadId,
-            text: formatted.text,
-            blocks: formatted.blocks,
-            metadata: {
-              event_type: 'lens_platform_message',
-              event_payload: {
-                messageId: message.id,
-                threadId: message.threadId,
-                triggeredBy: message.triggeredBy,
+          const dmChannelId = mapping.dmChannelId;
+          const { response: dmResponse, files } = await this.postShowingImages(
+            slackApp.app.client,
+            attachments,
+            (images) => this.prepareOutboundMessage(
+              message.content,
+              connection.teamId,
+              message.triggeredBy || undefined,
+              (message.toolCalls as Array<{ tool: string }>) ?? undefined,
+              { ...(includeFeedback ? { feedbackMessageId: message.id } : {}), images },
+            ),
+            (formatted) => slackApp.app.client.chat.postMessage({
+              channel: dmChannelId,
+              // Reply into the DM thread if the incoming message was in one;
+              // undefined posts the reply top-level (existing behavior).
+              thread_ts: channelContext?.channelThreadId,
+              text: formatted.text,
+              blocks: formatted.blocks,
+              metadata: {
+                event_type: 'lens_platform_message',
+                event_payload: {
+                  messageId: message.id,
+                  threadId: message.threadId,
+                  triggeredBy: message.triggeredBy,
+                },
               },
-            },
-          });
+            }),
+          );
 
           if (dmResponse.ts) {
             await conversationService.setExternalMessageId(message.id, dmResponse.ts);
@@ -358,9 +363,9 @@ class SlackAdapterService implements ChannelAdapter {
           // Upload any shared files, threaded under the message just posted.
           await this.uploadAttachmentsToSlack(
             slackApp.app.client,
-            mapping.dmChannelId,
+            dmChannelId,
             typeof dmResponse.ts === 'string' ? dmResponse.ts : undefined,
-            attachments,
+            files,
           );
 
           // Slack clears the assistant status on any bot post — set it again.
@@ -443,24 +448,27 @@ class SlackAdapterService implements ChannelAdapter {
     }
 
     try {
-      const formatted = await this.prepareOutboundMessage(
-        content,
-        teamId,
-        triggeredBy,
-        toolCalls,
-        includeFeedback && messageId ? { feedbackMessageId: messageId } : undefined,
+      const { response, files } = await this.postShowingImages(
+        slackApp.app.client,
+        attachments,
+        (images) => this.prepareOutboundMessage(
+          content,
+          teamId,
+          triggeredBy,
+          toolCalls,
+          { ...(includeFeedback && messageId ? { feedbackMessageId: messageId } : {}), images },
+        ),
+        (formatted) => slackApp.app.client.chat.postMessage({
+          channel: channelId,
+          thread_ts: threadTs, // Reply in thread if specified
+          text: formatted.text,
+          blocks: formatted.blocks,
+          metadata: {
+            event_type: 'lens_platform_message',
+            event_payload: { threadId, ...(messageId && { messageId }), ...(triggeredBy && { triggeredBy }) },
+          },
+        }),
       );
-
-      const response = await slackApp.app.client.chat.postMessage({
-        channel: channelId,
-        thread_ts: threadTs, // Reply in thread if specified
-        text: formatted.text,
-        blocks: formatted.blocks,
-        metadata: {
-          event_type: 'lens_platform_message',
-          event_payload: { threadId, ...(messageId && { messageId }), ...(triggeredBy && { triggeredBy }) },
-        },
-      });
 
       // Only set external ID when responding in an existing Slack thread.
       // When posting a new top-level message (e.g. heartbeat/cron broadcast),
@@ -481,7 +489,7 @@ class SlackAdapterService implements ChannelAdapter {
         slackApp.app.client,
         channelId,
         typeof response.ts === 'string' ? response.ts : threadTs,
-        attachments,
+        files,
       );
 
       // Slack clears the assistant status on any bot post — set it again.
@@ -648,20 +656,12 @@ class SlackAdapterService implements ChannelAdapter {
     if (attachments.length === 0) return;
     for (const meta of attachments) {
       try {
-        const row = await attachmentService.getById(meta.id);
-        if (!row) {
-          logger.warn('[Slack] shared attachment %s not found; skipping upload', meta.id);
-          continue;
-        }
-        const fileBytes = await attachmentService.loadBytes(row);
-        if (!fileBytes) {
-          logger.warn('[Slack] shared attachment %s has no content (expired); skipping upload', meta.id);
-          continue;
-        }
+        const fileBytes = await this.attachmentBytes(meta);
+        if (!fileBytes) continue;
         const uploadBase = {
           channel_id: channelId,
           file: fileBytes,
-          filename: row.filename,
+          filename: meta.filename,
         };
         // Concrete branches: the uploadV2 args union requires thread_ts to be a
         // string when present (not an optional), so don't spread it as optional.
@@ -674,6 +674,65 @@ class SlackAdapterService implements ChannelAdapter {
         logger.error('[Slack] failed to upload shared file %s to %s: %s', meta.filename, channelId, msg);
       }
     }
+  }
+
+  private async attachmentBytes(meta: AttachmentMeta): Promise<Buffer | null> {
+    const row = await attachmentService.getById(meta.id);
+    if (!row) {
+      logger.warn('[Slack] shared attachment %s not found; skipping upload', meta.id);
+      return null;
+    }
+    const bytes = await attachmentService.loadBytes(row);
+    if (!bytes) logger.warn('[Slack] shared attachment %s has no content (expired); skipping upload', meta.id);
+    return bytes;
+  }
+
+  /**
+   * Post a reply with the images its text places as image blocks at their place.
+   * Each image is uploaded to no channel first, so a block can name it. When
+   * Slack refuses the message with them, the text is posted with each image's
+   * description, and the images go with the files uploaded after it. Returns
+   * the files the posted message does not show.
+   */
+  private async postShowingImages(
+    client: App['client'],
+    attachments: AttachmentMeta[],
+    format: (images: ReadonlyMap<string, string>) => Promise<{ text: string; blocks: SlackBlock[] }>,
+    post: (formatted: { text: string; blocks: SlackBlock[] }) => Promise<ChatPostMessageResponse>,
+  ): Promise<{ response: ChatPostMessageResponse; files: AttachmentMeta[] }> {
+    const images = await this.uploadInlineImages(client, attachments);
+    if (images.size === 0) return { response: await post(await format(images)), files: attachments };
+    try {
+      return { response: await post(await format(images)), files: attachments.filter((a) => !images.has(a.id)) };
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.warn('[Slack] message with %d image block(s) refused (%s); posting the images after it', images.size, msg);
+      return { response: await post(await format(new Map())), files: attachments };
+    }
+  }
+
+  /** Attachment id → Slack file id of each inline image Slack took. */
+  private async uploadInlineImages(
+    client: App['client'],
+    attachments: AttachmentMeta[],
+  ): Promise<Map<string, string>> {
+    const images = new Map<string, string>();
+    for (const meta of attachments.filter((a) => a.inline)) {
+      try {
+        const file = await this.attachmentBytes(meta);
+        if (!file) continue;
+        // Bolt types the result loosely; the SDK's own client names its shape.
+        const upload = (await client.files.uploadV2({ file, filename: meta.filename })) as Awaited<
+          ReturnType<WebClient['filesUploadV2']>
+        >;
+        const fileId = upload.files[0]?.files?.[0]?.id;
+        if (fileId) images.set(meta.id, fileId);
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.warn('[Slack] inline image %s not uploaded: %s', meta.filename, msg);
+      }
+    }
+    return images;
   }
 
   /**

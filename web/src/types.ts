@@ -38,6 +38,8 @@ export interface Attachment {
   category: AttachmentCategory;
   /** Content deleted by the retention sweep (7 days) — metadata only. */
   expired?: boolean;
+  /** The message's text shows this image at its place, as `![alt](attachment:<id>)`. */
+  inline?: boolean;
 }
 
 export interface ConversationMessage {

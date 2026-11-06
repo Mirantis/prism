@@ -113,3 +113,57 @@ describe('ChatMessage', () => {
     expect(screen.queryByRole('link', { name: 'Sign in to Claude' })).toBeNull();
   });
 });
+
+describe('ChatMessage images in the text', () => {
+  afterEach(cleanup);
+
+  const CHART = '3f2a9c1e-5b7d-4e8a-9c21-7d4e5f6a8b90';
+  const DATA = '0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d';
+  const chart = { id: CHART, filename: 'euribor.png', mediaType: 'image/png', sizeBytes: 109_600, category: 'image' as const };
+  const data = { id: DATA, filename: 'euribor.csv', mediaType: 'text/csv', sizeBytes: 900, category: 'text' as const };
+
+  function agentReply(content: string, attachments: TranscriptMessage['attachments']) {
+    return userMessage({ role: 'AGENT', senderId: null, senderName: null, content, attachments });
+  }
+
+  it('shows an inline image between the text around it, and only the other files as chips', () => {
+    const reply = agentReply(`Rates fell.\n\n![Euribor, past year](attachment:${CHART})\n\nThey bottomed in May.`, [
+      { ...chart, inline: true },
+      data,
+    ]);
+    const { container } = renderMessage(reply, ADA);
+
+    const image = screen.getByTestId('inline-image');
+    expect(image.getAttribute('src')).toBe(`/agents/attachments/${CHART}`);
+    expect(image.getAttribute('alt')).toBe('Euribor, past year');
+    const paragraphs = [...container.querySelectorAll('p')].map((p) => p.textContent);
+    expect(paragraphs).toEqual(['Rates fell.', '', 'They bottomed in May.']);
+    expect(screen.getAllByTestId('message-attachment').map((chip) => chip.textContent)).toEqual([
+      expect.stringContaining('euribor.csv'),
+    ]);
+  });
+
+  it('keeps an image the text does not place as a chip', () => {
+    renderMessage(agentReply('Here is the chart.', [chart]), ADA);
+    expect(screen.queryByTestId('inline-image')).toBeNull();
+    expect(screen.getByTestId('message-attachment').textContent).toContain('euribor.png');
+  });
+
+  it('loads no image from another host, and links it instead', () => {
+    renderMessage(agentReply('![tracker](https://example.com/pixel.png?d=secret)', null), ADA);
+    expect(screen.queryByRole('img')).toBeNull();
+    expect(screen.getByRole('link', { name: 'tracker' }).getAttribute('href')).toBe('https://example.com/pixel.png?d=secret');
+  });
+
+  it('shows the description of a reference that names no image of the message', () => {
+    renderMessage(agentReply(`![lost chart](attachment:${DATA})`, [data]), ADA);
+    expect(screen.queryByRole('img')).toBeNull();
+    expect(screen.getByText('lost chart')).toBeTruthy();
+  });
+
+  it('marks an inline image whose content expired', () => {
+    renderMessage(agentReply(`![chart](attachment:${CHART})`, [{ ...chart, inline: true, expired: true }]), ADA);
+    expect(screen.queryByTestId('inline-image')).toBeNull();
+    expect(screen.getByTestId('inline-image-expired').textContent).toBe('chart · expired');
+  });
+});

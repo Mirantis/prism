@@ -52,6 +52,19 @@ Feature: Share files with the agent
     Then the downloaded file should be named "export.txt"
     And the downloaded file should contain "PRISMRELOAD7"
 
+  # The image is placed by its path, and the text file is shared as a download,
+  # so one reply shows both. The reload reads the placement back from history.
+  @slow
+  Scenario: The agent shows an image inside its reply and shares a file under it
+    When I navigate to the agent chat page
+    And I type "Run this exact shell command: printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAIAAABvFaqvAAAAH0lEQVR4nGNQTX5NFcQwatCoQaMGjRo0atCoQQNvEABZoULu4chlggAAAABJRU5ErkJggg==' | base64 -d > chart.png. Then create a file named notes.txt containing PRISMNOTES and share it with me as a download. Reply in three lines: the word PRISMBEFORE, then the image chart.png shown inside your reply, then the word PRISMAFTER." in the chat input
+    And I send the message
+    Then the agent's message should show an image between "PRISMBEFORE" and "PRISMAFTER"
+    And I should see "notes.txt" as an attachment on the agent's message
+    And I should not see "chart.png" as an attachment on the agent's message
+    When I reload the chat page
+    Then the agent's message should show an image between "PRISMBEFORE" and "PRISMAFTER"
+
   # @slow (playwright-bdd → test.slow(), i.e. 3× the configured timeout): the
   # hydrate-first flow costs ~3 inference round-trips (metadata stub →
   # hydrate_attachment → shell read → final text) where auto-inlining cost one.

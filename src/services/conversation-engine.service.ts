@@ -16,6 +16,7 @@ import { threadTurnService, type PendingMessage } from './thread-turn.service';
 import { threadTitleService } from './thread-title.service';
 import { conversationThreadActivityService } from './conversation-thread-activity.service';
 import { attachmentService } from './attachment.service';
+import { placeInlineImages } from './inline-image-placement';
 import { pendingWorkService } from './pending-work.service';
 import { questionCardService, type ClosedInChat } from './question-cards/question-card.service';
 import { ASK_QUESTIONS_TOOL_NAME } from './question-cards/question-card-schema';
@@ -68,6 +69,16 @@ interface StreamedTurn {
   error?: InvokeError;
   /** The model's stream ended on its own, not by an abort, so the reply is the whole answer. */
   completed: boolean;
+  images: TurnImages;
+}
+
+/** How the images and files of a turn's replies were shown. */
+interface TurnImages {
+  inline: number;
+  /** Image references that show no image. */
+  missed: number;
+  /** Files delivered under a reply rather than in its text. */
+  attached: number;
 }
 
 // ============================================================================
@@ -550,6 +561,7 @@ Answer with one word: WORTHY or SKIP.`;
     const allToolCalls: ToolCallRecord[] = [];
     let agentMessage: StreamedTurn['agentMessage'];
     let turnError: InvokeError | undefined;
+    const images: TurnImages = { inline: 0, missed: 0, attached: 0 };
     let verbose = false;
     let titleSet: string | null = null;
     // Every message this exchange answers. Each is owed an answer until the
@@ -700,6 +712,9 @@ Answer with one word: WORTHY or SKIP.`;
             });
 
             if (streamed.text) responseTexts.push(streamed.text);
+            images.inline += streamed.images.inline;
+            images.missed += streamed.images.missed;
+            images.attached += streamed.images.attached;
             allToolCalls.push(...streamed.toolCalls);
             allBlocks.push(...streamed.blocks);
             if (streamed.agentMessage) agentMessage = streamed.agentMessage;
@@ -774,6 +789,9 @@ Answer with one word: WORTHY or SKIP.`;
       'chat.tool_calls': String(allToolCalls.length),
       'chat.response_chars': String(response.length),
       'chat.verbose': String(verbose),
+      'chat.inline_images': String(images.inline),
+      'chat.inline_image_misses': String(images.missed),
+      'chat.attached_files': String(images.attached),
     });
 
     return {
@@ -945,9 +963,25 @@ Answer with one word: WORTHY or SKIP.`;
     const responseTexts: string[] = [];
     const allBlocks: UIBlock[] = [];
     const allToolCalls: ToolCallRecord[] = [];
-    // Files the agent shared (share_file) accrue across steps and ride out on
-    // the final delivered message, so they appear alongside the answer.
+    // Files the agent shared (share_file) accrue across steps. A delivered step
+    // takes the images its text places; the rest ride out on the final delivered
+    // message, so they appear alongside the answer.
     const allAttachmentIds: string[] = [...(params.unsentAttachmentIds ?? [])];
+    const images: TurnImages = { inline: 0, missed: 0, attached: 0 };
+    const place = async (text: string) => {
+      const placed = await placeInlineImages(text, {
+        threadId,
+        workspaceRoot: params.workspaceRoot,
+        shared: allAttachmentIds,
+      });
+      for (const id of placed.attachmentIds) {
+        const shared = allAttachmentIds.indexOf(id);
+        if (shared !== -1) allAttachmentIds.splice(shared, 1);
+      }
+      images.inline += placed.attachmentIds.length;
+      images.missed += placed.missed;
+      return placed;
+    };
     let error: InvokeError | undefined;
     // Whether the row holds calls or files that this turn's reply takes over.
     let owes = allAttachmentIds.length > 0;
@@ -986,13 +1020,15 @@ Answer with one word: WORTHY or SKIP.`;
         // no blocks, no feedback gate.
         if (bufferedStep) {
           if (params.verbose) {
+            const placed = await place(bufferedStep.text);
             agentMessage = await messageDeliveryService.publish(
               userId,
               threadId,
-              bufferedStep.text,
+              placed.content,
               'USER_INPUT',
               {
                 toolCalls: bufferedToolCalls.length > 0 ? bufferedToolCalls : undefined,
+                attachmentIds: placed.attachmentIds.length > 0 ? placed.attachmentIds : undefined,
                 channelContext: channelContext
                   ? { ...channelContext, includeFeedback: false }
                   : undefined,
@@ -1031,7 +1067,7 @@ Answer with one word: WORTHY or SKIP.`;
     // A turn a shutdown stopped delivers nothing. Its row keeps what the turn did,
     // and the next boot continues the turn from there.
     if (!completed && pendingWorkService.shutdownSignal.aborted) {
-      return { text: response, toolCalls: allToolCalls, blocks: allBlocks, agentMessage, completed, error };
+      return { text: response, toolCalls: allToolCalls, blocks: allBlocks, agentMessage, completed, error, images };
     }
 
     // Stream is done. The buffered step (if any) is the LAST text step:
@@ -1040,15 +1076,18 @@ Answer with one word: WORTHY or SKIP.`;
       const includeFeedback = params.promptSource === 'person' && await this.shouldShowFeedback(
         threadId, prompt, bufferedStep.text, userId, agentId, params.abortSignal,
       );
+      const placed = await place(bufferedStep.text);
+      const attachmentIds = [...placed.attachmentIds, ...allAttachmentIds];
+      images.attached += allAttachmentIds.length;
       agentMessage = await messageDeliveryService.publish(
         userId,
         threadId,
-        bufferedStep.text,
+        placed.content,
         'USER_INPUT',
         {
           toolCalls: bufferedToolCalls.length > 0 ? bufferedToolCalls : undefined,
           blocks: allBlocks.length > 0 ? allBlocks : undefined,
-          attachmentIds: allAttachmentIds.length > 0 ? allAttachmentIds : undefined,
+          attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
           channelContext: channelContext ? { ...channelContext, includeFeedback } : undefined,
         }
       );
@@ -1074,6 +1113,7 @@ Answer with one word: WORTHY or SKIP.`;
     }
 
     if (!agentMessage && (allToolCalls.length > 0 || allBlocks.length > 0 || allAttachmentIds.length > 0)) {
+      images.attached += allAttachmentIds.length;
       agentMessage = await messageDeliveryService.publish(
         userId,
         threadId,
@@ -1090,7 +1130,7 @@ Answer with one word: WORTHY or SKIP.`;
     // The reply holds the turn's calls and files now.
     if (owes) params.onUnsaved([], []);
 
-    return { text: response, toolCalls: allToolCalls, blocks: allBlocks, agentMessage, completed, error };
+    return { text: response, toolCalls: allToolCalls, blocks: allBlocks, agentMessage, completed, error, images };
   }
 }
 

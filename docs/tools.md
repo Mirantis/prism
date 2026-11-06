@@ -224,6 +224,9 @@ The agent can deliver a file from its workspace to you as a **downloadable
 attachment** (up to 10 MB). That's how files it produces — a report, an export,
 a generated artifact — reach you in the Web UI, Terminal UI, or Slack. In the
 TUI, save them to disk with [`/save`](terminal-ui.md#attaching-and-saving-files).
+The agent can also show an image, such as a chart, inside its reply at the place
+where the text explains it. The Terminal UI shows `[image: …]` there, and `/save`
+saves the image with the other files.
 A heartbeat, webhook run or scheduled task that doesn't continue a conversation
 can't share a file: it reaches you only through the messages it posts, which
 carry text alone.

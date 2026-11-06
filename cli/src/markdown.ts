@@ -7,12 +7,21 @@ import { markedTerminal } from 'marked-terminal';
 // widths — the chat column and the config content pane).
 const renderers = new Map<number, Marked>();
 
+/**
+ * A terminal draws no image, so an image a message places in its text reads as
+ * its description there. The file itself is in the list under the message.
+ */
+function image(href: string, _title: string | null, text: string): string {
+  if (!href.startsWith('attachment:')) return `![${text}](${href})`;
+  return `[image: ${text.trim() || 'image'}]`;
+}
+
 function rendererFor(width: number): Marked {
   let renderer = renderers.get(width);
   if (!renderer) {
     renderer = new Marked();
     renderer.use(
-      markedTerminal({ reflowText: true, width }) as Parameters<typeof renderer.use>[0],
+      markedTerminal({ reflowText: true, width, image }) as Parameters<typeof renderer.use>[0],
     );
     renderers.set(width, renderer);
   }

@@ -59,6 +59,47 @@ Then(
   },
 );
 
+Then(
+  "I should not see {string} as an attachment on the agent's message",
+  async ({ page }, name: string) => {
+    const homePage = new HomePage(page);
+    await homePage.waitForAgentResponse();
+    await homePage.waitForStreamComplete();
+    await expect(homePage.agentMessageAttachment(name)).toHaveCount(0);
+  },
+);
+
+Then(
+  "the agent's message should show an image between {string} and {string}",
+  async ({ page }, before: string, after: string) => {
+    const homePage = new HomePage(page);
+    await homePage.waitForAgentResponse();
+    await homePage.waitForStreamComplete();
+    const message = homePage.getAgentMessages().last();
+    const image = message.getByTestId('inline-image');
+    await expect(image).toBeVisible({ timeout: 60_000 });
+    await expect
+      .poll(() => image.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0), { timeout: 10_000 })
+      .toBe(true);
+    const between = await message.evaluate((root, [first, last]) => {
+      const textNode = (word: string) => {
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          if (node.textContent?.includes(word)) return node;
+        }
+        return null;
+      };
+      const img = root.querySelector('[data-testid="inline-image"]');
+      const start = textNode(first);
+      const end = textNode(last);
+      if (!img || !start || !end) return false;
+      const follows = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+      return follows(start, img) && follows(img, end);
+    }, [before, after]);
+    expect(between, `the image sits between "${before}" and "${after}"`).toBe(true);
+  },
+);
+
 Then('the agent response should contain {string}', async ({ page }, expected: string) => {
   const homePage = new HomePage(page);
   await homePage.waitForAgentResponse();

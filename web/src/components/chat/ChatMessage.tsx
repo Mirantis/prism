@@ -13,11 +13,13 @@ import type { TranscriptMessage } from '@/lib/chat-socket/transcript';
 import type { Viewer } from '@/lib/chat-socket/protocol';
 import type { ConversationMessage } from '@/types';
 
+/** The files the text does not show in place. */
 function AttachmentChips({ message }: { message: ConversationMessage }) {
-  if (!message.attachments || message.attachments.length === 0) return null;
+  const files = message.attachments?.filter((a) => !a.inline) ?? [];
+  if (files.length === 0) return null;
   return (
     <div className="flex flex-wrap gap-2">
-      {message.attachments.map((a) => (
+      {files.map((a) => (
         <MessageAttachmentChip key={a.id} attachment={a} />
       ))}
     </div>
@@ -82,7 +84,7 @@ const ChatMessage = memo(function ChatMessage({
     return (
       <div className={`flex ${ENTER} ${isBlock ? 'justify-start' : 'justify-center'}`} data-message-id={message.id}>
         <div className={`max-w-[85%] rounded-xl px-4 py-2 text-sm ${shape} ${skin}`}>
-          <ChatMarkdown content={message.content} />
+          <ChatMarkdown content={message.content} attachments={message.attachments} />
         </div>
       </div>
     );
@@ -113,7 +115,7 @@ const ChatMessage = memo(function ChatMessage({
           <AttachmentChips message={message} />
           {hasText && (
             <div className="max-w-full overflow-hidden rounded-2xl rounded-tl-md bg-muted px-4 py-2.5 text-[15px] break-words text-foreground [&_:not(pre)>code]:bg-background/70">
-              <ChatMarkdown content={message.content} />
+              <ChatMarkdown content={message.content} attachments={message.attachments} />
             </div>
           )}
         </div>
@@ -133,7 +135,7 @@ const ChatMessage = memo(function ChatMessage({
           <AttachmentChips message={message} />
           {hasText && (
             <div className="rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-[15px] text-primary-foreground shadow-md shadow-primary/15 selection:bg-primary-foreground selection:text-primary [&_a]:text-primary-foreground [&_a]:decoration-primary-foreground/50">
-              <ChatMarkdown content={message.content} />
+              <ChatMarkdown content={message.content} attachments={message.attachments} />
             </div>
           )}
           {message.delivery === 'failed' ? (
@@ -181,7 +183,7 @@ const ChatMessage = memo(function ChatMessage({
             tables and code keep their room. */}
         {!hasCard && message.content.trim() && (
           <div className="overflow-hidden rounded-2xl rounded-tl-md bg-muted px-4 py-3 text-[15px] leading-relaxed break-words text-foreground [&_:not(pre)>code]:bg-background/70">
-            <ChatMarkdown content={message.content} />
+            <ChatMarkdown content={message.content} attachments={message.attachments} />
           </div>
         )}
         {help.map((item) => (

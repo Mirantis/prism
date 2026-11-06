@@ -179,6 +179,8 @@ export interface AttachmentPayload {
   sizeBytes: number;
   category: string;
   expired?: boolean;
+  /** The message's text shows this image at its place, as `![alt](attachment:<id>)`. */
+  inline?: boolean;
 }
 
 /** One message, for any role. A client upserts it by `id`. */

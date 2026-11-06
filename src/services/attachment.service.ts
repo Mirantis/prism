@@ -24,6 +24,7 @@ import { listMediaFiles, readMediaFile, removeMediaFile, writeMediaFile } from '
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { MAX_ATTACHMENTS_PER_MESSAGE } from '../constants';
+import { placeAttachments } from '../lib/inline-images';
 import type { ChatPlatform } from './channel-adapter.interface';
 
 export type AttachmentCategory = 'image' | 'pdf' | 'text' | 'unreadable';
@@ -44,6 +45,8 @@ export interface AttachmentMeta {
    * `storagePath = null` at boot.
    */
   expired: boolean;
+  /** The message's text shows this image at its place (`placeAttachments`); every other file sits under the text. */
+  inline?: true;
 }
 
 export interface CreateAttachmentInput {
@@ -392,10 +395,11 @@ class AttachmentService {
 
   /**
    * Join attachment metadata (no bytes) onto messages by message id — the
-   * shared enrichment for thread-read endpoints, so the join shape lives in
-   * one place. Returns the input array untouched when nothing matches.
+   * shared enrichment for every message a client or channel receives, so the
+   * join shape and the inline placement live in one place. Returns the input
+   * array untouched when nothing matches.
    */
-  async attachMetaToMessages<T extends { id: string }>(
+  async attachMetaToMessages<T extends { id: string; content: string }>(
     messages: T[],
   ): Promise<(T & { attachments?: AttachmentMeta[] })[]> {
     if (messages.length === 0) return messages;
@@ -403,7 +407,7 @@ class AttachmentService {
     if (metaMap.size === 0) return messages;
     return messages.map((m) => {
       const attachments = metaMap.get(m.id);
-      return attachments && attachments.length > 0 ? { ...m, attachments } : m;
+      return attachments && attachments.length > 0 ? { ...m, attachments: placeAttachments(m.content, attachments) } : m;
     });
   }
 
