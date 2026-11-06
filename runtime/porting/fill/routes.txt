@@ -1,0 +1,23 @@
+src/index.ts -> runtime/src/index.rs (511 lines)
+src/lib/origin-guard.ts -> runtime/src/lib/origin_guard.rs (162 lines) tests: src/lib/origin-guard.test.ts
+src/lib/proxy-dispatcher.ts -> runtime/src/lib/proxy_dispatcher.rs (47 lines)
+src/lib/public-url.ts -> runtime/src/lib/public_url.rs (123 lines) tests: src/lib/public-url.test.ts
+src/lib/raw-body.ts -> runtime/src/lib/raw_body.rs (31 lines)
+src/routes/activity.ts -> runtime/src/routes/activity.rs (105 lines) tests: src/routes/activity.test.ts
+src/routes/agent-guide.ts -> runtime/src/routes/agent_guide.rs (55 lines) tests: src/routes/agent-guide.test.ts
+src/routes/agent-messages.ts -> runtime/src/routes/agent_messages.rs (168 lines) tests: src/routes/agent-messages.test.ts
+src/routes/agent-state.ts -> runtime/src/routes/agent_state.rs (18 lines) tests: src/routes/agent-state.test.ts
+src/routes/coding-agents.ts -> runtime/src/routes/coding_agents.rs (75 lines) tests: src/routes/coding-agents.test.ts
+src/routes/computer.ts -> runtime/src/routes/computer.rs (100 lines) tests: src/routes/computer.test.ts
+src/routes/computers.ts -> runtime/src/routes/computers.rs (188 lines) tests: src/routes/computers.test.ts
+src/routes/cron-tasks.ts -> runtime/src/routes/cron_tasks.rs (236 lines) tests: src/routes/cron-tasks.test.ts
+src/routes/document-revisions.ts -> runtime/src/routes/document_revisions.rs (182 lines) tests: src/routes/document-revisions.test.ts
+src/routes/heartbeat-delivery.ts -> runtime/src/routes/heartbeat_delivery.rs (49 lines)
+src/routes/locked-in.ts -> runtime/src/routes/locked_in.rs (44 lines) tests: src/routes/locked-in.test.ts
+src/routes/management.ts -> runtime/src/routes/management.rs (1956 lines) tests: src/routes/management.test.ts
+src/routes/messages.ts -> runtime/src/routes/messages.rs (72 lines) tests: src/routes/messages.test.ts
+src/routes/model-selection.ts -> runtime/src/routes/model_selection.rs (43 lines) tests: src/routes/model-selection.test.ts
+src/routes/threads.ts -> runtime/src/routes/threads.rs (106 lines) tests: src/routes/threads.test.ts
+src/routes/update.ts -> runtime/src/routes/update.rs (83 lines) tests: src/routes/update.test.ts
+src/routes/webhook.ts -> runtime/src/routes/webhook.rs (97 lines) tests: src/routes/webhook.test.ts
+src/server.ts -> runtime/src/server.rs (183 lines) tests: src/server.test.ts

@@ -1,0 +1,7 @@
+src/lib/agent-message-kind.ts -> runtime/src/lib/agent_message_kind.rs (12 lines)
+src/lib/langfuse.ts -> runtime/src/lib/langfuse.rs (63 lines)
+src/lib/startup-telemetry.ts -> runtime/src/lib/startup_telemetry.rs (105 lines) tests: src/lib/startup-telemetry.test.ts
+src/lib/telemetry.ts -> runtime/src/lib/telemetry.rs (192 lines) tests: src/lib/telemetry.test.ts
+src/services/update/apply.ts -> runtime/src/services/update/apply.rs (348 lines)
+src/services/update/ghcr.ts -> runtime/src/services/update/ghcr.rs (114 lines)
+src/services/update/update.service.ts -> runtime/src/services/update/update_service.rs (431 lines)

@@ -1,0 +1,6 @@
+src/lib/teams-config.ts -> runtime/src/lib/teams_config.rs (66 lines) tests: src/lib/teams-config.test.ts
+src/routes/teams.ts -> runtime/src/routes/teams.rs (278 lines) tests: src/routes/teams.test.ts
+src/services/teams/teams-adapter.service.ts -> runtime/src/services/teams/teams_adapter_service.rs (1237 lines)
+src/services/teams/teams-attachments.ts -> runtime/src/services/teams/teams_attachments.rs (300 lines)
+src/services/teams/teams-mapping.service.ts -> runtime/src/services/teams/teams_mapping_service.rs (277 lines)
+src/utils/teams-formatter.ts -> runtime/src/utils/teams_formatter.rs (72 lines) tests: src/utils/teams-formatter.test.ts
