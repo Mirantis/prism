@@ -440,8 +440,7 @@ somebody adds a caller.
   main path flat. A function reads best in four stages, in order: gather the
   inputs, normalize them, decide, then act.
 - **Group by purpose.** Related files sit in one folder, and a file that has
-  taken on two jobs splits into one file per job (the tree under `src/` shows
-  the grouping).
+  taken on two jobs splits into one file per job.
 - **Never edit `node_modules`.** Fix the source, pin the dependency, or add an
   npm override. An edit there is invisible in review, dies on the next install,
   and hits every other worktree at once, because a worktree's `node_modules` is
@@ -545,13 +544,13 @@ After:  esbuild receives `playwright-core` as a prebuilt bundle ...
 
 One `AGENT_ID` per container, with embedded SQLite and sqlite-vec at
 `file:/data/agent.db`, and one LLM provider per container (`LLM_PROVIDER`).
-`docs/docker.md` lists the image tags. `docs/configuration.md` (Provider
-selection, Credentials, Models, Memory embeddings, Voice) and the headers in
-`lib/llm-providers/` describe each vendor. These rules hold across vendors:
+`docs/docker.md` lists the image tags. A fork's PR builds the image and pushes
+nothing, because its token is read-only, and `pr-image-cleanup.yml` deletes the
+`pr-<n>` tags when the PR closes. The provider sections of
+`docs/configuration.md` (Provider selection, Credentials, Models, Voice
+meetings, Voice chat) and the headers in `lib/llm-providers/` describe each
+vendor. These rules hold across vendors:
 
-- A fork's PR builds the image and pushes nothing, because its token is
-  read-only. `pr-image-cleanup.yml` deletes the `pr-<n>` tags when the PR
-  closes.
 - `config.ts` resolves each vendor's endpoint once: the explicit `*_BASE_URL`,
   else the gateway mount, else the vendor's own host. A factory receives that
   endpoint and chooses nothing.
@@ -748,8 +747,8 @@ locally.
    clients — the bundled web SPA and `prism-cli` (not a backend): chat and
    thread/message CRUD, heartbeat start/stop/trigger + status, cron
    schedule/unschedule, Slack link/verification codes + mapping queries and
-   mutations, and skills list/run. The Slack and Teams routes are listed
-   under **Management API Endpoints** below.
+   mutations, and skills list/run. The Slack and Teams routes are in
+   `src/routes/slack.ts` and `src/routes/teams.ts`.
 
 ### Tools
 
@@ -846,7 +845,9 @@ The tree under `src/` and each file's header comment describe the modules, and
 - `get-coding-agent.ts` keeps one adapter instance per agent, so the adapter
   that prepared the home runs every task. It is a `Record`, so a configured name
   without an adapter fails to compile.
-- `lib/coding-agents/subscription.ts` and `terminal.ts` import no config.
+- `lib/coding-agents/subscription.ts` and `terminal.ts` import nothing that
+  reads the configuration, so `coding-agent-exec` loads them without starting
+  the runtime.
 - `bedrock-model-id.ts` imports nothing, so `config.ts` can use it.
 - A Converse family gets a prompt-cache breakpoint only from
   `CONVERSE_PROMPT_CACHE_FAMILIES`, because a `cachePoint` block on a model
@@ -857,11 +858,8 @@ The tree under `src/` and each file's header comment describe the modules, and
   conversation thread.
 - `voice-session-lock.ts` allows one voice session at a time across voice chat
   and meetings; dictation does not take it.
-- One emitter per event: `remoteComputerService` emits `computer added` /
-  `computer removed`, `computerLinkEndpoint` emits `computer connected` /
-  `computer disconnected`, and `threadReplyClassifierService` emits
-  `<platform> thread classification failed`. `computerService` owns
-  `ComputerSummary` (the REST list and the chat `computer` event).
+- `computerService` owns `ComputerSummary` (the REST list and the chat
+  `computer` event).
 - Removing a computer retires its access gate: runs on it fail at their next
   step, and their turns are not cancelled.
 - The Teams bot endpoint has a listener of its own that serves one route,
@@ -873,12 +871,12 @@ The tree under `src/` and each file's header comment describe the modules, and
   MCP config is written 0600 in its own temp dir and removed before the run's
   stream ends. The subscription `--settings` restate the overriding variables,
   so a repository's `.claude/settings.json` cannot bring one back.
-- `lib/origin-guard.ts` runs ahead of every route, `/health` included, and on
-  the `/api/ws` handshake. On a loopback bind it requires a loopback `Host`
+- `lib/origin-guard.ts` runs ahead of every route on the main port, `/health`
+  included, and on the `/api/ws` handshake. On a loopback bind it requires a loopback `Host`
   unless the request states `X-Forwarded-Host`, which closes DNS rebinding.
 - The Teams SDK validates the Bot Framework JWT before the handler runs.
-- An outbound read (`lib/public-url.ts`) reaches the public internet only, and
-  every DNS answer is checked.
+- An outbound read (`lib/public-url.ts`) connects only to public internet
+  addresses, and every DNS answer is checked.
 - `lib/tool-output-store.ts` keeps no database row; the file's mtime is its
   whole lifecycle. Compaction keeps those files, since `read_compacted_history`
   returns the notices that name them.
@@ -906,9 +904,10 @@ On shutdown, `pendingWorkService.shutdown()` runs first: the work in flight stop
 `.env.example` is the annotated template, and `src/config.ts` reads them.
 `SERVICE_VERSION` is set by the workflows under `.github/workflows/`.
 
-A `__nexus_cred:<uuid>__` sentinel works only in a header, because the proxy
-rewrites headers only. So `TEAMS_APP_PASSWORD` must be an OAuth
-client-credentials credential, and `GOOGLE_BOT_PASSWORD` must be the real value.
+A `__nexus_cred:<uuid>__` sentinel works only in a header, because the sandbox
+proxy rewrites headers only. So on Lens Agents, `TEAMS_APP_PASSWORD` is the
+sentinel of an OAuth client-credentials credential; elsewhere it is the app
+registration's client secret. `GOOGLE_BOT_PASSWORD` is always the real value.
 
 ## Chat Flow
 
@@ -1223,9 +1222,7 @@ The agent-runtime owns the full Slack adapter implementation. It manages Bolt ap
 
 ### Management API Endpoints
 
-The Slack and Teams management routes are in `src/routes/slack.ts` and
-`src/routes/teams.ts`, one JSDoc per route. The Teams messaging endpoint is
-`POST /agents/teams/messages` on `TEAMS_PORT`.
+The Teams messaging endpoint is `POST /agents/teams/messages` on `TEAMS_PORT`.
 
 ## WebSocket Gateway
 
@@ -1238,11 +1235,6 @@ The agent-runtime owns the chat socket, `/api/ws`, which the web UI, the TUI and
 - **Store first**: a send is stored under the client's uuid before anything else and only then confirmed, so a client resends anything unconfirmed and the same id is never stored twice.
 - **One turn at a time for the agent**: a message for another conversation waits, shown to every client as `queued`. The wait is also what keeps the agent quiet while a person holds the computer.
 - **Response delivery**: `messageDeliveryService.publish()` -> `websocketAdapterService` -> `eventStreamService.publish()`; a person's message and in-place edits go through `messageDeliveryService.mirror()`.
-
-### WebSocket Key Files
-
-Files: `services/websocket-gateway.service.ts`, `event-stream.service.ts`,
-`inbound-message.service.ts`, `websocket-adapter.service.ts`.
 
 ## Agent Guide (agentMd)
 
