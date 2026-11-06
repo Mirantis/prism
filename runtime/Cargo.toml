@@ -42,6 +42,7 @@ diesel = { version = "2.2", features = ["sqlite", "r2d2", "returning_clauses_for
 libsqlite3-sys = { version = "0.30", features = ["bundled"] }
 sqlite-vec = "0.1"
 r2d2 = "0.8"
+scheduled-thread-pool = "0.2"
 
 # Utilities
 anyhow = "1"
@@ -85,6 +86,17 @@ jsonschema = { version = "0.30", default-features = false }
 serde_yaml = "0.9"
 unicode-segmentation = "1"
 humantime = "2"
+unicode-normalization = "0.1.26"
+htmd = "0.5.6"
+dom_smoothie = "0.19.0"
+croner = "4.0.3"
+jsonwebtoken = "11.1.0"
+aws-sigv4 = "1.4.5"
+aws-credential-types = "1.2.14"
+aws-config = { version = "1.8.18", default-features = false, features = ["rustls", "rt-tokio", "behavior-version-latest", "credentials-process", "sso"] }
+opentelemetry = "0.33.1"
+opentelemetry_sdk = "0.33.1"
+opentelemetry-otlp = { version = "0.33.1", default-features = false, features = ["http-json", "http-proto", "logs", "trace", "reqwest-client", "reqwest-rustls"] }
 
 [dev-dependencies]
 serial_test = "3"
