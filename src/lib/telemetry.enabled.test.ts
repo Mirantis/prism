@@ -32,6 +32,9 @@ vi.mock('@opentelemetry/sdk-logs', () => ({
     getLogger() {
       return { emit: () => {} };
     }
+    forceFlush() {
+      return Promise.resolve();
+    }
     shutdown() {
       return Promise.resolve();
     }
@@ -39,7 +42,7 @@ vi.mock('@opentelemetry/sdk-logs', () => ({
   BatchLogRecordProcessor: class MockBatchLogRecordProcessor {},
 }));
 
-import { initTelemetry } from './telemetry';
+import { flushTelemetry, initTelemetry, shutdownTelemetry } from './telemetry';
 
 describe('telemetry (enabled path)', () => {
   beforeEach(() => {
@@ -72,5 +75,11 @@ describe('telemetry (enabled path)', () => {
     expect(attrs['product.name']).toBe('example-product');
     expect(attrs['service.name']).toBe('prism-agent-runtime');
     expect(attrs['service.namespace']).toBe('prism-agent');
+  });
+
+  it('flushes while running, and reports false once shut down', async () => {
+    await expect(flushTelemetry()).resolves.toBe(true);
+    await shutdownTelemetry();
+    await expect(flushTelemetry()).resolves.toBe(false);
   });
 });

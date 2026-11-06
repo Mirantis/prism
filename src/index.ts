@@ -389,8 +389,8 @@ const initialize = async () => {
     // and expired saved tool outputs now, then hourly (see lib/file-janitor.ts).
     fileJanitorTimer = await startFileJanitor();
 
-    // Report the agent's token use for each closed hour now, then hourly (see
-    // lib/usage-telemetry.ts). Nothing runs without an OTLP endpoint.
+    // Report the agent's token use for each closed hour now, then every few
+    // minutes (see lib/usage-telemetry.ts). Nothing runs without an OTLP endpoint.
     usageTelemetryTimer = startUsageTelemetry(agent.id);
 
     // Embed the memory entries that have no vector yet. In-process and

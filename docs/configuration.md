@@ -806,14 +806,14 @@ Every record has `deployment.id`, which identifies the install and stays the sam
 across restarts. A database restored from an export keeps the `deployment.id` of the
 install it came from.
 
-Once per hour, the runtime sends one `llm usage aggregated` event for each model
-it called in each closed UTC hour. The event has the hour, the provider, the model,
-the agent id, whether calls route through the Lens Agents gateway, and the number
-of model calls. It also has input, output, cache-write and cache-read token counts.
-The input count is the whole prompt, cache reads and writes included. The events
-count every call on the chat model and the classification model. They do not count
-memory embeddings, voice meetings, voice chat, dictation, or the work of a coding
-agent, so the totals are a floor.
+For each closed UTC hour, the runtime sends one `llm usage aggregated` event per
+model it called, a few minutes after the hour ends. The event has the hour, the
+provider, the model, the agent id, whether calls route through the Lens Agents
+gateway, and the number of model calls. It also has input, output, cache-write and
+cache-read token counts. The input count is the whole prompt, cache reads and
+writes included. The events count every call on the chat model and the
+classification model. They do not count memory embeddings, voice meetings, voice
+chat, dictation, or the work of a coding agent, so the totals are a floor.
 
 ## Installer variables
 

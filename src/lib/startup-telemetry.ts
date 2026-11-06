@@ -19,22 +19,11 @@ import { AgentWorkspace } from '@prisma/client';
 import { config } from '../config';
 import { getExecutionEnvironment } from './execution-environments/get-execution-environment';
 import { logger } from '../logger';
-import { trackEvent, isTelemetryEnabled } from './telemetry';
+import { trackEvent, isTelemetryEnabled, llmRouting } from './telemetry';
 import { modelCatalogState } from './model-catalog';
 import { skillCatalogService } from '../services/skill-catalog.service';
 import { pluginCatalogService } from '../services/plugin-catalog.service';
 import { agentWorkspaceService } from '../services/agent-workspace.service';
-
-/**
- * Whether the selected vendor's gateway chat mount is set: `nexus` or `direct`.
- * This is the deployment's shape, not where a request lands: an explicit
- * `*_BASE_URL` can point off the gateway host, and the `[Startup] LLM provider`
- * log reports that endpoint and its source. Every product event that reports
- * routing reads it here, so the events agree.
- */
-export function llmRouting(): 'nexus' | 'direct' {
-  return config.nexusChatBaseUrl ? 'nexus' : 'direct';
-}
 
 export async function trackAgentStarted(
   agent: Pick<AgentWorkspace, 'id' | 'userId' | 'webhooksEnabled' | 'lockedIn'>,

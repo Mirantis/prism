@@ -41,6 +41,16 @@ export function isTelemetryEnabled(): boolean {
 }
 
 /**
+ * Whether the selected vendor's gateway chat mount is set: `nexus` or `direct`.
+ * This is the deployment's shape, not where a request lands: an explicit
+ * `*_BASE_URL` can point off the gateway host, and the `[Startup] LLM provider`
+ * log reports that endpoint and its source.
+ */
+export function llmRouting(): 'nexus' | 'direct' {
+  return config.nexusChatBaseUrl ? 'nexus' : 'direct';
+}
+
+/**
  * Start the exporter. `deploymentId` is called only when an endpoint is set, so
  * a runtime without telemetry stores no id.
  */
@@ -119,8 +129,20 @@ export function trackEvent(
   });
 }
 
+/**
+ * Hand every buffered record to the exporter. Resolves false when telemetry is
+ * off or has shut down, since a record emitted then is dropped. A failed export
+ * still resolves true: the SDK reports it to its error handler only.
+ */
+export async function flushTelemetry(): Promise<boolean> {
+  if (!provider || !otelLogger) return false;
+  await provider.forceFlush();
+  return otelLogger !== null;
+}
+
 export async function shutdownTelemetry(): Promise<void> {
   if (provider) {
+    otelLogger = null;
     await provider.shutdown();
     logger.info('[Telemetry] Shutdown complete');
   }
