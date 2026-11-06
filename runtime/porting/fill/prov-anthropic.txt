@@ -4,3 +4,4 @@ src/lib/llm-providers/bedrock-mantle/bedrock-mantle-provider.ts -> runtime/src/l
 src/lib/llm-providers/create-provider.ts -> runtime/src/lib/llm_providers/create_provider.rs (106 lines) tests: src/lib/llm-providers/create-provider.test.ts
 src/lib/llm-providers/litellm/litellm-provider.ts -> runtime/src/lib/llm_providers/litellm/litellm_provider.rs (99 lines) tests: src/lib/llm-providers/litellm/litellm-provider.test.ts
 src/lib/llm-providers/llm-provider.ts -> runtime/src/lib/llm_providers/llm_provider.rs (341 lines) tests: src/lib/llm-providers/llm-provider.test.ts
+(new) runtime/src/ai/providers/anthropic.rs — port @ai-sdk/anthropic (Messages API model, prompt conversion, tools, cache control, response parsing, errors)
