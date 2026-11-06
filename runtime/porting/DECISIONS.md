@@ -64,6 +64,15 @@ identity (the `WeakMap` in `tools/computer.ts`, `isSpilledToolOutput` in `invoke
 keeps that state another way: a marker the runtime controls (for example a side
 table keyed by tool call id). Keep what the model sees identical.
 
+## Platforms
+
+The runtime ships for Linux (x64, arm64), macOS and Windows (x64), as the TypeScript
+one does. The crate must compile for `x86_64-pc-windows-msvc`: put Unix-only APIs
+(`nix`, Unix `libc` calls, process groups, Unix signals, file modes) under
+`#[cfg(unix)]`, and on Windows do what Node does there (`child.kill()` terminates the
+process; a signal other than a kill is ignored as Node ignores it). `nix` is a
+Unix-only dependency.
+
 ## Smaller points
 
 - `types::SteeringSource` returns `anyhow::Result`; a failed read is logged as the
