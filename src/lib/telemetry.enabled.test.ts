@@ -1,9 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { loggerProviderArgs } = vi.hoisted(() => ({
+type ExportDone = (result: { code: number }) => void;
+interface CapturedExporter {
+  export: (records: unknown[], done: ExportDone) => void;
+}
+
+const { loggerProviderArgs, collector } = vi.hoisted(() => ({
   loggerProviderArgs: [] as Array<{
     resource?: { attributes?: Record<string, unknown>; waitForAsyncAttributes?: () => Promise<void> };
   }>,
+  // What the collector answers an export with: a result code, or no answer yet.
+  collector: {
+    answer: 0 as number | 'none',
+    exporter: undefined as CapturedExporter | undefined,
+    unanswered: undefined as ExportDone | undefined,
+  },
 }));
 
 vi.mock('../config', () => ({
@@ -21,7 +32,12 @@ vi.mock('../logger', () => ({
 }));
 
 vi.mock('@opentelemetry/exporter-logs-otlp-http', () => ({
-  OTLPLogExporter: class MockOTLPLogExporter {},
+  OTLPLogExporter: class MockOTLPLogExporter {
+    export(_records: unknown[], done: ExportDone) {
+      if (collector.answer === 'none') collector.unanswered = done;
+      else done({ code: collector.answer });
+    }
+  },
 }));
 
 vi.mock('@opentelemetry/sdk-logs', () => ({
@@ -32,14 +48,22 @@ vi.mock('@opentelemetry/sdk-logs', () => ({
     getLogger() {
       return { emit: () => {} };
     }
+    // As the batch processor does: hand the buffer to the exporter and wait for its answer.
     forceFlush() {
-      return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        collector.exporter!.export([], () => resolve());
+        if (collector.answer === 'none') resolve();
+      });
     }
     shutdown() {
       return Promise.resolve();
     }
   },
-  BatchLogRecordProcessor: class MockBatchLogRecordProcessor {},
+  BatchLogRecordProcessor: class MockBatchLogRecordProcessor {
+    constructor(args: { exporter: CapturedExporter }) {
+      collector.exporter = args.exporter;
+    }
+  },
 }));
 
 import { flushTelemetry, initTelemetry, shutdownTelemetry } from './telemetry';
@@ -47,6 +71,7 @@ import { flushTelemetry, initTelemetry, shutdownTelemetry } from './telemetry';
 describe('telemetry (enabled path)', () => {
   beforeEach(() => {
     loggerProviderArgs.length = 0;
+    collector.answer = 0;
     initTelemetry(async () => 'deployment-1');
   });
 
@@ -75,6 +100,23 @@ describe('telemetry (enabled path)', () => {
     expect(attrs['product.name']).toBe('example-product');
     expect(attrs['service.name']).toBe('prism-agent-runtime');
     expect(attrs['service.namespace']).toBe('prism-agent');
+  });
+
+  it('reports false for a flush whose export the collector refused, and true for the next one', async () => {
+    collector.answer = 1;
+    await expect(flushTelemetry()).resolves.toBe(false);
+    collector.answer = 0;
+    await expect(flushTelemetry()).resolves.toBe(true);
+  });
+
+  it('reports false while an export has no answer', async () => {
+    collector.answer = 'none';
+    await expect(flushTelemetry()).resolves.toBe(false);
+
+    // The exporter answers every export in the end, at the latest on its own timeout.
+    collector.unanswered?.({ code: 0 });
+    collector.answer = 0;
+    await expect(flushTelemetry()).resolves.toBe(true);
   });
 
   it('flushes while running, and reports false once shut down', async () => {

@@ -9,7 +9,7 @@
  * Disabled (no-op) when OTEL_EXPORTER_OTLP_ENDPOINT is not set.
  */
 
-import { LoggerProvider, BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
+import { LoggerProvider, BatchLogRecordProcessor, type LogRecordExporter } from '@opentelemetry/sdk-logs';
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import {
@@ -33,8 +33,15 @@ const ATTR_PRODUCT_NAME = 'product.name';
 // The persisted id of this install, the attribute name Lens Agents uses for its own.
 const ATTR_DEPLOYMENT_ID = 'deployment.id';
 
+// `ExportResultCode.SUCCESS` in `@opentelemetry/core`, which is not a direct dependency.
+const EXPORT_SUCCESS = 0;
+
 let provider: LoggerProvider | null = null;
 let otelLogger: Logger | null = null;
+// The batch processor does not report an export result to its caller, so the exporter
+// counts them for `flushTelemetry`.
+let exportsInFlight = 0;
+let failedExports = 0;
 
 export function isTelemetryEnabled(): boolean {
   return Boolean(config.otelEndpoint);
@@ -79,10 +86,22 @@ export function initTelemetry(deploymentId: () => Promise<string | undefined>): 
   const headers: Record<string, string> = {};
   if (config.otelApiKey) headers['x-api-key'] = config.otelApiKey;
 
-  const exporter = new OTLPLogExporter({
+  const otlpExporter = new OTLPLogExporter({
     url: `${config.otelEndpoint}/v1/logs`,
     ...(Object.keys(headers).length > 0 ? { headers } : {}),
   });
+  const exporter: LogRecordExporter = {
+    export: (records, done) => {
+      exportsInFlight += 1;
+      otlpExporter.export(records, (result) => {
+        exportsInFlight -= 1;
+        if (result.code !== EXPORT_SUCCESS) failedExports += 1;
+        done(result);
+      });
+    },
+    forceFlush: () => otlpExporter.forceFlush(),
+    shutdown: () => otlpExporter.shutdown(),
+  };
 
   provider = new LoggerProvider({
     resource,
@@ -130,14 +149,16 @@ export function trackEvent(
 }
 
 /**
- * Hand every buffered record to the exporter. Resolves false when telemetry is
- * off or has shut down, since a record emitted then is dropped. A failed export
- * still resolves true: the SDK reports it to its error handler only.
+ * Export every buffered record now. Resolves true when the collector accepted
+ * them: no export failed during the flush and none is still running. Resolves
+ * false when telemetry is off or has shut down, since a record emitted then is
+ * dropped. A false answer can also come from another event's failed export.
  */
 export async function flushTelemetry(): Promise<boolean> {
   if (!provider || !otelLogger) return false;
+  const failedBefore = failedExports;
   await provider.forceFlush();
-  return otelLogger !== null;
+  return otelLogger !== null && failedExports === failedBefore && exportsInFlight === 0;
 }
 
 export async function shutdownTelemetry(): Promise<void> {
