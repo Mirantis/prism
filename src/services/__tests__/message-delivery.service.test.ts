@@ -43,12 +43,18 @@ vi.mock('../conversation.service', () => ({
   },
 }));
 
-vi.mock('../attachment.service', () => ({
-  attachmentService: {
-    linkToMessage: (...args: unknown[]) => mockLinkToMessage(...args),
-    getMetaByMessageIds: (...args: unknown[]) => mockGetMetaByMessageIds(...args),
-  },
-}));
+// The real enrichment over a mocked lookup, so the placement each message
+// leaves with is the one clients receive.
+vi.mock('../attachment.service', async () => {
+  const actual = await vi.importActual<typeof import('../attachment.service')>('../attachment.service');
+  return {
+    attachmentService: {
+      linkToMessage: (...args: unknown[]) => mockLinkToMessage(...args),
+      getMetaByMessageIds: (...args: unknown[]) => mockGetMetaByMessageIds(...args),
+      attachMetaToMessages: actual.attachmentService.attachMetaToMessages,
+    },
+  };
+});
 
 // Helper to create a mock adapter
 function createMockAdapter(name: string): ChannelAdapter & {
@@ -312,6 +318,27 @@ describe('MessageDeliveryService', () => {
         'user-123',
         expect.objectContaining({ id: 'msg-123', attachments }),
         expect.objectContaining({ channel: 'websocket' }),
+      );
+    });
+
+    it('marks an image the text places as inline, and leaves every other file under it', async () => {
+      const websocket = createMockAdapter('websocket');
+      service.register(websocket);
+      const chart = { id: '3f2a9c1e-5b7d-4e8a-9c21-7d4e5f6a8b90', filename: 'chart.png', mediaType: 'image/png', sizeBytes: 9, category: 'image' as const };
+      const data = { id: '0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d', filename: 'data.csv', mediaType: 'text/csv', sizeBytes: 9, category: 'text' as const };
+      const content = `Rates:\n\n![chart](attachment:${chart.id})`;
+      mockAddMessage.mockResolvedValue({ message: { ...sampleMessage, content }, titleSet: null });
+      mockGetMetaByMessageIds.mockResolvedValue(new Map([['msg-123', [chart, data]]]));
+
+      await service.publish('user-123', 'thread-456', content, 'USER_INPUT', {
+        attachmentIds: [chart.id, data.id],
+        channelContext: { channel: 'websocket', threadId: 'thread-456' },
+      });
+
+      expect(websocket.deliver).toHaveBeenCalledWith(
+        'user-123',
+        expect.objectContaining({ attachments: [{ ...chart, inline: true }, data] }),
+        expect.anything(),
       );
     });
 

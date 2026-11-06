@@ -349,3 +349,27 @@ describe('slackChannelLabel', () => {
     expect(slackChannelLabel('alerts')).toContain('writing their token');
   });
 });
+
+describe('formatSlackMessage — images the text places', () => {
+  const CHART = '3f2a9c1e-5b7d-4e8a-9c21-7d4e5f6a8b90';
+  const content = `Rates fell.\n\n![Euribor, past year](attachment:${CHART})\n\nThey bottomed in May.`;
+
+  it('shows an uploaded image as an image block at its place', () => {
+    const { text, blocks } = formatSlackMessage(content, undefined, undefined, { images: new Map([[CHART, 'F_CHART']]) });
+
+    expect(blocks.map((b) => b.type)).toEqual(['markdown', 'image', 'markdown']);
+    expect(blocks[1]).toEqual({ type: 'image', slack_file: { id: 'F_CHART' }, alt_text: 'Euribor, past year' });
+    expect(text).toBe('Rates fell.\n\nEuribor, past year\n\nThey bottomed in May.');
+  });
+
+  it('writes an image it has no upload for as its description, and leaves a web image as written', () => {
+    const { blocks } = formatSlackMessage(`${content}\n\n![logo](https://example.com/logo.png)`);
+
+    expect(blocks).toEqual([
+      {
+        type: 'markdown',
+        text: 'Rates fell.\n\nEuribor, past year\n\nThey bottomed in May.\n\n![logo](https://example.com/logo.png)',
+      },
+    ]);
+  });
+});

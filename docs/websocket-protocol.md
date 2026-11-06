@@ -85,6 +85,10 @@ see a gap, reconnect and resume from the last `seq` you applied.
     shorter than `limit` starts at the conversation's first message.
   - `senderId` and `senderName` say who wrote a `USER` message, or are `null`.
     Show `senderName`. Neither decides what anyone may do.
+  - An attachment with `inline: true` is an image the text shows at its place,
+    written `![description](attachment:<attachment id>)`. Draw it there from
+    `GET /agents/attachments/<attachment id>`, and list only the other
+    attachments under the message.
   - A `USER` message with `triggeredBy: "AGENT_MESSAGE"` is from another agent
     of the project, not from a person ([Agent messages](agent-messages.md)).
     Show it as another participant's, under "{senderName} · Agent", or under

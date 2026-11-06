@@ -29,6 +29,7 @@ const {
   mockShowInConversation,
   mockGetMetaByMessageIds,
   mockGetAdapter,
+  mockPlaceInlineImages,
   mockBeginWork,
   mockUpdateWork,
   mockWorkRows,
@@ -55,6 +56,8 @@ const {
   // The chat socket shows the whole conversation; a team chat channel posts
   // only the agent's replies.
   mockGetAdapter: vi.fn((name: string) => ({ name, showsWholeConversation: name === 'websocket' })),
+  // A reply with no image references passes through untouched.
+  mockPlaceInlineImages: vi.fn(async (text: string) => ({ content: text, attachmentIds: [] as string[], missed: 0 })),
   mockBeginWork: vi.fn(),
   mockUpdateWork: vi.fn(),
   mockWorkRows: vi.fn(),
@@ -114,6 +117,10 @@ vi.mock('../attachment.service', () => ({
 
 vi.mock('../../invoke', () => ({
   invokeStream: mockInvokeStream,
+}));
+
+vi.mock('../inline-image-placement', () => ({
+  placeInlineImages: mockPlaceInlineImages,
 }));
 
 vi.mock('../../lib/prisma', () => ({
@@ -310,6 +317,77 @@ describe('Requirement: Conversation Engine', () => {
           'channel.type': 'websocket',
         }),
       );
+    });
+
+    describe('images a reply places', () => {
+      const share = { tool: 'share_file', input: '{}', output: 'shared', success: true, timestamp: 't' };
+      const chat = () => conversationEngineService.chat({
+        userId: 'user-123', agentId: 'agent-123', message: 'Plot the rates', metadata: { channel: 'websocket' },
+      });
+
+      it('delivers the reply as placed, with its images before the files it only shared', async () => {
+        mockInvokeStream.mockReturnValueOnce(streamFromSteps([
+          { text: '', toolCalls: [share], attachmentIds: ['att-csv', 'att-chart'] },
+          { text: 'Rates: ![chart](chart.png)', toolCalls: [] },
+        ]));
+        let sharedWhenPlaced: string[] = [];
+        mockPlaceInlineImages.mockImplementationOnce(async (_text: string, context: { shared: readonly string[] }) => {
+          sharedWhenPlaced = [...context.shared];
+          return { content: 'Rates: ![chart](attachment:att-new)', attachmentIds: ['att-new', 'att-chart'], missed: 0 };
+        });
+
+        await chat();
+
+        expect(sharedWhenPlaced).toEqual(['att-csv', 'att-chart']);
+        expect(mockPlaceInlineImages).toHaveBeenCalledWith(
+          'Rates: ![chart](chart.png)',
+          expect.objectContaining({ threadId: 'thread-123' }),
+        );
+        expect(mockPublish).toHaveBeenCalledWith(
+          'user-123', 'thread-123', 'Rates: ![chart](attachment:att-new)', 'USER_INPUT',
+          expect.objectContaining({ attachmentIds: ['att-new', 'att-chart', 'att-csv'] }),
+        );
+      });
+
+      it('gives each delivered step the images its own text places', async () => {
+        mockInvokeStream.mockReturnValueOnce(streamFromSteps([
+          { text: '', toolCalls: [share], attachmentIds: ['att-chart', 'att-csv'] },
+          { text: 'First the chart: ![c](attachment:att-chart)', toolCalls: [share] },
+          { text: 'And the data.', toolCalls: [] },
+        ]));
+        mockPlaceInlineImages.mockImplementationOnce(async (text: string) => ({
+          content: text, attachmentIds: ['att-chart'], missed: 0,
+        }));
+
+        await chat();
+
+        expect(mockPublish).toHaveBeenNthCalledWith(
+          1, 'user-123', 'thread-123', 'First the chart: ![c](attachment:att-chart)', 'USER_INPUT',
+          expect.objectContaining({ attachmentIds: ['att-chart'] }),
+        );
+        expect(mockPublish).toHaveBeenNthCalledWith(
+          2, 'user-123', 'thread-123', 'And the data.', 'USER_INPUT',
+          expect.objectContaining({ attachmentIds: ['att-csv'] }),
+        );
+      });
+
+      it('counts the inline images, the missed references and the attached files in "chat message handled"', async () => {
+        mockInvokeStream.mockReturnValueOnce(streamFromSteps([
+          { text: '', toolCalls: [share], attachmentIds: ['att-csv'] },
+          { text: '![a](a.png) ![b](b.txt)', toolCalls: [] },
+        ]));
+        mockPlaceInlineImages.mockImplementationOnce(async () => ({
+          content: '![a](attachment:att-a) ![b](b.txt)', attachmentIds: ['att-a'], missed: 1,
+        }));
+
+        await chat();
+
+        expect(mockTrackEvent).toHaveBeenCalledWith('chat message handled', 'user-123', expect.objectContaining({
+          'chat.inline_images': '1',
+          'chat.inline_image_misses': '1',
+          'chat.attached_files': '1',
+        }));
+      });
     });
 
     it('should use provided threadId if specified', async () => {

@@ -1032,7 +1032,7 @@ describe('deliver — a message scoped to one conversation keeps its trigger lab
       { channel: 'slack', channelId: 'D123', threadId: 'thr-1' },
     );
 
-    expect(adapter.prepareOutboundMessage).toHaveBeenCalledWith('Build failed.', 'T001', 'WEBHOOK', undefined, undefined);
+    expect(adapter.prepareOutboundMessage).toHaveBeenCalledWith('Build failed.', 'T001', 'WEBHOOK', undefined, { images: new Map() });
     const call = postMessage.mock.calls[0][0];
     expect(call.channel).toBe('D123');
     expect(call.metadata).toEqual({
@@ -1049,7 +1049,7 @@ describe('deliver — a message scoped to one conversation keeps its trigger lab
       { channel: 'slack', channelId: 'C_CHAN', threadId: 'thr-1', channelThreadId: '123.000' },
     );
 
-    expect(adapter.prepareOutboundMessage).toHaveBeenCalledWith('Done.', 'T001', 'USER_INPUT', undefined, undefined);
+    expect(adapter.prepareOutboundMessage).toHaveBeenCalledWith('Done.', 'T001', 'USER_INPUT', undefined, { images: new Map() });
   });
 });
 
@@ -1273,5 +1273,60 @@ describe('Requirement: Slack routes messages nobody replied to', () => {
       expect(await slackAdapterService.linkedChannelIds('agent-1')).toEqual(['C_MAIN', 'C_REL']);
       expect(mockSlackMappingService.listChannelIds).toHaveBeenCalledWith('agent-1');
     });
+  });
+});
+
+describe('deliverToChannel — images the reply places', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const adapter = slackAdapterService as any;
+  const postMessage = vi.fn();
+  const uploadV2 = vi.fn();
+  const CHART = '3f2a9c1e-5b7d-4e8a-9c21-7d4e5f6a8b90';
+  const chart = { id: CHART, filename: 'euribor.png', mediaType: 'image/png', sizeBytes: 9, category: 'image', expired: false, inline: true };
+  const data = { id: 'att-csv', filename: 'euribor.csv', mediaType: 'text/csv', sizeBytes: 9, category: 'text', expired: false };
+  const content = `Rates fell.\n\n![Euribor, past year](attachment:${CHART})\n\nThey bottomed in May.`;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    postMessage.mockResolvedValue({ ts: '1700000000.000300' });
+    uploadV2.mockResolvedValue({ files: [{ files: [{ id: 'F_CHART' }] }] });
+    adapter.apps = new Map([['T001', { app: { client: { chat: { postMessage }, files: { uploadV2 } } }, teamId: 'T001' }]]);
+    // The formatter's own tests read the blocks; here each post carries the images it was given.
+    adapter.prepareOutboundMessage = vi.fn(
+      async (_content: string, _team: string, _trigger: unknown, _calls: unknown, options: { images: Map<string, string> }) => ({
+        text: 'formatted',
+        blocks: [...options.images.values()].map((id) => ({ type: 'image', slack_file: { id } })),
+      }),
+    );
+    adapter.attachmentBytes = vi.fn().mockResolvedValue(Buffer.from('png'));
+    adapter.uploadAttachmentsToSlack = vi.fn().mockResolvedValue(undefined);
+    mockSlackMappingService.findByChannelId.mockResolvedValue({ slackChannelName: 'general', connection: { teamId: 'T001' } });
+  });
+
+  it('uploads the image to no channel and posts it in the message, with only the other files after it', async () => {
+    await adapter.deliverToChannel('C_CHAN', content, 'thr-1', undefined, undefined, undefined, false, [chart, data]);
+
+    expect(uploadV2).toHaveBeenCalledWith({ file: Buffer.from('png'), filename: 'euribor.png' });
+    expect(postMessage.mock.calls[0][0].blocks).toEqual([{ type: 'image', slack_file: { id: 'F_CHART' } }]);
+    expect(adapter.uploadAttachmentsToSlack).toHaveBeenCalledWith(expect.anything(), 'C_CHAN', '1700000000.000300', [data]);
+  });
+
+  it('posts the image after the text when Slack refuses the image block', async () => {
+    postMessage.mockRejectedValueOnce(new Error('An API error occurred: invalid_blocks'));
+
+    await adapter.deliverToChannel('C_CHAN', content, 'thr-1', undefined, undefined, undefined, false, [chart, data]);
+
+    expect(postMessage).toHaveBeenCalledTimes(2);
+    expect(postMessage.mock.calls[1][0].blocks).toEqual([]);
+    expect(adapter.uploadAttachmentsToSlack).toHaveBeenCalledWith(expect.anything(), 'C_CHAN', '1700000000.000300', [chart, data]);
+  });
+
+  it('posts the text as before when the image upload fails', async () => {
+    uploadV2.mockRejectedValueOnce(new Error('An API error occurred: file_uploads_except_images_disabled'));
+
+    await adapter.deliverToChannel('C_CHAN', content, 'thr-1', undefined, undefined, undefined, false, [chart, data]);
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(adapter.uploadAttachmentsToSlack).toHaveBeenCalledWith(expect.anything(), 'C_CHAN', '1700000000.000300', [chart, data]);
   });
 });

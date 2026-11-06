@@ -165,9 +165,7 @@ export class MessageDeliveryService {
     let deliverable: DeliverableMessage = (await conversationService.withHiddenStepToolCalls(threadId, [message]))[0];
     if (options?.attachmentIds?.length) {
       await attachmentService.linkToMessage(options.attachmentIds, message.id, threadId);
-      const metaMap = await attachmentService.getMetaByMessageIds([message.id]);
-      const attachments = metaMap.get(message.id);
-      if (attachments?.length) deliverable = { ...deliverable, attachments };
+      [deliverable] = await attachmentService.attachMetaToMessages([deliverable]);
     }
 
     // 3. Deliver to all connected channels.
@@ -231,9 +229,8 @@ export class MessageDeliveryService {
   async showInConversation(userId: string, message: ConversationMessage): Promise<void> {
     const channels = this.adapters.filter((adapter) => adapter.showsWholeConversation);
     if (channels.length === 0) return;
-    const attachments = (await attachmentService.getMetaByMessageIds([message.id])).get(message.id);
     const [shown] = await conversationService.withHiddenStepToolCalls(message.threadId, [message]);
-    const deliverable: DeliverableMessage = attachments?.length ? { ...shown, attachments } : shown;
+    const [deliverable] = await attachmentService.attachMetaToMessages([shown]);
     await Promise.all(
       channels.map(async (adapter) => {
         try {

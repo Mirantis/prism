@@ -28,6 +28,7 @@ import type { PostingCeiling } from '../services/delivery-target.service';
 import { scheduledRunPrompt } from '../prompts/scheduled-run-prompt';
 import { renderAgentMessage } from '../prompts/agent-message-prompt';
 import { ALERT_THE_USER } from '../tools/computer';
+import { findImageRefs } from '../lib/inline-images';
 import type { AttachmentMeta } from '../services/attachment.service';
 
 export interface Grade {
@@ -1007,6 +1008,63 @@ export const SCENARIOS: Scenario[] = [
       const shared = String(share?.input.path ?? '').split('/').pop() ?? '';
       const write = trace.calls.find((c) => shared !== '' && writesFile(c, shared));
       const pass = Boolean(share && shared && write && write.step <= share.step);
+      return { pass, detail: describeTrace(trace) };
+    },
+  },
+  {
+    id: 'images.places-explained-chart',
+    expect: 'A chart the reply explains is placed inside the reply, not only attached.',
+    grader: 'reply text',
+    run: async () => {
+      const trace = await runTurn({
+        mode: 'chat',
+        history: [
+          { user: 'Plot our monthly sign-ups for January to March (120, 135 and 160) as a bar chart and explain the trend.' },
+        ],
+        maxSteps: 6,
+        stubs: {
+          shell_write_file: () => ({ ok: true }),
+          shell_exec: () => ({ stdout: 'saved signups.png', stderr: '', exitCode: 0 }),
+          share_file: (input) => ({
+            success: true,
+            attachmentId: '3f2a9c1e-5b7d-4e8a-9c21-7d4e5f6a8b90',
+            filename: String(input.path ?? 'signups.png').split('/').pop(),
+            sizeBytes: 18_000,
+            mediaType: 'image/png',
+            category: 'image',
+          }),
+        },
+      });
+      const pass = findImageRefs(replyOf(trace)).length > 0;
+      return { pass, detail: describeTrace(trace) };
+    },
+  },
+  {
+    id: 'images.shares-requested-file',
+    expect: 'A chart the user asks for as a file to keep is shared as a download, not placed in the reply.',
+    grader: 'tool call',
+    run: async () => {
+      const trace = await runTurn({
+        mode: 'chat',
+        history: [
+          { user: 'Make a bar chart PNG of sign-ups for January to March (120, 135 and 160) and send me the file for my slides.' },
+        ],
+        maxSteps: 6,
+        stubs: {
+          shell_write_file: () => ({ ok: true }),
+          shell_exec: () => ({ stdout: 'saved signups.png', stderr: '', exitCode: 0 }),
+          share_file: (input) => ({
+            success: true,
+            attachmentId: '3f2a9c1e-5b7d-4e8a-9c21-7d4e5f6a8b90',
+            filename: String(input.path ?? 'signups.png').split('/').pop(),
+            sizeBytes: 18_000,
+            mediaType: 'image/png',
+            category: 'image',
+          }),
+        },
+      });
+      const shared = trace.calls.some((c) => c.tool === 'share_file' && /\.png$/i.test(String(c.input.path ?? '')));
+      const pass = shared && findImageRefs(replyOf(trace)).length === 0;
       return { pass, detail: describeTrace(trace) };
     },
   },
