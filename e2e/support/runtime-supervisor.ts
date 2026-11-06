@@ -10,16 +10,17 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { rmSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
 import { RUNTIME_PID_FILE } from './runtime-pid';
-
-const ENTRY = path.join(__dirname, 'runtime-entry.ts');
+import { PRISM_SERVER_BIN, assertRuntimeBuilt, webSuiteRuntimeEnv } from './runtime-command';
 
 let runtime: ChildProcess;
 let stopping = false;
 
 function start(): void {
-  runtime = spawn(process.execPath, ['--import', 'tsx', ENTRY], { stdio: 'inherit' });
+  runtime = spawn(PRISM_SERVER_BIN, [], {
+    stdio: 'inherit',
+    env: { ...process.env, ...webSuiteRuntimeEnv() },
+  });
   writeFileSync(RUNTIME_PID_FILE, String(runtime.pid));
   runtime.on('exit', (code, signal) => {
     if (!stopping && signal === 'SIGKILL') {
@@ -39,4 +40,5 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   });
 }
 
+assertRuntimeBuilt();
 start();

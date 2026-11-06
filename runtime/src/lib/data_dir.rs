@@ -68,7 +68,56 @@ pub struct DataDirsSetup {
 /// `link_path` is only replaced when empty — we never delete a populated dir we
 /// didn't create.
 pub fn ensure_symlink(target: &str, link_path: &str) -> bool {
-    todo!()
+    try_ensure_symlink(target, link_path).unwrap_or(false)
+}
+
+fn try_ensure_symlink(target: &str, link_path: &str) -> std::io::Result<bool> {
+    match std::fs::symlink_metadata(link_path) {
+        Ok(st) => {
+            if st.file_type().is_symlink() {
+                if std::fs::read_link(link_path)?.as_os_str() == std::ffi::OsStr::new(target) {
+                    return Ok(true); // already correct
+                }
+                remove_link(link_path)?;
+            } else if st.is_dir() {
+                if std::fs::read_dir(link_path)?.next().is_some() {
+                    return Ok(false); // populated — leave it
+                }
+                std::fs::remove_dir(link_path)?;
+            } else {
+                std::fs::remove_file(link_path)?;
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err),
+    }
+    create_dir_link(target, link_path)?;
+    Ok(true)
+}
+
+/// `fs.unlinkSync` of a symlink.
+fn remove_link(link_path: &str) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        // A directory link on Windows is removed as a directory.
+        if std::fs::remove_dir(link_path).is_ok() {
+            return Ok(());
+        }
+    }
+    std::fs::remove_file(link_path)
+}
+
+/// `fs.symlinkSync(target, linkPath)`: a POSIX symlink, or on Windows a directory
+/// link, which Node makes as a junction.
+fn create_dir_link(target: &str, link_path: &str) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link_path)
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_dir(target, link_path)
+    }
 }
 
 /// Ensure the data dir and the canonical skills, plugins, media and tool-output
