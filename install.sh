@@ -3,11 +3,11 @@
 # Prism Agent installer (macOS + Linux).
 #
 # Installs the `prism` (terminal UI) and `prism-server` (agent runtime)
-# binaries plus the server's sidecar (node_modules/, web/) into ~/.prism,
+# binaries plus the web UI (web/) into ~/.prism,
 # symlinks `prism` into PATH, and registers `prism-server` to run always
 # (launchd on macOS, a systemd user service on Linux).
 #
-# Run it from a built checkout (after scripts/build-sea.mjs + collect-natives.mjs)
+# Run it from a built checkout (after scripts/build-binaries.sh)
 # or point PRISM_DIST at a directory containing the artifacts for this platform.
 set -euo pipefail
 
@@ -70,12 +70,12 @@ mkdir -p "$PRISM_HOME/workspace"
 cp "$DIST/prism" "$PRISM_HOME/prism"
 cp "$DIST/prism-server" "$PRISM_HOME/prism-server"
 chmod +x "$PRISM_HOME/prism" "$PRISM_HOME/prism-server"
+# node_modules/ is the sidecar an earlier runtime loaded; this one needs none.
 rm -rf "$PRISM_HOME/node_modules" "$PRISM_HOME/web"
-cp -R "$DIST/node_modules" "$PRISM_HOME/node_modules"
 cp -R "$DIST/web" "$PRISM_HOME/web"
 
 # License, attribution and third-party notices. Guarded because a dist-sea/
-# built by build-sea.mjs + collect-natives.mjs alone (see the header) has none.
+# built without scripts/build-binaries.sh has none.
 # A release archive always has them: the cp in scripts/build-binaries.sh runs
 # under `set -e`, and scripts/smoke-sea.mjs checks all three on four platforms.
 for f in LICENSE NOTICE THIRD_PARTY_NOTICES; do
