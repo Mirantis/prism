@@ -25,8 +25,25 @@ use regex::Regex;
 
 use crate::config::CONFIG;
 
+#[cfg(test)]
+thread_local! {
+    /// The setting a test on this thread runs under, in place of the configuration's.
+    static FULL_IN_TEST: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Run this thread as if `MEETING_TRANSCRIPT_LOGGING` were `full` (`Some(true)`), `off`
+/// (`Some(false)`), or as configured (`None`).
+#[cfg(test)]
+pub(crate) fn set_full_for_test(full: Option<bool>) {
+    FULL_IN_TEST.with(|cell| cell.set(full));
+}
+
 /// Whether `MEETING_TRANSCRIPT_LOGGING` lets the words into the log.
-fn full() -> bool {
+pub(crate) fn full() -> bool {
+    #[cfg(test)]
+    if let Some(full) = FULL_IN_TEST.with(|cell| cell.get()) {
+        return full;
+    }
     CONFIG.meeting_transcript_logging.as_str() == "full"
 }
 
@@ -74,5 +91,39 @@ pub fn format_gate_reasoning(text: &str) -> String {
     if !full() {
         return String::new();
     }
-    WHITESPACE_RUN.replace_all(text.trim(), " ").into_owned()
+    WHITESPACE_RUN
+        .replace_all(crate::support::js::trim(text), " ")
+        .into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn writes_only_counts_and_no_words_by_default() {
+        set_full_for_test(Some(false));
+        assert_eq!(format_roster(&["Emma".into(), "Lee".into()]), "roster=2");
+        assert_eq!(format_transcript("Emma, can you take a look?"), "");
+        assert_eq!(format_gate_reasoning("NO, the speaker addresses Isaac"), "");
+        set_full_for_test(None);
+    }
+
+    #[test]
+    fn writes_names_and_words_when_the_log_may_carry_them() {
+        set_full_for_test(Some(true));
+        assert_eq!(
+            format_roster(&["Emma".into(), "Lee".into(), "Mario Sarcher".into()]),
+            "roster=[Emma, Lee, Mario Sarcher]"
+        );
+        assert_eq!(
+            format_transcript("Emma, can you take a look?"),
+            "transcript=\"Emma, can you take a look?\""
+        );
+        assert_eq!(
+            format_gate_reasoning("  NO,\n\n the speaker\taddresses Isaac "),
+            "NO, the speaker addresses Isaac"
+        );
+        set_full_for_test(None);
+    }
 }

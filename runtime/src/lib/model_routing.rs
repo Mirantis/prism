@@ -5,12 +5,30 @@
 //! on its first turn, the first turn after compaction, or once that model's cache
 //! has expired, after the lifetime its vendor gives the newest call.
 
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
-use crate::lib::llm_providers::llm_provider::LlmProvider;
-use crate::lib::model_selection::{MODEL_TIERS, ModelTier, ModelTiers};
-use crate::services::llm_call_service::LlmCallPurpose;
+use crate::ai::{GenerateTextOptions, ModelMessage};
+use crate::config::CONFIG;
+use crate::db::models::MessageRole;
+use crate::lib::classification::get_gate_request;
+use crate::lib::context_window::context_window_for;
+use crate::lib::llm_providers::llm_provider::{LlmProvider, cache_ttl_for, cache_ttl_ms};
+use crate::lib::log_redaction::err_json;
+use crate::lib::model_call::{ModelCallMeta, apply_telemetry, call_model};
+use crate::lib::model_selection::{
+    MODEL_TIERS, ModelSelectionMode, ModelTier, ModelTiers, missing_auto_tiers,
+};
+use crate::lib::prompt_fence::escape_angles;
+use crate::lib::telemetry::{LangfuseTelemetryOptions, langfuse_telemetry};
+use crate::log_warn;
+use crate::services::agent_workspace_service::{resolve_effective_model, resolve_scoped_model};
+use crate::services::conversation_service::CONVERSATION_SERVICE;
+use crate::services::llm_call_service::{LLM_CALL_SERVICE, LlmCallPurpose};
+use crate::support::js::{self, len16, slice16};
+use crate::support::now_ms;
 use crate::types::{AgentContext, InvokeRequest};
 
 /// The longest previous reply the classifier is shown, so a follow-up keeps its
@@ -109,8 +127,80 @@ pub async fn select_turn_model(
     context: &AgentContext,
     request: &RoutedRequest,
     provider: &LlmProvider,
-) -> TurnModel {
-    todo!()
+) -> anyhow::Result<TurnModel> {
+    let selection = &context.model_selection;
+    if selection.mode == ModelSelectionMode::Fixed {
+        return Ok(fixed_model(context, request));
+    }
+
+    let missing = missing_auto_tiers(&selection.tiers);
+    if !missing.is_empty() {
+        // Boot and the settings route both refuse this, so it means a deployment
+        // default was removed under an agent that relied on it.
+        log_warn!(
+            json!({ "missing": missing.iter().map(|t| t.as_str()).collect::<Vec<_>>() }),
+            "[ModelRouting] Auto mode lacks a required tier; running the fixed model"
+        );
+        return Ok(fixed_model(context, request));
+    }
+
+    let configured: Vec<ModelTier> = MODEL_TIERS
+        .into_iter()
+        .filter(|tier| selection.tiers.get(*tier).is_some_and(|id| !id.is_empty()))
+        .collect();
+    let model_of = |tier: ModelTier| selection.tiers.get(tier).unwrap_or("").to_string();
+
+    let (held, fitting) = tokio::join!(
+        held_tier(request.thread_id.as_deref(), &selection.tiers, provider),
+        tiers_that_fit(request, &configured, &selection.tiers),
+    );
+    let held = held?;
+    let top = *fitting.last().expect("the largest tier always fits");
+
+    // Nothing to decide: the thread is on the largest tier and may not move down.
+    if let Some(held) = held
+        && held.warm
+        && held.tier == top
+    {
+        return Ok(TurnModel {
+            model_id: model_of(top),
+            tier: Some(top),
+            reason: TurnModelReason::Held,
+        });
+    }
+
+    if fitting.len() == 1 {
+        return Ok(TurnModel {
+            model_id: model_of(top),
+            tier: Some(top),
+            reason: TurnModelReason::OnlyFit,
+        });
+    }
+
+    let label = classify(context, request, &fitting).await;
+    let chosen = label.unwrap_or(top);
+    let reason = if label.is_some() {
+        TurnModelReason::Classified
+    } else {
+        TurnModelReason::Fallback
+    };
+
+    if let Some(held) = held
+        && held.warm
+        && fitting.contains(&held.tier)
+        && rank(chosen) < rank(held.tier)
+    {
+        return Ok(TurnModel {
+            model_id: model_of(held.tier),
+            tier: Some(held.tier),
+            reason: TurnModelReason::Held,
+        });
+    }
+    Ok(TurnModel {
+        model_id: model_of(chosen),
+        tier: Some(chosen),
+        reason,
+    })
 }
 
 /// The model a manual compaction of the thread runs on. In Auto mode that is the
@@ -121,13 +211,32 @@ pub async fn compaction_model(
     thread_id: &str,
     provider: &LlmProvider,
 ) -> anyhow::Result<String> {
-    todo!()
+    let selection = &context.model_selection;
+    if selection.mode == ModelSelectionMode::Fixed
+        || !missing_auto_tiers(&selection.tiers).is_empty()
+    {
+        return Ok(resolve_effective_model(context.model.as_deref()));
+    }
+    let held = held_tier(Some(thread_id), &selection.tiers, provider).await?;
+    let tier = held.map(|held| held.tier).unwrap_or(ModelTier::Large);
+    Ok(selection.tiers.get(tier).unwrap_or("").to_string())
 }
 
 /// Heartbeat and cron runs honor their own optional model override, falling back
 /// to the main per-agent model, then the env default.
 fn fixed_model(context: &AgentContext, request: &RoutedRequest) -> TurnModel {
-    todo!()
+    let model_id = match request.mode.as_str() {
+        "heartbeat" => {
+            resolve_scoped_model(context.heartbeat_model.as_deref(), context.model.as_deref())
+        }
+        "cron" => resolve_scoped_model(context.cron_model.as_deref(), context.model.as_deref()),
+        _ => resolve_effective_model(context.model.as_deref()),
+    };
+    TurnModel {
+        model_id,
+        tier: None,
+        reason: TurnModelReason::Fixed,
+    }
 }
 
 fn rank(tier: ModelTier) -> usize {
@@ -153,7 +262,37 @@ async fn held_tier(
     tiers: &ModelTiers,
     provider: &LlmProvider,
 ) -> anyhow::Result<Option<HeldTier>> {
-    todo!()
+    let Some(thread_id) = thread_id else {
+        return Ok(None);
+    };
+    let Some(last) = LLM_CALL_SERVICE
+        .newest_thread_call(thread_id, &HOLD_PURPOSES)
+        .await
+    else {
+        return Ok(None);
+    };
+    if last.purpose == LlmCallPurpose::Compaction.as_str() {
+        return Ok(None);
+    }
+
+    let mut tier = None;
+    for candidate in MODEL_TIERS {
+        let Some(id) = tiers.get(candidate).filter(|id| !id.is_empty()) else {
+            continue;
+        };
+        if provider.model(id)?.model_id() == last.model {
+            tier = Some(candidate);
+            break;
+        }
+    }
+    let Some(tier) = tier else {
+        return Ok(None);
+    };
+    let ttl = cache_ttl_ms(provider, &last.model, cache_ttl_for(&last.purpose));
+    Ok(Some(HeldTier {
+        tier,
+        warm: now_ms() - last.created_at.timestamp_millis() < ttl,
+    }))
 }
 
 /// The configured tiers whose context window holds the thread plus the incoming
@@ -170,7 +309,34 @@ async fn tiers_that_fit(
     configured: &[ModelTier],
     tiers: &ModelTiers,
 ) -> Vec<ModelTier> {
-    todo!()
+    let Some(&top) = configured.last() else {
+        return Vec::new();
+    };
+    let measured = match &request.thread_id {
+        Some(thread_id) => CONVERSATION_SERVICE
+            .get_thread_context_tokens(thread_id)
+            .await
+            .ok()
+            .flatten(),
+        None => None,
+    };
+    let used = measured.unwrap_or(0) as f64
+        + (len16(&request.prompt) as f64 / CHARS_PER_TOKEN as f64).ceil();
+
+    let limit_percent = CONFIG.compaction_threshold_percent.unwrap_or(100) as f64;
+    configured
+        .iter()
+        .copied()
+        .filter(|tier| {
+            if *tier == top {
+                return true;
+            }
+            match context_window_for(tiers.get(*tier).unwrap_or("")) {
+                None => true,
+                Some(window) => used < (window.tokens as f64 * limit_percent) / 100.0,
+            }
+        })
+        .collect()
 }
 
 fn tier_guidance(tier: ModelTier) -> &'static str {
@@ -232,7 +398,31 @@ pub fn routing_system(offered: &[ModelTier]) -> String {
 /// angle-escaped, then the newest non-blank AGENT reply in `<previous_reply>`, cut
 /// to `PREVIOUS_REPLY_CHARS`.
 fn routing_input(context: &AgentContext, request: &RoutedRequest) -> String {
-    todo!()
+    let subject = if request.mode == "heartbeat" {
+        &context.heartbeat_md
+    } else {
+        &request.prompt
+    };
+    let previous = context
+        .recent_messages
+        .iter()
+        .rev()
+        .find(|m| m.role == MessageRole::Agent && !js::trim(&m.content).is_empty());
+    let mut lines = vec![
+        format!("<request mode=\"{}\">", request.mode),
+        escape_angles(&slice16(subject, 0, REQUEST_CHARS)),
+        "</request>".to_string(),
+    ];
+    if let Some(previous) = previous {
+        lines.push("<previous_reply>".to_string());
+        lines.push(escape_angles(&slice16(
+            &previous.content,
+            0,
+            PREVIOUS_REPLY_CHARS,
+        )));
+        lines.push("</previous_reply>".to_string());
+    }
+    lines.join("\n")
 }
 
 /// The tier the classifier names, or `None` when it fails or names none on offer.
@@ -251,5 +441,78 @@ async fn classify(
     request: &RoutedRequest,
     offered: &[ModelTier],
 ) -> Option<ModelTier> {
-    todo!()
+    match classify_once(context, request, offered).await {
+        Ok(tier) => tier,
+        Err(err) => {
+            // A stopped turn ends right after this returns; it is not a classifier
+            // failure.
+            if !request
+                .abort_signal
+                .as_ref()
+                .is_some_and(|signal| signal.is_cancelled())
+            {
+                log_warn!(
+                    json!({ "err": err_json(&err) }),
+                    "[ModelRouting] classifier failed; using the largest tier"
+                );
+            }
+            None
+        }
+    }
+}
+
+async fn classify_once(
+    context: &AgentContext,
+    request: &RoutedRequest,
+    offered: &[ModelTier],
+) -> anyhow::Result<Option<ModelTier>> {
+    let gate = get_gate_request()?;
+    let mut params = GenerateTextOptions::new(gate.model);
+    params.provider_options = Some(gate.provider_options);
+    params.system = Some(routing_system(offered).into());
+    params.messages = Some(vec![ModelMessage::user(routing_input(context, request))]);
+    // 16 is the OpenAI Responses API minimum; the answer is one word.
+    params.max_output_tokens = Some(16);
+    params.abort_signal = request.abort_signal.clone();
+    params.temperature = gate.sampling_params.temperature;
+    // recordContent: false, since the whole prompt is the user's message and the
+    // agent's previous reply.
+    let mut identifiers = IndexMap::new();
+    identifiers.insert("userId".to_string(), request.user_id.clone());
+    apply_telemetry(
+        &mut params,
+        langfuse_telemetry(
+            "model-routing",
+            Some(identifiers),
+            Some(LangfuseTelemetryOptions {
+                record_content: Some(false),
+            }),
+        ),
+    );
+    let result = call_model(
+        ModelCallMeta {
+            purpose: LlmCallPurpose::ModelRouting,
+            thread_id: request.thread_id.clone(),
+            agent_id: Some(request.agent_id.clone()).filter(|id| !id.is_empty()),
+        },
+        params,
+    )
+    .await?;
+    let text = result.text();
+    let word: String = js::trim(&text)
+        .split(char::is_whitespace)
+        .next()
+        .unwrap_or("")
+        .chars()
+        .filter(|c| c.is_ascii_alphabetic())
+        .collect::<String>()
+        .to_lowercase();
+    let tier = offered.iter().copied().find(|t| t.as_str() == word);
+    if tier.is_none() {
+        log_warn!(
+            json!({ "answer": slice16(&text, 0, 40) }),
+            "[ModelRouting] classifier named no tier on offer"
+        );
+    }
+    Ok(tier)
 }

@@ -63,6 +63,11 @@ impl RetirableFetch {
     pub fn is_retired(&self) -> bool {
         self.retired.load(Ordering::SeqCst)
     }
+
+    /// The HTTP client requests are built with.
+    pub fn client(&self) -> reqwest::Client {
+        self.client.clone()
+    }
 }
 
 pub fn retirable_fetch(client: reqwest::Client) -> RetirableFetch {
@@ -95,4 +100,47 @@ pub async fn retire_socket_app(
     retire();
     client.remove_all_listeners("disconnected");
     app.stop().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use parking_lot::Mutex;
+
+    struct Recorder(Arc<Mutex<Vec<String>>>);
+
+    #[async_trait]
+    impl StoppableApp for Recorder {
+        async fn stop(&self) -> anyhow::Result<()> {
+            self.0.lock().push("stop".into());
+            Ok(())
+        }
+    }
+
+    impl RetiringClient for Recorder {
+        fn remove_all_listeners(&self, event: &str) {
+            self.0.lock().push(format!("remove {event}"));
+        }
+    }
+
+    #[tokio::test]
+    async fn retires_then_drops_the_disconnected_listeners_then_stops() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let app = Recorder(log.clone());
+        let retired = log.clone();
+        retire_socket_app(&app, &app, move || retired.lock().push("retire".into()))
+            .await
+            .unwrap();
+        assert_eq!(*log.lock(), vec!["retire", "remove disconnected", "stop"]);
+    }
+
+    #[tokio::test]
+    async fn a_retired_fetch_never_answers() {
+        let fetch = retirable_fetch(reqwest::Client::new());
+        fetch.retire();
+        let request = fetch.client().get("http://127.0.0.1:9/").build().unwrap();
+        let answered =
+            tokio::time::timeout(std::time::Duration::from_millis(50), fetch.fetch(request)).await;
+        assert!(answered.is_err());
+    }
 }

@@ -10,7 +10,7 @@
 //! issue's message when the value fails them.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::services::computer::desktop_windows::Titled;
 use crate::services::computer::picture_stream::StreamEncoding;
@@ -143,7 +143,175 @@ impl LinkErrorReason {
 pub trait LinkSchema: Sized + Send + 'static {
     /// The value read, or the message of the first issue found.
     fn parse(value: &Value) -> Result<Self, String>;
+
+    /// `parse` of a value that may be missing (`undefined`), which every link schema, an
+    /// object, refuses.
+    fn parse_input(value: Option<&Value>) -> Result<Self, String> {
+        match value {
+            Some(value) => Self::parse(value),
+            None => Err(expected("object", None)),
+        }
+    }
 }
+
+// ---------------------------------------------------------------------------
+// The checks, with zod's messages
+
+/// `Number.MAX_SAFE_INTEGER`, the bound of zod's `int()`.
+const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+
+/// The type name zod's messages give a value; `None` is `undefined`.
+fn type_name(value: Option<&Value>) -> &'static str {
+    match value {
+        None => "undefined",
+        Some(Value::Null) => "null",
+        Some(Value::Bool(_)) => "boolean",
+        Some(Value::Number(_)) => "number",
+        Some(Value::String(_)) => "string",
+        Some(Value::Array(_)) => "array",
+        Some(Value::Object(_)) => "object",
+    }
+}
+
+fn expected(kind: &str, value: Option<&Value>) -> String {
+    format!(
+        "Invalid input: expected {kind}, received {}",
+        type_name(value)
+    )
+}
+
+fn object(value: Option<&Value>) -> Result<&Map<String, Value>, String> {
+    match value {
+        Some(Value::Object(map)) => Ok(map),
+        other => Err(expected("object", other)),
+    }
+}
+
+/// `z.string()` with `min` and `max` lengths, which zod counts in code points.
+fn string(value: Option<&Value>, min: Option<usize>, max: Option<usize>) -> Result<String, String> {
+    let Some(Value::String(text)) = value else {
+        return Err(expected("string", value));
+    };
+    let length = text.chars().count();
+    if let Some(min) = min
+        && length < min
+    {
+        return Err(format!(
+            "Too small: expected string to have >={min} characters"
+        ));
+    }
+    if let Some(max) = max
+        && length > max
+    {
+        return Err(format!(
+            "Too big: expected string to have <={max} characters"
+        ));
+    }
+    Ok(text.clone())
+}
+
+fn number(value: Option<&Value>) -> Result<f64, String> {
+    match value {
+        Some(Value::Number(n)) => Ok(n.as_f64().unwrap_or(f64::NAN)),
+        other => Err(expected("number", other)),
+    }
+}
+
+/// `z.number().int()`: a safe integer.
+fn int(value: Option<&Value>) -> Result<i64, String> {
+    let n = number(value)?;
+    if n.fract() != 0.0 || !n.is_finite() {
+        return Err("Invalid input: expected int, received number".to_string());
+    }
+    if n > MAX_SAFE_INTEGER {
+        return Err("Too big: expected int to be <=9007199254740991".to_string());
+    }
+    if n < -MAX_SAFE_INTEGER {
+        return Err("Too small: expected int to be >=-9007199254740991".to_string());
+    }
+    Ok(n as i64)
+}
+
+/// `z.number().int().min(min).max(max)`.
+fn int_between(value: Option<&Value>, min: i64, max: i64) -> Result<i64, String> {
+    let n = int(value)?;
+    if n < min {
+        return Err(format!("Too small: expected number to be >={min}"));
+    }
+    if n > max {
+        return Err(format!("Too big: expected number to be <={max}"));
+    }
+    Ok(n)
+}
+
+/// `z.number().int().positive()`.
+fn positive_int(value: Option<&Value>) -> Result<i64, String> {
+    let n = int(value)?;
+    if n <= 0 {
+        return Err("Too small: expected number to be >0".to_string());
+    }
+    Ok(n)
+}
+
+fn boolean(value: Option<&Value>) -> Result<bool, String> {
+    match value {
+        Some(Value::Bool(b)) => Ok(*b),
+        other => Err(expected("boolean", other)),
+    }
+}
+
+/// `z.enum(options)`.
+fn one_of(value: Option<&Value>, options: &[&'static str]) -> Result<&'static str, String> {
+    let text = value.and_then(Value::as_str);
+    options
+        .iter()
+        .find(|option| Some(**option) == text)
+        .copied()
+        .ok_or_else(|| {
+            let listed: Vec<String> = options.iter().map(|o| format!("\"{o}\"")).collect();
+            format!("Invalid option: expected one of {}", listed.join("|"))
+        })
+}
+
+/// `z.array(item).min(min).max(max)`: the items' issues come before the length's.
+fn array_of<T>(
+    value: Option<&Value>,
+    min: Option<usize>,
+    max: usize,
+    item: impl Fn(Option<&Value>) -> Result<T, String>,
+) -> Result<Vec<T>, String> {
+    let Some(Value::Array(items)) = value else {
+        return Err(expected("array", value));
+    };
+    let parsed = items
+        .iter()
+        .map(|value| item(Some(value)))
+        .collect::<Result<Vec<T>, String>>()?;
+    if let Some(min) = min
+        && items.len() < min
+    {
+        return Err(format!("Too small: expected array to have >={min} items"));
+    }
+    if items.len() > max {
+        return Err(format!("Too big: expected array to have <={max} items"));
+    }
+    Ok(parsed)
+}
+
+/// A field with a zod `.default()`: the default when the key is absent.
+fn or_default<T>(
+    value: Option<&Value>,
+    default: T,
+    parse: impl Fn(Option<&Value>) -> Result<T, String>,
+) -> Result<T, String> {
+    match value {
+        None => Ok(default),
+        some => parse(some),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The schemas
 
 /// One display of a remote computer. Zod: `id` 1–100 characters, `width` and `height`
 /// integers 1–16384, `scale` positive and at most 8 (default 1), `primary` default false.
@@ -156,6 +324,39 @@ pub struct RemoteDisplay {
     pub primary: bool,
 }
 
+fn display(value: Option<&Value>) -> Result<RemoteDisplay, String> {
+    let fields = object(value)?;
+    Ok(RemoteDisplay {
+        id: string(fields.get("id"), Some(1), Some(100))?,
+        width: int_between(fields.get("width"), 1, 16_384)?,
+        height: int_between(fields.get("height"), 1, 16_384)?,
+        scale: or_default(fields.get("scale"), 1.0, |value| {
+            let n = number(value)?;
+            if n <= 0.0 {
+                return Err("Too small: expected number to be >0".to_string());
+            }
+            if n > 8.0 {
+                return Err("Too big: expected number to be <=8".to_string());
+            }
+            Ok(n)
+        })?,
+        primary: or_default(fields.get("primary"), false, boolean)?,
+    })
+}
+
+fn displays(value: Option<&Value>) -> Result<Vec<RemoteDisplay>, String> {
+    array_of(value, Some(1), 16, display)
+}
+
+/// A capability the client names that this runtime does not know is left out, not refused.
+fn capabilities(value: Option<&Value>) -> Result<Vec<Capability>, String> {
+    let names = array_of(value, None, 50, |name| string(name, None, Some(50)))?;
+    Ok(names
+        .iter()
+        .filter_map(|name| Capability::parse(name))
+        .collect())
+}
+
 /// A capability the client says does not work, and why. Zod: `capability` at most 50
 /// characters, `message` at most 500.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,12 +365,38 @@ pub struct CapabilityProblem {
     pub message: String,
 }
 
+fn problems(value: Option<&Value>) -> Result<Vec<CapabilityProblem>, String> {
+    or_default(value, Vec::new(), |value| {
+        array_of(value, None, 50, |problem| {
+            let fields = object(problem)?;
+            Ok(CapabilityProblem {
+                capability: string(fields.get("capability"), None, Some(50))?,
+                message: string(fields.get("message"), None, Some(500))?,
+            })
+        })
+    })
+}
+
 /// The client program. Zod: `name` 1–100 characters; `version` matches `^[\w.+-]{1,50}$`,
 /// since the version reaches telemetry, so it is a version and no other text.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkClient {
     pub name: String,
     pub version: String,
+}
+
+fn client(value: Option<&Value>) -> Result<LinkClient, String> {
+    let fields = object(value)?;
+    let name = string(fields.get("name"), Some(1), Some(100))?;
+    let version = string(fields.get("version"), None, None)?;
+    let valid = (1..=50).contains(&version.len())
+        && version
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'+' | b'-'));
+    if !valid {
+        return Err("Invalid string: must match pattern /^[\\w.+-]{1,50}$/".to_string());
+    }
+    Ok(LinkClient { name, version })
 }
 
 /// The `initialize` request's params. Zod: `protocolVersion` an integer, `displays` 1–16,
@@ -188,7 +415,18 @@ pub struct InitializeParams {
 
 impl LinkSchema for InitializeParams {
     fn parse(value: &Value) -> Result<Self, String> {
-        todo!()
+        let fields = object(Some(value))?;
+        let protocol_version = int(fields.get("protocolVersion"))?;
+        let client = client(fields.get("client"))?;
+        let platform = one_of(fields.get("platform"), &["macos", "windows", "linux"])?;
+        Ok(InitializeParams {
+            protocol_version,
+            client,
+            platform: RemotePlatform::parse(platform).unwrap_or(RemotePlatform::Linux),
+            displays: displays(fields.get("displays"))?,
+            capabilities: capabilities(fields.get("capabilities"))?,
+            problems: problems(fields.get("problems"))?,
+        })
     }
 }
 
@@ -200,7 +438,10 @@ pub struct DisplaysChangedParams {
 
 impl LinkSchema for DisplaysChangedParams {
     fn parse(value: &Value) -> Result<Self, String> {
-        todo!()
+        let fields = object(Some(value))?;
+        Ok(DisplaysChangedParams {
+            displays: displays(fields.get("displays"))?,
+        })
     }
 }
 
@@ -213,7 +454,11 @@ pub struct CapabilitiesChangedParams {
 
 impl LinkSchema for CapabilitiesChangedParams {
     fn parse(value: &Value) -> Result<Self, String> {
-        todo!()
+        let fields = object(Some(value))?;
+        Ok(CapabilitiesChangedParams {
+            capabilities: capabilities(fields.get("capabilities"))?,
+            problems: problems(fields.get("problems"))?,
+        })
     }
 }
 
@@ -247,7 +492,17 @@ pub struct CaptureResult {
 
 impl LinkSchema for CaptureResult {
     fn parse(value: &Value) -> Result<Self, String> {
-        todo!()
+        let fields = object(Some(value))?;
+        let media_type = match one_of(fields.get("mediaType"), &["image/jpeg", "image/png"])? {
+            "image/png" => CaptureMediaType::Png,
+            _ => CaptureMediaType::Jpeg,
+        };
+        Ok(CaptureResult {
+            media_type,
+            width: positive_int(fields.get("width"))?,
+            height: positive_int(fields.get("height"))?,
+            data: string(fields.get("data"), Some(1), None)?,
+        })
     }
 }
 
@@ -280,7 +535,24 @@ pub struct WindowsResult {
 
 impl LinkSchema for WindowsResult {
     fn parse(value: &Value) -> Result<Self, String> {
-        todo!()
+        let fields = object(Some(value))?;
+        let windows = array_of(fields.get("windows"), None, 500, |window| {
+            let fields = object(window)?;
+            Ok(RemoteWindow {
+                id: string(fields.get("id"), Some(1), Some(200))?,
+                title: string(fields.get("title"), None, Some(1000))?,
+                app: or_default(fields.get("app"), String::new(), |v| {
+                    string(v, None, Some(200))
+                })?,
+                x: number(fields.get("x"))?,
+                y: number(fields.get("y"))?,
+                width: number(fields.get("width"))?,
+                height: number(fields.get("height"))?,
+                focused: or_default(fields.get("focused"), false, boolean)?,
+                minimized: or_default(fields.get("minimized"), false, boolean)?,
+            })
+        })?;
+        Ok(WindowsResult { windows })
     }
 }
 
@@ -306,7 +578,22 @@ pub struct ElementsResult {
 
 impl LinkSchema for ElementsResult {
     fn parse(value: &Value) -> Result<Self, String> {
-        todo!()
+        let fields = object(Some(value))?;
+        let elements = array_of(fields.get("elements"), None, 5000, |element| {
+            let fields = object(element)?;
+            Ok(RemoteElement {
+                app: or_default(fields.get("app"), String::new(), |v| {
+                    string(v, None, Some(200))
+                })?,
+                role: string(fields.get("role"), None, Some(100))?,
+                name: string(fields.get("name"), None, Some(1000))?,
+                x: number(fields.get("x"))?,
+                y: number(fields.get("y"))?,
+                width: number(fields.get("width"))?,
+                height: number(fields.get("height"))?,
+            })
+        })?;
+        Ok(ElementsResult { elements })
     }
 }
 
@@ -323,7 +610,21 @@ pub struct StreamStartResult {
 
 impl LinkSchema for StreamStartResult {
     fn parse(value: &Value) -> Result<Self, String> {
-        todo!()
+        let fields = object(Some(value))?;
+        let encoding = match one_of(fields.get("encoding"), &["h264", "jpeg"])? {
+            "h264" => StreamEncoding::H264,
+            _ => StreamEncoding::Jpeg,
+        };
+        let codec = match fields.get("codec") {
+            None => None,
+            some => Some(string(some, None, Some(100))?),
+        };
+        Ok(StreamStartResult {
+            encoding,
+            codec,
+            width: positive_int(fields.get("width"))?,
+            height: positive_int(fields.get("height"))?,
+        })
     }
 }
 
@@ -333,7 +634,8 @@ pub struct EmptyResult {}
 
 impl LinkSchema for EmptyResult {
     fn parse(value: &Value) -> Result<Self, String> {
-        todo!()
+        object(Some(value))?;
+        Ok(EmptyResult {})
     }
 }
 
@@ -343,6 +645,15 @@ impl LinkSchema for EmptyResult {
 pub enum RpcId {
     Number(i64),
     Text(String),
+}
+
+/// The id a message names, when it is one the schema takes.
+fn rpc_id(value: Option<&Value>) -> Option<RpcId> {
+    match value? {
+        Value::String(_) => string(value, None, Some(100)).ok().map(RpcId::Text),
+        Value::Number(_) => int(value).ok().map(RpcId::Number),
+        _ => None,
+    }
 }
 
 /// A JSON-RPC error object. Zod: `code` an integer, `message` at most 2000 characters.
@@ -378,10 +689,51 @@ pub enum RpcMessage {
 }
 
 /// Read one JSON-RPC 2.0 message, or `None` when it is not one. The variants are tried in
-/// the order of `RpcMessage`: an error is tried before a result, since a missing `result`
-/// reads as `undefined`.
+/// the order of `RpcMessage`, so a `method` with an id the schema does not take reads as a
+/// notification, and an error is tried before a result.
 pub fn parse_rpc_message(value: &Value) -> Option<RpcMessage> {
-    todo!()
+    let fields = value.as_object()?;
+    if fields.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
+        return None;
+    }
+    let method = string(fields.get("method"), None, Some(100)).ok();
+    let id = rpc_id(fields.get("id"));
+    if let Some(method) = method {
+        let params = fields.get("params").cloned();
+        return Some(match id {
+            Some(id) => RpcMessage::Request { id, method, params },
+            None => RpcMessage::Notification { method, params },
+        });
+    }
+    if let Some(error) = rpc_error(fields) {
+        return Some(error);
+    }
+    match (id, fields.get("result")) {
+        (Some(id), Some(result)) => Some(RpcMessage::Response {
+            id,
+            result: result.clone(),
+        }),
+        _ => None,
+    }
+}
+
+/// The error variant: an `id` that is null or one the schema takes, and an error object.
+fn rpc_error(fields: &Map<String, Value>) -> Option<RpcMessage> {
+    let id = match fields.get("id")? {
+        Value::Null => None,
+        _ => Some(rpc_id(fields.get("id"))?),
+    };
+    let error = object(fields.get("error")).ok()?;
+    let code = int(error.get("code")).ok()?;
+    let message = string(error.get("message"), None, Some(2000)).ok()?;
+    Some(RpcMessage::Error {
+        id,
+        error: RpcErrorObject {
+            code,
+            message,
+            data: error.get("data").cloned(),
+        },
+    })
 }
 
 /// The JSON-RPC 2.0 error codes the runtime answers with.
@@ -397,3 +749,256 @@ pub const RPC_ERROR: RpcErrorCodes = RpcErrorCodes {
     method_not_found: -32601,
     invalid_params: -32602,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn hello() -> Value {
+        json!({
+            "protocolVersion": 1,
+            "client": { "name": "test-client", "version": "1.2.3" },
+            "platform": "macos",
+            "displays": [{ "id": "main", "width": 2560, "height": 1440, "scale": 2, "primary": true }],
+            "capabilities": ["screen", "input", "windows", "stream", "teleport"],
+        })
+    }
+
+    fn with(key: &str, value: Value) -> Value {
+        let mut params = hello();
+        params[key] = value;
+        params
+    }
+
+    fn issue(value: Value) -> String {
+        InitializeParams::parse(&value).expect_err("the params are refused")
+    }
+
+    #[test]
+    fn reads_initialize_leaving_out_capabilities_it_does_not_know() {
+        let params = InitializeParams::parse(&hello()).unwrap();
+        assert_eq!(params.protocol_version, 1);
+        assert_eq!(params.platform, RemotePlatform::Macos);
+        assert_eq!(
+            params.capabilities,
+            [
+                Capability::Screen,
+                Capability::Input,
+                Capability::Windows,
+                Capability::Stream
+            ]
+        );
+        assert!(params.problems.is_empty());
+        assert_eq!(params.displays[0].scale, 2.0);
+    }
+
+    #[test]
+    fn fills_the_display_defaults() {
+        let params = InitializeParams::parse(&with(
+            "displays",
+            json!([{ "id": "a", "width": 1, "height": 1, "extra": 2 }]),
+        ))
+        .unwrap();
+        assert_eq!(
+            params.displays,
+            [RemoteDisplay {
+                id: "a".into(),
+                width: 1,
+                height: 1,
+                scale: 1.0,
+                primary: false
+            }]
+        );
+    }
+
+    #[test]
+    fn answers_the_first_issue_as_zod_words_it() {
+        assert_eq!(
+            InitializeParams::parse_input(None).unwrap_err(),
+            "Invalid input: expected object, received undefined"
+        );
+        assert_eq!(
+            issue(json!([])),
+            "Invalid input: expected object, received array"
+        );
+        assert_eq!(
+            issue(json!({})),
+            "Invalid input: expected number, received undefined"
+        );
+        assert_eq!(
+            issue(with("protocolVersion", json!("1"))),
+            "Invalid input: expected number, received string"
+        );
+        assert_eq!(
+            issue(with("protocolVersion", json!(1.5))),
+            "Invalid input: expected int, received number"
+        );
+        assert_eq!(
+            issue(with("protocolVersion", json!(1e20))),
+            "Too big: expected int to be <=9007199254740991"
+        );
+        assert_eq!(
+            issue(with("client", json!({ "name": "", "version": "1" }))),
+            "Too small: expected string to have >=1 characters"
+        );
+        assert_eq!(
+            issue(with("client", json!({ "name": "a", "version": "1 2" }))),
+            "Invalid string: must match pattern /^[\\w.+-]{1,50}$/"
+        );
+        assert_eq!(
+            issue(with("client", json!({ "name": "a", "version": "é" }))),
+            "Invalid string: must match pattern /^[\\w.+-]{1,50}$/"
+        );
+        assert_eq!(
+            issue(with("platform", json!("beos"))),
+            "Invalid option: expected one of \"macos\"|\"windows\"|\"linux\""
+        );
+        assert_eq!(
+            issue(with("displays", json!([]))),
+            "Too small: expected array to have >=1 items"
+        );
+        assert_eq!(
+            issue(with(
+                "displays",
+                json!([{ "id": "a", "width": 1, "height": 1, "scale": 0 }])
+            )),
+            "Too small: expected number to be >0"
+        );
+        assert_eq!(
+            issue(with(
+                "displays",
+                json!([{ "id": "a", "width": 16385, "height": 1 }])
+            )),
+            "Too big: expected number to be <=16384"
+        );
+        assert_eq!(
+            issue(with(
+                "displays",
+                json!([{ "id": "a", "width": 1, "height": 1, "scale": null }])
+            )),
+            "Invalid input: expected number, received null"
+        );
+        assert_eq!(
+            issue(with("capabilities", json!(["x".repeat(51)]))),
+            "Too big: expected string to have <=50 characters"
+        );
+        assert_eq!(
+            issue(with("problems", json!([{ "capability": "x" }]))),
+            "Invalid input: expected string, received undefined"
+        );
+        let many: Vec<Value> = (0..17)
+            .map(|_| json!({ "id": "", "width": 1, "height": 1 }))
+            .collect();
+        assert_eq!(
+            issue(with("displays", Value::Array(many))),
+            "Too small: expected string to have >=1 characters"
+        );
+    }
+
+    #[test]
+    fn counts_a_name_in_code_points() {
+        let name = "😀".repeat(100);
+        let params =
+            InitializeParams::parse(&with("client", json!({ "name": name, "version": "1" })));
+        assert!(params.is_ok());
+        let name = "😀".repeat(101);
+        assert_eq!(
+            issue(with("client", json!({ "name": name, "version": "1" }))),
+            "Too big: expected string to have <=100 characters"
+        );
+    }
+
+    #[test]
+    fn tells_the_kinds_of_message_apart() {
+        let read = |value: Value| parse_rpc_message(&value);
+        assert_eq!(
+            read(json!({ "jsonrpc": "2.0", "id": 1, "method": "a" })),
+            Some(RpcMessage::Request {
+                id: RpcId::Number(1),
+                method: "a".into(),
+                params: None
+            })
+        );
+        // An id the schema does not take leaves a notification.
+        for id in [json!(1.5), json!(null), json!("x".repeat(101))] {
+            assert_eq!(
+                read(json!({ "jsonrpc": "2.0", "id": id, "method": "a" })),
+                Some(RpcMessage::Notification {
+                    method: "a".into(),
+                    params: None
+                })
+            );
+        }
+        assert_eq!(
+            read(json!({ "jsonrpc": "2.0", "id": null, "error": { "code": 1, "message": "m" } })),
+            Some(RpcMessage::Error {
+                id: None,
+                error: RpcErrorObject {
+                    code: 1,
+                    message: "m".into(),
+                    data: None
+                }
+            })
+        );
+        // An error is read before a result.
+        assert!(matches!(
+            read(
+                json!({ "jsonrpc": "2.0", "id": 1, "result": 2, "error": { "code": 1, "message": "m" } })
+            ),
+            Some(RpcMessage::Error { .. })
+        ));
+        assert_eq!(
+            read(json!({ "jsonrpc": "2.0", "id": 1, "result": { "a": 1 } })),
+            Some(RpcMessage::Response {
+                id: RpcId::Number(1),
+                result: json!({ "a": 1 })
+            })
+        );
+        for refused in [
+            json!({ "jsonrpc": "2.0", "error": { "code": 1, "message": "m" } }),
+            json!({ "jsonrpc": "2.0", "id": 1, "error": { "code": 1.5, "message": "m" } }),
+            json!({ "jsonrpc": "2.0", "id": 1 }),
+            json!({ "jsonrpc": "2.0", "id": null, "result": 1 }),
+            json!({ "jsonrpc": "1.0", "id": 1, "method": "a" }),
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "a".repeat(101) }),
+            json!([1]),
+        ] {
+            assert_eq!(read(refused.clone()), None, "{refused}");
+        }
+    }
+
+    #[test]
+    fn fills_the_defaults_of_a_window_and_an_element() {
+        let windows = WindowsResult::parse(
+            &json!({ "windows": [{ "id": "w", "title": "t", "x": 1, "y": 2, "width": 3, "height": 4 }] }),
+        )
+        .unwrap();
+        assert_eq!(windows.windows[0].app, "");
+        assert!(!windows.windows[0].focused && !windows.windows[0].minimized);
+        let elements = ElementsResult::parse(
+            &json!({ "elements": [{ "role": "r", "name": "n", "x": 1.5, "y": 2, "width": 3, "height": 4 }] }),
+        )
+        .unwrap();
+        assert_eq!(elements.elements[0].app, "");
+        assert_eq!(elements.elements[0].x, 1.5);
+    }
+
+    #[test]
+    fn takes_any_object_as_an_empty_result() {
+        assert!(EmptyResult::parse(&json!({ "a": 1 })).is_ok());
+        assert!(EmptyResult::parse(&json!(null)).is_err());
+        assert!(EmptyResult::parse(&json!([])).is_err());
+        assert!(
+            CaptureResult::parse(
+                &json!({ "mediaType": "image/jpeg", "width": 1, "height": 1, "data": "" })
+            )
+            .is_err()
+        );
+        let started =
+            StreamStartResult::parse(&json!({ "encoding": "h264", "width": 3, "height": 4 }))
+                .unwrap();
+        assert_eq!(started.encoding, StreamEncoding::H264);
+        assert_eq!(started.codec, None);
+    }
+}

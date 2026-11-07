@@ -97,3 +97,95 @@ fn encode_line(text: &str, max_bytes: usize) -> String {
     }
     base64::engine::general_purpose::STANDARD.encode(&bytes)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const OSC: &str = "\x1b]7501;";
+    const ST: &str = "\x1b\\";
+
+    fn base64(text: &str) -> String {
+        base64::engine::general_purpose::STANDARD.encode(text.as_bytes())
+    }
+
+    /// True when the text is one report: OSC 7501, valid pairs, ST.
+    fn is_report(text: &str) -> bool {
+        let pairs =
+            regex::Regex::new(r"^[a-z]+=[A-Za-z0-9_.,+/=-]*(:[a-z]+=[A-Za-z0-9_.,+/=-]*)*$")
+                .unwrap();
+        text.starts_with(OSC)
+            && text.ends_with(ST)
+            && pairs.is_match(&text[OSC.len()..text.len() - ST.len()])
+    }
+
+    fn decoded(sequence: &str, key: &str) -> String {
+        let pattern = regex::Regex::new(&format!("{key}=([A-Za-z0-9+/=]*)")).unwrap();
+        let value = &pattern.captures(sequence).unwrap()[1];
+        String::from_utf8(
+            base64::engine::general_purpose::STANDARD
+                .decode(value)
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn names_the_program_and_the_title_in_every_report() {
+        assert_eq!(
+            program_status_sequence(&ProgramStatus::Idle, "Peter"),
+            format!(
+                "\x1b]7501;state=idle:app=prism:title={}\x1b\\",
+                base64("Peter")
+            )
+        );
+        assert_eq!(CLEAR_SEQUENCE, "\x1b]7501;state=clear\x1b\\");
+    }
+
+    #[test]
+    fn writes_the_kind_and_the_message_as_base64_of_utf8() {
+        let sequence = program_status_sequence(
+            &ProgramStatus::Blocked {
+                kind: BlockedKind::Question,
+                msg: "Accept the café terms?".into(),
+            },
+            "Peter",
+        );
+        assert_eq!(
+            sequence,
+            format!(
+                "\x1b]7501;state=blocked:kind=question:app=prism:title={}:msg={}\x1b\\",
+                base64("Peter"),
+                base64("Accept the café terms?")
+            )
+        );
+        assert!(is_report(&sequence));
+    }
+
+    #[test]
+    fn turns_every_control_character_in_the_message_into_a_space() {
+        let sequence = program_status_sequence(
+            &ProgramStatus::Error {
+                msg: "line one\nline\ttwo\u{0085}\u{007f}.".into(),
+            },
+            "Peter",
+        );
+        assert_eq!(decoded(&sequence, "msg"), "line one line two  .");
+    }
+
+    #[test]
+    fn cuts_a_long_message_and_a_long_title_on_a_whole_character() {
+        // 64 characters, the longest agent name, at four bytes each.
+        let sequence = program_status_sequence(
+            &ProgramStatus::Blocked {
+                kind: BlockedKind::Auth,
+                msg: "€".repeat(2000),
+            },
+            &"😀".repeat(64),
+        );
+        assert_eq!(decoded(&sequence, "msg"), "€".repeat(682));
+        assert_eq!(decoded(&sequence, "title"), "😀".repeat(48));
+        assert!(sequence.len() <= 4096);
+        assert!(is_report(&sequence));
+    }
+}

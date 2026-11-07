@@ -65,3 +65,4 @@ pub mod websocket_adapter_service;
 pub mod websocket_gateway_service;
 pub mod websocket_upgrades;
 // @generated-modules-end
+pub mod slack_socket_mode;

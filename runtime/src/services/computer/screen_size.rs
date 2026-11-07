@@ -102,3 +102,64 @@ pub fn bounded_picture_for(screen: ScreenSize) -> ScreenSize {
 pub fn size_text(size: ScreenSize) -> String {
     format!("{}x{}", size.width, size.height)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn size(width: i64, height: i64) -> ScreenSize {
+        ScreenSize { width, height }
+    }
+
+    #[test]
+    fn takes_a_size_the_display_can_serve_as_it_is() {
+        assert_eq!(clamp_screen(1600.0, 900.0), size(1600, 900));
+    }
+
+    #[test]
+    fn holds_a_client_to_what_the_x_server_reserved() {
+        // The framebuffer is allocated once, so anything past it is a size the display
+        // cannot become however the client asks.
+        assert_eq!(clamp_screen(5000.0, 3000.0), MAX_SCREEN);
+    }
+
+    #[test]
+    fn holds_a_client_up_to_a_screen_with_room_for_a_window() {
+        assert_eq!(clamp_screen(10.0, 10.0), MIN_SCREEN);
+    }
+
+    #[test]
+    fn rounds_to_whole_pairs_of_pixels() {
+        assert_eq!(clamp_screen(1001.0, 563.0), size(1002, 564));
+    }
+
+    #[test]
+    fn falls_back_on_a_size_that_is_not_a_number() {
+        assert_eq!(clamp_screen(f64::NAN, 720.0), size(1920, 720));
+    }
+
+    #[test]
+    fn gives_the_model_the_screen_itself_while_it_is_small_enough() {
+        assert_eq!(picture_for(size(1280, 720)), size(1280, 720));
+        assert_eq!(picture_for(size(1024, 640)), size(1024, 640));
+    }
+
+    #[test]
+    fn caps_a_larger_screen_without_changing_its_shape() {
+        let picture = picture_for(size(1920, 1080));
+        assert_eq!(picture.width, PICTURE_MAX_WIDTH);
+        assert_eq!(picture.height, 720);
+    }
+
+    #[test]
+    fn keeps_the_shape_of_a_screen_that_is_not_sixteen_by_nine() {
+        let picture = picture_for(size(1920, 1200));
+        assert_eq!(picture.width, PICTURE_MAX_WIDTH);
+        assert_eq!(picture.height, 800);
+    }
+
+    #[test]
+    fn formats_dimensions_for_ffmpeg() {
+        assert_eq!(size_text(size(1280, 720)), "1280x720");
+    }
+}

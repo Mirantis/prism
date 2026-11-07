@@ -9,11 +9,15 @@
 //! default. Auto needs a small and a large model; a write that leaves either
 //! missing is refused with 400.
 
-use axum::Json;
 use axum::Router;
 use axum::response::Response;
 use axum::routing::get;
-use serde::Serialize;
+use serde_json::{Map, Value, json};
+
+use crate::lib::log_redaction::err_json;
+use crate::log_error;
+use crate::services::agent_workspace_service::{AGENT_WORKSPACE_SERVICE, ValidationError};
+use crate::support::http::{JsonBody, error_json, json};
 
 pub fn router() -> Router {
     Router::new().route(
@@ -22,31 +26,37 @@ pub fn router() -> Router {
     )
 }
 
-/// `{ error }`, the body of every refusal and failure.
-#[derive(Debug, Clone, Serialize)]
-pub struct ErrorBody {
-    pub error: String,
-}
-
-/// GET /agents/model-selection
-///
-/// Sends `AGENT_WORKSPACE_SERVICE.get_model_selection_info()` unchanged. A failure
-/// is logged (`[ModelSelection] Failed to read the model selection`, with `err`) and
-/// answers 500 with the error's message.
 async fn get_model_selection() -> Response {
-    todo!()
+    match AGENT_WORKSPACE_SERVICE.get_model_selection_info().await {
+        Ok(info) => json(200, info),
+        Err(err) => {
+            log_error!(
+                json!({ "err": err_json(&err) }),
+                "[ModelSelection] Failed to read the model selection"
+            );
+            error_json(500, err.to_string())
+        }
+    }
 }
 
-/// PATCH /agents/model-selection
-///
-/// The whole body object (`{}` when absent) goes to
-/// `AGENT_WORKSPACE_SERVICE.update_model_selection`, which reads `mode`, `small`,
-/// `medium` and `large` and checks their types; its result is sent unchanged. A
-/// `ValidationError` answers 400 with its message; any other failure is logged
-/// (`[ModelSelection] Failed to update the model selection`, with `err`) and
-/// answers 500.
-async fn update_model_selection(
-    Json(body): Json<serde_json::Map<String, serde_json::Value>>,
-) -> Response {
-    todo!()
+/// The whole body object (`{}` when absent) goes to the service, which reads
+/// `mode`, `small`, `medium` and `large` and checks their types.
+async fn update_model_selection(body: JsonBody) -> Response {
+    let input = match body.0 {
+        Some(Value::Object(map)) => map,
+        _ => Map::new(),
+    };
+    match AGENT_WORKSPACE_SERVICE.update_model_selection(&input).await {
+        Ok(info) => json(200, info),
+        Err(err) => {
+            if let Some(validation) = err.downcast_ref::<ValidationError>() {
+                return error_json(400, validation.to_string());
+            }
+            log_error!(
+                json!({ "err": err_json(&err) }),
+                "[ModelSelection] Failed to update the model selection"
+            );
+            error_json(500, err.to_string())
+        }
+    }
 }

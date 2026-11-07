@@ -83,3 +83,112 @@ pub fn teams_channel_label(channel_name: &str) -> String {
          token as text, and where you suggest a direct message for sensitive data"
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn triggered(by: &str) -> FormatTeamsMessageOptions {
+        FormatTeamsMessageOptions {
+            triggered_by: Some(by.to_string()),
+            tool_calls: None,
+        }
+    }
+
+    #[test]
+    fn returns_the_content_as_a_single_chunk() {
+        assert_eq!(format_teams_message("hello", None), vec!["hello"]);
+    }
+
+    #[test]
+    fn renders_a_heartbeat_banner() {
+        let chunks = format_teams_message("all clear", Some(&triggered("HEARTBEAT")));
+        assert_eq!(chunks[0], "💓 **Heartbeat Alert**\n\nall clear");
+    }
+
+    #[test]
+    fn renders_a_scheduled_task_banner() {
+        let chunks = format_teams_message("done", Some(&triggered("CRON_TASK")));
+        assert!(chunks[0].starts_with("⏰ **Scheduled Task Result**"));
+    }
+
+    #[test]
+    fn renders_a_generic_banner_for_other_triggers() {
+        let chunks = format_teams_message("hi", Some(&triggered("GOAL")));
+        assert!(chunks[0].starts_with("📬 **GOAL**"));
+    }
+
+    #[test]
+    fn adds_no_banner_for_user_input_or_a_webhook() {
+        assert_eq!(
+            format_teams_message("hi", Some(&triggered("USER_INPUT"))),
+            vec!["hi"]
+        );
+        assert_eq!(
+            format_teams_message("hi", Some(&triggered("WEBHOOK"))),
+            vec!["hi"]
+        );
+    }
+
+    #[test]
+    fn appends_a_deduplicated_tool_footer() {
+        let options = FormatTeamsMessageOptions {
+            triggered_by: None,
+            tool_calls: Some(vec![
+                json!({ "tool": "shell_exec" }),
+                json!({ "tool": "shell_exec" }),
+                json!({ "tool": "memory_search" }),
+            ]),
+        };
+        let chunks = format_teams_message("done", Some(&options));
+        assert_eq!(chunks[0], "done\n\n🔧 _shell_exec, memory_search_");
+    }
+
+    #[test]
+    fn passes_markdown_tables_through_unchanged() {
+        let table = "| a | b |\n| --- | --- |\n| 1 | 2 |";
+        assert_eq!(format_teams_message(table, None), vec![table]);
+    }
+
+    #[test]
+    fn renders_a_placeholder_for_empty_content() {
+        assert_eq!(format_teams_message("   ", None), vec!["(empty message)"]);
+    }
+
+    #[test]
+    fn chunks_over_limit_content_with_the_banner_first_and_the_footer_last() {
+        let body = format!(
+            "{}\n\n{}",
+            "a".repeat(TEAMS_TEXT_LIMIT - 100),
+            "b".repeat(TEAMS_TEXT_LIMIT - 100)
+        );
+        let options = FormatTeamsMessageOptions {
+            triggered_by: Some("HEARTBEAT".to_string()),
+            tool_calls: Some(vec![json!({ "tool": "kubectl" })]),
+        };
+        let chunks = format_teams_message(&body, Some(&options));
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks[0].starts_with("💓 **Heartbeat Alert**"));
+        assert!(!chunks[0].contains('🔧'));
+        assert!(chunks[1].ends_with("🔧 _kubectl_"));
+        for chunk in &chunks {
+            assert!(len16(chunk) <= TEAMS_TEXT_LIMIT + 100);
+        }
+    }
+
+    #[test]
+    fn names_the_channel_as_teams_shows_it() {
+        assert!(
+            teams_channel_label("General").contains("the Microsoft Teams channel **General**,")
+        );
+    }
+
+    // Teams shows a token in a reply as text, so the agent writes the name.
+    #[test]
+    fn tells_the_agent_to_address_people_by_name_not_by_token() {
+        let label = teams_channel_label("General");
+        assert!(label.contains("address people by name"));
+        assert!(!label.contains("writing their token"));
+    }
+}

@@ -12,30 +12,20 @@
 //! Auth is terminated by the platform in front of the container, as for every
 //! other route, so this one takes no credential from inside it.
 
-use axum::Json;
 use axum::Router;
 use axum::response::Response;
 use axum::routing::patch;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+use serde_json::json;
+
+use crate::lib::log_redaction::err_json;
+use crate::lib::workspace_docs::WorkspaceDocField;
+use crate::log_error;
+use crate::services::agent_workspace_service::{AGENT_WORKSPACE_SERVICE, ValidationError};
+use crate::support::http::{JsonBody, error_json, json};
 
 pub fn router() -> Router {
     Router::new().route("/agents/agent-guide", patch(update_agent_guide))
-}
-
-/// The body of `PATCH /agents/agent-guide`: `{ agentMd: string, reason?: string }`.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentGuideBody {
-    /// The whole document; an empty string clears it, which drops the
-    /// `# Agent Guide` section from the prompt. Outer `None`: the key is missing,
-    /// answered 400 `missing required field 'agentMd'`. A present value of any JSON
-    /// type (`null` included) goes to `update_workspace_doc`, which checks it.
-    #[serde(default, with = "::serde_with::rust::double_option")]
-    pub agent_md: Option<Option<serde_json::Value>>,
-    /// The note the document's history shows for this write. Passed to the
-    /// service as it came, of any JSON type.
-    #[serde(default)]
-    pub reason: Option<serde_json::Value>,
 }
 
 /// The body of a successful write: the document as stored.
@@ -45,12 +35,6 @@ pub struct AgentGuideResponse {
     pub agent_md: String,
 }
 
-/// `{ error }`, the body of every refusal and failure.
-#[derive(Debug, Clone, Serialize)]
-pub struct ErrorBody {
-    pub error: String,
-}
-
 /// PATCH /agents/agent-guide
 ///
 /// Body: `{ agentMd: string, reason?: string }` — the whole document; an empty
@@ -58,9 +42,24 @@ pub struct ErrorBody {
 /// `reason` is the note the document's history shows for this write. There is no
 /// concurrency control: the last write wins, so two editors open at once
 /// overwrite each other instead of merging.
-///
-/// A `ValidationError` answers 400 with its message; any other failure is logged
-/// (`[AgentGuide] Failed to update the agent guide`, with `err`) and answers 500.
-async fn update_agent_guide(Json(body): Json<AgentGuideBody>) -> Response {
-    todo!()
+async fn update_agent_guide(body: JsonBody) -> Response {
+    let Some(agent_md) = body.field("agentMd") else {
+        return error_json(400, "missing required field 'agentMd'");
+    };
+    let written = AGENT_WORKSPACE_SERVICE
+        .update_workspace_doc(WorkspaceDocField::AgentMd, agent_md, body.field("reason"))
+        .await;
+    match written {
+        Ok(agent_md) => json(200, AgentGuideResponse { agent_md }),
+        Err(err) => {
+            if let Some(validation) = err.downcast_ref::<ValidationError>() {
+                return error_json(400, validation.to_string());
+            }
+            log_error!(
+                json!({ "err": err_json(&err) }),
+                "[AgentGuide] Failed to update the agent guide"
+            );
+            error_json(500, err.to_string())
+        }
+    }
 }

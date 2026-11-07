@@ -12,20 +12,31 @@
 //! boundary remain authoritative.
 
 use std::collections::HashSet;
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, Once};
+use std::time::Duration;
 
 use futures::future::BoxFuture;
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
-use crate::ai::{ModelMessage, ToolSet};
+use crate::ai::{
+    GenerateObjectOptions, ModelMessage, Tool, ToolExecuteFunction, ToolExecutionOptions, ToolSet,
+    error_name, json_schema,
+};
 use crate::config::ToolRiskGateMode;
-use crate::log_warn;
+use crate::lib::classification::get_classification_request;
+use crate::lib::log_redaction::register_error_fields;
+use crate::lib::model_call::{ModelCallMeta, apply_object_telemetry, call_model_for_object};
+use crate::lib::telemetry::{LangfuseTelemetryOptions, langfuse_telemetry, track_event};
+use crate::services::llm_call_service::LlmCallPurpose;
 use crate::support::js::{len16, slice16};
+use crate::support::now_ms;
 use crate::templates::default_workspace::is_default_agent_guide;
+use crate::{log_debug, log_warn};
 
 const RISK_EVALUATION_TIMEOUT_MS: u64 = 10_000;
 /// Structured output routes through a tool call on the Anthropic surfaces, so the
@@ -232,6 +243,7 @@ impl ToolRiskGateError {
 
     /// A call the classifier blocked under `enforce`.
     pub fn blocked(risk: ToolRiskLevel, category: ToolRiskCategory) -> Self {
+        ensure_log_fields_registered();
         Self {
             code: ToolRiskGateErrorCode::ToolRiskBlocked,
             risk: risk.as_str().to_string(),
@@ -241,6 +253,7 @@ impl ToolRiskGateError {
 
     /// A call refused because the evaluator failed under `enforce`.
     pub fn evaluation_unavailable() -> Self {
+        ensure_log_fields_registered();
         Self {
             code: ToolRiskGateErrorCode::ToolRiskEvaluationUnavailable,
             risk: "unknown".to_string(),
@@ -424,7 +437,191 @@ fn truncate_guide(guide: &str) -> String {
 /// model's context. It may paraphrase sensitive evidence even though the prompt
 /// tells it not to.
 pub fn with_tool_risk_gate(tools: ToolSet, options: ToolRiskGateOptions) -> ToolSet {
-    todo!()
+    if options.mode == ToolRiskGateMode::Off {
+        return tools;
+    }
+
+    let evaluate: ToolRiskEvaluator = options
+        .evaluate
+        .clone()
+        .unwrap_or_else(|| Arc::new(|input| Box::pin(evaluate_tool_risk(input))));
+    let policy = Arc::new(resolve_policy(options.agent_guide.as_deref()));
+    warn_if_policy_truncated(options.agent_guide.as_deref(), &policy);
+    let options = Arc::new(options);
+
+    tools
+        .into_iter()
+        .map(|(tool_name, tool)| {
+            let Some(execute) = tool.execute.clone() else {
+                return (tool_name, tool);
+            };
+            if ALWAYS_ALLOWED_TOOL_NAMES.contains(&tool_name.as_str()) {
+                return (tool_name, tool);
+            }
+
+            let evaluate = evaluate.clone();
+            let policy = policy.clone();
+            let options = options.clone();
+            let name = tool_name.clone();
+            let description = tool.description.clone();
+            let gated: ToolExecuteFunction =
+                Arc::new(move |input, execution: ToolExecutionOptions| {
+                    let evaluate = evaluate.clone();
+                    let policy = policy.clone();
+                    let options = options.clone();
+                    let tool_name = name.clone();
+                    let description = description.clone();
+                    let execute = execute.clone();
+                    Box::pin(async move {
+                        let started_at = now_ms();
+                        let evaluated = evaluate(ToolRiskEvaluationInput {
+                            tool_name: tool_name.clone(),
+                            tool_description: description,
+                            input: input.clone(),
+                            invocation_mode: options.invocation_mode.clone(),
+                            initial_prompt: options.initial_prompt.clone(),
+                            initial_prompt_from_agent: options.initial_prompt_from_agent,
+                            messages: execution.messages.as_ref().clone(),
+                            agent_guide: options.agent_guide.clone(),
+                            user_id: options.user_id.clone(),
+                            agent_id: options.agent_id.clone(),
+                            abort_signal: execution.abort_signal.clone(),
+                        })
+                        .await;
+
+                        let decision = match evaluated {
+                            Ok(decision) => decision,
+                            Err(error) => {
+                                // Cancellation belongs to the invocation, not the policy
+                                // fallback. Never turn a canceled turn into either an
+                                // allowed operation or a misleading policy rejection.
+                                if execution
+                                    .abort_signal
+                                    .as_ref()
+                                    .is_some_and(CancellationToken::is_cancelled)
+                                {
+                                    return Err(error);
+                                }
+
+                                let action = if options.mode == ToolRiskGateMode::Enforce {
+                                    "blocked"
+                                } else {
+                                    "allowed"
+                                };
+                                let error_type = error_name(&error);
+                                log_warn!(
+                                    json!({
+                                        "toolName": tool_name,
+                                        "gateMode": options.mode.as_str(),
+                                        "errorType": error_type,
+                                    }),
+                                    "[ToolRiskGate] evaluation failed"
+                                );
+                                track_event(
+                                    "tool risk evaluation failed",
+                                    Some(&options.user_id),
+                                    Some(props(&[
+                                        ("agent.id", options.agent_id.clone()),
+                                        ("invoke.mode", options.invocation_mode.clone()),
+                                        ("tool.name", tool_name.clone()),
+                                        ("gate.mode", options.mode.as_str().to_string()),
+                                        ("gate.policy", policy.source.as_str().to_string()),
+                                        (
+                                            "gate.policy_hash",
+                                            policy.digest.clone().unwrap_or_default(),
+                                        ),
+                                        ("gate.action", action.to_string()),
+                                        ("gate.error_type", error_type),
+                                        ("gate.duration_ms", (now_ms() - started_at).to_string()),
+                                    ])),
+                                );
+
+                                if options.mode == ToolRiskGateMode::Enforce {
+                                    return Err(ToolRiskGateError::evaluation_unavailable().into());
+                                }
+
+                                return execute(input, execution).await;
+                            }
+                        };
+
+                        let should_block = decision.decision == ToolRiskVerdict::Block;
+                        let action = match (should_block, options.mode == ToolRiskGateMode::Enforce)
+                        {
+                            (true, true) => "blocked",
+                            (true, false) => "would_block",
+                            (false, _) => "allowed",
+                        };
+
+                        // The free-text reason is useful to the classifier's structured
+                        // reasoning but deliberately stays out of logs, telemetry,
+                        // persisted tool results, and the main model's context. It may
+                        // paraphrase sensitive evidence even though the prompt tells it
+                        // not to.
+                        track_event(
+                            "tool risk decision",
+                            Some(&options.user_id),
+                            Some(props(&[
+                                ("agent.id", options.agent_id.clone()),
+                                ("invoke.mode", options.invocation_mode.clone()),
+                                ("tool.name", tool_name.clone()),
+                                ("gate.mode", options.mode.as_str().to_string()),
+                                ("gate.policy", policy.source.as_str().to_string()),
+                                (
+                                    "gate.policy_hash",
+                                    policy.digest.clone().unwrap_or_default(),
+                                ),
+                                ("gate.action", action.to_string()),
+                                ("gate.decision", decision.decision.as_str().to_string()),
+                                ("gate.risk", decision.risk.as_str().to_string()),
+                                ("gate.category", decision.category.as_str().to_string()),
+                                ("gate.duration_ms", (now_ms() - started_at).to_string()),
+                            ])),
+                        );
+
+                        if should_block && options.mode == ToolRiskGateMode::Enforce {
+                            log_warn!(
+                                json!({
+                                    "toolName": tool_name,
+                                    "risk": decision.risk.as_str(),
+                                    "category": decision.category.as_str(),
+                                }),
+                                "[ToolRiskGate] blocked tool call"
+                            );
+                            return Err(ToolRiskGateError::blocked(
+                                decision.risk,
+                                decision.category,
+                            )
+                            .into());
+                        }
+
+                        log_debug!(
+                            json!({
+                                "toolName": tool_name,
+                                "gateMode": options.mode.as_str(),
+                                "decision": decision.decision.as_str(),
+                            }),
+                            "[ToolRiskGate] tool call evaluated"
+                        );
+                        execute(input, execution).await
+                    })
+                });
+            (
+                tool_name,
+                Tool {
+                    execute: Some(gated),
+                    ..tool
+                },
+            )
+        })
+        .collect()
+}
+
+/// Telemetry props in the order given.
+fn props(entries: &[(&str, String)]) -> IndexMap<String, String> {
+    entries
+        .iter()
+        .map(|(key, value)| (key.to_string(), value.clone()))
+        .collect()
 }
 
 const CLASSIFIER_OUTPUT_RULE: &str =
@@ -581,7 +778,114 @@ fn warn_if_policy_truncated(agent_guide: Option<&str>, policy: &ResolvedPolicy) 
 pub async fn evaluate_tool_risk(
     input: ToolRiskEvaluationInput,
 ) -> anyhow::Result<ToolRiskDecision> {
-    todo!()
+    let request = get_classification_request()?;
+    // The caller's signal combined with the deadline.
+    let abort_signal = match &input.abort_signal {
+        Some(signal) => signal.child_token(),
+        None => CancellationToken::new(),
+    };
+    let deadline = {
+        let abort_signal = abort_signal.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(RISK_EVALUATION_TIMEOUT_MS)).await;
+            abort_signal.cancel();
+        })
+    };
+
+    let mut params = GenerateObjectOptions::new(
+        request.model,
+        json_schema(TOOL_RISK_DECISION_SCHEMA.clone()),
+    );
+    params.schema_name = Some("tool_risk_decision".to_string());
+    params.provider_options = Some(request.provider_options);
+    // Applied, never hardcoded: a sampling param a vendor rejects 400s every call,
+    // and under `enforce` that fails closed and takes every gated tool down with it.
+    // Each provider declares what its models accept.
+    params.temperature = request.sampling_params.temperature;
+    params.max_output_tokens = Some(RISK_EVALUATION_MAX_OUTPUT_TOKENS);
+    // No max_retries override: the abort signal already bounds the wall clock, so a
+    // retry inside that window is free, and under `enforce` a single transient 429
+    // would otherwise block legitimate work.
+    params.abort_signal = Some(abort_signal.clone());
+    params.system =
+        Some(build_classifier_system(&resolve_policy(input.agent_guide.as_deref())).into());
+    params.prompt = Some(evidence_json(&input).into());
+    // recordContent: false, since the evidence has the user's prompt and the tool's
+    // arguments, which the log deliberately does not record either.
+    let mut identifiers = IndexMap::new();
+    identifiers.insert("userId".to_string(), input.user_id.clone());
+    identifiers.insert("agentId".to_string(), input.agent_id.clone());
+    identifiers.insert("toolName".to_string(), input.tool_name.clone());
+    apply_object_telemetry(
+        &mut params,
+        langfuse_telemetry(
+            "tool-risk-gate",
+            Some(identifiers),
+            Some(LangfuseTelemetryOptions {
+                record_content: Some(false),
+            }),
+        ),
+    );
+
+    let result = call_model_for_object(
+        ModelCallMeta {
+            purpose: LlmCallPurpose::RiskGate,
+            thread_id: None,
+            agent_id: Some(input.agent_id.clone()).filter(|id| !id.is_empty()),
+        },
+        params,
+    )
+    .await;
+    let timed_out = abort_signal.is_cancelled()
+        && !input
+            .abort_signal
+            .as_ref()
+            .is_some_and(CancellationToken::is_cancelled);
+    deadline.abort();
+
+    match result {
+        Ok(result) => Ok(serde_json::from_value(result.object)?),
+        // The deadline ended the call: the error is the timeout, as an aborted
+        // `AbortSignal.timeout` reports it.
+        Err(_) if timed_out => Err(TimeoutError.into()),
+        Err(error) => Err(error),
+    }
+}
+
+/// What a call cut short by the deadline fails with: the DOM `TimeoutError`.
+#[derive(Debug, Clone, Copy)]
+struct TimeoutError;
+
+impl std::fmt::Display for TimeoutError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("The operation was aborted due to timeout")
+    }
+}
+
+impl std::error::Error for TimeoutError {}
+
+/// The `name` and `code` of this module's errors, for logs and for the text the
+/// model reads in a tool error.
+fn log_fields(error: &(dyn std::error::Error + 'static)) -> Option<Map<String, Value>> {
+    if let Some(gate) = error.downcast_ref::<ToolRiskGateError>() {
+        let mut fields = Map::new();
+        fields.insert("name".into(), json!(ToolRiskGateError::NAME));
+        fields.insert("code".into(), json!(gate.code.as_str()));
+        return Some(fields);
+    }
+    if error.downcast_ref::<TimeoutError>().is_some() {
+        let mut fields = Map::new();
+        fields.insert("name".into(), json!("TimeoutError"));
+        return Some(fields);
+    }
+    None
+}
+
+static REGISTER_LOG_FIELDS: Once = Once::new();
+
+/// Registers this module's error names with the log serializer. Idempotent.
+fn ensure_log_fields_registered() {
+    REGISTER_LOG_FIELDS.call_once(|| register_error_fields(log_fields));
 }
 
 /// The evidence the classifier reads, as `JSON.stringify` writes it. Another
@@ -683,7 +987,7 @@ fn user_message_text(message: &Value) -> String {
 
 /// `JSON.stringify(input)`.
 fn stringify_input(input: &Value) -> String {
-    serde_json::to_string(input).unwrap_or_else(|_| "[unserializable tool input]".to_string())
+    crate::ai::json::js_stringify(input)
 }
 
 /// Preserve both ends: destructive shell suffixes often matter as much as prefixes.

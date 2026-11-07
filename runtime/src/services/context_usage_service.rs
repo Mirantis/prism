@@ -30,7 +30,13 @@ use std::sync::{Arc, LazyLock};
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 
+use serde_json::json;
+
 pub use crate::lib::context_window::ContextUsageSnapshot;
+use crate::lib::context_window::build_context_snapshot;
+use crate::lib::log_redaction::err_json;
+use crate::log_error;
+use crate::services::conversation_service::CONVERSATION_SERVICE;
 
 /// A thread's occupancy changed — emitted as `usage`.
 #[derive(Debug, Clone, Serialize)]
@@ -118,7 +124,30 @@ impl ContextUsageService {
     /// *render nothing* — never a reassuring 0% used, which would be a claim we
     /// can't back.
     pub fn record(&self, input: RecordInput) -> Option<ContextUsageSnapshot> {
-        todo!()
+        let input_tokens = input.input_tokens?;
+
+        let used_tokens = input_tokens + input.output_tokens.unwrap_or(0);
+        let snapshot =
+            build_context_snapshot(&input.thread_id, Some(&input.model_id), Some(used_tokens));
+        let previous = self.tracked.lock().insert(
+            input.thread_id.clone(),
+            TrackedThread {
+                model_id: input.model_id.clone(),
+                used_tokens,
+                snapshot: snapshot.clone(),
+            },
+        );
+        let snapshot = snapshot?;
+
+        let previous_percent = previous.and_then(|p| p.snapshot).map(|s| s.used_percent);
+        if previous_percent != Some(snapshot.used_percent) {
+            self.events.emit_usage(&ContextUsageEvent {
+                user_id: input.user_id,
+                snapshot: snapshot.clone(),
+            });
+        }
+
+        Some(snapshot)
     }
 
     /// Persist the turn's final measurement. One write per turn rather than per step.
@@ -126,7 +155,19 @@ impl ContextUsageService {
     /// error is logged (`[ContextUsage] failed to persist snapshot`) and swallowed,
     /// since the next turn writes the column again.
     pub async fn finalize(&self, thread_id: &str) {
-        todo!()
+        let Some(tracked) = self.tracked.lock().remove(thread_id) else {
+            return;
+        };
+
+        if let Err(err) = CONVERSATION_SERVICE
+            .set_thread_context_usage(thread_id, tracked.used_tokens, &tracked.model_id)
+            .await
+        {
+            log_error!(
+                json!({ "err": err_json(&err), "threadId": thread_id }),
+                "[ContextUsage] failed to persist snapshot"
+            );
+        }
     }
 
     /// Rebuild a snapshot from the columns stored on a thread, for read paths (a
@@ -139,7 +180,7 @@ impl ContextUsageService {
         context_tokens: Option<i64>,
         context_model: Option<&str>,
     ) -> Option<ContextUsageSnapshot> {
-        crate::lib::context_window::build_context_snapshot(thread_id, context_model, context_tokens)
+        build_context_snapshot(thread_id, context_model, context_tokens)
     }
 
     /// Drop in-flight state for a thread without persisting (e.g. thread deleted).
@@ -161,7 +202,32 @@ impl ContextUsageService {
     /// When the model's window is unknown it persists the estimate, emits nothing and
     /// returns `None`. It never reports a made-up percent.
     pub fn apply_estimate(&self, input: EstimateInput) -> Option<ContextUsageSnapshot> {
-        todo!()
+        let snapshot = build_context_snapshot(
+            &input.thread_id,
+            Some(&input.model_id),
+            Some(input.used_tokens),
+        );
+        let thread_id = input.thread_id.clone();
+        let model_id = input.model_id.clone();
+        let used_tokens = input.used_tokens;
+        tokio::spawn(async move {
+            if let Err(err) = CONVERSATION_SERVICE
+                .set_thread_context_usage(&thread_id, used_tokens, &model_id)
+                .await
+            {
+                log_error!(
+                    json!({ "err": err_json(&err), "threadId": thread_id }),
+                    "[ContextUsage] failed to persist estimate"
+                );
+            }
+        });
+        let snapshot = snapshot?;
+
+        self.events.emit_usage(&ContextUsageEvent {
+            user_id: input.user_id,
+            snapshot: snapshot.clone(),
+        });
+        Some(snapshot)
     }
 }
 

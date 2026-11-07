@@ -22,7 +22,10 @@
 //!   a total and names the way to get the rest (narrower arguments, fewer fields,
 //!   the next page).
 
-use crate::ai::{ToolResultOutput, ToolSet};
+use crate::ai::{
+    ToModelOutputFunction, ToModelOutputOptions, Tool, ToolExecuteFunction, ToolResultOutput,
+    ToolSet,
+};
 use crate::lib::tool_output_store::{SpillResult, write_tool_output};
 use crate::support::js::{len16, slice16, stringify};
 use crate::types::ToolOutputTruncation;
@@ -31,6 +34,7 @@ use regex::Regex;
 use serde::Serialize;
 use serde::ser::SerializeStruct;
 use serde_json::{Value, json};
+use std::sync::Arc;
 use std::sync::LazyLock;
 
 const DEFAULT_MAX_CHARS: usize = 30_000;
@@ -488,7 +492,87 @@ pub async fn render_and_spill(
 ///   envelope's text, or [`render_tool_result`] of the output with `max_chars` and
 ///   the tool's name.
 pub fn with_tool_output_capture(tools: ToolSet, options: ToolOutputCaptureOptions) -> ToolSet {
-    todo!()
+    let max_chars = options.max_chars.unwrap_or(DEFAULT_MAX_CHARS);
+    let options = Arc::new(ToolOutputCaptureOptions {
+        max_chars: Some(max_chars),
+        ..options
+    });
+
+    tools
+        .into_iter()
+        .map(|(name, original)| {
+            let execute = original.execute.clone().map(|execute| {
+                let options = options.clone();
+                let tool_name = name.clone();
+                let wrapped: ToolExecuteFunction = Arc::new(move |args, execution| {
+                    let execute = execute.clone();
+                    let options = options.clone();
+                    let tool_name = tool_name.clone();
+                    Box::pin(async move {
+                        let raw = execute(args, execution).await?;
+                        let rendered = render_and_spill(&raw, &options, Some(&tool_name)).await;
+                        let Some(truncation) = rendered.truncation else {
+                            return Ok(raw);
+                        };
+                        Ok(SpilledToolOutput {
+                            text: rendered.text,
+                            truncation,
+                            raw,
+                        }
+                        .into_value())
+                    })
+                });
+                wrapped
+            });
+
+            let to_model_output: ToModelOutputFunction = match original.to_model_output.clone() {
+                Some(own) => Arc::new(move |opts: ToModelOutputOptions| {
+                    let own = own.clone();
+                    Box::pin(async move {
+                        // The tool's own hook must see exactly what it would have
+                        // seen: an image tool loads bytes out of its return here, and
+                        // a truncated envelope would be meaningless to it.
+                        let cut_text = SpilledToolOutput::from_value(&opts.output).map(|s| s.text);
+                        let inner = own(ToModelOutputOptions {
+                            output: unwrap_tool_output(&opts.output).clone(),
+                            ..opts
+                        })
+                        .await?;
+                        Ok(cap_model_output(inner, cut_text.as_deref()))
+                    })
+                }),
+                None => {
+                    let tool_name = name.clone();
+                    Arc::new(move |opts: ToModelOutputOptions| {
+                        let tool_name = tool_name.clone();
+                        Box::pin(async move {
+                            let value = match SpilledToolOutput::from_value(&opts.output) {
+                                Some(spilled) => spilled.text,
+                                None => render_tool_result(
+                                    &opts.output,
+                                    &RenderToolResultOptions {
+                                        max_chars: Some(max_chars),
+                                        tool_name: Some(tool_name),
+                                        ..Default::default()
+                                    },
+                                ),
+                            };
+                            Ok(ToolResultOutput::text(value))
+                        })
+                    })
+                }
+            };
+
+            (
+                name,
+                Tool {
+                    execute,
+                    to_model_output: Some(to_model_output),
+                    ..original
+                },
+            )
+        })
+        .collect()
 }
 
 /// Any shape a tool's own `to_model_output` may return: the AI SDK's tool result

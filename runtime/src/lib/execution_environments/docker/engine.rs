@@ -13,8 +13,11 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 
-use crate::lib::execution_environments::capture::CaptureResult;
+use super::docker_process::host_cwd;
+use crate::lib::execution_environments::capture::{CaptureOptions, CaptureResult, capture_program};
 use crate::lib::execution_environments::execution_environment::{ExecutionEnvironment, ProcessEnv};
+use crate::lib::execution_environments::local::local_environment::create_local_environment;
+use crate::support::js;
 
 pub const DOCKER: &str = "docker";
 
@@ -39,7 +42,42 @@ pub struct EngineCallOptions {
 /// Runs in this process's own directory, with the host environment's base env
 /// plus `options.env`, and `CONTROL_OUTPUT_LIMIT` per stream.
 pub async fn engine_call(args: &[String], options: EngineCallOptions) -> CaptureResult {
-    todo!()
+    let environment = host_environment();
+    let mut env = environment.base_env();
+    if let Some(extra) = options.env {
+        env.extend(extra);
+    }
+    capture_program(
+        environment.as_ref(),
+        DOCKER,
+        args,
+        CaptureOptions {
+            // This process's own directory, which is certain to exist. Where the
+            // engine's client runs makes no difference to the subcommand, and the
+            // agent's workspace is not a host path under every environment.
+            cwd: host_cwd(),
+            env,
+            timeout_ms: options.timeout_ms,
+            limit_bytes: CONTROL_OUTPUT_LIMIT,
+            abort_signal: None,
+        },
+    )
+    .await
+}
+
+fn host_environment() -> Arc<dyn ExecutionEnvironment> {
+    if let Some(host) = HOST.read().as_ref() {
+        return host.clone();
+    }
+    HOST.write()
+        .get_or_insert_with(create_local_environment)
+        .clone()
+}
+
+/// `engine_call` with string arguments.
+pub async fn engine_call_args(args: &[&str], options: EngineCallOptions) -> CaptureResult {
+    let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
+    engine_call(&args, options).await
 }
 
 /// The engine's own report of a failed call, for a log line or an error.
@@ -50,9 +88,9 @@ pub fn engine_failure(command: &str, run: &CaptureResult) -> String {
     if run.timed_out {
         return format!("{command}: the engine did not answer in time");
     }
-    let stderr = run.stderr.trim();
+    let stderr = js::trim(&run.stderr);
     let said = if stderr.is_empty() {
-        run.stdout.trim()
+        js::trim(&run.stdout)
     } else {
         stderr
     };

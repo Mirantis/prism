@@ -5,9 +5,8 @@
 //! Reads nothing from the configuration, so the terminal's `coding_agent_exec`
 //! uses it without starting the runtime.
 
-use std::collections::HashMap;
-
 use crate::config::CodingAgentName;
+use crate::lib::execution_environments::execution_environment::ProcessEnv;
 
 /// The `runtime_state` key that holds the switch, `on` or absent.
 pub fn subscription_key(agent: CodingAgentName) -> String {
@@ -15,13 +14,13 @@ pub fn subscription_key(agent: CodingAgentName) -> String {
 }
 
 /// Whether `CLAUDE_CODE_SUBSCRIPTION` or `CODEX_SUBSCRIPTION` holds the switch on.
-pub fn subscription_forced_in(env: &HashMap<String, String>, agent: CodingAgentName) -> bool {
+pub fn subscription_forced_in(env: &ProcessEnv, agent: CodingAgentName) -> bool {
     let name = match agent {
         CodingAgentName::ClaudeCode => "CLAUDE_CODE_SUBSCRIPTION",
         CodingAgentName::Codex => "CODEX_SUBSCRIPTION",
     };
     env.get(name)
-        .is_some_and(|value| value.trim().to_lowercase() == "true")
+        .is_some_and(|value| crate::support::js::trim(value).to_lowercase() == "true")
 }
 
 /// What a coding agent says when it is set to use the subscription and nobody is
@@ -71,10 +70,9 @@ mod tests {
 
     #[test]
     fn reads_the_forcing_variable_of_each_agent() {
-        let env: HashMap<String, String> =
-            [("CLAUDE_CODE_SUBSCRIPTION".to_string(), " TRUE ".to_string())]
-                .into_iter()
-                .collect();
+        let env: ProcessEnv = [("CLAUDE_CODE_SUBSCRIPTION".to_string(), " TRUE ".to_string())]
+            .into_iter()
+            .collect();
         assert!(subscription_forced_in(&env, CodingAgentName::ClaudeCode));
         assert!(!subscription_forced_in(&env, CodingAgentName::Codex));
     }

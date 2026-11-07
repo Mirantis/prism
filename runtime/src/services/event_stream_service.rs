@@ -131,13 +131,74 @@ impl EventStreamService {
     /// event before an earlier one. Call it only once whatever the event describes
     /// is committed, so a client that reads history on the back of it finds it.
     pub fn publish(&self, event: StreamEvent) -> StreamEntry {
-        todo!()
+        let _publishing = self.publishing.lock();
+        let entry = {
+            let mut state = self.state.lock();
+            state.last_seq += 1;
+            let seq = state.last_seq;
+            let sequenced = SequencedEvent { event, seq };
+            let frame = serde_json::to_string(&sequenced).expect("a stream event serializes");
+            let bytes = frame.len();
+            let entry = StreamEntry {
+                seq,
+                event: sequenced,
+                frame,
+                bytes,
+            };
+            self.keep(&mut state, entry.clone());
+            entry
+        };
+        let subscribers: Vec<StreamSubscriber> = self
+            .subscribers
+            .lock()
+            .iter()
+            .map(|(_, subscriber)| Arc::clone(subscriber))
+            .collect();
+        for subscriber in subscribers {
+            subscriber(&entry);
+        }
+        entry
+    }
+
+    /// Run `f` with no event published meanwhile, so what it reads of the stream
+    /// and what it subscribes to meet without a gap: an event published by another
+    /// thread waits until `f` returns. `f` may publish itself.
+    pub fn exclusive<T>(&self, f: impl FnOnce() -> T) -> T {
+        let _publishing = self.publishing.lock();
+        f()
     }
 
     /// The events after `seq`, when this process still has every one of them and
     /// they fit one replay. `None` means the client has to reload from history.
     pub fn replay_after(&self, stream_id: &str, seq: i64) -> Option<Vec<StreamEntry>> {
-        todo!()
+        let state = self.state.lock();
+        if stream_id != state.stream_id {
+            return None;
+        }
+        if seq > state.last_seq {
+            return None;
+        }
+        if seq == state.last_seq {
+            return Some(Vec::new());
+        }
+
+        // The next event the client needs has been evicted.
+        let oldest = state.entries.front()?.seq;
+        if seq + 1 < oldest {
+            return None;
+        }
+
+        let skip = usize::try_from(seq + 1 - oldest).unwrap_or(0);
+        let mut size = 0usize;
+        let mut missed = Vec::new();
+        for entry in state.entries.iter().skip(skip) {
+            size += entry.bytes;
+            if size > self.limits.max_gap_bytes {
+                return None;
+            }
+            missed.push(entry.clone());
+        }
+        Some(missed)
     }
 
     /// Receive every event from now on. The returned function stops that.
@@ -149,7 +210,15 @@ impl EventStreamService {
     }
 
     fn keep(&self, state: &mut StreamState, entry: StreamEntry) {
-        todo!()
+        state.bytes += entry.bytes;
+        state.entries.push_back(entry);
+        while state.entries.len() > self.limits.max_events
+            || (state.bytes > self.limits.max_bytes && state.entries.len() > 1)
+        {
+            if let Some(evicted) = state.entries.pop_front() {
+                state.bytes -= evicted.bytes;
+            }
+        }
     }
 
     /// Start a new stream, as a restart would. For tests.
@@ -167,3 +236,111 @@ impl Default for EventStreamService {
 
 pub static EVENT_STREAM_SERVICE: LazyLock<EventStreamService> =
     LazyLock::new(EventStreamService::new);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::chat_protocol::{ThreadEventPayload, TurnEventPayload, TurnState};
+
+    fn turn() -> StreamEvent {
+        StreamEvent::Turn(TurnEventPayload {
+            thread_id: "t".into(),
+            state: TurnState::Running,
+            outcome: None,
+            error: None,
+        })
+    }
+
+    #[test]
+    fn numbers_each_event_and_writes_its_frame_once() {
+        let stream = EventStreamService::new();
+        assert_eq!(stream.seq(), 0);
+        let first = stream.publish(turn());
+        let second = stream.publish(StreamEvent::Thread(ThreadEventPayload {
+            thread_id: "t".into(),
+            title: None,
+            created_at: None,
+        }));
+        assert_eq!((first.seq, second.seq, stream.seq()), (1, 2, 2));
+        assert_eq!(
+            first.frame,
+            r#"{"type":"turn","payload":{"threadId":"t","state":"running"},"seq":1}"#
+        );
+        assert_eq!(first.bytes, first.frame.len());
+    }
+
+    #[test]
+    fn hands_every_event_to_every_subscriber_until_it_unsubscribes() {
+        let stream = EventStreamService::new();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        let unsubscribe = stream.subscribe(Arc::new(move |entry: &StreamEntry| {
+            sink.lock().push(entry.seq);
+        }));
+        stream.publish(turn());
+        unsubscribe();
+        unsubscribe();
+        stream.publish(turn());
+        assert_eq!(*seen.lock(), vec![1]);
+    }
+
+    #[test]
+    fn replays_what_a_client_missed_and_nothing_it_cannot_have() {
+        let stream = EventStreamService::new();
+        let id = stream.stream_id();
+        for _ in 0..3 {
+            stream.publish(turn());
+        }
+        let missed: Vec<i64> = stream
+            .replay_after(&id, 1)
+            .unwrap()
+            .iter()
+            .map(|e| e.seq)
+            .collect();
+        assert_eq!(missed, vec![2, 3]);
+        assert_eq!(stream.replay_after(&id, 3).unwrap().len(), 0);
+        assert!(stream.replay_after(&id, 4).is_none());
+        assert!(stream.replay_after("a-previous-process", 1).is_none());
+    }
+
+    #[test]
+    fn tells_a_client_to_reload_once_its_gap_is_evicted_or_too_large() {
+        let stream = EventStreamService::with_limits(ReplayLimits {
+            max_events: 2,
+            max_bytes: 1024 * 1024,
+            max_gap_bytes: 1024 * 1024,
+        });
+        let id = stream.stream_id();
+        for _ in 0..3 {
+            stream.publish(turn());
+        }
+        assert!(stream.replay_after(&id, 0).is_none());
+        assert_eq!(stream.replay_after(&id, 1).unwrap().len(), 2);
+
+        let small = EventStreamService::with_limits(ReplayLimits {
+            max_events: 10,
+            max_bytes: 1024 * 1024,
+            max_gap_bytes: 100,
+        });
+        let id = small.stream_id();
+        for _ in 0..3 {
+            small.publish(turn());
+        }
+        assert!(small.replay_after(&id, 0).is_none());
+        assert_eq!(small.replay_after(&id, 2).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn keeps_the_newest_event_past_the_byte_budget() {
+        let stream = EventStreamService::with_limits(ReplayLimits {
+            max_events: 10,
+            max_bytes: 10,
+            max_gap_bytes: 1024,
+        });
+        let id = stream.stream_id();
+        stream.publish(turn());
+        stream.publish(turn());
+        assert_eq!(stream.replay_after(&id, 1).unwrap().len(), 1);
+        assert!(stream.replay_after(&id, 0).is_none());
+    }
+}

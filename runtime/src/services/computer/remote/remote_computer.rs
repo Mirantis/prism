@@ -313,11 +313,11 @@ impl RemoteComputer {
 #[async_trait]
 impl ComputerBrowser for RemoteComputer {
     /// Answers that the computer offers no browser control, naming the desktop tools.
-    async fn browse(&self, command: BrowserCommand) -> BrowserResult {
+    async fn browse(&self, command: BrowserCommand) -> anyhow::Result<BrowserResult> {
         todo!()
     }
 
-    async fn look_at_screen(&self) -> ScreenLook {
+    async fn look_at_screen(&self) -> anyhow::Result<ScreenLook> {
         todo!()
     }
 }
@@ -332,47 +332,47 @@ impl ComputerDesktop for RemoteComputer {
         self.seen_picture().height
     }
 
-    async fn list_elements(&self, input: ListElementsInput) -> DesktopActionResult {
+    async fn list_elements(&self, input: ListElementsInput) -> anyhow::Result<DesktopActionResult> {
         todo!()
     }
 
-    async fn list_windows(&self) -> DesktopActionResult {
+    async fn list_windows(&self) -> anyhow::Result<DesktopActionResult> {
         todo!()
     }
 
-    async fn window_action(&self, input: WindowActionInput) -> DesktopActionResult {
+    async fn window_action(&self, input: WindowActionInput) -> anyhow::Result<DesktopActionResult> {
         todo!()
     }
 
-    async fn find_text(&self, input: FindTextInput) -> FindTextResult {
+    async fn find_text(&self, input: FindTextInput) -> anyhow::Result<FindTextResult> {
         todo!()
     }
 
-    async fn click_text(&self, input: ClickTextInput) -> DesktopActionResult {
+    async fn click_text(&self, input: ClickTextInput) -> anyhow::Result<DesktopActionResult> {
         todo!()
     }
 
-    async fn move_pointer(&self, input: MoveInput) -> DesktopActionResult {
+    async fn move_pointer(&self, input: MoveInput) -> anyhow::Result<DesktopActionResult> {
         todo!()
     }
 
-    async fn click(&self, input: ClickInput) -> DesktopActionResult {
+    async fn click(&self, input: ClickInput) -> anyhow::Result<DesktopActionResult> {
         todo!()
     }
 
-    async fn drag(&self, input: DragInput) -> DesktopActionResult {
+    async fn drag(&self, input: DragInput) -> anyhow::Result<DesktopActionResult> {
         todo!()
     }
 
-    async fn type_text(&self, input: TypeInput) -> DesktopActionResult {
+    async fn type_text(&self, input: TypeInput) -> anyhow::Result<DesktopActionResult> {
         todo!()
     }
 
-    async fn key(&self, input: KeyInput) -> DesktopActionResult {
+    async fn key(&self, input: KeyInput) -> anyhow::Result<DesktopActionResult> {
         todo!()
     }
 
-    async fn scroll(&self, input: ScrollInput) -> DesktopActionResult {
+    async fn scroll(&self, input: ScrollInput) -> anyhow::Result<DesktopActionResult> {
         todo!()
     }
 }
@@ -392,7 +392,7 @@ impl RemoteComputer {
 #[async_trait]
 impl ComputerUserScreen for RemoteComputer {
     /// Answers that the user is not sharing their screen.
-    async fn look_at_user_screen(&self) -> UserScreenResult {
+    async fn look_at_user_screen(&self) -> anyhow::Result<UserScreenResult> {
         todo!()
     }
 }

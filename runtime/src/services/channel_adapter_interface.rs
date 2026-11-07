@@ -222,8 +222,23 @@ pub struct SendRefusedError {
     pub code: String,
 }
 
+/// The `name` and `code` a logged or model-read `SendRefusedError` shows.
+fn send_refused_fields(
+    err: &(dyn std::error::Error + 'static),
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let refused = err.downcast_ref::<SendRefusedError>()?;
+    let mut fields = serde_json::Map::new();
+    fields.insert("name".into(), "SendRefusedError".into());
+    fields.insert("code".into(), refused.code.clone().into());
+    Some(fields)
+}
+
+static REGISTER_SEND_REFUSED: std::sync::Once = std::sync::Once::new();
+
 impl SendRefusedError {
     pub fn new(message: impl Into<String>, code: impl Into<String>) -> Self {
+        REGISTER_SEND_REFUSED
+            .call_once(|| crate::lib::log_redaction::register_error_fields(send_refused_fields));
         Self {
             message: message.into(),
             code: code.into(),

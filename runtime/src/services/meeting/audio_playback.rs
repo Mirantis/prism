@@ -26,7 +26,7 @@
 //! which is what `conversation.item.truncate` needs to be honest.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, LazyLock, Weak};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -103,9 +103,27 @@ pub struct PlaybackSnapshot {
     pub sent_ms: f64,
 }
 
+/// Milliseconds since the epoch in whole milliseconds, as `Date.now()` reads them, for
+/// the voice code's durations and deadlines.
+///
+/// Read off tokio's clock and anchored to the wall clock once, so the figures move
+/// monotonically and a paused test runtime moves them with `tokio::time::advance`.
+pub(crate) fn clock_ms() -> i64 {
+    static BASE: LazyLock<(i64, std::time::Instant)> =
+        LazyLock::new(|| (crate::support::now_ms(), std::time::Instant::now()));
+    let (wall, base) = *BASE;
+    let now = tokio::time::Instant::now().into_std();
+    let delta_ms = if now >= base {
+        now.duration_since(base).as_secs_f64() * 1000.0
+    } else {
+        -(base.duration_since(now).as_secs_f64() * 1000.0)
+    };
+    wall + delta_ms.floor() as i64
+}
+
 /// `Date.now()` as a float, since the playback clock is rebased by fractional amounts.
 fn now() -> f64 {
-    crate::support::now_ms() as f64
+    clock_ms() as f64
 }
 
 struct PlaybackState {
