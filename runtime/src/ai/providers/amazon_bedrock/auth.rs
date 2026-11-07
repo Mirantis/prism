@@ -151,7 +151,7 @@ fn is_ascii(value: &str) -> bool {
 /// The fetch `createApiKeyFetchFunction` or `createSigV4FetchFunction` makes:
 /// `inner` with the user agent and the request's authorization added.
 pub fn authorized_fetch(auth: Auth, inner: FetchFunction) -> FetchFunction {
-    Arc::new(move |request: FetchRequest| {
+    Arc::new(move |request: FetchRequest, abort_signal| {
         let auth = auth.clone();
         let inner = inner.clone();
         Box::pin(async move {
@@ -163,11 +163,11 @@ pub fn authorized_fetch(auth: Auth, inner: FetchFunction) -> FetchFunction {
                 Auth::ApiKey(key) => {
                     let mut headers = headers;
                     headers.insert("Authorization".to_string(), format!("Bearer {key}"));
-                    inner(FetchRequest { headers, ..request }).await
+                    inner(FetchRequest { headers, ..request }, abort_signal).await
                 }
                 Auth::SigV4(credentials) => {
                     if request.body.is_empty() {
-                        return inner(FetchRequest { headers, ..request }).await;
+                        return inner(FetchRequest { headers, ..request }, abort_signal).await;
                     }
                     let credentials = credentials().await?;
                     let signed = sign_request(&request.url, &headers, &request.body, &credentials)?;
@@ -175,10 +175,13 @@ pub fn authorized_fetch(auth: Auth, inner: FetchFunction) -> FetchFunction {
                     for (name, value) in signed {
                         combined.insert(name, value);
                     }
-                    inner(FetchRequest {
-                        headers: combined,
-                        ..request
-                    })
+                    inner(
+                        FetchRequest {
+                            headers: combined,
+                            ..request
+                        },
+                        abort_signal,
+                    )
                     .await
                 }
             }
@@ -367,7 +370,7 @@ mod tests {
     }
 
     fn recording_fetch(seen: Arc<parking_lot::Mutex<Vec<FetchRequest>>>) -> FetchFunction {
-        Arc::new(move |request: FetchRequest| {
+        Arc::new(move |request: FetchRequest, _| {
             seen.lock().push(request);
             Box::pin(async {
                 Ok(super::super::api::FetchResponse {
@@ -387,11 +390,14 @@ mod tests {
         let mut headers = Headers::new();
         headers.insert("Content-Type".into(), "application/json".into());
         headers.insert("user-agent".into(), "ai/7.0.137".into());
-        fetch(FetchRequest {
+        fetch(
+            FetchRequest {
             url: "https://x".into(),
             headers,
             body: "{}".into(),
-        })
+            },
+            None,
+        )
         .await
         .unwrap();
         let sent = seen.lock()[0].headers.clone();
@@ -420,11 +426,14 @@ mod tests {
         let mut headers = Headers::new();
         headers.insert("content-type".into(), "application/json".into());
         headers.insert("anthropic-beta".into(), "x".into());
-        fetch(FetchRequest {
+        fetch(
+            FetchRequest {
             url: "https://bedrock-runtime.us-east-1.amazonaws.com/model/m/invoke".into(),
             headers,
             body: "{}".into(),
-        })
+            },
+            None,
+        )
         .await
         .unwrap();
         let sent = seen.lock()[0].headers.clone();

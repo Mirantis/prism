@@ -13,9 +13,13 @@ use std::collections::HashSet;
 use std::sync::{Arc, LazyLock};
 
 use parking_lot::{Mutex, RwLock};
+use serde_json::json;
 use tokio::sync::OnceCell;
 
+use super::docker::detect::detect_environment;
 use super::docker::docker_environment::create_docker_environment;
+use crate::lib::log_redaction::err_json;
+use crate::{log_info, log_warn};
 use super::execution_environment::{
     ExecutionEnvironment, ExecutionEnvironmentName, ExecutionFiles,
 };
@@ -93,12 +97,63 @@ pub fn files_for(file_path: &str) -> Arc<dyn ExecutionFiles> {
 /// Resolve the environment and bring it up, once per process. Awaited at boot
 /// and by `collect_tools()`; every later caller gets the settled result.
 pub async fn ensure_execution_environment_detected() -> anyhow::Result<()> {
-    todo!()
+    let probe = PROBE.lock().clone();
+    let settled = probe
+        .get_or_init(|| async { resolve().await.map_err(Arc::new) })
+        .await;
+    match settled {
+        Ok(()) => Ok(()),
+        Err(err) => Err(anyhow::anyhow!("{err:#}")),
+    }
 }
 
 /// The detection and start-up `ensure_execution_environment_detected` runs once.
 async fn resolve() -> anyhow::Result<()> {
-    todo!()
+    let detection = match detect_environment(None).await {
+        Ok(detection) => Some(detection),
+        Err(err) => {
+            log_warn!(
+                json!({ "err": err_json(&err) }),
+                "[ExecutionEnvironment] detection failed; running locally"
+            );
+            None
+        }
+    };
+    let detection = match detection {
+        Some(detection) if detection.name != ExecutionEnvironmentName::Local => detection,
+        other => {
+            *INSTANCE.write() = Some(create_local_environment());
+            let reason = other.map_or_else(|| "detection failed".to_string(), |d| d.reason);
+            log_info!(
+                json!({ "environment": "local", "reason": reason }),
+                "[Startup] execution environment"
+            );
+            return Ok(());
+        }
+    };
+
+    let candidate = create_environment(detection.name);
+    if let Err(err) = candidate.start().await {
+        // An operator who named the environment gets the failure, because silently
+        // running unconfined is not what they asked for. Otherwise an agent that
+        // still works on the host beats one that will not boot.
+        if detection.demanded {
+            return Err(err);
+        }
+        log_warn!(
+            json!({ "err": err_json(&err), "environment": detection.name }),
+            "[ExecutionEnvironment] could not start; running locally"
+        );
+        *INSTANCE.write() = Some(create_local_environment());
+        return Ok(());
+    }
+    let (id, detail) = (candidate.id(), candidate.display_name());
+    *INSTANCE.write() = Some(candidate);
+    log_info!(
+        json!({ "environment": id, "detail": detail, "reason": detection.reason }),
+        "[Startup] execution environment"
+    );
+    Ok(())
 }
 
 fn local_fallback() -> Arc<dyn ExecutionEnvironment> {
@@ -117,7 +172,13 @@ pub fn get_host_environment() -> Arc<dyn ExecutionEnvironment> {
 }
 
 fn report_fallback(cwd: &str, environment: ExecutionEnvironmentName) {
-    todo!()
+    if !REPORTED.lock().insert(cwd.to_string()) {
+        return;
+    }
+    log_info!(
+        json!({ "cwd": cwd, "environment": environment }),
+        "[ExecutionEnvironment] this path is outside the container; it is served from the host"
+    );
 }
 
 /// Test-only: stand in a fake environment, or restore the real one with `None`.

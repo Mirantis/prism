@@ -4,129 +4,24 @@
 
 use std::sync::{Arc, LazyLock};
 
-use bytes::Bytes;
-use futures::future::BoxFuture;
 use indexmap::IndexMap;
 use regex::Regex;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use crate::ai::errors::{AbortError, ApiCallError, InvalidArgumentError, LoadSettingError};
+use crate::ai::errors::{ApiCallError, InvalidArgumentError, LoadSettingError};
 use crate::ai::generate_text::with_user_agent_suffix;
 use crate::ai::json::{js_stringify, secure_json_parse};
 use crate::ai::provider::Headers;
 
-/// The `@ai-sdk/provider-utils` version `postJsonToApi` names in the user agent.
-pub const PROVIDER_UTILS_VERSION: &str = "5.0.58";
+pub use crate::ai::providers::anthropic::{
+    FetchFunction, FetchRequest, FetchResponse, PROVIDER_UTILS_VERSION, default_fetch,
+};
 
-/// One request as the SDK's `fetch` receives it: always a POST with a JSON body.
-#[derive(Debug, Clone)]
-pub struct FetchRequest {
-    pub url: String,
-    pub headers: Headers,
-    pub body: String,
-}
-
-/// A whole response: status, headers (lowercase names, sorted, as `Headers`
-/// iterates them) and body.
-#[derive(Debug, Clone)]
-pub struct FetchResponse {
-    pub status: u16,
-    pub status_text: String,
-    pub headers: Headers,
-    pub body: Bytes,
-}
-
-impl FetchResponse {
-    /// `response.ok`.
-    pub fn ok(&self) -> bool {
-        (200..300).contains(&self.status)
-    }
-
-    /// The body as text, as `TextDecoder` decodes it.
-    pub fn text(&self) -> String {
-        String::from_utf8_lossy(&self.body).into_owned()
-    }
-}
-
-/// The `fetch` a provider sends its requests through.
-pub type FetchFunction =
-    Arc<dyn Fn(FetchRequest) -> BoxFuture<'static, anyhow::Result<FetchResponse>> + Send + Sync>;
-
-/// A request that never reached the server, as undici reports it (`fetch failed`
-/// with the socket error as its cause).
-#[derive(Debug)]
-pub struct FetchFailedError {
-    pub message: String,
-}
-
-impl std::fmt::Display for FetchFailedError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("fetch failed")
-    }
-}
-
-impl std::error::Error for FetchFailedError {}
-
-/// Node's global `fetch` ignores proxy settings, so this client does too.
-static HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
-    reqwest::Client::builder()
-        .no_proxy()
-        .build()
-        .expect("HTTP client builds")
-});
-
-/// The innermost message of an error chain: undici's `cause.message`.
-fn innermost_message(err: &(dyn std::error::Error + 'static)) -> String {
-    let mut current = err;
-    while let Some(source) = current.source() {
-        current = source;
-    }
-    current.to_string()
-}
-
-/// The global `fetch`: a POST over HTTPS, the whole body read.
-pub fn default_fetch() -> FetchFunction {
-    Arc::new(|request: FetchRequest| {
-        Box::pin(async move {
-            let mut builder = HTTP.post(&request.url);
-            for (name, value) in &request.headers {
-                builder = builder.header(name.as_str(), value.as_str());
-            }
-            let response =
-                builder
-                    .body(request.body)
-                    .send()
-                    .await
-                    .map_err(|e| FetchFailedError {
-                        message: innermost_message(&e),
-                    })?;
-            let status = response.status();
-            let mut headers: Vec<(String, String)> = Vec::new();
-            for (name, value) in response.headers() {
-                let value = String::from_utf8_lossy(value.as_bytes()).into_owned();
-                let name = name.as_str().to_lowercase();
-                match headers.iter_mut().find(|(n, _)| *n == name) {
-                    Some((_, existing)) if name != "set-cookie" => {
-                        existing.push_str(", ");
-                        existing.push_str(&value);
-                    }
-                    _ => headers.push((name, value)),
-                }
-            }
-            headers.sort_by(|a, b| a.0.cmp(&b.0));
-            let body = response.bytes().await.map_err(|e| FetchFailedError {
-                message: innermost_message(&e),
-            })?;
-            Ok(FetchResponse {
-                status: status.as_u16(),
-                status_text: status.canonical_reason().unwrap_or("").to_string(),
-                headers: headers.into_iter().collect(),
-                body,
-            })
-        })
-    })
+/// The body of a response as text, as `TextDecoder` decodes it.
+pub fn response_text(response: &FetchResponse) -> String {
+    String::from_utf8_lossy(&response.body).into_owned()
 }
 
 /// Reads an environment variable, as `process.env[name]`.
@@ -251,8 +146,6 @@ pub fn encode_uri_component(text: &str) -> String {
 
 /// `postJsonToApi` up to the response: the body as `JSON.stringify` writes it,
 /// `Content-Type: application/json`, the user agent, and the call's cancellation.
-/// A request that never got a response is the `ApiCallError` `handleFetchError`
-/// makes of it; any other error from `fetch` passes through.
 pub async fn post_json(
     url: &str,
     headers: &Headers,
@@ -274,37 +167,19 @@ pub async fn post_json(
         headers: request_headers,
         body: js_stringify(body),
     };
-    if abort_signal.is_some_and(|s| s.is_cancelled()) {
-        return Err(AbortError::operation().into());
+    match fetch(request, abort_signal.cloned()).await {
+        Ok(response) => Ok(response),
+        Err(mut err) => {
+            // `handleFetchError` makes a network failure an `ApiCallError` that
+            // names the request body.
+            if let Some(error) = err.downcast_mut::<ApiCallError>()
+                && error.request_body_values.is_null()
+            {
+                error.request_body_values = body.clone();
+            }
+            Err(err)
+        }
     }
-    let call = fetch(request);
-    let result = match abort_signal {
-        Some(signal) => tokio::select! {
-            result = call => result,
-            _ = signal.cancelled() => return Err(AbortError::operation().into()),
-        },
-        None => call.await,
-    };
-    result.map_err(|err| handle_fetch_error(err, url, body))
-}
-
-/// `handleFetchError`: a request that never reached the server is a retryable
-/// `ApiCallError`.
-fn handle_fetch_error(err: anyhow::Error, url: &str, body: &Value) -> anyhow::Error {
-    let Some(failed) = err.downcast_ref::<FetchFailedError>() else {
-        return err;
-    };
-    let mut error = ApiCallError::new(
-        format!("Cannot connect to API: {}", failed.message),
-        url,
-        body.clone(),
-        None,
-        None,
-        None,
-    );
-    error.is_retryable = true;
-    error.cause = Some(Arc::new(err));
-    error.into()
 }
 
 /// The `{ message, type? }` body Bedrock answers an error with.
@@ -324,7 +199,7 @@ pub fn failed_response_error(
     request_body: &Value,
     error_to_message: fn(&BedrockErrorBody) -> String,
 ) -> anyhow::Error {
-    let response_body = response.text();
+    let response_body = response_text(response);
     let mut error = ApiCallError::new(
         response.status_text.clone(),
         url,
@@ -364,7 +239,7 @@ pub fn parse_json_response<T: DeserializeOwned>(
     url: &str,
     request_body: &Value,
 ) -> anyhow::Result<(T, Value)> {
-    let response_body = response.text();
+    let response_body = response_text(response);
     let parsed = secure_json_parse(&response_body)
         .map_err(anyhow::Error::new)
         .and_then(|raw| {

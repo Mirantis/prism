@@ -170,8 +170,10 @@ fn file_options(
     provider_options: Option<&ProviderOptions>,
 ) -> anyhow::Result<AnthropicFilePartOptions> {
     Ok(
-        parse_provider_options::<AnthropicFilePartOptions>("anthropic", provider_options, |_| true)?
-            .unwrap_or_default(),
+        parse_provider_options::<AnthropicFilePartOptions>("anthropic", provider_options, |_| {
+            true
+        })?
+        .unwrap_or_default(),
     )
 }
 
@@ -252,7 +254,10 @@ fn user_file_block(
             };
             Ok(object([
                 ("type", text(kind)),
-                ("source", Some(json!({ "type": "file", "file_id": file_id }))),
+                (
+                    "source",
+                    Some(json!({ "type": "file", "file_id": file_id })),
+                ),
                 ("cache_control", cache_control),
             ]))
         }
@@ -334,7 +339,11 @@ fn tool_result_content_item(
             let top_level = top_level_media_type(media_type);
             match data {
                 FileData::Url { url, .. } => {
-                    let kind = if top_level == "image" { "image" } else { "document" };
+                    let kind = if top_level == "image" {
+                        "image"
+                    } else {
+                        "document"
+                    };
                     Ok(Some(json!({ "type": kind, "source": url_source(url) })))
                 }
                 FileData::Data { data: inline } => {
@@ -373,8 +382,7 @@ fn tool_result_content_item(
                 }
                 FileData::Text { .. } => {
                     warnings.push(other(
-                        "unsupported tool content part type: file with data type: text"
-                            .to_string(),
+                        "unsupported tool content part type: file with data type: text".to_string(),
                     ));
                     Ok(None)
                 }
@@ -384,7 +392,9 @@ fn tool_result_content_item(
             let anthropic = provider_options
                 .as_ref()
                 .and_then(|options| options.get("anthropic"));
-            if anthropic.and_then(|options| options.get("type")).and_then(Value::as_str)
+            if anthropic
+                .and_then(|options| options.get("type"))
+                .and_then(Value::as_str)
                 == Some("tool-reference")
             {
                 let tool_name = anthropic
@@ -402,7 +412,12 @@ fn tool_result_content_item(
         other_part => {
             let kind = serde_json::to_value(other_part)
                 .ok()
-                .and_then(|value| value.get("type").and_then(Value::as_str).map(str::to_string))
+                .and_then(|value| {
+                    value
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
                 .unwrap_or_default();
             warnings.push(other(format!("unsupported tool content part type: {kind}")));
             Ok(None)
@@ -668,9 +683,9 @@ pub(super) fn convert_to_anthropic_prompt(
                                     ToolResultOutput::Content { value } => {
                                         let mut items = Vec::new();
                                         for item in value {
-                                            if let Some(item) =
-                                                tool_result_content_item(item, warnings, &mut betas)?
-                                            {
+                                            if let Some(item) = tool_result_content_item(
+                                                item, warnings, &mut betas,
+                                            )? {
                                                 items.push(item);
                                             }
                                         }
@@ -785,8 +800,8 @@ fn convert_system_block(
         if !message_text.is_empty()
             || (tool_changes.is_empty() && options.clear_at.is_none() && options.effort.is_none())
         {
-            let cache_control = validator
-                .get_cache_control(provider_options.as_ref(), cacheable("system message"));
+            let cache_control =
+                validator.get_cache_control(provider_options.as_ref(), cacheable("system message"));
             content.push(object([
                 ("type", text("text")),
                 ("text", text(message_text)),
@@ -1154,7 +1169,11 @@ fn provider_executed_tool_call(
 ) -> Option<Value> {
     let provider_tool_name = tool_name_mapping.to_provider_tool_name(tool_name);
     let anthropic = provider_options.and_then(|options| options.get("anthropic"));
-    if anthropic.and_then(|a| a.get("type")).and_then(Value::as_str) == Some("mcp-tool-use") {
+    if anthropic
+        .and_then(|a| a.get("type"))
+        .and_then(Value::as_str)
+        == Some("mcp-tool-use")
+    {
         mcp_tool_use_ids.insert(tool_call_id.to_string());
         let Some(server_name) = anthropic
             .and_then(|a| a.get("serverName"))
@@ -1195,7 +1214,10 @@ fn provider_executed_tool_call(
             Some("bash_code_execution") | Some("text_editor_code_execution")
         )
     {
-        return Some(server_tool_use(input_type.unwrap_or_default(), without_type()));
+        return Some(server_tool_use(
+            input_type.unwrap_or_default(),
+            without_type(),
+        ));
     }
     if provider_tool_name == "code_execution"
         && input.is_object()
@@ -1204,7 +1226,10 @@ fn provider_executed_tool_call(
         return Some(server_tool_use("code_execution", without_type()));
     }
     match provider_tool_name.as_str() {
-        "code_execution" | "web_fetch" | "web_search" | "tool_search_tool_regex"
+        "code_execution"
+        | "web_fetch"
+        | "web_search"
+        | "tool_search_tool_regex"
         | "tool_search_tool_bm25" => Some(server_tool_use(&provider_tool_name, input.clone())),
         // The advisor's server_tool_use input is always {}.
         "advisor" => Some(server_tool_use("advisor", json!({}))),
@@ -1286,7 +1311,11 @@ fn provider_executed_tool_result(
             )));
         }
         if let ToolResultOutput::ErrorJson { value: error, .. } = output {
-            return Ok(Some(code_execution_error(error, tool_call_id, cache_control)));
+            return Ok(Some(code_execution_error(
+                error,
+                tool_call_id,
+                cache_control,
+            )));
         }
         let ToolResultOutput::Json { value, .. } = output else {
             unsupported_output(warnings);
@@ -1428,7 +1457,8 @@ fn provider_executed_tool_result(
         )));
     }
 
-    if provider_tool_name == "tool_search_tool_regex" || provider_tool_name == "tool_search_tool_bm25"
+    if provider_tool_name == "tool_search_tool_regex"
+        || provider_tool_name == "tool_search_tool_bm25"
     {
         let ToolResultOutput::Json { value, .. } = output else {
             unsupported_output(warnings);
@@ -1471,7 +1501,9 @@ fn provider_executed_tool_result(
                 ("encrypted_content", value.get("encryptedContent").cloned()),
                 ("stop_reason", stop_reason),
             ]),
-            _ => json!({ "type": "advisor_tool_result_error", "error_code": value.get("errorCode") }),
+            _ => {
+                json!({ "type": "advisor_tool_result_error", "error_code": value.get("errorCode") })
+            }
         };
         return Ok(Some(block("advisor_tool_result", content, cache_control)));
     }
@@ -1500,7 +1532,9 @@ fn code_execution_error(error: &Value, tool_call_id: &str, cache_control: Option
             ("tool_use_id", text(tool_call_id)),
             (
                 "content",
-                Some(json!({ "type": "code_execution_tool_result_error", "error_code": error_code })),
+                Some(
+                    json!({ "type": "code_execution_tool_result_error", "error_code": error_code }),
+                ),
             ),
             ("cache_control", cache_control),
         ]);
@@ -1511,7 +1545,9 @@ fn code_execution_error(error: &Value, tool_call_id: &str, cache_control: Option
         ("cache_control", cache_control),
         (
             "content",
-            Some(json!({ "type": "bash_code_execution_tool_result_error", "error_code": error_code })),
+            Some(
+                json!({ "type": "bash_code_execution_tool_result_error", "error_code": error_code }),
+            ),
         ),
     ])
 }
@@ -1530,7 +1566,10 @@ fn move_tool_use_blocks_to_end(content: Vec<Value>) -> Vec<Value> {
     };
     for part in content {
         let kind = part.get("type").and_then(Value::as_str);
-        if matches!(kind, Some("thinking") | Some("redacted_thinking") | Some("fallback")) {
+        if matches!(
+            kind,
+            Some("thinking") | Some("redacted_thinking") | Some("fallback")
+        ) {
             flush(&mut segment, &mut result);
             result.push(part);
         } else {

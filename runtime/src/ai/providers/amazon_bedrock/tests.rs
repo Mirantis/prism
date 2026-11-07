@@ -36,7 +36,7 @@ fn fake_fetch(response: &Value, seen: Arc<Mutex<Vec<FetchRequest>>>) -> FetchFun
         Value::String(text) => text.clone(),
         other => js_stringify(other),
     };
-    Arc::new(move |request: FetchRequest| {
+    Arc::new(move |request: FetchRequest, _| {
         seen.lock().push(request);
         let response = FetchResponse {
             status,

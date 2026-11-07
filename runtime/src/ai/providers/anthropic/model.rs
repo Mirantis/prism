@@ -27,8 +27,8 @@ use crate::ai::{
     Headers, InvalidArgumentError, LanguageModel, LanguageModelV4CallOptions,
     LanguageModelV4FinishReason, LanguageModelV4FunctionTool, LanguageModelV4GenerateResult,
     LanguageModelV4Message, LanguageModelV4Part, LanguageModelV4Request, LanguageModelV4Response,
-    LanguageModelV4ResponseFormat, LanguageModelV4Tool, LanguageModelV4ToolChoice,
-    ReasoningEffort, SupportedUrls, Warning,
+    LanguageModelV4ResponseFormat, LanguageModelV4Tool, LanguageModelV4ToolChoice, ReasoningEffort,
+    SupportedUrls, Warning,
 };
 
 /// The request headers a model sends, resolved on each call; resolving can fail
@@ -136,9 +136,8 @@ pub struct ModelCapabilities {
 
 static SONNET_4: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"claude-sonnet-4(?:-|@)").unwrap());
 static OPUS_4: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"claude-opus-4(?:-|@)").unwrap());
-static LEGACY_CLAUDE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"claude-(?:instant(?:-|$)|v?2(?:$|[-.:])|3(?:$|[-.]))").unwrap()
-});
+static LEGACY_CLAUDE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"claude-(?:instant(?:-|$)|v?2(?:$|[-.:])|3(?:$|[-.]))").unwrap());
 
 #[allow(clippy::too_many_arguments)]
 const fn capabilities(
@@ -173,43 +172,75 @@ const fn capabilities(
 pub fn get_model_capabilities(model_id: &str) -> ModelCapabilities {
     let has = |family: &str| model_id.contains(family);
     if has("claude-sonnet-5-5") {
-        capabilities(128000, true, true, true, true, true, true, true, true, true, true)
+        capabilities(
+            128000, true, true, true, true, true, true, true, true, true, true,
+        )
     } else if has("claude-opus-5-5") {
-        capabilities(128000, true, true, true, true, true, true, true, true, false, true)
+        capabilities(
+            128000, true, true, true, true, true, true, true, true, false, true,
+        )
     } else if has("claude-haiku-5-5") {
         // Thinking can be turned off, but only up to `high` effort.
-        capabilities(128000, true, true, true, true, true, false, true, false, false, true)
+        capabilities(
+            128000, true, true, true, true, true, false, true, false, false, true,
+        )
     } else if has("claude-opus-5") {
-        capabilities(128000, true, true, true, true, true, false, false, false, false, true)
+        capabilities(
+            128000, true, true, true, true, true, false, false, false, false, true,
+        )
     } else if has("claude-fable-5-1") {
-        capabilities(128000, true, true, true, true, false, true, true, true, false, true)
+        capabilities(
+            128000, true, true, true, true, false, true, true, true, false, true,
+        )
     } else if has("claude-fable-5") {
-        capabilities(128000, true, true, true, true, false, true, true, false, false, true)
+        capabilities(
+            128000, true, true, true, true, false, true, true, false, false, true,
+        )
     } else if has("claude-opus-4-8") || has("claude-opus-4-7") || has("claude-sonnet-5") {
-        capabilities(128000, true, true, true, true, false, false, false, false, false, true)
+        capabilities(
+            128000, true, true, true, true, false, false, false, false, false, true,
+        )
     } else if has("claude-sonnet-4-6") || has("claude-opus-4-6") {
-        capabilities(128000, true, true, false, false, false, false, false, false, false, true)
+        capabilities(
+            128000, true, true, false, false, false, false, false, false, false, true,
+        )
     } else if has("claude-sonnet-4-5") || has("claude-opus-4-5") || has("claude-haiku-4-5") {
-        capabilities(64000, true, false, false, false, false, false, false, false, false, true)
+        capabilities(
+            64000, true, false, false, false, false, false, false, false, false, true,
+        )
     } else if has("claude-opus-4-1") {
-        capabilities(32000, true, false, false, false, false, false, false, false, false, true)
+        capabilities(
+            32000, true, false, false, false, false, false, false, false, false, true,
+        )
     } else if SONNET_4.is_match(model_id) {
-        capabilities(64000, false, false, false, false, false, false, false, false, false, true)
+        capabilities(
+            64000, false, false, false, false, false, false, false, false, false, true,
+        )
     } else if OPUS_4.is_match(model_id) {
-        capabilities(32000, false, false, false, false, false, false, false, false, false, true)
+        capabilities(
+            32000, false, false, false, false, false, false, false, false, false, true,
+        )
     } else if has("claude-3-haiku") {
-        capabilities(4096, false, false, false, false, false, false, false, false, false, true)
+        capabilities(
+            4096, false, false, false, false, false, false, false, false, false, true,
+        )
     } else if LEGACY_CLAUDE.is_match(model_id) {
-        capabilities(4096, false, false, false, false, false, false, false, false, false, false)
+        capabilities(
+            4096, false, false, false, false, false, false, false, false, false, false,
+        )
     } else if has("claude-") {
         // Known and legacy Claude families are handled above, so any remaining
         // Claude id is newer than the known list. It stays unknown so callers still
         // receive the maxOutputTokens compatibility warning.
-        capabilities(128000, true, true, true, true, true, false, false, false, false, false)
+        capabilities(
+            128000, true, true, true, true, true, false, false, false, false, false,
+        )
     } else {
         // Non-Claude models (served through Anthropic-compatible APIs) keep
         // conservative defaults.
-        capabilities(4096, false, false, false, false, false, false, false, false, false, false)
+        capabilities(
+            4096, false, false, false, false, false, false, false, false, false, false,
+        )
     }
 }
 
@@ -371,7 +402,16 @@ fn get_anthropic_toolset_names(tools: Option<&[LanguageModelV4Tool]>) -> IndexMa
 }
 
 const SUPPORTED_STRING_FORMATS: &[&str] = &[
-    "date-time", "time", "date", "duration", "email", "hostname", "uri", "ipv4", "ipv6", "uuid",
+    "date-time",
+    "time",
+    "date",
+    "duration",
+    "email",
+    "hostname",
+    "uri",
+    "ipv4",
+    "ipv6",
+    "uuid",
 ];
 
 const DESCRIPTION_CONSTRAINT_KEYS: &[&str] = &[
@@ -655,14 +695,18 @@ impl AnthropicMessagesLanguageModel {
             if top_k.is_some() {
                 warnings.push(unsupported(
                     "topK",
-                    Some(format!("topK is not supported by {model_id} and will be ignored")),
+                    Some(format!(
+                        "topK is not supported by {model_id} and will be ignored"
+                    )),
                 ));
                 top_k = None;
             }
             if top_p.is_some() {
                 warnings.push(unsupported(
                     "topP",
-                    Some(format!("topP is not supported by {model_id} and will be ignored")),
+                    Some(format!(
+                        "topP is not supported by {model_id} and will be ignored"
+                    )),
                 ));
                 top_p = None;
             }
@@ -677,7 +721,8 @@ impl AnthropicMessagesLanguageModel {
         let structured_output_mode = anthropic_options
             .structured_output_mode
             .unwrap_or(StructuredOutputMode::Auto);
-        let mut use_structured_output = structured_output_mode == StructuredOutputMode::OutputFormat
+        let mut use_structured_output = structured_output_mode
+            == StructuredOutputMode::OutputFormat
             || (structured_output_mode == StructuredOutputMode::Auto && supports_structured_output);
 
         // The JSON response tool relies on forced tool use, which some models reject.
@@ -707,7 +752,9 @@ impl AnthropicMessagesLanguageModel {
                 strict: None,
             });
 
-        if json_response_tool.is_some() && anthropic_options.disable_parallel_tool_use == Some(false) {
+        if json_response_tool.is_some()
+            && anthropic_options.disable_parallel_tool_use == Some(false)
+        {
             warnings.push(unsupported(
                 "providerOptions.anthropic.disableParallelToolUse",
                 Some(
@@ -756,10 +803,7 @@ impl AnthropicMessagesLanguageModel {
                     if anthropic_options.thinking.is_none() {
                         anthropic_options.thinking = thinking;
                     }
-                    let disabled = anthropic_options
-                        .thinking
-                        .as_ref()
-                        .and_then(|t| t.kind)
+                    let disabled = anthropic_options.thinking.as_ref().and_then(|t| t.kind)
                         == Some(ThinkingType::Disabled);
                     if effort.is_some() && !disabled {
                         anthropic_options.effort = effort;
@@ -795,7 +839,8 @@ impl AnthropicMessagesLanguageModel {
         // Models that only support adaptive thinking reject budget-based thinking
         // with a 400; adaptive thinking runs instead, with `effort` in control.
         if capabilities.rejects_budget_thinking
-            && anthropic_options.thinking.as_ref().and_then(|t| t.kind) == Some(ThinkingType::Enabled)
+            && anthropic_options.thinking.as_ref().and_then(|t| t.kind)
+                == Some(ThinkingType::Enabled)
         {
             let details = if capabilities.rejects_thinking_disabled {
                 format!(
@@ -806,15 +851,20 @@ impl AnthropicMessagesLanguageModel {
                     "budget-based thinking is not supported by {model_id}. Using adaptive thinking instead. Use 'effort' to control how much the model thinks."
                 )
             };
-            warnings.push(unsupported("providerOptions.anthropic.thinking", Some(details)));
+            warnings.push(unsupported(
+                "providerOptions.anthropic.thinking",
+                Some(details),
+            ));
             anthropic_options.thinking = Some(Thinking::of(ThinkingType::Adaptive));
         }
 
-        let high_effort = |effort: Option<Effort>| matches!(effort, Some(Effort::Xhigh) | Some(Effort::Max));
+        let high_effort =
+            |effort: Option<Effort>| matches!(effort, Some(Effort::Xhigh) | Some(Effort::Max));
 
         // Newer models allow disabling thinking only up to `high` effort.
         if capabilities.rejects_thinking_disabled_above_high_effort
-            && anthropic_options.thinking.as_ref().and_then(|t| t.kind) == Some(ThinkingType::Disabled)
+            && anthropic_options.thinking.as_ref().and_then(|t| t.kind)
+                == Some(ThinkingType::Disabled)
             && high_effort(anthropic_options.effort)
         {
             warnings.push(unsupported(
@@ -829,7 +879,8 @@ impl AnthropicMessagesLanguageModel {
 
         // `between_tools` thinking is only accepted at `low`, `medium` and `high`
         // effort.
-        if anthropic_options.thinking.as_ref().and_then(|t| t.kind) == Some(ThinkingType::BetweenTools)
+        if anthropic_options.thinking.as_ref().and_then(|t| t.kind)
+            == Some(ThinkingType::BetweenTools)
             && high_effort(anthropic_options.effort)
         {
             warnings.push(unsupported(
@@ -846,7 +897,9 @@ impl AnthropicMessagesLanguageModel {
         let thinking_type = thinking.as_ref().and_then(|t| t.kind);
         let is_thinking = matches!(
             thinking_type,
-            Some(ThinkingType::Enabled) | Some(ThinkingType::Adaptive) | Some(ThinkingType::BetweenTools)
+            Some(ThinkingType::Enabled)
+                | Some(ThinkingType::Adaptive)
+                | Some(ThinkingType::BetweenTools)
         );
         let thinking_block_binding = thinking.as_ref().and_then(|t| t.block_binding.clone());
         // `disabled` is still sent: some models default thinking on, and leaving it
@@ -1001,7 +1054,10 @@ impl AnthropicMessagesLanguageModel {
                                         object([
                                             (
                                                 "allowed_tools",
-                                                configuration.allowed_tools.clone().map(|tools| json!(tools)),
+                                                configuration
+                                                    .allowed_tools
+                                                    .clone()
+                                                    .map(|tools| json!(tools)),
                                             ),
                                             ("enabled", configuration.enabled.map(Value::Bool)),
                                         ])
@@ -1085,47 +1141,62 @@ impl AnthropicMessagesLanguageModel {
         let compaction = anthropic_options.compaction.as_ref().map(|compaction| {
             object([
                 ("type", Some(Value::from("summarize"))),
-                ("instructions", compaction.instructions.clone().map(Value::from)),
+                (
+                    "instructions",
+                    compaction.instructions.clone().map(Value::from),
+                ),
             ])
         });
 
-        let context_management = anthropic_options.context_management.as_ref().map(|management| {
-            let edits: Vec<Value> = management
-                .edits
-                .iter()
-                .map(|edit| match edit {
-                    ContextManagementEdit::ClearToolUses {
-                        trigger,
-                        keep,
-                        clear_at_least,
-                        clear_tool_inputs,
-                        exclude_tools,
-                    } => object([
-                        ("type", Some(Value::from("clear_tool_uses_20250919"))),
-                        ("trigger", trigger.as_ref().map(|t| t.to_json())),
-                        ("keep", keep.as_ref().map(|k| k.to_json())),
-                        ("clear_at_least", clear_at_least.as_ref().map(|c| c.to_json())),
-                        ("clear_tool_inputs", clear_tool_inputs.map(Value::Bool)),
-                        ("exclude_tools", exclude_tools.clone().map(|tools| json!(tools))),
-                    ]),
-                    ContextManagementEdit::ClearThinking { keep } => object([
-                        ("type", Some(Value::from("clear_thinking_20251015"))),
-                        ("keep", keep.as_ref().map(|k| k.to_json())),
-                    ]),
-                    ContextManagementEdit::Compact {
-                        trigger,
-                        pause_after_compaction,
-                        instructions,
-                    } => object([
-                        ("type", Some(Value::from("compact_20260112"))),
-                        ("trigger", trigger.as_ref().map(|t| t.to_json())),
-                        ("pause_after_compaction", pause_after_compaction.map(Value::Bool)),
-                        ("instructions", instructions.clone().map(Value::from)),
-                    ]),
-                })
-                .collect();
-            json!({ "edits": edits })
-        });
+        let context_management = anthropic_options
+            .context_management
+            .as_ref()
+            .map(|management| {
+                let edits: Vec<Value> = management
+                    .edits
+                    .iter()
+                    .map(|edit| match edit {
+                        ContextManagementEdit::ClearToolUses {
+                            trigger,
+                            keep,
+                            clear_at_least,
+                            clear_tool_inputs,
+                            exclude_tools,
+                        } => object([
+                            ("type", Some(Value::from("clear_tool_uses_20250919"))),
+                            ("trigger", trigger.as_ref().map(|t| t.to_json())),
+                            ("keep", keep.as_ref().map(|k| k.to_json())),
+                            (
+                                "clear_at_least",
+                                clear_at_least.as_ref().map(|c| c.to_json()),
+                            ),
+                            ("clear_tool_inputs", clear_tool_inputs.map(Value::Bool)),
+                            (
+                                "exclude_tools",
+                                exclude_tools.clone().map(|tools| json!(tools)),
+                            ),
+                        ]),
+                        ContextManagementEdit::ClearThinking { keep } => object([
+                            ("type", Some(Value::from("clear_thinking_20251015"))),
+                            ("keep", keep.as_ref().map(|k| k.to_json())),
+                        ]),
+                        ContextManagementEdit::Compact {
+                            trigger,
+                            pause_after_compaction,
+                            instructions,
+                        } => object([
+                            ("type", Some(Value::from("compact_20260112"))),
+                            ("trigger", trigger.as_ref().map(|t| t.to_json())),
+                            (
+                                "pause_after_compaction",
+                                pause_after_compaction.map(Value::Bool),
+                            ),
+                            ("instructions", instructions.clone().map(Value::from)),
+                        ]),
+                    })
+                    .collect();
+                json!({ "edits": edits })
+            });
 
         if mcp_servers.is_some() {
             betas.insert("mcp-client-2025-04-04".to_string());
@@ -1225,22 +1296,37 @@ impl AnthropicMessagesLanguageModel {
             ("temperature", sent_temperature.map(number)),
             ("top_k", sent_top_k.map(number)),
             ("top_p", sent_top_p.map(number)),
-            ("stop_sequences", options.stop_sequences.clone().map(|stops| json!(stops))),
+            (
+                "stop_sequences",
+                options.stop_sequences.clone().map(|stops| json!(stops)),
+            ),
             ("thinking", thinking_json),
             ("output_config", output_config),
-            ("speed", anthropic_options.speed.map(|speed| Value::from(speed.as_str()))),
+            (
+                "speed",
+                anthropic_options
+                    .speed
+                    .map(|speed| Value::from(speed.as_str())),
+            ),
             (
                 "service_tier",
-                anthropic_options.service_tier.map(|tier| Value::from(tier.as_str())),
+                anthropic_options
+                    .service_tier
+                    .map(|tier| Value::from(tier.as_str())),
             ),
             (
                 "inference_geo",
-                anthropic_options.inference_geo.map(|geo| Value::from(geo.as_str())),
+                anthropic_options
+                    .inference_geo
+                    .map(|geo| Value::from(geo.as_str())),
             ),
             ("fallbacks", fallbacks),
             (
                 "cache_control",
-                anthropic_options.cache_control.as_ref().map(|control| control.to_json()),
+                anthropic_options
+                    .cache_control
+                    .as_ref()
+                    .map(|control| control.to_json()),
             ),
             (
                 "metadata",
@@ -1421,7 +1507,9 @@ impl LanguageModel for AnthropicMessagesLanguageModel {
         if let Some(error) = &self.config.creation_error {
             return Err(error.clone().into());
         }
-        let user_supplied_betas = self.get_betas_from_headers(options.headers.as_ref()).await?;
+        let user_supplied_betas = self
+            .get_betas_from_headers(options.headers.as_ref())
+            .await?;
         let PreparedRequest {
             args,
             warnings,
@@ -1430,7 +1518,13 @@ impl LanguageModel for AnthropicMessagesLanguageModel {
             tool_name_mapping,
             provider_options_name,
             used_custom_provider_key,
-        } = Self::prepare_request(&self.model_id, &self.config, &options, false, user_supplied_betas)?;
+        } = Self::prepare_request(
+            &self.model_id,
+            &self.config,
+            &options,
+            false,
+            user_supplied_betas,
+        )?;
 
         let mut citation_documents = Self::extract_citation_documents(&options.prompt);
         let mark_code_execution_dynamic =
