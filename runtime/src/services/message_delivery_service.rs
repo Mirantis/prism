@@ -11,14 +11,21 @@
 
 use std::sync::{Arc, LazyLock};
 
+use futures::future::join_all;
 use parking_lot::RwLock;
+use serde_json::Value;
 use tokio::sync::broadcast;
 
-use crate::db::models::ConversationMessage;
+use crate::config::CONFIG;
+use crate::db::models::{ConversationMessage, MessageRole};
+use crate::services::attachment_service::ATTACHMENT_SERVICE;
 use crate::services::channel_adapter_interface::{
-    ChannelAdapter, ChannelContext, ChannelDestination, ChannelName, DeliverableMessage,
+    ChannelAdapter, ChannelContext, ChannelDestination, ChannelName, ChatPlatform,
+    DeliverableMessage,
 };
+use crate::services::conversation_service::{AddedMessage, CONVERSATION_SERVICE, MessageInput};
 use crate::types::ToolCallRecord;
+use crate::{log_error, log_info, log_warn};
 
 // ============================================================================
 // Types
@@ -102,7 +109,9 @@ impl MessageDeliveryService {
 
     /// Register a channel adapter
     pub fn register(&self, adapter: Arc<dyn ChannelAdapter>) {
-        todo!()
+        let name = adapter.name();
+        self.adapters.write().push(adapter);
+        log_info!("Registered channel adapter: {}", name);
     }
 
     /// Get all registered adapters (for testing)
@@ -112,7 +121,11 @@ impl MessageDeliveryService {
 
     /// The registered adapter named `name`.
     pub fn get_adapter(&self, name: &str) -> Option<Arc<dyn ChannelAdapter>> {
-        todo!()
+        self.adapters
+            .read()
+            .iter()
+            .find(|adapter| adapter.name().as_str() == name)
+            .cloned()
     }
 
     /// Whether a message delivered in `channel` can link a page of the web UI:
@@ -120,7 +133,14 @@ impl MessageDeliveryService {
     /// links relative to the web UI. No channel is a broadcast, which some
     /// channels cannot open.
     pub fn opens_web_ui_links(&self, channel: Option<&str>) -> bool {
-        todo!()
+        CONFIG
+            .public_url
+            .as_deref()
+            .is_some_and(|url| !url.is_empty())
+            || channel
+                .filter(|channel| !channel.is_empty())
+                .and_then(|channel| self.get_adapter(channel))
+                .is_some_and(|adapter| adapter.opens_web_ui_links())
     }
 
     /// The delivery context for an autonomous message that continues `thread_id`
@@ -133,7 +153,27 @@ impl MessageDeliveryService {
         origin_channel: Option<&str>,
         origin_channel_id: Option<&str>,
     ) -> anyhow::Result<ThreadContext> {
-        todo!()
+        let channel = origin_channel
+            .and_then(ChatPlatform::parse)
+            .map_or(ChannelName::Websocket, ChannelName::from);
+        let destination = match self.get_adapter(channel.as_str()) {
+            Some(adapter) => adapter
+                .thread_destination(thread_id, origin_channel_id)
+                .await
+                .transpose()?
+                .unwrap_or_default(),
+            None => ChannelDestination::default(),
+        };
+        Ok(ThreadContext {
+            context: ChannelContext {
+                channel,
+                channel_id: destination.channel_id,
+                channel_thread_id: destination.channel_thread_id,
+                thread_id: thread_id.to_string(),
+                include_feedback: None,
+            },
+            channel_label: destination.channel_label,
+        })
     }
 
     /// SINGLE FUNCTION: Store message in DB + deliver to all channels
@@ -145,7 +185,55 @@ impl MessageDeliveryService {
         triggered_by: MessageTrigger,
         options: PublishOptions,
     ) -> anyhow::Result<ConversationMessage> {
-        todo!()
+        // 1. Store in the database, in the thread clients show.
+        let thread_id = CONVERSATION_SERVICE.writable_thread_id(thread_id).await?;
+        let mut input = MessageInput::new(content, MessageRole::Agent, triggered_by);
+        input.trigger_name = options.trigger_name.clone();
+        input.tool_calls = options
+            .tool_calls
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()?;
+        input.blocks = options.blocks.clone().map(Value::Array);
+        let AddedMessage { message, .. } =
+            CONVERSATION_SERVICE.add_message(&thread_id, input).await?;
+
+        // 2. Link any agent-shared files to this message and load their metadata
+        // (no bytes) so adapters can render/upload them. `link_to_message` only claims
+        // unlinked rows and caps the count, so forged/duplicate ids are safe.
+        // Deliver a copy with the metadata, and with the tool calls of the steps a
+        // concise turn hid — the persisted message we return stays a clean
+        // `ConversationMessage` (no extra fields leak out).
+        let shown = CONVERSATION_SERVICE
+            .with_hidden_step_tool_calls(&thread_id, vec![message.clone()])
+            .await?;
+        let mut deliverable =
+            DeliverableMessage::bare(shown.into_iter().next().unwrap_or_else(|| message.clone()));
+        if let Some(attachment_ids) = options
+            .attachment_ids
+            .as_ref()
+            .filter(|ids| !ids.is_empty())
+        {
+            ATTACHMENT_SERVICE
+                .link_to_message(attachment_ids, &message.id, &thread_id)
+                .await?;
+            let mut meta = ATTACHMENT_SERVICE
+                .get_meta_by_message_ids(std::slice::from_ref(&message.id))
+                .await?;
+            if let Some(attachments) = meta.shift_remove(&message.id).filter(|a| !a.is_empty()) {
+                deliverable.attachments = Some(attachments);
+            }
+        }
+
+        // 3. Deliver to all connected channels. The channel context is the single
+        // source of routing + rendering hints; it is forwarded as-is and the adapter
+        // decides what to do with it.
+        self.deliver_to_all(user_id, &deliverable, options.channel_context.as_ref())
+            .await;
+        // Nobody listening is not an error.
+        let _ = self.published.send(message.clone());
+
+        Ok(message)
     }
 
     /// Publish a message for autonomous background services (heartbeat, cron)
@@ -161,7 +249,14 @@ impl MessageDeliveryService {
         triggered_by: MessageTrigger,
         options: PublishOptions,
     ) -> anyhow::Result<ConversationMessage> {
-        todo!()
+        // Resolve (or create) the latest thread for this user
+        let thread = CONVERSATION_SERVICE
+            .get_or_create_latest_thread(agent_id, user_id)
+            .await?;
+
+        // Use the standard publish method
+        self.publish(user_id, &thread.id, content, triggered_by, options)
+            .await
     }
 
     /// Publish an autonomous message to web chat only, in the web-visible latest
@@ -174,7 +269,21 @@ impl MessageDeliveryService {
         triggered_by: MessageTrigger,
         options: PublishOptions,
     ) -> anyhow::Result<ConversationMessage> {
-        todo!()
+        let thread = CONVERSATION_SERVICE
+            .get_or_create_latest_thread(agent_id, user_id)
+            .await?;
+        let options = PublishOptions {
+            channel_context: Some(ChannelContext {
+                channel: ChannelName::Websocket,
+                channel_id: None,
+                channel_thread_id: None,
+                thread_id: thread.id.clone(),
+                include_feedback: None,
+            }),
+            ..options
+        };
+        self.publish(user_id, &thread.id, content, triggered_by, options)
+            .await
     }
 
     /// Send a stored message that `publish` does not, to every channel that shows
@@ -194,7 +303,40 @@ impl MessageDeliveryService {
         user_id: &str,
         message: &ConversationMessage,
     ) -> anyhow::Result<()> {
-        todo!()
+        let channels: Vec<Arc<dyn ChannelAdapter>> = self
+            .adapters
+            .read()
+            .iter()
+            .filter(|adapter| adapter.shows_whole_conversation())
+            .cloned()
+            .collect();
+        if channels.is_empty() {
+            return Ok(());
+        }
+        let attachments = ATTACHMENT_SERVICE
+            .get_meta_by_message_ids(std::slice::from_ref(&message.id))
+            .await?
+            .shift_remove(&message.id);
+        let shown = CONVERSATION_SERVICE
+            .with_hidden_step_tool_calls(&message.thread_id, vec![message.clone()])
+            .await?
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| message.clone());
+        let deliverable = DeliverableMessage {
+            inner: shown,
+            attachments: attachments.filter(|attachments| !attachments.is_empty()),
+        };
+        join_all(channels.iter().map(|adapter| {
+            let deliverable = &deliverable;
+            async move {
+                if let Err(error) = adapter.deliver(user_id, deliverable, None).await {
+                    log_error!("Failed to show a message via {}: {}", adapter.name(), error);
+                }
+            }
+        }))
+        .await;
+        Ok(())
     }
 
     /// Deliver to all connected channels. A USER_INPUT message without a channel
@@ -206,22 +348,127 @@ impl MessageDeliveryService {
         message: &DeliverableMessage,
         channel_context: Option<&ChannelContext>,
     ) {
-        todo!()
+        let adapters = self.adapters.read().clone();
+        if adapters.is_empty() {
+            log_warn!("No channel adapters registered, message stored but not delivered");
+            return;
+        }
+
+        // Fail-closed: USER_INPUT replies must always be scoped to a channel.
+        // If a caller forgot to pass a channel context, broadcasting would leak the
+        // reply to every connected adapter, a direct message's answer included.
+        // Better to log loudly and drop delivery than to leak.
+        // Heartbeat/cron (HEARTBEAT/CRON_TASK) legitimately broadcast and are unaffected.
+        if channel_context.is_none() && message.triggered_by == MessageTrigger::UserInput {
+            log_error!(
+                "[MessageDelivery] user-input message {} (thread {}) lacks channelContext — skipping delivery to prevent cross-channel leak",
+                message.id,
+                message.thread_id
+            );
+            return;
+        }
+
+        let results: Vec<DeliveryResult> = join_all(adapters.iter().map(|adapter| async move {
+            let name = adapter.name().as_str().to_string();
+            // When a channel context is set (user-initiated), only deliver to the
+            // originating channel. When it is absent (heartbeat/cron), broadcast to
+            // all connected channels.
+            if let Some(context) = channel_context {
+                if context.channel != adapter.name() {
+                    return DeliveryResult {
+                        adapter: name,
+                        delivered: false,
+                        reason: Some("not originating channel".to_string()),
+                    };
+                }
+            }
+            let attempt = async {
+                if adapter.is_user_connected(user_id).await? {
+                    adapter.deliver(user_id, message, channel_context).await?;
+                    return Ok(true);
+                }
+                Ok::<bool, anyhow::Error>(false)
+            };
+            match attempt.await {
+                Ok(true) => DeliveryResult {
+                    adapter: name,
+                    delivered: true,
+                    reason: None,
+                },
+                Ok(false) => DeliveryResult {
+                    adapter: name,
+                    delivered: false,
+                    reason: Some("not connected".to_string()),
+                },
+                Err(error) => {
+                    log_error!("Failed to deliver via {}: {}", name, error);
+                    DeliveryResult {
+                        adapter: name,
+                        delivered: false,
+                        reason: Some(error.to_string()),
+                    }
+                }
+            }
+        }))
+        .await;
+
+        let delivered = results.iter().filter(|result| result.delivered).count();
+        let statuses: Vec<String> = results
+            .iter()
+            .map(|result| {
+                if result.delivered {
+                    format!("{}:✓", result.adapter)
+                } else {
+                    format!("{}:✗", result.adapter)
+                }
+            })
+            .collect();
+
+        log_info!(
+            "Message delivered to {}/{} channel(s) for user {} [{}]",
+            delivered,
+            adapters.len(),
+            user_id,
+            statuses.join(", ")
+        );
     }
 
     /// Initialize all registered adapters
     pub async fn initialize_all(&self) {
-        todo!()
+        let adapters = self.adapters.read().clone();
+        log_info!("Initializing {} channel adapter(s)", adapters.len());
+
+        for adapter in adapters {
+            match adapter.initialize().await {
+                Ok(()) => log_info!("{} adapter initialized", adapter.name()),
+                Err(error) => log_error!("Failed to initialize {}: {}", adapter.name(), error),
+            }
+        }
     }
 
     /// Shutdown all registered adapters
     pub async fn shutdown_all(&self) {
-        todo!()
+        let adapters = self.adapters.read().clone();
+        log_info!("Shutting down {} channel adapter(s)", adapters.len());
+
+        for adapter in adapters {
+            match adapter.shutdown().await {
+                Ok(()) => log_info!("{} adapter shut down", adapter.name()),
+                Err(error) => log_error!("Failed to shutdown {}: {}", adapter.name(), error),
+            }
+        }
     }
 
     /// Check if any adapter has an active connection for a user
     pub async fn is_user_connected_to_any(&self, user_id: &str) -> bool {
-        todo!()
+        let adapters = self.adapters.read().clone();
+        for adapter in adapters {
+            // Errors are ignored; the next adapter is asked.
+            if let Ok(true) = adapter.is_user_connected(user_id).await {
+                return true;
+            }
+        }
+        false
     }
 }
 

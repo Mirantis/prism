@@ -8,11 +8,14 @@
 //! Boxes come back divided by that factor, in screen pixels.
 
 use std::cmp::Ordering;
+use std::time::Duration;
 
 use bytes::Bytes;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use super::child_process::{Pipes, StopSignal, spawn_child};
 use crate::support::js;
 
 /// One word Tesseract read, in screen pixels.
@@ -52,7 +55,67 @@ const OCR_TIMEOUT_MS: u64 = 20_000;
 /// layout, which is what a desktop with a menu, a panel and windows is. Fails with
 /// `OCR timed out` after `OCR_TIMEOUT_MS`, and with `tesseract exited with <code>`.
 pub async fn read_screen_words(png: Bytes, scale: i64) -> anyhow::Result<Vec<ScreenWord>> {
-    todo!()
+    let args = ["stdin", "stdout", "--psm", "11", "tsv"];
+    let tsv = pipe_through("tesseract", &args, png, "OCR timed out").await?;
+    Ok(parse_tsv(&String::from_utf8_lossy(&tsv), scale))
+}
+
+/// Feed `input` to a program on its stdin and answer what it writes to stdout. The
+/// program runs in this process's environment, with its stderr ignored, and is killed
+/// with SIGKILL when it runs past `OCR_TIMEOUT_MS`, failing with `timed_out`. An exit
+/// other than 0 fails with `<file> exited with <code>`.
+async fn pipe_through(
+    file: &str,
+    args: &[&str],
+    input: Bytes,
+    timed_out: &str,
+) -> anyhow::Result<Vec<u8>> {
+    let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
+    let env: IndexMap<String, String> = std::env::vars().collect();
+    let (proc, pipes) = spawn_child(
+        file,
+        &args,
+        &env,
+        Pipes {
+            stdin: true,
+            stdout: true,
+            stderr: false,
+        },
+    )?;
+    let mut stdin = pipes.stdin;
+    let mut stdout = pipes.stdout;
+    let run = async {
+        let write = async {
+            if let Some(mut pipe) = stdin.take() {
+                let _ = pipe.write_all(&input).await;
+                let _ = pipe.shutdown().await;
+            }
+        };
+        let read = async {
+            let mut out = Vec::new();
+            if let Some(pipe) = stdout.as_mut() {
+                let _ = pipe.read_to_end(&mut out).await;
+            }
+            out
+        };
+        let ((), out) = tokio::join!(write, read);
+        (out, proc.wait().await)
+    };
+    match tokio::time::timeout(Duration::from_millis(OCR_TIMEOUT_MS), run).await {
+        Err(_) => {
+            proc.kill(StopSignal::Kill);
+            anyhow::bail!("{timed_out}")
+        }
+        Ok((out, exit)) => {
+            if exit.code != Some(0) {
+                let code = exit
+                    .code
+                    .map_or_else(|| "null".to_string(), |code| code.to_string());
+                anyhow::bail!("{file} exited with {code}");
+            }
+            Ok(out)
+        }
+    }
 }
 
 /// Tesseract's TSV: level, page, block, paragraph, line, word, left, top, width, height,
@@ -88,7 +151,22 @@ pub fn parse_tsv(tsv: &str, scale: i64) -> Vec<ScreenWord> {
 /// that did not come off the display, such as the user's shared screen. Fails with
 /// `upscale timed out` after `OCR_TIMEOUT_MS`, and with `ffmpeg exited with <code>`.
 pub async fn upscale_for_ocr(jpeg: Bytes, scale: i64) -> anyhow::Result<Bytes> {
-    todo!()
+    let filter = format!("scale=iw*{scale}:ih*{scale}");
+    let args = [
+        "-loglevel",
+        "error",
+        "-i",
+        "pipe:0",
+        "-vf",
+        &filter,
+        "-f",
+        "image2pipe",
+        "-vcodec",
+        "png",
+        "pipe:1",
+    ];
+    let png = pipe_through("ffmpeg", &args, jpeg, "upscale timed out").await?;
+    Ok(Bytes::from(png))
 }
 
 fn cmp(a: f64, b: f64) -> Ordering {
@@ -202,5 +280,120 @@ fn text_box(run: &[&ScreenWord], line: &[&ScreenWord]) -> TextMatch {
         y: (top + bottom) / 2.0,
         width: right - left,
         height: bottom - top,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::computer::screen_size::math_round;
+
+    /// Rows Tesseract produced for the About dialog on the desktop, grabbed at twice the
+    /// size: header, then level page block par line word left top width height conf text.
+    /// Level 5 rows are words; the two rows before them are what a grab also returns and
+    /// this drops.
+    fn tsv() -> String {
+        [
+            "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext",
+            "5\t1\t2\t1\t1\t6\t1260\t88\t8\t8\t29.915310\t.",
+            "4\t1\t5\t1\t1\t0\t1724\t262\t309\t21\t-1\t",
+            "5\t1\t5\t1\t2\t1\t1707\t310\t30\t18\t95.482529\tOS",
+            "5\t1\t5\t1\t2\t2\t1756\t310\t60\t18\t96.713371\tName",
+            "5\t1\t5\t1\t2\t3\t1843\t308\t94\t21\t96.563179\tDebian",
+            "5\t1\t5\t1\t2\t4\t1955\t308\t142\t21\t96.098534\tGNU/Linux",
+            "5\t1\t5\t1\t2\t5\t2116\t309\t29\t20\t96.214478\t12",
+            "5\t1\t5\t1\t2\t6\t2166\t308\t152\t26\t96.214478\t(bookworm)",
+            "5\t1\t5\t1\t3\t1\t1707\t356\t30\t18\t96.452904\tOS",
+            "5\t1\t5\t1\t3\t2\t1755\t356\t61\t24\t95.875023\tType",
+            "5\t1\t5\t1\t3\t3\t1843\t354\t93\t21\t96.339973\t64-bit",
+            "5\t1\t5\t1\t4\t1\t1644\t400\t172\t20\t96.417061\tDistributor",
+            "5\t1\t5\t1\t4\t2\t1843\t400\t94\t21\t96.466576\tDebian",
+            "5\t1\t6\t1\t1\t2\t1627\t470\t61\t20\t96.730331\tXfce",
+            "5\t1\t6\t1\t1\t3\t1706\t470\t110\t20\t96.156990\tVersion",
+            "5\t1\t6\t1\t1\t4\t1843\t471\t62\t20\t96.215294\t4.18",
+            "5\t1\t6\t1\t2\t1\t1643\t518\t47\t18\t92.887886\tGTK",
+            "5\t1\t6\t1\t2\t2\t1706\t516\t110\t20\t95.718300\tVersion",
+            "5\t1\t6\t1\t2\t3\t1843\t517\t110\t20\t95.718300\t3.24.38",
+        ]
+        .join("\n")
+    }
+
+    #[test]
+    fn keeps_confident_words_only_divided_back_to_screen_pixels() {
+        let words = parse_tsv(&tsv(), 2);
+        let texts: Vec<&str> = words.iter().map(|w| w.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            vec![
+                "OS",
+                "Name",
+                "Debian",
+                "GNU/Linux",
+                "12",
+                "(bookworm)",
+                "OS",
+                "Type",
+                "64-bit",
+                "Distributor",
+                "Debian",
+                "Xfce",
+                "Version",
+                "4.18",
+                "GTK",
+                "Version",
+                "3.24.38",
+            ]
+        );
+        assert_eq!(
+            (words[2].left, words[2].top, words[2].width, words[2].height),
+            (921.5, 154.0, 47.0, 10.5)
+        );
+    }
+
+    #[test]
+    fn joins_each_line_left_to_right_and_orders_lines_top_to_bottom() {
+        assert_eq!(
+            read_lines(&parse_tsv(&tsv(), 2)),
+            vec![
+                "OS Name Debian GNU/Linux 12 (bookworm)",
+                "OS Type 64-bit",
+                "Distributor Debian",
+                "Xfce Version 4.18",
+                "GTK Version 3.24.38",
+            ]
+        );
+    }
+
+    #[test]
+    fn finds_a_phrase_as_consecutive_words_on_one_line_and_centres_on_the_run() {
+        let words = parse_tsv(&tsv(), 2);
+        let found = find_text(&words, "GNU/Linux 12");
+        assert_eq!(found[0].text, "GNU/Linux 12");
+        assert_eq!(math_round(found[0].x), 1025.0);
+        assert_eq!(math_round(found[0].y), 159.0);
+    }
+
+    #[test]
+    fn ignores_case_and_punctuation_in_the_query_and_on_screen() {
+        let words = parse_tsv(&tsv(), 2);
+        assert_eq!(find_text(&words, "debian gnu/linux").len(), 1);
+        assert_eq!(find_text(&words, "OS NAME").len(), 1);
+    }
+
+    #[test]
+    fn does_not_join_words_from_different_lines() {
+        assert!(find_text(&parse_tsv(&tsv(), 2), "Debian Xfce").is_empty());
+    }
+
+    #[test]
+    fn matches_a_single_word_that_a_label_starts_with_when_nothing_matches_whole() {
+        let words = parse_tsv(&tsv(), 2);
+        assert_eq!(find_text(&words, "Distrib").len(), 1);
+        assert!(find_text(&words, "Di").is_empty());
+    }
+
+    #[test]
+    fn answers_empty_for_text_that_is_not_on_screen() {
+        assert!(find_text(&parse_tsv(&tsv(), 2), "Web Browser").is_empty());
     }
 }

@@ -14,12 +14,16 @@
 use std::sync::{Arc, LazyLock};
 
 use parking_lot::Mutex;
+use serde_json::json;
 use tokio::sync::OnceCell;
 
 use super::claude_code::claude_code_agent::create_claude_code_agent;
 use super::codex::codex_agent::create_codex_agent;
 use super::coding_agent::CodingAgent;
-use crate::config::CodingAgentName;
+use crate::config::{CODING_AGENTS, CONFIG, CodingAgentName};
+use crate::lib::execution_environments::get_execution_environment::get_execution_environment;
+use crate::lib::log_redaction::err_json;
+use crate::{log_info, log_warn};
 
 /// Every adapter, whether or not it is available — the availability check is
 /// what this module is about, so `get_coding_agent`'s would be circular.
@@ -38,13 +42,58 @@ static PROBE: LazyLock<Mutex<Arc<OnceCell<()>>>> =
 /// leaves no agent available rather than a wrong one (logged as
 /// `[CodingAgents] credential detection failed; none available`).
 pub async fn ensure_coding_agents_detected() {
-    todo!()
+    let probe = PROBE.lock().clone();
+    probe
+        .get_or_init(|| async {
+            if let Err(err) = detect().await {
+                // A failed probe leaves no agent available rather than a wrong
+                // one: the `coding_agent` tool then says so, which beats
+                // launching a binary that cannot authenticate.
+                log_warn!(
+                    json!({ "err": err_json(&err) }),
+                    "[CodingAgents] credential detection failed; none available"
+                );
+            }
+        })
+        .await;
 }
 
 /// Ask each adapter with the execution environment's base env, then choose the
 /// default agent unless the operator named one (`[Startup] coding agents detected`).
 async fn detect() -> anyhow::Result<()> {
-    todo!()
+    let mut available = Vec::new();
+    for name in CODING_AGENTS {
+        // The env the task runs with, since the probe runs in the same
+        // environment and a host `PATH` or `HOME` would decide the answer there.
+        if factory(name)
+            .is_available(&get_execution_environment().base_env())
+            .await?
+        {
+            available.push(name);
+        }
+    }
+    CONFIG.set_available_coding_agents(available.clone());
+    // An explicit CODING_AGENT is the operator's choice and stands even when its
+    // credentials are missing, so the failure names the agent they asked for.
+    if CONFIG.configured_coding_agent.is_none() {
+        CONFIG.set_coding_agent(default_agent(&available));
+    }
+    log_info!(
+        json!({ "available": available, "effective": CONFIG.coding_agent() }),
+        "[Startup] coding agents detected"
+    );
+    Ok(())
+}
+
+/// Claude Code when it is available or Codex is not, else Codex.
+fn default_agent(available: &[CodingAgentName]) -> CodingAgentName {
+    if available.contains(&CodingAgentName::ClaudeCode)
+        || !available.contains(&CodingAgentName::Codex)
+    {
+        CodingAgentName::ClaudeCode
+    } else {
+        CodingAgentName::Codex
+    }
 }
 
 /// Ask again after a sign-in, which can make an agent available. A changed
@@ -58,4 +107,18 @@ pub async fn redetect_coding_agents() {
 /// Test-only: forget the probe so the next call runs it again.
 pub fn reset_coding_agent_detection_for_tests() {
     *PROBE.lock() = Arc::new(OnceCell::new());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prefers_claude_code_whenever_it_is_available() {
+        use CodingAgentName::*;
+        assert_eq!(default_agent(&[]), ClaudeCode);
+        assert_eq!(default_agent(&[ClaudeCode]), ClaudeCode);
+        assert_eq!(default_agent(&[ClaudeCode, Codex]), ClaudeCode);
+        assert_eq!(default_agent(&[Codex]), Codex);
+    }
 }

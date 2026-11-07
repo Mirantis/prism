@@ -11,16 +11,23 @@
 //! Each of these is the user acting, so locked-in mode does not gate them — that
 //! lock withholds the agent's own writers.
 
-use axum::Json;
 use axum::Router;
 use axum::extract::Path;
 use axum::response::Response;
 use axum::routing::{get, patch, post};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde::Serialize;
+use serde_json::{Value, json};
 
 use crate::db::models::AgentWorkspaceRevision;
+use crate::lib::log_redaction::err_json;
 use crate::lib::workspace_docs::WorkspaceDocField;
+use crate::log_error;
+use crate::services::agent_workspace_service::{
+    AGENT_WORKSPACE_SERVICE, RollbackWorkspaceDocInput, RollbackWorkspaceDocResult, ValidationError,
+};
+use crate::services::document_revision_service::DOCUMENT_REVISION_SERVICE;
+use crate::services::heartbeat_service::{HEARTBEAT_SERVICE, HeartbeatSchedule};
+use crate::support::http::{JsonBody, error_json, json};
 
 pub fn router() -> Router {
     Router::new()
@@ -40,7 +47,8 @@ pub fn router() -> Router {
 /// `unknown identity document '<field>'`, so each handler reads the field or
 /// returns.
 fn read_field(field: &str) -> Result<WorkspaceDocField, Response> {
-    todo!()
+    WorkspaceDocField::parse(field)
+        .ok_or_else(|| error_json(400, format!("unknown identity document '{field}'")))
 }
 
 /// A write or a restore of the heartbeat config changes what a heartbeat run
@@ -48,39 +56,15 @@ fn read_field(field: &str) -> Result<WorkspaceDocField, Response> {
 /// does (`tools/agent_config.rs`). `keep-schedule` leaves the next check where
 /// it is, since the document holds the checks and not the cadence. It happens here
 /// rather than in the service, because the heartbeat service imports the invoke
-/// path, which builds context through the workspace service. A failure is logged
-/// (`[DocumentRevisions] Failed to restart the heartbeat`, with `err`) and not
-/// answered.
+/// path, which builds context through the workspace service.
 async fn restart_heartbeat() {
-    todo!()
-}
-
-/// The body of `PATCH /agents/documents/{field}`: `{ content: string, reason?: string }`.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WriteDocumentBody {
-    /// The whole document. Outer `None`: the key is missing, answered 400
-    /// `missing required field 'content'`. A present value of any JSON type
-    /// (`null` included) goes to `update_workspace_doc`, which checks it.
-    #[serde(default, with = "::serde_with::rust::double_option")]
-    pub content: Option<Option<Value>>,
-    /// The note the history shows for this write, passed on as it came.
-    #[serde(default)]
-    pub reason: Option<Value>,
-}
-
-/// The body of `POST /agents/documents/{field}/revisions/{id}/restore`:
-/// `{ expectedRevisionId: string, reason?: string }`.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RestoreBody {
-    /// The newest revision the caller read. Anything but a non-empty string
-    /// answers 400 `missing required field 'expectedRevisionId'`.
-    #[serde(default)]
-    pub expected_revision_id: Option<Value>,
-    /// A string is kept; any other value reads as `''`.
-    #[serde(default)]
-    pub reason: Option<Value>,
+    match AGENT_WORKSPACE_SERVICE.get_agent().await {
+        Ok(agent) => HEARTBEAT_SERVICE.start_heartbeat(&agent, HeartbeatSchedule::KeepSchedule),
+        Err(err) => log_error!(
+            json!({ "err": err_json(&err) }),
+            "[DocumentRevisions] Failed to restart the heartbeat"
+        ),
+    }
 }
 
 /// The body of a successful write: `{ field, content }`.
@@ -108,10 +92,14 @@ pub struct StaleRestoreBody {
     pub newest_revision_id: Option<String>,
 }
 
-/// `{ error }`, the body of every other refusal and failure.
-#[derive(Debug, Clone, Serialize)]
-pub struct ErrorBody {
-    pub error: String,
+/// Log a failure with the field it was for, and answer 500 with its message.
+fn failure(err: anyhow::Error, field: WorkspaceDocField, message: &str) -> Response {
+    log_error!(
+        json!({ "err": err_json(&err), "field": field.as_str() }),
+        "{}",
+        message
+    );
+    error_json(500, err.to_string())
 }
 
 /// PATCH /agents/documents/{field}
@@ -121,39 +109,84 @@ pub struct ErrorBody {
 /// note the document's history shows for this write. There is no concurrency
 /// control: the last write wins, so two editors open at once overwrite each other
 /// instead of merging.
-///
-/// A write of `heartbeatMd` restarts the heartbeat before the answer. A
-/// `ValidationError` answers 400 with its message; any other failure is logged
-/// (`[DocumentRevisions] Failed to write the document`, with `err` and `field`)
-/// and answers 500.
-async fn write_document(
-    Path(field): Path<String>,
-    Json(body): Json<WriteDocumentBody>,
-) -> Response {
-    todo!()
+async fn write_document(Path(field): Path<String>, body: JsonBody) -> Response {
+    let field = match read_field(&field) {
+        Ok(field) => field,
+        Err(response) => return response,
+    };
+    let Some(content) = body.field("content") else {
+        return error_json(400, "missing required field 'content'");
+    };
+    let written = AGENT_WORKSPACE_SERVICE
+        .update_workspace_doc(field, content, body.field("reason"))
+        .await;
+    match written {
+        Ok(content) => {
+            if field == WorkspaceDocField::HeartbeatMd {
+                restart_heartbeat().await;
+            }
+            json(
+                200,
+                DocumentWritten {
+                    field: field.as_str().to_string(),
+                    content,
+                },
+            )
+        }
+        Err(err) => {
+            if let Some(validation) = err.downcast_ref::<ValidationError>() {
+                return error_json(400, validation.to_string());
+            }
+            failure(
+                err,
+                field,
+                "[DocumentRevisions] Failed to write the document",
+            )
+        }
+    }
 }
 
 /// GET /agents/documents/{field}/revisions
 ///
 /// The history of one document, newest first, without the content of each
-/// revision: `DOCUMENT_REVISION_SERVICE.history(agent, field)` sent unchanged.
-/// `drifted` reports a document that no longer agrees with its newest revision,
-/// which is what a write outside this path leaves behind. A failure is logged
-/// (`[DocumentRevisions] Failed to read the history`, with `err` and `field`) and
-/// answers 500.
+/// revision. `drifted` reports a document that no longer agrees with its newest
+/// revision, which is what a write outside this path leaves behind.
 async fn history(Path(field): Path<String>) -> Response {
-    todo!()
+    let field = match read_field(&field) {
+        Ok(field) => field,
+        Err(response) => return response,
+    };
+    let result = async {
+        let agent = AGENT_WORKSPACE_SERVICE.get_agent().await?;
+        DOCUMENT_REVISION_SERVICE.history(&agent, field).await
+    }
+    .await;
+    match result {
+        Ok(history) => json(200, history),
+        Err(err) => failure(err, field, "[DocumentRevisions] Failed to read the history"),
+    }
 }
 
 /// GET /agents/documents/{field}/revisions/{id}
 ///
-/// One revision with its content, which is what the client compares two of:
-/// `DOCUMENT_REVISION_SERVICE.get(agent_id, field, id)` sent unchanged, or 404
-/// `revision not found`. A failure is logged
-/// (`[DocumentRevisions] Failed to read a revision`, with `err` and `field`) and
-/// answers 500.
+/// One revision with its content, which is what the client compares two of.
 async fn read_revision(Path((field, id)): Path<(String, String)>) -> Response {
-    todo!()
+    let field = match read_field(&field) {
+        Ok(field) => field,
+        Err(response) => return response,
+    };
+    let result = async {
+        let agent = AGENT_WORKSPACE_SERVICE.get_agent().await?;
+        let agent_id = agent.id;
+        crate::db::read(move |conn| DOCUMENT_REVISION_SERVICE.get(conn, &agent_id, field, &id))
+            .await
+    }
+    .await;
+    match result {
+        Ok(Some(revision)) => json(200, revision),
+        Ok(None) => error_json(404, "revision not found"),
+        Err(err) => failure(err, field, "[DocumentRevisions] Failed to read a revision"),
+    }
 }
 
 /// POST /agents/documents/{field}/revisions/{id}/restore
@@ -164,15 +197,58 @@ async fn read_revision(Path((field, id)): Path<(String, String)>) -> Response {
 /// lands in between answers 409, so a restore never overwrites content the caller
 /// has not seen — the read-modify-write in the agent's own document tools has no
 /// such check, and a restore widens that window.
-///
-/// `rollback_workspace_doc` answers `revision_not_found` (404 `revision not
-/// found`), `stale` (409 `StaleRestoreBody`) or `restored`. A restore of
-/// `heartbeatMd` restarts the heartbeat before the answer. A failure is logged
-/// (`[DocumentRevisions] Failed to restore a revision`, with `err` and `field`) and
-/// answers 500.
-async fn restore_revision(
-    Path((field, id)): Path<(String, String)>,
-    Json(body): Json<RestoreBody>,
-) -> Response {
-    todo!()
+async fn restore_revision(Path((field, id)): Path<(String, String)>, body: JsonBody) -> Response {
+    let field = match read_field(&field) {
+        Ok(field) => field,
+        Err(response) => return response,
+    };
+    let expected_revision_id = match body.field("expectedRevisionId") {
+        Some(Value::String(id)) if !id.is_empty() => id.clone(),
+        _ => return error_json(400, "missing required field 'expectedRevisionId'"),
+    };
+    let reason = match body.field("reason") {
+        Some(Value::String(reason)) => reason.clone(),
+        _ => String::new(),
+    };
+    let result = async {
+        let agent = AGENT_WORKSPACE_SERVICE.get_agent().await?;
+        AGENT_WORKSPACE_SERVICE
+            .rollback_workspace_doc(RollbackWorkspaceDocInput {
+                agent_id: agent.id,
+                field,
+                revision_id: id,
+                expected_revision_id,
+                reason,
+            })
+            .await
+    }
+    .await;
+    match result {
+        Ok(RollbackWorkspaceDocResult::RevisionNotFound) => error_json(404, "revision not found"),
+        Ok(RollbackWorkspaceDocResult::Stale { newest_revision_id }) => json(
+            409,
+            StaleRestoreBody {
+                error: "the document changed since this history was read".to_string(),
+                newest_revision_id,
+            },
+        ),
+        Ok(RollbackWorkspaceDocResult::Restored { content, revision }) => {
+            if field == WorkspaceDocField::HeartbeatMd {
+                restart_heartbeat().await;
+            }
+            json(
+                200,
+                DocumentRestored {
+                    field: field.as_str().to_string(),
+                    content,
+                    revision,
+                },
+            )
+        }
+        Err(err) => failure(
+            err,
+            field,
+            "[DocumentRevisions] Failed to restore a revision",
+        ),
+    }
 }

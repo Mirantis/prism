@@ -8,6 +8,8 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+use crate::db::models::{AgentWorkspace, AgentWorkspaceChangeset};
+
 /// An `AgentWorkspace` column that holds an identity document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WorkspaceDocField {
@@ -83,6 +85,36 @@ impl WorkspaceDocField {
         WORKSPACE_DOC_FIELDS
             .into_iter()
             .find(|field| field.as_str() == value)
+    }
+
+    /// The document's text in an agent row (`agent[field]`).
+    pub fn read(self, agent: &AgentWorkspace) -> &str {
+        match self {
+            Self::AgentMd => &agent.agent_md,
+            Self::SoulMd => &agent.soul_md,
+            Self::UserMd => &agent.user_md,
+            Self::HeartbeatMd => &agent.heartbeat_md,
+            Self::MemoryMd => &agent.memory_md,
+            Self::VisionMd => &agent.vision_md,
+            Self::BootstrapMd => &agent.bootstrap_md,
+        }
+    }
+
+    /// The update that writes `content` to this document's column, stamping
+    /// `updatedAt` as Prisma's `@updatedAt` does.
+    pub fn changeset(self, content: String) -> AgentWorkspaceChangeset {
+        let mut changeset = AgentWorkspaceChangeset::default();
+        let slot = match self {
+            Self::AgentMd => &mut changeset.agent_md,
+            Self::SoulMd => &mut changeset.soul_md,
+            Self::UserMd => &mut changeset.user_md,
+            Self::HeartbeatMd => &mut changeset.heartbeat_md,
+            Self::MemoryMd => &mut changeset.memory_md,
+            Self::VisionMd => &mut changeset.vision_md,
+            Self::BootstrapMd => &mut changeset.bootstrap_md,
+        };
+        *slot = Some(content);
+        changeset
     }
 }
 

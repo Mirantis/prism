@@ -9,19 +9,34 @@ use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, LazyLock};
 
 use chrono::{DateTime, Utc};
+use diesel::prelude::*;
+use diesel::sqlite::Sqlite;
+use indexmap::IndexMap;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::config::{CONFIG, ThreadMode};
 use crate::db::models::{
-    ConversationMessage, ConversationThread, MessageRole, MessageTrigger, ThreadSource,
+    ConversationMessage, ConversationThread, ConversationThreadChangeset, MessageRole,
+    MessageTrigger, NewConversationMessage, NewConversationThread, ThreadSource,
 };
+use crate::db::schema::conversation_messages::dsl as m;
+use crate::db::schema::conversation_threads::{self, dsl as t};
+use crate::db::sql_types::DbDateTime;
 use crate::lib::agent_message_kind::agent_message_kind;
-use crate::lib::context_window::ContextUsageSnapshot;
+use crate::lib::context_window::{ContextUsageSnapshot, build_context_snapshot};
+use crate::lib::telemetry::track_event;
+use crate::log_info;
 use crate::protocol::chat_protocol::AgentMessageKind;
-use crate::services::attachment_service::{HasMessageId, WithAttachments};
+use crate::services::attachment_service::{ATTACHMENT_SERVICE, HasMessageId, WithAttachments};
 use crate::services::providers::database_thread_provider::DatabaseThreadProvider;
-use crate::services::thread_provider_interface::ThreadMessageProvider;
+use crate::services::runtime_state_service::{RUNTIME_STATE_SERVICE, SINGLE_THREAD};
+use crate::services::thread_provider_interface::{
+    MessageReadOptions, MessageView, ThreadMessageProvider,
+};
+use crate::support::js;
+use crate::utils::thread_title::derive_thread_title;
 
 /// A message a compaction summary replaced, and its index among the thread's
 /// compacted messages, oldest first.
@@ -306,6 +321,57 @@ pub struct ConversationService {
     live_providers: RwLock<HashMap<ThreadSource, Arc<dyn ThreadMessageProvider>>>,
 }
 
+/// The thread mode, which a test may set.
+fn thread_mode() -> ThreadMode {
+    #[cfg(test)]
+    if let Some(mode) = *testing::THREAD_MODE.lock() {
+        return mode;
+    }
+    CONFIG.thread_mode
+}
+
+/// The threads of `filter`, on a thread query.
+fn client_threads<'a>(
+    query: conversation_threads::BoxedQuery<'a, Sqlite>,
+    filter: &ClientThreadFilter,
+) -> conversation_threads::BoxedQuery<'a, Sqlite> {
+    match &filter.single_thread_id {
+        None => query,
+        Some(id) => query.filter(t::external_thread_id.is_not_null().or(t::id.eq(id.clone()))),
+    }
+}
+
+/// `trackEvent`'s props, in the order given.
+fn props<const N: usize>(entries: [(&str, String); N]) -> IndexMap<String, String> {
+    entries
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), value))
+        .collect()
+}
+
+/// The order that defines a compacted message's position, and the fields a read returns.
+type CompactedRow = (
+    String,
+    MessageRole,
+    String,
+    Option<Value>,
+    bool,
+    DateTime<Utc>,
+);
+
+fn compacted(row: CompactedRow, position: i64) -> CompactedMessage {
+    let (id, role, content, tool_calls, internal_step, created_at) = row;
+    CompactedMessage {
+        id,
+        role,
+        content,
+        tool_calls,
+        internal_step,
+        created_at,
+        position,
+    }
+}
+
 impl ConversationService {
     pub fn new() -> Self {
         Self {
@@ -325,20 +391,80 @@ impl ConversationService {
         agent_id: &str,
         user_id: &str,
     ) -> anyhow::Result<Option<ConversationThread>> {
-        todo!()
+        let stored_id = RUNTIME_STATE_SERVICE.get(SINGLE_THREAD).await?;
+        if let Some(stored_id) = stored_id.filter(|id| !id.is_empty()) {
+            let (agent, user) = (agent_id.to_string(), user_id.to_string());
+            let stored = crate::db::run(move |conn| {
+                Ok(t::conversation_threads
+                    .filter(t::id.eq(stored_id))
+                    .filter(t::agent_id.eq(agent))
+                    .filter(t::user_id.eq(user))
+                    .filter(t::external_thread_id.is_null())
+                    .select(ConversationThread::as_select())
+                    .first(conn)
+                    .optional()?)
+            })
+            .await?;
+            if stored.is_some() {
+                return Ok(stored);
+            }
+        }
+
+        let (agent, user) = (agent_id.to_string(), user_id.to_string());
+        let last_written = crate::db::run(move |conn| {
+            Ok(m::conversation_messages
+                .inner_join(t::conversation_threads)
+                .filter(m::role.eq(MessageRole::User))
+                .filter(m::triggered_by.eq(MessageTrigger::UserInput))
+                .filter(m::internal_step.eq(false))
+                .filter(t::agent_id.eq(agent))
+                .filter(t::user_id.eq(user))
+                .filter(t::external_thread_id.is_null())
+                .order((m::created_at.desc(), m::id.desc()))
+                .select(ConversationThread::as_select())
+                .first(conn)
+                .optional()?)
+        })
+        .await?;
+        let chosen = match last_written {
+            Some(thread) => Some(thread),
+            None => self.newest_web_thread(agent_id, user_id).await?,
+        };
+        if let Some(chosen) = &chosen {
+            RUNTIME_STATE_SERVICE.set(SINGLE_THREAD, &chosen.id).await?;
+        }
+        Ok(chosen)
     }
 
     /// Forget single-thread mode's conversation, so the next single-thread boot keeps the
     /// conversation the person wrote in last rather than the one it kept before.
     pub async fn forget_single_thread(&self) -> anyhow::Result<()> {
-        todo!()
+        RUNTIME_STATE_SERVICE.delete(SINGLE_THREAD).await
     }
 
     /// The thread a run or a chat turn that names `thread_id` writes to. In single-thread
     /// mode another web thread resolves to the one conversation, so a task or goal bound
     /// to an older conversation answers where every client shows it.
     pub async fn writable_thread_id(&self, thread_id: &str) -> anyhow::Result<String> {
-        todo!()
+        if thread_mode() != ThreadMode::Single {
+            return Ok(thread_id.to_string());
+        }
+        let id = thread_id.to_string();
+        let thread = crate::db::run(move |conn| {
+            Ok(t::conversation_threads
+                .filter(t::id.eq(id))
+                .select((t::agent_id, t::user_id, t::external_thread_id))
+                .first::<(String, String, Option<String>)>(conn)
+                .optional()?)
+        })
+        .await?;
+        let Some((agent_id, user_id, None)) = thread else {
+            return Ok(thread_id.to_string());
+        };
+        Ok(self
+            .get_or_create_latest_thread(&agent_id, &user_id)
+            .await?
+            .id)
     }
 
     async fn newest_web_thread(
@@ -346,7 +472,18 @@ impl ConversationService {
         agent_id: &str,
         user_id: &str,
     ) -> anyhow::Result<Option<ConversationThread>> {
-        todo!()
+        let (agent, user) = (agent_id.to_string(), user_id.to_string());
+        crate::db::run(move |conn| {
+            Ok(t::conversation_threads
+                .filter(t::agent_id.eq(agent))
+                .filter(t::user_id.eq(user))
+                .filter(t::external_thread_id.is_null())
+                .order(t::created_at.desc())
+                .select(ConversationThread::as_select())
+                .first(conn)
+                .optional()?)
+        })
+        .await
     }
 
     /// The threads a client may list, read or write to. In single-thread mode that is
@@ -357,7 +494,15 @@ impl ConversationService {
         agent_id: &str,
         user_id: &str,
     ) -> anyhow::Result<ClientThreadFilter> {
-        todo!()
+        if thread_mode() != ThreadMode::Single {
+            return Ok(ClientThreadFilter {
+                single_thread_id: None,
+            });
+        }
+        let conversation = self.single_thread(agent_id, user_id).await?;
+        Ok(ClientThreadFilter {
+            single_thread_id: Some(conversation.map(|thread| thread.id).unwrap_or_default()),
+        })
     }
 
     /// Serve every thread of `source` from `provider`, which reads the channel live.
@@ -380,12 +525,20 @@ impl ConversationService {
         &self,
         thread_id: &str,
     ) -> anyhow::Result<Arc<dyn ThreadMessageProvider>> {
-        todo!()
+        Ok(self.provider_for(self.get_thread_source(thread_id).await?))
     }
 
     /// Where a thread's messages are read from, or `None` for a thread that does not exist.
     pub async fn get_thread_source(&self, thread_id: &str) -> anyhow::Result<Option<ThreadSource>> {
-        todo!()
+        let id = thread_id.to_string();
+        crate::db::run(move |conn| {
+            Ok(t::conversation_threads
+                .filter(t::id.eq(id))
+                .select(t::thread_source)
+                .first::<ThreadSource>(conn)
+                .optional()?)
+        })
+        .await
     }
 
     /// Get or create the latest database conversation thread for a user.
@@ -400,7 +553,26 @@ impl ConversationService {
         agent_id: &str,
         user_id: &str,
     ) -> anyhow::Result<ConversationThread> {
-        todo!()
+        if let Some(thread) = self.find_latest_web_thread(agent_id, user_id).await? {
+            return Ok(thread);
+        }
+        let thread = insert_thread(NewConversationThread::new(agent_id, user_id)).await?;
+        log_info!(
+            "Created new conversation thread for user {} (threadId: {})",
+            user_id,
+            thread.id
+        );
+        track_event(
+            "thread created",
+            Some(user_id),
+            Some(props([
+                ("agent.id", agent_id.to_string()),
+                ("thread.id", thread.id.clone()),
+                ("thread.source", "database".to_string()),
+            ])),
+        );
+        self.announce_thread(&thread);
+        Ok(thread)
     }
 
     /// The user's latest web thread, or `None` when there is none. Creates nothing.
@@ -410,7 +582,10 @@ impl ConversationService {
         agent_id: &str,
         user_id: &str,
     ) -> anyhow::Result<Option<ConversationThread>> {
-        todo!()
+        if thread_mode() == ThreadMode::Single {
+            return self.single_thread(agent_id, user_id).await;
+        }
+        self.newest_web_thread(agent_id, user_id).await
     }
 
     /// Say that a web thread exists, so every open client can list it — a
@@ -442,7 +617,32 @@ impl ConversationService {
         user_id: &str,
         options: Option<StartThreadOptions>,
     ) -> anyhow::Result<ConversationThread> {
-        todo!()
+        if thread_mode() == ThreadMode::Single {
+            return self.get_or_create_latest_thread(agent_id, user_id).await;
+        }
+        let workspace_root = options
+            .and_then(|options| options.workspace_root)
+            .map(|root| js::trim(&root).to_string())
+            .filter(|root| !root.is_empty());
+        let mut row = NewConversationThread::new(agent_id, user_id);
+        row.workspace_root = workspace_root;
+        let thread = insert_thread(row).await?;
+        log_info!(
+            "Started new conversation thread for user {} (threadId: {})",
+            user_id,
+            thread.id
+        );
+        track_event(
+            "thread created",
+            Some(user_id),
+            Some(props([
+                ("agent.id", agent_id.to_string()),
+                ("thread.id", thread.id.clone()),
+                ("thread.source", "database".to_string()),
+            ])),
+        );
+        self.announce_thread(&thread);
+        Ok(thread)
     }
 
     /// Start a fresh conversation, reusing the newest thread when it is still
@@ -457,7 +657,43 @@ impl ConversationService {
         agent_id: &str,
         user_id: &str,
     ) -> anyhow::Result<ConversationThread> {
-        todo!()
+        if thread_mode() == ThreadMode::Single {
+            return self.get_or_create_latest_thread(agent_id, user_id).await;
+        }
+        let (agent, user) = (agent_id.to_string(), user_id.to_string());
+        let newest = crate::db::run(move |conn| {
+            Ok(t::conversation_threads
+                .filter(t::agent_id.eq(agent))
+                .filter(t::user_id.eq(user))
+                .filter(t::external_thread_id.is_null())
+                .filter(t::thread_source.eq(ThreadSource::Database))
+                .order(t::created_at.desc())
+                .select(ConversationThread::as_select())
+                .first(conn)
+                .optional()?)
+        })
+        .await?;
+
+        if let Some(newest) = newest.filter(|thread| {
+            thread
+                .workspace_root
+                .as_deref()
+                .is_none_or(|root| root.is_empty())
+        }) {
+            let id = newest.id.clone();
+            let message_count: i64 = crate::db::run(move |conn| {
+                Ok(m::conversation_messages
+                    .filter(m::thread_id.eq(id))
+                    .count()
+                    .get_result(conn)?)
+            })
+            .await?;
+            if message_count == 0 {
+                return Ok(newest);
+            }
+        }
+
+        self.start_new_thread(agent_id, user_id, None).await
     }
 
     /// Read a thread's persisted workspace root (the directory it's rooted in),
@@ -467,7 +703,16 @@ impl ConversationService {
         &self,
         thread_id: &str,
     ) -> anyhow::Result<Option<String>> {
-        todo!()
+        let id = thread_id.to_string();
+        let root = crate::db::run(move |conn| {
+            Ok(t::conversation_threads
+                .filter(t::id.eq(id))
+                .select(t::workspace_root)
+                .first::<Option<String>>(conn)
+                .optional()?)
+        })
+        .await?;
+        Ok(root.flatten())
     }
 
     /// Get or create a conversation thread bound to a specific external thread ID,
@@ -481,7 +726,63 @@ impl ConversationService {
         external_thread_id: &str,
         live: Option<LiveThread>,
     ) -> anyhow::Result<ConversationThread> {
-        todo!()
+        let (agent, user, external) = (
+            agent_id.to_string(),
+            user_id.to_string(),
+            external_thread_id.to_string(),
+        );
+        let live_fields = live.clone();
+        let thread = crate::db::run(move |conn| {
+            conn.transaction(|conn| {
+                let existing = t::conversation_threads
+                    .filter(t::agent_id.eq(&agent))
+                    .filter(t::user_id.eq(&user))
+                    .filter(t::external_thread_id.eq(&external))
+                    .select(t::id)
+                    .first::<String>(conn)
+                    .optional()?;
+                if let Some(id) = existing {
+                    // Update the channel id if provided (in case it was missing before).
+                    let mut changes = ConversationThreadChangeset::default();
+                    if let Some(live) = &live_fields {
+                        changes.thread_source = Some(live.source);
+                        changes.external_channel_id = Some(Some(live.channel_id.clone()));
+                    }
+                    return Ok(diesel::update(t::conversation_threads.filter(t::id.eq(id)))
+                        .set(&changes)
+                        .returning(ConversationThread::as_returning())
+                        .get_result(conn)?);
+                }
+                let mut row = NewConversationThread::new(agent.clone(), user.clone());
+                row.external_thread_id = Some(external.clone());
+                if let Some(live) = &live_fields {
+                    row.thread_source = live.source;
+                    row.external_channel_id = Some(live.channel_id.clone());
+                }
+                Ok(diesel::insert_into(t::conversation_threads)
+                    .values(&row)
+                    .returning(ConversationThread::as_returning())
+                    .get_result(conn)?)
+            })
+        })
+        .await?;
+
+        // An upsert can't report create-vs-update; on create both timestamps carry
+        // the same initial value, while the update path bumps updatedAt.
+        if thread.created_at.timestamp_millis() == thread.updated_at.timestamp_millis() {
+            let source = live.map_or(ThreadSource::Database, |live| live.source);
+            track_event(
+                "thread created",
+                Some(user_id),
+                Some(props([
+                    ("agent.id", agent_id.to_string()),
+                    ("thread.id", thread.id.clone()),
+                    ("thread.source", source.as_str().to_lowercase()),
+                ])),
+            );
+        }
+
+        Ok(thread)
     }
 
     /// The thread bound to an external thread ID, without creating one.
@@ -491,7 +792,49 @@ impl ConversationService {
         agent_id: &str,
         external_thread_id: &str,
     ) -> anyhow::Result<Option<ConversationThread>> {
-        todo!()
+        let (agent, user, external) = (
+            agent_id.to_string(),
+            user_id.to_string(),
+            external_thread_id.to_string(),
+        );
+        crate::db::run(move |conn| {
+            Ok(t::conversation_threads
+                .filter(t::agent_id.eq(agent))
+                .filter(t::user_id.eq(user))
+                .filter(t::external_thread_id.eq(external))
+                .select(ConversationThread::as_select())
+                .first(conn)
+                .optional()?)
+        })
+        .await
+    }
+
+    /// The thread `thread_id` when it belongs to the agent and the user and a client
+    /// may see it.
+    async fn client_thread(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+        thread_id: &str,
+    ) -> anyhow::Result<Option<ConversationThread>> {
+        let filter = self.client_thread_filter(agent_id, user_id).await?;
+        let (id, agent, user) = (
+            thread_id.to_string(),
+            agent_id.to_string(),
+            user_id.to_string(),
+        );
+        crate::db::run(move |conn| {
+            let query = t::conversation_threads
+                .filter(t::id.eq(id))
+                .filter(t::agent_id.eq(agent))
+                .filter(t::user_id.eq(user))
+                .into_boxed();
+            Ok(client_threads(query, &filter)
+                .select(ConversationThread::as_select())
+                .first(conn)
+                .optional()?)
+        })
+        .await
     }
 
     /// Get a thread by ID (with ownership check). With `page`, it holds that page of
@@ -503,7 +846,58 @@ impl ConversationService {
         thread_id: &str,
         page: Option<MessagePage>,
     ) -> anyhow::Result<Option<ThreadWithMessages>> {
-        todo!()
+        let Some(thread) = self.client_thread(user_id, agent_id, thread_id).await? else {
+            return Ok(None);
+        };
+
+        let provider = self.provider_for(Some(thread.thread_source));
+
+        // CLIENT history (web SPA): hide concise-mode internal steps. The model path
+        // (get_thread_context) reads without this option so it still replays them.
+        let read = match page {
+            Some(page) => {
+                provider
+                    .get_recent_messages(
+                        thread_id,
+                        page.limit,
+                        Some(&MessageReadOptions {
+                            view: Some(MessageView::Client),
+                            before: page.before,
+                        }),
+                    )
+                    .await?
+            }
+            None => {
+                provider
+                    .get_messages(
+                        thread_id,
+                        Some(&MessageReadOptions {
+                            view: Some(MessageView::Client),
+                            before: None,
+                        }),
+                    )
+                    .await?
+            }
+        };
+        let messages = self.with_hidden_step_tool_calls(thread_id, read).await?;
+
+        // Attach file metadata (no bytes) so the web UI renders chips on history.
+        let with_attachments = ATTACHMENT_SERVICE.attach_meta_to_messages(messages).await?;
+
+        // Derived here rather than in each client: the percentage needs the model's
+        // context window, which only the runtime has. `None` until the thread's
+        // first turn completes, or when the stored model is unrecognized.
+        let context_usage = build_context_snapshot(
+            thread_id,
+            thread.context_model.as_deref(),
+            thread.context_tokens,
+        );
+
+        Ok(Some(ThreadWithMessages {
+            thread,
+            messages: with_attachments.into_iter().map(with_sender).collect(),
+            context_usage,
+        }))
     }
 
     /// Lightweight ownership/existence check: returns the thread id when it
@@ -516,7 +910,10 @@ impl ConversationService {
         agent_id: &str,
         thread_id: &str,
     ) -> anyhow::Result<Option<String>> {
-        todo!()
+        Ok(self
+            .client_thread(user_id, agent_id, thread_id)
+            .await?
+            .map(|thread| thread.id))
     }
 
     /// List the threads of a user, newest first.
@@ -531,7 +928,33 @@ impl ConversationService {
         agent_id: &str,
         options: Option<ListThreadsOptions>,
     ) -> anyhow::Result<Vec<ConversationThread>> {
-        todo!()
+        let filter = self.client_thread_filter(agent_id, user_id).await?;
+        let options = options.unwrap_or_default();
+        let (agent, user) = (agent_id.to_string(), user_id.to_string());
+        crate::db::run(move |conn| {
+            let mut query = client_threads(
+                t::conversation_threads
+                    .filter(t::agent_id.eq(agent))
+                    .filter(t::user_id.eq(user))
+                    .into_boxed(),
+                &filter,
+            );
+            match options.thread_source {
+                Some(ThreadSource::Database) => {
+                    query = query
+                        .filter(t::thread_source.eq(ThreadSource::Database))
+                        .filter(t::external_thread_id.is_null());
+                }
+                Some(source) => query = query.filter(t::thread_source.eq(source)),
+                None => {}
+            }
+            Ok(query
+                .order(t::created_at.desc())
+                .limit(options.limit.unwrap_or(20))
+                .select(ConversationThread::as_select())
+                .load(conn)?)
+        })
+        .await
     }
 
     /// Add a message to a thread.
@@ -546,7 +969,94 @@ impl ConversationService {
         thread_id: &str,
         input: MessageInput,
     ) -> anyhow::Result<AddedMessage> {
-        todo!()
+        let mut row = NewConversationMessage::new(
+            thread_id,
+            input.role,
+            input.content.clone(),
+            input.triggered_by,
+        );
+        if let Some(id) = input.id.clone().filter(|id| !id.is_empty()) {
+            row.id = id;
+        }
+        row.trigger_name = input.trigger_name.clone();
+        row.tool_calls = input.tool_calls.clone();
+        row.blocks = input.blocks.clone();
+        row.sender_external_id = input.sender_external_id.clone();
+        row.sender_name = input.sender_name.clone();
+        row.external_message_id = input.external_message_id.clone();
+        row.internal_step = input.internal_step.unwrap_or(false);
+        let message = crate::db::run(move |conn| {
+            Ok(diesel::insert_into(m::conversation_messages)
+                .values(&row)
+                .returning(ConversationMessage::as_returning())
+                .get_result(conn)?)
+        })
+        .await?;
+
+        // Update the thread's updatedAt.
+        let id = thread_id.to_string();
+        let agent_id = crate::db::run(move |conn| {
+            let agent_id = diesel::update(t::conversation_threads.filter(t::id.eq(id)))
+                .set(t::updated_at.eq(DbDateTime::now()))
+                .returning(t::agent_id)
+                .get_result::<String>(conn)
+                .optional()?;
+            agent_id.ok_or_else(record_not_found)
+        })
+        .await?;
+
+        let mut tracked = IndexMap::new();
+        if !agent_id.is_empty() {
+            tracked.insert("agent.id".to_string(), agent_id);
+        }
+        tracked.insert("thread.id".to_string(), thread_id.to_string());
+        tracked.insert("message.role".to_string(), input.role.as_str().to_string());
+        tracked.insert(
+            "message.triggered_by".to_string(),
+            input.triggered_by.as_str().to_string(),
+        );
+        // Internal rows are written by the runtime, not sent by anyone. Without this a
+        // recalling chat turn adds a second `role=USER` count and every message-volume
+        // metric steps at deploy for a reason that is not user behaviour.
+        tracked.insert(
+            "message.internal".to_string(),
+            input.internal_step.unwrap_or(false).to_string(),
+        );
+        track_event("message added", None, Some(tracked));
+
+        // Name the thread after the user's first message (first 3 words, capped).
+        // `title IS NULL` makes this atomic and one-shot — it fires only for the very
+        // first user message with text and is a no-op for every later message.
+        // A changed row means this call actually set it, so callers can broadcast it.
+        // Never from an internal row: those are written for model context and are not
+        // the user's words. A first message carrying only a file leaves the title unset
+        // (its text is empty), and the turn's recalled memories would otherwise be the
+        // next USER row with text and name the thread after themselves.
+        let mut title_set = None;
+        if input.role == MessageRole::User && !input.internal_step.unwrap_or(false) {
+            let title = derive_thread_title(&input.content);
+            if !title.is_empty() {
+                let (id, new_title) = (thread_id.to_string(), title.clone());
+                let count = crate::db::run(move |conn| {
+                    Ok(diesel::update(
+                        t::conversation_threads
+                            .filter(t::id.eq(id))
+                            .filter(t::title.is_null()),
+                    )
+                    .set((
+                        t::title.eq(Some(new_title)),
+                        t::updated_at.eq(DbDateTime::now()),
+                    ))
+                    .execute(conn)?)
+                })
+                .await?;
+                if count > 0 {
+                    title_set = Some(title);
+                }
+            }
+        }
+
+        Ok(AddedMessage { message, title_set })
     }
 
     /// Store the external message ID on a persisted message: the id the channel
@@ -557,7 +1067,19 @@ impl ConversationService {
         message_id: &str,
         external_message_id: &str,
     ) -> anyhow::Result<()> {
-        todo!()
+        let (id, external) = (message_id.to_string(), external_message_id.to_string());
+        let count = crate::db::run(move |conn| {
+            Ok(
+                diesel::update(m::conversation_messages.filter(m::id.eq(id)))
+                    .set(m::external_message_id.eq(Some(external)))
+                    .execute(conn)?,
+            )
+        })
+        .await?;
+        if count == 0 {
+            return Err(record_not_found());
+        }
+        Ok(())
     }
 
     /// Get recent messages from a thread for CLIENT history (`GET /messages`): the
@@ -570,13 +1092,42 @@ impl ConversationService {
         limit: i64,
         before: Option<&str>,
     ) -> anyhow::Result<Vec<WithSender<ConversationMessage>>> {
-        todo!()
+        let provider = self.resolve_provider(thread_id).await?;
+        let messages = provider
+            .get_recent_messages(
+                thread_id,
+                limit,
+                Some(&MessageReadOptions {
+                    view: Some(MessageView::Client),
+                    before: before.map(str::to_string),
+                }),
+            )
+            .await?;
+        Ok(self
+            .with_hidden_step_tool_calls(thread_id, messages)
+            .await?
+            .into_iter()
+            .map(with_sender)
+            .collect())
     }
 
     /// Whether two or more people wrote in the thread. Every row counts, compacted
     /// ones too, and no row is deleted, so once true it stays true.
     pub async fn has_several_senders(&self, thread_id: &str) -> anyhow::Result<bool> {
-        todo!()
+        let id = thread_id.to_string();
+        let senders = crate::db::run(move |conn| {
+            Ok(m::conversation_messages
+                .filter(m::thread_id.eq(id))
+                .filter(m::role.eq(MessageRole::User))
+                .filter(m::triggered_by.eq(MessageTrigger::UserInput))
+                .filter(m::sender_external_id.is_not_null())
+                .select(m::sender_external_id)
+                .distinct()
+                .limit(2)
+                .load::<Option<String>>(conn)?)
+        })
+        .await?;
+        Ok(senders.len() > 1)
     }
 
     /// The oldest message of a stored thread, internal steps left out: in a channel
@@ -585,7 +1136,17 @@ impl ConversationService {
         &self,
         thread_id: &str,
     ) -> anyhow::Result<Option<ConversationMessage>> {
-        todo!()
+        let id = thread_id.to_string();
+        crate::db::run(move |conn| {
+            Ok(m::conversation_messages
+                .filter(m::thread_id.eq(id))
+                .filter(m::internal_step.eq(false))
+                .order((m::created_at.asc(), m::id.asc()))
+                .select(ConversationMessage::as_select())
+                .first(conn)
+                .optional()?)
+        })
+        .await
     }
 
     /// The messages a client is shown, each agent message with the tool calls of
@@ -607,7 +1168,95 @@ impl ConversationService {
         thread_id: &str,
         messages: Vec<ConversationMessage>,
     ) -> anyhow::Result<Vec<ConversationMessage>> {
-        todo!()
+        const ASKING: [MessageTrigger; 2] =
+            [MessageTrigger::UserInput, MessageTrigger::AgentMessage];
+        let mut visible: Vec<&ConversationMessage> = messages.iter().collect();
+        visible.sort_by(|a, b| {
+            a.created_at
+                .timestamp_millis()
+                .cmp(&b.created_at.timestamp_millis())
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        let (Some(first), Some(last)) = (visible.first(), visible.last()) else {
+            return Ok(messages);
+        };
+        if !visible
+            .iter()
+            .any(|message| message.role == MessageRole::Agent)
+        {
+            return Ok(messages);
+        }
+        let (first_at, last_at) = (first.created_at, last.created_at);
+
+        // The window starts at the last row before the first message that a person sent
+        // or that answers one. A step before that row is shown on it or nowhere. A step
+        // after it can belong to an answer here, even past a heartbeat's row, so a page
+        // shows what the whole history shows.
+        let id = thread_id.to_string();
+        let before = crate::db::run(move |conn| {
+            Ok(m::conversation_messages
+                .filter(m::thread_id.eq(id))
+                .filter(m::internal_step.eq(false))
+                .filter(m::triggered_by.eq_any(ASKING))
+                .filter(m::created_at.lt(DbDateTime(first_at)))
+                .order((m::created_at.desc(), m::id.desc()))
+                .select(m::created_at)
+                .first::<DateTime<Utc>>(conn)
+                .optional()?)
+        })
+        .await?;
+        let id = thread_id.to_string();
+        let steps = crate::db::run(move |conn| {
+            let mut query = m::conversation_messages
+                .filter(m::thread_id.eq(id))
+                .filter(m::role.eq(MessageRole::Agent))
+                .filter(m::internal_step.eq(true))
+                .filter(m::created_at.le(DbDateTime(last_at)))
+                .into_boxed();
+            if let Some(before) = before {
+                query = query.filter(m::created_at.gt(DbDateTime(before)));
+            }
+            Ok(query
+                .order((m::created_at.asc(), m::id.asc()))
+                .select((m::created_at, m::tool_calls))
+                .load::<(DateTime<Utc>, Option<Value>)>(conn)?)
+        })
+        .await?;
+
+        let mut hidden: HashMap<String, Vec<Value>> = HashMap::new();
+        for (created_at, tool_calls) in steps {
+            let Some(Value::Array(calls)) = tool_calls else {
+                continue;
+            };
+            if calls.is_empty() {
+                continue;
+            }
+            let shown_on = visible.iter().find(|message| {
+                ASKING.contains(&message.triggered_by)
+                    && message.created_at.timestamp_millis() >= created_at.timestamp_millis()
+            });
+            let Some(shown_on) = shown_on.filter(|message| message.role == MessageRole::Agent)
+            else {
+                continue;
+            };
+            hidden.entry(shown_on.id.clone()).or_default().extend(calls);
+        }
+        if hidden.is_empty() {
+            return Ok(messages);
+        }
+        Ok(messages
+            .into_iter()
+            .map(|mut message| {
+                let Some(mut calls) = hidden.remove(&message.id) else {
+                    return message;
+                };
+                if let Some(Value::Array(own)) = message.tool_calls.take() {
+                    calls.extend(own);
+                }
+                message.tool_calls = Some(Value::Array(calls));
+                message
+            })
+            .collect())
     }
 
     /// Record this thread's latest context-occupancy snapshot.
@@ -624,12 +1273,33 @@ impl ConversationService {
         context_tokens: i64,
         context_model: &str,
     ) -> anyhow::Result<()> {
-        todo!()
+        let id = thread_id.to_string();
+        let changes = ConversationThreadChangeset {
+            context_tokens: Some(Some(context_tokens)),
+            context_model: Some(Some(context_model.to_string())),
+            ..ConversationThreadChangeset::default()
+        };
+        crate::db::run(move |conn| {
+            diesel::update(t::conversation_threads.filter(t::id.eq(id)))
+                .set(&changes)
+                .execute(conn)?;
+            Ok(())
+        })
+        .await
     }
 
     /// The thread's latest context measurement in tokens, or `None` when it has none.
     pub async fn get_thread_context_tokens(&self, thread_id: &str) -> anyhow::Result<Option<i64>> {
-        todo!()
+        let id = thread_id.to_string();
+        let tokens = crate::db::run(move |conn| {
+            Ok(t::conversation_threads
+                .filter(t::id.eq(id))
+                .select(t::context_tokens)
+                .first::<Option<i64>>(conn)
+                .optional()?)
+        })
+        .await?;
+        Ok(tokens.flatten())
     }
 
     /// Update thread title.
@@ -640,13 +1310,55 @@ impl ConversationService {
         thread_id: &str,
         title: &str,
     ) -> anyhow::Result<()> {
-        todo!()
+        let (id, agent, user) = (
+            thread_id.to_string(),
+            agent_id.to_string(),
+            user_id.to_string(),
+        );
+        let changes = ConversationThreadChangeset {
+            title: Some(Some(title.to_string())),
+            ..ConversationThreadChangeset::default()
+        };
+        crate::db::run(move |conn| {
+            diesel::update(
+                t::conversation_threads
+                    .filter(t::id.eq(id))
+                    .filter(t::agent_id.eq(agent))
+                    .filter(t::user_id.eq(user)),
+            )
+            .set(&changes)
+            .execute(conn)?;
+            Ok(())
+        })
+        .await
     }
 
     /// Get thread with compaction summary (for context building).
     /// Compaction itself (summarize + mark rows) lives in `compaction_service.rs`.
     pub async fn get_thread_context(&self, thread_id: &str) -> anyhow::Result<StoredThreadContext> {
-        todo!()
+        let id = thread_id.to_string();
+        let thread = crate::db::run(move |conn| {
+            Ok(t::conversation_threads
+                .filter(t::id.eq(id))
+                .select((t::compaction_summary, t::thread_source))
+                .first::<(Option<String>, ThreadSource)>(conn)
+                .optional()?)
+        })
+        .await?;
+
+        let thread_source = thread
+            .as_ref()
+            .map_or(ThreadSource::Database, |(_, source)| *source);
+        let messages = self
+            .provider_for(Some(thread_source))
+            .get_messages(thread_id, None)
+            .await?;
+
+        Ok(StoredThreadContext {
+            compaction_summary: thread.and_then(|(summary, _)| summary),
+            thread_source,
+            messages,
+        })
     }
 
     /// One page of the messages a compaction summary replaced, oldest first, and
@@ -664,7 +1376,55 @@ impl ConversationService {
         thread_id: &str,
         options: CompactedListOptions,
     ) -> anyhow::Result<CompactedPage> {
-        todo!()
+        let want = options.offset + options.limit + 1;
+
+        let found: Vec<CompactedMessage> = match options.query.as_deref().filter(|q| !q.is_empty())
+        {
+            None => {
+                let rows =
+                    read_compacted(thread_id, None, options.offset, options.limit + 1).await?;
+                rows.into_iter()
+                    .enumerate()
+                    .map(|(i, row)| compacted(row, options.offset + i as i64))
+                    .collect()
+            }
+            Some(query) => {
+                let needle = query.to_lowercase();
+                let mut matches: Vec<CompactedMessage> = Vec::new();
+                let mut after: Option<(DateTime<Utc>, String)> = None;
+                let mut position = 0i64;
+                while (matches.len() as i64) < want {
+                    let batch =
+                        read_compacted(thread_id, after.clone(), 0, COMPACTED_SEARCH_BATCH).await?;
+                    let batch_len = batch.len() as i64;
+                    let last = batch.last().map(|row| (row.5, row.0.clone()));
+                    for row in batch {
+                        let mut text = vec![row.2.clone()];
+                        if let Some(tool_calls) = &row.3 {
+                            text.extend(strings_in(tool_calls));
+                        }
+                        if text.join("\n").to_lowercase().contains(&needle) {
+                            matches.push(compacted(row, position));
+                        }
+                        position += 1;
+                    }
+                    if batch_len < COMPACTED_SEARCH_BATCH {
+                        break;
+                    }
+                    after = last;
+                }
+                matches
+                    .into_iter()
+                    .skip(usize::try_from(options.offset).unwrap_or(0))
+                    .collect()
+            }
+        };
+        let limit = usize::try_from(options.limit).unwrap_or(0);
+        let more = found.len() > limit;
+        Ok(CompactedPage {
+            messages: found.into_iter().take(limit).collect(),
+            more,
+        })
     }
 
     /// The compacted message at `position`, or `None` past the last one.
@@ -673,7 +1433,8 @@ impl ConversationService {
         thread_id: &str,
         position: i64,
     ) -> anyhow::Result<Option<CompactedMessage>> {
-        todo!()
+        let rows = read_compacted(thread_id, None, position, 1).await?;
+        Ok(rows.into_iter().next().map(|row| compacted(row, position)))
     }
 
     /// The threads idle compaction may have to finish after a restart: large, and used since `since`.
@@ -682,7 +1443,25 @@ impl ConversationService {
         min_tokens: i64,
         since: DateTime<Utc>,
     ) -> anyhow::Result<Vec<IdleCompactionCandidate>> {
-        todo!()
+        let rows = crate::db::run(move |conn| {
+            Ok(t::conversation_threads
+                .filter(t::context_tokens.ge(Some(min_tokens)))
+                .filter(t::updated_at.ge(DbDateTime(since)))
+                .select((t::id, t::agent_id, t::user_id, t::compacted_at))
+                .load::<(String, String, String, Option<DateTime<Utc>>)>(conn)?)
+        })
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(id, agent_id, user_id, compacted_at)| IdleCompactionCandidate {
+                    id,
+                    agent_id,
+                    user_id,
+                    compacted_at,
+                },
+            )
+            .collect())
     }
 
     /// Set the external thread ID on an existing thread.
@@ -693,7 +1472,25 @@ impl ConversationService {
         thread_id: &str,
         external_thread_id: &str,
     ) -> anyhow::Result<()> {
-        todo!()
+        let id = thread_id.to_string();
+        let changes = ConversationThreadChangeset {
+            external_thread_id: Some(Some(external_thread_id.to_string())),
+            ..ConversationThreadChangeset::default()
+        };
+        crate::db::run(move |conn| {
+            diesel::update(t::conversation_threads.filter(t::id.eq(id)))
+                .set(&changes)
+                .execute(conn)?;
+            Ok(())
+        })
+        .await?;
+        let mut tracked = IndexMap::new();
+        if let Some(agent_id) = CONFIG.agent_id().filter(|id| !id.is_empty()) {
+            tracked.insert("agent.id".to_string(), agent_id);
+        }
+        tracked.insert("thread.id".to_string(), thread_id.to_string());
+        track_event("thread external id set", None, Some(tracked));
+        Ok(())
     }
 }
 
@@ -701,6 +1498,61 @@ impl Default for ConversationService {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// The error Prisma's `update` gives when no row matches.
+fn record_not_found() -> anyhow::Error {
+    anyhow::anyhow!(
+        "An operation failed because it depends on one or more records that were required but not found. No record was found for an update."
+    )
+}
+
+async fn insert_thread(row: NewConversationThread) -> anyhow::Result<ConversationThread> {
+    crate::db::run(move |conn| {
+        Ok(diesel::insert_into(t::conversation_threads)
+            .values(&row)
+            .returning(ConversationThread::as_returning())
+            .get_result(conn)?)
+    })
+    .await
+}
+
+/// Up to `take` compacted rows of a thread in position order, after skipping `skip`,
+/// starting after the row `after` names when given.
+async fn read_compacted(
+    thread_id: &str,
+    after: Option<(DateTime<Utc>, String)>,
+    skip: i64,
+    take: i64,
+) -> anyhow::Result<Vec<CompactedRow>> {
+    let id = thread_id.to_string();
+    crate::db::run(move |conn| {
+        let mut query = m::conversation_messages
+            .filter(m::thread_id.eq(id))
+            .filter(m::is_compacted.eq(true))
+            .into_boxed();
+        if let Some((created_at, after_id)) = after {
+            query = query.filter(
+                m::created_at.gt(DbDateTime(created_at)).or(m::created_at
+                    .eq(DbDateTime(created_at))
+                    .and(m::id.gt(after_id))),
+            );
+        }
+        Ok(query
+            .order((m::created_at.asc(), m::id.asc()))
+            .offset(skip)
+            .limit(take)
+            .select((
+                m::id,
+                m::role,
+                m::content,
+                m::tool_calls,
+                m::internal_step,
+                m::created_at,
+            ))
+            .load::<CompactedRow>(conn)?)
+    })
+    .await
 }
 
 /// Every key and value a stored tool call holds, as written, not as `JSON.stringify` escapes them.
@@ -725,3 +1577,13 @@ fn strings_in(value: &Value) -> Vec<String> {
 
 pub static CONVERSATION_SERVICE: LazyLock<ConversationService> =
     LazyLock::new(ConversationService::new);
+
+/// What tests set in place of the configuration.
+#[cfg(test)]
+pub(crate) mod testing {
+    use crate::config::ThreadMode;
+
+    /// The thread mode the service runs in, in place of `THREAD_MODE`.
+    pub(crate) static THREAD_MODE: parking_lot::Mutex<Option<ThreadMode>> =
+        parking_lot::Mutex::new(None);
+}

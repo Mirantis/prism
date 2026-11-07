@@ -23,3 +23,5 @@ pub mod sign_in_form;
 pub mod supported;
 pub mod video_stream;
 // @generated-modules-end
+
+pub(crate) mod child_process;

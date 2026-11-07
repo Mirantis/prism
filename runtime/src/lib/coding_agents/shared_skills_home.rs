@@ -25,10 +25,38 @@ pub async fn prepare_shared_skills_home(
     config_dir: &str,
     operator_home: Option<&str>,
 ) -> anyhow::Result<CodingAgentHome> {
-    todo!()
+    let skills_dir = environment.paths().skills_dir;
+    let files = environment.files();
+    let link = format!("{config_dir}/skills");
+
+    if operator_home.is_some_and(|home| !home.is_empty() && home == config_dir) {
+        return Ok(CodingAgentHome {
+            config_dir: config_dir.to_string(),
+            skills_linked: points_at(environment, &link, &skills_dir).await,
+        });
+    }
+
+    files.mkdir(config_dir).await?;
+    if files.symlink(&skills_dir, &link).await.is_err() {
+        // A home that is not linked to the skills still runs tasks, so this is
+        // reported rather than returned; the startup log carries `skills_linked`.
+        return Ok(CodingAgentHome {
+            config_dir: config_dir.to_string(),
+            skills_linked: false,
+        });
+    }
+    Ok(CodingAgentHome {
+        config_dir: config_dir.to_string(),
+        skills_linked: points_at(environment, &link, &skills_dir).await,
+    })
 }
 
 /// Whether the link really resolves to the skills dir, rather than merely existing.
 async fn points_at(environment: &dyn ExecutionEnvironment, link: &str, target: &str) -> bool {
-    todo!()
+    let files = environment.files();
+    let (from, to) = tokio::join!(files.realpath(link), files.realpath(target));
+    match (from, to) {
+        (Ok(from), Ok(to)) => from == to,
+        _ => false,
+    }
 }

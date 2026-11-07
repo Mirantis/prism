@@ -15,7 +15,10 @@ use super::llm_provider::{
     provider_options,
 };
 use super::tool_changes::bare_model_id;
-use crate::ai::{Tool, ToolResultOutput};
+use crate::ai::{
+    ToModelOutputOptions, Tool, ToolExecuteFunction, ToolExecutionOptions, ToolResultOutput,
+    ToolType, execute_fn, to_model_output_fn, tool, zod_schema,
+};
 
 pub const LOAD_TOOLS_NAME: &str = "load_tools";
 
@@ -155,7 +158,29 @@ fn anthropic_output(load: &ToolLoad) -> ToolResultOutput {
 /// The `load_tools` tool on the Anthropic Messages API: executes `loader.load` and
 /// answers with `tool_reference` blocks.
 fn anthropic_load_tool(loader: Arc<ToolLoader>) -> Tool {
-    todo!()
+    tool(Tool {
+        description: Some(loader.description.clone()),
+        input_schema: zod_schema(LOAD_REQUEST_SCHEMA.clone()),
+        execute: Some(load_execute(loader)),
+        to_model_output: Some(to_model_output_fn(
+            |options: ToModelOutputOptions| async move {
+                let load: ToolLoad = serde_json::from_value(options.output)?;
+                Ok(anthropic_output(&load))
+            },
+        )),
+        ..Default::default()
+    })
+}
+
+/// `execute: async (request) => loader.load(request)`.
+fn load_execute(loader: Arc<ToolLoader>) -> ToolExecuteFunction {
+    execute_fn(move |input: Value, _options: ToolExecutionOptions| {
+        let loader = Arc::clone(&loader);
+        async move {
+            let request: ToolLoadRequest = serde_json::from_value(input)?;
+            Ok(serde_json::to_value((loader.load)(&request))?)
+        }
+    })
 }
 
 fn anthropic_replay(call: &StoredToolLoad, _loader: &ToolLoader) -> ReplayedToolLoad {
@@ -242,8 +267,55 @@ fn open_ai_call_id(id: &str) -> String {
 /// `execution: 'client'`): the runtime keeps the `ToolLoad` as the call's result
 /// and the model output is the wire's `{ tools }`.
 fn open_ai_load_tool(loader: Arc<ToolLoader>) -> Tool {
-    todo!()
+    let mut args = Map::new();
+    args.insert("execution".into(), json!("client"));
+    args.insert("description".into(), json!(loader.description));
+    args.insert("parameters".into(), LOAD_REQUEST_JSON_SCHEMA.clone());
+    let execute_loader = Arc::clone(&loader);
+    let output_loader = loader;
+    Tool {
+        tool_type: ToolType::Provider {
+            id: "openai.tool_search".into(),
+            args,
+            is_provider_executed: false,
+            supports_deferred_results: None,
+        },
+        input_schema: zod_schema(TOOL_SEARCH_INPUT_SCHEMA.clone()),
+        execute: Some(execute_fn(
+            move |input: Value, _options: ToolExecutionOptions| {
+                let loader = Arc::clone(&execute_loader);
+                async move {
+                    let input: OpenAiSearchInput = serde_json::from_value(input)?;
+                    Ok(serde_json::to_value((loader.load)(&open_ai_request(
+                        &input,
+                    )))?)
+                }
+            },
+        )),
+        to_model_output: Some(to_model_output_fn(move |options: ToModelOutputOptions| {
+            let loader = Arc::clone(&output_loader);
+            async move {
+                let load: ToolLoad = serde_json::from_value(options.output)?;
+                Ok(open_ai_output(&load, &loader))
+            }
+        })),
+        ..Default::default()
+    }
 }
+
+/// The OpenAI tool search's input schema (`arguments`, `call_id`) as the SDK's zod
+/// schema writes it.
+static TOOL_SEARCH_INPUT_SCHEMA: LazyLock<Value> = LazyLock::new(|| {
+    json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+            "arguments": {},
+            "call_id": { "type": ["string", "null"] }
+        },
+        "additionalProperties": false
+    })
+});
 
 fn open_ai_replay(call: &StoredToolLoad, loader: &ToolLoader) -> ReplayedToolLoad {
     let id = open_ai_call_id(&call.id);
@@ -271,7 +343,12 @@ pub static OPENAI_DEFERRED_TOOLS: LazyLock<DeferredToolProtocol> =
 /// A plain `load_tools` tool with no model output of its own: it executes
 /// `loader.load` and returns the `ToolLoad`.
 fn realtime_load_tool(loader: Arc<ToolLoader>) -> Tool {
-    todo!()
+    tool(Tool {
+        description: Some(loader.description.clone()),
+        input_schema: zod_schema(LOAD_REQUEST_SCHEMA.clone()),
+        execute: Some(load_execute(loader)),
+        ..Default::default()
+    })
 }
 
 fn realtime_replay(call: &StoredToolLoad, _loader: &ToolLoader) -> ReplayedToolLoad {

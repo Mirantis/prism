@@ -11,7 +11,9 @@ pub struct BedrockAnthropicProvider {
     pub settings: AmazonBedrockProviderSettings,
 }
 
-pub fn create_bedrock_anthropic(settings: AmazonBedrockProviderSettings) -> BedrockAnthropicProvider {
+pub fn create_bedrock_anthropic(
+    settings: AmazonBedrockProviderSettings,
+) -> BedrockAnthropicProvider {
     BedrockAnthropicProvider { settings }
 }
 

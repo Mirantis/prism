@@ -33,8 +33,8 @@ pub struct ScreenLook {
 /// What a session offers the tools: its browser, and the model to show a picture to.
 #[async_trait]
 pub trait ComputerBrowser: Send + Sync {
-    async fn browse(&self, command: BrowserCommand) -> BrowserResult;
-    async fn look_at_screen(&self) -> ScreenLook;
+    async fn browse(&self, command: BrowserCommand) -> anyhow::Result<BrowserResult>;
+    async fn look_at_screen(&self) -> anyhow::Result<ScreenLook>;
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,7 +86,7 @@ pub struct UserScreenResult {
 pub trait ComputerUserScreen: Send + Sync {
     /// The picture into the session, plus the words on it as `text` where the host can
     /// read them.
-    async fn look_at_user_screen(&self) -> UserScreenResult;
+    async fn look_at_user_screen(&self) -> anyhow::Result<UserScreenResult>;
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,17 +171,17 @@ pub struct ScrollInput {
 pub trait ComputerDesktop: Send + Sync {
     fn width(&self) -> i64;
     fn height(&self) -> i64;
-    async fn list_elements(&self, input: ListElementsInput) -> DesktopActionResult;
-    async fn list_windows(&self) -> DesktopActionResult;
-    async fn window_action(&self, input: WindowActionInput) -> DesktopActionResult;
-    async fn find_text(&self, input: FindTextInput) -> FindTextResult;
-    async fn click_text(&self, input: ClickTextInput) -> DesktopActionResult;
-    async fn move_pointer(&self, input: MoveInput) -> DesktopActionResult;
-    async fn click(&self, input: ClickInput) -> DesktopActionResult;
-    async fn drag(&self, input: DragInput) -> DesktopActionResult;
-    async fn type_text(&self, input: TypeInput) -> DesktopActionResult;
-    async fn key(&self, input: KeyInput) -> DesktopActionResult;
-    async fn scroll(&self, input: ScrollInput) -> DesktopActionResult;
+    async fn list_elements(&self, input: ListElementsInput) -> anyhow::Result<DesktopActionResult>;
+    async fn list_windows(&self) -> anyhow::Result<DesktopActionResult>;
+    async fn window_action(&self, input: WindowActionInput) -> anyhow::Result<DesktopActionResult>;
+    async fn find_text(&self, input: FindTextInput) -> anyhow::Result<FindTextResult>;
+    async fn click_text(&self, input: ClickTextInput) -> anyhow::Result<DesktopActionResult>;
+    async fn move_pointer(&self, input: MoveInput) -> anyhow::Result<DesktopActionResult>;
+    async fn click(&self, input: ClickInput) -> anyhow::Result<DesktopActionResult>;
+    async fn drag(&self, input: DragInput) -> anyhow::Result<DesktopActionResult>;
+    async fn type_text(&self, input: TypeInput) -> anyhow::Result<DesktopActionResult>;
+    async fn key(&self, input: KeyInput) -> anyhow::Result<DesktopActionResult>;
+    async fn scroll(&self, input: ScrollInput) -> anyhow::Result<DesktopActionResult>;
 }
 
 /// The field that picks a computer, on every tool that acts on one once remote computers

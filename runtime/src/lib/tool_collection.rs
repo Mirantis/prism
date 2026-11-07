@@ -6,25 +6,52 @@
 //! same pattern `create_task_tool` itself uses) so this module never imports
 //! `invoke.rs`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::ai::{ModelMessage, Tool, ToolSet};
+use crate::config::CONFIG;
+use crate::db::models::ThreadSource;
+use crate::lib::coding_agents::availability::ensure_coding_agents_detected;
+use crate::lib::execution_environments::get_execution_environment::get_execution_environment;
 use crate::lib::llm_providers::llm_provider::{
     CachePointFragment, is_deferred_tool, merge_provider_options,
 };
+use crate::lib::mcp_client::{MCPConnectionConfig, get_mcp_tools};
 use crate::lib::pending_file_writes::PendingFileWrites;
 use crate::lib::task_tool::Invoker;
+use crate::lib::task_tool::create_task_tool;
+use crate::lib::tool_names::{cap_tool_names, to_model_tool_name};
+use crate::services::agent_workspace_service::AGENT_WORKSPACE_SERVICE;
 use crate::services::agent_workspace_service::SubagentInfo;
 use crate::services::channel_adapter_interface::ChannelName;
+use crate::services::coding_agent_sign_in::coding_agent_account::installed_clis;
 use crate::services::computer::computer_access::ComputerUse;
+use crate::services::computer::supported::has_computer_for_mode;
+use crate::services::conversation_service::CONVERSATION_SERVICE;
 use crate::services::delivery_target_service::PostingCeiling;
 use crate::services::outbound_message_service::SEND_MESSAGE_TOOL_NAME;
+use crate::services::plugin_mcp_service::PLUGIN_MCP_SERVICE;
+use crate::tools::agent_config::get_agent_config_tools;
+use crate::tools::attachments::get_attachment_tools;
+use crate::tools::coding_agent_sign_in::get_coding_agent_sign_in_tools;
+use crate::tools::computer::get_computer_tools;
+use crate::tools::conversation_history::get_conversation_history_tools;
+use crate::tools::cron::get_cron_tools;
+use crate::tools::goals::get_goal_tools;
 use crate::tools::meeting::{
     MEETING_MEMBERSHIP_TOOL_NAMES, MEETING_READ_TOOL_NAME, MEETING_SCREEN_TOOL_NAMES,
 };
+use crate::tools::meeting::{MeetingToolsInput, get_meeting_tools, is_meeting_supported};
+use crate::tools::memory::get_memory_tools;
+use crate::tools::send_message::get_send_message_tools;
 use crate::tools::share_file::SHARE_FILE_TOOL_NAME;
+use crate::tools::share_file::get_share_file_tools;
+use crate::tools::shell::get_shell_tools;
+use crate::tools::skills::get_skill_tools;
+use crate::tools::web::web_fetch::get_web_fetch_tools;
+use crate::{log_info, log_warn};
 
 /// The tools that post a message, and list where it may go.
 const MESSAGE_TOOL_NAMES: [&str; 2] = [SEND_MESSAGE_TOOL_NAME, "list_message_targets"];
@@ -78,12 +105,12 @@ static MEETING_TOOLS_AVAILABLE: AtomicBool = AtomicBool::new(false);
 
 /// Probe for the meeting toolchain and remember the answer.
 ///
-/// Called from the startup sequence. Never fails: a failed probe logs `[Tools]
-/// Meeting toolchain probe failed: ${err}` and means "no voice meetings here",
-/// which is the correct outcome for every host without the container's browser
-/// and audio packages.
+/// Called from the startup sequence. Never fails: a host without the container's
+/// browser and audio packages answers "no voice meetings here".
 pub async fn init_meeting_tool_availability() -> bool {
-    todo!()
+    let available = is_meeting_supported().await;
+    MEETING_TOOLS_AVAILABLE.store(available, Ordering::Relaxed);
+    available
 }
 
 /// Whether `init_meeting_tool_availability` found the meeting toolchain.
@@ -126,7 +153,261 @@ pub struct CollectedTools {
 /// 7. Logs `Collected ${builtIn} built-in + ${nexus} platform MCP + ${plugin}
 ///    plugin MCP tool(s); ${subagents} subagent(s)`.
 pub async fn collect_tools(input: CollectToolsInput) -> anyhow::Result<CollectedTools> {
-    todo!()
+    let origin_channel = input.origin_channel.unwrap_or(ChannelName::Websocket);
+    let mode = input.mode.as_str();
+    let thread_id = input.thread_id.as_deref();
+    let workspace_root = input.workspace_root.as_deref();
+    let origin_channel_id = input.origin_channel_id.as_deref();
+    // The shell tools name the available coding agents in their descriptions, and
+    // the tools block has to be byte-identical from turn to turn for the prompt
+    // cache. Memoized, so only a turn that beats boot to it pays anything.
+    ensure_coding_agents_detected().await;
+    // Asked once per process, so the sign-in's agent list stays the same too.
+    let sign_in_agents = if mode == "chat" {
+        installed_clis(get_execution_environment().as_ref()).await
+    } else {
+        Vec::new()
+    };
+
+    let mut built_in_tools = ToolSet::new();
+    built_in_tools.extend(get_memory_tools(&input.user_id, &input.agent_id));
+    if has_computer_for_mode(mode) {
+        built_in_tools.extend(get_computer_tools(
+            input.computer_use.clone(),
+            None,
+            Some(mode),
+        ));
+    }
+    built_in_tools.extend(get_cron_tools(
+        &input.user_id,
+        &input.agent_id,
+        mode,
+        thread_id,
+        Some(origin_channel),
+        origin_channel_id,
+    ));
+    built_in_tools.extend(get_goal_tools(
+        &input.user_id,
+        &input.agent_id,
+        thread_id,
+        origin_channel,
+        origin_channel_id,
+    ));
+    // A person is there to sign in only in chat.
+    built_in_tools.extend(get_coding_agent_sign_in_tools(
+        &input.user_id,
+        &input.agent_id,
+        thread_id,
+        origin_channel,
+        origin_channel_id,
+        &sign_in_agents,
+    ));
+    built_in_tools.extend(get_agent_config_tools()?);
+    built_in_tools.extend(get_shell_tools(
+        workspace_root,
+        input.pending_file_writes.clone(),
+    ));
+    // Same workspace root as the shell tools: write-then-share has to agree on what
+    // a relative path means, and the write/read sequencing compares resolved paths.
+    built_in_tools.extend(get_share_file_tools(
+        workspace_root,
+        input.pending_file_writes.clone(),
+    ));
+    // A run whose delivery setting reaches nowhere gets no tool to post with.
+    let reaches_nowhere = input
+        .posting_ceiling
+        .as_ref()
+        .is_some_and(|ceiling| !ceiling.web_chat && ceiling.targets.is_empty());
+    if !reaches_nowhere {
+        built_in_tools.extend(get_send_message_tools(
+            &input.user_id,
+            &input.agent_id,
+            mode,
+            thread_id,
+            Some(origin_channel),
+            origin_channel_id,
+            input.posting_ceiling.clone(),
+        ));
+    }
+    built_in_tools.extend(get_attachment_tools(
+        &input.user_id,
+        &input.agent_id,
+        thread_id,
+        workspace_root,
+        input.register_attachment_injection.clone(),
+    ));
+    built_in_tools.extend(get_web_fetch_tools(&input.user_id, &input.agent_id));
+    // Every run bound to a stored thread gets it, so the thread keeps one tool list
+    // across its modes. A thread read live from a channel keeps its compacted
+    // messages there.
+    if let Some(thread_id) = thread_id
+        && CONVERSATION_SERVICE.get_thread_source(thread_id).await? == Some(ThreadSource::Database)
+    {
+        built_in_tools.extend(get_conversation_history_tools(thread_id, workspace_root));
+    }
+    // Progressive disclosure: the `skill` tool loads a skill's full SKILL.md body on
+    // demand. The workspace root merges the repo's skills with the global ones.
+    // Empty (and omitted) when no skills are available.
+    built_in_tools.extend(get_skill_tools(workspace_root).await);
+    // Live voice meetings. Empty unless the host has the browser/audio toolchain
+    // and an OpenAI key; see `MEETING_TOOLS_AVAILABLE`.
+    if meeting_tools_available() {
+        built_in_tools.extend(get_meeting_tools(MeetingToolsInput {
+            user_id: input.user_id.clone(),
+            agent_id: input.agent_id.clone(),
+            thread_id: input.thread_id.clone(),
+            // `see_screen` delivers its picture into the meeting's Realtime session,
+            // so it has to know whether the model asking for it is the one in the call.
+            in_meeting_session: Some(mode == "meeting"),
+        }));
+    }
+
+    // Register every tool the Lens Agents MCP endpoint exposes. In the sandbox this
+    // is the project-scoped endpoint, which already excludes first-party shell tools
+    // by design (those are local built-ins above), so no tool allowlist is sent.
+    let nexus_tools = match CONFIG
+        .nexus_mcp_url
+        .as_deref()
+        .filter(|url| !url.is_empty())
+    {
+        Some(url) => {
+            get_mcp_tools(MCPConnectionConfig {
+                url: url.to_string(),
+            })
+            .await
+        }
+        None => ToolSet::new(),
+    };
+
+    // Tools contributed by installed Agent Plugins, already namespaced by plugin and
+    // server and in a stable order.
+    let plugin_tools = PLUGIN_MCP_SERVICE.get_tools().await;
+
+    // Merged with an explicit guard, so "nothing replaces a built-in" is a property
+    // of this code and not of a naming convention that a future rename could
+    // quietly invalidate. Platform tool names are un-namespaced, so one answering
+    // to `memory_write` would otherwise inherit that name's exemption from the risk
+    // gate, whose list matches bare names.
+    let mut merged = built_in_tools.clone();
+    let mut mcp_names: HashSet<String> = HashSet::new();
+    for (source, tools) in [("Nexus", &nexus_tools), ("Plugins", &plugin_tools)] {
+        for (name, tool) in tools {
+            if merged.contains_key(name) {
+                log_warn!(
+                    "[{}] dropping tool \"{}\" — that name is already taken",
+                    source,
+                    name
+                );
+                continue;
+            }
+            merged.insert(name.clone(), tool.clone());
+            mcp_names.insert(name.clone());
+        }
+    }
+
+    // Applied to everything, not just the built-ins: an MCP tool that shares a name
+    // with a built-in the current mode removed must not survive either.
+    let mut mode_filtered_tools = filter_tools_by_mode(merged, mode);
+    // A run with a posting ceiling reaches people only through `send_message`,
+    // which has no file, so a file it shared would reach nobody.
+    if input.posting_ceiling.is_some() {
+        mode_filtered_tools.shift_remove(SHARE_FILE_TOOL_NAME);
+    }
+
+    // Locked-in mode: withhold the workspace-markdown writers and the long-term
+    // memory writers. Applied after the mode filter so it holds for every mode, and
+    // over the merged map so a platform MCP tool cannot answer to a withheld name.
+    // The refusals in agent_config.rs and memory.rs are what enforce the lock.
+    let mut filtered_tools = if input.locked_in {
+        omit_locked_tools(mode_filtered_tools)
+    } else {
+        mode_filtered_tools
+    };
+
+    // Fetch subagents (skip for subagent invocations to prevent recursion).
+    let subagents: Vec<SubagentInfo> = if mode == "subagent" {
+        Vec::new()
+    } else {
+        AGENT_WORKSPACE_SERVICE
+            .get_subagents(&input.agent_id)
+            .await?
+            .into_iter()
+            .map(|subagent| SubagentInfo {
+                id: subagent.agent.id,
+                name: subagent.agent.name,
+                description: subagent.description,
+            })
+            .collect()
+    };
+
+    // Add the Task tool when subagents are configured.
+    if !subagents.is_empty() && mode != "subagent" {
+        log_info!("Adding Task tool for {} subagent(s)", subagents.len());
+        filtered_tools.insert(
+            "Task".to_string(),
+            create_task_tool(
+                subagents.clone(),
+                input.user_id.clone(),
+                input.task_invoker.clone(),
+            ),
+        );
+        mcp_names.remove("Task");
+    }
+
+    // Last word on what a tool may be called, and deliberately the last step here:
+    // this is the only assembly point every request goes through (chat, compaction,
+    // and the voice-meeting bridge, which re-declares these same keys to the
+    // Realtime API under the same limit).
+    //
+    // Every built-in name is reserved, `Task` included, and the set is taken before
+    // the filters rather than after: a mode that withheld `share_file` leaves its
+    // name unclaimed, and a remote `share.file` sanitizing into that slot would hand
+    // the model a tool the mode had just taken away.
+    let mut reserved_names: HashSet<String> = built_in_tools.keys().cloned().collect();
+    reserved_names.insert("Task".to_string());
+    let origins = capped_origins(filtered_tools.keys(), &reserved_names);
+    let tools = cap_tool_names(filtered_tools, "collect", &reserved_names);
+    // Matched on where each kept tool came from, since capping can rename a tool.
+    let deferrable: Vec<String> = tools
+        .keys()
+        .filter(|name| {
+            origins
+                .get(name.as_str())
+                .is_some_and(|original| mcp_names.contains(original))
+        })
+        .cloned()
+        .collect();
+
+    log_info!(
+        "Collected {} built-in + {} platform MCP + {} plugin MCP tool(s); {} subagent(s)",
+        built_in_tools.len(),
+        nexus_tools.len(),
+        plugin_tools.len(),
+        subagents.len()
+    );
+
+    Ok(CollectedTools {
+        tools,
+        subagents,
+        deferrable,
+    })
+}
+
+/// The original name behind each name `cap_tool_names` keeps, by the same rule:
+/// a rename onto a reserved name is dropped, and a collision keeps the first.
+fn capped_origins<'a>(
+    names: impl Iterator<Item = &'a String>,
+    reserved: &HashSet<String>,
+) -> HashMap<String, String> {
+    let mut origins: HashMap<String, String> = HashMap::new();
+    for name in names {
+        let capped = to_model_tool_name(name);
+        if &capped != name && reserved.contains(&capped) {
+            continue;
+        }
+        origins.entry(capped).or_insert_with(|| name.clone());
+    }
+    origins
 }
 
 /// Mark the last tool with the provider's cache breakpoint. Tools are stable per
