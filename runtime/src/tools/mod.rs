@@ -14,3 +14,5 @@ pub mod shell;
 pub mod skills;
 pub mod web;
 // @generated-modules-end
+#[cfg(test)]
+pub(crate) mod schema_fixture;

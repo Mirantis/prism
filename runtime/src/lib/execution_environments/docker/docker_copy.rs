@@ -6,6 +6,15 @@
 //! volumes still hold the work — a container is created for the copy and
 //! removed afterwards.
 
+use serde_json::json;
+
+use super::docker_environment::exec_image;
+use super::engine::{EngineCallOptions, engine_call, engine_call_args, engine_failure};
+use super::volumes::volume_mounts;
+use crate::config::CONFIG;
+use crate::log_info;
+use crate::support::js;
+
 pub const CONTROL_TIMEOUT_MS: u64 = 60_000;
 
 /// A large workspace crossing the engine's pipe is the slow case.
@@ -23,7 +32,10 @@ pub struct DockerAccess {
 impl DockerAccess {
     /// Removes the container when this call created one; otherwise does nothing.
     pub async fn release(&self) -> anyhow::Result<()> {
-        todo!()
+        if let Some(temporary) = &self.temporary {
+            remove_container(temporary).await;
+        }
+        Ok(())
     }
 }
 
@@ -32,7 +44,45 @@ impl DockerAccess {
 /// Reuses the running exec container when it is there, so a copy never disturbs
 /// work in progress.
 pub async fn open_volumes(deployment: &str, container: &str) -> anyhow::Result<DockerAccess> {
-    todo!()
+    if is_running(container).await {
+        return Ok(DockerAccess {
+            container: container.to_string(),
+            temporary: None,
+        });
+    }
+
+    let temporary = format!("{container}-copy");
+    remove_container(&temporary).await;
+
+    let image = exec_image(&CONFIG.app_version);
+    let mut argv: Vec<String> = ["run", "--detach", "--name", temporary.as_str()]
+        .map(str::to_string)
+        .to_vec();
+    for mount in volume_mounts(deployment) {
+        argv.push("--volume".to_string());
+        argv.push(format!("{}:{}", mount.name, mount.path));
+    }
+    argv.extend([image, "sleep".to_string(), "infinity".to_string()]);
+    let run = engine_call(
+        &argv,
+        EngineCallOptions {
+            timeout_ms: CONTROL_TIMEOUT_MS,
+            env: None,
+        },
+    )
+    .await;
+    if run.error.is_some() || run.exit_code != Some(0) {
+        anyhow::bail!(engine_failure("could not open the agent volumes", &run));
+    }
+    log_info!(
+        json!({ "container": temporary }),
+        "[Docker] opened the volumes for a copy"
+    );
+
+    Ok(DockerAccess {
+        container: temporary.clone(),
+        temporary: Some(temporary),
+    })
 }
 
 /// Copy one entry from this machine into the container.
@@ -49,13 +99,39 @@ pub async fn copy_from_container(container: &str, from: &str, to: &str) -> anyho
 /// directory to drop into: given an existing directory the engine copies
 /// *inside* it, which would nest a second copy on a re-run.
 async fn copy(from: &str, to: &str) -> anyhow::Result<()> {
-    todo!()
+    let run = engine_call_args(
+        &["cp", "--archive", from, to],
+        EngineCallOptions {
+            timeout_ms: COPY_TIMEOUT_MS,
+            env: None,
+        },
+    )
+    .await;
+    if run.error.is_some() || run.exit_code != Some(0) {
+        anyhow::bail!(engine_failure(&format!("could not copy {from} to {to}"), &run));
+    }
+    Ok(())
 }
 
 async fn is_running(container: &str) -> bool {
-    todo!()
+    let run = engine_call_args(
+        &["inspect", "--format", "{{.State.Running}}", container],
+        EngineCallOptions {
+            timeout_ms: CONTROL_TIMEOUT_MS,
+            env: None,
+        },
+    )
+    .await;
+    run.error.is_none() && run.exit_code == Some(0) && js::trim(&run.stdout) == "true"
 }
 
 async fn remove_container(name: &str) {
-    todo!()
+    engine_call_args(
+        &["rm", "--force", name],
+        EngineCallOptions {
+            timeout_ms: CONTROL_TIMEOUT_MS,
+            env: None,
+        },
+    )
+    .await;
 }

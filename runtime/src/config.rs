@@ -1413,8 +1413,10 @@ impl Config {
             );
         }
 
-        let claude_code_subscription = subscription_forced_in(env, CodingAgentName::ClaudeCode);
-        let codex_subscription = subscription_forced_in(env, CodingAgentName::Codex);
+        let process_env = env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        let claude_code_subscription =
+            subscription_forced_in(&process_env, CodingAgentName::ClaudeCode);
+        let codex_subscription = subscription_forced_in(&process_env, CodingAgentName::Codex);
         let claude_code_skip_permissions = e
             .get("CLAUDE_CODE_SKIP_PERMISSIONS")
             .is_some_and(|v| v.trim().to_lowercase() == "true");

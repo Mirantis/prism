@@ -13,18 +13,17 @@
 //! parked it there to check, the wait never ends and the command times out. The commands
 //! in one call run in order without it.
 
-use std::collections::HashMap;
-
-use indexmap::IndexMap;
 use std::sync::LazyLock;
 
 use bytes::Bytes;
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+use super::child_process::{DEFAULT_MAX_BUFFER, ExecFileOptions, exec_file, process_env};
 pub use super::screen_size::OCR_SCALE;
-use super::screen_size::{ScreenSize, math_round, picture_for};
+use super::screen_size::{ScreenSize, math_round, picture_for, size_text};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -151,7 +150,9 @@ impl DesktopControl {
 
     /// Put the pointer on a point given in picture coordinates, without clicking.
     pub async fn move_to(&self, x: f64, y: f64) -> anyhow::Result<()> {
-        todo!()
+        let (px, py) = self.to_screen(x, y);
+        self.xdotool(vec!["mousemove".into(), px.to_string(), py.to_string()])
+            .await
     }
 
     /// Click at a point given in picture coordinates, or where the pointer is when none is
@@ -162,22 +163,80 @@ impl DesktopControl {
         button: MouseButton,
         count: i64,
     ) -> anyhow::Result<()> {
-        todo!()
+        let mut args: Vec<String> = Vec::new();
+        if let Some(at) = at {
+            let (px, py) = self.to_screen(at.x, at.y);
+            args.extend(["mousemove".to_string(), px.to_string(), py.to_string()]);
+        }
+        args.extend([
+            "click".to_string(),
+            "--repeat".to_string(),
+            count.to_string(),
+            "--delay".to_string(),
+            "80".to_string(),
+            button.x11().to_string(),
+        ]);
+        self.xdotool(args).await
     }
 
     /// Press at one point, move to another, release, all in picture coordinates. One
     /// `xdotool` call holds the whole sequence, with `sleep`s between the steps.
     pub async fn drag(&self, from: Point, to: Point, button: MouseButton) -> anyhow::Result<()> {
-        todo!()
+        let (x0, y0) = self.to_screen(from.x, from.y);
+        let (x1, y1) = self.to_screen(to.x, to.y);
+        let mut args: Vec<String> = vec![
+            "mousemove".into(),
+            x0.to_string(),
+            y0.to_string(),
+            "mousedown".into(),
+            button.x11().into(),
+            "sleep".into(),
+            "0.1".into(),
+        ];
+        for step in 1..=DRAG_STEPS {
+            let x = math_round(x0 as f64 + ((x1 - x0) * step) as f64 / DRAG_STEPS as f64) as i64;
+            let y = math_round(y0 as f64 + ((y1 - y0) * step) as f64 / DRAG_STEPS as f64) as i64;
+            args.extend([
+                "mousemove".to_string(),
+                x.to_string(),
+                y.to_string(),
+                "sleep".to_string(),
+                "0.03".to_string(),
+            ]);
+        }
+        args.extend([
+            "sleep".to_string(),
+            "0.1".to_string(),
+            "mouseup".to_string(),
+            button.x11().to_string(),
+        ]);
+        self.xdotool(args).await
     }
 
     pub async fn type_text(&self, text: &str) -> anyhow::Result<()> {
-        todo!()
+        self.xdotool(vec![
+            "type".into(),
+            "--clearmodifiers".into(),
+            "--delay".into(),
+            "15".into(),
+            "--".into(),
+            text.to_string(),
+        ])
+        .await
     }
 
     /// Fails with `"<chord>" is not a key name or chord` for anything `KEY_CHORD` refuses.
     pub async fn key(&self, chord: &str) -> anyhow::Result<()> {
-        todo!()
+        if !KEY_CHORD.is_match(chord) {
+            anyhow::bail!("\"{chord}\" is not a key name or chord");
+        }
+        self.xdotool(vec![
+            "key".into(),
+            "--clearmodifiers".into(),
+            "--".into(),
+            chord.to_string(),
+        ])
+        .await
     }
 
     /// Scroll the wheel over a point given in picture coordinates. `clicks` defaults to 3
@@ -189,17 +248,102 @@ impl DesktopControl {
         direction: ScrollDirection,
         clicks: i64,
     ) -> anyhow::Result<()> {
-        todo!()
+        let (px, py) = self.to_screen(x, y);
+        self.xdotool(vec![
+            "mousemove".into(),
+            px.to_string(),
+            py.to_string(),
+            "click".into(),
+            "--repeat".into(),
+            clicks.to_string(),
+            "--delay".into(),
+            "40".into(),
+            direction.x11().into(),
+        ])
+        .await
     }
 
     /// The model's picture: the whole display at the picture size, as JPEG.
     pub async fn capture(&self) -> anyhow::Result<Bytes> {
-        todo!()
+        let (screen, picture) = {
+            let sizes = self.sizes.lock();
+            (sizes.screen, sizes.picture)
+        };
+        let args: Vec<String> = [
+            "-loglevel",
+            "error",
+            "-f",
+            "x11grab",
+            "-video_size",
+            &size_text(screen),
+            "-i",
+            &self.display(),
+            "-frames:v",
+            "1",
+            "-vf",
+            &format!("scale={}:{}", picture.width, picture.height),
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "mjpeg",
+            "-q:v",
+            &CAPTURE_QUALITY.to_string(),
+            "-",
+        ]
+        .iter()
+        .map(|arg| arg.to_string())
+        .collect();
+        let env = self.process_env();
+        let stdout = exec_file(
+            "ffmpeg",
+            &args,
+            ExecFileOptions {
+                env: &env,
+                timeout_ms: COMMAND_TIMEOUT_MS,
+                max_buffer: CAPTURE_MAX_BYTES,
+            },
+        )
+        .await?;
+        Ok(Bytes::from(stdout))
     }
 
     /// A lossless PNG of the display enlarged `OCR_SCALE` times, for Tesseract.
     pub async fn capture_for_ocr(&self) -> anyhow::Result<Bytes> {
-        todo!()
+        let screen = self.sizes.lock().screen;
+        let args: Vec<String> = [
+            "-loglevel",
+            "error",
+            "-f",
+            "x11grab",
+            "-video_size",
+            &size_text(screen),
+            "-i",
+            &self.display(),
+            "-frames:v",
+            "1",
+            "-vf",
+            &format!("scale=iw*{OCR_SCALE}:ih*{OCR_SCALE}"),
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "png",
+            "-",
+        ]
+        .iter()
+        .map(|arg| arg.to_string())
+        .collect();
+        let env = self.process_env();
+        let stdout = exec_file(
+            "ffmpeg",
+            &args,
+            ExecFileOptions {
+                env: &env,
+                timeout_ms: COMMAND_TIMEOUT_MS,
+                max_buffer: CAPTURE_MAX_BYTES * 4,
+            },
+        )
+        .await?;
+        Ok(Bytes::from(stdout))
     }
 
     /// A screen pixel as a picture coordinate, the inverse of `to_screen`.
@@ -221,14 +365,100 @@ impl DesktopControl {
         (px as i64, py as i64)
     }
 
-    async fn xdotool(&self, args: &[String]) -> anyhow::Result<()> {
-        todo!()
+    /// The X display, e.g. `:99`.
+    fn display(&self) -> String {
+        self.env.get("DISPLAY").cloned().unwrap_or_default()
+    }
+
+    async fn xdotool(&self, args: Vec<String>) -> anyhow::Result<()> {
+        let env = self.process_env();
+        exec_file(
+            "xdotool",
+            &args,
+            ExecFileOptions {
+                env: &env,
+                timeout_ms: COMMAND_TIMEOUT_MS,
+                max_buffer: DEFAULT_MAX_BUFFER,
+            },
+        )
+        .await?;
+        Ok(())
     }
 
     /// The process environment with the display's variables over it.
     fn process_env(&self) -> IndexMap<String, String> {
-        let mut env: IndexMap<String, String> = std::env::vars().collect();
-        env.extend(self.env.clone());
-        env
+        process_env(&self.env)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn env() -> IndexMap<String, String> {
+        IndexMap::from([("DISPLAY".to_string(), ":99".to_string())])
+    }
+
+    #[test]
+    fn gives_the_model_the_screen_itself_while_it_is_small_enough() {
+        let control = DesktopControl::new(
+            env(),
+            ScreenSize {
+                width: 1280,
+                height: 720,
+            },
+        );
+        assert_eq!(control.picture_width(), 1280);
+        assert_eq!(control.picture_height(), 720);
+        assert_eq!(control.to_picture(640.0, 360.0), (640.0, 360.0));
+    }
+
+    #[test]
+    fn maps_a_point_on_a_screen_larger_than_the_picture() {
+        let control = DesktopControl::new(
+            env(),
+            ScreenSize {
+                width: 1920,
+                height: 1080,
+            },
+        );
+        assert_eq!(control.picture_width(), 1280);
+        assert_eq!(control.picture_height(), 720);
+        // The middle of the screen is the middle of the picture, whatever the scale.
+        assert_eq!(control.to_picture(960.0, 540.0), (640.0, 360.0));
+    }
+
+    #[test]
+    fn follows_the_screen_when_the_client_resizes_it() {
+        let control = DesktopControl::new(
+            env(),
+            ScreenSize {
+                width: 1280,
+                height: 720,
+            },
+        );
+        control.resize(ScreenSize {
+            width: 1920,
+            height: 1200,
+        });
+        assert_eq!(control.width(), 1920);
+        assert_eq!(control.height(), 1200);
+        // The cap holds, and the shape follows the new screen rather than the old one.
+        assert_eq!(control.picture_width(), 1280);
+        assert_eq!(control.picture_height(), 800);
+        assert_eq!(control.to_picture(960.0, 600.0), (640.0, 400.0));
+    }
+
+    #[tokio::test]
+    async fn refuses_a_key_that_is_not_a_name_or_chord() {
+        let control = DesktopControl::new(
+            env(),
+            ScreenSize {
+                width: 1280,
+                height: 720,
+            },
+        );
+        let err = control.key("ctrl+;rm").await.unwrap_err();
+        assert_eq!(err.to_string(), "\"ctrl+;rm\" is not a key name or chord");
     }
 }

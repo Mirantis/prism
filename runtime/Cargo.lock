@@ -2941,6 +2941,7 @@ dependencies = [
  "nix",
  "once_cell",
  "opentelemetry",
+ "opentelemetry-http",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "parking_lot",

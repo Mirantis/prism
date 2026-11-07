@@ -6,6 +6,8 @@
 //! persistent home (skills, plugins, the coding agent's config dir) derives
 //! from one place.
 
+use anyhow::Context;
+
 /// Resolve the persistent data dir.
 ///
 ///  1. `PRISM_DATA_DIR` when set — the container image bakes
@@ -130,7 +132,45 @@ fn create_dir_link(target: &str, link_path: &str) -> std::io::Result<()> {
 /// every subsequent resolve agrees. Called once at startup, before any tool can
 /// spawn. Fails when the fallback or one of the canonical dirs cannot be created.
 pub fn ensure_data_dirs() -> anyhow::Result<DataDirsSetup> {
-    todo!()
+    let desired = resolve_data_dir();
+    let mut data_dir = desired.clone();
+    let mut fell_back_from = None;
+    if std::fs::create_dir_all(&desired).is_err() {
+        let fallback = join_path(&tmp_dir(), "prism-data");
+        std::fs::create_dir_all(&fallback)
+            .with_context(|| format!("failed to create the data dir {fallback}"))?;
+        // SAFETY: called once at startup, before any tool or task reads the
+        // environment concurrently.
+        unsafe { std::env::set_var("PRISM_DATA_DIR", &fallback) }; // pin so all resolvers agree
+        data_dir = fallback;
+        fell_back_from = Some(desired);
+    }
+
+    let skills_dir = resolve_skills_dir();
+    let plugins_dir = resolve_plugins_dir();
+    let media_dir = resolve_media_dir();
+    let tool_output_dir = resolve_tool_output_dir();
+    for dir in [&skills_dir, &plugins_dir, &media_dir, &tool_output_dir] {
+        std::fs::create_dir_all(dir).with_context(|| format!("failed to create {dir}"))?;
+    }
+
+    Ok(DataDirsSetup {
+        data_dir,
+        skills_dir,
+        plugins_dir,
+        media_dir,
+        tool_output_dir,
+        fell_back_from,
+    })
+}
+
+/// `os.tmpdir()`.
+fn tmp_dir() -> String {
+    let dir = std::env::temp_dir().to_string_lossy().into_owned();
+    match dir.strip_suffix(std::path::MAIN_SEPARATOR) {
+        Some(stripped) if !stripped.is_empty() => stripped.to_string(),
+        _ => dir,
+    }
 }
 
 /// An environment variable, trimmed; `None` when unset or blank.
@@ -154,6 +194,12 @@ fn home_dir() -> String {
 
 /// `path.resolve(p)`: absolute against the working directory, then normalized.
 fn resolve_path(path: &str) -> String {
+    #[cfg(windows)]
+    {
+        return std::path::absolute(path)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| path.to_string());
+    }
     if path.starts_with('/') {
         return normalize(path);
     }
@@ -165,7 +211,203 @@ fn resolve_path(path: &str) -> String {
 
 /// `path.join(base, name)` for an absolute `base`.
 fn join_path(base: &str, name: &str) -> String {
+    #[cfg(windows)]
+    {
+        return std::path::Path::new(base)
+            .join(name)
+            .to_string_lossy()
+            .into_owned();
+    }
     normalize(&format!("{base}/{name}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ENV_KEYS: [&str; 3] = ["PRISM_DATA_DIR", "PRISM_SKILLS_DIR", "PRISM_PLUGINS_DIR"];
+
+    /// Clears the variables the resolvers read for one test, and puts them back.
+    struct EnvGuard {
+        saved: Vec<(&'static str, Option<String>)>,
+        tmp: tempfile::TempDir,
+    }
+
+    impl EnvGuard {
+        fn new() -> EnvGuard {
+            let saved = ENV_KEYS
+                .iter()
+                .map(|k| (*k, std::env::var(k).ok()))
+                .collect();
+            for k in ENV_KEYS {
+                // SAFETY: the tests that touch the environment run serially.
+                unsafe { std::env::remove_var(k) };
+            }
+            let tmp = tempfile::Builder::new()
+                .prefix("prism-datadir-test-")
+                .tempdir()
+                .unwrap();
+            EnvGuard { saved, tmp }
+        }
+
+        fn tmp(&self) -> String {
+            self.tmp.path().to_string_lossy().into_owned()
+        }
+
+        fn set(&self, key: &str, value: &str) {
+            // SAFETY: the tests that touch the environment run serially.
+            unsafe { std::env::set_var(key, value) };
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (k, v) in &self.saved {
+                // SAFETY: the tests that touch the environment run serially.
+                unsafe {
+                    match v {
+                        Some(v) => std::env::set_var(k, v),
+                        None => std::env::remove_var(k),
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn honors_prism_data_dir_over_everything_else() {
+        let g = EnvGuard::new();
+        g.set("PRISM_DATA_DIR", &g.tmp());
+        assert_eq!(resolve_data_dir(), resolve_path(&g.tmp()));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn falls_back_to_home_prism_when_prism_data_dir_is_unset() {
+        let _g = EnvGuard::new();
+        assert_eq!(resolve_data_dir(), join_path(&home_dir(), ".prism"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn skills_and_media_dirs_derive_from_the_data_dir() {
+        let g = EnvGuard::new();
+        g.set("PRISM_DATA_DIR", &g.tmp());
+        assert_eq!(resolve_skills_dir(), format!("{}/skills", g.tmp()));
+        assert_eq!(resolve_media_dir(), format!("{}/media", g.tmp()));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn honors_prism_skills_dir_override() {
+        let g = EnvGuard::new();
+        g.set("PRISM_DATA_DIR", &g.tmp());
+        let custom = format!("{}/elsewhere", g.tmp());
+        g.set("PRISM_SKILLS_DIR", &custom);
+        assert_eq!(resolve_skills_dir(), custom);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn plugins_dir_derives_from_the_data_dir() {
+        let g = EnvGuard::new();
+        g.set("PRISM_DATA_DIR", &g.tmp());
+        assert_eq!(resolve_plugins_dir(), format!("{}/plugins", g.tmp()));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn honors_prism_plugins_dir_override() {
+        let g = EnvGuard::new();
+        g.set("PRISM_DATA_DIR", &g.tmp());
+        let custom = format!("{}/elsewhere", g.tmp());
+        g.set("PRISM_PLUGINS_DIR", &custom);
+        assert_eq!(resolve_plugins_dir(), custom);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn ensure_data_dirs_creates_the_skills_plugins_media_and_tool_output_dirs() {
+        let g = EnvGuard::new();
+        g.set("PRISM_DATA_DIR", &g.tmp());
+        let r = ensure_data_dirs().unwrap();
+
+        assert_eq!(r.fell_back_from, None);
+        assert_eq!(r.data_dir, resolve_path(&g.tmp()));
+        assert_eq!(r.skills_dir, format!("{}/skills", g.tmp()));
+        assert_eq!(r.plugins_dir, format!("{}/plugins", g.tmp()));
+        assert_eq!(r.media_dir, format!("{}/media", g.tmp()));
+        assert_eq!(r.tool_output_dir, format!("{}/tool-outputs", g.tmp()));
+        for dir in [
+            &r.skills_dir,
+            &r.plugins_dir,
+            &r.media_dir,
+            &r.tool_output_dir,
+        ] {
+            assert!(std::fs::metadata(dir).unwrap().is_dir());
+        }
+    }
+
+    fn realpath(p: &str) -> std::path::PathBuf {
+        std::fs::canonicalize(p).unwrap()
+    }
+
+    #[test]
+    fn ensure_symlink_creates_the_link_and_reports_it_in_place() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("target").to_string_lossy().into_owned();
+        let link = tmp.path().join("link").to_string_lossy().into_owned();
+        std::fs::create_dir(&target).unwrap();
+
+        assert!(ensure_symlink(&target, &link));
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(realpath(&link), realpath(&target));
+    }
+
+    #[test]
+    fn ensure_symlink_is_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("target").to_string_lossy().into_owned();
+        let link = tmp.path().join("link").to_string_lossy().into_owned();
+        std::fs::create_dir(&target).unwrap();
+
+        ensure_symlink(&target, &link);
+        assert!(ensure_symlink(&target, &link));
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(realpath(&link), realpath(&target));
+    }
+
+    #[test]
+    fn ensure_symlink_does_not_clobber_a_populated_real_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("target").to_string_lossy().into_owned();
+        let link = tmp.path().join("link");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::create_dir(&link).unwrap();
+        std::fs::write(link.join("keep.txt"), "x").unwrap();
+        let link = link.to_string_lossy().into_owned();
+
+        assert!(!ensure_symlink(&target, &link));
+        // The content that was there survives: a directory this did not make is never deleted.
+        assert!(std::path::Path::new(&link).join("keep.txt").exists());
+        assert!(
+            !std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
 }
 
 /// Lexical normalization of an absolute POSIX path: no `.`, no `..`, no empty

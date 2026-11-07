@@ -22,9 +22,16 @@ use std::sync::LazyLock;
 
 use indexmap::{IndexMap, IndexSet};
 use parking_lot::Mutex;
+use serde_json::{Value, json};
 
-use crate::ai::{StopCondition, SystemModelMessage, Tool, ToolChoice, ToolSet};
-use crate::lib::llm_providers::llm_provider::{ToolChange, ToolChangeProtocol};
+use crate::ai::json::js_stringify;
+use crate::ai::{
+    StopCondition, SystemModelMessage, Tool, ToolChoice, ToolExecutionOptions, ToolSet, ToolType,
+    execute_fn, step_count_is,
+};
+use crate::lib::llm_providers::llm_provider::{
+    ToolChange, ToolChangeProtocol, ToolChangeType, is_deferred_tool, merge_provider_options,
+};
 
 /// A tool-change announcement and the history row it follows; `None` when it
 /// counts from the start.
@@ -83,19 +90,76 @@ const WIRE_FIELDS: [&str; 6] = [
 
 /// The tool with only its `WIRE_FIELDS`.
 fn wire_definition(tool: &Tool) -> Tool {
-    todo!()
+    Tool {
+        tool_type: tool.tool_type.clone(),
+        description: tool.description.clone(),
+        input_schema: tool.input_schema.clone(),
+        input_examples: tool.input_examples.clone(),
+        strict: tool.strict,
+        provider_options: tool.provider_options.clone(),
+        ..Default::default()
+    }
+}
+
+/// The turn's tool with a declared definition over it: every `WIRE_FIELDS` value
+/// the definition sets wins, and the turn's tool gives the rest.
+fn over_live(live: &Tool, definition: &Tool) -> Tool {
+    Tool {
+        // A function tool leaves `type` unset, so the turn's tool gives it.
+        tool_type: if definition.tool_type == ToolType::Function {
+            live.tool_type.clone()
+        } else {
+            definition.tool_type.clone()
+        },
+        description: definition
+            .description
+            .clone()
+            .or_else(|| live.description.clone()),
+        input_schema: definition.input_schema.clone(),
+        input_examples: definition
+            .input_examples
+            .clone()
+            .or_else(|| live.input_examples.clone()),
+        strict: definition.strict.or(live.strict),
+        provider_options: definition
+            .provider_options
+            .clone()
+            .or_else(|| live.provider_options.clone()),
+        ..live.clone()
+    }
 }
 
 /// The definition as the model sees it, in one string: the JSON of
 /// `[type, description, inputSchema as JSON Schema, inputExamples, strict, isDeferredTool]`.
 async fn wire_signature(tool: &Tool) -> String {
-    todo!()
+    let examples = tool
+        .input_examples
+        .as_ref()
+        .map(|examples| serde_json::to_value(examples).unwrap_or(Value::Null))
+        .unwrap_or(Value::Null);
+    js_stringify(&json!([
+        tool.tool_type.as_str(),
+        tool.description,
+        tool.input_schema.json_schema(),
+        examples,
+        tool.strict,
+        is_deferred_tool(tool),
+    ]))
 }
 
 /// A tool's `execute` that fails with
 /// `The <name> tool is not available in this conversation now.`
 fn refusal(tool: Tool, name: &str) -> Tool {
-    todo!()
+    let message = format!("The {name} tool is not available in this conversation now.");
+    Tool {
+        execute: Some(execute_fn(
+            move |_input: Value, _options: ToolExecutionOptions| {
+                let message = message.clone();
+                async move { Err(anyhow::anyhow!(message)) }
+            },
+        )),
+        ..tool
+    }
 }
 
 /// The tool options of a summary request (a compaction, the early-stop summary).
@@ -115,7 +179,15 @@ pub struct SummaryToolOptions {
 /// the request would miss the cached prefix that starts with them. The request
 /// therefore declares the list under `auto`, and refuses every call.
 pub fn summary_tool_options(tools: &ToolSet) -> SummaryToolOptions {
-    todo!()
+    SummaryToolOptions {
+        tools: tools
+            .iter()
+            .map(|(name, tool)| (name.clone(), refusal(tool.clone(), name)))
+            .collect(),
+        tool_choice: ToolChoice::Auto,
+        allow_system_in_messages: true,
+        stop_when: step_count_is(2),
+    }
 }
 
 /// Additions, then removals, each in declaration order, so the bytes do not
@@ -125,11 +197,35 @@ fn changes_between<'a>(
     from: &HashSet<String>,
     to: &HashSet<String>,
 ) -> Vec<ToolChange> {
-    todo!()
+    let names: Vec<&String> = order.into_iter().collect();
+    let additions = names
+        .iter()
+        .filter(|name| to.contains(name.as_str()) && !from.contains(name.as_str()))
+        .map(|name| ToolChange {
+            kind: ToolChangeType::ToolAddition,
+            tool_name: (*name).clone(),
+        });
+    let removals = names
+        .iter()
+        .filter(|name| from.contains(name.as_str()) && !to.contains(name.as_str()))
+        .map(|name| ToolChange {
+            kind: ToolChangeType::ToolRemoval,
+            tool_name: (*name).clone(),
+        });
+    additions.chain(removals).collect()
 }
 
 fn apply(available: &mut HashSet<String>, changes: &[ToolChange]) {
-    todo!()
+    for change in changes {
+        match change.kind {
+            ToolChangeType::ToolAddition => {
+                available.insert(change.tool_name.clone());
+            }
+            ToolChangeType::ToolRemoval => {
+                available.remove(&change.tool_name);
+            }
+        }
+    }
 }
 
 /// What `declare` records for one turn of a conversation.
@@ -158,7 +254,77 @@ impl ToolLedgerService {
     /// its request sends. `row_ids` are the history rows the request replays,
     /// oldest first; a change this turn is announced after the last of them.
     pub async fn declare(&self, input: DeclareInput<'_>) -> DeclaredTools {
-        todo!()
+        let DeclareInput {
+            thread_id,
+            model_id,
+            protocol,
+            available,
+            row_ids,
+        } = input;
+        let names: Vec<&String> = available.keys().collect();
+        let key = format!("{model_id} {thread_id}");
+        // Computed before the record is read, so the update below runs under one lock.
+        let mut signatures = Vec::with_capacity(names.len());
+        for name in &names {
+            signatures.push(wire_signature(&available[name.as_str()]).await);
+        }
+
+        let mut conversations = self.conversations.lock();
+        let mut conversation =
+            conversations
+                .shift_remove(&key)
+                .unwrap_or_else(|| ConversationTools {
+                    definitions: IndexMap::new(),
+                    signatures: IndexMap::new(),
+                    initial: names.iter().map(|name| (*name).clone()).collect(),
+                    at_start: names.iter().map(|name| (*name).clone()).collect(),
+                    announcements: Vec::new(),
+                });
+
+        Self::fold(&mut conversation, row_ids);
+
+        // A new tool joins at the end; a changed one keeps its place.
+        for (index, name) in names.iter().enumerate() {
+            if conversation.signatures.get(name.as_str()) == Some(&signatures[index]) {
+                continue;
+            }
+            let definition = wire_definition(&available[name.as_str()]);
+            conversation
+                .signatures
+                .insert((*name).clone(), signatures[index].clone());
+            let definition = if conversation.initial.contains(name.as_str()) {
+                definition
+            } else {
+                Tool {
+                    provider_options: Some(merge_provider_options([
+                        definition.provider_options.as_ref(),
+                        Some(&protocol.deferred_tool),
+                    ])),
+                    ..definition
+                }
+            };
+            conversation.definitions.insert((*name).clone(), definition);
+        }
+
+        let mut current = conversation.at_start.clone();
+        for announcement in &conversation.announcements {
+            apply(&mut current, &announcement.changes);
+        }
+        let offered: HashSet<String> = names.iter().map(|name| (*name).clone()).collect();
+        let changes = changes_between(conversation.definitions.keys(), &current, &offered);
+        if !changes.is_empty() {
+            conversation.announcements.push(Announcement {
+                after_row_id: row_ids.last().cloned(),
+                changes,
+            });
+        }
+
+        let view = Self::view(&conversation, protocol, available);
+        conversations.insert(key, conversation);
+        if conversations.len() > MAX_CONVERSATIONS {
+            conversations.shift_remove_index(0);
+        }
+        view
     }
 
     /// What the conversation's next request would declare, with no tool
@@ -169,13 +335,26 @@ impl ToolLedgerService {
         model_id: &str,
         protocol: &ToolChangeProtocol,
     ) -> Option<DeclaredTools> {
-        todo!()
+        let conversations = self.conversations.lock();
+        let conversation = conversations.get(&format!("{model_id} {thread_id}"))?;
+        Some(Self::view(conversation, protocol, &ToolSet::new()))
     }
 
     /// Fold every announcement up to the last one whose row left the history
     /// (compaction) into `at_start`, so they become one announcement at the start.
     fn fold(conversation: &mut ConversationTools, row_ids: &[String]) {
-        todo!()
+        let present: HashSet<&str> = row_ids.iter().map(String::as_str).collect();
+        let mut cut = 0;
+        for (index, announcement) in conversation.announcements.iter().enumerate() {
+            match announcement.after_row_id.as_deref() {
+                Some(id) if present.contains(id) => {}
+                _ => cut = index + 1,
+            }
+        }
+        let folded: Vec<Announcement> = conversation.announcements.drain(..cut).collect();
+        for announcement in folded {
+            apply(&mut conversation.at_start, &announcement.changes);
+        }
     }
 
     fn view(
@@ -183,7 +362,42 @@ impl ToolLedgerService {
         protocol: &ToolChangeProtocol,
         available: &ToolSet,
     ) -> DeclaredTools {
-        todo!()
+        let mut tools = ToolSet::new();
+        let mut deferred = IndexSet::new();
+        for (name, definition) in &conversation.definitions {
+            if !conversation.initial.contains(name) {
+                deferred.insert(name.clone());
+            }
+            let tool = match available.get(name) {
+                Some(live) => over_live(live, definition),
+                None => refusal(definition.clone(), name),
+            };
+            tools.insert(name.clone(), tool);
+        }
+
+        let at_start = changes_between(
+            conversation.definitions.keys(),
+            &conversation.initial,
+            &conversation.at_start,
+        );
+        let mut tool_changes = Vec::new();
+        if !at_start.is_empty() {
+            tool_changes.push(AnchoredToolChange {
+                after_row_id: None,
+                message: (protocol.announce)(&at_start),
+            });
+        }
+        tool_changes.extend(conversation.announcements.iter().map(|announcement| {
+            AnchoredToolChange {
+                after_row_id: announcement.after_row_id.clone(),
+                message: (protocol.announce)(&announcement.changes),
+            }
+        }));
+        DeclaredTools {
+            tools,
+            deferred,
+            tool_changes,
+        }
     }
 }
 

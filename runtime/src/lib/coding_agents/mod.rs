@@ -13,3 +13,6 @@ pub mod subscription;
 pub mod subscription_switch;
 pub mod terminal;
 // @generated-modules-end
+
+#[cfg(test)]
+pub mod testing;

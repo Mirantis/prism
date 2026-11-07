@@ -10,6 +10,14 @@
 
 use std::sync::LazyLock;
 
+use diesel::prelude::*;
+
+use crate::config::CONFIG;
+use crate::db::models::ThreadSource;
+use crate::db::schema::conversation_threads::dsl as t;
+use crate::services::conversation_service::CONVERSATION_SERVICE;
+use crate::services::runtime_state_service::RUNTIME_STATE_SERVICE;
+
 /// The `runtime_state` key that holds the web conversation of `conversation_id`.
 fn conversation_key(conversation_id: &str) -> String {
     format!("agentConversation:{conversation_id}")
@@ -30,12 +38,39 @@ impl AgentConversationService {
         conversation_id: &str,
         agent_id: &str,
     ) -> anyhow::Result<Option<String>> {
-        todo!()
+        let thread_id = RUNTIME_STATE_SERVICE
+            .get(&conversation_key(conversation_id))
+            .await?;
+        let Some(thread_id) = thread_id.filter(|id| !id.is_empty()) else {
+            return Ok(None);
+        };
+        let owner = CONFIG.owner_user_id();
+        let filter = CONVERSATION_SERVICE
+            .client_thread_filter(agent_id, &owner)
+            .await?;
+        let agent = agent_id.to_string();
+        let thread = crate::db::run(move |conn| {
+            Ok(t::conversation_threads
+                .filter(t::id.eq(thread_id))
+                .filter(t::agent_id.eq(agent))
+                .filter(t::user_id.eq(owner))
+                .filter(t::external_thread_id.is_null())
+                .filter(t::thread_source.eq(ThreadSource::Database))
+                .select(crate::db::models::ConversationThread::as_select())
+                .first(conn)
+                .optional()?)
+        })
+        .await?;
+        Ok(thread
+            .filter(|thread| filter.allows(thread))
+            .map(|thread| thread.id))
     }
 
     /// Keep `conversation_id` in the web conversation that now holds it.
     pub async fn remember(&self, conversation_id: &str, thread_id: &str) -> anyhow::Result<()> {
-        todo!()
+        RUNTIME_STATE_SERVICE
+            .set(&conversation_key(conversation_id), thread_id)
+            .await
     }
 }
 

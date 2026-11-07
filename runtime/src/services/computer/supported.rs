@@ -2,6 +2,12 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use super::remote::remote_computer_service::REMOTE_COMPUTER_SERVICE;
+use crate::lib::has_binary::missing_binary;
+use crate::log_info;
+use crate::services::meeting::audio_stack::AUDIO_STACK_BINARIES;
+use crate::services::meeting::browser_stack::is_browser_available;
+
 pub const COMPUTER_BINARIES: [&str; 7] = [
     "dbus-launch",
     "startxfce4",
@@ -22,7 +28,20 @@ pub fn unsupported_reason(missing: &str) -> String {
 }
 
 pub async fn is_computer_supported() -> bool {
-    todo!()
+    if !is_browser_available().await {
+        return false;
+    }
+    if missing_binary(&AUDIO_STACK_BINARIES).await.is_some() {
+        return false;
+    }
+    if let Some(missing) = missing_binary(&COMPUTER_BINARIES).await {
+        log_info!(
+            "[Computer] No computer on this host: {} is not on PATH",
+            missing
+        );
+        return false;
+    }
+    true
 }
 
 /// The startup answer, for the Web UI to read on every `/agents/me`.
@@ -45,10 +64,32 @@ pub fn uses_remote_computers(mode: &str) -> bool {
 
 /// Meetings use their own browser; subagents return work to the desktop's owning invocation.
 pub fn has_computer_for_mode(mode: &str) -> bool {
-    todo!()
+    if mode == "meeting" || mode == "subagent" {
+        return false;
+    }
+    has_computer() || (uses_remote_computers(mode) && REMOTE_COMPUTER_SERVICE.count() > 0)
 }
 
 /// Probe once and remember the answer. Never fails: a failed probe means "no computer".
 pub async fn init_computer_availability() -> bool {
-    todo!()
+    let available = is_computer_supported().await;
+    COMPUTER_AVAILABLE.store(available, Ordering::SeqCst);
+    available
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn offers_the_desktop_only_to_modes_that_can_own_it() {
+        COMPUTER_AVAILABLE.store(true, Ordering::SeqCst);
+        for mode in ["chat", "goal", "cron", "heartbeat", "webhook"] {
+            assert!(has_computer_for_mode(mode), "{mode}");
+        }
+        for mode in ["meeting", "subagent"] {
+            assert!(!has_computer_for_mode(mode), "{mode}");
+        }
+        COMPUTER_AVAILABLE.store(false, Ordering::SeqCst);
+    }
 }

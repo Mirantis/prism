@@ -23,9 +23,167 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use indexmap::IndexMap;
-use nix::sys::signal::Signal;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
+
+/// A signal by its POSIX name (`NodeJS.Signals`). The type exists on every
+/// platform; only Unix delivers one, and on Windows a kill ends the process as
+/// Node's `child.kill()` does there.
+#[allow(non_camel_case_types, clippy::upper_case_acronyms)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Signal {
+    SIGHUP,
+    SIGINT,
+    SIGQUIT,
+    SIGILL,
+    SIGTRAP,
+    SIGABRT,
+    SIGBUS,
+    SIGFPE,
+    SIGKILL,
+    SIGUSR1,
+    SIGSEGV,
+    SIGUSR2,
+    SIGPIPE,
+    SIGALRM,
+    SIGTERM,
+    SIGCHLD,
+    SIGCONT,
+    SIGSTOP,
+    SIGTSTP,
+    SIGTTIN,
+    SIGTTOU,
+    SIGURG,
+    SIGXCPU,
+    SIGXFSZ,
+    SIGVTALRM,
+    SIGPROF,
+    SIGWINCH,
+    SIGIO,
+    SIGSYS,
+}
+
+impl Signal {
+    pub const ALL: [Signal; 29] = [
+        Signal::SIGHUP,
+        Signal::SIGINT,
+        Signal::SIGQUIT,
+        Signal::SIGILL,
+        Signal::SIGTRAP,
+        Signal::SIGABRT,
+        Signal::SIGBUS,
+        Signal::SIGFPE,
+        Signal::SIGKILL,
+        Signal::SIGUSR1,
+        Signal::SIGSEGV,
+        Signal::SIGUSR2,
+        Signal::SIGPIPE,
+        Signal::SIGALRM,
+        Signal::SIGTERM,
+        Signal::SIGCHLD,
+        Signal::SIGCONT,
+        Signal::SIGSTOP,
+        Signal::SIGTSTP,
+        Signal::SIGTTIN,
+        Signal::SIGTTOU,
+        Signal::SIGURG,
+        Signal::SIGXCPU,
+        Signal::SIGXFSZ,
+        Signal::SIGVTALRM,
+        Signal::SIGPROF,
+        Signal::SIGWINCH,
+        Signal::SIGIO,
+        Signal::SIGSYS,
+    ];
+
+    /// The name Node reports (`SIGTERM`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Signal::SIGHUP => "SIGHUP",
+            Signal::SIGINT => "SIGINT",
+            Signal::SIGQUIT => "SIGQUIT",
+            Signal::SIGILL => "SIGILL",
+            Signal::SIGTRAP => "SIGTRAP",
+            Signal::SIGABRT => "SIGABRT",
+            Signal::SIGBUS => "SIGBUS",
+            Signal::SIGFPE => "SIGFPE",
+            Signal::SIGKILL => "SIGKILL",
+            Signal::SIGUSR1 => "SIGUSR1",
+            Signal::SIGSEGV => "SIGSEGV",
+            Signal::SIGUSR2 => "SIGUSR2",
+            Signal::SIGPIPE => "SIGPIPE",
+            Signal::SIGALRM => "SIGALRM",
+            Signal::SIGTERM => "SIGTERM",
+            Signal::SIGCHLD => "SIGCHLD",
+            Signal::SIGCONT => "SIGCONT",
+            Signal::SIGSTOP => "SIGSTOP",
+            Signal::SIGTSTP => "SIGTSTP",
+            Signal::SIGTTIN => "SIGTTIN",
+            Signal::SIGTTOU => "SIGTTOU",
+            Signal::SIGURG => "SIGURG",
+            Signal::SIGXCPU => "SIGXCPU",
+            Signal::SIGXFSZ => "SIGXFSZ",
+            Signal::SIGVTALRM => "SIGVTALRM",
+            Signal::SIGPROF => "SIGPROF",
+            Signal::SIGWINCH => "SIGWINCH",
+            Signal::SIGIO => "SIGIO",
+            Signal::SIGSYS => "SIGSYS",
+        }
+    }
+
+    /// The signal a name spells, `None` for any other text.
+    pub fn from_name(name: &str) -> Option<Signal> {
+        Signal::ALL.into_iter().find(|signal| signal.as_str() == name)
+    }
+
+    /// The platform's number for the signal.
+    #[cfg(unix)]
+    pub fn as_raw(self) -> i32 {
+        match self {
+            Signal::SIGHUP => libc::SIGHUP,
+            Signal::SIGINT => libc::SIGINT,
+            Signal::SIGQUIT => libc::SIGQUIT,
+            Signal::SIGILL => libc::SIGILL,
+            Signal::SIGTRAP => libc::SIGTRAP,
+            Signal::SIGABRT => libc::SIGABRT,
+            Signal::SIGBUS => libc::SIGBUS,
+            Signal::SIGFPE => libc::SIGFPE,
+            Signal::SIGKILL => libc::SIGKILL,
+            Signal::SIGUSR1 => libc::SIGUSR1,
+            Signal::SIGSEGV => libc::SIGSEGV,
+            Signal::SIGUSR2 => libc::SIGUSR2,
+            Signal::SIGPIPE => libc::SIGPIPE,
+            Signal::SIGALRM => libc::SIGALRM,
+            Signal::SIGTERM => libc::SIGTERM,
+            Signal::SIGCHLD => libc::SIGCHLD,
+            Signal::SIGCONT => libc::SIGCONT,
+            Signal::SIGSTOP => libc::SIGSTOP,
+            Signal::SIGTSTP => libc::SIGTSTP,
+            Signal::SIGTTIN => libc::SIGTTIN,
+            Signal::SIGTTOU => libc::SIGTTOU,
+            Signal::SIGURG => libc::SIGURG,
+            Signal::SIGXCPU => libc::SIGXCPU,
+            Signal::SIGXFSZ => libc::SIGXFSZ,
+            Signal::SIGVTALRM => libc::SIGVTALRM,
+            Signal::SIGPROF => libc::SIGPROF,
+            Signal::SIGWINCH => libc::SIGWINCH,
+            Signal::SIGIO => libc::SIGIO,
+            Signal::SIGSYS => libc::SIGSYS,
+        }
+    }
+
+    /// The signal behind a platform number, `None` for one without a name here.
+    #[cfg(unix)]
+    pub fn from_raw(raw: i32) -> Option<Signal> {
+        Signal::ALL.into_iter().find(|signal| signal.as_raw() == raw)
+    }
+}
+
+impl std::fmt::Display for Signal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 /// The environment variables a process starts with (`NodeJS.ProcessEnv`), in
 /// insertion order.

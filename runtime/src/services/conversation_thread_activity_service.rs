@@ -12,7 +12,12 @@ use indexmap::IndexMap;
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 
-use crate::types::InvokeRequest;
+use serde_json::json;
+
+use crate::lib::log_redaction::err_json;
+use crate::log_warn;
+use crate::services::conversation_service::CONVERSATION_SERVICE;
+use crate::types::{InvokeMode, InvokeRequest};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -131,7 +136,15 @@ impl ConversationThreadActivityService {
     /// (`[ThreadActivity] latest-thread lookup failed; no thread shows as working`)
     /// and marks nothing.
     pub async fn begin(&self, request: &InvokeRequest) -> ThreadActivity {
-        todo!()
+        let Some(thread_id) = self.thread_for(request).await else {
+            return ThreadActivity::unmarked();
+        };
+        let mark = self.begin_thread(&thread_id, &request.user_id);
+        ThreadActivity {
+            thread: Some((thread_id, request.user_id.clone())),
+            mark: Mutex::new(Some(mark)),
+            ended: AtomicBool::new(false),
+        }
     }
 
     /// Mark a known thread as working. The returned mark ends that, once.
@@ -152,7 +165,25 @@ impl ConversationThreadActivityService {
     /// The thread a request marks: its own, else the user's latest web thread;
     /// none for a subagent.
     async fn thread_for(&self, request: &InvokeRequest) -> Option<String> {
-        todo!()
+        if request.mode == InvokeMode::Subagent {
+            return None;
+        }
+        if let Some(thread_id) = request.thread_id.as_ref().filter(|id| !id.is_empty()) {
+            return Some(thread_id.clone());
+        }
+        match CONVERSATION_SERVICE
+            .find_latest_web_thread(&request.agent_id, &request.user_id)
+            .await
+        {
+            Ok(latest) => latest.map(|thread| thread.id),
+            Err(err) => {
+                log_warn!(
+                    json!({ "err": err_json(&err) }),
+                    "[ThreadActivity] latest-thread lookup failed; no thread shows as working"
+                );
+                None
+            }
+        }
     }
 
     fn add(&self, thread_id: &str, user_id: &str, delta: i64) {

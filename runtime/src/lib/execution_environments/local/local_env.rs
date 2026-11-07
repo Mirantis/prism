@@ -42,3 +42,63 @@ pub fn local_base_env(base: Option<&ProcessEnv>) -> ProcessEnv {
     }
     env
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn env(pairs: &[(&str, &str)]) -> ProcessEnv {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn strips_node_env_from_the_returned_environment() {
+        let result = local_base_env(Some(&env(&[
+            ("NODE_ENV", "production"),
+            ("PATH", "/usr/bin"),
+            ("HOME", "/root"),
+        ])));
+        assert!(!result.contains_key("NODE_ENV"));
+    }
+
+    #[test]
+    fn strips_husky_so_cloned_repos_keep_their_own_git_hooks() {
+        let result = local_base_env(Some(&env(&[
+            ("HUSKY", "0"),
+            ("PATH", "/usr/bin"),
+        ])));
+        assert!(!result.contains_key("HUSKY"));
+    }
+
+    #[test]
+    fn preserves_path_home_and_other_vars() {
+        let result = local_base_env(Some(&env(&[
+            ("NODE_ENV", "production"),
+            ("PATH", "/usr/bin"),
+            ("HOME", "/home/user"),
+            ("AWS_REGION", "us-east-1"),
+            ("GH_TOKEN", "ghp_abc"),
+        ])));
+        assert_eq!(result["PATH"], "/usr/bin");
+        assert_eq!(result["HOME"], "/home/user");
+        assert_eq!(result["AWS_REGION"], "us-east-1");
+        assert_eq!(result["GH_TOKEN"], "ghp_abc");
+    }
+
+    #[test]
+    fn does_not_change_the_base() {
+        let base = env(&[("NODE_ENV", "production"), ("PATH", "/usr/bin")]);
+        local_base_env(Some(&base));
+        assert_eq!(base["NODE_ENV"], "production");
+    }
+
+    #[test]
+    fn uses_this_processs_environment_by_default() {
+        let result = local_base_env(None);
+        assert!(!result.contains_key("NODE_ENV"));
+        assert_eq!(result.get("PATH").cloned(), std::env::var("PATH").ok());
+    }
+}

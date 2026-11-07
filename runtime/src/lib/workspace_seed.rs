@@ -99,8 +99,9 @@ pub fn read_workspace_seed(dir: Option<&str>) -> WorkspaceSeed {
     let mut seed = WorkspaceSeed::default();
     for field in seedable_fields() {
         let file = Path::new(dir).join(format!("{}.md", field.as_str()));
-        match std::fs::read_to_string(&file) {
-            Ok(text) => seed.set(field, text),
+        // `readFileSync(file, 'utf8')`: an invalid sequence reads as U+FFFD.
+        match std::fs::read(&file) {
+            Ok(bytes) => seed.set(field, String::from_utf8_lossy(&bytes).into_owned()),
             Err(err) => {
                 // A missing document is the ordinary case: the seed names only the ones it changes.
                 if err.kind() != std::io::ErrorKind::NotFound {
@@ -119,6 +120,91 @@ pub fn read_workspace_seed(dir: Option<&str>) -> WorkspaceSeed {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn write(dir: &tempfile::TempDir, name: &str, content: &str) {
+        std::fs::write(dir.path().join(name), content).unwrap();
+    }
+
+    fn read(dir: &tempfile::TempDir) -> WorkspaceSeed {
+        read_workspace_seed(Some(dir.path().to_str().unwrap()))
+    }
+
+    #[test]
+    fn reads_one_document_per_field_file() {
+        let dir = tempfile::tempdir().unwrap();
+        write(&dir, "soulMd.md", "# Soul\n\nYou are {{agentName}}.");
+        write(&dir, "agentMd.md", "# Guide");
+        write(&dir, "bootstrapMd.md", "# Bootstrap");
+
+        assert_eq!(
+            read(&dir),
+            WorkspaceSeed {
+                soul_md: Some("# Soul\n\nYou are {{agentName}}.".into()),
+                agent_md: Some("# Guide".into()),
+                bootstrap_md: Some("# Bootstrap".into()),
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn keeps_an_empty_file_which_clears_that_document() {
+        let dir = tempfile::tempdir().unwrap();
+        write(&dir, "bootstrapMd.md", "");
+        assert_eq!(
+            read(&dir),
+            WorkspaceSeed {
+                bootstrap_md: Some(String::new()),
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn does_not_seed_memory() {
+        let dir = tempfile::tempdir().unwrap();
+        write(&dir, "memoryMd.md", "# Memory");
+        assert_eq!(read(&dir), WorkspaceSeed::default());
+    }
+
+    #[test]
+    fn ignores_files_that_name_no_document() {
+        let dir = tempfile::tempdir().unwrap();
+        write(&dir, "notes.md", "hello");
+        write(&dir, "soulMd.txt", "hello");
+        assert_eq!(read(&dir), WorkspaceSeed::default());
+    }
+
+    #[test]
+    fn keeps_the_default_for_a_document_it_cannot_read() {
+        let dir = tempfile::tempdir().unwrap();
+        // A directory where the file should be fails the read.
+        std::fs::create_dir(dir.path().join("agentMd.md")).unwrap();
+        write(&dir, "soulMd.md", "# Soul");
+        assert_eq!(
+            read(&dir),
+            WorkspaceSeed {
+                soul_md: Some("# Soul".into()),
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn returns_nothing_for_a_directory_that_does_not_exist() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing");
+        assert_eq!(
+            read_workspace_seed(Some(missing.to_str().unwrap())),
+            WorkspaceSeed::default()
+        );
+    }
+
+    #[test]
+    fn returns_nothing_when_no_directory_is_configured() {
+        assert_eq!(read_workspace_seed(None), WorkspaceSeed::default());
+        assert_eq!(read_workspace_seed(Some("")), WorkspaceSeed::default());
+    }
 
     #[test]
     fn reads_the_documents_the_directory_holds_and_skips_memory() {

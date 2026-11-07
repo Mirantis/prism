@@ -14,7 +14,9 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde_json::{Map, Value, json};
 
-use crate::types::InvokeStep;
+use crate::ai::{ApiCallError, RetryError};
+use crate::lib::log_redaction::err_json;
+use crate::types::{InvokeError, InvokeErrorType, InvokeStep};
 use crate::{log_error, log_warn};
 
 /// The fields a JavaScript error object for `error` would have: an AI SDK
@@ -22,7 +24,40 @@ use crate::{log_error, log_warn};
 /// `RetryError` gives `message` and `lastError` (itself such a view); any other
 /// error gives `message` alone.
 pub fn error_fields(error: &anyhow::Error) -> Value {
-    todo!()
+    if let Some(api) = error.downcast_ref::<ApiCallError>() {
+        return api_call_error_fields(api);
+    }
+    if let Some(retry) = error.downcast_ref::<RetryError>() {
+        let mut map = Map::new();
+        map.insert("message".into(), json!(retry.message));
+        if let Some(last) = &retry.last_error {
+            map.insert("lastError".into(), error_fields(last));
+        }
+        return Value::Object(map);
+    }
+    for cause in error.chain() {
+        if let Some(api) = cause.downcast_ref::<ApiCallError>() {
+            return api_call_error_fields(api);
+        }
+    }
+    json!({ "message": error.to_string() })
+}
+
+fn api_call_error_fields(error: &ApiCallError) -> Value {
+    let mut map = Map::new();
+    map.insert("message".into(), json!(error.message));
+    map.insert("url".into(), json!(error.url));
+    if let Some(status) = error.status_code {
+        map.insert("statusCode".into(), json!(status));
+    }
+    if let Some(body) = &error.response_body {
+        map.insert("responseBody".into(), json!(body));
+    }
+    map.insert("isRetryable".into(), json!(error.is_retryable));
+    if let Some(data) = &error.data {
+        map.insert("data".into(), data.clone());
+    }
+    Value::Object(map)
 }
 
 /// Check if an error is a gateway budget-exceeded 429.
@@ -268,7 +303,55 @@ pub const GENERIC_ERROR_PREFIX: &str = "I encountered an error while processing 
 ///   `error: { type: 'generic', detail: errorDetail }`, where `message` is the
 ///   error's message (`Unknown error` for a non-error value).
 pub fn build_error_step(error: &anyhow::Error) -> InvokeStep {
-    todo!()
+    // Handed over as `err` so the redacting serializer sees it. A `responseBody`
+    // logged verbatim quotes back whatever was sent, including a meeting's
+    // transcript on a failed gate call.
+    log_error!(json!({ "err": err_json(error) }), "Invocation failed");
+    error_step_from_fields(&error_fields(error))
+}
+
+/// `build_error_step` after the log line, over an error's field view.
+fn error_step_from_fields(fields: &Value) -> InvokeStep {
+    let message = match fields.get("message") {
+        Some(Value::String(message)) => message.clone(),
+        _ => "Unknown error".to_string(),
+    };
+
+    // The SDK wraps retried errors: unwrap lastError to check the original.
+    let original = unwrap_last_error(fields);
+
+    if is_spending_limit_value(original) {
+        log_spending_limit_warning_value(original);
+        let detail = detail_of(original);
+        let detail_clause = match &detail {
+            Some(detail) if !detail.is_empty() => format!(": {detail}"),
+            _ => String::new(),
+        };
+        return InvokeStep {
+            text: format!("{SPENDING_LIMIT_TEXT}{detail_clause}{SPENDING_LIMIT_ADVICE}"),
+            tool_calls: Vec::new(),
+            error: Some(InvokeError {
+                kind: InvokeErrorType::BudgetExceeded,
+                detail,
+            }),
+            ..Default::default()
+        };
+    }
+
+    let error_detail = detail_of(original);
+    let shown = match &error_detail {
+        Some(detail) if !detail.is_empty() => detail.clone(),
+        _ => message,
+    };
+    InvokeStep {
+        text: format!("{GENERIC_ERROR_PREFIX}{shown}"),
+        tool_calls: Vec::new(),
+        error: Some(InvokeError {
+            kind: InvokeErrorType::Generic,
+            detail: error_detail,
+        }),
+        ..Default::default()
+    }
 }
 
 /// The text of a refusal step.
@@ -286,12 +369,248 @@ pub const REFUSAL_TEXT: &str = "I can't help with that request. If that seems wr
 /// is an ordinary final answer that happens to be no. The step is `REFUSAL_TEXT`
 /// with no tool calls and no error.
 pub fn build_refusal_step() -> InvokeStep {
-    todo!()
+    InvokeStep {
+        text: REFUSAL_TEXT.to_string(),
+        tool_calls: Vec::new(),
+        ..Default::default()
+    }
 }
 
 fn try_parse_json(value: &Value) -> Value {
     match value {
         Value::String(text) => serde_json::from_str(text).unwrap_or_else(|_| value.clone()),
         other => other.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::RetryErrorReason;
+    use std::sync::Arc;
+
+    fn api_error(status: Option<u16>, body: Option<&str>, message: &str) -> anyhow::Error {
+        anyhow::Error::new(ApiCallError::new(
+            message,
+            "https://llm.example/v1/messages",
+            json!({}),
+            status,
+            None,
+            body.map(str::to_string),
+        ))
+    }
+
+    fn retried(last: anyhow::Error) -> anyhow::Error {
+        anyhow::Error::new(RetryError::new(
+            "Failed after 3 attempts",
+            RetryErrorReason::MaxRetriesExceeded,
+            vec![Arc::new(last)],
+        ))
+    }
+
+    #[test]
+    fn detects_a_budget_429_in_each_body_shape() {
+        let body = json!({ "type": "budget-exceeded", "title": "Budget Exceeded" }).to_string();
+        assert!(is_spending_limit_value(
+            &json!({ "status": 429, "responseBody": body })
+        ));
+        assert!(is_spending_limit_value(
+            &json!({ "status": 429, "body": { "type": "budget-exceeded" } })
+        ));
+        assert!(is_spending_limit_value(
+            &json!({ "status": 429, "response": { "data": { "type": "budget-exceeded" } } })
+        ));
+        assert!(is_spending_limit_value(
+            &json!({ "statusCode": 429, "responseBody": "{\"type\":\"budget-exceeded\"}" })
+        ));
+    }
+
+    #[test]
+    fn leaves_out_other_statuses_and_types() {
+        assert!(!is_spending_limit_value(
+            &json!({ "status": 500, "responseBody": "{\"type\":\"budget-exceeded\"}" })
+        ));
+        assert!(!is_spending_limit_value(
+            &json!({ "status": 429, "message": "throttled" })
+        ));
+        assert!(!is_spending_limit_value(
+            &json!({ "status": 429, "responseBody": "{\"type\":\"rate-limit\"}" })
+        ));
+        assert!(!is_spending_limit_value(&Value::Null));
+        assert!(!is_spending_limit_value(&json!("error")));
+    }
+
+    #[test]
+    fn reads_the_problem_detail() {
+        assert_eq!(
+            detail_of(
+                &json!({ "status": 502, "responseBody": "{\"detail\":\"upstream timeout\"}" })
+            ),
+            Some("upstream timeout".into())
+        );
+        assert_eq!(
+            detail_of(&json!({ "status": 400, "body": { "detail": "malformed request" } })),
+            Some("malformed request".into())
+        );
+        assert_eq!(
+            detail_of(&json!({ "response": { "data": { "detail": "nested detail" } } })),
+            Some("nested detail".into())
+        );
+        assert_eq!(
+            detail_of(&json!({ "responseBody": "{\"message\":\"no detail key\"}" })),
+            None
+        );
+        assert_eq!(detail_of(&json!({ "responseBody": "not-json" })), None);
+        assert_eq!(detail_of(&Value::Null), None);
+    }
+
+    #[test]
+    fn builds_a_budget_step_with_its_detail() {
+        let error = api_error(
+            Some(429),
+            Some("{\"type\":\"budget-exceeded\",\"detail\":\"Monthly budget: $5 of $5 used\"}"),
+            "Too Many Requests",
+        );
+        let step = build_error_step(&error);
+        assert_eq!(
+            step.text,
+            "Your organization's AI spending limit has been reached: Monthly budget: $5 of $5 used. Please contact your administrator to increase the budget or wait for the limit to reset."
+        );
+        assert!(step.tool_calls.is_empty());
+        assert_eq!(
+            serde_json::to_value(step.error).unwrap(),
+            json!({ "type": "budget_exceeded", "detail": "Monthly budget: $5 of $5 used" })
+        );
+    }
+
+    #[test]
+    fn omits_the_detail_clause_when_the_budget_error_has_none() {
+        let error = api_error(
+            Some(429),
+            Some("{\"type\":\"budget-exceeded\"}"),
+            "Too Many Requests",
+        );
+        let step = build_error_step(&error);
+        assert!(step.text.contains("AI spending limit has been reached."));
+        assert_eq!(
+            serde_json::to_value(step.error).unwrap(),
+            json!({ "type": "budget_exceeded", "detail": null })
+        );
+    }
+
+    #[test]
+    fn unwraps_the_retry_wrapper_to_detect_a_budget() {
+        let error = retried(api_error(
+            Some(429),
+            Some("{\"type\":\"budget-exceeded\",\"detail\":\"wrapped detail\"}"),
+            "Too Many Requests",
+        ));
+        let step = build_error_step(&error);
+        assert_eq!(
+            step.error.as_ref().unwrap().kind,
+            InvokeErrorType::BudgetExceeded
+        );
+        assert!(step.text.contains("wrapped detail"));
+    }
+
+    #[test]
+    fn builds_a_generic_step_from_the_message() {
+        let step = build_error_step(&anyhow::anyhow!("Model timeout"));
+        assert_eq!(
+            step.text,
+            "I encountered an error while processing your request: Model timeout"
+        );
+        assert_eq!(
+            serde_json::to_value(step.error).unwrap(),
+            json!({ "type": "generic", "detail": null })
+        );
+    }
+
+    #[test]
+    fn prefers_the_problem_detail_over_the_message() {
+        let step = build_error_step(&api_error(
+            Some(400),
+            Some("{\"detail\":\"invalid prompt\"}"),
+            "400",
+        ));
+        assert_eq!(
+            step.text,
+            "I encountered an error while processing your request: invalid prompt"
+        );
+    }
+
+    #[test]
+    fn detects_a_context_overflow() {
+        assert!(is_context_overflow_error(&anyhow::anyhow!(
+            "prompt is too long: 213456 tokens > 200000 maximum"
+        )));
+        assert!(is_context_overflow_error(&anyhow::anyhow!(
+            "Input is too long for requested model."
+        )));
+        assert!(is_context_overflow_error(&api_error(
+            Some(400),
+            Some("{\"error\":{\"code\":\"context_length_exceeded\",\"message\":\"too big\"}}"),
+            "Bad Request",
+        )));
+        assert!(is_context_overflow_error(&api_error(
+            Some(413),
+            None,
+            "Payload Too Large"
+        )));
+        assert!(is_context_overflow_error(&retried(anyhow::anyhow!(
+            "prompt is too long: 9 tokens > 1 maximum"
+        ))));
+    }
+
+    #[test]
+    fn leaves_unrelated_errors_out_of_overflow() {
+        assert!(!is_context_overflow_error(&anyhow::anyhow!("rate limited")));
+        assert!(!is_context_overflow_error(&anyhow::anyhow!(
+            "The security token is invalid"
+        )));
+        assert!(!is_context_overflow_value(&json!({
+            "status": 429,
+            "responseBody": "{\"type\":\"budget-exceeded\",\"detail\":\"x\"}",
+        })));
+        assert!(!is_context_overflow_value(&Value::Null));
+        assert!(!is_context_overflow_value(&json!("prompt is too long")));
+    }
+
+    #[test]
+    fn detects_a_rejected_request_behind_the_retry_wrapper() {
+        assert!(is_rejected_request_error(&api_error(
+            Some(400),
+            None,
+            "Bad Request"
+        )));
+        assert!(is_rejected_request_error(&retried(api_error(
+            Some(400),
+            None,
+            "Bad Request"
+        ))));
+    }
+
+    #[test]
+    fn leaves_out_an_oversized_400_and_other_statuses() {
+        assert!(!is_rejected_request_error(&api_error(
+            Some(400),
+            None,
+            "Input is too long for requested model."
+        )));
+        assert!(!is_rejected_request_error(&api_error(
+            Some(429),
+            None,
+            "Too Many Requests"
+        )));
+        assert!(!is_rejected_request_error(&anyhow::anyhow!(
+            "Model timeout"
+        )));
+    }
+
+    #[test]
+    fn writes_the_refusal_without_an_error() {
+        let step = build_refusal_step();
+        assert_eq!(step.text, REFUSAL_TEXT);
+        assert!(step.error.is_none());
     }
 }

@@ -3,7 +3,7 @@
 
 use tokio_util::sync::CancellationToken;
 
-use crate::lib::execution_environments::capture::CaptureResult;
+use crate::lib::execution_environments::capture::{CaptureOptions, CaptureResult, capture_program};
 use crate::lib::execution_environments::execution_environment::{ExecutionEnvironment, ProcessEnv};
 
 /// How long the CLI gets to answer before the probe gives up on it.
@@ -24,7 +24,27 @@ pub async fn probe_cli(
     env: ProcessEnv,
     signal: Option<CancellationToken>,
 ) -> anyhow::Result<CaptureResult> {
-    todo!()
+    let name = probe_name(command, args);
+    let run = capture_program(
+        environment,
+        command,
+        args,
+        CaptureOptions {
+            cwd: environment.workspace_root(),
+            env,
+            timeout_ms: PROBE_TIMEOUT_MS,
+            limit_bytes: PROBE_OUTPUT_LIMIT,
+            abort_signal: signal,
+        },
+    )
+    .await;
+    if let Some(error) = &run.error {
+        anyhow::bail!("{name} failed: {error}");
+    }
+    if run.timed_out {
+        anyhow::bail!("{name} did not answer in {} s", PROBE_TIMEOUT_MS / 1000);
+    }
+    Ok(run)
 }
 
 /// The command and its words up to the first flag: `claude auth status`.
