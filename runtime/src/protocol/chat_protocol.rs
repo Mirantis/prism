@@ -250,7 +250,54 @@ impl ClientFrame {
 /// integer `seq`. Unknown keys are dropped. `Err` holds the first issue's message,
 /// worded as zod 4 words it.
 pub fn parse_hello_frame(raw: &Value) -> Result<HelloFrame, String> {
-    todo!()
+    let mut issues = zod::Issues::default();
+    let frame = zod::object(Some(raw), &mut issues).map(|obj| {
+        zod::literal(obj.get("type"), "hello", &mut issues);
+        let id = zod::request_id(obj.get("id"), &mut issues);
+        let payload = zod::object(obj.get("payload"), &mut issues).map(|payload| {
+            let protocol = zod::int(payload.get("protocol"), &mut issues);
+            let client = zod::object(payload.get("client"), &mut issues).map(|client| {
+                let name = zod::string(client.get("name"), Some(1), Some(64), &mut issues);
+                let version = match client.get("version") {
+                    None => None,
+                    some => zod::string(some, None, Some(64), &mut issues),
+                };
+                HelloClient {
+                    name: name.unwrap_or_default(),
+                    version,
+                }
+            });
+            let resume = match payload.get("resume") {
+                None => None,
+                some => zod::object(some, &mut issues).map(|resume| {
+                    let stream_id =
+                        zod::string(resume.get("streamId"), Some(1), Some(64), &mut issues);
+                    let seq = zod::int(resume.get("seq"), &mut issues);
+                    if let Some(seq) = seq {
+                        zod::nonnegative(seq, &mut issues);
+                    }
+                    HelloResume {
+                        stream_id: stream_id.unwrap_or_default(),
+                        seq: seq.unwrap_or_default() as i64,
+                    }
+                }),
+            };
+            (protocol, client, resume)
+        });
+        (id, payload)
+    });
+    issues.first()?;
+    let Some((Some(id), Some((Some(protocol), Some(client), resume)))) = frame else {
+        return Err(zod::INVALID_INPUT.to_string());
+    };
+    Ok(HelloFrame {
+        id,
+        payload: HelloPayload {
+            protocol: protocol as i64,
+            client,
+            resume,
+        },
+    })
 }
 
 /// Validates a frame a client sends after `hello`: a `type` naming one of the
@@ -265,7 +312,328 @@ pub fn parse_hello_frame(raw: &Value) -> Result<HelloFrame, String> {
 /// present. Unknown keys are dropped. `Err` holds the first issue's message, as
 /// the gateway's `nack` sends it, worded as zod 4 words it.
 pub fn parse_client_frame(raw: &Value) -> Result<ClientFrame, String> {
-    todo!()
+    let mut issues = zod::Issues::default();
+    let Some(obj) = zod::object(Some(raw), &mut issues) else {
+        return Err(issues.first().unwrap_err());
+    };
+    let kind = obj.get("type").and_then(Value::as_str).unwrap_or("");
+    let frame = match kind {
+        "send" => {
+            let id = zod::request_id(obj.get("id"), &mut issues);
+            let message = zod::object(obj.get("payload"), &mut issues)
+                .and_then(|payload| zod::send_message(payload.get("message"), &mut issues));
+            id.zip(message).map(|(id, message)| {
+                ClientFrame::Send(SendFrame {
+                    id,
+                    payload: SendPayload { message },
+                })
+            })
+        }
+        "cancel" => {
+            let id = zod::request_id(obj.get("id"), &mut issues);
+            let thread_id = zod::object(obj.get("payload"), &mut issues).and_then(|payload| {
+                zod::matching(
+                    payload.get("threadId"),
+                    &UUID,
+                    UUID_MESSAGE,
+                    None,
+                    &mut issues,
+                )
+            });
+            id.zip(thread_id).map(|(id, thread_id)| {
+                ClientFrame::Cancel(CancelFrame {
+                    id,
+                    payload: CancelPayload { thread_id },
+                })
+            })
+        }
+        "ping" => zod::request_id(obj.get("id"), &mut issues)
+            .map(|id| ClientFrame::Ping(PingFrame { id })),
+        "voice_start" | "voice_stop" | "dictation_start" => {
+            let id = zod::request_id(obj.get("id"), &mut issues);
+            let payload = match obj.get("payload") {
+                None => Some(Map::new()),
+                some => zod::record(some, &mut issues),
+            };
+            id.zip(payload).map(|(id, payload)| {
+                let frame = LooseFrame { id, payload };
+                match kind {
+                    "voice_start" => ClientFrame::VoiceStart(frame),
+                    "voice_stop" => ClientFrame::VoiceStop(frame),
+                    _ => ClientFrame::DictationStart(frame),
+                }
+            })
+        }
+        "dictation_stop" => {
+            let id = zod::request_id(obj.get("id"), &mut issues);
+            let payload = match obj.get("payload") {
+                None => Some(DictationStopPayload::default()),
+                some => zod::object(some, &mut issues).map(|payload| DictationStopPayload {
+                    commit: match payload.get("commit") {
+                        None => None,
+                        some => zod::boolean(some, &mut issues),
+                    },
+                }),
+            };
+            id.zip(payload)
+                .map(|(id, payload)| ClientFrame::DictationStop(DictationStopFrame { id, payload }))
+        }
+        _ => {
+            return Err(format!(
+                "Invalid discriminator value. Expected {}",
+                CLIENT_FRAME_TYPES
+                    .iter()
+                    .map(|t| format!("'{t}'"))
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            ));
+        }
+    };
+    issues.first()?;
+    frame.ok_or_else(|| zod::INVALID_INPUT.to_string())
+}
+
+/// The `type` of every frame a client may send after `hello`, in the order the
+/// contract lists them.
+const CLIENT_FRAME_TYPES: [&str; 7] = [
+    "send",
+    "cancel",
+    "ping",
+    "voice_start",
+    "voice_stop",
+    "dictation_start",
+    "dictation_stop",
+];
+
+/// Validation as the contract's zod 4 schemas do it: every field is checked in the
+/// schema's key order, every issue is kept, and the first one's message is the
+/// answer. A check that runs after a field's type was wrong does not run, as zod
+/// skips the checks of an aborted value.
+mod zod {
+    use serde_json::{Map, Value};
+
+    use super::{
+        MAX_ATTACHMENTS_PER_MESSAGE, MAX_MESSAGE_CHARS, SendMessage, UUID, UUID_MESSAGE, UUID_V4,
+        UUID_V4_MESSAGE,
+    };
+    use crate::support::js;
+
+    pub(super) const INVALID_INPUT: &str = "Invalid input";
+
+    /// The issues found so far, each with whether it aborts the checks after it.
+    #[derive(Default)]
+    pub(super) struct Issues(Vec<(String, bool)>);
+
+    impl Issues {
+        fn push(&mut self, message: impl Into<String>, aborts: bool) {
+            self.0.push((message.into(), aborts));
+        }
+
+        /// The first issue's message, as `Err`.
+        pub(super) fn first(&self) -> Result<(), String> {
+            match self.0.first() {
+                Some((message, _)) => Err(message.clone()),
+                None => Ok(()),
+            }
+        }
+
+        fn len(&self) -> usize {
+            self.0.len()
+        }
+
+        /// Whether an issue from `start` on aborts later checks.
+        fn aborted_since(&self, start: usize) -> bool {
+            self.0[start..].iter().any(|(_, aborts)| *aborts)
+        }
+    }
+
+    /// zod's name for a JSON value's type; `undefined` for a missing one.
+    fn received(value: Option<&Value>) -> &'static str {
+        match value {
+            None => "undefined",
+            Some(Value::Null) => "null",
+            Some(Value::Bool(_)) => "boolean",
+            Some(Value::Number(_)) => "number",
+            Some(Value::String(_)) => "string",
+            Some(Value::Array(_)) => "array",
+            Some(Value::Object(_)) => "object",
+        }
+    }
+
+    fn invalid_type(expected: &str, value: Option<&Value>, issues: &mut Issues) {
+        issues.push(
+            format!(
+                "Invalid input: expected {expected}, received {}",
+                received(value)
+            ),
+            true,
+        );
+    }
+
+    pub(super) fn object<'a>(
+        value: Option<&'a Value>,
+        issues: &mut Issues,
+    ) -> Option<&'a Map<String, Value>> {
+        match value {
+            Some(Value::Object(map)) => Some(map),
+            other => {
+                invalid_type("object", other, issues);
+                None
+            }
+        }
+    }
+
+    /// `z.record(z.string(), z.unknown())`.
+    pub(super) fn record(value: Option<&Value>, issues: &mut Issues) -> Option<Map<String, Value>> {
+        match value {
+            Some(Value::Object(map)) => Some(map.clone()),
+            other => {
+                invalid_type("record", other, issues);
+                None
+            }
+        }
+    }
+
+    pub(super) fn literal(value: Option<&Value>, expected: &str, issues: &mut Issues) {
+        if value.and_then(Value::as_str) != Some(expected) {
+            issues.push(format!("Invalid input: expected \"{expected}\""), true);
+        }
+    }
+
+    pub(super) fn boolean(value: Option<&Value>, issues: &mut Issues) -> Option<bool> {
+        match value {
+            Some(Value::Bool(flag)) => Some(*flag),
+            other => {
+                invalid_type("boolean", other, issues);
+                None
+            }
+        }
+    }
+
+    /// `z.string()` with its `min` and `max` lengths in UTF-16 code units.
+    pub(super) fn string(
+        value: Option<&Value>,
+        min: Option<usize>,
+        max: Option<usize>,
+        issues: &mut Issues,
+    ) -> Option<String> {
+        let Some(Value::String(text)) = value else {
+            invalid_type("string", value, issues);
+            return None;
+        };
+        let len = js::len16(text);
+        if let Some(min) = min.filter(|min| len < *min) {
+            issues.push(
+                format!("Too small: expected string to have >={min} characters"),
+                false,
+            );
+        }
+        if let Some(max) = max.filter(|max| len > *max) {
+            issues.push(
+                format!("Too big: expected string to have <={max} characters"),
+                false,
+            );
+        }
+        Some(text.clone())
+    }
+
+    /// A string that must match `pattern`, worded with `message` when it does not.
+    pub(super) fn matching(
+        value: Option<&Value>,
+        pattern: &regex::Regex,
+        message: &str,
+        max: Option<usize>,
+        issues: &mut Issues,
+    ) -> Option<String> {
+        let text = string(value, None, max, issues)?;
+        if !pattern.is_match(&text) {
+            issues.push(message, false);
+        }
+        Some(text)
+    }
+
+    /// A client's name for one request: 1 to 64 characters.
+    pub(super) fn request_id(value: Option<&Value>, issues: &mut Issues) -> Option<String> {
+        string(value, Some(1), Some(super::REQUEST_ID_MAX_CHARS), issues)
+    }
+
+    /// `z.number().int()`, within the safe integer range.
+    pub(super) fn int(value: Option<&Value>, issues: &mut Issues) -> Option<f64> {
+        let Some(number) = value.and_then(Value::as_f64) else {
+            invalid_type("number", value, issues);
+            return None;
+        };
+        if number.fract() != 0.0 {
+            issues.push("Invalid input: expected int, received number", true);
+            return None;
+        }
+        const MAX_SAFE: f64 = 9_007_199_254_740_991.0;
+        if number > MAX_SAFE {
+            issues.push("Too big: expected int to be <=9007199254740991", false);
+        } else if number < -MAX_SAFE {
+            issues.push("Too small: expected int to be >=-9007199254740991", false);
+        }
+        Some(number)
+    }
+
+    /// `.nonnegative()`.
+    pub(super) fn nonnegative(number: f64, issues: &mut Issues) {
+        if number < 0.0 {
+            issues.push("Too small: expected number to be >=0", false);
+        }
+    }
+
+    /// A `send` request's message, with the check that it holds text or a file run
+    /// after its fields, unless one of them aborted it.
+    pub(super) fn send_message(value: Option<&Value>, issues: &mut Issues) -> Option<SendMessage> {
+        let start = issues.len();
+        let message = object(value, issues)?;
+        let id = matching(message.get("id"), &UUID_V4, UUID_V4_MESSAGE, None, issues);
+        let thread_id = matching(message.get("threadId"), &UUID, UUID_MESSAGE, None, issues);
+        let content = string(
+            message.get("content"),
+            None,
+            Some(MAX_MESSAGE_CHARS),
+            issues,
+        );
+        let attachment_ids = match message.get("attachmentIds") {
+            None => Some(Vec::new()),
+            Some(Value::Array(items)) => {
+                let ids: Vec<Option<String>> = items
+                    .iter()
+                    .map(|item| matching(Some(item), &UUID, UUID_MESSAGE, None, issues))
+                    .collect();
+                if items.len() > MAX_ATTACHMENTS_PER_MESSAGE {
+                    issues.push(
+                        format!(
+                            "Too big: expected array to have <={MAX_ATTACHMENTS_PER_MESSAGE} items"
+                        ),
+                        false,
+                    );
+                }
+                ids.into_iter().collect::<Option<Vec<String>>>()
+            }
+            other => {
+                invalid_type("array", other, issues);
+                None
+            }
+        };
+        if !issues.aborted_since(start) {
+            let has_text = content
+                .as_deref()
+                .is_some_and(|content| !js::trim(content).is_empty());
+            let has_file = attachment_ids.as_ref().is_some_and(|ids| !ids.is_empty());
+            if !has_text && !has_file {
+                issues.push("a message needs text or an attachment", false);
+            }
+        }
+        Some(SendMessage {
+            id: id?,
+            thread_id: thread_id?,
+            content: content?,
+            attachment_ids: attachment_ids?,
+        })
+    }
 }
 
 // ============================================================================
@@ -581,6 +949,7 @@ pub enum DirectFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     const SESSION: &str = include_str!("../../../src/protocol/fixtures/v2-session.json");
 
@@ -694,5 +1063,175 @@ mod tests {
         assert!(!is_uuid_v4("a636fe73-e7b4-1981-ae24-e45381e8ed59"));
         assert!(is_uuid("a636fe73-e7b4-1981-ae24-e45381e8ed59"));
         assert!(!is_uuid("not-a-uuid"));
+    }
+
+    #[test]
+    fn accepts_every_recorded_request_apart_from_the_ones_sent_to_be_refused() {
+        for entry in log() {
+            if entry["direction"] != "sent" {
+                continue;
+            }
+            let frame = &entry["frame"];
+            if frame["type"] == "chat" {
+                continue; // the client from before protocol 2
+            }
+            let accepted = if frame["type"] == "hello" {
+                parse_hello_frame(frame).is_ok()
+            } else {
+                parse_client_frame(frame).is_ok()
+            };
+            assert_eq!(accepted, frame["id"] != "send-bad", "{frame}");
+        }
+    }
+
+    #[test]
+    fn reads_a_recorded_request_into_its_type() {
+        for entry in log() {
+            let frame = &entry["frame"];
+            if entry["direction"] != "sent" || frame["type"] == "chat" || frame["id"] == "send-bad"
+            {
+                continue;
+            }
+            if frame["type"] == "hello" {
+                assert_eq!(
+                    parse_hello_frame(frame).unwrap(),
+                    serde_json::from_value::<HelloFrame>(frame.clone()).unwrap()
+                );
+            } else {
+                assert_eq!(
+                    parse_client_frame(frame).unwrap(),
+                    serde_json::from_value::<ClientFrame>(frame.clone()).unwrap()
+                );
+            }
+        }
+    }
+
+    fn send(message: Value) -> Value {
+        json!({ "type": "send", "id": "s-1", "payload": { "message": message } })
+    }
+
+    const MESSAGE_ID: &str = "a636fe73-e7b4-4981-ae24-e45381e8ed59";
+    const THREAD_ID: &str = "d046783b-f46e-43b5-b4bb-247e6b1915bf";
+
+    #[test]
+    fn words_a_refused_request_as_zod_does() {
+        let cases = [
+            (
+                json!("hi"),
+                "Invalid input: expected object, received string",
+            ),
+            (json!([]), "Invalid input: expected object, received array"),
+            (
+                json!({ "type": "chat" }),
+                "Invalid discriminator value. Expected 'send' | 'cancel' | 'ping' | 'voice_start' | 'voice_stop' | 'dictation_start' | 'dictation_stop'",
+            ),
+            (
+                json!({ "type": "ping" }),
+                "Invalid input: expected string, received undefined",
+            ),
+            (
+                json!({ "type": "ping", "id": "" }),
+                "Too small: expected string to have >=1 characters",
+            ),
+            (
+                json!({ "type": "ping", "id": "x".repeat(65) }),
+                "Too big: expected string to have <=64 characters",
+            ),
+            (
+                send(
+                    json!({ "id": "not-a-uuid", "threadId": THREAD_ID, "content": "x", "attachmentIds": [] }),
+                ),
+                "must be a uuid v4",
+            ),
+            (
+                send(json!({ "id": MESSAGE_ID, "threadId": "t", "content": "x" })),
+                "must be a uuid",
+            ),
+            (
+                send(json!({ "id": MESSAGE_ID, "threadId": THREAD_ID, "content": "   " })),
+                "a message needs text or an attachment",
+            ),
+            (
+                send(json!({ "id": MESSAGE_ID, "threadId": THREAD_ID, "content": 3 })),
+                "Invalid input: expected string, received number",
+            ),
+            (
+                json!({ "type": "cancel", "id": "c", "payload": { "threadId": 1 } }),
+                "Invalid input: expected string, received number",
+            ),
+            (
+                json!({ "type": "voice_start", "id": "v", "payload": [] }),
+                "Invalid input: expected record, received array",
+            ),
+            (
+                json!({ "type": "dictation_stop", "id": "d", "payload": { "commit": "yes" } }),
+                "Invalid input: expected boolean, received string",
+            ),
+        ];
+        for (frame, message) in cases {
+            assert_eq!(parse_client_frame(&frame).unwrap_err(), message, "{frame}");
+        }
+    }
+
+    #[test]
+    fn fills_the_defaults_and_drops_unknown_keys() {
+        let parsed = parse_client_frame(&json!({
+            "type": "send",
+            "id": "s",
+            "extra": true,
+            "payload": { "message": { "id": MESSAGE_ID, "threadId": THREAD_ID, "content": "hi" } },
+        }))
+        .unwrap();
+        let ClientFrame::Send(frame) = parsed else {
+            panic!("a send");
+        };
+        assert!(frame.payload.message.attachment_ids.is_empty());
+        let stop = parse_client_frame(&json!({ "type": "dictation_stop", "id": "d" })).unwrap();
+        assert_eq!(
+            stop,
+            ClientFrame::DictationStop(DictationStopFrame {
+                id: "d".into(),
+                payload: DictationStopPayload { commit: None },
+            })
+        );
+        let voice = parse_client_frame(&json!({ "type": "voice_stop", "id": "v" })).unwrap();
+        assert_eq!(
+            voice,
+            ClientFrame::VoiceStop(LooseFrame {
+                id: "v".into(),
+                payload: Map::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn refuses_a_hello_of_another_shape() {
+        let hello = |payload: Value| json!({ "type": "hello", "id": "h", "payload": payload });
+        assert!(
+            parse_hello_frame(&hello(
+                json!({ "protocol": 2, "client": { "name": "web" } })
+            ))
+            .is_ok()
+        );
+        assert_eq!(
+            parse_hello_frame(&hello(
+                json!({ "protocol": 2.5, "client": { "name": "web" } })
+            ))
+            .unwrap_err(),
+            "Invalid input: expected int, received number"
+        );
+        assert_eq!(
+            parse_hello_frame(&hello(json!({
+                "protocol": 2,
+                "client": { "name": "web" },
+                "resume": { "streamId": "s", "seq": -1 },
+            })))
+            .unwrap_err(),
+            "Too small: expected number to be >=0"
+        );
+        assert_eq!(
+            parse_hello_frame(&json!({ "type": "chat", "id": "h", "payload": {} })).unwrap_err(),
+            "Invalid input: expected \"hello\""
+        );
     }
 }

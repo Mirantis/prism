@@ -9,27 +9,19 @@
 //! other route), so the route takes no credential from inside it. A shell can
 //! therefore reach it — see the known holes in `docs/configuration.md`.
 
-use axum::Json;
 use axum::Router;
 use axum::response::Response;
 use axum::routing::patch;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+use serde_json::json;
+
+use crate::lib::log_redaction::err_json;
+use crate::log_error;
+use crate::services::agent_workspace_service::{AGENT_WORKSPACE_SERVICE, ValidationError};
+use crate::support::http::{JsonBody, error_json, json};
 
 pub fn router() -> Router {
     Router::new().route("/agents/locked-in", patch(update_locked_in))
-}
-
-/// The body of `PATCH /agents/locked-in`: `{ lockedIn: boolean }`.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LockedInBody {
-    /// Outer `None`: the key is missing, answered 400
-    /// `missing required field 'lockedIn'`. `Some(None)` is an explicit `null`,
-    /// which passes the presence check and goes to
-    /// `AGENT_WORKSPACE_SERVICE.update_locked_in`, whose `ValidationError` text is
-    /// answered 400. Any JSON type is accepted here; the service checks it.
-    #[serde(default, with = "::serde_with::rust::double_option")]
-    pub locked_in: Option<Option<serde_json::Value>>,
 }
 
 /// The body of a successful write: the value now in force.
@@ -39,18 +31,26 @@ pub struct LockedInResponse {
     pub locked_in: bool,
 }
 
-/// `{ error }`, the body of every refusal and failure.
-#[derive(Debug, Clone, Serialize)]
-pub struct ErrorBody {
-    pub error: String,
-}
-
 /// PATCH /agents/locked-in
 ///
 /// Body: `{ lockedIn: boolean }`. A missing key answers 400; a `ValidationError`
 /// from the service answers 400 with its message; any other failure is logged
-/// (`[LockedIn] Failed to update locked-in mode`, with `err`) and answers 500 with
-/// the error's message. A body that is absent or not JSON reads as `{}` in Express.
-async fn update_locked_in(Json(body): Json<LockedInBody>) -> Response {
-    todo!()
+/// and answers 500 with the error's message.
+async fn update_locked_in(body: JsonBody) -> Response {
+    let Some(locked_in) = body.field("lockedIn") else {
+        return error_json(400, "missing required field 'lockedIn'");
+    };
+    match AGENT_WORKSPACE_SERVICE.update_locked_in(locked_in).await {
+        Ok(locked_in) => json(200, LockedInResponse { locked_in }),
+        Err(err) => {
+            if let Some(validation) = err.downcast_ref::<ValidationError>() {
+                return error_json(400, validation.to_string());
+            }
+            log_error!(
+                json!({ "err": err_json(&err) }),
+                "[LockedIn] Failed to update locked-in mode"
+            );
+            error_json(500, err.to_string())
+        }
+    }
 }

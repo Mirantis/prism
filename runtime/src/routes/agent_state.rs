@@ -9,6 +9,9 @@ use axum::response::Response;
 use axum::routing::get;
 use serde::Serialize;
 
+use crate::services::agent_activity::is_agent_idle;
+use crate::support::http::json;
+
 pub fn router() -> Router {
     Router::new().route("/agents/state", get(get_state))
 }
@@ -38,8 +41,12 @@ pub struct AgentStateBody {
 
 /// GET /agents/state
 ///
-/// `idle` when `is_agent_idle()` answers true, else `working`. Never answers an error:
-/// a rejection of `is_agent_idle` reaches Express's default error handler.
+/// `idle` when `is_agent_idle()` answers true, else `working`.
 async fn get_state() -> Response {
-    todo!()
+    let state = if is_agent_idle().await {
+        AgentState::Idle
+    } else {
+        AgentState::Working
+    };
+    json(200, AgentStateBody { state })
 }

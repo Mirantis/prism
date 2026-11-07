@@ -21,3 +21,59 @@ pub async fn get_slack_connection() -> anyhow::Result<Option<SlackConnectionReco
     // nowhere else the token could have come from.
     get_slack_config().await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lib::slack_config::{__reset_slack_config_for_tests, set_slack_config_for_tests};
+
+    fn singleton_record() -> SlackConnectionRecord {
+        SlackConnectionRecord {
+            id: "T123".into(),
+            team_id: "T123".into(),
+            team_name: "Test".into(),
+            bot_token: "xoxb-TEST".into(),
+            bot_id: "BBOT".into(),
+            bot_user_id: "UBOT".into(),
+            installed_at: crate::support::now_iso(),
+            is_active: true,
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(slack_config)]
+    async fn lists_the_singleton_when_configured() {
+        set_slack_config_for_tests(Some(singleton_record()));
+        let result = get_active_slack_connections().await.unwrap();
+        __reset_slack_config_for_tests();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].team_id, "T123");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(slack_config)]
+    async fn lists_nothing_when_slack_is_disabled() {
+        set_slack_config_for_tests(None);
+        let result = get_active_slack_connections().await.unwrap();
+        __reset_slack_config_for_tests();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(slack_config)]
+    async fn the_connection_is_the_singleton() {
+        set_slack_config_for_tests(Some(singleton_record()));
+        let result = get_slack_connection().await.unwrap();
+        __reset_slack_config_for_tests();
+        assert_eq!(result.unwrap().bot_user_id, "UBOT");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(slack_config)]
+    async fn no_connection_when_slack_is_disabled() {
+        set_slack_config_for_tests(None);
+        let result = get_slack_connection().await.unwrap();
+        __reset_slack_config_for_tests();
+        assert!(result.is_none());
+    }
+}

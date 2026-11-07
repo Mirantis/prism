@@ -7,13 +7,23 @@
 //!
 //! Disabled (no-op) when OTEL_EXPORTER_OTLP_ENDPOINT is not set.
 
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock};
+use std::time::{Duration, SystemTime};
+
+use async_trait::async_trait;
+use bytes::Bytes;
+use indexmap::IndexMap;
+use opentelemetry::KeyValue;
+use opentelemetry::logs::{AnyValue, LogRecord as _, Logger as _, LoggerProvider as _, Severity};
+use opentelemetry_otlp::{Protocol, WithExportConfig, WithHttpConfig};
+use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::logs::{SdkLogger, SdkLoggerProvider};
+
 use crate::ai::TelemetryOptions;
-use crate::config::CONFIG;
+use crate::config::{CONFIG, Config};
 use crate::lib::langfuse::is_langfuse_enabled;
 use crate::{log_debug, log_info};
-use indexmap::IndexMap;
-use serde_json::Value;
-use std::sync::{Arc, LazyLock};
 
 /// `deployment.environment.name` is a stable attribute name per the OTel spec.
 const ATTR_DEPLOYMENT_ENVIRONMENT_NAME: &str = "deployment.environment.name";
@@ -24,41 +34,192 @@ const ATTR_SERVICE_NAME: &str = "service.name";
 const ATTR_SERVICE_NAMESPACE: &str = "service.namespace";
 const ATTR_SERVICE_VERSION: &str = "service.version";
 
-/// The OTLP/HTTP log pipeline [`init_telemetry`] builds: the export URL
-/// (`<endpoint>/v1/logs`), its headers, the resource attributes that describe the
-/// emitter of every record, and the records a batch processor has not exported
-/// yet. The instrumentation scope is `product-telemetry`.
-struct OtelLogger {
-    url: String,
-    headers: IndexMap<String, String>,
-    resource: IndexMap<String, String>,
-    pending: parking_lot::Mutex<Vec<Value>>,
+/// The instrumentation scope every product event is emitted under.
+const SCOPE_NAME: &str = "product-telemetry";
+
+/// The OTLP exporter's request timeout, its default.
+const EXPORT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The log pipeline [`init_telemetry`] builds.
+struct Pipeline {
+    provider: SdkLoggerProvider,
+    logger: SdkLogger,
 }
 
 /// Set by [`init_telemetry`]; `None` while telemetry is off.
-static OTEL_LOGGER: LazyLock<parking_lot::RwLock<Option<Arc<OtelLogger>>>> =
+static PIPELINE: LazyLock<parking_lot::RwLock<Option<Arc<Pipeline>>>> =
     LazyLock::new(|| parking_lot::RwLock::new(None));
+
+// ---------------------------------------------------------------------------
+// The HTTP client both OTLP pipelines export through
+// ---------------------------------------------------------------------------
+
+/// The runtime the OTLP exports run on. The SDK's batch processors export from a
+/// thread of their own, outside any async runtime, and the HTTP client needs one.
+/// A runtime of its own keeps an export independent of the main runtime's
+/// shutdown.
+static EXPORT_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .thread_name("otlp-export")
+        .enable_all()
+        .build()
+        .expect("the OTLP export runtime starts")
+});
+
+/// The OTLP exporters' HTTP client: each request runs on [`EXPORT_RUNTIME`]. No
+/// proxy, as Node's `http` module uses none.
+#[derive(Debug, Clone)]
+pub(crate) struct OtlpHttpClient {
+    client: reqwest::Client,
+}
+
+impl OtlpHttpClient {
+    pub(crate) fn new(timeout: Duration) -> anyhow::Result<Self> {
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(timeout)
+            .build()?;
+        Ok(Self { client })
+    }
+}
+
+#[async_trait]
+impl opentelemetry_http::HttpClient for OtlpHttpClient {
+    async fn send_bytes(
+        &self,
+        request: http::Request<Bytes>,
+    ) -> Result<http::Response<Bytes>, opentelemetry_http::HttpError> {
+        let client = self.client.clone();
+        let task = EXPORT_RUNTIME.spawn(async move {
+            let (parts, body) = request.into_parts();
+            let response = client
+                .request(parts.method, parts.uri.to_string())
+                .headers(parts.headers)
+                .body(body)
+                .send()
+                .await?;
+            let status = response.status();
+            let headers = response.headers().clone();
+            let body = response.bytes().await?;
+            let mut out = http::Response::builder().status(status).body(body)?;
+            *out.headers_mut() = headers;
+            Ok::<_, opentelemetry_http::HttpError>(out)
+        });
+        task.await
+            .map_err(|err| Box::new(err) as opentelemetry_http::HttpError)?
+    }
+}
+
+/// Event names as the SDK stores them, which is `&'static str`. Each distinct
+/// name is leaked once; the names come from a fixed set in the code.
+fn interned_event_name(event: &str) -> &'static str {
+    static NAMES: LazyLock<parking_lot::Mutex<HashMap<String, &'static str>>> =
+        LazyLock::new(|| parking_lot::Mutex::new(HashMap::new()));
+    let mut names = NAMES.lock();
+    if let Some(name) = names.get(event) {
+        return name;
+    }
+    let name: &'static str = Box::leak(event.to_string().into_boxed_str());
+    names.insert(event.to_string(), name);
+    name
+}
+
+// ---------------------------------------------------------------------------
+// Product telemetry
+// ---------------------------------------------------------------------------
 
 pub fn is_telemetry_enabled() -> bool {
     !CONFIG.otel_endpoint.is_empty()
 }
 
+/// Resource attributes describe the *emitter* of every event on this stream.
+/// `service.version` identifies the deployed build so events can be broken down
+/// by version and regressions correlated to specific releases. `product.name`
+/// separates the agents a product launched from the others.
+fn resource_attributes(config: &Config) -> Vec<(&'static str, String)> {
+    let mut attributes = vec![
+        (ATTR_SERVICE_NAME, "prism-agent-runtime".to_string()),
+        (ATTR_SERVICE_NAMESPACE, "prism-agent".to_string()),
+        (
+            ATTR_DEPLOYMENT_ENVIRONMENT_NAME,
+            config.deployment_environment.clone(),
+        ),
+    ];
+    if !config.service_version.is_empty() {
+        attributes.push((ATTR_SERVICE_VERSION, config.service_version.clone()));
+    }
+    if !config.product_name.is_empty() {
+        attributes.push((ATTR_PRODUCT_NAME, config.product_name.clone()));
+    }
+    attributes
+}
+
+/// The pipeline for `config`: OTLP/HTTP JSON to `<endpoint>/v1/logs`, with
+/// `x-api-key` when an API key is set, through a batch processor.
+fn build_pipeline(config: &Config) -> anyhow::Result<Pipeline> {
+    let resource = Resource::builder_empty()
+        .with_attributes(
+            resource_attributes(config)
+                .into_iter()
+                .map(|(key, value)| KeyValue::new(key, value)),
+        )
+        .build();
+
+    let mut headers = HashMap::new();
+    if !config.otel_api_key.is_empty() {
+        headers.insert("x-api-key".to_string(), config.otel_api_key.clone());
+    }
+
+    let mut builder = opentelemetry_otlp::LogExporter::builder()
+        .with_http()
+        .with_protocol(Protocol::HttpJson)
+        .with_endpoint(format!("{}/v1/logs", config.otel_endpoint))
+        .with_timeout(EXPORT_TIMEOUT)
+        .with_http_client(OtlpHttpClient::new(EXPORT_TIMEOUT)?);
+    if !headers.is_empty() {
+        builder = builder.with_headers(headers);
+    }
+    let exporter = builder.build()?;
+
+    let provider = SdkLoggerProvider::builder()
+        .with_resource(resource)
+        .with_batch_exporter(exporter)
+        .build();
+    let logger = provider.logger(SCOPE_NAME);
+    Ok(Pipeline { provider, logger })
+}
+
 /// Builds the OTLP log pipeline when an endpoint is configured.
-///
-/// Resource attributes describe the *emitter* of every event on this stream:
-/// `service.name` `prism-agent-runtime`, `service.namespace` `prism-agent`,
-/// `deployment.environment.name`, and, when set, `service.version` (the deployed
-/// build, so events can be broken down by version and regressions correlated to
-/// specific releases) and `product.name` (separates the agents a product launched
-/// from the others). `x-api-key` carries `otel_api_key` when set. Records go out
-/// through a batch processor. Logs
-/// `[Telemetry] Initialized → <endpoint> (env: <env>, version: <version or <unset>>)`.
 pub fn init_telemetry() {
     if CONFIG.otel_endpoint.is_empty() {
         log_info!("[Telemetry] Not configured (no OTEL_EXPORTER_OTLP_ENDPOINT), skipping");
         return;
     }
-    todo!()
+
+    let pipeline = match build_pipeline(&CONFIG) {
+        Ok(pipeline) => pipeline,
+        Err(err) => {
+            crate::log_error!(
+                serde_json::json!({ "err": crate::lib::log_redaction::err_json(&err) }),
+                "[Telemetry] Initialization failed"
+            );
+            return;
+        }
+    };
+    *PIPELINE.write() = Some(Arc::new(pipeline));
+
+    let version = if CONFIG.service_version.is_empty() {
+        "<unset>"
+    } else {
+        CONFIG.service_version.as_str()
+    };
+    log_info!(
+        "[Telemetry] Initialized → {} (env: {}, version: {})",
+        CONFIG.otel_endpoint,
+        CONFIG.deployment_environment,
+        version
+    );
 }
 
 /// Emit a product analytics event as an OTEL Log Record.
@@ -71,7 +232,7 @@ pub fn track_event(
     user_id: Option<&str>,
     properties: Option<IndexMap<String, String>>,
 ) {
-    let Some(logger) = OTEL_LOGGER.read().clone() else {
+    let Some(pipeline) = PIPELINE.read().clone() else {
         return;
     };
 
@@ -82,13 +243,57 @@ pub fn track_event(
         event,
         user_id.filter(|id| !id.is_empty()).unwrap_or("unknown")
     );
-    todo!()
+
+    emit(&pipeline.logger, event, user_id, properties);
+}
+
+/// A record's attributes: the properties, then `event.id`, then `user.id` when
+/// the user is known.
+fn record_attributes(
+    user_id: Option<&str>,
+    properties: Option<IndexMap<String, String>>,
+) -> IndexMap<String, String> {
+    let mut attributes = properties.unwrap_or_default();
+    attributes.insert("event.id".to_string(), uuid::Uuid::now_v7().to_string());
+    if let Some(user_id) = user_id.filter(|id| !id.is_empty()) {
+        attributes.insert("user.id".to_string(), user_id.to_string());
+    }
+    attributes
+}
+
+fn emit(
+    logger: &SdkLogger,
+    event: &str,
+    user_id: Option<&str>,
+    properties: Option<IndexMap<String, String>>,
+) {
+    let attributes = record_attributes(user_id, properties);
+    let now = SystemTime::now();
+    let mut record = logger.create_log_record();
+    record.set_timestamp(now);
+    record.set_observed_timestamp(now);
+    record.set_severity_number(Severity::Info);
+    record.set_severity_text("INFO");
+    record.set_body(AnyValue::from(event.to_string()));
+    record.set_event_name(interned_event_name(event));
+    record.add_attributes(
+        attributes
+            .into_iter()
+            .map(|(key, value)| (key, AnyValue::from(value))),
+    );
+    logger.emit(record);
 }
 
 /// Flushes and closes the pipeline, then logs `[Telemetry] Shutdown complete`.
 /// Does nothing when telemetry was never initialized.
 pub async fn shutdown_telemetry() {
-    todo!()
+    let Some(pipeline) = PIPELINE.read().clone() else {
+        return;
+    };
+    let shutdown = tokio::task::spawn_blocking(move || pipeline.provider.shutdown()).await;
+    if matches!(shutdown, Ok(Ok(()))) {
+        log_info!("[Telemetry] Shutdown complete");
+    }
 }
 
 /// Options for [`langfuse_telemetry`].
@@ -175,5 +380,192 @@ pub fn langfuse_embed_telemetry(function_id: &str) -> LangfuseEmbedTelemetry {
             function_id: Some(function_id.to_string()),
             ..Default::default()
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Env;
+    use serde_json::Value;
+
+    fn config_with(pairs: &[(&str, &str)]) -> Config {
+        let env: Env = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        Config::load(&env, &mut |_, _| {}).expect("config loads")
+    }
+
+    #[test]
+    fn track_event_is_a_no_op_when_not_configured() {
+        // The test configuration has no OTEL endpoint.
+        init_telemetry();
+        assert!(!is_telemetry_enabled());
+        track_event("message feedback", Some("user-123"), None);
+        track_event("message feedback", None, None);
+        assert!(PIPELINE.read().is_none());
+    }
+
+    #[tokio::test]
+    async fn shutdown_resolves_when_never_initialized() {
+        shutdown_telemetry().await;
+    }
+
+    #[test]
+    fn attaches_the_service_environment_version_and_product_to_the_resource() {
+        let config = config_with(&[
+            ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://example.test"),
+            ("DEPLOYMENT_ENVIRONMENT", "staging"),
+            ("SERVICE_VERSION", "v2026.6.18060952"),
+            ("PRODUCT_NAME", "example-product"),
+        ]);
+        assert_eq!(
+            resource_attributes(&config),
+            vec![
+                ("service.name", "prism-agent-runtime".to_string()),
+                ("service.namespace", "prism-agent".to_string()),
+                ("deployment.environment.name", "staging".to_string()),
+                ("service.version", "v2026.6.18060952".to_string()),
+                ("product.name", "example-product".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn omits_service_version_and_product_name_when_not_configured() {
+        let config = config_with(&[("OTEL_EXPORTER_OTLP_ENDPOINT", "http://example.test")]);
+        let attributes = resource_attributes(&config);
+        assert!(!attributes.iter().any(|(k, _)| *k == "service.version"));
+        assert!(!attributes.iter().any(|(k, _)| *k == "product.name"));
+        assert!(attributes.contains(&("service.name", "prism-agent-runtime".to_string())));
+        assert!(attributes.contains(&("deployment.environment.name", "development".to_string())));
+    }
+
+    /// A collector that answers 200 to each POST and keeps the request.
+    async fn collector() -> (
+        String,
+        tokio::sync::mpsc::UnboundedReceiver<(String, Value)>,
+    ) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let app = axum::Router::new().route(
+            "/v1/logs",
+            axum::routing::post(
+                move |headers: axum::http::HeaderMap, body: axum::body::Bytes| {
+                    let tx = tx.clone();
+                    async move {
+                        let key = headers
+                            .get("x-api-key")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or_default()
+                            .to_string();
+                        let json: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+                        let _ = tx.send((key, json));
+                        "{}"
+                    }
+                },
+            ),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{addr}"), rx)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn exports_an_event_as_an_otlp_json_log_record() {
+        let (endpoint, mut rx) = collector().await;
+        let config = config_with(&[
+            ("OTEL_EXPORTER_OTLP_ENDPOINT", &endpoint),
+            ("OTEL_EXPORTER_OTLP_API_KEY", "key-1"),
+            ("DEPLOYMENT_ENVIRONMENT", "staging"),
+        ]);
+        let pipeline = build_pipeline(&config).unwrap();
+        let mut props = IndexMap::new();
+        props.insert("feedback.rating".to_string(), "up".to_string());
+        emit(
+            &pipeline.logger,
+            "message feedback",
+            Some("user-123"),
+            Some(props),
+        );
+        tokio::task::spawn_blocking(move || pipeline.provider.shutdown())
+            .await
+            .unwrap()
+            .unwrap();
+
+        let (api_key, body) = rx.recv().await.expect("one export");
+        assert_eq!(api_key, "key-1");
+        let resource_logs = &body["resourceLogs"][0];
+        let resource: HashMap<String, Value> = resource_logs["resource"]["attributes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| (a["key"].as_str().unwrap().to_string(), a["value"].clone()))
+            .collect();
+        assert_eq!(
+            resource["service.name"],
+            serde_json::json!({ "stringValue": "prism-agent-runtime" })
+        );
+        assert_eq!(
+            resource["deployment.environment.name"],
+            serde_json::json!({ "stringValue": "staging" })
+        );
+        let scope_logs = &resource_logs["scopeLogs"][0];
+        assert_eq!(scope_logs["scope"]["name"], "product-telemetry");
+        let record = &scope_logs["logRecords"][0];
+        assert_eq!(record["eventName"], "message feedback");
+        assert_eq!(
+            record["body"],
+            serde_json::json!({ "stringValue": "message feedback" })
+        );
+        assert_eq!(record["severityNumber"], 9);
+        assert_eq!(record["severityText"], "INFO");
+        let keys: Vec<&str> = record["attributes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["key"].as_str().unwrap())
+            .collect();
+        assert_eq!(keys, vec!["feedback.rating", "event.id", "user.id"]);
+        assert_eq!(
+            record["attributes"][2]["value"],
+            serde_json::json!({ "stringValue": "user-123" })
+        );
+    }
+
+    #[test]
+    fn omits_user_id_when_unknown() {
+        for user in [None, Some("")] {
+            let attributes = record_attributes(user, None);
+            let keys: Vec<&str> = attributes.keys().map(String::as_str).collect();
+            assert_eq!(keys, vec!["event.id"]);
+        }
+    }
+
+    #[test]
+    fn event_ids_are_uuid_v7() {
+        let attributes = record_attributes(Some("user-1"), None);
+        let id = uuid::Uuid::parse_str(&attributes["event.id"]).unwrap();
+        assert_eq!(id.get_version_num(), 7);
+    }
+
+    #[test]
+    fn interns_each_event_name_once() {
+        let a = interned_event_name("update available");
+        let b = interned_event_name(&String::from("update available"));
+        assert!(std::ptr::eq(a, b));
+    }
+
+    #[test]
+    fn langfuse_options_are_empty_while_langfuse_is_off() {
+        let options = langfuse_telemetry("probe", None, None);
+        assert!(options.runtime_context.is_none());
+        assert!(options.experimental_telemetry.is_none());
+        assert!(
+            langfuse_embed_telemetry("probe")
+                .experimental_telemetry
+                .is_none()
+        );
     }
 }

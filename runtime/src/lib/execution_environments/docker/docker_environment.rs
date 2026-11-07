@@ -18,9 +18,12 @@ use super::docker_env::docker_base_env;
 use super::docker_files::create_docker_files;
 use super::docker_process::{DockerExecContext, run_docker_program, run_docker_shell};
 use super::volumes::{CONTAINER_PATHS, serves_path};
+use crate::config::CONFIG;
+use crate::lib::agent_processes::AGENT_PROCESSES;
+use crate::lib::data_dir::resolve_data_dir;
 use crate::lib::execution_environments::execution_environment::{
     AgentPaths, ExecProcess, ExecutionEnvironment, ExecutionEnvironmentName, ExecutionFiles,
-    PreparedWorkspace, ProcessEnv, RunOptions,
+    PreparedWorkspace, ProcessEnv, RunOptions, StdinMode,
 };
 
 /// Hardcoded: the image is a component of this runtime, not a deployment choice.
@@ -69,7 +72,20 @@ pub struct DockerEnvironment {
 
 /// The environment for this deployment, its image `exec_image(config.app_version)`.
 pub fn create_docker_environment() -> Arc<dyn ExecutionEnvironment> {
-    todo!()
+    let deployment = deployment_id();
+    let container = exec_container_name(&deployment);
+    let image = exec_image(&CONFIG.app_version);
+    let ctx = DockerExecContext {
+        container: container.clone(),
+    };
+    let files = create_docker_files(&container);
+    Arc::new(DockerEnvironment {
+        deployment,
+        container,
+        image,
+        ctx,
+        files,
+    })
 }
 
 #[async_trait]
@@ -131,7 +147,13 @@ impl ExecutionEnvironment for DockerEnvironment {
 
     /// Started through `AGENT_PROCESSES.track`.
     fn run_shell(&self, command: &str, options: RunOptions) -> Arc<dyn ExecProcess> {
-        todo!()
+        let with_stdin = options.stdin == StdinMode::Pipe;
+        let command = command.to_string();
+        let ctx = self.ctx.clone();
+        AGENT_PROCESSES.track(
+            Box::new(move || run_docker_shell(&command, options, &ctx)),
+            with_stdin,
+        )
     }
 
     /// Started through `AGENT_PROCESSES.track`.
@@ -141,7 +163,14 @@ impl ExecutionEnvironment for DockerEnvironment {
         args: &[String],
         options: RunOptions,
     ) -> Arc<dyn ExecProcess> {
-        todo!()
+        let with_stdin = options.stdin == StdinMode::Pipe;
+        let command = command.to_string();
+        let args = args.to_vec();
+        let ctx = self.ctx.clone();
+        AGENT_PROCESSES.track(
+            Box::new(move || run_docker_program(&command, &args, options, &ctx)),
+            with_stdin,
+        )
     }
 
     fn files(&self) -> Arc<dyn ExecutionFiles> {
@@ -160,7 +189,7 @@ impl ExecutionEnvironment for DockerEnvironment {
 ///
 /// The first 12 hex digits of the SHA-256 of `resolve_data_dir()`.
 pub fn deployment_id() -> String {
-    todo!()
+    deployment_id_for(&resolve_data_dir())
 }
 
 /// The first 12 hex digits of the SHA-256 of `data_dir`.

@@ -3,19 +3,26 @@
 //! Builds the system prompt and conversation messages from pre-fetched context.
 //! No data fetching here beyond the catalogs and memories the prompt lists.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 use chrono::{DateTime, Utc};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
-use crate::ai::ModelMessage;
+use crate::ai::json::normalize_numbers;
+use crate::ai::{
+    AssistantContentPart, ModelMessage, TextPart, ToolCallPart, ToolContentPart, ToolResultOutput,
+    ToolResultPart, UserContentPart,
+};
 use crate::db::models::MessageRole;
 use crate::lib::execution_environments::get_execution_environment::get_execution_environment;
-use crate::lib::tool_search::plan::ToolSearchPrompt;
+use crate::lib::tool_names::to_model_tool_name;
+use crate::lib::tool_output_limiter::{RenderToolResultOptions, render_legacy_stored_output};
+use crate::lib::tool_search::plan::{ReplayedToolCall, ToolSearchPrompt};
 use crate::prompts::agent_message_prompt::{
-    AgentMessageColumns, agent_message_origin, render_agent_message,
+    AgentMessageColumns, agent_message_columns, agent_message_origin, render_agent_message,
 };
 use crate::prompts::computer_prompt::{COMPUTER_INSTRUCTIONS, REMOTE_COMPUTER_INSTRUCTIONS};
 use crate::prompts::webhook_prompt_tags::{WEBHOOK_EVENT_DATA_TAG, WEBHOOK_PROMPT_TAG};
@@ -70,6 +77,23 @@ pub struct ConversationMessage {
 }
 
 impl ConversationMessage {
+    /// A stored row as the prompt reads it, with no attachments yet.
+    pub fn from_row(row: crate::db::models::ConversationMessage) -> Self {
+        Self {
+            id: row.id,
+            role: row.role,
+            content: row.content,
+            tool_calls: row.tool_calls,
+            triggered_by: Some(row.triggered_by.as_str().to_string()),
+            trigger_name: row.trigger_name,
+            sender_external_id: row.sender_external_id,
+            sender_name: row.sender_name,
+            external_message_id: row.external_message_id,
+            internal_step: row.internal_step,
+            attachments: None,
+        }
+    }
+
     /// The columns that hold the message's origin.
     pub fn agent_message_columns(&self) -> AgentMessageColumns {
         AgentMessageColumns {
@@ -728,7 +752,175 @@ pub fn build_conversation_history(
     tool_search: Option<&ToolSearchPrompt>,
     sender_tags: bool,
 ) -> ConversationHistory {
-    todo!()
+    let mut messages: Vec<ModelMessage> = Vec::new();
+    let row_ids: HashSet<&str> = context
+        .recent_messages
+        .iter()
+        .map(|msg| msg.id.as_str())
+        .collect();
+    let mut after_row: HashMap<String, Vec<ModelMessage>> = HashMap::new();
+    let mut pending: Vec<ModelMessage> = Vec::new();
+    for change in tool_changes {
+        let message = ModelMessage::System(change.message.clone());
+        match change.after_row_id.as_deref() {
+            Some(id) if row_ids.contains(id) => {
+                after_row.entry(id.to_string()).or_default().push(message);
+            }
+            _ => pending.push(message),
+        }
+    }
+    let replay_tool_call = tool_search.and_then(|prompt| prompt.replay_tool_call.as_ref());
+
+    // The compaction summary stands in for the rows it replaced. It is rebuilt on every
+    // turn, so its text holds for any turn after the compaction, not only the next one.
+    if let Some(summary) = context
+        .conversation_summary
+        .as_deref()
+        .filter(|summary| !summary.is_empty())
+    {
+        push_history_message(
+            &mut messages,
+            &mut pending,
+            ModelMessage::user(summary_message(summary, context.compacted_history_readable)),
+        );
+    }
+
+    // Add recent messages (only user and assistant, skip system and empty messages)
+    for msg in &context.recent_messages {
+        match msg.role {
+            MessageRole::User => {
+                if let Some(message) = build_user_message(msg, sender_tags) {
+                    push_history_message(&mut messages, &mut pending, message);
+                }
+            }
+            MessageRole::Agent => {
+                if let Some(trigger_name) = msg.trigger_name.as_deref().filter(|n| !n.is_empty()) {
+                    push_history_message(
+                        &mut messages,
+                        &mut pending,
+                        ModelMessage::user(webhook_event_text(trigger_name)),
+                    );
+                }
+                let tool_calls: Vec<HistoryToolCall> = parse_tool_calls(msg)
+                    .into_iter()
+                    .map(|tc| {
+                        let replayed = replay_tool_call.and_then(|replay| {
+                            replay(&ReplayedToolCall {
+                                id: tc.id.clone(),
+                                tool: tc.tool.clone(),
+                                input: tc.parsed_input.clone(),
+                                output: tc.output.clone(),
+                            })
+                        });
+                        match replayed {
+                            Some(replayed) => HistoryToolCall {
+                                id: replayed.id,
+                                tool: tc.tool,
+                                input: replayed.input,
+                                output: replayed.output,
+                            },
+                            None => HistoryToolCall {
+                                id: tc.id,
+                                tool: tc.tool,
+                                input: tc.parsed_input,
+                                output: ToolResultOutput::text(tc.output),
+                            },
+                        }
+                    })
+                    .collect();
+
+                if !tool_calls.is_empty() {
+                    // Build assistant message with tool-call content blocks (+ text if present)
+                    let mut assistant_parts: Vec<AssistantContentPart> = Vec::new();
+                    if !js_trim(&msg.content).is_empty() {
+                        assistant_parts.push(AssistantContentPart::Text(TextPart::new(
+                            msg.content.clone(),
+                        )));
+                    }
+                    for tc in &tool_calls {
+                        assistant_parts.push(AssistantContentPart::ToolCall(ToolCallPart {
+                            tool_call_id: tc.id.clone(),
+                            tool_name: tc.tool.clone(),
+                            input: tc.input.clone(),
+                            provider_executed: None,
+                            provider_options: None,
+                        }));
+                    }
+                    push_history_message(
+                        &mut messages,
+                        &mut pending,
+                        ModelMessage::assistant_parts(assistant_parts),
+                    );
+
+                    // Build tool message with tool-result content blocks.
+                    //
+                    // A stored text output is replayed verbatim on purpose: it is the exact
+                    // text the model saw when the call ran, rendered and cut at execute time
+                    // by `lib/tool_output_limiter`. Do not render it again here: the bytes
+                    // would then depend on today's budget rather than the turn's, so a
+                    // constant change would silently rewrite history and break the
+                    // provider's prompt-cache prefix on every thread.
+                    let tool_result_parts: Vec<ToolContentPart> = tool_calls
+                        .into_iter()
+                        .map(|tc| {
+                            ToolContentPart::ToolResult(ToolResultPart {
+                                tool_call_id: tc.id,
+                                tool_name: tc.tool,
+                                output: tc.output,
+                                provider_options: None,
+                            })
+                        })
+                        .collect();
+                    push_history_message(
+                        &mut messages,
+                        &mut pending,
+                        ModelMessage::tool(tool_result_parts),
+                    );
+                } else if !js_trim(&msg.content).is_empty() {
+                    // Plain text assistant message (no tool calls)
+                    push_history_message(
+                        &mut messages,
+                        &mut pending,
+                        ModelMessage::assistant(msg.content.clone()),
+                    );
+                }
+            }
+            MessageRole::System => {}
+        }
+        if let Some(changes) = after_row.get(msg.id.as_str()) {
+            pending.extend(changes.iter().cloned());
+        }
+    }
+
+    ConversationHistory {
+        messages,
+        trailing_tool_changes: pending,
+    }
+}
+
+/// One stored tool call in the form this request sends it.
+struct HistoryToolCall {
+    id: String,
+    tool: String,
+    input: Value,
+    output: ToolResultOutput,
+}
+
+/// Appends `message`, first placing the pending tool-change announcements when this is
+/// a place the API accepts a system message: an assistant turn after a user turn or a
+/// tool result.
+fn push_history_message(
+    messages: &mut Vec<ModelMessage>,
+    pending: &mut Vec<ModelMessage>,
+    message: ModelMessage,
+) {
+    let previous = messages.last().map(ModelMessage::role);
+    let fits = matches!(message, ModelMessage::Assistant(_))
+        && matches!(previous, Some("user") | Some("tool"));
+    if !pending.is_empty() && fits {
+        messages.append(pending);
+    }
+    messages.push(message);
 }
 
 const SUMMARY_TAG: &str = "conversation-summary";
@@ -782,7 +974,31 @@ pub struct SteeringMessage {
 /// presented to the model exactly as one shared at the start of a turn: a metadata
 /// stub the agent hydrates on demand. One text part keeps the plain-string form.
 pub fn build_steering_message(msg: &SteeringMessage) -> ModelMessage {
-    todo!()
+    let columns = msg
+        .agent_message
+        .as_ref()
+        .map(agent_message_columns)
+        .unwrap_or_default();
+    let row = ConversationMessage {
+        id: "steering".to_string(),
+        role: MessageRole::User,
+        content: msg.text.clone(),
+        tool_calls: None,
+        triggered_by: columns.triggered_by,
+        trigger_name: columns.trigger_name,
+        sender_external_id: columns.sender_external_id,
+        sender_name: columns.sender_name,
+        external_message_id: columns.external_message_id,
+        internal_step: false,
+        attachments: msg.attachments.clone(),
+    };
+    let mut parts = build_user_content_parts(&row, false);
+
+    // Keep the plain-string form when there's just text, same as history.
+    if parts.len() == 1 {
+        return ModelMessage::user(parts.remove(0));
+    }
+    ModelMessage::user_parts(parts.into_iter().map(text_part).collect())
 }
 
 /// A user row as history renders it: its text and a stub per attachment, or `None`
@@ -790,7 +1006,20 @@ pub fn build_steering_message(msg: &SteeringMessage) -> ModelMessage {
 /// text part keeps the plain-string form, rather than wrapping every turn in a
 /// content array of one part.
 pub fn build_user_message(msg: &ConversationMessage, sender_tags: bool) -> Option<ModelMessage> {
-    todo!()
+    let mut parts = build_user_content_parts(msg, sender_tags);
+    if parts.is_empty() {
+        return None;
+    }
+    if parts.len() == 1 {
+        return Some(ModelMessage::user(parts.remove(0)));
+    }
+    Some(ModelMessage::user_parts(
+        parts.into_iter().map(text_part).collect(),
+    ))
+}
+
+fn text_part(text: String) -> UserContentPart {
+    UserContentPart::Text(TextPart::new(text))
 }
 
 static SENDER_NAME_STRIP: LazyLock<Regex> =
@@ -919,7 +1148,57 @@ pub(crate) struct ParsedToolCall {
 /// function is deterministic and idempotent, so an old name maps onto exactly the
 /// name the current tools block carries.
 pub(crate) fn parse_tool_calls(msg: &ConversationMessage) -> Vec<ParsedToolCall> {
-    todo!()
+    let Some(Value::Array(tool_calls)) = msg.tool_calls.as_ref() else {
+        return Vec::new();
+    };
+
+    let mut results = Vec::new();
+    for (i, tc) in tool_calls.iter().enumerate() {
+        let Value::Object(tc) = tc else {
+            continue;
+        };
+        let Some(tool) = tc
+            .get("tool")
+            .and_then(Value::as_str)
+            .filter(|t| !t.is_empty())
+        else {
+            continue;
+        };
+
+        let parsed_input = match tc.get("input") {
+            Some(Value::String(text)) => serde_json::from_str::<Value>(text)
+                .map(normalize_numbers)
+                .unwrap_or_else(|_| Value::Object(Map::new())),
+            None | Some(Value::Null) => Value::Object(Map::new()),
+            Some(other) => normalize_numbers(other.clone()),
+        };
+
+        let stored = tc.get("output").and_then(Value::as_str).unwrap_or("");
+
+        results.push(ParsedToolCall {
+            id: format!("{}-tc-{i}", msg.id),
+            tool: to_model_tool_name(tool),
+            parsed_input,
+            // `rendered` marks a row written under the render-at-execute contract: its
+            // `output` already is what the model saw, cut and all, so it replays
+            // verbatim. A row without the flag predates that contract and holds
+            // `JSON.stringify(rawOutput)` (uncapped, and escaped differently from what
+            // the model was shown), so it has to be parsed and rendered here instead.
+            output: if tc.get("rendered") == Some(&Value::Bool(true)) {
+                stored.to_string()
+            } else {
+                render_legacy_stored_output(
+                    stored,
+                    &RenderToolResultOptions {
+                        tool_name: Some(tool.to_string()),
+                        ..Default::default()
+                    },
+                )
+            },
+        });
+    }
+
+    results
 }
 
 // ============================================================================
@@ -1327,3 +1606,7 @@ fn get_internal_database_instructions() -> String {
 Never access, read or modify your own runtime database directly: not `DATABASE_URL`, not the SQLite file, not the Prisma client, with `sqlite3`, a script or any other tool. Read and change your own state only through your tools."#
         .to_string()
 }
+
+#[cfg(test)]
+#[path = "context_builder_tests.rs"]
+mod tests;

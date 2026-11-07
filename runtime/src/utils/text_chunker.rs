@@ -16,7 +16,7 @@ static PARAGRAPH_BREAK: LazyLock<Regex> =
 
 /// `String.prototype.trim`.
 pub(crate) fn js_trim(text: &str) -> &str {
-    text.trim_matches(|c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}')
+    crate::support::js::trim(text)
 }
 
 /// Split content into chunks respecting paragraph boundaries.
@@ -122,23 +122,74 @@ mod tests {
     use super::*;
 
     #[test]
-    fn keeps_paragraphs_together_until_the_limit() {
+    fn keeps_short_content_as_a_single_chunk() {
+        assert_eq!(split_content("hello world", 100), vec!["hello world"]);
+    }
+
+    #[test]
+    fn splits_at_paragraph_boundaries() {
+        let para1 = "a".repeat(60);
+        let para2 = "b".repeat(60);
         assert_eq!(
-            split_content("one\n\ntwo\n\n\nthree", 9),
-            vec!["one\n\ntwo", "three"]
+            split_content(&format!("{para1}\n\n{para2}"), 100),
+            vec![para1, para2]
         );
     }
 
     #[test]
-    fn splits_a_long_paragraph_at_a_sentence_and_keeps_every_chunk_within_the_limit() {
-        let text = "First sentence here. Second sentence follows. Third one.";
-        let chunks = split_long_text(text, 25);
-        assert!(chunks.iter().all(|c| len16(c) <= 25), "{chunks:?}");
-        assert_eq!(chunks[0], "First sentence here.");
+    fn packs_paragraphs_that_fit_together_into_one_chunk() {
+        assert_eq!(
+            split_content("one\n\ntwo\n\nthree", 100),
+            vec!["one\n\ntwo\n\nthree"]
+        );
     }
 
     #[test]
-    fn hard_splits_text_without_a_boundary() {
-        assert_eq!(split_long_text("abcdefghij", 4), vec!["abcd", "efgh", "ij"]);
+    fn splits_an_over_long_paragraph_at_a_sentence_boundary() {
+        let text = format!("{}. {}", "x".repeat(70), "y".repeat(50));
+        let chunks = split_content(&text, 100);
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks[0].ends_with('.'));
+    }
+
+    #[test]
+    fn drops_nothing_chunks_rejoin_to_the_original_words() {
+        let text = (0..30)
+            .map(|i| format!("word{i}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let joined = split_content(&text, 40).join(" ");
+        assert_eq!(
+            joined.split_whitespace().collect::<Vec<_>>(),
+            text.split_whitespace().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn hard_splits_text_with_no_natural_boundaries() {
+        let text = "z".repeat(250);
+        let chunks = split_long_text(&text, 100);
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks.concat(), text);
+    }
+
+    #[test]
+    fn never_emits_a_chunk_longer_than_max_length_hard_split_included() {
+        for chunk in split_long_text(&"z".repeat(250), 100) {
+            assert!(len16(&chunk) <= 100);
+        }
+
+        // A sentence boundary landing exactly on maxLength must not overshoot.
+        let boundary = split_long_text(&format!("{}. {}", "a".repeat(99), "b".repeat(50)), 100);
+        for chunk in boundary {
+            assert!(len16(&chunk) <= 100);
+        }
+    }
+
+    #[test]
+    fn prefers_a_newline_over_a_mid_word_split() {
+        let text = format!("{}\n{}", "a".repeat(80), "b".repeat(80));
+        let chunks = split_long_text(&text, 100);
+        assert_eq!(chunks[0], "a".repeat(80));
     }
 }

@@ -111,3 +111,129 @@ pub fn codec_from(unit: &[u8]) -> Option<String> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A NAL of `kind`, behind a start code of the length the encoder really varies.
+    fn nal(kind: u8, body: &[u8], short: bool) -> Vec<u8> {
+        let mut out = if short {
+            vec![0x00, 0x00, 0x01]
+        } else {
+            vec![0x00, 0x00, 0x00, 0x01]
+        };
+        out.push(kind);
+        out.extend_from_slice(body);
+        out
+    }
+
+    fn delimiter() -> Vec<u8> {
+        nal(9, &[0xf0], false)
+    }
+
+    /// The first three bytes of a parameter set are the profile, its constraints and the
+    /// level.
+    fn sps() -> Vec<u8> {
+        nal(7, &[0x64, 0x00, 0x1f, 0xac], false)
+    }
+
+    fn pps() -> Vec<u8> {
+        nal(8, &[0xeb, 0xe2], false)
+    }
+
+    fn idr() -> Vec<u8> {
+        nal(5, &[0x88, 0x84, 0x00], false)
+    }
+
+    fn slice() -> Vec<u8> {
+        nal(1, &[0x9a, 0x12], true)
+    }
+
+    fn concat(parts: &[Vec<u8>]) -> Vec<u8> {
+        parts.concat()
+    }
+
+    #[test]
+    fn cuts_the_stream_where_each_picture_begins_and_keeps_the_last_one_back() {
+        let first = concat(&[delimiter(), sps(), pps(), idr()]);
+        let second = concat(&[delimiter(), slice()]);
+        let third = concat(&[delimiter(), slice()]);
+
+        let split = split_access_units(&Bytes::from(concat(&[
+            first.clone(),
+            second.clone(),
+            third.clone(),
+        ])));
+
+        // A picture is only whole once the next one has started.
+        assert_eq!(split.units.len(), 2);
+        assert_eq!(split.units[0].as_ref(), first.as_slice());
+        assert_eq!(split.units[1].as_ref(), second.as_slice());
+        assert_eq!(split.rest.as_ref(), third.as_slice());
+    }
+
+    #[test]
+    fn loses_nothing_when_the_bytes_arrive_in_pieces_of_any_size() {
+        let stream = concat(&[
+            delimiter(),
+            sps(),
+            pps(),
+            idr(),
+            delimiter(),
+            slice(),
+            delimiter(),
+            slice(),
+            delimiter(),
+            slice(),
+        ]);
+        for size in [1usize, 3, 5, 64] {
+            let mut pending: Vec<u8> = Vec::new();
+            let mut seen: Vec<Bytes> = Vec::new();
+            let mut i = 0;
+            while i < stream.len() {
+                pending.extend_from_slice(&stream[i..(i + size).min(stream.len())]);
+                let out = split_access_units(&Bytes::from(pending.clone()));
+                seen.extend(out.units);
+                pending = out.rest.to_vec();
+                i += size;
+            }
+            assert_eq!(seen.len(), 3);
+            let mut joined: Vec<u8> = seen.iter().flat_map(|unit| unit.to_vec()).collect();
+            joined.extend_from_slice(&pending);
+            assert_eq!(joined, stream);
+        }
+    }
+
+    #[test]
+    fn holds_everything_back_until_a_second_picture_has_begun() {
+        let whole = concat(&[delimiter(), sps(), pps(), idr()]);
+        let split = split_access_units(&Bytes::from(whole.clone()));
+        assert!(split.units.is_empty());
+        assert_eq!(split.rest.len(), whole.len());
+    }
+
+    #[test]
+    fn is_a_keyframe_for_a_picture_a_viewer_can_join_on() {
+        assert!(is_keyframe(&concat(&[delimiter(), sps(), pps(), idr()])));
+    }
+
+    #[test]
+    fn is_no_keyframe_for_one_that_needs_the_picture_before_it() {
+        assert!(!is_keyframe(&concat(&[delimiter(), slice()])));
+    }
+
+    #[test]
+    fn names_the_stream_from_its_parameter_set() {
+        // What the encoder in the image really produced for a 1280x720 screen.
+        assert_eq!(
+            codec_from(&concat(&[delimiter(), sps(), pps(), idr()])).as_deref(),
+            Some("avc1.64001F")
+        );
+    }
+
+    #[test]
+    fn has_no_name_until_a_parameter_set_arrives() {
+        assert_eq!(codec_from(&concat(&[delimiter(), slice()])), None);
+    }
+}

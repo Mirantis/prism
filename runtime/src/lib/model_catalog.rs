@@ -44,8 +44,17 @@ use indexmap::{IndexMap, IndexSet};
 use parking_lot::{Mutex, RwLock};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
+
+use std::time::Duration;
+
+use crate::config::CONFIG;
+use crate::lib::log_redaction::err_json;
+use crate::lib::proxy_dispatcher::get_proxy_dispatcher;
+use crate::lib::telemetry::track_event;
+use crate::support::now_ms;
+use crate::{log_debug, log_info, log_warn};
 
 /// The bundled floor, as vendored from models.dev.
 const BUNDLED_JSON: &str = include_str!("model_limits.generated.json");
@@ -339,8 +348,118 @@ struct RejectedPayload {
 /// `[ModelCatalog] refresh failed; using the bundled catalog`. Each outcome but the
 /// cancel emits `model catalog refreshed`.
 pub async fn refresh_model_catalog() {
-    todo!()
+    let Some(url) = CONFIG.models_dev_url.clone().filter(|url| !url.is_empty()) else {
+        *STATE.lock() = CatalogState::Disabled;
+        // debug, not info: this is the default, so an info line would add one entry
+        // to every boot log saying nothing happened.
+        log_debug!(
+            "[ModelCatalog] MODELS_DEV_URL unset; using the bundled catalog (no outbound call)"
+        );
+        return;
+    };
+
+    *STATE.lock() = CatalogState::Pending;
+    let started_at = now_ms();
+    let controller = CancellationToken::new();
+    *CONTROLLER.lock() = Some(controller.clone());
+
+    let outcome = tokio::select! {
+        _ = controller.cancelled() => Err(RefreshError::Canceled),
+        fetched = tokio::time::timeout(
+            Duration::from_millis(FETCH_TIMEOUT_MS),
+            fetch_registry(&url),
+        ) => match fetched {
+            Ok(Ok(remote)) => Ok(remote),
+            Ok(Err(error)) => Err(RefreshError::Failed(error)),
+            Err(_) => Err(RefreshError::Timeout),
+        },
+    };
+
+    match outcome {
+        Ok(remote) => {
+            let counts = install_remote_catalog(&remote);
+            *STATE.lock() = CatalogState::Remote;
+
+            let per_provider = remote
+                .iter()
+                .map(|(provider, models)| format!("{}={}", provider, models.len()))
+                .collect::<Vec<_>>()
+                .join(" ");
+            log_info!(
+                "[ModelCatalog] refreshed from models.dev in {}ms ({}, {} new, {} changed)",
+                now_ms() - started_at,
+                per_provider,
+                counts.added,
+                counts.changed
+            );
+            if counts.diverged > 0 {
+                // Not rejected: a legitimate window upgrade (200k -> 1M) is a 5x jump,
+                // so a rejection band would block the main thing this feature is for.
+                // Surfaced so a bad upstream edit is at least visible.
+                log_warn!(
+                    "[ModelCatalog] {} model(s) diverge from the bundled catalog by more than 2x; regenerate the snapshot to review",
+                    counts.diverged
+                );
+            }
+
+            emit_outcome("remote", started_at, Some(&remote), Some(&counts), None);
+        }
+        // Our own abort means shutdown, which is not an outcome worth reporting.
+        Err(RefreshError::Canceled) => {
+            *STATE.lock() = CatalogState::Bundled;
+            log_debug!("[ModelCatalog] refresh canceled");
+        }
+        Err(RefreshError::Failed(error)) if error.downcast_ref::<RejectedPayload>().is_some() => {
+            *STATE.lock() = CatalogState::Failed;
+            let rejected = error
+                .downcast_ref::<RejectedPayload>()
+                .expect("checked above");
+            log_warn!(
+                "[ModelCatalog] models.dev payload rejected ({}); using the bundled catalog",
+                rejected.message
+            );
+            let outcome = if matches!(rejected.kind, FailureKind::Shape | FailureKind::Parse) {
+                "rejected"
+            } else {
+                "failed"
+            };
+            emit_outcome(outcome, started_at, None, None, Some(rejected.kind));
+        }
+        Err(other) => {
+            *STATE.lock() = CatalogState::Failed;
+            let (kind, error) = match other {
+                RefreshError::Timeout => (
+                    FailureKind::Timeout,
+                    anyhow::anyhow!("The operation was aborted due to timeout"),
+                ),
+                RefreshError::Failed(error) => (FailureKind::Network, error),
+                RefreshError::Canceled => unreachable!("handled above"),
+            };
+            log_warn!(
+                json!({ "err": err_json(&error) }),
+                "[ModelCatalog] refresh failed; using the bundled catalog"
+            );
+            emit_outcome("failed", started_at, None, None, Some(kind));
+        }
+    }
+
+    *CONTROLLER.lock() = None;
 }
+
+/// How a refresh ended without a catalog.
+enum RefreshError {
+    Canceled,
+    Timeout,
+    Failed(anyhow::Error),
+}
+
+/// The client for a direct fetch, which reads no proxy settings, as Node's `fetch` reads none.
+static DIRECT_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("the HTTP client builds")
+});
 
 /// Abort an in-flight refresh. Safe to call when none is running.
 pub fn cancel_model_catalog_refresh() {
@@ -355,8 +474,87 @@ pub fn cancel_model_catalog_refresh() {
 /// `shape` (`content-type ${type || 'absent'}`), an unparseable body is `parse`
 /// (`body is not valid JSON`), and a payload `reshape_registry` refuses is `shape`
 /// (`no usable models for any configured provider`).
-async fn fetch_registry(url: &str, signal: &CancellationToken) -> anyhow::Result<ModelCatalog> {
-    todo!()
+async fn fetch_registry(url: &str) -> anyhow::Result<ModelCatalog> {
+    let client = match get_proxy_dispatcher().await {
+        Some(proxied) => proxied,
+        None => DIRECT_CLIENT.clone(),
+    };
+
+    let res = client
+        .get(url)
+        .header("accept", "application/json")
+        .send()
+        .await?;
+    let status = res.status();
+    if !status.is_success() {
+        return Err(rejected(
+            FailureKind::Http,
+            format!("HTTP {}", status.as_u16()),
+        ));
+    }
+
+    let declared = res
+        .headers()
+        .get("content-length")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok());
+    if let Some(declared) = declared
+        && declared > MAX_BODY_BYTES
+    {
+        return Err(rejected(
+            FailureKind::Http,
+            format!("body declares {declared} bytes"),
+        ));
+    }
+
+    // Not paranoia: a captive portal or proxy interstitial answers HTTP 200 with
+    // HTML, which would otherwise reach the JSON parser as a confusing syntax error.
+    let content_type = res
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    if !content_type.contains("json") {
+        let shown = if content_type.is_empty() {
+            "absent"
+        } else {
+            content_type.as_str()
+        };
+        return Err(rejected(
+            FailureKind::Shape,
+            format!("content-type {shown}"),
+        ));
+    }
+
+    let raw: Value = match res.bytes().await {
+        Ok(body) => match serde_json::from_slice(&body) {
+            Ok(raw) => raw,
+            Err(_) => {
+                return Err(rejected(
+                    FailureKind::Parse,
+                    "body is not valid JSON".into(),
+                ));
+            }
+        },
+        Err(_) => {
+            return Err(rejected(
+                FailureKind::Parse,
+                "body is not valid JSON".into(),
+            ));
+        }
+    };
+
+    reshape_registry(&raw).ok_or_else(|| {
+        rejected(
+            FailureKind::Shape,
+            "no usable models for any configured provider".into(),
+        )
+    })
+}
+
+fn rejected(kind: FailureKind, message: String) -> anyhow::Error {
+    anyhow::Error::new(RejectedPayload { kind, message })
 }
 
 /// The refresh's outcome event. Telemetry no-ops without an OTel logger, and
@@ -375,5 +573,30 @@ fn emit_outcome(
     counts: Option<&InstallResult>,
     kind: Option<FailureKind>,
 ) {
-    todo!()
+    let mut props: IndexMap<String, String> = IndexMap::new();
+    props.insert("catalog.outcome".into(), outcome.to_string());
+    props.insert(
+        "catalog.duration_ms".into(),
+        (now_ms() - started_at_ms).to_string(),
+    );
+    if let Some(remote) = remote {
+        for (provider, models) in remote {
+            props.insert(
+                format!("catalog.entries_{provider}"),
+                models.len().to_string(),
+            );
+        }
+    }
+    if let Some(counts) = counts {
+        props.insert("catalog.new_entries".into(), counts.added.to_string());
+        props.insert("catalog.changed_entries".into(), counts.changed.to_string());
+        props.insert(
+            "catalog.diverged_entries".into(),
+            counts.diverged.to_string(),
+        );
+    }
+    if let Some(kind) = kind {
+        props.insert("catalog.failure_kind".into(), kind.as_str().to_string());
+    }
+    track_event("model catalog refreshed", None, Some(props));
 }

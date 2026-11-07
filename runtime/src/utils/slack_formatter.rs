@@ -15,7 +15,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::support::js::len16;
+use crate::support::js::{len16, trim as js_trim};
 use crate::utils::text_chunker::split_content;
 
 /// A `mrkdwn` text object.
@@ -162,7 +162,7 @@ fn convert_tables_to_text(content: &str) -> String {
     TABLE
         .replace_all(content, |caps: &regex::Captures<'_>| {
             let matched = &caps[0];
-            let lines: Vec<&str> = matched.trim().split('\n').collect();
+            let lines: Vec<&str> = js_trim(matched).split('\n').collect();
             if lines.len() < 3 {
                 return matched.to_string();
             }
@@ -170,7 +170,7 @@ fn convert_tables_to_text(content: &str) -> String {
             // Parse header and rows
             let parse_row = |row: &str| -> Vec<String> {
                 row.split('|')
-                    .map(|cell| cell.trim().to_string())
+                    .map(|cell| js_trim(cell).to_string())
                     .filter(|cell| !cell.is_empty() && !DIVIDER_CELL.is_match(cell))
                     .collect()
             };
@@ -178,7 +178,7 @@ fn convert_tables_to_text(content: &str) -> String {
             let headers = parse_row(lines[0]);
             let rows: Vec<Vec<String>> = lines[2..]
                 .iter()
-                .filter(|line| !line.trim().is_empty())
+                .filter(|line| !js_trim(line).is_empty())
                 .map(|line| parse_row(line))
                 .collect();
 
@@ -266,7 +266,7 @@ pub fn format_slack_message(
     } else if processed_length > BLOCK_TEXT_LIMIT {
         // Split by paragraphs/sections to stay within limits
         for section in split_content(&processed_content, BLOCK_TEXT_LIMIT) {
-            if !section.trim().is_empty() {
+            if !js_trim(&section).is_empty() {
                 blocks.push(SlackBlock::markdown(section));
             }
         }
@@ -362,44 +362,364 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn block_json(block: &SlackBlock) -> Value {
+        serde_json::to_value(block).unwrap()
+    }
+
+    fn markdown_texts(message: &FormattedSlackMessage) -> Vec<String> {
+        message
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                SlackBlock::Markdown { text } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn first_markdown(message: &FormattedSlackMessage) -> String {
+        markdown_texts(message).into_iter().next().unwrap()
+    }
+
+    fn format(content: &str) -> FormattedSlackMessage {
+        format_slack_message(content, None, None, None)
+    }
+
+    // formatSlackMessage: basic content
+
     #[test]
-    fn writes_blocks_as_slack_reads_them() {
+    fn wraps_short_content_in_a_single_markdown_block() {
+        let result = format("Hello world");
+        assert_eq!(result.text, "Hello world");
+        assert_eq!(result.blocks.len(), 1);
+        assert_eq!(
+            block_json(&result.blocks[0]),
+            json!({ "type": "markdown", "text": "Hello world" })
+        );
+    }
+
+    #[test]
+    fn returns_a_fallback_block_for_empty_content() {
+        let result = format("");
+        assert_eq!(result.blocks.len(), 1);
+        assert_eq!(
+            block_json(&result.blocks[0]),
+            json!({ "type": "markdown", "text": "(empty message)" })
+        );
+    }
+
+    #[test]
+    fn preserves_whitespace_only_content_in_a_single_markdown_block() {
+        let result = format("   ");
+        assert_eq!(result.text, "   ");
+        assert_eq!(result.blocks.len(), 1);
+        assert_eq!(
+            block_json(&result.blocks[0]),
+            json!({ "type": "markdown", "text": "   " })
+        );
+    }
+
+    // triggeredBy context blocks
+
+    #[test]
+    fn adds_a_heartbeat_context_block() {
+        let result = format_slack_message("alert", Some("HEARTBEAT"), None, None);
+        assert_eq!(
+            block_json(&result.blocks[0]),
+            json!({ "type": "context", "elements": [{ "type": "mrkdwn", "text": "💓 Heartbeat Alert" }] })
+        );
+    }
+
+    #[test]
+    fn adds_a_cron_task_context_block() {
+        let result = format_slack_message("report", Some("CRON_TASK"), None, None);
+        assert_eq!(
+            block_json(&result.blocks[0]),
+            json!({ "type": "context", "elements": [{ "type": "mrkdwn", "text": "⏰ Scheduled Task Result" }] })
+        );
+    }
+
+    #[test]
+    fn adds_a_custom_trigger_context_block() {
+        let result = format_slack_message("msg", Some("GOAL"), None, None);
+        assert_eq!(
+            block_json(&result.blocks[0]),
+            json!({ "type": "context", "elements": [{ "type": "mrkdwn", "text": "📬 GOAL" }] })
+        );
+    }
+
+    #[test]
+    fn adds_no_context_block_for_a_webhook() {
+        let result = format_slack_message("msg", Some("WEBHOOK"), None, None);
+        assert_eq!(result.blocks.len(), 1);
+        assert!(matches!(result.blocks[0], SlackBlock::Markdown { .. }));
+    }
+
+    #[test]
+    fn adds_no_context_block_for_user_input() {
+        let result = format_slack_message("msg", Some("USER_INPUT"), None, None);
+        assert!(
+            !result
+                .blocks
+                .iter()
+                .any(|b| matches!(b, SlackBlock::Context { .. }))
+        );
+        assert_eq!(result.blocks.len(), 1);
+        assert!(matches!(result.blocks[0], SlackBlock::Markdown { .. }));
+    }
+
+    #[test]
+    fn adds_no_context_block_without_a_trigger() {
+        let result = format("msg");
+        assert_eq!(result.blocks.len(), 1);
+        assert!(matches!(result.blocks[0], SlackBlock::Markdown { .. }));
+    }
+
+    // toolCalls context
+
+    #[test]
+    fn appends_a_tool_context_block_with_unique_tool_names() {
+        let calls = [
+            json!({ "tool": "kubectl" }),
+            json!({ "tool": "github" }),
+            json!({ "tool": "kubectl" }),
+        ];
+        let result = format_slack_message("done", None, Some(&calls), None);
+        assert_eq!(
+            block_json(result.blocks.last().unwrap()),
+            json!({ "type": "context", "elements": [{ "type": "mrkdwn", "text": "🔧 kubectl, github" }] })
+        );
+    }
+
+    #[test]
+    fn adds_no_tool_block_when_there_are_no_tool_calls() {
+        let result = format_slack_message("done", None, Some(&[]), None);
+        assert_eq!(result.blocks.len(), 1);
+    }
+
+    // Table conversion
+
+    #[test]
+    fn converts_a_markdown_table_to_a_bullet_list() {
+        let table = [
+            "| Name | Status |",
+            "| --- | --- |",
+            "| svc-a | healthy |",
+            "| svc-b | degraded |",
+        ]
+        .join("\n");
+        let text = first_markdown(&format(&table));
+        assert!(text.contains("• **Name:** svc-a | **Status:** healthy"));
+        assert!(text.contains("• **Name:** svc-b | **Status:** degraded"));
+        assert!(!text.contains("| Name | Status |"));
+    }
+
+    #[test]
+    fn preserves_non_table_content_around_a_table() {
+        let text = first_markdown(&format(
+            "Before\n\n| A | B |\n| - | - |\n| 1 | 2 |\n\nAfter",
+        ));
+        assert!(text.contains("Before"));
+        assert!(text.contains("After"));
+        assert!(text.contains("• **A:** 1 | **B:** 2"));
+    }
+
+    #[test]
+    fn leaves_content_alone_when_there_is_no_table() {
+        let content = "Just some text\nwith newlines";
+        assert_eq!(first_markdown(&format(content)), content);
+    }
+
+    // Content splitting for long messages
+
+    #[test]
+    fn splits_content_over_3000_characters_into_several_blocks() {
+        let para = "A".repeat(1000);
+        let content = format!("{para}\n\n{para}\n\n{para}\n\n{para}");
+        assert!(markdown_texts(&format(&content)).len() > 1);
+    }
+
+    #[test]
+    fn splits_a_single_very_long_paragraph_at_a_sentence_boundary() {
+        let content = "This is a test sentence. ".repeat(200);
+        let blocks = markdown_texts(&format(&content));
+        assert!(blocks.len() > 1);
+        for text in blocks {
+            assert!(len16(&text) <= 3000);
+        }
+    }
+
+    #[test]
+    fn hard_splits_text_with_no_natural_break_points() {
+        let content = "X".repeat(7000);
+        let blocks = markdown_texts(&format(&content));
+        assert!(blocks.len() > 1);
+        assert_eq!(blocks.concat(), content);
+    }
+
+    #[test]
+    fn splits_at_a_newline_when_no_sentence_boundary_exists() {
+        let line = "word ".repeat(100);
+        let content = vec![js_trim(&line); 10].join("\n");
+        assert!(markdown_texts(&format(&content)).len() > 1);
+    }
+
+    // 50-block truncation
+
+    #[test]
+    fn truncates_to_50_blocks_with_a_truncation_notice() {
+        let para = "B".repeat(2999);
+        let content = vec![para.as_str(); 55].join("\n\n");
+        let result = format(&content);
+        assert_eq!(result.blocks.len(), 50);
+        assert_eq!(
+            block_json(&result.blocks[49]),
+            json!({ "type": "context", "elements": [{ "type": "mrkdwn", "text": "_Message truncated due to length..._" }] })
+        );
+    }
+
+    // Fallback when only context blocks
+
+    #[test]
+    fn adds_a_fallback_markdown_block_when_content_is_empty_but_a_trigger_exists() {
+        let result = format_slack_message("", Some("HEARTBEAT"), None, None);
+        assert!(!markdown_texts(&result).is_empty());
+    }
+
+    // formatNotification
+
+    #[test]
+    fn formats_an_info_notification() {
+        let result = format_notification("Deploy", "v1.2.3 released", NotificationType::default());
+        assert_eq!(result.text, "ℹ️ Deploy: v1.2.3 released");
+        assert_eq!(result.blocks.len(), 1);
+        assert_eq!(
+            block_json(&result.blocks[0]),
+            json!({ "type": "markdown", "text": "ℹ️ **Deploy**\n\nv1.2.3 released" })
+        );
+    }
+
+    #[test]
+    fn formats_a_warning_notification() {
+        let result = format_notification("Disk", "low space", NotificationType::Warning);
+        assert!(result.text.contains("⚠️"));
+    }
+
+    #[test]
+    fn formats_an_error_notification() {
+        let result = format_notification("Crash", "OOM killed", NotificationType::Error);
+        assert!(result.text.contains("🚨"));
+    }
+
+    #[test]
+    fn formats_a_success_notification() {
+        let result = format_notification("Build", "passed", NotificationType::Success);
+        assert!(result.text.contains("✅"));
+    }
+
+    #[test]
+    fn a_notification_defaults_to_info() {
+        let result = format_notification("Test", "msg", NotificationType::default());
+        assert!(result.text.contains("ℹ️"));
+    }
+
+    // Feedback actions block
+
+    #[test]
+    fn omits_the_feedback_block_by_default() {
+        let result = format("Some substantive content to analyse.");
+        assert!(
+            !result
+                .blocks
+                .iter()
+                .any(|b| matches!(b, SlackBlock::Actions { .. }))
+        );
+    }
+
+    #[test]
+    fn appends_the_feedback_block_when_a_feedback_message_id_is_given() {
+        let result = format_slack_message(
+            "Some substantive content to analyse.",
+            None,
+            None,
+            Some(&FormatSlackMessageOptions {
+                feedback_message_id: Some("msg-42".into()),
+            }),
+        );
+        let actions = result
+            .blocks
+            .iter()
+            .find(|b| matches!(b, SlackBlock::Actions { .. }))
+            .unwrap();
+        assert_eq!(actions, &build_feedback_actions_block("msg-42"));
+    }
+
+    #[test]
+    fn the_feedback_block_carries_the_message_id_on_both_buttons() {
+        let block = block_json(&build_feedback_actions_block("msg-abc"));
+        assert_eq!(block["block_id"], FEEDBACK_BLOCK_ID);
+        assert_eq!(block["elements"].as_array().unwrap().len(), 2);
+        assert_eq!(block["elements"][0]["type"], "button");
+        assert_eq!(block["elements"][0]["action_id"], FEEDBACK_ACTION_UP);
+        assert_eq!(block["elements"][0]["value"], "msg-abc");
+        assert_eq!(block["elements"][1]["type"], "button");
+        assert_eq!(block["elements"][1]["action_id"], FEEDBACK_ACTION_DOWN);
+        assert_eq!(block["elements"][1]["value"], "msg-abc");
+    }
+
+    #[test]
+    fn the_feedback_block_comes_after_the_tool_calls_block() {
+        let result = format_slack_message(
+            "Substantive content.",
+            None,
+            Some(&[json!({ "tool": "kubectl" })]),
+            Some(&FormatSlackMessageOptions {
+                feedback_message_id: Some("msg-42".into()),
+            }),
+        );
+        assert!(matches!(
+            result.blocks.last().unwrap(),
+            SlackBlock::Actions { .. }
+        ));
+    }
+
+    #[test]
+    fn the_feedback_ack_is_a_generic_thank_you() {
+        let ack = block_json(&build_feedback_ack_block());
+        assert_eq!(ack["type"], "context");
+        let text = ack["elements"][0]["text"].as_str().unwrap();
+        assert!(text.contains("Thanks for the feedback"));
+        assert!(!text.to_lowercase().contains("you rated"));
+        assert!(!text.contains('👍'));
+        assert!(!text.contains('👎'));
+    }
+
+    #[test]
+    fn writes_every_block_key_in_slack_order() {
         let message = format_slack_message(
             "hello",
             Some("HEARTBEAT"),
-            Some(&[
-                json!({ "tool": "shell_exec" }),
-                json!({ "tool": "shell_exec" }),
-            ]),
+            Some(&[json!({ "tool": "shell_exec" })]),
             Some(&FormatSlackMessageOptions {
                 feedback_message_id: Some("m-1".into()),
             }),
         );
         assert_eq!(
-            serde_json::to_value(&message.blocks).unwrap(),
-            json!([
-                { "type": "context", "elements": [{ "type": "mrkdwn", "text": "💓 Heartbeat Alert" }] },
-                { "type": "markdown", "text": "hello" },
-                { "type": "context", "elements": [{ "type": "mrkdwn", "text": "🔧 shell_exec" }] },
-                { "type": "actions", "block_id": "lens_feedback", "elements": [
-                    { "type": "button", "action_id": "feedback_thumbs_up", "text": { "type": "plain_text", "text": "👍 Helpful", "emoji": true }, "value": "m-1" },
-                    { "type": "button", "action_id": "feedback_thumbs_down", "text": { "type": "plain_text", "text": "👎 Not helpful", "emoji": true }, "value": "m-1" },
-                ] },
-            ])
+            serde_json::to_string(&message.blocks).unwrap(),
+            r#"[{"type":"context","elements":[{"type":"mrkdwn","text":"💓 Heartbeat Alert"}]},{"type":"markdown","text":"hello"},{"type":"context","elements":[{"type":"mrkdwn","text":"🔧 shell_exec"}]},{"type":"actions","block_id":"lens_feedback","elements":[{"type":"button","action_id":"feedback_thumbs_up","text":{"type":"plain_text","text":"👍 Helpful","emoji":true},"value":"m-1"},{"type":"button","action_id":"feedback_thumbs_down","text":{"type":"plain_text","text":"👎 Not helpful","emoji":true},"value":"m-1"}]}]"#
         );
     }
 
+    // slackChannelLabel
+
     #[test]
-    fn turns_a_table_into_bullets() {
-        let message = format_slack_message("| A | B |\n|---|---|\n| 1 | 2 |\n", None, None, None);
-        assert_eq!(
-            message.blocks,
-            vec![SlackBlock::markdown("\u{2022} **A:** 1 | **B:** 2")]
-        );
+    fn names_the_channel_with_one_hash() {
+        assert!(slack_channel_label("alerts").contains("the team Slack channel **#alerts**,"));
+        assert!(slack_channel_label("#general").contains("the team Slack channel **#general**,"));
     }
 
     #[test]
-    fn names_a_channel_with_one_hash() {
-        assert!(slack_channel_label("#ops").starts_with("the team Slack channel **#ops**, where"));
+    fn tells_the_agent_to_mention_someone_with_their_token() {
+        assert!(slack_channel_label("alerts").contains("writing their token"));
     }
 }

@@ -38,7 +38,10 @@ use serde_json::json;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
+use std::time::Duration;
+
 use crate::log_warn;
+use crate::support::now_ms;
 
 /// What a wait for pending writes ended with.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -181,7 +184,69 @@ impl PendingFileWrites for PendingFileWritesRegistry {
     /// the abort signal (`Aborted`, at once when it is already cancelled).
     /// `elapsed_ms` counts from the start of the wait.
     async fn wait_for(&self, full_path: &str, options: WaitForOptions) -> PendingWaitOutcome {
-        todo!()
+        let (tool_names, receivers): (Vec<String>, Vec<watch::Receiver<Option<Release>>>) = self
+            .writes
+            .lock()
+            .values()
+            .filter(|w| w.full_path.as_deref().is_none_or(|p| p == full_path))
+            .map(|w| (w.tool_name.clone(), w.done.subscribe()))
+            .unzip();
+        if receivers.is_empty() {
+            return PendingWaitOutcome::None;
+        }
+
+        let started = now_ms();
+        // Any entry released by `clear()` poisons the whole wait: one abandoned
+        // write is enough to make the file's contents unknown.
+        let all_released = async move {
+            let mut cleared = false;
+            for mut receiver in receivers {
+                let how = match receiver.wait_for(Option::is_some).await {
+                    Ok(value) => *value,
+                    // The sender is gone without a release: nobody knows what is on disk.
+                    Err(_) => Some(Release::Cleared),
+                };
+                cleared |= how == Some(Release::Cleared);
+            }
+            cleared
+        };
+        let aborted = async {
+            match &options.abort_signal {
+                Some(signal) => signal.cancelled().await,
+                None => std::future::pending().await,
+            }
+        };
+
+        enum Outcome {
+            Released { cleared: bool },
+            Aborted,
+            Timeout,
+        }
+        let outcome = tokio::select! {
+            biased;
+            cleared = all_released => Outcome::Released { cleared },
+            _ = aborted => Outcome::Aborted,
+            _ = tokio::time::sleep(Duration::from_millis(options.timeout_ms)) => Outcome::Timeout,
+        };
+        let elapsed_ms = now_ms() - started;
+        match outcome {
+            Outcome::Released { cleared: true } => PendingWaitOutcome::Cleared {
+                tool_names,
+                elapsed_ms,
+            },
+            Outcome::Released { cleared: false } => PendingWaitOutcome::Settled {
+                tool_names,
+                elapsed_ms,
+            },
+            Outcome::Aborted => PendingWaitOutcome::Aborted {
+                tool_names,
+                elapsed_ms,
+            },
+            Outcome::Timeout => PendingWaitOutcome::Timeout {
+                tool_names,
+                elapsed_ms,
+            },
+        }
     }
 
     fn clear(&self) {

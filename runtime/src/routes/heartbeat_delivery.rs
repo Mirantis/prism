@@ -7,11 +7,18 @@
 //! value) and `channelIds` (linked channels of that target's channel; `null`
 //! clears them). An invalid value is refused with 400.
 
-use axum::Json;
 use axum::Router;
 use axum::response::Response;
 use axum::routing::get;
-use serde::{Deserialize, Serialize};
+use indexmap::IndexMap;
+use serde_json::json;
+
+use crate::config::CONFIG;
+use crate::lib::log_redaction::err_json;
+use crate::lib::telemetry::track_event;
+use crate::log_error;
+use crate::services::agent_status_service::{AGENT_STATUS_SERVICE, HeartbeatDeliveryChanges};
+use crate::support::http::{JsonBody, error_json, json};
 
 pub fn router() -> Router {
     Router::new().route(
@@ -20,45 +27,55 @@ pub fn router() -> Router {
     )
 }
 
-/// The body of `PATCH /agents/heartbeat/delivery`. Both fields go to
-/// `AGENT_STATUS_SERVICE.update_heartbeat_delivery` as they came, of any JSON type;
-/// the service checks them and its error text is answered 400.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HeartbeatDeliveryBody {
-    /// A `DELIVER_TARGETS` value. Absent keeps the stored one.
-    #[serde(default)]
-    pub deliver_to: Option<serde_json::Value>,
-    /// Linked channels of that target's channel. Absent keeps the stored list and
-    /// `null` clears it, so the two are told apart.
-    #[serde(default, with = "::serde_with::rust::double_option")]
-    pub channel_ids: Option<Option<serde_json::Value>>,
-}
-
-/// `{ error }`, the body of every refusal and failure.
-#[derive(Debug, Clone, Serialize)]
-pub struct ErrorBody {
-    pub error: String,
-}
-
-/// GET /agents/heartbeat/delivery
-///
-/// Sends `AGENT_STATUS_SERVICE.get_heartbeat_delivery()` (`{ deliverTo, channelIds }`)
-/// unchanged. A failure is logged
-/// (`[HeartbeatDelivery] Failed to read the heartbeat delivery`, with `err`) and
-/// answers 500 with the error's message.
 async fn get_heartbeat_delivery() -> Response {
-    todo!()
+    match AGENT_STATUS_SERVICE.get_heartbeat_delivery().await {
+        Ok(delivery) => json(200, delivery),
+        Err(err) => {
+            log_error!(
+                json!({ "err": err_json(&err) }),
+                "[HeartbeatDelivery] Failed to read the heartbeat delivery"
+            );
+            error_json(500, err.to_string())
+        }
+    }
 }
 
-/// PATCH /agents/heartbeat/delivery
-///
-/// A refusal from the service answers 400 `{ error }`. A write emits
-/// `heartbeat delivery updated` (user `null`) with `agent.id` when
-/// `config.agent_id` is set, `heartbeat.deliver_to` and `heartbeat.channels` (the
-/// channel count as text), then sends the stored `{ deliverTo, channelIds }`. A
-/// failure is logged (`[HeartbeatDelivery] Failed to update the heartbeat
-/// delivery`, with `err`) and answers 500.
-async fn update_heartbeat_delivery(Json(body): Json<HeartbeatDeliveryBody>) -> Response {
-    todo!()
+/// `deliverTo` and `channelIds` go to the service as they came, of any JSON
+/// type; an absent key keeps the stored value, and `null` channels clear the list.
+async fn update_heartbeat_delivery(body: JsonBody) -> Response {
+    let changes = HeartbeatDeliveryChanges {
+        deliver_to: body.field("deliverTo").cloned(),
+        channel_ids: body.field("channelIds").cloned(),
+    };
+    let result = match AGENT_STATUS_SERVICE
+        .update_heartbeat_delivery(changes)
+        .await
+    {
+        Ok(result) => result,
+        Err(err) => {
+            log_error!(
+                json!({ "err": err_json(&err) }),
+                "[HeartbeatDelivery] Failed to update the heartbeat delivery"
+            );
+            return error_json(500, err.to_string());
+        }
+    };
+    let delivery = match result {
+        Ok(delivery) => delivery,
+        Err(refusal) => return error_json(400, refusal),
+    };
+    let mut props = IndexMap::new();
+    if let Some(agent_id) = CONFIG.agent_id().filter(|id| !id.is_empty()) {
+        props.insert("agent.id".to_string(), agent_id);
+    }
+    props.insert(
+        "heartbeat.deliver_to".to_string(),
+        delivery.deliver_to.clone(),
+    );
+    props.insert(
+        "heartbeat.channels".to_string(),
+        delivery.channel_ids.len().to_string(),
+    );
+    track_event("heartbeat delivery updated", None, Some(props));
+    json(200, delivery)
 }
