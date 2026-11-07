@@ -23,8 +23,14 @@ const PROVIDER_TOOL_NAMES: &[(&str, &str)] = &[
     ("anthropic.computer_toolset_20260801", "computer"),
     ("anthropic.text_editor_20241022", "str_replace_editor"),
     ("anthropic.text_editor_20250124", "str_replace_editor"),
-    ("anthropic.text_editor_20250429", "str_replace_based_edit_tool"),
-    ("anthropic.text_editor_20250728", "str_replace_based_edit_tool"),
+    (
+        "anthropic.text_editor_20250429",
+        "str_replace_based_edit_tool",
+    ),
+    (
+        "anthropic.text_editor_20250728",
+        "str_replace_based_edit_tool",
+    ),
     ("anthropic.bash_20241022", "bash"),
     ("anthropic.bash_20250124", "bash"),
     ("anthropic.memory_20250818", "memory"),
@@ -34,8 +40,14 @@ const PROVIDER_TOOL_NAMES: &[(&str, &str)] = &[
     ("anthropic.web_fetch_20250910", "web_fetch"),
     ("anthropic.web_fetch_20260209", "web_fetch"),
     ("anthropic.web_fetch_20260318", "web_fetch"),
-    ("anthropic.tool_search_regex_20251119", "tool_search_tool_regex"),
-    ("anthropic.tool_search_bm25_20251119", "tool_search_tool_bm25"),
+    (
+        "anthropic.tool_search_regex_20251119",
+        "tool_search_tool_regex",
+    ),
+    (
+        "anthropic.tool_search_bm25_20251119",
+        "tool_search_tool_bm25",
+    ),
     ("anthropic.advisor_20260301", "advisor"),
 ];
 
@@ -55,7 +67,8 @@ impl ToolNameMapping {
             let LanguageModelV4Tool::Provider(tool) = tool else {
                 continue;
             };
-            let Some((_, provider_name)) = PROVIDER_TOOL_NAMES.iter().find(|(id, _)| *id == tool.id)
+            let Some((_, provider_name)) =
+                PROVIDER_TOOL_NAMES.iter().find(|(id, _)| *id == tool.id)
             else {
                 continue;
             };
@@ -169,7 +182,10 @@ pub(super) fn prepare_tools(
     };
 
     let (tools, choice) = match choice {
-        LanguageModelV4ToolChoice::Auto => (Some(anthropic_tools), Some(tool_choice("auto", None, disable))),
+        LanguageModelV4ToolChoice::Auto => (
+            Some(anthropic_tools),
+            Some(tool_choice("auto", None, disable)),
+        ),
         LanguageModelV4ToolChoice::Required => {
             if input.rejects_forced_tool_use {
                 tool_warnings.push(Warning::Unsupported {
@@ -179,9 +195,15 @@ pub(super) fn prepare_tools(
                             .to_string(),
                     ),
                 });
-                (Some(anthropic_tools), Some(tool_choice("auto", None, disable)))
+                (
+                    Some(anthropic_tools),
+                    Some(tool_choice("auto", None, disable)),
+                )
             } else {
-                (Some(anthropic_tools), Some(tool_choice("any", None, disable)))
+                (
+                    Some(anthropic_tools),
+                    Some(tool_choice("any", None, disable)),
+                )
             }
         }
         LanguageModelV4ToolChoice::None => (None, None),
@@ -275,7 +297,12 @@ fn function_tool(
     if let Some(examples) = &tool.input_examples {
         map.insert(
             "input_examples".into(),
-            Value::Array(examples.iter().map(|example| example.input.clone()).collect()),
+            Value::Array(
+                examples
+                    .iter()
+                    .map(|example| example.input.clone())
+                    .collect(),
+            ),
         );
     }
 
@@ -300,7 +327,10 @@ fn put_arg(map: &mut Map<String, Value>, key: &str, value: Option<&Value>) {
 
 /// A provider-defined tool's definition, or `None` for an id Anthropic does not
 /// define. Its arguments go to the API as given.
-fn provider_tool(tool: &LanguageModelV4ProviderTool, betas: &mut IndexSet<String>) -> Option<Value> {
+fn provider_tool(
+    tool: &LanguageModelV4ProviderTool,
+    betas: &mut IndexSet<String>,
+) -> Option<Value> {
     let mut map = Map::new();
     let named = |map: &mut Map<String, Value>, kind: &str, name: &str| {
         map.insert("type".into(), Value::from(kind));
@@ -321,7 +351,9 @@ fn provider_tool(tool: &LanguageModelV4ProviderTool, betas: &mut IndexSet<String
         "anthropic.code_execution_20260120" => {
             named(&mut map, "code_execution_20260120", "code_execution");
         }
-        "anthropic.computer_20241022" | "anthropic.computer_20250124" | "anthropic.computer_20251124" => {
+        "anthropic.computer_20241022"
+        | "anthropic.computer_20250124"
+        | "anthropic.computer_20251124" => {
             let kind = tool.id.trim_start_matches("anthropic.");
             beta(match kind {
                 "computer_20241022" => "computer-use-2024-10-22",
@@ -344,7 +376,11 @@ fn provider_tool(tool: &LanguageModelV4ProviderTool, betas: &mut IndexSet<String
                     .iter()
                     .map(|(member, config)| {
                         let mut entry = Map::new();
-                        put_arg(&mut entry, "enabled", config.get("enabled").filter(|v| !v.is_null()));
+                        put_arg(
+                            &mut entry,
+                            "enabled",
+                            config.get("enabled").filter(|v| !v.is_null()),
+                        );
                         put_arg(
                             &mut entry,
                             "defer_loading",
@@ -391,7 +427,9 @@ fn provider_tool(tool: &LanguageModelV4ProviderTool, betas: &mut IndexSet<String
             map.insert("name".into(), Value::from("memory"));
             map.insert("type".into(), Value::from("memory_20250818"));
         }
-        "anthropic.web_fetch_20250910" | "anthropic.web_fetch_20260209" | "anthropic.web_fetch_20260318" => {
+        "anthropic.web_fetch_20250910"
+        | "anthropic.web_fetch_20260209"
+        | "anthropic.web_fetch_20260318" => {
             let kind = tool.id.trim_start_matches("anthropic.");
             match kind {
                 "web_fetch_20250910" => beta("web-fetch-2025-09-10"),
@@ -403,13 +441,23 @@ fn provider_tool(tool: &LanguageModelV4ProviderTool, betas: &mut IndexSet<String
             put_arg(&mut map, "allowed_domains", arg(tool, "allowedDomains"));
             put_arg(&mut map, "blocked_domains", arg(tool, "blockedDomains"));
             put_arg(&mut map, "citations", arg(tool, "citations"));
-            put_arg(&mut map, "max_content_tokens", arg(tool, "maxContentTokens"));
+            put_arg(
+                &mut map,
+                "max_content_tokens",
+                arg(tool, "maxContentTokens"),
+            );
             if kind == "web_fetch_20260318" {
                 put_arg(&mut map, "use_cache", arg(tool, "useCache"));
-                put_arg(&mut map, "response_inclusion", arg(tool, "responseInclusion"));
+                put_arg(
+                    &mut map,
+                    "response_inclusion",
+                    arg(tool, "responseInclusion"),
+                );
             }
         }
-        "anthropic.web_search_20250305" | "anthropic.web_search_20260209" | "anthropic.web_search_20260318" => {
+        "anthropic.web_search_20250305"
+        | "anthropic.web_search_20260209"
+        | "anthropic.web_search_20260318" => {
             let kind = tool.id.trim_start_matches("anthropic.");
             if kind == "web_search_20260209" {
                 beta("code-execution-web-tools-2026-02-09");
@@ -420,14 +468,26 @@ fn provider_tool(tool: &LanguageModelV4ProviderTool, betas: &mut IndexSet<String
             put_arg(&mut map, "blocked_domains", arg(tool, "blockedDomains"));
             put_arg(&mut map, "user_location", arg(tool, "userLocation"));
             if kind == "web_search_20260318" {
-                put_arg(&mut map, "response_inclusion", arg(tool, "responseInclusion"));
+                put_arg(
+                    &mut map,
+                    "response_inclusion",
+                    arg(tool, "responseInclusion"),
+                );
             }
         }
         "anthropic.tool_search_regex_20251119" => {
-            named(&mut map, "tool_search_tool_regex_20251119", "tool_search_tool_regex");
+            named(
+                &mut map,
+                "tool_search_tool_regex_20251119",
+                "tool_search_tool_regex",
+            );
         }
         "anthropic.tool_search_bm25_20251119" => {
-            named(&mut map, "tool_search_tool_bm25_20251119", "tool_search_tool_bm25");
+            named(
+                &mut map,
+                "tool_search_tool_bm25_20251119",
+                "tool_search_tool_bm25",
+            );
         }
         "anthropic.advisor_20260301" => {
             beta("advisor-tool-2026-03-01");

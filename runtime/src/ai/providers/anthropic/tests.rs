@@ -46,18 +46,16 @@ fn ok_response() -> FetchResponse {
         headers: [("content-type".to_string(), "application/json".to_string())]
             .into_iter()
             .collect(),
-        body: Bytes::from(
-            js_stringify(&json!({
-                "type": "message",
-                "id": "msg_ok",
-                "model": "claude-test",
-                "role": "assistant",
-                "content": [{ "type": "text", "text": "ok" }],
-                "stop_reason": "end_turn",
-                "stop_sequence": null,
-                "usage": { "input_tokens": 1, "output_tokens": 1 },
-            })),
-        ),
+        body: Bytes::from(js_stringify(&json!({
+            "type": "message",
+            "id": "msg_ok",
+            "model": "claude-test",
+            "role": "assistant",
+            "content": [{ "type": "text", "text": "ok" }],
+            "stop_reason": "end_turn",
+            "stop_sequence": null,
+            "usage": { "input_tokens": 1, "output_tokens": 1 },
+        }))),
     }
 }
 
@@ -65,12 +63,15 @@ fn ok_response() -> FetchResponse {
 /// `id-0`, `id-1`, … and the case's own settings.
 fn provider(settings: &Value, fetch: FetchFunction) -> AnthropicProvider {
     let next = Arc::new(AtomicUsize::new(0));
-    let headers = settings.get("headers").and_then(Value::as_object).map(|headers| {
-        headers
-            .iter()
-            .map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_string()))
-            .collect::<IndexMap<_, _>>()
-    });
+    let headers = settings
+        .get("headers")
+        .and_then(Value::as_object)
+        .map(|headers| {
+            headers
+                .iter()
+                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_string()))
+                .collect::<IndexMap<_, _>>()
+        });
     create_anthropic(AnthropicProviderSettings {
         api_key: Some("sk-test".to_string()),
         base_url: Some("https://api.example.com/v1".to_string()),
@@ -79,7 +80,10 @@ fn provider(settings: &Value, fetch: FetchFunction) -> AnthropicProvider {
         generate_id: Some(Arc::new(move || {
             format!("id-{}", next.fetch_add(1, Ordering::SeqCst))
         })),
-        name: settings.get("name").and_then(Value::as_str).map(str::to_string),
+        name: settings
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         ..Default::default()
     })
 }
@@ -98,7 +102,8 @@ async fn request_bodies_headers_and_warnings_match_the_sdk() {
     for case in fixture()["requests"].as_array().unwrap() {
         let name = case["name"].as_str().unwrap();
         let (fetch, captured) = capturing_fetch(ok_response());
-        let model = provider(&case["settings"], fetch).language_model(case["modelId"].as_str().unwrap());
+        let model =
+            provider(&case["settings"], fetch).language_model(case["modelId"].as_str().unwrap());
         let result = model
             .do_generate(call_options(&case["options"]))
             .await
@@ -107,7 +112,11 @@ async fn request_bodies_headers_and_warnings_match_the_sdk() {
 
         assert_eq!(request.url, case["url"].as_str().unwrap(), "{name}: url");
         assert_eq!(request.body, case["body"].as_str().unwrap(), "{name}: body");
-        assert_eq!(sorted_headers(&request.headers), case["headers"], "{name}: headers");
+        assert_eq!(
+            sorted_headers(&request.headers),
+            case["headers"],
+            "{name}: headers"
+        );
         assert_eq!(
             serde_json::to_value(&result.warnings).unwrap(),
             case["warnings"],
@@ -115,7 +124,10 @@ async fn request_bodies_headers_and_warnings_match_the_sdk() {
         );
         let sent: Value = serde_json::from_str(&request.body).unwrap();
         assert_eq!(
-            result.request.and_then(|request| request.body).map(normalize_numbers),
+            result
+                .request
+                .and_then(|request| request.body)
+                .map(normalize_numbers),
             Some(normalize_numbers(sent)),
             "{name}: the reported request body is the sent one"
         );
@@ -145,15 +157,28 @@ async fn responses_and_errors_match_the_sdk() {
         let outcome = model.do_generate(call_options(&case["options"])).await;
 
         if let Some(expected) = case.get("error") {
-            let err = outcome.err().unwrap_or_else(|| panic!("{name}: expected an error"));
+            let err = outcome
+                .err()
+                .unwrap_or_else(|| panic!("{name}: expected an error"));
             let api = err
                 .downcast_ref::<ApiCallError>()
                 .unwrap_or_else(|| panic!("{name}: {err:#}"));
             assert_eq!(error_name(&err), expected["name"], "{name}: name");
             assert_eq!(api.message, expected["message"], "{name}: message");
-            assert_eq!(api.status_code.map(u64::from), expected["statusCode"].as_u64(), "{name}");
-            assert_eq!(api.is_retryable, expected["isRetryable"], "{name}: isRetryable");
-            assert_eq!(api.response_body.as_deref(), expected["responseBody"].as_str(), "{name}");
+            assert_eq!(
+                api.status_code.map(u64::from),
+                expected["statusCode"].as_u64(),
+                "{name}"
+            );
+            assert_eq!(
+                api.is_retryable, expected["isRetryable"],
+                "{name}: isRetryable"
+            );
+            assert_eq!(
+                api.response_body.as_deref(),
+                expected["responseBody"].as_str(),
+                "{name}"
+            );
             assert_eq!(
                 api.response_headers.as_ref().map(sorted_headers),
                 Some(expected["responseHeaders"].clone()),
@@ -167,7 +192,13 @@ async fn responses_and_errors_match_the_sdk() {
         let result = outcome.unwrap_or_else(|err| panic!("{name}: {err:#}"));
         let expected = &case["result"];
         let actual = normalize_numbers(serde_json::to_value(&result).unwrap());
-        for key in ["content", "finishReason", "usage", "providerMetadata", "warnings"] {
+        for key in [
+            "content",
+            "finishReason",
+            "usage",
+            "providerMetadata",
+            "warnings",
+        ] {
             assert_eq!(
                 js_stringify(&actual[key]),
                 js_stringify(&expected[key]),
@@ -176,7 +207,11 @@ async fn responses_and_errors_match_the_sdk() {
         }
         let response = &actual["response"];
         for key in ["id", "modelId", "headers", "body"] {
-            assert_eq!(response.get(key), expected["response"].get(key), "{name}: response.{key}");
+            assert_eq!(
+                response.get(key),
+                expected["response"].get(key),
+                "{name}: response.{key}"
+            );
         }
     }
 }
@@ -246,8 +281,14 @@ async fn a_media_type_the_api_cannot_hold_refuses_the_call() {
         media_type: "audio/mpeg".to_string(),
         provider_options: None,
     };
-    let err = model.do_generate(single_user_message(part)).await.unwrap_err();
-    assert_eq!(err.to_string(), "'media type: audio/mpeg' functionality not supported.");
+    let err = model
+        .do_generate(single_user_message(part))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "'media type: audio/mpeg' functionality not supported."
+    );
     assert!(captured.lock().is_empty());
 }
 
@@ -297,8 +338,14 @@ fn the_bare_api_host_gains_its_version_and_a_trailing_slash_goes() {
         })
         .base_url
     };
-    assert_eq!(base("https://api.anthropic.com/"), "https://api.anthropic.com/v1");
-    assert_eq!(base("https://gw.example/anthropic/v1/"), "https://gw.example/anthropic/v1");
+    assert_eq!(
+        base("https://api.anthropic.com/"),
+        "https://api.anthropic.com/v1"
+    );
+    assert_eq!(
+        base("https://gw.example/anthropic/v1/"),
+        "https://gw.example/anthropic/v1"
+    );
 }
 
 #[test]
@@ -311,7 +358,10 @@ fn models_report_the_provider_and_the_urls_they_read() {
     assert_eq!(model.provider(), "anthropic.messages");
     assert_eq!(model.model_id(), "claude-opus-5");
     let urls = model.supported_urls();
-    assert_eq!(urls.keys().collect::<Vec<_>>(), ["image/*", "application/pdf"]);
+    assert_eq!(
+        urls.keys().collect::<Vec<_>>(),
+        ["image/*", "application/pdf"]
+    );
     assert!(urls["image/*"][0].is_match("https://example.com/a.png"));
 }
 
@@ -355,8 +405,14 @@ async fn a_refused_connection_is_a_retryable_api_call_error() {
         }))
         .await
         .unwrap_err();
-    let api = err.downcast_ref::<ApiCallError>().expect("an API call error");
-    assert!(api.message.starts_with("Cannot connect to API: "), "{}", api.message);
+    let api = err
+        .downcast_ref::<ApiCallError>()
+        .expect("an API call error");
+    assert!(
+        api.message.starts_with("Cannot connect to API: "),
+        "{}",
+        api.message
+    );
     assert!(api.is_retryable);
     assert_eq!(api.url, format!("http://127.0.0.1:{port}/v1/messages"));
     assert_eq!(api.request_body_values["model"], "claude-opus-5");
@@ -431,8 +487,14 @@ async fn the_default_fetch_posts_the_body_with_the_provider_headers() {
     assert!(head.starts_with("POST /v1/messages HTTP/1.1"), "{head}");
     let lower = head.to_lowercase();
     assert!(lower.contains("\r\nx-api-key: sk-live"), "{head}");
-    assert!(lower.contains("\r\nanthropic-version: 2023-06-01"), "{head}");
-    assert!(lower.contains("\r\ncontent-type: application/json"), "{head}");
+    assert!(
+        lower.contains("\r\nanthropic-version: 2023-06-01"),
+        "{head}"
+    );
+    assert!(
+        lower.contains("\r\ncontent-type: application/json"),
+        "{head}"
+    );
     assert!(
         lower.contains("\r\nuser-agent: ai/7.0.137 ai-sdk-provider-utils/5.0.58"),
         "{head}"
@@ -449,9 +511,19 @@ async fn the_default_fetch_posts_the_body_with_the_provider_headers() {
 #[test]
 fn model_families_resolve_to_their_capabilities() {
     let caps = get_model_capabilities("us.anthropic.claude-opus-5-5-v1:0");
-    assert!(caps.is_known_model && caps.rejects_forced_tool_use && !caps.supports_between_tools_thinking);
-    assert_eq!(get_model_capabilities("claude-sonnet-4@20250514").max_output_tokens, 64000);
-    assert_eq!(get_model_capabilities("claude-opus-4-20250514").max_output_tokens, 32000);
+    assert!(
+        caps.is_known_model
+            && caps.rejects_forced_tool_use
+            && !caps.supports_between_tools_thinking
+    );
+    assert_eq!(
+        get_model_capabilities("claude-sonnet-4@20250514").max_output_tokens,
+        64000
+    );
+    assert_eq!(
+        get_model_capabilities("claude-opus-4-20250514").max_output_tokens,
+        32000
+    );
     let legacy = get_model_capabilities("claude-2.1");
     assert!(!legacy.is_known_model);
     assert_eq!(legacy.max_output_tokens, 4096);
