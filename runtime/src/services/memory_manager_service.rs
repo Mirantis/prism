@@ -672,7 +672,10 @@ mod tests {
 
     #[test]
     fn one_line_folds_line_breaks_so_an_entry_cannot_forge_another() {
-        assert_eq!(one_line("  first\n  - second (fact)\n"), "first - second (fact)");
+        assert_eq!(
+            one_line("  first\n  - second (fact)\n"),
+            "first - second (fact)"
+        );
         assert_eq!(capitalize("fact"), "Fact");
         assert_eq!(capitalize(""), "");
     }
@@ -719,8 +722,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(block.text, "- Newer thing (task)\n- New thing (observation)");
-        assert_eq!(block.entry_ids, vec!["newer".to_string(), "new".to_string()]);
+        assert_eq!(
+            block.text,
+            "- Newer thing (task)\n- New thing (observation)"
+        );
+        assert_eq!(
+            block.entry_ids,
+            vec!["newer".to_string(), "new".to_string()]
+        );
     }
 
     #[tokio::test]
@@ -771,7 +780,10 @@ mod tests {
         insert("old-low", "Old", "observation", 2, 31 * 24 * 60 * 60 * 1000);
         insert("high", "High", "fact", 9, 0);
 
-        let stats = MEMORY_MANAGER_SERVICE.get_stats("u", "agent-1").await.unwrap();
+        let stats = MEMORY_MANAGER_SERVICE
+            .get_stats("u", "agent-1")
+            .await
+            .unwrap();
         assert_eq!(stats.total_entries, 3);
         assert_eq!(stats.by_category.get("fact"), Some(&2));
         assert!((stats.avg_importance - 16.0 / 3.0).abs() < 1e-9);
@@ -808,7 +820,10 @@ mod tests {
                 .unwrap(),
             1
         );
-        let empty = MEMORY_MANAGER_SERVICE.get_stats("u", "agent-2").await.unwrap();
+        let empty = MEMORY_MANAGER_SERVICE
+            .get_stats("u", "agent-2")
+            .await
+            .unwrap();
         assert_eq!(empty.avg_importance, 0.0);
         assert_eq!(
             serde_json::to_string(&empty).unwrap(),

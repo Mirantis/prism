@@ -183,9 +183,7 @@ async fn get_or_load(
             }
         }
     };
-    inflight
-        .await
-        .map_err(|err| anyhow::anyhow!("{}", err))
+    inflight.await.map_err(|err| anyhow::anyhow!("{}", err))
 }
 
 /// Test-only: reset the cached singleton. Not for production use.
@@ -240,7 +238,10 @@ mod tests {
         assert_eq!(result.unwrap().unwrap().team_id, "T999");
         // auth.test went out with the sentinel verbatim — the proxy swaps it on the wire.
         assert_eq!(
-            api.calls("auth.test")[0].headers.get("authorization").unwrap(),
+            api.calls("auth.test")[0]
+                .headers
+                .get("authorization")
+                .unwrap(),
             "Bearer __nexus_cred:abc-123__"
         );
     }
@@ -287,7 +288,10 @@ mod tests {
         let record = load_with(Some("xoxb-TEST"), Some("A_EXPECTED")).await;
         set_test_api_url(None);
         assert_eq!(record.unwrap().unwrap().team_id, "T123");
-        assert_eq!(api.calls("bots.info")[0].field("bot").as_deref(), Some("B123"));
+        assert_eq!(
+            api.calls("bots.info")[0].field("bot").as_deref(),
+            Some("B123")
+        );
     }
 
     #[tokio::test]
@@ -337,7 +341,10 @@ mod tests {
         set_test_api_url(Some(api.url.clone()));
         let err = load_with(Some("xoxb-TEST"), None).await.unwrap_err();
         set_test_api_url(None);
-        assert_eq!(err.to_string(), "Failed to determine Slack bot ID from bot token");
+        assert_eq!(
+            err.to_string(),
+            "Failed to determine Slack bot ID from bot token"
+        );
     }
 
     #[tokio::test]

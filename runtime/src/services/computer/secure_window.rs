@@ -5,7 +5,13 @@
 //! also the answer to "did they submit the form": a submitted sign-in leaves no
 //! field to clear, and an abandoned one leaves nothing that outlives the window.
 
+use serde_json::{Value, json};
+
+use super::sign_in_form::PASSWORD_FIELDS;
+use crate::lib::log_redaction::err_json;
 use crate::services::meeting::browser_stack::PageHandle;
+use crate::utils::with_timeout::with_timeout;
+use crate::{log_info, log_warn};
 
 /// How long one frame gets. An evaluation in the page has no deadline of its own, and the
 /// agent runs again when this is done, so a wedged frame would stop the runtime for good.
@@ -57,5 +63,37 @@ fn is_gone(err: &anyhow::Error) -> bool {
 /// Empty every password field in every frame of these tabs, and report how many held
 /// something. A frame that is wedged is reported and passed over.
 pub async fn clear_password_fields(pages: &[PageHandle]) -> i64 {
-    todo!()
+    let mut cleared = 0;
+    for page in pages {
+        if page.is_closed() {
+            continue;
+        }
+        for frame in page.frames() {
+            let evaluated = async {
+                let value = frame
+                    .evaluate_function(CLEAR_PASSWORD_FIELDS, Value::from(PASSWORD_FIELDS))
+                    .await?;
+                Ok(value.as_i64().unwrap_or(0))
+            };
+            cleared += match with_timeout(evaluated, CLEAR_TIMEOUT_MS as i64).await {
+                Ok(count) => count,
+                Err(err) => {
+                    if !is_gone(&err) {
+                        log_warn!(
+                            json!({ "err": err_json(&err) }),
+                            "[Computer] A frame could not be cleared"
+                        );
+                    }
+                    0
+                }
+            };
+        }
+    }
+    if cleared != 0 {
+        log_info!(
+            "[Computer] Cleared {} password field(s) after a secure takeover",
+            cleared
+        );
+    }
+    cleared
 }

@@ -279,13 +279,8 @@ impl MemoryEmbeddingStore for SqliteMemoryEmbeddingStore {
 }
 
 /// The columns a search returns.
-const SELECT: (m::id, m::content, m::category, m::importance, m::created_at) = (
-    m::id,
-    m::content,
-    m::category,
-    m::importance,
-    m::created_at,
-);
+const SELECT: (m::id, m::content, m::category, m::importance, m::created_at) =
+    (m::id, m::content, m::category, m::importance, m::created_at);
 
 // ============================================================================
 // Module-level selector

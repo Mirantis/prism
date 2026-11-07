@@ -23,7 +23,9 @@ use indexmap::IndexMap;
 use crate::ai::generate_text::with_user_agent_suffix;
 use crate::ai::{Headers, InvalidArgumentError, LanguageModel, LoadApiKeyError, SupportedUrls};
 
-pub use fetch::{FetchFunction, FetchRequest, FetchResponse, PROVIDER_UTILS_VERSION, default_fetch};
+pub use fetch::{
+    FetchFunction, FetchRequest, FetchResponse, PROVIDER_UTILS_VERSION, default_fetch,
+};
 pub use model::{
     AnthropicLanguageModel, AnthropicMessagesConfig, AnthropicMessagesLanguageModel,
     BuildRequestUrlFunction, GenerateIdFunction, HeadersFunction, ModelCapabilities,
@@ -106,7 +108,11 @@ fn load_api_key(api_key: Option<&str>) -> Result<String, LoadApiKeyError> {
 fn provider_headers(settings: &AnthropicProviderSettings) -> anyhow::Result<Headers> {
     let mut headers: Headers = IndexMap::new();
     headers.insert("anthropic-version".to_string(), "2023-06-01".to_string());
-    match settings.auth_token.as_deref().filter(|token| !token.is_empty()) {
+    match settings
+        .auth_token
+        .as_deref()
+        .filter(|token| !token.is_empty())
+    {
         Some(token) => {
             headers.insert("Authorization".to_string(), format!("Bearer {token}"));
         }

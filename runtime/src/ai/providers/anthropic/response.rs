@@ -613,7 +613,9 @@ fn document_source(
     LanguageModelV4Content::Source(LanguageModelV4Source::Document {
         id: generate_id(),
         media_type: document.media_type.clone(),
-        title: document_title.clone().unwrap_or_else(|| document.title.clone()),
+        title: document_title
+            .clone()
+            .unwrap_or_else(|| document.title.clone()),
         filename: document.filename.clone(),
         provider_metadata: Some(anthropic_metadata(
             metadata.as_object().cloned().unwrap_or_default(),
@@ -755,10 +757,7 @@ pub(super) fn map_content(
                     provider_metadata: Some(anthropic_metadata(anthropic)),
                 });
             }
-            ResponseContent::Compaction {
-                content,
-                signature,
-            } => {
+            ResponseContent::Compaction { content, signature } => {
                 let Some(text) = content.as_ref().filter(|text| !text.is_empty()) else {
                     continue;
                 };
@@ -921,10 +920,7 @@ pub(super) fn map_content(
                 is_error,
                 content,
             } => {
-                let (name, metadata) = mcp_tool_calls
-                    .get(tool_use_id)
-                    .cloned()
-                    .unwrap_or_default();
+                let (name, metadata) = mcp_tool_calls.get(tool_use_id).cloned().unwrap_or_default();
                 out.push(LanguageModelV4Content::ToolResult {
                     tool_call_id: tool_use_id.clone(),
                     tool_name: name,
@@ -977,7 +973,13 @@ pub(super) fn map_content(
                                 ),
                             ]),
                         });
-                        out.push(tool_result(tool_use_id, name, result, None, caller_metadata(caller)));
+                        out.push(tool_result(
+                            tool_use_id,
+                            name,
+                            result,
+                            None,
+                            caller_metadata(caller),
+                        ));
                     }
                     Some("web_fetch_tool_result_error") => {
                         out.push(tool_result(
@@ -1006,7 +1008,10 @@ pub(super) fn map_content(
                         .map(|result| {
                             object([
                                 ("url", result.get("url").cloned()),
-                                ("title", result.get("title").filter(|t| !t.is_null()).cloned()),
+                                (
+                                    "title",
+                                    result.get("title").filter(|t| !t.is_null()).cloned(),
+                                ),
                                 (
                                     "pageAge",
                                     Some(result.get("page_age").cloned().unwrap_or(Value::Null)),
@@ -1036,7 +1041,10 @@ pub(super) fn map_content(
                                 .and_then(Value::as_str)
                                 .unwrap_or_default()
                                 .to_string(),
-                            title: result.get("title").and_then(Value::as_str).map(str::to_string),
+                            title: result
+                                .get("title")
+                                .and_then(Value::as_str)
+                                .map(str::to_string),
                             provider_metadata: Some(anthropic_metadata(anthropic)),
                         }));
                     }
@@ -1119,15 +1127,21 @@ pub(super) fn map_content(
                 tool_use_id,
                 content,
             } => {
-                let provider_tool_name = server_tool_calls.get(tool_use_id).cloned().unwrap_or_else(|| {
-                    if mapping.to_custom_tool_name("tool_search_tool_bm25") != "tool_search_tool_bm25" {
-                        "tool_search_tool_bm25".to_string()
-                    } else {
-                        "tool_search_tool_regex".to_string()
-                    }
-                });
+                let provider_tool_name = server_tool_calls
+                    .get(tool_use_id)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        if mapping.to_custom_tool_name("tool_search_tool_bm25")
+                            != "tool_search_tool_bm25"
+                        {
+                            "tool_search_tool_bm25".to_string()
+                        } else {
+                            "tool_search_tool_regex".to_string()
+                        }
+                    });
                 let name = mapping.to_custom_tool_name(&provider_tool_name);
-                if content.get("type").and_then(Value::as_str) == Some("tool_search_tool_search_result")
+                if content.get("type").and_then(Value::as_str)
+                    == Some("tool_search_tool_search_result")
                 {
                     let references: Vec<Value> = content
                         .get("tool_references")
@@ -1138,7 +1152,13 @@ pub(super) fn map_content(
                             json!({ "type": reference.get("type"), "toolName": reference.get("tool_name") })
                         })
                         .collect();
-                    out.push(tool_result(tool_use_id, name, Value::Array(references), None, None));
+                    out.push(tool_result(
+                        tool_use_id,
+                        name,
+                        Value::Array(references),
+                        None,
+                        None,
+                    ));
                 } else {
                     out.push(tool_result(
                         tool_use_id,
@@ -1175,7 +1195,10 @@ pub(super) fn map_content(
                         name,
                         object([
                             ("type", Some(Value::from("advisor_redacted_result"))),
-                            ("encryptedContent", content.get("encrypted_content").cloned()),
+                            (
+                                "encryptedContent",
+                                content.get("encrypted_content").cloned(),
+                            ),
                             ("stopReason", stop_reason),
                         ]),
                         None,
@@ -1227,7 +1250,10 @@ pub(super) fn response_metadata(response: &AnthropicResponse, usage: &JsonObject
                 ("type", Some(Value::from(details.kind.clone()))),
                 ("category", details.category.clone().map(Value::from)),
                 ("explanation", details.explanation.clone().map(Value::from)),
-                ("recommendedModel", details.recommended_model.clone().map(Value::from)),
+                (
+                    "recommendedModel",
+                    details.recommended_model.clone().map(Value::from),
+                ),
             ]),
         );
     }
@@ -1268,8 +1294,14 @@ pub(super) fn response_metadata(response: &AnthropicResponse, usage: &JsonObject
                         ("model", item.get("model").filter(|m| !m.is_null()).cloned()),
                         ("inputTokens", item.get("input_tokens").cloned()),
                         ("outputTokens", item.get("output_tokens").cloned()),
-                        ("cacheCreationInputTokens", truthy_number("cache_creation_input_tokens")),
-                        ("cacheReadInputTokens", truthy_number("cache_read_input_tokens")),
+                        (
+                            "cacheCreationInputTokens",
+                            truthy_number("cache_creation_input_tokens"),
+                        ),
+                        (
+                            "cacheReadInputTokens",
+                            truthy_number("cache_read_input_tokens"),
+                        ),
                     ])
                 })
                 .collect(),

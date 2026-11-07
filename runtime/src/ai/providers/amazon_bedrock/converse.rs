@@ -28,26 +28,7 @@ use crate::ai::provider::{
     LanguageModelV4ResponseFormat, LanguageModelV4Tool, LanguageModelV4ToolChoice,
     LanguageModelV4Usage, ProviderOptions, SupportedUrls, Warning,
 };
-use self::temporary_anthropic::{get_model_capabilities, sanitize_json_schema};
-
-// TEMPORARY-SHIM: replaced by `crate::ai::providers::anthropic` once it is published.
-mod temporary_anthropic {
-    pub struct ModelCapabilities {
-        pub supports_structured_output: bool,
-        pub rejects_sampling_parameters: bool,
-        pub rejects_forced_tool_use: bool,
-    }
-    pub fn get_model_capabilities(_model_id: &str) -> ModelCapabilities {
-        ModelCapabilities {
-            supports_structured_output: false,
-            rejects_sampling_parameters: false,
-            rejects_forced_tool_use: false,
-        }
-    }
-    pub fn sanitize_json_schema(schema: &serde_json::Value) -> serde_json::Value {
-        schema.clone()
-    }
-}
+use crate::ai::providers::anthropic::{get_model_capabilities, sanitize_json_schema};
 use crate::support::js;
 
 /// What a Converse model needs from its provider.
