@@ -158,7 +158,7 @@ impl OutboundMessageService {
     /// not. A refusal is a `SendRefusedError`.
     pub async fn send(&self, input: SendInput) -> anyhow::Result<SentMessage> {
         let mut target: Option<TrackedTarget> = None;
-        let result = async {
+        let result: anyhow::Result<SentMessage> = async {
             if input.target == WEB_CHAT_TARGET
                 && input
                     .ceiling

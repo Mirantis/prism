@@ -50,7 +50,10 @@ impl FetchResponse {
 /// network failure and an `AbortError` when the call is cancelled. A wrapper can
 /// sign or rewrite the request and pass it on to `default_fetch()`.
 pub type FetchFunction = Arc<
-    dyn Fn(FetchRequest, Option<CancellationToken>) -> BoxFuture<'static, anyhow::Result<FetchResponse>>
+    dyn Fn(
+            FetchRequest,
+            Option<CancellationToken>,
+        ) -> BoxFuture<'static, anyhow::Result<FetchResponse>>
         + Send
         + Sync,
 >;

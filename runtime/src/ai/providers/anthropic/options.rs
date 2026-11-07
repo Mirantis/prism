@@ -264,7 +264,11 @@ pub(super) enum UrlLiteral {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "lowercase",
+    rename_all_fields = "camelCase"
+)]
 pub(super) enum SkillOption {
     Anthropic {
         skill_id: String,
