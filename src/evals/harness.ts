@@ -184,6 +184,8 @@ interface TurnInput {
   /** Where a heartbeat, unbound scheduled-task or webhook run may post, as its service sets it. */
   postingCeiling?: PostingCeiling;  /** The channel messages that started a heartbeat. */
   heartbeatTriggers?: HeartbeatTrigger[];
+  /** A turn bound to a stored conversation, for the tools only such a turn gets. */
+  threadId?: string;
 }
 
 export interface ToolCallRecord {
@@ -227,6 +229,7 @@ export async function runTurn(input: TurnInput): Promise<TurnTrace> {
     userId: EVAL_USER_ID,
     agentId,
     mode: input.mode,
+    threadId: input.threadId,
     originChannel: input.channel?.platform ?? 'websocket',
     postingCeiling: input.postingCeiling,
     taskInvoker: async () => {

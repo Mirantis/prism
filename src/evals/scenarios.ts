@@ -19,6 +19,7 @@ import {
 } from './harness';
 import { placesOf, reachedUser, runAutonomous, type AutonomousRun, type Outcome, type Place } from './delivery';
 import { THREAD_GATE_SCENARIOS } from './thread-gate';
+import { ASK_QUESTIONS_RESULT } from '../tools/ask-questions';
 import { jsonSchema, tool } from 'ai';
 import type { ModelTier } from '../lib/model-selection';
 import { getDefaultWorkspaceFiles } from '../templates/default-workspace';
@@ -1712,6 +1713,45 @@ export const SCENARIOS: Scenario[] = [
       const text = brief ? `${String(brief.input.description ?? '')} ${String(brief.input.prompt ?? '')}` : '';
       const pass = ['billing-api', 'payments', 'staging-east'].every((fact) => text.includes(fact));
       return { pass, detail: describeTrace(trace) };
+    },
+  },
+
+  // ---- Question cards ----------------------------------------------------
+  {
+    id: 'questions.several-decisions-use-the-card',
+    expect: 'An agent with several decisions to ask puts them in one ask_questions call.',
+    grader: 'tool call',
+    run: async () => {
+      const trace = await runTurn({
+        mode: 'chat',
+        threadId: 'eval-thread',
+        history: [
+          {
+            user:
+              'Plan the launch of our new newsletter for example-product. Before you write anything, ask me what you ' +
+              'need to know: the monthly budget, the channels to promote it on, and the launch month are all still open.',
+          },
+        ],
+        maxSteps: 2,
+        stubs: { ask_questions: () => ASK_QUESTIONS_RESULT },
+      });
+      const asks = trace.calls.filter((c) => c.tool === 'ask_questions');
+      const questions = asks[0]?.input.questions;
+      return { pass: asks.length === 1 && Array.isArray(questions) && questions.length >= 2, detail: describeTrace(trace) };
+    },
+  },
+  {
+    id: 'questions.plain-request-needs-no-card',
+    expect: 'A request with nothing to decide is answered without ask_questions.',
+    grader: 'tool call',
+    run: async () => {
+      const trace = await runTurn({
+        mode: 'chat',
+        threadId: 'eval-thread',
+        history: [{ user: 'What is 17 plus 25? Reply with the number.' }],
+        maxSteps: 2,
+      });
+      return { pass: !trace.calls.some((c) => c.tool === 'ask_questions'), detail: describeTrace(trace) };
     },
   },
 
