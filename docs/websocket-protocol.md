@@ -173,6 +173,66 @@ pings, and a phone can keep a socket that is dead without noticing.
 - Audio is binary frames, both ways.
 - An agent has one voice call at a time.
 
+## Question cards
+
+An `AGENT` message can hold one block of type `question_card`. Its `content` is the
+same questions as plain text, so a client that cannot draw the card shows `content`.
+
+```json
+{
+  "type": "question_card",
+  "id": "c9f1a2b3-4d5e-4f60-8a71-92b3c4d5e6f7",
+  "status": "waiting",
+  "otherMaxLength": 500,
+  "questions": [
+    {
+      "text": "How much can we spend each month?",
+      "header": "Budget",
+      "options": [
+        { "label": "Under €500", "detail": "fits the current plan" },
+        { "label": "€500 to €2,000" }
+      ],
+      "recommended": "Under €500",
+      "allowOther": true,
+      "multiSelect": false
+    }
+  ]
+}
+```
+
+- `status` is `waiting`, `answered` or `answered_in_chat`. A message in the
+  conversation from a person closes a waiting card as `answered_in_chat`.
+- An answered card also has `answers`, one per question in order, and `answeredBy`:
+  `{ id, name }`, or `null` when the sign-in named nobody. Compare `answeredBy.id`
+  with `you.id`.
+- Each answer is `{ "options": [0], "other": "text" }`. `options` are indexes into
+  the question's options. A blank question has `"options": []` and no `other`.
+- A card that changes arrives again as a `message` event with the same message id.
+
+| Field | Limit |
+|---|---|
+| Questions per card | 1 to 7 |
+| Options per question | 2 to 4 |
+| `text` | 300 characters |
+| `header` | 40 characters |
+| Option `label` | 80 characters |
+| Option `detail` | 200 characters |
+| `other` | 500 characters |
+
+### `POST /agents/question-cards/:id/answer`
+
+The body is `{ "answers": [ … ] }`, one answer per question, with at least one
+question answered. The first answer wins, and its answers become one message from
+the person who sent them.
+
+| Status | Body | Meaning |
+|---|---|---|
+| 200 | `{ card }` | The answers were taken. |
+| 400 | `{ error }` | The answers do not fit the card. |
+| 404 | `{ error }` | No such card in a conversation this client can see. |
+| 409 | `{ error, card }` | The card is closed. `card` is the stored card, which the client shows. |
+| 503 | `{ error }` | The agent is still starting. |
+
 ## Reconnecting
 
 - Reconnect with a backoff. Reset the backoff only after a connection has stayed
