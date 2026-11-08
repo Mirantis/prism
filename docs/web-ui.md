@@ -145,10 +145,11 @@ The main conversation surface.
 
 ### Questions from the agent
 
-When the agent asks for your decisions as a card, choose your answers and select
-**Send answers**; you can skip any question or type a reply instead. Anyone in
-the conversation can answer, the first answer counts, and the card then shows who
-answered.
+When the agent asks for your decisions as a card, choose your answers and send
+them, or type a reply instead. On a card with several questions you can skip any
+of them, as long as one has an answer. Your own answer under **Other…** can be up
+to 500 characters. Anyone in the conversation can answer and the first answer
+counts; the card then shows who answered when their name is known.
 
 ### One conversation
 
