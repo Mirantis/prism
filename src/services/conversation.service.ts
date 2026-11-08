@@ -515,24 +515,31 @@ class ConversationService {
    */
   async addMessage(
     threadId: string,
-    input: MessageInput
+    input: MessageInput,
+    /** A write that commits with the new row, or not at all. */
+    withMessage?: (tx: Prisma.TransactionClient) => Promise<void>,
   ): Promise<{ message: ConversationMessage; titleSet: string | null }> {
-    const message = await prisma.conversationMessage.create({
-      data: {
-        ...(input.id ? { id: input.id } : {}),
-        threadId,
-        role: input.role,
-        content: input.content,
-        triggeredBy: input.triggeredBy,
-        triggerName: input.triggerName,
-        toolCalls: input.toolCalls as Prisma.InputJsonValue | undefined,
-        blocks: input.blocks as Prisma.InputJsonValue | undefined,
-        senderExternalId: input.senderExternalId,
-        senderName: input.senderName,
-        externalMessageId: input.externalMessageId,
-        internalStep: input.internalStep,
-      },
-    });
+    const data = {
+      ...(input.id ? { id: input.id } : {}),
+      threadId,
+      role: input.role,
+      content: input.content,
+      triggeredBy: input.triggeredBy,
+      triggerName: input.triggerName,
+      toolCalls: input.toolCalls as Prisma.InputJsonValue | undefined,
+      blocks: input.blocks as Prisma.InputJsonValue | undefined,
+      senderExternalId: input.senderExternalId,
+      senderName: input.senderName,
+      externalMessageId: input.externalMessageId,
+      internalStep: input.internalStep,
+    };
+    const message = withMessage
+      ? await prisma.$transaction(async (tx) => {
+          const created = await tx.conversationMessage.create({ data });
+          await withMessage(tx);
+          return created;
+        })
+      : await prisma.conversationMessage.create({ data });
 
     // Update thread's updatedAt
     const thread = await prisma.conversationThread.update({

@@ -84,6 +84,11 @@ const VALID = [{ options: [1] }, { options: [] }];
 const answer = (id: string, answers: Parameters<typeof service.answer>[3] = VALID, sender: typeof ADA | null = ADA) =>
   service.answer(AGENT, USER, id, answers, sender);
 
+const closeInChat = async () => {
+  const closed = await opened.client.$transaction((tx) => service.closeWaitingInChat(tx, THREAD));
+  await service.showClosedInChat(AGENT, USER, closed);
+};
+
 beforeAll(async () => {
   opened = openMigratedDatabase();
   database.client = opened.client;
@@ -230,11 +235,11 @@ describe('answer', () => {
       expect(track).toHaveBeenCalledWith('question card step failed', USER, expect.objectContaining({ step: 'accept' }));
     });
 
-    it('stores a typed message when showing the closed card throws', async () => {
+    it('goes on when showing a card closed in chat throws', async () => {
       const messageId = await seed(card());
       delivery.showInConversation.mockRejectedValueOnce(new Error('stream is closed'));
 
-      await expect(service.closeWaitingInChat(AGENT, USER, THREAD)).resolves.toBeUndefined();
+      await expect(closeInChat()).resolves.toBeUndefined();
       expect((await stored(messageId)).status).toBe('answered_in_chat');
     });
   });
@@ -331,7 +336,7 @@ describe('closeWaitingInChat', () => {
     const closed = card({ status: 'answered', answers: VALID, answeredBy: ADA });
     const closedId = await seed(closed);
 
-    await service.closeWaitingInChat(AGENT, USER, THREAD);
+    await closeInChat();
 
     expect((await stored(waiting)).status).toBe('answered_in_chat');
     expect(await stored(closedId)).toEqual(closed);
@@ -345,7 +350,7 @@ describe('closeWaitingInChat', () => {
   it('leaves a card in another conversation waiting', async () => {
     await opened.client.conversationThread.create({ data: { id: 'thread-2', agentId: AGENT, userId: USER } });
     const other = await seed(card(), 'thread-2');
-    await service.closeWaitingInChat(AGENT, USER, THREAD);
+    await closeInChat();
     expect((await stored(other)).status).toBe('waiting');
   });
 });

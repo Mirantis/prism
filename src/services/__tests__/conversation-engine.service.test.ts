@@ -35,6 +35,7 @@ const {
   mockFlushWork,
   mockFinishWork,
   mockCloseWaitingInChat,
+  mockShowClosedInChat,
   shutdown,
 } = vi.hoisted(() => ({
   mockGetOrCreateLatestThread: vi.fn(),
@@ -61,7 +62,8 @@ const {
   mockWorkRows: vi.fn(),
   mockFlushWork: vi.fn(async () => undefined),
   mockFinishWork: vi.fn(),
-  mockCloseWaitingInChat: vi.fn(async () => undefined),
+  mockCloseWaitingInChat: vi.fn(async () => [{ card: 'closed' }]),
+  mockShowClosedInChat: vi.fn(async () => undefined),
   shutdown: { controller: new AbortController() },
 }));
 
@@ -101,7 +103,7 @@ vi.mock('../message-delivery.service', () => ({
 }));
 
 vi.mock('../question-cards/question-card.service', () => ({
-  questionCardService: { closeWaitingInChat: mockCloseWaitingInChat },
+  questionCardService: { closeWaitingInChat: mockCloseWaitingInChat, showClosedInChat: mockShowClosedInChat },
 }));
 
 vi.mock('../thread-title.service', () => ({
@@ -238,7 +240,7 @@ describe('Requirement: Conversation Engine', () => {
           role: 'USER',
           triggeredBy: 'USER_INPUT',
         })
-      );
+      , expect.any(Function));
 
       // Should call invokeStream() directly with mode: 'chat'
       expect(mockInvokeStream).toHaveBeenCalledWith(
@@ -378,7 +380,7 @@ describe('Requirement: Conversation Engine', () => {
       });
 
       expect(mockWritableThreadId).toHaveBeenCalledWith('thread-older');
-      expect(mockAddMessage).toHaveBeenCalledWith('thread-conversation', expect.objectContaining({ role: 'USER' }));
+      expect(mockAddMessage).toHaveBeenCalledWith('thread-conversation', expect.objectContaining({ role: 'USER' }), expect.any(Function));
       expect(mockInvokeStream).toHaveBeenCalledWith(expect.objectContaining({ threadId: 'thread-conversation' }));
     });
 
@@ -427,7 +429,7 @@ describe('Requirement: Conversation Engine', () => {
 
       // The engine never rejects empty text (the gateway guards that); it stores
       // the user message and links the file.
-      expect(mockAddMessage).toHaveBeenCalledWith('thread-123', expect.objectContaining({ role: 'USER' }));
+      expect(mockAddMessage).toHaveBeenCalledWith('thread-123', expect.objectContaining({ role: 'USER' }), expect.any(Function));
       expect(mockLinkToMessage).toHaveBeenCalledWith(['att-9'], mockAddMessage.mock.calls[0][1].id, 'thread-123');
       expect(mockInvokeStream).toHaveBeenCalled();
     });
@@ -538,6 +540,7 @@ describe('Requirement: Conversation Engine', () => {
       expect(mockAddMessage).toHaveBeenCalledWith(
         'thread-123',
         expect.objectContaining({ role: 'USER' }),
+        expect.any(Function),
       );
       const userCall = mockAddMessage.mock.calls.find((c: unknown[]) => (c[1] as { role: string }).role === 'USER');
       expect((userCall?.[1] as { internalStep?: boolean }).internalStep).toBeUndefined();
@@ -1682,6 +1685,7 @@ describe('Requirement: Conversation Engine', () => {
         expect(mockAddMessage).toHaveBeenCalledWith(
           steerThread,
           expect.objectContaining({ id: owedIds()[0], role: 'USER' }),
+          expect.any(Function),
         );
         expect(mockBeginWork.mock.invocationCallOrder[0]).toBeLessThan(mockAddMessage.mock.invocationCallOrder[0]);
       });
@@ -1956,10 +1960,26 @@ describe('Requirement: Conversation Engine', () => {
     const asked = { tool: 'ask_questions', input: '{}', output: '', success: true, timestamp: '2025-01-01' };
     const person = { agentId: 'agent-123', userId: 'user-123', message: 'Budget first.' };
 
-    it("closes a waiting card when a person's message is stored, before the row is written", async () => {
+    it("closes a waiting card in the typed message's write, and shows it after that write", async () => {
       await conversationEngineService.acceptUserMessage(person, 'thread-123', 'typed-1');
-      expect(mockCloseWaitingInChat).toHaveBeenCalledWith('agent-123', 'user-123', 'thread-123');
-      expect(mockCloseWaitingInChat.mock.invocationCallOrder[0]).toBeLessThan(mockAddMessage.mock.invocationCallOrder[0]);
+
+      const withMessage = mockAddMessage.mock.calls[0][2];
+      expect(mockShowClosedInChat.mock.invocationCallOrder[0]).toBeGreaterThan(mockAddMessage.mock.invocationCallOrder[0]);
+      expect(mockCloseWaitingInChat).not.toHaveBeenCalled();
+      mockCloseWaitingInChat.mockClear();
+      await withMessage('tx');
+      expect(mockCloseWaitingInChat).toHaveBeenCalledWith('tx', 'thread-123');
+    });
+
+    it('keeps the row of a message that could not be stored, for the next boot', async () => {
+      mockAddMessage.mockReset();
+      mockAddMessage.mockRejectedValue(new Error('database is busy'));
+
+      await expect(conversationEngineService.chat({ ...person, threadId: 'thread-123' })).rejects.toThrow('database is busy');
+
+      expect(mockBeginWork).toHaveBeenCalledTimes(1);
+      const stillOwed = mockBeginWork.mock.calls[0][1];
+      expect(mockFinishWork.mock.calls.flatMap(([, keys]) => keys)).not.toContain(stillOwed);
     });
 
     it("leaves a card waiting on another agent's message", async () => {
@@ -1968,7 +1988,7 @@ describe('Requirement: Conversation Engine', () => {
         'thread-123',
         'delivery-9',
       );
-      expect(mockCloseWaitingInChat).not.toHaveBeenCalled();
+      expect(mockAddMessage.mock.calls[0][2]).toBeUndefined();
     });
 
     it('leaves a card waiting on a message the runtime wrote, also after a restart stops its insert', async () => {
@@ -1977,7 +1997,7 @@ describe('Requirement: Conversation Engine', () => {
         'thread-123',
         'continuation-1',
       );
-      expect(mockCloseWaitingInChat).not.toHaveBeenCalled();
+      expect(mockAddMessage.mock.calls[0][2]).toBeUndefined();
       expect(mockBeginWork).toHaveBeenCalledWith(
         'chat',
         'continuation-1',
@@ -2056,7 +2076,7 @@ describe('Requirement: Conversation Engine', () => {
         'delivery-2',
       );
 
-      expect(mockAddMessage).toHaveBeenCalledWith('thread-123', expect.objectContaining({ triggeredBy: 'USER_INPUT' }));
+      expect(mockAddMessage).toHaveBeenCalledWith('thread-123', expect.objectContaining({ triggeredBy: 'USER_INPUT' }), expect.any(Function));
       expect(mockAddMessage).not.toHaveBeenCalledWith('thread-123', expect.objectContaining({ triggeredBy: 'AGENT_MESSAGE' }));
     });
 

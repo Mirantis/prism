@@ -38,6 +38,12 @@ export type AnswerOutcome =
   | { result: 'invalid'; error: string }
   | { result: 'not_found' };
 
+/** A card that a typed reply closed, for the clients to hear about once the reply is committed. */
+export interface ClosedInChat {
+  row: ConversationMessage;
+  card: QuestionCardBlock;
+}
+
 /** The agent asked again while a card waits, or twice in one step. */
 export class QuestionCardWaitingError extends Error {
   constructor() {
@@ -207,19 +213,26 @@ class QuestionCardService {
     return { result: 'answered', card: answered };
   }
 
-  /** A message the person typed closes the cards waiting in its conversation. */
-  async closeWaitingInChat(agentId: string, userId: string, threadId: string): Promise<void> {
-    for (const row of await this.waitingRows(threadId)) {
+  /** A message the person typed closes the cards waiting in its conversation, in that message's transaction. */
+  async closeWaitingInChat(tx: Prisma.TransactionClient, threadId: string): Promise<ClosedInChat[]> {
+    const closedCards: ClosedInChat[] = [];
+    for (const row of await this.waitingRows(threadId, tx)) {
       const card = cardOf(row);
       if (!card) continue;
       const closed: QuestionCardBlock = { ...card, status: 'answered_in_chat' };
-      const { count } = await prisma.conversationMessage.updateMany({
+      const { count } = await tx.conversationMessage.updateMany({
         where: { id: row.id, blocks: WAITING },
         data: { blocks: [closed] as unknown as Prisma.InputJsonValue },
       });
-      if (count === 0) continue;
-      trackEvent('question card closed', userId, { 'agent.id': agentId, ...closedProps(row, closed) });
-      await this.showCard(agentId, userId, row, closed);
+      if (count > 0) closedCards.push({ row, card: closed });
+    }
+    return closedCards;
+  }
+
+  async showClosedInChat(agentId: string, userId: string, closedCards: ClosedInChat[]): Promise<void> {
+    for (const { row, card } of closedCards) {
+      trackEvent('question card closed', userId, { 'agent.id': agentId, ...closedProps(row, card) });
+      await this.showCard(agentId, userId, row, card);
     }
   }
 
@@ -252,8 +265,8 @@ class QuestionCardService {
     });
   }
 
-  private waitingRows(threadId: string): Promise<ConversationMessage[]> {
-    return prisma.conversationMessage.findMany({
+  private waitingRows(threadId: string, db: Prisma.TransactionClient = prisma): Promise<ConversationMessage[]> {
+    return db.conversationMessage.findMany({
       where: { threadId, AND: [{ blocks: IS_CARD }, { blocks: WAITING }] },
       orderBy: { createdAt: 'asc' },
     });
