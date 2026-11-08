@@ -1732,12 +1732,14 @@ export const SCENARIOS: Scenario[] = [
               'need to know: the monthly budget, the channels to promote it on, and the launch month are all still open.',
           },
         ],
-        maxSteps: 2,
+        // One step, so the text is what the model wrote beside the call.
+        maxSteps: 1,
         stubs: { ask_questions: () => ASK_QUESTIONS_RESULT },
       });
       const asks = trace.calls.filter((c) => c.tool === 'ask_questions');
       const questions = asks[0]?.input.questions;
-      return { pass: asks.length === 1 && Array.isArray(questions) && questions.length >= 2, detail: describeTrace(trace) };
+      const asked = asks.length === 1 && Array.isArray(questions) && questions.length >= 2;
+      return { pass: asked && trace.text.trim() === '', detail: describeTrace(trace) };
     },
   },
   {

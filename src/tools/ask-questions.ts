@@ -33,8 +33,9 @@ export function getAskQuestionsTools(
         'their decisions before you can go on, above all when there are several: put every question in one call, ' +
         'in the order they should answer them. Give each question 2 to 4 options, and name one as recommended when ' +
         'you have a view. The user can always leave a question blank or, unless allowOther is false, write their ' +
-        'own answer. Do not write the questions in your reply as well. For a single open question with no natural ' +
-        'options, ask in plain text instead. Call it once, then end your turn and write nothing else. The answers ' +
+        'own answer. Do not write the questions in your reply as well. Put any lead-in in intro, and write no other ' +
+        'text in this reply. For a single open question with no natural options, ask in plain text instead. Call it ' +
+        'once, then end your turn and write nothing else. The answers ' +
         'arrive as the user\'s next message, one line per question; a blank question reads "no answer".',
       inputSchema: askQuestionsInputSchema,
       execute: async (input) => {
