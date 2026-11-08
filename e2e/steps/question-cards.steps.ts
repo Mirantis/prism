@@ -132,7 +132,7 @@ When('I show the questions on the question card', async ({ page }) => {
 });
 
 Then('the question card says {string}', async ({ page }, line: string) => {
-  await expect(card(page).getByTestId('question-card-answered-first')).toHaveText(line);
+  await expect(card(page).getByTestId('question-card-notice')).toHaveText(line);
 });
 
 Then('the conversation shows my answer {string}', async ({ page }, line: string) => {

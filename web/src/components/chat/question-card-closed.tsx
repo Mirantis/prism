@@ -15,21 +15,20 @@ function answeredTitle(card: QuestionCardBlock, viewer: Viewer | undefined): str
 export function QuestionCardClosed({
   card,
   viewer,
-  choseUnsent,
+  notice,
   titleId,
   titleRef,
 }: {
   card: QuestionCardBlock;
   viewer: Viewer | undefined;
-  /** This person had chosen something and did not send it. */
-  choseUnsent: boolean;
+  /** What this person needs to know about this card. The card's status region announces it. */
+  notice: string | null;
   titleId: string;
   titleRef: RefObject<HTMLHeadingElement | null>;
 }) {
   const [open, setOpen] = useState(false);
   const inChat = card.status === 'answered_in_chat';
   const total = card.questions.length;
-  const someoneElse = card.answeredBy && card.answeredBy.id !== viewer?.id ? card.answeredBy.name : null;
   const Icon = inChat ? MessageCircle : CircleCheck;
   return (
     <>
@@ -49,9 +48,9 @@ export function QuestionCardClosed({
               {storedAnsweredCount(card)} of {total} answered
             </p>
           )}
-          {!inChat && choseUnsent && someoneElse && (
-            <p className="mt-0.5 break-words text-muted-foreground" data-testid="question-card-answered-first">
-              {someoneElse} answered first. Your choices weren’t sent.
+          {notice && (
+            <p aria-hidden="true" className="mt-0.5 break-words text-muted-foreground" data-testid="question-card-notice">
+              {notice}
             </p>
           )}
         </div>

@@ -45,7 +45,7 @@ export function QuestionCardOption({
         className={cn(
           'mt-0.5 flex size-4.5 shrink-0 items-center justify-center border border-muted-foreground bg-background text-primary-foreground',
           'peer-checked:border-primary peer-checked:bg-primary [&>svg]:opacity-0 peer-checked:[&>svg]:opacity-100',
-          type === 'radio' ? 'rounded-full' : 'rounded-[4px]',
+          type === 'radio' ? 'rounded-full' : 'rounded-sm',
         )}
       >
         <Check className="size-3" strokeWidth={3} />
@@ -55,7 +55,7 @@ export function QuestionCardOption({
         <span className="flex flex-col items-start gap-1 @[38rem]:flex-row @[38rem]:flex-wrap @[38rem]:items-center @[38rem]:gap-x-2">
           <span className="min-w-0 break-words text-foreground">{label}</span>
           {recommended && (
-            <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[11px] leading-none font-semibold text-primary">
+            <span className="rounded bg-primary/10 px-1.5 py-0.5 text-xs leading-none font-semibold text-primary">
               Recommended
             </span>
           )}
