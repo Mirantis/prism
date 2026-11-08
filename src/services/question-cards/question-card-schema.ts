@@ -47,7 +47,7 @@ export const askQuestionsInputSchema = z.object({
     .trim()
     .max(MAX_INTRO_CHARS)
     .optional()
-    .describe('One short line before the questions, for channels that show them as text.'),
+    .describe('One short plain-text line shown above the questions.'),
   questions: z.array(questionSchema).min(1).max(MAX_QUESTIONS),
 });
 
@@ -61,6 +61,7 @@ export const questionCardBlockSchema = z.object({
   type: z.literal('question_card'),
   id: z.string(),
   status: z.enum(['waiting', 'answered', 'answered_in_chat']),
+  intro: z.string().max(MAX_INTRO_CHARS).optional(),
   questions: z.array(questionSchema).min(1).max(MAX_QUESTIONS),
   otherMaxLength: z.number().int().positive(),
   answers: z.array(answerSchema).optional(),

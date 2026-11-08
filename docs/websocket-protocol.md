@@ -183,6 +183,7 @@ same questions as plain text, so a client that cannot draw the card shows `conte
   "type": "question_card",
   "id": "c9f1a2b3-4d5e-4f60-8a71-92b3c4d5e6f7",
   "status": "waiting",
+  "intro": "A few decisions before I start.",
   "otherMaxLength": 500,
   "questions": [
     {
@@ -200,6 +201,8 @@ same questions as plain text, so a client that cannot draw the card shows `conte
 }
 ```
 
+- `intro` is optional plain text. Show it above the first question, and with the
+  questions when a closed card is folded.
 - `status` is `waiting`, `answered` or `answered_in_chat`. A message in the
   conversation from a person closes a waiting card as `answered_in_chat`.
 - An answered card also has `answers`, one per question in order, and `answeredBy`:
@@ -213,6 +216,7 @@ same questions as plain text, so a client that cannot draw the card shows `conte
 |---|---|
 | Questions per card | 1 to 7 |
 | Options per question | 2 to 4 |
+| `intro` | 300 characters |
 | `text` | 300 characters |
 | `header` | 40 characters |
 | Option `label` | 80 characters |

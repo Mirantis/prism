@@ -107,6 +107,7 @@ class QuestionCardService {
         type: 'question_card',
         id: randomUUID(),
         status: 'waiting',
+        ...(input.intro ? { intro: input.intro } : {}),
         questions: input.questions,
         otherMaxLength: MAX_OTHER_CHARS,
       };

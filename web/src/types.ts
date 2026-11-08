@@ -673,6 +673,8 @@ export interface QuestionCardBlock {
   type: 'question_card';
   id: string;
   status: 'waiting' | 'answered' | 'answered_in_chat';
+  /** One short line from the agent, in plain text. */
+  intro?: string;
   questions: QuestionCardQuestion[];
   otherMaxLength: number;
   answers?: QuestionCardAnswer[];
@@ -698,6 +700,7 @@ export function isQuestionCard(value: unknown): value is QuestionCardBlock {
     typeof card.id === 'string' &&
     ['waiting', 'answered', 'answered_in_chat'].includes(card.status) &&
     typeof card.otherMaxLength === 'number' &&
+    (card.intro === undefined || typeof card.intro === 'string') &&
     Array.isArray(card.questions) &&
     card.questions.length > 0 &&
     card.questions.every(isQuestion) &&

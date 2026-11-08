@@ -122,6 +122,14 @@ describe('post', () => {
     expect(track).toHaveBeenCalledWith('question card posted', USER, expect.objectContaining({ questions: '2' }));
   });
 
+  it('stores the intro on the card, and no field without one', async () => {
+    const withIntro = await service.post(caller, { ...input, intro: 'Two decisions.' });
+    expect(withIntro.intro).toBe('Two decisions.');
+    await opened.client.conversationMessage.deleteMany();
+    const blank = await service.post(caller, { ...input, intro: '' });
+    expect(blank).not.toHaveProperty('intro');
+  });
+
   it('refuses a new card while one waits in the conversation', async () => {
     await service.post(caller, input);
     await expect(service.post(caller, input)).rejects.toBeInstanceOf(QuestionCardWaitingError);

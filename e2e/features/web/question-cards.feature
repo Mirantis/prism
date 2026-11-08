@@ -22,6 +22,7 @@ Feature: The agent asks questions as a card
     Given a conversation with a waiting question card
     When I open that conversation
     Then a question card waits with "3 questions"
+    And the question card shows its intro
     And the answer button is disabled
     When I reload the page
     And I choose "Under €500" on the question card
@@ -29,6 +30,9 @@ Feature: The agent asks questions as a card
     Then the question card status reads "2 of 3 answered"
     When I send the question card
     Then the question card shows "Answered"
+    And the question card hides its intro
+    When I show the questions on the question card
+    Then the question card shows its intro
     And the conversation shows my answer "Budget: Under €500"
     And the conversation shows my answer "Which channels should we use? Newsletter"
     And the conversation shows my answer "Launch: no answer"

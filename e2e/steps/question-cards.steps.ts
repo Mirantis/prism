@@ -23,6 +23,7 @@ const CARD_TIMEOUT = 90_000;
 // Scenarios run one at a time (workers: 1), so module state belongs to the current scenario.
 let seeded: { threadId: string; cardId: string } | undefined;
 
+const CARD_INTRO = 'A few decisions before I draft the launch plan.';
 const CARD_ANSWERS = [{ options: [1] }, { options: [] }, { options: [] }];
 
 function seededCard() {
@@ -30,6 +31,7 @@ function seededCard() {
     type: 'question_card',
     id: randomUUID(),
     status: 'waiting',
+    intro: CARD_INTRO,
     otherMaxLength: 500,
     questions: [
       {
@@ -115,6 +117,18 @@ When('I send the question card', async ({ page }) => {
 Then('the question card shows {string}', async ({ page }, title: string) => {
   await expect(card(page).getByRole('heading', { name: title, exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(card(page)).not.toHaveAttribute('data-status', 'waiting');
+});
+
+Then('the question card shows its intro', async ({ page }) => {
+  await expect(card(page).getByTestId('question-card-intro')).toHaveText(CARD_INTRO);
+});
+
+Then('the question card hides its intro', async ({ page }) => {
+  await expect(card(page).getByTestId('question-card-intro')).toHaveCount(0);
+});
+
+When('I show the questions on the question card', async ({ page }) => {
+  await card(page).getByRole('button', { name: 'Show questions' }).click();
 });
 
 Then('the question card says {string}', async ({ page }, line: string) => {

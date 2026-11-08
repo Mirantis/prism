@@ -119,6 +119,65 @@ describe('QuestionCard', () => {
     });
   });
 
+  describe('intro', () => {
+    const INTRO = 'A few decisions before I draft the plan.';
+    const intro = () => screen.queryByTestId('question-card-intro');
+    const follows = (first: Element, second: Element) =>
+      Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+    it('shows the intro directly under the title and above the first question', () => {
+      show({ ...BLOCK, intro: INTRO });
+      const title = screen.getByRole('heading', { name: '2 questions' });
+      expect(intro()?.textContent).toBe(INTRO);
+      expect(title.nextElementSibling).toBe(intro());
+      expect(follows(intro()!, screen.getByRole('group', { name: /How much can we spend/ }))).toBe(true);
+    });
+
+    it('uses the secondary text colour of the helper line', () => {
+      show({ ...BLOCK, intro: INTRO });
+      expect(intro()?.className).toContain('text-muted-foreground');
+    });
+
+    it('renders nothing for no intro or an empty one, so the helper line follows the title', () => {
+      for (const block of [BLOCK, { ...BLOCK, intro: '' }]) {
+        const { unmount } = show(block);
+        expect(intro()).toBeNull();
+        expect(screen.getByRole('heading', { name: '2 questions' }).nextElementSibling?.textContent).toBe(
+          'Choose your answers, then send them. You can skip any question.',
+        );
+        unmount();
+      }
+    });
+
+    it('shows Markdown and links as plain text', () => {
+      const text = 'See **this** [link](https://example.com)';
+      show({ ...BLOCK, intro: text });
+      expect(intro()?.textContent).toBe(text);
+      expect(intro()?.querySelector('a, strong')).toBeNull();
+    });
+
+    it('shows the whole of a 300-character intro and wraps it', () => {
+      const text = 'x'.repeat(300);
+      show({ ...BLOCK, intro: text });
+      expect(intro()?.textContent).toBe(text);
+      expect(intro()?.className).toContain('break-words');
+      expect(intro()?.className).not.toMatch(/truncate|line-clamp/);
+    });
+
+    it.each([
+      ['answered', { ...ANSWERED, intro: INTRO }],
+      ['answered in chat', { ...BLOCK, status: 'answered_in_chat' as const, intro: INTRO }],
+    ])('folds away on a card %s, and Show questions brings it back above the first question', (_name, block) => {
+      show(block);
+      expect(intro()).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'Show questions' }));
+      expect(intro()?.textContent).toBe(INTRO);
+      expect(follows(intro()!, screen.getByText(/How much can we spend\?/))).toBe(true);
+      fireEvent.click(screen.getByRole('button', { name: 'Hide questions' }));
+      expect(intro()).toBeNull();
+    });
+  });
+
   describe('sending', () => {
     it('sends the choices, marks the card busy and disables the controls meanwhile', async () => {
       let finish = (_value: { card: QuestionCardBlock }) => {};
@@ -277,6 +336,7 @@ describe('isQuestionCard', () => {
     ['no questions', { ...BLOCK, questions: [] }],
     ['an unknown status', { ...BLOCK, status: 'expired' }],
     ['a malformed question', { ...BLOCK, questions: [{ text: 'q' }] }],
+    ['an intro that is not text', { ...BLOCK, intro: 3 }],
     ['answers that do not match the questions', { ...BLOCK, answers: [{ options: [] }] }],
     ['null', null],
   ])('refuses %s', (_name, value) => {
