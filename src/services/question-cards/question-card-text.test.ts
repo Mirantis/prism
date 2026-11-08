@@ -80,6 +80,15 @@ describe('answerMessageText', () => {
     );
   });
 
+  it('keeps each question on one line when its header, text or option holds a line break', () => {
+    const broken = question({
+      header: 'Bud\nget',
+      options: [{ label: 'First\r\n  part' }, { label: 'B' }],
+    });
+    const plain = question({ text: 'Pick\none?' });
+    expect(answerMessageText([broken, plain], [{ options: [0] }, { options: [1] }])).toBe('1. Bud get: First part\n2. Pick one? B');
+  });
+
   it('adds a colon after a question text with no end punctuation', () => {
     expect(answerMessageText([question({ text: 'Pick a colour' })], [{ options: [0] }])).toBe('1. Pick a colour: A');
   });

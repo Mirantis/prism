@@ -327,7 +327,10 @@ describe('closeWaitingInChat', () => {
     expect((await stored(waiting)).status).toBe('answered_in_chat');
     expect(await stored(closedId)).toEqual(closed);
     expect(delivery.showInConversation).toHaveBeenCalledTimes(1);
-    expect(track).toHaveBeenCalledWith('question card closed', USER, expect.objectContaining({ status: 'answered_in_chat' }));
+    const closedEvent = track.mock.calls.find(([name]) => name === 'question card closed')?.[2];
+    expect(closedEvent).toMatchObject({ status: 'answered_in_chat', questions: '2' });
+    expect(closedEvent).not.toHaveProperty('blank');
+    expect(closedEvent).not.toHaveProperty('answered');
   });
 
   it('leaves a card in another conversation waiting', async () => {
