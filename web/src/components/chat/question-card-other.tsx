@@ -1,6 +1,10 @@
+import { useId } from 'react';
 import { Textarea } from '@/components/ui/textarea';
 import type { QuestionChoice } from '@/lib/question-card';
 import { QuestionCardOption } from './question-card-option';
+
+/** The count appears when fewer characters than this remain. */
+const SHOW_COUNT_BELOW = 50;
 
 /** The "Other…" row, and the text field it opens under itself. */
 export function QuestionCardOther({
@@ -20,6 +24,10 @@ export function QuestionCardOther({
   onToggle: () => void;
   onText: (text: string) => void;
 }) {
+  const countId = useId();
+  // Counted as the field's maxLength counts, in UTF-16 code units.
+  const left = maxLength - choice.otherText.length;
+  const showCount = left < SHOW_COUNT_BELOW;
   return (
     <>
       <QuestionCardOption type={type} name={name} label="Other…" checked={choice.otherOpen} onChange={onToggle} />
@@ -30,10 +38,16 @@ export function QuestionCardOther({
             onChange={(event) => onText(event.target.value)}
             placeholder="Type your answer"
             aria-label={`Your answer to question ${questionNumber}`}
+            aria-describedby={showCount ? countId : undefined}
             maxLength={maxLength}
             className="min-h-9 border-muted-foreground"
             rows={1}
           />
+          {showCount && (
+            <p id={countId} className="mt-1 text-xs text-muted-foreground" data-testid="question-card-count">
+              {left} {left === 1 ? 'character' : 'characters'} left
+            </p>
+          )}
         </div>
       )}
     </>
