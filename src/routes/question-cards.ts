@@ -36,5 +36,9 @@ questionCardsRouter.post('/question-cards/:id/answer', async (req, res) => {
     res.status(409).json({ error: 'These questions are already closed.', card: outcome.card });
     return;
   }
+  if (outcome.result === 'reply_pending') {
+    res.status(202).json({ card: outcome.card, replyPending: true });
+    return;
+  }
   res.json({ card: outcome.card });
 });

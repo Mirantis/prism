@@ -232,6 +232,7 @@ the person who sent them.
 | Status | Body | Meaning |
 |---|---|---|
 | 200 | `{ card }` | The answers were taken. |
+| 202 | `{ card, replyPending: true }` | The answers are stored, and the agent's reply starts after the runtime next restarts. |
 | 400 | `{ error }` | The answers do not fit the card. |
 | 404 | `{ error }` | No such card in a conversation this client can see. |
 | 409 | `{ error, card }` | The card is closed. `card` is the stored card, which the client shows. |

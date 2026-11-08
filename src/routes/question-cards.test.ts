@@ -59,6 +59,13 @@ describe('POST /agents/question-cards/:id/answer', () => {
     expect(response.body.error).toEqual(expect.any(String));
   });
 
+  it('answers 202 and says the reply is pending when the answer message could not be accepted', async () => {
+    mockAnswer.mockResolvedValue({ result: 'reply_pending', card: CARD });
+    const response = await request(app()).post(URL).send(BODY);
+    expect(response.status).toBe(202);
+    expect(response.body).toEqual({ card: CARD, replyPending: true });
+  });
+
   it('answers 404 for a card that does not exist', async () => {
     mockAnswer.mockResolvedValue({ result: 'not_found' });
     expect((await request(app()).post(URL).send(BODY)).status).toBe(404);
