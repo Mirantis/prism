@@ -7,6 +7,13 @@ import { isQuestionCard, type QuestionCardBlock } from '@/types';
 import { QuestionCardClosed } from './question-card-closed';
 import { QuestionCardWaiting, type SendState } from './question-card-waiting';
 
+const REPLY_PENDING = 'Your answers are saved. The agent will reply after its next restart.';
+
+function answeredFirstNotice(card: QuestionCardBlock, viewer: Viewer | undefined, choseUnsent: boolean): string | null {
+  if (card.status !== 'answered' || !choseUnsent || !card.answeredBy || card.answeredBy.id === viewer?.id) return null;
+  return `${card.answeredBy.name} answered first. Your choices weren’t sent.`;
+}
+
 /** The agent's questions in the chat. Choices live here until they are sent, so a reload drops them. */
 export function QuestionCard({ block, viewer }: { block: QuestionCardBlock; viewer: Viewer | undefined }) {
   // The answer route's copy, for a client whose socket missed the change. A closed card never changes again.
@@ -14,6 +21,7 @@ export function QuestionCard({ block, viewer }: { block: QuestionCardBlock; view
   const [choices, setChoices] = useState<QuestionChoice[]>(() => block.questions.map(emptyChoice));
   const [sendState, setSendState] = useState<SendState>('idle');
   const [sent, setSent] = useState(false);
+  const [replyPending, setReplyPending] = useState(false);
   const titleId = useId();
   const titleRef = useRef<HTMLHeadingElement>(null);
   const focusTitle = useRef(false);
@@ -22,6 +30,7 @@ export function QuestionCard({ block, viewer }: { block: QuestionCardBlock; view
 
   const card = served ?? block;
   const waiting = card.status === 'waiting';
+  const notice = replyPending ? REPLY_PENDING : answeredFirstNotice(card, viewer, !sent && answeredCount(choices) > 0);
 
   useLayoutEffect(() => {
     if (card.status === 'waiting') return;
@@ -34,15 +43,17 @@ export function QuestionCard({ block, viewer }: { block: QuestionCardBlock; view
   const send = async () => {
     setSendState('sending');
     try {
-      const { card: stored } = await runtimeApi.answerQuestionCard(block.id, toAnswers(choices));
+      const { card: stored, replyPending: pending } = await runtimeApi.answerQuestionCard(block.id, toAnswers(choices));
       focusTitle.current = true;
       setSent(true);
+      setReplyPending(Boolean(pending));
       setServed(stored);
       setSendState('idle');
     } catch (error) {
-      const stored = error instanceof ApiError && error.status === 409 ? (error.body as { card?: unknown } | undefined)?.card : undefined;
+      const status = error instanceof ApiError ? error.status : 0;
+      const stored = status === 409 ? ((error as ApiError).body as { card?: unknown } | undefined)?.card : undefined;
       if (!isQuestionCard(stored)) {
-        setSendState('error');
+        setSendState(status === 400 || status === 404 ? 'refused' : 'error');
         return;
       }
       focusTitle.current = true;
@@ -78,11 +89,15 @@ export function QuestionCard({ block, viewer }: { block: QuestionCardBlock; view
         <QuestionCardClosed
           card={card}
           viewer={viewer}
-          choseUnsent={!sent && answeredCount(choices) > 0}
+          notice={notice}
           titleId={titleId}
           titleRef={titleRef}
         />
       )}
+      {/* Mounted from the start, since a screen reader announces a change to a region it already has. */}
+      <p role="status" className="sr-only">
+        {notice}
+      </p>
     </section>
   );
 }

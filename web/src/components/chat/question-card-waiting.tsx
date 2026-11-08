@@ -4,9 +4,12 @@ import { answeredCount, type QuestionChoice } from '@/lib/question-card';
 import type { QuestionCardBlock } from '@/types';
 import { QuestionCardQuestion } from './question-card-question';
 
-export type SendState = 'idle' | 'sending' | 'error';
+export type SendState = 'idle' | 'sending' | 'error' | 'refused';
 
-const SEND_ERROR = 'Couldn’t send your answers. Check your connection, then try again.';
+const SEND_FAILURES: Partial<Record<SendState, string>> = {
+  error: 'Couldn’t send your answers. Check your connection, then try again.',
+  refused: 'Couldn’t send these answers. Reload the page to see the current questions.',
+};
 
 /** The card while it waits: every question, and the bar that sends the answers. */
 export function QuestionCardWaiting({
@@ -29,6 +32,7 @@ export function QuestionCardWaiting({
   const answered = answeredCount(choices);
   const sending = sendState === 'sending';
   const label = several ? 'Send answers' : 'Send answer';
+  const failure = SEND_FAILURES[sendState];
   return (
     <>
       <div className="flex items-start gap-3">
@@ -47,7 +51,7 @@ export function QuestionCardWaiting({
           </p>
         </div>
       </div>
-      <fieldset disabled={sending} className="mt-4 flex min-w-0 flex-col gap-4">
+      <fieldset disabled={sending} aria-labelledby={titleId} className="mt-4 flex min-w-0 flex-col gap-4">
         {card.questions.map((question, index) => (
           <QuestionCardQuestion
             key={`${index}-${question.text}`}
@@ -60,9 +64,9 @@ export function QuestionCardWaiting({
           />
         ))}
       </fieldset>
-      {sendState === 'error' && (
+      {failure && (
         <p role="alert" className="mt-4 text-destructive" data-testid="question-card-error">
-          {SEND_ERROR}
+          {failure}
         </p>
       )}
       <div className="mt-4 flex flex-col gap-3 border-t pt-3 @[38rem]:flex-row @[38rem]:items-center @[38rem]:justify-between">

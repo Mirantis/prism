@@ -72,6 +72,11 @@ describe('QuestionCard', () => {
       expect(send('Send answer')).toBeTruthy();
     });
 
+    it('names the group of questions after the card title', () => {
+      show(BLOCK);
+      expect(screen.getByRole('group', { name: '2 questions' }).contains(radio(/Over €500/))).toBe(true);
+    });
+
     it('names Recommended with the option and describes it by its detail', () => {
       show(BLOCK);
       const recommended = radio('Under €500, Recommended');
@@ -196,7 +201,7 @@ describe('QuestionCard', () => {
       await screen.findByRole('heading', { name: 'Answered by you' });
       expect(screen.getByTestId('question-card').getAttribute('aria-busy')).toBe('false');
       expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Answered by you' }));
-      expect(screen.queryByTestId('question-card-answered-first')).toBeNull();
+      expect(screen.queryByTestId('question-card-notice')).toBeNull();
     });
 
     it('sends a trimmed Other, and no Other when its field is closed', async () => {
@@ -225,10 +230,31 @@ describe('QuestionCard', () => {
       fireEvent.click(radio(/Over €500/));
       fireEvent.click(send());
       const title = await screen.findByRole('heading', { name: 'Answered by Grace Example' });
-      expect(screen.getByTestId('question-card-answered-first').textContent).toBe(
+      expect(screen.getByTestId('question-card-notice').textContent).toBe(
         'Grace Example answered first. Your choices weren’t sent.',
       );
       expect(document.activeElement).toBe(title);
+    });
+
+    it.each([400, 404])('says a %i cannot be fixed by trying again', async (status) => {
+      vi.spyOn(runtimeApi, 'answerQuestionCard').mockRejectedValue(new ApiError('refused', {}, status));
+      show(BLOCK);
+      fireEvent.click(radio(/Over €500/));
+      fireEvent.click(send());
+      const alert = await screen.findByRole('alert');
+      expect(alert.textContent).toBe('Couldn’t send these answers. Reload the page to see the current questions.');
+      expect((radio(/Over €500/) as HTMLInputElement).checked).toBe(true);
+    });
+
+    it('shows the card answered and says the reply is pending on a 202', async () => {
+      const line = 'Your answers are saved. The agent will reply after its next restart.';
+      vi.spyOn(runtimeApi, 'answerQuestionCard').mockResolvedValue({ card: ANSWERED, replyPending: true });
+      show(BLOCK);
+      fireEvent.click(radio(/Over €500/));
+      fireEvent.click(send());
+      await screen.findByRole('heading', { name: 'Answered by Grace Example' });
+      expect(screen.getByTestId('question-card-notice').textContent).toBe(line);
+      expect(screen.getByRole('status').textContent).toBe(line);
     });
 
     it('treats a 409 with no stored card as a failed send', async () => {
@@ -237,6 +263,34 @@ describe('QuestionCard', () => {
       fireEvent.click(radio(/Over €500/));
       fireEvent.click(send());
       expect(await screen.findByRole('alert')).toBeTruthy();
+    });
+  });
+
+  describe('the status region', () => {
+    const LINE = 'Grace Example answered first. Your choices weren’t sent.';
+
+    it('is on the waiting card, empty, and is the same element that holds the line after a 409', async () => {
+      vi.spyOn(runtimeApi, 'answerQuestionCard').mockRejectedValue(new ApiError('closed', {}, 409, { card: ANSWERED }));
+      show(BLOCK);
+      const region = screen.getByRole('status');
+      expect(region.textContent).toBe('');
+
+      fireEvent.click(radio(/Over €500/));
+      fireEvent.click(send());
+      await screen.findByRole('heading', { name: 'Answered by Grace Example' });
+
+      expect(screen.getByRole('status')).toBe(region);
+      expect(region.textContent).toBe(LINE);
+      expect(screen.getByTestId('question-card-notice').getAttribute('aria-hidden')).toBe('true');
+    });
+
+    it('holds the line when a live update closes the card', () => {
+      const { rerender } = show(BLOCK);
+      const region = screen.getByRole('status');
+      fireEvent.click(radio(/Over €500/));
+      rerender(<QuestionCard block={ANSWERED} viewer={ADA} />);
+      expect(screen.getByRole('status')).toBe(region);
+      expect(region.textContent).toBe(LINE);
     });
   });
 
@@ -249,7 +303,7 @@ describe('QuestionCard', () => {
       fireEvent.click(radio(/Over €500/));
       update(rerender, ANSWERED);
       expect(screen.getByRole('heading', { name: 'Answered by Grace Example' })).toBeTruthy();
-      expect(screen.getByTestId('question-card-answered-first')).toBeTruthy();
+      expect(screen.getByTestId('question-card-notice')).toBeTruthy();
     });
 
     it('moves focus to the title only when focus was inside the card', () => {
@@ -273,7 +327,7 @@ describe('QuestionCard', () => {
     it('says nothing about unsent choices when none were made', () => {
       const { rerender } = show(BLOCK);
       update(rerender, ANSWERED);
-      expect(screen.queryByTestId('question-card-answered-first')).toBeNull();
+      expect(screen.queryByTestId('question-card-notice')).toBeNull();
     });
 
     it('says nothing about another device of the same person', () => {
@@ -281,7 +335,7 @@ describe('QuestionCard', () => {
       fireEvent.click(radio(/Over €500/));
       update(rerender, { ...ANSWERED, answeredBy: { id: 'ada-id', name: 'Ada Example' } });
       expect(screen.getByRole('heading', { name: 'Answered by you' })).toBeTruthy();
-      expect(screen.queryByTestId('question-card-answered-first')).toBeNull();
+      expect(screen.queryByTestId('question-card-notice')).toBeNull();
     });
   });
 

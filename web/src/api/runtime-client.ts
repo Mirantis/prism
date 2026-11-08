@@ -80,7 +80,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const runtimeApi = {
   /** The first answer wins; a later one is refused with 409 and the stored card in the error's body. */
   answerQuestionCard: (id: string, answers: QuestionCardAnswer[]) =>
-    request<{ card: QuestionCardBlock }>(`/agents/question-cards/${encodeURIComponent(id)}/answer`, {
+    request<{ card: QuestionCardBlock; replyPending?: true }>(`/agents/question-cards/${encodeURIComponent(id)}/answer`, {
       method: 'POST',
       body: JSON.stringify({ answers }),
     }),
