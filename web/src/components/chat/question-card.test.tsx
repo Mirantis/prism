@@ -480,6 +480,16 @@ describe('isQuestionCard', () => {
     ['an unknown status', { ...BLOCK, status: 'expired' }],
     ['a malformed question', { ...BLOCK, questions: [{ text: 'q' }] }],
     ['an intro that is not text', { ...BLOCK, intro: 3 }],
+    ['a header that is an object', { ...BLOCK, questions: [{ ...BLOCK.questions[0], header: { a: 1 } }] }],
+    ['a recommended option that is an object', { ...BLOCK, questions: [{ ...BLOCK.questions[0], recommended: {} }] }],
+    [
+      'an option detail that is an object',
+      { ...BLOCK, questions: [{ ...BLOCK.questions[0], options: [{ label: 'A', detail: {} }, { label: 'B' }] }] },
+    ],
+    ['a sender name that is an object', { ...ANSWERED, answeredBy: { id: 'x', name: {} } }],
+    ['a sender with no id', { ...ANSWERED, answeredBy: { name: 'Grace Example' } }],
+    ['an Other answer that is not text', { ...ANSWERED, answers: [{ options: [], other: {} }, { options: [] }] }],
+    ['an answer index that is not a number', { ...ANSWERED, answers: [{ options: ['0'] }, { options: [] }] }],
     ['answers that do not match the questions', { ...BLOCK, answers: [{ options: [] }] }],
     ['null', null],
   ])('refuses %s', (_name, value) => {
@@ -511,6 +521,12 @@ describe('ChatMessage with a question card', () => {
     renderMessage([BLOCK]);
     expect(screen.getByTestId('question-card')).toBeTruthy();
     expect(screen.queryByText('The questions as plain text.')).toBeNull();
+  });
+
+  it('renders the text instead of throwing on an object-valued header', () => {
+    renderMessage([{ ...BLOCK, questions: [{ ...BLOCK.questions[0], header: { a: 1 } }] }]);
+    expect(screen.queryByTestId('question-card')).toBeNull();
+    expect(screen.getByText('The questions as plain text.')).toBeTruthy();
   });
 
   it('falls back to the text for a malformed card', () => {

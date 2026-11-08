@@ -681,15 +681,35 @@ export interface QuestionCardBlock {
   answeredBy?: { id: string; name: string } | null;
 }
 
+const isOptionalString = (value: unknown) => value === undefined || typeof value === 'string';
+
+function isOption(value: unknown): value is QuestionCardOption {
+  const option = value as QuestionCardOption | null;
+  return typeof option?.label === 'string' && isOptionalString(option.detail);
+}
+
 function isQuestion(value: unknown): value is QuestionCardQuestion {
   const question = value as QuestionCardQuestion | null;
   return (
     typeof question?.text === 'string' &&
+    isOptionalString(question.header) &&
+    isOptionalString(question.recommended) &&
     typeof question.allowOther === 'boolean' &&
     typeof question.multiSelect === 'boolean' &&
     Array.isArray(question.options) &&
-    question.options.every((option) => typeof option?.label === 'string')
+    question.options.every(isOption)
   );
+}
+
+function isAnswer(value: unknown): value is QuestionCardAnswer {
+  const answer = value as QuestionCardAnswer | null;
+  return Array.isArray(answer?.options) && answer.options.every(Number.isInteger) && isOptionalString(answer.other);
+}
+
+function isAnsweredBy(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  const person = value as { id?: unknown; name?: unknown };
+  return typeof person.id === 'string' && typeof person.name === 'string';
 }
 
 /** The whole shape is checked, so a malformed block falls back to the message text. */
@@ -700,14 +720,13 @@ export function isQuestionCard(value: unknown): value is QuestionCardBlock {
     typeof card.id === 'string' &&
     ['waiting', 'answered', 'answered_in_chat'].includes(card.status) &&
     typeof card.otherMaxLength === 'number' &&
-    (card.intro === undefined || typeof card.intro === 'string') &&
+    isOptionalString(card.intro) &&
+    isAnsweredBy(card.answeredBy) &&
     Array.isArray(card.questions) &&
     card.questions.length > 0 &&
     card.questions.every(isQuestion) &&
     (card.answers === undefined ||
-      (Array.isArray(card.answers) &&
-        card.answers.length === card.questions.length &&
-        card.answers.every((answer) => Array.isArray(answer?.options))))
+      (Array.isArray(card.answers) && card.answers.length === card.questions.length && card.answers.every(isAnswer)))
   );
 }
 
