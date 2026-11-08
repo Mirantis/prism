@@ -185,7 +185,7 @@ describe('answer', () => {
     });
   });
 
-  it('writes the row that owes the reply in the same act as the card', async () => {
+  it('writes the pending_work row of the answer message with the card', async () => {
     const block = card();
     await seed(block);
     await answer(block.id);
@@ -292,7 +292,7 @@ describe('answer', () => {
     expect(inbound.accept).not.toHaveBeenCalled();
   });
 
-  it('records a null answeredBy when the sign-in named nobody', async () => {
+  it('records a null answeredBy when the request has no sender headers', async () => {
     const block = card();
     const messageId = await seed(block);
     await answer(block.id, VALID, null);

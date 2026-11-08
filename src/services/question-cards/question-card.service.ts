@@ -2,9 +2,8 @@
  * The agent's questions to a person, as a card on one of its messages: posting
  * it, taking the first answer, and closing it when the person replies in words.
  *
- * The card is the only state and it is stored on the message, so a waiting card
- * needs no timer and no `pending_work` row. Every lookup reads `$[0]`, so a card
- * is the only block on its message.
+ * The card is stored on the message. Every lookup reads `$[0]`, so a card is the
+ * only block on its message.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -140,9 +139,9 @@ class QuestionCardService {
   }
 
   /**
-   * Takes the answers when the card still waits. The card and the row that owes
-   * the answer change in one transaction, so a restart cannot leave a card
-   * answered with its answer lost, and the first answer is the only one stored.
+   * Stores the answers when the card still waits. One transaction updates the card
+   * and writes the `pending_work` row of the answer message, so a restart keeps the
+   * answers and only the first answer is stored.
    */
   async answer(
     agentId: string,

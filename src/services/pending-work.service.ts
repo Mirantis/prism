@@ -83,19 +83,19 @@ export class PendingWorkService {
   }
 
   /**
-   * Record work in one transaction with the owner's write that decides it exists.
-   * When `decide` answers false nothing is recorded. Answers what `decide` answered.
+   * Run the owner's write and record the work in one transaction. When `ownerWrite`
+   * resolves false, no row is written and this resolves false too.
    */
   beginWith(
     kind: PendingWorkKind,
     key: string,
     payload: object,
-    decide: (tx: Prisma.TransactionClient) => Promise<boolean>,
+    ownerWrite: (tx: Prisma.TransactionClient) => Promise<boolean>,
   ): Promise<boolean> {
     const json = payload as Prisma.InputJsonValue;
     return this.write(kind, [key], () =>
       prisma.$transaction(async (tx) => {
-        if (!(await decide(tx))) return false;
+        if (!(await ownerWrite(tx))) return false;
         await tx.pendingWork.upsert({
           where: { kind_key: { kind, key } },
           create: { kind, key, payload: json },
