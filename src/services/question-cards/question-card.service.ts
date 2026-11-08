@@ -1,0 +1,251 @@
+/**
+ * The agent's questions to a person, as a card on one of its messages: posting
+ * it, taking the first answer, and closing it when the person replies in words.
+ *
+ * The card is the only state and it is stored on the message, so a waiting card
+ * needs no timer and no `pending_work` row. Every lookup reads `$[0]`, so a card
+ * is the only block on its message.
+ */
+
+import { randomUUID } from 'node:crypto';
+import type { ConversationMessage, Prisma } from '@prisma/client';
+import type { z } from 'zod';
+import prisma from '../../lib/prisma';
+import { logger } from '../../logger';
+import { trackEvent } from '../../lib/telemetry';
+import type { QuestionCardAnswer, QuestionCardBlock, QuestionCardPerson } from '../../protocol/chat-protocol';
+import type { ChannelName } from '../channel-adapter.interface';
+import { messageDeliveryService } from '../message-delivery.service';
+import { pendingWorkService } from '../pending-work.service';
+import { askQuestionsInputSchema, MAX_OTHER_CHARS, questionCardBlockSchema } from './question-card-schema';
+import { answerMessageText, questionCardText } from './question-card-text';
+
+const IS_CARD = { path: '$[0].type', equals: 'question_card' } as const;
+const WAITING = { path: '$[0].status', equals: 'waiting' } as const;
+
+export interface QuestionCardCaller {
+  agentId: string;
+  userId: string;
+  threadId: string;
+  originChannel?: ChannelName;
+  originChannelId?: string;
+}
+
+export type AnswerOutcome =
+  | { result: 'answered'; card: QuestionCardBlock }
+  | { result: 'closed'; card: QuestionCardBlock }
+  | { result: 'invalid'; error: string }
+  | { result: 'not_found' };
+
+/** The agent asked again while a card waits, or twice in one step. */
+export class QuestionCardWaitingError extends Error {
+  constructor() {
+    super(
+      'A question card already waits in this conversation, so nothing new was sent. End this turn; the answers arrive as the user\'s next message.',
+    );
+    this.name = 'QuestionCardWaitingError';
+  }
+}
+
+/** The stored card of a row, or null when the block is not a well-formed card. */
+function cardOf(row: Pick<ConversationMessage, 'blocks'>): QuestionCardBlock | null {
+  const parsed = questionCardBlockSchema.safeParse((row.blocks as unknown[] | null)?.[0]);
+  return parsed.success ? parsed.data : null;
+}
+
+/** Line breaks collapse so that each question stays one line of the answer message. */
+function cleanOther(other: string | undefined): string | undefined {
+  const cleaned = other?.replace(/\s*[\r\n]+\s*/g, ' ');
+  return cleaned || undefined;
+}
+
+/** The answers as the card stores them, or why they do not fit the card. */
+function fitAnswers(
+  card: QuestionCardBlock,
+  answers: QuestionCardAnswer[],
+): { answers: QuestionCardAnswer[] } | { error: string } {
+  if (answers.length !== card.questions.length) return { error: 'Send one answer per question.' };
+  const fitted: QuestionCardAnswer[] = [];
+  for (const [index, question] of card.questions.entries()) {
+    const options = [...new Set(answers[index].options)].sort((a, b) => a - b);
+    const other = cleanOther(answers[index].other);
+    if (options.some((option) => option >= question.options.length)) return { error: 'That option does not exist.' };
+    if (other && !question.allowOther) return { error: 'That question takes no answer of your own.' };
+    if (!question.multiSelect && options.length + (other ? 1 : 0) > 1) return { error: 'That question takes one answer.' };
+    fitted.push({ options, ...(other ? { other } : {}) });
+  }
+  if (fitted.every((answer) => answer.options.length === 0 && !answer.other)) return { error: 'Answer at least one question.' };
+  return { answers: fitted };
+}
+
+function closedProps(row: ConversationMessage, card: QuestionCardBlock, answers: QuestionCardAnswer[]) {
+  const answered = answers.filter((answer) => answer.options.length > 0 || answer.other).length;
+  return {
+    'thread.id': row.threadId,
+    'question_card.id': card.id,
+    status: card.status,
+    questions: String(card.questions.length),
+    answered: String(answered),
+    blank: String(card.questions.length - answered),
+    other: String(answers.filter((answer) => answer.other).length),
+    elapsed_ms: String(Date.now() - row.createdAt.getTime()),
+  };
+}
+
+class QuestionCardService {
+  /** Threads with a post under way. Taken in the tick of the check, so two calls in one step cannot both pass it. */
+  private readonly posting = new Set<string>();
+
+  /** Posts the card. Throws {@link QuestionCardWaitingError} while another waits in the thread. */
+  async post(caller: QuestionCardCaller, input: z.output<typeof askQuestionsInputSchema>): Promise<QuestionCardBlock> {
+    const { threadId } = caller;
+    if (this.posting.has(threadId)) throw new QuestionCardWaitingError();
+    this.posting.add(threadId);
+    try {
+      if ((await this.waitingRows(threadId)).length > 0) throw new QuestionCardWaitingError();
+      const card: QuestionCardBlock = {
+        type: 'question_card',
+        id: randomUUID(),
+        status: 'waiting',
+        questions: input.questions,
+        otherMaxLength: MAX_OTHER_CHARS,
+      };
+      const channelContext = await messageDeliveryService.threadContext(
+        threadId,
+        caller.originChannel,
+        caller.originChannelId,
+      );
+      await messageDeliveryService.publish(
+        caller.userId,
+        threadId,
+        questionCardText(input.questions, input.intro),
+        'USER_INPUT',
+        { blocks: [card], channelContext },
+      );
+      trackEvent('question card posted', caller.userId, {
+        'agent.id': caller.agentId,
+        'thread.id': threadId,
+        'question_card.id': card.id,
+        questions: String(card.questions.length),
+        multi_select: String(card.questions.filter((question) => question.multiSelect).length),
+        with_recommended: String(card.questions.filter((question) => question.recommended !== undefined).length),
+        channel: channelContext.channel,
+      });
+      return card;
+    } finally {
+      this.posting.delete(threadId);
+    }
+  }
+
+  /**
+   * Takes the answers when the card still waits. The card and the row that owes
+   * the answer change in one transaction, so a restart cannot leave a card
+   * answered with its answer lost, and the first answer is the only one stored.
+   */
+  async answer(
+    agentId: string,
+    userId: string,
+    id: string,
+    answers: QuestionCardAnswer[],
+    sender: QuestionCardPerson | null,
+  ): Promise<AnswerOutcome> {
+    const { inboundMessageService, InboundMessageError } = await import('../inbound-message.service');
+    const row = await prisma.conversationMessage.findFirst({
+      where: { thread: { agentId, userId }, AND: [{ blocks: IS_CARD }, { blocks: { path: '$[0].id', equals: id } }] },
+    });
+    const card = row && cardOf(row);
+    if (!row || !card) return { result: 'not_found' };
+    try {
+      await inboundMessageService.checkThread(row.threadId, agentId);
+    } catch (error) {
+      if (error instanceof InboundMessageError) return { result: 'not_found' };
+      throw error;
+    }
+    if (card.status !== 'waiting') return this.refuse(agentId, userId, row.threadId, card);
+
+    const fitted = fitAnswers(card, answers);
+    if ('error' in fitted) return { result: 'invalid', error: fitted.error };
+
+    const answered: QuestionCardBlock = { ...card, status: 'answered', answers: fitted.answers, answeredBy: sender };
+    const message = {
+      id: randomUUID(),
+      threadId: row.threadId,
+      content: answerMessageText(card.questions, fitted.answers),
+      attachmentIds: [],
+      sender,
+    };
+    const won = await pendingWorkService.beginWith(
+      'chat',
+      message.id,
+      inboundMessageService.pendingWorkFor(message),
+      async (tx) => {
+        const { count } = await tx.conversationMessage.updateMany({
+          where: { id: row.id, blocks: WAITING },
+          data: { blocks: [answered] as unknown as Prisma.InputJsonValue },
+        });
+        return count === 1;
+      },
+    );
+    if (!won) {
+      const stored = await prisma.conversationMessage.findUnique({ where: { id: row.id } });
+      return this.refuse(agentId, userId, row.threadId, (stored && cardOf(stored)) ?? card);
+    }
+
+    trackEvent('question card closed', userId, {
+      'agent.id': agentId,
+      ...closedProps(row, answered, fitted.answers),
+    });
+    // The card is part of the transcript, so every open client shows it answered.
+    await messageDeliveryService.showInConversation(userId, {
+      ...row,
+      blocks: [answered] as unknown as Prisma.JsonValue,
+    });
+    // The row written above makes the next boot finish this if it fails here.
+    await inboundMessageService
+      .accept(message)
+      .catch((error: unknown) => logger.error({ err: error, cardId: id }, '[QuestionCards] Answer message failed'));
+    return { result: 'answered', card: answered };
+  }
+
+  /**
+   * A person's message closes the cards waiting in its conversation. A message
+   * the runtime writes for a person closes them too: that needs a card and a
+   * computer help or sign-in request open at once, and the person loses nothing.
+   */
+  async closeWaitingInChat(agentId: string, userId: string, threadId: string): Promise<void> {
+    for (const row of await this.waitingRows(threadId)) {
+      const card = cardOf(row);
+      if (!card) continue;
+      const closed: QuestionCardBlock = { ...card, status: 'answered_in_chat' };
+      const { count } = await prisma.conversationMessage.updateMany({
+        where: { id: row.id, blocks: WAITING },
+        data: { blocks: [closed] as unknown as Prisma.InputJsonValue },
+      });
+      if (count === 0) continue;
+      trackEvent('question card closed', userId, { 'agent.id': agentId, ...closedProps(row, closed, []) });
+      await messageDeliveryService.showInConversation(userId, {
+        ...row,
+        blocks: [closed] as unknown as Prisma.JsonValue,
+      });
+    }
+  }
+
+  private waitingRows(threadId: string): Promise<ConversationMessage[]> {
+    return prisma.conversationMessage.findMany({
+      where: { threadId, AND: [{ blocks: IS_CARD }, { blocks: WAITING }] },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  private refuse(agentId: string, userId: string, threadId: string, card: QuestionCardBlock): AnswerOutcome {
+    trackEvent('question card answer refused', userId, {
+      'agent.id': agentId,
+      'thread.id': threadId,
+      'question_card.id': card.id,
+      status: card.status,
+    });
+    return { result: 'closed', card };
+  }
+}
+
+export const questionCardService = new QuestionCardService();

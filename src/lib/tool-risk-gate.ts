@@ -56,6 +56,8 @@ const MAX_AGENT_GUIDE_CHARS = 8_000;
  * credential read — the very verdict it is recording. `memory_delete` stays
  * evaluated, since that is the one memory operation that loses something.
  *
+ * `ask_questions` posts only into the conversation that its reply goes to.
+ *
  * Matching is by bare name, which is safe because `lib/tool-collection.ts`
  * merges every other source behind a guard: nothing can answer to a built-in's
  * name, so a name on this list is the built-in it names.
@@ -66,6 +68,7 @@ const ALWAYS_ALLOWED_TOOL_NAMES = new Set([
   'list_scheduled_tasks',
   'get_goal',
   'skill',
+  'ask_questions',
   'coding_agent_status',
   'coding_agent_stop',
   'shell_stdout',

@@ -286,3 +286,28 @@ describe('collectTools coding agent sign-in', () => {
     expect(tools.coding_agent_sign_in).toBeUndefined();
   });
 });
+
+describe('collectTools ask_questions', () => {
+  beforeEach(() => {
+    mockGetSubagents.mockResolvedValue([]);
+    mockGetMCPTools.mockResolvedValue({});
+    mockGetPluginTools.mockResolvedValue({});
+  });
+
+  it('offers the tool in a chat', async () => {
+    const { tools } = await collectTools({ userId: 'user', agentId: 'agent', mode: 'chat', threadId: 'thread-1', lockedIn: false, taskInvoker: vi.fn() });
+    expect(tools.ask_questions).toBeDefined();
+  });
+
+  it('keeps one position and one description from request to request', async () => {
+    const collect = () => collectTools({ userId: 'user', agentId: 'agent', mode: 'chat', threadId: 'thread-1', lockedIn: false, taskInvoker: vi.fn() });
+    const [first, second] = [await collect(), await collect()];
+    expect(Object.keys(first.tools)).toEqual(Object.keys(second.tools));
+    expect(first.tools.ask_questions.description).toBe(second.tools.ask_questions.description);
+  });
+
+  it.each(['heartbeat', 'cron', 'webhook', 'goal', 'meeting', 'subagent'])('offers no ask_questions in %s', async (mode) => {
+    const { tools } = await collectTools({ userId: 'user', agentId: 'agent', mode, threadId: 'thread-1', lockedIn: false, taskInvoker: vi.fn() });
+    expect(tools.ask_questions).toBeUndefined();
+  });
+});

@@ -25,6 +25,7 @@ import { ThreadSource } from '@prisma/client';
 import { getCronTools } from '../tools/cron';
 import { getGoalTools } from '../tools/goals';
 import { getCodingAgentSignInTools } from '../tools/coding-agent-sign-in';
+import { getAskQuestionsTools } from '../tools/ask-questions';
 import { getAgentConfigTools } from '../tools/agent-config';
 import { getShellTools } from '../tools/shell/index';
 import { ensureCodingAgentsDetected } from './coding-agents/availability';
@@ -153,6 +154,10 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
       input.originChannelId,
       signInAgents,
     ),
+    // A person is there to answer only in chat.
+    ...(input.mode === 'chat'
+      ? getAskQuestionsTools(input.userId, input.agentId, input.threadId, originChannel, input.originChannelId)
+      : {}),
     ...getAgentConfigTools(),
     ...getShellTools(input.workspaceRoot, input.pendingFileWrites),
     // Same workspaceRoot as the shell tools: write-then-share has to agree on what

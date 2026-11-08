@@ -123,6 +123,24 @@ describe('PendingWorkService', () => {
     });
   });
 
+  describe('Scenario: work recorded with the write that decides it', () => {
+    beforeEach(() => {
+      Object.assign(mockPrisma, { $transaction: (run: (tx: unknown) => Promise<unknown>) => run(mockPrisma) });
+    });
+
+    it('records the work when the write decides yes', async () => {
+      await expect(service.beginWith('chat', 'k', { a: 1 }, async () => true)).resolves.toBe(true);
+      expect(mockPrisma.pendingWork.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { kind_key: { kind: 'chat', key: 'k' } }, create: { kind: 'chat', key: 'k', payload: { a: 1 } } }),
+      );
+    });
+
+    it('records nothing when the write decides no', async () => {
+      await expect(service.beginWith('chat', 'k', { a: 1 }, async () => false)).resolves.toBe(false);
+      expect(mockPrisma.pendingWork.upsert).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Scenario: a shutdown', () => {
     it('stops the work in flight and keeps every row for the next boot', async () => {
       service.shutdown();

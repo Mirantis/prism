@@ -17,6 +17,8 @@ import { threadTitleService } from './thread-title.service';
 import { conversationThreadActivityService } from './conversation-thread-activity.service';
 import { attachmentService } from './attachment.service';
 import { pendingWorkService } from './pending-work.service';
+import { questionCardService } from './question-cards/question-card.service';
+import { ASK_QUESTIONS_TOOL_NAME } from './question-cards/question-card-schema';
 import { RESUMED_REPLY_NOTICE } from '../prompts/resume-prompt';
 import { agentMessageColumns, renderAgentMessage } from '../prompts/agent-message-prompt';
 import { invokeStream } from '../invoke';
@@ -187,6 +189,25 @@ export async function attachmentsHeldByChatWork(): Promise<string[]> {
     const work = payload as unknown as ChatWork;
     return [...(work.message?.attachmentIds ?? []), ...(work.unsentAttachmentIds ?? [])];
   });
+}
+
+/**
+ * What `pending_work` holds from before a message is stored until the exchange
+ * that answers it ends. The row holds the message, so a restart before the
+ * insert lands stores it at boot.
+ */
+export function chatWorkFor(
+  input: Pick<ChatInput, 'agentId' | 'userId' | 'message' | 'attachmentIds' | 'metadata' | 'agentMessage'>,
+  threadId: string,
+): ChatWork {
+  const { agentId, userId, message, metadata, attachmentIds, agentMessage } = input;
+  return {
+    threadId,
+    agentId,
+    userId,
+    ...(metadata ? { metadata } : {}),
+    message: { message, attachmentIds, ...(agentMessage ? { agentMessage } : {}) },
+  };
 }
 
 /** How much of an unsaved tool call the pending-work row keeps: the newest calls, each cut. */
@@ -740,16 +761,11 @@ Answer with one word: WORTHY or SKIP.`;
     const messageId = id ?? randomUUID();
 
     // Owed an answer from before it is stored until the exchange that answers it
-    // ends, so no restart in between loses it. The row holds the message until
-    // then, so a restart before the insert lands stores it at boot.
-    const work: ChatWork = {
-      threadId,
-      agentId,
-      userId,
-      ...(metadata ? { metadata } : {}),
-      message: { message, attachmentIds: input.attachmentIds, ...(agentMessage ? { agentMessage } : {}) },
-    };
-    await pendingWorkService.begin('chat', messageId, work);
+    // ends, so no restart in between loses it.
+    await pendingWorkService.begin('chat', messageId, chatWorkFor(input, threadId));
+
+    // A person's reply stands in for the answers to any card still waiting.
+    if (!agentMessage) await questionCardService.closeWaitingInChat(agentId, userId, threadId);
 
     // The message text arrives already prefixed with the sender's mention
     // marker when the channel adapter wants the agent to see it in conversation
@@ -981,6 +997,20 @@ Answer with one word: WORTHY or SKIP.`;
     // a turn is canceled before producing anything, skip it rather than render
     // an empty agent bubble. (In this branch `response` is always '' because any
     // text step would have set `agentMessage` via the buffered-step publish.)
+    // A question card is the turn's whole reply: the row keeps its tool call for the
+    // model and shows nothing under the card.
+    const asked = allToolCalls.some((call) => call.tool === ASK_QUESTIONS_TOOL_NAME);
+    if (!agentMessage && asked && allBlocks.length === 0 && allAttachmentIds.length === 0) {
+      const { message: persisted } = await conversationService.addMessage(threadId, {
+        content: response,
+        role: 'AGENT',
+        triggeredBy: 'USER_INPUT',
+        toolCalls: allToolCalls,
+        internalStep: true,
+      });
+      agentMessage = persisted;
+    }
+
     if (!agentMessage && (allToolCalls.length > 0 || allBlocks.length > 0 || allAttachmentIds.length > 0)) {
       agentMessage = await messageDeliveryService.publish(
         userId,

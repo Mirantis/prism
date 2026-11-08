@@ -3202,13 +3202,13 @@ describe('invoke', () => {
 
       expect(Object.keys(cron.tools)).toEqual(Object.keys(chat.tools));
       expect(cron.messages.at(-2)).toEqual({ role: 'user', content: 'check the build' });
-      // Cron mode withholds the goal tools, and the coding agent sign-in nobody is there to finish.
+      // Cron mode withholds the goal tools, and the sign-in and questions nobody is there to answer.
       expect(cron.messages.at(-1)).toEqual({
         role: 'system',
         content: '',
         providerOptions: {
           anthropic: {
-            toolChanges: ['create_goal', 'get_goal', 'coding_agent_sign_in']
+            toolChanges: ['create_goal', 'get_goal', 'coding_agent_sign_in', 'ask_questions']
               .map((toolName) => ({ type: 'tool_removal', toolName })),
           },
         },
