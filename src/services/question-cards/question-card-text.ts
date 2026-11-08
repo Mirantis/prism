@@ -5,6 +5,11 @@ import type { QuestionCardAnswer, QuestionCardQuestion } from '../../protocol/ch
 const CLOSING_LINE = 'Reply with 1a, 2b… or in your own words.';
 const NO_ANSWER = 'no answer';
 
+/** Line breaks collapse to one space, so that each question stays one line of the answer message. */
+export function oneLine(text: string): string {
+  return text.replace(/\s*[\r\n]+\s*/g, ' ');
+}
+
 function optionLine(question: QuestionCardQuestion, optionIndex: number): string {
   const { label, detail } = question.options[optionIndex];
   const letter = String.fromCharCode(97 + optionIndex);
@@ -25,12 +30,14 @@ export function questionCardText(questions: QuestionCardQuestion[], intro?: stri
 }
 
 function answerSubject(question: QuestionCardQuestion): string {
-  if (question.header) return `${question.header}:`;
-  return /[?!:.]$/.test(question.text) ? question.text : `${question.text}:`;
+  if (question.header) return `${oneLine(question.header)}:`;
+  const text = oneLine(question.text);
+  return /[?!:.]$/.test(text) ? text : `${text}:`;
 }
 
 function answerLine(question: QuestionCardQuestion, answer: QuestionCardAnswer, index: number): string {
-  const chosen = [...answer.options.map((option) => question.options[option].label), ...(answer.other ? [answer.other] : [])];
+  const labels = answer.options.map((option) => oneLine(question.options[option].label));
+  const chosen = [...labels, ...(answer.other ? [answer.other] : [])];
   return `${index + 1}. ${answerSubject(question)} ${chosen.length > 0 ? chosen.join(', ') : NO_ANSWER}`;
 }
 

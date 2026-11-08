@@ -18,7 +18,7 @@ import type { ChannelName } from '../channel-adapter.interface';
 import { messageDeliveryService } from '../message-delivery.service';
 import { pendingWorkService } from '../pending-work.service';
 import { askQuestionsInputSchema, MAX_OTHER_CHARS, questionCardBlockSchema } from './question-card-schema';
-import { answerMessageText, questionCardText } from './question-card-text';
+import { answerMessageText, oneLine, questionCardText } from './question-card-text';
 
 const IS_CARD = { path: '$[0].type', equals: 'question_card' } as const;
 const WAITING = { path: '$[0].status', equals: 'waiting' } as const;
@@ -55,12 +55,6 @@ function cardOf(row: Pick<ConversationMessage, 'blocks'>): QuestionCardBlock | n
   return parsed.success ? parsed.data : null;
 }
 
-/** Line breaks collapse so that each question stays one line of the answer message. */
-function cleanOther(other: string | undefined): string | undefined {
-  const cleaned = other?.replace(/\s*[\r\n]+\s*/g, ' ');
-  return cleaned || undefined;
-}
-
 /** The answers as the card stores them, or why they do not fit the card. */
 function fitAnswers(
   card: QuestionCardBlock,
@@ -70,7 +64,7 @@ function fitAnswers(
   const fitted: QuestionCardAnswer[] = [];
   for (const [index, question] of card.questions.entries()) {
     const options = [...new Set(answers[index].options)].sort((a, b) => a - b);
-    const other = cleanOther(answers[index].other);
+    const other = oneLine(answers[index].other ?? '') || undefined;
     if (options.some((option) => option >= question.options.length)) return { error: 'That option does not exist.' };
     if (other && !question.allowOther) return { error: 'That question takes no answer of your own.' };
     if (!question.multiSelect && options.length + (other ? 1 : 0) > 1) return { error: 'That question takes one answer.' };
@@ -80,17 +74,22 @@ function fitAnswers(
   return { answers: fitted };
 }
 
-function closedProps(row: ConversationMessage, card: QuestionCardBlock, answers: QuestionCardAnswer[]) {
-  const answered = answers.filter((answer) => answer.options.length > 0 || answer.other).length;
+function closedProps(row: ConversationMessage, card: QuestionCardBlock) {
   return {
     'thread.id': row.threadId,
     'question_card.id': card.id,
     status: card.status,
     questions: String(card.questions.length),
-    answered: String(answered),
-    blank: String(card.questions.length - answered),
-    other: String(answers.filter((answer) => answer.other).length),
     elapsed_ms: String(Date.now() - row.createdAt.getTime()),
+  };
+}
+
+function answerCounts(answers: QuestionCardAnswer[]) {
+  const answered = answers.filter((answer) => answer.options.length > 0 || answer.other).length;
+  return {
+    answered: String(answered),
+    blank: String(answers.length - answered),
+    other: String(answers.filter((answer) => answer.other).length),
   };
 }
 
@@ -196,7 +195,8 @@ class QuestionCardService {
 
     trackEvent('question card closed', userId, {
       'agent.id': agentId,
-      ...closedProps(row, answered, fitted.answers),
+      ...closedProps(row, answered),
+      ...answerCounts(fitted.answers),
     });
     await this.showCard(agentId, userId, row, answered);
     try {
@@ -219,7 +219,7 @@ class QuestionCardService {
         data: { blocks: [closed] as unknown as Prisma.InputJsonValue },
       });
       if (count === 0) continue;
-      trackEvent('question card closed', userId, { 'agent.id': agentId, ...closedProps(row, closed, []) });
+      trackEvent('question card closed', userId, { 'agent.id': agentId, ...closedProps(row, closed) });
       await this.showCard(agentId, userId, row, closed);
     }
   }
