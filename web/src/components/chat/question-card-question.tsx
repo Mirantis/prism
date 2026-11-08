@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useId, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   isAnswered,
@@ -29,6 +29,7 @@ export function QuestionCardQuestion({
 }) {
   const name = useId();
   const hintId = useId();
+  const firstOption = useRef<HTMLInputElement>(null);
   const type = question.multiSelect ? 'checkbox' : 'radio';
   return (
     <fieldset className="relative min-w-0" aria-describedby={question.multiSelect ? hintId : undefined}>
@@ -59,6 +60,7 @@ export function QuestionCardQuestion({
             detail={option.detail}
             recommended={question.recommended === option.label}
             checked={choice.options.includes(index)}
+            inputRef={index === 0 ? firstOption : undefined}
             onChange={() => onChange(toggleOption(choice, index, question.multiSelect))}
           />
         ))}
@@ -82,7 +84,11 @@ export function QuestionCardQuestion({
           size="sm"
           className="absolute top-0 right-0 text-muted-foreground"
           aria-label={`Clear answer to question ${questionNumber}`}
-          onClick={() => onChange(emptyChoice())}
+          onClick={() => {
+            // Clear leaves with the answer, so focus moves first.
+            firstOption.current?.focus();
+            onChange(emptyChoice());
+          }}
         >
           Clear
         </Button>

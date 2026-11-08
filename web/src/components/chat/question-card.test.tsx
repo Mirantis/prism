@@ -46,6 +46,12 @@ const radio = (name: RegExp | string) => screen.getByRole('radio', { name });
 const checkbox = (name: RegExp | string) => screen.getByRole('checkbox', { name });
 const send = (name = 'Send answers') => screen.getByRole('button', { name });
 const status = () => screen.getByTestId('question-card-status').textContent;
+/** Focus and press Send, as a keyboard or pointer does in a browser. */
+const pressSend = (name = 'Send answers') => {
+  const button = send(name);
+  button.focus();
+  fireEvent.click(button);
+};
 const show = (block: QuestionCardBlock, viewer: Viewer | undefined = ADA) => render(<QuestionCard block={block} viewer={viewer} />);
 
 describe('QuestionCard', () => {
@@ -106,6 +112,19 @@ describe('QuestionCard', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Clear answer to question 1' }));
       expect((radio(/Over €500/) as HTMLInputElement).checked).toBe(false);
       expect(status()).toBe('0 of 2 answered');
+    });
+
+    it.each([
+      ['single-select', /Over €500/, 'radio', 'Under €500, Recommended', 'Clear answer to question 1'],
+      ['multi-select', 'Webinar', 'checkbox', 'Newsletter', 'Clear answer to question 2'],
+    ] as const)('moves focus to the first option after Clear on a %s question', (_name, choose, role, first, clear) => {
+      show(BLOCK);
+      fireEvent.click(screen.getByRole(role, { name: choose }));
+      const button = screen.getByRole('button', { name: clear });
+      button.focus();
+      fireEvent.click(button);
+      expect(document.activeElement).toBe(screen.getByRole(role, { name: first }));
+      expect(screen.queryByRole('button', { name: clear })).toBeNull();
     });
 
     it('opens the Other field, counts it only with text, and keeps the text when another option is chosen', () => {
@@ -190,7 +209,7 @@ describe('QuestionCard', () => {
       show(BLOCK);
       fireEvent.click(radio(/Over €500/));
       fireEvent.click(checkbox('Webinar'));
-      fireEvent.click(send());
+      pressSend();
 
       await screen.findByRole('button', { name: 'Sending…' });
       expect(call).toHaveBeenCalledWith('card-1', [{ options: [1] }, { options: [1] }]);
@@ -204,12 +223,29 @@ describe('QuestionCard', () => {
       expect(screen.queryByTestId('question-card-notice')).toBeNull();
     });
 
+    it('leaves focus in the composer when the person moved there during a slow send', async () => {
+      const composer = document.body.appendChild(document.createElement('textarea'));
+      let finish = (_value: { card: QuestionCardBlock }) => {};
+      vi.spyOn(runtimeApi, 'answerQuestionCard').mockReturnValue(new Promise((resolve) => (finish = resolve)));
+      show(BLOCK);
+      fireEvent.click(radio(/Over €500/));
+      pressSend();
+      await screen.findByRole('button', { name: 'Sending…' });
+      composer.focus();
+
+      finish({ card: ANSWERED });
+      await screen.findByRole('heading', { name: 'Answered by Grace Example' });
+
+      expect(document.activeElement).toBe(composer);
+      composer.remove();
+    });
+
     it('sends a trimmed Other, and no Other when its field is closed', async () => {
       const call = vi.spyOn(runtimeApi, 'answerQuestionCard').mockResolvedValue({ card: ANSWERED });
       show(BLOCK);
       fireEvent.click(radio('Other…'));
       fireEvent.change(screen.getByRole('textbox'), { target: { value: '  mine  ' } });
-      fireEvent.click(send());
+      pressSend();
       await waitFor(() => expect(call).toHaveBeenCalledWith('card-1', [{ options: [], other: 'mine' }, { options: [] }]));
     });
 
@@ -217,7 +253,7 @@ describe('QuestionCard', () => {
       vi.spyOn(runtimeApi, 'answerQuestionCard').mockRejectedValue(new TypeError('Failed to fetch'));
       show(BLOCK);
       fireEvent.click(radio(/Over €500/));
-      fireEvent.click(send());
+      pressSend();
       const alert = await screen.findByRole('alert');
       expect(alert.textContent).toBe('Couldn’t send your answers. Check your connection, then try again.');
       expect((radio(/Over €500/) as HTMLInputElement).checked).toBe(true);
@@ -228,7 +264,7 @@ describe('QuestionCard', () => {
       vi.spyOn(runtimeApi, 'answerQuestionCard').mockRejectedValue(new ApiError('closed', {}, 409, { card: ANSWERED }));
       show(BLOCK);
       fireEvent.click(radio(/Over €500/));
-      fireEvent.click(send());
+      pressSend();
       const title = await screen.findByRole('heading', { name: 'Answered by Grace Example' });
       expect(screen.getByTestId('question-card-notice').textContent).toBe(
         'Grace Example answered first. Your choices weren’t sent.',
@@ -240,7 +276,7 @@ describe('QuestionCard', () => {
       vi.spyOn(runtimeApi, 'answerQuestionCard').mockRejectedValue(new ApiError('refused', {}, status));
       show(BLOCK);
       fireEvent.click(radio(/Over €500/));
-      fireEvent.click(send());
+      pressSend();
       const alert = await screen.findByRole('alert');
       expect(alert.textContent).toBe('Couldn’t send these answers. Reload the page to see the current questions.');
       expect((radio(/Over €500/) as HTMLInputElement).checked).toBe(true);
@@ -251,7 +287,7 @@ describe('QuestionCard', () => {
       vi.spyOn(runtimeApi, 'answerQuestionCard').mockResolvedValue({ card: ANSWERED, replyPending: true });
       show(BLOCK);
       fireEvent.click(radio(/Over €500/));
-      fireEvent.click(send());
+      pressSend();
       await screen.findByRole('heading', { name: 'Answered by Grace Example' });
       expect(screen.getByTestId('question-card-notice').textContent).toBe(line);
       expect(screen.getByRole('status').textContent).toBe(line);
@@ -261,7 +297,7 @@ describe('QuestionCard', () => {
       vi.spyOn(runtimeApi, 'answerQuestionCard').mockRejectedValue(new ApiError('closed', {}, 409, {}));
       show(BLOCK);
       fireEvent.click(radio(/Over €500/));
-      fireEvent.click(send());
+      pressSend();
       expect(await screen.findByRole('alert')).toBeTruthy();
     });
   });
@@ -276,7 +312,7 @@ describe('QuestionCard', () => {
       expect(region.textContent).toBe('');
 
       fireEvent.click(radio(/Over €500/));
-      fireEvent.click(send());
+      pressSend();
       await screen.findByRole('heading', { name: 'Answered by Grace Example' });
 
       expect(screen.getByRole('status')).toBe(region);
@@ -313,6 +349,21 @@ describe('QuestionCard', () => {
       fireEvent.focus(input);
       update(rerender, ANSWERED);
       expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Answered by Grace Example' }));
+    });
+
+    it('leaves focus alone after a click on a row and then on blank page space', () => {
+      const { rerender } = show(BLOCK);
+      const input = radio(/Over €500/);
+      input.focus();
+      fireEvent.click(input);
+      input.blur();
+      expect(document.activeElement).toBe(document.body);
+      const focusSpy = vi.spyOn(HTMLElement.prototype, 'focus');
+
+      update(rerender, ANSWERED);
+
+      expect(document.activeElement).toBe(document.body);
+      expect(focusSpy).not.toHaveBeenCalled();
     });
 
     it('leaves focus alone when it was elsewhere', () => {

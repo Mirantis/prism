@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useId, type Ref } from 'react';
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -10,6 +10,7 @@ export function QuestionCardOption({
   detail,
   recommended = false,
   checked,
+  inputRef,
   onChange,
 }: {
   type: 'radio' | 'checkbox';
@@ -18,6 +19,7 @@ export function QuestionCardOption({
   detail?: string;
   recommended?: boolean;
   checked: boolean;
+  inputRef?: Ref<HTMLInputElement>;
   onChange: () => void;
 }) {
   const detailId = useId();
@@ -32,6 +34,7 @@ export function QuestionCardOption({
       data-testid="question-card-option"
     >
       <input
+        ref={inputRef}
         type={type}
         name={name}
         checked={checked}
