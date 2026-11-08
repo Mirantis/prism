@@ -2018,6 +2018,18 @@ describe('Requirement: Conversation Engine', () => {
       expect(mockPublish).not.toHaveBeenCalled();
     });
 
+    it('publishes the tool-only turn when the call failed, so the person is not left with nothing', async () => {
+      mockAddMessage.mockResolvedValue({ message: { id: 'row' }, titleSet: null });
+      mockPublish.mockResolvedValue({ id: 'reply' });
+      const failed = { ...asked, success: false };
+      mockInvokeStream.mockReturnValue(streamFromSteps([{ text: '', toolCalls: [failed] }]));
+
+      await conversationEngineService.chat({ ...person, threadId: 'thread-123' });
+
+      expect(mockPublish).toHaveBeenCalledTimes(1);
+      expect(mockAddMessage).not.toHaveBeenCalledWith('thread-123', expect.objectContaining({ internalStep: true }));
+    });
+
     it('publishes a reply the agent wrote after the card', async () => {
       mockAddMessage.mockResolvedValue({ message: { id: 'row' }, titleSet: null });
       mockPublish.mockResolvedValue({ id: 'reply' });

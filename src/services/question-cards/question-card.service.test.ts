@@ -147,6 +147,7 @@ describe('post', () => {
     await service.post(caller, input);
     await expect(service.post(caller, input)).rejects.toBeInstanceOf(QuestionCardWaitingError);
     expect(delivery.publish).toHaveBeenCalledTimes(1);
+    expect(track).toHaveBeenCalledWith('question card post refused', USER, expect.objectContaining({ reason: 'card_waiting' }));
   });
 
   it('fails the tool call with the reason while a card waits', async () => {
@@ -161,6 +162,7 @@ describe('post', () => {
     const results = await Promise.allSettled([service.post(caller, input), service.post(caller, input)]);
     expect(results.map((result) => result.status).sort()).toEqual(['fulfilled', 'rejected']);
     expect(delivery.publish).toHaveBeenCalledTimes(1);
+    expect(track).toHaveBeenCalledWith('question card post refused', USER, expect.objectContaining({ reason: 'same_step' }));
   });
 
   it('posts again once the earlier card has closed', async () => {

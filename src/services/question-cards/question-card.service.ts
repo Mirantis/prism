@@ -105,10 +105,10 @@ class QuestionCardService {
   /** Posts the card. Throws {@link QuestionCardWaitingError} while another waits in the thread. */
   async post(caller: QuestionCardCaller, input: z.output<typeof askQuestionsInputSchema>): Promise<QuestionCardBlock> {
     const { threadId } = caller;
-    if (this.posting.has(threadId)) throw new QuestionCardWaitingError();
+    if (this.posting.has(threadId)) throw this.postRefused(caller, 'same_step');
     this.posting.add(threadId);
     try {
-      if ((await this.waitingRows(threadId)).length > 0) throw new QuestionCardWaitingError();
+      if ((await this.waitingRows(threadId)).length > 0) throw this.postRefused(caller, 'card_waiting');
       const card: QuestionCardBlock = {
         type: 'question_card',
         id: randomUUID(),
@@ -156,6 +156,7 @@ class QuestionCardService {
     answers: QuestionCardAnswer[],
     sender: QuestionCardPerson | null,
   ): Promise<AnswerOutcome> {
+    // Imported here because the inbound service imports the engine, which imports this module.
     const { inboundMessageService, InboundMessageError } = await import('../inbound-message.service');
     const row = await prisma.conversationMessage.findFirst({
       where: { thread: { agentId, userId }, AND: [{ blocks: IS_CARD }, { blocks: { path: '$[0].id', equals: id } }] },
@@ -270,6 +271,15 @@ class QuestionCardService {
       where: { threadId, AND: [{ blocks: IS_CARD }, { blocks: WAITING }] },
       orderBy: { createdAt: 'asc' },
     });
+  }
+
+  private postRefused(caller: QuestionCardCaller, reason: 'same_step' | 'card_waiting'): QuestionCardWaitingError {
+    trackEvent('question card post refused', caller.userId, {
+      'agent.id': caller.agentId,
+      'thread.id': caller.threadId,
+      reason,
+    });
+    return new QuestionCardWaitingError();
   }
 
   private refuse(agentId: string, userId: string, threadId: string, card: QuestionCardBlock): AnswerOutcome {
