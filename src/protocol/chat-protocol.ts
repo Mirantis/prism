@@ -232,7 +232,7 @@ export interface QuestionCardAnswer {
   other?: string;
 }
 
-/** Who answered a card, as the Lens Agents sign-in named them. For display only. */
+/** Who answered a card, from the ingress headers. For display only. */
 export interface QuestionCardPerson {
   id: string;
   name: string;
@@ -246,11 +246,11 @@ export interface QuestionCardBlock {
   /** One short line from the agent, in plain text, shown above the questions. */
   intro?: string;
   questions: QuestionCardQuestion[];
-  /** The most characters the answer route takes for one question's own answer. */
+  /** The most UTF-16 code units the answer route takes for one question's own answer. */
   otherMaxLength: number;
   /** In the order of `questions`. Set when `status` is `answered`. */
   answers?: QuestionCardAnswer[];
-  /** Null when the sign-in named nobody. Set when `status` is `answered`. */
+  /** Null when the ingress headers hold no person. Set when `status` is `answered`. */
   answeredBy?: QuestionCardPerson | null;
 }
 
