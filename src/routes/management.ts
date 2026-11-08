@@ -1821,6 +1821,7 @@ router.post('/skills/:name/run', async (req: Request, res: Response) => {
         userId: config.ownerUserId,
         agentId: config.agentId,
         message: directive,
+        runtimeWritten: true,
         threadId,
         metadata: { channel: 'websocket' },
         channelLabelFor: webChatLabel,

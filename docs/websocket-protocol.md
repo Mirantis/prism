@@ -203,8 +203,8 @@ same questions as plain text, so a client that cannot draw the card shows `conte
 
 - `intro` is optional plain text. Show it above the first question, and with the
   questions when a closed card is folded.
-- `status` is `waiting`, `answered` or `answered_in_chat`. A message in the
-  conversation from a person closes a waiting card as `answered_in_chat`.
+- `status` is `waiting`, `answered` or `answered_in_chat`. A message a person types
+  in the conversation closes a waiting card as `answered_in_chat`.
 - An answered card also has `answers`, one per question in order, and `answeredBy`:
   `{ id, name }`, or `null` when the sign-in named nobody. Compare `answeredBy.id`
   with `you.id`.

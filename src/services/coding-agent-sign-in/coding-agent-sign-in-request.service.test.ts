@@ -104,6 +104,7 @@ describe('codingAgentSignInRequestService', () => {
       ['thread-1', 'I signed in to Claude.'],
       ['thread-2', 'I signed in to Claude.'],
     ]);
+    expect(engine.acceptUserMessage.mock.calls[0][0]).toMatchObject({ runtimeWritten: true });
     // Each turn answers the continuation stored before its card was marked.
     expect(engine.chat.mock.calls.map(([input]) => input.stored.id)).toEqual(
       engine.acceptUserMessage.mock.calls.map((call) => call[2]),

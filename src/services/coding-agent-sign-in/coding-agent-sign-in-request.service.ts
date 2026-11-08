@@ -167,6 +167,7 @@ class CodingAgentSignInRequestService {
       userId,
       agentId,
       message: `I signed in to ${PROVIDERS[request.agent]}.`,
+      runtimeWritten: true as const,
       metadata: {
         channel: context.channel,
         channelId: context.channelId,
