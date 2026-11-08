@@ -143,6 +143,13 @@ The main conversation surface.
   summarized.`) lands in the chat when it finishes. `/compact` triggers the same
   thing manually.
 
+### Questions from the agent
+
+When the agent asks for your decisions as a card, choose your answers and select
+**Send answers**; you can skip any question or type a reply instead. Anyone in
+the conversation can answer, the first answer counts, and the card then shows who
+answered.
+
 ### One conversation
 
 With `THREAD_MODE=single` the agent keeps one conversation. **Chat** always opens
