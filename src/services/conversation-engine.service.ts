@@ -1024,7 +1024,7 @@ Answer with one word: WORTHY or SKIP.`;
     // text step would have set `agentMessage` via the buffered-step publish.)
     // A question card is the turn's whole reply: the row keeps its tool call for the
     // model and shows nothing under the card.
-    const asked = allToolCalls.some((call) => call.tool === ASK_QUESTIONS_TOOL_NAME);
+    const asked = allToolCalls.some((call) => call.tool === ASK_QUESTIONS_TOOL_NAME && call.success);
     if (!agentMessage && asked && allBlocks.length === 0 && allAttachmentIds.length === 0) {
       const { message: persisted } = await conversationService.addMessage(threadId, {
         content: response,
