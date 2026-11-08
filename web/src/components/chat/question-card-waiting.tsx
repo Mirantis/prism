@@ -65,7 +65,8 @@ export function QuestionCardWaiting({
         ))}
       </fieldset>
       {failure && (
-        <p role="alert" className="mt-4 text-destructive" data-testid="question-card-error">
+        // The design system's reds are below 4.5:1 on the card, so this one is lifted toward the strong text colour.
+        <p role="alert" className="mt-4 text-[color-mix(in_srgb,var(--destructive)_70%,var(--strong))]" data-testid="question-card-error">
           {failure}
         </p>
       )}
@@ -78,7 +79,7 @@ export function QuestionCardWaiting({
         <Button
           type="button"
           size="lg"
-          className="w-full @[38rem]:ml-auto @[38rem]:w-auto"
+          className="min-h-11 w-full focus-visible:ring-2 focus-visible:ring-foreground @[38rem]:ml-auto @[38rem]:w-auto"
           disabled={answered === 0 && !sending}
           // Kept enabled while sending, so that it holds focus until the card closes.
           aria-disabled={sending || undefined}

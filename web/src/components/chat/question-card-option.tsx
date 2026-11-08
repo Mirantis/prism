@@ -26,9 +26,9 @@ export function QuestionCardOption({
   return (
     <label
       className={cn(
-        'flex min-h-11 cursor-pointer items-start gap-3 rounded-lg px-3 py-2.5 transition-colors hover:bg-muted/50',
+        'group/option flex min-h-11 cursor-pointer items-start gap-3 rounded-lg px-3 py-2.5 transition-colors hover:bg-muted/50',
         'has-[:checked]:bg-primary/10 has-[:checked]:hover:bg-primary/10',
-        'has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring',
+        'has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:focus-visible]:outline-hidden',
         'has-[:disabled]:cursor-default has-[:disabled]:opacity-60 has-[:disabled]:hover:bg-transparent',
       )}
       data-testid="question-card-option"
@@ -58,13 +58,16 @@ export function QuestionCardOption({
         <span className="flex flex-col items-start gap-1 @[38rem]:flex-row @[38rem]:flex-wrap @[38rem]:items-center @[38rem]:gap-x-2">
           <span className="min-w-0 break-words text-foreground">{label}</span>
           {recommended && (
-            <span className="rounded bg-primary/10 px-1.5 py-0.5 text-xs leading-none font-semibold text-primary">
+            <span className="rounded bg-primary/10 px-1.5 py-0.5 text-xs leading-none font-semibold text-(--lds-color-primary-hover) group-hover/option:text-strong group-has-[:checked]/option:bg-transparent">
               Recommended
             </span>
           )}
         </span>
         {detail && (
-          <span id={detailId} className="mt-0.5 block text-xs break-words text-muted-foreground">
+          <span
+            id={detailId}
+            className="mt-0.5 block text-xs break-words text-muted-foreground group-hover/option:text-foreground group-has-[:checked]/option:text-foreground"
+          >
             {detail}
           </span>
         )}

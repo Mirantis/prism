@@ -39,7 +39,7 @@ export function QuestionCardClosed({
             id={titleId}
             ref={titleRef}
             tabIndex={-1}
-            className="rounded-sm font-semibold break-words text-strong outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="rounded-sm font-semibold break-words text-strong outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
           >
             {inChat ? 'Answered in chat' : answeredTitle(card, viewer)}
           </h3>
@@ -56,7 +56,7 @@ export function QuestionCardClosed({
         </div>
       </div>
       <Collapsible open={open} onOpenChange={setOpen} className="mt-2 pl-8">
-        <CollapsibleTrigger className="-ml-1.5 inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-[0.8rem] text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+        <CollapsibleTrigger className="-ml-1.5 inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-[0.8rem] text-muted-foreground outline-hidden hover:bg-muted hover:text-strong focus-visible:ring-2 focus-visible:ring-ring">
           <ChevronRight aria-hidden="true" className={`size-3.5 transition-transform ${open ? 'rotate-90' : ''}`} />
           {open ? 'Hide questions' : 'Show questions'}
         </CollapsibleTrigger>
