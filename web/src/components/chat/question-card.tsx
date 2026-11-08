@@ -23,28 +23,28 @@ export function QuestionCard({ block, viewer }: { block: QuestionCardBlock; view
   const [sent, setSent] = useState(false);
   const [replyPending, setReplyPending] = useState(false);
   const titleId = useId();
+  const root = useRef<HTMLElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
-  const focusTitle = useRef(false);
-  // Removing a focused control leaves focus on the body with no related target, so this stays true.
-  const focusInside = useRef(false);
+  const moveFocus = useRef(false);
 
   const card = served ?? block;
   const waiting = card.status === 'waiting';
+  const wasWaiting = useRef(waiting);
+  // Read in the render that closes the card, while the focused control is still in the document.
+  if (wasWaiting.current && !waiting) moveFocus.current = root.current?.contains(document.activeElement) ?? false;
+  wasWaiting.current = waiting;
   const notice = replyPending ? REPLY_PENDING : answeredFirstNotice(card, viewer, !sent && answeredCount(choices) > 0);
 
   useLayoutEffect(() => {
-    if (card.status === 'waiting') return;
-    if (focusTitle.current || (focusInside.current && document.activeElement === document.body)) {
-      titleRef.current?.focus();
-    }
-    focusTitle.current = false;
+    if (!moveFocus.current) return;
+    moveFocus.current = false;
+    titleRef.current?.focus();
   }, [card.status]);
 
   const send = async () => {
     setSendState('sending');
     try {
       const { card: stored, replyPending: pending } = await runtimeApi.answerQuestionCard(block.id, toAnswers(choices));
-      focusTitle.current = true;
       setSent(true);
       setReplyPending(Boolean(pending));
       setServed(stored);
@@ -56,7 +56,6 @@ export function QuestionCard({ block, viewer }: { block: QuestionCardBlock; view
         setSendState(status === 400 || status === 404 ? 'refused' : 'error');
         return;
       }
-      focusTitle.current = true;
       setServed(stored);
       setSendState('idle');
     }
@@ -64,17 +63,12 @@ export function QuestionCard({ block, viewer }: { block: QuestionCardBlock; view
 
   return (
     <section
+      ref={root}
       aria-labelledby={titleId}
       aria-busy={sendState === 'sending'}
       className="@container w-full max-w-2xl rounded-xl border bg-card p-4 text-sm shadow-sm"
       data-testid="question-card"
       data-status={card.status}
-      onFocus={() => {
-        focusInside.current = true;
-      }}
-      onBlur={(event) => {
-        if (event.relatedTarget) focusInside.current = event.currentTarget.contains(event.relatedTarget);
-      }}
     >
       {waiting ? (
         <QuestionCardWaiting
