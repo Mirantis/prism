@@ -209,6 +209,29 @@ describe('QuestionCard', () => {
     });
   });
 
+  describe('the Other character count', () => {
+    const typed = (length: number) => {
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'x'.repeat(length) } });
+      return screen.queryByTestId('question-card-count');
+    };
+
+    it('appears when fewer than 50 characters remain, and describes the field', () => {
+      show(BLOCK);
+      fireEvent.click(radio('Other…'));
+      expect(typed(450)).toBeNull();
+      const count = typed(451);
+      expect(count?.textContent).toBe('49 characters left');
+      expect(screen.getByRole('textbox').getAttribute('aria-describedby')).toBe(count?.id);
+    });
+
+    it('uses the singular for one and shows zero at the limit', () => {
+      show(BLOCK);
+      fireEvent.click(radio('Other…'));
+      expect(typed(499)?.textContent).toBe('1 character left');
+      expect(typed(500)?.textContent).toBe('0 characters left');
+    });
+  });
+
   describe('sending', () => {
     it('sends the choices, marks the card busy and disables the controls meanwhile', async () => {
       let finish = (_value: { card: QuestionCardBlock }) => {};
