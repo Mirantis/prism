@@ -35,6 +35,7 @@ vi.mock('../../config', async (original) => {
 vi.mock('../../logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 import { questionCardsRouter } from '../../routes/question-cards';
+import { getAskQuestionsTools } from '../../tools/ask-questions';
 import { QuestionCardWaitingError, questionCardService as service } from './question-card.service';
 
 const AGENT = 'agent-1';
@@ -140,6 +141,14 @@ describe('post', () => {
   it('refuses a new card while one waits in the conversation', async () => {
     await service.post(caller, input);
     await expect(service.post(caller, input)).rejects.toBeInstanceOf(QuestionCardWaitingError);
+    expect(delivery.publish).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails the tool call with the reason while a card waits', async () => {
+    const tool = getAskQuestionsTools(USER, AGENT, THREAD, 'websocket', undefined).ask_questions;
+    const run = () => (tool.execute as (input: unknown, options: unknown) => Promise<unknown>)(input, {});
+    await run();
+    await expect(run()).rejects.toThrow('already waits');
     expect(delivery.publish).toHaveBeenCalledTimes(1);
   });
 
