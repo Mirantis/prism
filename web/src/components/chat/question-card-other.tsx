@@ -31,7 +31,7 @@ export function QuestionCardOther({
             placeholder="Type your answer"
             aria-label={`Your answer to question ${questionNumber}`}
             maxLength={maxLength}
-            className="min-h-9"
+            className="min-h-9 border-muted-foreground"
             rows={1}
           />
         </div>

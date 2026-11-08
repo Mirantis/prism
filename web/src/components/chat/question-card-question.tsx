@@ -82,7 +82,7 @@ export function QuestionCardQuestion({
           type="button"
           variant="ghost"
           size="sm"
-          className="absolute top-0 right-0 text-muted-foreground"
+          className="absolute top-0 right-0 text-muted-foreground hover:text-strong"
           aria-label={`Clear answer to question ${questionNumber}`}
           onClick={() => {
             // Clear leaves with the answer, so focus moves first.
