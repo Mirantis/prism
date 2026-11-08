@@ -30,6 +30,7 @@ export function QuestionCardClosed({
   const inChat = card.status === 'answered_in_chat';
   const total = card.questions.length;
   const Icon = inChat ? MessageCircle : CircleCheck;
+  const title = inChat ? 'Answered in chat' : answeredTitle(card, viewer);
   return (
     <>
       <div className="flex items-start gap-3">
@@ -41,7 +42,7 @@ export function QuestionCardClosed({
             tabIndex={-1}
             className="rounded-sm font-semibold break-words text-strong outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
           >
-            {inChat ? 'Answered in chat' : answeredTitle(card, viewer)}
+            {title}
           </h3>
           {!inChat && total > 1 && (
             <p className="mt-0.5 text-muted-foreground">
@@ -56,7 +57,9 @@ export function QuestionCardClosed({
         </div>
       </div>
       <Collapsible open={open} onOpenChange={setOpen} className="mt-2 pl-8">
-        <CollapsibleTrigger className="-ml-1.5 inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-[0.8rem] text-muted-foreground outline-hidden hover:bg-muted hover:text-strong focus-visible:ring-2 focus-visible:ring-ring">
+        <CollapsibleTrigger
+          aria-label={`${open ? 'Hide' : 'Show'} questions, ${title}`}
+          className="-ml-1.5 inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-[0.8rem] text-muted-foreground outline-hidden hover:bg-muted hover:text-strong focus-visible:ring-2 focus-visible:ring-ring">
           <ChevronRight aria-hidden="true" className={`size-3.5 transition-transform ${open ? 'rotate-90' : ''}`} />
           {open ? 'Hide questions' : 'Show questions'}
         </CollapsibleTrigger>

@@ -10,8 +10,9 @@ import { QuestionCardWaiting, type SendState } from './question-card-waiting';
 const REPLY_PENDING = 'Your answers are saved. The agent will reply after its next restart.';
 
 function answeredFirstNotice(card: QuestionCardBlock, viewer: Viewer | undefined, choseUnsent: boolean): string | null {
-  if (card.status !== 'answered' || !choseUnsent || !card.answeredBy || card.answeredBy.id === viewer?.id) return null;
-  return `${card.answeredBy.name} answered first. Your choices weren’t sent.`;
+  if (card.status !== 'answered' || !choseUnsent) return null;
+  if (card.answeredBy && card.answeredBy.id === viewer?.id) return null;
+  return `${card.answeredBy?.name ?? 'Someone else'} answered first. Your choices weren’t sent.`;
 }
 
 /** The agent's questions in the chat. Choices live here until they are sent, so a reload drops them. */
@@ -23,7 +24,7 @@ export function QuestionCard({ block, viewer }: { block: QuestionCardBlock; view
   const [sent, setSent] = useState(false);
   const [replyPending, setReplyPending] = useState(false);
   const titleId = useId();
-  const root = useRef<HTMLElement>(null);
+  const root = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
   const moveFocus = useRef(false);
 
@@ -62,9 +63,11 @@ export function QuestionCard({ block, viewer }: { block: QuestionCardBlock; view
   };
 
   return (
-    <section
+    <div
       ref={root}
-      aria-labelledby={titleId}
+      // A waiting card's group is its fieldset, which has the same name.
+      role={waiting ? undefined : 'group'}
+      aria-labelledby={waiting ? undefined : titleId}
       aria-busy={sendState === 'sending'}
       className="@container w-full max-w-2xl rounded-xl border bg-card p-4 text-sm shadow-sm"
       data-testid="question-card"
@@ -92,6 +95,6 @@ export function QuestionCard({ block, viewer }: { block: QuestionCardBlock; view
       <p role="status" className="sr-only">
         {notice}
       </p>
-    </section>
+    </div>
   );
 }

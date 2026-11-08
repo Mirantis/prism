@@ -11,25 +11,27 @@ export function QuestionCardReview({ card }: { card: QuestionCardBlock }) {
           {card.intro}
         </p>
       )}
-      <ol className="flex flex-col gap-3">
+      <div className="flex flex-col gap-3">
       {card.questions.map((question, index) => {
         const labels = answerLabels(question, card.answers?.[index]);
         return (
-          <li key={`${index}-${question.text}`} className="min-w-0">
+          <div key={`${index}-${question.text}`} className="min-w-0">
             {question.header && <p className="text-xs font-medium break-words text-muted-foreground">{question.header}</p>}
             <p className="font-medium break-words text-strong">
               {several && `${index + 1}. `}
               {question.text}
             </p>
-            {card.status === 'answered' && (
-              <p className={labels.length > 0 ? 'break-words text-foreground' : 'text-muted-foreground'}>
-                {labels.length > 0 ? labels.join(', ') : 'No answer'}
-              </p>
-            )}
-          </li>
+            {card.status === 'answered' && labels.length === 0 && <p className="text-muted-foreground">No answer</p>}
+            {card.status === 'answered' &&
+              labels.map((label, at) => (
+                <p key={`${at}-${label}`} className="break-words text-foreground">
+                  {label}
+                </p>
+              ))}
+          </div>
         );
       })}
-      </ol>
+      </div>
     </div>
   );
 }
