@@ -70,6 +70,10 @@ describe('ask_questions', () => {
     expect(getAskQuestionsTools('user', 'agent', undefined, 'websocket', undefined)).toEqual({});
   });
 
+  it('tells the agent to put a lead-in in intro, which the card shows above the questions', () => {
+    expect(tools().ask_questions.description).toContain('Put any lead-in in intro');
+  });
+
   it('posts for its conversation and tells the agent to end the turn', async () => {
     mockPost.mockResolvedValue({});
     const input = askQuestionsInputSchema.parse({ questions: [question()] });
