@@ -28,6 +28,8 @@ import type {
   ModelSelectionPatch,
   SkillSummary,
   PluginSummary,
+  QuestionCardAnswer,
+  QuestionCardBlock,
   Goal,
   WebhookReceiver,
   WebhookSubscription,
@@ -56,9 +58,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const raw = await res.text().catch(() => '');
     let message = `${res.status} ${res.statusText}`;
     let fieldErrors: Record<string, string> = {};
+    let body: unknown;
     if (raw) {
       try {
         const parsed = JSON.parse(raw) as { error?: string; fieldErrors?: Record<string, string> };
+        body = parsed;
         if (typeof parsed.error === 'string' && parsed.error) message = parsed.error;
         if (parsed.fieldErrors && typeof parsed.fieldErrors === 'object') {
           fieldErrors = parsed.fieldErrors;
@@ -67,13 +71,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         message = `${message}: ${raw}`;
       }
     }
-    throw new ApiError(message, fieldErrors, res.status);
+    throw new ApiError(message, fieldErrors, res.status, body);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
 
 export const runtimeApi = {
+  /** The first answer wins; a later one is refused with 409 and the stored card in the error's body. */
+  answerQuestionCard: (id: string, answers: QuestionCardAnswer[]) =>
+    request<{ card: QuestionCardBlock }>(`/agents/question-cards/${encodeURIComponent(id)}/answer`, {
+      method: 'POST',
+      body: JSON.stringify({ answers }),
+    }),
+
   // Single-agent identity
   me: () => request<AgentSummary>('/agents/me'),
 
