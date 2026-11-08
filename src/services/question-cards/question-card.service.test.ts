@@ -5,6 +5,8 @@
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
+import express from 'express';
+import request from 'supertest';
 import { openMigratedDatabase, type MigratedDatabase } from '../../test-utils/migrated-database';
 import type { QuestionCardBlock } from '../../protocol/chat-protocol';
 
@@ -26,8 +28,13 @@ vi.mock('../../lib/prisma', () => {
 vi.mock('../message-delivery.service', () => ({ messageDeliveryService: delivery }));
 vi.mock('../inbound-message.service', () => ({ inboundMessageService: inbound, InboundMessageError: InboundError }));
 vi.mock('../../lib/telemetry', () => ({ trackEvent: track }));
+vi.mock('../../config', async (original) => {
+  const actual = await original<typeof import('../../config')>();
+  return { ...actual, config: { ...actual.config, agentId: 'agent-1', ownerUserId: 'user-1' } };
+});
 vi.mock('../../logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
+import { questionCardsRouter } from '../../routes/question-cards';
 import { QuestionCardWaitingError, questionCardService as service } from './question-card.service';
 
 const AGENT = 'agent-1';
@@ -178,14 +185,49 @@ describe('answer', () => {
     expect(row.payload).toMatchObject({ threadId: THREAD, message: { message: '1. Budget? High\n2. Channels? no answer' } });
   });
 
-  it('keeps the card answered and the row when the message cannot be accepted, for the next boot', async () => {
-    const block = card();
-    const messageId = await seed(block);
-    inbound.accept.mockRejectedValueOnce(new Error('database is busy'));
+  describe('a step after the card closes fails', () => {
+    const answerOverRoute = (id: string) => {
+      const app = express();
+      app.use(express.json());
+      app.use('/agents', questionCardsRouter);
+      return request(app).post(`/agents/question-cards/${id}/answer`).send({ answers: VALID });
+    };
 
-    await expect(answer(block.id)).resolves.toMatchObject({ result: 'answered' });
-    expect((await stored(messageId)).status).toBe('answered');
-    expect(await opened.client.pendingWork.count({ where: { kind: 'chat' } })).toBe(1);
+    it('accepts the answer message and answers 200 when showing the card throws', async () => {
+      const block = card();
+      const messageId = await seed(block);
+      delivery.showInConversation.mockRejectedValueOnce(new Error('stream is closed'));
+
+      const response = await answerOverRoute(block.id);
+
+      expect(response.status).toBe(200);
+      expect(response.body.card.status).toBe('answered');
+      expect((await stored(messageId)).status).toBe('answered');
+      expect(inbound.accept).toHaveBeenCalledTimes(1);
+      expect(track).toHaveBeenCalledWith('question card step failed', USER, expect.objectContaining({ step: 'show' }));
+    });
+
+    it('answers 202 with the reply pending and keeps the row for the next boot when accept rejects', async () => {
+      const block = card();
+      const messageId = await seed(block);
+      inbound.accept.mockRejectedValueOnce(new Error('database is busy'));
+
+      const response = await answerOverRoute(block.id);
+
+      expect(response.status).toBe(202);
+      expect(response.body).toMatchObject({ replyPending: true, card: { status: 'answered' } });
+      expect((await stored(messageId)).status).toBe('answered');
+      expect(await opened.client.pendingWork.count({ where: { kind: 'chat' } })).toBe(1);
+      expect(track).toHaveBeenCalledWith('question card step failed', USER, expect.objectContaining({ step: 'accept' }));
+    });
+
+    it('stores a typed message when showing the closed card throws', async () => {
+      const messageId = await seed(card());
+      delivery.showInConversation.mockRejectedValueOnce(new Error('stream is closed'));
+
+      await expect(service.closeWaitingInChat(AGENT, USER, THREAD)).resolves.toBeUndefined();
+      expect((await stored(messageId)).status).toBe('answered_in_chat');
+    });
   });
 
   it('lets the first answer win when a second has already read the card as waiting', async () => {

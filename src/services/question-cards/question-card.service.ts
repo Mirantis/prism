@@ -33,6 +33,8 @@ export interface QuestionCardCaller {
 
 export type AnswerOutcome =
   | { result: 'answered'; card: QuestionCardBlock }
+  /** The answers are stored and the next boot starts the turn, since the message could not be accepted. */
+  | { result: 'reply_pending'; card: QuestionCardBlock }
   | { result: 'closed'; card: QuestionCardBlock }
   | { result: 'invalid'; error: string }
   | { result: 'not_found' };
@@ -196,15 +198,13 @@ class QuestionCardService {
       'agent.id': agentId,
       ...closedProps(row, answered, fitted.answers),
     });
-    // The card is part of the transcript, so every open client shows it answered.
-    await messageDeliveryService.showInConversation(userId, {
-      ...row,
-      blocks: [answered] as unknown as Prisma.JsonValue,
-    });
-    // The row written above makes the next boot finish this if it fails here.
-    await inboundMessageService
-      .accept(message)
-      .catch((error: unknown) => logger.error({ err: error, cardId: id }, '[QuestionCards] Answer message failed'));
+    await this.showCard(agentId, userId, row, answered);
+    try {
+      await inboundMessageService.accept(message);
+    } catch (error) {
+      this.stepFailed('accept', error, agentId, userId, row.threadId, card.id);
+      return { result: 'reply_pending', card: answered };
+    }
     return { result: 'answered', card: answered };
   }
 
@@ -220,11 +220,37 @@ class QuestionCardService {
       });
       if (count === 0) continue;
       trackEvent('question card closed', userId, { 'agent.id': agentId, ...closedProps(row, closed, []) });
+      await this.showCard(agentId, userId, row, closed);
+    }
+  }
+
+  /** Every open client shows the changed card. The stored card is already right, so a failure here stops nothing. */
+  private async showCard(agentId: string, userId: string, row: ConversationMessage, card: QuestionCardBlock): Promise<void> {
+    try {
       await messageDeliveryService.showInConversation(userId, {
         ...row,
-        blocks: [closed] as unknown as Prisma.JsonValue,
+        blocks: [card] as unknown as Prisma.JsonValue,
       });
+    } catch (error) {
+      this.stepFailed('show', error, agentId, userId, row.threadId, card.id);
     }
+  }
+
+  private stepFailed(
+    step: 'show' | 'accept',
+    error: unknown,
+    agentId: string,
+    userId: string,
+    threadId: string,
+    cardId: string,
+  ): void {
+    logger.error({ err: error, cardId, step }, '[QuestionCards] A step after the card closed failed');
+    trackEvent('question card step failed', userId, {
+      'agent.id': agentId,
+      'thread.id': threadId,
+      'question_card.id': cardId,
+      step,
+    });
   }
 
   private waitingRows(threadId: string): Promise<ConversationMessage[]> {
