@@ -33,8 +33,8 @@ rule in the guide can override.
 
 **Ask questions** — when the agent needs your decisions in a chat, it can ask them
 as one card with answer options. Choose your answers and send them, skip any
-question, or type a reply instead. In Slack and Teams the same questions arrive as
-text, and you reply in your own words or with `1a, 2b`.
+question, or type a reply instead. In Slack, Teams and the terminal UI the same
+questions arrive as text, and you reply in your own words or with `1a, 2b`.
 
 ## Memory
 

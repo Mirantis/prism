@@ -206,22 +206,24 @@ same questions as plain text, so a client that cannot draw the card shows `conte
 - `status` is `waiting`, `answered` or `answered_in_chat`. A message a person types
   in the conversation closes a waiting card as `answered_in_chat`.
 - An answered card also has `answers`, one per question in order, and `answeredBy`:
-  `{ id, name }`, or `null` when the sign-in named nobody. Compare `answeredBy.id`
+  `{ id, name }`, or `null` when the person is not known. Compare `answeredBy.id`
   with `you.id`.
 - Each answer is `{ "options": [0], "other": "text" }`. `options` are indexes into
   the question's options. A blank question has `"options": []` and no `other`.
 - A card that changes arrives again as a `message` event with the same message id.
 
+Text limits count UTF-16 code units.
+
 | Field | Limit |
 |---|---|
 | Questions per card | 1 to 7 |
 | Options per question | 2 to 4 |
-| `intro` | 300 characters |
-| `text` | 300 characters |
-| `header` | 40 characters |
-| Option `label` | 80 characters |
-| Option `detail` | 200 characters |
-| `other` | 500 characters |
+| `intro` | 300 |
+| `text` | 300 |
+| `header` | 40 |
+| Option `label` | 80 |
+| Option `detail` | 200 |
+| `other` | 500 |
 
 ### `POST /agents/question-cards/:id/answer`
 
