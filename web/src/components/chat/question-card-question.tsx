@@ -40,6 +40,7 @@ export function QuestionCardQuestion({
           {question.header && (
             <span className="col-start-2 row-start-1 text-xs font-medium break-words text-muted-foreground">
               {question.header}
+              <span className="sr-only">.</span>
             </span>
           )}
           <span className="col-start-2 row-start-2 font-medium break-words text-strong">{question.text}</span>

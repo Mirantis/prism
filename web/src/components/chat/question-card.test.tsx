@@ -90,6 +90,13 @@ describe('QuestionCard', () => {
       expect(document.getElementById(recommended.getAttribute('aria-describedby')!)?.textContent).toBe('fits the current plan');
     });
 
+    it('separates the header and the question text for a screen reader', () => {
+      show(BLOCK);
+      expect(screen.getByRole('group', { name: /How much can we spend/ }).querySelector('legend')?.textContent).toBe(
+        '1.Budget.How much can we spend?',
+      );
+    });
+
     it('marks a multi-select question and uses checkboxes for it', () => {
       show(BLOCK);
       expect(screen.getByText('Choose any')).toBeTruthy();
@@ -194,10 +201,10 @@ describe('QuestionCard', () => {
     ])('folds away on a card %s, and Show questions brings it back above the first question', (_name, block) => {
       show(block);
       expect(intro()).toBeNull();
-      fireEvent.click(screen.getByRole('button', { name: 'Show questions' }));
+      fireEvent.click(screen.getByRole('button', { name: /^Show questions/ }));
       expect(intro()?.textContent).toBe(INTRO);
       expect(follows(intro()!, screen.getByText(/How much can we spend\?/))).toBe(true);
-      fireEvent.click(screen.getByRole('button', { name: 'Hide questions' }));
+      fireEvent.click(screen.getByRole('button', { name: /^Hide questions/ }));
       expect(intro()).toBeNull();
     });
   });
@@ -381,6 +388,16 @@ describe('QuestionCard', () => {
       expect(screen.queryByTestId('question-card-notice')).toBeNull();
     });
 
+    it('says someone else answered first when the card names nobody', () => {
+      const { rerender } = show(BLOCK, { id: null, name: null });
+      fireEvent.click(radio(/Over €500/));
+      rerender(<QuestionCard block={{ ...ANSWERED, answeredBy: null }} viewer={{ id: null, name: null }} />);
+      expect(screen.getByRole('heading', { name: 'Answered' })).toBeTruthy();
+      expect(screen.getByTestId('question-card-notice').textContent).toBe(
+        'Someone else answered first. Your choices weren’t sent.',
+      );
+    });
+
     it('says nothing about another device of the same person', () => {
       const { rerender } = show(BLOCK);
       fireEvent.click(radio(/Over €500/));
@@ -396,17 +413,38 @@ describe('QuestionCard', () => {
       expect(screen.getByRole('heading', { name: 'Answered by Grace Example' })).toBeTruthy();
       expect(screen.getByText('1 of 2 answered')).toBeTruthy();
       expect(screen.queryByText(/How much can we spend\?/)).toBeNull();
-      fireEvent.click(screen.getByRole('button', { name: 'Show questions' }));
-      expect(screen.getByRole('button', { name: 'Hide questions' })).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: /^Show questions/ }));
+      expect(screen.getByRole('button', { name: /^Hide questions/ })).toBeTruthy();
       expect(screen.getByText(/How much can we spend\?/)).toBeTruthy();
       expect(screen.getByText('Under €500')).toBeTruthy();
       expect(screen.getByText('No answer')).toBeTruthy();
       expect(screen.queryByRole('radio')).toBeNull();
     });
 
+    it('lists several choices on separate lines and numbers each question once', () => {
+      show({ ...ANSWERED, answers: [{ options: [0], other: 'Yes, as little as we can' }, { options: [] }] });
+      fireEvent.click(screen.getByRole('button', { name: /^Show questions/ }));
+      expect(screen.getByText('Under €500').tagName).toBe('P');
+      expect(screen.getByText('Yes, as little as we can').tagName).toBe('P');
+      expect(screen.queryByRole('list')).toBeNull();
+      expect(screen.getAllByText(/^1\. How much can we spend/)).toHaveLength(1);
+    });
+
+    it('names the disclosure with the card title and keeps the visible text', () => {
+      show(ANSWERED);
+      const disclosure = screen.getByRole('button', { name: 'Show questions, Answered by Grace Example' });
+      expect(disclosure.textContent).toBe('Show questions');
+    });
+
+    it('is a plain group, not a landmark', () => {
+      show(ANSWERED);
+      expect(screen.getByTestId('question-card').tagName).toBe('DIV');
+      expect(screen.getByRole('group', { name: 'Answered by Grace Example' })).toBeTruthy();
+    });
+
     it('shows the Other text as typed', () => {
       show({ ...ANSWERED, answers: [{ options: [], other: 'As little as we can' }, { options: [] }] });
-      fireEvent.click(screen.getByRole('button', { name: 'Show questions' }));
+      fireEvent.click(screen.getByRole('button', { name: /^Show questions/ }));
       expect(screen.getByText('As little as we can')).toBeTruthy();
     });
 
@@ -423,7 +461,7 @@ describe('QuestionCard', () => {
     it('shows Answered in chat, with the questions only', () => {
       show({ ...BLOCK, status: 'answered_in_chat' });
       expect(screen.getByRole('heading', { name: 'Answered in chat' })).toBeTruthy();
-      fireEvent.click(screen.getByRole('button', { name: 'Show questions' }));
+      fireEvent.click(screen.getByRole('button', { name: /^Show questions/ }));
       expect(screen.getByText(/How much can we spend\?/)).toBeTruthy();
       expect(screen.queryByText('No answer')).toBeNull();
     });
