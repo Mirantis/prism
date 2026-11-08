@@ -37,6 +37,11 @@ export function QuestionCardWaiting({
           <h3 id={titleId} className="font-semibold text-strong">
             {several ? `${total} questions` : '1 question'}
           </h3>
+          {card.intro && (
+            <p className="mt-0.5 break-words text-muted-foreground" data-testid="question-card-intro">
+              {card.intro}
+            </p>
+          )}
           <p className="mt-0.5 text-muted-foreground">
             {several ? 'Choose your answers, then send them. You can skip any question.' : 'Choose an answer, then send it.'}
           </p>

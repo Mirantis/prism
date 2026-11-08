@@ -243,6 +243,8 @@ export interface QuestionCardBlock {
   type: 'question_card';
   id: string;
   status: 'waiting' | 'answered' | 'answered_in_chat';
+  /** One short line from the agent, in plain text, shown above the questions. */
+  intro?: string;
   questions: QuestionCardQuestion[];
   /** The most characters the answer route takes for one question's own answer. */
   otherMaxLength: number;
