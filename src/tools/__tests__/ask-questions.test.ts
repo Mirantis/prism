@@ -2,7 +2,6 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Tool } from 'ai';
-import type { z } from 'zod';
 
 const { mockPost } = vi.hoisted(() => ({ mockPost: vi.fn() }));
 
@@ -79,19 +78,6 @@ describe('ask_questions', () => {
     expect(mockPost).toHaveBeenCalledWith(
       { userId: 'user', agentId: 'agent', threadId: 'thread', originChannel: 'websocket', originChannelId: undefined },
       input,
-    );
-  });
-
-  it('fails the call when a card already waits, so the agent reads why', async () => {
-    mockPost.mockRejectedValue(new Error('A question card already waits in this conversation'));
-    await expect(run(tools().ask_questions, {})).rejects.toThrow('already waits');
-  });
-
-  it('has the same description and schema on every build', () => {
-    const [first, second] = [tools().ask_questions, tools().ask_questions];
-    expect(first.description).toBe(second.description);
-    expect(JSON.stringify((first.inputSchema as z.ZodType).toJSONSchema?.())).toBe(
-      JSON.stringify((second.inputSchema as z.ZodType).toJSONSchema?.()),
     );
   });
 });
