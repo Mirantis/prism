@@ -648,6 +648,70 @@ export interface CodingAgentSignInBlock {
   status: 'waiting' | 'signed_in';
 }
 
+export interface QuestionCardOption {
+  label: string;
+  detail?: string;
+}
+
+export interface QuestionCardQuestion {
+  text: string;
+  header?: string;
+  options: QuestionCardOption[];
+  /** The label of the option the agent recommends. */
+  recommended?: string;
+  allowOther: boolean;
+  multiSelect: boolean;
+}
+
+export interface QuestionCardAnswer {
+  options: number[];
+  other?: string;
+}
+
+/** A chat message block: the agent's questions, with answer options to choose from. */
+export interface QuestionCardBlock {
+  type: 'question_card';
+  id: string;
+  status: 'waiting' | 'answered' | 'answered_in_chat';
+  questions: QuestionCardQuestion[];
+  otherMaxLength: number;
+  answers?: QuestionCardAnswer[];
+  answeredBy?: { id: string; name: string } | null;
+}
+
+function isQuestion(value: unknown): value is QuestionCardQuestion {
+  const question = value as QuestionCardQuestion | null;
+  return (
+    typeof question?.text === 'string' &&
+    typeof question.allowOther === 'boolean' &&
+    typeof question.multiSelect === 'boolean' &&
+    Array.isArray(question.options) &&
+    question.options.every((option) => typeof option?.label === 'string')
+  );
+}
+
+/** The whole shape is checked, so a malformed block falls back to the message text. */
+export function isQuestionCard(value: unknown): value is QuestionCardBlock {
+  const card = value as QuestionCardBlock | null;
+  return (
+    card?.type === 'question_card' &&
+    typeof card.id === 'string' &&
+    ['waiting', 'answered', 'answered_in_chat'].includes(card.status) &&
+    typeof card.otherMaxLength === 'number' &&
+    Array.isArray(card.questions) &&
+    card.questions.length > 0 &&
+    card.questions.every(isQuestion) &&
+    (card.answers === undefined ||
+      (Array.isArray(card.answers) &&
+        card.answers.length === card.questions.length &&
+        card.answers.every((answer) => Array.isArray(answer?.options))))
+  );
+}
+
+export function questionCardBlocks(message: ConversationMessage): QuestionCardBlock[] {
+  return message.blocks?.filter(isQuestionCard) ?? [];
+}
+
 export function codingAgentSignInBlocks(message: ConversationMessage): CodingAgentSignInBlock[] {
   return message.blocks?.filter(
     (block): block is CodingAgentSignInBlock =>
