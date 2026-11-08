@@ -134,6 +134,16 @@ describe('resumeReplies', () => {
     expect(mockEndWork).toHaveBeenCalledWith('chat', []);
   });
 
+  it('keeps a message the runtime wrote marked when a restart stopped its insert', async () => {
+    mockAcceptUserMessage.mockImplementation(async (_input: unknown, threadId: string, id: string) => {
+      stored.push(message(id, threadId, 'I signed in.'));
+    });
+
+    await resumeReplies([owed('m-7', 'thread-slack', SLACK, { message: { message: 'I signed in.', runtimeWritten: true } })]);
+
+    expect(mockAcceptUserMessage.mock.calls[0][0]).toMatchObject({ runtimeWritten: true });
+  });
+
   it('lists each owed file once, also when two rows both hold it', async () => {
     stored = [message('m-8', 'thread-slack', 'send it'), message('m-9', 'thread-slack', 'and the log')];
 

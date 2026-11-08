@@ -412,6 +412,7 @@ class ComputerHelpService {
         agentId,
         threadId: help.threadId,
         message: `I finished helping with the computer. The help request was: ${JSON.stringify(help.reason)}\n\nInspect the current screen, then continue the original request.`,
+        runtimeWritten: true,
         metadata: {
           channel: context.channel,
           channelId: context.channelId,

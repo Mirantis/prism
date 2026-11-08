@@ -99,6 +99,12 @@ export interface ChatInput {
    */
   agentMessage?: AgentMessageOrigin;
   /**
+   * The runtime wrote this message in the person's name, so it leaves a waiting
+   * question card open. Only the runtime's own callers set it: `metadata` can
+   * come from a request body.
+   */
+  runtimeWritten?: true;
+  /**
    * The shared-channel label of the thread, read again before each turn of the
    * exchange, so a follow-up turn sees a person who first wrote during the turn
    * before it. Takes precedence over `metadata.channelLabel`.
@@ -165,7 +171,7 @@ export interface ChatWork {
    * The message itself until its row is stored, so the boot stores it when a
    * restart came first. `acceptUserMessage` writes it.
    */
-  message?: Pick<ChatInput, 'message' | 'attachmentIds' | 'agentMessage'>;
+  message?: Pick<ChatInput, 'message' | 'attachmentIds' | 'agentMessage' | 'runtimeWritten'>;
   /**
    * The tool calls the turn has made that no stored message holds yet: a step's
    * calls are stored with the next text step. A resumed exchange stores them
@@ -197,16 +203,21 @@ export async function attachmentsHeldByChatWork(): Promise<string[]> {
  * insert lands stores it at boot.
  */
 export function chatWorkFor(
-  input: Pick<ChatInput, 'agentId' | 'userId' | 'message' | 'attachmentIds' | 'metadata' | 'agentMessage'>,
+  input: Pick<ChatInput, 'agentId' | 'userId' | 'message' | 'attachmentIds' | 'metadata' | 'agentMessage' | 'runtimeWritten'>,
   threadId: string,
 ): ChatWork {
-  const { agentId, userId, message, metadata, attachmentIds, agentMessage } = input;
+  const { agentId, userId, message, metadata, attachmentIds, agentMessage, runtimeWritten } = input;
   return {
     threadId,
     agentId,
     userId,
     ...(metadata ? { metadata } : {}),
-    message: { message, attachmentIds, ...(agentMessage ? { agentMessage } : {}) },
+    message: {
+      message,
+      attachmentIds,
+      ...(agentMessage ? { agentMessage } : {}),
+      ...(runtimeWritten ? { runtimeWritten } : {}),
+    },
   };
 }
 
@@ -753,7 +764,7 @@ Answer with one word: WORTHY or SKIP.`;
    * id — see `MessageInput.id`.
    */
   async acceptUserMessage(
-    input: Pick<ChatInput, 'agentId' | 'userId' | 'message' | 'attachmentIds' | 'metadata' | 'agentMessage'>,
+    input: Pick<ChatInput, 'agentId' | 'userId' | 'message' | 'attachmentIds' | 'metadata' | 'agentMessage' | 'runtimeWritten'>,
     threadId: string,
     id?: string,
   ): Promise<{ message: ConversationMessage; titleSet: string | null }> {
@@ -764,8 +775,8 @@ Answer with one word: WORTHY or SKIP.`;
     // ends, so no restart in between loses it.
     await pendingWorkService.begin('chat', messageId, chatWorkFor(input, threadId));
 
-    // A person's reply stands in for the answers to any card still waiting.
-    if (!agentMessage) await questionCardService.closeWaitingInChat(agentId, userId, threadId);
+    // A reply the person typed stands in for the answers to any card still waiting.
+    if (!agentMessage && !input.runtimeWritten) await questionCardService.closeWaitingInChat(agentId, userId, threadId);
 
     // The message text arrives already prefixed with the sender's mention
     // marker when the channel adapter wants the agent to see it in conversation

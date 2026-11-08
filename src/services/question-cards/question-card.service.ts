@@ -208,11 +208,7 @@ class QuestionCardService {
     return { result: 'answered', card: answered };
   }
 
-  /**
-   * A person's message closes the cards waiting in its conversation. A message
-   * the runtime writes for a person closes them too: that needs a card and a
-   * computer help or sign-in request open at once, and the person loses nothing.
-   */
+  /** A message the person typed closes the cards waiting in its conversation. */
   async closeWaitingInChat(agentId: string, userId: string, threadId: string): Promise<void> {
     for (const row of await this.waitingRows(threadId)) {
       const card = cardOf(row);

@@ -166,6 +166,7 @@ it("continues a channel thread's request in that thread, with the channel's guid
   expect(conversationEngineService.chat).toHaveBeenCalledWith(
     expect.objectContaining({
       threadId: 'thread',
+      runtimeWritten: true,
       metadata: {
         channel: 'slack',
         channelId: 'C1',

@@ -1971,6 +1971,20 @@ describe('Requirement: Conversation Engine', () => {
       expect(mockCloseWaitingInChat).not.toHaveBeenCalled();
     });
 
+    it('leaves a card waiting on a message the runtime wrote, also after a restart stops its insert', async () => {
+      await conversationEngineService.acceptUserMessage(
+        { ...person, message: 'I signed in to the example plan.', runtimeWritten: true },
+        'thread-123',
+        'continuation-1',
+      );
+      expect(mockCloseWaitingInChat).not.toHaveBeenCalled();
+      expect(mockBeginWork).toHaveBeenCalledWith(
+        'chat',
+        'continuation-1',
+        expect.objectContaining({ message: expect.objectContaining({ runtimeWritten: true }) }),
+      );
+    });
+
     it('keeps the tool call of a turn that ended on the card in a row no client shows', async () => {
       mockAddMessage.mockResolvedValue({ message: { id: 'row' }, titleSet: null });
       mockInvokeStream.mockReturnValue(streamFromSteps([{ text: '', toolCalls: [asked] }]));

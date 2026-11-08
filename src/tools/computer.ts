@@ -297,6 +297,7 @@ export function getComputerTools(
           threadId: owner.threadId,
           message: instruction,
           steerOnly: true,
+          runtimeWritten: true,
           metadata: {
             channel: context.channel,
             channelId: context.channelId,

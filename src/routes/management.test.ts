@@ -2288,6 +2288,7 @@ describe('Management Routes', () => {
         userId: 'owner-user-id',
         agentId: 'test-agent-id',
         message: 'Use the "echo-marker" skill.',
+        runtimeWritten: true,
         threadId: 'latest-thread',
         metadata: { channel: 'websocket' },
         channelLabelFor: expect.any(Function),
