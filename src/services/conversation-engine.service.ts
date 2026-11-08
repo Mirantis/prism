@@ -17,7 +17,7 @@ import { threadTitleService } from './thread-title.service';
 import { conversationThreadActivityService } from './conversation-thread-activity.service';
 import { attachmentService } from './attachment.service';
 import { pendingWorkService } from './pending-work.service';
-import { questionCardService } from './question-cards/question-card.service';
+import { questionCardService, type ClosedInChat } from './question-cards/question-card.service';
 import { ASK_QUESTIONS_TOOL_NAME } from './question-cards/question-card-schema';
 import { RESUMED_REPLY_NOTICE } from '../prompts/resume-prompt';
 import { agentMessageColumns, renderAgentMessage } from '../prompts/agent-message-prompt';
@@ -466,7 +466,10 @@ Answer with one word: WORTHY or SKIP.`;
     const stored: Promise<{ titleSet: string | null }> = input.stored
       ? Promise.resolve(input.stored)
       : this.acceptUserMessage(input, threadId, messageId);
-    stored.catch(() => {});
+    let storeFailed = false;
+    stored.catch(() => {
+      storeFailed = true;
+    });
 
     if (!claim) {
       let titleSet: string | null;
@@ -720,7 +723,11 @@ Answer with one word: WORTHY or SKIP.`;
     } finally {
       // A shutdown leaves owed what no turn answered in full, so the next boot
       // answers it. Any other end, a cancel or a throw included, owes nothing.
-      pendingWorkService.finish('chat', pendingWorkService.shutdownSignal.aborted ? answered : owed);
+      // A message that could not be stored stays owed: its row holds the text, so the next boot stores it.
+      pendingWorkService.finish(
+        'chat',
+        pendingWorkService.shutdownSignal.aborted ? answered : owed.filter((id) => !(storeFailed && id === messageId)),
+      );
       unregister();
       for (const signal of stoppers) signal?.removeEventListener('abort', abort);
       endActivity();
@@ -775,16 +782,13 @@ Answer with one word: WORTHY or SKIP.`;
     // ends, so no restart in between loses it.
     await pendingWorkService.begin('chat', messageId, chatWorkFor(input, threadId));
 
-    // A reply the person typed stands in for the answers to any card still waiting.
-    if (!agentMessage && !input.runtimeWritten) await questionCardService.closeWaitingInChat(agentId, userId, threadId);
-
     // The message text arrives already prefixed with the sender's mention
     // marker when the channel adapter wants the agent to see it in conversation
     // history.
-    const { message: userMessage, titleSet } = await conversationService.addMessage(threadId, {
+    const row = {
       id: messageId,
       content: message,
-      role: 'USER',
+      role: 'USER' as const,
       ...(agentMessage
         ? agentMessageColumns(agentMessage)
         : {
@@ -792,7 +796,17 @@ Answer with one word: WORTHY or SKIP.`;
             senderExternalId: metadata?.senderExternalId,
             senderName: metadata?.senderName,
           }),
-    });
+    };
+    // A reply the person typed stands in for the answers to any card still waiting.
+    // The reply and the card's new status commit together, and clients hear after that.
+    const typed = !agentMessage && !input.runtimeWritten;
+    let closedCards: ClosedInChat[] = [];
+    const { message: userMessage, titleSet } = typed
+      ? await conversationService.addMessage(threadId, row, async (tx) => {
+          closedCards = await questionCardService.closeWaitingInChat(tx, threadId);
+        })
+      : await conversationService.addMessage(threadId, row);
+    await questionCardService.showClosedInChat(agentId, userId, closedCards);
 
     // First user message named the thread: announce the placeholder title and
     // kick off the cheap-model upgrade (fire-and-forget, never blocks the
