@@ -24,7 +24,7 @@ import prisma from '../lib/prisma';
 import { config } from '../config';
 import { logger } from '../logger';
 import { trackEvent } from '../lib/telemetry';
-import { conversationEngineService, type ChatTurnEnd } from './conversation-engine.service';
+import { chatWorkFor, conversationEngineService, type ChatTurnEnd, type ChatWork } from './conversation-engine.service';
 import {
   conversationThreadActivityService,
   type ThreadActivityChange,
@@ -231,13 +231,7 @@ class InboundMessageService {
     let stored: { message: ConversationMessage; titleSet: string | null };
     try {
       stored = await conversationEngineService.acceptUserMessage(
-        {
-          agentId,
-          userId: config.ownerUserId,
-          message: inbound.content,
-          attachmentIds: inbound.attachmentIds,
-          ...senderInput(inbound),
-        },
+        this.engineInput(inbound, agentId),
         inbound.threadId,
         inbound.id,
       );
@@ -316,8 +310,23 @@ class InboundMessageService {
     return false;
   }
 
+  private engineInput(message: InboundMessage, agentId: string) {
+    return {
+      agentId,
+      userId: config.ownerUserId,
+      message: message.content,
+      attachmentIds: message.attachmentIds,
+      ...senderInput(message),
+    };
+  }
+
+  /** What `pending_work` holds for `message` until its answer ends, as `accept` writes it. */
+  pendingWorkFor(message: InboundMessage): ChatWork {
+    return chatWorkFor(this.engineInput(message, config.agentId as string), message.threadId);
+  }
+
   /** Only this agent's web conversations that clients may see take messages from the socket. */
-  private async checkThread(threadId: string, agentId: string): Promise<void> {
+  async checkThread(threadId: string, agentId: string): Promise<void> {
     const thread = await prisma.conversationThread.findUnique({
       where: { id: threadId, AND: await conversationService.clientThreadFilter(agentId, config.ownerUserId) },
       select: { agentId: true, threadSource: true },

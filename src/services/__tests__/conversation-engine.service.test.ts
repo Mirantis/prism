@@ -34,6 +34,7 @@ const {
   mockWorkRows,
   mockFlushWork,
   mockFinishWork,
+  mockCloseWaitingInChat,
   shutdown,
 } = vi.hoisted(() => ({
   mockGetOrCreateLatestThread: vi.fn(),
@@ -60,6 +61,7 @@ const {
   mockWorkRows: vi.fn(),
   mockFlushWork: vi.fn(async () => undefined),
   mockFinishWork: vi.fn(),
+  mockCloseWaitingInChat: vi.fn(async () => undefined),
   shutdown: { controller: new AbortController() },
 }));
 
@@ -96,6 +98,10 @@ vi.mock('../message-delivery.service', () => ({
     showInConversation: mockShowInConversation,
     getAdapter: mockGetAdapter,
   },
+}));
+
+vi.mock('../question-cards/question-card.service', () => ({
+  questionCardService: { closeWaitingInChat: mockCloseWaitingInChat },
 }));
 
 vi.mock('../thread-title.service', () => ({
@@ -1943,6 +1949,49 @@ describe('Requirement: Conversation Engine', () => {
         expect(last.unsaved.map((u) => u.tool)).toEqual(['coding_agent', 'coding_agent_status']);
         expect(mockFinishWork).toHaveBeenCalledWith('chat', []);
       });
+    });
+  });
+
+  describe('Scenario: A question card', () => {
+    const asked = { tool: 'ask_questions', input: '{}', output: '', success: true, timestamp: '2025-01-01' };
+    const person = { agentId: 'agent-123', userId: 'user-123', message: 'Budget first.' };
+
+    it("closes a waiting card when a person's message is stored, before the row is written", async () => {
+      await conversationEngineService.acceptUserMessage(person, 'thread-123', 'typed-1');
+      expect(mockCloseWaitingInChat).toHaveBeenCalledWith('agent-123', 'user-123', 'thread-123');
+      expect(mockCloseWaitingInChat.mock.invocationCallOrder[0]).toBeLessThan(mockAddMessage.mock.invocationCallOrder[0]);
+    });
+
+    it("leaves a card waiting on another agent's message", async () => {
+      await conversationEngineService.acceptUserMessage(
+        { ...person, agentMessage: { kind: 'notice', senderId: 'a', senderName: 'A', messageId: 'm' } },
+        'thread-123',
+        'delivery-9',
+      );
+      expect(mockCloseWaitingInChat).not.toHaveBeenCalled();
+    });
+
+    it('keeps the tool call of a turn that ended on the card in a row no client shows', async () => {
+      mockAddMessage.mockResolvedValue({ message: { id: 'row' }, titleSet: null });
+      mockInvokeStream.mockReturnValue(streamFromSteps([{ text: '', toolCalls: [asked] }]));
+
+      await conversationEngineService.chat({ ...person, threadId: 'thread-123' });
+
+      expect(mockAddMessage).toHaveBeenCalledWith(
+        'thread-123',
+        expect.objectContaining({ role: 'AGENT', content: '', toolCalls: [asked], internalStep: true }),
+      );
+      expect(mockPublish).not.toHaveBeenCalled();
+    });
+
+    it('publishes a reply the agent wrote after the card', async () => {
+      mockAddMessage.mockResolvedValue({ message: { id: 'row' }, titleSet: null });
+      mockPublish.mockResolvedValue({ id: 'reply' });
+      mockInvokeStream.mockReturnValue(streamFromSteps([{ text: '', toolCalls: [asked] }, { text: 'Over to you.', toolCalls: [] }]));
+
+      await conversationEngineService.chat({ ...person, threadId: 'thread-123' });
+
+      expect(mockPublish).toHaveBeenCalledTimes(1);
     });
   });
 

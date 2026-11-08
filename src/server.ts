@@ -29,6 +29,7 @@ import express from 'express';
 import { computerRouter } from './routes/computer';
 import { codingAgentsRouter } from './routes/coding-agents';
 import { computersRouter } from './routes/computers';
+import { questionCardsRouter } from './routes/question-cards';
 import path from 'path';
 import fs from 'fs';
 import { createServer, type Server } from 'http';
@@ -76,6 +77,9 @@ export function createApp() {
 
   // The agent's computers, its own and remote ones (/agents/computers)
   app.use('/agents', computersRouter);
+
+  // Answers to the agent's question cards (/agents/question-cards)
+  app.use('/agents', questionCardsRouter);
 
   // Locked-in mode (PATCH /agents/locked-in)
   app.use('/agents', lockedInRouter);

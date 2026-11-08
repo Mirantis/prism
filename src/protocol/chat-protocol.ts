@@ -211,6 +211,47 @@ export interface MessageEventPayload {
 
 export type AgentMessageKind = 'message' | 'ask' | 'notice';
 
+export interface QuestionCardOption {
+  label: string;
+  detail?: string;
+}
+
+export interface QuestionCardQuestion {
+  text: string;
+  header?: string;
+  options: QuestionCardOption[];
+  /** The label of the option the agent recommends. */
+  recommended?: string;
+  allowOther: boolean;
+  multiSelect: boolean;
+}
+
+/** One question's answer: indexes into its options, and the person's own words. A blank has neither. */
+export interface QuestionCardAnswer {
+  options: number[];
+  other?: string;
+}
+
+/** Who answered a card, as the Lens Agents sign-in named them. For display only. */
+export interface QuestionCardPerson {
+  id: string;
+  name: string;
+}
+
+/** A block on an AGENT message: the agent's questions, with answer options to choose from. */
+export interface QuestionCardBlock {
+  type: 'question_card';
+  id: string;
+  status: 'waiting' | 'answered' | 'answered_in_chat';
+  questions: QuestionCardQuestion[];
+  /** The most characters the answer route takes for one question's own answer. */
+  otherMaxLength: number;
+  /** In the order of `questions`. Set when `status` is `answered`. */
+  answers?: QuestionCardAnswer[];
+  /** Null when the sign-in named nobody. Set when `status` is `answered`. */
+  answeredBy?: QuestionCardPerson | null;
+}
+
 export interface ThreadEventPayload {
   threadId: string;
   title: string | null;

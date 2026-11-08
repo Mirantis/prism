@@ -82,6 +82,30 @@ export class PendingWorkService {
     ).then(() => undefined);
   }
 
+  /**
+   * Record work in one transaction with the owner's write that decides it exists.
+   * When `decide` answers false nothing is recorded. Answers what `decide` answered.
+   */
+  beginWith(
+    kind: PendingWorkKind,
+    key: string,
+    payload: object,
+    decide: (tx: Prisma.TransactionClient) => Promise<boolean>,
+  ): Promise<boolean> {
+    const json = payload as Prisma.InputJsonValue;
+    return this.write(kind, [key], () =>
+      prisma.$transaction(async (tx) => {
+        if (!(await decide(tx))) return false;
+        await tx.pendingWork.upsert({
+          where: { kind_key: { kind, key } },
+          create: { kind, key, payload: json },
+          update: { payload: json },
+        });
+        return true;
+      }),
+    );
+  }
+
   /** Replace what the owner needs to continue the work, e.g. once a session id is known. */
   update(kind: PendingWorkKind, key: string, payload: object): void {
     this.replace(kind, key, { payload: payload as Prisma.InputJsonValue });
