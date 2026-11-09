@@ -18,7 +18,7 @@ import { resolveRealtimeConfiguration } from './lib/managed-realtime';
 import { isLoopbackHostname } from './lib/loopback-host';
 import { type OriginPattern, parseOriginPatterns } from './lib/origin-patterns';
 import { subscriptionForcedIn } from './lib/coding-agents/subscription';
-import { isAnthropicModelId } from './lib/llm-providers/bedrock-model-id';
+import { isAnthropicModelId, isOpenAiBedrockModelId } from './lib/llm-providers/bedrock-model-id';
 
 /**
  * Centralized configuration — single place for all env var reads.
@@ -875,13 +875,21 @@ const codingAgentModelOverrides = {
 };
 
 /**
- * One Claude Code tier: an override that is a Bedrock ID serves Bedrock only,
- * because the Anthropic API and a Claude subscription refuse it; the same agent
- * can run its tasks on either, so the other backend keeps its own default.
+ * One coding agent tier: an override that is a Bedrock ID serves Bedrock only,
+ * because the vendor's API and subscription refuse it; the same agent can run
+ * its tasks on either, so the other backend keeps its own default.
  */
 function claudeCodeTier(override: string | undefined, defaults: { default: string; bedrock: string }) {
   return {
     default: override !== undefined && !isAnthropicModelId(override) ? override : defaults.default,
+    bedrock: override ?? defaults.bedrock,
+  };
+}
+
+/** The Codex tier, by the same rule as `claudeCodeTier`. */
+function codexTier(override: string | undefined, defaults: { openai: string; bedrock: string }) {
+  return {
+    openai: override !== undefined && !isOpenAiBedrockModelId(override) ? override : defaults.openai,
     bedrock: override ?? defaults.bedrock,
   };
 }
@@ -899,20 +907,13 @@ const codingAgentModels = {
   },
   // Reuse the repository's model choices: luna is the fast classification model,
   // sol is the main model, and terra is the Codex adapter's existing Bedrock default.
-  // Bedrock defaults use the vendor prefix; operator overrides are full model ids.
+  // Bedrock defaults use the vendor prefix; an override that is a Bedrock ID serves
+  // Bedrock only (`codexTier`).
   codex: {
-    small: {
-      openai: codingAgentModelOverrides.codex.small ?? 'gpt-5.6-luna',
-      bedrock: codingAgentModelOverrides.codex.small ?? 'openai.gpt-5.6-luna',
-    },
-    medium: {
-      openai: codingAgentModelOverrides.codex.medium ?? 'gpt-5.6-terra',
-      bedrock: codingAgentModelOverrides.codex.medium ?? 'openai.gpt-5.6-terra',
-    },
-    large: {
-      openai: codingAgentModelOverrides.codex.large ?? 'gpt-5.6-sol',
-      bedrock: codingAgentModelOverrides.codex.large ?? 'openai.gpt-5.6-sol',
-    },
+    small: codexTier(codingAgentModelOverrides.codex.small, { openai: 'gpt-5.6-luna', bedrock: 'openai.gpt-5.6-luna' }),
+    medium: codexTier(codingAgentModelOverrides.codex.medium,
+      { openai: 'gpt-5.6-terra', bedrock: 'openai.gpt-5.6-terra' }),
+    large: codexTier(codingAgentModelOverrides.codex.large, { openai: 'gpt-5.6-sol', bedrock: 'openai.gpt-5.6-sol' }),
   },
 };
 

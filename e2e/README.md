@@ -36,8 +36,9 @@ To test a Claude subscription, sign a Claude home in with
 The Bedrock ID in `CLAUDE_CODE_MODEL_SMALL` checks that a model tier still runs on the subscription; without it that scenario is skipped.
 To test a ChatGPT subscription, sign a Codex home in with
 `CODEX_HOME=/path/to/codex-home codex login`, then run
-`CODEX_HOME=/path/to/codex-home CODEX_SUBSCRIPTION=true npm run test --workspace=prism-agent-e2e -- --grep @codex-subscription`.
-That run gives the runtime OpenAI keys the API refuses, so the scenario passes only on the ChatGPT login.
+`CODEX_HOME=/path/to/codex-home CODEX_SUBSCRIPTION=true CODEX_MODEL_SMALL=openai.gpt-5.6-luna npm run test --workspace=prism-agent-e2e -- --grep @codex-subscription`.
+That run gives the runtime OpenAI keys the API refuses, so the scenarios pass only on the ChatGPT login.
+The Bedrock ID in `CODEX_MODEL_SMALL` checks that a model tier still runs on the subscription; without it that scenario is skipped.
 The sign-in scenarios in `coding-agent-sign-in.feature` carry the same tags but need no subscription:
 they start a sign-in from the Profile page and stop where the person signs in on the provider's page.
 They run against a home with no saved login, and skip when the home holds one or the CLI is missing.
