@@ -203,6 +203,8 @@ same questions as plain text, so a client that cannot draw the card shows `conte
 
 - `intro` is optional plain text. Show it above the first question. A closed card
   hides it with the questions and shows it again when the questions are opened.
+- `header` is a short topic for `content` and the answer message. A card shows
+  `text` alone.
 - `status` is `waiting`, `answered` or `answered_in_chat`. A message a person types
   in the conversation closes a waiting card as `answered_in_chat`.
 - An answered card also has `answers`, one per question in order, and `answeredBy`:
