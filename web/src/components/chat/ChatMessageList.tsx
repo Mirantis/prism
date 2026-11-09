@@ -8,6 +8,7 @@ import DayDivider from './day-divider';
 import { isSameDay } from '@/lib/day-label';
 import type { TurnState } from '@/lib/chat-socket/protocol';
 import type { TranscriptMessage } from '@/lib/chat-socket/transcript';
+import { questionCardBlocks } from '@/types';
 
 /** How close to the end, in pixels, still counts as reading the latest message. */
 const AT_BOTTOM_PX = 120;
@@ -105,6 +106,17 @@ export default function ChatMessageList({
   const first = messages[0];
   const last = messages[messages.length - 1];
   const isEmpty = messages.length === 0 && !isLoading;
+  const endsOnWaitingCard = last?.role === 'AGENT' && questionCardBlocks(last).some((card) => card.status === 'waiting');
+
+  /** The row of a waiting card that ends the list. A tall card is read from its top. */
+  const waitingCardRow = () =>
+    endsOnWaitingCard ? columnRef.current?.querySelector(`:scope > [data-message-id="${last.id}"]`) : null;
+
+  const revealEnd = (behavior?: ScrollBehavior) => {
+    const card = waitingCardRow();
+    if (card) card.scrollIntoView({ block: 'start', behavior });
+    else endRef.current?.scrollIntoView({ behavior });
+  };
 
   const onScroll = () => {
     const el = scrollRef.current;
@@ -112,7 +124,9 @@ export default function ChatMessageList({
     const corrected = correctedToRef.current !== null && Math.abs(el.scrollTop - correctedToRef.current) < 1;
     correctedToRef.current = null;
     if (!corrected) anchorRef.current = columnRef.current ? topRow(el, columnRef.current) : null;
-    const next = el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_PX;
+    const cardTop = waitingCardRow()?.getBoundingClientRect().top;
+    const cardInView = cardTop !== undefined && cardTop < el.getBoundingClientRect().bottom;
+    const next = cardInView || el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_PX;
     atBottomRef.current = next;
     setAtBottom(next);
   };
@@ -147,7 +161,7 @@ export default function ChatMessageList({
   // somebody reading older messages as they load.
   const sentByMe = last?.role === 'USER' && last.triggeredBy !== 'AGENT_MESSAGE';
   useEffect(() => {
-    if (atBottomRef.current || sentByMe) endRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (atBottomRef.current || sentByMe) revealEnd('smooth');
   }, [last?.id, turnState, sentByMe]);
 
   // A conversation opens at its end, whatever the last one was scrolled to. Keyed on the
@@ -158,7 +172,7 @@ export default function ChatMessageList({
   useEffect(() => {
     atBottomRef.current = true;
     setAtBottom(true);
-    endRef.current?.scrollIntoView();
+    revealEnd();
     // Taken here too: a list already at its end gets no scroll event.
     const el = scrollRef.current;
     anchorRef.current = el && columnRef.current ? topRow(el, columnRef.current) : null;
@@ -195,7 +209,7 @@ export default function ChatMessageList({
         ) : (
           // One readable column, however wide the window: a reply that runs the full width of
           // a large screen is a line the eye cannot follow back.
-          <div ref={columnRef} className="mx-auto w-full max-w-3xl space-y-7 px-4 py-6">
+          <div ref={columnRef} className="mx-auto w-full max-w-3xl space-y-7 px-4 pt-6 pb-12">
             {hasOlder && (
               <div ref={olderRef} role="status" className="flex h-6 justify-center" data-testid="older-messages">
                 {isLoadingOlder && (
