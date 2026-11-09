@@ -571,6 +571,7 @@ class GoalService {
     attachmentIds?: string[],
   ): Promise<void> {
     // A goal's reply places images as a chat reply does (see share_file's description).
+    // Its run gives `invoke` no workspace root, so placement reads the default workspace too.
     const placed = await placeReplyImages(goal.threadId, content, attachmentIds);
     await messageDeliveryService.publish(goal.userId, goal.threadId, placed.content, 'GOAL', {
       ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),

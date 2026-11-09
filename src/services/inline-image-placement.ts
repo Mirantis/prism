@@ -4,7 +4,7 @@
  * `attachment:<id>`, and the stored message names each image it placed by the
  * attachment that holds it.
  *
- * A path is held to `share_file`'s bound: it must resolve inside the thread's
+ * A path is held to `share_file`'s bound: it must resolve inside the run's
  * workspace, and it is read through the filesystem that holds it. Placement runs
  * once the step's tool calls have finished, so no write of that step is still
  * pending. A file this turn already shared is placed as that attachment, not
@@ -24,7 +24,6 @@ import { readSettledFile } from '../lib/read-settled-file';
 import { resolveWorkspace } from '../lib/execution-environments/workspace';
 import { filesFor } from '../lib/execution-environments/get-execution-environment';
 import { isInsideWorkspace, resolvePath } from '../tools/shell/workspace';
-import { conversationService } from './conversation.service';
 import { logger } from '../logger';
 
 export interface PlacedImages {
@@ -38,7 +37,7 @@ export interface PlacedImages {
 
 export interface PlacementContext {
   threadId: string;
-  /** The thread's workspace, which a relative path is read from. */
+  /** The run's workspace, which a relative path is read from. */
   workspaceRoot?: string;
   /** Files this turn shared that no message holds yet. */
   shared: readonly string[];
@@ -65,24 +64,20 @@ export async function placeInlineImages(text: string, context: PlacementContext)
 /**
  * A reply delivered outside a chat turn (a goal turn, a bound scheduled run):
  * its text with the images it places, and its attachments, the placed images
- * first. A failure leaves the text and the files as they were.
+ * first. `workspaceRoot` is the one the run gave `invoke`, so a path means what
+ * it meant to the run's shell. An image that cannot be stored keeps its reference as written.
  */
 export async function placeReplyImages(
   threadId: string,
   text: string,
   attachmentIds: readonly string[] = [],
+  workspaceRoot?: string,
 ): Promise<{ content: string; attachmentIds: string[] }> {
-  try {
-    const workspaceRoot = (await conversationService.getThreadWorkspaceRoot(threadId)) ?? undefined;
-    const placed = await placeInlineImages(text, { threadId, workspaceRoot, shared: attachmentIds });
-    return {
-      content: placed.content,
-      attachmentIds: [...placed.attachmentIds, ...attachmentIds.filter((id) => !placed.attachmentIds.includes(id))],
-    };
-  } catch (err) {
-    logger.error({ err }, '[InlineImages] placing the images of a reply in %s failed', threadId);
-    return { content: text, attachmentIds: [...attachmentIds] };
-  }
+  const placed = await placeInlineImages(text, { threadId, workspaceRoot, shared: attachmentIds });
+  return {
+    content: placed.content,
+    attachmentIds: [...placed.attachmentIds, ...attachmentIds.filter((id) => !placed.attachmentIds.includes(id))],
+  };
 }
 
 /** A failure to store one image leaves its reference as written, so the reply still goes out. */

@@ -4,7 +4,6 @@ import * as os from 'os';
 import * as path from 'path';
 import { placeInlineImages, placeReplyImages } from '../inline-image-placement';
 import { attachmentService } from '../attachment.service';
-import { conversationService } from '../conversation.service';
 import * as environments from '../../lib/execution-environments/get-execution-environment';
 
 // Pass-through, so a test can see which filesystem a path is read through.
@@ -181,7 +180,6 @@ describe('placeReplyImages', () => {
 
   beforeEach(async () => {
     workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'inline-images-reply-'));
-    vi.spyOn(conversationService, 'getThreadWorkspaceRoot').mockResolvedValue(workspace);
     vi.spyOn(attachmentService, 'create').mockImplementation(
       async (input) => ({ id: CREATED, ...input }) as unknown as NonNullable<Row>,
     );
@@ -192,22 +190,14 @@ describe('placeReplyImages', () => {
     await fs.rm(workspace, { recursive: true, force: true });
   });
 
-  it("places a goal or scheduled reply's images from the thread's workspace, ahead of its other files", async () => {
+  it("places a goal or scheduled reply's images from the run's workspace, ahead of its other files", async () => {
     await fs.writeFile(path.join(workspace, 'signups.png'), PNG);
     vi.spyOn(attachmentService, 'getById').mockResolvedValue({
       id: 'att-csv', threadId: null, messageId: null, filename: 'signups.csv', mediaType: 'text/csv', sizeBytes: 9,
     } as NonNullable<Row>);
 
-    const placed = await placeReplyImages('thread-1', '![Sign-ups](signups.png)', ['att-csv']);
+    const placed = await placeReplyImages('thread-1', '![Sign-ups](signups.png)', ['att-csv'], workspace);
 
     expect(placed).toEqual({ content: `![Sign-ups](attachment:${CREATED})`, attachmentIds: [CREATED, 'att-csv'] });
-  });
-
-  it('delivers the reply as written when the workspace cannot be read', async () => {
-    vi.spyOn(conversationService, 'getThreadWorkspaceRoot').mockRejectedValue(new Error('db down'));
-
-    const placed = await placeReplyImages('thread-1', '![Sign-ups](signups.png)', ['att-csv']);
-
-    expect(placed).toEqual({ content: '![Sign-ups](signups.png)', attachmentIds: ['att-csv'] });
   });
 });
