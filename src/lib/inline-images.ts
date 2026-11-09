@@ -26,7 +26,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const URL_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 const FENCE = /^ {0,3}(`{3,}|~{3,})[^\n]*$/gm;
 
-/** The image references in `content`, in order, skipping fenced and inline code. */
+/**
+ * The image references in `content`, in order, skipping what a markdown
+ * renderer shows as text: fenced, indented and inline code, and an escaped `\!`.
+ */
 export function findImageRefs(content: string): ImageRef[] {
   if (!content.includes('![')) return [];
   const code = codeRanges(content);
@@ -34,6 +37,7 @@ export function findImageRefs(content: string): ImageRef[] {
   for (const match of content.matchAll(IMAGE)) {
     const start = match.index;
     if (code.some(([from, to]) => start >= from && start < to)) continue;
+    if (escaped(content, start)) continue;
     const raw = match[2];
     const target = raw.startsWith('<') ? raw.slice(1, -1).trim() : raw;
     if (!target) continue;
@@ -106,6 +110,7 @@ function codeRanges(content: string): Array<[number, number]> {
     }
   }
   if (open) ranges.push([open.start, content.length]);
+  ranges.push(...indentedCode(content, ranges));
 
   const runs = [...content.matchAll(/`+/g)].filter(
     (run) => !ranges.some(([from, to]) => run.index >= from && run.index < to),
@@ -117,5 +122,53 @@ function codeRanges(content: string): Array<[number, number]> {
     ranges.push([opening.index, runs[closing].index + runs[closing][0].length]);
     i = closing;
   }
+  return ranges;
+}
+
+/** True when an odd run of backslashes precedes `at`, which makes that character literal. */
+function escaped(content: string, at: number): boolean {
+  let slashes = 0;
+  while (at - slashes > 0 && content[at - slashes - 1] === '\\') slashes++;
+  return slashes % 2 === 1;
+}
+
+const LIST_ITEM = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:\s|$)/;
+const INDENTED = /^(?: {4}|\t)/;
+
+/**
+ * `[from, to)` offsets of indented code blocks: lines indented four spaces (or
+ * a tab) that follow a blank line, outside a fence. A list's indented lines
+ * continue the list item, so a list since the last unindented paragraph ends
+ * the search there.
+ */
+function indentedCode(content: string, fences: ReadonlyArray<[number, number]>): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  let at = 0;
+  let afterBlank = true;
+  let inList = false;
+  let block: [number, number] | null = null;
+  for (const line of content.split('\n')) {
+    const start = at;
+    at += line.length + 1;
+    if (fences.some(([from, to]) => start >= from && start < to)) {
+      afterBlank = false;
+      continue;
+    }
+    if (!line.trim()) {
+      afterBlank = true;
+      continue;
+    }
+    if (INDENTED.test(line) && !inList && (afterBlank || block)) {
+      if (block) block[1] = start + line.length;
+      else block = [start, start + line.length];
+      afterBlank = false;
+      continue;
+    }
+    if (block) ranges.push(block);
+    block = null;
+    if (!INDENTED.test(line)) inList = LIST_ITEM.test(line);
+    afterBlank = false;
+  }
+  if (block) ranges.push(block);
   return ranges;
 }

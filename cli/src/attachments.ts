@@ -120,3 +120,28 @@ export function listPathSuggestions(partial: string, cwd = process.cwd()): PathS
       };
     });
 }
+
+/**
+ * The files of the latest turn that delivered any: every agent message since
+ * the user's last message that holds one, oldest first. A verbose turn places
+ * a chart in one step's reply and attaches a CSV to the last, and `/save`
+ * offers both. With no files since the user's last message, the newest agent
+ * turn that has any.
+ */
+export function latestTurnAttachments(
+  messages: ReadonlyArray<{ role: string; attachments?: AttachmentMeta[] | null }>,
+): AttachmentMeta[] {
+  const turn: AttachmentMeta[][] = [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!;
+    if (m.role === 'USER') {
+      if (turn.length > 0) break;
+      continue;
+    }
+    if (m.role === 'AGENT' && Array.isArray(m.attachments) && m.attachments.length > 0) {
+      turn.unshift(m.attachments);
+    }
+  }
+  const seen = new Set<string>();
+  return turn.flat().filter((a) => !seen.has(a.id) && seen.add(a.id));
+}

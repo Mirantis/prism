@@ -371,6 +371,27 @@ describe('Requirement: Conversation Engine', () => {
         );
       });
 
+      it("reads a step's images when the step arrives, before a later step can rewrite the file", async () => {
+        let rewritten = false;
+        const placedBeforeRewrite: boolean[] = [];
+        mockPlaceInlineImages.mockImplementation(async (text: string) => {
+          placedBeforeRewrite.push(!rewritten);
+          return { content: text, attachmentIds: [] as string[], missed: 0 };
+        });
+        mockInvokeStream.mockReturnValueOnce((async function* () {
+          yield { text: 'First version: ![v1](chart.png)', toolCalls: [] };
+          rewritten = true; // the next step regenerates chart.png
+          yield { text: '', toolCalls: [share] };
+          yield { text: 'Second version.', toolCalls: [] };
+        })());
+
+        await chat();
+
+        expect(mockPlaceInlineImages.mock.calls[0][0]).toBe('First version: ![v1](chart.png)');
+        expect(placedBeforeRewrite[0]).toBe(true);
+        mockPlaceInlineImages.mockImplementation(async (text: string) => ({ content: text, attachmentIds: [] as string[], missed: 0 }));
+      });
+
       it('counts the inline images, the missed references and the attached files in "chat message handled"', async () => {
         mockInvokeStream.mockReturnValueOnce(streamFromSteps([
           { text: '', toolCalls: [share], attachmentIds: ['att-csv'] },

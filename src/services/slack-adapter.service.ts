@@ -702,11 +702,22 @@ class SlackAdapterService implements ChannelAdapter {
   ): Promise<{ response: ChatPostMessageResponse; files: AttachmentMeta[] }> {
     const images = await this.uploadInlineImages(client, attachments);
     if (images.size === 0) return { response: await post(await format(images)), files: attachments };
+    const formatted = await format(images);
+    // The formatter can cut blocks past Slack's limit, so an image counts as
+    // shown only when its block is still in the message.
+    const shown = new Set(
+      formatted.blocks.flatMap((block) => (block.type === 'image' ? [block.slack_file.id] : [])),
+    );
     try {
-      return { response: await post(await format(images)), files: attachments.filter((a) => !images.has(a.id)) };
+      return {
+        response: await post(formatted),
+        files: attachments.filter((a) => !shown.has(images.get(a.id) ?? '')),
+      };
     } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : String(error);
-      logger.warn('[Slack] message with %d image block(s) refused (%s); posting the images after it', images.size, msg);
+      // Only a refused block is worth a second post. Any other failure
+      // (not_in_channel, channel_not_found, …) would fail the same way again.
+      if (slackErrorCode(error) !== 'invalid_blocks') throw error;
+      logger.warn('[Slack] message with %d image block(s) refused (invalid_blocks); posting the images after it', shown.size);
       return { response: await post(await format(new Map())), files: attachments };
     }
   }
@@ -2560,3 +2571,9 @@ class SlackAdapterService implements ChannelAdapter {
 
 // Export singleton instance
 export const slackAdapterService = new SlackAdapterService();
+
+/** The Web API error code a Slack client call failed with, such as `invalid_blocks`. */
+function slackErrorCode(error: unknown): string | undefined {
+  const data = (error as { data?: { error?: unknown } } | null)?.data;
+  return typeof data?.error === 'string' ? data.error : undefined;
+}

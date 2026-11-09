@@ -28,7 +28,7 @@ import type { PostingCeiling } from '../services/delivery-target.service';
 import { scheduledRunPrompt } from '../prompts/scheduled-run-prompt';
 import { renderAgentMessage } from '../prompts/agent-message-prompt';
 import { ALERT_THE_USER } from '../tools/computer';
-import { findImageRefs } from '../lib/inline-images';
+import { attachmentRefId, findImageRefs, isLocalPath } from '../lib/inline-images';
 import type { AttachmentMeta } from '../services/attachment.service';
 
 export interface Grade {
@@ -1035,7 +1035,13 @@ export const SCENARIOS: Scenario[] = [
           }),
         },
       });
-      const pass = findImageRefs(replyOf(trace)).length > 0;
+      // Only a target the runtime can place counts: an attachment id, or a local
+      // path to a file the turn's tool calls named, not a remote URL or a made-up path.
+      const named = trace.calls.map((call) => call.input).join('\n');
+      const placeable = (target: string) =>
+        attachmentRefId(target) !== null ||
+        (isLocalPath(target) && /\.(png|jpe?g|gif|webp)$/i.test(target) && named.includes(target.split('/').pop()!));
+      const pass = findImageRefs(replyOf(trace)).some((ref) => placeable(ref.target));
       return { pass, detail: describeTrace(trace) };
     },
   },

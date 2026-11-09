@@ -1312,12 +1312,28 @@ describe('deliverToChannel — images the reply places', () => {
   });
 
   it('posts the image after the text when Slack refuses the image block', async () => {
-    postMessage.mockRejectedValueOnce(new Error('An API error occurred: invalid_blocks'));
+    postMessage.mockRejectedValueOnce(Object.assign(new Error('An API error occurred: invalid_blocks'), { data: { ok: false, error: 'invalid_blocks' } }));
 
     await adapter.deliverToChannel('C_CHAN', content, 'thr-1', undefined, undefined, undefined, false, [chart, data]);
 
     expect(postMessage).toHaveBeenCalledTimes(2);
     expect(postMessage.mock.calls[1][0].blocks).toEqual([]);
+    expect(adapter.uploadAttachmentsToSlack).toHaveBeenCalledWith(expect.anything(), 'C_CHAN', '1700000000.000300', [chart, data]);
+  });
+
+  it('does not post again when Slack refuses the message for another reason', async () => {
+    postMessage.mockRejectedValueOnce(Object.assign(new Error('An API error occurred: not_in_channel'), { data: { ok: false, error: 'not_in_channel' } }));
+
+    await adapter.deliverToChannel('C_CHAN', content, 'thr-1', undefined, undefined, undefined, false, [chart, data]).catch(() => {});
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps an image whose block the formatter cut among the files after the message', async () => {
+    adapter.prepareOutboundMessage = vi.fn(async () => ({ text: 'formatted', blocks: [{ type: 'markdown', text: 'cut' }] }));
+
+    await adapter.deliverToChannel('C_CHAN', content, 'thr-1', undefined, undefined, undefined, false, [chart, data]);
+
     expect(adapter.uploadAttachmentsToSlack).toHaveBeenCalledWith(expect.anything(), 'C_CHAN', '1700000000.000300', [chart, data]);
   });
 

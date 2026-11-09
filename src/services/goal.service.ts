@@ -26,6 +26,7 @@ import { invoke } from '../invoke';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { messageDeliveryService } from './message-delivery.service';
+import { placeReplyImages } from './inline-image-placement';
 import { outboundMessageService, sentMessageList } from './outbound-message.service';
 import { ChannelName, isChatPlatform } from './channel-adapter.interface';
 import { threadTurnService } from './thread-turn.service';
@@ -569,9 +570,11 @@ class GoalService {
     toolCalls?: ToolCallRecord[],
     attachmentIds?: string[],
   ): Promise<void> {
-    await messageDeliveryService.publish(goal.userId, goal.threadId, content, 'GOAL', {
+    // A goal's reply places images as a chat reply does (see share_file's description).
+    const placed = await placeReplyImages(goal.threadId, content, attachmentIds);
+    await messageDeliveryService.publish(goal.userId, goal.threadId, placed.content, 'GOAL', {
       ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
-      ...(attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : {}),
+      ...(placed.attachmentIds.length > 0 ? { attachmentIds: placed.attachmentIds } : {}),
       channelContext: {
         channel: goalChannel(goal),
         channelId: goal.originChannelId ?? undefined,

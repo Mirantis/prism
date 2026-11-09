@@ -236,7 +236,7 @@ export function getShareFileTools(
         'The file is delivered as a download in the web/CLI chat and uploaded natively to Slack. ' +
         'Max 10 MB per file. Do not paste large file contents into your reply or invent download links — use this tool. ' +
         'To show an image (PNG, JPEG, GIF or WebP) inside your reply instead, write ![description](path) where it belongs: ' +
-        'the path of an image file, or attachment:<id> for an image in this conversation. That needs no share_file call. ' +
+        'the path of an image file in your workspace, or attachment:<id> for an image in this conversation. That needs no share_file call. ' +
         'When your reply explains an image, such as a chart, show it inline; share it as a file when the user wants a file to keep.',
       inputSchema: shareFileInput,
       // Announce this call so it can tell "no pending writes" from "the hook that

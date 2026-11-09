@@ -31,6 +31,7 @@ const {
   mockWritableThreadId,
   mockGetAdapter,
   mockPublishToWebChat,
+  mockPlaceReplyImages,
   shutdown,
 } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
@@ -51,8 +52,15 @@ const {
   mockWritableThreadId: vi.fn(),
   mockGetAdapter: vi.fn(),
   mockPublishToWebChat: vi.fn(),
+  // A reply with no image references passes through untouched.
+  mockPlaceReplyImages: vi.fn(async (_threadId: string, content: string, attachmentIds: string[] = []) => ({
+    content,
+    attachmentIds,
+  })),
   shutdown: { controller: new AbortController() },
 }));
+
+vi.mock('./inline-image-placement', () => ({ placeReplyImages: mockPlaceReplyImages }));
 
 vi.mock('../invoke', () => ({
   invoke: mockInvoke,
@@ -1269,6 +1277,28 @@ describe('CronSchedulerService', () => {
         'cron task executed',
         'user-abc-123',
         expect.objectContaining({ 'cron.result': 'silent', 'cron.messages_sent': '0' }),
+      );
+    });
+
+    it("places the images a thread-bound run's reply names, as a chat reply does", async () => {
+      mockThreadFindUnique.mockResolvedValue({ id: 'thread-bound' });
+      mockInvoke.mockResolvedValue({
+        response: 'Sign-ups: ![chart](signups.png)',
+        steps: [{ text: 'Sign-ups: ![chart](signups.png)' }],
+        toolCalls: [],
+        attachmentIds: ['att-csv'],
+      });
+      mockPlaceReplyImages.mockResolvedValueOnce({
+        content: 'Sign-ups: ![chart](attachment:att-chart)',
+        attachmentIds: ['att-chart', 'att-csv'],
+      });
+
+      await scheduleAndCapture({ threadId: 'thread-bound' })();
+
+      expect(mockPlaceReplyImages).toHaveBeenCalledWith('thread-bound', 'Sign-ups: ![chart](signups.png)', ['att-csv']);
+      expect(mockPublish).toHaveBeenCalledWith(
+        expect.any(String), 'thread-bound', 'Sign-ups: ![chart](attachment:att-chart)', 'CRON_TASK',
+        expect.objectContaining({ attachmentIds: ['att-chart', 'att-csv'] }),
       );
     });
 

@@ -37,7 +37,7 @@ import {
   PanelId,
   SlashCommand,
 } from './commands.js';
-import { AttachmentMeta, formatFileSize, listPathSuggestions } from './attachments.js';
+import { AttachmentMeta, formatFileSize, latestTurnAttachments, listPathSuggestions } from './attachments.js';
 
 export interface AppProps {
   userId: string;
@@ -367,16 +367,9 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   const runCommand = useCallback(
     async (cmd: SlashCommand, args: string[], rawArgs: string) => {
       const lastEntry = entries[entries.length - 1];
-      // Files from the most recent agent message that shared any — the /save
-      // candidates. Walk newest→oldest so /save targets the latest delivery.
-      let recentAttachments: AttachmentMeta[] = [];
-      for (let i = entries.length - 1; i >= 0; i--) {
-        const m = entries[i]!.message;
-        if (m.role === 'AGENT' && Array.isArray(m.attachments) && m.attachments.length > 0) {
-          recentAttachments = m.attachments;
-          break;
-        }
-      }
+      // The /save candidates: the files of the latest turn that delivered any,
+      // across all of its messages.
+      const recentAttachments = latestTurnAttachments(entries.map((e) => e.message));
       const ctx: CommandContext = {
         lastMessageContent: lastEntry?.message.content ?? null,
         requestShutdown: triggerShutdown,
