@@ -451,7 +451,7 @@ is the same thing to tell them about as the agent's presence.
 | `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. | `gpt-realtime-2.1` |
 | `OPENAI_REALTIME_VOICE` | `auto` has the voice follow the agent's name ([The agent's voice](voice-chat.md#the-agents-voice)); any other value is the voice of every call. | `auto` |
 | `OPENAI_REALTIME_REASONING_EFFORT` | How hard the model thinks before answering or picking a tool: `minimal`, `low`, `medium`, `high`, `xhigh`. Defaults higher than the API's own `low` — see [Reasoning effort](#reasoning-effort). Empty takes the API default. | `high` |
-| `OPENAI_TRANSCRIPTION_MODEL` | Transcriber used only so a call can be read back in the log — never fed to the model, and nothing waits on it. Only requested when `MEETING_TRANSCRIPT_LOGGING=full`, since it bills per audio minute and by default the words are dropped. The default accepts name hints, which is what keeps names legible in the log — see [Names](#names). | `gpt-live-transcribe` |
+| `OPENAI_TRANSCRIPTION_MODEL` | Transcriber used only so a call can be read back in the log — never fed to the model, and nothing waits on it. Only requested when `MEETING_TRANSCRIPT_LOGGING=full`, since it bills per audio minute and by default the words are dropped. The default accepts name hints, which is what keeps names legible in the log — see [What ends up in the log](#what-ends-up-in-the-log). | `gpt-live-transcribe` |
 | `OPENAI_NOISE_REDUCTION` | Server-side noise reduction over the meeting audio before turn detection and transcription see it: `off`, `near_field`, `far_field`. Off by default on purpose — what arrives is Meet's already-cleaned mix, and reducing it again cost a live agent most of what a quieter person in the room said. | `off` |
 | `MEETING_TRANSCRIPT_LOGGING` | Whether what was said may appear in the runtime's log: `off` or `full`. See [What ends up in the log](#what-ends-up-in-the-log). | `off` |
 | `MEETING_TIMEOUT_MINUTES` | Hard cap on one call. | `60` |
@@ -473,6 +473,10 @@ Every utterance the agent judges produces one line in the runtime's log, and
 Under `full` the words arrive on a line of their own rather than beside the verdict.
 Transcription finishes after the decision has already been made, so the two cannot
 share a line; they carry the same utterance id, which is what pairs them.
+
+Under `full` the transcriber also gets the agent's own name and the names on the
+room's roster as hints, refreshed as people come and go. Names are the words a
+transcript gets wrong most often, and the hints are what keep them legible.
 
 `off` is the default because a call is not an authenticated surface: whoever is in
 the room did not agree to be written into a log that outlives it, and a mishearing
