@@ -60,9 +60,9 @@ describe('config', () => {
           large: { default: 'opus', bedrock: 'opus' },
         }[tier]
         : {
-          small: { openai: 'gpt-5.6-luna', bedrock: 'openai.gpt-5.6-luna' },
-          medium: { openai: 'gpt-5.6-terra', bedrock: 'openai.gpt-5.6-terra' },
-          large: { openai: 'gpt-5.6-sol', bedrock: 'openai.gpt-5.6-sol' },
+          small: { openai: 'gpt-5.6-terra', bedrock: 'openai.gpt-5.6-terra' },
+          medium: { openai: 'gpt-5.6-sol', bedrock: 'openai.gpt-5.6-sol' },
+          large: { openai: 'gpt-6-astra', bedrock: 'openai.gpt-6-astra' },
         }[tier];
       delete process.env[name];
       expect((await loadConfig()).codingAgentModels[agent][tier]).toEqual(defaults);
@@ -94,9 +94,9 @@ describe('config', () => {
   });
 
   it.each([
-    ['small', 'openai.gpt-5.6-luna', 'gpt-5.6-luna'],
-    ['medium', 'us.openai.gpt-5.6-terra', 'gpt-5.6-terra'],
-    ['large', 'arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.openai.gpt-5.6-sol', 'gpt-5.6-sol'],
+    ['small', 'eu.openai.gpt-5.6-terra', 'gpt-5.6-terra'],
+    ['medium', 'us.openai.gpt-5.6-sol', 'gpt-5.6-sol'],
+    ['large', 'arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.openai.gpt-6-astra', 'gpt-6-astra'],
   ] as const)('keeps a Bedrock ID for the codex %s tier on Bedrock only', async (tier, model, openai) => {
     process.env.LLM_PROVIDER = 'anthropic';
     process.env['CODEX_MODEL_' + tier.toUpperCase()] = model;

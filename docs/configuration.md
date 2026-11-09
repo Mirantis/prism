@@ -179,9 +179,9 @@ Omitted parameters keep the deployment's model and effort behavior.
 | `CLAUDE_CODE_MODEL_LARGE` | Model for the Claude Code large tier | `opus` |
 | `CLAUDE_CODE_SUBSCRIPTION` | `true` runs every Claude Code task on the Claude subscription signed in by hand. See [Coding tasks on a Claude subscription](#coding-tasks-on-a-claude-subscription). | off |
 | `CLAUDE_CODE_SKIP_PERMISSIONS` | `true` runs every Claude Code edit task with Claude Code's permission checks off. See [What a coding task may do](#what-a-coding-task-may-do). | off |
-| `CODEX_MODEL_SMALL` | Model for the Codex small tier | `gpt-5.6-luna` (Bedrock: `openai.gpt-5.6-luna`) |
-| `CODEX_MODEL_MEDIUM` | Model for the Codex medium tier | `gpt-5.6-terra` (Bedrock: `openai.gpt-5.6-terra`) |
-| `CODEX_MODEL_LARGE` | Model for the Codex large tier | `gpt-5.6-sol` (Bedrock: `openai.gpt-5.6-sol`) |
+| `CODEX_MODEL_SMALL` | Model for the Codex small tier | `gpt-5.6-terra` (Bedrock: `openai.gpt-5.6-terra`) |
+| `CODEX_MODEL_MEDIUM` | Model for the Codex medium tier | `gpt-5.6-sol` (Bedrock: `openai.gpt-5.6-sol`) |
+| `CODEX_MODEL_LARGE` | Model for the Codex large tier | `gpt-6-astra` (Bedrock: `openai.gpt-6-astra`) |
 | `CODEX_SUBSCRIPTION` | `true` runs every Codex task on the ChatGPT subscription signed in by hand. See [Codex tasks on a ChatGPT subscription](#codex-tasks-on-a-chatgpt-subscription). | off |
 
 A `CLAUDE_CODE_MODEL_*` value that is a Bedrock ID, such as
