@@ -169,6 +169,10 @@ describe('readingOfAnswer', () => {
   it.each([
     ['woman', 'woman'],
     ['Man.', 'man'],
+    ['**man**', 'man'],
+    ['- woman', 'woman'],
+    ['Not man', 'unclear'],
+    ['"woman"', 'woman'],
     [' woman\n', 'woman'],
     ['unclear', 'unclear'],
     ['male', 'unclear'],
