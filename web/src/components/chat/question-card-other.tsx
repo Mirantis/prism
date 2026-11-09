@@ -28,6 +28,8 @@ export function QuestionCardOther({
   // Counted as the field's maxLength counts, in UTF-16 code units.
   const left = maxLength - choice.otherText.length;
   const showCount = left < SHOW_COUNT_BELOW;
+  // Spoken at these two points only. A paste that jumps past 20 is heard at 0.
+  const announcement = left === 20 || left === 0 ? `${left} characters left` : '';
   return (
     <>
       <QuestionCardOption type={type} name={name} label="Other…" checked={choice.otherOpen} onChange={onToggle} />
@@ -40,7 +42,7 @@ export function QuestionCardOther({
             aria-label={`Your answer to question ${questionNumber}`}
             aria-describedby={showCount ? countId : undefined}
             maxLength={maxLength}
-            className="min-h-9 border-muted-foreground"
+            className="min-h-9 border-muted-foreground outline-hidden"
             rows={1}
           />
           {showCount && (
@@ -48,6 +50,9 @@ export function QuestionCardOther({
               {left} {left === 1 ? 'character' : 'characters'} left
             </p>
           )}
+          <p role="status" className="sr-only" data-testid="question-card-count-announcement">
+            {announcement}
+          </p>
         </div>
       )}
     </>

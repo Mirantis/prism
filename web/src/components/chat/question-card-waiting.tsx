@@ -79,7 +79,7 @@ export function QuestionCardWaiting({
         <Button
           type="button"
           size="lg"
-          className="min-h-11 w-full focus-visible:ring-2 focus-visible:ring-foreground @[38rem]:ml-auto @[38rem]:w-auto"
+          className="min-h-11 w-full outline-hidden focus-visible:ring-2 focus-visible:ring-foreground @[38rem]:ml-auto @[38rem]:w-auto"
           disabled={answered === 0 && !sending}
           // Kept enabled while sending, so that it holds focus until the card closes.
           aria-disabled={sending || undefined}
