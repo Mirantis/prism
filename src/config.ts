@@ -907,8 +907,7 @@ const codingAgentModels = {
   },
   // Reuse the repository's model choices: luna is the fast classification model,
   // sol is the main model, and terra is the Codex adapter's existing Bedrock default.
-  // Bedrock defaults use the vendor prefix; an override that is a Bedrock ID serves
-  // Bedrock only (`codexTier`).
+  // Bedrock defaults use the vendor prefix.
   codex: {
     small: codexTier(codingAgentModelOverrides.codex.small, { openai: 'gpt-5.6-luna', bedrock: 'openai.gpt-5.6-luna' }),
     medium: codexTier(codingAgentModelOverrides.codex.medium,
