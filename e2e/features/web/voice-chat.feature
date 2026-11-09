@@ -45,7 +45,7 @@ Feature: Voice chat in the browser
     And the voice model has no session open
 
   Scenario: The agent speaks with the voice its name gets
-    Given the agent is called "Max"
+    Given the agent is called "Robert", a name read as a man
     And I open a fresh chat
     And the voice model has heard nothing yet
     When I start a voice chat from the chat header
