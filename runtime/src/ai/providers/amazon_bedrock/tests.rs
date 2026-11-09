@@ -1,6 +1,6 @@
 //! The provider against what `@ai-sdk/amazon-bedrock` sends and returns, recorded
-//! by `porting/scratch-prov-bedrock/gen-fixtures.mjs` with a fake `fetch` under
-//! Node 24 (`testdata/sdk_requests.json`).
+//! by `testdata/sdk_requests.mjs` with a fake `fetch` under Node 24
+//! (`testdata/sdk_requests.json`).
 
 use std::sync::Arc;
 
@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use super::api::{EnvLookup, FetchFunction, FetchRequest, FetchResponse};
 use super::*;
-use crate::ai::json::js_stringify;
+use crate::ai::json::{js_stringify, normalize_numbers};
 use crate::ai::provider::{EmbeddingModelV4CallOptions, LanguageModelV4CallOptions};
 use crate::ai::{ApiCallError, LanguageModel};
 
@@ -173,8 +173,9 @@ async fn embeds_as_the_sdk_does() {
             continue;
         }
         let result = result.unwrap_or_else(|e| panic!("{name}: {e:#}"));
+        // The token count is an `f64`; compare it as JavaScript prints it.
         assert_eq!(
-            serde_json::to_value(&result).unwrap(),
+            normalize_numbers(serde_json::to_value(&result).unwrap()),
             case["result"],
             "{name}"
         );

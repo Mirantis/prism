@@ -71,7 +71,14 @@ pub fn runtime_secret_prefixes() -> Vec<String> {
         .iter()
         .map(|platform| format!("{}_", platform.as_str().to_uppercase()))
         .chain(
-            ["GOOGLE_BOT_", "LANGFUSE_", "OTEL_", "NEXUS_", "OPENAI_REALTIME_"].map(str::to_string),
+            [
+                "GOOGLE_BOT_",
+                "LANGFUSE_",
+                "OTEL_",
+                "NEXUS_",
+                "OPENAI_REALTIME_",
+            ]
+            .map(str::to_string),
         )
         .collect()
 }

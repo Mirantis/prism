@@ -1,27 +1,9 @@
 //! The rules every voice session shares, meeting or voice chat: how to speak, what the
 //! gate lets through, and how to use a tool when nobody can see the screen.
 
-use serde::{Deserialize, Serialize};
-
 /// Which utterances reach the model: all of them (`open`), only the ones said to
 /// the agent (`addressed`), or all of them while the call has two people (`auto`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ResponseMode {
-    Auto,
-    Open,
-    Addressed,
-}
-
-impl ResponseMode {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Open => "open",
-            Self::Addressed => "addressed",
-        }
-    }
-}
+pub use crate::services::meeting::response_policy::ResponseMode;
 
 /// What to expect from the gate that decides which utterances reach the model. A model
 /// that does not know it is filtered explains its own silence, introduces itself again

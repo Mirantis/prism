@@ -152,7 +152,9 @@ impl ProgramStatusService {
         CONVERSATION_THREAD_ACTIVITY_SERVICE
             .events
             .on_change(move |_| self.update());
-        COMPACTION_SERVICE.events.on_compaction(move |_| self.update());
+        COMPACTION_SERVICE
+            .events
+            .on_compaction(move |_| self.update());
         COMPACTION_SERVICE.events.on_settled(move |_| self.update());
         let mut published = MESSAGE_DELIVERY_SERVICE.published.subscribe();
         tokio::spawn(async move {
@@ -356,7 +358,12 @@ impl ProgramStatusService {
             }
             None => {}
         }
-        if let Some(error) = state.outcome.error.as_ref().filter(|error| !error.is_empty()) {
+        if let Some(error) = state
+            .outcome
+            .error
+            .as_ref()
+            .filter(|error| !error.is_empty())
+        {
             return ProgramStatus::Error { msg: error.clone() };
         }
         if state.outcome.cancelled {

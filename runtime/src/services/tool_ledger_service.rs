@@ -408,3 +408,493 @@ impl Default for ToolLedgerService {
 }
 
 pub static TOOL_LEDGER_SERVICE: LazyLock<ToolLedgerService> = LazyLock::new(ToolLedgerService::new);
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use serde_json::{Value, json};
+
+    use super::*;
+    use crate::ai::json_schema;
+    use crate::lib::llm_providers::llm_provider::{provider_options, provider_options_json};
+    use crate::lib::llm_providers::tool_changes::ANTHROPIC_TOOL_CHANGES;
+
+    const MODEL: &str = "global.anthropic.claude-opus-5-5";
+
+    fn tool_with(description: &str, properties: Value, calls: Option<Arc<AtomicUsize>>) -> Tool {
+        let answer = description.to_string();
+        Tool {
+            description: Some(description.to_string()),
+            input_schema: json_schema(json!({ "type": "object", "properties": properties })),
+            execute: Some(execute_fn(
+                move |_input: Value, _options: ToolExecutionOptions| {
+                    let answer = answer.clone();
+                    let calls = calls.clone();
+                    async move {
+                        if let Some(calls) = calls {
+                            calls.fetch_add(1, Ordering::SeqCst);
+                        }
+                        Ok(Value::String(answer))
+                    }
+                },
+            )),
+            ..Default::default()
+        }
+    }
+
+    fn tool(description: &str) -> Tool {
+        tool_with(description, json!({}), None)
+    }
+
+    fn set(tools: Vec<(&str, Tool)>) -> ToolSet {
+        tools
+            .into_iter()
+            .map(|(name, tool)| (name.to_string(), tool))
+            .collect()
+    }
+
+    fn ids(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|id| id.to_string()).collect()
+    }
+
+    async fn declare_on(
+        ledger: &ToolLedgerService,
+        available: ToolSet,
+        row_ids: &[&str],
+        thread_id: &str,
+        model_id: &str,
+    ) -> DeclaredTools {
+        ledger
+            .declare(DeclareInput {
+                thread_id,
+                model_id,
+                protocol: &ANTHROPIC_TOOL_CHANGES,
+                available: &available,
+                row_ids: &ids(row_ids),
+            })
+            .await
+    }
+
+    async fn declare(
+        ledger: &ToolLedgerService,
+        available: ToolSet,
+        row_ids: &[&str],
+    ) -> DeclaredTools {
+        declare_on(ledger, available, row_ids, "thread-1", MODEL).await
+    }
+
+    fn names(declared: &DeclaredTools) -> Vec<&str> {
+        declared.tools.keys().map(String::as_str).collect()
+    }
+
+    /// The changes each announcement has, with its row.
+    fn announced(declared: &DeclaredTools) -> Value {
+        Value::Array(
+            declared
+                .tool_changes
+                .iter()
+                .map(|change| {
+                    let options = change
+                        .message
+                        .provider_options
+                        .as_ref()
+                        .map(provider_options_json)
+                        .unwrap_or(Value::Null);
+                    json!({
+                        "afterRowId": change.after_row_id,
+                        "changes": options["anthropic"]["toolChanges"],
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    async fn run(tool: &Tool) -> anyhow::Result<Value> {
+        (tool.execute.as_ref().expect("execute"))(json!({}), ToolExecutionOptions::default()).await
+    }
+
+    fn options_of(tool: &Tool) -> Option<Value> {
+        tool.provider_options.as_ref().map(provider_options_json)
+    }
+
+    #[tokio::test]
+    async fn declares_the_first_turns_tools_as_loaded_with_nothing_to_announce() {
+        let ledger = ToolLedgerService::new();
+        let first = declare(
+            &ledger,
+            set(vec![("a", tool("A")), ("b", tool("B"))]),
+            &["u1"],
+        )
+        .await;
+        assert_eq!(names(&first), ["a", "b"]);
+        assert!(first.deferred.is_empty());
+        assert!(first.tool_changes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn sends_the_same_list_and_announces_nothing_when_the_tools_do_not_change() {
+        let ledger = ToolLedgerService::new();
+        declare(
+            &ledger,
+            set(vec![("a", tool("A")), ("b", tool("B"))]),
+            &["u1"],
+        )
+        .await;
+        let second = declare(
+            &ledger,
+            set(vec![("a", tool("A")), ("b", tool("B"))]),
+            &["u1", "r1", "u2"],
+        )
+        .await;
+        assert_eq!(names(&second), ["a", "b"]);
+        assert!(second.tool_changes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn keeps_a_removed_tool_declared_announces_the_removal_and_refuses_its_calls() {
+        let ledger = ToolLedgerService::new();
+        let removed_calls = Arc::new(AtomicUsize::new(0));
+        declare(
+            &ledger,
+            set(vec![
+                ("a", tool("A")),
+                (
+                    "b",
+                    tool_with("B", json!({}), Some(Arc::clone(&removed_calls))),
+                ),
+            ]),
+            &["u1"],
+        )
+        .await;
+
+        let second = declare(&ledger, set(vec![("a", tool("A"))]), &["u1", "r1", "u2"]).await;
+
+        assert_eq!(names(&second), ["a", "b"]);
+        assert_eq!(second.tools["b"].description.as_deref(), Some("B"));
+        assert_eq!(
+            announced(&second),
+            json!([{ "afterRowId": "u2", "changes": [{ "type": "tool_removal", "toolName": "b" }] }])
+        );
+        let err = run(&second.tools["b"]).await.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "The b tool is not available in this conversation now."
+        );
+        assert_eq!(removed_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn announces_a_tool_that_comes_back_as_an_addition_and_replays_the_earlier_removal() {
+        let ledger = ToolLedgerService::new();
+        declare(
+            &ledger,
+            set(vec![("a", tool("A")), ("b", tool("B"))]),
+            &["u1"],
+        )
+        .await;
+        declare(&ledger, set(vec![("a", tool("A"))]), &["u1", "r1", "u2"]).await;
+        let third = declare(
+            &ledger,
+            set(vec![("a", tool("A")), ("b", tool("B"))]),
+            &["u1", "r1", "u2", "r2", "u3"],
+        )
+        .await;
+        assert_eq!(names(&third), ["a", "b"]);
+        assert!(third.deferred.is_empty());
+        assert_eq!(
+            announced(&third),
+            json!([
+                { "afterRowId": "u2", "changes": [{ "type": "tool_removal", "toolName": "b" }] },
+                { "afterRowId": "u3", "changes": [{ "type": "tool_addition", "toolName": "b" }] },
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn appends_a_tool_first_seen_mid_conversation_as_deferred_and_announces_it() {
+        let ledger = ToolLedgerService::new();
+        declare(&ledger, set(vec![("a", tool("A"))]), &["u1"]).await;
+        let second = declare(
+            &ledger,
+            set(vec![("c", tool("C")), ("a", tool("A"))]),
+            &["u1", "r1", "u2"],
+        )
+        .await;
+        assert_eq!(names(&second), ["a", "c"]);
+        assert_eq!(second.deferred.iter().collect::<Vec<_>>(), ["c"]);
+        assert_eq!(
+            options_of(&second.tools["c"]),
+            Some(json!({ "anthropic": { "deferLoading": true } }))
+        );
+        assert_eq!(
+            announced(&second),
+            json!([{ "afterRowId": "u2", "changes": [{ "type": "tool_addition", "toolName": "c" }] }])
+        );
+    }
+
+    #[tokio::test]
+    async fn runs_the_turns_own_execute_under_the_declared_definition() {
+        let ledger = ToolLedgerService::new();
+        declare(&ledger, set(vec![("a", tool("A"))]), &["u1"]).await;
+        let mut live = tool("A");
+        live.execute = Some(execute_fn(|_: Value, _: ToolExecutionOptions| async {
+            Ok(json!("live"))
+        }));
+        let second = declare(&ledger, set(vec![("a", live)]), &["u1", "r1", "u2"]).await;
+        assert_eq!(run(&second.tools["a"]).await.unwrap(), json!("live"));
+    }
+
+    #[tokio::test]
+    async fn replaces_a_definition_that_changes_in_its_place_and_with_its_loading() {
+        // An MCP server that adds a required parameter: calls with the old schema would fail.
+        let ledger = ToolLedgerService::new();
+        declare(
+            &ledger,
+            set(vec![("a", tool("A")), ("b", tool("B"))]),
+            &["u1"],
+        )
+        .await;
+        declare(
+            &ledger,
+            set(vec![("a", tool("A")), ("b", tool("B")), ("c", tool("C"))]),
+            &["u1", "r1", "u2"],
+        )
+        .await;
+        let third = declare(
+            &ledger,
+            set(vec![
+                (
+                    "a",
+                    tool_with("A", json!({ "region": { "type": "string" } }), None),
+                ),
+                ("b", tool("B")),
+                ("c", tool("C, now with a region")),
+            ]),
+            &["u1", "r1", "u2", "r2", "u3"],
+        )
+        .await;
+        assert_eq!(names(&third), ["a", "b", "c"]);
+        assert_eq!(
+            third.tools["a"].input_schema.json_schema(),
+            &json!({ "type": "object", "properties": { "region": { "type": "string" } } })
+        );
+        assert_eq!(
+            third.tools["c"].description.as_deref(),
+            Some("C, now with a region")
+        );
+        assert_eq!(
+            options_of(&third.tools["c"]),
+            Some(json!({ "anthropic": { "deferLoading": true } }))
+        );
+        assert_eq!(third.tool_changes.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn replaces_a_definition_that_a_tool_search_stops_deferring() {
+        let ledger = ToolLedgerService::new();
+        let mut deferred = tool("B");
+        deferred.provider_options = Some(provider_options(
+            json!({ "anthropic": { "deferLoading": true } }),
+        ));
+        declare(
+            &ledger,
+            set(vec![("a", tool("A")), ("b", deferred)]),
+            &["u1"],
+        )
+        .await;
+        let second = declare(
+            &ledger,
+            set(vec![("a", tool("A")), ("b", tool("B"))]),
+            &["u1", "r1", "u2"],
+        )
+        .await;
+        assert_eq!(second.tools["b"].provider_options, None);
+    }
+
+    #[tokio::test]
+    async fn folds_the_announcements_of_compacted_rows_into_their_net_change_at_the_start() {
+        let ledger = ToolLedgerService::new();
+        declare(
+            &ledger,
+            set(vec![("a", tool("A")), ("b", tool("B")), ("c", tool("C"))]),
+            &["u1"],
+        )
+        .await;
+        declare(
+            &ledger,
+            set(vec![("a", tool("A")), ("c", tool("C"))]),
+            &["u1", "r1", "u2"],
+        )
+        .await;
+        declare(
+            &ledger,
+            set(vec![("a", tool("A")), ("b", tool("B"))]),
+            &["u1", "r1", "u2", "r2", "u3"],
+        )
+        .await;
+        declare(
+            &ledger,
+            set(vec![("a", tool("A"))]),
+            &["u1", "r1", "u2", "r2", "u3", "r3", "u4"],
+        )
+        .await;
+
+        // Compaction kept the rows from r3 on.
+        let after = declare(
+            &ledger,
+            set(vec![("a", tool("A"))]),
+            &["r3", "u4", "r4", "u5"],
+        )
+        .await;
+
+        assert_eq!(names(&after), ["a", "b", "c"]);
+        assert_eq!(
+            announced(&after),
+            json!([
+                // u2 removed b and u3 put it back and removed c: c's removal is what is left.
+                { "afterRowId": null, "changes": [{ "type": "tool_removal", "toolName": "c" }] },
+                { "afterRowId": "u4", "changes": [{ "type": "tool_removal", "toolName": "b" }] },
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn starts_a_new_list_after_a_restart_with_nothing_to_replay() {
+        let before = ToolLedgerService::new();
+        declare(
+            &before,
+            set(vec![("a", tool("A")), ("b", tool("B"))]),
+            &["u1"],
+        )
+        .await;
+        declare(&before, set(vec![("a", tool("A"))]), &["u1", "r1", "u2"]).await;
+
+        let restarted = ToolLedgerService::new();
+        let first = declare(
+            &restarted,
+            set(vec![("a", tool("A"))]),
+            &["u1", "r1", "u2", "r2", "u3"],
+        )
+        .await;
+        assert_eq!(names(&first), ["a"]);
+        assert!(first.tool_changes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn keeps_a_list_of_its_own_for_each_model_the_conversation_runs_on() {
+        let ledger = ToolLedgerService::new();
+        declare(
+            &ledger,
+            set(vec![("a", tool("A")), ("b", tool("B"))]),
+            &["u1"],
+        )
+        .await;
+        // A thread-bound cron task with a model of its own, then the chat model again.
+        let other = declare_on(
+            &ledger,
+            set(vec![("a", tool("A"))]),
+            &["u1", "r1"],
+            "thread-1",
+            "us.anthropic.claude-opus-4-8",
+        )
+        .await;
+        let back = declare(
+            &ledger,
+            set(vec![("a", tool("A")), ("b", tool("B"))]),
+            &["u1", "r1", "r2", "u3"],
+        )
+        .await;
+        assert_eq!(names(&other), ["a"]);
+        assert!(other.tool_changes.is_empty());
+        assert_eq!(names(&back), ["a", "b"]);
+        assert!(back.tool_changes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn shows_the_declared_list_without_recording_anything_every_tool_refusing() {
+        let ledger = ToolLedgerService::new();
+        let calls = Arc::new(AtomicUsize::new(0));
+        declare(
+            &ledger,
+            set(vec![
+                ("a", tool_with("A", json!({}), Some(Arc::clone(&calls)))),
+                ("b", tool("B")),
+            ]),
+            &["u1"],
+        )
+        .await;
+        declare(
+            &ledger,
+            set(vec![(
+                "a",
+                tool_with("A", json!({}), Some(Arc::clone(&calls))),
+            )]),
+            &["u1", "r1", "u2"],
+        )
+        .await;
+
+        let peeked = ledger
+            .peek("thread-1", MODEL, &ANTHROPIC_TOOL_CHANGES)
+            .expect("a declared list");
+
+        assert_eq!(names(&peeked), ["a", "b"]);
+        assert_eq!(
+            announced(&peeked),
+            json!([{ "afterRowId": "u2", "changes": [{ "type": "tool_removal", "toolName": "b" }] }])
+        );
+        assert!(run(&peeked.tools["a"]).await.is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(
+            ledger
+                .peek("thread-2", MODEL, &ANTHROPIC_TOOL_CHANGES)
+                .is_none()
+        );
+        assert!(
+            ledger
+                .peek("thread-1", "other", &ANTHROPIC_TOOL_CHANGES)
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn forgets_the_least_recently_used_conversation_past_its_bound() {
+        let ledger = ToolLedgerService::new();
+        for i in 0..=100 {
+            declare_on(
+                &ledger,
+                set(vec![("a", tool("A"))]),
+                &["u1"],
+                &format!("thread-{i}"),
+                MODEL,
+            )
+            .await;
+        }
+        assert!(
+            ledger
+                .peek("thread-0", MODEL, &ANTHROPIC_TOOL_CHANGES)
+                .is_none()
+        );
+        assert!(
+            ledger
+                .peek("thread-1", MODEL, &ANTHROPIC_TOOL_CHANGES)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn a_summary_request_declares_the_list_under_auto_and_refuses_every_call() {
+        let options = summary_tool_options(&set(vec![("a", tool("A"))]));
+        assert_eq!(options.tool_choice, ToolChoice::Auto);
+        assert!(options.allow_system_in_messages);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let err = runtime.block_on(run(&options.tools["a"])).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "The a tool is not available in this conversation now."
+        );
+    }
+}

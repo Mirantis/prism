@@ -318,7 +318,10 @@ async fn marks_a_pending_attempt_failure_when_the_version_did_not_change() {
     assert_eq!(row.outcome, UpdateOutcome::Failure);
     assert_eq!(row.error_code.as_deref(), Some("restart_version_mismatch"));
     assert_eq!(
-        host.0.lock().tracked[0].1.get("error_code").map(String::as_str),
+        host.0.lock().tracked[0]
+            .1
+            .get("error_code")
+            .map(String::as_str),
         Some("restart_version_mismatch")
     );
 }
@@ -452,9 +455,8 @@ async fn frees_the_flag_when_the_attempt_row_cannot_be_written() {
 #[serial_test::serial]
 async fn stays_silent_on_an_automatic_failure_before_updating() {
     let _db = crate::db::testing::test_db();
-    let host = FakeHost::new().with(|s| {
-        s.stage_error = Some(UpdateError::new(UpdateErrorCode::DownloadFailed, "boom"))
-    });
+    let host = FakeHost::new()
+        .with(|s| s.stage_error = Some(UpdateError::new(UpdateErrorCode::DownloadFailed, "boom")));
     let service = service(&host);
     let mut rx = service.events.subscribe();
     let error = service
@@ -504,9 +506,8 @@ async fn defers_an_automatic_activation_when_the_agent_turned_busy_during_the_do
 #[serial_test::serial]
 async fn reports_an_automatic_failure_that_happens_after_updating_went_out() {
     let _db = crate::db::testing::test_db();
-    let host = FakeHost::new().with(|s| {
-        s.swap_error = Some(UpdateError::new(UpdateErrorCode::SwapFailed, "disk full"))
-    });
+    let host = FakeHost::new()
+        .with(|s| s.swap_error = Some(UpdateError::new(UpdateErrorCode::SwapFailed, "disk full")));
     let service = service(&host);
     let mut rx = service.events.subscribe();
     let error = service
@@ -541,7 +542,10 @@ async fn fails_the_attempt_when_the_windows_installer_never_restarts_this_proces
     assert!(service.get_status().await.unwrap().applying);
 
     tokio::time::pause();
-    tokio::time::advance(Duration::from_millis(WINDOWS_HANDOFF_TIMEOUT_MS as u64 + 1_000)).await;
+    tokio::time::advance(Duration::from_millis(
+        WINDOWS_HANDOFF_TIMEOUT_MS as u64 + 1_000,
+    ))
+    .await;
     settle().await;
 
     let row = only_attempt().await;
@@ -589,8 +593,7 @@ fn serializes_events_as_the_clients_read_them() {
         json!({ "status": "available", "version": NEWER })
     );
     assert_eq!(
-        serde_json::to_value(event(UpdateEventStatus::Failed, NEWER, Some("swap_failed")))
-            .unwrap(),
+        serde_json::to_value(event(UpdateEventStatus::Failed, NEWER, Some("swap_failed"))).unwrap(),
         json!({ "status": "failed", "version": NEWER, "errorCode": "swap_failed" })
     );
 }

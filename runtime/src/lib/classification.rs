@@ -14,7 +14,8 @@ use crate::ai::LanguageModel;
 use crate::config::CONFIG;
 use crate::lib::llm_providers::create_provider::create_provider;
 use crate::lib::llm_providers::llm_provider::{
-    ClassificationSamplingParams, ProviderOptionsFragment, merge_provider_options, provider_options,
+    ClassificationSamplingParams, LlmProvider, ProviderOptionsFragment, merge_provider_options,
+    provider_options,
 };
 
 /// The sampling params a gate sends when the vendor declares none:
@@ -68,7 +69,11 @@ pub struct ClassificationRequest {
 ///
 /// Fails where the provider's dispatcher fails (LiteLLM without a key).
 pub fn get_gate_request() -> anyhow::Result<GateRequest> {
-    let provider = create_provider();
+    gate_request_of(&create_provider())
+}
+
+/// `get_gate_request` for one provider.
+fn gate_request_of(provider: &LlmProvider) -> anyhow::Result<GateRequest> {
     Ok(GateRequest {
         model: provider.model(&CONFIG.classification_model_id)?,
         provider_options: provider
@@ -88,7 +93,11 @@ pub fn get_gate_request() -> anyhow::Result<GateRequest> {
 /// output specifically (some platforms reject the SDK's native path — which ones is
 /// the provider's business, not the caller's).
 pub fn get_classification_request() -> anyhow::Result<ClassificationRequest> {
-    let provider = create_provider();
+    classification_request_of(&create_provider())
+}
+
+/// `get_classification_request` for one provider.
+fn classification_request_of(provider: &LlmProvider) -> anyhow::Result<ClassificationRequest> {
     Ok(ClassificationRequest {
         model: provider.model(&CONFIG.classification_model_id)?,
         provider_options: merge_provider_options([
@@ -99,4 +108,134 @@ pub fn get_classification_request() -> anyhow::Result<ClassificationRequest> {
             .classification_sampling_params
             .unwrap_or(DEFAULT_GATE_SAMPLING),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::{LanguageModelV4CallOptions, LanguageModelV4GenerateResult};
+    use crate::lib::llm_providers::llm_provider::{NO_CACHE_POINT, provider_options_json};
+    use async_trait::async_trait;
+    use serde_json::{Value, json};
+
+    struct Named(String);
+
+    #[async_trait]
+    impl LanguageModel for Named {
+        fn provider(&self) -> &str {
+            "stub"
+        }
+
+        fn model_id(&self) -> &str {
+            &self.0
+        }
+
+        async fn do_generate(
+            &self,
+            _options: LanguageModelV4CallOptions,
+        ) -> anyhow::Result<LanguageModelV4GenerateResult> {
+            anyhow::bail!("not called")
+        }
+    }
+
+    fn stub() -> LlmProvider {
+        LlmProvider::new(
+            Arc::new(|id: &str| Ok(Arc::new(Named(id.to_string())) as Arc<dyn LanguageModel>)),
+            Arc::new(|_id: &str, _ttl| NO_CACHE_POINT),
+        )
+    }
+
+    fn options(value: Value) -> Option<ProviderOptionsFragment> {
+        Some(provider_options(value))
+    }
+
+    #[test]
+    fn resolves_the_classification_model_through_the_provider() {
+        let request = gate_request_of(&stub()).unwrap();
+        assert_eq!(request.model.model_id(), CONFIG.classification_model_id);
+    }
+
+    #[test]
+    fn passes_the_providers_classification_options_through() {
+        let mut provider = stub();
+        provider.classification_provider_options =
+            options(json!({ "openai": { "reasoningEffort": "none" } }));
+        provider.structured_output_options =
+            options(json!({ "anthropic": { "structuredOutputMode": "jsonTool" } }));
+        let request = gate_request_of(&provider).unwrap();
+        // The gates are plain text calls: no structured-output options.
+        assert_eq!(
+            provider_options_json(&request.provider_options),
+            json!({ "openai": { "reasoningEffort": "none" } })
+        );
+    }
+
+    #[test]
+    fn yields_empty_options_and_the_defaults_when_the_provider_declares_none() {
+        let request = gate_request_of(&stub()).unwrap();
+        assert_eq!(provider_options_json(&request.provider_options), json!({}));
+        assert_eq!(request.min_output_tokens, 0);
+        assert_eq!(request.sampling_params, DEFAULT_GATE_SAMPLING);
+        assert_eq!(request.sampling_params.temperature, Some(0.0));
+    }
+
+    #[test]
+    fn carries_the_output_floor_and_the_declared_sampling() {
+        let mut provider = stub();
+        provider.classification_min_output_tokens = Some(16);
+        provider.classification_sampling_params = Some(ClassificationSamplingParams::default());
+        let request = gate_request_of(&provider).unwrap();
+        assert_eq!(request.min_output_tokens, 16);
+        assert_eq!(request.sampling_params.temperature, None);
+    }
+
+    #[test]
+    fn merges_classification_and_structured_output_options() {
+        let mut provider = stub();
+        provider.classification_provider_options =
+            options(json!({ "openai": { "reasoningEffort": "none" } }));
+        provider.structured_output_options =
+            options(json!({ "anthropic": { "structuredOutputMode": "jsonTool" } }));
+        let request = classification_request_of(&provider).unwrap();
+        assert_eq!(
+            provider_options_json(&request.provider_options),
+            json!({
+                "openai": { "reasoningEffort": "none" },
+                "anthropic": { "structuredOutputMode": "jsonTool" },
+            })
+        );
+    }
+
+    #[test]
+    fn merges_one_namespace_deep() {
+        let mut provider = stub();
+        provider.classification_provider_options = options(json!({ "acme": { "effort": "none" } }));
+        provider.structured_output_options = options(json!({ "acme": { "mode": "widget" } }));
+        let request = classification_request_of(&provider).unwrap();
+        assert_eq!(
+            provider_options_json(&request.provider_options),
+            json!({ "acme": { "effort": "none", "mode": "widget" } })
+        );
+    }
+
+    #[test]
+    fn gives_structured_output_the_same_sampling_contract() {
+        assert_eq!(
+            classification_request_of(&stub()).unwrap().sampling_params,
+            DEFAULT_GATE_SAMPLING
+        );
+        let mut provider = stub();
+        provider.classification_sampling_params = Some(ClassificationSamplingParams::default());
+        assert_eq!(
+            classification_request_of(&provider)
+                .unwrap()
+                .sampling_params
+                .temperature,
+            None
+        );
+        assert_eq!(
+            provider_options_json(&classification_request_of(&stub()).unwrap().provider_options),
+            json!({})
+        );
+    }
 }

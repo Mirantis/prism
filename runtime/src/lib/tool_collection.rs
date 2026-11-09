@@ -612,3 +612,230 @@ pub fn filter_tools_by_mode(tools: ToolSet, mode: &str) -> ToolSet {
     // why every enumerated mode above drops them.
     omit(tools, &membership_tool_names)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lib::llm_providers::llm_provider::{
+        ANTHROPIC_CACHE_POINT, provider_options, provider_options_json,
+    };
+    use serde_json::{Value, json};
+
+    fn named(names: &[&str]) -> ToolSet {
+        names
+            .iter()
+            .map(|name| {
+                (
+                    name.to_string(),
+                    Tool {
+                        description: Some(name.to_string()),
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn options_of(tools: &ToolSet, name: &str) -> Option<Value> {
+        tools[name]
+            .provider_options
+            .as_ref()
+            .map(provider_options_json)
+    }
+
+    fn cache_point() -> Value {
+        json!({ "anthropic": { "cacheControl": { "type": "ephemeral" } } })
+    }
+
+    #[test]
+    fn returns_no_tools_for_no_tools() {
+        let result =
+            with_tools_cache_control(ToolSet::new(), ANTHROPIC_CACHE_POINT, &HashSet::new());
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn marks_only_the_last_tool() {
+        let result = with_tools_cache_control(
+            named(&["alpha", "beta", "gamma"]),
+            ANTHROPIC_CACHE_POINT,
+            &HashSet::new(),
+        );
+        assert_eq!(options_of(&result, "alpha"), None);
+        assert_eq!(options_of(&result, "beta"), None);
+        assert_eq!(options_of(&result, "gamma"), Some(cache_point()));
+        assert_eq!(
+            result.keys().collect::<Vec<_>>(),
+            ["alpha", "beta", "gamma"]
+        );
+    }
+
+    #[test]
+    fn merges_the_breakpoint_into_the_tools_own_options() {
+        let mut tools = named(&["a"]);
+        tools["a"].provider_options = Some(provider_options(
+            json!({ "anthropic": { "eagerInputStreaming": true } }),
+        ));
+        let result = with_tools_cache_control(tools, ANTHROPIC_CACHE_POINT, &HashSet::new());
+        assert_eq!(
+            options_of(&result, "a"),
+            Some(
+                json!({ "anthropic": { "eagerInputStreaming": true, "cacheControl": { "type": "ephemeral" } } })
+            )
+        );
+    }
+
+    #[test]
+    fn puts_the_breakpoint_on_the_last_tool_that_is_not_deferred() {
+        // The API refuses a breakpoint on a tool that loads only when a change names it.
+        let deferred: HashSet<String> = ["c".to_string()].into_iter().collect();
+        let result =
+            with_tools_cache_control(named(&["a", "b", "c"]), ANTHROPIC_CACHE_POINT, &deferred);
+        assert_eq!(options_of(&result, "b"), Some(cache_point()));
+        assert_eq!(options_of(&result, "c"), None);
+    }
+
+    #[test]
+    fn puts_the_breakpoint_on_the_last_tool_a_load_has_not_deferred() {
+        let deferred = json!({ "anthropic": { "deferLoading": true } });
+        let mut tools = named(&["a", "b"]);
+        tools["b"].provider_options = Some(provider_options(deferred.clone()));
+        let result = with_tools_cache_control(tools, ANTHROPIC_CACHE_POINT, &HashSet::new());
+        assert_eq!(options_of(&result, "a"), Some(cache_point()));
+        assert_eq!(options_of(&result, "b"), Some(deferred));
+    }
+
+    const ALL: [&str; 16] = [
+        "memory_search",
+        "memory_write",
+        "memory_delete",
+        "schedule_task",
+        "list_scheduled_tasks",
+        "update_scheduled_task",
+        "delete_scheduled_task",
+        "update_soul",
+        "shell_exec",
+        "share_file",
+        "create_goal",
+        "get_goal",
+        "hydrate_attachment",
+        "view_attachment",
+        "send_message",
+        "list_message_targets",
+    ];
+
+    fn kept(mode: &str, extra: &[&str]) -> Vec<String> {
+        let mut names: Vec<&str> = ALL.to_vec();
+        names.extend_from_slice(extra);
+        filter_tools_by_mode(named(&names), mode)
+            .into_keys()
+            .collect()
+    }
+
+    #[test]
+    fn chat_keeps_every_tool_but_the_meeting_chat_read() {
+        let tools = kept("chat", &["join_meeting", MEETING_READ_TOOL_NAME]);
+        assert!(tools.iter().any(|n| n == "share_file"));
+        assert!(tools.iter().any(|n| n == "join_meeting"));
+        assert!(!tools.iter().any(|n| n == MEETING_READ_TOOL_NAME));
+        assert_eq!(tools.len(), ALL.len() + 1);
+    }
+
+    #[test]
+    fn a_subagent_has_no_user_channel() {
+        let tools = kept("subagent", &["join_meeting"]);
+        for gone in [
+            "share_file",
+            "create_goal",
+            "get_goal",
+            "hydrate_attachment",
+            "view_attachment",
+            "send_message",
+            "list_message_targets",
+            "join_meeting",
+        ] {
+            assert!(!tools.iter().any(|n| n == gone), "{gone} stays");
+        }
+        assert!(tools.iter().any(|n| n == "shell_exec"));
+    }
+
+    #[test]
+    fn an_autonomous_run_keeps_the_schedule_and_drops_the_goal_tools() {
+        for mode in ["heartbeat", "cron", "webhook"] {
+            let tools = kept(mode, &["leave_meeting"]);
+            for stays in [
+                "schedule_task",
+                "list_scheduled_tasks",
+                "update_scheduled_task",
+                "delete_scheduled_task",
+                "memory_search",
+                "update_soul",
+                "shell_exec",
+            ] {
+                assert!(tools.iter().any(|n| n == stays), "{mode} loses {stays}");
+            }
+            for gone in ["create_goal", "get_goal", "leave_meeting"] {
+                assert!(!tools.iter().any(|n| n == gone), "{mode} keeps {gone}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_goal_turn_keeps_get_goal_and_drops_the_schedule() {
+        let tools = kept("goal", &[]);
+        assert!(!tools.iter().any(|n| n == "create_goal"));
+        assert!(tools.iter().any(|n| n == "get_goal"));
+        assert!(tools.iter().any(|n| n == "shell_exec"));
+        for gone in [
+            "schedule_task",
+            "list_scheduled_tasks",
+            "update_scheduled_task",
+            "delete_scheduled_task",
+        ] {
+            assert!(!tools.iter().any(|n| n == gone));
+        }
+    }
+
+    #[test]
+    fn a_meeting_drops_share_file_and_the_message_tools_and_reads_the_chat() {
+        let tools = kept("meeting", &[MEETING_READ_TOOL_NAME, "join_meeting"]);
+        for gone in ["share_file", "send_message", "list_message_targets"] {
+            assert!(!tools.iter().any(|n| n == gone));
+        }
+        assert!(tools.iter().any(|n| n == MEETING_READ_TOOL_NAME));
+        assert!(tools.iter().any(|n| n == "join_meeting"));
+    }
+
+    #[test]
+    fn an_unknown_mode_keeps_the_shell_but_never_joins_a_call() {
+        let tools = kept("something-new", &["join_meeting", "leave_meeting"]);
+        assert!(tools.iter().any(|n| n == "shell_exec"));
+        assert!(!tools.iter().any(|n| n == "join_meeting"));
+        assert!(!tools.iter().any(|n| n == "leave_meeting"));
+    }
+
+    #[test]
+    fn locked_in_withholds_the_writers_and_keeps_the_search() {
+        let tools: Vec<String> = omit_locked_tools(named(&ALL)).into_keys().collect();
+        for gone in ["memory_write", "memory_delete", "update_soul"] {
+            assert!(!tools.iter().any(|n| n == gone));
+        }
+        assert!(tools.iter().any(|n| n == "memory_search"));
+    }
+
+    #[test]
+    fn traces_a_capped_name_back_to_its_original() {
+        let long = format!("{}__connector__tool", "0123456789abcdef".repeat(4));
+        let names = vec![
+            long.clone(),
+            "kubectl_get".to_string(),
+            "share.file".to_string(),
+        ];
+        let reserved: HashSet<String> = ["share_file".to_string()].into_iter().collect();
+        let origins = capped_origins(names.iter(), &reserved);
+        assert_eq!(origins[&to_model_tool_name(&long)], long);
+        assert_eq!(origins["kubectl_get"], "kubectl_get");
+        // A rename onto a reserved name is dropped, as cap_tool_names drops it.
+        assert!(!origins.contains_key("share_file"));
+    }
+}

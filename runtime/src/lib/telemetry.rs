@@ -67,6 +67,15 @@ static EXPORT_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
         .expect("the OTLP export runtime starts")
 });
 
+/// Runs `future` on the runtime the OTLP exports use.
+pub(crate) fn spawn_export<F>(future: F) -> tokio::task::JoinHandle<F::Output>
+where
+    F: std::future::Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    EXPORT_RUNTIME.spawn(future)
+}
+
 /// The OTLP exporters' HTTP client: each request runs on [`EXPORT_RUNTIME`]. No
 /// proxy, as Node's `http` module uses none.
 #[derive(Debug, Clone)]

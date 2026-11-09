@@ -218,14 +218,14 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial_test::serial(slack_config)]
+    #[serial_test::serial]
     async fn answers_none_when_no_bot_token_is_set() {
         assert_eq!(load_with(None, None).await.unwrap(), None);
         assert_eq!(load_with(Some(""), None).await.unwrap(), None);
     }
 
     #[tokio::test]
-    #[serial_test::serial(slack_config)]
+    #[serial_test::serial]
     async fn passes_a_platform_credential_sentinel_unchanged() {
         let api = fake_slack_api(answers(
             json!({ "ok": true, "team_id": "T999", "team": "Sentinel Team", "user_id": "UBOT", "bot_id": "B999" }),
@@ -247,7 +247,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial_test::serial(slack_config)]
+    #[serial_test::serial]
     async fn builds_the_record_from_auth_test_when_no_app_id_is_expected() {
         let api = fake_slack_api(answers(
             json!({ "ok": true, "team_id": "T123", "team": "Test Team", "user_id": "UBOT", "bot_id": "B123" }),
@@ -277,7 +277,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial_test::serial(slack_config)]
+    #[serial_test::serial]
     async fn validates_the_app_id_when_one_is_expected() {
         let api = fake_slack_api(answers(
             json!({ "ok": true, "team_id": "T123", "team": "Test Team", "user_id": "UBOT", "bot_id": "B123" }),
@@ -295,7 +295,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial_test::serial(slack_config)]
+    #[serial_test::serial]
     async fn fails_when_the_app_id_does_not_match() {
         let api = fake_slack_api(answers(
             json!({ "ok": true, "team_id": "T123", "team": "Test Team", "user_id": "UBOT", "bot_id": "B123" }),
@@ -314,7 +314,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial_test::serial(slack_config)]
+    #[serial_test::serial]
     async fn fails_when_auth_test_names_no_workspace() {
         let api = fake_slack_api(answers(
             json!({ "ok": true, "team_id": "", "bot_id": "B123" }),
@@ -331,7 +331,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial_test::serial(slack_config)]
+    #[serial_test::serial]
     async fn fails_when_auth_test_names_no_bot() {
         let api = fake_slack_api(answers(
             json!({ "ok": true, "team_id": "T123", "team": "Test" }),
@@ -348,7 +348,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial_test::serial(slack_config)]
+    #[serial_test::serial]
     async fn caches_the_result_after_the_first_load() {
         __reset_slack_config_for_tests();
         let loads = Arc::new(AtomicUsize::new(0));
@@ -369,7 +369,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial_test::serial(slack_config)]
+    #[serial_test::serial]
     async fn does_not_cache_a_failed_load() {
         __reset_slack_config_for_tests();
         let failed = get_or_load(|| async { anyhow::bail!("boom") }.boxed()).await;

@@ -122,19 +122,38 @@ mod tests {
     #[test]
     fn gpt_5_and_later_and_the_o_series_are_reasoning_models() {
         for id in ["gpt-5", "gpt-5.6-sol", "gpt-6-luna", "o3", "o4-mini"] {
-            assert!(get_openai_language_model_capabilities(id).is_reasoning_model, "{id}");
+            assert!(
+                get_openai_language_model_capabilities(id).is_reasoning_model,
+                "{id}"
+            );
         }
-        for id in ["gpt-4.1", "gpt-5-chat-latest", "openai/gpt-5.6-sol", "gpt-oss-120b"] {
-            assert!(!get_openai_language_model_capabilities(id).is_reasoning_model, "{id}");
+        for id in [
+            "gpt-4.1",
+            "gpt-5-chat-latest",
+            "openai/gpt-5.6-sol",
+            "gpt-oss-120b",
+        ] {
+            assert!(
+                !get_openai_language_model_capabilities(id).is_reasoning_model,
+                "{id}"
+            );
         }
     }
 
     #[test]
     fn gpt_5_1_and_later_take_sampling_params_with_reasoning_off() {
-        assert!(get_openai_language_model_capabilities("gpt-5.6-luna").supports_non_reasoning_parameters);
+        assert!(
+            get_openai_language_model_capabilities("gpt-5.6-luna")
+                .supports_non_reasoning_parameters
+        );
         assert!(!get_openai_language_model_capabilities("gpt-5").supports_non_reasoning_parameters);
-        assert!(!get_openai_language_model_capabilities("gpt-6-astra").supports_non_reasoning_parameters);
-        assert!(get_openai_language_model_capabilities("gpt-6-sol").supports_non_reasoning_parameters);
+        assert!(
+            !get_openai_language_model_capabilities("gpt-6-astra")
+                .supports_non_reasoning_parameters
+        );
+        assert!(
+            get_openai_language_model_capabilities("gpt-6-sol").supports_non_reasoning_parameters
+        );
     }
 
     #[test]

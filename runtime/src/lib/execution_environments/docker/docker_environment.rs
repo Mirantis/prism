@@ -197,3 +197,143 @@ pub fn deployment_id_for(data_dir: &str) -> String {
     let digest = Sha256::digest(data_dir.as_bytes());
     hex::encode(digest)[..12].to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    //! What the environment is pointed at before it starts anything: the image it
+    //! pairs with, the container and volumes it claims, and the paths it hands the
+    //! rest of the runtime.
+
+    use super::*;
+    use crate::lib::execution_environments::docker::volumes::{VolumePurpose, volume_name};
+
+    fn data_dir(name: &str) -> String {
+        format!(
+            "{}/{name}",
+            std::env::temp_dir().to_string_lossy().trim_end_matches('/')
+        )
+    }
+
+    /// Points the data dir somewhere for one case, and puts it back after.
+    struct DataDir(Option<String>);
+
+    impl DataDir {
+        fn set(path: &str) -> DataDir {
+            let previous = std::env::var("PRISM_DATA_DIR").ok();
+            // SAFETY: serialized with every case that writes the environment.
+            unsafe { std::env::set_var("PRISM_DATA_DIR", path) };
+            DataDir(previous)
+        }
+    }
+
+    impl Drop for DataDir {
+        fn drop(&mut self) {
+            // SAFETY: as above.
+            unsafe {
+                match &self.0 {
+                    Some(value) => std::env::set_var("PRISM_DATA_DIR", value),
+                    None => std::env::remove_var("PRISM_DATA_DIR"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pairs_the_image_with_the_runtime_build_that_asks_for_it() {
+        assert_eq!(
+            exec_image("v2026.9.21120000"),
+            format!("{EXEC_IMAGE_REPO}:v2026.9.21120000")
+        );
+        assert_eq!(
+            exec_image("canary-0f1e2d3"),
+            format!("{EXEC_IMAGE_REPO}:canary-0f1e2d3")
+        );
+    }
+
+    #[test]
+    fn takes_the_moving_tag_for_a_build_carrying_no_version() {
+        assert_eq!(exec_image(""), format!("{EXEC_IMAGE_REPO}:latest"));
+    }
+
+    #[test]
+    fn says_which_image_the_engine_may_hold_a_stale_copy_of() {
+        assert!(is_moving_image(&exec_image("")));
+        assert!(!is_moving_image(&exec_image("v2026.9.21120000")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn names_a_deployment_by_its_data_dir() {
+        let _dir = DataDir::set(&data_dir("prism-exec-env-a"));
+        let id = deployment_id();
+        assert_eq!(id.len(), 12);
+        assert!(
+            id.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
+        assert_eq!(deployment_id(), id);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn separates_two_runtimes_that_hold_separate_data() {
+        let mine = {
+            let _dir = DataDir::set(&data_dir("prism-exec-env-a"));
+            deployment_id()
+        };
+        let theirs = {
+            let _dir = DataDir::set(&data_dir("prism-exec-env-b"));
+            deployment_id()
+        };
+        assert_ne!(theirs, mine);
+        // Which is what keeps one runtime's workspace out of the other's.
+        assert_ne!(
+            volume_name(&mine, VolumePurpose::WorkspaceRoot),
+            volume_name(&theirs, VolumePurpose::WorkspaceRoot)
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn puts_the_agent_in_the_container_not_on_this_machine() {
+        let _dir = DataDir::set(&data_dir("prism-exec-env-a"));
+        let environment = create_docker_environment();
+        assert_eq!(environment.workspace_root(), CONTAINER_PATHS.workspace_root);
+        assert_eq!(
+            environment.paths(),
+            AgentPaths {
+                skills_dir: CONTAINER_PATHS.skills_dir.to_string(),
+                plugins_dir: CONTAINER_PATHS.plugins_dir.to_string(),
+                plugin_data_dir: CONTAINER_PATHS.plugin_data_dir.to_string(),
+                tool_output_dir: CONTAINER_PATHS.tool_output_dir.to_string(),
+                claude_home: CONTAINER_PATHS.claude_home.to_string(),
+                codex_home: CONTAINER_PATHS.codex_home.to_string(),
+            }
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn serves_the_container_tree_and_leaves_the_rest_to_the_local_environment() {
+        let dir = data_dir("prism-exec-env-a");
+        let _dir = DataDir::set(&dir);
+        let environment = create_docker_environment();
+        assert!(environment.serves_path(&format!("{}/my-skill", CONTAINER_PATHS.skills_dir)));
+        // The database, and a repository the terminal UI was started in.
+        assert!(!environment.serves_path(&format!("{dir}/agent.db")));
+        assert!(!environment.serves_path("/Users/me/dev/repo"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn needs_nothing_prepared_on_this_machine_for_its_workspace() {
+        let _dir = DataDir::set(&data_dir("prism-exec-env-a"));
+        assert_eq!(
+            create_docker_environment().prepare_workspace(),
+            PreparedWorkspace {
+                root: CONTAINER_PATHS.workspace_root.to_string(),
+                fell_back_from: None,
+            }
+        );
+    }
+}

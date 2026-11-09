@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::lib::coding_agents::bedrock_credentials::has_bedrock_credentials;
+use crate::lib::coding_agents::cli_probe::probe_cli;
 use crate::lib::execution_environments::execution_environment::{ExecutionEnvironment, ProcessEnv};
 use crate::lib::execution_environments::workspace::path_resolve;
 
@@ -82,7 +83,11 @@ pub fn resolve_codex_home_in(env: &ProcessEnv, data_dir: &str) -> String {
 /// Asked of the execution environment, because that is where the home is.
 /// Never fails: no answer means no saved login.
 pub async fn has_saved_codex_login(environment: &dyn ExecutionEnvironment) -> bool {
-    todo!()
+    environment
+        .files()
+        .stat(&format!("{}/auth.json", environment.paths().codex_home))
+        .await
+        .is_ok()
 }
 
 /// `CODEX_API_KEY`, else `OPENAI_API_KEY`.
@@ -132,7 +137,11 @@ pub async fn read_codex_login(
     codex_home: &str,
     signal: Option<CancellationToken>,
 ) -> anyhow::Result<SavedCodexLogin> {
-    todo!()
+    let mut env = subscription_environment(env);
+    env.insert("CODEX_HOME".to_string(), codex_home.to_string());
+    let args: Vec<String> = LOGIN_STATUS_ARGS.iter().map(|a| a.to_string()).collect();
+    let run = probe_cli(environment, "codex", &args, env, signal).await?;
+    codex_login_from_status(&format!("{}\n{}", run.stdout, run.stderr), run.exit_code)
 }
 
 pub const LOGIN_STATUS_ARGS: &[&str] = &[
@@ -187,3 +196,204 @@ pub const SUBSCRIPTION_CONFIG_ARGS: &[&str] = &[
     "-c",
     "cli_auth_credentials_store=\"file\"",
 ];
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::lib::coding_agents::testing::{
+        FakeChild, FakeEnvironment, FakeFiles, env_of, fake_paths,
+    };
+    use crate::lib::execution_environments::execution_environment::RunOptions;
+
+    fn environment_with_home(codex_home: &str) -> FakeEnvironment {
+        let mut paths = fake_paths("/workspace");
+        paths.codex_home = codex_home.to_string();
+        FakeEnvironment {
+            paths,
+            files: FakeFiles::local(),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn finds_a_saved_login_in_the_environment_the_cli_will_run_in() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let home = data_dir.path().join(".codex");
+        std::fs::create_dir(&home).unwrap();
+        std::fs::write(home.join("auth.json"), "{}").unwrap();
+        let home = home.to_string_lossy().into_owned();
+        assert_eq!(
+            resolve_codex_home(&ProcessEnv::new(), Some(&data_dir.path().to_string_lossy())),
+            home
+        );
+
+        // Read through the environment, not this process's filesystem: under a
+        // container the home is the container's.
+        assert!(has_saved_codex_login(&environment_with_home(&home)).await);
+        assert_eq!(
+            codex_auth_method(&ProcessEnv::new(), true),
+            Some(CodexAuthMethod::Saved)
+        );
+    }
+
+    #[tokio::test]
+    async fn reports_no_saved_login_when_the_home_holds_none() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let other = data_dir.path().join("other").to_string_lossy().into_owned();
+        assert!(!has_saved_codex_login(&environment_with_home(&other)).await);
+        assert_eq!(codex_auth_method(&ProcessEnv::new(), false), None);
+    }
+
+    #[test]
+    fn resolves_a_relative_home_before_the_child_changes_working_directory() {
+        let resolved = resolve_codex_home(&env_of(&[("CODEX_HOME", "codex-home")]), Some("/data"));
+        assert_eq!(
+            resolved,
+            std::env::current_dir()
+                .unwrap()
+                .join("codex-home")
+                .to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn uses_bedrock_when_a_saved_login_and_api_key_are_unavailable() {
+        assert_eq!(
+            codex_auth_method(&env_of(&[("AWS_PROFILE", "test-profile")]), false),
+            Some(CodexAuthMethod::Bedrock)
+        );
+        assert_eq!(codex_auth_method(&ProcessEnv::new(), false), None);
+    }
+
+    type Runs = Arc<parking_lot::Mutex<Vec<(Vec<String>, RunOptions)>>>;
+
+    /// An environment whose `codex` prints `stderr` and exits with `code`, or
+    /// does not start.
+    fn status_environment(stderr: Option<&'static str>, code: i32) -> (FakeEnvironment, Runs) {
+        let runs: Runs = Arc::default();
+        let sink = runs.clone();
+        let environment = FakeEnvironment::with_run_program(move |_, args, options| {
+            sink.lock().push((args.to_vec(), options));
+            let child = FakeChild::new();
+            match stderr {
+                Some(stderr) => {
+                    child.write_stderr(&format!("{stderr}\n"));
+                    child.finish(Some(code));
+                }
+                None => child.fail("codex: not found"),
+            }
+            child.process()
+        });
+        (environment, runs)
+    }
+
+    async fn read(stderr: Option<&'static str>, code: i32) -> anyhow::Result<SavedCodexLogin> {
+        let (environment, _) = status_environment(stderr, code);
+        read_codex_login(&environment, &ProcessEnv::new(), "/home/.codex", None).await
+    }
+
+    #[tokio::test]
+    async fn asks_the_cli_about_the_home_from_the_file_store_without_the_variables_that_outrank_it()
+    {
+        let env = env_of(&[
+            ("PATH", "/bin"),
+            ("OPENAI_API_KEY", "test-key"),
+            ("CODEX_API_KEY", "test-key"),
+            ("CODEX_ACCESS_TOKEN", "test-token"),
+            ("AWS_PROFILE", "test-profile"),
+            ("CODEX_HOME", "/theirs"),
+        ]);
+        let (environment, runs) = status_environment(Some("Logged in using ChatGPT"), 0);
+        assert_eq!(
+            read_codex_login(&environment, &env, "/home/.codex", None)
+                .await
+                .unwrap(),
+            SavedCodexLogin::Chatgpt
+        );
+        let runs = runs.lock();
+        assert_eq!(
+            runs[0].0,
+            [
+                "login",
+                "status",
+                "-c",
+                "cli_auth_credentials_store=\"file\""
+            ]
+        );
+        assert_eq!(
+            runs[0].1.env,
+            env_of(&[
+                ("PATH", "/bin"),
+                ("AWS_PROFILE", "test-profile"),
+                ("CODEX_HOME", "/home/.codex")
+            ])
+        );
+    }
+
+    /// `codex login status` as Codex 0.163 printed it, on stderr, with the key
+    /// replaced. In a container, a warning line comes first.
+    #[tokio::test]
+    async fn reads_each_login_from_its_status() {
+        assert_eq!(
+            read(
+                Some("WARNING: proceeding, even though we could not create PATH aliases\nLogged in using ChatGPT"),
+                0
+            )
+            .await
+            .unwrap(),
+            SavedCodexLogin::Chatgpt
+        );
+        assert_eq!(
+            read(Some("Logged in using an API key - sk-test-***-real"), 0)
+                .await
+                .unwrap(),
+            SavedCodexLogin::Other
+        );
+        assert_eq!(
+            read(Some("Not logged in"), 1).await.unwrap(),
+            SavedCodexLogin::None
+        );
+    }
+
+    #[tokio::test]
+    async fn names_a_cli_that_does_not_start() {
+        let err = read(None, 0).await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("codex login status failed: codex: not found")
+        );
+    }
+
+    #[tokio::test]
+    async fn names_output_that_is_not_a_status_without_quoting_it() {
+        let err = read(Some("Signed in as user@example.com"), 0)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "codex login status exited with 0 and no status"
+        );
+    }
+
+    #[test]
+    fn keeps_every_variable_but_the_credentials_that_outrank_the_login_and_the_gateway() {
+        assert_eq!(
+            subscription_environment(&env_of(&[
+                ("PATH", "/bin"),
+                ("OPENAI_API_KEY", "test-key"),
+                ("CODEX_API_KEY", "test-key"),
+                ("CODEX_ACCESS_TOKEN", "test-token"),
+                ("OPENAI_BASE_URL", "https://gateway.example.test/v1"),
+                ("AWS_BEARER_TOKEN_BEDROCK", "test-token"),
+                ("OPENAI_MODEL_ID", "gpt-5.6-sol"),
+            ])),
+            env_of(&[
+                ("PATH", "/bin"),
+                ("AWS_BEARER_TOKEN_BEDROCK", "test-token"),
+                ("OPENAI_MODEL_ID", "gpt-5.6-sol"),
+            ])
+        );
+    }
+}

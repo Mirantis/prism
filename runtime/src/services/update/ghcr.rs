@@ -237,7 +237,10 @@ mod tests {
     #[test]
     fn fails_on_non_release_input() {
         let err = compare_release_versions("dev", "v2026.8.24083158").unwrap_err();
-        assert_eq!(err.to_string(), "not release versions: dev, v2026.8.24083158");
+        assert_eq!(
+            err.to_string(),
+            "not release versions: dev, v2026.8.24083158"
+        );
     }
 
     #[test]
@@ -285,15 +288,10 @@ mod tests {
         let Some((status, body, link)) = next else {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         };
-        let mut response = (
-            StatusCode::from_u16(status).unwrap(),
-            axum::Json(body),
-        )
-            .into_response();
+        let mut response =
+            (StatusCode::from_u16(status).unwrap(), axum::Json(body)).into_response();
         if let Some(link) = link {
-            response
-                .headers_mut()
-                .insert("link", link.parse().unwrap());
+            response.headers_mut().insert("link", link.parse().unwrap());
         }
         response
     }
@@ -337,7 +335,10 @@ mod tests {
         assert_eq!(requests.len(), 3);
         assert!(requests[0].starts_with("/token"));
         assert!(requests[0].contains("repository:lensapp/prism-agent:pull"));
-        assert_eq!(requests[2], "/v2/lensapp/prism-agent/tags/list?n=100&last=x");
+        assert_eq!(
+            requests[2],
+            "/v2/lensapp/prism-agent/tags/list?n=100&last=x"
+        );
     }
 
     #[tokio::test]

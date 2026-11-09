@@ -463,3 +463,294 @@ impl AudioPlayback {
         }
     }
 }
+
+/// Playback is paced against a clock: it stays a fixed, small distance ahead of real time.
+/// The two properties these tests pin down are the ones that broke in production — audio
+/// must not be committed far ahead (or interruption is sluggish), and a new response item
+/// must not discard the previous one (or the bot cuts itself off mid-word when a tool
+/// result arrives).
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+    use crate::services::meeting::resampler::{MEETING_SAMPLE_RATE, REALTIME_SAMPLE_RATE};
+
+    /// `ms` of silence at `rate`.
+    fn audio_at(ms: f64, rate: u32) -> Bytes {
+        Bytes::from(vec![0u8; pcm16_bytes_for_ms(ms, rate) as usize])
+    }
+
+    /// `ms` of silence at the meeting's rate.
+    fn audio(ms: f64) -> Bytes {
+        audio_at(ms, MEETING_SAMPLE_RATE)
+    }
+
+    #[derive(Default)]
+    struct RecordingSink {
+        writes: Mutex<Vec<Bytes>>,
+        clears: AtomicUsize,
+        fail_writes: bool,
+        fail_clears: bool,
+    }
+
+    impl PlaybackSink for RecordingSink {
+        fn write(&self, chunk: Bytes) -> anyhow::Result<()> {
+            if self.fail_writes {
+                anyhow::bail!("pacat died");
+            }
+            self.writes.lock().push(chunk);
+            Ok(())
+        }
+
+        fn clear(&self) -> anyhow::Result<()> {
+            self.clears.fetch_add(1, Ordering::SeqCst);
+            if self.fail_clears {
+                anyhow::bail!("the socket went away");
+            }
+            Ok(())
+        }
+    }
+
+    impl RecordingSink {
+        fn bytes(&self) -> usize {
+            self.writes.lock().iter().map(Bytes::len).sum()
+        }
+
+        fn total_ms(&self) -> f64 {
+            (self.bytes() as f64 / 2.0 / MEETING_SAMPLE_RATE as f64) * 1000.0
+        }
+    }
+
+    fn playback() -> (Arc<RecordingSink>, AudioPlayback) {
+        let sink = Arc::new(RecordingSink::default());
+        let playback = AudioPlayback::new(sink.clone(), MEETING_SAMPLE_RATE);
+        (sink, playback)
+    }
+
+    /// Move the paused clock on a tick at a time, letting the playback timer run.
+    async fn advance(ms: u64) {
+        for _ in 0..ms / 20 {
+            tokio::time::advance(Duration::from_millis(20)).await;
+            tokio::task::yield_now().await;
+            tokio::task::yield_now().await;
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn hands_over_only_a_small_lead_not_the_whole_utterance() {
+        let (s, playback) = playback();
+        // Five seconds arrive at once, as the Realtime API really delivers them.
+        playback.enqueue(audio(5000.0), "item-1");
+        assert!(s.total_ms() < 400.0);
+        assert!(s.total_ms() > 0.0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn keeps_feeding_the_device_as_time_passes() {
+        let (s, playback) = playback();
+        playback.enqueue(audio(5000.0), "item-1");
+        advance(1000).await;
+        let after_one_second = s.total_ms();
+        // Roughly a second of audio plus the lead.
+        assert!(after_one_second > 900.0, "{after_one_second}");
+        assert!(after_one_second < 1400.0, "{after_one_second}");
+        advance(1000).await;
+        assert!(s.total_ms() > after_one_second + 800.0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn catches_up_after_a_late_tick_instead_of_starving_the_device() {
+        let (s, playback) = playback();
+        playback.enqueue(audio(5000.0), "item-1");
+        // One late tick, as when the process is busy.
+        tokio::time::advance(Duration::from_millis(600)).await;
+        tokio::task::yield_now().await;
+        tokio::task::yield_now().await;
+        assert!(s.total_ms() > 600.0, "{}", s.total_ms());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn does_not_discard_the_previous_item_when_a_new_one_arrives() {
+        let (s, playback) = playback();
+        playback.enqueue(audio(500.0), "item-1");
+        playback.enqueue(audio(500.0), "item-2");
+        advance(2000).await;
+        assert!((s.total_ms() - 1000.0).abs() < 0.5, "{}", s.total_ms());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn reports_played_time_measured_from_the_clock() {
+        let (_s, playback) = playback();
+        playback.enqueue(audio(3000.0), "item-1");
+        advance(1000).await;
+        let played = playback.current_played_ms();
+        assert!(played > 900.0 && played < 1100.0, "{played}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn never_claims_more_was_heard_than_was_handed_over() {
+        let (_s, playback) = playback();
+        playback.enqueue(audio(200.0), "item-1");
+        advance(5000).await;
+        assert!(playback.current_played_ms() <= 200.0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn attributes_played_time_to_the_audible_item_after_a_switch() {
+        let (_s, playback) = playback();
+        playback.enqueue(audio(400.0), "item-1");
+        playback.enqueue(audio(2000.0), "item-2");
+        advance(1500).await;
+        let items = playback.flush();
+        assert_eq!(
+            items.iter().map(|i| i.item_id.as_str()).collect::<Vec<_>>(),
+            vec!["item-1", "item-2"]
+        );
+        assert!((items[0].played_ms - 400.0).abs() < 0.5);
+        assert!(items[1].played_ms > 900.0);
+        assert!((items[0].sent_ms - 400.0).abs() < 0.5);
+        assert!(items[1].sent_ms > items[1].played_ms);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn drops_unplayed_audio_on_flush_and_reports_what_was_heard() {
+        let (s, playback) = playback();
+        playback.enqueue(audio(5000.0), "item-1");
+        advance(1000).await;
+        let written = s.total_ms();
+
+        let items = playback.flush();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].item_id, "item-1");
+        assert!(items[0].played_ms > 900.0);
+
+        advance(3000).await;
+        // Nothing further reaches the meeting — barge-in has to actually stop it.
+        assert_eq!(s.total_ms(), written);
+        assert!(!playback.is_speaking());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stops_while_paused_and_continues_on_resume() {
+        let (s, playback) = playback();
+        playback.enqueue(audio(5000.0), "item-1");
+        advance(300).await;
+
+        playback.pause();
+        let at_pause = s.total_ms();
+        advance(1000).await;
+        assert_eq!(s.total_ms(), at_pause);
+
+        playback.resume();
+        advance(500).await;
+        assert!(s.total_ms() > at_pause);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn plays_an_utterance_shorter_than_the_pre_roll_rather_than_holding_it_forever() {
+        let (s, playback) = playback();
+        playback.enqueue(audio(40.0), "item-1");
+        assert_eq!(s.total_ms(), 0.0);
+        advance(400).await;
+        assert!((s.total_ms() - 40.0).abs() < 0.5, "{}", s.total_ms());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn counts_itself_as_speaking_while_audio_is_still_in_the_device() {
+        let (_s, playback) = playback();
+        playback.enqueue(audio(1000.0), "item-1");
+        assert!(playback.is_speaking());
+        advance(1200).await;
+        assert!(!playback.is_speaking());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn does_not_burst_after_a_gap_between_phrases() {
+        let (s, playback) = playback();
+        playback.enqueue(audio(300.0), "item-1");
+        advance(2000).await;
+        s.writes.lock().clear();
+        playback.enqueue(audio(5000.0), "item-2");
+        assert!(s.total_ms() < 400.0, "{}", s.total_ms());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn reports_never_played_items_so_their_transcript_is_truncated_too() {
+        let (_s, playback) = playback();
+        playback.enqueue(audio(3000.0), "item-1");
+        playback.enqueue(audio(500.0), "item-2");
+        let items = playback.flush();
+        assert_eq!(
+            items.iter().map(|i| i.item_id.as_str()).collect::<Vec<_>>(),
+            vec!["item-1", "item-2"]
+        );
+        assert_eq!(items[1].played_ms, 0.0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn paces_by_the_rate_it_was_told_not_by_a_fixed_one() {
+        let fast = Arc::new(RecordingSink::default());
+        let slow = Arc::new(RecordingSink::default());
+        let at48 = AudioPlayback::new(fast.clone(), MEETING_SAMPLE_RATE);
+        let at24 = AudioPlayback::new(slow.clone(), REALTIME_SAMPLE_RATE);
+        at48.enqueue(audio_at(1000.0, MEETING_SAMPLE_RATE), "item-1");
+        at24.enqueue(audio_at(1000.0, REALTIME_SAMPLE_RATE), "item-1");
+        advance(500).await;
+        let bytes_at48 = fast.bytes() as f64;
+        let bytes_at24 = slow.bytes() as f64;
+        assert!(bytes_at48 > 0.0);
+        assert!((bytes_at24 - bytes_at48 / 2.0).abs() < 50.0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn tells_a_sink_that_holds_a_queue_to_drop_it_when_the_floor_is_yielded() {
+        let (s, playback) = playback();
+        playback.enqueue(audio(1000.0), "item-1");
+        advance(200).await;
+        playback.flush();
+        assert_eq!(s.clears.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn clears_on_dispose_as_well() {
+        let (s, playback) = playback();
+        playback.enqueue(audio(200.0), "item-1");
+        playback.dispose();
+        assert_eq!(s.clears.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn finishes_yielding_the_floor_even_when_clearing_fails() {
+        let sink = Arc::new(RecordingSink {
+            fail_clears: true,
+            ..Default::default()
+        });
+        let playback = AudioPlayback::new(sink, MEETING_SAMPLE_RATE);
+        playback.enqueue(audio(1000.0), "item-1");
+        advance(200).await;
+        let items = playback.flush();
+        assert_eq!(items.len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn survives_a_sink_that_fails() {
+        let sink = Arc::new(RecordingSink {
+            fail_writes: true,
+            ..Default::default()
+        });
+        let playback = AudioPlayback::new(sink, MEETING_SAMPLE_RATE);
+        playback.enqueue(audio(500.0), "item-1");
+        advance(500).await;
+        assert!(!playback.is_speaking());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ignores_audio_enqueued_after_dispose() {
+        let (s, playback) = playback();
+        playback.dispose();
+        playback.enqueue(audio(500.0), "item-1");
+        advance(1000).await;
+        assert_eq!(s.total_ms(), 0.0);
+    }
+}

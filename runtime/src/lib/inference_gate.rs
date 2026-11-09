@@ -92,3 +92,63 @@ impl Default for InferenceGate {
 }
 
 pub static INFERENCE_GATE: LazyLock<InferenceGate> = LazyLock::new(InferenceGate::new);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn lets_a_call_through_while_nothing_holds_it() {
+        let gate = InferenceGate::new();
+        gate.wait(None).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn holds_a_call_until_the_window_closes() {
+        let gate = Arc::new(InferenceGate::new());
+        gate.hold();
+        let waiting = gate.clone();
+        let call = tokio::spawn(async move { waiting.wait(None).await });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(!call.is_finished());
+
+        gate.free();
+        call.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn holds_once_however_many_times_it_is_asked() {
+        let gate = Arc::new(InferenceGate::new());
+        gate.hold();
+        gate.hold();
+        let waiting = gate.clone();
+        let call = tokio::spawn(async move { waiting.wait(None).await });
+        gate.free();
+        call.await.unwrap().unwrap();
+        assert!(!gate.held());
+    }
+
+    #[tokio::test]
+    async fn lets_an_aborted_caller_through_while_nothing_holds_it() {
+        let gate = InferenceGate::new();
+        let signal = CancellationToken::new();
+        signal.cancel();
+        gate.wait(Some(&signal)).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn gives_up_on_a_caller_that_aborts_while_it_waits() {
+        let gate = Arc::new(InferenceGate::new());
+        gate.hold();
+        let signal = CancellationToken::new();
+        let waiting = gate.clone();
+        let token = signal.clone();
+        let call = tokio::spawn(async move { waiting.wait(Some(&token)).await });
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        signal.cancel();
+        let error = call.await.unwrap().unwrap_err();
+        assert_eq!(error.to_string(), ABORTED_MESSAGE);
+    }
+}

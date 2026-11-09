@@ -330,3 +330,282 @@ fn replay_for(
         ))
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use serde_json::json;
+
+    use super::*;
+    use crate::ai::{ToolExecutionOptions, execute_fn, json_schema};
+    use crate::lib::llm_providers::deferred_tools::{
+        ANTHROPIC_DEFERRED_TOOLS, OPENAI_DEFERRED_TOOLS,
+    };
+    use crate::lib::llm_providers::llm_provider::{provider_options, provider_options_json};
+
+    /// A tool whose definition is about `chars` characters long.
+    fn sized(chars: usize) -> Tool {
+        Tool {
+            description: Some("x".repeat(chars)),
+            input_schema: json_schema(json!({ "type": "object" })),
+            ..Default::default()
+        }
+    }
+
+    fn tools(entries: Vec<(&str, Tool)>) -> ToolSet {
+        entries
+            .into_iter()
+            .map(|(name, tool)| (name.to_string(), tool))
+            .collect()
+    }
+
+    /// Two MCP tools of 47,000 characters together: 23,500 tokens, over 2% of the
+    /// 1M window of `claude-opus-5-5`.
+    fn input() -> PlanToolSearchInput {
+        PlanToolSearchInput {
+            tools: tools(vec![
+                ("shell_exec", sized(100)),
+                ("nexus__github__create_issue", sized(23_500)),
+                ("nexus__gmail__send_email", sized(23_500)),
+            ]),
+            deferrable: vec![
+                "nexus__github__create_issue".into(),
+                "nexus__gmail__send_email".into(),
+            ],
+            protocol: Some(&ANTHROPIC_DEFERRED_TOOLS),
+            model_id: "claude-opus-5-5".into(),
+            telemetry: ToolSearchTelemetry {
+                user_id: "u".into(),
+                agent_id: "a".into(),
+                mode: "chat".into(),
+            },
+        }
+    }
+
+    fn options_of(tool: &Tool) -> Option<Value> {
+        tool.provider_options.as_ref().map(provider_options_json)
+    }
+
+    #[test]
+    fn estimates_two_characters_per_token() {
+        let definitions = [DeferredToolDefinition {
+            name: "ab".into(),
+            description: "cde".into(),
+            parameters: json!({ "type": "object" }).as_object().unwrap().clone(),
+        }];
+        // 2 + 3 + 17 characters.
+        assert_eq!(estimate_definition_tokens(&definitions), 11);
+    }
+
+    #[tokio::test]
+    async fn defers_the_deferrable_tools_past_the_threshold_and_adds_load_tools_and_the_catalog() {
+        let plan = plan_tool_search(input()).await;
+
+        assert!(plan.active);
+        assert_eq!(
+            plan.deferred,
+            ["nexus__github__create_issue", "nexus__gmail__send_email"]
+        );
+        assert_eq!(
+            options_of(&plan.tools["nexus__github__create_issue"]),
+            Some(json!({ "anthropic": { "deferLoading": true } }))
+        );
+        assert_eq!(options_of(&plan.tools["shell_exec"]), None);
+        assert!(plan.tools.contains_key(LOAD_TOOLS_NAME));
+        assert_eq!(plan.tools.keys().last().unwrap(), LOAD_TOOLS_NAME);
+        assert!(
+            plan.catalog
+                .as_deref()
+                .unwrap()
+                .contains("- nexus__gmail__send_email")
+        );
+    }
+
+    #[tokio::test]
+    async fn sends_every_tool_as_it_is_under_the_threshold() {
+        let mut request = input();
+        request.tools = tools(vec![
+            ("shell_exec", sized(100)),
+            ("nexus__github__create_issue", sized(5_000)),
+            ("nexus__gmail__send_email", sized(5_000)),
+        ]);
+        let names: Vec<String> = request.tools.keys().cloned().collect();
+        let plan = plan_tool_search(request).await;
+        assert!(!plan.active);
+        assert!(plan.deferred.is_empty());
+        assert!(!plan.summary_declares_tools);
+        assert_eq!(plan.tools.keys().cloned().collect::<Vec<_>>(), names);
+        let prompt = (plan.prompt_for)(ToolSet::new(), HashSet::new()).await;
+        assert!(prompt.catalog.is_none() && prompt.replay_tool_call.is_none());
+    }
+
+    #[tokio::test]
+    async fn keeps_the_execute_a_deferred_tool_arrives_with_so_the_risk_gate_still_runs_on_its_calls()
+     {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&calls);
+        let mut request = input();
+        request
+            .tools
+            .get_mut("nexus__github__create_issue")
+            .unwrap()
+            .execute = Some(execute_fn(move |_: Value, _: ToolExecutionOptions| {
+            let seen = Arc::clone(&seen);
+            async move {
+                seen.fetch_add(1, Ordering::SeqCst);
+                Ok(json!("blocked by the risk gate"))
+            }
+        }));
+
+        let plan = plan_tool_search(request).await;
+        let result = (plan.tools["nexus__github__create_issue"]
+            .execute
+            .as_ref()
+            .unwrap())(json!({}), ToolExecutionOptions::default())
+        .await
+        .unwrap();
+
+        assert_eq!(result, json!("blocked by the risk gate"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn sends_every_tool_as_it_is_on_a_model_without_a_protocol() {
+        let mut request = input();
+        request.protocol = None;
+        assert!(!plan_tool_search(request).await.active);
+    }
+
+    #[tokio::test]
+    async fn defers_on_a_model_whose_window_is_unknown() {
+        let mut request = input();
+        request.model_id = "unknown-model".into();
+        request.tools = tools(vec![("nexus__github__create_issue", sized(10))]);
+        request.deferrable = vec!["nexus__github__create_issue".into()];
+        assert!(plan_tool_search(request).await.active);
+    }
+
+    #[tokio::test]
+    async fn loads_a_tool_by_a_query() {
+        let plan = plan_tool_search(input()).await;
+        let load = (plan.tools[LOAD_TOOLS_NAME].execute.as_ref().unwrap())(
+            json!({ "query": "send an email" }),
+            ToolExecutionOptions::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(load["loaded"], json!(["nexus__gmail__send_email"]));
+    }
+
+    #[tokio::test]
+    async fn a_summary_that_history_loads_tools_into_refuses_calls_under_auto_on_anthropic_only() {
+        let mut anthropic = input();
+        anthropic.model_id = "gpt-5.6-sol".into();
+        assert!(plan_tool_search(anthropic).await.summary_declares_tools);
+        let mut openai = input();
+        openai.protocol = Some(&OPENAI_DEFERRED_TOOLS);
+        openai.model_id = "gpt-5.6-sol".into();
+        assert!(!plan_tool_search(openai).await.summary_declares_tools);
+    }
+
+    #[tokio::test]
+    async fn prompt_for_builds_the_catalog_and_the_replay_from_the_declared_list_leaving_out_its_late_joiners()
+     {
+        let plan = plan_tool_search(input()).await;
+        // The ledger keeps every tool the plan sent and appends a deferred tool that joined later.
+        let mut declared = plan.tools.clone();
+        let mut late = sized(10);
+        late.provider_options = Some(provider_options(
+            json!({ "anthropic": { "deferLoading": true } }),
+        ));
+        declared.insert("nexus__jira__create_ticket".into(), late);
+
+        let prompt = (plan.prompt_for)(
+            declared,
+            HashSet::from(["nexus__jira__create_ticket".to_string()]),
+        )
+        .await;
+        let output = json!({ "loaded": ["nexus__github__create_issue"], "unmatched": [], "suggestions": [] })
+            .to_string();
+
+        assert_eq!(prompt.catalog, plan.catalog);
+        assert!(
+            !prompt
+                .catalog
+                .as_deref()
+                .unwrap()
+                .contains(&format!("- {LOAD_TOOLS_NAME}"))
+        );
+        let replayed = (prompt.replay_tool_call.unwrap())(&ReplayedToolCall {
+            id: "1".into(),
+            tool: LOAD_TOOLS_NAME.into(),
+            input: json!({}),
+            output,
+        })
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(&replayed.output).unwrap(),
+            json!({
+                "type": "content",
+                "value": [{ "type": "custom", "providerOptions": { "anthropic": { "type": "tool-reference", "toolName": "nexus__github__create_issue" } } }],
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn replays_a_stored_load_keeping_only_tools_this_request_declares() {
+        let plan = plan_tool_search(input()).await;
+        let output = json!({
+            "loaded": ["nexus__gmail__send_email", "nexus__gone__tool"],
+            "unmatched": [],
+            "suggestions": [],
+        })
+        .to_string();
+        let replay = plan.replay_tool_call.unwrap();
+        let replayed = replay(&ReplayedToolCall {
+            id: "toolu_1".into(),
+            tool: LOAD_TOOLS_NAME.into(),
+            input: json!({}),
+            output,
+        })
+        .unwrap();
+        assert_eq!(replayed.id, "toolu_1");
+        assert_eq!(replayed.input, json!({}));
+        assert_eq!(
+            serde_json::to_value(&replayed.output).unwrap(),
+            json!({
+                "type": "content",
+                "value": [{ "type": "custom", "providerOptions": { "anthropic": { "type": "tool-reference", "toolName": "nexus__gmail__send_email" } } }],
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn leaves_every_other_call_and_a_load_it_cannot_read_to_the_text_replay() {
+        let plan = plan_tool_search(input()).await;
+        let replay = plan.replay_tool_call.unwrap();
+        let call = |tool: &str, output: &str| ReplayedToolCall {
+            id: "1".into(),
+            tool: tool.into(),
+            input: json!({}),
+            output: output.into(),
+        };
+        assert!(replay(&call("shell_exec", "{\"loaded\":[]}")).is_none());
+        assert!(replay(&call(LOAD_TOOLS_NAME, "Error")).is_none());
+    }
+
+    #[test]
+    fn reads_a_stored_load_keeping_only_strings() {
+        assert_eq!(
+            parse_stored_load("{\"loaded\":[\"a\",3],\"suggestions\":\"x\"}"),
+            Some(ToolLoad {
+                loaded: vec!["a".into()],
+                unmatched: Vec::new(),
+                suggestions: Vec::new(),
+            })
+        );
+        assert_eq!(parse_stored_load("{\"loaded\":\"a\"}"), None);
+        assert_eq!(parse_stored_load("null"), None);
+    }
+}

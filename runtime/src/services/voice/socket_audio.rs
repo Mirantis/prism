@@ -176,3 +176,140 @@ impl SocketAudio {
         Ok(())
     }
 }
+
+/// The transport is deliberately thin, so these tests are about the two things it could
+/// get wrong and nothing else: passing audio through untouched in both directions, and
+/// going quiet once the session is over.
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicUsize;
+
+    use parking_lot::Mutex;
+
+    use super::*;
+
+    #[derive(Default)]
+    struct Recorder {
+        sent: Mutex<Vec<Bytes>>,
+        cleared: AtomicUsize,
+        received: Mutex<Vec<Bytes>>,
+    }
+
+    impl SocketAudioChannel for Recorder {
+        fn send_audio(&self, pcm: Bytes) {
+            self.sent.lock().push(pcm);
+        }
+        fn send_clear(&self) {
+            self.cleared.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    impl SocketAudioEvents for Recorder {
+        fn on_audio(&self, pcm: Bytes) {
+            self.received.lock().push(pcm);
+        }
+    }
+
+    fn build() -> (SocketAudio, Arc<Recorder>) {
+        let recorder = Arc::new(Recorder::default());
+        let audio = SocketAudio::new(recorder.clone(), recorder.clone(), None);
+        (audio, recorder)
+    }
+
+    #[test]
+    fn declares_the_rate_the_model_speaks() {
+        assert_eq!(VOICE_AUDIO_FORMAT.sample_rate, REALTIME_SAMPLE_RATE);
+        assert_eq!(VOICE_AUDIO_FORMAT.encoding, "pcm16");
+        assert_eq!(VOICE_AUDIO_FORMAT.channels, 1);
+        assert_eq!(
+            serde_json::to_value(VOICE_AUDIO_FORMAT).unwrap(),
+            json!({ "encoding": "pcm16", "sampleRate": 24000, "channels": 1 })
+        );
+    }
+
+    #[test]
+    fn passes_client_audio_to_the_core_byte_for_byte() {
+        let (audio, r) = build();
+        let frame = Bytes::from_static(&[1, 2, 3, 4, 5, 6]);
+        audio.push(frame.clone());
+        assert_eq!(*r.received.lock(), vec![frame]);
+    }
+
+    #[test]
+    fn drops_a_frame_carrying_half_a_sample() {
+        let (audio, r) = build();
+        audio.push(Bytes::from_static(&[1, 2, 3]));
+        assert!(r.received.lock().is_empty());
+    }
+
+    #[test]
+    fn drops_a_frame_over_the_size_limit_and_keeps_taking_the_next_one() {
+        let (audio, r) = build();
+        audio.push(Bytes::from(vec![
+            0u8;
+            REALTIME_SAMPLE_RATE as usize * 2 + 2
+        ]));
+        assert!(r.received.lock().is_empty());
+        audio.push(Bytes::from(vec![0u8; 960]));
+        assert_eq!(r.received.lock().len(), 1);
+    }
+
+    #[test]
+    fn ignores_an_empty_frame() {
+        let (audio, r) = build();
+        audio.push(Bytes::new());
+        assert!(r.received.lock().is_empty());
+    }
+
+    #[test]
+    fn sends_one_frame_per_write_unchanged() {
+        let (audio, r) = build();
+        let first = Bytes::from(vec![1u8; 960]);
+        let second = Bytes::from(vec![2u8; 320]);
+        audio.sink.write(first.clone()).unwrap();
+        audio.sink.write(second.clone()).unwrap();
+        assert_eq!(*r.sent.lock(), vec![first, second]);
+    }
+
+    #[test]
+    fn re_frames_nothing() {
+        let (audio, r) = build();
+        audio.sink.write(Bytes::from(vec![9u8; 7_000])).unwrap();
+        let sent = r.sent.lock();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].len(), 7_000);
+    }
+
+    #[test]
+    fn says_nothing_for_an_empty_write() {
+        let (audio, r) = build();
+        audio.sink.write(Bytes::new()).unwrap();
+        assert!(r.sent.lock().is_empty());
+    }
+
+    #[test]
+    fn asks_the_client_to_drop_what_it_has_not_played() {
+        let (audio, r) = build();
+        audio.sink.clear().unwrap();
+        assert_eq!(r.cleared.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn passes_no_audio_in_either_direction_once_closed() {
+        let (audio, r) = build();
+        audio.close().await.unwrap();
+        audio.push(Bytes::from(vec![0u8; 320]));
+        audio.sink.write(Bytes::from(vec![0u8; 320])).unwrap();
+        audio.sink.clear().unwrap();
+        assert!(r.received.lock().is_empty());
+        assert!(r.sent.lock().is_empty());
+        assert_eq!(r.cleared.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn closes_more_than_once_without_complaint() {
+        let (audio, _r) = build();
+        audio.close().await.unwrap();
+        assert!(audio.close().await.is_ok());
+    }
+}

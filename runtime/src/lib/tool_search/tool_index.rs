@@ -211,3 +211,126 @@ impl ToolIndex {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn define(name: &str, description: &str) -> DeferredToolDefinition {
+        DeferredToolDefinition {
+            name: name.into(),
+            description: description.into(),
+            parameters: json!({ "type": "object", "properties": {} })
+                .as_object()
+                .unwrap()
+                .clone(),
+        }
+    }
+
+    fn index() -> ToolIndex {
+        ToolIndex::new(&[
+            define(
+                "nexus__github__create_issue",
+                "Create a new issue in a GitHub repository.",
+            ),
+            define(
+                "nexus__github__list_pull_requests",
+                "List pull requests in a repository.",
+            ),
+            define("nexus__gmail__send_email", "Send an email message."),
+            define(
+                "nexus__gmail__search_threads",
+                "Search mail threads by query.",
+            ),
+            define(
+                "notes__notion__create_page",
+                "Create a page in a Notion workspace.",
+            ),
+        ])
+    }
+
+    fn names(names: &[&str]) -> ToolLoadRequest {
+        ToolLoadRequest {
+            names: Some(names.iter().map(|n| n.to_string()).collect()),
+            query: None,
+        }
+    }
+
+    fn query(query: &str) -> ToolLoadRequest {
+        ToolLoadRequest {
+            names: None,
+            query: Some(query.into()),
+        }
+    }
+
+    #[test]
+    fn loads_an_exact_name_a_different_case_of_one_and_a_tool_by_its_own_name_on_its_server() {
+        assert_eq!(
+            index()
+                .load(&names(&[
+                    "nexus__github__create_issue",
+                    "NEXUS__GMAIL__SEND_EMAIL",
+                    "create_page"
+                ]))
+                .loaded,
+            [
+                "nexus__github__create_issue",
+                "nexus__gmail__send_email",
+                "notes__notion__create_page"
+            ]
+        );
+    }
+
+    #[test]
+    fn reports_an_unknown_name_with_the_nearest_tools() {
+        let result = index().load(&names(&["send_mail"]));
+        assert!(result.loaded.is_empty());
+        assert_eq!(result.unmatched, ["send_mail"]);
+        assert_eq!(result.suggestions[0], "nexus__gmail__send_email");
+    }
+
+    #[test]
+    fn loads_the_best_matches_of_a_query_best_first() {
+        assert_eq!(
+            index().load(&query("open an issue on github")).loaded[0],
+            "nexus__github__create_issue"
+        );
+        assert_eq!(
+            index().load(&query("email")).loaded,
+            ["nexus__gmail__send_email"]
+        );
+    }
+
+    #[test]
+    fn caps_what_one_call_loads() {
+        let many = ToolIndex::new(
+            &(0..40)
+                .map(|i| define(&format!("s__repo_tool_{i}"), "Read a repository."))
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(
+            many.load(&query("repository")).loaded.len(),
+            QUERY_LOAD_COUNT
+        );
+        let found = many.search("repository", 40);
+        let request = ToolLoadRequest {
+            names: Some(found),
+            query: None,
+        };
+        assert_eq!(many.load(&request).loaded.len(), MAX_NAMED_LOADS);
+    }
+
+    #[test]
+    fn reports_a_query_that_matches_nothing() {
+        assert_eq!(
+            index().load(&query("kubernetes")),
+            ToolLoad {
+                loaded: Vec::new(),
+                unmatched: vec!["kubernetes".into()],
+                suggestions: Vec::new(),
+            }
+        );
+    }
+}

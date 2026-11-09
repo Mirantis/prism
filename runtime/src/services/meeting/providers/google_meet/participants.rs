@@ -31,9 +31,12 @@
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::services::meeting::browser_stack::PageHandle;
 use crate::services::meeting::meeting_provider_interface::{SpeakerDetails, SpeakerReading};
+use crate::utils::with_timeout::with_timeout;
+use crate::{log_debug, log_info};
 
 /// One row of the panel, as the page hands it back.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -160,8 +163,159 @@ const OVERLAP_MS: f64 = 400.0;
 /// Never fails. Attribution is a hint a call runs without, and a panel that refuses to open
 /// is not a reason to refuse a meeting.
 pub async fn open_participants(page: &PageHandle) {
-    todo!()
+    let outcome = with_timeout(
+        page.evaluate_function(
+            OPEN_PANEL_PROBE,
+            json!({
+                "list": LIST,
+                "settleMs": PANEL_OPEN_MS,
+                "giveUpAfter": FRUITLESS_OPENS_BEFORE_GIVING_UP,
+            }),
+        ),
+        (READ_TIMEOUT_MS + PANEL_OPEN_MS) as i64,
+    )
+    .await;
+
+    match outcome {
+        Ok(outcome) => match outcome.as_str() {
+            Some("opened") => {
+                log_info!("[Meeting] Opened the participants panel, so I can tell who is speaking");
+            }
+            Some("no-list") => {
+                log_debug!("[Meeting] Clicked the participants control but no list appeared");
+            }
+            Some("gave-up") => {
+                log_debug!(
+                    "[Meeting] Not clicking the participants control again — it opens no list"
+                );
+            }
+            _ => {}
+        },
+        Err(err) => {
+            log_debug!(
+                "[Meeting] Could not open the participants panel: Error: {}",
+                err
+            );
+        }
+    }
 }
+
+/// The page half of `open_participants`: `open`, `opened`, `no-list`, `no-control` or
+/// `gave-up`.
+const OPEN_PANEL_PROBE: &str = r#"async ({ list, settleMs, giveUpAfter }) => {
+  const w = globalThis;
+  const doc = w.document;
+  if (doc.querySelector(list)) return 'open';
+
+  const tries = (w.__prismPanel ??= { fruitless: 0 });
+  if (tries.fruitless >= giveUpAfter) return 'gave-up';
+
+  // The control has its name as *text* — "People" plus a count badge, so
+  // "People2" — and has no aria-label of its own. Matched on that text, with the
+  // jsname as a second try, because between an English word and a minified
+  // identifier neither is clearly the more durable of the two.
+  const byText = Array.from(doc.querySelectorAll('[role="button"]')).find((el) =>
+    /^people\s*\d*$/i.test(el.textContent?.trim() ?? ''),
+  );
+  const control = byText ?? doc.querySelector('[jsname="ocqpFe"]');
+  if (!control) return 'no-control';
+
+  control.click();
+  await new Promise((resolve) => setTimeout(resolve, settleMs));
+
+  // Checked rather than assumed, because the click is the cheap half: what has to be
+  // true afterwards is that the list is *there*.
+  if (doc.querySelector(list)) {
+    tries.fruitless = 0;
+    return 'opened';
+  }
+  tries.fruitless += 1;
+  return 'no-list';
+}"#;
+
+/// The page half of `read_room`: the rows, and the meter transitions the observer saw.
+const READ_ROOM_PROBE: &str = r#"({ list, row, meter, selfMark, maxNameChars, hitsKept }) => {
+  const w = globalThis;
+
+  const panel = w.document.querySelector(list);
+  if (!panel) return null;
+
+  const identify = (el) =>
+    el.getAttribute('data-participant-id') ??
+    el.getAttribute('data-cohort-id') ??
+    el.getAttribute('aria-label') ??
+    '';
+
+  // Re-installed whenever the list this was attached to is gone: an observer on a
+  // detached node keeps its callback and never fires again, so trusting a previous
+  // install would report a silent room for the rest of the call.
+  let state = w.__prismRoom;
+  if (!state || state.list !== panel || !state.list.isConnected) {
+    state?.observer.disconnect();
+    const hits = new Map();
+    const observer = new w.MutationObserver((records) => {
+      const at = Date.now();
+      for (let i = 0; i < records.length; i++) {
+        let node = records[i].target;
+        let sawMeter = false;
+        while (node && node !== panel) {
+          if (!sawMeter && node.matches(meter)) sawMeter = true;
+          if (node.matches(row)) break;
+          node = node.parentElement;
+        }
+        if (!sawMeter || !node || node === panel) continue;
+
+        const key = identify(node);
+        if (!key) continue;
+        const seen = hits.get(key) ?? [];
+        seen.unshift(at);
+        if (seen.length > hitsKept) seen.length = hitsKept;
+        hits.set(key, seen);
+      }
+    });
+    observer.observe(panel, { subtree: true, attributes: true, attributeFilter: ['class'] });
+    state = { hits, observer, list: panel };
+    w.__prismRoom = state;
+  }
+
+  const now = Date.now();
+  const participants = [];
+  let meteredWithId = 0;
+  let meteredWithoutId = 0;
+
+  for (const el of Array.from(panel.querySelectorAll(row))) {
+    const name = el.getAttribute('aria-label')?.trim() ?? '';
+    const id = identify(el);
+    if (!id || name.length === 0 || name.length > maxNameChars) continue;
+
+    const hasMeter = el.querySelector(meter) !== null;
+    if (hasMeter) {
+      if (el.getAttribute('data-participant-id')) meteredWithId += 1;
+      else meteredWithoutId += 1;
+    }
+
+    participants.push({
+      id,
+      name,
+      isSelf: (el.textContent ?? '').includes(selfMark),
+      // A row with no `data-participant-id` is a shared one. That attribute is a
+      // *device* path, and a merged row stands for no single device — in the live
+      // merged-audio call these probes were written against it carried
+      // `data-cohort-id` instead, while the people inside it kept their own rows
+      // and their own ids and lost only their meters.
+      isGroup: !el.getAttribute('data-participant-id'),
+      hasMeter,
+      meterHitsMsAgo: (state.hits.get(id) ?? []).map((at) => now - at),
+    });
+  }
+
+  // A metered row with no participant id is a cohort: several people Meet is
+  // mixing into one stream, whose own members' meters have gone quiet.
+  const activity =
+    meteredWithoutId > 0 ? 'merged' : meteredWithId > 0 ? 'per-person' : 'unavailable';
+
+  return { participants, activity };
+}"#;
 
 /// Read the panel: every row, and how recently each row's meter moved.
 ///
@@ -181,7 +335,33 @@ pub async fn open_participants(page: &PageHandle) {
 /// `None` when the panel is not open or the read failed
 /// (`[Meeting] Could not read the participants panel: {err}` at debug).
 pub async fn read_room(page: &PageHandle) -> Option<RoomReading> {
-    todo!()
+    let read = with_timeout(
+        page.evaluate_function(
+            READ_ROOM_PROBE,
+            json!({
+                "list": LIST,
+                "row": ROW,
+                "meter": METER,
+                "selfMark": SELF_MARK,
+                "maxNameChars": MAX_NAME_CHARS,
+                "hitsKept": METER_HITS_KEPT,
+            }),
+        ),
+        READ_TIMEOUT_MS as i64,
+    )
+    .await
+    .and_then(|value| Ok(serde_json::from_value::<Option<RoomReading>>(value)?));
+
+    match read {
+        Ok(reading) => reading,
+        Err(err) => {
+            log_debug!(
+                "[Meeting] Could not read the participants panel: Error: {}",
+                err
+            );
+            None
+        }
+    }
 }
 
 /// Which row the meters point at, or `None` when they cannot say.
@@ -314,4 +494,244 @@ pub fn names_from(reading: Option<&RoomReading>) -> Vec<String> {
             .or_insert_with(|| p.name.clone());
     }
     seen.into_values().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::meeting::browser_stack::testing::Live;
+
+    fn row(name: &str, hits: &[f64]) -> RoomParticipant {
+        RoomParticipant {
+            id: format!("d/{name}"),
+            name: name.to_string(),
+            is_self: false,
+            is_group: false,
+            has_meter: true,
+            meter_hits_ms_ago: hits.to_vec(),
+        }
+    }
+
+    fn reading(participants: Vec<RoomParticipant>, activity: RoomActivity) -> RoomReading {
+        RoomReading {
+            participants,
+            activity,
+        }
+    }
+
+    #[test]
+    fn names_the_row_whose_meter_is_moving() {
+        let verdict = judge_speaker(&reading(
+            vec![row("Iris", &[]), row("Mario", &[40.0, 300.0])],
+            RoomActivity::PerPerson,
+        ));
+        assert_eq!(
+            verdict,
+            Some(SpeakerReading {
+                id: "d/Mario".into(),
+                is_self: false,
+                who: SpeakerDetails::Person {
+                    name: "Mario".into()
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn treats_a_single_transition_as_a_state_change_not_speech() {
+        // Muting swaps the meter for an icon and changes its class exactly once.
+        let verdict = judge_speaker(&reading(
+            vec![row("Mario", &[40.0])],
+            RoomActivity::PerPerson,
+        ));
+        assert_eq!(verdict, None);
+    }
+
+    #[test]
+    fn declines_when_two_rows_are_talking_at_once() {
+        let verdict = judge_speaker(&reading(
+            vec![row("Iris", &[30.0, 200.0]), row("Mario", &[60.0, 250.0])],
+            RoomActivity::PerPerson,
+        ));
+        assert_eq!(verdict, None);
+    }
+
+    #[test]
+    fn names_the_fresher_of_two_rows_once_they_are_clearly_apart() {
+        let verdict = judge_speaker(&reading(
+            vec![row("Iris", &[30.0, 200.0]), row("Mario", &[700.0, 900.0])],
+            RoomActivity::PerPerson,
+        ));
+        assert_eq!(
+            verdict.map(|v| v.who),
+            Some(SpeakerDetails::Person {
+                name: "Iris".into()
+            })
+        );
+    }
+
+    #[test]
+    fn declines_a_meter_that_stopped_moving_a_while_ago() {
+        let verdict = judge_speaker(&reading(
+            vec![row("Mario", &[3_000.0, 3_200.0])],
+            RoomActivity::PerPerson,
+        ));
+        assert_eq!(verdict, None);
+    }
+
+    #[test]
+    fn declines_when_the_platform_offers_no_meters_at_all() {
+        let verdict = judge_speaker(&reading(
+            vec![row("Mario", &[40.0, 300.0])],
+            RoomActivity::Unavailable,
+        ));
+        assert_eq!(verdict, None);
+    }
+
+    #[test]
+    fn reports_the_agent_itself_rather_than_nobody() {
+        let mut me = row("Iris", &[40.0, 300.0]);
+        me.is_self = true;
+        let verdict = judge_speaker(&reading(vec![me], RoomActivity::PerPerson)).unwrap();
+        assert!(verdict.is_self);
+        assert_eq!(
+            verdict.who,
+            SpeakerDetails::Person {
+                name: "Iris".into()
+            }
+        );
+    }
+
+    #[test]
+    fn reports_a_merged_cohort_as_a_group_and_names_who_shares_the_microphone() {
+        let mut group = row("Merged audio", &[40.0, 300.0]);
+        group.is_group = true;
+        let mut jari = row("Jari", &[]);
+        jari.has_meter = false;
+        let mut mario = row("Mario Sarcher", &[]);
+        mario.has_meter = false;
+        let verdict = judge_speaker(&reading(
+            vec![group, jari, mario, row("Prismith", &[])],
+            RoomActivity::Merged,
+        ));
+        assert_eq!(
+            verdict.map(|v| v.who),
+            Some(SpeakerDetails::Group {
+                members: vec!["Jari".into(), "Mario Sarcher".into()]
+            })
+        );
+    }
+
+    #[test]
+    fn names_nobody_as_sharing_a_microphone_when_nothing_is_merged() {
+        let plain = reading(vec![row("Jari", &[40.0, 300.0])], RoomActivity::PerPerson);
+        assert!(shared_microphone_names(Some(&plain)).is_empty());
+        assert!(shared_microphone_names(None).is_empty());
+    }
+
+    #[test]
+    fn lists_a_person_once_however_many_rows_the_panel_gives_them() {
+        let roster = reading(
+            vec![
+                row("Maximilian Greis", &[]),
+                row("maximilian greis", &[]),
+                row("Jari", &[]),
+            ],
+            RoomActivity::PerPerson,
+        );
+        assert_eq!(
+            names_from(Some(&roster)),
+            vec!["Maximilian Greis".to_string(), "Jari".to_string()]
+        );
+    }
+
+    const PANEL: &str = r#"
+      <div role="list" aria-label="Participants">
+        <div role="listitem" aria-label="Iris" data-participant-id="spaces/_CtC/devices/244">
+          <span>Iris(You)</span><div jscontroller="ES310d" class="IisKdb gjg47c"></div>
+        </div>
+        <div role="listitem" aria-label="Mario Sarcher" data-participant-id="spaces/_CtC/devices/235">
+          <span>Mario Sarcher</span><div jscontroller="ES310d" class="IisKdb gjg47c"></div>
+        </div>
+      </div>"#;
+
+    const MERGED_PANEL: &str = r#"
+      <div role="list" aria-label="Participants">
+        <div role="listitem" aria-label="Iris" data-participant-id="spaces/_CtC/devices/244">
+          <span>Iris(You)</span><div jscontroller="ES310d" class="IisKdb gjg47c"></div>
+        </div>
+        <div role="listitem" aria-label="Merged audio">
+          <span>Merged audio</span><div jscontroller="ES310d" class="IisKdb gjg47c"></div>
+        </div>
+        <div role="listitem" aria-label="Mario Sarcher" data-participant-id="spaces/_CtC/devices/235">
+          <span>Mario Sarcher</span>
+        </div>
+      </div>"#;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn reads_the_panel_off_a_real_page() {
+        let Some(live) = Live::start().await else {
+            return;
+        };
+        let page = &live.page;
+
+        // With the panel shut the list is not in the page at all.
+        live.show("<div>call in progress</div>").await;
+        assert_eq!(read_room(page).await, None);
+
+        live.show(PANEL).await;
+        let room = read_room(page).await.unwrap();
+        assert_eq!(room.activity, RoomActivity::PerPerson);
+        assert_eq!(
+            room.participants[0],
+            RoomParticipant {
+                id: "spaces/_CtC/devices/244".into(),
+                name: "Iris".into(),
+                is_self: true,
+                is_group: false,
+                has_meter: true,
+                meter_hits_ms_ago: vec![],
+            }
+        );
+        assert_eq!(names_from(Some(&room)), vec!["Mario Sarcher".to_string()]);
+
+        // A meter churning is recorded on its own row only.
+        page.evaluate(
+            "(() => { const m = document.querySelector('[aria-label=\"Mario Sarcher\"] [jscontroller=\"ES310d\"]'); m.setAttribute('class', 'IisKdb Oaajhc'); m.setAttribute('class', 'IisKdb wEsLMd'); })()",
+        )
+        .await
+        .unwrap();
+        let room = read_room(page).await.unwrap();
+        assert_eq!(room.participants[1].meter_hits_ms_ago.len(), 2);
+        assert!(room.participants[0].meter_hits_ms_ago.is_empty());
+
+        live.show(MERGED_PANEL).await;
+        let room = read_room(page).await.unwrap();
+        assert_eq!(room.activity, RoomActivity::Merged);
+        assert!(room.participants[1].is_group);
+        assert_eq!(room.participants[1].id, "Merged audio");
+        assert_eq!(names_from(Some(&room)), vec!["Mario Sarcher".to_string()]);
+        live.stop().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn opens_the_panel_and_stops_clicking_a_control_that_opens_nothing() {
+        let Some(live) = Live::start().await else {
+            return;
+        };
+        let page = &live.page;
+        live.show(
+            r#"<div role="button" onclick="window.clicks = (window.clicks || 0) + 1"><span>People</span><div>2</div></div>"#,
+        )
+        .await;
+        for _ in 0..5 {
+            open_participants(page).await;
+        }
+        // Three fruitless clicks, then it gives up for the rest of the call.
+        assert_eq!(
+            page.evaluate("window.clicks").await.unwrap(),
+            serde_json::json!(3)
+        );
+        live.stop().await;
+    }
 }

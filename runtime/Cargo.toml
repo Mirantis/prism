@@ -88,8 +88,11 @@ humantime = "2"
 unicode-normalization = "0.1.26"
 htmd = "0.5.6"
 dom_smoothie = "0.19.0"
+dom_query = "0.29.0"
+html5ever = "0.40.1"
+encoding_rs = "0.8"
 croner = "4.0.3"
-jsonwebtoken = "11.1.0"
+jsonwebtoken = { version = "11.1.0", features = ["aws_lc_rs"] }
 aws-sigv4 = "1.4.5"
 aws-credential-types = "1.2.14"
 aws-config = { version = "1.8.18", default-features = false, features = ["rustls", "rt-tokio", "behavior-version-latest", "credentials-process", "sso"] }

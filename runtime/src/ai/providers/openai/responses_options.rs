@@ -73,7 +73,9 @@ impl<'de> Deserialize<'de> for Logprobs {
                     Err(serde::de::Error::custom("logprobs out of range"))
                 }
             }
-            _ => Err(serde::de::Error::custom("logprobs must be a boolean or a number")),
+            _ => Err(serde::de::Error::custom(
+                "logprobs must be a boolean or a number",
+            )),
         }
     }
 }
@@ -351,14 +353,18 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(parsed.reasoning_effort.as_deref(), Some("none"));
-        assert_eq!(parsed.prompt_cache_options.unwrap().to_json(), json!({ "ttl": "12h" }));
+        assert_eq!(
+            parsed.prompt_cache_options.unwrap().to_json(),
+            json!({ "ttl": "12h" })
+        );
     }
 
     #[test]
     fn refuses_an_option_outside_the_schema() {
-        let options = provider_options(json!({ "openai": { "promptCacheOptions": { "ttl": "1h" } } }));
-        let err = parse_provider_options::<OpenAIResponsesOptions>("openai", Some(&options))
-            .unwrap_err();
+        let options =
+            provider_options(json!({ "openai": { "promptCacheOptions": { "ttl": "1h" } } }));
+        let err =
+            parse_provider_options::<OpenAIResponsesOptions>("openai", Some(&options)).unwrap_err();
         assert_eq!(err.message, "invalid openai provider options");
     }
 

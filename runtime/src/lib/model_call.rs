@@ -158,3 +158,127 @@ pub async fn call_model_for_object(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::{
+        FinishReason, LanguageModel, LanguageModelV4CallOptions, LanguageModelV4Content,
+        LanguageModelV4FinishReason, LanguageModelV4GenerateResult, LanguageModelV4InputTokens,
+        LanguageModelV4OutputTokens, LanguageModelV4Usage, PrepareStepResult,
+    };
+    use async_trait::async_trait;
+    use parking_lot::Mutex;
+
+    /// A model that answers every call with one text and records what it was sent.
+    struct Scripted {
+        calls: Mutex<Vec<LanguageModelV4CallOptions>>,
+    }
+
+    #[async_trait]
+    impl LanguageModel for Scripted {
+        fn provider(&self) -> &str {
+            "mock-provider"
+        }
+
+        fn model_id(&self) -> &str {
+            "a-model"
+        }
+
+        async fn do_generate(
+            &self,
+            options: LanguageModelV4CallOptions,
+        ) -> anyhow::Result<LanguageModelV4GenerateResult> {
+            self.calls.lock().push(options);
+            Ok(LanguageModelV4GenerateResult {
+                content: vec![LanguageModelV4Content::Text {
+                    text: "done".into(),
+                    provider_metadata: None,
+                }],
+                finish_reason: LanguageModelV4FinishReason {
+                    unified: FinishReason::Stop,
+                    raw: None,
+                },
+                usage: LanguageModelV4Usage {
+                    input_tokens: LanguageModelV4InputTokens {
+                        total: Some(10),
+                        no_cache: Some(10),
+                        ..Default::default()
+                    },
+                    output_tokens: LanguageModelV4OutputTokens {
+                        total: Some(1),
+                        text: Some(1),
+                        ..Default::default()
+                    },
+                    raw: None,
+                },
+                provider_metadata: None,
+                request: None,
+                response: None,
+                warnings: vec![],
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn runs_the_callers_own_hooks_around_the_recording() {
+        let model = Arc::new(Scripted {
+            calls: Mutex::new(Vec::new()),
+        });
+        let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+
+        let mut params = GenerateTextOptions::new(model.clone());
+        params.prompt = Some("hi".into());
+        let prepared = seen.clone();
+        params.prepare_step = Some(Arc::new(move |_options| {
+            let prepared = prepared.clone();
+            Box::pin(async move {
+                prepared.lock().push("prepare".into());
+                Ok(Some(PrepareStepResult::default()))
+            })
+        }));
+        let finished = seen.clone();
+        params.on_step_finish = Some(Arc::new(move |step: Arc<StepResult>| {
+            let finished = finished.clone();
+            Box::pin(async move {
+                finished
+                    .lock()
+                    .push(format!("finish:{}", step.usage.output_tokens.unwrap_or(0)));
+            })
+        }));
+
+        let result = call_model(
+            ModelCallMeta {
+                purpose: LlmCallPurpose::Chat,
+                thread_id: Some("thread-1".into()),
+                agent_id: None,
+            },
+            params,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.text(), "done");
+        assert_eq!(*seen.lock(), ["prepare", "finish:1"]);
+        assert_eq!(model.calls.lock().len(), 1);
+    }
+
+    #[test]
+    fn sets_the_tracing_options_of_a_call() {
+        let model = Arc::new(Scripted {
+            calls: Mutex::new(Vec::new()),
+        });
+        let mut params = GenerateTextOptions::new(model);
+        let mut identifiers = indexmap::IndexMap::new();
+        identifiers.insert("userId".to_string(), "user-1".to_string());
+        apply_telemetry(
+            &mut params,
+            LangfuseTelemetry {
+                runtime_context: Some(identifiers),
+                experimental_telemetry: None,
+            },
+        );
+        assert_eq!(params.runtime_context["userId"], "user-1");
+        assert!(params.telemetry.is_none());
+    }
+}
