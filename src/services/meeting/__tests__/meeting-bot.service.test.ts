@@ -48,6 +48,10 @@ class FakeAudioStack {
   waitForMicCapture = audioWaitForMicCapture;
   isMicCaptured = audioIsMicCaptured;
 }
+// The voice for the agent's name, without a model reading it.
+const voiceForAgent = vi.fn(async (_name: string) => 'cedar');
+vi.mock('../../voice/agent-voice', () => ({ voiceForAgent: (name: string) => voiceForAgent(name) }));
+
 vi.mock('../audio-stack', () => ({
   AudioStack: FakeAudioStack,
   AUDIO_STACK_BINARIES: ['Xvfb'],
@@ -2655,7 +2659,8 @@ describe('reading the room', () => {
     await service.join(input);
     await settle();
 
-    expect(conversationOptions).toMatchObject({ agentName: 'Atlas', responseMode: 'auto' });
+    expect(conversationOptions).toMatchObject({ agentName: 'Atlas', responseMode: 'auto', voice: 'cedar' });
+    expect(voiceForAgent).toHaveBeenCalledWith('Atlas');
   });
 
 });

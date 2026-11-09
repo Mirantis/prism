@@ -1331,14 +1331,19 @@ describe('config', () => {
       expect(cfg.openaiRealtimeModel).toBe('gpt-realtime-mini');
     });
 
-    it('names a voice rather than accepting the API default', async () => {
-      // `marin` is materially better for conversation than the default `alloy`.
+    it("has the voice follow the agent's name when none is set", async () => {
       delete process.env.OPENAI_REALTIME_VOICE;
       const cfg = await loadConfig();
-      expect(cfg.openaiRealtimeVoice).toBe('marin');
+      expect(cfg.openaiRealtimeVoice).toBe('auto');
     });
 
-    it('allows overriding the voice, in case a model retires the name', async () => {
+    it('reads auto in any case', async () => {
+      process.env.OPENAI_REALTIME_VOICE = ' Auto ';
+      const cfg = await loadConfig();
+      expect(cfg.openaiRealtimeVoice).toBe('auto');
+    });
+
+    it('takes a voice that is set, for every call', async () => {
       process.env.OPENAI_REALTIME_VOICE = 'cedar';
       const cfg = await loadConfig();
       expect(cfg.openaiRealtimeVoice).toBe('cedar');

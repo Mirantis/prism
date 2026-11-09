@@ -65,6 +65,7 @@ import { startFileJanitor } from './lib/file-janitor';
 import { getSlackHeartbeatThrottleQueue } from './queues/slack-heartbeat-throttle-queue';
 import { prisma } from './lib/prisma';
 import { resolveOrBootstrapSingleAgent } from './lib/single-agent-bootstrap';
+import { warmVoice } from './services/voice/agent-voice';
 import { migrateStorageIfEnvironmentChanged } from './lib/execution-environments/storage-migration';
 import {
   ensureExecutionEnvironmentDetected,
@@ -286,6 +287,8 @@ const initialize = async () => {
       '[Startup] resolving agent workspace',
     );
     const agent = await resolveOrBootstrapSingleAgent();
+    // The name is read before the first call needs its voice.
+    warmVoice(agent.name);
     // Chosen, and created if need be, before any work or request can name a thread, so
     // two first requests never make two.
     if (config.threadMode === 'single') {

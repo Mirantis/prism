@@ -22,6 +22,8 @@ const { mockPrisma, mockHeartbeatService, mockTrackEvent } = vi.hoisted(() => ({
   mockTrackEvent: vi.fn(),
 }));
 
+// A rename reads the new name's voice; no model is called in a test.
+vi.mock('../../services/voice/agent-voice', () => ({ warmVoice: vi.fn() }));
 vi.mock('../../lib/prisma', () => ({
   default: mockPrisma,
   prisma: mockPrisma,
