@@ -125,6 +125,16 @@ describe('latestTurnAttachments', () => {
     expect(latestTurnAttachments(messages).map((a) => a.id)).toEqual(['chart', 'csv']);
   });
 
+  it("keeps a chat turn's files when a scheduled reply lands between them", () => {
+    const messages = [
+      { role: 'USER' },
+      { role: 'AGENT', triggeredBy: 'USER_INPUT', attachments: [file('chart')] },
+      { role: 'AGENT', triggeredBy: 'CRON_TASK', attachments: [file('report')] },
+      { role: 'AGENT', triggeredBy: 'USER_INPUT', attachments: [file('csv')] },
+    ];
+    expect(latestTurnAttachments(messages).map((a) => a.id)).toEqual(['chart', 'csv']);
+  });
+
   it('offers nothing when no agent message has files', () => {
     expect(latestTurnAttachments([{ role: 'USER' }, { role: 'AGENT' }])).toEqual([]);
   });
