@@ -192,6 +192,14 @@ describe('answer', () => {
     });
   });
 
+  it('marks the answer message as written by the runtime, in the row and when it is accepted', async () => {
+    const block = card();
+    await seed(block);
+    await answer(block.id);
+    expect(inbound.pendingWorkFor.mock.calls[0][0]).toMatchObject({ runtimeWritten: true });
+    expect(inbound.accept.mock.calls[0][0]).toMatchObject({ runtimeWritten: true });
+  });
+
   it('writes the pending_work row of the answer message with the card', async () => {
     const block = card();
     await seed(block);

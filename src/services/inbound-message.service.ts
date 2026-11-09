@@ -60,6 +60,8 @@ export interface InboundMessage {
   sender: { id: string; name: string } | null;
   /** Set when another agent of the project sent it, and `sender` is then null. */
   agentMessage?: AgentMessageOrigin;
+  /** The runtime wrote it in the person's name, so it leaves a waiting question card open. */
+  runtimeWritten?: true;
 }
 
 export interface Acceptance {
@@ -316,6 +318,7 @@ class InboundMessageService {
       userId: config.ownerUserId,
       message: message.content,
       attachmentIds: message.attachmentIds,
+      ...(message.runtimeWritten ? { runtimeWritten: message.runtimeWritten } : {}),
       ...senderInput(message),
     };
   }

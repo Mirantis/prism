@@ -20,10 +20,15 @@ vi.mock('../../lib/prisma', () => {
 vi.mock('../message-delivery.service', () => ({ messageDeliveryService: delivery }));
 vi.mock('../../invoke', () => ({ invokeStream: vi.fn() }));
 vi.mock('../../lib/telemetry', () => ({ trackEvent: vi.fn(), isTelemetryEnabled: () => false, langfuseTelemetry: () => ({}) }));
+vi.mock('../../config', async (original) => {
+  const actual = await original<typeof import('../../config')>();
+  return { ...actual, config: { ...actual.config, agentId: 'agent-1', ownerUserId: 'user-1' } };
+});
 vi.mock('../../logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 import { conversationEngineService as engine } from '../conversation-engine.service';
 import { conversationService } from '../conversation.service';
+import { inboundMessageService } from '../inbound-message.service';
 
 const AGENT = 'agent-1';
 const USER = 'user-1';
@@ -69,6 +74,29 @@ beforeEach(async () => {
     data: { threadId: THREAD, role: 'AGENT', content: 'text', triggeredBy: 'USER_INPUT', blocks: [BLOCK] as never },
   });
   cardRow = row.id;
+});
+
+describe('an answer message that the next boot stores', () => {
+  it('leaves a newer waiting card open', async () => {
+    const work = inboundMessageService.pendingWorkFor({
+      id: 'answer-1',
+      threadId: THREAD,
+      content: '1. Pick? A',
+      attachmentIds: [],
+      sender: null,
+      runtimeWritten: true,
+    });
+
+    // As resume-replies stores a message from its row.
+    await engine.acceptUserMessage(
+      { agentId: work.agentId, userId: work.userId, metadata: work.metadata, ...work.message! },
+      work.threadId,
+      'answer-1',
+    );
+
+    expect(await statusOf(cardRow)).toBe('waiting');
+    expect(await opened.client.conversationMessage.count({ where: { id: 'answer-1' } })).toBe(1);
+  });
 });
 
 describe('a typed reply while a card waits', () => {

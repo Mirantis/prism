@@ -38,7 +38,7 @@ export type AnswerOutcome =
   | { result: 'invalid'; error: string }
   | { result: 'not_found' };
 
-/** A card that a typed reply closed, for the clients to hear about once the reply is committed. */
+/** A card that a typed reply closed, shown to clients once the reply is committed. */
 export interface ClosedInChat {
   row: ConversationMessage;
   card: QuestionCardBlock;
@@ -181,6 +181,8 @@ class QuestionCardService {
       content: answerMessageText(card.questions, fitted.answers),
       attachmentIds: [],
       sender,
+      // A later boot can store this message after the agent has posted a newer card.
+      runtimeWritten: true as const,
     };
     const won = await pendingWorkService.beginWith(
       'chat',
