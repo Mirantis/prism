@@ -16,14 +16,12 @@ export function QuestionCardClosed({
   card,
   viewer,
   notice,
-  titleId,
   titleRef,
 }: {
   card: QuestionCardBlock;
   viewer: Viewer | undefined;
   /** What this person needs to know about this card. The card's status region announces it. */
   notice: string | null;
-  titleId: string;
   titleRef: RefObject<HTMLHeadingElement | null>;
 }) {
   const [open, setOpen] = useState(false);
@@ -37,7 +35,6 @@ export function QuestionCardClosed({
         <Icon aria-hidden="true" className={`mt-0.5 size-5 shrink-0 ${inChat ? 'text-muted-foreground' : 'text-primary'}`} />
         <div className="min-w-0">
           <h3
-            id={titleId}
             ref={titleRef}
             tabIndex={-1}
             className="rounded-sm font-semibold break-words text-strong outline-hidden focus-visible:ring-2 focus-visible:ring-ring"

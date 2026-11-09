@@ -224,6 +224,24 @@ describe('QuestionCard', () => {
       expect(screen.getByRole('textbox').getAttribute('aria-describedby')).toBe(count?.id);
     });
 
+    it('announces once at 20 and once at 0, and not on the keys between', () => {
+      show(BLOCK);
+      fireEvent.click(radio('Other…'));
+      const region = screen.getByTestId('question-card-count-announcement');
+      expect(region.getAttribute('role')).toBe('status');
+      expect(region.textContent).toBe('');
+      typed(479);
+      expect(region.textContent).toBe('');
+      typed(480);
+      expect(region.textContent).toBe('20 characters left');
+      typed(481);
+      expect(region.textContent).toBe('');
+      typed(499);
+      expect(region.textContent).toBe('');
+      typed(500);
+      expect(region.textContent).toBe('0 characters left');
+    });
+
     it('uses the singular for one and shows zero at the limit', () => {
       show(BLOCK);
       fireEvent.click(radio('Other…'));
@@ -302,8 +320,8 @@ describe('QuestionCard', () => {
       expect(document.activeElement).toBe(title);
     });
 
-    it.each([400, 404])('says a %i cannot be fixed by trying again', async (status) => {
-      vi.spyOn(runtimeApi, 'answerQuestionCard').mockRejectedValue(new ApiError('refused', {}, status));
+    it('says a reload is needed when the card is gone', async () => {
+      vi.spyOn(runtimeApi, 'answerQuestionCard').mockRejectedValue(new ApiError('gone', {}, 404));
       show(BLOCK);
       fireEvent.click(radio(/Over €500/));
       pressSend();
@@ -312,8 +330,39 @@ describe('QuestionCard', () => {
       expect((radio(/Over €500/) as HTMLInputElement).checked).toBe(true);
     });
 
+    it('uses the standard failure line for a 400', async () => {
+      vi.spyOn(runtimeApi, 'answerQuestionCard').mockRejectedValue(new ApiError('does not fit', {}, 400));
+      show(BLOCK);
+      fireEvent.click(radio(/Over €500/));
+      pressSend();
+      expect((await screen.findByRole('alert')).textContent).toBe(
+        'Couldn’t send your answers. Check your connection, then try again.',
+      );
+    });
+
+    it('stays quiet when the socket closes the card during this person’s own send', async () => {
+      const nobody: Viewer = { id: null, name: null };
+      const closed: QuestionCardBlock = { ...ANSWERED, answeredBy: null };
+      let finish = (_value: { card: QuestionCardBlock }) => {};
+      vi.spyOn(runtimeApi, 'answerQuestionCard').mockReturnValue(new Promise((resolve) => (finish = resolve)));
+      const { rerender } = show(BLOCK, nobody);
+      fireEvent.click(radio(/Over €500/));
+      pressSend();
+      await screen.findByRole('button', { name: 'Sending…' });
+
+      rerender(<QuestionCard block={closed} viewer={nobody} />);
+
+      expect(screen.getByRole('heading', { name: 'Answered' })).toBeTruthy();
+      expect(screen.queryByTestId('question-card-notice')).toBeNull();
+      expect(screen.getByRole('status').textContent).toBe('');
+
+      finish({ card: closed });
+      await waitFor(() => expect(screen.getByTestId('question-card').getAttribute('aria-busy')).toBe('false'));
+      expect(screen.queryByTestId('question-card-notice')).toBeNull();
+    });
+
     it('shows the card answered and says the reply is pending on a 202', async () => {
-      const line = 'Your answers are saved. The agent will reply after its next restart.';
+      const line = 'Your answers are saved. The reply is delayed.';
       vi.spyOn(runtimeApi, 'answerQuestionCard').mockResolvedValue({ card: ANSWERED, replyPending: true });
       show(BLOCK);
       fireEvent.click(radio(/Over €500/));
@@ -329,6 +378,22 @@ describe('QuestionCard', () => {
       fireEvent.click(radio(/Over €500/));
       pressSend();
       expect(await screen.findByRole('alert')).toBeTruthy();
+    });
+  });
+
+  describe('in forced-colours mode', () => {
+    it('gives Send, Clear and the Other field the transparent outline the rows have', () => {
+      show(BLOCK);
+      fireEvent.click(radio('Other…'));
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'mine' } });
+      for (const control of [
+        send(),
+        screen.getByRole('button', { name: 'Clear answer to question 1' }),
+        screen.getByRole('textbox'),
+      ]) {
+        expect(control.className).toContain('outline-hidden');
+        expect(control.className).not.toContain('outline-none');
+      }
     });
   });
 
@@ -411,13 +476,13 @@ describe('QuestionCard', () => {
       expect(screen.queryByTestId('question-card-notice')).toBeNull();
     });
 
-    it('says someone else answered first when the card names nobody', () => {
+    it('says another answer arrived first when the card names nobody', () => {
       const { rerender } = show(BLOCK, { id: null, name: null });
       fireEvent.click(radio(/Over €500/));
       rerender(<QuestionCard block={{ ...ANSWERED, answeredBy: null }} viewer={{ id: null, name: null }} />);
       expect(screen.getByRole('heading', { name: 'Answered' })).toBeTruthy();
       expect(screen.getByTestId('question-card-notice').textContent).toBe(
-        'Someone else answered first. Your choices weren’t sent.',
+        'Another answer arrived first. Your choices weren’t sent.',
       );
     });
 
@@ -459,10 +524,10 @@ describe('QuestionCard', () => {
       expect(disclosure.textContent).toBe('Show questions');
     });
 
-    it('is a plain group, not a landmark', () => {
+    it('adds no group around the title, so the title is spoken once', () => {
       show(ANSWERED);
-      expect(screen.getByTestId('question-card').tagName).toBe('DIV');
-      expect(screen.getByRole('group', { name: 'Answered by Grace Example' })).toBeTruthy();
+      expect(screen.queryByRole('group')).toBeNull();
+      expect(screen.queryByRole('region')).toBeNull();
     });
 
     it('shows the Other text as typed', () => {

@@ -7,12 +7,13 @@ import { isQuestionCard, type QuestionCardBlock } from '@/types';
 import { QuestionCardClosed } from './question-card-closed';
 import { QuestionCardWaiting, type SendState } from './question-card-waiting';
 
-const REPLY_PENDING = 'Your answers are saved. The agent will reply after its next restart.';
+const REPLY_DELAYED = 'Your answers are saved. The reply is delayed.';
 
 function answeredFirstNotice(card: QuestionCardBlock, viewer: Viewer | undefined, choseUnsent: boolean): string | null {
   if (card.status !== 'answered' || !choseUnsent) return null;
   if (card.answeredBy && card.answeredBy.id === viewer?.id) return null;
-  return `${card.answeredBy?.name ?? 'Someone else'} answered first. Your choices weren’t sent.`;
+  const first = card.answeredBy ? `${card.answeredBy.name} answered first.` : 'Another answer arrived first.';
+  return `${first} Your choices weren’t sent.`;
 }
 
 /** The agent's questions in the chat. Choices live here until they are sent, so a reload drops them. */
@@ -34,7 +35,9 @@ export function QuestionCard({ block, viewer }: { block: QuestionCardBlock; view
   // Read in the render that closes the card, while the focused control is still in the document.
   if (wasWaiting.current && !waiting) moveFocus.current = root.current?.contains(document.activeElement) ?? false;
   wasWaiting.current = waiting;
-  const notice = replyPending ? REPLY_PENDING : answeredFirstNotice(card, viewer, !sent && answeredCount(choices) > 0);
+  // The socket can close the card before this person's own send answers, so an unresolved send says nothing.
+  const choseUnsent = !sent && sendState === 'idle' && answeredCount(choices) > 0;
+  const notice = replyPending ? REPLY_DELAYED : answeredFirstNotice(card, viewer, choseUnsent);
 
   useLayoutEffect(() => {
     if (!moveFocus.current) return;
@@ -54,7 +57,7 @@ export function QuestionCard({ block, viewer }: { block: QuestionCardBlock; view
       const status = error instanceof ApiError ? error.status : 0;
       const stored = status === 409 ? ((error as ApiError).body as { card?: unknown } | undefined)?.card : undefined;
       if (!isQuestionCard(stored)) {
-        setSendState(status === 400 || status === 404 ? 'refused' : 'error');
+        setSendState(status === 404 ? 'refused' : 'error');
         return;
       }
       setServed(stored);
@@ -65,9 +68,6 @@ export function QuestionCard({ block, viewer }: { block: QuestionCardBlock; view
   return (
     <div
       ref={root}
-      // A waiting card's group is its fieldset, which has the same name.
-      role={waiting ? undefined : 'group'}
-      aria-labelledby={waiting ? undefined : titleId}
       aria-busy={sendState === 'sending'}
       className="@container w-full max-w-2xl rounded-xl border bg-card p-4 text-sm shadow-sm"
       data-testid="question-card"
@@ -87,7 +87,6 @@ export function QuestionCard({ block, viewer }: { block: QuestionCardBlock; view
           card={card}
           viewer={viewer}
           notice={notice}
-          titleId={titleId}
           titleRef={titleRef}
         />
       )}
