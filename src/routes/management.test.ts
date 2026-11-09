@@ -112,6 +112,8 @@ const {
 
 const { mockSetReceiverEnabled } = vi.hoisted(() => ({ mockSetReceiverEnabled: vi.fn() }));
 
+// A rename reads the new name's voice; no model is called in a test.
+vi.mock('../services/voice/agent-voice', () => ({ warmVoice: vi.fn() }));
 vi.mock('../services/webhook-receiver.service', () => ({
   webhookReceiverService: { enabled: false, setEnabled: mockSetReceiverEnabled },
 }));

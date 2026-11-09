@@ -43,6 +43,7 @@ import { googleMeetProvider } from './providers/google-meet';
 import { withTimeout } from '../../utils/with-timeout';
 import { voiceSessionLock } from '../voice/voice-session-lock';
 import { MAX_TOOL_RESULT_CHARS } from '../voice/realtime-tools';
+import { voiceForAgent } from '../voice/agent-voice';
 import type {
   ChatMessageRead,
   ChatReadStep,
@@ -833,7 +834,7 @@ export class MeetingBotService {
         // agent that says one name and answers to another would be addressed by
         // the name it just gave the room, and stay silent.
         agentName,
-        voice: config.openaiRealtimeVoice,
+        voice: await voiceForAgent(agentName),
         onSessionLost: (reason) => this.onSessionLost(epoch, reason),
       });
       await conversation.start();

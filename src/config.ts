@@ -583,9 +583,10 @@ const openaiRealtimeModel = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime-2
 const realtimeConfiguration = resolveRealtimeConfiguration(process.env);
 const openaiRealtimeUrl = realtimeConfiguration.url;
 const openaiRealtimeApiKey = realtimeConfiguration.apiKey;
-// `marin` is markedly better for conversation than the API's `alloy` default.
-// Overridable because a future model may retire a voice name.
-const openaiRealtimeVoice = process.env.OPENAI_REALTIME_VOICE || 'marin';
+// `auto`, the default, has the voice follow the agent's name: `cedar` for a
+// man's name, `marin` for any other (`services/voice/agent-voice.ts`). Any
+// other value is the voice of every call.
+const openaiRealtimeVoice = (process.env.OPENAI_REALTIME_VOICE || 'auto').trim().toLowerCase() || 'auto';
 // How hard the in-meeting model thinks before it answers or picks a tool.
 //
 // The API's own default is `low`, which is the right call for the voice agents

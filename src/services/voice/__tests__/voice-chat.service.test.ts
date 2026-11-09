@@ -16,6 +16,7 @@ vi.mock('../../../logger', () => ({
 
 vi.mock('../../../config', () => ({
   config: {
+    // A voice that is set, so no model reads the name.
     openaiRealtimeVoice: 'marin',
     realtimeProvider: 'azure',
     realtimeSource: 'managed',

@@ -8,7 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 
-const { mockPrisma, mockTrackEvent } = vi.hoisted(() => {
+const { mockPrisma, mockTrackEvent, mockWarmVoice } = vi.hoisted(() => {
   const prisma = {
     // The transaction client is the same mock, so a write inside a transaction
     // is asserted like any other.
@@ -33,7 +33,7 @@ const { mockPrisma, mockTrackEvent } = vi.hoisted(() => {
       delete: vi.fn(),
     },
   };
-  return { mockPrisma: prisma, mockTrackEvent: vi.fn() };
+  return { mockPrisma: prisma, mockTrackEvent: vi.fn(), mockWarmVoice: vi.fn() };
 });
 
 vi.mock('../../lib/prisma', () => ({
@@ -45,6 +45,8 @@ vi.mock('../../lib/telemetry', () => ({
   langfuseTelemetry: () => ({}),
   trackEvent: mockTrackEvent,
 }));
+
+vi.mock('../voice/agent-voice', () => ({ warmVoice: mockWarmVoice }));
 
 import { agentWorkspaceService } from '../agent-workspace.service';
 import { WORKSPACE_DOC_FIELDS } from '../../lib/workspace-docs';
@@ -262,6 +264,14 @@ describe('AgentWorkspaceService telemetry', () => {
       'agent.id': agentId,
       'agent.name': 'NewName',
     });
+  });
+
+  it("reads the new name's voice ahead of the next call", async () => {
+    mockPrisma.agentWorkspace.update.mockResolvedValue(createAgentRow({ name: 'Max' }));
+
+    await agentWorkspaceService.renameAgent('Max');
+
+    expect(mockWarmVoice).toHaveBeenCalledWith('Max');
   });
 
   it('does not emit "agent renamed" when validation rejects the name', async () => {

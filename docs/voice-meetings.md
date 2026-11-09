@@ -449,7 +449,7 @@ is the same thing to tell them about as the agent's presence.
 | `OPENAI_API_KEY` | Legacy direct-voice fallback; shared with OpenAI chat. Managed voice resolves its own credential. | — |
 | `OPENAI_REALTIME_API_KEY` | Credential for an explicit voice endpoint or direct fallback. | selected managed key, else eligible direct key |
 | `OPENAI_REALTIME_MODEL` | Realtime model for the in-meeting voice. | `gpt-realtime-2.1` |
-| `OPENAI_REALTIME_VOICE` | Voice name. | `marin` |
+| `OPENAI_REALTIME_VOICE` | `auto` has the voice follow the agent's name ([The agent's voice](voice-chat.md#the-agents-voice)); any other value is the voice of every call. | `auto` |
 | `OPENAI_REALTIME_REASONING_EFFORT` | How hard the model thinks before answering or picking a tool: `minimal`, `low`, `medium`, `high`, `xhigh`. Defaults higher than the API's own `low` — see [Reasoning effort](#reasoning-effort). Empty takes the API default. | `high` |
 | `OPENAI_TRANSCRIPTION_MODEL` | Transcriber used only so a call can be read back in the log — never fed to the model, and nothing waits on it. Only requested when `MEETING_TRANSCRIPT_LOGGING=full`, since it bills per audio minute and by default the words are dropped. The default accepts name hints, which is what keeps names legible in the log — see [Names](#names). | `gpt-live-transcribe` |
 | `OPENAI_NOISE_REDUCTION` | Server-side noise reduction over the meeting audio before turn detection and transcription see it: `off`, `near_field`, `far_field`. Off by default on purpose — what arrives is Meet's already-cleaned mix, and reducing it again cost a live agent most of what a quieter person in the room said. | `off` |

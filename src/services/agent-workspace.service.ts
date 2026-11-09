@@ -26,6 +26,7 @@ import { DocumentWriteActor, DocumentWriteMethod, WorkspaceDocField } from '../l
 import type { WorkspaceSeed } from '../lib/workspace-seed';
 import { AGENT_NAME_RULE, normaliseAgentName } from '../lib/agent-name';
 import { documentRevisionService } from './document-revision.service';
+import { warmVoice } from './voice/agent-voice';
 
 // Format-only validation for the per-agent model override. Letters/digits and
 // a small set of separators cover Bedrock inference-profile IDs, region-prefixed
@@ -372,6 +373,8 @@ class AgentWorkspaceService {
       'agent.id': updated.id,
       'agent.name': updated.name,
     });
+    // The next call speaks with the new name's voice, without waiting to read it.
+    warmVoice(updated.name);
     return updated;
   }
 

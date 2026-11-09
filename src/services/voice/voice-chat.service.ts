@@ -47,6 +47,7 @@ import { conversationService } from '../conversation.service';
 import { messageDeliveryService } from '../message-delivery.service';
 import { NO_CALL_SUMMARY, VOICE_CALL_SUMMARY_INSTRUCTIONS } from '../../prompts/voice-chat-prompt';
 import { voiceSessionLock } from './voice-session-lock';
+import { voiceForAgent } from './agent-voice';
 import {
   isAudioFrameUsable,
   maxFrameBytes,
@@ -405,7 +406,7 @@ class VoiceChatService {
         sampleRate,
         responseMode: mode,
         agentName,
-        voice: config.openaiRealtimeVoice,
+        voice: await voiceForAgent(agentName),
         onSessionLost: (reason) => void this.end(epoch, 'error', reason),
         onResponseFinished: () => { if (computerUse) computerService.yield(computerUse); },
       });
