@@ -721,9 +721,10 @@ Answer with one word: WORTHY or SKIP.`;
       this.events.emit('turnEnded', ended);
       throw error;
     } finally {
-      // A shutdown leaves owed what no turn answered in full, so the next boot
-      // answers it. Any other end, a cancel or a throw included, owes nothing.
-      // A message that could not be stored stays owed: its row holds the text, so the next boot stores it.
+      // A shutdown keeps the rows of the messages no turn answered in full, and the
+      // next boot answers them. Any other end removes the rows, except the row of a
+      // message that could not be stored. The next boot stores and answers that
+      // message, so a caller who sent it again gets two replies.
       pendingWorkService.finish(
         'chat',
         pendingWorkService.shutdownSignal.aborted ? answered : owed.filter((id) => !(storeFailed && id === messageId)),
@@ -798,7 +799,7 @@ Answer with one word: WORTHY or SKIP.`;
           }),
     };
     // A reply the person typed stands in for the answers to any card still waiting.
-    // The reply and the card's new status commit together, and clients hear after that.
+    // The reply and the card's new status commit together, and clients see the card after that.
     const typed = !agentMessage && !input.runtimeWritten;
     let closedCards: ClosedInChat[] = [];
     const { message: userMessage, titleSet } = typed
