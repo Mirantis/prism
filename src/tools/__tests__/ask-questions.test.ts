@@ -2,6 +2,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Tool } from 'ai';
+import { z } from 'zod';
 
 const { mockPost } = vi.hoisted(() => ({ mockPost: vi.fn() }));
 
@@ -70,8 +71,14 @@ describe('ask_questions', () => {
     expect(getAskQuestionsTools('user', 'agent', undefined, 'websocket', undefined)).toEqual({});
   });
 
-  it('tells the agent to put a lead-in in intro, which the card shows above the questions', () => {
-    expect(tools().ask_questions.description).toContain('Put any lead-in in intro');
+  it('names a declared field for the lead-in, and hands that field to the card', async () => {
+    const field = /Put any lead-in in (\w+)/.exec(tools().ask_questions.description ?? '')?.[1] ?? '';
+    expect(Object.keys(z.toJSONSchema(askQuestionsInputSchema, { io: 'input' }).properties ?? {})).toContain(field);
+
+    mockPost.mockResolvedValue({});
+    const input = askQuestionsInputSchema.parse({ [field]: '  A few decisions.  ', questions: [question()] });
+    await run(tools().ask_questions, input);
+    expect(mockPost.mock.calls[0][1]).toMatchObject({ [field]: 'A few decisions.' });
   });
 
   it('posts for its conversation and tells the agent to end the turn', async () => {
