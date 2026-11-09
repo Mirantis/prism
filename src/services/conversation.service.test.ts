@@ -444,6 +444,22 @@ describe('ConversationService', () => {
       });
     });
 
+    it('stores the step mark', async () => {
+      mockPrisma.conversationMessage.create.mockResolvedValue({ id: 'm1' });
+      mockPrisma.conversationThread.update.mockResolvedValue(createTestThread());
+
+      await conversationService.addMessage('thread-1', {
+        content: 'Checking the pods…',
+        role: 'AGENT',
+        triggeredBy: 'USER_INPUT',
+        step: true,
+      });
+
+      expect(mockPrisma.conversationMessage.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ step: true }),
+      });
+    });
+
     it('names the thread after the first user message and reports titleSet', async () => {
       mockPrisma.conversationMessage.create.mockResolvedValue({ id: 'm1' });
       mockPrisma.conversationThread.update.mockResolvedValue(createTestThread());

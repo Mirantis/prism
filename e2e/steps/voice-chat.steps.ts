@@ -250,4 +250,6 @@ Then('the conversation shows a summary of the call', async ({ page }) => {
     where: { threadId: thread.id, role: 'AGENT', content: { startsWith: 'Voice call summary:' } },
   });
   expect(stored.map((m) => m.content)).toEqual([`Voice call summary:\n\n${MOCK_CALL_SUMMARY}`]);
+  // The summary is unmarked: a client shows it in place.
+  expect(stored.map((m) => m.step)).toEqual([false]);
 });

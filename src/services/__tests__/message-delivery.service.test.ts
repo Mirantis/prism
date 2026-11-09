@@ -137,6 +137,14 @@ describe('MessageDeliveryService', () => {
       });
     });
 
+    it('stores the step mark of a verbose turn\'s step', async () => {
+      service.register(createMockAdapter('test'));
+
+      await service.publish('user-123', 'thread-456', 'Checking the pods…', 'USER_INPUT', { step: true });
+
+      expect(mockAddMessage).toHaveBeenCalledWith('thread-456', expect.objectContaining({ step: true }));
+    });
+
     it('should store message with tool calls and blocks', async () => {
       const adapter = createMockAdapter('test');
       service.register(adapter);

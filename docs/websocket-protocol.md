@@ -97,9 +97,8 @@ see a gap, reconnect and resume from the last `seq` you applied.
     ```
 
   - `step` is `true` on an `AGENT` message that a verbose turn delivers
-    before its reply, and `false` on every other message. Fold a turn's steps
-    above the next `AGENT` message without the mark: that is the reply. A
-    concise turn delivers its reply alone.
+    before its reply, and `false` on every other message. Fold marked
+    messages where they appear, and show every unmarked message.
 
 - **`turn`** `{ threadId, state, outcome?, error? }`: what a conversation is doing.
   - `state` is `queued`, `running` or `idle`.
