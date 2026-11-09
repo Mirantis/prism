@@ -40,6 +40,8 @@ export function QuestionCardOther({
     if (!choice.otherOpen || !focusWhenOpen.current) return;
     focusWhenOpen.current = false;
     field.current?.focus();
+    // Its bottom margin keeps the field clear of the fade above the composer.
+    field.current?.scrollIntoView({ block: 'nearest' });
   }, [choice.otherOpen]);
 
   return (
