@@ -155,3 +155,86 @@ fn line_trimmed_matches(content: &str, find: &str) -> Vec<(usize, usize)> {
     }
     found
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ok(outcome: EditOutcome) -> String {
+        match outcome {
+            EditOutcome::Ok { content } => content,
+            EditOutcome::Error { message } => panic!("{message}"),
+        }
+    }
+
+    fn refused(outcome: EditOutcome) -> String {
+        match outcome {
+            EditOutcome::Error { message } => message,
+            EditOutcome::Ok { content } => panic!("edited: {content}"),
+        }
+    }
+
+    #[test]
+    fn replaces_a_single_occurrence_exactly() {
+        assert_eq!(
+            ok(apply_edit("hello world", "hello", "goodbye", false)),
+            "goodbye world"
+        );
+    }
+
+    #[test]
+    fn replaces_all_occurrences_when_replace_all_is_true() {
+        assert_eq!(ok(apply_edit("aa bb aa", "aa", "cc", true)), "cc bb cc");
+    }
+
+    #[test]
+    fn rejects_multiple_matches_when_replace_all_is_false() {
+        assert_eq!(
+            refused(apply_edit("aa bb aa", "aa", "cc", false)),
+            "oldString has 2 matches — use replaceAll or provide more context to make it unique"
+        );
+    }
+
+    #[test]
+    fn rejects_identical_old_and_new_strings() {
+        assert_eq!(
+            refused(apply_edit("hello", "hello", "hello", false)),
+            "oldString and newString are identical"
+        );
+    }
+
+    #[test]
+    fn errors_when_old_string_is_not_present() {
+        assert_eq!(
+            refused(apply_edit("hello", "xyz", "abc", false)),
+            "oldString not found in file"
+        );
+    }
+
+    #[test]
+    fn falls_back_to_a_line_trimmed_match_when_the_exact_match_fails() {
+        let content = "  function foo() {\n    return 1;\n  }";
+        let edited = ok(apply_edit(
+            content,
+            "function foo() {\nreturn 1;\n}",
+            "function bar() {\nreturn 2;\n}",
+            false,
+        ));
+        assert!(edited.contains("function bar()"));
+    }
+
+    #[test]
+    fn rejects_an_ambiguous_line_trimmed_match_instead_of_editing_the_first_one() {
+        let content = "  - item\n  - other\n\n  - item\n  - other";
+        let message = refused(apply_edit(content, "- item\n- other", "- changed", false));
+        assert!(message.contains("2 whitespace-tolerant matches"));
+    }
+
+    #[test]
+    fn keeps_the_exact_match_path_when_both_exact_and_trimmed_would_match() {
+        assert_eq!(
+            ok(apply_edit("  hello\n", "hello", "goodbye", true)),
+            "  goodbye\n"
+        );
+    }
+}

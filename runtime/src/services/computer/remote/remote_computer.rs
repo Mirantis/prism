@@ -9,21 +9,29 @@
 use std::any::Any;
 use std::future::Future;
 use std::sync::{Arc, Weak};
+use std::time::Duration;
 
 use async_trait::async_trait;
+use base64::Engine;
 use bytes::Bytes;
 use futures::future::BoxFuture;
 use indexmap::IndexSet;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::task::JoinHandle;
 
-use super::computer_link::{ComputerLink, LinkError, LinkEvent};
+use super::computer_link::{ComputerLink, LinkError, LinkEvent, LinkFailure};
 use super::link_protocol::{
-    Capability, CapabilityProblem, InitializeParams, RemoteDisplay, RemotePlatform, RemoteWindow,
+    CapabilitiesChangedParams, Capability, CapabilityProblem, CaptureResult, DisplaysChangedParams,
+    ElementsResult, EmptyResult, InitializeParams, LINK_JPEG_FRAME, LINK_KEYFRAME_FLAG,
+    LINK_VIDEO_FRAME, LinkErrorReason, LinkSchema, RemoteDisplay, RemotePlatform, RemoteWindow,
+    StreamStartResult, WindowsResult,
 };
-use crate::services::computer::agent_computer::{ModelChannel, ModelChannelScope};
+use crate::lib::has_binary::has_binaries;
+use crate::services::computer::agent_computer::{
+    ACTION_SETTLE_MS, ModelChannel, ModelChannelScope, window_action_done,
+};
 use crate::services::computer::computer::{Computer, SignInFormInfo};
 use crate::services::computer::computer_session::SignInOutcome;
 use crate::services::computer::computer_tools::{
@@ -32,12 +40,22 @@ use crate::services::computer::computer_tools::{
     MoveInput, ScreenLook, ScrollInput, TextLocation, TypeInput, UserScreenResult,
     WindowActionInput,
 };
-use crate::services::computer::desktop_control::MouseButton;
-use crate::services::computer::picture_stream::FrameSink;
-use crate::services::computer::screen_elements::ScreenElement;
-use crate::services::computer::screen_size::ScreenSize;
+use crate::services::computer::desktop_control::{MouseButton, ScrollDirection};
+use crate::services::computer::desktop_input::{
+    InputFrame, MetaAs, chord_for, input_frame, paste_text,
+};
+use crate::services::computer::desktop_windows::find_windows;
+use crate::services::computer::picture_stream::{FrameSink, ScreenFrame, StreamEncoding};
+use crate::services::computer::screen_elements::{ScreenElement, describe_elements, find_elements};
+use crate::services::computer::screen_size::{
+    MAX_SCREEN, ScreenSize, bounded_picture_for, math_round,
+};
+use crate::services::computer::screen_text::{find_text, read_screen_words, upscale_for_ocr};
 use crate::services::computer::sign_in_form::SignInCredentials;
 use crate::services::meeting::browser_control::{BrowserCommand, BrowserResult};
+use crate::services::meeting::realtime_session::decode_base64_lenient;
+use crate::support::js;
+use crate::{log_info, log_warn};
 
 /// How long an input request may take on the computer, and a read of its screen or controls.
 const INPUT_TIMEOUT_MS: u64 = 10_000;
@@ -101,6 +119,25 @@ pub struct DisplayPoint {
     pub y: i64,
 }
 
+impl DisplayPoint {
+    fn json(self) -> Value {
+        json!({ "x": self.x, "y": self.y })
+    }
+}
+
+/// A position held to the display: rounded, and inside it.
+fn clamp_to(display: &RemoteDisplay, x: f64, y: f64) -> DisplayPoint {
+    DisplayPoint {
+        x: ((display.width - 1) as f64).min(0f64.max(math_round(x))) as i64,
+        y: ((display.height - 1) as f64).min(0f64.max(math_round(y))) as i64,
+    }
+}
+
+/// `Math.round(n)` as an integer, for the numbers a message shows.
+fn rounded(n: f64) -> i64 {
+    math_round(n) as i64
+}
+
 /// The screen stream the viewers watch.
 struct RemoteStream {
     /// Tells this stream from one that replaced it.
@@ -154,11 +191,61 @@ impl RemoteComputer {
         hello: InitializeParams,
         on_change: Option<Arc<dyn Fn() + Send + Sync>>,
     ) -> Arc<Self> {
-        todo!()
+        let display = primary(&hello.displays);
+        let pointer = DisplayPoint {
+            x: display.width / 2,
+            y: display.height / 2,
+        };
+        let computer = Arc::new_cyclic(|me| RemoteComputer {
+            me: me.clone(),
+            channels: ModelChannelScope::new(),
+            tail: tokio::sync::Mutex::new(()),
+            name_of,
+            link: Arc::clone(&link),
+            on_change: on_change.unwrap_or_else(|| Arc::new(|| {})),
+            ocr_available: tokio::sync::OnceCell::new(),
+            state: Mutex::new(RemoteState {
+                display,
+                capabilities: hello.capabilities.iter().copied().collect(),
+                problems: hello.problems.clone(),
+                pointer,
+                held: IndexSet::new(),
+                move_timer: None,
+                stream: None,
+                next_stream: 1,
+                seen: None,
+                watcher: None,
+            }),
+            hello,
+        });
+        let me = Arc::downgrade(&computer);
+        link.on(Arc::new(move |event| {
+            let Some(computer) = me.upgrade() else {
+                return;
+            };
+            match event {
+                LinkEvent::Notification { method, params } => {
+                    computer.notified(method, params.as_ref())
+                }
+                LinkEvent::Binary(data) => computer.frame(data),
+                _ => {}
+            }
+        }));
+        computer
     }
 
     pub fn info(&self) -> RemoteComputerInfo {
-        todo!()
+        let state = self.state.lock();
+        RemoteComputerInfo {
+            platform: self.hello.platform,
+            client_version: self.hello.client.version.clone(),
+            display: ScreenSize {
+                width: state.display.width,
+                height: state.display.height,
+            },
+            capabilities: state.capabilities.iter().copied().collect(),
+            problems: state.problems.clone(),
+        }
     }
 
     pub fn name(&self) -> String {
@@ -171,23 +258,101 @@ impl RemoteComputer {
 
     /// The largest picture the model is shown, which a capture is asked for.
     fn picture(&self) -> ScreenSize {
-        todo!()
+        bounded_picture_for(self.display_size())
     }
 
     /// The picture the model's coordinates refer to: the last one it saw, else the one
     /// asked for.
     fn seen_picture(&self) -> ScreenSize {
-        todo!()
+        let seen = self.state.lock().seen;
+        seen.unwrap_or_else(|| self.picture())
+    }
+
+    fn display_id(&self) -> String {
+        self.state.lock().display.id.clone()
     }
 
     /// A notification from the client: `displays.changed` or `capabilities.changed`.
     fn notified(&self, method: &str, params: Option<&Value>) {
-        todo!()
+        if method == "displays.changed" {
+            let Ok(parsed) = DisplaysChangedParams::parse_input(params) else {
+                return;
+            };
+            let restart = {
+                let mut state = self.state.lock();
+                let before = state.display.clone();
+                state.display = primary(&parsed.displays);
+                state.pointer = clamp_to(
+                    &state.display,
+                    state.pointer.x as f64,
+                    state.pointer.y as f64,
+                );
+                let moved = before.id != state.display.id
+                    || before.width != state.display.width
+                    || before.height != state.display.height;
+                if !moved {
+                    return;
+                }
+                // The model's last picture and the viewers' stream are of the display that went.
+                state.seen = None;
+                state
+                    .stream
+                    .as_ref()
+                    .map(|stream| Arc::clone(&stream.on_frame))
+            };
+            if let Some(on_frame) = restart {
+                self.start_screen_stream(on_frame);
+            }
+            (self.on_change)();
+            return;
+        }
+        if method == "capabilities.changed" {
+            let Ok(parsed) = CapabilitiesChangedParams::parse_input(params) else {
+                return;
+            };
+            let restart = {
+                let mut state = self.state.lock();
+                let could_stream = state.capabilities.contains(&Capability::Stream);
+                state.capabilities = parsed.capabilities.into_iter().collect();
+                state.problems = parsed.problems;
+                let can_stream = state.capabilities.contains(&Capability::Stream);
+                // The watcher stays, so the stream starts again when the permission comes back.
+                if could_stream && !can_stream {
+                    state.stream = None;
+                }
+                if !could_stream && can_stream {
+                    state.watcher.clone()
+                } else {
+                    None
+                }
+            };
+            if let Some(watcher) = restart {
+                self.start_screen_stream(watcher);
+            }
+            (self.on_change)();
+        }
     }
 
     /// A binary frame of the screen stream, passed on as the viewer socket sends it.
     fn frame(&self, data: &Bytes) {
-        todo!()
+        let on_frame = match &self.state.lock().stream {
+            Some(stream) if stream.started => Arc::clone(&stream.on_frame),
+            _ => return,
+        };
+        if data.len() < 2 {
+            return;
+        }
+        let body = data.slice(2..);
+        if data[0] == LINK_VIDEO_FRAME {
+            on_frame(ScreenFrame::H264 {
+                data: body,
+                keyframe: (data[1] & LINK_KEYFRAME_FLAG) != 0,
+            });
+        } else if data[0] == LINK_JPEG_FRAME {
+            on_frame(ScreenFrame::Jpeg {
+                data: base64::engine::general_purpose::STANDARD.encode(&body),
+            });
+        }
     }
 
     fn can(&self, capability: Capability) -> bool {
@@ -195,16 +360,56 @@ impl RemoteComputer {
     }
 
     fn missing(&self, capability: Capability) -> String {
-        todo!()
+        let problem = self
+            .state
+            .lock()
+            .problems
+            .iter()
+            .find(|item| item.capability == capability.as_str())
+            .map(|item| item.message.clone());
+        format!(
+            "{} cannot {}{}",
+            self.name(),
+            capability_words(capability),
+            match problem {
+                Some(message) => format!(": {message}"),
+                None => ".".to_string(),
+            }
+        )
     }
 
     fn cannot_read(&self) -> String {
-        todo!()
+        if self.can(Capability::Elements) {
+            format!("I could not read the screen of {}.", self.name())
+        } else {
+            self.missing(Capability::Elements)
+        }
     }
 
     /// What the model is told when the computer or the link refused.
     fn failure(&self, what: &str, err: &anyhow::Error) -> String {
-        todo!()
+        let message = format!("{what}: {}", detail(err));
+        let Some(link) = err.downcast_ref::<LinkError>() else {
+            return message;
+        };
+        match link.reason {
+            LinkFailure::Refused(LinkErrorReason::PermissionDenied) => {
+                let permission = link
+                    .data
+                    .get("permission")
+                    .and_then(Value::as_str)
+                    .unwrap_or("the permission it needs");
+                format!(
+                    "{message} Ask your user to grant {permission} to the computer client on {}.",
+                    self.name()
+                )
+            }
+            LinkFailure::Refused(LinkErrorReason::Held) => format!(
+                "{message} The person at {} has control; wait until they hand it back.",
+                self.name()
+            ),
+            _ => message,
+        }
     }
 
     fn look_note(&self) -> String {
@@ -223,7 +428,10 @@ impl RemoteComputer {
 
     /// One input request; `timeout_ms` is `INPUT_TIMEOUT_MS` unless a caller says otherwise.
     async fn call(&self, method: &str, params: Value, timeout_ms: u64) -> Result<(), LinkError> {
-        todo!()
+        self.link
+            .request::<EmptyResult>(method, Some(params), timeout_ms, None)
+            .await
+            .map(|_| ())
     }
 
     /// Run one action, wait for the screen to settle, and show the model the result.
@@ -237,88 +445,391 @@ impl RemoteComputer {
         F: FnOnce() -> Fut + Send,
         Fut: Future<Output = anyhow::Result<()>> + Send,
     {
-        todo!()
+        if !self.can(capability) {
+            return DesktopActionResult::new(false, self.missing(capability));
+        }
+        self.on_queue(async {
+            if let Err(err) = action().await {
+                log_info!(
+                    "[Computer:Remote] {}: {} failed: {}",
+                    self.name(),
+                    message,
+                    detail(&err)
+                );
+                return DesktopActionResult::new(false, self.failure("That did not work", &err));
+            }
+            if !self.can(Capability::Screen) {
+                return DesktopActionResult::new(true, format!("{message}."));
+            }
+            tokio::time::sleep(Duration::from_millis(ACTION_SETTLE_MS)).await;
+            let shown = self.show_screen(&self.after_note()).await.unwrap_or(false);
+            DesktopActionResult::new(
+                true,
+                if shown {
+                    format!("{message}. The picture shows the screen now.")
+                } else {
+                    format!("{message}. I could not get a picture afterwards.")
+                },
+            )
+        })
+        .await
     }
 
     /// One picture of the screen into the session. Its own size is what the model's next
     /// coordinates refer to. One larger than asked for is refused: a provider may shrink it
     /// before the model sees it, to a scale the runtime cannot know.
     async fn show_screen(&self, note: &str) -> anyhow::Result<bool> {
-        todo!()
+        let asked = self.picture();
+        let shot = self
+            .link
+            .request::<CaptureResult>(
+                "screen.capture",
+                Some(json!({
+                    "display": self.display_id(),
+                    "format": "jpeg",
+                    "maxWidth": asked.width,
+                    "maxHeight": asked.height,
+                    "quality": CAPTURE_QUALITY,
+                })),
+                READ_TIMEOUT_MS,
+                None,
+            )
+            .await?;
+        // A client that keeps the display's shape may round the height by a pixel or two.
+        if shot.width > asked.width || shot.height > asked.height + 2 {
+            return Err(LinkError::new(
+                format!(
+                    "The computer sent a {} by {} picture, larger than the {} by {} it was asked for.",
+                    shot.width, shot.height, asked.width, asked.height
+                ),
+                LinkFailure::Refused(LinkErrorReason::Internal),
+            )
+            .into());
+        }
+        self.state.lock().seen = Some(ScreenSize {
+            width: shot.width,
+            height: shot.height,
+        });
+        let url = format!("data:{};base64,{}", shot.media_type.as_str(), shot.data);
+        Ok(self
+            .channel()
+            .map(|channel| channel.show_image(&url, note))
+            .unwrap_or(false))
     }
 
     /// The computer's controls, in the model's picture coordinates. `filter` lets the client
     /// stop early; the callers match names again, so a client may ignore it.
     async fn read_elements(&self, filter: Option<&str>) -> anyhow::Result<Vec<ScreenElement>> {
-        todo!()
+        let params = match filter {
+            Some(filter) if !filter.is_empty() => json!({ "filter": filter }),
+            _ => json!({}),
+        };
+        let read = self
+            .link
+            .request::<ElementsResult>("elements.list", Some(params), READ_TIMEOUT_MS, None)
+            .await?;
+        Ok(read
+            .elements
+            .into_iter()
+            .map(|e| {
+                let (x, y) = self.to_picture(e.x, e.y);
+                let (right, bottom) = self.to_picture(e.x + e.width, e.y + e.height);
+                ScreenElement {
+                    app: e.app,
+                    role: e.role,
+                    name: e.name,
+                    x: math_round(x),
+                    y: math_round(y),
+                    width: math_round(right - x),
+                    height: math_round(bottom - y),
+                }
+            })
+            .collect())
     }
 
     /// The open windows, in the model's picture coordinates.
     async fn read_windows(&self) -> anyhow::Result<Vec<RemoteWindow>> {
-        todo!()
+        let read = self
+            .link
+            .request::<WindowsResult>("windows.list", Some(json!({})), READ_TIMEOUT_MS, None)
+            .await?;
+        Ok(read
+            .windows
+            .into_iter()
+            .map(|w| {
+                let (x, y) = self.to_picture(w.x, w.y);
+                let (right, bottom) = self.to_picture(w.x + w.width, w.y + w.height);
+                RemoteWindow {
+                    x: math_round(x),
+                    y: math_round(y),
+                    width: math_round(right - x),
+                    height: math_round(bottom - y),
+                    ..w
+                }
+            })
+            .collect())
     }
 
     /// Find `query` on the screen in picture coordinates: a control of that name first,
     /// else words read off a full-size capture. `None` when the computer offers neither.
     async fn locate_text(&self, query: &str) -> anyhow::Result<Option<Vec<TextLocation>>> {
-        todo!()
+        let ocr = self.can(Capability::Screen) && self.can_read_text().await;
+        if !self.can(Capability::Elements) && !ocr {
+            return Ok(None);
+        }
+        self.on_queue(async {
+            if self.can(Capability::Elements) {
+                let widgets = find_elements(&self.read_elements(Some(query)).await?, query);
+                if !widgets.is_empty() || !ocr {
+                    return Ok(Some(
+                        widgets
+                            .into_iter()
+                            .map(|e| TextLocation {
+                                line: if e.app.is_empty() {
+                                    e.role.clone()
+                                } else {
+                                    format!("{} in {}", e.role, e.app)
+                                },
+                                x: rounded(e.x + e.width / 2.0),
+                                y: rounded(e.y + e.height / 2.0),
+                                text: e.name,
+                            })
+                            .collect(),
+                    ));
+                }
+            }
+            let shot = self
+                .link
+                .request::<CaptureResult>(
+                    "screen.capture",
+                    Some(json!({ "display": self.display_id(), "format": "png" })),
+                    READ_TIMEOUT_MS,
+                    None,
+                )
+                .await?;
+            // A high-density screen already draws text large enough to read; a plain one is enlarged.
+            let scale = if self.state.lock().display.scale >= 2.0 {
+                1
+            } else {
+                2
+            };
+            let raw = Bytes::from(decode_base64_lenient(&shot.data));
+            let png = if scale > 1 {
+                upscale_for_ocr(raw, scale).await?
+            } else {
+                raw
+            };
+            let words = read_screen_words(png, scale).await?;
+            let ratio = self.seen_picture().width as f64 / shot.width as f64;
+            Ok(Some(
+                find_text(&words, query)
+                    .into_iter()
+                    .map(|m| TextLocation {
+                        text: m.text,
+                        line: m.line,
+                        x: rounded(m.x * ratio),
+                        y: rounded(m.y * ratio),
+                    })
+                    .collect(),
+            ))
+        })
+        .await
     }
 
     async fn can_read_text(&self) -> bool {
-        todo!()
+        *self
+            .ocr_available
+            .get_or_init(|| has_binaries(&["ffmpeg", "tesseract"]))
+            .await
     }
 
     fn display_size(&self) -> ScreenSize {
-        todo!()
+        let state = self.state.lock();
+        ScreenSize {
+            width: state.display.width,
+            height: state.display.height,
+        }
     }
 
     fn clamp(&self, x: f64, y: f64) -> DisplayPoint {
-        todo!()
+        clamp_to(&self.state.lock().display, x, y)
     }
 
     fn to_display(&self, x: f64, y: f64) -> DisplayPoint {
-        todo!()
+        let picture = self.seen_picture();
+        let size = self.display_size();
+        self.clamp(
+            (x * size.width as f64) / picture.width as f64,
+            (y * size.height as f64) / picture.height as f64,
+        )
     }
 
     fn to_picture(&self, x: f64, y: f64) -> (f64, f64) {
-        todo!()
+        let picture = self.seen_picture();
+        let size = self.display_size();
+        (
+            (x * picture.width as f64) / size.width as f64,
+            (y * picture.height as f64) / size.height as f64,
+        )
     }
 
     fn stream_scale(&self) -> (f64, f64) {
-        todo!()
+        let state = self.state.lock();
+        let size = match &state.stream {
+            Some(stream) => stream.size,
+            None => ScreenSize {
+                width: state.display.width,
+                height: state.display.height,
+            },
+        };
+        (
+            state.display.width as f64 / size.width as f64,
+            state.display.height as f64 / size.height as f64,
+        )
     }
 
     fn from_stream(&self, x: f64, y: f64) -> DisplayPoint {
-        todo!()
+        let (sx, sy) = self.stream_scale();
+        self.clamp(x * sx, y * sy)
     }
 
     fn schedule_move(&self) {
-        todo!()
+        let mut state = self.state.lock();
+        if state.move_timer.is_some() {
+            return;
+        }
+        let me = self.me.clone();
+        state.move_timer = Some(tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(MOVE_FLUSH_MS)).await;
+            if let Some(computer) = me.upgrade() {
+                computer.move_now();
+            }
+        }));
     }
 
     fn flush_move(&self) {
-        todo!()
+        if self.state.lock().move_timer.is_some() {
+            self.move_now();
+        }
     }
 
     fn move_now(&self) {
-        todo!()
+        let (timer, pointer) = {
+            let mut state = self.state.lock();
+            (state.move_timer.take(), state.pointer)
+        };
+        if let Some(timer) = timer {
+            timer.abort();
+        }
+        self.link.notify("input.pointer", Some(pointer.json()));
     }
 
     async fn on_queue<F: Future>(&self, run: F) -> F::Output {
         let _turn = self.tail.lock().await;
         run.await
     }
+
+    /// `click` with the message a caller words from the verb (`Clicked`, `Double-clicked`),
+    /// as `click_text` words it.
+    async fn click_described(
+        &self,
+        input: ClickInput,
+        describe: Option<Box<dyn FnOnce(&str) -> String + Send>>,
+    ) -> DesktopActionResult {
+        let button = input.button.unwrap_or(MouseButton::Left);
+        let named = match (input.x, input.y) {
+            (Some(x), Some(y)) => Some((x, y)),
+            _ => None,
+        };
+        let at = match named {
+            Some((x, y)) => self.to_display(x, y),
+            None => self.state.lock().pointer,
+        };
+        let double = input.double == Some(true);
+        let verb = if double { "Double-clicked" } else { "Clicked" };
+        let message = match (describe, named) {
+            (Some(describe), _) => describe(verb),
+            (None, Some((x, y))) => format!(
+                "{verb} {} at ({}, {})",
+                button.as_str(),
+                rounded(x),
+                rounded(y)
+            ),
+            (None, None) => format!("{verb} {} where the pointer was", button.as_str()),
+        };
+        self.act(
+            Capability::Input,
+            || async move {
+                self.state.lock().pointer = at;
+                self.call(
+                    "input.click",
+                    json!({
+                        "x": at.x,
+                        "y": at.y,
+                        "button": button.as_str(),
+                        "count": if double { 2 } else { 1 },
+                    }),
+                    INPUT_TIMEOUT_MS,
+                )
+                .await?;
+                Ok(())
+            },
+            message,
+        )
+        .await
+    }
 }
 
 #[async_trait]
 impl ComputerBrowser for RemoteComputer {
     /// Answers that the computer offers no browser control, naming the desktop tools.
-    async fn browse(&self, command: BrowserCommand) -> anyhow::Result<BrowserResult> {
-        todo!()
+    async fn browse(&self, _command: BrowserCommand) -> anyhow::Result<BrowserResult> {
+        Ok(BrowserResult::message(
+            false,
+            format!(
+                "{} offers no browser control. Use its browser through the desktop tools: computer_screen, computer_click_text, computer_type and computer_key.",
+                self.name()
+            ),
+        ))
     }
 
     async fn look_at_screen(&self) -> anyhow::Result<ScreenLook> {
-        todo!()
+        if !self.can(Capability::Screen) {
+            return Ok(ScreenLook {
+                success: false,
+                message: self.missing(Capability::Screen),
+                ..Default::default()
+            });
+        }
+        let note = self.look_note();
+        match self.on_queue(self.show_screen(&note)).await {
+            Ok(shown) => Ok(ScreenLook {
+                success: shown,
+                message: if shown {
+                    format!(
+                        "This is the whole screen of {}, as a {} by {} picture; the desktop tools take coordinates from it.",
+                        self.name(),
+                        ComputerDesktop::width(self),
+                        ComputerDesktop::height(self)
+                    )
+                } else {
+                    format!("I could not get the picture of {} through.", self.name())
+                },
+                ..Default::default()
+            }),
+            Err(err) => {
+                log_info!(
+                    "[Computer:Remote] {}: screen capture failed: {}",
+                    self.name(),
+                    detail(&err)
+                );
+                Ok(ScreenLook {
+                    success: false,
+                    message: self.failure("I could not get a picture of the screen", &err),
+                    ..Default::default()
+                })
+            }
+        }
     }
 }
 
@@ -333,59 +844,325 @@ impl ComputerDesktop for RemoteComputer {
     }
 
     async fn list_elements(&self, input: ListElementsInput) -> anyhow::Result<DesktopActionResult> {
-        todo!()
+        if !self.can(Capability::Elements) {
+            return Ok(DesktopActionResult::new(
+                false,
+                self.missing(Capability::Elements),
+            ));
+        }
+        let filter = input.filter.as_deref();
+        Ok(match self.on_queue(self.read_elements(filter)).await {
+            Ok(elements) => DesktopActionResult::new(true, describe_elements(&elements, filter)),
+            Err(err) => DesktopActionResult::new(
+                false,
+                self.failure("I could not read the computer's controls", &err),
+            ),
+        })
     }
 
     async fn list_windows(&self) -> anyhow::Result<DesktopActionResult> {
-        todo!()
+        if !self.can(Capability::Windows) {
+            return Ok(DesktopActionResult::new(
+                false,
+                self.missing(Capability::Windows),
+            ));
+        }
+        let windows = match self.read_windows().await {
+            Ok(windows) => windows,
+            Err(err) => {
+                return Ok(DesktopActionResult::new(
+                    false,
+                    self.failure("I could not list the windows", &err),
+                ));
+            }
+        };
+        if windows.is_empty() {
+            return Ok(DesktopActionResult::new(true, "No windows are open."));
+        }
+        let lines: Vec<String> = windows
+            .iter()
+            .map(|w| {
+                format!(
+                    "\"{}\"{} at ({}, {}), {} by {}",
+                    w.title,
+                    if w.app.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({})", w.app)
+                    },
+                    js::number_text(w.x),
+                    js::number_text(w.y),
+                    js::number_text(w.width),
+                    js::number_text(w.height)
+                )
+            })
+            .collect();
+        Ok(DesktopActionResult::new(
+            true,
+            format!("{} window(s):\n{}", windows.len(), lines.join("\n")),
+        ))
     }
 
     async fn window_action(&self, input: WindowActionInput) -> anyhow::Result<DesktopActionResult> {
-        todo!()
+        if !self.can(Capability::Windows) {
+            return Ok(DesktopActionResult::new(
+                false,
+                self.missing(Capability::Windows),
+            ));
+        }
+        let windows = match self.read_windows().await {
+            Ok(windows) => windows,
+            Err(err) => {
+                return Ok(DesktopActionResult::new(
+                    false,
+                    self.failure("I could not list the windows", &err),
+                ));
+            }
+        };
+        let Some(window) = find_windows(&windows, &input.title)
+            .first()
+            .copied()
+            .cloned()
+        else {
+            return Ok(DesktopActionResult::new(
+                false,
+                format!("There is no window with \"{}\" in its title.", input.title),
+            ));
+        };
+        let action = input.action;
+        let id = window.id.clone();
+        Ok(self
+            .act(
+                Capability::Windows,
+                || async move {
+                    self.call(
+                        "windows.act",
+                        json!({ "id": id, "action": action.as_str() }),
+                        INPUT_TIMEOUT_MS,
+                    )
+                    .await?;
+                    Ok(())
+                },
+                format!("{} \"{}\"", window_action_done(action), window.title),
+            )
+            .await)
     }
 
     async fn find_text(&self, input: FindTextInput) -> anyhow::Result<FindTextResult> {
-        todo!()
+        let failed = |message: String| FindTextResult {
+            success: false,
+            message,
+            matches: None,
+        };
+        Ok(match self.locate_text(&input.text).await {
+            Err(err) => failed(self.failure("I could not read the screen", &err)),
+            Ok(None) => failed(self.cannot_read()),
+            Ok(Some(matches)) if matches.is_empty() => failed(format!(
+                "I cannot see the text \"{}\" on the screen right now.",
+                input.text
+            )),
+            Ok(Some(matches)) => FindTextResult {
+                success: true,
+                message: format!(
+                    "\"{}\" appears {} on the screen.",
+                    input.text,
+                    if matches.len() == 1 {
+                        "once".to_string()
+                    } else {
+                        format!("{} times", matches.len())
+                    }
+                ),
+                matches: Some(matches),
+            },
+        })
     }
 
     async fn click_text(&self, input: ClickTextInput) -> anyhow::Result<DesktopActionResult> {
-        todo!()
+        let matches = match self.locate_text(&input.text).await {
+            Ok(matches) => matches,
+            Err(err) => {
+                return Ok(DesktopActionResult::new(
+                    false,
+                    self.failure("I could not read the screen", &err),
+                ));
+            }
+        };
+        let Some(matches) = matches else {
+            return Ok(DesktopActionResult::new(false, self.cannot_read()));
+        };
+        if matches.is_empty() {
+            return Ok(DesktopActionResult::new(
+                false,
+                format!(
+                    "I cannot see the text \"{}\" on the screen right now.",
+                    input.text
+                ),
+            ));
+        }
+        let count = matches.len() as i64;
+        let index = (count.min(1_i64.max(input.occurrence.unwrap_or(1))) - 1) as usize;
+        let target = matches[index].clone();
+        let others = if matches.len() > 1 {
+            format!(
+                " ({} matches; clicked number {}, in \"{}\")",
+                matches.len(),
+                index + 1,
+                target.line
+            )
+        } else {
+            String::new()
+        };
+        let click = ClickInput {
+            x: Some(target.x as f64),
+            y: Some(target.y as f64),
+            button: input.button,
+            double: input.double,
+        };
+        Ok(self
+            .click_described(
+                click,
+                Some(Box::new(move |verb: &str| {
+                    format!(
+                        "{verb} \"{}\" at ({}, {}){others}",
+                        target.text, target.x, target.y
+                    )
+                })),
+            )
+            .await)
     }
 
     async fn move_pointer(&self, input: MoveInput) -> anyhow::Result<DesktopActionResult> {
-        todo!()
+        let at = self.to_display(input.x, input.y);
+        Ok(self
+            .act(
+                Capability::Input,
+                || async move {
+                    self.state.lock().pointer = at;
+                    self.call("input.pointer", at.json(), INPUT_TIMEOUT_MS)
+                        .await?;
+                    Ok(())
+                },
+                format!(
+                    "Moved the pointer to ({}, {})",
+                    rounded(input.x),
+                    rounded(input.y)
+                ),
+            )
+            .await)
     }
 
     async fn click(&self, input: ClickInput) -> anyhow::Result<DesktopActionResult> {
-        todo!()
+        Ok(self.click_described(input, None).await)
     }
 
     async fn drag(&self, input: DragInput) -> anyhow::Result<DesktopActionResult> {
-        todo!()
+        let button = input.button.unwrap_or(MouseButton::Left);
+        let from = self.to_display(input.from_x, input.from_y);
+        let to = self.to_display(input.to_x, input.to_y);
+        Ok(self
+            .act(
+                Capability::Input,
+                || async move {
+                    // Notifications apply in arrival order, so only the release needs an answer.
+                    self.link.notify("input.pointer", Some(from.json()));
+                    self.link.notify(
+                        "input.button",
+                        Some(json!({ "button": button.as_str(), "down": true })),
+                    );
+                    for step in 1..=DRAG_STEPS {
+                        let along = |a: i64, b: i64| {
+                            rounded(a as f64 + ((b - a) * step) as f64 / DRAG_STEPS as f64)
+                        };
+                        self.link.notify(
+                            "input.pointer",
+                            Some(json!({ "x": along(from.x, to.x), "y": along(from.y, to.y) })),
+                        );
+                    }
+                    self.state.lock().pointer = to;
+                    self.call(
+                        "input.button",
+                        json!({ "button": button.as_str(), "down": false }),
+                        INPUT_TIMEOUT_MS,
+                    )
+                    .await?;
+                    Ok(())
+                },
+                format!(
+                    "Dragged {} from ({}, {}) to ({}, {})",
+                    button.as_str(),
+                    rounded(input.from_x),
+                    rounded(input.from_y),
+                    rounded(input.to_x),
+                    rounded(input.to_y)
+                ),
+            )
+            .await)
     }
 
     async fn type_text(&self, input: TypeInput) -> anyhow::Result<DesktopActionResult> {
-        todo!()
+        let length = js::len16(&input.text);
+        let timeout = TYPE_TIMEOUT_CAP_MS.min(INPUT_TIMEOUT_MS + length as u64 * TYPE_MS_PER_CHAR);
+        let text = input.text.clone();
+        Ok(self
+            .act(
+                Capability::Input,
+                || async move {
+                    self.call("input.text", json!({ "text": text }), timeout)
+                        .await?;
+                    Ok(())
+                },
+                format!(
+                    "Typed {length} character{}",
+                    if length == 1 { "" } else { "s" }
+                ),
+            )
+            .await)
     }
 
     async fn key(&self, input: KeyInput) -> anyhow::Result<DesktopActionResult> {
-        todo!()
+        let keys = input.keys.clone();
+        Ok(self
+            .act(
+                Capability::Input,
+                || async move {
+                    self.call("input.key", json!({ "keys": keys }), INPUT_TIMEOUT_MS)
+                        .await?;
+                    Ok(())
+                },
+                format!("Pressed {}", input.keys),
+            )
+            .await)
     }
 
     async fn scroll(&self, input: ScrollInput) -> anyhow::Result<DesktopActionResult> {
-        todo!()
-    }
-}
-
-impl RemoteComputer {
-    /// `click` with the message a caller words from the verb (`Clicked`, `Double-clicked`),
-    /// as `click_text` words it.
-    async fn click_described(
-        &self,
-        input: ClickInput,
-        describe: Option<Box<dyn FnOnce(&str) -> String + Send>>,
-    ) -> DesktopActionResult {
-        todo!()
+        let at = self.to_display(input.x, input.y);
+        let clicks = input.clicks.unwrap_or(3);
+        let dy = if input.direction == ScrollDirection::Down {
+            clicks
+        } else {
+            -clicks
+        };
+        Ok(self
+            .act(
+                Capability::Input,
+                || async move {
+                    self.state.lock().pointer = at;
+                    self.call(
+                        "input.wheel",
+                        json!({ "x": at.x, "y": at.y, "dy": dy }),
+                        INPUT_TIMEOUT_MS,
+                    )
+                    .await?;
+                    Ok(())
+                },
+                format!(
+                    "Scrolled {} at ({}, {})",
+                    input.direction.as_str(),
+                    rounded(input.x),
+                    rounded(input.y)
+                ),
+            )
+            .await)
     }
 }
 
@@ -393,7 +1170,11 @@ impl RemoteComputer {
 impl ComputerUserScreen for RemoteComputer {
     /// Answers that the user is not sharing their screen.
     async fn look_at_user_screen(&self) -> anyhow::Result<UserScreenResult> {
-        todo!()
+        Ok(UserScreenResult {
+            success: false,
+            message: "Your user is not sharing their screen right now.".to_string(),
+            text: None,
+        })
     }
 }
 
@@ -404,21 +1185,187 @@ impl Computer for RemoteComputer {
     }
 
     fn start_screen_stream(&self, on_frame: FrameSink) {
-        todo!()
+        let (id, display) = {
+            let mut state = self.state.lock();
+            // Kept even when the computer cannot stream yet, so the stream starts once it can.
+            state.watcher = Some(Arc::clone(&on_frame));
+            if !state.capabilities.contains(&Capability::Stream) {
+                return;
+            }
+            let id = state.next_stream;
+            state.next_stream += 1;
+            let size = ScreenSize {
+                width: state.display.width,
+                height: state.display.height,
+            };
+            state.stream = Some(RemoteStream {
+                id,
+                on_frame,
+                started: false,
+                size,
+            });
+            (id, state.display.id.clone())
+        };
+        let me = self.me.clone();
+        // The client answers before this stream's first frame, so the answer is where it begins.
+        let on_answer = Box::new(move |started: &StreamStartResult| {
+            let Some(computer) = me.upgrade() else {
+                return;
+            };
+            let on_frame = {
+                let mut state = computer.state.lock();
+                let Some(stream) = state.stream.as_mut().filter(|stream| stream.id == id) else {
+                    return;
+                };
+                stream.size = ScreenSize {
+                    width: started.width,
+                    height: started.height,
+                };
+                stream.started = true;
+                Arc::clone(&stream.on_frame)
+            };
+            on_frame(match started.encoding {
+                StreamEncoding::H264 => ScreenFrame::Start {
+                    encoding: StreamEncoding::H264,
+                    codec: Some(
+                        started
+                            .codec
+                            .clone()
+                            .unwrap_or_else(|| "avc1.42E01F".to_string()),
+                    ),
+                },
+                StreamEncoding::Jpeg => ScreenFrame::Start {
+                    encoding: StreamEncoding::Jpeg,
+                    codec: None,
+                },
+            });
+        });
+        let answer = self.link.request::<StreamStartResult>(
+            "stream.start",
+            Some(json!({
+                "display": display,
+                "encodings": ["h264", "jpeg"],
+                "maxWidth": MAX_SCREEN.width,
+                "fps": 30,
+            })),
+            READ_TIMEOUT_MS,
+            Some(on_answer),
+        );
+        let me = self.me.clone();
+        tokio::spawn(async move {
+            let Err(err) = answer.await else {
+                return;
+            };
+            let Some(computer) = me.upgrade() else {
+                return;
+            };
+            {
+                let mut state = computer.state.lock();
+                if state.stream.as_ref().is_some_and(|stream| stream.id == id) {
+                    state.stream = None;
+                }
+            }
+            log_warn!(
+                "[Computer:Remote] {}: the screen stream did not start: {}",
+                computer.name(),
+                detail(&err)
+            );
+        });
     }
 
     fn stop_screen_stream(&self) {
-        todo!()
+        {
+            let mut state = self.state.lock();
+            state.watcher = None;
+            if state.stream.take().is_none() {
+                return;
+            }
+        }
+        // Sent now; nobody waits for the answer.
+        drop(
+            self.link
+                .request::<EmptyResult>("stream.stop", None, INPUT_TIMEOUT_MS, None),
+        );
     }
 
     /// A viewer's pointer and keyboard while it holds the computer; positions are stream
     /// pixels.
     fn handle_input(&self, text: &str) {
-        todo!()
+        if !self.can(Capability::Input) {
+            return;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(text) else {
+            return;
+        };
+        let Some(frame) = input_frame(&value) else {
+            return;
+        };
+        match frame {
+            InputFrame::Pointer { x, y } => {
+                let at = self.from_stream(x, y);
+                self.state.lock().pointer = at;
+                self.move_now();
+            }
+            InputFrame::PointerMove { dx, dy } => {
+                let (sx, sy) = self.stream_scale();
+                let pointer = self.state.lock().pointer;
+                let at = self.clamp(pointer.x as f64 + dx * sx, pointer.y as f64 + dy * sy);
+                self.state.lock().pointer = at;
+                self.schedule_move();
+            }
+            InputFrame::PointerButton { button, down } => {
+                self.flush_move();
+                {
+                    let mut state = self.state.lock();
+                    if down {
+                        state.held.insert(button);
+                    } else {
+                        state.held.shift_remove(&button);
+                    }
+                }
+                self.link.notify(
+                    "input.button",
+                    Some(json!({ "button": button.as_str(), "down": down })),
+                );
+            }
+            InputFrame::Wheel { dy } => {
+                let clicks =
+                    MAX_WHEEL_CLICKS.min(1_i64.max(rounded(dy.abs() / WHEEL_PIXELS_PER_CLICK)));
+                self.flush_move();
+                let pointer = self.state.lock().pointer;
+                self.link.notify(
+                    "input.wheel",
+                    Some(json!({
+                        "x": pointer.x,
+                        "y": pointer.y,
+                        "dy": if dy > 0.0 { clicks } else { -clicks },
+                    })),
+                );
+            }
+            InputFrame::Key(frame) => {
+                if let Some(keys) = chord_for(&frame, MetaAs::Super) {
+                    self.link.notify("input.key", Some(json!({ "keys": keys })));
+                }
+            }
+            InputFrame::Text { text } => {
+                let typed = paste_text(&text);
+                if !typed.is_empty() {
+                    self.link
+                        .notify("input.text", Some(json!({ "text": typed })));
+                }
+            }
+        }
     }
 
     fn release_input(&self) {
-        todo!()
+        self.flush_move();
+        let held: Vec<MouseButton> = self.state.lock().held.drain(..).collect();
+        for button in held {
+            self.link.notify(
+                "input.button",
+                Some(json!({ "button": button.as_str(), "down": false })),
+            );
+        }
     }
 
     async fn clear_after_secure_window(&self) -> anyhow::Result<()> {
@@ -447,10 +1394,21 @@ impl Computer for RemoteComputer {
     }
 
     async fn stop(&self) -> anyhow::Result<()> {
-        todo!()
+        let timer = {
+            let mut state = self.state.lock();
+            state.stream = None;
+            state.move_timer.take()
+        };
+        if let Some(timer) = timer {
+            timer.abort();
+        }
+        Ok(())
     }
 
     fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self
     }
 }
+
+#[cfg(test)]
+mod tests;

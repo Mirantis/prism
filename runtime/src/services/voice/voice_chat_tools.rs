@@ -113,3 +113,150 @@ pub fn prepare_voice_chat_tools(
         catalog: base.catalog.clone().filter(|catalog| !catalog.is_empty()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    /// A prepared set that records which of its tools were run.
+    fn set(names: &[&str]) -> (PreparedTools, Arc<Mutex<Vec<String>>>) {
+        let declarations: Arc<Vec<RealtimeFunctionTool>> = Arc::new(
+            names
+                .iter()
+                .map(|name| RealtimeFunctionTool {
+                    name: name.to_string(),
+                    description: name.to_string(),
+                    parameters: json!({}),
+                })
+                .collect(),
+        );
+        let ran = Arc::new(Mutex::new(Vec::new()));
+        let record = ran.clone();
+        let prepared = PreparedTools {
+            declarations: Arc::new(move || declarations.clone()),
+            count: names.len(),
+            execute: Arc::new(move |name: String, _arguments: String| {
+                record.lock().push(name.clone());
+                async move { name }.boxed()
+            }),
+            catalog: None,
+        };
+        (prepared, ran)
+    }
+
+    fn names(tools: &PreparedTools) -> Vec<String> {
+        tools
+            .declarations()
+            .iter()
+            .map(|d| d.name.clone())
+            .collect()
+    }
+
+    const COMPUTER_NAMES: [&str; 4] = [
+        "computer_browse",
+        "computer_screen",
+        "computer_click",
+        "computer_instruct",
+    ];
+
+    fn with_meeting_tools(first: &str) -> Vec<&str> {
+        std::iter::once(first)
+            .chain(MEETING_TOOL_NAMES.iter().copied())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn omits_call_specific_tools_and_refuses_to_execute_them() {
+        let (base, ran) = set(&with_meeting_tools("memory_search"));
+        let tools = prepare_voice_chat_tools(base, None);
+        assert_eq!(names(&tools), vec!["memory_search"]);
+        assert_eq!(tools.count, 1);
+        let refused = tools.execute(MEETING_TOOL_NAMES[0], "{}").await;
+        assert!(refused.contains("Unknown tool"), "{refused}");
+        assert!(ran.lock().is_empty());
+    }
+
+    #[tokio::test]
+    async fn follows_the_base_declarations_when_a_load_adds_to_them() {
+        let current = Arc::new(Mutex::new(Arc::new(vec![RealtimeFunctionTool {
+            name: "memory_search".into(),
+            description: String::new(),
+            parameters: json!({}),
+        }])));
+        let source = current.clone();
+        let base = PreparedTools {
+            declarations: Arc::new(move || source.lock().clone()),
+            count: 2,
+            execute: Arc::new(|_name: String, _arguments: String| async { String::new() }.boxed()),
+            catalog: None,
+        };
+        let (computer, _) = set(&["computer_screen"]);
+        let tools = prepare_voice_chat_tools(base, Some(computer));
+        let before = tools.declarations();
+        assert!(Arc::ptr_eq(&tools.declarations(), &before));
+        // The base counts its deferred tool, as the meeting path does.
+        assert_eq!(tools.count, 3);
+
+        {
+            let mut declarations = current.lock();
+            let mut next = declarations.as_ref().clone();
+            next.push(RealtimeFunctionTool {
+                name: "gh__create_issue".into(),
+                description: String::new(),
+                parameters: json!({}),
+            });
+            *declarations = Arc::new(next);
+        }
+
+        assert!(!Arc::ptr_eq(&tools.declarations(), &before));
+        assert_eq!(
+            names(&tools),
+            vec!["memory_search", "gh__create_issue", "computer_screen"]
+        );
+    }
+
+    #[tokio::test]
+    async fn adds_the_computer_declarations_after_the_agents_own() {
+        let (base, _) = set(&with_meeting_tools("memory_search"));
+        let (computer, _) = set(&COMPUTER_NAMES);
+        let tools = prepare_voice_chat_tools(base, Some(computer));
+        let mut expected = vec!["memory_search".to_string()];
+        expected.extend(COMPUTER_NAMES.iter().map(|n| n.to_string()));
+        assert_eq!(names(&tools), expected);
+    }
+
+    #[tokio::test]
+    async fn routes_each_computer_declaration_to_the_computer_executor() {
+        let (base, base_ran) = set(&with_meeting_tools("memory_search"));
+        let (computer, computer_ran) = set(&COMPUTER_NAMES);
+        let tools = prepare_voice_chat_tools(base, Some(computer));
+        tools.execute("memory_search", "{}").await;
+        for name in COMPUTER_NAMES {
+            tools.execute(name, "{}").await;
+        }
+        assert_eq!(*base_ran.lock(), vec!["memory_search"]);
+        assert_eq!(*computer_ran.lock(), COMPUTER_NAMES.to_vec());
+    }
+
+    #[tokio::test]
+    async fn keeps_unrelated_tools_whose_names_start_with_computer() {
+        let (base, ran) = set(&["computer_inventory"]);
+        let tools = prepare_voice_chat_tools(base, None);
+        assert_eq!(names(&tools), vec!["computer_inventory"]);
+        tools.execute("computer_inventory", "{}").await;
+        assert_eq!(*ran.lock(), vec!["computer_inventory"]);
+    }
+
+    #[tokio::test]
+    async fn declares_a_duplicate_name_once_and_uses_its_replacement_executor() {
+        let (base, base_ran) = set(&["computer_browse"]);
+        let (computer, computer_ran) = set(&["computer_browse"]);
+        let tools = prepare_voice_chat_tools(base, Some(computer));
+        assert_eq!(names(&tools), vec!["computer_browse"]);
+        tools.execute("computer_browse", "{}").await;
+        assert!(base_ran.lock().is_empty());
+        assert_eq!(*computer_ran.lock(), vec!["computer_browse"]);
+    }
+}

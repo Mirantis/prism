@@ -161,3 +161,98 @@ fn id_candidates(model_id: &str) -> Vec<String> {
 
     seen.into_iter().collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lib::model_catalog::reset_model_catalog;
+
+    // The IDs the configuration defaults to. If the models.dev snapshot stops
+    // covering these, the indicator disappears for every default deployment.
+    const BEDROCK_CHAT_DEFAULT: &str = "global.anthropic.claude-opus-5-5";
+    const AZURE_CHAT_DEFAULT: &str = "claude-opus-5";
+    const OPENAI_CHAT_DEFAULT: &str = "gpt-5.6-sol";
+    const OPENAI_CLASSIFICATION_DEFAULT: &str = "gpt-5.6-luna";
+
+    /// The lookups below read the bundled floor; an operator-set window replaces it.
+    fn window(model_id: &str) -> Option<i64> {
+        reset_model_catalog();
+        context_window_for(model_id).map(|window| window.tokens)
+    }
+
+    fn without_override() -> bool {
+        CONFIG.context_window_tokens.is_none()
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn resolves_the_runtime_defaults() {
+        if !without_override() {
+            return;
+        }
+        assert_eq!(window(BEDROCK_CHAT_DEFAULT), Some(1_000_000));
+        assert_eq!(window(AZURE_CHAT_DEFAULT), Some(1_000_000));
+        assert_eq!(window(OPENAI_CHAT_DEFAULT), Some(1_050_000));
+        assert_eq!(window(OPENAI_CLASSIFICATION_DEFAULT), Some(1_050_000));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn normalizes_region_prefixes_and_version_suffixes() {
+        if !without_override() {
+            return;
+        }
+        // `sa.` is a plausible future geo the registry does not list yet.
+        assert_eq!(window("sa.anthropic.claude-opus-5"), Some(1_000_000));
+        assert_eq!(window("us.anthropic.claude-opus-5-v1:0"), Some(1_000_000));
+        // Cross-provider fallback: either spelling of a known model resolves.
+        assert_eq!(window("claude-haiku-4-5"), Some(200_000));
+        assert_eq!(window("us.anthropic.claude-opus-5"), Some(1_000_000));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn resolves_each_region_spelling_and_a_model_only_one_provider_lists() {
+        if !without_override() {
+            return;
+        }
+        for region in ["us", "eu", "au", "jp", "global"] {
+            assert_eq!(
+                window(&format!("{region}.anthropic.claude-sonnet-4-6")),
+                Some(1_000_000)
+            );
+        }
+        assert_eq!(window("claude-opus-4-6"), Some(1_000_000));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn knows_no_window_for_an_unknown_model() {
+        if !without_override() {
+            return;
+        }
+        assert_eq!(window("my-opus-deploy"), None);
+        assert_eq!(window("amazon.titan-embed-text-v2:0"), None);
+        assert_eq!(window(""), None);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn builds_a_snapshot_against_the_models_window() {
+        if !without_override() {
+            return;
+        }
+        reset_model_catalog();
+        let snapshot =
+            build_context_snapshot("thread-1", Some(BEDROCK_CHAT_DEFAULT), Some(250_000)).unwrap();
+        assert_eq!(snapshot.window_tokens, 1_000_000);
+        assert_eq!(snapshot.used_percent, 25);
+        let overflow =
+            build_context_snapshot("thread-1", Some(BEDROCK_CHAT_DEFAULT), Some(2_000_000))
+                .unwrap();
+        assert_eq!(overflow.used_percent, 100);
+        assert!(build_context_snapshot("thread-1", Some("my-opus-deploy"), Some(1)).is_none());
+        assert!(build_context_snapshot("thread-1", None, Some(1)).is_none());
+        assert!(build_context_snapshot("thread-1", Some(BEDROCK_CHAT_DEFAULT), None).is_none());
+    }
+}

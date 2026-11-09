@@ -1587,3 +1587,6 @@ pub(crate) mod testing {
     pub(crate) static THREAD_MODE: parking_lot::Mutex<Option<ThreadMode>> =
         parking_lot::Mutex::new(None);
 }
+
+#[cfg(test)]
+mod tests;

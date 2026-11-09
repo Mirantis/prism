@@ -600,3 +600,268 @@ fn emit_outcome(
     }
     track_event("model catalog refreshed", None, Some(props));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    const BEDROCK_CHAT_DEFAULT: &str = "us.anthropic.claude-opus-5";
+
+    /// A minimal models.dev-shaped payload.
+    fn registry() -> Value {
+        json!({
+            "amazon-bedrock": {
+                "models": {
+                    "us.anthropic.claude-opus-5": { "limit": { "context": 1_000_000, "output": 128_000 } },
+                    "amazon.titan-embed-text-v2:0": { "limit": { "context": 8_192, "output": 0 } },
+                },
+            },
+            "azure": {
+                "models": {
+                    "claude-opus-5": { "limit": { "context": 1_000_000, "output": 128_000 } },
+                },
+            },
+        })
+    }
+
+    fn entry(context: i64, output: Option<i64>) -> CatalogEntry {
+        CatalogEntry { context, output }
+    }
+
+    fn catalog(provider: &str, entries: &[(&str, CatalogEntry)]) -> ModelCatalog {
+        let mut models = IndexMap::new();
+        for (id, entry) in entries {
+            models.insert(id.to_string(), *entry);
+        }
+        let mut catalog = ModelCatalog::new();
+        catalog.insert(provider.to_string(), models);
+        catalog
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn serves_the_bundled_catalog_before_any_refresh() {
+        reset_model_catalog();
+        assert_eq!(*model_catalog(), *bundled_model_catalog());
+        assert_eq!(model_catalog_state(), CatalogState::Bundled);
+        let bedrock = &bundled_model_catalog()["bedrock"];
+        assert!(!bedrock.is_empty());
+        assert_eq!(bedrock[BEDROCK_CHAT_DEFAULT].context, 1_000_000);
+    }
+
+    #[test]
+    fn keeps_claude_models_with_a_believable_window_in_the_claude_buckets() {
+        assert!(is_usable_registry_entry(
+            "claude-opus-5",
+            &json!({ "limit": { "context": 1_000_000 } }),
+            "azure"
+        ));
+        assert!(is_usable_registry_entry(
+            "anthropic.claude-fable-5",
+            &json!({ "limit": { "context": 200_000 } }),
+            "amazon-bedrock"
+        ));
+    }
+
+    #[test]
+    fn drops_out_of_family_models_per_bucket() {
+        assert!(!is_usable_registry_entry(
+            "amazon.titan-embed-text-v2:0",
+            &json!({ "limit": { "context": 8_192 } }),
+            "amazon-bedrock"
+        ));
+        assert!(!is_usable_registry_entry(
+            "gpt-5",
+            &json!({ "limit": { "context": 400_000 } }),
+            "azure"
+        ));
+        assert!(!is_usable_registry_entry(
+            "claude-opus-5",
+            &json!({ "limit": { "context": 1_000_000 } }),
+            "openai"
+        ));
+    }
+
+    #[test]
+    fn keeps_gpt_o_series_and_codex_models_in_the_openai_bucket() {
+        for id in ["gpt-5.6-sol", "o3-mini", "codex-mini-latest"] {
+            assert!(is_usable_registry_entry(
+                id,
+                &json!({ "limit": { "context": 200_000 } }),
+                "openai"
+            ));
+        }
+    }
+
+    #[test]
+    fn drops_everything_for_an_unknown_registry_provider() {
+        assert!(!is_usable_registry_entry(
+            "claude-opus-5",
+            &json!({ "limit": { "context": 1_000_000 } }),
+            "acme"
+        ));
+    }
+
+    #[test]
+    fn drops_an_implausibly_small_or_missing_window() {
+        for model in [
+            json!({ "limit": { "context": 0 } }),
+            json!({ "limit": { "context": -1 } }),
+            json!({ "limit": { "context": 500 } }),
+            json!({ "limit": {} }),
+            json!({}),
+        ] {
+            assert!(!is_usable_registry_entry("claude-opus-5", &model, "azure"));
+        }
+        assert!(is_usable_registry_entry(
+            "claude-opus-5",
+            &json!({ "limit": { "context": MIN_PLAUSIBLE_CONTEXT } }),
+            "azure"
+        ));
+    }
+
+    #[test]
+    fn scopes_per_provider_and_normalizes_a_missing_output() {
+        let mut payload = registry();
+        payload["azure"] =
+            json!({ "models": { "claude-opus-5": { "limit": { "context": 1_000_000 } } } });
+        let reshaped = reshape_registry(&payload).unwrap();
+        assert_eq!(
+            serde_json::to_value(&reshaped).unwrap(),
+            json!({
+                "bedrock": { "us.anthropic.claude-opus-5": { "context": 1_000_000, "output": 128_000 } },
+                "azure": { "claude-opus-5": { "context": 1_000_000, "output": null } },
+            })
+        );
+    }
+
+    #[test]
+    fn ignores_providers_it_is_not_configured_for() {
+        let mut payload = registry();
+        payload["openai"] =
+            json!({ "models": { "claude-opus-5": { "limit": { "context": 1_000_000 } } } });
+        let reshaped = reshape_registry(&payload).unwrap();
+        assert_eq!(reshaped.keys().collect::<Vec<_>>(), ["bedrock", "azure"]);
+    }
+
+    #[test]
+    fn omits_a_provider_that_yielded_nothing() {
+        let mut payload = registry();
+        payload["azure"] = json!({ "models": { "gpt-5": { "limit": { "context": 400_000 } } } });
+        let reshaped = reshape_registry(&payload).unwrap();
+        assert!(!reshaped.contains_key("azure"));
+        assert!(reshaped.contains_key("bedrock"));
+    }
+
+    #[test]
+    fn rejects_an_unusable_payload() {
+        for payload in [
+            Value::Null,
+            json!([]),
+            json!({}),
+            json!("nope"),
+            json!({ "openai": { "models": {} } }),
+            json!({ "amazon-bedrock": { "models": { "gpt-5": { "limit": { "context": 9 } } } } }),
+            json!({ "amazon-bedrock": { "models": "oops" } }),
+        ] {
+            assert!(reshape_registry(&payload).is_none(), "{payload}");
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn lets_the_overlay_win_and_keeps_the_rest_of_the_floor() {
+        reset_model_catalog();
+        let azure_floor = bundled_model_catalog().get("azure").cloned();
+        install_remote_catalog(&catalog(
+            "bedrock",
+            &[(BEDROCK_CHAT_DEFAULT, entry(2_000_000, Some(128_000)))],
+        ));
+        let effective = model_catalog();
+        assert_eq!(
+            effective["bedrock"][BEDROCK_CHAT_DEFAULT].context,
+            2_000_000
+        );
+        assert_eq!(effective.get("azure").cloned(), azure_floor);
+        assert_eq!(
+            bundled_model_catalog()["bedrock"][BEDROCK_CHAT_DEFAULT].context,
+            1_000_000
+        );
+        reset_model_catalog();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn adds_a_model_the_bundle_has_never_heard_of() {
+        reset_model_catalog();
+        let result = install_remote_catalog(&catalog(
+            "bedrock",
+            &[(
+                "us.anthropic.claude-brandnew-9",
+                entry(5_000_000, Some(64_000)),
+            )],
+        ));
+        assert_eq!(result.added, 1);
+        assert_eq!(result.changed, 0);
+        assert_eq!(
+            model_catalog()["bedrock"]["us.anthropic.claude-brandnew-9"].context,
+            5_000_000
+        );
+        assert!(!bundled_model_catalog()["bedrock"].contains_key("us.anthropic.claude-brandnew-9"));
+        reset_model_catalog();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn counts_a_large_divergence_separately_from_an_ordinary_change() {
+        reset_model_catalog();
+        let bedrock = &bundled_model_catalog()["bedrock"];
+        let (other, other_entry) = bedrock
+            .iter()
+            .find(|(id, _)| id.as_str() != BEDROCK_CHAT_DEFAULT)
+            .map(|(id, entry)| (id.clone(), *entry))
+            .unwrap();
+        let result = install_remote_catalog(&catalog(
+            "bedrock",
+            &[
+                // 1M -> 900k: a real change, within the noise band.
+                (BEDROCK_CHAT_DEFAULT, entry(900_000, Some(128_000))),
+                // An order of magnitude down, worth a human look.
+                (&other, entry(other_entry.context / 10, other_entry.output)),
+            ],
+        ));
+        assert_eq!(result.changed, 2);
+        assert_eq!(result.diverged, 1);
+        reset_model_catalog();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn does_not_count_an_identical_value_as_changed() {
+        reset_model_catalog();
+        let result = install_remote_catalog(&catalog(
+            "bedrock",
+            &[(BEDROCK_CHAT_DEFAULT, entry(1_000_000, Some(128_000)))],
+        ));
+        assert_eq!(result, InstallResult::default());
+        reset_model_catalog();
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn makes_no_outbound_call_without_a_url() {
+        // CONFIG holds no MODELS_DEV_URL in tests.
+        if CONFIG
+            .models_dev_url
+            .as_deref()
+            .is_some_and(|url| !url.is_empty())
+        {
+            return;
+        }
+        reset_model_catalog();
+        refresh_model_catalog().await;
+        assert_eq!(model_catalog_state(), CatalogState::Disabled);
+        reset_model_catalog();
+    }
+}

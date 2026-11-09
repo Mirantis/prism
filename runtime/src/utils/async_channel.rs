@@ -121,4 +121,81 @@ mod tests {
             .await;
         assert_eq!(items, ["1", "2", "boom"]);
     }
+
+    async fn drain(channel: Arc<AsyncChannel<i32>>) -> (Vec<i32>, Option<String>) {
+        let mut values = Vec::new();
+        while let Some(item) = channel.next().await {
+            match item {
+                Ok(value) => values.push(value),
+                Err(err) => return (values, Some(err.to_string())),
+            }
+        }
+        (values, None)
+    }
+
+    #[tokio::test]
+    async fn yields_values_pushed_before_iteration() {
+        let channel = Arc::new(AsyncChannel::new());
+        channel.push(1);
+        channel.push(2);
+        channel.close();
+        assert_eq!(drain(channel).await, (vec![1, 2], None));
+    }
+
+    #[tokio::test]
+    async fn yields_values_pushed_during_iteration() {
+        let channel = Arc::new(AsyncChannel::new());
+        let consumer = tokio::spawn(drain(channel.clone()));
+        channel.push(1);
+        channel.push(2);
+        tokio::task::yield_now().await;
+        channel.push(3);
+        channel.close();
+        assert_eq!(consumer.await.unwrap(), (vec![1, 2, 3], None));
+    }
+
+    #[tokio::test]
+    async fn ends_at_once_when_closed_with_no_values() {
+        let channel: Arc<AsyncChannel<i32>> = Arc::new(AsyncChannel::new());
+        channel.close();
+        assert_eq!(drain(channel).await, (vec![], None));
+    }
+
+    #[tokio::test]
+    async fn ends_with_the_error_after_the_values_before_it() {
+        let channel = Arc::new(AsyncChannel::new());
+        channel.push(1);
+        channel.error(anyhow::anyhow!("boom"));
+        assert_eq!(drain(channel).await, (vec![1], Some("boom".to_string())));
+    }
+
+    #[tokio::test]
+    async fn ends_with_an_error_set_while_the_consumer_waits() {
+        let channel: Arc<AsyncChannel<i32>> = Arc::new(AsyncChannel::new());
+        let consumer = tokio::spawn(drain(channel.clone()));
+        tokio::task::yield_now().await;
+        channel.error(anyhow::anyhow!("failed"));
+        assert_eq!(
+            consumer.await.unwrap(),
+            (vec![], Some("failed".to_string()))
+        );
+    }
+
+    #[tokio::test]
+    async fn ignores_pushes_after_close() {
+        let channel = Arc::new(AsyncChannel::new());
+        channel.push(1);
+        channel.close();
+        channel.push(2);
+        assert_eq!(drain(channel).await, (vec![1], None));
+    }
+
+    #[tokio::test]
+    async fn ignores_pushes_after_an_error() {
+        let channel = Arc::new(AsyncChannel::new());
+        channel.push(1);
+        channel.error(anyhow::anyhow!("err"));
+        channel.push(2);
+        assert_eq!(drain(channel).await, (vec![1], Some("err".to_string())));
+    }
 }

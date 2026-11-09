@@ -491,10 +491,7 @@ impl ComputerLink {
                     _ => Map::new(),
                 };
                 let reason = LinkFailure::Refused(reason_of(&data));
-                (
-                    id,
-                    Err(LinkError::with_data(error.message, reason, data)),
-                )
+                (id, Err(LinkError::with_data(error.message, reason, data)))
             }
             RpcMessage::Response { id, result } => (Some(id), Ok(result)),
         };
@@ -527,6 +524,9 @@ impl ComputerLink {
             code,
             reason: reason.to_string(),
         });
+        // Nothing follows a close, and the listeners hold what the link was serving.
+        self.listeners.lock().clear();
+        *self.pong.lock() = None;
     }
 
     fn emit(&self, event: LinkEvent) {
@@ -585,6 +585,135 @@ pub(crate) mod tests {
                 _ => continue,
             }
         }
+    }
+
+    /// What a fake client answers a request with: its `result`, or its `error` object.
+    pub(crate) type Handler = Arc<dyn Fn(&str, &Value) -> Result<Value, Value> + Send + Sync>;
+
+    /// A computer client: answers requests with its handler (a method it does not handle
+    /// is refused with -32601), and records everything it was sent. A clone is the same
+    /// client.
+    #[derive(Clone)]
+    pub(crate) struct FakeClient {
+        received: Arc<Mutex<Vec<Value>>>,
+        outgoing: mpsc::UnboundedSender<ClientMessage>,
+        closed: Arc<Mutex<Option<u16>>>,
+    }
+
+    impl FakeClient {
+        pub(crate) fn run(
+            ws: tokio_tungstenite::WebSocketStream<
+                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+            >,
+            handler: Handler,
+        ) -> FakeClient {
+            let (mut sink, mut stream) = ws.split();
+            let (outgoing, mut queue) = mpsc::unbounded_channel::<ClientMessage>();
+            tokio::spawn(async move {
+                while let Some(message) = queue.recv().await {
+                    if sink.send(message).await.is_err() {
+                        break;
+                    }
+                }
+            });
+            let received = Arc::new(Mutex::new(Vec::new()));
+            let closed = Arc::new(Mutex::new(None));
+            let (seen, ended, answers) =
+                (Arc::clone(&received), Arc::clone(&closed), outgoing.clone());
+            tokio::spawn(async move {
+                while let Some(Ok(message)) = stream.next().await {
+                    match message {
+                        ClientMessage::Text(text) => {
+                            let value: Value = serde_json::from_str(&text).unwrap();
+                            seen.lock().push(value.clone());
+                            let (Some(method), Some(id)) =
+                                (value.get("method").and_then(Value::as_str), value.get("id"))
+                            else {
+                                continue;
+                            };
+                            let params = value.get("params").cloned().unwrap_or(json!({}));
+                            let answer = match handler(method, &params) {
+                                Ok(result) => {
+                                    json!({ "jsonrpc": "2.0", "id": id, "result": result })
+                                }
+                                Err(error) => json!({ "jsonrpc": "2.0", "id": id, "error": error }),
+                            };
+                            let _ = answers.send(ClientMessage::text(answer.to_string()));
+                        }
+                        ClientMessage::Close(frame) => {
+                            *ended.lock() =
+                                Some(frame.map(|frame| u16::from(frame.code)).unwrap_or(1005));
+                        }
+                        _ => {}
+                    }
+                }
+                ended.lock().get_or_insert(1006);
+            });
+            FakeClient {
+                received,
+                outgoing,
+                closed,
+            }
+        }
+
+        /// A handler that answers each method in `answers` with its value, and refuses the
+        /// rest.
+        pub(crate) fn answering(answers: Vec<(&'static str, Value)>) -> Handler {
+            Arc::new(move |method, _| {
+                answers
+                    .iter()
+                    .find(|(name, _)| *name == method)
+                    .map(|(_, value)| value.clone())
+                    .ok_or_else(|| json!({ "code": -32601, "message": "no" }))
+            })
+        }
+
+        pub(crate) fn requests(&self, method: &str) -> Vec<Value> {
+            self.received
+                .lock()
+                .iter()
+                .filter(|message| message.get("method").and_then(Value::as_str) == Some(method))
+                .cloned()
+                .collect()
+        }
+
+        /// The answers the client got to its own requests.
+        pub(crate) fn answers(&self) -> Vec<Value> {
+            self.received
+                .lock()
+                .iter()
+                .filter(|message| message.get("method").is_none())
+                .cloned()
+                .collect()
+        }
+
+        pub(crate) fn send(&self, message: Value) {
+            let _ = self.outgoing.send(ClientMessage::text(message.to_string()));
+        }
+
+        pub(crate) fn send_binary(&self, data: Vec<u8>) {
+            let _ = self.outgoing.send(ClientMessage::binary(data));
+        }
+
+        pub(crate) fn close(&self) {
+            let _ = self.outgoing.send(ClientMessage::Close(None));
+        }
+
+        /// The close code the server sent, or 1006 once the socket ended without one.
+        pub(crate) fn closed(&self) -> Option<u16> {
+            *self.closed.lock()
+        }
+    }
+
+    /// Wait up to two seconds for `ready`.
+    pub(crate) async fn eventually(ready: impl Fn() -> bool) {
+        for _ in 0..200 {
+            if ready() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(ready(), "the condition never held");
     }
 
     #[tokio::test]

@@ -97,3 +97,24 @@ pub async fn clear_password_fields(pages: &[PageHandle]) -> i64 {
     }
     cleared
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn asks_for_the_hidden_field_and_the_one_a_show_password_control_revealed() {
+        assert!(PASSWORD_FIELDS.contains(r#"input[type="password" i]"#));
+        assert!(PASSWORD_FIELDS.contains(r#"input[autocomplete*="password" i]"#));
+    }
+
+    #[test]
+    fn says_nothing_about_the_frame_a_sign_in_navigated_away_from() {
+        let navigated = anyhow::anyhow!(
+            "frame.evaluate: Execution context was destroyed, most likely because of a navigation"
+        );
+        assert!(is_gone(&navigated));
+        assert!(is_gone(&anyhow::anyhow!("Frame was detached")));
+        assert!(!is_gone(&anyhow::anyhow!("timed out after 5000ms")));
+    }
+}

@@ -37,28 +37,39 @@
 //! spliced into one garbled utterance. Hence `commit_if_pending()` ahead of the
 //! enqueue rather than after.
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
+use bytes::Bytes;
+use futures::FutureExt;
 use futures::future::{BoxFuture, Shared};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use unicode_normalization::UnicodeNormalization;
 
-use crate::log_info;
-use crate::services::meeting::audio_playback::{AudioPlayback, PlaybackSink};
+use crate::config::CONFIG;
+use crate::services::computer::agent_computer::ModelChannel;
+use crate::services::meeting::addressed_audio_gate::{
+    ADDRESSED_DEADLINE_MS, JudgeAddressedInput, judge_addressed,
+};
+use crate::services::meeting::audio_playback::{AudioPlayback, PlaybackSink, clock_ms};
 use crate::services::meeting::barge_in::{BargeInHandlers, BargeInPolicy};
 use crate::services::meeting::meeting_provider_interface::SpeakerReading;
 use crate::services::meeting::openai_endpoint::RealtimeEndpoint;
 use crate::services::meeting::realtime_session::{
-    RealtimeFunctionTool, RealtimeSession, RealtimeSessionOptions, RecordingSegment,
+    OutOfBandRequest, RealtimeFunctionCall, RealtimeFunctionTool, RealtimeSession,
+    RealtimeSessionEvent, RealtimeSessionOptions, RecordingSegment,
 };
 use crate::services::meeting::resampler::{
     Downsampler, MEETING_SAMPLE_RATE, REALTIME_SAMPLE_RATE, Upsampler,
 };
 use crate::services::meeting::response_policy::{
-    EffectiveMode, ResponseMode, ResponsePolicy, ResponsePolicyOptions,
+    EffectiveMode, ResponseMode, ResponsePolicy, ResponsePolicyOptions, TurnDecision,
 };
+use crate::services::meeting::transcript_log::format_transcript;
 use crate::services::voice::realtime_tools::PreparedTools;
+use crate::{log_debug, log_info, log_warn};
 
 /// How long a speaker reading stays worth believing.
 ///
@@ -344,7 +355,195 @@ impl VoiceConversation {
     /// utterances into the policy and the gate, tool calls into the tools, and the
     /// latency and outcome lines into the log.
     fn wire_session(&self) {
-        todo!()
+        let weak = self.this.clone();
+        self.session.on(Arc::new(move |event| {
+            if let Some(conversation) = weak.upgrade() {
+                conversation.on_session_event(event);
+            }
+        }));
+    }
+
+    fn on_session_event(&self, event: &RealtimeSessionEvent) {
+        match event {
+            RealtimeSessionEvent::Audio { pcm, item_id } => self.on_audio(pcm, item_id),
+            RealtimeSessionEvent::SpeechStarted => self.barge_in.on_speech_started(),
+            RealtimeSessionEvent::SpeechStopped => {
+                // The room's clock starts here, not at the turn boundary: the detector takes
+                // its own time to close an utterance, and the silence is already running.
+                self.state.lock().silence_since = Some(clock_ms());
+                self.barge_in.on_speech_stopped();
+            }
+            RealtimeSessionEvent::ResponseDone => {
+                let runs: Vec<Shared<BoxFuture<'static, ()>>> = {
+                    let mut state = self.state.lock();
+                    state.responses += 1;
+                    // The measurement belongs to one response. Left set, a response that
+                    // ends without ever producing audio — cancelled by a barge-in, killed by
+                    // an API error — would hand its marker to whatever spoke next, including
+                    // the greeting, which deliberately measures nothing.
+                    state.pending_answer = None;
+                    state.tool_runs.values().cloned().collect()
+                };
+                if let Some(finished) = self.options.on_response_finished.clone() {
+                    tokio::spawn(async move {
+                        futures::future::join_all(runs).await;
+                        finished();
+                    });
+                }
+            }
+            RealtimeSessionEvent::ResponseFailed { .. } => {
+                self.state.lock().responses_failed += 1;
+            }
+            RealtimeSessionEvent::FunctionCall(call) => self.on_function_call(call),
+            // The model never answers on its own, so every utterance passes the policy —
+            // and there is exactly one place that happens. The turn detector closing an
+            // utterance is both the earliest moment the audio can be pointed at and the
+            // earliest the agent should speak, so deciding here needs no transcript, holds
+            // nothing back for a later boundary, and cannot produce two verdicts for one
+            // sentence.
+            RealtimeSessionEvent::UtteranceCommitted { item_id } => {
+                self.on_utterance_committed(item_id)
+            }
+            // Nothing decides anything from these words — the gate hears the audio. What a
+            // transcript is still worth is being able to read back what a call actually
+            // said next to how it was judged. It lags the decision by however long
+            // transcription takes, so it is written as its own line and paired with the
+            // verdict by `item=` rather than folded into one.
+            RealtimeSessionEvent::Transcript { item_id, text } => {
+                let sentence = format_transcript(text);
+                if sentence.is_empty() {
+                    return;
+                }
+                log_info!(
+                    "[Meeting:Heard] item={} {}",
+                    if item_id.is_empty() { "none" } else { item_id },
+                    sentence
+                );
+            }
+            RealtimeSessionEvent::ApiError { message } => {
+                log_warn!("[Meeting] Realtime API reported: {}", message);
+            }
+            RealtimeSessionEvent::Closed { reason } => {
+                log_info!("[Meeting] Realtime session closed: {}", reason);
+                // A close we didn't ask for is the end of the agent's participation: no
+                // audio reaches the room and none of the room's audio reaches a model. The
+                // browser is still in the call, so without this the bot lingers as a silent
+                // tile until the empty-room poll or the duration cap notices.
+                if !self.state.lock().stopped {
+                    if let Some(lost) = &self.options.on_session_lost {
+                        lost(reason.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    fn on_audio(&self, pcm24k: &Bytes, item_id: &str) {
+        // The first audio of a response is the moment the silence actually ends — asking
+        // for a response is not the same as the room hearing one, and the model takes its
+        // own time to start. Reported separately so the part we control (the decision)
+        // stays distinguishable from the part we don't (the model).
+        //
+        // The reasoning effort is on this line because it is the number effort moves:
+        // thinking harder shows up here and nowhere else, so two calls at different levels
+        // are only comparable if the level is written down beside the figure.
+        let (pending, silence_since, is_new_item) = {
+            let mut state = self.state.lock();
+            (
+                state.pending_answer.take(),
+                state.silence_since,
+                !item_id.is_empty() && state.current_item_id.as_deref() != Some(item_id),
+            )
+        };
+        if let Some((at, via)) = pending {
+            let now = clock_ms();
+            let effort = CONFIG
+                .openai_realtime_reasoning_effort
+                .map(|effort| effort.as_str())
+                .unwrap_or("api default");
+            log_info!(
+                "[Meeting:Latency] voice started {}ms after asking (via {}, effort {}){}",
+                now - at,
+                via,
+                effort,
+                silence_since
+                    .map(|since| format!(", {}ms of silence in the room", now - since))
+                    .unwrap_or_default()
+            );
+        }
+
+        if is_new_item {
+            // A new utterance begins: settle any undecided pause first so stale audio can't
+            // be spliced onto the front of the new one.
+            self.barge_in.commit_if_pending();
+            self.barge_in.on_utterance_started();
+            self.state.lock().current_item_id = Some(item_id.to_string());
+        }
+        self.playback
+            .enqueue(Bytes::from(self.from_model(pcm24k)), item_id);
+    }
+
+    fn on_function_call(&self, call: &RealtimeFunctionCall) {
+        // A response still finishing after the call ended must not act for a user who left.
+        let Some(this) = self.this.upgrade() else {
+            return;
+        };
+        let mut state = self.state.lock();
+        if state.stopped {
+            return;
+        }
+        state.tool_calls += 1;
+        let call = call.clone();
+        let run: Shared<BoxFuture<'static, ()>> = async move {
+            this.run_tool(call.call_id, call.name, call.arguments_json)
+                .await
+        }
+        .boxed()
+        .shared();
+        state.next_tool_run += 1;
+        let id = state.next_tool_run;
+        state.tool_runs.insert(id, run.clone());
+        let weak = self.this.clone();
+        tokio::spawn(async move {
+            run.await;
+            if let Some(conversation) = weak.upgrade() {
+                conversation.state.lock().tool_runs.remove(&id);
+            }
+        });
+    }
+
+    fn on_utterance_committed(&self, item_id: &str) {
+        if self.state.lock().stopped {
+            return;
+        }
+        let decision = self.response_policy.lock().on_utterance_committed(item_id);
+        // Only a turn the policy actually accepted moves this. A duplicated commit for an
+        // earlier utterance is answered `Ignore`, and letting it set the marker anyway
+        // would rewind the guard below — that earlier utterance's late yes would then
+        // pass, and the bare response would answer whatever came after it.
+        if decision != TurnDecision::Ignore {
+            // Against `current_speaker`, so the agent's own voice does not score as a
+            // success. A rate that sags while the agent is being talked over is the honest
+            // reading: in those moments attribution is not available.
+            let attributed = self.current_speaker().is_some();
+            let mut state = self.state.lock();
+            state.newest_item_id = Some(item_id.to_string());
+            if attributed {
+                state.attributed_utterances += 1;
+            } else {
+                state.unattributed_utterances += 1;
+            }
+        }
+        match decision {
+            TurnDecision::Respond => self.answer("open-mode"),
+            TurnDecision::Gate => {
+                if let Some(this) = self.this.upgrade() {
+                    let item_id = item_id.to_string();
+                    tokio::spawn(async move { this.judge_then_maybe_answer(item_id).await });
+                }
+            }
+            TurnDecision::Ignore => {}
+        }
     }
 
     /// Ask the model whether an utterance was aimed at the agent, then act on it.
@@ -354,7 +553,77 @@ impl VoiceConversation {
     /// Each probe ends its context on the utterance it is judging, so verdicts arriving
     /// out of order still land on the right sentence.
     async fn judge_then_maybe_answer(&self, item_id: String) {
-        todo!()
+        let asked = clock_ms();
+        let roster = {
+            let mut state = self.state.lock();
+            state.gate_calls += 1;
+            state.roster_names.clone()
+        };
+
+        let verdict = judge_addressed(
+            &*self.session,
+            &JudgeAddressedInput {
+                agent_name: self.options.agent_name.clone(),
+                roster,
+                item_id: item_id.clone(),
+            },
+        )
+        .await;
+
+        let newest = {
+            let mut state = self.state.lock();
+            state.gate_latency_ms += verdict.elapsed_ms;
+
+            // A failure is counted here and nowhere else. It must not reach the policy: a
+            // verdict that never happened is not a suppression, and counting it as one
+            // would put failures into `suppressed` as well as `gate_failed`.
+            if verdict.failed {
+                state.gate_failed += 1;
+                return;
+            }
+
+            // The call ended under the probe. Nothing to answer into.
+            if state.stopped {
+                return;
+            }
+            state.newest_item_id.clone()
+        };
+
+        // A verdict this late is worse than a missed one: the room has moved on, and
+        // answering a question everybody has stopped caring about breaks whatever is
+        // being said now. The gate's own deadline should make this unreachable; it is
+        // kept because the cost of being wrong here is paid in the room.
+        if clock_ms() - asked > ADDRESSED_DEADLINE_MS as i64 {
+            log_info!(
+                "[Meeting] Dropped a late verdict for item={} — the room has moved on",
+                item_id
+            );
+            return;
+        }
+
+        // Somebody else has spoken since. Answering now would answer *their* utterance,
+        // because the response carries the conversation as it stands rather than the turn
+        // that was judged. Dropped instead, on the same principle as the deadline above:
+        // speaking out of turn is the failure this gate exists to prevent, and someone
+        // repeating themselves recovers a lost answer.
+        if let Some(newest) = newest.filter(|newest| *newest != item_id) {
+            self.state.lock().gate_superseded += 1;
+            log_info!(
+                "[Meeting] Dropped a verdict for item={} — item={} has closed since, and the answer would land on that",
+                if item_id.is_empty() { "none" } else { &item_id },
+                if newest.is_empty() { "none" } else { &newest }
+            );
+            return;
+        }
+
+        if !self
+            .response_policy
+            .lock()
+            .resolve_verdict(&item_id, verdict.addressed)
+        {
+            return;
+        }
+        self.answer("gate");
     }
 
     /// Ask for a response, and record how long the room waited to get one.
@@ -365,7 +634,7 @@ impl VoiceConversation {
     /// apart: the first is free, the second is a model round trip the room sits through
     /// in silence.
     fn answer(&self, via: &str) {
-        let now = crate::support::now_ms();
+        let now = clock_ms();
         {
             let mut state = self.state.lock();
             match state.silence_since {
@@ -389,7 +658,25 @@ impl VoiceConversation {
     /// Run one tool call, then hand its output back. Declarations a `load_tools` call
     /// changed are sent first, so the response the output asks for can call what loaded.
     async fn run_tool(&self, call_id: String, name: String, arguments_json: String) {
-        todo!()
+        let output = self.options.tools.execute(&name, &arguments_json).await;
+        let changed = {
+            let mut state = self.state.lock();
+            if state.stopped {
+                return;
+            }
+            // Declared before the result, so the response it asks for can call what loaded.
+            let declarations = self.options.tools.declarations();
+            if Arc::ptr_eq(&declarations, &state.declared_tools) {
+                None
+            } else {
+                state.declared_tools = declarations.clone();
+                Some(declarations)
+            }
+        };
+        if let Some(declarations) = changed {
+            self.session.set_tools(declarations.as_ref().clone());
+        }
+        self.session.send_function_output(&call_id, &output);
     }
 
     /// Open the Realtime session. Fails if the connection or auth fails. The opening
@@ -521,7 +808,7 @@ impl VoiceConversation {
             return;
         }
         let Some(reading) = reading else { return };
-        state.speaker = Some((reading, crate::support::now_ms()));
+        state.speaker = Some((reading, clock_ms()));
     }
 
     /// The human who currently has the floor, or `None`.
@@ -562,7 +849,7 @@ impl VoiceConversation {
     fn has_speaker_reading(state: &ConversationState) -> bool {
         match &state.speaker {
             None => false,
-            Some((_, at)) => crate::support::now_ms() - at <= SPEAKER_FRESHNESS_MS,
+            Some((_, at)) => clock_ms() - at <= SPEAKER_FRESHNESS_MS,
         }
     }
 
@@ -606,7 +893,64 @@ impl VoiceConversation {
     /// \`meeting_speaker\` when you need to know who you are answering or who just spoke.
     /// Never guess at a name.`
     pub fn set_participant_names(&self, names: &[String]) {
-        todo!()
+        if self.state.lock().stopped {
+            return;
+        }
+
+        // Sorted before anything else is derived from it. Meet reorders participant tiles
+        // by who is speaking and virtualizes the grid, so the *same* people arrive from the
+        // scrape in a different order poll after poll.
+        let agent = self.options.agent_name.to_lowercase();
+        let mut others: Vec<String> = names
+            .iter()
+            .filter(|name| name.to_lowercase() != agent)
+            .cloned()
+            .collect();
+        others.sort_by(|a, b| locale_compare(&a.to_lowercase(), &b.to_lowercase()));
+
+        // A scrape that found nobody but the agent is a failed read, not an empty room:
+        // tiles render late, and the grid drops off-screen participants. Saying "you appear
+        // to be alone" on that evidence is a false statement the model may act on.
+        if others.is_empty() {
+            log_debug!(
+                "[Meeting] Participant names came back empty — leaving the roster as it was"
+            );
+            return;
+        }
+
+        let keywords: Vec<String> = std::iter::once(self.options.agent_name.clone())
+            .chain(others.iter().cloned())
+            .take(KEYWORD_LIMIT)
+            .collect();
+
+        // Only on a change. This runs on the participant poll, and re-sending the same list
+        // every ten seconds would mutate a live session for no reason.
+        let signature = keywords.join("\u{0}");
+        {
+            let mut state = self.state.lock();
+            if state.keyword_signature.as_deref() == Some(signature.as_str()) {
+                return;
+            }
+            state.keyword_signature = Some(signature);
+            // The gate is given the names uncapped: the cap exists because every keyword
+            // biases the transcriber toward hearing it, and a prompt has no such cost.
+            state.roster_names = others.clone();
+        }
+
+        self.session.set_transcription_keywords(&keywords);
+        log_info!(
+            "[Meeting] Transcriber now expects {} name(s) in the room",
+            keywords.len()
+        );
+
+        // The model is told too, not just the transcriber. It has no other way to know who
+        // is present: the room arrives as one mixed audio channel with no speaker labels.
+        // Sent as context rather than folded into the system prompt, because the prompt is
+        // fixed when the session is created and the roster is not.
+        self.notify(&format!(
+            "The people in the call with you are now: {}. The audio is still one mixed channel, so you cannot hear which of them is speaking — call `meeting_speaker` when you need to know who you are answering or who just spoke. Never guess at a name.",
+            others.join(", ")
+        ));
     }
 
     /// What the policy is doing right now — reported by `meeting_status`.
@@ -651,7 +995,25 @@ impl VoiceConversation {
     /// session is already stopped or does not answer by the deadline. The question carries
     /// no `input`, so the answer reads the whole call.
     pub async fn stop_with_text(&self, request: StopWithTextRequest) -> Option<String> {
-        todo!()
+        if self.state.lock().stopped {
+            return None;
+        }
+        self.stop_speaking();
+        self.silence();
+        // No `input`, so the answer reads the whole call.
+        let answer = self
+            .session
+            .request_out_of_band_text(OutOfBandRequest {
+                instructions: request.instructions,
+                input: None,
+                metadata: None,
+                deadline_ms: request.deadline_ms,
+                max_output_tokens: request.max_output_tokens,
+                reasoning_effort: request.reasoning_effort,
+            })
+            .await;
+        self.session.close();
+        answer
     }
 
     fn silence(&self) {
@@ -659,6 +1021,28 @@ impl VoiceConversation {
         self.barge_in.dispose();
         self.playback.dispose();
     }
+}
+
+/// The conversation is the channel a computer tool's picture and notes reach the model on.
+impl ModelChannel for VoiceConversation {
+    fn show_image(&self, image_url: &str, note: &str) -> bool {
+        VoiceConversation::show_image(self, image_url, note)
+    }
+
+    fn notify(&self, text: &str) {
+        VoiceConversation::notify(self, text)
+    }
+}
+
+/// `localeCompare` in the root locale, close enough for display names: letters compare
+/// without their accents first, then as written.
+fn locale_compare(a: &str, b: &str) -> Ordering {
+    fn base(text: &str) -> String {
+        text.nfd()
+            .filter(|c| !unicode_normalization::char::is_combining_mark(*c))
+            .collect()
+    }
+    base(a).cmp(&base(b)).then_with(|| a.cmp(b))
 }
 
 /// `Math.round`: the nearest integer, halves toward positive infinity.

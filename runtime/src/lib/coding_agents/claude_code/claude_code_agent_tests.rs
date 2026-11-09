@@ -199,7 +199,10 @@ async fn runs_the_claude_binary_in_print_mode_with_stream_json_output_and_the_tu
             "42"
         ]
     );
-    assert_eq!(value_of(&args, "--disallowed-tools"), Some("AskUserQuestion"));
+    assert_eq!(
+        value_of(&args, "--disallowed-tools"),
+        Some("AskUserQuestion")
+    );
 }
 
 #[tokio::test]
@@ -219,7 +222,10 @@ async fn hands_the_tasks_cwd_and_env_to_the_child() {
     // there.
     assert_eq!(
         options.env,
-        env_of(&[("PATH", "/bin"), ("CLAUDE_CONFIG_DIR", "/workspace/.claude")])
+        env_of(&[
+            ("PATH", "/bin"),
+            ("CLAUDE_CONFIG_DIR", "/workspace/.claude")
+        ])
     );
 }
 
@@ -376,7 +382,10 @@ async fn runs_a_task_on_the_signed_in_subscription_with_nothing_that_outranks_it
     assert_eq!(settings["env"]["CLAUDE_CODE_USE_BEDROCK"], "");
     assert_eq!(settings["env"]["CLAUDE_CODE_USE_VERTEX"], "");
     assert_eq!(settings["env"]["ANTHROPIC_API_KEY"], "");
-    assert_eq!(settings["env"]["ANTHROPIC_BASE_URL"], "https://api.anthropic.com");
+    assert_eq!(
+        settings["env"]["ANTHROPIC_BASE_URL"],
+        "https://api.anthropic.com"
+    );
 }
 
 #[tokio::test]
@@ -385,7 +394,10 @@ async fn fails_the_task_and_starts_nothing_without_a_subscription_in_the_home() 
     let _on = SubscriptionOn::new();
     for (status, message) in [
         (SIGNED_OUT, NO_SUBSCRIPTION.to_string()),
-        (r#"{"loggedIn":true,"authMethod":"api_key"}"#, NO_SUBSCRIPTION.to_string()),
+        (
+            r#"{"loggedIn":true,"authMethod":"api_key"}"#,
+            NO_SUBSCRIPTION.to_string(),
+        ),
         // What Claude Code 2.1.20, from before `auth status --json`, prints on
         // stdout: nothing.
         (
@@ -425,9 +437,13 @@ fn host_environment(
             ..Default::default()
         },
         ..FakeEnvironment::with_run_program(move |_, args, options| {
-            homes
-                .lock()
-                .push(options.env.get("CLAUDE_CONFIG_DIR").cloned().unwrap_or_default());
+            homes.lock().push(
+                options
+                    .env
+                    .get("CLAUDE_CONFIG_DIR")
+                    .cloned()
+                    .unwrap_or_default(),
+            );
             let child = FakeChild::new();
             if args.first().map(String::as_str) == Some("auth") {
                 child.emit_line(status);
@@ -696,7 +712,8 @@ async fn points_the_cli_at_a_private_config_file_strictly() {
         std::fs::read_to_string(&config_path).unwrap(),
         claude_mcp_config(&servers(), true).document
     );
-    let mode = |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    let mode =
+        |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode(std::path::Path::new(&config_path)), 0o600);
     assert_eq!(
         mode(std::path::Path::new(&config_path).parent().unwrap()),
@@ -761,23 +778,17 @@ async fn removes_the_config_however_the_cli_ends() {
         let harness = mcp_harness(FakeChild::new, FakeFiles::local());
         let run = harness.start();
         let Launch { child, .. } = harness.launched().await;
-        let named = run.clone();
-        wait_for(move || named.mark().is_some() || named.exited() || true).await;
 
         match ending {
             "reports its result" => {
-                child.emit_line(r#"{"type":"result","subtype":"success","result":"ok","num_turns":1}"#);
+                child.emit_line(
+                    r#"{"type":"result","subtype":"success","result":"ok","num_turns":1}"#,
+                );
                 child.finish(Some(0));
             }
             "exits without a result" => child.finish(Some(1)),
-            _ => {
-                let stoppable = run.clone();
-                let has_run = harness.launches.clone();
-                wait_for(move || !has_run.lock().is_empty()).await;
-                // The CLI is up once the deferred start has handed it over.
-                tokio::task::yield_now().await;
-                stoppable.stop();
-            }
+            // A stop before the start hands the CLI over reaches it once it does.
+            _ => run.stop(),
         }
         let events = collect(&run).await;
 
@@ -969,7 +980,9 @@ fn maps_each_subtype_to_its_stop_reason() {
         ("error_during_execution", CodingAgentStopReason::Error),
     ] {
         assert_eq!(
-            parse(json!({ "type": "result", "subtype": subtype, "result": "text", "num_turns": 3 })),
+            parse(
+                json!({ "type": "result", "subtype": subtype, "result": "text", "num_turns": 3 })
+            ),
             [result(stop_reason, 3, "text")]
         );
     }
@@ -1103,14 +1116,20 @@ fn with_skip_permissions_on_warns_when_an_edit_task_starts_outside_the_bypass() 
 fn falls_back_to_the_subtype_as_the_message_when_the_result_line_has_no_text() {
     assert_eq!(
         parse(json!({ "type": "result", "subtype": "error_during_execution" })),
-        [result(CodingAgentStopReason::Error, 0, "error_during_execution")]
+        [result(
+            CodingAgentStopReason::Error,
+            0,
+            "error_during_execution"
+        )]
     );
 }
 
 #[test]
 fn ignores_lines_of_other_types() {
     assert_eq!(
-        parse(json!({ "type": "user", "message": { "content": [{ "type": "tool_result", "content": "x" }] } })),
+        parse(
+            json!({ "type": "user", "message": { "content": [{ "type": "tool_result", "content": "x" }] } })
+        ),
         []
     );
     assert_eq!(
@@ -1185,14 +1204,23 @@ async fn creates_the_config_dir_and_links_the_skills_dir_into_it() {
     assert!(std::fs::metadata(&prepared.config_dir).unwrap().is_dir());
     assert!(prepared.skills_linked);
     let link = std::path::Path::new(&prepared.config_dir).join("skills");
-    assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+    assert!(
+        std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
     assert_eq!(
         std::fs::canonicalize(&link).unwrap(),
         std::fs::canonicalize(&home.skills_dir).unwrap()
     );
     // Only skills are exposed — Claude Code's plugin layout differs from the
     // Agent Plugins one, so plugins are not linked across.
-    assert!(!std::path::Path::new(&prepared.config_dir).join("plugins").exists());
+    assert!(
+        !std::path::Path::new(&prepared.config_dir)
+            .join("plugins")
+            .exists()
+    );
 }
 
 #[cfg(unix)]
@@ -1260,7 +1288,12 @@ async fn reports_the_skills_as_unlinked_when_a_populated_dir_sits_at_the_link_pa
 
 // ------------------------------------------------------ model tier and effort
 
-fn args_with(task: CodingAgentTask, on_bedrock: bool, subscription: bool, settings: &Settings) -> Vec<String> {
+fn args_with(
+    task: CodingAgentTask,
+    on_bedrock: bool,
+    subscription: bool,
+    settings: &Settings,
+) -> Vec<String> {
     build_args(&task, on_bedrock, subscription, None, settings)
 }
 
@@ -1313,7 +1346,10 @@ async fn maps_a_tier_to_the_bedrock_model_when_claude_code_runs_on_bedrock() {
     ] {
         let started = start(
             CodingAgentTask {
-                env: env_of(&[("AWS_BEARER_TOKEN_BEDROCK", "test-token"), ("HOME", "/nonexistent")]),
+                env: env_of(&[
+                    ("AWS_BEARER_TOKEN_BEDROCK", "test-token"),
+                    ("HOME", "/nonexistent"),
+                ]),
                 model_tier: Some(tier),
                 ..base_task()
             },
@@ -1333,7 +1369,10 @@ async fn maps_a_tier_to_the_subscription_model_bedrock_credentials_or_not() {
     for (tier, model) in TIERS {
         let started = start(
             CodingAgentTask {
-                env: env_of(&[("AWS_BEARER_TOKEN_BEDROCK", "test-token"), ("HOME", "/nonexistent")]),
+                env: env_of(&[
+                    ("AWS_BEARER_TOKEN_BEDROCK", "test-token"),
+                    ("HOME", "/nonexistent"),
+                ]),
                 model_tier: Some(tier),
                 ..base_task()
             },
@@ -1379,5 +1418,9 @@ fn preserves_deployment_defaults_when_both_parameters_are_omitted() {
     let args = args_with(base_task(), false, false, &deployment());
     assert!(!args.contains(&"--model".to_string()));
     assert!(!args.contains(&"--effort".to_string()));
-    assert!(!args.iter().any(|arg| arg.starts_with("model_reasoning_effort=")));
+    assert!(
+        !args
+            .iter()
+            .any(|arg| arg.starts_with("model_reasoning_effort="))
+    );
 }

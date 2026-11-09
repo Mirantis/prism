@@ -131,7 +131,10 @@ async fn wait_for_exit(proc: &mut Child, ms: u64) -> bool {
 /// absent file is the normal case.
 async fn clear_stale_profile_locks(user_data_dir: &Path) {
     for name in ["SingletonLock", "SingletonCookie", "SingletonSocket"] {
-        if tokio::fs::remove_file(user_data_dir.join(name)).await.is_ok() {
+        if tokio::fs::remove_file(user_data_dir.join(name))
+            .await
+            .is_ok()
+        {
             log_info!("[Meeting] Cleared a stale browser profile lock ({})", name);
         }
     }
@@ -387,7 +390,9 @@ impl Connection {
                 .filter(|(_, command)| command.session.as_deref() == Some(session))
                 .map(|(id, _)| *id)
                 .collect();
-            ids.into_iter().filter_map(|id| pending.remove(&id)).collect()
+            ids.into_iter()
+                .filter_map(|id| pending.remove(&id))
+                .collect()
         };
         for command in failed {
             let _ = command.reply.send(Err(CommandError::Closed));
@@ -879,7 +884,10 @@ async fn initialize_page(browser: Weak<BrowserInner>, page: Arc<PageInner>, wait
         send("Page.getFrameTree", json!({})),
         send("Page.setLifecycleEventsEnabled", json!({ "enabled": true })),
         send("Runtime.enable", json!({})),
-        send("Emulation.setFocusEmulationEnabled", json!({ "enabled": true })),
+        send(
+            "Emulation.setFocusEmulationEnabled",
+            json!({ "enabled": true })
+        ),
         send(
             "Target.setAutoAttach",
             json!({ "autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true })
@@ -954,10 +962,9 @@ impl BrowserHandle {
         let config = WebSocketConfig::default()
             .max_message_size(Some(512 << 20))
             .max_frame_size(Some(512 << 20));
-        let (socket, _) =
-            tokio_tungstenite::connect_async_with_config(ws_url, Some(config), false)
-                .await
-                .map_err(|err| anyhow::anyhow!("browserType.connectOverCDP: {err}"))?;
+        let (socket, _) = tokio_tungstenite::connect_async_with_config(ws_url, Some(config), false)
+            .await
+            .map_err(|err| anyhow::anyhow!("browserType.connectOverCDP: {err}"))?;
         let (sink, stream) = socket.split();
 
         let (conn, rx) = Connection::new();
@@ -1147,7 +1154,9 @@ impl BrowserContextHandle {
                 json!({ "targetId": page.inner.target_id, "flatten": true }),
             )
             .await
-            .map_err(|err| anyhow::anyhow!("browserContext.newCDPSession: {}", err.into_anyhow()))?;
+            .map_err(|err| {
+                anyhow::anyhow!("browserContext.newCDPSession: {}", err.into_anyhow())
+            })?;
         let Some(session) = attached["sessionId"].as_str() else {
             anyhow::bail!("browserContext.newCDPSession: the browser named no session");
         };
@@ -1797,7 +1806,12 @@ impl PageInner {
             .map_err(CommandError::into_anyhow)
     }
 
-    async fn key_down(&self, key: &KeyDefinition, modifiers: i64, text: &str) -> anyhow::Result<()> {
+    async fn key_down(
+        &self,
+        key: &KeyDefinition,
+        modifiers: i64,
+        text: &str,
+    ) -> anyhow::Result<()> {
         self.dispatch_key(json!({
             "type": if text.is_empty() { "rawKeyDown" } else { "keyDown" },
             "modifiers": modifiers,
@@ -1982,7 +1996,13 @@ fn char_key(ch: char) -> Option<KeyDefinition> {
         return Some(key(&text, &format!("Digit{ch}"), ch as i64, &text, 0));
     }
     if let Some(index) = ")!@#$%^&*(".find(ch) {
-        return Some(key(&text, &format!("Digit{index}"), 48 + index as i64, &text, 0));
+        return Some(key(
+            &text,
+            &format!("Digit{index}"),
+            48 + index as i64,
+            &text,
+            0,
+        ));
     }
     for (plain, shifted, code, key_code) in PUNCTUATION {
         if ch == plain || ch == shifted {
@@ -2225,7 +2245,10 @@ impl PageHandle {
         }
         let deadline = Instant::now() + Duration::from_millis(DEFAULT_TIMEOUT_MS);
         while !self.is_closed() {
-            if tokio::time::timeout_at(deadline, notified.as_mut()).await.is_err() {
+            if tokio::time::timeout_at(deadline, notified.as_mut())
+                .await
+                .is_err()
+            {
                 break;
             }
             notified.set(self.inner.changed.notified());
@@ -2606,7 +2629,9 @@ impl Locator {
         let input = json!({ "steps": self.steps_json(), "op": op });
         let expression = format!(
             "({LOCATOR_ENGINE})({input}, {})",
-            user_fn.map(|f| format!("({f})")).unwrap_or_else(|| "undefined".to_string())
+            user_fn
+                .map(|f| format!("({f})"))
+                .unwrap_or_else(|| "undefined".to_string())
         );
         self.page
             .inner
@@ -2776,12 +2801,16 @@ impl Locator {
     /// Replace the field's value with `text`.
     pub async fn fill(&self, text: &str, timeout_ms: u64) -> anyhow::Result<()> {
         let api = "locator.fill";
-        self.poll_one(api, timeout_ms, json!({ "type": "fill" }), None, |value| {
-            match value["retry"].as_str() {
+        self.poll_one(
+            api,
+            timeout_ms,
+            json!({ "type": "fill" }),
+            None,
+            |value| match value["retry"].as_str() {
                 Some(reason) => Probe::Retry(Some(reason.to_string())),
                 None => Probe::Done(Ok(())),
-            }
-        })
+            },
+        )
         .await?;
         let typed = if text.is_empty() {
             self.page.inner.press("Delete", 0).await
@@ -2930,7 +2959,11 @@ impl CdpSession {
         self.browser
             .inner
             .conn
-            .send(None, "Target.detachFromTarget", json!({ "sessionId": session }))
+            .send(
+                None,
+                "Target.detachFromTarget",
+                json!({ "sessionId": session }),
+            )
             .await
             .map(|_| ())
             .map_err(CommandError::into_anyhow)
@@ -3478,6 +3511,91 @@ pub(crate) mod testing {
             self.browser.inner.dispatch(Some(&session), method, &params);
         }
     }
+
+    /// A Chrome to run against: `PRISM_TEST_CHROME`, or one installed in the usual places.
+    fn chrome() -> Option<String> {
+        if let Ok(path) = std::env::var("PRISM_TEST_CHROME") {
+            return Some(path);
+        }
+        [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/usr/bin/google-chrome",
+            "/usr/bin/chromium",
+        ]
+        .into_iter()
+        .find(|path| Path::new(path).exists())
+        .map(str::to_string)
+    }
+
+    /// A real headless browser with one tab, for tests that need a DOM. `start` answers
+    /// `None` on a host without Chrome, and those tests then pass without running.
+    pub(crate) struct Live {
+        pub browser: BrowserHandle,
+        pub page: PageHandle,
+        process: Child,
+        _profile: tempfile::TempDir,
+    }
+
+    impl Live {
+        pub async fn start() -> Option<Live> {
+            let chrome = chrome()?;
+            let profile = tempfile::tempdir().ok()?;
+            let port = free_port().await.ok()?;
+            let process = tokio::process::Command::new(chrome)
+                .args([
+                    "--headless=new".to_string(),
+                    format!("--remote-debugging-port={port}"),
+                    format!("--user-data-dir={}", profile.path().display()),
+                    "--no-first-run".to_string(),
+                    "--no-default-browser-check".to_string(),
+                    "--window-size=1280,720".to_string(),
+                    "about:blank".to_string(),
+                ])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .kill_on_drop(true)
+                .spawn()
+                .ok()?;
+            let mut browser = None;
+            for _ in 0..75 {
+                if let Ok(connected) =
+                    BrowserHandle::connect_over_cdp(&format!("http://127.0.0.1:{port}")).await
+                {
+                    browser = Some(connected);
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+            let browser = browser?;
+            let page = browser.contexts()[0].new_page().await.ok()?;
+            Some(Live {
+                browser,
+                page,
+                process,
+                _profile: profile,
+            })
+        }
+
+        /// Load this markup into the tab.
+        pub async fn show(&self, html: &str) {
+            let url = format!("data:text/html;charset=utf-8,{}", urlencoding::encode(html));
+            self.page
+                .goto(
+                    &url,
+                    GotoOptions {
+                        wait_until: LoadState::Load,
+                        timeout_ms: Some(10_000),
+                    },
+                )
+                .await
+                .unwrap();
+        }
+
+        pub async fn stop(mut self) {
+            let _ = self.browser.close().await;
+            let _ = self.process.kill().await;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -3489,7 +3607,11 @@ mod tests {
     fn grants_camera_and_microphone_without_the_fake_ui_path() {
         let args = build_browser_args(9222, "/tmp/profile");
         assert!(args.contains(&"--auto-accept-camera-and-microphone-capture".to_string()));
-        assert!(!args.iter().any(|arg| arg == "--use-fake-ui-for-media-stream"));
+        assert!(
+            !args
+                .iter()
+                .any(|arg| arg == "--use-fake-ui-for-media-stream")
+        );
     }
 
     #[test]
@@ -3518,7 +3640,12 @@ mod tests {
     #[tokio::test]
     async fn removes_only_the_singleton_files_leaving_the_session_intact() {
         let dir = tempfile::tempdir().unwrap();
-        for name in ["SingletonLock", "SingletonCookie", "SingletonSocket", "Cookies"] {
+        for name in [
+            "SingletonLock",
+            "SingletonCookie",
+            "SingletonSocket",
+            "Cookies",
+        ] {
             std::fs::write(dir.path().join(name), "x").unwrap();
         }
         clear_stale_profile_locks(dir.path()).await;
@@ -3579,7 +3706,9 @@ mod tests {
             Err(err) => err.to_string(),
         };
         assert!(err.starts_with("No browser found (looked in "));
-        assert!(err.ends_with("Voice meetings need the browser toolchain, which ships in the container image."));
+        assert!(err.ends_with(
+            "Voice meetings need the browser toolchain, which ships in the container image."
+        ));
         assert!(!is_browser_available().await);
     }
 
@@ -3676,9 +3805,17 @@ mod tests {
             .collect();
         assert_eq!(ids, vec![main.clone(), "A".into(), "A1".into(), "B".into()]);
 
-        fake.emit(&page, "Page.frameDetached", json!({ "frameId": "A", "reason": "swap" }));
+        fake.emit(
+            &page,
+            "Page.frameDetached",
+            json!({ "frameId": "A", "reason": "swap" }),
+        );
         assert_eq!(page.frames().len(), 4);
-        fake.emit(&page, "Page.frameDetached", json!({ "frameId": "A", "reason": "remove" }));
+        fake.emit(
+            &page,
+            "Page.frameDetached",
+            json!({ "frameId": "A", "reason": "remove" }),
+        );
         let ids: Vec<String> = page
             .frames()
             .iter()
@@ -3721,94 +3858,10 @@ mod tests {
         assert_eq!(commit.loader, "OTHER");
     }
 
-    /// A real headless browser, when the host has one: `PRISM_TEST_CHROME`, or a
-    /// Chrome installed in the usual places.
+    /// Against a real headless browser, when the host has one.
     mod live {
+        use super::super::testing::Live;
         use super::*;
-
-        fn chrome() -> Option<String> {
-            if let Ok(path) = std::env::var("PRISM_TEST_CHROME") {
-                return Some(path);
-            }
-            [
-                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-                "/usr/bin/google-chrome",
-                "/usr/bin/chromium",
-            ]
-            .into_iter()
-            .find(|path| Path::new(path).exists())
-            .map(str::to_string)
-        }
-
-        pub(super) struct Live {
-            pub browser: BrowserHandle,
-            pub page: PageHandle,
-            process: Child,
-            _profile: tempfile::TempDir,
-        }
-
-        impl Live {
-            pub async fn start() -> Option<Live> {
-                let chrome = chrome()?;
-                let profile = tempfile::tempdir().ok()?;
-                let port = free_port().await.ok()?;
-                let process = tokio::process::Command::new(chrome)
-                    .args([
-                        "--headless=new".to_string(),
-                        format!("--remote-debugging-port={port}"),
-                        format!("--user-data-dir={}", profile.path().display()),
-                        "--no-first-run".to_string(),
-                        "--no-default-browser-check".to_string(),
-                        "--window-size=1280,720".to_string(),
-                        "about:blank".to_string(),
-                    ])
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .kill_on_drop(true)
-                    .spawn()
-                    .ok()?;
-                let mut browser = None;
-                for _ in 0..75 {
-                    if let Ok(connected) =
-                        BrowserHandle::connect_over_cdp(&format!("http://127.0.0.1:{port}")).await
-                    {
-                        browser = Some(connected);
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(200)).await;
-                }
-                let browser = browser?;
-                let page = browser.contexts()[0].new_page().await.ok()?;
-                Some(Live {
-                    browser,
-                    page,
-                    process,
-                    _profile: profile,
-                })
-            }
-
-            pub async fn show(&self, html: &str) {
-                let url = format!(
-                    "data:text/html;charset=utf-8,{}",
-                    urlencoding::encode(html)
-                );
-                self.page
-                    .goto(
-                        &url,
-                        GotoOptions {
-                            wait_until: LoadState::Load,
-                            timeout_ms: Some(10_000),
-                        },
-                    )
-                    .await
-                    .unwrap();
-            }
-
-            pub async fn stop(mut self) {
-                let _ = self.browser.close().await;
-                let _ = self.process.kill().await;
-            }
-        }
 
         #[tokio::test(flavor = "multi_thread")]
         async fn finds_controls_by_role_name_label_text_and_placeholder() {
@@ -3816,18 +3869,19 @@ mod tests {
                 return;
             };
             live.show(
-                r#"<button aria-label="Turn off microphone" data-is-muted="false">mic</button>
+                r##"<button aria-label="Turn off microphone" data-is-muted="false">mic</button>
                 <button>Ask to join without camera</button>
                 <button disabled>Join now</button>
                 <a href="#x">Sign in with Google</a>
                 <label>Your name <input id="name"></label>
                 <textarea placeholder="Send a message"></textarea>
                 <div style="display:none"><button>Hidden button</button></div>
-                <p>Some <b>bold</b> text</p>"#,
+                <p>Some <b>bold</b> text</p>"##,
             )
             .await;
             let page = &live.page;
-            let by = |source: &str| page.get_by_role("button", Some(TextMatch::pattern(source, "i")));
+            let by =
+                |source: &str| page.get_by_role("button", Some(TextMatch::pattern(source, "i")));
 
             assert_eq!(by("ask to join").count().await.unwrap(), 1);
             assert!(!by("join now").first().is_enabled(1_000).await.unwrap());
@@ -3860,7 +3914,10 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(
-                page.locator("#name").input_value(Some(1_000)).await.unwrap(),
+                page.locator("#name")
+                    .input_value(Some(1_000))
+                    .await
+                    .unwrap(),
                 "Prism"
             );
             assert_eq!(
@@ -3871,7 +3928,10 @@ mod tests {
                 1
             );
             assert_eq!(
-                page.get_by_text(TextMatch::text("bold")).count().await.unwrap(),
+                page.get_by_text(TextMatch::text("bold"))
+                    .count()
+                    .await
+                    .unwrap(),
                 1
             );
             assert!(
@@ -3880,7 +3940,11 @@ mod tests {
                     .await
                     .is_ok()
             );
-            let err = page.locator("button").wait_for(WaitForState::Visible, 500).await.unwrap_err();
+            let err = page
+                .locator("button")
+                .wait_for(WaitForState::Visible, 500)
+                .await
+                .unwrap_err();
             assert!(err.to_string().contains("strict mode violation"), "{err}");
             live.stop().await;
         }
@@ -3905,11 +3969,22 @@ mod tests {
                 page.locator("#go").inner_text(Some(1_000)).await.unwrap(),
                 "clicked"
             );
-            let err = page.locator("#under").click(800).await.unwrap_err().to_string();
-            assert!(err.starts_with("locator.click: Timeout 800ms exceeded."), "{err}");
+            let err = page
+                .locator("#under")
+                .click(800)
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.starts_with("locator.click: Timeout 800ms exceeded."),
+                "{err}"
+            );
             assert!(err.contains("intercepts pointer events"), "{err}");
 
-            page.locator("#box").type_text("hi there", 0, Some(2_000)).await.unwrap();
+            page.locator("#box")
+                .type_text("hi there", 0, Some(2_000))
+                .await
+                .unwrap();
             assert_eq!(
                 page.locator("#box").input_value(None).await.unwrap(),
                 "hi there"
@@ -3937,7 +4012,10 @@ mod tests {
                     .unwrap(),
                 json!(3)
             );
-            let err = page.evaluate("(() => { throw new Error('boom') })()").await.unwrap_err();
+            let err = page
+                .evaluate("(() => { throw new Error('boom') })()")
+                .await
+                .unwrap_err();
             assert!(err.to_string().contains("boom"), "{err}");
             assert_eq!(page.frames().len(), 1);
             assert!(page.url().starts_with("data:text/html"));

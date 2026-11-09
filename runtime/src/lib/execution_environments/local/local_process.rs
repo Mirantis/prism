@@ -83,7 +83,10 @@ pub fn run_local_program(
 /// Node's words for a spawn that failed: `spawn <command> <CODE>`.
 fn spawn_error(command: &str, err: io::Error) -> anyhow::Error {
     let (code, _) = errno_text(&err);
-    anyhow::Error::new(io::Error::new(err.kind(), format!("spawn {command} {code}")))
+    anyhow::Error::new(io::Error::new(
+        err.kind(),
+        format!("spawn {command} {code}"),
+    ))
 }
 
 /// What a running process reports while it runs and once it ends.
@@ -120,10 +123,7 @@ impl LocalProcess {
             }),
             _ => None,
         };
-        let stdin = child
-            .stdin
-            .take()
-            .map(|stdin| Box::pin(stdin) as ExecStdin);
+        let stdin = child.stdin.take().map(|stdin| Box::pin(stdin) as ExecStdin);
         let (stdout, stdout_done) = watched(child.stdout.take());
         let (stderr, stderr_done) = watched(child.stderr.take());
 
@@ -293,11 +293,11 @@ async fn wait_for_end(
         state.exit_code = end.exit_code;
         state.signal = end.signal;
     }
-    let _ = ended_tx.send(Some(end.clone()));
+    ended_tx.send_replace(Some(end.clone()));
     for stream in streams {
         let _ = stream.await;
     }
-    let _ = closed_tx.send(Some(end));
+    closed_tx.send_replace(Some(end));
 }
 
 #[cfg(unix)]

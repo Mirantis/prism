@@ -9,9 +9,15 @@
 //! A sign-in that asks for the username first and the password on the screen after it is
 //! driven the same way, one step at a time. The user answers one box either way.
 
-use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+
+use crate::lib::log_redaction::err_json;
 use crate::services::meeting::browser_stack::{FrameHandle, PageHandle};
+use crate::utils::with_timeout::with_timeout;
+use crate::{log_debug, log_info, log_warn};
 
 /// A field holding a password: the ordinary one, and the one a "show password" control has
 /// turned into plain text, which keeps its autocomplete name.
@@ -204,7 +210,13 @@ const NOTHING: SignInResult = SignInResult {
 /// Where a frame is: the origin of its URL. A frame on no page at all (an opaque origin, or
 /// a URL that does not parse) answers nothing, and is passed over.
 pub fn frame_origin(frame: &FrameHandle) -> Option<String> {
-    todo!()
+    origin_of(&frame.url())
+}
+
+/// `new URL(url).origin`, or `None` for an opaque origin or a URL that does not parse.
+fn origin_of(url: &str) -> Option<String> {
+    let origin = url::Url::parse(url).ok()?.origin().ascii_serialization();
+    if origin == "null" { None } else { Some(origin) }
 }
 
 /// What one frame answered, and which frame that was.
@@ -221,22 +233,78 @@ struct FrameResult {
 /// that does not answer within `FILL_TIMEOUT_MS`, as one part-way through a navigation,
 /// answers `NOTHING` and is logged at debug level.
 async fn run(page: &PageHandle, arg: &PageArgument, site: Option<&str>) -> Option<FrameResult> {
-    todo!()
+    if page.is_closed() {
+        return None;
+    }
+    let arg = serde_json::to_value(arg).expect("a page argument serializes");
+    let mut best: Option<FrameResult> = None;
+    for frame in page.frames() {
+        if let Some(site) = site {
+            if frame_origin(&frame).as_deref() != Some(site) {
+                continue;
+            }
+        }
+        let evaluated = async {
+            let value = frame
+                .evaluate_function(IN_PAGE_SIGN_IN, arg.clone())
+                .await?;
+            Ok(serde_json::from_value::<SignInResult>(value).unwrap_or(NOTHING))
+        };
+        let result = match with_timeout(evaluated, FILL_TIMEOUT_MS as i64).await {
+            Ok(result) => result,
+            Err(err) => {
+                // A frame part-way through a navigation answers nothing. That is a step of
+                // an ordinary sign-in rather than a fault, and the caller asks again.
+                log_debug!(
+                    json!({ "err": err_json(&err) }),
+                    "[Computer] A frame could not be asked about its sign-in form"
+                );
+                NOTHING
+            }
+        };
+        if result.found {
+            return Some(FrameResult { result, frame });
+        }
+        // A first step: keep it, in case a later frame holds the whole form.
+        if result.username && best.is_none() {
+            best = Some(FrameResult { result, frame });
+        }
+    }
+    best
 }
 
 /// The sign-in this page holds, and the origin it goes to, or `None` when it holds none.
 pub async fn find_sign_in(page: &PageHandle, site: Option<&str>) -> Option<SignInShape> {
-    todo!()
+    let found = run(page, &page_argument(None, None), site).await?;
+    let origin = frame_origin(&found.frame)?;
+    Some(SignInShape {
+        password: found.result.found,
+        username: found.result.username,
+        site: origin,
+    })
 }
 
 /// Press what submits this step, when the page did not submit it itself.
 async fn submit_step(page: &PageHandle, result: SignInResult) -> anyhow::Result<()> {
-    todo!()
+    if !result.submitted {
+        page.keyboard_press("Enter").await?;
+    }
+    Ok(())
 }
 
 /// Wait for the screen that asks for the password, as a person waits for it to load.
-async fn wait_for_password_step(page: &PageHandle, site: &str) -> bool {
-    todo!()
+async fn wait_for_password_step(page: &PageHandle, site: &str) -> anyhow::Result<bool> {
+    let deadline = std::time::Instant::now() + Duration::from_millis(PASSWORD_STEP_TIMEOUT_MS);
+    loop {
+        let found = run(page, &page_argument(None, None), Some(site)).await;
+        if found.is_some_and(|found| found.result.found) {
+            return Ok(true);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(false);
+        }
+        page.wait_for_timeout(PASSWORD_STEP_POLL_MS).await?;
+    }
 }
 
 /// How `fill_sign_in_form` ended.
@@ -263,5 +331,98 @@ pub async fn fill_sign_in_form(
     credentials: &SignInCredentials,
     site: &str,
 ) -> anyhow::Result<FillOutcome> {
-    todo!()
+    let Some(shape) = find_sign_in(page, Some(site)).await else {
+        return Ok(FillOutcome::NoForm);
+    };
+
+    if !shape.password {
+        let first = run(
+            page,
+            &page_argument(Some(&credentials.username), None),
+            Some(site),
+        )
+        .await;
+        let Some(first) = first.filter(|first| first.result.username) else {
+            return Ok(FillOutcome::NoForm);
+        };
+        submit_step(page, first.result).await?;
+        if !wait_for_password_step(page, site).await? {
+            log_warn!("[Computer] A sign-in took the username and never asked for the password");
+            return Ok(FillOutcome::NoPasswordStep);
+        }
+        let second = run(
+            page,
+            &page_argument(None, Some(&credentials.password)),
+            Some(site),
+        )
+        .await;
+        let Some(second) = second.filter(|second| second.result.found) else {
+            return Ok(FillOutcome::NoPasswordStep);
+        };
+        submit_step(page, second.result).await?;
+        log_info!("[Computer] Signed in over two steps");
+        return Ok(FillOutcome::Filled);
+    }
+
+    let result = run(
+        page,
+        &page_argument(Some(&credentials.username), Some(&credentials.password)),
+        Some(site),
+    )
+    .await;
+    let Some(result) = result.filter(|result| result.result.found) else {
+        return Ok(FillOutcome::NoForm);
+    };
+    submit_step(page, result.result).await?;
+    log_info!(
+        "[Computer] Signed in on {}",
+        if result.result.username {
+            "two fields"
+        } else {
+            "a password field"
+        }
+    );
+    Ok(FillOutcome::Filled)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn names_the_origin_a_frame_is_on() {
+        assert_eq!(
+            origin_of("https://login.example.com:8443/sign-in?next=/").as_deref(),
+            Some("https://login.example.com:8443")
+        );
+        assert_eq!(
+            origin_of("https://example.com/").as_deref(),
+            Some("https://example.com")
+        );
+    }
+
+    #[test]
+    fn passes_over_a_frame_on_no_page_at_all() {
+        assert_eq!(origin_of("about:blank"), None);
+        assert_eq!(origin_of("data:text/html,hi"), None);
+        assert_eq!(origin_of(""), None);
+    }
+
+    #[test]
+    fn hands_the_page_the_values_as_its_argument() {
+        let arg = serde_json::to_value(page_argument(Some("ada"), None)).unwrap();
+        assert_eq!(
+            serde_json::to_string(&arg).unwrap(),
+            serde_json::to_string(&json!({
+                "password": null,
+                "username": "ada",
+                "passwordFields": PASSWORD_FIELDS,
+                "usernameFields": USERNAME_FIELDS,
+                "namedUsernameTiers": 2,
+                "submitControls": SUBMIT_CONTROLS,
+            }))
+            .unwrap()
+        );
+        assert!(!IN_PAGE_SIGN_IN.contains("ada"));
+    }
 }

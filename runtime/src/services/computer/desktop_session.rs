@@ -84,11 +84,7 @@ fn coding_agent_wrappers(entry: &Path, dir: &Path) -> IndexMap<String, String> {
         for command in ["claude", "codex"] {
             let target = dir.join(command);
             // Renamed into place, so a terminal starting one never reads half a file.
-            let staged = PathBuf::from(format!(
-                "{}.{}.tmp",
-                target.display(),
-                std::process::id()
-            ));
+            let staged = PathBuf::from(format!("{}.{}.tmp", target.display(), std::process::id()));
             let exec = [
                 entry.display().to_string(),
                 EXEC_SUBCOMMAND.to_string(),
@@ -400,7 +396,11 @@ mod tests {
             .unwrap();
         // Stands in for the runtime's executable: prints what it was given, one per line.
         let entry = dir.path().join("entry");
-        std::fs::write(&entry, "#!/bin/sh\nfor arg in \"$@\"; do echo \"$arg\"; done\n").unwrap();
+        std::fs::write(
+            &entry,
+            "#!/bin/sh\nfor arg in \"$@\"; do echo \"$arg\"; done\n",
+        )
+        .unwrap();
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(0o755)).unwrap();

@@ -52,3 +52,39 @@ pub fn format_file_content(raw: &str, offset: Option<i64>, limit: Option<i64>) -
     }
     numbered
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn numbers_every_line_starting_at_1() {
+        let result = format_file_content("line1\nline2\nline3\n", None, None);
+        assert!(result.contains("1: line1"));
+        assert!(result.contains("2: line2"));
+        assert!(result.contains("3: line3"));
+    }
+
+    #[test]
+    fn respects_offset_and_limit() {
+        let result = format_file_content("a\nb\nc\nd\ne\n", Some(3), Some(2));
+        assert_eq!(
+            result,
+            "3: c\n4: d\n(showing lines 3-4 of 6, use offset to read more)"
+        );
+    }
+
+    #[test]
+    fn reports_past_end_when_offset_exceeds_file_length() {
+        assert_eq!(
+            format_file_content("a\nb\n", Some(100), None),
+            "(file has 3 lines, offset 100 is past end)"
+        );
+    }
+
+    #[test]
+    fn truncates_lines_longer_than_max_line_length() {
+        let result = format_file_content(&"x".repeat(3000), None, None);
+        assert_eq!(result, format!("1: {}... (truncated)", "x".repeat(2000)));
+    }
+}

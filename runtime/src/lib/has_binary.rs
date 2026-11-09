@@ -9,7 +9,12 @@ use std::path::Path;
 /// The first named program that is not on PATH, or `None` when all of them are.
 pub async fn missing_binary(names: &[&str]) -> Option<String> {
     let path = std::env::var("PATH").unwrap_or_default();
-    let dirs: Vec<&str> = path.split(':').filter(|dir| !dir.is_empty()).collect();
+    // `path.delimiter`.
+    let delimiter = if cfg!(windows) { ';' } else { ':' };
+    let dirs: Vec<&str> = path
+        .split(delimiter)
+        .filter(|dir| !dir.is_empty())
+        .collect();
     for name in names {
         let mut found = false;
         for dir in &dirs {
