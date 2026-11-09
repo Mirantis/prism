@@ -237,7 +237,6 @@ impl VideoStream {
             reason
         );
     }
-
 }
 
 #[async_trait]

@@ -66,10 +66,7 @@ mod tests {
 
     #[test]
     fn strips_husky_so_cloned_repos_keep_their_own_git_hooks() {
-        let result = local_base_env(Some(&env(&[
-            ("HUSKY", "0"),
-            ("PATH", "/usr/bin"),
-        ])));
+        let result = local_base_env(Some(&env(&[("HUSKY", "0"), ("PATH", "/usr/bin")])));
         assert!(!result.contains_key("HUSKY"));
     }
 

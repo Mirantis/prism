@@ -287,8 +287,19 @@ pub struct ValidationError(pub String);
 
 impl ValidationError {
     pub fn new(message: impl Into<String>) -> Self {
+        static REGISTER_LOG_FIELDS: std::sync::Once = std::sync::Once::new();
+        REGISTER_LOG_FIELDS
+            .call_once(|| crate::lib::log_redaction::register_error_fields(validation_error_name));
         Self(message.into())
     }
+}
+
+/// The error's `name`, so a log line and a tool result read `ValidationError`.
+fn validation_error_name(error: &(dyn std::error::Error + 'static)) -> Option<Map<String, Value>> {
+    error.downcast_ref::<ValidationError>()?;
+    let mut fields = Map::new();
+    fields.insert("name".into(), json!("ValidationError"));
+    Some(fields)
 }
 
 // ============================================================================

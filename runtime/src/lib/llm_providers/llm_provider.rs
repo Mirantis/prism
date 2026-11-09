@@ -489,3 +489,82 @@ impl LlmProvider {
         self.deferred_tools.as_ref().and_then(|f| f(model_id))
     }
 }
+
+/// A configuration of `pairs` on the built-in defaults, never the developer's
+/// environment, for the vendor factories' tests.
+#[cfg(test)]
+pub(crate) fn test_config(pairs: &[(&str, &str)]) -> crate::config::Config {
+    let mut env: crate::config::Env = crate::config::Env::new();
+    env.insert(
+        "PRISM_SETTINGS_PATH".to_string(),
+        "/nonexistent/prism-settings.json".to_string(),
+    );
+    for (key, value) in pairs {
+        env.insert(key.to_string(), value.to_string());
+    }
+    crate::config::Config::load(&env, &mut |_, _| {}).expect("the test configuration loads")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn with_point(
+        cache_point: impl Fn(&str, Option<CacheTtl>) -> CachePointFragment + Send + Sync + 'static,
+    ) -> LlmProvider {
+        LlmProvider::new(
+            Arc::new(|_: &str| -> anyhow::Result<Arc<dyn LanguageModel>> {
+                anyhow::bail!("no model in this test")
+            }),
+            Arc::new(cache_point),
+        )
+    }
+
+    #[test]
+    fn anthropic_cache_point_asks_for_the_lifetime_it_is_given_which_cache_ttl_ms_reads_back() {
+        let anthropic = with_point(|_, ttl| anthropic_cache_point(ttl));
+        assert_eq!(
+            anthropic_cache_point(Some(CacheTtl::OneHour)).to_json(),
+            json!({ "anthropic": { "cacheControl": { "type": "ephemeral", "ttl": "1h" } } })
+        );
+        assert_eq!(
+            anthropic_cache_point(Some(CacheTtl::FiveMinutes)).to_json(),
+            json!({ "anthropic": { "cacheControl": { "type": "ephemeral" } } })
+        );
+        assert_eq!(
+            cache_ttl_ms(&anthropic, "m", CacheTtl::OneHour),
+            60 * 60 * 1000
+        );
+        assert_eq!(
+            cache_ttl_ms(&anthropic, "m", CacheTtl::FiveMinutes),
+            5 * 60 * 1000
+        );
+        let none = with_point(|_, _| NO_CACHE_POINT);
+        assert_eq!(cache_ttl_ms(&none, "m", CacheTtl::OneHour), 5 * 60 * 1000);
+    }
+
+    #[test]
+    fn sends_no_request_level_options_for_a_vendor_that_declares_none() {
+        let anthropic = with_point(|_, ttl| anthropic_cache_point(ttl));
+        assert_eq!(
+            provider_options_json(&cache_request_options(
+                &anthropic,
+                "m",
+                CacheTtl::OneHour,
+                true
+            )),
+            json!({})
+        );
+    }
+
+    #[test]
+    fn merging_fragments_combines_a_shared_namespace() {
+        let a = provider_options(json!({ "anthropic": { "deferLoading": true } }));
+        let b =
+            provider_options(json!({ "anthropic": { "cacheControl": { "type": "ephemeral" } } }));
+        assert_eq!(
+            serde_json::to_string(&merge_provider_options([Some(&a), None, Some(&b)])).unwrap(),
+            r#"{"anthropic":{"deferLoading":true,"cacheControl":{"type":"ephemeral"}}}"#
+        );
+    }
+}

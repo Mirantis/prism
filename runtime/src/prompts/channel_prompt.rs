@@ -22,3 +22,14 @@ You are in {channel_label}. Several people can talk to you here, and everyone he
 - Before a destructive command, one that deletes, overwrites or stops something, ask the person who requested it to confirm, even after a direct request, because the command also changes what other members use."#
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn names_the_channel_with_the_label_its_adapter_gives() {
+        let out = get_channel_behavior_instructions("the team channel **#alerts**");
+        assert!(out.contains("You are in the team channel **#alerts**."));
+    }
+}

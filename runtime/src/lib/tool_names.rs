@@ -208,4 +208,184 @@ mod tests {
             "t_0123e4567-e89b-12d3-a456-426614174000__github__create_809b466"
         );
     }
+
+    /// A platform MCP name from the failure this rule exists for (70 characters).
+    const NEXUS_ATLASSIAN: &str =
+        "75166a14-fd0b-4bbb-b6d6-ddbd008bb95b__atlassian__addCommentToJiraIssue";
+
+    fn accepted(name: &str) -> bool {
+        !name.is_empty()
+            && name.len() <= MAX_TOOL_NAME
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    }
+
+    fn make_tool(description: &str) -> crate::ai::Tool {
+        crate::ai::Tool {
+            description: Some(description.to_string()),
+            ..Default::default()
+        }
+    }
+
+    fn set(entries: &[(&str, &str)]) -> ToolSet {
+        entries
+            .iter()
+            .map(|(name, description)| (name.to_string(), make_tool(description)))
+            .collect()
+    }
+
+    fn reserved(names: &[&str]) -> HashSet<String> {
+        names.iter().map(|name| name.to_string()).collect()
+    }
+
+    #[test]
+    fn replaces_anything_outside_the_charset_and_keeps_punctuation_distinct() {
+        assert_eq!(sanitize_tool_name_segment("read:file"), "read_file");
+        assert_eq!(sanitize_tool_name_segment("my.plugin"), "my_plugin");
+        let a = sanitize_tool_name_segment("___");
+        assert_ne!(a, sanitize_tool_name_segment("..."));
+        assert_eq!(sanitize_tool_name_segment("___"), a);
+    }
+
+    #[test]
+    fn keeps_the_double_underscore_joiners() {
+        assert_eq!(
+            to_model_tool_name("my.plugin__srv__read:file"),
+            "my_plugin__srv__read_file"
+        );
+        assert_eq!(
+            to_model_tool_name("12306__srv__search"),
+            "t_12306__srv__search"
+        );
+        for name in ["shell_exec", "memory_search", "Task", "demo__probe__search"] {
+            assert_eq!(to_model_tool_name(name), name);
+        }
+    }
+
+    #[test]
+    fn shortens_the_over_long_platform_name() {
+        let capped = to_model_tool_name(NEXUS_ATLASSIAN);
+        assert_eq!(NEXUS_ATLASSIAN.len(), 70);
+        assert_eq!(
+            capped,
+            "t_75166a14-fd0b-4bbb-b6d6-ddbd008bb95b__atlassian__addCo_b897e9d"
+        );
+        assert!(accepted(&capped));
+    }
+
+    #[test]
+    fn keeps_two_long_names_with_a_shared_prefix_distinct() {
+        let long = "a".repeat(70);
+        let a = to_model_tool_name(&format!("{long}_one"));
+        let b = to_model_tool_name(&format!("{long}_two"));
+        assert_ne!(a, b);
+        assert_eq!(a.len(), MAX_TOOL_NAME);
+        assert_eq!(b.len(), MAX_TOOL_NAME);
+    }
+
+    #[test]
+    fn is_idempotent() {
+        let names = [
+            NEXUS_ATLASSIAN.to_string(),
+            "a".repeat(200),
+            "x__".repeat(30),
+            "shell_exec".to_string(),
+            format!("{}__{}", "a".repeat(54), "b".repeat(20)),
+            format!("{}__{}", "a".repeat(53), "b".repeat(20)),
+            format!("{}__{}", "a".repeat(55), "b".repeat(20)),
+        ];
+        for name in names {
+            let once = to_model_tool_name(&name);
+            assert_eq!(to_model_tool_name(&once), once);
+            assert!(accepted(&once), "{once}");
+        }
+    }
+
+    #[test]
+    fn never_emits_a_name_a_provider_would_reject() {
+        let long = "a".repeat(500);
+        for name in [
+            NEXUS_ATLASSIAN,
+            long.as_str(),
+            "...",
+            "9",
+            "server..name__tool with spaces",
+            "__leading__and__trailing__",
+            "ünïcödé__tööl",
+        ] {
+            assert!(accepted(&to_model_tool_name(name)), "{name}");
+        }
+    }
+
+    #[test]
+    fn caps_only_what_does_not_fit_and_keeps_the_order() {
+        let capped = cap_tool_names(
+            set(&[
+                ("shell_exec", "shell_exec"),
+                (NEXUS_ATLASSIAN, "mcp"),
+                ("memory_search", "memory_search"),
+                ("Task", "Task"),
+            ]),
+            "test",
+            &HashSet::new(),
+        );
+        assert_eq!(
+            capped.keys().cloned().collect::<Vec<_>>(),
+            [
+                "shell_exec".to_string(),
+                to_model_tool_name(NEXUS_ATLASSIAN),
+                "memory_search".to_string(),
+                "Task".to_string(),
+            ]
+        );
+        assert_eq!(
+            capped[&to_model_tool_name(NEXUS_ATLASSIAN)]
+                .description
+                .as_deref(),
+            Some("mcp")
+        );
+    }
+
+    #[test]
+    fn keeps_the_incumbent_when_a_sanitized_name_is_taken() {
+        let capped = cap_tool_names(
+            set(&[("shell_exec", "built-in"), ("shell.exec", "remote")]),
+            "test",
+            &HashSet::new(),
+        );
+        assert_eq!(capped.keys().collect::<Vec<_>>(), ["shell_exec"]);
+        assert_eq!(
+            capped["shell_exec"].description.as_deref(),
+            Some("built-in")
+        );
+    }
+
+    #[test]
+    fn drops_a_rename_onto_a_reserved_name_whatever_the_order() {
+        let capped = cap_tool_names(
+            set(&[("Task.", "remote"), ("Task", "the real one")]),
+            "test",
+            &reserved(&["Task"]),
+        );
+        assert_eq!(capped.keys().collect::<Vec<_>>(), ["Task"]);
+        assert_eq!(capped["Task"].description.as_deref(), Some("the real one"));
+
+        let owner = cap_tool_names(
+            set(&[("shell_exec", "built-in")]),
+            "test",
+            &reserved(&["shell_exec"]),
+        );
+        assert_eq!(owner["shell_exec"].description.as_deref(), Some("built-in"));
+    }
+
+    #[test]
+    fn refuses_a_rename_into_a_name_the_mode_withheld() {
+        let capped = cap_tool_names(
+            set(&[("share.file", "remote"), ("kubectl", "kubectl")]),
+            "test",
+            &reserved(&["share_file"]),
+        );
+        assert_eq!(capped.keys().collect::<Vec<_>>(), ["kubectl"]);
+    }
 }

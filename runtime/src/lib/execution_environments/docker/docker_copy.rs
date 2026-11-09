@@ -108,7 +108,10 @@ async fn copy(from: &str, to: &str) -> anyhow::Result<()> {
     )
     .await;
     if run.error.is_some() || run.exit_code != Some(0) {
-        anyhow::bail!(engine_failure(&format!("could not copy {from} to {to}"), &run));
+        anyhow::bail!(engine_failure(
+            &format!("could not copy {from} to {to}"),
+            &run
+        ));
     }
     Ok(())
 }

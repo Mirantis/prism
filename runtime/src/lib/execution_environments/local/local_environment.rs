@@ -110,7 +110,10 @@ mod tests {
     use crate::lib::execution_environments::execution_environment::Signal;
 
     fn temp() -> (tempfile::TempDir, String) {
-        let dir = tempfile::Builder::new().prefix("local-env-").tempdir().unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("local-env-")
+            .tempdir()
+            .unwrap();
         let path = std::fs::canonicalize(dir.path())
             .unwrap()
             .to_string_lossy()

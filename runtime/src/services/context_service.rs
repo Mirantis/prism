@@ -176,3 +176,278 @@ impl Default for ContextService {
 }
 
 pub static CONTEXT_SERVICE: LazyLock<ContextService> = LazyLock::new(ContextService::new);
+
+#[cfg(test)]
+mod tests {
+    use chrono::{Duration, Utc};
+    use diesel::prelude::*;
+    use serde_json::json;
+
+    use super::*;
+    use crate::db::models::{
+        MessageTrigger, NewAgentWorkspace, NewConversationMessage, NewConversationThread,
+        NewMessageAttachment,
+    };
+    use crate::db::schema::{
+        agent_workspaces, conversation_messages, conversation_threads, message_attachments,
+    };
+    use crate::db::testing::{TestDb, test_db};
+
+    const AGENT: &str = "test-agent-id";
+
+    fn seed_agent(test: &TestDb, bootstrap_md: &str) {
+        let bootstrap_md = bootstrap_md.to_string();
+        test.db
+            .run_sync(move |conn| {
+                let mut agent = NewAgentWorkspace::new(
+                    "user-1",
+                    "soul content",
+                    "user content",
+                    "memory content",
+                    "heartbeat content",
+                    bootstrap_md,
+                );
+                agent.id = AGENT.into();
+                agent.name = "Test Agent".into();
+                agent.vision_md = "vision content".into();
+                agent.agent_md = "agent guide".into();
+                diesel::insert_into(agent_workspaces::table)
+                    .values(&agent)
+                    .execute(conn)?;
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    fn seed_thread(test: &TestDb, id: &str, summary: Option<&str>, minutes_ago: i64) {
+        let id = id.to_string();
+        let summary = summary.map(str::to_string);
+        test.db
+            .run_sync(move |conn| {
+                let mut thread = NewConversationThread::new(AGENT, "user-1");
+                thread.id = id;
+                thread.compaction_summary = summary;
+                let at = Utc::now() - Duration::minutes(minutes_ago);
+                thread.created_at = at.into();
+                thread.updated_at = at.into();
+                diesel::insert_into(conversation_threads::table)
+                    .values(&thread)
+                    .execute(conn)?;
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    fn seed_message(test: &TestDb, message: NewConversationMessage) {
+        test.db
+            .run_sync(move |conn| {
+                diesel::insert_into(conversation_messages::table)
+                    .values(&message)
+                    .execute(conn)?;
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    fn message(id: &str, role: MessageRole, content: &str, seconds: i64) -> NewConversationMessage {
+        let mut message =
+            NewConversationMessage::new("thread-1", role, content, MessageTrigger::UserInput);
+        message.id = id.into();
+        message.created_at = (Utc::now() - Duration::hours(1) + Duration::seconds(seconds)).into();
+        message
+    }
+
+    fn options(thread_id: Option<&str>, include_conversation: Option<bool>) -> AgentContextOptions {
+        AgentContextOptions {
+            agent_id: AGENT.into(),
+            thread_id: thread_id.map(str::to_string),
+            include_conversation,
+            verbose: None,
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn maps_agent_fields_into_the_context() {
+        let test = test_db();
+        seed_agent(&test, "");
+        let context = CONTEXT_SERVICE
+            .get_agent_context("user-1", options(None, Some(false)))
+            .await
+            .unwrap();
+        assert_eq!(context.soul_md, "soul content");
+        assert_eq!(context.user_md, "user content");
+        assert_eq!(context.memory_md, "memory content");
+        assert_eq!(context.heartbeat_md, "heartbeat content");
+        assert_eq!(context.vision_md, "vision content");
+        assert_eq!(context.agent_md, "agent guide");
+        assert_eq!(context.agent_name, "Test Agent");
+        assert_eq!(context.agent_id, AGENT);
+        assert_eq!(context.user_id, "user-1");
+        assert!(!context.is_bootstrap_phase);
+        assert!(context.conversation_summary.is_none());
+        assert!(context.recent_messages.is_empty());
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn is_in_the_bootstrap_phase_only_while_bootstrap_md_has_content() {
+        for (bootstrap_md, expected) in [("Welcome!", true), ("", false), ("  \n\t ", false)] {
+            let test = test_db();
+            seed_agent(&test, bootstrap_md);
+            let context = CONTEXT_SERVICE
+                .get_agent_context("user-1", options(None, Some(false)))
+                .await
+                .unwrap();
+            assert_eq!(context.is_bootstrap_phase, expected, "{bootstrap_md:?}");
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn the_verbose_option_overrides_the_agent_setting() {
+        let test = test_db();
+        seed_agent(&test, "");
+        let mut verbose = options(None, Some(false));
+        verbose.verbose = Some(true);
+        let context = CONTEXT_SERVICE
+            .get_agent_context("user-1", verbose)
+            .await
+            .unwrap();
+        assert!(context.verbose);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn reads_the_named_thread_its_summary_and_its_messages() {
+        let test = test_db();
+        seed_agent(&test, "");
+        seed_thread(&test, "thread-1", Some("Earlier work."), 10);
+        seed_message(&test, message("m1", MessageRole::User, "hello", 1));
+        seed_message(&test, message("m2", MessageRole::Agent, "hi", 2));
+
+        let context = CONTEXT_SERVICE
+            .get_agent_context("user-1", options(Some("thread-1"), Some(true)))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            context.conversation_summary.as_deref(),
+            Some("Earlier work.")
+        );
+        assert!(context.compacted_history_readable);
+        let ids: Vec<&str> = context
+            .recent_messages
+            .iter()
+            .map(|m| m.id.as_str())
+            .collect();
+        assert_eq!(ids, ["m1", "m2"]);
+        assert_eq!(
+            context.recent_messages[0].triggered_by.as_deref(),
+            Some("USER_INPUT")
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn reads_the_latest_web_thread_when_no_thread_is_named() {
+        let test = test_db();
+        seed_agent(&test, "");
+        seed_thread(&test, "thread-old", None, 60);
+        seed_thread(&test, "thread-1", None, 1);
+        seed_message(&test, message("m1", MessageRole::User, "newest", 1));
+
+        let context = CONTEXT_SERVICE
+            .get_agent_context("user-1", options(None, None))
+            .await
+            .unwrap();
+
+        assert_eq!(context.recent_messages.len(), 1);
+        assert_eq!(context.recent_messages[0].content, "newest");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn reads_no_conversation_when_the_user_has_no_thread() {
+        let test = test_db();
+        seed_agent(&test, "");
+        let context = CONTEXT_SERVICE
+            .get_agent_context("user-1", options(None, Some(true)))
+            .await
+            .unwrap();
+        assert!(context.recent_messages.is_empty());
+        assert!(context.conversation_summary.is_none());
+        assert!(!context.compacted_history_readable);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn keeps_a_message_with_text_tool_calls_or_files_and_drops_the_rest() {
+        let test = test_db();
+        seed_agent(&test, "");
+        seed_thread(&test, "thread-1", None, 10);
+        seed_message(&test, message("m1", MessageRole::User, "hello", 1));
+        seed_message(&test, message("m2", MessageRole::User, "   ", 2));
+        seed_message(&test, message("m3", MessageRole::Agent, "", 3));
+        let mut with_calls = message("m4", MessageRole::Agent, "", 4);
+        with_calls.tool_calls =
+            Some(json!([{ "tool": "list_pods", "input": "{}", "output": "[]" }]));
+        seed_message(&test, with_calls);
+        seed_message(&test, message("m5", MessageRole::User, "", 5));
+        test.db
+            .run_sync(|conn| {
+                let mut file = NewMessageAttachment::new("pic.png", "image/png", 3, "image", "web");
+                file.id = "att-1".into();
+                file.message_id = Some("m5".into());
+                file.thread_id = Some("thread-1".into());
+                file.data = Some(vec![1, 2, 3]);
+                diesel::insert_into(message_attachments::table)
+                    .values(&file)
+                    .execute(conn)?;
+                Ok(())
+            })
+            .unwrap();
+
+        let context = CONTEXT_SERVICE
+            .get_agent_context("user-1", options(Some("thread-1"), None))
+            .await
+            .unwrap();
+
+        let ids: Vec<&str> = context
+            .recent_messages
+            .iter()
+            .map(|m| m.id.as_str())
+            .collect();
+        assert_eq!(ids, ["m1", "m4", "m5"]);
+        assert!(context.recent_messages[0].attachments.is_none());
+        let files = context.recent_messages[2].attachments.as_ref().unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].id, "att-1");
+        assert_eq!(files[0].filename, "pic.png");
+        assert!(!files[0].expired);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn keeps_every_uncompacted_message_with_no_count_window() {
+        let test = test_db();
+        seed_agent(&test, "");
+        seed_thread(&test, "thread-1", None, 10);
+        for i in 0..60 {
+            seed_message(
+                &test,
+                message(
+                    &format!("m{i:02}"),
+                    MessageRole::User,
+                    &format!("message {i}"),
+                    i,
+                ),
+            );
+        }
+        let context = CONTEXT_SERVICE
+            .get_agent_context("user-1", options(Some("thread-1"), None))
+            .await
+            .unwrap();
+        assert_eq!(context.recent_messages.len(), 60);
+    }
+}

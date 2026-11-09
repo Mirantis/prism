@@ -2,19 +2,22 @@
 
 use std::any::Any;
 use std::collections::HashMap;
-
-use indexmap::IndexMap;
 use std::future::Future;
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use async_trait::async_trait;
+use base64::Engine;
 use bytes::Bytes;
 use futures::future::BoxFuture;
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
+use serde_json::{Value, json};
 
-use super::computer::{Computer, SignInFormInfo};
+use super::computer::{Computer, CredentialFields, SignInFormInfo};
 use super::computer_session::SignInOutcome;
 use super::computer_tools::{
     ClickInput, ClickTextInput, ComputerBrowser, ComputerDesktop, ComputerUserScreen,
@@ -22,16 +25,36 @@ use super::computer_tools::{
     MoveInput, ScreenLook, ScrollInput, TextLocation, TypeInput, UserScreenResult,
     WindowActionInput,
 };
-use super::desktop_control::DesktopControl;
+use super::desktop_control::{DesktopControl, MouseButton, Point};
 use super::desktop_input::DesktopInput;
 use super::desktop_session::DesktopSession;
-use super::desktop_windows::WindowAction;
+use super::desktop_windows::{WindowAction, act_on_window, find_windows, list_windows};
 use super::picture_stream::{FrameSink, PictureStream};
-use super::screen_size::{DEFAULT_SCREEN, ScreenSize};
-use super::sign_in_form::SignInCredentials;
-use crate::services::meeting::audio_stack::{AudioStack, AudioStackHandles};
-use crate::services::meeting::browser_control::{BrowserCommand, BrowserResult};
-use crate::services::meeting::browser_stack::{BrowserStack, PageHandle};
+use super::screen_elements::{describe_elements, find_elements, read_screen_elements};
+use super::screen_size::{
+    DEFAULT_SCREEN, OCR_SCALE, ScreenSize, clamp_screen, math_round, size_text,
+};
+use super::screen_text::{find_text, read_lines, read_screen_words, upscale_for_ocr};
+use super::secure_window::clear_password_fields;
+use super::sign_in_form::{
+    FillOutcome, SignInCredentials, fill_sign_in_form, find_sign_in, frame_origin,
+};
+use super::supported::{COMPUTER_BINARIES, unsupported_reason};
+use super::video_stream::VideoStream;
+use crate::lib::data_dir::resolve_data_dir;
+use crate::lib::has_binary::{has_binaries, missing_binary};
+use crate::lib::log_redaction::err_json;
+use crate::services::meeting::audio_stack::{AudioStack, AudioStackHandles, AudioStackOptions};
+use crate::services::meeting::browser_control::{
+    BrowserAction, BrowserCommand, BrowserReading, BrowserResult, capture, normalize_url, read,
+    run_browser_command, summarize_tabs,
+};
+use crate::services::meeting::browser_stack::{
+    BrowserStack, BrowserStackOptions, GotoOptions, LoadState, PageHandle,
+};
+use crate::support::js;
+use crate::support::now_ms;
+use crate::{log_debug, log_error, log_info, log_warn};
 
 /// How the computer shows the model what it did: a picture into the live session, and a
 /// line of narration when something changed that nobody asked about.
@@ -138,6 +161,9 @@ const USER_SCREEN_MAX_CHARS: usize = 6 * 1024 * 1024;
 /// How much of the words read off the user's screen goes back to the model.
 const USER_SCREEN_TEXT_MAX_CHARS: usize = 4_000;
 
+/// What every desktop tool answers on a computer with no desktop.
+const NO_DESKTOP: &str = "There is no desktop on this computer.";
+
 /// The past tense of each window action, for the message that comes back.
 pub fn window_action_done(action: WindowAction) -> &'static str {
     match action {
@@ -153,8 +179,8 @@ pub fn window_action_done(action: WindowAction) -> &'static str {
 #[derive(Debug, Clone)]
 struct SharedScreen {
     jpeg: Bytes,
-    width: i64,
-    height: i64,
+    width: f64,
+    height: f64,
     /// When it arrived, in epoch milliseconds.
     at: i64,
 }
@@ -181,6 +207,93 @@ struct AgentComputerState {
     screen: Option<Arc<dyn PictureStream>>,
     /// The fixed desktop size; viewers scale its picture.
     size: ScreenSize,
+}
+
+/// The first line of an error's message, as the desktop tools report a failure.
+fn detail(err: &anyhow::Error) -> String {
+    err.to_string()
+        .split('\n')
+        .next()
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// `Math.round(n)` as a template literal writes it.
+fn rounded(n: f64) -> String {
+    js::number_text(math_round(n))
+}
+
+/// A value from the page as a template literal writes it.
+fn js_text(value: Option<&Value>) -> String {
+    match value {
+        None => "undefined".to_string(),
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Number(n)) => js::number_text(n.as_f64().unwrap_or(f64::NAN)),
+        Some(Value::Array(_)) | Some(Value::Object(_)) => "[object Object]".to_string(),
+        Some(other) => other.to_string(),
+    }
+}
+
+/// `Number(value) || 0`, for a size the page sent.
+fn js_number_or_zero(value: Option<&Value>) -> f64 {
+    let n = match value {
+        Some(Value::Number(n)) => n.as_f64().unwrap_or(0.0),
+        Some(Value::String(text)) => js::number_from(text).unwrap_or(f64::NAN),
+        Some(Value::Bool(true)) => 1.0,
+        _ => 0.0,
+    };
+    if n.is_nan() { 0.0 } else { n }
+}
+
+/// `Buffer.from(text, 'base64')`: characters outside the alphabet are skipped, and either
+/// alphabet is read.
+fn decode_base64(text: &str) -> Bytes {
+    let mut clean: String = text
+        .chars()
+        .take_while(|c| *c != '=')
+        .filter_map(|c| match c {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '+' | '/' => Some(c),
+            '-' => Some('+'),
+            '_' => Some('/'),
+            _ => None,
+        })
+        .collect();
+    if clean.len() % 4 == 1 {
+        clean.pop();
+    }
+    Bytes::from(
+        base64::engine::general_purpose::STANDARD_NO_PAD
+            .decode(clean)
+            .unwrap_or_default(),
+    )
+}
+
+fn data_url(jpeg: &[u8]) -> String {
+    format!(
+        "data:image/jpeg;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(jpeg)
+    )
+}
+
+/// A tab number the model gave, as an index into the tab list, when it names one.
+fn tab_index(number: f64) -> Option<usize> {
+    (number.is_finite() && number >= 0.0 && number.fract() == 0.0).then_some(number as usize)
+}
+
+/// `{ success, message, ...reading }`.
+fn screen_look(success: bool, message: String, reading: Option<BrowserReading>) -> ScreenLook {
+    let mut look = ScreenLook {
+        success,
+        message,
+        ..ScreenLook::default()
+    };
+    if let Some(reading) = reading {
+        look.url = Some(reading.url);
+        look.title = Some(reading.title);
+        look.text = Some(reading.text);
+        look.controls = Some(reading.controls);
+    }
+    look
 }
 
 /// Everything the runtime's computer owns, released together when it ends.
@@ -221,10 +334,123 @@ impl AgentComputer {
         self.channels.current()
     }
 
+    fn browser(&self) -> Option<Arc<BrowserStack>> {
+        self.state.lock().browser.clone()
+    }
+
+    fn control(&self) -> Option<Arc<DesktopControl>> {
+        self.state.lock().desktop_control.clone()
+    }
+
+    fn desktop_env(&self) -> IndexMap<String, String> {
+        self.state.lock().desktop_env.clone()
+    }
+
     /// Bring up the display, the desktop and the browser, at `screen` when given. Fails with
     /// `Could not open the browser: <reason>`, having stopped whatever had started.
     pub async fn open_browser(&self, screen: Option<ScreenSize>) -> anyhow::Result<()> {
-        todo!()
+        if let Some(screen) = screen {
+            self.state.lock().size = clamp_screen(screen.width as f64, screen.height as f64);
+        }
+        let browser = Arc::new(BrowserStack::new());
+        let mut display: Option<Arc<AudioStack>> = None;
+        let mut desktop: Option<Arc<DesktopSession>> = None;
+        let opened = self.bring_up(&browser, &mut display, &mut desktop).await;
+        let Err(err) = opened else {
+            return Ok(());
+        };
+        let input = {
+            let mut state = self.state.lock();
+            state.desktop_control = None;
+            state.input.take()
+        };
+        if let Some(input) = input {
+            input.stop();
+        }
+        browser.stop().await;
+        if let Some(desktop) = desktop {
+            desktop.stop().await;
+        }
+        if let Some(display) = display {
+            display.stop().await;
+        }
+        anyhow::bail!("Could not open the browser: {err}")
+    }
+
+    async fn bring_up(
+        &self,
+        browser: &Arc<BrowserStack>,
+        display_slot: &mut Option<Arc<AudioStack>>,
+        desktop_slot: &mut Option<Arc<DesktopSession>>,
+    ) -> anyhow::Result<()> {
+        if let Some(missing) = missing_binary(&COMPUTER_BINARIES).await {
+            anyhow::bail!(unsupported_reason(&missing));
+        }
+
+        let display = Arc::new(AudioStack::new());
+        *display_slot = Some(display.clone());
+        let size = self.state.lock().size;
+        let handles = display
+            .start(AudioStackOptions {
+                screen: Some(size_text(size)),
+            })
+            .await?;
+        let env = handles.browser_env.clone();
+        // A meeting ends on this; here the desktop's sound just stops reaching the page.
+        (handles.on_lost)(Arc::new(|reason: String| {
+            log_warn!("[VoiceChat] Desktop audio capture lost: {}", reason);
+        }));
+        // The desktop before the browser, so the window manager is there to place the
+        // browser's window when it opens, and the session bus exists for it to join.
+        let desktop = DesktopSession::new(env.clone());
+        *desktop_slot = Some(desktop.clone());
+        desktop.start().await?;
+        desktop.start_dock().await?;
+        let mut desktop_env = env.clone();
+        desktop_env.extend(desktop.bus_env());
+        let control = Arc::new(DesktopControl::new(env.clone(), size));
+        {
+            let mut state = self.state.lock();
+            state.desktop_env = desktop_env.clone();
+            state.desktop_control = Some(control.clone());
+            state.input = Some(DesktopInput::new(env.clone(), control));
+        }
+
+        let main_page = browser
+            .start(BrowserStackOptions {
+                // On the desktop's bus with accessibility on, so the browser's frame is in
+                // the tree.
+                env: desktop_env,
+                profile_dir: Some(
+                    Path::new(&resolve_data_dir()).join("voice-chat-browser-profile"),
+                ),
+            })
+            .await?;
+        self.state.lock().main_page = Some(main_page);
+        // The agent's working tab, open from the start so the page has something to show
+        // and the agent's first navigation lands in it rather than opening a second one.
+        let tab = browser.open_tab().await?;
+        let loaded = tab
+            .goto(
+                &START_PAGE,
+                GotoOptions {
+                    wait_until: LoadState::DomContentLoaded,
+                    timeout_ms: Some(10_000),
+                },
+            )
+            .await;
+        if let Err(err) = loaded {
+            log_warn!(
+                json!({ "err": err_json(&err) }),
+                "[VoiceChat] Start page did not load"
+            );
+        }
+        let mut state = self.state.lock();
+        state.browser = Some(browser.clone());
+        state.display = Some(display);
+        state.desktop = Some(desktop);
+        state.audio_handles = Some(Arc::new(handles));
+        Ok(())
     }
 
     /// Send what the desktop plays, 48 kHz pcm16 mono, silence left out.
@@ -232,7 +458,15 @@ impl AgentComputer {
     /// False when there is no display to record from, which is a computer that never
     /// opened.
     pub fn start_browser_audio(&self, on_pcm: Arc<dyn Fn(Bytes) + Send + Sync>) -> bool {
-        todo!()
+        let Some(handles) = self.state.lock().audio_handles.clone() else {
+            return false;
+        };
+        (handles.on_capture)(Arc::new(move |pcm: Bytes| {
+            if !is_silent(&pcm) {
+                on_pcm(pcm);
+            }
+        }));
+        true
     }
 
     /// Whether the computer tools have a desktop to act on.
@@ -241,23 +475,74 @@ impl AgentComputer {
     }
 
     async fn target_of(&self, page: &PageHandle) -> anyhow::Result<Option<String>> {
-        todo!()
+        if page.is_closed() {
+            return Ok(None);
+        }
+        let session = page.context().new_cdp_session(page).await?;
+        let info = session.send("Target.getTargetInfo", json!({})).await;
+        session.detach().await?;
+        let info = info?;
+        Ok(info["targetInfo"]["targetId"].as_str().map(str::to_string))
     }
 
     fn tab_page(&self, tab: Option<i64>) -> Option<PageHandle> {
-        todo!()
+        let browser = self.browser()?;
+        let page = match tab.filter(|tab| *tab != 0) {
+            Some(tab) if tab >= 1 => browser.list_tabs().get((tab - 1) as usize).cloned(),
+            Some(_) => None,
+            None => browser.front(),
+        };
+        page.filter(|page| !page.is_closed())
     }
 
     async fn page_for_target(
         &self,
         target_id: &str,
     ) -> anyhow::Result<Option<(PageHandle, usize)>> {
-        todo!()
+        let pages = self.browser().map(|b| b.list_tabs()).unwrap_or_default();
+        for (index, page) in pages.iter().enumerate() {
+            if self.tab_target(Some(index as i64 + 1)).await?.as_deref() == Some(target_id) {
+                return Ok(Some((page.clone(), index)));
+            }
+        }
+        Ok(None)
     }
 
     /// The words on a shared-screen picture, or `None` where this host cannot read them.
     async fn read_user_screen_text(&self, jpeg: Bytes) -> Option<String> {
-        todo!()
+        let available = *self
+            .ocr_available
+            .get_or_init(|| has_binaries(&["ffmpeg", "tesseract"]))
+            .await;
+        if !available {
+            return None;
+        }
+        let read = async {
+            let png = upscale_for_ocr(jpeg, OCR_SCALE).await?;
+            let lines = read_lines(&read_screen_words(png, OCR_SCALE).await?);
+            anyhow::Ok(lines.join("\n"))
+        };
+        match read.await {
+            Ok(text) => {
+                if js::len16(&text) > USER_SCREEN_TEXT_MAX_CHARS {
+                    Some(format!(
+                        "{}\n…",
+                        js::slice16(&text, 0, USER_SCREEN_TEXT_MAX_CHARS)
+                    ))
+                } else if text.is_empty() {
+                    None
+                } else {
+                    Some(text)
+                }
+            }
+            Err(err) => {
+                log_info!(
+                    "[VoiceChat] Could not read the user's screen as text: Error: {}",
+                    err
+                );
+                None
+            }
+        }
     }
 
     /// Find `query` on the screen: a control of that name in the accessibility tree first,
@@ -268,7 +553,49 @@ impl AgentComputer {
         control: Arc<DesktopControl>,
         query: &str,
     ) -> anyhow::Result<Vec<TextLocation>> {
-        todo!()
+        let env = self.desktop_env();
+        self.on_front_queue(async {
+            let elements = match read_screen_elements(&env).await {
+                Ok(elements) => elements,
+                Err(err) => {
+                    log_debug!(
+                        "[VoiceChat:Desktop] accessibility tree unavailable: Error: {}",
+                        err
+                    );
+                    Vec::new()
+                }
+            };
+            let widgets = find_elements(&elements, query);
+            if !widgets.is_empty() {
+                return Ok(widgets
+                    .into_iter()
+                    .map(|e| {
+                        let (x, y) = control.to_picture(e.x + e.width / 2.0, e.y + e.height / 2.0);
+                        TextLocation {
+                            text: e.name,
+                            line: format!("{} in {}", e.role, e.app),
+                            x: math_round(x) as i64,
+                            y: math_round(y) as i64,
+                        }
+                    })
+                    .collect());
+            }
+            let png = control.capture_for_ocr().await?;
+            let words = read_screen_words(png, OCR_SCALE).await?;
+            Ok(find_text(&words, query)
+                .into_iter()
+                .map(|m| {
+                    let (x, y) = control.to_picture(m.x, m.y);
+                    TextLocation {
+                        text: m.text,
+                        line: m.line,
+                        x: math_round(x) as i64,
+                        y: math_round(y) as i64,
+                    }
+                })
+                .collect())
+        })
+        .await
     }
 
     /// Run one desktop action, wait for the screen to settle, and show the model the
@@ -278,12 +605,40 @@ impl AgentComputer {
         F: FnOnce(Arc<DesktopControl>) -> Fut + Send,
         Fut: Future<Output = anyhow::Result<()>> + Send,
     {
-        todo!()
+        let Some(control) = self.control() else {
+            return DesktopActionResult::new(false, NO_DESKTOP);
+        };
+        self.on_front_queue(async {
+            let done = async {
+                act(control.clone()).await?;
+                tokio::time::sleep(Duration::from_millis(ACTION_SETTLE_MS)).await;
+                self.show_desktop(&control, DESKTOP_AFTER_NOTE).await
+            };
+            match done.await {
+                Ok(shown) => DesktopActionResult::new(
+                    true,
+                    if shown {
+                        format!("{message}. The picture shows the screen now.")
+                    } else {
+                        format!("{message}. I could not get a picture afterwards.")
+                    },
+                ),
+                Err(err) => {
+                    let detail = detail(&err);
+                    log_info!("[VoiceChat:Desktop] {} failed: {}", message, detail);
+                    DesktopActionResult::new(false, format!("That did not work: {detail}"))
+                }
+            }
+        })
+        .await
     }
 
     /// One picture of the desktop into the session. Answers whether the model got it.
     async fn show_desktop(&self, control: &DesktopControl, note: &str) -> anyhow::Result<bool> {
-        todo!()
+        let jpeg = control.capture().await?;
+        Ok(self
+            .channel()
+            .is_some_and(|channel| channel.show_image(&data_url(&jpeg), note)))
     }
 
     async fn on_front_queue<F: Future>(&self, run: F) -> F::Output {
@@ -298,7 +653,98 @@ impl AgentComputer {
         browser: &BrowserStack,
         command: BrowserCommand,
     ) -> anyhow::Result<BrowserResult> {
-        todo!()
+        match command.action {
+            BrowserAction::NewTab => {
+                if let Some(url) = &command.url {
+                    if !url.is_empty() && normalize_url(url).is_none() {
+                        return Ok(BrowserResult::message(
+                            false,
+                            format!("\"{url}\" is not a web address I can open."),
+                        ));
+                    }
+                }
+                let page = browser.open_tab().await?;
+                if let Some(url) = command.url.filter(|url| !url.is_empty()) {
+                    let navigate = BrowserCommand {
+                        action: BrowserAction::Navigate,
+                        url: Some(url),
+                        tab: None,
+                        target: None,
+                        text: None,
+                        key: None,
+                        amount: None,
+                    };
+                    return Ok(run_browser_command(&page, &navigate).await);
+                }
+                Ok(BrowserResult::with_reading(
+                    true,
+                    "Opened a new tab.",
+                    read(&page).await,
+                ))
+            }
+
+            BrowserAction::SwitchTab => {
+                let index = command.tab.and_then(|tab| tab_index(tab - 1.0));
+                let page = match index {
+                    Some(index) => browser.select_tab(index).await?,
+                    None => None,
+                };
+                let Some(page) = page else {
+                    let tab = command
+                        .tab
+                        .map_or_else(|| "of that number".to_string(), js::number_text);
+                    return Ok(BrowserResult::message(
+                        false,
+                        format!("There is no tab {tab}."),
+                    ));
+                };
+                let tab = command
+                    .tab
+                    .map_or_else(|| "undefined".to_string(), js::number_text);
+                Ok(BrowserResult::with_reading(
+                    true,
+                    format!("Switched to tab {tab}."),
+                    read(&page).await,
+                ))
+            }
+
+            BrowserAction::CloseTab => {
+                let tabs = browser.list_tabs();
+                let index = match command.tab {
+                    None => {
+                        let front = browser.front();
+                        tabs.iter()
+                            .position(|page| Some(page) == front.as_ref())
+                            .map(|index| index as f64)
+                            .unwrap_or(-1.0)
+                    }
+                    Some(tab) => tab - 1.0,
+                };
+                let closed = match tab_index(index) {
+                    Some(index) if index as f64 >= 0.0 => browser.close_tab(index).await?,
+                    _ => false,
+                };
+                if index < 0.0 || !closed {
+                    return Ok(BrowserResult::message(
+                        false,
+                        "There is no such tab to close.",
+                    ));
+                }
+                let page = browser.front();
+                let main_page = self.state.lock().main_page.clone();
+                match page {
+                    Some(page) if Some(&page) != main_page.as_ref() => Ok(
+                        BrowserResult::with_reading(true, "Closed the tab.", read(&page).await),
+                    ),
+                    _ => Ok(BrowserResult::message(
+                        true,
+                        "Closed the last tab. Nothing is open now.",
+                    )),
+                }
+            }
+
+            _ => Ok(run_browser_command(&browser.workbench().await?, &command).await),
+        }
     }
 }
 
@@ -310,15 +756,109 @@ impl Default for AgentComputer {
 
 #[async_trait]
 impl ComputerBrowser for AgentComputer {
-    async fn browse(&self, command: BrowserCommand) -> BrowserResult {
-        todo!()
+    async fn browse(&self, command: BrowserCommand) -> anyhow::Result<BrowserResult> {
+        let Some(browser) = self.browser() else {
+            return Ok(BrowserResult::message(
+                false,
+                "There is no browser on this computer.",
+            ));
+        };
+        Ok(self
+            .on_front_queue(async {
+                browser.observe_front().await;
+                match self.run_browse_command(&browser, command).await {
+                    Ok(mut result) => {
+                        let tabs = browser.list_tabs();
+                        let front = browser.front();
+                        result.tabs = Some(summarize_tabs(&tabs, front.as_ref()).await);
+                        result
+                    }
+                    Err(err) => {
+                        log_error!(
+                            json!({ "err": err_json(&err) }),
+                            "[VoiceChat] Browser command failed"
+                        );
+                        BrowserResult::message(false, "I could not reach the browser.")
+                    }
+                }
+            })
+            .await)
     }
 
     /// Show the model the screen: the whole desktop where the runtime owns the display,
     /// else the browser tab in front. The tab's reading goes along in both cases, since
     /// the words on the page are worth more to a voice model than pixels.
-    async fn look_at_screen(&self) -> ScreenLook {
-        todo!()
+    async fn look_at_screen(&self) -> anyhow::Result<ScreenLook> {
+        let browser = self.browser();
+        if let Some(browser) = &browser {
+            browser.observe_front().await;
+        }
+        let page = browser.as_ref().and_then(|browser| browser.front());
+
+        if let Some(control) = self.control() {
+            return Ok(match self.show_desktop(&control, SCREEN_LOOK_NOTE).await {
+                Ok(shown) => {
+                    let reading = match &page {
+                        Some(page) => Some(read(page).await),
+                        None => None,
+                    };
+                    let message = if shown {
+                        format!(
+                            "This is my whole screen, as a {} by {} picture; the desktop tools take coordinates from it.",
+                            control.picture_width(),
+                            control.picture_height()
+                        )
+                    } else {
+                        "Here is what the browser tab says. I could not get the picture through."
+                            .to_string()
+                    };
+                    screen_look(true, message, reading)
+                }
+                Err(err) => {
+                    log_error!(
+                        json!({ "err": err_json(&err) }),
+                        "[VoiceChat] Desktop capture failed"
+                    );
+                    screen_look(
+                        false,
+                        "I could not get a picture of the screen.".to_string(),
+                        None,
+                    )
+                }
+            });
+        }
+
+        let Some(page) = page else {
+            return Ok(screen_look(
+                false,
+                "There is no browser window open.".to_string(),
+                None,
+            ));
+        };
+        Ok(match capture(&page).await {
+            Ok(captured) => {
+                let shown = self.channel().is_some_and(|channel| {
+                    channel.show_image(&captured.image_url, SCREEN_LOOK_NOTE)
+                });
+                let message = if shown {
+                    "This is what my browser is showing."
+                } else {
+                    "Here is what the page says. I could not get the picture through."
+                };
+                screen_look(true, message.to_string(), Some(captured.reading))
+            }
+            Err(err) => {
+                log_error!(
+                    json!({ "err": err_json(&err) }),
+                    "[VoiceChat] Screen capture failed"
+                );
+                screen_look(
+                    false,
+                    "I could not get a picture of the browser.".to_string(),
+                    None,
+                )
+            }
+        })
     }
 }
 
@@ -342,50 +882,313 @@ impl ComputerDesktop for AgentComputer {
     }
 
     /// The desktop's controls as a reading, from the accessibility tree.
-    async fn list_elements(&self, input: ListElementsInput) -> DesktopActionResult {
-        todo!()
+    async fn list_elements(&self, input: ListElementsInput) -> anyhow::Result<DesktopActionResult> {
+        if self.control().is_none() {
+            return Ok(DesktopActionResult::new(false, NO_DESKTOP));
+        }
+        let env = self.desktop_env();
+        let elements = self.on_front_queue(read_screen_elements(&env)).await;
+        Ok(match elements {
+            Ok(elements) => DesktopActionResult::new(
+                true,
+                describe_elements(&elements, input.filter.as_deref()),
+            ),
+            Err(err) => {
+                let detail = detail(&err);
+                log_info!("[VoiceChat:Desktop] list elements failed: {}", detail);
+                DesktopActionResult::new(
+                    false,
+                    format!("I could not read the desktop's controls: {detail}"),
+                )
+            }
+        })
     }
 
-    async fn list_windows(&self) -> DesktopActionResult {
-        todo!()
+    async fn list_windows(&self) -> anyhow::Result<DesktopActionResult> {
+        if self.control().is_none() {
+            return Ok(DesktopActionResult::new(false, NO_DESKTOP));
+        }
+        Ok(match list_windows(&self.desktop_env()).await {
+            Ok(windows) if windows.is_empty() => {
+                DesktopActionResult::new(true, "No windows are open.")
+            }
+            Ok(windows) => {
+                let lines: Vec<String> = windows
+                    .iter()
+                    .map(|w| {
+                        format!(
+                            "\"{}\" at ({}, {}), {} by {}",
+                            w.title, w.x, w.y, w.width, w.height
+                        )
+                    })
+                    .collect();
+                DesktopActionResult::new(
+                    true,
+                    format!("{} window(s):\n{}", windows.len(), lines.join("\n")),
+                )
+            }
+            Err(err) => {
+                let detail = detail(&err);
+                log_info!("[VoiceChat:Desktop] list windows failed: {}", detail);
+                DesktopActionResult::new(false, format!("I could not list the windows: {detail}"))
+            }
+        })
     }
 
-    async fn window_action(&self, input: WindowActionInput) -> DesktopActionResult {
-        todo!()
+    async fn window_action(&self, input: WindowActionInput) -> anyhow::Result<DesktopActionResult> {
+        if self.control().is_none() {
+            return Ok(DesktopActionResult::new(false, NO_DESKTOP));
+        }
+        let env = self.desktop_env();
+        let windows = match list_windows(&env).await {
+            Ok(windows) => windows,
+            Err(err) => {
+                return Ok(DesktopActionResult::new(
+                    false,
+                    format!("I could not list the windows: {}", detail(&err)),
+                ));
+            }
+        };
+        let Some(window) = find_windows(&windows, &input.title)
+            .into_iter()
+            .next()
+            .cloned()
+        else {
+            return Ok(DesktopActionResult::new(
+                false,
+                format!("There is no window with \"{}\" in its title.", input.title),
+            ));
+        };
+        let message = format!("{} \"{}\"", window_action_done(input.action), window.title);
+        let action = input.action;
+        Ok(self
+            .desktop_action(
+                |_| async move { act_on_window(&env, &window, action).await },
+                message,
+            )
+            .await)
     }
 
     /// Where a control or some words are on the screen right now, in picture coordinates.
-    async fn find_text(&self, input: FindTextInput) -> FindTextResult {
-        todo!()
+    async fn find_text(&self, input: FindTextInput) -> anyhow::Result<FindTextResult> {
+        let Some(control) = self.control() else {
+            return Ok(FindTextResult {
+                success: false,
+                message: NO_DESKTOP.to_string(),
+                matches: None,
+            });
+        };
+        Ok(match self.locate_text(control, &input.text).await {
+            Ok(matches) if matches.is_empty() => FindTextResult {
+                success: false,
+                message: format!(
+                    "I cannot see the text \"{}\" on the screen right now.",
+                    input.text
+                ),
+                matches: None,
+            },
+            Ok(matches) => FindTextResult {
+                success: true,
+                message: format!(
+                    "\"{}\" appears {} on the screen.",
+                    input.text,
+                    if matches.len() == 1 {
+                        "once".to_string()
+                    } else {
+                        format!("{} times", matches.len())
+                    }
+                ),
+                matches: Some(matches),
+            },
+            Err(err) => {
+                let detail = detail(&err);
+                log_info!("[VoiceChat:Desktop] find text failed: {}", detail);
+                FindTextResult {
+                    success: false,
+                    message: format!("I could not read the screen: {detail}"),
+                    matches: None,
+                }
+            }
+        })
     }
 
     /// Click the centre of some words on the screen.
-    async fn click_text(&self, input: ClickTextInput) -> DesktopActionResult {
-        todo!()
+    async fn click_text(&self, input: ClickTextInput) -> anyhow::Result<DesktopActionResult> {
+        let Some(control) = self.control() else {
+            return Ok(DesktopActionResult::new(false, NO_DESKTOP));
+        };
+        let matches = match self.locate_text(control, &input.text).await {
+            Ok(matches) => matches,
+            Err(err) => {
+                let detail = detail(&err);
+                log_info!("[VoiceChat:Desktop] click text failed: {}", detail);
+                return Ok(DesktopActionResult::new(
+                    false,
+                    format!("I could not read the screen: {detail}"),
+                ));
+            }
+        };
+        if matches.is_empty() {
+            return Ok(DesktopActionResult::new(
+                false,
+                format!(
+                    "I cannot see the text \"{}\" on the screen right now.",
+                    input.text
+                ),
+            ));
+        }
+        let count = matches.len() as i64;
+        let index = (count.min(input.occurrence.unwrap_or(1).max(1)) - 1) as usize;
+        let target = matches[index].clone();
+        let button = input.button.unwrap_or(MouseButton::Left);
+        let double = input.double.unwrap_or(false);
+        let others = if count > 1 {
+            format!(
+                " ({count} matches; clicked number {}, in \"{}\")",
+                index + 1,
+                target.line
+            )
+        } else {
+            String::new()
+        };
+        let message = format!(
+            "{} \"{}\" at ({}, {}){others}",
+            if double { "Double-clicked" } else { "Clicked" },
+            target.text,
+            target.x,
+            target.y
+        );
+        let at = Point {
+            x: target.x as f64,
+            y: target.y as f64,
+        };
+        Ok(self
+            .desktop_action(
+                move |control| async move {
+                    control
+                        .click(Some(at), button, if double { 2 } else { 1 })
+                        .await
+                },
+                message,
+            )
+            .await)
     }
 
-    async fn move_pointer(&self, input: MoveInput) -> DesktopActionResult {
-        todo!()
+    async fn move_pointer(&self, input: MoveInput) -> anyhow::Result<DesktopActionResult> {
+        let message = format!(
+            "Moved the pointer to ({}, {})",
+            rounded(input.x),
+            rounded(input.y)
+        );
+        Ok(self
+            .desktop_action(
+                move |control| async move { control.move_to(input.x, input.y).await },
+                message,
+            )
+            .await)
     }
 
-    async fn click(&self, input: ClickInput) -> DesktopActionResult {
-        todo!()
+    async fn click(&self, input: ClickInput) -> anyhow::Result<DesktopActionResult> {
+        let button = input.button.unwrap_or(MouseButton::Left);
+        let at = match (input.x, input.y) {
+            (Some(x), Some(y)) => Some(Point { x, y }),
+            _ => None,
+        };
+        let double = input.double.unwrap_or(false);
+        let verb = if double { "Double-clicked" } else { "Clicked" };
+        let message = match at {
+            Some(at) => format!(
+                "{verb} {} at ({}, {})",
+                button.as_str(),
+                rounded(at.x),
+                rounded(at.y)
+            ),
+            None => format!("{verb} {} where the pointer was", button.as_str()),
+        };
+        Ok(self
+            .desktop_action(
+                move |control| async move {
+                    control.click(at, button, if double { 2 } else { 1 }).await
+                },
+                message,
+            )
+            .await)
     }
 
-    async fn drag(&self, input: DragInput) -> DesktopActionResult {
-        todo!()
+    async fn drag(&self, input: DragInput) -> anyhow::Result<DesktopActionResult> {
+        let button = input.button.unwrap_or(MouseButton::Left);
+        let message = format!(
+            "Dragged {} from ({}, {}) to ({}, {})",
+            button.as_str(),
+            rounded(input.from_x),
+            rounded(input.from_y),
+            rounded(input.to_x),
+            rounded(input.to_y)
+        );
+        Ok(self
+            .desktop_action(
+                move |control| async move {
+                    control
+                        .drag(
+                            Point {
+                                x: input.from_x,
+                                y: input.from_y,
+                            },
+                            Point {
+                                x: input.to_x,
+                                y: input.to_y,
+                            },
+                            button,
+                        )
+                        .await
+                },
+                message,
+            )
+            .await)
     }
 
-    async fn type_text(&self, input: TypeInput) -> DesktopActionResult {
-        todo!()
+    async fn type_text(&self, input: TypeInput) -> anyhow::Result<DesktopActionResult> {
+        let length = js::len16(&input.text);
+        let message = format!(
+            "Typed {length} character{}",
+            if length == 1 { "" } else { "s" }
+        );
+        Ok(self
+            .desktop_action(
+                move |control| async move { control.type_text(&input.text).await },
+                message,
+            )
+            .await)
     }
 
-    async fn key(&self, input: KeyInput) -> DesktopActionResult {
-        todo!()
+    async fn key(&self, input: KeyInput) -> anyhow::Result<DesktopActionResult> {
+        let message = format!("Pressed {}", input.keys);
+        Ok(self
+            .desktop_action(
+                move |control| async move { control.key(&input.keys).await },
+                message,
+            )
+            .await)
     }
 
-    async fn scroll(&self, input: ScrollInput) -> DesktopActionResult {
-        todo!()
+    async fn scroll(&self, input: ScrollInput) -> anyhow::Result<DesktopActionResult> {
+        let message = format!(
+            "Scrolled {} at ({}, {})",
+            input.direction.as_str(),
+            rounded(input.x),
+            rounded(input.y)
+        );
+        let clicks = input.clicks.unwrap_or(3);
+        Ok(self
+            .desktop_action(
+                move |control| async move {
+                    control
+                        .scroll(input.x, input.y, input.direction, clicks)
+                        .await
+                },
+                message,
+            )
+            .await)
     }
 }
 
@@ -394,8 +1197,43 @@ impl ComputerUserScreen for AgentComputer {
     /// Show the model the user's shared screen, as last received: the picture into the
     /// session, and the words on it as text, since a model reading a picture gets the gist
     /// of a dialog but garbles an error code or a hostname, which is what people share.
-    async fn look_at_user_screen(&self) -> UserScreenResult {
-        todo!()
+    async fn look_at_user_screen(&self) -> anyhow::Result<UserScreenResult> {
+        let Some(shared) = self.state.lock().user_screen.clone() else {
+            return Ok(UserScreenResult {
+                success: false,
+                message: "Your user is not sharing their screen right now. Ask them to press the share button.".to_string(),
+                text: None,
+            });
+        };
+        let shown = self
+            .channel()
+            .is_some_and(|channel| channel.show_image(&data_url(&shared.jpeg), USER_SCREEN_NOTE));
+        let age_seconds = math_round((now_ms() - shared.at) as f64 / 1000.0) as i64;
+        let text = self.read_user_screen_text(shared.jpeg.clone()).await;
+        let message = if shown {
+            format!(
+                "This is your user's shared screen, {} by {}, {}.{}",
+                js::number_text(shared.width),
+                js::number_text(shared.height),
+                if age_seconds <= 1 {
+                    "as of now".to_string()
+                } else {
+                    format!("as of {age_seconds} seconds ago")
+                },
+                if text.is_some() {
+                    " The words on it are attached, read off the picture, top to bottom."
+                } else {
+                    ""
+                }
+            )
+        } else {
+            "I could not get the picture of your user's screen through.".to_string()
+        };
+        Ok(UserScreenResult {
+            success: shown,
+            message,
+            text,
+        })
     }
 }
 
@@ -407,40 +1245,141 @@ impl Computer for AgentComputer {
 
     /// Start sending the screen to the page as video; `open_browser()` has to have run.
     fn start_screen_stream(&self, on_frame: FrameSink) {
-        todo!()
+        let (display, size) = {
+            let state = self.state.lock();
+            let display = state
+                .audio_handles
+                .as_ref()
+                .and_then(|handles| handles.browser_env.get("DISPLAY").cloned());
+            (display, state.size)
+        };
+        let Some(display) = display.filter(|display| !display.is_empty()) else {
+            return;
+        };
+        self.stop_screen_stream();
+        let screen: Arc<dyn PictureStream> = VideoStream::new(display, size_text(size), on_frame);
+        self.state.lock().screen = Some(screen.clone());
+        screen.start();
     }
 
     /// Stop sending the screen. The computer runs on; a later client starts it again.
     fn stop_screen_stream(&self) {
-        todo!()
+        let screen = self.state.lock().screen.take();
+        if let Some(screen) = screen {
+            tokio::spawn(async move { screen.stop().await });
+        }
     }
 
     /// A text frame from the page: the user's shared screen (`user_screen_started`,
     /// `user_screen` with base64 `data`, `width` and `height`, `user_screen_stopped`), or
     /// their pointer and keyboard while they hold the desktop.
     fn handle_input(&self, text: &str) {
-        todo!()
+        let Ok(frame) = serde_json::from_str::<Value>(text) else {
+            return;
+        };
+        let Some(kind) = frame
+            .as_object()
+            .and_then(|object| object.get("type"))
+            .and_then(Value::as_str)
+        else {
+            return;
+        };
+        match kind {
+            "user_screen_started" => {
+                log_info!("[VoiceChat] User started sharing their screen");
+                if let Some(channel) = self.channel() {
+                    channel.notify(
+                        "Your user has just started sharing their screen with you. Call computer_user_screen whenever you want to look at it, and do look when they refer to something on it.",
+                    );
+                }
+            }
+            "user_screen" => {
+                let Some(data) = frame.get("data").and_then(Value::as_str) else {
+                    return;
+                };
+                if js::len16(data) > USER_SCREEN_MAX_CHARS {
+                    return;
+                }
+                let first = self.state.lock().user_screen.is_none();
+                if first {
+                    log_info!(
+                        "[VoiceChat] First picture of the user's shared screen, {} by {}",
+                        js_text(frame.get("width")),
+                        js_text(frame.get("height"))
+                    );
+                }
+                self.state.lock().user_screen = Some(SharedScreen {
+                    jpeg: decode_base64(data),
+                    width: js_number_or_zero(frame.get("width")),
+                    height: js_number_or_zero(frame.get("height")),
+                    at: now_ms(),
+                });
+            }
+            "user_screen_stopped" => {
+                log_info!("[VoiceChat] User stopped sharing their screen");
+                self.state.lock().user_screen = None;
+                if let Some(channel) = self.channel() {
+                    channel.notify("Your user has stopped sharing their screen.");
+                }
+            }
+            _ => {
+                let input = self.state.lock().input.clone();
+                if let Some(input) = input {
+                    input.handle(&frame);
+                }
+            }
+        }
     }
 
     fn release_input(&self) {
-        todo!()
+        let mut state = self.state.lock();
+        if let Some(input) = state.input.take() {
+            input.stop();
+        }
+        state.input = state
+            .desktop_control
+            .clone()
+            .map(|control| DesktopInput::new(state.desktop_env.clone(), control));
     }
 
     /// End a secure takeover: empty every password field the browser holds, and drop
     /// the retained picture of the user's own shared screen. Sharing goes on, so the
     /// next frame replaces what this drops.
     async fn clear_after_secure_window(&self) -> anyhow::Result<()> {
-        todo!()
+        let pages = {
+            let mut state = self.state.lock();
+            state.user_screen = None;
+            state
+                .browser
+                .as_ref()
+                .map(|browser| browser.list_tabs())
+                .unwrap_or_default()
+        };
+        if !pages.is_empty() {
+            self.on_front_queue(clear_password_fields(&pages)).await;
+        }
+        Ok(())
     }
 
     async fn tab_target(&self, tab: Option<i64>) -> anyhow::Result<Option<String>> {
-        todo!()
+        match self.tab_page(tab) {
+            Some(page) => self.target_of(&page).await,
+            None => Ok(None),
+        }
     }
 
     /// Fails with `The tab needing help has closed. You have control of the current
     /// desktop.` when no tab has that target.
     async fn focus_target(&self, target_id: &str) -> anyhow::Result<()> {
-        todo!()
+        let Some((_, index)) = self.page_for_target(target_id).await? else {
+            anyhow::bail!(
+                "The tab needing help has closed. You have control of the current desktop."
+            );
+        };
+        if let Some(browser) = self.browser() {
+            browser.select_tab(index).await?;
+        }
+        Ok(())
     }
 
     /// The sign-in on a tab: where it goes, and what the box for it asks for.
@@ -458,7 +1397,32 @@ impl Computer for AgentComputer {
     /// last looking. Whichever tab holds the form is the one the box names and the one
     /// the typing goes to.
     async fn sign_in_form(&self, tab: Option<i64>) -> anyhow::Result<Option<SignInFormInfo>> {
-        todo!()
+        let mut pages: Vec<PageHandle> = Vec::new();
+        let named = self.tab_page(tab);
+        let open = self.browser().map(|b| b.list_tabs()).unwrap_or_default();
+        for page in named.into_iter().chain(open) {
+            if !pages.contains(&page) {
+                pages.push(page);
+            }
+        }
+        for page in pages {
+            if page.is_closed() {
+                continue;
+            }
+            let Some(found) = self.on_front_queue(find_sign_in(&page, None)).await else {
+                continue;
+            };
+            return Ok(Some(SignInFormInfo {
+                origin: found.site,
+                fields: if found.password && !found.username {
+                    CredentialFields::Password
+                } else {
+                    CredentialFields::Both
+                },
+                target_id: self.target_of(&page).await?,
+            }));
+        }
+        Ok(None)
     }
 
     /// Type a sign-in the user answered, into the tab that asked for it.
@@ -473,15 +1437,153 @@ impl Computer for AgentComputer {
         site: &str,
         credentials: &SignInCredentials,
     ) -> anyhow::Result<SignInOutcome> {
-        todo!()
+        let Some((page, index)) = self.page_for_target(target_id).await? else {
+            return Ok(SignInOutcome::TabGone);
+        };
+        if !page
+            .frames()
+            .iter()
+            .any(|frame| frame_origin(frame).as_deref() == Some(site))
+        {
+            return Ok(SignInOutcome::SiteChanged);
+        }
+        self.on_front_queue(async {
+            if let Some(browser) = self.browser() {
+                browser.select_tab(index).await?;
+            }
+            Ok(match fill_sign_in_form(&page, credentials, site).await? {
+                FillOutcome::Filled => SignInOutcome::Filled,
+                FillOutcome::NoForm => SignInOutcome::NoForm,
+                FillOutcome::NoPasswordStep => SignInOutcome::NoPasswordStep,
+            })
+        })
+        .await
     }
 
     /// Release everything. Safe to call more than once.
     async fn stop(&self) -> anyhow::Result<()> {
-        todo!()
+        let input = self.state.lock().input.take();
+        if let Some(input) = input {
+            input.stop();
+        }
+        let screen = self.state.lock().screen.take();
+        if let Some(screen) = screen {
+            screen.stop().await;
+        }
+        let (browser, desktop, display) = {
+            let mut state = self.state.lock();
+            state.desktop_control = None;
+            state.main_page = None;
+            state.audio_handles = None;
+            (
+                state.browser.take(),
+                state.desktop.take(),
+                state.display.take(),
+            )
+        };
+        if let Some(browser) = browser {
+            browser.stop().await;
+        }
+        if let Some(desktop) = desktop {
+            desktop.stop().await;
+        }
+        if let Some(display) = display {
+            display.stop().await;
+        }
+        Ok(())
     }
 
     fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opens_the_working_tab_on_a_page_that_paints() {
+        assert!(START_PAGE.starts_with("data:text/html,%3C!doctype%20html%3E%3Ctitle%3EReady"));
+        assert!(START_PAGE.ends_with("Ready%3C%2Fbody%3E"));
+    }
+
+    #[test]
+    fn reads_a_shared_picture_as_the_page_encoded_it() {
+        assert_eq!(decode_base64("aGVsbG8=").as_ref(), b"hello");
+        assert_eq!(decode_base64("aGVsbG8").as_ref(), b"hello");
+        assert_eq!(decode_base64("aGVs\nbG8=").as_ref(), b"hello");
+    }
+
+    #[test]
+    fn hears_silence_as_nothing() {
+        assert!(is_silent(&[0, 0, 0, 0]));
+        assert!(!is_silent(&[0, 1, 0, 0]));
+    }
+
+    #[test]
+    fn names_a_tab_only_by_a_whole_number() {
+        assert_eq!(tab_index(0.0), Some(0));
+        assert_eq!(tab_index(2.0), Some(2));
+        assert_eq!(tab_index(-1.0), None);
+        assert_eq!(tab_index(1.5), None);
+    }
+
+    #[test]
+    fn writes_a_size_the_page_sent_as_a_template_literal_does() {
+        assert_eq!(js_text(Some(&json!(1280))), "1280");
+        assert_eq!(js_text(Some(&json!("720"))), "720");
+        assert_eq!(js_text(None), "undefined");
+        assert_eq!(js_number_or_zero(Some(&json!("720"))), 720.0);
+        assert_eq!(js_number_or_zero(Some(&json!("wide"))), 0.0);
+        assert_eq!(js_number_or_zero(None), 0.0);
+    }
+
+    #[tokio::test]
+    async fn answers_every_desktop_tool_without_a_desktop() {
+        let computer = AgentComputer::new();
+        assert_eq!(computer.width(), 0);
+        assert!(!computer.has_desktop());
+        let windows = computer.list_windows().await.unwrap();
+        assert_eq!(windows, DesktopActionResult::new(false, NO_DESKTOP));
+        let moved = computer
+            .move_pointer(MoveInput { x: 1.0, y: 2.0 })
+            .await
+            .unwrap();
+        assert_eq!(moved, DesktopActionResult::new(false, NO_DESKTOP));
+        let browsed = computer
+            .browse(BrowserCommand {
+                action: BrowserAction::Read,
+                url: None,
+                tab: None,
+                target: None,
+                text: None,
+                key: None,
+                amount: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            browsed,
+            BrowserResult::message(false, "There is no browser on this computer.")
+        );
+        let look = computer.look_at_screen().await.unwrap();
+        assert_eq!(
+            serde_json::to_value(look).unwrap(),
+            json!({ "success": false, "message": "There is no browser window open." })
+        );
+    }
+
+    #[tokio::test]
+    async fn tells_the_model_when_the_user_is_not_sharing() {
+        let computer = AgentComputer::new();
+        let answer = computer.look_at_user_screen().await.unwrap();
+        assert_eq!(
+            serde_json::to_value(answer).unwrap(),
+            json!({
+                "success": false,
+                "message": "Your user is not sharing their screen right now. Ask them to press the share button."
+            })
+        );
     }
 }

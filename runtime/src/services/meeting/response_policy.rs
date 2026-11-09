@@ -348,3 +348,253 @@ impl ResponsePolicy {
         }
     }
 }
+
+/// The gate that decides whether an utterance in the room becomes speech.
+///
+/// Everything here is about false positives: a "yes" from this object always reaches the
+/// room, because once `response.create` goes out the model has no way to decline. So the
+/// tests that matter most are the ones asserting silence.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn policy(mode: ResponseMode) -> ResponsePolicy {
+        ResponsePolicy::new(ResponsePolicyOptions { mode })
+    }
+
+    fn auto() -> ResponsePolicy {
+        policy(ResponseMode::Auto)
+    }
+
+    fn crowded() -> ResponsePolicy {
+        let mut p = auto();
+        p.set_participant_count(Some(4));
+        p
+    }
+
+    #[test]
+    fn answers_everything_when_there_is_one_other_person() {
+        let mut p = auto();
+        p.set_participant_count(Some(2));
+        assert_eq!(p.effective_mode(), EffectiveMode::Open);
+        assert_eq!(p.on_utterance_committed("i1"), TurnDecision::Respond);
+    }
+
+    #[test]
+    fn asks_the_gate_once_a_third_person_joins() {
+        let mut p = auto();
+        p.set_participant_count(Some(2));
+        p.set_participant_count(Some(3));
+        assert_eq!(p.effective_mode(), EffectiveMode::Addressed);
+        assert_eq!(p.on_utterance_committed("i1"), TurnDecision::Gate);
+    }
+
+    #[test]
+    fn assumes_a_crowd_until_it_has_been_told_otherwise() {
+        assert_eq!(auto().effective_mode(), EffectiveMode::Addressed);
+    }
+
+    #[test]
+    fn keeps_the_current_mode_when_the_count_cannot_be_read() {
+        let mut p = auto();
+        p.set_participant_count(Some(2));
+        p.set_participant_count(None);
+        assert_eq!(p.effective_mode(), EffectiveMode::Open);
+        assert_eq!(p.statistics().mode_switches, 1);
+    }
+
+    #[test]
+    fn ignores_the_room_when_a_mode_was_asked_for_explicitly() {
+        let mut p = policy(ResponseMode::Addressed);
+        p.set_participant_count(Some(2));
+        assert_eq!(p.effective_mode(), EffectiveMode::Addressed);
+    }
+
+    #[test]
+    fn counts_a_switch_only_when_the_mode_actually_changes() {
+        let mut p = auto();
+        p.set_participant_count(Some(5));
+        p.set_participant_count(Some(6));
+        assert_eq!(p.statistics().mode_switches, 0);
+    }
+
+    #[test]
+    fn stops_answering_everything_when_nobody_can_hear_it() {
+        let mut p = auto();
+        p.set_participant_count(Some(2));
+        assert_eq!(p.effective_mode(), EffectiveMode::Open);
+        p.set_audible(false);
+        assert_eq!(p.effective_mode(), EffectiveMode::Addressed);
+        assert_eq!(p.on_utterance_committed("i1"), TurnDecision::Gate);
+    }
+
+    #[test]
+    fn does_not_drift_back_into_open_mode_on_the_next_count_reading() {
+        let mut p = auto();
+        p.set_audible(false);
+        p.set_participant_count(Some(2));
+        assert_eq!(p.effective_mode(), EffectiveMode::Addressed);
+    }
+
+    #[test]
+    fn goes_back_to_open_mode_once_the_room_can_hear_it_again() {
+        let mut p = auto();
+        p.set_participant_count(Some(2));
+        p.set_audible(false);
+        p.set_audible(true);
+        p.set_participant_count(Some(2));
+        assert_eq!(p.effective_mode(), EffectiveMode::Open);
+    }
+
+    #[test]
+    fn restores_a_mode_that_was_asked_for_explicitly() {
+        let mut p = policy(ResponseMode::Open);
+        p.set_audible(false);
+        assert_eq!(p.effective_mode(), EffectiveMode::Addressed);
+        p.set_audible(true);
+        assert_eq!(p.effective_mode(), EffectiveMode::Open);
+    }
+
+    #[test]
+    fn still_answers_when_it_is_addressed_by_name_while_inaudible() {
+        let mut p = auto();
+        p.set_participant_count(Some(4));
+        p.set_audible(false);
+        assert_eq!(p.on_utterance_committed("i1"), TurnDecision::Gate);
+    }
+
+    #[test]
+    fn answers_when_the_model_says_the_utterance_was_for_the_agent() {
+        let mut p = crowded();
+        assert_eq!(p.on_utterance_committed("i1"), TurnDecision::Gate);
+        assert!(p.resolve_verdict("i1", true));
+        assert_eq!(p.statistics().addressed_matches, 1);
+    }
+
+    #[test]
+    fn stays_quiet_when_the_model_says_it_was_not() {
+        let mut p = crowded();
+        assert_eq!(p.on_utterance_committed("i1"), TurnDecision::Gate);
+        assert!(!p.resolve_verdict("i1", false));
+        assert_eq!(p.statistics().suppressed, 1);
+        assert_eq!(p.statistics().answered, 0);
+    }
+
+    #[test]
+    fn drops_a_second_verdict_for_an_utterance_already_answered() {
+        let mut p = crowded();
+        assert!(p.resolve_verdict("i1", true));
+        assert!(!p.resolve_verdict("i1", true));
+        assert_eq!(p.statistics().answered, 1);
+    }
+
+    #[test]
+    fn ignores_an_utterance_the_boundary_already_answered() {
+        let mut p = auto();
+        p.set_participant_count(Some(2));
+        assert_eq!(p.on_utterance_committed("i1"), TurnDecision::Respond);
+        assert_eq!(p.on_utterance_committed("i1"), TurnDecision::Ignore);
+        assert_eq!(p.statistics().answered, 1);
+    }
+
+    #[test]
+    fn does_not_spend_a_second_probe_on_a_duplicated_commit() {
+        let mut p = crowded();
+        assert_eq!(p.on_utterance_committed("i1"), TurnDecision::Gate);
+        assert_eq!(p.on_utterance_committed("i1"), TurnDecision::Ignore);
+        assert_eq!(p.statistics().utterances, 1);
+    }
+
+    #[test]
+    fn makes_a_no_terminal_so_a_later_yes_cannot_answer_it() {
+        let mut p = crowded();
+        p.on_utterance_committed("i1");
+        assert!(!p.resolve_verdict("i1", false));
+        assert!(!p.resolve_verdict("i1", true));
+        assert_eq!(p.statistics().answered, 0);
+        assert_eq!(p.statistics().suppressed, 1);
+    }
+
+    #[test]
+    fn counts_one_suppression_per_utterance_not_one_per_verdict() {
+        let mut p = crowded();
+        p.on_utterance_committed("i1");
+        p.resolve_verdict("i1", false);
+        p.resolve_verdict("i1", false);
+        assert_eq!(p.statistics().suppressed, 1);
+        assert_eq!(p.statistics().utterances, 1);
+    }
+
+    #[test]
+    fn needs_the_name_every_time_with_no_grace_period_after_it_speaks() {
+        let mut p = crowded();
+        assert!(p.resolve_verdict("i1", true));
+        assert_eq!(p.on_utterance_committed("i2"), TurnDecision::Gate);
+    }
+
+    #[test]
+    fn answers_an_id_less_utterance_in_open_mode() {
+        let mut p = auto();
+        p.set_participant_count(Some(2));
+        assert_eq!(p.on_utterance_committed(""), TurnDecision::Respond);
+    }
+
+    #[test]
+    fn still_puts_an_id_less_utterance_to_the_gate_in_a_crowd() {
+        let mut p = auto();
+        p.set_participant_count(Some(4));
+        assert_eq!(p.on_utterance_committed(""), TurnDecision::Gate);
+    }
+
+    #[test]
+    fn counts_every_utterance_the_room_produced_answered_or_not() {
+        let mut p = policy(ResponseMode::Addressed);
+        p.on_utterance_committed("i1");
+        p.on_utterance_committed("i2");
+        p.resolve_verdict("i1", true);
+        p.resolve_verdict("i2", false);
+        assert_eq!(p.statistics().utterances, 2);
+        assert_eq!(p.statistics().answered, 1);
+        assert_eq!(p.statistics().suppressed, 1);
+    }
+
+    #[test]
+    fn counts_an_answer_once_however_many_verdicts_arrive() {
+        let mut p = policy(ResponseMode::Addressed);
+        assert!(p.resolve_verdict("i1", true));
+        assert!(!p.resolve_verdict("i1", true));
+        assert_eq!(p.statistics().answered, 1);
+        assert_eq!(p.statistics().addressed_matches, 1);
+    }
+
+    #[test]
+    fn still_answers_someone_who_used_the_name_as_the_room_emptied() {
+        let mut p = auto();
+        p.set_participant_count(Some(4));
+        assert_eq!(p.on_utterance_committed("i1"), TurnDecision::Gate);
+        p.set_participant_count(Some(2));
+        assert!(p.resolve_verdict("i1", true));
+    }
+
+    #[test]
+    fn does_not_answer_twice_when_the_room_filled_instead() {
+        let mut p = auto();
+        p.set_participant_count(Some(2));
+        assert_eq!(p.on_utterance_committed("i1"), TurnDecision::Respond);
+        p.set_participant_count(Some(4));
+        assert!(!p.resolve_verdict("i1", true));
+    }
+
+    #[test]
+    #[serial_test::serial(inference_gate)]
+    fn keeps_the_agent_quiet_during_a_secure_takeover_of_the_computer() {
+        let mut p = policy(ResponseMode::Open);
+        INFERENCE_GATE.hold();
+        // Not even claimed: the utterance is not the agent's to decide while somebody is
+        // typing a password on its desktop.
+        assert_eq!(p.on_utterance_committed("i1"), TurnDecision::Ignore);
+        assert_eq!(p.statistics().utterances, 0);
+        INFERENCE_GATE.free();
+        assert_eq!(p.on_utterance_committed("i1"), TurnDecision::Respond);
+    }
+}

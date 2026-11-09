@@ -5,8 +5,15 @@
 //! Reads nothing of the configuration, so `coding-agent-exec` uses it without
 //! starting the runtime.
 
+use diesel::connection::SimpleConnection;
+use diesel::sql_types::Text;
+use diesel::{QueryableByName, RunQueryDsl};
+
 use crate::config::CodingAgentName;
 use crate::lib::execution_environments::execution_environment::ProcessEnv;
+use crate::lib::sqlite_path::resolve_prisma_sqlite_path;
+
+use super::subscription::{subscription_forced_in, subscription_key};
 
 use super::claude_code::authenticated_home::{
     AUTH_STATUS_ARGS, SUBSCRIPTION_SETTINGS, SavedLogin, saved_login_from_status,
@@ -216,7 +223,19 @@ pub fn read_subscription_switch(
     database_url: Option<&str>,
     agent: CodingAgentName,
 ) -> anyhow::Result<bool> {
-    todo!()
+    let path = resolve_prisma_sqlite_path(database_url)?;
+    let mut conn = crate::db::open_readonly(&path)?;
+    conn.batch_execute("PRAGMA busy_timeout = 2000;")?;
+    let rows: Vec<SwitchRow> = diesel::sql_query("SELECT value FROM runtime_state WHERE key = ?")
+        .bind::<Text, _>(subscription_key(agent))
+        .load(&mut conn)?;
+    Ok(rows.first().is_some_and(|row| row.value == "on"))
+}
+
+#[derive(QueryableByName)]
+struct SwitchRow {
+    #[diesel(sql_type = Text)]
+    value: String,
 }
 
 /// The switch for the terminal: held on by the environment, or as stored.
@@ -224,5 +243,191 @@ pub fn terminal_uses_subscription(
     env: &ProcessEnv,
     agent: CodingAgentName,
 ) -> anyhow::Result<bool> {
-    todo!()
+    if subscription_forced_in(env, agent) {
+        return Ok(true);
+    }
+    read_subscription_switch(env.get("DATABASE_URL").map(String::as_str), agent)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lib::coding_agents::testing::env_of;
+
+    fn bedrock() -> ProcessEnv {
+        env_of(&[
+            ("PATH", "/usr/bin"),
+            ("CLAUDE_CODE_USE_BEDROCK", "1"),
+            ("AWS_REGION", "eu-west-1"),
+            ("OPENAI_API_KEY", "sk-test"),
+        ])
+    }
+
+    fn strings(args: &[&str]) -> Vec<String> {
+        args.iter().map(|a| a.to_string()).collect()
+    }
+
+    #[test]
+    fn runs_a_claude_session_on_the_saved_login_alone_with_the_switch_on() {
+        let launch = terminal_launch(
+            TerminalCommand::Claude,
+            &strings(&["-p", "hi"]),
+            &bedrock(),
+            true,
+        );
+        assert!(!launch.env.contains_key("CLAUDE_CODE_USE_BEDROCK"));
+        assert_eq!(
+            launch.args,
+            ["--settings", SUBSCRIPTION_SETTINGS.as_str(), "-p", "hi"]
+        );
+        assert!(launch.check_login);
+    }
+
+    #[test]
+    fn leaves_claudes_subcommands_and_version_unchecked_so_a_person_can_sign_in_from_the_terminal()
+    {
+        for args in [
+            vec!["auth", "login"],
+            vec!["mcp", "list"],
+            vec!["--version"],
+        ] {
+            let launch =
+                terminal_launch(TerminalCommand::Claude, &strings(&args), &bedrock(), true);
+            assert_eq!(launch.args, args);
+            assert!(!launch.check_login);
+            assert!(!launch.env.contains_key("CLAUDE_CODE_USE_BEDROCK"));
+        }
+    }
+
+    #[test]
+    fn runs_claude_on_the_deployments_models_with_the_switch_off() {
+        let launch = terminal_launch(TerminalCommand::Claude, &[], &bedrock(), false);
+        assert!(launch.args.is_empty());
+        assert!(!launch.check_login);
+        assert_eq!(launch.env["CLAUDE_CODE_USE_BEDROCK"], "1");
+    }
+
+    #[test]
+    fn runs_codex_on_the_chatgpt_login_with_the_switch_on_and_checks_it_except_to_sign_in() {
+        let session = terminal_launch(
+            TerminalCommand::Codex,
+            &strings(&["exec", "hi"]),
+            &bedrock(),
+            true,
+        );
+        assert!(!session.env.contains_key("OPENAI_API_KEY"));
+        let mut expected = strings(SUBSCRIPTION_CONFIG_ARGS);
+        expected.extend(strings(&["exec", "hi"]));
+        assert_eq!(session.args, expected);
+        assert!(
+            session
+                .args
+                .contains(&"model_provider=\"openai\"".to_string())
+        );
+        assert!(session.check_login);
+        assert!(
+            !terminal_launch(
+                TerminalCommand::Codex,
+                &strings(&["login", "--device-auth"]),
+                &bedrock(),
+                true
+            )
+            .check_login
+        );
+    }
+
+    #[test]
+    fn leaves_codex_as_it_is_with_the_switch_off() {
+        assert_eq!(
+            terminal_launch(
+                TerminalCommand::Codex,
+                &strings(&["exec"]),
+                &bedrock(),
+                false
+            ),
+            TerminalLaunch {
+                env: bedrock(),
+                args: strings(&["exec"]),
+                check_login: false
+            }
+        );
+    }
+
+    #[test]
+    fn takes_only_the_subscription_login() {
+        let claude =
+            |status: &str| signed_in_to_subscription(TerminalCommand::Claude, status, "", Some(0));
+        assert!(claude(
+            r#"{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max"}"#
+        ));
+        assert!(!claude(r#"{"loggedIn":true,"authMethod":"api_key"}"#));
+        assert!(!claude(r#"{"loggedIn":false}"#));
+        assert!(!signed_in_to_subscription(
+            TerminalCommand::Claude,
+            "boom",
+            "",
+            Some(1)
+        ));
+        assert!(signed_in_to_subscription(
+            TerminalCommand::Codex,
+            "",
+            "Logged in using ChatGPT\n",
+            Some(0)
+        ));
+        assert!(!signed_in_to_subscription(
+            TerminalCommand::Codex,
+            "",
+            "Logged in using an API key - sk-…\n",
+            Some(0)
+        ));
+    }
+
+    /// A database file holding only `runtime_state` with these rows.
+    fn database(rows: &[(&str, &str)]) -> (tempfile::TempDir, String) {
+        let dir = tempfile::Builder::new()
+            .prefix("prism-switch-")
+            .tempdir()
+            .unwrap();
+        let file = dir.path().join("agent.db").to_string_lossy().into_owned();
+        let mut conn = crate::db::open_connection(&file).unwrap();
+        conn.batch_execute(
+            "CREATE TABLE runtime_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updatedAt INTEGER)",
+        )
+        .unwrap();
+        for (key, value) in rows {
+            diesel::sql_query("INSERT INTO runtime_state VALUES (?, ?, 0)")
+                .bind::<Text, _>(*key)
+                .bind::<Text, _>(*value)
+                .execute(&mut conn)
+                .unwrap();
+        }
+        (dir, format!("file:{file}"))
+    }
+
+    #[test]
+    fn reads_the_switch_the_runtime_stored_without_writing() {
+        let (_dir, url) = database(&[("codingAgentSubscription:codex", "on")]);
+        let _writer = crate::db::open_connection(url.strip_prefix("file:").unwrap()).unwrap();
+        assert!(read_subscription_switch(Some(&url), CodingAgentName::Codex).unwrap());
+        assert!(!read_subscription_switch(Some(&url), CodingAgentName::ClaudeCode).unwrap());
+    }
+
+    #[test]
+    fn fails_for_a_database_that_is_not_there_and_never_creates_one() {
+        let missing = std::env::temp_dir().join(format!("prism-missing-{}.db", std::process::id()));
+        let url = format!("file:{}", missing.display());
+        assert!(read_subscription_switch(Some(&url), CodingAgentName::Codex).is_err());
+        assert!(!missing.exists());
+    }
+
+    #[test]
+    fn is_held_on_by_the_environment_without_reading_the_database() {
+        assert!(
+            terminal_uses_subscription(
+                &env_of(&[("CLAUDE_CODE_SUBSCRIPTION", "true")]),
+                CodingAgentName::ClaudeCode
+            )
+            .unwrap()
+        );
+    }
 }

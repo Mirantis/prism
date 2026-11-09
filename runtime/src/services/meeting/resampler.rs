@@ -270,3 +270,161 @@ pub fn pcm16_bytes_duration_ms(bytes: usize, sample_rate: u32) -> f64 {
 pub fn pcm16_bytes_for_ms(ms: f64, sample_rate: u32) -> i64 {
     js_round((ms / 1000.0) * sample_rate as f64) as i64 * 2
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `ms` of a mono pcm16 sine wave at `freq` Hz.
+    fn tone(freq: f64, ms: f64, sample_rate: u32, amplitude: f64) -> Vec<u8> {
+        let samples = js_round((ms / 1000.0) * sample_rate as f64) as usize;
+        let mut buf = Vec::with_capacity(samples * 2);
+        for i in 0..samples {
+            let value = js_round(
+                amplitude
+                    * (2.0 * std::f64::consts::PI * freq * i as f64 / sample_rate as f64).sin(),
+            ) as i16;
+            buf.extend_from_slice(&value.to_le_bytes());
+        }
+        buf
+    }
+
+    fn samples(pcm: &[u8]) -> Vec<i16> {
+        pcm.chunks_exact(2)
+            .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
+            .collect()
+    }
+
+    /// Peak absolute amplitude, ignoring the filter's start-up transient.
+    fn peak(pcm: &[u8]) -> i32 {
+        samples(pcm)
+            .iter()
+            .skip(64)
+            .map(|s| (*s as i32).abs())
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// The energy at `freq`, by correlating against a reference sine/cosine pair (a
+    /// single-bin Goertzel-style projection), as an amplitude.
+    fn energy_at(pcm: &[u8], freq: f64, sample_rate: u32) -> f64 {
+        let mut re = 0.0;
+        let mut im = 0.0;
+        let mut n = 0usize;
+        for s in samples(pcm).iter().skip(64) {
+            let phase = 2.0 * std::f64::consts::PI * freq * n as f64 / sample_rate as f64;
+            re += *s as f64 * phase.cos();
+            im += *s as f64 * phase.sin();
+            n += 1;
+        }
+        if n == 0 {
+            return 0.0;
+        }
+        2.0 * (re * re + im * im).sqrt() / n as f64
+    }
+
+    #[test]
+    fn downsampling_halves_the_sample_count() {
+        let input = tone(440.0, 100.0, MEETING_SAMPLE_RATE, 12000.0);
+        let out = Downsampler::new().process(&input);
+        // Within one filter window of exactly half: the first output needs a full window
+        // of history, so the very first chunk is slightly short.
+        assert!(out.len() / 2 > input.len() / 2 / 2 - 40);
+        assert!(out.len() / 2 <= input.len() / 2 / 2);
+    }
+
+    #[test]
+    fn downsampling_preserves_a_speech_band_tone_at_roughly_unity_gain() {
+        let input = tone(1000.0, 200.0, MEETING_SAMPLE_RATE, 12000.0);
+        let out = Downsampler::new().process(&input);
+        let amplitude = energy_at(&out, 1000.0, REALTIME_SAMPLE_RATE);
+        assert!(amplitude > 12000.0 * 0.9, "{amplitude}");
+        assert!(amplitude < 12000.0 * 1.1, "{amplitude}");
+    }
+
+    #[test]
+    fn downsampling_rejects_content_above_the_24k_nyquist_limit_instead_of_aliasing_it() {
+        // 18 kHz would alias to 6 kHz — squarely in the speech band — if the low-pass were
+        // missing.
+        let input = tone(18000.0, 200.0, MEETING_SAMPLE_RATE, 12000.0);
+        let out = Downsampler::new().process(&input);
+        assert!(energy_at(&out, 6000.0, REALTIME_SAMPLE_RATE) < 12000.0 * 0.02);
+    }
+
+    #[test]
+    fn downsampling_is_continuous_across_chunk_boundaries() {
+        let whole = tone(1000.0, 200.0, MEETING_SAMPLE_RATE, 12000.0);
+        let mut chunked = Downsampler::new();
+        let mut streamed = Vec::new();
+        for start in (0..whole.len()).step_by(1234) {
+            streamed.extend(chunked.process(&whole[start..(start + 1234).min(whole.len())]));
+        }
+        let one_shot = Downsampler::new().process(&whole);
+        assert!(streamed.len().abs_diff(one_shot.len()) <= 2);
+        assert!(peak(&streamed) < 13000);
+        assert!(energy_at(&streamed, 1000.0, REALTIME_SAMPLE_RATE) > 12000.0 * 0.9);
+    }
+
+    #[test]
+    fn upsampling_doubles_the_sample_count() {
+        let input = tone(440.0, 100.0, REALTIME_SAMPLE_RATE, 12000.0);
+        let out = Upsampler::new().process(&input);
+        assert!(out.len() / 2 > (input.len() / 2) * 2 - 40);
+        assert!(out.len() / 2 <= (input.len() / 2) * 2);
+    }
+
+    #[test]
+    fn upsampling_preserves_amplitude() {
+        // Without the ×2 gain the bot would come through 6 dB too quiet.
+        let input = tone(1000.0, 200.0, REALTIME_SAMPLE_RATE, 12000.0);
+        let out = Upsampler::new().process(&input);
+        let amplitude = energy_at(&out, 1000.0, MEETING_SAMPLE_RATE);
+        assert!(amplitude > 12000.0 * 0.85, "{amplitude}");
+        assert!(amplitude < 12000.0 * 1.15, "{amplitude}");
+    }
+
+    #[test]
+    fn upsampling_suppresses_the_mirror_image_above_nyquist() {
+        // Zero-stuffing a 3 kHz tone creates an image at 24k - 3k = 21 kHz.
+        let input = tone(3000.0, 200.0, REALTIME_SAMPLE_RATE, 12000.0);
+        let out = Upsampler::new().process(&input);
+        assert!(energy_at(&out, 21000.0, MEETING_SAMPLE_RATE) < 12000.0 * 0.05);
+    }
+
+    #[test]
+    fn upsampling_is_continuous_across_chunk_boundaries() {
+        let whole = tone(1000.0, 200.0, REALTIME_SAMPLE_RATE, 12000.0);
+        let mut chunked = Upsampler::new();
+        let mut streamed = Vec::new();
+        for start in (0..whole.len()).step_by(998) {
+            streamed.extend(chunked.process(&whole[start..(start + 998).min(whole.len())]));
+        }
+        assert!(peak(&streamed) < 14000);
+        assert!(energy_at(&streamed, 1000.0, MEETING_SAMPLE_RATE) > 12000.0 * 0.85);
+    }
+
+    #[test]
+    fn survives_a_round_trip_with_the_speech_band_intact() {
+        let input = tone(800.0, 300.0, MEETING_SAMPLE_RATE, 10000.0);
+        let down = Downsampler::new().process(&input);
+        let up = Upsampler::new().process(&down);
+        assert!(energy_at(&up, 800.0, MEETING_SAMPLE_RATE) > 10000.0 * 0.8);
+    }
+
+    #[test]
+    fn converts_between_bytes_and_milliseconds() {
+        let one_second = pcm16_bytes_for_ms(1000.0, REALTIME_SAMPLE_RATE);
+        assert_eq!(one_second, REALTIME_SAMPLE_RATE as i64 * 2);
+        assert_eq!(
+            pcm16_duration_ms(&vec![0u8; one_second as usize], REALTIME_SAMPLE_RATE),
+            1000.0
+        );
+        assert_eq!(
+            pcm16_duration_ms(
+                &vec![0u8; REALTIME_SAMPLE_RATE as usize],
+                REALTIME_SAMPLE_RATE
+            ),
+            500.0
+        );
+    }
+}

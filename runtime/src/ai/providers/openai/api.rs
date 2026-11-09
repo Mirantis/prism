@@ -94,13 +94,14 @@ pub fn default_fetch() -> FetchFunction {
             for (name, value) in &request.headers {
                 builder = builder.header(name.as_str(), value.as_str());
             }
-            let response = builder
-                .body(request.body)
-                .send()
-                .await
-                .map_err(|e| FetchFailedError {
-                    message: innermost_message(&e),
-                })?;
+            let response =
+                builder
+                    .body(request.body)
+                    .send()
+                    .await
+                    .map_err(|e| FetchFailedError {
+                        message: innermost_message(&e),
+                    })?;
             let status = response.status();
             let mut headers: Vec<(String, String)> = Vec::new();
             for (name, value) in response.headers() {
@@ -375,7 +376,8 @@ mod tests {
     #[test]
     fn an_error_body_of_openai_shape_gives_its_message_and_data() {
         let body = r#"{"error":{"code":"x","message":"Bad.","extra":1}}"#;
-        let err = openai_failed_response_error(&response(400, "Bad Request", body), "u", &json!({}));
+        let err =
+            openai_failed_response_error(&response(400, "Bad Request", body), "u", &json!({}));
         let err = err.downcast_ref::<ApiCallError>().unwrap();
         assert_eq!(err.message, "Bad.");
         assert_eq!(
@@ -429,11 +431,21 @@ mod tests {
                 .into())
             })
         });
-        let err = post_json("http://x/v1", &Headers::new(), &json!({}), None, &fetch, "5.0.65")
-            .await
-            .unwrap_err();
+        let err = post_json(
+            "http://x/v1",
+            &Headers::new(),
+            &json!({}),
+            None,
+            &fetch,
+            "5.0.65",
+        )
+        .await
+        .unwrap_err();
         let err = err.downcast_ref::<ApiCallError>().unwrap();
-        assert_eq!(err.message, "Cannot connect to API: connect ECONNREFUSED 127.0.0.1:1");
+        assert_eq!(
+            err.message,
+            "Cannot connect to API: connect ECONNREFUSED 127.0.0.1:1"
+        );
         assert!(err.is_retryable);
     }
 
@@ -442,9 +454,16 @@ mod tests {
         let token = CancellationToken::new();
         token.cancel();
         let fetch = default_fetch();
-        let err = post_json("http://x/v1", &Headers::new(), &json!({}), Some(&token), &fetch, "5.0.65")
-            .await
-            .unwrap_err();
+        let err = post_json(
+            "http://x/v1",
+            &Headers::new(),
+            &json!({}),
+            Some(&token),
+            &fetch,
+            "5.0.65",
+        )
+        .await
+        .unwrap_err();
         assert!(crate::ai::is_abort_error(&err));
     }
 }

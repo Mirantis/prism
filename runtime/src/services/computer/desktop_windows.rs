@@ -192,7 +192,14 @@ mod tests {
     fn prefers_an_exact_title_else_titles_containing_the_words() {
         let windows = vec![
             window("0x1", "Terminal - node@box: /app", 4, 95, 819, 488),
-            window("0x2", "About the Xfce Desktop Environment", 614, 95, 666, 600),
+            window(
+                "0x2",
+                "About the Xfce Desktop Environment",
+                614,
+                95,
+                666,
+                600,
+            ),
             window("0x3", "Terminal", 384, 328, 619, 298),
         ];
         let ids = |query: &str| -> Vec<String> {

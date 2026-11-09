@@ -53,7 +53,28 @@ fn pathname_of(req: &Request) -> String {
 /// Whether a request asks to switch to the WebSocket protocol (`Connection:
 /// upgrade` and `Upgrade: websocket`).
 pub fn is_upgrade_request(req: &Request) -> bool {
-    todo!()
+    let headers = req.headers();
+    let upgrades = headers
+        .get_all(http::header::CONNECTION)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|token| token.trim().eq_ignore_ascii_case("upgrade"));
+    let websocket = headers
+        .get(http::header::UPGRADE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("websocket"));
+    upgrades && websocket
+}
+
+/// The answer to an upgrade nobody serves. HTTP has no way to end a request
+/// without a status line, so the connection is closed right after this one.
+fn refuse() -> Response {
+    Response::builder()
+        .status(http::StatusCode::BAD_REQUEST)
+        .header(http::header::CONNECTION, "close")
+        .body(axum::body::Body::empty())
+        .expect("a static response builds")
 }
 
 /// Serve WebSocket upgrades on `path` with `handler`.
@@ -76,8 +97,24 @@ pub fn reset_upgrades() {
 /// (`axum::middleware::from_fn(upgrade_middleware)`). A request that is not an
 /// upgrade goes on to `next`. An upgrade goes to the handler registered for its
 /// path; an upgrade to any other path is logged at debug as
-/// `Refused a WebSocket upgrade to {url}` and its connection closed without an
-/// answer.
+/// `Refused a WebSocket upgrade to {url}` and answered with `refuse`, which ends
+/// its connection.
 pub async fn upgrade_middleware(req: Request, next: Next) -> Response {
-    todo!()
+    if !is_upgrade_request(&req) {
+        return next.run(req).await;
+    }
+    if !INSTALLED.load(Ordering::SeqCst) {
+        return refuse();
+    }
+    let handler = HANDLERS.read().get(&pathname_of(&req)).cloned();
+    if let Some(handle) = handler {
+        return handle(req).await;
+    }
+    let url = req
+        .uri()
+        .path_and_query()
+        .map(|p| p.as_str().to_string())
+        .unwrap_or_default();
+    crate::log_debug!("Refused a WebSocket upgrade to {}", url);
+    refuse()
 }

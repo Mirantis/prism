@@ -33,7 +33,7 @@ use std::sync::Arc;
 use super::converse_tool_images::CONVERSE_TOOL_IMAGES;
 use crate::ai::providers::amazon_bedrock::anthropic::create_bedrock_anthropic;
 use crate::ai::providers::amazon_bedrock::{AmazonBedrockProviderSettings, create_amazon_bedrock};
-use crate::ai::{LanguageModel, WrapLanguageModelOptions, wrap_language_model};
+use crate::ai::{LanguageModel, WrapLanguageModelOptions, with_llm_cache, wrap_language_model};
 use crate::config::CONFIG;
 use crate::lib::llm_providers::bedrock_model_id::is_anthropic_model_id;
 use crate::lib::llm_providers::bedrock_shared::create_shared_bedrock_options;
@@ -72,20 +72,27 @@ pub fn create_bedrock_provider(base_url: Option<&str>) -> LlmProvider {
         },
         None => create_shared_bedrock_options(),
     };
+    bedrock_provider_from(shared_options)
+}
+
+/// The dispatcher and the vendor's declarations, on resolved provider settings.
+/// Every model is handed out behind the E2E LLM cache.
+fn bedrock_provider_from(shared_options: AmazonBedrockProviderSettings) -> LlmProvider {
     let anthropic = Arc::new(create_bedrock_anthropic(shared_options.clone()));
     let generic = Arc::new(create_amazon_bedrock(shared_options));
 
     let mut provider = LlmProvider::new(
         Arc::new(
             move |model_id: &str| -> anyhow::Result<Arc<dyn LanguageModel>> {
-                if is_anthropic_model_id(model_id) {
-                    Ok(anthropic.language_model(model_id))
+                let model = if is_anthropic_model_id(model_id) {
+                    anthropic.language_model(model_id)?
                 } else {
-                    Ok(wrap_language_model(WrapLanguageModelOptions {
+                    wrap_language_model(WrapLanguageModelOptions {
                         model: generic.language_model(model_id),
                         middleware: Arc::new(CONVERSE_TOOL_IMAGES),
-                    }))
-                }
+                    })
+                };
+                Ok(with_llm_cache(model))
             },
         ),
         Arc::new(prompt_cache_fragment),
@@ -156,5 +163,176 @@ fn prompt_cache_fragment(model_id: &str, ttl: Option<CacheTtl>) -> CachePointFra
         BEDROCK_CACHE_POINT
     } else {
         NO_CACHE_POINT
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn provider() -> LlmProvider {
+        bedrock_provider_from(AmazonBedrockProviderSettings {
+            region: Some("us-west-2".into()),
+            api_key: Some("test-key".into()),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn routes_anthropic_model_ids_through_the_anthropic_native_provider() {
+        let model = provider()
+            .model("global.anthropic.claude-opus-5-5")
+            .unwrap();
+        assert_eq!(model.provider(), "bedrock.anthropic.messages");
+        assert_eq!(model.model_id(), "global.anthropic.claude-opus-5-5");
+    }
+
+    #[test]
+    fn routes_other_model_ids_through_the_converse_provider() {
+        let model = provider().model("moonshotai.kimi-k2.5").unwrap();
+        assert_eq!(model.provider(), "amazon-bedrock");
+        assert_eq!(model.model_id(), "moonshotai.kimi-k2.5");
+    }
+
+    #[test]
+    fn declares_no_structured_output_options() {
+        assert!(provider().structured_output_options.is_none());
+    }
+
+    #[test]
+    fn sends_the_gates_no_temperature() {
+        assert_eq!(
+            provider().classification_sampling_params,
+            Some(ClassificationSamplingParams::default())
+        );
+        assert_eq!(
+            serde_json::to_value(ClassificationSamplingParams::default()).unwrap(),
+            json!({})
+        );
+    }
+
+    #[test]
+    fn gives_anthropic_models_the_anthropic_cache_control_fragment() {
+        assert_eq!(
+            provider()
+                .cache_point("global.anthropic.claude-opus-5-5", None)
+                .to_json(),
+            json!({ "anthropic": { "cacheControl": { "type": "ephemeral" } } })
+        );
+    }
+
+    #[test]
+    fn asks_a_claude_model_for_the_cache_lifetime_it_is_given() {
+        let provider = provider();
+        let one_hour =
+            json!({ "anthropic": { "cacheControl": { "type": "ephemeral", "ttl": "1h" } } });
+        let five_minutes = json!({ "anthropic": { "cacheControl": { "type": "ephemeral" } } });
+        let point = |id: &str, ttl| provider.cache_point(id, Some(ttl)).to_json();
+        assert_eq!(
+            point("global.anthropic.claude-opus-5-5", CacheTtl::OneHour),
+            one_hour
+        );
+        assert_eq!(
+            point(
+                "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                CacheTtl::OneHour
+            ),
+            one_hour
+        );
+        assert_eq!(
+            point("global.anthropic.claude-opus-5-5", CacheTtl::FiveMinutes),
+            five_minutes
+        );
+        assert_eq!(point("us.xai.grok-4.6", CacheTtl::OneHour), json!({}));
+    }
+
+    /// A Bedrock model without prompt-cache support refuses a request that has a
+    /// `cachePoint` block, and no source names the Converse models that have it.
+    #[test]
+    fn gives_no_converse_model_a_breakpoint() {
+        let provider = provider();
+        for id in [
+            "us.xai.grok-4.6",
+            "global.xai.grok-4.6",
+            "us.amazon.nova-2-lite-v1:0",
+            "moonshotai.kimi-k2.5",
+            "meta.llama3-70b-instruct-v1:0",
+        ] {
+            assert!(provider.cache_point(id, None).is_empty(), "{id}");
+        }
+    }
+
+    #[test]
+    fn reports_prompt_cache_state_on_for_claude_and_off_for_converse() {
+        let provider = provider();
+        assert_eq!(
+            provider.prompt_cache_state("global.anthropic.claude-opus-5-5"),
+            Some(PromptCacheState::On)
+        );
+        assert_eq!(
+            provider.prompt_cache_state("us.xai.grok-4.6"),
+            Some(PromptCacheState::Off)
+        );
+        assert_eq!(
+            provider.prompt_cache_state("us.amazon.nova-2-lite-v1:0"),
+            Some(PromptCacheState::Off)
+        );
+    }
+
+    #[test]
+    fn takes_mid_conversation_tool_changes_on_the_listed_claude_models() {
+        let provider = provider();
+        let tool_changes = provider.tool_changes.as_ref().unwrap();
+        for id in [
+            "global.anthropic.claude-opus-5-5",
+            "us.anthropic.claude-opus-5-5",
+            "anthropic.claude-opus-5-5",
+            "global.anthropic.claude-opus-4-8",
+            "us.anthropic.claude-sonnet-5-5",
+            "arn:aws:bedrock:us-east-1:123456789012:inference-profile/global.anthropic.claude-opus-5-5",
+        ] {
+            assert!(
+                tool_changes(id).is_some_and(|p| std::ptr::eq(p, &*ANTHROPIC_TOOL_CHANGES)),
+                "{id}"
+            );
+        }
+        for id in [
+            "global.anthropic.claude-opus-5",
+            "global.anthropic.claude-sonnet-5",
+            "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            "us.xai.grok-4.6",
+            "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/a1b2c3d4e5f6",
+        ] {
+            assert!(tool_changes(id).is_none(), "{id}");
+        }
+    }
+
+    #[test]
+    fn defers_tools_on_claude_4_and_later() {
+        let provider = provider();
+        let deferred = provider.deferred_tools.as_ref().unwrap();
+        for id in [
+            "global.anthropic.claude-opus-5-5",
+            "us.anthropic.claude-opus-4-7",
+            "global.anthropic.claude-haiku-5-5",
+            "global.anthropic.claude-opus-6",
+            "global.anthropic.claude-sonnet-6-1",
+            "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            "us.anthropic.claude-opus-4-20250514-v1:0",
+        ] {
+            assert!(
+                deferred(id).is_some_and(|p| std::ptr::eq(p, &*ANTHROPIC_DEFERRED_TOOLS)),
+                "{id}"
+            );
+        }
+        for id in [
+            "anthropic.claude-3-5-sonnet-20241022-v2:0",
+            "anthropic.claude-v2:1",
+            "anthropic.claude-instant-v1",
+            "us.xai.grok-4.6",
+            "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/a1b2c3d4e5f6",
+        ] {
+            assert!(deferred(id).is_none(), "{id}");
+        }
     }
 }

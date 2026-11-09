@@ -119,12 +119,7 @@ impl CodingAgent for ClaudeCodeAgent {
             .clone()
             .unwrap_or_else(get_execution_environment);
         let operator_home = std::env::var("CLAUDE_CONFIG_DIR").ok();
-        prepare_shared_skills_home(
-            &*env,
-            &env.paths().claude_home,
-            operator_home.as_deref(),
-        )
-        .await
+        prepare_shared_skills_home(&*env, &env.paths().claude_home, operator_home.as_deref()).await
     }
 
     async fn is_available(&self, env: &ProcessEnv) -> anyhow::Result<bool> {
@@ -474,7 +469,9 @@ fn refusal_of(denial: &Value) -> anyhow::Result<CodingAgentRefusal> {
     let tool_input = denial
         .get("tool_input")
         .filter(|input| !input.is_null())
-        .ok_or_else(|| anyhow::anyhow!("Cannot read properties of undefined (reading 'file_path')"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("Cannot read properties of undefined (reading 'file_path')")
+        })?;
     let field = TARGET_FIELDS
         .iter()
         .find_map(|name| tool_input.get(*name).and_then(Value::as_str));

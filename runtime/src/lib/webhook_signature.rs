@@ -531,7 +531,10 @@ mod tests {
 
     #[test]
     fn rejects_a_scheme_with_no_header_configured() {
-        assert_eq!(case().auth("hmac", Some(SECRET), None).verify(), Misconfigured);
+        assert_eq!(
+            case().auth("hmac", Some(SECRET), None).verify(),
+            Misconfigured
+        );
     }
 
     #[test]
@@ -613,7 +616,10 @@ mod tests {
             Passed
         );
         // A bare credential still matches — the prefix is optional on the wire.
-        assert_eq!(with_prefix().header("authorization", SECRET).verify(), Passed);
+        assert_eq!(
+            with_prefix().header("authorization", SECRET).verify(),
+            Passed
+        );
         assert_eq!(
             with_prefix()
                 .header("authorization", format!("Basic {SECRET}"))
@@ -650,7 +656,10 @@ mod tests {
 
     #[test]
     fn hmac_accepts_a_digest_over_the_exact_received_bytes() {
-        assert_eq!(signed().header("x-signature", hex_sha256(BODY)).verify(), Passed);
+        assert_eq!(
+            signed().header("x-signature", hex_sha256(BODY)).verify(),
+            Passed
+        );
     }
 
     #[test]
@@ -738,7 +747,10 @@ mod tests {
         );
         let b64 = hmac(BODY, SECRET, "sha256", "base64");
         assert_eq!(
-            signed().encoding("base64").header("x-signature", b64.clone()).verify(),
+            signed()
+                .encoding("base64")
+                .header("x-signature", b64.clone())
+                .verify(),
             Passed
         );
         assert_eq!(
@@ -778,7 +790,13 @@ mod tests {
             hmac(BODY, "old-secret", "sha256", "hex"),
             hex_sha256(BODY)
         );
-        assert_eq!(signed().prefix("v1=").header("x-signature", header).verify(), Passed);
+        assert_eq!(
+            signed()
+                .prefix("v1=")
+                .header("x-signature", header)
+                .verify(),
+            Passed
+        );
     }
 
     #[test]
@@ -788,7 +806,13 @@ mod tests {
             hmac(BODY, "old", "sha256", "hex"),
             hmac(BODY, "older", "sha256", "hex")
         );
-        assert_eq!(signed().prefix("v1=").header("x-signature", header).verify(), Invalid);
+        assert_eq!(
+            signed()
+                .prefix("v1=")
+                .header("x-signature", header)
+                .verify(),
+            Invalid
+        );
     }
 
     #[test]
@@ -827,7 +851,10 @@ mod tests {
             case()
                 .auth("hmac", Some(SECRET), Some("X-Hub-Signature-256"))
                 .prefix("sha256=")
-                .header("x-hub-signature-256", format!("sha256={}", hex_sha256(BODY)))
+                .header(
+                    "x-hub-signature-256",
+                    format!("sha256={}", hex_sha256(BODY))
+                )
                 .verify(),
             Passed
         );

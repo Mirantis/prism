@@ -219,7 +219,10 @@ fn singleton_reference(schema: &Map<String, Value>) -> Option<String> {
 static LOCAL_REFERENCE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^#/(definitions|\$defs)/(.+)$").unwrap());
 
-fn local_reference_schema(reference: &str, schema: &Map<String, Value>) -> Option<Map<String, Value>> {
+fn local_reference_schema(
+    reference: &str,
+    schema: &Map<String, Value>,
+) -> Option<Map<String, Value>> {
     let captures = LOCAL_REFERENCE.captures(reference)?;
     let keyword = &captures[1];
     let name = captures[2].replace("~1", "/").replace("~0", "~");

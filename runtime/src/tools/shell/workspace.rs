@@ -72,3 +72,66 @@ pub fn is_inside_workspace(full_path: &str, workspace: &str) -> bool {
     }
     normalized.starts_with(&format!("{normalized_workspace}{SEP}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolves_relative_paths_from_the_workspace_root() {
+        assert_eq!(
+            resolve_path("/home/sandbox", "src/main.rs"),
+            "/home/sandbox/src/main.rs"
+        );
+    }
+
+    #[test]
+    fn passes_absolute_paths_through_as_is() {
+        assert_eq!(
+            resolve_path("/home/sandbox", "/src/main.rs"),
+            "/src/main.rs"
+        );
+        assert_eq!(resolve_path("/home/sandbox", "/tmp"), "/tmp");
+        assert_eq!(
+            resolve_path("/home/sandbox", "/tmp/workdir"),
+            "/tmp/workdir"
+        );
+    }
+
+    #[test]
+    fn normalizes_parent_segments_in_relative_paths() {
+        assert_eq!(
+            resolve_path("/home/sandbox", "../../etc/passwd"),
+            "/etc/passwd"
+        );
+    }
+
+    #[test]
+    fn collapses_double_slashes_in_absolute_paths() {
+        assert_eq!(resolve_path("/home/sandbox", "//etc/passwd"), "/etc/passwd");
+    }
+
+    #[test]
+    fn accepts_paths_under_the_workspace() {
+        assert!(is_inside_workspace(
+            "/home/sandbox/file.txt",
+            "/home/sandbox"
+        ));
+        assert!(is_inside_workspace("/home/sandbox", "/home/sandbox"));
+    }
+
+    #[test]
+    fn rejects_paths_outside_the_workspace() {
+        assert!(!is_inside_workspace("/etc/passwd", "/home/sandbox"));
+        // Prefix-match must not cross the directory boundary.
+        assert!(!is_inside_workspace("/home/sandboxer", "/home/sandbox"));
+    }
+
+    #[test]
+    fn rejects_parent_traversal_through_the_workspace_root() {
+        assert!(!is_inside_workspace(
+            "/home/sandbox/../../etc/passwd",
+            "/home/sandbox"
+        ));
+    }
+}

@@ -1640,7 +1640,8 @@
               {
                 "type": "tool-call",
                 "toolCallId": "call_g",
-                "toolName": "read_file"
+                "toolName": "read_file",
+                "input": {}
               }
             ]
           },
@@ -4481,14 +4482,14 @@
           {
             "type": "source",
             "sourceType": "url",
-            "id": "XKEDsuFihgJM2GqD",
+            "id": "WKRA19s5SkuXD51L",
             "url": "https://example.com",
             "title": "Example"
           },
           {
             "type": "source",
             "sourceType": "document",
-            "id": "P4jCh3gBOzmoIESB",
+            "id": "iv52appLQdhIBhUL",
             "mediaType": "text/plain",
             "title": "a.txt",
             "filename": "a.txt",
@@ -4503,7 +4504,7 @@
           {
             "type": "source",
             "sourceType": "document",
-            "id": "dQrZhrXzOFECpwXu",
+            "id": "J2cA7jG3g15NT8pN",
             "mediaType": "text/plain",
             "title": "b.txt",
             "filename": "b.txt",
@@ -4518,7 +4519,7 @@
           {
             "type": "source",
             "sourceType": "document",
-            "id": "sSaPROlOwFDbcAlK",
+            "id": "Q8lNu1QwURNfzsZ4",
             "mediaType": "application/octet-stream",
             "title": "file-3",
             "filename": "file-3",
@@ -4724,7 +4725,7 @@
           {
             "type": "source",
             "sourceType": "document",
-            "id": "Ut48xoWKerkVZniW",
+            "id": "0B4VHBbRbfr2VIK1",
             "mediaType": "application/octet-stream",
             "title": "file-3",
             "filename": "file-3",
