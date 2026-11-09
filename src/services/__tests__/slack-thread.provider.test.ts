@@ -575,6 +575,27 @@ describe('Requirement: Slack Thread Provider', () => {
       expect(messages[1].toolCalls).toEqual(sampleToolCalls);
     });
 
+    it('keeps the step mark of a verbose turn\'s stored step', async () => {
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'U100', text: 'Search for test', ts: '1710000001.000000' },
+          { user: botUserId, text: 'Searching…', ts: '1710000002.000000' },
+          { user: botUserId, text: 'Here are the results', ts: '1710000003.000000' },
+        ],
+        response_metadata: {},
+      });
+      mockUsersInfo.mockResolvedValue({ user: { real_name: 'Alice' } });
+
+      mockDbAgentRows([
+        { externalMessageId: '1710000002.000000', step: true },
+        { externalMessageId: '1710000003.000000', step: false },
+      ]);
+
+      const messages = await provider.getMessages(threadId);
+
+      expect(messages.map((m) => m.step)).toEqual([false, true, false]);
+    });
+
     it('should leave user messages unchanged', async () => {
       mockConversationsReplies.mockResolvedValue({
         messages: [

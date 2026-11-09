@@ -93,8 +93,13 @@ see a gap, reconnect and resume from the last `seq` you applied.
     itself says; it is `null` on every other message:
 
     ```json
-    {"type":"message","payload":{"id":"6f1c2a3b-4d5e-4f60-8a71-92b3c4d5e6f7","threadId":"…","role":"USER","content":"Can you check whether CI is green on main?","triggeredBy":"AGENT_MESSAGE","toolCalls":null,"blocks":null,"isCompacted":false,"createdAt":"2026-10-21T12:00:00.000Z","attachments":null,"senderId":"<agent id>","senderName":"Researcher","agentMessageKind":"ask"},"seq":12}
+    {"type":"message","payload":{"id":"6f1c2a3b-4d5e-4f60-8a71-92b3c4d5e6f7","threadId":"…","role":"USER","content":"Can you check whether CI is green on main?","triggeredBy":"AGENT_MESSAGE","toolCalls":null,"blocks":null,"isCompacted":false,"step":false,"createdAt":"2026-10-21T12:00:00.000Z","attachments":null,"senderId":"<agent id>","senderName":"Researcher","agentMessageKind":"ask"},"seq":12}
     ```
+
+  - `step` is `true` on an `AGENT` message that a verbose turn delivers
+    before its reply, and `false` on every other message. Fold a turn's steps
+    above the next `AGENT` message without the mark: that is the reply. A
+    concise turn delivers its reply alone.
 
 - **`turn`** `{ threadId, state, outcome?, error? }`: what a conversation is doing.
   - `state` is `queued`, `running` or `idle`.

@@ -23,8 +23,8 @@ interface SlackMessage {
   ts: string;
 }
 
-/** What started a reply we stored. */
-type StoredTrigger = Pick<ConversationMessage, 'triggeredBy' | 'triggerName'>;
+/** What started a reply we stored, and whether it is a verbose turn's step. */
+type StoredTrigger = Pick<ConversationMessage, 'triggeredBy' | 'triggerName' | 'step'>;
 
 const USER_NAME_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -404,6 +404,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
         isCompacted: false,
         // Slack-derived rows are always delivered messages, never internal steps.
         internalStep: false,
+        step: (isOurAgent && triggerByTs.get(msg.ts)?.step) || false,
         createdAt,
       };
     });
@@ -445,6 +446,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
         createdAt: true,
         triggeredBy: true,
         triggerName: true,
+        step: true,
       },
     });
 
@@ -456,7 +458,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
       if (!msg.externalMessageId) continue;
       contentByTs.set(msg.externalMessageId, msg.content);
       createdAtByTs.set(msg.externalMessageId, msg.createdAt);
-      triggerByTs.set(msg.externalMessageId, { triggeredBy: msg.triggeredBy, triggerName: msg.triggerName });
+      triggerByTs.set(msg.externalMessageId, { triggeredBy: msg.triggeredBy, triggerName: msg.triggerName, step: msg.step });
       if (msg.toolCalls != null) {
         toolCallsByTs.set(msg.externalMessageId, msg.toolCalls);
       }

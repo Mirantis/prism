@@ -287,6 +287,10 @@ model ConversationMessage {
   // history reads hide them, while the model-context read still replays them.
   internalStep Boolean @default(false)
 
+  // A verbose turn's step: text the turn delivers before its reply. Clients fold
+  // steps above the reply that follows them.
+  step Boolean @default(false)
+
   createdAt DateTime @default(now())
 
   thread      ConversationThread  @relation(fields: [threadId], references: [id], onDelete: Cascade)

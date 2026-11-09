@@ -470,6 +470,7 @@ describe('Requirement: Conversation Engine', () => {
           toolCalls: expect.arrayContaining([
             expect.objectContaining({ tool: 'kubectl' }),
           ]),
+          step: true,
         }),
       );
 
@@ -484,6 +485,8 @@ describe('Requirement: Conversation Engine', () => {
           toolCalls: undefined,
         }),
       );
+      // The reply is not a step, so clients fold the first message above it.
+      expect(mockPublish.mock.calls[1][4]).not.toHaveProperty('step');
     });
 
     it('should persist but not deliver intermediate steps when verbose is false', async () => {
@@ -518,6 +521,8 @@ describe('Requirement: Conversation Engine', () => {
         'USER_INPUT',
         expect.objectContaining({}),
       );
+      // A concise turn delivers its reply alone, never a step.
+      expect(mockPublish.mock.calls[0][4]).not.toHaveProperty('step');
 
       // The intermediate step is persisted as its own AGENT row (with its tool
       // calls) and flagged internalStep so client history hides it while the

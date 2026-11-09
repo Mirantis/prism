@@ -31,6 +31,7 @@ export function messageEventPayload(message: DeliverableMessage): MessageEventPa
     toolCalls: (message.toolCalls as unknown[] | null) ?? null,
     blocks: (message.blocks as unknown[] | null) ?? null,
     isCompacted: message.isCompacted,
+    step: message.step,
     createdAt,
     // Shared-file metadata (no bytes); clients render download chips and
     // fetch bytes from GET /agents/attachments/:id.

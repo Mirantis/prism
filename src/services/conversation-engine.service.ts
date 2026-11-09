@@ -957,6 +957,7 @@ Answer with one word: WORTHY or SKIP.`;
               'USER_INPUT',
               {
                 toolCalls: bufferedToolCalls.length > 0 ? bufferedToolCalls : undefined,
+                step: true,
                 channelContext: channelContext
                   ? { ...channelContext, includeFeedback: false }
                   : undefined,

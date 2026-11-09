@@ -81,6 +81,8 @@ export interface MessageInput {
    * memories. Omit (or false) for a normal, user-visible message.
    */
   internalStep?: boolean;
+  /** A verbose turn's step, which the turn delivers before its reply. Clients fold steps above the reply. */
+  step?: boolean;
 }
 
 /** One page of a thread's client history: `limit` messages, the newest ones or those before `before`. */
@@ -532,6 +534,7 @@ class ConversationService {
       senderName: input.senderName,
       externalMessageId: input.externalMessageId,
       internalStep: input.internalStep,
+      step: input.step,
     };
     const message = withMessage
       ? await prisma.$transaction(async (tx) => {

@@ -14,7 +14,7 @@ vi.mock('../conversation.service', () => ({ conversationService: { hasSeveralSen
 vi.mock('../inbound-message.service', () => ({ inboundMessageService: { resume: vi.fn() } }));
 vi.mock('../event-stream.service', () => ({ eventStreamService: { publish: vi.fn() } }));
 
-import { webSocketAdapterService } from '../websocket-adapter.service';
+import { messageEventPayload, webSocketAdapterService } from '../websocket-adapter.service';
 import { WEB_CHAT_LABEL } from '../web-chat-label';
 
 describe('webSocketAdapterService.threadDestination', () => {
@@ -43,5 +43,19 @@ describe('webSocketAdapterService.threadDestination', () => {
 
     await expect(webSocketAdapterService.threadDestination('thread-1')).resolves.toEqual({ channelLabel: undefined });
     expect(mockHasSeveralSenders).not.toHaveBeenCalled();
+  });
+});
+
+describe('messageEventPayload', () => {
+  const message = {
+    id: 'm-1', threadId: 'thread-1', role: 'AGENT', content: 'Checking the pods…', triggeredBy: 'USER_INPUT',
+    triggerName: null, toolCalls: null, blocks: null, senderExternalId: null, senderName: null,
+    externalMessageId: null, isCompacted: false, internalStep: false, step: true,
+    createdAt: new Date('2026-11-09T10:00:00.000Z'),
+  } as const;
+
+  it('says whether the message is a step of a verbose turn', () => {
+    expect(messageEventPayload(message).step).toBe(true);
+    expect(messageEventPayload({ ...message, step: false }).step).toBe(false);
   });
 });
