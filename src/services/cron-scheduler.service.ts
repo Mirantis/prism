@@ -794,6 +794,7 @@ class CronSchedulerService {
         // header. An empty reply is a wait with nothing to say yet.
         if (responseText) {
           // A continuation places images as a chat reply does (see share_file's description).
+          // Its run gives `invoke` no workspace root, so placement reads the default workspace too.
           const placed = await placeReplyImages(boundThreadId, responseText, result.attachmentIds);
           await messageDeliveryService.publish(task.userId, boundThreadId, placed.content, 'CRON_TASK', {
             toolCalls,

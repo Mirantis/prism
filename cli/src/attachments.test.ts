@@ -105,6 +105,26 @@ describe('latestTurnAttachments', () => {
     expect(latestTurnAttachments(messages).map((a) => a.id)).toEqual(['a', 'b']);
   });
 
+  it('offers the newest autonomous run alone: each goal or scheduled message is a run of its own', () => {
+    const messages = [
+      { role: 'USER' },
+      { role: 'AGENT', triggeredBy: 'USER_INPUT', attachments: [file('chat')] },
+      { role: 'AGENT', triggeredBy: 'GOAL', attachments: [file('run1')] },
+      { role: 'AGENT', triggeredBy: 'GOAL', attachments: [file('run2')] },
+    ];
+    expect(latestTurnAttachments(messages).map((a) => a.id)).toEqual(['run2']);
+  });
+
+  it("stops a chat turn's files at an autonomous run's message", () => {
+    const messages = [
+      { role: 'USER' },
+      { role: 'AGENT', triggeredBy: 'CRON_TASK', attachments: [file('cron')] },
+      { role: 'AGENT', triggeredBy: 'USER_INPUT', attachments: [file('chart')] },
+      { role: 'AGENT', triggeredBy: 'USER_INPUT', attachments: [file('csv')] },
+    ];
+    expect(latestTurnAttachments(messages).map((a) => a.id)).toEqual(['chart', 'csv']);
+  });
+
   it('offers nothing when no agent message has files', () => {
     expect(latestTurnAttachments([{ role: 'USER' }, { role: 'AGENT' }])).toEqual([]);
   });

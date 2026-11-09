@@ -122,14 +122,14 @@ export function listPathSuggestions(partial: string, cwd = process.cwd()): PathS
 }
 
 /**
- * The files of the latest turn that delivered any: every agent message since
- * the user's last message that holds one, oldest first. A verbose turn places
- * a chart in one step's reply and attaches a CSV to the last, and `/save`
- * offers both. With no files since the user's last message, the newest agent
- * turn that has any.
+ * The files of the latest run that delivered any. A chat turn is every reply
+ * since the user's last message, oldest first: a verbose turn places a chart in
+ * one step's reply and attaches a CSV to the last, and `/save` offers both. A
+ * goal, scheduled or heartbeat message is a run of its own. With no files since
+ * the user's last message, the newest run that has any.
  */
 export function latestTurnAttachments(
-  messages: ReadonlyArray<{ role: string; attachments?: AttachmentMeta[] | null }>,
+  messages: ReadonlyArray<{ role: string; triggeredBy?: string; attachments?: AttachmentMeta[] | null }>,
 ): AttachmentMeta[] {
   const turn: AttachmentMeta[][] = [];
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -138,9 +138,11 @@ export function latestTurnAttachments(
       if (turn.length > 0) break;
       continue;
     }
-    if (m.role === 'AGENT' && Array.isArray(m.attachments) && m.attachments.length > 0) {
-      turn.unshift(m.attachments);
-    }
+    if (m.role !== 'AGENT' || !Array.isArray(m.attachments) || m.attachments.length === 0) continue;
+    const chatReply = (m.triggeredBy ?? 'USER_INPUT') === 'USER_INPUT';
+    if (turn.length > 0 && !chatReply) break;
+    turn.unshift(m.attachments);
+    if (!chatReply) break;
   }
   const seen = new Set<string>();
   return turn.flat().filter((a) => !seen.has(a.id) && seen.add(a.id));
