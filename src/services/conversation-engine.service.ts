@@ -16,7 +16,7 @@ import { threadTurnService, type PendingMessage } from './thread-turn.service';
 import { threadTitleService } from './thread-title.service';
 import { conversationThreadActivityService } from './conversation-thread-activity.service';
 import { attachmentService } from './attachment.service';
-import { placeInlineImages } from './inline-image-placement';
+import { placeInlineImages, type PlacedImages } from './inline-image-placement';
 import { pendingWorkService } from './pending-work.service';
 import { questionCardService, type ClosedInChat } from './question-cards/question-card.service';
 import { ASK_QUESTIONS_TOOL_NAME } from './question-cards/question-card-schema';
@@ -968,12 +968,14 @@ Answer with one word: WORTHY or SKIP.`;
     // message, so they appear alongside the answer.
     const allAttachmentIds: string[] = [...(params.unsentAttachmentIds ?? [])];
     const images: TurnImages = { inline: 0, missed: 0, attached: 0 };
-    const place = async (text: string) => {
-      const placed = await placeInlineImages(text, {
+    const place = (text: string) =>
+      placeInlineImages(text, {
         threadId,
         workspaceRoot: params.workspaceRoot,
         shared: allAttachmentIds,
       });
+    // A delivered step takes the images it placed out of the files still owed.
+    const deliver = (placed: PlacedImages) => {
       for (const id of placed.attachmentIds) {
         const shared = allAttachmentIds.indexOf(id);
         if (shared !== -1) allAttachmentIds.splice(shared, 1);
@@ -982,6 +984,10 @@ Answer with one word: WORTHY or SKIP.`;
       images.missed += placed.missed;
       return placed;
     };
+    // In verbose mode a step's images are read when the step arrives, not when
+    // the next text step flushes it, so a later step that rewrites or deletes
+    // the file does not change what this step's text describes.
+    let bufferedPlaced: PlacedImages | null = null;
     let error: InvokeError | undefined;
     // Whether the row holds calls or files that this turn's reply takes over.
     let owes = allAttachmentIds.length > 0;
@@ -1020,7 +1026,7 @@ Answer with one word: WORTHY or SKIP.`;
         // no blocks, no feedback gate.
         if (bufferedStep) {
           if (params.verbose) {
-            const placed = await place(bufferedStep.text);
+            const placed = deliver(bufferedPlaced ?? (await place(bufferedStep.text)));
             agentMessage = await messageDeliveryService.publish(
               userId,
               threadId,
@@ -1050,6 +1056,7 @@ Answer with one word: WORTHY or SKIP.`;
         }
 
         bufferedStep = step;
+        bufferedPlaced = params.verbose ? await place(step.text) : null;
         bufferedToolCalls = pendingToolCalls;
         pendingToolCalls = [];
       }
@@ -1076,7 +1083,7 @@ Answer with one word: WORTHY or SKIP.`;
       const includeFeedback = params.promptSource === 'person' && await this.shouldShowFeedback(
         threadId, prompt, bufferedStep.text, userId, agentId, params.abortSignal,
       );
-      const placed = await place(bufferedStep.text);
+      const placed = deliver(bufferedPlaced ?? (await place(bufferedStep.text)));
       const attachmentIds = [...placed.attachmentIds, ...allAttachmentIds];
       images.attached += allAttachmentIds.length;
       agentMessage = await messageDeliveryService.publish(

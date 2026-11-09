@@ -34,6 +34,7 @@ const {
   mockWritableThreadId,
   mockKeepWithheldRun,
   mockMessageFindMany,
+  mockPlaceReplyImages,
 } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
   mockPublish: vi.fn(),
@@ -51,7 +52,14 @@ const {
   mockWritableThreadId: vi.fn(),
   mockKeepWithheldRun: vi.fn(),
   mockMessageFindMany: vi.fn(),
+  // A reply with no image references passes through untouched.
+  mockPlaceReplyImages: vi.fn(async (_threadId: string, content: string, attachmentIds: string[] = []) => ({
+    content,
+    attachmentIds,
+  })),
 }));
+
+vi.mock('./inline-image-placement', () => ({ placeReplyImages: mockPlaceReplyImages }));
 
 vi.mock('../invoke', () => ({ invoke: mockInvoke }));
 
@@ -349,6 +357,32 @@ describe('GoalService', () => {
       const finishedCall = mockTrackEvent.mock.calls.find((c) => c[0] === 'goal finished');
       expect(JSON.stringify(finishedCall)).not.toContain('do the thing'); // no objective (PII)
       await vi.waitFor(() => expect(mockEndLoopStatus).toHaveBeenCalledWith({ cancelled: false }));
+    });
+
+    it("places the images a turn's reply names, as a chat reply does", async () => {
+      mockGenerateText.mockResolvedValue({ text: 'COMPLETE' });
+      mockInvoke.mockResolvedValue({
+        response: 'Sign-ups: ![chart](signups.png)',
+        toolCalls: [{ tool: 'shell_exec', input: '{}', output: 'ok', success: true, timestamp: '2025-01-01T00:00:00Z' }],
+        steps: [{ text: 'Sign-ups: ![chart](signups.png)' }],
+        attachmentIds: ['att-csv'],
+        usage: { totalTokens: 10 },
+      });
+      mockPlaceReplyImages.mockResolvedValueOnce({
+        content: 'Sign-ups: ![chart](attachment:att-chart)',
+        attachmentIds: ['att-chart', 'att-csv'],
+      });
+
+      await goalService.startGoal({
+        userId: 'user-1', agentId: 'agent-1', threadId: 'thread-1', objective: 'chart sign-ups', originChannel: 'websocket',
+      });
+      await waitForTerminal();
+
+      expect(mockPlaceReplyImages).toHaveBeenCalledWith('thread-1', 'Sign-ups: ![chart](signups.png)', ['att-csv']);
+      expect(mockPublish).toHaveBeenCalledWith(
+        'user-1', 'thread-1', 'Sign-ups: ![chart](attachment:att-chart)', 'GOAL',
+        expect.objectContaining({ attachmentIds: ['att-chart', 'att-csv'] }),
+      );
     });
 
     it('runs each turn in the channel the goal was started in', async () => {

@@ -3,6 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import {
+  latestTurnAttachments,
   expandPath,
   formatFileSize,
   listPathSuggestions,
@@ -75,5 +76,36 @@ describe('listPathSuggestions', () => {
 
   it('returns [] when the dir part is a file', () => {
     expect(listPathSuggestions('alpha.txt/x', dir)).toEqual([]);
+  });
+});
+
+describe('latestTurnAttachments', () => {
+  const file = (id: string) => ({ id, filename: `${id}.bin`, mediaType: 'application/octet-stream', sizeBytes: 1, category: 'other' });
+
+  it("offers the files of every message of the latest turn: a verbose step's chart and the last reply's CSV", () => {
+    const messages = [
+      { role: 'USER' },
+      { role: 'AGENT', attachments: [file('old')] },
+      { role: 'USER' },
+      { role: 'AGENT', attachments: [{ ...file('chart'), inline: true }] },
+      { role: 'AGENT', attachments: [] },
+      { role: 'AGENT', attachments: [file('csv')] },
+    ];
+    expect(latestTurnAttachments(messages).map((a) => a.id)).toEqual(['chart', 'csv']);
+  });
+
+  it('falls back to the last turn that delivered files when the newest shared none', () => {
+    const messages = [
+      { role: 'USER' },
+      { role: 'AGENT', attachments: [file('a')] },
+      { role: 'AGENT', attachments: [file('b')] },
+      { role: 'USER' },
+      { role: 'AGENT', attachments: null },
+    ];
+    expect(latestTurnAttachments(messages).map((a) => a.id)).toEqual(['a', 'b']);
+  });
+
+  it('offers nothing when no agent message has files', () => {
+    expect(latestTurnAttachments([{ role: 'USER' }, { role: 'AGENT' }])).toEqual([]);
   });
 });

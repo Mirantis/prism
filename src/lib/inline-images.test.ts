@@ -27,6 +27,35 @@ describe('findImageRefs', () => {
     expect(refs.map((r) => r.target)).toEqual(['/work/my chart.png']);
   });
 
+  it('skips an escaped image, which the renderer shows as text', () => {
+    const content = `\\![chart](attachment:${ID}) and \\\\![real](d.png)`;
+    expect(findImageRefs(content).map((r) => r.target)).toEqual(['d.png']);
+  });
+
+  it('skips an image in an indented code block but not in a list item or a continued paragraph', () => {
+    const content = [
+      '    ![at the start](a.png)',
+      '',
+      'Example:',
+      '',
+      `    ![indented](attachment:${ID})`,
+      '    more code',
+      '',
+      'A paragraph',
+      '    ![continued](b.png)',
+      '',
+      '- an item',
+      '',
+      '    ![in the item](c.png)',
+      '',
+      'Done.',
+      '',
+      '\t![tab](e.png)',
+    ].join('\n');
+    expect(findImageRefs(content).map((r) => r.target)).toEqual(['b.png', 'c.png']);
+    expect(placeAttachments(content, [{ id: ID, category: 'image' }])).toEqual([{ id: ID, category: 'image' }]);
+  });
+
   it('skips images inside fenced code blocks and inline code', () => {
     const content = [
       '```markdown',

@@ -19,6 +19,7 @@ import * as cron from 'node-cron';
 import { Prisma, type CronTask } from '@prisma/client';
 import { invoke } from '../invoke';
 import { messageDeliveryService } from './message-delivery.service';
+import { placeReplyImages } from './inline-image-placement';
 import {
   DELIVER_TARGETS,
   deliveryTargetService,
@@ -792,9 +793,11 @@ class CronSchedulerService {
         // A continuation replies in its conversation, with no "Scheduled Task"
         // header. An empty reply is a wait with nothing to say yet.
         if (responseText) {
-          await messageDeliveryService.publish(task.userId, boundThreadId, responseText, 'CRON_TASK', {
+          // A continuation places images as a chat reply does (see share_file's description).
+          const placed = await placeReplyImages(boundThreadId, responseText, result.attachmentIds);
+          await messageDeliveryService.publish(task.userId, boundThreadId, placed.content, 'CRON_TASK', {
             toolCalls,
-            attachmentIds: result.attachmentIds,
+            attachmentIds: placed.attachmentIds.length > 0 ? placed.attachmentIds : undefined,
             channelContext,
           });
         } else {
