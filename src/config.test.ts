@@ -94,9 +94,9 @@ describe('config', () => {
   });
 
   it.each([
-    ['small', 'eu.openai.gpt-5.6-terra', 'gpt-5.6-terra'],
-    ['medium', 'us.openai.gpt-5.6-sol', 'gpt-5.6-sol'],
-    ['large', 'arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.openai.gpt-6-astra', 'gpt-6-astra'],
+    ['small', 'openai.gpt-5.6-sol', 'gpt-5.6-terra'],
+    ['medium', 'eu.openai.gpt-6-astra', 'gpt-5.6-sol'],
+    ['large', 'arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.openai.gpt-5.6-terra', 'gpt-6-astra'],
   ] as const)('keeps a Bedrock ID for the codex %s tier on Bedrock only', async (tier, model, openai) => {
     process.env.LLM_PROVIDER = 'anthropic';
     process.env['CODEX_MODEL_' + tier.toUpperCase()] = model;

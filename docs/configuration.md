@@ -162,7 +162,7 @@ Set `CODING_AGENT` to `claude-code` or `codex` to choose the default coding agen
 Each coding task can override it with the optional `agent` parameter; the tool lists
 agents available from your credentials. When unset, the default is Claude Code,
 or Codex when only Codex credentials are available. Codex also supports Bedrock credentials;
-set `AWS_REGION` to a region with access to `openai.gpt-5.6-terra`.
+set `AWS_REGION` to a region with access to the Codex models in the table below.
 
 Codex uses `CODEX_API_KEY` or `OPENAI_API_KEY` first, then a saved `auth.json` login,
 then Bedrock credentials. To reuse a Codex login, set `CODEX_HOME` to its writable
