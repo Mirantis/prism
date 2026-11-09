@@ -588,6 +588,10 @@ const openaiRealtimeApiKey = realtimeConfiguration.apiKey;
 // man's name, `marin` for any other (`services/voice/agent-voice.ts`). Any
 // other value is the voice of every call.
 const openaiRealtimeVoice = (process.env.OPENAI_REALTIME_VOICE || 'auto').trim().toLowerCase() || 'auto';
+// The two voices `auto` picks from. `marin` is markedly better for conversation
+// than the API's `alloy` default, and is also the voice of a name read as
+// neither a woman's nor a man's.
+const openaiRealtimeNameVoices = { default: 'marin', man: 'cedar' } as const;
 // How hard the in-meeting model thinks before it answers or picks a tool.
 //
 // The API's own default is `low`, which is the right call for the voice agents
@@ -1270,6 +1274,7 @@ export const config = {
   realtimeProvider: realtimeConfiguration.provider,
   realtimeUnavailableReason: realtimeConfiguration.unavailableReason,
   openaiRealtimeVoice,
+  openaiRealtimeNameVoices,
   // OPENAI_REALTIME_REASONING_EFFORT, default 'high' (the API's own default is
   // 'low'); '' sends no setting at all and leaves the choice to the API.
   openaiRealtimeReasoningEffort,

@@ -35,7 +35,30 @@ import {
   waitForScreen,
 } from '../support/voice-model';
 
-const { When, Then } = createBdd();
+const { Given, When, Then } = createBdd();
+
+/** Long enough for the classification model to read a name, through the LLM cache or live. */
+const NAME_READING_TIMEOUT_MS = 30_000;
+
+Given('the agent is called {string}', async ({ page }, name: string) => {
+  const res = await page.request.patch('/agents/name', { data: { name } });
+  expect(res.ok(), `renaming the agent answered ${res.status()}`).toBeTruthy();
+  // The rename starts reading the name; the call waits only briefly for it, so the
+  // scenario waits here until the reading is stored.
+  await expect
+    .poll(
+      async () => {
+        const row = await dbHelper.getPrisma().runtimeState.findUnique({ where: { key: 'agentVoiceReadings' } });
+        return row ? (JSON.parse(row.value) as Record<string, string>)[name] : undefined;
+      },
+      { message: `the reading of the name "${name}"`, timeout: NAME_READING_TIMEOUT_MS },
+    )
+    .toBeDefined();
+});
+
+Then('the voice session speaks with {string}', async ({ page }, voice: string) => {
+  await waitForModel(`the voice session asking for the voice "${voice}"`, (state) => state.voice === voice, describeScreen(page));
+});
 
 /** A frame already on the wire when the mute landed still arrives, so the count settles first. */
 const MUTE_SETTLE_MS = 750;

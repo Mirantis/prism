@@ -43,7 +43,7 @@ import { googleMeetProvider } from './providers/google-meet';
 import { withTimeout } from '../../utils/with-timeout';
 import { voiceSessionLock } from '../voice/voice-session-lock';
 import { MAX_TOOL_RESULT_CHARS } from '../voice/realtime-tools';
-import { voiceForAgent } from '../voice/agent-voice';
+import { voiceForAgent, type AgentVoice } from '../voice/agent-voice';
 import type {
   ChatMessageRead,
   ChatReadStep,
@@ -473,6 +473,8 @@ export class MeetingBotService {
   private audio: AudioStack | null = null;
   private browser: BrowserStack | null = null;
   private conversation: VoiceConversation | null = null;
+  /** The voice the current call speaks with, for `meeting joined`. */
+  private agentVoice: AgentVoice | null = null;
   private page: Page | null = null;
   private pollTimer: NodeJS.Timeout | null = null;
   private speakerTimer: NodeJS.Timeout | null = null;
@@ -820,6 +822,7 @@ export class MeetingBotService {
       // from the inside. Same ending as a lost Realtime session.
       handles.onLost((reason) => this.onAudioLost(epoch, reason));
 
+      const agentVoice = await voiceForAgent(agentName);
       conversation = new VoiceConversation({
         instructions,
         openingContext,
@@ -834,7 +837,7 @@ export class MeetingBotService {
         // agent that says one name and answers to another would be addressed by
         // the name it just gave the room, and stay silent.
         agentName,
-        voice: await voiceForAgent(agentName),
+        voice: agentVoice.voice,
         onSessionLost: (reason) => this.onSessionLost(epoch, reason),
       });
       await conversation.start();
@@ -869,6 +872,7 @@ export class MeetingBotService {
 
       this.audio = audio;
       this.conversation = conversation;
+      this.agentVoice = agentVoice;
       this.browser = browser;
       this.page = page;
       // The stack is on the fields, so `teardown()` can release it — which is the whole
@@ -1110,6 +1114,8 @@ export class MeetingBotService {
         // entry and confirmed is the fix earning its keep, unconfirmed is a room that
         // heard nothing — which used to be indistinguishable from a good call.
         mic_confirmed: String(audible),
+        voice: this.agentVoice?.voice ?? 'unknown',
+        voice_source: this.agentVoice?.source ?? 'unknown',
       });
 
       if (audible) {
@@ -2357,6 +2363,7 @@ export class MeetingBotService {
     }
 
     this.conversation = null;
+    this.agentVoice = null;
     this.browser = null;
     this.audio = null;
     this.page = null;

@@ -7,8 +7,9 @@
  * itself sounds like its new name on its next call. Any other value of
  * `OPENAI_REALTIME_VOICE` is the voice of every call.
  *
- * The classification model reads the name once per name; a rename and startup
- * read it ahead of the next call.
+ * The classification model reads a name once. The reading is stored in
+ * `runtime_state`, so the voice stays the same across restarts, and every call
+ * reads it there.
  */
 
 import { config } from '../../config';
@@ -16,20 +17,29 @@ import { logger } from '../../logger';
 import { normaliseAgentName } from '../../lib/agent-name';
 import { getGateRequest } from '../../lib/classification';
 import { callModel } from '../../lib/model-call';
+import { isRealtimeConfigured } from '../meeting/openai-endpoint';
+import { AGENT_VOICE_READINGS, runtimeStateService } from '../runtime-state.service';
 
 /** How most people read a name. */
 export type NameReading = 'woman' | 'man' | 'unclear';
 
+/**
+ * Where a call's voice came from: `OPENAI_REALTIME_VOICE`, the reading of the
+ * agent's name, or the default voice because the name was not read in time,
+ * could not be read, or breaks the rule for names.
+ */
+export type VoiceSource = 'configured' | 'name' | 'fallback';
+
+export type AgentVoice = { voice: string; source: VoiceSource };
+
 /** The `OPENAI_REALTIME_VOICE` value that has the voice follow the name. */
 export const AUTO_VOICE = 'auto';
-export const WOMAN_VOICE = 'marin';
-export const MAN_VOICE = 'cedar';
 
-/** How long a call waits for a name it has not read yet. After that it speaks with `marin`, and the next call has the answer. */
+/** How long a call waits for a name it has not read yet. After that it speaks with the default voice, and the next call has the answer. */
 export const READING_WAIT_MS = 1_500;
 /** The longest one reading may take before it counts as failed. */
 const READING_TIMEOUT_MS = 10_000;
-/** Names whose reading is kept. An agent goes by a few names; the oldest is dropped first. */
+/** Names whose reading is stored. An agent goes by a few names; the oldest is dropped first. */
 const MAX_READINGS = 32;
 
 /** The prompt that reads a name. */
@@ -42,13 +52,10 @@ export const NAME_READING_PROMPT = [
   'Answer with one word: woman, man or unclear.',
 ].join('\n');
 
-/** Readings by name, kept as the call in progress so concurrent asks share one. */
-const readings = new Map<string, Promise<NameReading>>();
-
-/** The voice for a reading: `cedar` for a man's name, `marin` for every other. */
-export function voiceForReading(reading: NameReading): string {
-  return reading === 'man' ? MAN_VOICE : WOMAN_VOICE;
-}
+/** Readings in progress, by name, so concurrent asks share one. Null is a reading that failed. */
+const readings = new Map<string, Promise<NameReading | null>>();
+/** Writes of the stored readings, one after another, so two readings never drop each other. */
+let storing: Promise<void> = Promise.resolve();
 
 /** The model's answer as a reading. Anything but `woman` or `man` is `unclear`. */
 export function readingOfAnswer(answer: string): NameReading {
@@ -57,24 +64,27 @@ export function readingOfAnswer(answer: string): NameReading {
 }
 
 /**
- * The voice for a call by the agent named `name`.
+ * The voice for a call by the agent named `name`, and where it came from.
  *
  * With a voice set in `OPENAI_REALTIME_VOICE`, that voice. Otherwise waits up
  * to `READING_WAIT_MS` for a name it has not read yet; a name still being read
- * then gets `marin`, and the reading goes on for the next call.
+ * then gets the default voice, and the reading goes on for the next call.
  */
-export async function voiceForAgent(name: string): Promise<string> {
-  if (!followsName()) return config.openaiRealtimeVoice;
+export async function voiceForAgent(name: string): Promise<AgentVoice> {
+  const voices = config.openaiRealtimeNameVoices;
+  if (!followsName()) return { voice: config.openaiRealtimeVoice, source: 'configured' };
   // Only a name that follows the rule for names reaches the model.
   const key = normaliseAgentName(name);
-  if (!key) return WOMAN_VOICE;
+  if (!key) return { voice: voices.default, source: 'fallback' };
   let timer: NodeJS.Timeout | undefined;
-  const waited = new Promise<NameReading>((resolve) => {
-    timer = setTimeout(() => resolve('unclear'), READING_WAIT_MS);
+  const waited = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), READING_WAIT_MS);
     timer.unref?.();
   });
   try {
-    return voiceForReading(await Promise.race([readingOf(key), waited]));
+    const reading = await Promise.race([readingOf(key), waited]);
+    if (reading === null) return { voice: voices.default, source: 'fallback' };
+    return { voice: reading === 'man' ? voices.man : voices.default, source: 'name' };
   } finally {
     clearTimeout(timer);
   }
@@ -82,19 +92,16 @@ export async function voiceForAgent(name: string): Promise<string> {
 
 /**
  * Reads `name` ahead of the next call, so that call starts with its voice.
- * Called after a rename and at startup. Never throws: the rename or the
- * startup that calls it has already happened.
+ * Called after a rename and at startup, when the agent can open a voice
+ * session and its voice follows its name.
  */
 export function warmVoice(name: string): void {
-  try {
-    const key = followsName() ? normaliseAgentName(name) : undefined;
-    if (key) void readingOf(key);
-  } catch (error) {
-    logger.warn({ err: error }, '[AgentVoice] could not start reading the agent name');
-  }
+  if (!followsName() || !isRealtimeConfigured()) return;
+  const key = normaliseAgentName(name);
+  if (key) void readingOf(key);
 }
 
-/** Forgets every reading. For tests. */
+/** Forgets the readings in progress. For tests. */
 export function forgetVoiceReadings(): void {
   readings.clear();
 }
@@ -103,23 +110,62 @@ function followsName(): boolean {
   return config.openaiRealtimeVoice === AUTO_VOICE;
 }
 
-function readingOf(name: string): Promise<NameReading> {
-  const known = readings.get(name);
-  if (known) return known;
-  const reading: Promise<NameReading> = readName(name).catch((error: unknown) => {
-    // Read again on the next call: a failure is the model's, not the name's. A newer
-    // reading of the same name, started after this one was dropped, stays.
-    if (readings.get(name) === reading) readings.delete(name);
-    logger.warn({ err: error }, '[AgentVoice] could not read the agent name, speaking with marin');
-    return 'unclear' as const;
-  });
+/**
+ * The stored reading of `name`, or a new one. A reading lives in `runtime_state`;
+ * memory holds it only while it is in progress.
+ */
+function readingOf(name: string): Promise<NameReading | null> {
+  const inProgress = readings.get(name);
+  if (inProgress) return inProgress;
+  const reading: Promise<NameReading | null> = storedOrRead(name)
+    .catch((error: unknown) => {
+      // Read again on the next call: a failure is the model's, not the name's.
+      logger.warn({ err: error }, '[AgentVoice] could not read the agent name, speaking with the default voice');
+      return null;
+    })
+    .finally(() => {
+      if (readings.get(name) === reading) readings.delete(name);
+    });
   readings.set(name, reading);
-  while (readings.size > MAX_READINGS) {
-    const oldest = readings.keys().next().value;
-    if (oldest === undefined) break;
-    readings.delete(oldest);
-  }
   return reading;
+}
+
+async function storedOrRead(name: string): Promise<NameReading> {
+  const stored = await storedReadings();
+  const known = stored[name];
+  if (known) return known;
+  const reading = await readName(name);
+  await storeReading(name, reading).catch((error: unknown) => {
+    logger.warn({ err: error }, '[AgentVoice] could not store the reading of the agent name');
+  });
+  return reading;
+}
+
+async function storedReadings(): Promise<Record<string, NameReading>> {
+  try {
+    const value = await runtimeStateService.get(AGENT_VOICE_READINGS);
+    const parsed: unknown = value ? JSON.parse(value) : {};
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, NameReading] => ['woman', 'man', 'unclear'].includes(entry[1] as string)),
+    );
+  } catch (error) {
+    logger.warn({ err: error }, '[AgentVoice] could not read the stored readings of agent names');
+    return {};
+  }
+}
+
+function storeReading(name: string, reading: NameReading): Promise<void> {
+  const write = storing.then(async () => {
+    const stored = await storedReadings();
+    delete stored[name];
+    stored[name] = reading;
+    // The newest names stay; object keys keep their insertion order.
+    const kept = Object.entries(stored).slice(-MAX_READINGS);
+    await runtimeStateService.set(AGENT_VOICE_READINGS, JSON.stringify(Object.fromEntries(kept)));
+  });
+  storing = write.catch(() => undefined);
+  return write;
 }
 
 async function readName(name: string): Promise<NameReading> {

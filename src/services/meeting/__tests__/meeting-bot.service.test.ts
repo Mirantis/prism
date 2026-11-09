@@ -49,7 +49,7 @@ class FakeAudioStack {
   isMicCaptured = audioIsMicCaptured;
 }
 // The voice for the agent's name, without a model reading it.
-const voiceForAgent = vi.fn(async (_name: string) => 'cedar');
+const voiceForAgent = vi.fn(async (_name: string) => ({ voice: 'cedar', source: 'name' as const }));
 vi.mock('../../voice/agent-voice', () => ({ voiceForAgent: (name: string) => voiceForAgent(name) }));
 
 vi.mock('../audio-stack', () => ({
@@ -2400,6 +2400,8 @@ describe('telemetry', () => {
       response_mode: 'auto',
       muted_on_entry: 'false',
       mic_confirmed: 'true',
+      voice: 'cedar',
+      voice_source: 'name',
     });
 
     await service.leave();

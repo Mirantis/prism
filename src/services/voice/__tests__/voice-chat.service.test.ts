@@ -424,6 +424,8 @@ describe('ending a session', () => {
       response_mode: 'open',
       surface: 'chat',
       computer: 'false',
+      voice: 'marin',
+      voice_source: 'configured',
     });
     expect(trackEvent).toHaveBeenCalledWith(
       'voice chat ended',

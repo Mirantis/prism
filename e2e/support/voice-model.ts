@@ -40,6 +40,8 @@ export interface MockState {
   summariesRequested: number;
   /** The text-only items the newest session was given, joined by newlines. */
   contextText: string;
+  /** The voice the newest session asked to speak with, or empty when it named none. */
+  voice: string;
 }
 
 /** What the page showed and complained about, for the same failure message. */
@@ -57,6 +59,7 @@ let baseline: MockState = {
   dictationsTranscribed: 0,
   summariesRequested: 0,
   contextText: '',
+  voice: '',
 };
 
 export async function readState(): Promise<MockState> {
@@ -87,7 +90,8 @@ export function describeExchange(state: MockState): string {
     `recording windows=${state.recordingSegments - baseline.recordingSegments} ` +
     `(${state.recordingImages - baseline.recordingImages} pictures, ` +
     `${Math.round(state.recordingAudioMs - baseline.recordingAudioMs)}ms of narration), ` +
-    `dictations transcribed=${state.dictationsTranscribed - baseline.dictationsTranscribed} ` +
+    `dictations transcribed=${state.dictationsTranscribed - baseline.dictationsTranscribed}, ` +
+    `voice=${state.voice || 'none'} ` +
     `(counted since this scenario started)`
   );
 }
