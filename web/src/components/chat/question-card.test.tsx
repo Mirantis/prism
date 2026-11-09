@@ -62,19 +62,17 @@ describe('QuestionCard', () => {
     it('shows every question with nothing chosen and Send disabled', () => {
       show(BLOCK);
       expect(screen.getByRole('heading', { name: '2 questions' })).toBeTruthy();
-      expect(screen.getByText('Choose your answers, then send them. You can skip any question.')).toBeTruthy();
       expect(screen.getAllByRole('radio').some((input) => (input as HTMLInputElement).checked)).toBe(false);
       expect(screen.getAllByRole('checkbox').some((input) => (input as HTMLInputElement).checked)).toBe(false);
       expect((send() as HTMLButtonElement).disabled).toBe(true);
-      expect(status()).toBe('0 of 2 answered');
+      expect(status()).toBe('');
     });
 
     it('words a single question in the singular and shows no count or number', () => {
       show(ONE);
       expect(screen.getByRole('heading', { name: '1 question' })).toBeTruthy();
-      expect(screen.getByText('Choose an answer, then send it.')).toBeTruthy();
       expect(screen.queryByTestId('question-card-status')).toBeNull();
-      expect(screen.getByRole('group', { name: /How much can we spend\?/ }).querySelector('legend')?.textContent).not.toMatch(/1\./);
+      expect(screen.getByRole('group', { name: 'How much can we spend?' })).toBeTruthy();
       expect(send('Send answer')).toBeTruthy();
     });
 
@@ -90,11 +88,51 @@ describe('QuestionCard', () => {
       expect(document.getElementById(recommended.getAttribute('aria-describedby')!)?.textContent).toBe('fits the current plan');
     });
 
-    it('separates the header and the question text for a screen reader', () => {
+    it('names each question by its number and text, and shows no header label', () => {
       show(BLOCK);
-      expect(screen.getByRole('group', { name: /How much can we spend/ }).querySelector('legend')?.textContent).toBe(
-        '1.Budget.How much can we spend?',
-      );
+      expect(screen.getByRole('group', { name: '1. How much can we spend?' })).toBeTruthy();
+      expect(screen.queryByText('Budget')).toBeNull();
+    });
+
+    it('puts Choose any in the name of a multi-select question', () => {
+      show(BLOCK);
+      expect(screen.getByRole('group', { name: '2. Which channels? Choose any' })).toBeTruthy();
+    });
+
+    it('moves focus to the Other field when Other is chosen by pointer', () => {
+      show(BLOCK);
+      fireEvent.pointerDown(radio('Other…'));
+      fireEvent.click(radio('Other…'));
+      expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Your answer to question 1' }));
+    });
+
+    it('moves focus to the Other field when Other is chosen with Space', () => {
+      show(BLOCK);
+      const other = radio('Other…');
+      other.focus();
+      fireEvent.keyDown(other, { key: ' ' });
+      fireEvent.click(other);
+      expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Your answer to question 1' }));
+    });
+
+    it('keeps focus on the radio when an arrow key lands on Other', () => {
+      show(BLOCK);
+      const other = radio('Other…');
+      other.focus();
+      fireEvent.keyDown(other, { key: 'ArrowDown' });
+      fireEvent.click(other);
+      expect(screen.getByRole('textbox', { name: 'Your answer to question 1' })).toBeTruthy();
+      expect(document.activeElement).toBe(other);
+    });
+
+    it('moves focus to the field after arrowing when a pointer then chooses Other', () => {
+      show(BLOCK);
+      const other = radio('Other…');
+      fireEvent.keyDown(other, { key: 'ArrowDown' });
+      fireEvent.click(radio(/Over €500/));
+      fireEvent.pointerDown(other);
+      fireEvent.click(other);
+      expect(document.activeElement).toBe(screen.getByRole('textbox'));
     });
 
     it('marks a multi-select question and uses checkboxes for it', () => {
@@ -118,7 +156,7 @@ describe('QuestionCard', () => {
       expect((send() as HTMLButtonElement).disabled).toBe(false);
       fireEvent.click(screen.getByRole('button', { name: 'Clear answer to question 1' }));
       expect((radio(/Over €500/) as HTMLInputElement).checked).toBe(false);
-      expect(status()).toBe('0 of 2 answered');
+      expect(status()).toBe('');
     });
 
     it.each([
@@ -140,7 +178,7 @@ describe('QuestionCard', () => {
       const field = screen.getByRole('textbox', { name: 'Your answer to question 1' }) as HTMLTextAreaElement;
       expect(field.placeholder).toBe('Type your answer');
       expect(field.maxLength).toBe(500);
-      expect(status()).toBe('0 of 2 answered');
+      expect(status()).toBe('');
       fireEvent.change(field, { target: { value: 'As little as we can' } });
       expect(status()).toBe('1 of 2 answered');
       fireEvent.click(radio(/Over €500/));
@@ -160,22 +198,19 @@ describe('QuestionCard', () => {
       show({ ...BLOCK, intro: INTRO });
       const title = screen.getByRole('heading', { name: '2 questions' });
       expect(intro()?.textContent).toBe(INTRO);
-      expect(title.nextElementSibling).toBe(intro());
+      expect(follows(title, intro()!)).toBe(true);
       expect(follows(intro()!, screen.getByRole('group', { name: /How much can we spend/ }))).toBe(true);
     });
 
-    it('uses the secondary text colour of the helper line', () => {
+    it('leads in the foreground colour of an agent message', () => {
       show({ ...BLOCK, intro: INTRO });
-      expect(intro()?.className).toContain('text-muted-foreground');
+      expect(intro()?.className).toContain('text-foreground');
     });
 
-    it('renders nothing for no intro or an empty one, so the helper line follows the title', () => {
+    it('renders nothing for no intro or an empty one', () => {
       for (const block of [BLOCK, { ...BLOCK, intro: '' }]) {
         const { unmount } = show(block);
         expect(intro()).toBeNull();
-        expect(screen.getByRole('heading', { name: '2 questions' }).nextElementSibling?.textContent).toBe(
-          'Choose your answers, then send them. You can skip any question.',
-        );
         unmount();
       }
     });
@@ -539,6 +574,11 @@ describe('QuestionCard', () => {
     it('reads Answered when nobody was named, and for a viewer with no identity', () => {
       show({ ...ANSWERED, answeredBy: null }, { id: null, name: null });
       expect(screen.getByRole('heading', { name: 'Answered' })).toBeTruthy();
+    });
+
+    it('shows no count when every question has an answer', () => {
+      show({ ...ANSWERED, answers: [{ options: [0] }, { options: [1] }] });
+      expect(screen.queryByText(/of 2 answered/)).toBeNull();
     });
 
     it('shows no count for a single question', () => {
