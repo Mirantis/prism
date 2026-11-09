@@ -59,6 +59,10 @@ describe('QuestionCard', () => {
   afterEach(cleanup);
 
   describe('waiting', () => {
+    beforeEach(() => {
+      Element.prototype.scrollIntoView = vi.fn();
+    });
+
     it('shows every question with nothing chosen and Send disabled', () => {
       show(BLOCK);
       expect(screen.getByRole('heading', { name: '2 questions' })).toBeTruthy();
@@ -104,6 +108,13 @@ describe('QuestionCard', () => {
       fireEvent.pointerDown(radio('Other…'));
       fireEvent.click(radio('Other…'));
       expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Your answer to question 1' }));
+    });
+
+    it('scrolls the Other field into view when it takes focus', () => {
+      show(BLOCK);
+      fireEvent.pointerDown(radio('Other…'));
+      fireEvent.click(radio('Other…'));
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
     });
 
     it('moves focus to the Other field when Other is chosen with Space', () => {
