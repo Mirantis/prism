@@ -69,7 +69,8 @@ export function QuestionCard({ block, viewer }: { block: QuestionCardBlock; view
     <div
       ref={root}
       aria-busy={sendState === 'sending'}
-      className="@container w-full max-w-2xl rounded-xl border bg-card p-4 text-sm shadow-sm"
+      // On a phone the card takes the avatar's column too, so that the questions have the full width.
+      className="@container w-full rounded-xl border border-foreground/10 bg-secondary p-3.5 text-sm shadow-sm max-sm:-ml-10 max-sm:w-[calc(100%+2.5rem)] sm:p-4"
       data-testid="question-card"
       data-status={card.status}
     >

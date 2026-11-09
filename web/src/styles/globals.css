@@ -20,6 +20,14 @@
   /* Lifted toward the body text color so secondary text meets the 4.5:1 contrast
      minimum on the charcoal background, while staying a clear step below it. */
   --muted-foreground: color-mix(in srgb, var(--lds-color-text-primary) 60%, var(--lds-color-text-muted));
+  /* The design system has no step for these. Each is built from its tokens, as --muted-foreground is. */
+  /* A fill that holds white text at 4.5:1, and one step darker for its hover. */
+  --primary-strong: color-mix(in srgb, var(--lds-color-primary-pressed) 90%, var(--lds-color-bg-primary));
+  --primary-strong-hover: color-mix(in srgb, var(--lds-color-primary-pressed) 76%, var(--lds-color-bg-primary));
+  /* Blue text that stays at 4.5:1 on a primary tint. */
+  --primary-soft: color-mix(in srgb, var(--lds-color-primary) 60%, var(--lds-color-text-accent));
+  /* A control's resting border, at 3:1 on a raised surface. */
+  --control-border: color-mix(in srgb, var(--lds-color-text-muted) 80%, var(--lds-color-text-primary));
   --accent: var(--lds-color-surface-hover);
   --accent-foreground: var(--lds-color-text-accent);
   --destructive: var(--lds-color-critical);
@@ -68,6 +76,10 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
+  --color-primary-strong: var(--primary-strong);
+  --color-primary-strong-hover: var(--primary-strong-hover);
+  --color-primary-soft: var(--primary-soft);
+  --color-control-border: var(--control-border);
   --color-muted: var(--muted);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-secondary: var(--secondary);
