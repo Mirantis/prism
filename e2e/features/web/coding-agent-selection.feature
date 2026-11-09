@@ -63,3 +63,17 @@ Feature: Coding agent delegation
     When I ask for a coding task using "codex"
     Then the coding task file contains "after"
     And the coding task used "codex"
+
+  # A Bedrock-ID override serves Bedrock only; on the subscription the tier
+  # runs its default model, which the ChatGPT login accepts.
+  @codex-subscription
+  Scenario: Run a coding task on a saved ChatGPT subscription with a model tier
+    Given I am logged in
+    And I have a personal agent
+    And Codex has a saved ChatGPT login
+    And Codex's small model is a Bedrock ID
+    And a coding task file contains "before"
+    When I ask for a coding task using "codex" on the "small" model
+    Then the coding task file contains "after"
+    And the coding task used "codex"
+    And the coding task asked for the "small" model

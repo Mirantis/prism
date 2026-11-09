@@ -93,6 +93,16 @@ describe('config', () => {
     expect((await loadConfig()).codingAgentModels['claude-code'][tier]).toEqual({ default: alias, bedrock: model });
   });
 
+  it.each([
+    ['small', 'openai.gpt-5.6-luna', 'gpt-5.6-luna'],
+    ['medium', 'us.openai.gpt-5.6-terra', 'gpt-5.6-terra'],
+    ['large', 'arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.openai.gpt-5.6-sol', 'gpt-5.6-sol'],
+  ] as const)('keeps a Bedrock ID for the codex %s tier on Bedrock only', async (tier, model, openai) => {
+    process.env.LLM_PROVIDER = 'anthropic';
+    process.env['CODEX_MODEL_' + tier.toUpperCase()] = model;
+    expect((await loadConfig()).codingAgentModels.codex[tier]).toEqual({ openai, bedrock: model });
+  });
+
   describe('public Web UI address', () => {
     beforeEach(() => {
       delete process.env.PRISM_PUBLIC_URL;

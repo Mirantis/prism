@@ -187,6 +187,9 @@ Omitted parameters keep the deployment's model and effort behavior.
 A `CLAUDE_CODE_MODEL_*` value that is a Bedrock ID, such as
 `eu.anthropic.claude-haiku-5-5`, applies only to tasks that run on Bedrock. Tasks
 on an Anthropic API key or a Claude subscription run the tier's default instead.
+A `CODEX_MODEL_*` value that is a Bedrock ID, such as `openai.gpt-5.6-luna`, also
+applies only to tasks that run on Bedrock. Tasks on an OpenAI API key or a ChatGPT
+subscription run the tier's default instead.
 
 Set each tier to a model your account can serve; set all three overrides to keep a model
 out of every tier. Blank overrides log a warning and use the default.
@@ -265,12 +268,12 @@ then set `CODEX_SUBSCRIPTION=true` and restart the agent:
 Sign in with ChatGPT. In a container, open the link that the command prints and
 enter its one-time code there. Codex then uses the subscription and none of the
 agent's API keys or Bedrock credentials. While no ChatGPT login is saved, every
-Codex task fails with a message that says so. The `CODEX_MODEL_*` overrides apply
-to these tasks too, so set them to models your plan serves, not Bedrock IDs. When
-the subscription reaches its usage limit, tasks fail with Codex's message until the
-limit resets. To go back to the agent's credentials, remove the variable and
-restart the agent. While the variable is set, **Sign out** leaves tasks failing
-until you sign in again.
+Codex task fails with a message that says so. A `CODEX_MODEL_*` model name, such
+as `gpt-5.6-terra`, applies to these tasks too; a Bedrock ID does not (see
+[Core](#core)). When the subscription reaches its usage limit, tasks fail with
+Codex's message until the limit resets. To go back to the agent's credentials,
+remove the variable and restart the agent. While the variable is set, **Sign
+out** leaves tasks failing until you sign in again.
 
 To send tasks to Codex by default, set `CODING_AGENT=codex` as well. When commands
 run in a container, a conversation you

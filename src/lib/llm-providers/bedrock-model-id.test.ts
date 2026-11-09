@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { isAnthropicModelId } from './bedrock-model-id';
+import { isAnthropicModelId, isOpenAiBedrockModelId } from './bedrock-model-id';
 
 describe('isAnthropicModelId', () => {
   it('matches bare and region-prefixed Anthropic IDs', () => {
@@ -23,5 +23,21 @@ describe('isAnthropicModelId', () => {
     expect(isAnthropicModelId('moonshot.kimi-k2-thinking')).toBe(false);
     expect(isAnthropicModelId('meta.llama3-70b-instruct-v1:0')).toBe(false);
     expect(isAnthropicModelId('mistral.mistral-large-2402-v1:0')).toBe(false);
+  });
+});
+
+describe('isOpenAiBedrockModelId', () => {
+  it('matches bare, region-prefixed and ARN OpenAI IDs on Bedrock', () => {
+    expect(isOpenAiBedrockModelId('openai.gpt-5.6-luna')).toBe(true);
+    expect(isOpenAiBedrockModelId('us.openai.gpt-5.6-terra')).toBe(true);
+    expect(
+      isOpenAiBedrockModelId('arn:aws:bedrock:us-east-1:123:inference-profile/us.openai.gpt-5.6-sol'),
+    ).toBe(true);
+  });
+
+  it('does not match OpenAI API IDs or other vendors', () => {
+    expect(isOpenAiBedrockModelId('gpt-5.6-luna')).toBe(false);
+    expect(isOpenAiBedrockModelId('o4-mini')).toBe(false);
+    expect(isOpenAiBedrockModelId('eu.anthropic.claude-haiku-5-5')).toBe(false);
   });
 });

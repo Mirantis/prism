@@ -8,7 +8,7 @@ import { hasClaudeCodeCredentials } from '../../src/lib/coding-agents/claude-cod
 import { readSavedLogin } from '../../src/lib/coding-agents/claude-code/authenticated-home';
 import { getExecutionEnvironment } from '../../src/lib/execution-environments/get-execution-environment';
 import { codexAuthMethod, readCodexLogin } from '../../src/lib/coding-agents/codex/credentials';
-import { isAnthropicModelId } from '../../src/lib/llm-providers/bedrock-model-id';
+import { isAnthropicModelId, isOpenAiBedrockModelId } from '../../src/lib/llm-providers/bedrock-model-id';
 import { getPrisma } from '../support/db-helper';
 import type { ToolCallRecord } from '../../src/types';
 
@@ -151,16 +151,37 @@ Then('the coding task is signed in with {string}', async ({}, method: string) =>
   }));
 });
 
-When('I ask for a coding task using {string}', async ({ page }, agent: string) => {
+async function askForCodingTask(page: Page, agent: string, model?: string): Promise<void> {
   test.setTimeout(240_000);
   const home = new HomePage(page);
   await home.navigate();
   await home.typeMessage(
-    `Use coding_agent with agent="${agent}" in edit mode to change ${filename} to exactly after. ` +
+    `Use coding_agent with agent="${agent}"${model ? ` and model="${model}"` : ''} in edit mode ` +
+    `to change ${filename} to exactly after. ` +
     'Poll coding_agent_status until completed. Report which coding agent ran the task and its result.',
   );
   await home.sendMessage();
   await home.waitForStreamComplete(180_000);
+}
+
+When('I ask for a coding task using {string}', async ({ page }, agent: string) => {
+  await askForCodingTask(page, agent);
+});
+
+// The runtime Playwright starts inherits this process's env, as for Claude Code above.
+Given("Codex's small model is a Bedrock ID", async () => {
+  test.skip(!isOpenAiBedrockModelId(process.env.CODEX_MODEL_SMALL ?? ''),
+    'Needs CODEX_MODEL_SMALL set to a Bedrock ID, such as openai.gpt-5.6-luna.');
+});
+
+When('I ask for a coding task using {string} on the {string} model', async ({ page }, agent: string, model: string) => {
+  await askForCodingTask(page, agent, model);
+});
+
+Then('the coding task asked for the {string} model', async ({}, model: string) => {
+  const starts = (await codingCalls()).filter(call => call.tool === 'coding_agent');
+  expect(starts).toHaveLength(1);
+  expect(JSON.parse(starts[0].input).model).toBe(model);
 });
 
 Then('the coding task used {string}', async ({ page }, agent: string) => {

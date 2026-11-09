@@ -9,3 +9,11 @@
 export function isAnthropicModelId(modelId: string): boolean {
   return /^anthropic\.|\.anthropic\./i.test(modelId);
 }
+
+/**
+ * Returns true when `modelId` is an OpenAI model on Bedrock, in the same forms
+ * as `isAnthropicModelId` (`openai.…`, `us.openai.…`, `…/us.openai.…`).
+ */
+export function isOpenAiBedrockModelId(modelId: string): boolean {
+  return /^openai\.|\.openai\./i.test(modelId);
+}
