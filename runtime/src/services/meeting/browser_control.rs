@@ -8,7 +8,13 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::services::meeting::browser_stack::{Locator, PageHandle};
+use serde_json::json;
+
+use crate::log_info;
+use crate::services::meeting::browser_stack::{
+    GotoOptions, LoadState, Locator, PageHandle, ScreenshotOptions, ScreenshotType, TextMatch,
+};
+use crate::utils::with_timeout::with_timeout;
 
 /// What the model asked to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -205,13 +211,31 @@ pub fn looks_like_selector(target: &str) -> bool {
 /// it meant. The substring pass still covers a name the 60-character reading limit cut
 /// short.
 async fn locate(page: &PageHandle, target: &str) -> anyhow::Result<Locator> {
-    todo!()
+    if looks_like_selector(target) {
+        return Ok(page.locator(target).first());
+    }
+
+    let exact = by_name(page, target, true);
+    if exact.count().await? > 0 {
+        return Ok(exact.first());
+    }
+
+    Ok(by_name(page, target, false).first())
 }
 
 /// One locator that matches a button, a link, a text box, a label, a placeholder or plain
 /// text with this name. `exact` chooses between a whole-name match and a substring match.
 fn by_name(page: &PageHandle, target: &str, exact: bool) -> Locator {
-    todo!()
+    let name = || TextMatch::Text {
+        text: target.to_string(),
+        exact,
+    };
+    page.get_by_role("button", Some(name()))
+        .or(page.get_by_role("link", Some(name())))
+        .or(page.get_by_role("textbox", Some(name())))
+        .or(page.get_by_label(name()))
+        .or(page.get_by_placeholder(name()))
+        .or(page.get_by_text(name()))
 }
 
 /// The controls probe run in the page: the names of links, buttons and fields, from
@@ -247,7 +271,37 @@ const CONTROLS_PROBE: &str = r#"({ limit, nameLimit }) => {
 /// `READ_TIMEOUT_MS`, and each empty when it does not arrive. Runs of three or more
 /// newlines in the text become two, and the text is trimmed and cut to `TEXT_LIMIT`.
 pub async fn read(page: &PageHandle) -> BrowserReading {
-    todo!()
+    static BLANK_RUNS: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\n{3,}").expect("valid regex"));
+    let timeout = READ_TIMEOUT_MS as i64;
+    let body = page.locator("body");
+
+    let (title, text, controls) = tokio::join!(
+        with_timeout(page.title(), timeout),
+        with_timeout(body.inner_text(Some(READ_TIMEOUT_MS)), timeout),
+        with_timeout(
+            page.evaluate_function(
+                CONTROLS_PROBE,
+                json!({ "limit": CONTROL_LIMIT, "nameLimit": CONTROL_NAME_LIMIT }),
+            ),
+            timeout,
+        ),
+    );
+    let title = title.unwrap_or_default();
+    let text = text.unwrap_or_default();
+    let controls: Vec<String> = controls
+        .ok()
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or_default();
+
+    let text = BLANK_RUNS.replace_all(&text, "\n\n");
+    let text = crate::support::js::trim(&text);
+    BrowserReading {
+        url: page.url(),
+        title,
+        text: crate::support::js::slice16(text, 0, TEXT_LIMIT),
+        controls,
+    }
 }
 
 /// JPEG, and not at full quality. The picture stays in the live session's context for
@@ -261,7 +315,17 @@ const SCREENSHOT_TIMEOUT_MS: u64 = 10_000;
 /// Numbered from 1, since the agent says these numbers out loud. A title that does not
 /// arrive in time is left empty: the address alone still tells the model which tab it is.
 pub async fn summarize_tabs(pages: &[PageHandle], active: Option<&PageHandle>) -> Vec<TabSummary> {
-    todo!()
+    futures::future::join_all(pages.iter().enumerate().map(|(index, page)| async move {
+        TabSummary {
+            number: index as i64 + 1,
+            title: with_timeout(page.title(), READ_TIMEOUT_MS as i64)
+                .await
+                .unwrap_or_default(),
+            url: page.url(),
+            active: active == Some(page),
+        }
+    }))
+    .await
 }
 
 /// A picture of the page and the reading taken with it.
@@ -274,7 +338,29 @@ pub struct PageCapture {
 
 /// A picture of the page, as a data URL, with the same reading attached.
 pub async fn capture(page: &PageHandle) -> anyhow::Result<PageCapture> {
-    todo!()
+    use base64::Engine as _;
+
+    let (shot, reading) = tokio::join!(
+        with_timeout(
+            page.screenshot(ScreenshotOptions {
+                kind: ScreenshotType::Jpeg,
+                quality: Some(SCREENSHOT_QUALITY),
+                timeout_ms: Some(SCREENSHOT_TIMEOUT_MS),
+                path: None,
+            }),
+            SCREENSHOT_TIMEOUT_MS as i64,
+        ),
+        read(page),
+    );
+    let shot = shot?;
+
+    Ok(PageCapture {
+        image_url: format!(
+            "data:image/jpeg;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(shot)
+        ),
+        reading,
+    })
 }
 
 /// Run one command against a page.
@@ -295,5 +381,226 @@ pub async fn capture(page: &PageHandle) -> anyhow::Result<PageCapture> {
 /// `[Meeting:Browser] {action} failed: {first line of the error}` at info and answers
 /// `That {action} did not work: {first line of the error}` with the reading.
 pub async fn run_browser_command(page: &PageHandle, command: &BrowserCommand) -> BrowserResult {
-    todo!()
+    match attempt(page, command).await {
+        Ok(result) => result,
+        Err(err) => {
+            let text = err.to_string();
+            let detail = text.split('\n').next().unwrap_or_default();
+            let action = command.action.as_str();
+            log_info!("[Meeting:Browser] {} failed: {}", action, detail);
+            BrowserResult::with_reading(
+                false,
+                format!("That {action} did not work: {detail}"),
+                read(page).await,
+            )
+        }
+    }
+}
+
+/// The command itself; an error is a command that failed, which the caller reports.
+async fn attempt(page: &PageHandle, command: &BrowserCommand) -> anyhow::Result<BrowserResult> {
+    let done = |message: String| async move {
+        BrowserResult::with_reading(true, message, read(page).await)
+    };
+
+    match command.action {
+        BrowserAction::Navigate => {
+            let Some(raw) = command.url.as_deref().filter(|url| !url.is_empty()) else {
+                return Ok(BrowserResult::message(false, "Say which URL to open."));
+            };
+            let Some(url) = normalize_url(raw) else {
+                return Ok(BrowserResult::message(
+                    false,
+                    format!("\"{raw}\" is not a web address I can open."),
+                ));
+            };
+            page.goto(
+                &url,
+                GotoOptions {
+                    wait_until: LoadState::DomContentLoaded,
+                    timeout_ms: Some(NAVIGATE_TIMEOUT_MS),
+                },
+            )
+            .await?;
+            Ok(done(format!("Opened {url}")).await)
+        }
+
+        BrowserAction::Click => {
+            let Some(target) = command.target.as_deref().filter(|t| !t.is_empty()) else {
+                return Ok(BrowserResult::message(false, "Say what to click."));
+            };
+            locate(page, target).await?.click(ACTION_TIMEOUT_MS).await?;
+            Ok(done(format!("Clicked \"{target}\"")).await)
+        }
+
+        BrowserAction::Type => {
+            let Some(text) = command.text.as_deref() else {
+                return Ok(BrowserResult::message(false, "Say what to type."));
+            };
+            let target = command.target.as_deref().filter(|t| !t.is_empty());
+            if let Some(target) = target {
+                locate(page, target)
+                    .await?
+                    .fill(text, ACTION_TIMEOUT_MS)
+                    .await?;
+            } else {
+                // No target: type wherever the page put the cursor, which is what a person
+                // does after clicking a field.
+                page.keyboard_type(text, 20).await?;
+            }
+            Ok(done(match target {
+                Some(target) => format!("Typed into \"{target}\""),
+                None => "Typed".to_string(),
+            })
+            .await)
+        }
+
+        BrowserAction::Press => {
+            let Some(key) = command.key.as_deref().filter(|k| !k.is_empty()) else {
+                return Ok(BrowserResult::message(false, "Say which key to press."));
+            };
+            page.keyboard_press(key).await?;
+            // A key can start a navigation (Enter in a search box), and the reading has to
+            // be of where that lands rather than of the page being left.
+            let _ = page
+                .wait_for_load_state(LoadState::DomContentLoaded, ACTION_TIMEOUT_MS)
+                .await;
+            Ok(done(format!("Pressed {key}")).await)
+        }
+
+        BrowserAction::Scroll => {
+            let amount = command.amount.unwrap_or(600.0);
+            page.mouse_wheel(0.0, amount).await?;
+            let message = if amount >= 0.0 {
+                "Scrolled down"
+            } else {
+                "Scrolled up"
+            };
+            Ok(done(message.to_string()).await)
+        }
+
+        BrowserAction::Read => Ok(done("Read the page".to_string()).await),
+
+        // The set of tabs belongs to the browser, not to one page. `browse` in
+        // `meeting_bot_service.rs` answers these.
+        BrowserAction::NewTab | BrowserAction::SwitchTab | BrowserAction::CloseTab => {
+            Ok(BrowserResult::message(
+                false,
+                format!("{} is not a page command.", command.action.as_str()),
+            ))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::meeting::browser_stack::testing::FakeBrowser;
+
+    #[test]
+    fn takes_a_selector_for_a_selector_and_words_for_words() {
+        assert!(looks_like_selector("#search"));
+        assert!(looks_like_selector(".btn-primary"));
+        assert!(looks_like_selector("input[name=\"q\"]"));
+        assert!(!looks_like_selector("Sign in"));
+        assert!(!looks_like_selector("Search the docs"));
+    }
+
+    #[test]
+    fn opens_a_bare_host_as_https_and_refuses_other_schemes() {
+        assert_eq!(
+            normalize_url("example.test").as_deref(),
+            Some("https://example.test/")
+        );
+        assert_eq!(
+            normalize_url("http://example.test/a?b=1").as_deref(),
+            Some("http://example.test/a?b=1")
+        );
+        assert_eq!(normalize_url("file:///etc/passwd"), None);
+        assert_eq!(normalize_url("chrome://settings"), None);
+    }
+
+    fn command(action: BrowserAction) -> BrowserCommand {
+        BrowserCommand {
+            action,
+            url: None,
+            tab: None,
+            target: None,
+            text: None,
+            key: None,
+            amount: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn answers_a_command_with_a_missing_argument_instead_of_failing() {
+        let fake = FakeBrowser::new();
+        let page = fake.page("https://example.test/");
+        for action in [
+            BrowserAction::Navigate,
+            BrowserAction::Click,
+            BrowserAction::Type,
+            BrowserAction::Press,
+        ] {
+            let result = run_browser_command(&page, &command(action)).await;
+            assert!(!result.success);
+            assert!(
+                result.message.starts_with("Say which") || result.message.starts_with("Say what"),
+                "{}",
+                result.message
+            );
+            assert_eq!(result.url, None);
+        }
+        assert!(fake.sent_to(&page).is_empty());
+    }
+
+    #[tokio::test]
+    async fn refuses_a_scheme_a_room_could_not_be_shown() {
+        // The point of the browser is what the room sees, and a screen share of
+        // `file:///etc/passwd` is a different kind of event.
+        let fake = FakeBrowser::new();
+        let page = fake.page("https://example.test/");
+        let mut navigate = command(BrowserAction::Navigate);
+        navigate.url = Some("file:///etc/passwd".to_string());
+        let result = run_browser_command(&page, &navigate).await;
+        assert!(!result.success);
+        assert_eq!(
+            result.message,
+            "\"file:///etc/passwd\" is not a web address I can open."
+        );
+        assert!(fake.sent_to(&page).is_empty());
+    }
+
+    #[tokio::test]
+    async fn answers_a_tab_action_as_not_a_page_command() {
+        let fake = FakeBrowser::new();
+        let page = fake.page("https://example.test/");
+        let result = run_browser_command(&page, &command(BrowserAction::NewTab)).await;
+        assert_eq!(
+            result,
+            BrowserResult::message(false, "new_tab is not a page command.")
+        );
+    }
+
+    #[test]
+    fn serializes_a_result_with_the_reading_beside_success_and_message() {
+        let result = BrowserResult::with_reading(
+            true,
+            "Read the page",
+            BrowserReading {
+                url: "https://example.test/".into(),
+                title: "Example".into(),
+                text: "Hi".into(),
+                controls: vec!["Sign in".into()],
+            },
+        );
+        assert_eq!(
+            serde_json::to_string(&result).unwrap(),
+            r#"{"success":true,"message":"Read the page","url":"https://example.test/","title":"Example","text":"Hi","controls":["Sign in"]}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&BrowserResult::message(false, "Say what to click.")).unwrap(),
+            r#"{"success":false,"message":"Say what to click."}"#
+        );
+    }
 }

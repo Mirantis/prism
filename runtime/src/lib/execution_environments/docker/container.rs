@@ -80,7 +80,11 @@ pub async fn start_container(spec: &ContainerSpec) -> anyhow::Result<()> {
     }
     // Held open by the image's own command; nothing runs here until a
     // `docker exec` arrives.
-    argv.extend([spec.image.clone(), "sleep".to_string(), "infinity".to_string()]);
+    argv.extend([
+        spec.image.clone(),
+        "sleep".to_string(),
+        "infinity".to_string(),
+    ]);
 
     let run = engine_call(
         &argv,

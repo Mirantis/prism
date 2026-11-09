@@ -22,10 +22,10 @@ use crate::db::schema::conversation_threads::dsl as t;
 use crate::db::schema::webhook_runs::dsl as wr;
 use crate::db::sql_types::DbDateTime;
 use crate::lib::log_redaction::err_json;
+use crate::log_error;
 use crate::services::tool_call_history_service::read_tool_calls;
 use crate::support::js;
 use crate::types::ToolCallRecord;
-use crate::log_error;
 
 /// Every status a webhook run row holds, in the order of the run's life.
 pub const WEBHOOK_RUN_STATUSES: [WebhookRunStatus; 7] = [
@@ -295,10 +295,7 @@ fn with_messages(
     Ok(runs
         .into_iter()
         .map(|run| SummaryRow {
-            message: run
-                .message_id
-                .as_ref()
-                .and_then(|id| messages.remove(id)),
+            message: run.message_id.as_ref().and_then(|id| messages.remove(id)),
             id: run.id,
             name: run.name,
             event: run.event,
@@ -469,9 +466,9 @@ impl WebhookRunService {
                     return Ok(Vec::new());
                 };
                 query = query.filter(
-                    wr::created_at.lt(DbDateTime(created_at)).or(wr::created_at
-                        .eq(DbDateTime(created_at))
-                        .and(wr::id.lt(id))),
+                    wr::created_at
+                        .lt(DbDateTime(created_at))
+                        .or(wr::created_at.eq(DbDateTime(created_at)).and(wr::id.lt(id))),
                 );
             }
             let runs = query.load(conn)?;
@@ -766,13 +763,19 @@ mod tests {
             let base = 1_700_000_000_000_i64;
             let rows: Vec<NewWebhookRun> = (0..MAX_WEBHOOK_RUNS + 1)
                 .map(|i| {
-                    let mut row =
-                        NewWebhookRun::new(format!("old-{i}"), &agent_id, "alerts", "push", "completed");
+                    let mut row = NewWebhookRun::new(
+                        format!("old-{i}"),
+                        &agent_id,
+                        "alerts",
+                        "push",
+                        "completed",
+                    );
                     row.created_at = DbDateTime(crate::support::from_ms(base + i));
                     row
                 })
                 .chain(std::iter::once({
-                    let mut row = NewWebhookRun::new("waiting", &agent_id, "alerts", "push", "queued");
+                    let mut row =
+                        NewWebhookRun::new("waiting", &agent_id, "alerts", "push", "queued");
                     row.created_at = DbDateTime(crate::support::from_ms(base - 1));
                     row
                 }))

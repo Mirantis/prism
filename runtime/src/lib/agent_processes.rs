@@ -362,8 +362,10 @@ impl ExecProcess for DeferredProcess {
             signal: Some(signal),
             error: None,
         };
-        self.ended_tx.send_if_modified(|value| settle_once(value, &end));
-        self.closed_tx.send_if_modified(|value| settle_once(value, &end));
+        self.ended_tx
+            .send_if_modified(|value| settle_once(value, &end));
+        self.closed_tx
+            .send_if_modified(|value| settle_once(value, &end));
         true
     }
 }

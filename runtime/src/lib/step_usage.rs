@@ -71,3 +71,191 @@ pub fn fold_step_usage(steps: &[StepUsage]) -> Option<StepUsage> {
     }
     Some(acc)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::InputTokenDetails;
+
+    fn usage() -> StepUsage {
+        StepUsage {
+            model: "claude-opus-5".into(),
+            total_tokens: 1100,
+            input_tokens: 1000,
+            output_tokens: 100,
+            cache_read_tokens: 700,
+            cache_write_tokens: 100,
+            no_cache_tokens: 200,
+        }
+    }
+
+    fn sdk(
+        input: Option<i64>,
+        output: Option<i64>,
+        total: Option<i64>,
+        details: (Option<i64>, Option<i64>, Option<i64>),
+    ) -> LanguageModelUsage {
+        LanguageModelUsage {
+            input_tokens: input,
+            output_tokens: output,
+            total_tokens: total,
+            input_token_details: InputTokenDetails {
+                cache_read_tokens: details.0,
+                cache_write_tokens: details.1,
+                no_cache_tokens: details.2,
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn keeps_the_cache_split() {
+        let result = to_step_usage(
+            "claude-opus-5",
+            Some(&sdk(
+                Some(1000),
+                Some(100),
+                Some(1100),
+                (Some(700), Some(100), Some(200)),
+            )),
+        );
+        assert_eq!(result, Some(usage()));
+    }
+
+    #[test]
+    fn keeps_the_providers_own_total_when_it_exceeds_input_plus_output() {
+        // A model billing reasoning tokens reports a total above the split.
+        let result = to_step_usage(
+            "claude-opus-5",
+            Some(&sdk(
+                Some(1000),
+                Some(100),
+                Some(1400),
+                (Some(700), Some(100), Some(200)),
+            )),
+        );
+        assert_eq!(result.unwrap().total_tokens, 1400);
+    }
+
+    #[test]
+    fn falls_back_to_input_plus_output_without_a_total() {
+        let result = to_step_usage(
+            "claude-opus-5",
+            Some(&sdk(
+                Some(1000),
+                Some(100),
+                None,
+                (Some(700), Some(100), Some(200)),
+            )),
+        );
+        assert_eq!(result.unwrap().total_tokens, 1100);
+    }
+
+    #[test]
+    fn returns_nothing_when_the_provider_reported_neither_figure() {
+        assert_eq!(to_step_usage("m", None), None);
+        assert_eq!(
+            to_step_usage("m", Some(&sdk(None, Some(5), None, (None, None, None)))),
+            None
+        );
+    }
+
+    #[test]
+    fn keeps_a_total_given_without_a_prompt_size() {
+        // The goal loop meters its budget against total_tokens, so discarding a
+        // partial report would leave it counting zero for ever.
+        let result = to_step_usage(
+            "m",
+            Some(&sdk(None, Some(5), Some(900), (None, None, None))),
+        );
+        assert_eq!(
+            result,
+            Some(StepUsage {
+                model: "m".into(),
+                total_tokens: 900,
+                input_tokens: 0,
+                output_tokens: 5,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                no_cache_tokens: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn keeps_a_converse_model_whole_cache_free_but_measured() {
+        // Converse reports its uncached prompt as `noCacheTokens` and no cache
+        // tokens at all, so the three details still sum to the prompt.
+        let result = to_step_usage(
+            "us.meta.llama3-3-70b-instruct-v1:0",
+            Some(&sdk(
+                Some(42),
+                Some(2),
+                Some(44),
+                (Some(0), Some(0), Some(42)),
+            )),
+        )
+        .unwrap();
+        assert_eq!(result.no_cache_tokens, 42);
+        assert_eq!(
+            result.cache_read_tokens + result.cache_write_tokens + result.no_cache_tokens,
+            result.input_tokens
+        );
+    }
+
+    #[test]
+    fn zeroes_a_cache_split_the_provider_omits() {
+        let result = to_step_usage(
+            "gpt-5.6-sol",
+            Some(&sdk(Some(900), Some(50), Some(950), (None, None, None))),
+        );
+        assert_eq!(
+            result,
+            Some(StepUsage {
+                model: "gpt-5.6-sol".into(),
+                total_tokens: 950,
+                input_tokens: 900,
+                output_tokens: 50,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                no_cache_tokens: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn adds_every_count_and_keeps_the_model() {
+        assert_eq!(
+            fold_step_usage(&[usage(), usage(), usage()]),
+            Some(StepUsage {
+                model: "claude-opus-5".into(),
+                total_tokens: 3300,
+                input_tokens: 3000,
+                output_tokens: 300,
+                cache_read_tokens: 2100,
+                cache_write_tokens: 300,
+                no_cache_tokens: 600,
+            })
+        );
+    }
+
+    #[test]
+    fn sums_the_prompt_once_per_step() {
+        let mut second = usage();
+        second.input_tokens = 1400;
+        assert_eq!(
+            fold_step_usage(&[usage(), second]).unwrap().input_tokens,
+            2400
+        );
+    }
+
+    #[test]
+    fn returns_nothing_for_no_steps() {
+        assert_eq!(fold_step_usage(&[]), None);
+    }
+
+    #[test]
+    fn leaves_a_single_step_untouched() {
+        assert_eq!(fold_step_usage(&[usage()]), Some(usage()));
+    }
+}

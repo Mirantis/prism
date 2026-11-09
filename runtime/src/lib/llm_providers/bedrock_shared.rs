@@ -144,7 +144,8 @@ fn default_provider() -> ChainProvider {
             let credentials = chain
                 .provide_credentials()
                 .await
-                .map_err(anyhow::Error::new)?;
+                // The chain's own message is generic; its causes say which provider failed.
+                .map_err(|err| anyhow::anyhow!("{:#}", anyhow::Error::new(err)))?;
             guard.1 = Some(credentials.clone());
             Ok(credentials)
         })

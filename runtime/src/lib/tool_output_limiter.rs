@@ -675,3 +675,203 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+mod capture_tests {
+    use super::*;
+    use crate::ai::{ToModelOutputOptions, ToolExecutionOptions, execute_fn, to_model_output_fn};
+
+    fn tool_with(result: Value) -> ToolSet {
+        let mut tools = ToolSet::new();
+        tools.insert(
+            "myTool".into(),
+            Tool {
+                description: Some("my description".into()),
+                execute: Some(execute_fn(move |_input, _options| {
+                    let result = result.clone();
+                    async move { Ok(result) }
+                })),
+                ..Default::default()
+            },
+        );
+        tools
+    }
+
+    fn capture(tools: ToolSet, max_chars: usize) -> ToolSet {
+        with_tool_output_capture(
+            tools,
+            ToolOutputCaptureOptions {
+                max_chars: Some(max_chars),
+                spill: Some(false),
+                ..Default::default()
+            },
+        )
+    }
+
+    async fn run(tools: &ToolSet, name: &str) -> Value {
+        let execute = tools[name].execute.clone().unwrap();
+        execute(json!({}), ToolExecutionOptions::default())
+            .await
+            .unwrap()
+    }
+
+    async fn model_view(tools: &ToolSet, name: &str, output: Value) -> Value {
+        let hook = tools[name].to_model_output.clone().unwrap();
+        let view = hook(ToModelOutputOptions {
+            tool_call_id: "call-1".into(),
+            input: json!({}),
+            output,
+        })
+        .await
+        .unwrap();
+        serde_json::to_value(view).unwrap()
+    }
+
+    #[tokio::test]
+    async fn returns_a_result_that_fits_unchanged() {
+        let raw = json!({ "success": true, "attachmentId": "att-1" });
+        let tools = capture(tool_with(raw.clone()), 1000);
+        assert_eq!(run(&tools, "myTool").await, raw);
+    }
+
+    #[tokio::test]
+    async fn shows_a_result_that_fits_unchanged_to_the_model() {
+        let tools = capture(tool_with(json!("short output")), 1000);
+        assert_eq!(
+            model_view(&tools, "myTool", json!("short output")).await,
+            json!({ "type": "text", "value": "short output" })
+        );
+    }
+
+    #[tokio::test]
+    async fn replaces_an_oversized_result_with_a_cut_that_keeps_the_original() {
+        let raw = json!("Z".repeat(50_000));
+        let tools = capture(tool_with(raw.clone()), 1000);
+        let out = run(&tools, "myTool").await;
+        assert!(is_spilled_tool_output(&out));
+        assert_eq!(unwrap_tool_output(&out), &raw);
+        let text = out["text"].as_str().unwrap();
+        assert!(text.contains("[INCOMPLETE OUTPUT"));
+        assert!(text.len() < 50_000);
+
+        // The model is shown the cut minted at execute time.
+        assert_eq!(
+            model_view(&tools, "myTool", out.clone()).await,
+            json!({ "type": "text", "value": text })
+        );
+    }
+
+    #[tokio::test]
+    async fn cuts_an_mcp_result_down_to_its_text() {
+        let mcp = json!({ "content": [{ "type": "text", "text": "POD".repeat(500) }] });
+        let tools = capture(tool_with(mcp), 50);
+        let out = run(&tools, "myTool").await;
+        assert!(out["text"].as_str().unwrap().contains("[INCOMPLETE OUTPUT"));
+    }
+
+    #[tokio::test]
+    async fn caps_a_tool_that_brings_its_own_model_output() {
+        let raw = json!({ "content": [{ "type": "text", "text": "POD".repeat(500) }] });
+        let mut tools = tool_with(raw.clone());
+        let seen: Arc<parking_lot::Mutex<Option<Value>>> = Arc::default();
+        let seen_in = seen.clone();
+        tools["myTool"].to_model_output = Some(to_model_output_fn(move |options| {
+            let seen_in = seen_in.clone();
+            async move {
+                *seen_in.lock() = Some(options.output.clone());
+                Ok(serde_json::from_value(json!({
+                    "type": "content",
+                    "value": [
+                        { "type": "text", "text": "POD".repeat(500) },
+                        { "type": "image-data", "data": "abc123", "mediaType": "image/png" },
+                    ],
+                }))?)
+            }
+        }));
+        let tools = capture(tools, 50);
+        let out = run(&tools, "myTool").await;
+        let view = model_view(&tools, "myTool", out).await;
+
+        // The tool's own hook still saw its own return, not the envelope.
+        assert_eq!(seen.lock().as_ref(), Some(&raw));
+        assert_eq!(view["type"], "content");
+        let parts = view["value"].as_array().unwrap();
+        assert!(
+            parts[0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("[INCOMPLETE OUTPUT")
+        );
+        assert!(parts[0]["text"].as_str().unwrap().len() < 1500);
+        // A non-text part is never cut.
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[1]["data"], "abc123");
+    }
+
+    #[tokio::test]
+    async fn leaves_an_image_only_result_alone() {
+        let raw = json!({ "content": [{ "type": "image", "data": "x".repeat(60_000), "mimeType": "image/png" }] });
+        let tools = capture(tool_with(raw.clone()), 50);
+        assert_eq!(run(&tools, "myTool").await, raw);
+    }
+
+    #[tokio::test]
+    async fn caps_the_model_view_of_a_tool_with_no_execute() {
+        let mut tools = ToolSet::new();
+        tools.insert(
+            "provided".into(),
+            Tool {
+                description: Some("provider-defined".into()),
+                ..Default::default()
+            },
+        );
+        let tools = capture(tools, 100);
+        assert!(tools["provided"].execute.is_none());
+        let view = model_view(&tools, "provided", json!("Z".repeat(50_000))).await;
+        assert!(
+            view["value"]
+                .as_str()
+                .unwrap()
+                .contains("[INCOMPLETE OUTPUT")
+        );
+    }
+
+    #[tokio::test]
+    async fn does_not_mistake_a_result_with_the_marker_for_a_cut_one() {
+        let impostor = json!({ "__prismToolOutputSpill": true, "somethingElse": 1 });
+        assert!(!is_spilled_tool_output(&impostor));
+        let tools = capture(tool_with(impostor), 1000);
+        let out = run(&tools, "myTool").await;
+        let view = model_view(&tools, "myTool", out).await;
+        assert!(view["value"].as_str().unwrap().contains("somethingElse"));
+    }
+
+    #[test]
+    fn keeps_the_tools_own_properties() {
+        let tools = capture(tool_with(json!("x")), 1000);
+        assert_eq!(
+            tools["myTool"].description.as_deref(),
+            Some("my description")
+        );
+    }
+
+    #[test]
+    fn serializes_the_envelope_as_the_cut_view_alone() {
+        let spilled = SpilledToolOutput {
+            text: "cut".into(),
+            truncation: ToolOutputTruncation {
+                total_chars: 10,
+                kept_chars: 5,
+                omitted_chars: 5,
+                spill_id: None,
+            },
+            raw: json!("ONLY-IN-THE-RAW"),
+        };
+        let serialized = serde_json::to_string(&spilled).unwrap();
+        assert!(!serialized.contains("ONLY-IN-THE-RAW"));
+        assert_eq!(
+            serde_json::from_str::<Value>(&serialized).unwrap(),
+            json!({ "text": "cut", "truncation": { "totalChars": 10, "keptChars": 5, "omittedChars": 5 } })
+        );
+    }
+}

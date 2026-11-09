@@ -165,3 +165,74 @@ fn kebab(purpose: &str) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+
+    #[test]
+    fn gives_every_agent_directory_one_of_its_own() {
+        let mounts = volume_mounts("abc123");
+        assert_eq!(mounts.len(), purposes().len());
+        let names: HashSet<_> = mounts.iter().map(|m| m.name.clone()).collect();
+        let paths: HashSet<_> = mounts.iter().map(|m| m.path.clone()).collect();
+        assert_eq!(names.len(), mounts.len());
+        assert_eq!(paths.len(), mounts.len());
+    }
+
+    #[test]
+    fn names_them_after_the_deployment_so_two_runtimes_never_share_one() {
+        assert_eq!(
+            volume_name("abc123", VolumePurpose::WorkspaceRoot),
+            "prism-exec-abc123-workspace-root"
+        );
+        assert_eq!(
+            volume_name("def456", VolumePurpose::WorkspaceRoot),
+            "prism-exec-def456-workspace-root"
+        );
+    }
+
+    #[test]
+    fn mounts_each_one_at_the_path_the_image_created() {
+        let mounts = volume_mounts("abc123");
+        let workspace = mounts
+            .iter()
+            .find(|m| m.path == CONTAINER_PATHS.workspace_root)
+            .unwrap();
+        assert_eq!(workspace.name, "prism-exec-abc123-workspace-root");
+        // Every path is under one root, which is what Dockerfile.exec creates.
+        assert!(mounts.iter().all(|m| m.path.starts_with("/prism/")));
+    }
+
+    #[test]
+    fn serves_the_container_tree_and_nothing_else() {
+        assert!(serves_path(CONTAINER_PATHS.workspace_root));
+        assert!(serves_path(&format!(
+            "{}/repo/src",
+            CONTAINER_PATHS.workspace_root
+        )));
+        assert!(serves_path(CONTAINER_PATHS.skills_dir));
+    }
+
+    #[test]
+    fn does_not_serve_a_path_on_this_machine() {
+        assert!(!serves_path("/Users/me/dev/repo"));
+        assert!(!serves_path("/etc"));
+        assert!(!serves_path("/data/agent.db"));
+    }
+
+    #[test]
+    fn does_not_serve_a_sibling_whose_name_merely_starts_the_same() {
+        assert!(!serves_path("/prismatic"));
+        assert!(!serves_path("/prism-other/workspace"));
+    }
+
+    #[test]
+    fn resolves_a_path_before_deciding_and_refuses_a_relative_one() {
+        assert!(serves_path("/prism/workspace/../skills"));
+        assert!(!serves_path("/prism/workspace/../../etc"));
+        assert!(!serves_path("workspace"));
+    }
+}

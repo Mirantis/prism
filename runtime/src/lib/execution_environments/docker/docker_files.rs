@@ -426,7 +426,12 @@ mod tests {
     #[test]
     fn sends_written_content_on_stdin() {
         // `-i` is what connects our stdin to the container's.
-        let argv = file_argv("c", "cat > \"$1\"", &["/prism/workspace/a.txt".into()], true);
+        let argv = file_argv(
+            "c",
+            "cat > \"$1\"",
+            &["/prism/workspace/a.txt".into()],
+            true,
+        );
         assert_eq!(&argv[..3], &["exec", "-i", "c"]);
     }
 
@@ -501,7 +506,10 @@ mod tests {
             Some(1),
             "/prism/workspace/full",
         );
-        assert_eq!(err.to_string(), "rmdir: failed to remove: Directory not empty");
+        assert_eq!(
+            err.to_string(),
+            "rmdir: failed to remove: Directory not empty"
+        );
         assert_eq!(
             crate::lib::execution_environments::execution_environment::io_error_kind(&err),
             Some(std::io::ErrorKind::DirectoryNotEmpty)

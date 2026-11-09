@@ -19,7 +19,13 @@
 use std::collections::BTreeMap;
 
 use bytes::{Bytes, BytesMut};
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
+
+use crate::lib::telemetry::track_event;
+use crate::log_info;
+use crate::services::meeting::audio_playback::clock_ms;
+use crate::services::meeting::resampler::pcm16_bytes_duration_ms;
 
 pub use crate::services::meeting::realtime_session::RecordingSegment;
 use crate::services::meeting::resampler::{Downsampler, REALTIME_SAMPLE_RATE};
@@ -79,6 +85,16 @@ pub struct ScreenRecordingOptions {
 pub fn format_offset(ms: f64) -> String {
     let total = (ms / 1000.0).floor().max(0.0) as i64;
     format!("{}:{:02}", total / 60, total % 60)
+}
+
+/// `Math.round`: the nearest integer, halves toward positive infinity.
+fn js_round(value: f64) -> f64 {
+    let floor = value.floor();
+    if value - floor >= 0.5 {
+        floor + 1.0
+    } else {
+        floor
+    }
 }
 
 /// The window an offset falls in.
@@ -141,7 +157,23 @@ impl ScreenRecording {
     /// Logs `[VoiceChat] The user is recording their screen` and emits
     /// `screen recording started`.
     pub fn start(&mut self) -> bool {
-        todo!()
+        if self.started_at.is_some() {
+            return false;
+        }
+        self.started_at = Some(clock_ms());
+        self.audio = Vec::new();
+        self.audio_bytes = 0;
+        self.frames = Vec::new();
+        if let Some(downsampler) = self.downsampler.as_mut() {
+            downsampler.reset();
+        }
+        log_info!("[VoiceChat] The user is recording their screen");
+        track_event(
+            "screen recording started",
+            Some(&self.options.user_id),
+            None,
+        );
+        true
     }
 
     /// Take a frame of the client's audio. Answers whether the recording took it, which is
@@ -162,7 +194,7 @@ impl ScreenRecording {
         }
         // Timed here while the pictures are timed in the page, a round trip apart. Windows
         // are half a minute, so the two agree on which one a moment belongs to.
-        let index = window_of((crate::support::now_ms() - started_at) as f64);
+        let index = window_of((clock_ms() - started_at) as f64);
         if self.audio.len() <= index {
             self.audio.resize_with(index + 1, Vec::new);
         }
@@ -201,7 +233,17 @@ impl ScreenRecording {
     /// Answers whether a recording was running, so a caller can tell the user's model about
     /// the one that will not arrive without announcing a recording nobody made.
     pub fn cancel(&mut self) -> bool {
-        todo!()
+        let Some(started_at) = self.started_at else {
+            return false;
+        };
+        self.finish_event(
+            RecordingStatus::Cancelled,
+            None,
+            (clock_ms() - started_at) as f64,
+            &[],
+        );
+        self.clear();
+        true
     }
 
     /// End the recording and answer what to put in front of the model.
@@ -215,7 +257,52 @@ impl ScreenRecording {
     /// `MAX_RECORDING_MS`. Logs
     /// `[VoiceChat] Recording ended after {offset} ({reason}): {frames} pictures, {seconds}s of narration`.
     pub fn stop(&mut self, reason: RecordingEndReason, ms: f64) -> Option<RecordingResult> {
-        todo!()
+        let started_at = self.started_at?;
+        // The page's own figure, since it holds the clock the pictures are stamped against.
+        let reported = if ms.is_finite() && ms > 0.0 {
+            ms
+        } else {
+            (clock_ms() - started_at) as f64
+        };
+        let ran = reported.min(MAX_RECORDING_MS as f64);
+        let segments = self.build_segments();
+        let frames = self.frames.len();
+        let audio_ms = js_round(pcm16_bytes_duration_ms(
+            self.audio_bytes,
+            REALTIME_SAMPLE_RATE,
+        )) as i64;
+        self.finish_event(
+            if segments.is_empty() {
+                RecordingStatus::Empty
+            } else {
+                RecordingStatus::Delivered
+            },
+            Some(reason),
+            ran,
+            &[
+                ("frames", frames.to_string()),
+                ("audio_ms", audio_ms.to_string()),
+                ("segments", segments.len().to_string()),
+            ],
+        );
+        self.clear();
+        log_info!(
+            "[VoiceChat] Recording ended after {} ({}): {} pictures, {}s of narration",
+            format_offset(ran),
+            reason.as_str(),
+            frames,
+            js_round(audio_ms as f64 / 1000.0) as i64
+        );
+        if segments.is_empty() {
+            return None;
+        }
+        Some(RecordingResult {
+            segments,
+            ms: ran,
+            frames,
+            audio_ms,
+            reason,
+        })
     }
 
     /// The windows, oldest first, with the empty ones left out.
@@ -258,7 +345,20 @@ impl ScreenRecording {
         ms: f64,
         extra: &[(&str, String)],
     ) {
-        todo!()
+        let mut props = IndexMap::new();
+        props.insert("status".to_string(), status.as_str().to_string());
+        if let Some(reason) = reason {
+            props.insert("reason".to_string(), reason.as_str().to_string());
+        }
+        props.insert("duration_ms".to_string(), (js_round(ms) as i64).to_string());
+        for (key, value) in extra {
+            props.insert(key.to_string(), value.clone());
+        }
+        track_event(
+            "screen recording finished",
+            Some(&self.options.user_id),
+            Some(props),
+        );
     }
 
     fn clear(&mut self) {
@@ -266,5 +366,242 @@ impl ScreenRecording {
         self.audio = Vec::new();
         self.audio_bytes = 0;
         self.frames = Vec::new();
+    }
+}
+
+/// A recording of the user's screen, from the frames the page sends to the items the model
+/// is given.
+///
+/// What is worth pinning is every cap — a page frame is untrusted input, and each of these
+/// bounds something the runtime holds in memory for the length of a call — and the
+/// grouping, which is the whole difference between a recording and a pile of pictures.
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use base64::Engine;
+
+    use super::*;
+    use crate::services::meeting::resampler::MEETING_SAMPLE_RATE;
+
+    /// A picture the page kept, as it arrives: base64 with no data-URI prefix.
+    fn picture() -> String {
+        base64::engine::general_purpose::STANDARD.encode("a picture")
+    }
+
+    /// `ms` of pcm16 mono at `rate`.
+    fn audio_at(ms: f64, rate: u32) -> Vec<u8> {
+        vec![0u8; ((ms / 1000.0) * rate as f64).round() as usize * 2]
+    }
+
+    fn audio(ms: f64) -> Vec<u8> {
+        audio_at(ms, MEETING_SAMPLE_RATE)
+    }
+
+    fn recording_at(rate: u32) -> ScreenRecording {
+        ScreenRecording::new(ScreenRecordingOptions {
+            client_sample_rate: rate,
+            user_id: "user-1".into(),
+        })
+    }
+
+    fn recording() -> ScreenRecording {
+        recording_at(MEETING_SAMPLE_RATE)
+    }
+
+    #[test]
+    fn formats_an_offset_as_a_place_in_the_recording() {
+        assert_eq!(format_offset(0.0), "0:00");
+        assert_eq!(format_offset(7_400.0), "0:07");
+        assert_eq!(format_offset(90_000.0), "1:30");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn takes_the_microphone_only_while_one_runs() {
+        let mut rec = recording();
+        assert!(!rec.push_audio(&audio(20.0)));
+        rec.start();
+        assert!(rec.push_audio(&audio(20.0)));
+        rec.stop(RecordingEndReason::User, 1_000.0);
+        assert!(!rec.push_audio(&audio(20.0)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ignores_a_second_start_while_one_runs() {
+        let mut rec = recording();
+        assert!(rec.start());
+        assert!(!rec.start());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn holds_the_audio_at_the_models_rate_rather_than_the_clients() {
+        let mut rec = recording_at(MEETING_SAMPLE_RATE);
+        rec.start();
+        rec.push_audio(&audio(1_000.0));
+        rec.add_frame(&picture(), 0.0);
+        let result = rec.stop(RecordingEndReason::User, 1_000.0).unwrap();
+        assert!(result.audio_ms > 900);
+        assert!(result.audio_ms <= 1_000);
+        assert!(result.segments[0].audio.len() <= REALTIME_SAMPLE_RATE as usize * 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn passes_the_audio_through_when_the_client_already_speaks_the_models_rate() {
+        let mut rec = recording_at(REALTIME_SAMPLE_RATE);
+        rec.start();
+        rec.push_audio(&audio_at(500.0, REALTIME_SAMPLE_RATE));
+        let result = rec.stop(RecordingEndReason::User, 500.0).unwrap();
+        assert_eq!(
+            result.segments[0].audio.len(),
+            audio_at(500.0, REALTIME_SAMPLE_RATE).len()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn groups_the_pictures_and_the_narration_into_the_windows_they_happened_in() {
+        let mut rec = recording();
+        rec.start();
+        rec.push_audio(&audio(100.0));
+        tokio::time::advance(Duration::from_millis(40_000)).await;
+        rec.push_audio(&audio(100.0));
+        rec.add_frame(&picture(), 1_000.0);
+        rec.add_frame(&picture(), 45_000.0);
+        let result = rec.stop(RecordingEndReason::User, 50_000.0).unwrap();
+        assert_eq!(
+            result
+                .segments
+                .iter()
+                .map(|s| s.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["0:00", "0:30"]
+        );
+        assert_eq!(result.segments[0].images.len(), 1);
+        assert_eq!(result.segments[1].images.len(), 1);
+        assert!(result.segments.iter().all(|s| !s.audio.is_empty()));
+        assert!(result.segments[0].images[0].starts_with("data:image/jpeg;base64,"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn leaves_out_a_window_with_nothing_in_it() {
+        let mut rec = recording();
+        rec.start();
+        rec.add_frame(&picture(), 0.0);
+        rec.add_frame(&picture(), 70_000.0);
+        let result = rec.stop(RecordingEndReason::User, 80_000.0).unwrap();
+        assert_eq!(
+            result
+                .segments
+                .iter()
+                .map(|s| s.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["0:00", "1:00"]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn answers_nothing_for_a_recording_with_neither_a_picture_nor_a_word_in_it() {
+        let mut rec = recording();
+        rec.start();
+        assert!(rec.stop(RecordingEndReason::User, 400.0).is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn takes_no_more_pictures_than_reach_the_model() {
+        let mut rec = recording();
+        rec.start();
+        for i in 0..MAX_RECORDING_FRAMES + 10 {
+            rec.add_frame(&picture(), (i * 100) as f64);
+        }
+        let result = rec.stop(RecordingEndReason::User, 5_000.0).unwrap();
+        assert_eq!(result.frames, MAX_RECORDING_FRAMES);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn refuses_a_huge_offset_so_stopping_cannot_walk_to_it() {
+        let mut rec = recording();
+        rec.start();
+        rec.add_frame(&picture(), 0.0);
+        rec.add_frame(&picture(), 1e308);
+        let result = rec.stop(RecordingEndReason::User, 1_000.0).unwrap();
+        assert_eq!(result.frames, 1);
+        assert_eq!(result.segments.len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn refuses_an_offset_that_is_not_a_time_at_all() {
+        let mut rec = recording();
+        rec.start();
+        rec.add_frame(&picture(), 0.0);
+        rec.add_frame(&picture(), f64::INFINITY);
+        rec.add_frame(&picture(), f64::NAN);
+        rec.add_frame(&picture(), -1.0);
+        rec.add_frame(&picture(), MAX_RECORDING_MS as f64 + 1.0);
+        assert_eq!(
+            rec.stop(RecordingEndReason::User, 1_000.0).unwrap().frames,
+            1
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn keeps_a_frame_at_the_far_end_of_what_a_recording_may_run() {
+        let mut rec = recording();
+        rec.start();
+        rec.add_frame(&picture(), MAX_RECORDING_MS as f64);
+        assert_eq!(
+            rec.stop(RecordingEndReason::User, MAX_RECORDING_MS as f64)
+                .unwrap()
+                .frames,
+            1
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn refuses_a_picture_too_large_to_be_one() {
+        let mut rec = recording();
+        rec.start();
+        rec.add_frame(&"x".repeat(2 * 1024 * 1024), 0.0);
+        rec.add_frame(&picture(), 100.0);
+        assert_eq!(
+            rec.stop(RecordingEndReason::User, 1_000.0).unwrap().frames,
+            1
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn keeps_no_more_audio_than_a_recording_is_allowed_to_run() {
+        let mut rec = recording_at(REALTIME_SAMPLE_RATE);
+        rec.start();
+        for _ in 0..7 {
+            rec.push_audio(&audio_at(60_000.0, REALTIME_SAMPLE_RATE));
+        }
+        let result = rec
+            .stop(
+                RecordingEndReason::Limit,
+                MAX_RECORDING_MS as f64 + 60_000.0,
+            )
+            .unwrap();
+        assert!(result.audio_ms <= MAX_RECORDING_MS);
+        // The page's own figure is taken, but never past the limit it was told to stop at.
+        assert_eq!(result.ms, MAX_RECORDING_MS as f64);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn answers_whether_a_cancel_had_a_recording_to_throw_away() {
+        let mut rec = recording();
+        assert!(!rec.cancel());
+        rec.start();
+        assert!(rec.cancel());
+        assert!(!rec.cancel());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn throws_away_what_a_cancel_held() {
+        let mut rec = recording();
+        rec.start();
+        rec.add_frame(&picture(), 0.0);
+        rec.push_audio(&audio(200.0));
+        rec.cancel();
+        rec.start();
+        assert!(rec.stop(RecordingEndReason::ShareEnded, 1_000.0).is_none());
     }
 }

@@ -521,8 +521,9 @@ impl UpdateService {
         .await;
 
         // `applying` intentionally stays true on success — this process is over.
-        let Err(error) = outcome else {
-            return outcome;
+        let error = match outcome {
+            Ok(done) => return Ok(done),
+            Err(error) => error,
         };
         let error_code = error
             .downcast_ref::<UpdateError>()
@@ -642,11 +643,7 @@ impl UpdateService {
                 }
             }
             Err(error) => {
-                log_warn!(
-                    "[Update] automatic update to {} failed: {}",
-                    latest,
-                    error
-                );
+                log_warn!("[Update] automatic update to {} failed: {}", latest, error);
             }
         }
     }
@@ -703,11 +700,7 @@ impl UpdateService {
             if success {
                 self.finish_attempt(&row, UpdateOutcome::Success, None, None)
                     .await?;
-                log_info!(
-                    "[Update] updated {} -> {}",
-                    row.version_from,
-                    app_version
-                );
+                log_info!("[Update] updated {} -> {}", row.version_from, app_version);
             } else {
                 self.finish_attempt(
                     &row,

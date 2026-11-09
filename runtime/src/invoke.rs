@@ -22,8 +22,8 @@ use serde_json::{Value, json};
 use crate::ai::json::js_stringify;
 use crate::ai::{
     ContentPart, FinishReason, GenerateTextOptions, GenerateTextResult, Instructions,
-    LanguageModel, ModelMessage, PrepareStepOptions, PrepareStepResult, StepResult,
-    StopCondition, SystemModelMessage, ToolChoice, ToolErrorValue, ToolSet, step_count_is,
+    LanguageModel, ModelMessage, PrepareStepOptions, PrepareStepResult, StepResult, StopCondition,
+    SystemModelMessage, ToolChoice, ToolErrorValue, ToolSet, step_count_is,
 };
 use crate::config::CONFIG;
 use crate::constants::{COMPACTION_FALLBACK_WINDOW_TOKENS, MAX_OUTPUT_TOKENS, STEP_LIMIT};
@@ -241,7 +241,10 @@ fn restated_after_follow_up(
     sender_tags: bool,
 ) -> Vec<ModelMessage> {
     let rows = &context.recent_messages;
-    if !rows.iter().any(|row| appended_message_ids.contains(&row.id)) {
+    if !rows
+        .iter()
+        .any(|row| appended_message_ids.contains(&row.id))
+    {
         return Vec::new();
     }
     let mut after = rows.len();
@@ -434,7 +437,9 @@ impl InvocationCleanup {
         if let Some(thread_id) = &self.thread_id {
             CONTEXT_USAGE_SERVICE.finalize(thread_id).await;
         }
-        AGENT_STATUS_SERVICE.set_done_processing(&self.agent_id).await
+        AGENT_STATUS_SERVICE
+            .set_done_processing(&self.agent_id)
+            .await
     }
 
     fn release(&self) {
@@ -741,7 +746,9 @@ impl RequestInputs {
             &self.context,
             request,
             &self.subagents,
-            declared.as_ref().map(|declared| declared.tool_changes.as_slice()),
+            declared
+                .as_ref()
+                .map(|declared| declared.tool_changes.as_slice()),
             Some(&tool_search_prompt),
         )
         .await?;
@@ -956,8 +963,11 @@ impl Turn {
         // Documents view_attachment registered since the last step boundary, pinned
         // at this step's tail so each lands right after the tool result that
         // attached it, then re-spliced every later step like any other injection.
-        let attached: Vec<ModelMessage> =
-            self.pending_attachment_injections.lock().drain(..).collect();
+        let attached: Vec<ModelMessage> = self
+            .pending_attachment_injections
+            .lock()
+            .drain(..)
+            .collect();
         {
             let mut injections = self.injections.lock();
             for message in attached {
@@ -1039,8 +1049,7 @@ impl Turn {
                 *self.last_snapshot.lock() = recorded;
             }
             if let Some(input_tokens) = input_tokens {
-                *self.last_measured_tokens.lock() =
-                    Some(input_tokens + output_tokens.unwrap_or(0));
+                *self.last_measured_tokens.lock() = Some(input_tokens + output_tokens.unwrap_or(0));
             }
         }
 
@@ -1115,7 +1124,10 @@ impl Turn {
                 .iter()
                 .any(|step| !js::trim(&step.text()).is_empty())
         {
-            log_info!("Model declined the request in {} mode", request.mode.as_str());
+            log_info!(
+                "Model declined the request in {} mode",
+                request.mode.as_str()
+            );
             track_event(
                 "invocation refused",
                 Some(&request.user_id),
@@ -1208,8 +1220,7 @@ impl Turn {
         let trigger_snapshot = self.last_snapshot.lock().clone().or_else(|| {
             let thread_id = request.thread_id.clone()?;
             let used_tokens = (*self.last_measured_tokens.lock())?;
-            let percent = (100.0 * used_tokens as f64
-                / COMPACTION_FALLBACK_WINDOW_TOKENS as f64
+            let percent = (100.0 * used_tokens as f64 / COMPACTION_FALLBACK_WINDOW_TOKENS as f64
                 + 0.5)
                 .floor() as i64;
             Some(ContextUsageSnapshot {
@@ -1307,12 +1318,8 @@ impl Turn {
                 Err(error) => return Some(Err(error)),
             };
             // Steering messages the refused request took are sent at its tail.
-            next.messages.extend(
-                self.injections
-                    .lock()
-                    .drain(..)
-                    .map(|(_, message)| message),
-            );
+            next.messages
+                .extend(self.injections.lock().drain(..).map(|(_, message)| message));
             *self.model_request.lock() = next;
             self.refused_deferral.store(true, Ordering::SeqCst);
             return Some(self.send().await);
@@ -1350,7 +1357,9 @@ async fn run_invocation(
     out: &StepOut,
 ) -> anyhow::Result<()> {
     let agent_id = request.agent_id.clone();
-    AGENT_STATUS_SERVICE.set_processing(&request.agent_id).await?;
+    AGENT_STATUS_SERVICE
+        .set_processing(&request.agent_id)
+        .await?;
     let activity = Arc::new(CONVERSATION_THREAD_ACTIVITY_SERVICE.begin(&request).await);
     *cleanup.activity.lock() = Some(activity.clone());
     let idle: IdleWrapper = Arc::new(move |wait| {
@@ -1596,7 +1605,10 @@ async fn run_invocation(
     let mut entries: Vec<(&str, String)> = vec![
         ("agent.id", agent_id),
         ("invoke.mode", request.mode.as_str().to_string()),
-        ("invocation.duration_ms", (now_ms() - start_time).to_string()),
+        (
+            "invocation.duration_ms",
+            (now_ms() - start_time).to_string(),
+        ),
         ("llm.model", model_id),
         (
             "llm.model_mode",
@@ -1658,19 +1670,22 @@ fn step_tool_calls(step: &StepResult) -> Vec<ToolCallRecord> {
             });
             // An oversized result was already rendered and saved at execute time;
             // reuse that, so the id the model was given is the id on the record.
-            let rendered = result.map(|result| match SpilledToolOutput::from_value(&result.output) {
-                Some(spilled) => crate::lib::tool_output_limiter::RenderedToolResult {
-                    text: spilled.text,
-                    truncation: Some(spilled.truncation),
-                },
-                None => render_tool_result_detailed(
-                    &result.output,
-                    &RenderToolResultOptions {
-                        tool_name: Some(call.tool_name.clone()),
-                        ..Default::default()
+            let rendered =
+                result.map(
+                    |result| match SpilledToolOutput::from_value(&result.output) {
+                        Some(spilled) => crate::lib::tool_output_limiter::RenderedToolResult {
+                            text: spilled.text,
+                            truncation: Some(spilled.truncation),
+                        },
+                        None => render_tool_result_detailed(
+                            &result.output,
+                            &RenderToolResultOptions {
+                                tool_name: Some(call.tool_name.clone()),
+                                ..Default::default()
+                            },
+                        ),
                     },
-                ),
-            });
+                );
             let output = match (&rendered, &risk_error) {
                 (Some(rendered), _) => rendered.text.clone(),
                 // A gate refusal has no tool result to render: the summary of *why*

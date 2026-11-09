@@ -1614,7 +1614,11 @@ pub fn to_fork_rows(messages: &[HistoryRow]) -> Vec<ForkRow> {
 /// When even the newest exchange does not fit the token budget, everything is
 /// summarized. A thread with no user message keeps its newest rows that fit both.
 pub fn split_tail(rows: &[ForkRow]) -> TailSplit {
-    let tail_messages = crate::config::CONFIG.compaction_tail_messages;
+    split_tail_at(rows, crate::config::CONFIG.compaction_tail_messages)
+}
+
+/// `split_tail` with a tail of at most `tail_messages` rows.
+fn split_tail_at(rows: &[ForkRow], tail_messages: i64) -> TailSplit {
     if tail_messages == 0 {
         return TailSplit {
             compactable: rows.to_vec(),
@@ -1763,3 +1767,7 @@ fn is_summary_message(message: Option<&ModelMessage>) -> bool {
 }
 
 pub static COMPACTION_SERVICE: LazyLock<CompactionService> = LazyLock::new(CompactionService::new);
+
+#[cfg(test)]
+#[path = "compaction_service_tests.rs"]
+mod tests;

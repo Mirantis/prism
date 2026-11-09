@@ -8,11 +8,12 @@
 //! Port of the upstream Lens Agents shell sandbox's process handlers,
 //! with the per-process state map living in `process_manager`.
 
-use nix::sys::signal::Signal;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
-use super::process_manager::DrainResult;
+use super::process_manager::{DrainResult, SpawnParams, get_process_manager};
+use super::workspace::resolve_path;
+use crate::lib::execution_environments::execution_environment::Signal;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ShellSpawnInput {
@@ -76,20 +77,74 @@ pub struct ShellKillInput {
     pub signal: Option<KillSignal>,
 }
 
+const PROCESS_ID_DESCRIPTION: &str = "Process ID returned by shell_spawn";
+
 pub fn shell_spawn_input_schema() -> Value {
-    todo!("JSON Schema supplied by the coordinator")
+    json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+            "command": {
+                "type": "string",
+                "description": "The shell command to start as a background process"
+            },
+            "workdir": {
+                "description": "Working directory (default: workspace root). Relative paths resolve from the workspace root; absolute paths are used as-is.",
+                "type": "string"
+            }
+        },
+        "required": ["command"],
+        "additionalProperties": false
+    })
 }
 
 pub fn shell_stdin_input_schema() -> Value {
-    todo!("JSON Schema supplied by the coordinator")
+    json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+            "processId": { "type": "string", "description": PROCESS_ID_DESCRIPTION },
+            "data": {
+                "type": "string",
+                "description": "Data to write to the process's stdin (raw, no automatic newline)"
+            }
+        },
+        "required": ["processId", "data"],
+        "additionalProperties": false
+    })
 }
 
 pub fn shell_stdout_input_schema() -> Value {
-    todo!("JSON Schema supplied by the coordinator")
+    json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+            "processId": { "type": "string", "description": PROCESS_ID_DESCRIPTION },
+            "drainStderr": {
+                "description": "If true, drain stderr instead of stdout (default: false). Call once per stream.",
+                "type": "boolean"
+            }
+        },
+        "required": ["processId"],
+        "additionalProperties": false
+    })
 }
 
 pub fn shell_kill_input_schema() -> Value {
-    todo!("JSON Schema supplied by the coordinator")
+    json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+            "processId": { "type": "string", "description": PROCESS_ID_DESCRIPTION },
+            "signal": {
+                "description": "Signal to send (default: SIGTERM).",
+                "type": "string",
+                "enum": ["SIGTERM", "SIGKILL", "SIGINT", "SIGHUP"]
+            }
+        },
+        "required": ["processId"],
+        "additionalProperties": false
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -124,15 +179,37 @@ pub async fn run_shell_spawn(
     input: ShellSpawnInput,
     workspace: &str,
 ) -> anyhow::Result<ShellSpawnResult> {
-    todo!()
+    let cwd = match input.workdir.as_deref().filter(|dir| !dir.is_empty()) {
+        Some(workdir) => resolve_path(workspace, workdir),
+        None => workspace.to_string(),
+    };
+    let process_id = get_process_manager().spawn(SpawnParams {
+        command: input.command,
+        workdir: cwd,
+        env: None,
+    })?;
+    Ok(ShellSpawnResult { process_id })
 }
 
 pub async fn run_shell_stdin(input: ShellStdinInput) -> ShellStdinResult {
-    todo!()
+    match get_process_manager()
+        .stdin(&input.process_id, &input.data)
+        .await
+    {
+        Ok(()) => ShellStdinResult::Ok { ok: true },
+        Err(err) => ShellStdinResult::Error {
+            error: err.to_string(),
+        },
+    }
 }
 
 pub async fn run_shell_stdout(input: ShellStdoutInput) -> ShellStdoutResult {
-    todo!()
+    match get_process_manager().drain(&input.process_id, input.drain_stderr.unwrap_or(false)) {
+        Ok(drained) => ShellStdoutResult::Drained(drained),
+        Err(err) => ShellStdoutResult::Error {
+            error: err.to_string(),
+        },
+    }
 }
 
 /// Don't reap on kill — the signal is async and the process may
@@ -145,5 +222,64 @@ pub async fn run_shell_stdout(input: ShellStdoutInput) -> ShellStdoutResult {
 /// the exit code) takes the process out of the running count once it
 /// actually exits; the entry is purged on the next drain after exit.
 pub async fn run_shell_kill(input: ShellKillInput) -> ShellKillResult {
-    todo!()
+    let ok = get_process_manager().kill(&input.process_id, input.signal.map(KillSignal::signal));
+    ShellKillResult { ok }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn declares_the_schemas_the_typescript_runtime_sends() {
+        let fixture: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tool-schemas.json"
+        )))
+        .unwrap();
+        let tools = fixture["shell"].as_array().unwrap();
+        for (name, schema) in [
+            ("shell_spawn", shell_spawn_input_schema()),
+            ("shell_stdin", shell_stdin_input_schema()),
+            ("shell_stdout", shell_stdout_input_schema()),
+            ("shell_kill", shell_kill_input_schema()),
+        ] {
+            let expected = &tools.iter().find(|tool| tool["name"] == name).unwrap()["inputSchema"];
+            assert_eq!(
+                serde_json::to_string(&schema).unwrap(),
+                serde_json::to_string(expected).unwrap(),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn writes_each_result_as_the_typescript_runtime_does() {
+        assert_eq!(
+            serde_json::to_string(&ShellStdinResult::Ok { ok: true }).unwrap(),
+            r#"{"ok":true}"#
+        );
+        let drained = ShellStdoutResult::Drained(DrainResult {
+            stdout: "a".into(),
+            stderr: String::new(),
+            exit_code: None,
+            signal: None,
+            running: true,
+            truncated: super::super::process_manager::Truncated {
+                stdout: false,
+                stderr: false,
+            },
+        });
+        assert_eq!(
+            serde_json::to_string(&drained).unwrap(),
+            r#"{"stdout":"a","stderr":"","exitCode":null,"signal":null,"running":true,"truncated":{"stdout":false,"stderr":false}}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&ShellSpawnResult {
+                process_id: "p".into()
+            })
+            .unwrap(),
+            r#"{"processId":"p"}"#
+        );
+    }
 }

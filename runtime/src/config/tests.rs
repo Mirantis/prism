@@ -1108,7 +1108,7 @@ fn builds_the_explicit_project_openai_and_litellm_mounts() {
         ("PROJECT_ID", "proj-42"),
     ]);
     assert_eq!(
-        cfg.nexus_open_ai_base_url.as_deref(),
+        cfg.nexus_openai_base_url.as_deref(),
         Some("https://gateway.example.com/projects/proj-42/llm/openai/v1")
     );
     let cfg = load(&[
@@ -1130,7 +1130,7 @@ fn has_no_chat_mount_without_a_gateway() {
     );
     let cfg = load(&[("LLM_PROVIDER", "openai")]);
     assert_eq!(cfg.nexus_chat_base_url, None);
-    assert_eq!(cfg.nexus_open_ai_base_url, None);
+    assert_eq!(cfg.nexus_openai_base_url, None);
 }
 
 // ---------------------------------------------------------------------------

@@ -41,7 +41,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial_test::serial(slack_config)]
+    #[serial_test::serial]
     async fn lists_the_singleton_when_configured() {
         set_slack_config_for_tests(Some(singleton_record()));
         let result = get_active_slack_connections().await.unwrap();
@@ -51,7 +51,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial_test::serial(slack_config)]
+    #[serial_test::serial]
     async fn lists_nothing_when_slack_is_disabled() {
         set_slack_config_for_tests(None);
         let result = get_active_slack_connections().await.unwrap();
@@ -60,7 +60,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial_test::serial(slack_config)]
+    #[serial_test::serial]
     async fn the_connection_is_the_singleton() {
         set_slack_config_for_tests(Some(singleton_record()));
         let result = get_slack_connection().await.unwrap();
@@ -69,7 +69,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial_test::serial(slack_config)]
+    #[serial_test::serial]
     async fn no_connection_when_slack_is_disabled() {
         set_slack_config_for_tests(None);
         let result = get_slack_connection().await.unwrap();

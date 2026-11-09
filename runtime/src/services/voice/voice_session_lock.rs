@@ -70,3 +70,51 @@ impl VoiceSessionLock {
 }
 
 pub static VOICE_SESSION_LOCK: LazyLock<VoiceSessionLock> = LazyLock::new(VoiceSessionLock::new);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gives_the_lock_to_the_first_caller_and_refuses_the_second() {
+        let lock = VoiceSessionLock::new();
+        assert!(lock.try_acquire(VoiceSessionKind::VoiceChat));
+        assert!(!lock.try_acquire(VoiceSessionKind::Meeting));
+        assert_eq!(lock.holder(), Some(VoiceSessionKind::VoiceChat));
+    }
+
+    #[test]
+    fn refuses_a_second_session_of_the_same_kind() {
+        let lock = VoiceSessionLock::new();
+        assert!(lock.try_acquire(VoiceSessionKind::VoiceChat));
+        assert!(!lock.try_acquire(VoiceSessionKind::VoiceChat));
+    }
+
+    #[test]
+    fn frees_the_lock_for_the_other_owner_once_the_holder_lets_go() {
+        let lock = VoiceSessionLock::new();
+        lock.try_acquire(VoiceSessionKind::Meeting);
+        lock.release(VoiceSessionKind::Meeting);
+        assert_eq!(lock.holder(), None);
+        assert!(lock.try_acquire(VoiceSessionKind::VoiceChat));
+    }
+
+    #[test]
+    fn ignores_a_release_from_anything_but_the_holder() {
+        let lock = VoiceSessionLock::new();
+        lock.try_acquire(VoiceSessionKind::VoiceChat);
+        lock.release(VoiceSessionKind::Meeting);
+        lock.release(VoiceSessionKind::Meeting);
+        assert_eq!(lock.holder(), Some(VoiceSessionKind::VoiceChat));
+    }
+
+    #[test]
+    fn takes_a_repeated_release_from_the_holder_as_one() {
+        let lock = VoiceSessionLock::new();
+        lock.try_acquire(VoiceSessionKind::Meeting);
+        lock.release(VoiceSessionKind::Meeting);
+        lock.try_acquire(VoiceSessionKind::VoiceChat);
+        lock.release(VoiceSessionKind::Meeting);
+        assert_eq!(lock.holder(), Some(VoiceSessionKind::VoiceChat));
+    }
+}

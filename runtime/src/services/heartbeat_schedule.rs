@@ -142,7 +142,10 @@ mod tests {
 
     #[test]
     fn delay_waits_the_remainder_for_a_cycle_due_within_the_interval() {
-        assert_eq!(heartbeat_delay_ms(NOW + 3 * HOUR, EIGHT_HOURS, NOW), 3 * HOUR);
+        assert_eq!(
+            heartbeat_delay_ms(NOW + 3 * HOUR, EIGHT_HOURS, NOW),
+            3 * HOUR
+        );
     }
 
     #[test]

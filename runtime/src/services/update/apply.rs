@@ -294,12 +294,9 @@ async fn run_version(server_binary: &str) -> anyhow::Result<String> {
         .arg("--version")
         .stdin(std::process::Stdio::null())
         .kill_on_drop(true);
-    let output = tokio::time::timeout(
-        Duration::from_millis(PROBE_TIMEOUT_MS),
-        command.output(),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!("Command failed: {server_binary} --version"))??;
+    let output = tokio::time::timeout(Duration::from_millis(PROBE_TIMEOUT_MS), command.output())
+        .await
+        .map_err(|_| anyhow::anyhow!("Command failed: {server_binary} --version"))??;
     if !output.status.success() {
         anyhow::bail!(
             "Command failed: {server_binary} --version\n{}",
@@ -590,8 +587,8 @@ async fn extract(archive_path: &str, dest_dir: &str) -> anyhow::Result<()> {
         .args([flags, archive_path, "-C", dest_dir])
         .stdin(std::process::Stdio::null())
         .kill_on_drop(true);
-    let outcome = tokio::time::timeout(Duration::from_millis(EXTRACT_TIMEOUT_MS), command.output())
-        .await;
+    let outcome =
+        tokio::time::timeout(Duration::from_millis(EXTRACT_TIMEOUT_MS), command.output()).await;
     let failure = match outcome {
         Err(_) => Some(format!(
             "Command failed: tar {flags} {archive_path} -C {dest_dir}"
@@ -738,7 +735,13 @@ mod tests {
     fn removes_one_staged_release() {
         let install = install();
         remove_staged_release("v2026.8.24083158", Some(&path_text(&install.root)));
-        assert!(!install.root.join("updates").join("v2026.8.24083158").exists());
+        assert!(
+            !install
+                .root
+                .join("updates")
+                .join("v2026.8.24083158")
+                .exists()
+        );
         // A release that was never staged is fine.
         remove_staged_release("v2020.1.1000000", Some(&path_text(&install.root)));
     }
@@ -784,11 +787,8 @@ mod tests {
             )
             .unwrap();
             for binary in ["prism", "prism-server"] {
-                std::fs::set_permissions(
-                    dist.join(binary),
-                    std::fs::Permissions::from_mode(0o755),
-                )
-                .unwrap();
+                std::fs::set_permissions(dist.join(binary), std::fs::Permissions::from_mode(0o755))
+                    .unwrap();
             }
             let archive = fixture.path().join(asset_name());
             let status = std::process::Command::new("tar")

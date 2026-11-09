@@ -201,15 +201,16 @@ impl SessionManagerService {
                 .get_mut(user_id)
                 .ok_or_else(|| anyhow!("No session for user {user_id}"))?;
             state.last_activity = Utc::now();
-            let restart = agent.idle_timeout_mins.filter(|minutes| *minutes != 0).filter(|_| {
-                match &state.idle_timeout {
+            let restart = agent
+                .idle_timeout_mins
+                .filter(|minutes| *minutes != 0)
+                .filter(|_| match &state.idle_timeout {
                     Some(handle) => {
                         handle.abort();
                         true
                     }
                     None => false,
-                }
-            });
+                });
             (state.session_id.clone(), restart)
         };
         if let Some(minutes) = restart {
@@ -259,7 +260,11 @@ impl SessionManagerService {
         user_id: &str,
         reason: ResetReason,
     ) -> anyhow::Result<String> {
-        log_info!("Resetting session for user {} (reason: {})", user_id, reason);
+        log_info!(
+            "Resetting session for user {} (reason: {})",
+            user_id,
+            reason
+        );
 
         let agent = self.get_agent_by_user_id(user_id).await?;
 
@@ -312,7 +317,11 @@ impl SessionManagerService {
             }
         }
 
-        log_info!("Created new session {} for user {}", new_session_id, user_id);
+        log_info!(
+            "Created new session {} for user {}",
+            new_session_id,
+            user_id
+        );
         Ok(new_session_id)
     }
 
@@ -678,10 +687,10 @@ mod tests {
         let mut state = SessionState::new("user-1", "sess_1".into());
         state.idle_timeout = Some(timer.clone());
         service.sessions.lock().insert("user-1".into(), state);
-        service
-            .sessions
-            .lock()
-            .insert("user-2".into(), SessionState::new("user-2", "sess_2".into()));
+        service.sessions.lock().insert(
+            "user-2".into(),
+            SessionState::new("user-2", "sess_2".into()),
+        );
 
         service.stop_all();
 
@@ -721,7 +730,10 @@ mod tests {
     #[test]
     fn waits_until_the_reset_hour_today_or_tomorrow() {
         // 01:30:15 with a reset at 04:00: 2h29m45s.
-        assert_eq!(ms_until_reset(4, 1, 30, 15), (2 * 3600 + 29 * 60 + 45) * 1000);
+        assert_eq!(
+            ms_until_reset(4, 1, 30, 15),
+            (2 * 3600 + 29 * 60 + 45) * 1000
+        );
         // At 04:00 itself the next reset is tomorrow.
         assert_eq!(ms_until_reset(4, 4, 0, 0), 24 * 3600 * 1000);
         // 23:59:59 with a reset at midnight.

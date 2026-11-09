@@ -515,7 +515,7 @@ pub struct Config {
     pub openai_classification_model_id: String,
     pub openai_embedding_model_id: String,
     pub openai_endpoint: Option<String>,
-    pub nexus_open_ai_base_url: Option<String>,
+    pub nexus_openai_base_url: Option<String>,
 
     /// OpenRouter (used when LLM_PROVIDER=openrouter). Same OpenAI surface, a
     /// different vendor behind it, at `openrouter_endpoint`. Direct it needs
@@ -526,7 +526,7 @@ pub struct Config {
     pub openrouter_embedding_model_id: String,
     pub openrouter_endpoint: String,
     pub openrouter_api_key: Option<String>,
-    pub nexus_open_router_base_url: Option<String>,
+    pub nexus_openrouter_base_url: Option<String>,
 
     /// Anthropic (used when LLM_PROVIDER=anthropic): direct to api.anthropic.com
     /// (or `anthropic_base_url`), the one vendor with no gateway mount, so
@@ -543,7 +543,7 @@ pub struct Config {
     pub litellm_classification_model_id: String,
     pub litellm_api_key: Option<String>,
     pub litellm_endpoint: Option<String>,
-    pub nexus_lite_llm_base_url: Option<String>,
+    pub nexus_litellm_base_url: Option<String>,
 
     /// AGENT_ID is optional: when unset, `resolveOrBootstrapSingleAgent` either
     /// picks up the existing row or creates one, and sets it here.
@@ -932,13 +932,13 @@ impl Config {
         let nexus_bedrock_mantle_base_url =
             mount(format!("bedrock-mantle/anthropic/{aws_region}/v1"));
         // OpenAI: one mount carries chat, classification and embeddings. Keyless.
-        let nexus_open_ai_base_url = mount("openai/v1".to_string());
+        let nexus_openai_base_url = mount("openai/v1".to_string());
         // OpenRouter: it must be this mount rather than `/llm/openai/*`, since the
         // managed-inference gate compares the path's backend against the policy's.
-        let nexus_open_router_base_url = mount("openrouter/openai/v1".to_string());
+        let nexus_openrouter_base_url = mount("openrouter/openai/v1".to_string());
         // LiteLLM's Anthropic surface. The gateway meters this backend by the
         // cost LiteLLM reports, so it must be this mount.
-        let nexus_lite_llm_base_url = mount("litellm/anthropic/v1".to_string());
+        let nexus_litellm_base_url = mount("litellm/anthropic/v1".to_string());
 
         // The selected vendor's gateway chat mount. No gateway mount serves
         // api.anthropic.com, so anthropic chat is always direct.
@@ -946,10 +946,10 @@ impl Config {
             LlmProviderName::Bedrock => nexus_llm_base_url.clone(),
             LlmProviderName::Azure => nexus_azure_base_url.clone(),
             LlmProviderName::BedrockMantle => nexus_bedrock_mantle_base_url.clone(),
-            LlmProviderName::Openai => nexus_open_ai_base_url.clone(),
-            LlmProviderName::Openrouter => nexus_open_router_base_url.clone(),
+            LlmProviderName::Openai => nexus_openai_base_url.clone(),
+            LlmProviderName::Openrouter => nexus_openrouter_base_url.clone(),
             LlmProviderName::Anthropic => None,
-            LlmProviderName::Litellm => nexus_lite_llm_base_url.clone(),
+            LlmProviderName::Litellm => nexus_litellm_base_url.clone(),
         };
 
         // The gateway's own origin. The credential decision turns on one
@@ -1062,14 +1062,14 @@ impl Config {
             .unwrap_or_else(|| bedrock_mantle_region_endpoint.clone());
         let openai_endpoint = openai_override
             .clone()
-            .or_else(|| nexus_open_ai_base_url.clone());
+            .or_else(|| nexus_openai_base_url.clone());
         let openrouter_endpoint = openrouter_override
             .clone()
-            .or_else(|| nexus_open_router_base_url.clone())
+            .or_else(|| nexus_openrouter_base_url.clone())
             .unwrap_or_else(|| OPENROUTER_DIRECT_BASE_URL.to_string());
         let litellm_endpoint = litellm_override
             .clone()
-            .or_else(|| nexus_lite_llm_base_url.clone());
+            .or_else(|| nexus_litellm_base_url.clone());
 
         // The selected vendor's chat endpoint and the override that supplied it,
         // for the startup log. Anthropic has no mount, so its override is its
@@ -1174,7 +1174,7 @@ impl Config {
             LlmProviderName::Openrouter => EmbeddingProviderName::Openrouter,
             LlmProviderName::Anthropic => {
                 if openai_api_key.as_deref().is_some_and(|k| !k.is_empty())
-                    || nexus_open_ai_base_url.is_some()
+                    || nexus_openai_base_url.is_some()
                 {
                     EmbeddingProviderName::Openai
                 } else {
@@ -1564,13 +1564,13 @@ impl Config {
             openai_classification_model_id,
             openai_embedding_model_id,
             openai_endpoint,
-            nexus_open_ai_base_url,
+            nexus_openai_base_url,
             openrouter_model_id,
             openrouter_classification_model_id,
             openrouter_embedding_model_id,
             openrouter_endpoint,
             openrouter_api_key,
-            nexus_open_router_base_url,
+            nexus_openrouter_base_url,
             anthropic_api_key,
             anthropic_model_id,
             anthropic_classification_model_id,
@@ -1579,7 +1579,7 @@ impl Config {
             litellm_classification_model_id,
             litellm_api_key,
             litellm_endpoint,
-            nexus_lite_llm_base_url,
+            nexus_litellm_base_url,
             agent_id: RwLock::new(e.get("AGENT_ID").map(str::to_string)),
             agent_messages_token_id,
             owner_user_id: RwLock::new(

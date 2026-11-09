@@ -30,8 +30,8 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use crate::ai::LanguageModel;
 use crate::ai::providers::openai::{OpenAIProviderSettings, create_openai};
+use crate::ai::{LanguageModel, with_llm_cache};
 use crate::lib::llm_providers::llm_provider::{
     CacheTtl, ClassificationSamplingParams, LlmProvider, NO_CACHE_POINT, provider_options,
 };
@@ -54,7 +54,7 @@ pub fn create_open_ai_compatible_provider(options: OpenAiCompatibleOptions) -> L
     let mut provider = LlmProvider::new(
         Arc::new(
             move |model_id: &str| -> anyhow::Result<Arc<dyn LanguageModel>> {
-                Ok(openai.language_model(model_id))
+                Ok(with_llm_cache(openai.language_model(model_id)))
             },
         ),
         // No breakpoints: OpenAI caches long prompts automatically, so there is

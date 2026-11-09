@@ -133,7 +133,9 @@ impl Signal {
 
     /// The signal a name spells, `None` for any other text.
     pub fn from_name(name: &str) -> Option<Signal> {
-        Signal::ALL.into_iter().find(|signal| signal.as_str() == name)
+        Signal::ALL
+            .into_iter()
+            .find(|signal| signal.as_str() == name)
     }
 
     /// The platform's number for the signal.
@@ -175,7 +177,9 @@ impl Signal {
     /// The signal behind a platform number, `None` for one without a name here.
     #[cfg(unix)]
     pub fn from_raw(raw: i32) -> Option<Signal> {
-        Signal::ALL.into_iter().find(|signal| signal.as_raw() == raw)
+        Signal::ALL
+            .into_iter()
+            .find(|signal| signal.as_raw() == raw)
     }
 }
 

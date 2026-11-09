@@ -238,7 +238,7 @@ impl MCPTransport for ExecStdioTransport {
     /// Write one message as a line. Fails with "the MCP server is not started"
     /// before `start`.
     async fn send(&self, message: Value, _options: MCPTransportSendOptions) -> anyhow::Result<()> {
-        if self.process.lock().is_none() || self.stdin.lock().await.is_none() {
+        if self.stdin.lock().await.is_none() {
             anyhow::bail!("the MCP server is not started");
         }
         let line = format!("{}\n", crate::ai::json::js_stringify(&message));
@@ -266,5 +266,123 @@ impl MCPTransport for ExecStdioTransport {
         process.ended().await;
         self.finish();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::ToolExecutionOptions;
+    use crate::ai::mcp::{MCPClientConfig, MCPTransportConfig, create_mcp_client};
+    use crate::lib::execution_environments::local::local_environment::create_local_environment;
+
+    fn node_available() -> bool {
+        std::process::Command::new("node")
+            .arg("--version")
+            .output()
+            .is_ok_and(|out| out.status.success())
+    }
+
+    fn probe_server(cwd: &str) -> ExecStdioServer {
+        ExecStdioServer {
+            command: "node".into(),
+            args: Some(vec![format!(
+                "{}/../e2e/fixtures/plugin-mcp-probe.mjs",
+                env!("CARGO_MANIFEST_DIR")
+            )]),
+            env: None,
+            cwd: Some(cwd.to_string()),
+        }
+    }
+
+    #[test]
+    fn delivers_each_whole_line_and_reports_one_that_is_not_json() {
+        let transport =
+            ExecStdioTransport::new(create_local_environment(), ExecStdioServer::default());
+        let messages = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let errors = Arc::new(Mutex::new(Vec::<String>::new()));
+        transport.set_handlers(TransportHandlers {
+            on_message: Arc::new({
+                let messages = messages.clone();
+                move |message| {
+                    messages.lock().push(message);
+                    Ok(())
+                }
+            }),
+            on_error: Arc::new({
+                let errors = errors.clone();
+                move |error| errors.lock().push(error.to_string())
+            }),
+            on_close: Arc::new(|| {}),
+        });
+
+        transport.receive("{\"a\":1}\n{\"b\"");
+        transport.receive(":2.0}\r\n\n not json\n{\"c\"");
+
+        assert_eq!(*messages.lock(), vec![json!({ "a": 1 }), json!({ "b": 2 })]);
+        assert_eq!(errors.lock().len(), 1);
+        assert_eq!(*transport.buffered.lock(), "{\"c\"");
+    }
+
+    #[test]
+    fn keeps_a_utf8_sequence_cut_by_a_chunk_for_the_next_chunk() {
+        let mut pending = vec![b'a', 0xC3];
+        assert_eq!(take_utf8(&mut pending), "a");
+        pending.push(0xA9);
+        assert_eq!(take_utf8(&mut pending), "é");
+        assert!(pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn runs_the_plugin_probe_server_and_calls_its_tool() {
+        if !node_available() {
+            eprintln!("node is not on PATH; skipping");
+            return;
+        }
+        let cwd = tempfile::tempdir().unwrap();
+        let transport = ExecStdioTransport::new(
+            create_local_environment(),
+            probe_server(&cwd.path().to_string_lossy()),
+        );
+        let mut config = MCPClientConfig::new(MCPTransportConfig::Custom(transport));
+        config.client_name = Some("prism-agent".into());
+        let client = create_mcp_client(config).await.unwrap();
+
+        let tools = client.tools().await.unwrap();
+        let tool = &tools["plugin_mcp_probe"];
+        let output = (tool.execute.as_ref().unwrap())(json!({}), ToolExecutionOptions::default())
+            .await
+            .unwrap();
+
+        assert_eq!(tools.len(), 1);
+        assert_eq!(
+            tool.description.as_deref(),
+            Some("Returns a fixed marker proving the plugin MCP server ran.")
+        );
+        assert_eq!(
+            crate::ai::json::js_stringify(tool.input_schema.json_schema()),
+            r#"{"type":"object","properties":{},"additionalProperties":false}"#
+        );
+        assert_eq!(
+            crate::ai::json::js_stringify(&output),
+            r#"{"content":[{"type":"text","text":"PLUGIN_MCP_TOOL_OK"}],"isError":false}"#
+        );
+        client.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn fails_the_connect_of_a_command_that_does_not_exist() {
+        let cwd = tempfile::tempdir().unwrap();
+        let transport = ExecStdioTransport::new(
+            create_local_environment(),
+            ExecStdioServer {
+                command: "prism-no-such-mcp-server".into(),
+                cwd: Some(cwd.path().to_string_lossy().into_owned()),
+                ..ExecStdioServer::default()
+            },
+        );
+        let config = MCPClientConfig::new(MCPTransportConfig::Custom(transport));
+
+        assert!(create_mcp_client(config).await.is_err());
     }
 }

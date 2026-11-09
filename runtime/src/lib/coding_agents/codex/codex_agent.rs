@@ -2,49 +2,38 @@
 //! of `CodingAgent`.
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
-use serde::Deserialize;
+use futures::StreamExt;
+use indexmap::IndexMap;
+use serde_json::Value;
 
-use super::credentials::CodexAuthMethod;
-use crate::config::CodingAgentName;
-use crate::lib::coding_agents::cli_run::ParseLine;
-use crate::lib::coding_agents::coding_agent::{
-    CodingAgent, CodingAgentHome, CodingAgentRun, CodingAgentTask,
+use super::credentials::{
+    CodexAuthMethod, SUBSCRIPTION_CONFIG_ARGS, SavedCodexLogin, codex_api_key, codex_auth_method,
+    has_saved_codex_login, read_codex_login, subscription_environment,
 };
-use crate::lib::execution_environments::execution_environment::{ExecutionEnvironment, ProcessEnv};
+use crate::config::{CONFIG, CodexTierModel, CodingAgentName, TierSet};
+use crate::lib::coding_agents::bedrock_credentials::bedrock_region;
+use crate::lib::coding_agents::cli_run::{CliRunSpec, ParseLine, run_cli};
+use crate::lib::coding_agents::coding_agent::{
+    CodingAgent, CodingAgentEvent, CodingAgentEvents, CodingAgentHome, CodingAgentMode,
+    CodingAgentRun, CodingAgentStopReason, CodingAgentTask, PLAN_ONLY_INSTRUCTION,
+};
+use crate::lib::coding_agents::deferred_run::{aborted, deferred_run};
+use crate::lib::coding_agents::shared_skills_home::prepare_shared_skills_home;
+use crate::lib::coding_agents::subscription::not_signed_in_message;
+use crate::lib::coding_agents::subscription_switch::uses_subscription;
+use crate::lib::execution_environments::execution_environment::{
+    ExecutionEnvironment, ProcessEnv, ProcessMark,
+};
+use crate::lib::execution_environments::get_execution_environment::{
+    get_execution_environment, get_execution_environment_for,
+};
+use crate::lib::telemetry::track_event;
 
 pub const DISPLAY_NAME: &str = "Codex";
 pub const COMMAND: &str = "codex";
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct StreamItem {
-    #[serde(rename = "type")]
-    pub item_type: String,
-    #[serde(default)]
-    pub text: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct StreamError {
-    pub message: String,
-}
-
-/// One line of `codex exec --json`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct StreamLine {
-    #[serde(rename = "type")]
-    pub line_type: String,
-    #[serde(default)]
-    pub thread_id: Option<String>,
-    #[serde(default)]
-    pub item: Option<StreamItem>,
-    #[serde(default)]
-    pub error: Option<StreamError>,
-    #[serde(default)]
-    pub message: Option<String>,
-}
 
 pub struct CodexAgent {
     /// A test hook; production runs in the selected environment.
@@ -63,6 +52,14 @@ pub fn create_codex_agent(
     })
 }
 
+impl CodexAgent {
+    fn target(&self) -> Arc<dyn ExecutionEnvironment> {
+        self.environment
+            .clone()
+            .unwrap_or_else(get_execution_environment)
+    }
+}
+
 #[async_trait]
 impl CodingAgent for CodexAgent {
     fn id(&self) -> CodingAgentName {
@@ -75,12 +72,16 @@ impl CodingAgent for CodexAgent {
 
     /// The environment's `codex_home`, unless `CODEX_HOME` names it.
     async fn prepare_home(&self) -> anyhow::Result<CodingAgentHome> {
-        todo!()
+        let env = self.target();
+        let operator_home = std::env::var("CODEX_HOME").ok();
+        prepare_shared_skills_home(&*env, &env.paths().codex_home, operator_home.as_deref()).await
     }
 
     /// Reads the saved login once, then whether any auth method applies.
     async fn is_available(&self, env: &ProcessEnv) -> anyhow::Result<bool> {
-        todo!()
+        let saved_login = has_saved_codex_login(&*self.target()).await;
+        self.saved_login.store(saved_login, Ordering::SeqCst);
+        Ok(codex_auth_method(env, saved_login).is_some())
     }
 
     /// Emits `codex task started` now and `codex task finished` (with `status`
@@ -88,7 +89,207 @@ impl CodingAgent for CodexAgent {
     /// the subscription the run is deferred until the home's login reads
     /// `chatgpt`; otherwise the CLI starts at once with `CODEX_API_KEY`.
     fn run(&self, task: CodingAgentTask) -> Arc<dyn CodingAgentRun> {
-        todo!()
+        let subscription = uses_subscription(CodingAgentName::Codex);
+        let auth_method = if subscription {
+            Some(CodexAuthMethod::Subscription)
+        } else {
+            codex_auth_method(&task.env, self.saved_login.load(Ordering::SeqCst))
+        };
+        let started_at = crate::support::now_ms();
+        let mut props = IndexMap::new();
+        props.insert("task.id".to_string(), task.task_id.clone());
+        props.insert(
+            "auth.method".to_string(),
+            auth_method
+                .map_or("none", CodexAuthMethod::as_str)
+                .to_string(),
+        );
+        let owner = CONFIG.owner_user_id();
+        track_event("codex task started", Some(&owner), Some(props.clone()));
+        // The environment the CLI runs in, which is also where its home is.
+        let run_in = self
+            .environment
+            .clone()
+            .unwrap_or_else(|| get_execution_environment_for(task.workdir.as_deref()));
+        let home = run_in.paths().codex_home;
+        let models = CONFIG.coding_agent_models.codex.clone();
+        let launch = {
+            let task = task.clone();
+            let run_in = run_in.clone();
+            let home = home.clone();
+            move |mut env: ProcessEnv| {
+                env.insert("CODEX_HOME".to_string(), home);
+                if task.debug == Some(true) {
+                    env.insert("RUST_LOG".to_string(), "debug".to_string());
+                }
+                run_cli(
+                    CliRunSpec {
+                        task_id: task.task_id.clone(),
+                        display_name: DISPLAY_NAME.to_string(),
+                        command: COMMAND.to_string(),
+                        args: build_args(&task, auth_method, &models),
+                        cwd: task.workdir.clone(),
+                        env,
+                        parse_line: create_parser(),
+                    },
+                    Some(run_in),
+                )
+            }
+        };
+        let run = if subscription {
+            let task_id = task.task_id.clone();
+            deferred_run(
+                &task_id,
+                DISPLAY_NAME,
+                Box::new(move |signal| {
+                    Box::pin(async move {
+                        // Asked on every run, so a sign-in or a sign-out applies to the
+                        // next task. Anything but a ChatGPT login fails the task, which
+                        // then bills nothing.
+                        let login =
+                            read_codex_login(&*run_in, &task.env, &home, Some(signal.clone()))
+                                .await?;
+                        if login != SavedCodexLogin::Chatgpt {
+                            // A folder outside the deployment's environment runs here, on
+                            // a home Coding agents doesn't sign in.
+                            let host_home = task
+                                .workdir
+                                .as_deref()
+                                .filter(|workdir| {
+                                    !workdir.is_empty()
+                                        && !get_execution_environment().serves_path(workdir)
+                                })
+                                .map(|_| home.clone());
+                            anyhow::bail!(not_signed_in_message(
+                                CodingAgentName::Codex,
+                                host_home.as_deref()
+                            ));
+                        }
+                        if signal.is_cancelled() {
+                            return Err(aborted());
+                        }
+                        Ok(launch(subscription_environment(&task.env)))
+                    })
+                }),
+            )
+        } else {
+            let mut env = task.env.clone();
+            match codex_api_key(&task.env) {
+                Some(key) => {
+                    env.insert("CODEX_API_KEY".to_string(), key);
+                }
+                None => {
+                    env.shift_remove("CODEX_API_KEY");
+                }
+            }
+            launch(env)
+        };
+        let stopped = Arc::new(AtomicBool::new(false));
+        let events = run.take_events().map(|events| {
+            finished_after(
+                events,
+                Finish {
+                    owner,
+                    props,
+                    started_at,
+                    stopped: stopped.clone(),
+                    status: "error",
+                    done: false,
+                },
+            )
+        });
+        Arc::new(TrackedRun {
+            run,
+            stopped,
+            events: parking_lot::Mutex::new(events),
+        })
+    }
+}
+
+/// `codex task finished`, emitted once when a run's events end or are dropped.
+struct Finish {
+    owner: String,
+    props: IndexMap<String, String>,
+    started_at: i64,
+    stopped: Arc<AtomicBool>,
+    status: &'static str,
+    done: bool,
+}
+
+impl Finish {
+    fn emit(&mut self) {
+        if self.done {
+            return;
+        }
+        self.done = true;
+        let mut props = self.props.clone();
+        let status = if self.stopped.load(Ordering::SeqCst) {
+            "stopped"
+        } else {
+            self.status
+        };
+        props.insert("status".to_string(), status.to_string());
+        props.insert(
+            "elapsed_ms".to_string(),
+            (crate::support::now_ms() - self.started_at).to_string(),
+        );
+        track_event("codex task finished", Some(&self.owner), Some(props));
+    }
+}
+
+impl Drop for Finish {
+    fn drop(&mut self) {
+        self.emit();
+    }
+}
+
+fn finished_after(events: CodingAgentEvents, finish: Finish) -> CodingAgentEvents {
+    futures::stream::unfold((Some(events), finish), |(events, mut finish)| async move {
+        let mut events = events?;
+        match events.next().await {
+            Some(event) => {
+                if let CodingAgentEvent::Result { stop_reason, .. } = &event {
+                    finish.status = stop_reason.as_str();
+                }
+                Some((event, (Some(events), finish)))
+            }
+            None => {
+                finish.emit();
+                None
+            }
+        }
+    })
+    .boxed()
+}
+
+/// The CLI's run, its stop remembered for the finished event.
+struct TrackedRun {
+    run: Arc<dyn CodingAgentRun>,
+    stopped: Arc<AtomicBool>,
+    events: parking_lot::Mutex<Option<CodingAgentEvents>>,
+}
+
+#[async_trait]
+impl CodingAgentRun for TrackedRun {
+    fn take_events(&self) -> Option<CodingAgentEvents> {
+        self.events.lock().take()
+    }
+
+    fn exited(&self) -> bool {
+        self.run.exited()
+    }
+
+    fn mark(&self) -> Option<ProcessMark> {
+        self.run.mark()
+    }
+
+    async fn started(&self) {
+        self.run.started().await
+    }
+
+    fn stop(&self) {
+        self.stopped.store(true, Ordering::SeqCst);
+        self.run.stop();
     }
 }
 
@@ -100,12 +301,178 @@ impl CodingAgent for CodexAgent {
 /// Every task runs without Codex's sandbox: in an unprivileged container, the
 /// deployed shape, the sandbox cannot start and every command in it fails.
 /// Nothing can answer an approval request, so none is asked.
-fn build_args(task: &CodingAgentTask, auth_method: Option<CodexAuthMethod>) -> Vec<String> {
-    todo!()
+fn build_args(
+    task: &CodingAgentTask,
+    auth_method: Option<CodexAuthMethod>,
+    models: &TierSet<CodexTierModel>,
+) -> Vec<String> {
+    let mut args: Vec<String> = [
+        "exec",
+        "--json",
+        "--skip-git-repo-check",
+        "-c",
+        "approval_policy=\"never\"",
+        "-c",
+        "sandbox_mode=\"danger-full-access\"",
+    ]
+    .iter()
+    .map(|arg| arg.to_string())
+    .collect();
+    let use_bedrock = auth_method == Some(CodexAuthMethod::Bedrock);
+    if use_bedrock {
+        // Bedrock identifies these models with the vendor prefix `openai.`; the
+        // OpenAI endpoint uses bare ids. Tier defaults below follow the same rule.
+        args.push("-c".to_string());
+        args.push("model_provider=\"amazon-bedrock\"".to_string());
+        if task.model_tier.is_none() {
+            args.push("-c".to_string());
+            args.push("model=\"openai.gpt-5.6-terra\"".to_string());
+        }
+        args.push("-c".to_string());
+        args.push(format!(
+            "model_providers.amazon-bedrock.aws.region={}",
+            Value::String(bedrock_region(&task.env))
+        ));
+    } else if auth_method == Some(CodexAuthMethod::Subscription) {
+        // A repository's `.codex/config.toml` cannot move the task off this login:
+        // Codex 0.163 ignores its `model_provider`, `model_providers` and `profiles`.
+        args.extend(SUBSCRIPTION_CONFIG_ARGS.iter().map(|arg| arg.to_string()));
+    } else {
+        args.push("-c".to_string());
+        args.push("model_provider=\"openai\"".to_string());
+        if auth_method == Some(CodexAuthMethod::Api) {
+            args.push("-c".to_string());
+            args.push("forced_login_method=\"api\"".to_string());
+        }
+        if auth_method == Some(CodexAuthMethod::Saved) {
+            args.push("-c".to_string());
+            args.push("cli_auth_credentials_store=\"file\"".to_string());
+        }
+    }
+    // An omitted tier or effort must emit no selection flag here, preserving
+    // deployment configuration and the existing Bedrock default above. Keep
+    // both optional on resume too; a default tier would silently replace it.
+    if let Some(tier) = task.model_tier {
+        let model = models.get(tier.as_str()).expect("every tier has a model");
+        args.push("--model".to_string());
+        args.push(if use_bedrock {
+            model.bedrock.clone()
+        } else {
+            model.openai.clone()
+        });
+    }
+    if let Some(effort) = task.effort {
+        args.push("-c".to_string());
+        args.push(format!("model_reasoning_effort=\"{}\"", effort.as_str()));
+    }
+    if let Some(append) = task
+        .append_system_prompt
+        .as_deref()
+        .filter(|a| !a.is_empty())
+    {
+        args.push("-c".to_string());
+        args.push(format!(
+            "developer_instructions={}",
+            Value::String(append.to_string())
+        ));
+    }
+    if let Some(session_id) = task.session_id.as_deref().filter(|id| !id.is_empty()) {
+        args.push("resume".to_string());
+        args.push(session_id.to_string());
+    }
+    // Mode is a per-turn instruction; developer instructions persist across resume.
+    // With no sandbox, the instruction is all that keeps a plan task read-only.
+    let mode = if task.mode == CodingAgentMode::Plan {
+        PLAN_ONLY_INSTRUCTION
+    } else {
+        "Implement the requested changes and verify the result."
+    };
+    args.push("--".to_string());
+    args.push(format!("{mode}\n\n{}", task.prompt));
+    args
+}
+
+/// A field's text: a string as it is, any other value as `String(value)`.
+fn js_string(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// A field unless it is `null` or absent, as `??` reads it.
+fn present<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
+    value.get(key).filter(|field| !field.is_null())
 }
 
 /// Codex reports one turn for the whole exec task, including its tool calls.
 /// The parser keeps the last answer and the last error between lines.
 fn create_parser() -> ParseLine {
-    todo!()
+    let mut answer = String::new();
+    let mut error = String::new();
+    Box::new(move |line| {
+        let event: Value = serde_json::from_str(line)?;
+        if event.is_null() {
+            anyhow::bail!("Cannot read properties of null (reading 'type')");
+        }
+        let event_type = event.get("type").and_then(Value::as_str);
+        if event_type == Some("thread.started")
+            && let Some(thread_id) =
+                present(&event, "thread_id").filter(|id| crate::support::js::truthy(id))
+        {
+            return Ok(vec![CodingAgentEvent::Session {
+                session_id: js_string(thread_id),
+            }]);
+        }
+        let item = present(&event, "item");
+        if event_type == Some("item.completed")
+            && item
+                .and_then(|item| item.get("type"))
+                .and_then(Value::as_str)
+                == Some("agent_message")
+        {
+            answer = item
+                .and_then(|item| present(item, "text"))
+                .map(js_string)
+                .unwrap_or_default();
+            return Ok(vec![CodingAgentEvent::Text {
+                text: answer.clone(),
+            }]);
+        }
+        if event_type == Some("error") {
+            // Connection retries can emit errors before a successful terminal event.
+            error = present(&event, "message")
+                .map(js_string)
+                .unwrap_or_default();
+            return Ok(vec![]);
+        }
+        if event_type == Some("turn.failed") {
+            let reported = present(&event, "error")
+                .and_then(|error| error.get("message"))
+                .filter(|message| crate::support::js::truthy(message))
+                .map(js_string);
+            let message = reported
+                .or_else(|| (!error.is_empty()).then(|| error.clone()))
+                .unwrap_or_else(|| "Codex task failed".to_string());
+            return Ok(vec![CodingAgentEvent::Result {
+                stop_reason: CodingAgentStopReason::Error,
+                turns: 1,
+                message,
+                refusals: None,
+            }]);
+        }
+        if event_type == Some("turn.completed") {
+            return Ok(vec![CodingAgentEvent::Result {
+                stop_reason: CodingAgentStopReason::EndTurn,
+                turns: 1,
+                message: answer.clone(),
+                refusals: None,
+            }]);
+        }
+        Ok(vec![])
+    })
 }
+
+#[cfg(test)]
+#[path = "codex_agent_tests.rs"]
+mod tests;

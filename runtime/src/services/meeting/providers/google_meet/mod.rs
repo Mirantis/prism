@@ -26,12 +26,30 @@ pub mod sign_in;
 use std::sync::LazyLock;
 
 use async_trait::async_trait;
+use serde::Deserialize;
+use serde_json::json;
 
-use crate::services::meeting::browser_stack::{Locator, PageHandle, WaitForState};
-use crate::services::meeting::meeting_provider_interface::{
-    ChatReadOptions, ChatReadResult, ChatSendResult, JoinOptions, JoinOutcome, MeetingProvider,
-    ProviderCapabilities, ScreenShareOutcome, SignInOptions, SpeakerReading,
+use crate::services::meeting::browser_stack::{
+    GotoOptions, LoadState, Locator, PageHandle, ScreenshotOptions, TextMatch, WaitForState,
 };
+use crate::services::meeting::meeting_provider_interface::{
+    ChatMessageRead, ChatReadOptions, ChatReadResult, ChatReadStep, ChatSendResult, ChatSendStep,
+    JoinOptions, JoinOutcome, JoinStep, MeetingProvider, ProviderCapabilities, ScreenShareOutcome,
+    SignInOptions, SpeakerReading,
+};
+use crate::support::now_ms;
+use crate::utils::with_timeout::with_timeout;
+use crate::{log_debug, log_error, log_info, log_warn};
+
+/// A JavaScript regular expression with the `i` flag, as the patterns below are written.
+fn pattern(source: &str) -> TextMatch {
+    TextMatch::pattern(source, "i")
+}
+
+/// How a pattern reads in a log line, as JavaScript prints a regular expression.
+fn shown(source: &str) -> String {
+    format!("/{source}/i")
+}
 
 /// Wait for a locator to actually be visible, returning false instead of failing.
 ///
@@ -231,6 +249,62 @@ pub const CHAT_MESSAGE_GROUP_SELECTOR: &str = "[jsname=\"Ypafjf\"]";
 /// How long to wait for the chat control, and then the composer, to paint.
 const CHAT_PANEL_TIMEOUT_MS: u64 = 5_000;
 
+/// The chat controls, each as an ordered list of phrasings.
+///
+/// Ordered, and probed one at a time by `first_that_appears` — `Locator::or()` cannot
+/// express this. An `or` chain matches the union and `.first()` takes the first match **in
+/// the document**, so the order written means nothing: whichever candidate's element sits
+/// earlier in the DOM wins. That is wrong twice here. The send button carries the same
+/// accessible name as the composer, so a union of the two resolves to whichever Meet renders
+/// first. And the toggle's broadest phrasing, `aria-label*="chat"`, is a substring match that
+/// can pick up another control in the bar — it is last so that it is used last.
+fn chat_toggle_candidates(page: &PageHandle) -> Vec<Locator> {
+    vec![
+        page.get_by_role("button", Some(pattern("chat with everyone")))
+            .first(),
+        page.get_by_role("button", Some(pattern("^chat$"))).first(),
+        page.locator(CHAT_TOGGLE_SELECTOR).first(),
+    ]
+}
+
+/// The composer. The last phrasing covers a contenteditable rather than a textarea.
+fn chat_composer_candidates(page: &PageHandle) -> Vec<Locator> {
+    vec![
+        page.locator(CHAT_COMPOSER_SELECTOR).first(),
+        page.locator("textarea[placeholder*=\"Send a message\" i]")
+            .first(),
+        page.locator("[role=\"textbox\"][aria-label*=\"message\" i]")
+            .first(),
+    ]
+}
+
+/// The send button, tag pinned first so it is not confused with the composer.
+fn chat_send_candidates(page: &PageHandle) -> Vec<Locator> {
+    vec![
+        page.locator(CHAT_SEND_SELECTOR).first(),
+        page.get_by_role("button", Some(pattern("^send"))).first(),
+    ]
+}
+
+/// The first candidate to appear, probed in the order written.
+///
+/// The first gets the full budget, since it is the one a live call measured; the rest get one
+/// short probe each, so a rotted first selector costs the fallbacks rather than a multiple of
+/// the whole timeout.
+async fn first_that_appears(candidates: Vec<Locator>, timeout_ms: u64) -> Option<Locator> {
+    for (index, candidate) in candidates.into_iter().enumerate() {
+        let budget = if index == 0 {
+            timeout_ms
+        } else {
+            CHAT_FALLBACK_PROBE_MS
+        };
+        if appears(&candidate, budget).await {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 /// How long each later phrasing gets, once the expected one has not appeared.
 ///
 /// Short, because a rotted first selector pays this per candidate, and by then the page has
@@ -381,6 +455,20 @@ const COUNT_READ_TIMEOUT_MS: u64 = 2_000;
 /// this one have their own waits.
 const CHAT_LIST_READ_TIMEOUT_MS: u64 = 2_000;
 
+/// The guest name field.
+///
+/// Shared by the classification race and the fill so the two cannot disagree. The
+/// third alternative is scoped to "your name" rather than any label merely
+/// *containing* "name": the looser form matched unrelated text inputs on a signed-in
+/// lobby, filled one, and then logged the "meeting has most likely ended" warning at
+/// nobody.
+fn name_field_locator(page: &PageHandle) -> Locator {
+    page.locator("input[aria-label=\"Your name\"]")
+        .or(page.locator("input[placeholder=\"Your name\"]"))
+        .or(page.locator("input[type=\"text\"][aria-label*=\"your name\" i]"))
+        .first()
+}
+
 /// Accessible-name patterns for the button that submits a join request.
 ///
 /// Matched as substrings, not exact strings: Meet appends device state to the
@@ -455,6 +543,999 @@ impl GoogleMeetProvider {
     }
 }
 
+/// Where opening the chat panel stopped: no panel, or a panel with no input in it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PanelStep {
+    Panel,
+    Composer,
+}
+
+impl PanelStep {
+    fn for_send(self) -> ChatSendStep {
+        match self {
+            PanelStep::Panel => ChatSendStep::Panel,
+            PanelStep::Composer => ChatSendStep::Composer,
+        }
+    }
+
+    fn for_read(self) -> ChatReadStep {
+        match self {
+            PanelStep::Panel => ChatReadStep::Panel,
+            PanelStep::Composer => ChatReadStep::Composer,
+        }
+    }
+}
+
+/// What one read of the chat panel found.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatHarvest {
+    rows: Vec<ChatRow>,
+    total: usize,
+    id_nodes: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatRow {
+    label: String,
+    text: String,
+    cut: bool,
+}
+
+/// The chat read run in the page. One pass over the rows already painted, for the same
+/// reason the count is one: a locator per message is a round trip per message, and the room
+/// is waiting.
+const CHAT_HARVEST_PROBE: &str = r#"({ rowSelector, bodySelector, groupSelector, limit, maxChars }) => {
+  const doc = globalThis.document;
+
+  // What a group says apart from the messages and the controls in it: the name of
+  // the person who sent them, and the time. One line per node, so the reader can
+  // tell the name from the time instead of parsing one glued string. Read once
+  // per group, since a group holds a run of messages from one person.
+  const labels = new Map();
+  const labelOf = (row) => {
+    const group = row.closest(groupSelector);
+    if (!group) return '';
+    const known = labels.get(group);
+    if (known !== undefined) return known;
+    const copy = group.cloneNode(true);
+    for (const part of Array.from(copy.querySelectorAll('[data-message-id], button'))) {
+      part.remove();
+    }
+    const label = Array.from(copy.children)
+      .map((part) => (part.textContent ?? '').replace(/\s+/g, ' ').trim())
+      .join('\n');
+    labels.set(group, label);
+    return label;
+  };
+
+  const rows = [];
+  const seen = new Set();
+  for (const row of Array.from(doc.querySelectorAll(rowSelector))) {
+    const id = row.getAttribute('data-message-id');
+    if (!id || seen.has(id)) continue;
+
+    // The body node only, so the name and the time are read from the group rather
+    // than glued to the text. A row with no body node counts as unparsed, and an
+    // id is taken as read only once a body is found.
+    const body = row.querySelector(bodySelector);
+    if (!body) continue;
+    const text = (body.textContent ?? '').replace(/\s+/g, ' ').trim();
+    if (!text) continue;
+    seen.add(id);
+    rows.push({
+      label: labelOf(row),
+      text: text.slice(0, maxChars),
+      cut: text.length > maxChars,
+    });
+  }
+
+  return {
+    rows: rows.slice(-limit),
+    total: rows.length,
+    idNodes: doc.querySelectorAll('[data-message-id]').length,
+  };
+}"#;
+
+/// The participant count read in the page, three ways. See `participant_count`.
+const PARTICIPANT_COUNT_PROBE: &str = r#"() => {
+  const doc = globalThis.document;
+
+  const found = [];
+  const add = (value) => {
+    if (Number.isFinite(value) && value > 0) found.push(value);
+  };
+
+  const panel = doc.querySelector('[role="list"][aria-label="Participants"]');
+  if (panel) {
+    add(
+      Array.from(panel.querySelectorAll('[role="listitem"][aria-label]')).filter((row) =>
+        row.getAttribute('data-participant-id'),
+      ).length,
+    );
+  }
+
+  // The People control renders its label and a count badge as separate nodes, so
+  // the control's combined text reads "People2". Matched on that text rather than a
+  // class name, because every class on that subtree is a generated hash that
+  // changes without notice — and the control has no aria-label of its own.
+  for (const el of Array.from(doc.querySelectorAll('div,span,button'))) {
+    const text = el.textContent?.trim() ?? '';
+    if (text.length > 24) continue;
+    const badge = text.match(/^people\s*(\d{1,4})$/i);
+    if (badge) add(parseInt(badge[1], 10));
+  }
+
+  // Distinct ids, because the same participant appears both as a tile and as a
+  // panel row once the roster is open.
+  const ids = new Set(
+    Array.from(doc.querySelectorAll('[data-participant-id]')).map((el) =>
+      el.getAttribute('data-participant-id'),
+    ),
+  );
+  add(ids.size);
+
+  return found;
+}"#;
+
+impl GoogleMeetProvider {
+    /// Load the meeting, once more if another navigation lands on top of it.
+    ///
+    /// A `goto` that a *different* navigation interrupts fails, and one can still be in
+    /// flight from the sign-in that ran seconds earlier: Google's redirect chains outlive the
+    /// call that started them. The sign-in now parks the page before handing it over, so this
+    /// should be rare — but "rare" and "never" are different things when the cost of being
+    /// wrong is a user told their meeting link is broken.
+    ///
+    /// Only that one error is retried. Everything else — a dead link, a timeout, no
+    /// network — is a real answer and is reported as it stands.
+    async fn load_meeting_page(&self, page: &PageHandle, url: &str) -> anyhow::Result<()> {
+        static INTERRUPTED: LazyLock<regex::Regex> = LazyLock::new(|| {
+            regex::Regex::new(r"(?i)interrupted by another navigation").expect("valid regex")
+        });
+        let mut attempt = 1;
+        loop {
+            let loaded = page
+                .goto(
+                    url,
+                    GotoOptions {
+                        wait_until: LoadState::DomContentLoaded,
+                        timeout_ms: Some(PAGE_READY_TIMEOUT_MS),
+                    },
+                )
+                .await;
+            let Err(err) = loaded else {
+                return Ok(());
+            };
+            if attempt > 1 || !INTERRUPTED.is_match(&err.to_string()) {
+                return Err(err);
+            }
+            log_info!("[Meeting] Another navigation landed on the meeting page — loading it again");
+            // From a still page, or the interloper's next hop takes the retry down too and
+            // reports the same misleading message this exists to prevent.
+            sign_in::quiesce(page, None, None).await;
+            attempt += 1;
+        }
+    }
+
+    async fn attempt_join(
+        &self,
+        page: &PageHandle,
+        options: &JoinOptions,
+    ) -> anyhow::Result<JoinOutcome> {
+        if let Err(err) = self.load_meeting_page(page, &options.url).await {
+            return Ok(JoinOutcome::Failed {
+                step: JoinStep::PageLoad,
+                reason: format!("Could not load the meeting page: {err}"),
+            });
+        }
+
+        // Everything up to the click shares this; the waiting room gets its own budget
+        // below. Capped by the admission timeout as well so a caller asking for a short
+        // join gets a short one.
+        let lobby_deadline =
+            now_ms() + options.admission_timeout_ms.min(LOBBY_PHASE_TIMEOUT_MS) as i64;
+
+        // A rejection can be on screen before we ever reach the name field — but at
+        // `domcontentloaded` it can equally be a frame the SPA is about to replace, so
+        // this has to be the confirmed reading rather than a single glance.
+        if let Some(early) = self.confirmed_rejection(page).await? {
+            return Ok(JoinOutcome::Denied {
+                step: JoinStep::Lobby,
+                reason: self.explain_denial(&early),
+            });
+        }
+
+        self.dismiss_device_dialogs(page).await;
+        // Before the camera toggle and the join click: Meet keeps the join button
+        // disabled until the guest name has a value.
+        //
+        // Three conditions, and all of them have to hold. An account is configured, so a
+        // session is meant to exist. Google refused that session when the sign-in call
+        // asked. And Meet is offering a guest name field. Going on from there is a
+        // guaranteed refusal, because Meet auto-denies automated anonymous guests without
+        // ever prompting a host — so say so and let the caller sign in again. A session
+        // Google accepted keeps its join even when Meet paints the field, since throwing a
+        // live session away is what earns this account a challenge; the probe after the
+        // button hunt covers a session that reads live and is refused anyway. The session
+        // test comes first so a healthy join pays nothing for the field probe.
+        let session = sign_in::session_evidence();
+        if sign_in::is_authenticated()
+            && !session.as_ref().is_some_and(|s| s.live)
+            && self.guest_name_field_present(page, lobby_deadline).await
+        {
+            log_warn!(
+                "[Meeting] Meet is offering a guest name field and the account session is not live ({}) — signing in again before trying the link",
+                session
+                    .as_ref()
+                    .map(|s| s.signal.as_str())
+                    .unwrap_or("the session was never checked")
+            );
+            return Ok(JoinOutcome::ReauthRequired);
+        }
+
+        self.turn_off_camera(page).await;
+
+        match self.click_join_button(page, lobby_deadline).await? {
+            ClickOutcome::Clicked => {}
+            ClickOutcome::NotClicked { rejection } => {
+                // Already confirmed inside the loop — reported as-is rather than
+                // re-confirmed, because the page may have moved on since.
+                if let Some(rejection) = rejection {
+                    return Ok(JoinOutcome::Denied {
+                        step: JoinStep::Lobby,
+                        reason: self.explain_denial(&rejection),
+                    });
+                }
+                // One cause is worth telling apart from selector rot, because it is the one
+                // an operator can fix: Meet offering to let us in without a microphone means
+                // it found no working capture device, and its panel sits over the join
+                // button. That used to be clicked, which got us into calls as a participant
+                // who could never say anything; now it stops the join, so the reason had
+                // better name the mic rather than blame the page.
+                if self.no_microphone_offer(page).await {
+                    return Ok(JoinOutcome::Failed {
+                        step: JoinStep::Microphone,
+                        reason: "Google Meet couldn't find a working microphone in my browser — it only offered to let me in without one, which would have put me in the call unable to say anything, so I didn't join. The container's audio devices are the place to look.".to_string(),
+                    });
+                }
+                // A join button that never enables is the other face of a refused session:
+                // Meet keeps it disabled until the guest name has a value, and nothing here
+                // fills that field. Asked whatever the session check read, since a session
+                // that reads live and is refused anyway lands here — and asked only now, so
+                // a healthy join pays nothing for it. The caller signs in again and tries the
+                // link once, then reports a second refusal as a denial.
+                if sign_in::is_authenticated()
+                    && self
+                        .guest_name_field_present(page, now_ms() + STALE_SESSION_PROBE_MS as i64)
+                        .await
+                {
+                    log_warn!(
+                        "[Meeting] The join button never became available and Meet is asking for a guest name — signing in again before trying the link"
+                    );
+                    return Ok(JoinOutcome::ReauthRequired);
+                }
+                // Deliberately not split further by "did we run out of time". The button
+                // hunt always runs to the lobby deadline, so an elapsed-budget test is true
+                // on every failure path and would make the selector-rot message below
+                // unreachable — which is the distinction that actually gets acted on.
+                return Ok(JoinOutcome::Failed {
+                    step: JoinStep::JoinButton,
+                    reason:
+                        "The join button never became available — the Meet page may have changed."
+                            .to_string(),
+                });
+            }
+        }
+
+        // The request is in: the click landed, and every step that could have failed before
+        // it has returned already. What follows is the wait for a host, which is the part
+        // the caller must not sit through.
+        (options.on_request_submitted)();
+
+        // Measured from the moment the request actually went in, not from the top of the
+        // function — see `LOBBY_PHASE_TIMEOUT_MS`.
+        self.wait_for_admission(page, now_ms() + options.admission_timeout_ms as i64)
+            .await
+    }
+
+    /// Add the real cause to Meet's catch-all wall when we already know it.
+    ///
+    /// Meet says the same thing for an ended meeting, a dead link and a tenant that
+    /// blocks guests — and says it *also* when it refused us for being an automated
+    /// anonymous guest. In that last case the runtime knows why (sign-in failed
+    /// moments earlier) and used to say nothing, so an expired bot password read to
+    /// the user as "the meeting has ended".
+    fn explain_denial(&self, reason: &str) -> String {
+        // Only the catch-all wall is ambiguous enough to be worth annotating; "a host
+        // denied the request" is already unambiguous and needs no help.
+        let Some(failure) = sign_in::sign_in_failure_reason() else {
+            return reason.to_string();
+        };
+        if reason != CATCH_ALL_REJECTION {
+            return reason.to_string();
+        }
+        format!(
+            "{reason} I also couldn't sign in to the Google account configured for me ({failure}), and Google refuses automated anonymous guests — that is the most likely cause."
+        )
+    }
+
+    /// Grant/dismiss the permission and device-preview dialogs.
+    ///
+    /// The browser grants its own permission prompt (see `browser_stack.rs`), but Meet
+    /// has its own "allow microphone" and "continue without" panels that sit on top of
+    /// the join UI.
+    async fn dismiss_device_dialogs(&self, page: &PageHandle) {
+        // "Got it" dismisses the sign-in tooltip, which floats over the join column
+        // and can otherwise intercept a click meant for the controls beneath it.
+        //
+        // "Continue without microphone" and "Continue without microphone and camera"
+        // used to be on this list, and pressing them is how a bot ends up in a call
+        // with no capture device — silent for the whole meeting, and past the point
+        // where unmuting can help, because there is no device left to unmute. Meet only
+        // offers them when it thinks the mic is unavailable; the answer is to let that
+        // join fail loudly rather than to accept a mute we cannot recover from.
+        for label in ["Got it", "Dismiss"] {
+            let button = page.get_by_role("button", Some(pattern(label))).first();
+            if appears(&button, 1_500).await && button.click(2_000).await.is_ok() {
+                log_info!("[Meeting] Dismissed Meet dialog: {}", label);
+            }
+            // None of these are required — absence is the normal case.
+        }
+    }
+
+    /// Is Meet offering to let us in without a microphone?
+    ///
+    /// Read, never pressed — see `dismiss_device_dialogs`. Meet paints this offer when it
+    /// has no capture device to give the tab, and the panel carrying it sits over the
+    /// join button, so the visible symptom is a join that never finds its button. That
+    /// is a true observation and a useless report: it points at Meet's markup when the
+    /// fault is the container's audio devices.
+    ///
+    /// Text rather than a selector because the wording is what we actually know; the
+    /// panel's structure we do not. A miss just falls through to the generic message.
+    async fn no_microphone_offer(&self, page: &PageHandle) -> bool {
+        static OFFER: LazyLock<regex::Regex> = LazyLock::new(|| {
+            regex::Regex::new(r"(?i)continue without (a )?microphone").expect("valid regex")
+        });
+        match page.locator("body").inner_text(Some(2_000)).await {
+            Ok(text) => OFFER.is_match(&text),
+            Err(_) => false,
+        }
+    }
+
+    /// Is Meet asking for a guest name?
+    ///
+    /// A field that is on screen means Meet treats this browser as a guest, and it
+    /// refuses automated anonymous guests. Short-tempered about it, since waiting the
+    /// full lobby budget would delay the answer for a join that is already suspect. A
+    /// miss is not costly — the join goes ahead and Meet refuses it, which is the outcome
+    /// this only makes faster and clearer.
+    async fn guest_name_field_present(&self, page: &PageHandle, lobby_deadline: i64) -> bool {
+        let budget = (STALE_SESSION_PROBE_MS as i64)
+            .min(lobby_deadline - now_ms())
+            .max(0);
+        if budget == 0 {
+            return false;
+        }
+        name_field_locator(page)
+            .wait_for(WaitForState::Visible, budget as u64)
+            .await
+            .is_ok()
+    }
+
+    /// Clear a modal off the call controls, pressing only buttons that just dismiss.
+    ///
+    /// Returns quietly when there is no dialog, which is the common case. When there is
+    /// one it doesn't recognise, it says so and leaves it: the click it would otherwise
+    /// guess at is the one that joins without a microphone. See `DIALOG_DISMISS_PATTERNS`.
+    ///
+    /// The button hunt is page-wide rather than scoped inside the dialog. Scoping reads
+    /// better but buys nothing here — the allowlist is anchored to whole names that only
+    /// ever mean "dismiss", so pressing one that belongs to something else on the page is
+    /// harmless, and the dialog is what we already know is on top.
+    async fn dismiss_blocking_dialogs(&self, page: &PageHandle) {
+        let dialog = page.locator(BLOCKING_DIALOG_SELECTOR).first();
+
+        for _pass in 1..=DIALOG_SWEEP_PASSES {
+            if !appears(&dialog, DIALOG_PROBE_MS).await {
+                return;
+            }
+
+            for source in DIALOG_DISMISS_PATTERNS {
+                let button = page.get_by_role("button", Some(pattern(source))).first();
+                if !appears(&button, DIALOG_PROBE_MS).await {
+                    continue;
+                }
+                if button.click(2_000).await.is_ok() {
+                    log_info!(
+                        "[Meeting] Cleared a dialog off the call controls (matched {})",
+                        shown(source)
+                    );
+                    break;
+                }
+                // Went stale mid-click, or something else took it — try the next phrasing.
+            }
+        }
+
+        // Judged on the dialog rather than on "did I click something", because the two
+        // can disagree: the hunt is page-wide, so a match can belong to something else
+        // entirely and leave the modal exactly where it was.
+        if appears(&dialog, DIALOG_PROBE_MS).await {
+            log_warn!(
+                "[Meeting] A dialog is still covering the call controls — either its buttons are not ones I will press, or clearing it did not work"
+            );
+        }
+    }
+
+    /// Is the microphone muted? `None` means the toggle could not be read at all.
+    ///
+    /// Three-valued on purpose. "Couldn't read it" must not collapse into "it's fine":
+    /// that reading is what a rotted selector produces, and treating it as unmuted is
+    /// indistinguishable from success right up to the point where nobody can hear the
+    /// agent. Anything other than a literal `"false"` counts as muted for the same
+    /// reason — an attribute Meet renames is not permission to assume the best.
+    async fn mic_muted(&self, page: &PageHandle, timeout_ms: u64) -> Option<bool> {
+        let toggle = page.locator(MIC_TOGGLE_SELECTOR).first();
+        if !appears(&toggle, timeout_ms).await {
+            return None;
+        }
+        match toggle.get_attribute("data-is-muted", None).await {
+            Ok(Some(muted)) => Some(muted != "false"),
+            _ => None,
+        }
+    }
+
+    /// Get the microphone live, and report whether Meet had muted us.
+    ///
+    /// Meet auto-mutes a new joiner once a call is past a handful of participants, which
+    /// is exactly the meeting anyone bothers to send an agent to. Nothing downstream can
+    /// see it — admission, the participant count and the Realtime socket all read healthy
+    /// while the agent greets a room that hears nothing — so the unmute is part of getting
+    /// in, and what came of it is reported rather than assumed.
+    ///
+    /// This is the same click a human makes when Meet mutes them on the way in, and it
+    /// carries the same consequence: if it does not work, you are in a meeting nobody can
+    /// hear you in. What the agent does about that is `confirm_admitted`'s business.
+    async fn ensure_mic_on(&self, page: &PageHandle) -> anyhow::Result<MicOutcome> {
+        let Some(initial) = self.mic_muted(page, MIC_TOGGLE_TIMEOUT_MS).await else {
+            log_error!(
+                "[Meeting] Could not read the microphone toggle on the call UI — the Meet controls may have changed, and I cannot tell whether the room can hear me"
+            );
+            // Not filed as an auto-mute: this is a reading nobody took, and counting it would
+            // inflate `muted_on_entry` in exactly the outage that produces it.
+            return Ok(MicOutcome {
+                confirmed: false,
+                muted_on_entry: false,
+            });
+        };
+
+        if !initial {
+            log_info!("[Meeting] Microphone was already live on arrival");
+            return Ok(MicOutcome {
+                confirmed: true,
+                muted_on_entry: false,
+            });
+        }
+
+        log_info!("[Meeting] Meet put me in the call muted — unmuting");
+        let deadline = now_ms() + MIC_PHASE_TIMEOUT_MS as i64;
+        let mut attempt = 1;
+        while attempt <= MIC_UNMUTE_ATTEMPTS && now_ms() < deadline {
+            // Every attempt, not just the first: the dialog that eats the click can arrive
+            // after the sweep, and a click that was swallowed leaves no trace beyond the
+            // toggle not having moved.
+            self.dismiss_blocking_dialogs(page).await;
+
+            if let Err(err) = page
+                .locator(MIC_TOGGLE_SELECTOR)
+                .first()
+                .click(MIC_CLICK_TIMEOUT_MS)
+                .await
+            {
+                // Reported rather than swallowed: "subtree intercepts pointer events" here
+                // is the scrim, and it is the difference between a UI change and a covered
+                // button.
+                log_info!("[Meeting] Unmute attempt {} did not land: {}", attempt, err);
+            }
+
+            page.wait_for_timeout(MIC_SETTLE_MS).await?;
+            // The short patience: the toggle was found on the read above, so a confirmation
+            // that has to wait ten seconds for it is waiting for something else.
+            let mut after = self.mic_muted(page, MIC_RECHECK_MS).await;
+            // "Couldn't read it" must not fall through to the next attempt as if it said
+            // muted: if the click did land, clicking again would mute a microphone that is
+            // now live — the original bug, re-entered through the retry. Pay the full
+            // patience once before spending an attempt on it.
+            if after.is_none() {
+                after = self.mic_muted(page, MIC_TOGGLE_TIMEOUT_MS).await;
+            }
+            if after == Some(false) {
+                log_info!("[Meeting] Microphone is live (took {} attempt(s))", attempt);
+                return Ok(MicOutcome {
+                    confirmed: true,
+                    muted_on_entry: true,
+                });
+            }
+            attempt += 1;
+        }
+
+        log_error!("[Meeting] Microphone is still muted after every attempt");
+        Ok(MicOutcome {
+            confirmed: false,
+            muted_on_entry: true,
+        })
+    }
+
+    /// Put the side rail back the way the read found it.
+    ///
+    /// A panel that read as open before the click belongs to a person in the call, and
+    /// closing it would take the chat away from them mid-conversation. Everything else is
+    /// closed: a panel this read opened, and a toggle that would not say, since the reading
+    /// that costs the call is a rail left on chat while the empty-room check counts tiles.
+    async fn restore_chat_panel(&self, toggle: &Locator, was_open: Option<bool>) {
+        if was_open == Some(true) {
+            return;
+        }
+        self.close_chat_panel(toggle).await;
+    }
+
+    /// Get the panel open, and hand back the composer in it.
+    ///
+    /// Answers the failure rather than a boolean, so the two reasons stay apart: a panel
+    /// that would not open is `panel`, a panel that painted no input is `composer`, and
+    /// those are different problems for whoever reads the telemetry.
+    ///
+    /// The failure carries the step and the reason alone, since a send and a read both open
+    /// the panel this way and each puts it into its own result shape.
+    async fn open_chat_panel(
+        &self,
+        page: &PageHandle,
+        toggle: &Locator,
+    ) -> Result<Locator, (PanelStep, String)> {
+        if self.panel_is_open(toggle).await != Some(true) {
+            // Same reason the unmute does this: a modal's scrim eats the click, and the
+            // click reports success on the scrim rather than on the button underneath.
+            self.dismiss_blocking_dialogs(page).await;
+            if let Err(err) = toggle.click(CHAT_CLICK_TIMEOUT_MS).await {
+                return Err((
+                    PanelStep::Panel,
+                    format!("the chat control would not open: {err}"),
+                ));
+            }
+        }
+
+        // The first of the three positives a send needs: the composer painted. `appears`
+        // waits; `is_visible` would not — see its doc comment.
+        match first_that_appears(chat_composer_candidates(page), CHAT_PANEL_TIMEOUT_MS).await {
+            Some(composer) => Ok(composer),
+            None => Err((
+                PanelStep::Composer,
+                "the chat panel did not paint an input".to_string(),
+            )),
+        }
+    }
+
+    /// Is the chat panel open? `Some(true)`, `Some(false)`, or `None` when the toggle will
+    /// not say.
+    ///
+    /// `aria-expanded` on the toggle is the one piece of panel state Meet publishes, and it
+    /// answers immediately. The alternative is probing for the composer, which asks a
+    /// different question: a panel that is open but a render behind reads as closed, and the
+    /// probe then either clicks the panel shut or has to be short enough to race.
+    async fn panel_is_open(&self, toggle: &Locator) -> Option<bool> {
+        match toggle
+            .get_attribute("aria-expanded", Some(CHAT_READ_TIMEOUT_MS))
+            .await
+        {
+            Ok(Some(expanded)) => {
+                Some(crate::support::js::trim(&expanded).to_lowercase() == "true")
+            }
+            _ => None,
+        }
+    }
+
+    /// Close the panel again. Never changes the reported outcome.
+    ///
+    /// Not cosmetic, and not conditional on the send having worked: the panel shares the side
+    /// rail with People, `participant_count` reads participant tiles, and a count of one for a
+    /// minute is what makes the runtime leave the call. So every exit from a send comes
+    /// through here.
+    ///
+    /// Reads the state first, because the control is a toggle and something else can have
+    /// closed the panel already — the participants poll shares that rail, so a click landing
+    /// after it would *open* chat instead. A toggle that will not say gets the click: a panel
+    /// left open is the reading that costs the call, and clicking a closed panel open is what
+    /// the next poll undoes.
+    async fn close_chat_panel(&self, toggle: &Locator) {
+        if self.panel_is_open(toggle).await == Some(false) {
+            return;
+        }
+        // Best effort. The next send opens it again, and the count poll tolerates a
+        // reading it cannot take — it is a low reading that costs us.
+        let _ = toggle.click(CHAT_CLICK_TIMEOUT_MS).await;
+    }
+
+    /// Did the page take the message? Two readings, both required.
+    ///
+    /// Neither alone is worth anything. An empty composer on its own is what Meet shows
+    /// for a send the server then dropped. The text being on the page on its own is
+    /// *worse*: an unsent draft is still sitting in the composer, inside the panel, so a
+    /// containment test would match the exact failure it is meant to catch. Together they
+    /// mean the draft went somewhere and the text is in the room's message list — which is
+    /// read without a selector for that list, the most volatile node in the panel and the
+    /// one there is least evidence about.
+    ///
+    /// `before` is why this counts rather than contains. A containment test answers "is
+    /// this text on the page", which is already true of anything the agent posted earlier
+    /// in the call, so a second send of the same link would read as confirmed by the first
+    /// one's message. Counting answers "is there one more of it than there was", which
+    /// only the send can make true.
+    ///
+    /// Known false negative, unverified: a long message Meet renders collapsed behind a
+    /// "show more" could fail the count having actually been sent. 60 characters of a
+    /// message capped at 500 makes that unlikely, and it fails in the safe direction.
+    async fn confirm_sent(
+        &self,
+        page: &PageHandle,
+        composer: &Locator,
+        needle: &str,
+        before: i64,
+    ) -> anyhow::Result<bool> {
+        for read in 1..=CHAT_CONFIRM_READS {
+            // The first look is immediate: a send that landed should not be made to wait an
+            // interval before the agent may speak about it.
+            if read > 1 {
+                page.wait_for_timeout(CHAT_CONFIRM_INTERVAL_MS).await?;
+            }
+
+            if !self.read_draft(composer).await.is_empty() {
+                continue;
+            }
+            // A read that failed is not a reading of zero. There are more reads after it,
+            // and then a reported failure.
+            if let Some(now) = self.count_on_page(page, needle).await {
+                if now > before {
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(false)
+    }
+
+    /// The baseline count, once it stops moving. `None` if any read of it fails.
+    ///
+    /// The panel paints its history when it opens, and the composer can be there a moment
+    /// before the messages are. A baseline read in that moment is too low, and a message that
+    /// paints later — during the confirmation reads — then counts as this send: a success the
+    /// room never got. So the count has to agree with itself twice before anything is typed.
+    ///
+    /// Costs one extra read on a still panel, since the second read agrees with the first.
+    async fn settled_count(&self, page: &PageHandle, needle: &str) -> anyhow::Result<Option<i64>> {
+        let mut last: Option<i64> = None;
+        for read in 1..=BASELINE_SETTLE_READS {
+            if read > 1 {
+                page.wait_for_timeout(BASELINE_SETTLE_INTERVAL_MS).await?;
+            }
+            // Unreadable is fatal here rather than something to retry past: a baseline
+            // nobody could take is what makes an unconfirmable send look confirmed.
+            let Some(now) = self.count_on_page(page, needle).await else {
+                return Ok(None);
+            };
+            if Some(now) == last {
+                return Ok(Some(now));
+            }
+            last = Some(now);
+        }
+        // Still moving after that many reads. The newest reading is the best there is, and
+        // the other two positives a send needs still have to hold on top of it.
+        Ok(last)
+    }
+
+    /// How many times `needle` appears in the page's text, or `None` when it cannot be read.
+    ///
+    /// `None` rather than 0 for an unreadable page: 0 is a number the caller compares, and a
+    /// busy page must not be able to make a count look like it went up.
+    async fn count_on_page(&self, page: &PageHandle, needle: &str) -> Option<i64> {
+        let page_text = page
+            .locator("body")
+            .inner_text(Some(CHAT_READ_TIMEOUT_MS))
+            .await
+            .ok()?;
+        if needle.is_empty() {
+            return Some(crate::support::js::len16(&page_text) as i64 - 1);
+        }
+        Some(page_text.matches(needle).count() as i64)
+    }
+
+    /// What is still in the composer, or `"unknown"` when it cannot be read.
+    ///
+    /// Reading the value fails on a contenteditable, which is one of the shapes the composer
+    /// locator accepts, so the rendered text is the fallback. An unreadable box answers
+    /// `"unknown"` rather than `""`: only a box confirmed empty may contribute to a
+    /// success, and "I could not look" is not that.
+    async fn read_draft(&self, composer: &Locator) -> String {
+        if let Ok(value) = composer.input_value(Some(CHAT_READ_TIMEOUT_MS)).await {
+            return crate::support::js::trim(&value).to_string();
+        }
+        match composer.inner_text(Some(CHAT_READ_TIMEOUT_MS)).await {
+            Ok(text) => crate::support::js::trim(&text).to_string(),
+            Err(_) => "unknown".to_string(),
+        }
+    }
+
+    /// Report the admission, with what became of the microphone attached.
+    ///
+    /// Both admission paths go through here so neither can grow an `Admitted` that never
+    /// tried the microphone at all — the unmute is part of getting in, not something the
+    /// call does later.
+    ///
+    /// A microphone it could not confirm is **not** a failed join. The agent hears the
+    /// room through a different device entirely (`meet_out.monitor`, nothing to do with
+    /// the mic), so a muted agent is still a listener with its full tool surface, and
+    /// leaving would throw that away. It is also a scraped DOM attribute: taking Google
+    /// renaming it as grounds to abandon meetings would turn a cosmetic UI change into a
+    /// total outage. So this reports what it knows and lets the runtime tell somebody —
+    /// which is the property the veto was really after, without the amputation.
+    async fn confirm_admitted(&self, page: &PageHandle) -> anyhow::Result<JoinOutcome> {
+        let mic = self.ensure_mic_on(page).await?;
+
+        if !mic.confirmed {
+            log_warn!(
+                "[Meeting] Joining with a microphone I could not confirm is live — the room may hear nothing from me"
+            );
+        }
+
+        Ok(JoinOutcome::Admitted {
+            muted_on_entry: mic.muted_on_entry,
+            mic_confirmed: mic.confirmed,
+        })
+    }
+
+    /// Leave the camera off.
+    ///
+    /// There is no camera device in the container, so this is about how the bot
+    /// appears to the room (an avatar tile rather than a broken video tile) and about
+    /// not having Meet retry a device that will never work.
+    async fn turn_off_camera(&self, page: &PageHandle) {
+        let camera = page
+            .get_by_role("button", Some(pattern("turn off camera")))
+            .first();
+        if appears(&camera, 2_000).await && camera.click(2_000).await.is_ok() {
+            log_info!("[Meeting] Camera turned off");
+        }
+        // Already off, or no camera control on this page.
+    }
+
+    /// Find and press the join button, retrying while the page settles.
+    ///
+    /// Retrying rather than waiting once: the button's label changes as Meet decides
+    /// whether we're a guest ("Ask to join") or a member ("Join now"), and it is
+    /// briefly present-but-disabled in between.
+    ///
+    /// Hands back the rejection it found rather than a bare false. Discarding it meant
+    /// the caller had to confirm all over again — several seconds later — and if the
+    /// wall text had repainted away by then, a genuine denial was reported as "the join
+    /// button never became available", blaming the Meet UI for a refusal we had already
+    /// read twice.
+    async fn click_join_button(
+        &self,
+        page: &PageHandle,
+        deadline: i64,
+    ) -> anyhow::Result<ClickOutcome> {
+        let started_at = now_ms();
+        // `deadline` already carries the lobby-phase cap, so there is nothing left to
+        // min() against here.
+        let button_deadline = deadline;
+        let mut last_report = 0;
+
+        while now_ms() < button_deadline {
+            for source in JOIN_BUTTON_PATTERNS {
+                let button = page.get_by_role("button", Some(pattern(source))).first();
+                if !appears(&button, 1_000).await {
+                    continue;
+                }
+                // Present but disabled is the normal state until the name field has a
+                // value and Meet has finished probing devices, so this is a retry
+                // condition rather than a failure.
+                match button.is_enabled(30_000).await {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        // Reported at info, throttled: at debug a 60-second hunt left no
+                        // trace at all, so the only evidence was the terminal "may have
+                        // changed" message.
+                        if now_ms() - last_report > BUTTON_REPORT_INTERVAL_MS as i64 {
+                            last_report = now_ms();
+                            log_info!(
+                                "[Meeting] Join button matching {} is not enabled yet ({}ms so far)",
+                                shown(source),
+                                now_ms() - started_at
+                            );
+                        }
+                        continue;
+                    }
+                    // Not this pattern, or it went stale mid-check — keep looking.
+                    Err(_) => continue,
+                }
+                if button.click(5_000).await.is_ok() {
+                    log_info!(
+                        "[Meeting] Clicked the join button (matched {}) after {}ms",
+                        shown(source),
+                        now_ms() - started_at
+                    );
+                    return Ok(ClickOutcome::Clicked);
+                }
+            }
+
+            if let Some(rejection) = self.confirmed_rejection(page).await? {
+                return Ok(ClickOutcome::NotClicked {
+                    rejection: Some(rejection),
+                });
+            }
+            page.wait_for_timeout(JOIN_RETRY_INTERVAL_MS).await?;
+        }
+
+        log_info!(
+            "[Meeting] Gave up looking for a join button after {}ms",
+            now_ms() - started_at
+        );
+        Ok(ClickOutcome::NotClicked { rejection: None })
+    }
+
+    /// Wait out the waiting room.
+    ///
+    /// Admission is inferred from in-call furniture appearing (the leave button, the
+    /// participants panel) because Meet exposes no explicit "you are in" signal.
+    async fn wait_for_admission(
+        &self,
+        page: &PageHandle,
+        deadline: i64,
+    ) -> anyhow::Result<JoinOutcome> {
+        log_info!("[Meeting] Waiting to be admitted");
+        let started_at = now_ms();
+
+        while now_ms() < deadline {
+            if self.is_in_call(page).await {
+                log_info!(
+                    "[Meeting] Admitted to the call after {}ms",
+                    now_ms() - started_at
+                );
+                return self.confirm_admitted(page).await;
+            }
+
+            if let Some(rejection) = self.confirmed_rejection(page).await? {
+                // Confirming takes a couple of seconds, and admission can land inside that
+                // window. Being in the room outranks any text on it.
+                if self.is_in_call(page).await {
+                    log_info!("[Meeting] Admitted while a rejection message was being confirmed");
+                    return self.confirm_admitted(page).await;
+                }
+                return Ok(JoinOutcome::Denied {
+                    step: JoinStep::Admission,
+                    reason: self.explain_denial(&rejection),
+                });
+            }
+
+            page.wait_for_timeout(1_500).await?;
+        }
+
+        Ok(JoinOutcome::Denied {
+            step: JoinStep::Admission,
+            reason: "Nobody admitted the request to join before the wait timed out.".to_string(),
+        })
+    }
+
+    /// In-call furniture — the closest thing Meet gives us to an "admitted" flag.
+    ///
+    /// Two more markers used to be listed here, `button[aria-label*="People"]` and
+    /// `[data-participant-count]`. A live probe of every `aria-label` on the page found
+    /// neither, which is the same finding that removed them from `participant_count` — and
+    /// here they were not merely inert: each one costs its own 400ms wait on the *not*
+    /// in-call path, which is the path every admission poll and every rejection check takes.
+    async fn is_in_call(&self, page: &PageHandle) -> bool {
+        for selector in [
+            "button[aria-label*=\"Leave call\" i]",
+            "button[aria-label*=\"Leave meeting\" i]",
+        ] {
+            if appears(&page.locator(selector).first(), 400).await {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Save what the page looked like when a join failed, best effort.
+    ///
+    /// Written into the persistent data dir under a fixed name — one artifact from
+    /// the most recent failure, not a growing pile — and never allowed to affect the
+    /// outcome being reported.
+    async fn capture_failure(&self, page: &PageHandle) {
+        let path = format!(
+            "{}/meeting-join-failure.png",
+            crate::lib::data_dir::resolve_data_dir()
+        );
+        let shot = page
+            .screenshot(ScreenshotOptions {
+                path: Some(path.clone().into()),
+                timeout_ms: Some(5_000),
+                ..ScreenshotOptions::default()
+            })
+            .await;
+        match shot {
+            Ok(_) => log_info!(
+                "[Meeting] Saved a screenshot of the failed join to {}",
+                path
+            ),
+            Err(err) => log_debug!(
+                "[Meeting] Could not capture the failure screenshot: Error: {}",
+                err
+            ),
+        }
+    }
+
+    /// A rejection that held still — the only kind worth acting on.
+    ///
+    /// Costs nothing in the common case: a page with no rejection text takes one read
+    /// and returns. Only once something matches do we pay for confirmation, and that is
+    /// exactly when it is worth paying, because the alternative is ending the join on a
+    /// frame Meet was about to replace.
+    async fn confirmed_rejection(&self, page: &PageHandle) -> anyhow::Result<Option<String>> {
+        let Some(first) = self.read_rejection(page).await else {
+            return Ok(None);
+        };
+
+        for _ in 1..REJECTION_CONFIRM_READS {
+            // If we are already in the room, whatever the page says is stale by
+            // definition — chat and captions are part of the text being scanned.
+            if self.is_in_call(page).await {
+                log_info!("[Meeting] Ignoring rejection text — already in the call");
+                return Ok(None);
+            }
+            page.wait_for_timeout(REJECTION_CONFIRM_INTERVAL_MS).await?;
+            // Compared on the mapped reason, so a *different* rejection on a later read
+            // also counts as a page that has not settled.
+            if self.read_rejection(page).await.as_deref() != Some(first.as_str()) {
+                log_info!(
+                    "[Meeting] A rejection message did not persist — continuing (was: {})",
+                    crate::support::js::slice16(&first, 0, 60)
+                );
+                return Ok(None);
+            }
+        }
+        Ok(Some(first))
+    }
+
+    /// Scan the visible text for a known rejection, returning what to tell the user.
+    async fn read_rejection(&self, page: &PageHandle) -> Option<String> {
+        let text = page.locator("body").inner_text(Some(2_000)).await.ok()?;
+        REJECTION_PATTERNS
+            .iter()
+            .find(|(pattern, _)| pattern.is_match(&text))
+            .map(|(_, reason)| reason.to_string())
+    }
+
+    /// The first control matching any of these names, or `None`.
+    ///
+    /// Buttons and menu items are searched together because Meet renders these choices as
+    /// one or the other, and every caller here wants whichever it turns out to be. The
+    /// patterns are anchored by their authors for the reason `DIALOG_DISMISS_PATTERNS` is:
+    /// this clicks things on a live call, and a loose match on a control bar full of verbs
+    /// is how a share tool stops a share.
+    async fn find_control(&self, page: &PageHandle, patterns: &[&str]) -> Option<Locator> {
+        for source in patterns {
+            let control = page
+                .get_by_role("button", Some(pattern(source)))
+                .or(page.get_by_role("menuitem", Some(pattern(source))))
+                .first();
+            if appears(&control, SHARE_PROBE_MS).await {
+                return Some(control);
+            }
+        }
+        None
+    }
+}
+
 #[async_trait]
 impl MeetingProvider for GoogleMeetProvider {
     fn name(&self) -> &'static str {
@@ -517,7 +1598,11 @@ impl MeetingProvider for GoogleMeetProvider {
     /// something diagnosable without reproducing the call, so every outcome but
     /// `Admitted` saves one.
     async fn join(&self, page: &PageHandle, options: JoinOptions) -> anyhow::Result<JoinOutcome> {
-        todo!()
+        let outcome = self.attempt_join(page, &options).await?;
+        if !matches!(outcome, JoinOutcome::Admitted { .. }) {
+            self.capture_failure(page).await;
+        }
+        Ok(outcome)
     }
 
     /// Read the microphone without touching it. `None` when the control cannot be read.
@@ -526,7 +1611,10 @@ impl MeetingProvider for GoogleMeetProvider {
     /// already up, so a control that is not there now is not about to paint, and a
     /// ten-second wait would hold a poll open for a reading it will take again anyway.
     async fn microphone_live(&self, page: &PageHandle) -> anyhow::Result<Option<bool>> {
-        todo!()
+        Ok(self
+            .mic_muted(page, MIC_RECHECK_MS)
+            .await
+            .map(|muted| !muted))
     }
 
     /// Put the microphone in the requested state, mid-call, and report what it reads.
@@ -541,7 +1629,31 @@ impl MeetingProvider for GoogleMeetProvider {
     /// requested state — that is the reading a rotted selector gives, and it would silence
     /// the retry and the warning together.
     async fn set_microphone(&self, page: &PageHandle, on: bool) -> anyhow::Result<Option<bool>> {
-        todo!()
+        let Some(muted) = self.mic_muted(page, MIC_RECHECK_MS).await else {
+            return Ok(None);
+        };
+        let live = !muted;
+        if live == on {
+            return Ok(Some(live));
+        }
+
+        self.dismiss_blocking_dialogs(page).await;
+        if page
+            .locator(MIC_TOGGLE_SELECTOR)
+            .first()
+            .click(MIC_CLICK_TIMEOUT_MS)
+            .await
+            .is_err()
+        {
+            // Still covered, or gone. Report the state read before the click, which
+            // disagrees with the request, so the caller reads a failure. Safe even if the
+            // click did land: the next call reads the new state and returns without
+            // clicking again.
+            return Ok(Some(live));
+        }
+
+        page.wait_for_timeout(MIC_SETTLE_MS).await?;
+        self.microphone_live(page).await
     }
 
     /// Post one message into the call's chat, and confirm the page took it.
@@ -565,7 +1677,92 @@ impl MeetingProvider for GoogleMeetProvider {
         page: &PageHandle,
         text: &str,
     ) -> anyhow::Result<ChatSendResult> {
-        todo!()
+        let not_sent = |step: ChatSendStep, reason: &str| ChatSendResult::NotSent {
+            step,
+            reason: reason.to_string(),
+        };
+
+        let Some(toggle) =
+            first_that_appears(chat_toggle_candidates(page), CHAT_PANEL_TIMEOUT_MS).await
+        else {
+            return Ok(not_sent(
+                ChatSendStep::Panel,
+                "no chat control on the call page",
+            ));
+        };
+
+        let composer = match self.open_chat_panel(page, &toggle).await {
+            Ok(composer) => composer,
+            Err((step, reason)) => {
+                // Closed on this path too: opening reports `composer` after clicking the
+                // panel open, so this is the failure that leaves a panel over the
+                // participant tiles.
+                self.close_chat_panel(&toggle).await;
+                return Ok(not_sent(step.for_send(), &reason));
+            }
+        };
+
+        // Read before anything is typed. The confirmation is that this number went up, so
+        // the baseline has to predate both the draft and the message: the same link posted
+        // twice in one call would otherwise confirm the second send off the first one's
+        // message, still sitting in the panel above it.
+        let needle = crate::support::js::slice16(text, 0, CONFIRM_NEEDLE_CHARS);
+        let Some(before) = self.settled_count(page, &needle).await? else {
+            self.close_chat_panel(&toggle).await;
+            return Ok(not_sent(
+                ChatSendStep::Confirm,
+                "the page could not be read before sending, so no send could be confirmed",
+            ));
+        };
+
+        if let Err(err) = composer.fill(text, CHAT_CLICK_TIMEOUT_MS).await {
+            self.close_chat_panel(&toggle).await;
+            return Ok(not_sent(
+                ChatSendStep::Composer,
+                &format!("could not type into the chat box: {err}"),
+            ));
+        }
+
+        // Enter is how Meet sends, and `fill` above put the text in as one operation, so
+        // there is no keystroke to trip it early. The caller has already collapsed every
+        // run of whitespace, so no newline can submit a fragment or split the message.
+        // A failure falls through: the send button below is the other way in.
+        let _ = composer.press("Enter", CHAT_CLICK_TIMEOUT_MS).await;
+
+        if self.confirm_sent(page, &composer, &needle, before).await? {
+            self.close_chat_panel(&toggle).await;
+            return Ok(ChatSendResult::Sent);
+        }
+
+        // One fallback, not a retry loop: a panel whose Enter handler moved still has a
+        // send button, and pressing it is a different path rather than the same one again.
+        let Some(send) = first_that_appears(chat_send_candidates(page), CHAT_SEND_PROBE_MS).await
+        else {
+            self.close_chat_panel(&toggle).await;
+            return Ok(not_sent(
+                ChatSendStep::Send,
+                "Enter did not send and there is no send button",
+            ));
+        };
+
+        if let Err(err) = send.click(CHAT_CLICK_TIMEOUT_MS).await {
+            self.close_chat_panel(&toggle).await;
+            return Ok(not_sent(
+                ChatSendStep::Send,
+                &format!("the send button would not take a click: {err}"),
+            ));
+        }
+
+        let confirmed = self.confirm_sent(page, &composer, &needle, before).await?;
+        self.close_chat_panel(&toggle).await;
+        Ok(if confirmed {
+            ChatSendResult::Sent
+        } else {
+            not_sent(
+                ChatSendStep::Confirm,
+                "the page never showed the message as sent",
+            )
+        })
     }
 
     /// Read the messages already in the panel, oldest first.
@@ -586,7 +1783,80 @@ impl MeetingProvider for GoogleMeetProvider {
         page: &PageHandle,
         options: ChatReadOptions,
     ) -> anyhow::Result<ChatReadResult> {
-        todo!()
+        let not_read = |step: ChatReadStep, reason: &str| ChatReadResult::NotRead {
+            step,
+            reason: reason.to_string(),
+        };
+
+        let Some(toggle) =
+            first_that_appears(chat_toggle_candidates(page), CHAT_PANEL_TIMEOUT_MS).await
+        else {
+            return Ok(not_read(
+                ChatReadStep::Panel,
+                "no chat control on the call page",
+            ));
+        };
+
+        // Read before the click, so the restore can tell a panel somebody else opened from
+        // one this read opened. A toggle that will not say is treated as ours to close.
+        let was_open = self.panel_is_open(&toggle).await;
+
+        if let Err((step, reason)) = self.open_chat_panel(page, &toggle).await {
+            self.restore_chat_panel(&toggle, was_open).await;
+            return Ok(not_read(step.for_read(), &reason));
+        }
+
+        let harvest = with_timeout(
+            page.evaluate_function(
+                CHAT_HARVEST_PROBE,
+                json!({
+                    "rowSelector": CHAT_MESSAGE_ROW_SELECTOR,
+                    "bodySelector": CHAT_MESSAGE_BODY_SELECTOR,
+                    "groupSelector": CHAT_MESSAGE_GROUP_SELECTOR,
+                    "limit": options.limit,
+                    "maxChars": options.max_chars_per_message,
+                }),
+            ),
+            CHAT_LIST_READ_TIMEOUT_MS as i64,
+        )
+        .await
+        .and_then(|value| Ok(serde_json::from_value::<ChatHarvest>(value)?));
+
+        let result = match harvest {
+            // A closed page, a navigation mid-read, or a page too busy to answer.
+            Err(_) => not_read(ChatReadStep::Read, "the page did not answer the chat read"),
+            Ok(harvest) => {
+                // Nothing parsed has three possible reasons: the chat is empty, the selectors
+                // no longer match, or the panel closed. Ids on the page mean the page has
+                // messages this code could not read. An empty chat is reported only when
+                // neither of the other two is true, and a toggle that does not answer counts
+                // as still open.
+                if harvest.total == 0 && harvest.id_nodes > 0 {
+                    not_read(
+                        ChatReadStep::Read,
+                        "the panel had messages the reader could not parse",
+                    )
+                } else if harvest.total == 0 && self.panel_is_open(&toggle).await == Some(false) {
+                    not_read(ChatReadStep::Read, "the chat panel closed during the read")
+                } else {
+                    let truncated = harvest.total > harvest.rows.len();
+                    ChatReadResult::Read {
+                        messages: harvest
+                            .rows
+                            .into_iter()
+                            .map(|row| ChatMessageRead {
+                                sender: chat_sender_name(&row.label),
+                                text: row.text,
+                                truncated: row.cut,
+                            })
+                            .collect(),
+                        truncated,
+                    }
+                }
+            }
+        };
+        self.restore_chat_panel(&toggle, was_open).await;
+        Ok(result)
     }
 
     /// Who is in the call, by name, for the transcriber's keyword list.
@@ -632,7 +1902,62 @@ impl MeetingProvider for GoogleMeetProvider {
     /// Chromium answers the capture picker itself — a launch flag selects the virtual
     /// display (see `browser_stack.rs`).
     async fn start_screen_share(&self, page: &PageHandle) -> anyhow::Result<ScreenShareOutcome> {
-        todo!()
+        if self
+            .find_control(page, &[STOP_SHARING_PATTERN])
+            .await
+            .is_some()
+        {
+            return Ok(ScreenShareOutcome::AlreadySharing);
+        }
+
+        self.dismiss_blocking_dialogs(page).await;
+
+        let Some(control) = self.find_control(page, &SHARE_CONTROL_PATTERNS).await else {
+            return Ok(ScreenShareOutcome::Failed {
+                reason: "I could not find Meet's screen-sharing control.".to_string(),
+            });
+        };
+
+        if control.click(SHARE_CLICK_TIMEOUT_MS).await.is_err() {
+            return Ok(ScreenShareOutcome::Failed {
+                reason: "Meet's screen-sharing control would not take a click.".to_string(),
+            });
+        }
+
+        if let Some(source) = self.find_control(page, &[SHARE_SOURCE_PATTERN]).await {
+            // The menu closed itself, or the choice moved. Whether that mattered is
+            // decided below, by the room rather than by this click.
+            let _ = source.click(SHARE_CLICK_TIMEOUT_MS).await;
+        }
+
+        let deadline = now_ms() + SHARE_CONFIRM_TIMEOUT_MS as i64;
+        while now_ms() < deadline {
+            // Swept on every pass rather than once: the warning lands somewhere inside the
+            // renegotiation, and while it is up it covers the presentation.
+            if let Some(anyway) = self.find_control(page, &[SELF_VIEW_CONFIRM_PATTERN]).await {
+                // A failed click is somebody's click winning the race, or a repaint. The
+                // state is read below either way.
+                if anyway.click(SHARE_CLICK_TIMEOUT_MS).await.is_ok() {
+                    log_info!("[Meeting] Confirmed the self-view warning");
+                }
+            }
+
+            if self
+                .find_control(page, &[STOP_SHARING_PATTERN])
+                .await
+                .is_some()
+            {
+                log_info!("[Meeting] Sharing the screen");
+                return Ok(ScreenShareOutcome::Sharing);
+            }
+
+            page.wait_for_timeout(SHARE_CONFIRM_INTERVAL_MS).await?;
+        }
+
+        log_warn!("[Meeting] Asked Meet to share the screen, but it never started presenting");
+        Ok(ScreenShareOutcome::Failed {
+            reason: "I asked Meet to share the screen and it never started presenting.".to_string(),
+        })
     }
 
     /// Stop presenting.
@@ -641,7 +1966,33 @@ impl MeetingProvider for GoogleMeetProvider {
     /// control means there is nothing to stop, and the result comes from that control
     /// disappearing rather than from the click.
     async fn stop_screen_share(&self, page: &PageHandle) -> anyhow::Result<ScreenShareOutcome> {
-        todo!()
+        let Some(stop) = self.find_control(page, &[STOP_SHARING_PATTERN]).await else {
+            return Ok(ScreenShareOutcome::NotSharing);
+        };
+
+        if stop.click(SHARE_CLICK_TIMEOUT_MS).await.is_err() {
+            return Ok(ScreenShareOutcome::Failed {
+                reason: "Meet's stop-sharing control would not take a click.".to_string(),
+            });
+        }
+
+        let deadline = now_ms() + SHARE_CONFIRM_TIMEOUT_MS as i64;
+        while now_ms() < deadline {
+            if self
+                .find_control(page, &[STOP_SHARING_PATTERN])
+                .await
+                .is_none()
+            {
+                log_info!("[Meeting] Stopped sharing the screen");
+                return Ok(ScreenShareOutcome::Stopped);
+            }
+            page.wait_for_timeout(SHARE_CONFIRM_INTERVAL_MS).await?;
+        }
+
+        log_warn!("[Meeting] Asked Meet to stop sharing, and it is still presenting");
+        Ok(ScreenShareOutcome::Failed {
+            reason: "I asked Meet to stop sharing and it is still presenting.".to_string(),
+        })
     }
 
     /// How many people are in the call, or `None` when it can't be determined.
@@ -660,7 +2011,23 @@ impl MeetingProvider for GoogleMeetProvider {
     /// `COUNT_READ_TIMEOUT_MS`: this runs on a timer for the whole call. A closed page, a
     /// navigation mid-read, or a page too busy to answer reads as `None`.
     async fn participant_count(&self, page: &PageHandle) -> anyhow::Result<Option<i64>> {
-        todo!()
+        // One page read rather than a locator per strategy: this runs on a timer for the
+        // whole call, and three locator round-trips each with their own timeout is a lot of
+        // work to repeat every ten seconds.
+        let readings = with_timeout(
+            page.evaluate_function(PARTICIPANT_COUNT_PROBE, json!(null)),
+            COUNT_READ_TIMEOUT_MS as i64,
+        )
+        .await;
+        // A closed page, a navigation mid-read, or a page too busy to answer.
+        let Ok(serde_json::Value::Array(readings)) = readings else {
+            return Ok(None);
+        };
+        Ok(readings
+            .iter()
+            .filter_map(serde_json::Value::as_f64)
+            .reduce(f64::max)
+            .map(|largest| largest as i64))
     }
 
     /// Click "Leave call" or "Leave meeting" when one appears within two seconds, and log
@@ -668,7 +2035,18 @@ impl MeetingProvider for GoogleMeetProvider {
     /// immediately after, which drops the WebRTC session and removes the bot from the room
     /// anyway (`[Meeting] No leave button found — closing the browser instead`).
     async fn leave(&self, page: &PageHandle) -> anyhow::Result<()> {
-        todo!()
+        for source in ["leave call", "leave meeting"] {
+            let button = page.get_by_role("button", Some(pattern(source))).first();
+            if appears(&button, 2_000).await && button.click(3_000).await.is_ok() {
+                log_info!("[Meeting] Left the call");
+                return Ok(());
+            }
+            // Try the other label.
+        }
+        // Not a failure: the browser is closed immediately after, which drops the
+        // WebRTC session and removes the bot from the room anyway.
+        log_info!("[Meeting] No leave button found — closing the browser instead");
+        Ok(())
     }
 }
 

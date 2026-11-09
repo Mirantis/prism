@@ -430,7 +430,7 @@ const requestCases = [
             type: 'tool-call',
             toolCallId: `call_${id}`,
             toolName: 'read_file',
-            input: id === 'g' ? undefined : { path: id },
+            input: id === 'g' ? {} : { path: id },
           })),
         },
         {

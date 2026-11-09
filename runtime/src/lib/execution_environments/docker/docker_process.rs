@@ -490,7 +490,15 @@ mod tests {
         let pid_file = dir.path().join("group.pid");
         let pid_file = pid_file.to_string_lossy().into_owned();
         let mut child = std::process::Command::new("setsid")
-            .args(["bash", "-c", RECORD_PGID, "prism-exec", &pid_file, "sleep", "30"])
+            .args([
+                "bash",
+                "-c",
+                RECORD_PGID,
+                "prism-exec",
+                &pid_file,
+                "sleep",
+                "30",
+            ])
             .spawn()
             .or_else(|_| {
                 // No `setsid` binary on this host: the wrapper alone, in a group of its own.

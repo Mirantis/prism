@@ -85,7 +85,10 @@ mod tests {
     #[serial_test::serial(shell_workspace_root)]
     fn creates_the_configured_root_and_reports_no_fallback() {
         let _restore = RestoreRoot(std::env::var("SHELL_WORKSPACE_ROOT").ok());
-        let base = tempfile::Builder::new().prefix("ws-cfg-").tempdir().unwrap();
+        let base = tempfile::Builder::new()
+            .prefix("ws-cfg-")
+            .tempdir()
+            .unwrap();
         let root = format!("{}/nested/workspace", base.path().to_string_lossy());
         // SAFETY: serialized on the variable.
         unsafe { std::env::set_var("SHELL_WORKSPACE_ROOT", &root) };
@@ -106,7 +109,10 @@ mod tests {
     #[serial_test::serial(shell_workspace_root)]
     fn falls_back_to_a_temp_dir_when_the_configured_root_cannot_be_created() {
         let _restore = RestoreRoot(std::env::var("SHELL_WORKSPACE_ROOT").ok());
-        let base = tempfile::Builder::new().prefix("ws-bad-").tempdir().unwrap();
+        let base = tempfile::Builder::new()
+            .prefix("ws-bad-")
+            .tempdir()
+            .unwrap();
         let file = format!("{}/not-a-dir", base.path().to_string_lossy());
         std::fs::write(&file, "x").unwrap();
         let desired = format!("{file}/workspace");
@@ -124,10 +130,7 @@ mod tests {
             }
         );
         // Pins the fallback so every later resolve_local_workspace_root() agrees.
-        assert_eq!(
-            std::env::var("SHELL_WORKSPACE_ROOT").unwrap(),
-            fallback
-        );
+        assert_eq!(std::env::var("SHELL_WORKSPACE_ROOT").unwrap(), fallback);
         assert!(std::path::Path::new(&fallback).is_dir());
     }
 }

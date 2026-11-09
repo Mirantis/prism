@@ -392,9 +392,9 @@ mod tests {
         headers.insert("user-agent".into(), "ai/7.0.137".into());
         fetch(
             FetchRequest {
-            url: "https://x".into(),
-            headers,
-            body: "{}".into(),
+                url: "https://x".into(),
+                headers,
+                body: "{}".into(),
             },
             None,
         )
@@ -428,9 +428,9 @@ mod tests {
         headers.insert("anthropic-beta".into(), "x".into());
         fetch(
             FetchRequest {
-            url: "https://bedrock-runtime.us-east-1.amazonaws.com/model/m/invoke".into(),
-            headers,
-            body: "{}".into(),
+                url: "https://bedrock-runtime.us-east-1.amazonaws.com/model/m/invoke".into(),
+                headers,
+                body: "{}".into(),
             },
             None,
         )

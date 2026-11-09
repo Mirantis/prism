@@ -1447,6 +1447,7 @@ mod tests {
                     "thread-9",
                     crate::db::models::MessageRole::User,
                     "hi",
+                    crate::db::models::MessageTrigger::UserInput,
                 );
                 message.id = id.to_string();
                 diesel::insert_into(crate::db::schema::conversation_messages::table)

@@ -1230,3 +1230,519 @@ fn a_task_run_reads_what_it_sent_and_what_later_runs_reported() {
     let heartbeat = get_last_send_instructions(&last_send, LastSendKind::Heartbeat);
     assert!(!heartbeat.contains("A condition that still holds is not a new occurrence"));
 }
+
+// ---------------------------------------------------------------------------
+// the `# Plugins` section
+// ---------------------------------------------------------------------------
+
+const PLUGINS_DIR: &str = "/data/plugins";
+
+fn plugin(id: &str, version: Option<&str>, description: Option<&str>, mcp: bool) -> PluginEntry {
+    PluginEntry {
+        id: id.into(),
+        name: id.into(),
+        version: version.map(str::to_string),
+        description: description.map(str::to_string),
+        dir: format!("{PLUGINS_DIR}/{id}"),
+        skills_dir: None,
+        mcp_config_path: mcp.then(|| format!("{PLUGINS_DIR}/{id}/mcp.json")),
+        diagnostics: Vec::new(),
+    }
+}
+
+fn skill(name: &str, source: SkillSource, plugin_id: Option<&str>) -> SkillEntry {
+    SkillEntry {
+        name: name.into(),
+        dir_name: name.into(),
+        description: format!("Does {name}."),
+        dir: format!("/skills/{name}"),
+        skill_md_path: format!("/skills/{name}/SKILL.md"),
+        source,
+        plugin_id: plugin_id.map(str::to_string),
+    }
+}
+
+#[test]
+fn the_plugins_section_collapses_to_one_sentence_when_nothing_is_installed() {
+    let out = render_plugins_section(&[], &[], PLUGINS_DIR);
+    assert!(out.contains("# Plugins"));
+    assert!(out.contains("No Agent Plugins are installed"));
+    // Most installs have no plugins; they must not pay for a full section.
+    assert_eq!(out.split("\n\n").count(), 2);
+    assert!(out.contains(PLUGINS_DIR));
+}
+
+#[test]
+fn the_plugins_section_lists_each_plugin_with_its_version_and_description() {
+    let out = render_plugins_section(
+        &[
+            plugin("acme-deploy", Some("1.2.0"), Some("Deploy helpers."), false),
+            plugin("bare", None, None, false),
+        ],
+        &[],
+        PLUGINS_DIR,
+    );
+    assert!(out.contains("- **acme-deploy** v1.2.0 — Deploy helpers."));
+    assert!(out.contains("- **bare**"));
+    assert!(!out.contains("bare** v"));
+    assert!(!out.contains("bare** —"));
+    assert!(out.contains(PLUGINS_DIR));
+}
+
+#[test]
+fn the_plugins_section_names_only_the_skills_a_plugin_contributed() {
+    let out = render_plugins_section(
+        &[
+            plugin("notes", None, None, false),
+            plugin("other", None, None, false),
+        ],
+        &[
+            skill("summarize", SkillSource::Plugin, Some("notes")),
+            // A global skill of the same name wins a clash, so the catalog lists it alone.
+            skill("translate", SkillSource::Global, None),
+        ],
+        PLUGINS_DIR,
+    );
+    assert!(out.contains("- **notes** (skills: summarize)"));
+    assert!(out.contains("- **other**\n"));
+    // The name is enough to correlate the two sections.
+    assert!(!out.contains("Does summarize."));
+}
+
+#[test]
+fn the_plugins_section_points_at_a_tool_prefix_only_for_a_plugin_with_mcp_servers() {
+    let out = render_plugins_section(
+        &[
+            plugin("nomcp", None, None, false),
+            plugin("withmcp", None, None, true),
+        ],
+        &[skill("thing", SkillSource::Plugin, Some("nomcp"))],
+        PLUGINS_DIR,
+    );
+    assert!(out.contains("tools prefixed `withmcp__`"));
+    assert!(!out.contains("tools prefixed `nomcp__`"));
+    assert!(out.contains("`<plugin>__<server>__<tool>`"));
+}
+
+#[test]
+fn the_plugins_section_caps_the_listing_and_reports_the_remainder() {
+    let plugins: Vec<PluginEntry> = (0..55)
+        .map(|i| plugin(&format!("p{i:03}"), None, None, false))
+        .collect();
+    let out = render_plugins_section(&plugins, &[], PLUGINS_DIR);
+    assert!(out.contains("(+5 more installed.)"));
+    assert!(out.contains("**p049**"));
+    assert!(!out.contains("**p050**"));
+}
+
+#[test]
+fn the_plugins_section_reads_exactly_as_the_typescript_wrote_it() {
+    assert_eq!(
+        render_plugins_section(
+            &[plugin("demo", Some("0.1.0"), Some("Demo."), true)],
+            &[skill("probe", SkillSource::Plugin, Some("demo"))],
+            PLUGINS_DIR,
+        ),
+        "# Plugins\n\nInstalled Agent Plugins, with the skills and tools each one adds:\n\n- **demo** v0.1.0 — Demo. (skills: probe; tools prefixed `demo__`)\n\nA plugin's tools are named `<plugin>__<server>__<tool>`. A name too long for the limit is shortened, so call a tool by the name in your tool set.\n\nTo install a plugin, put its directory into `/data/plugins`: a `plugin.json` (the agent-plugins.org format), with an optional `skills/` and an optional `mcp.json` for MCP servers. Delete the directory to remove it. Changes apply without a restart."
+    );
+}
+
+// ---------------------------------------------------------------------------
+// the system prompt, built whole (a test database for the important memories)
+// ---------------------------------------------------------------------------
+
+const ALL_MODES: [PromptMode; 7] = [
+    PromptMode::Chat,
+    PromptMode::Heartbeat,
+    PromptMode::Cron,
+    PromptMode::Webhook,
+    PromptMode::Goal,
+    PromptMode::Subagent,
+    PromptMode::Meeting,
+];
+
+async fn parts_of(
+    context: &AgentContext,
+    mode: PromptMode,
+    triggers: Option<&[HeartbeatTrigger]>,
+) -> Vec<SystemPromptPart> {
+    build_system_prompt_parts(context, mode, triggers, None)
+        .await
+        .expect("a system prompt")
+}
+
+/// The joined prompt text.
+async fn prompt_text(context: &AgentContext, mode: PromptMode) -> String {
+    parts_of(context, mode, None)
+        .await
+        .iter()
+        .map(|part| part.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n---\n\n")
+}
+
+fn trigger(place: Option<(&str, &str)>, messages: &[(&str, &str)]) -> HeartbeatTrigger {
+    serde_json::from_value(json!({
+        "platform": "Slack",
+        "place": place.map(|(target, name)| json!({ "target": target, "name": name })),
+        "messages": messages
+            .iter()
+            .map(|(sender, text)| json!({ "sender": sender, "text": text, "timestamp": crate::support::now_iso() }))
+            .collect::<Vec<_>>(),
+    }))
+    .expect("a heartbeat trigger")
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn includes_soul_user_and_memory_sections_in_every_mode() {
+    let _db = crate::db::testing::test_db();
+    let context = test_context(Vec::new());
+    for mode in [PromptMode::Chat, PromptMode::Heartbeat, PromptMode::Cron] {
+        let prompt = prompt_text(&context, mode).await;
+        for needle in ["# Soul", "# User", "# Memory"] {
+            assert!(prompt.contains(needle), "{needle} in {}", mode.as_str());
+        }
+        assert!(prompt.contains(&context.soul_md));
+        assert!(prompt.contains(&context.user_md));
+        assert!(prompt.contains(&context.memory_md));
+    }
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn adds_the_bootstrap_section_in_chat_mode_only() {
+    let _db = crate::db::testing::test_db();
+    let mut context = test_context(Vec::new());
+    context.is_bootstrap_phase = true;
+    let chat = parts_of(&context, PromptMode::Chat, None).await;
+    let dynamic = chat.iter().find(|p| p.text.contains("Bootstrap")).unwrap();
+    assert!(!dynamic.cacheable);
+    assert!(dynamic.text.contains("# Bootstrap Phase"));
+    assert!(dynamic.text.contains(&context.bootstrap_md));
+    assert!(
+        !prompt_text(&context, PromptMode::Heartbeat)
+            .await
+            .contains("# Bootstrap Phase")
+    );
+    assert!(
+        !prompt_text(&context, PromptMode::Webhook)
+            .await
+            .contains("# Bootstrap Phase")
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn explains_locked_in_mode_after_the_chat_and_claims_sections() {
+    let _db = crate::db::testing::test_db();
+    let mut context = test_context(Vec::new());
+    context.locked_in = true;
+    let prompt = prompt_text(&context, PromptMode::Chat).await;
+    assert!(prompt.contains("# Locked-In Mode"));
+    // The catalog stays; only the "go install more" paragraph goes away.
+    assert!(prompt.contains("# Skills"));
+    assert!(!prompt.contains("npx skills add"));
+    assert!(!prompt.contains("\n\n\n"));
+    let locked = &prompt[prompt.find("# Locked-In Mode").unwrap()..];
+    assert!(!locked.contains("write long-term memories"));
+    assert!(locked.contains("cannot add or delete entries"));
+    assert!(locked.contains("search long-term memory"));
+    assert!(!locked.contains("onboarding script is paused"));
+    let chat = prompt.find("# Chat Mode").unwrap();
+    let claims = prompt.find("# Claims and Evidence").unwrap();
+    assert!(chat < claims && claims < prompt.find("# Locked-In Mode").unwrap());
+
+    context.locked_in = false;
+    let unlocked = prompt_text(&context, PromptMode::Chat).await;
+    assert!(!unlocked.contains("# Locked-In Mode"));
+    assert!(unlocked.contains("npx skills add"));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn suppresses_the_bootstrap_script_while_locked_and_says_it_is_paused() {
+    let _db = crate::db::testing::test_db();
+    let mut context = test_context(Vec::new());
+    context.is_bootstrap_phase = true;
+    context.locked_in = true;
+    let prompt = prompt_text(&context, PromptMode::Chat).await;
+    assert!(!prompt.contains("# Bootstrap Phase"));
+    assert!(prompt.contains("onboarding script is paused"));
+    assert!(prompt.contains("runs when the user unlocks you"));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn includes_the_vision_and_the_agent_guide_only_when_they_have_text() {
+    let _db = crate::db::testing::test_db();
+    let mut context = test_context(Vec::new());
+    context.vision_md = "Scale to 10k users by Q4.".into();
+    context.agent_md = "Be proactive with heartbeats.".into();
+    let prompt = prompt_text(&context, PromptMode::Chat).await;
+    assert!(prompt.contains("# Vision & Goals\n\nScale to 10k users by Q4."));
+    assert!(prompt.contains("# Agent Guide\n\nBe proactive with heartbeats."));
+    for blank in ["", "   "] {
+        context.vision_md = blank.into();
+        context.agent_md = blank.into();
+        let prompt = prompt_text(&context, PromptMode::Chat).await;
+        assert!(!prompt.contains("# Vision & Goals"));
+        assert!(!prompt.contains("# Agent Guide"));
+        assert!(prompt.contains("# Claims and Evidence"));
+    }
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn gives_each_mode_its_own_mode_sections() {
+    let _db = crate::db::testing::test_db();
+    let context = test_context(Vec::new());
+    let chat = prompt_text(&context, PromptMode::Chat).await;
+    assert!(chat.contains("# Chat Mode") && chat.contains("Ask first"));
+    assert!(!chat.contains("# Subagent Mode") && !chat.contains("# Goal Mode"));
+    let subagent = prompt_text(&context, PromptMode::Subagent).await;
+    assert!(subagent.contains("# Subagent Mode") && !subagent.contains("# Chat Mode"));
+    assert!(!subagent.contains("Ask first"));
+    let goal = prompt_text(&context, PromptMode::Goal).await;
+    assert!(goal.contains("# Goal Mode") && !goal.contains("# Chat Mode"));
+    assert!(!goal.contains("Ask first"));
+    assert!(goal.contains("Each turn's final message is posted top-level in the conversation or channel this goal reports into, so do not also post it there with send_message or another messaging tool; that sends it twice."));
+    let heartbeat = prompt_text(&context, PromptMode::Heartbeat).await;
+    assert!(heartbeat.contains("## Heartbeats") && heartbeat.contains("### Rules"));
+    assert!(heartbeat.contains("### Configured Checks\nCheck for new items every 5 minutes."));
+    assert!(heartbeat.contains("A remark about the heartbeat configuration itself"));
+    assert!(
+        heartbeat
+            .contains("- When everything looks normal, or no checks are configured, post nothing.")
+    );
+    assert!(!heartbeat.contains("HEARTBEAT_OK"));
+    assert!(!heartbeat.contains("# Where This Run May Post"));
+    let cron = prompt_text(&context, PromptMode::Cron).await;
+    assert!(cron.contains("# Scheduled Task Mode"));
+    assert!(!cron.contains("# Messages This Task Sent"));
+    let webhook = prompt_text(&context, PromptMode::Webhook).await;
+    assert!(webhook.contains("# Webhook Mode") && webhook.contains("inbound webhook"));
+    assert!(!webhook.contains("# Scheduled Task Mode"));
+    let pattern =
+        Regex::new(r"You can (also )?list the scheduled tasks.* delete a scheduled task\.")
+            .unwrap();
+    for text in [&heartbeat, &cron, &webhook] {
+        assert!(pattern.is_match(text));
+    }
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn carries_the_claims_and_database_rules_in_every_mode() {
+    let _db = crate::db::testing::test_db();
+    let context = test_context(Vec::new());
+    for mode in ALL_MODES {
+        let prompt = prompt_text(&context, mode).await;
+        assert!(
+            prompt.contains("# Claims and Evidence"),
+            "{}",
+            mode.as_str()
+        );
+        assert!(prompt.contains("# Internal Database"), "{}", mode.as_str());
+        assert!(prompt.contains("Never access, read or modify your own runtime database directly"));
+        assert!(!prompt.contains("\n\n\n"), "{}", mode.as_str());
+    }
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn lists_the_places_a_run_may_post_after_the_cached_part() {
+    let _db = crate::db::testing::test_db();
+    let mut context = test_context(Vec::new());
+    context.user_id = "user-123".into();
+    context.posting_ceiling = Some(ceiling());
+    for mode in [PromptMode::Heartbeat, PromptMode::Cron, PromptMode::Webhook] {
+        let parts = parts_of(&context, mode, None).await;
+        let section = parts
+            .iter()
+            .find(|p| p.text.contains("# Where This Run May Post"))
+            .unwrap();
+        assert!(!section.cacheable);
+        let prompt = prompt_text(&context, mode).await;
+        assert!(prompt.contains(
+            "Nothing you write in this run reaches anyone unless you post it with send_message. Your final message is kept as this run's record and is not delivered."
+        ));
+    }
+    let cron = prompt_text(&context, PromptMode::Cron).await;
+    assert!(!cron.contains("continues an earlier conversation"));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn tells_a_heartbeat_which_channel_triggered_it_in_the_stable_part() {
+    let _db = crate::db::testing::test_db();
+    let context = test_context(Vec::new());
+    let triggers = [trigger(
+        None,
+        &[
+            ("Alice", "deploy failed with OOM"),
+            ("Bob", "seeing increased error rates"),
+        ],
+    )];
+    let parts = parts_of(&context, PromptMode::Heartbeat, Some(&triggers)).await;
+    let stable = parts.iter().find(|p| p.cacheable).unwrap();
+    assert!(
+        stable
+            .text
+            .contains("### Recent Slack Messages (triggering this heartbeat)")
+    );
+    assert!(
+        stable
+            .text
+            .contains("Posted in the monitored Slack channel since your last heartbeat:")
+    );
+    assert!(
+        stable
+            .text
+            .contains("- **Alice** (just now): \"deploy failed with OOM\"")
+    );
+    assert!(stable.text.contains("**Bob**"));
+
+    let placed = [trigger(
+        Some(("slack:C0REL0001", "#releases")),
+        &[("Alice", "ALERT: production deployment failed")],
+    )];
+    let text = parts_of(&context, PromptMode::Heartbeat, Some(&placed))
+        .await
+        .iter()
+        .map(|p| p.text.clone())
+        .collect::<String>();
+    assert!(text.contains("Posted in #releases (`slack:C0REL0001`) since your last heartbeat:"));
+    assert!(text.contains(
+        "Act on what they report or ask for, and post your answer in #releases, also when no checks are configured"
+    ));
+    let none = parts_of(&context, PromptMode::Heartbeat, Some(&[])).await;
+    assert!(
+        none.iter()
+            .all(|p| !p.text.contains("(triggering this heartbeat)"))
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn tells_a_run_what_earlier_runs_sent_after_the_cached_part() {
+    let _db = crate::db::testing::test_db();
+    let now = crate::support::now_ms();
+    let mut context = test_context(Vec::new());
+    context.last_send = Some(
+        serde_json::from_value(json!({
+            "messages": "- To #ops (1h ago): Build #812 failed.\n- To #oncall (3h ago): Disk is 95% full.",
+            "at": now - 3_600_000,
+            "reports": [
+                { "text": "Build #812 still fails.", "at": now - 1_800_000 },
+                { "text": "All systems healthy.", "at": now - 7_200_000 },
+            ],
+        }))
+        .unwrap(),
+    );
+    let parts = parts_of(&context, PromptMode::Heartbeat, None).await;
+    let section = parts
+        .iter()
+        .find(|p| p.text.contains("# Messages Your Heartbeat Sent"))
+        .unwrap();
+    assert!(!section.cacheable);
+    assert!(section.text.contains("Earlier heartbeat runs sent these messages, newest first:\n\n- To #ops (1h ago): Build #812 failed.\n- To #oncall (3h ago): Disk is 95% full."));
+    assert!(section.text.contains("The runs since the oldest of these sends reported, newest first:\n\n(30min ago) Build #812 still fails.\n\n(2h ago) All systems healthy."));
+    assert!(
+        section
+            .text
+            .contains("If a check asks for a message on every run, send it as asked.")
+    );
+    assert!(
+        parts
+            .iter()
+            .filter(|p| p.cacheable)
+            .all(|p| !p.text.contains("Build #812"))
+    );
+
+    context.last_send = Some(
+        serde_json::from_value(json!({
+            "messages": "- To #releases (2h ago): The rollout started.",
+            "at": now - 7_200_000,
+        }))
+        .unwrap(),
+    );
+    let goal = parts_of(&context, PromptMode::Goal, None).await;
+    let section = goal
+        .iter()
+        .find(|p| p.text.contains("# Messages This Goal Sent"))
+        .unwrap();
+    assert!(!section.cacheable);
+    assert!(section.text.contains("# Messages This Goal Sent\n\nEarlier turns of this goal sent these messages, newest first:\n\n- To #releases (2h ago): The rollout started.\n\nSend one of these messages again only when the objective asks for it again, for example at a new stage of the work."));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn splits_the_prompt_into_a_stable_part_and_a_dated_dynamic_part() {
+    let _db = crate::db::testing::test_db();
+    let context = test_context(Vec::new());
+    let parts = parts_of(&context, PromptMode::Chat, None).await;
+    assert_eq!(parts.len(), 2);
+    assert!(parts[0].cacheable);
+    assert!(!parts[1].cacheable);
+    let stable = &parts[0].text;
+    for needle in [
+        "# Identity",
+        "**TestAgent**",
+        "# Soul",
+        "# User",
+        "# Memory",
+        "# Chat Mode",
+        "# Working Rules",
+        "# Claims and Evidence",
+    ] {
+        assert!(stable.contains(needle), "{needle}");
+    }
+    assert!(!stable.contains("# Runtime Context"));
+    let dynamic = &parts[1].text;
+    assert!(dynamic.contains("# Runtime Context"));
+    assert!(
+        Regex::new(
+            r"\d{4}-\d{2}-\d{2} \((Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\)"
+        )
+        .unwrap()
+        .is_match(dynamic)
+    );
+    assert!(dynamic.contains("date -u"));
+    // A clock here would change on every turn and re-bill the conversation behind it.
+    assert!(!Regex::new(r"\d{2}:\d{2}:\d{2}").unwrap().is_match(dynamic));
+    let again = parts_of(&context, PromptMode::Chat, None).await;
+    assert_eq!(parts, again);
+    assert!(parts.iter().all(|p| !p.text.contains("# Runtime Notices")));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn injects_runtime_notices_as_a_part_of_their_own() {
+    let _db = crate::db::testing::test_db();
+    let mut context = test_context(Vec::new());
+    context.runtime_notices = Some(vec![
+        "A file could not be downloaded — the Slack app likely needs the files:read scope.".into(),
+    ]);
+    let parts = parts_of(&context, PromptMode::Chat, None).await;
+    let notice = parts
+        .iter()
+        .find(|p| p.text.contains("# Runtime Notices"))
+        .unwrap();
+    assert!(!notice.cacheable);
+    assert!(notice.text.contains("authoritative"));
+    assert!(notice.text.ends_with(
+        "- A file could not be downloaded — the Slack app likely needs the files:read scope."
+    ));
+}
+
+#[test]
+fn writes_the_runtime_context_for_a_date_without_its_time() {
+    let at = chrono::DateTime::parse_from_rfc3339("2026-01-02T09:30:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    assert_eq!(
+        runtime_context_section(at),
+        "# Runtime Context\n\nToday's date (UTC): 2026-01-02 (Friday)\n\nWhen a task needs the time of day, read the clock with the shell: `date -u \"+%Y-%m-%dT%H:%M:%SZ\"`"
+    );
+}

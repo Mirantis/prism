@@ -84,7 +84,11 @@ pub fn default_detection_deps() -> DetectionDeps {
     }
 }
 
-fn detection(name: ExecutionEnvironmentName, reason: impl Into<String>, demanded: bool) -> Detection {
+fn detection(
+    name: ExecutionEnvironmentName,
+    reason: impl Into<String>,
+    demanded: bool,
+) -> Detection {
     Detection {
         name,
         reason: reason.into(),
@@ -222,7 +226,9 @@ mod tests {
         Arc::new(move || Some(value.to_string()))
     }
 
-    fn last(value: &'static str) -> Arc<dyn Fn() -> BoxFuture<'static, Option<String>> + Send + Sync> {
+    fn last(
+        value: &'static str,
+    ) -> Arc<dyn Fn() -> BoxFuture<'static, Option<String>> + Send + Sync> {
         Arc::new(move || Box::pin(async move { Some(value.to_string()) }))
     }
 
@@ -239,7 +245,11 @@ mod tests {
         .await;
         assert_eq!(
             found,
-            detection(ExecutionEnvironmentName::Docker, "a container engine answered", false)
+            detection(
+                ExecutionEnvironmentName::Docker,
+                "a container engine answered",
+                false
+            )
         );
     }
 
@@ -261,7 +271,11 @@ mod tests {
         // Demanded, so a failure to start must be reported rather than degraded.
         assert_eq!(
             forced,
-            detection(ExecutionEnvironmentName::Docker, "EXECUTION_ENVIRONMENT=docker", true)
+            detection(
+                ExecutionEnvironmentName::Docker,
+                "EXECUTION_ENVIRONMENT=docker",
+                true
+            )
         );
 
         let refused = detect(DetectionDeps {

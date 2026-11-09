@@ -378,11 +378,7 @@ impl PendingWorkService {
                     "work.dropped".to_string(),
                     (of_kind.len() - live_count).to_string(),
                 );
-                track_event(
-                    "work resumed",
-                    Some(&CONFIG.owner_user_id()),
-                    Some(props),
-                );
+                track_event("work resumed", Some(&CONFIG.owner_user_id()), Some(props));
             }
         }
     }
@@ -634,7 +630,10 @@ mod tests {
         );
         service.flush().await;
         let rows = stored().await;
-        assert_eq!(rows[0].2, json!({ "finished": { "stopReason": "end_turn" } }));
+        assert_eq!(
+            rows[0].2,
+            json!({ "finished": { "stopReason": "end_turn" } })
+        );
         assert_eq!(rows[0].3, 0);
     }
 

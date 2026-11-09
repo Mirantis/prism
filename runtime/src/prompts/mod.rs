@@ -15,3 +15,6 @@ pub mod voice_delivery_prompt;
 pub mod voice_history;
 pub mod webhook_prompt_tags;
 // @generated-modules-end
+
+#[cfg(test)]
+mod prompt_texts_tests;

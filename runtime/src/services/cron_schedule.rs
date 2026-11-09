@@ -390,9 +390,11 @@ static WEEKDAY_NAMES: LazyLock<Vec<(Regex, String)>> = LazyLock::new(|| {
 });
 
 fn replace_names(field: &str, names: &[(Regex, String)]) -> String {
-    names.iter().fold(field.to_string(), |text, (pattern, number)| {
-        pattern.replace_all(&text, number.as_str()).into_owned()
-    })
+    names
+        .iter()
+        .fold(field.to_string(), |text, (pattern, number)| {
+            pattern.replace_all(&text, number.as_str()).into_owned()
+        })
 }
 
 /// Each token's first `*` becomes the field's whole range.
@@ -476,8 +478,7 @@ static LAST_OFFSET_INPUT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)^l-[0-9]{1,2}$").expect("valid pattern"));
 static LAST_WEEKDAY_INPUT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)^[0-7]l$").expect("valid pattern"));
-static DIGITS: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[0-9]+$").expect("valid pattern"));
+static DIGITS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9]+$").expect("valid pattern"));
 
 /// Each token of a field as a number or an upper-cased token.
 fn normalize_integers(field: &str) -> Vec<CronValue> {
@@ -533,7 +534,10 @@ fn convert_expression(expression: &str) -> anyhow::Result<CronFields> {
     for (index, bounds) in FIELD_BOUNDS.iter().enumerate() {
         fields[index] = convert_range(&fields[index], *bounds);
     }
-    let mut values: CronFields = fields.iter().map(|field| normalize_integers(field)).collect();
+    let mut values: CronFields = fields
+        .iter()
+        .map(|field| normalize_integers(field))
+        .collect();
 
     let mut weekdays: Vec<CronValue> = Vec::new();
     for value in values[5].drain(..) {
@@ -1171,7 +1175,10 @@ mod tests {
         for expression in ["0 0 * * 0", "0 0 * * 7", "0 0 * * sun", "0 0 * * Sunday"] {
             let matcher = CronMatcher::new(expression, Tz::UTC).unwrap();
             assert!(matcher.matches(utc("2026-01-04T00:00:00Z")), "{expression}");
-            assert!(!matcher.matches(utc("2026-01-05T00:00:00Z")), "{expression}");
+            assert!(
+                !matcher.matches(utc("2026-01-05T00:00:00Z")),
+                "{expression}"
+            );
         }
     }
 

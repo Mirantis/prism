@@ -9,6 +9,7 @@ use std::io;
 use async_trait::async_trait;
 use tokio::io::AsyncReadExt;
 
+use super::local_workspace::os_tmpdir;
 use crate::lib::execution_environments::execution_environment::{
     DirEntry, ExecutionFiles, FileStat,
 };
@@ -55,14 +56,15 @@ impl ExecutionFiles for LocalFiles {
     async fn make_temp_dir(&self, prefix: &str) -> anyhow::Result<String> {
         let prefix = prefix.to_string();
         tokio::task::spawn_blocking(move || {
-            let template = std::env::temp_dir().join(format!("{prefix}XXXXXX"));
+            let tmpdir = os_tmpdir();
             tempfile::Builder::new()
                 .prefix(&prefix)
                 .rand_bytes(6)
-                .tempdir()
+                .tempdir_in(&tmpdir)
                 .map(|dir| dir.keep().to_string_lossy().into_owned())
                 .map_err(|err| {
-                    node_fs_error(err, "mkdtemp", Some(&template.to_string_lossy()), None)
+                    let template = format!("{tmpdir}/{prefix}XXXXXX");
+                    node_fs_error(err, "mkdtemp", Some(&template), None)
                 })
         })
         .await?
@@ -322,7 +324,10 @@ mod tests {
     use crate::lib::execution_environments::execution_environment::io_error_kind;
 
     fn temp() -> (tempfile::TempDir, String) {
-        let dir = tempfile::Builder::new().prefix("local-env-").tempdir().unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("local-env-")
+            .tempdir()
+            .unwrap();
         // realpath, so macOS's /var → /private/var symlink doesn't make a path
         // comparison fail for reasons that have nothing to do with the test.
         let path = std::fs::canonicalize(dir.path())
@@ -344,7 +349,10 @@ mod tests {
     async fn reads_only_the_requested_prefix() {
         let (_guard, dir) = temp();
         let file = format!("{dir}/head.txt");
-        LocalFiles.write_text(&file, "abcdefghij", None).await.unwrap();
+        LocalFiles
+            .write_text(&file, "abcdefghij", None)
+            .await
+            .unwrap();
         assert_eq!(LocalFiles.read_text(&file, Some(4)).await.unwrap(), "abcd");
     }
 
@@ -352,8 +360,14 @@ mod tests {
     async fn writes_and_reads_bytes() {
         let (_guard, dir) = temp();
         let file = format!("{dir}/a.bin");
-        LocalFiles.write_bytes(&file, &[0, 1, 2, 255]).await.unwrap();
-        assert_eq!(LocalFiles.read_bytes(&file).await.unwrap(), vec![0, 1, 2, 255]);
+        LocalFiles
+            .write_bytes(&file, &[0, 1, 2, 255])
+            .await
+            .unwrap();
+        assert_eq!(
+            LocalFiles.read_bytes(&file).await.unwrap(),
+            vec![0, 1, 2, 255]
+        );
     }
 
     #[cfg(unix)]
@@ -362,7 +376,10 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let (_guard, dir) = temp();
         let file = format!("{dir}/mcp.json");
-        LocalFiles.write_text(&file, "{}", Some(0o600)).await.unwrap();
+        LocalFiles
+            .write_text(&file, "{}", Some(0o600))
+            .await
+            .unwrap();
         let mode = std::fs::metadata(&file).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
     }
@@ -414,7 +431,10 @@ mod tests {
     async fn lists_a_directory_with_the_kind_of_each_entry() {
         let (_guard, dir) = temp();
         LocalFiles.mkdir(&format!("{dir}/sub")).await.unwrap();
-        LocalFiles.write_text(&format!("{dir}/file"), "x", None).await.unwrap();
+        LocalFiles
+            .write_text(&format!("{dir}/file"), "x", None)
+            .await
+            .unwrap();
         let mut entries = LocalFiles.read_dir(&dir).await.unwrap();
         entries.sort_by(|a, b| a.name.cmp(&b.name));
         assert_eq!(
@@ -441,7 +461,10 @@ mod tests {
         let (_guard, dir) = temp();
         let tree = format!("{dir}/tree/deep");
         LocalFiles.mkdir(&tree).await.unwrap();
-        LocalFiles.write_text(&format!("{tree}/f"), "x", None).await.unwrap();
+        LocalFiles
+            .write_text(&format!("{tree}/f"), "x", None)
+            .await
+            .unwrap();
         LocalFiles.remove(&format!("{dir}/tree")).await.unwrap();
         assert!(LocalFiles.stat(&format!("{dir}/tree")).await.is_err());
         assert!(LocalFiles.remove(&format!("{dir}/tree")).await.is_ok());
@@ -454,7 +477,10 @@ mod tests {
         let full = format!("{dir}/full");
         LocalFiles.mkdir(&empty).await.unwrap();
         LocalFiles.mkdir(&full).await.unwrap();
-        LocalFiles.write_text(&format!("{full}/f"), "x", None).await.unwrap();
+        LocalFiles
+            .write_text(&format!("{full}/f"), "x", None)
+            .await
+            .unwrap();
         assert!(LocalFiles.remove_dir(&empty).await.is_ok());
         assert!(LocalFiles.remove_dir(&full).await.is_err());
     }
@@ -487,7 +513,10 @@ mod tests {
 
     #[tokio::test]
     async fn makes_a_temp_dir_with_the_prefix() {
-        let made = LocalFiles.make_temp_dir("prism-local-files-").await.unwrap();
+        let made = LocalFiles
+            .make_temp_dir("prism-local-files-")
+            .await
+            .unwrap();
         let name = std::path::Path::new(&made)
             .file_name()
             .unwrap()
