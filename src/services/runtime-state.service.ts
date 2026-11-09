@@ -15,6 +15,9 @@ export const SINGLE_THREAD = 'singleThread';
 /** This install's `deployment.id` on product telemetry. */
 export const DEPLOYMENT_ID = 'deploymentId';
 
+/** How the agent's names were read for its voice: a JSON object of name to reading. */
+export const AGENT_VOICE_READINGS = 'agentVoiceReadings';
+
 /** The end of the last closed hour that `llm usage aggregated` reported, as an ISO time. */
 export const LLM_USAGE_REPORTED_THROUGH = 'llmUsageReportedThrough';
 

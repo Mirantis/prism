@@ -43,3 +43,13 @@ Feature: Voice chat in the browser
     When I end the voice chat
     Then the conversation shows a summary of the call
     And the voice model has no session open
+
+  Scenario: The agent speaks with the voice its name gets
+    Given the agent is called "Max"
+    And I open a fresh chat
+    And the voice model has heard nothing yet
+    When I start a voice chat from the chat header
+    Then the chat shows the call is live
+    And the voice session speaks with "cedar"
+    When I end the voice chat
+    Then the voice model has no session open

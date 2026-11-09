@@ -58,6 +58,8 @@ const state = {
   summariesRequested: 0,
   /** The text-only items the newest session was given, joined by newlines. */
   contextText: '',
+  /** The voice the newest session asked to speak with, or empty when it named none. */
+  voice: '',
 };
 
 const server = http.createServer((req, res) => {
@@ -85,6 +87,7 @@ wss.on('connection', (ws: WebSocket) => {
   state.sessions += 1;
   state.managedHandshakes += 1;
   state.contextText = '';
+  state.voice = '';
   log(`session opened (${state.sessions} open)`);
   let turns = 0;
   // Both counted for this socket only. The turn boundary is a property of one
@@ -104,7 +107,7 @@ wss.on('connection', (ws: WebSocket) => {
       event_id?: string;
       item?: unknown;
       response?: { output_modalities?: string[]; input?: unknown; metadata?: Record<string, unknown> };
-      session?: { audio?: { input?: { turn_detection?: unknown } } };
+      session?: { audio?: { input?: { turn_detection?: unknown }; output?: { voice?: string } } };
     };
     try {
       event = JSON.parse(data.toString());
@@ -115,6 +118,7 @@ wss.on('connection', (ws: WebSocket) => {
     // The real API confirms every update, and a dictation waits for the confirmation.
     if (event.type === 'session.update') {
       dictation = event.session?.audio?.input?.turn_detection === null;
+      if (event.session?.audio?.output?.voice) state.voice = event.session.audio.output.voice;
       send(ws, { type: 'session.updated', session: { id: 'sess_mock' } });
       return;
     }

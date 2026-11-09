@@ -46,17 +46,14 @@ The agent speaks the language you speak, and switches when you do.
 
 ## The agent's voice
 
-By default (`OPENAI_REALTIME_VOICE=auto`) the voice follows the agent's name, in
-a voice chat and in a [meeting](voice-meetings.md). The classification model
-reads the name: a name most people read as a man's gets `cedar`, and every other
-name gets `marin`. The reading of a name is kept. Startup and a rename read the
-name ahead of the next call, so an agent that renames itself sounds like its new
-name on that call. A call that starts while the name is still being read, or
-when the model fails, speaks with `marin`. A failed reading is tried again on
-the next call.
+By default the voice follows the agent's name, in a voice chat and in a
+[meeting](voice-meetings.md). A name most people read as a man's gets `cedar`,
+and any other name gets `marin`. After the agent renames itself, its next call
+speaks with the new name's voice. A call that starts before the name has been
+read speaks with `marin`.
 
-Any other value of `OPENAI_REALTIME_VOICE`, such as `marin`, is the voice of
-every call, and no name is read.
+To give every call one voice, set `OPENAI_REALTIME_VOICE`, for example to
+`marin`.
 
 ## The agent's computer
 

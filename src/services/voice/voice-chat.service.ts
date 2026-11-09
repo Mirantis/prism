@@ -398,6 +398,7 @@ class VoiceChatService {
         sampleRate,
       );
 
+      const agentVoice = await voiceForAgent(agentName);
       conversation = new VoiceConversation({
         instructions,
         openingContext,
@@ -406,7 +407,7 @@ class VoiceChatService {
         sampleRate,
         responseMode: mode,
         agentName,
-        voice: await voiceForAgent(agentName),
+        voice: agentVoice.voice,
         onSessionLost: (reason) => void this.end(epoch, 'error', reason),
         onResponseFinished: () => { if (computerUse) computerService.yield(computerUse); },
       });
@@ -466,6 +467,8 @@ class VoiceChatService {
         response_mode: mode,
         surface,
         computer: String(computer !== null),
+        voice: agentVoice.voice,
+        voice_source: agentVoice.source,
       });
       return true;
     } catch (err) {

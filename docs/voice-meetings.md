@@ -632,8 +632,10 @@ the next join log in fresh. A screenshot of any failed join lands at
 the join-button hunt and the admission wait, and a failed attempt tags its
 `meeting ended` telemetry event with `fail_step` — one of `page_load`, `lobby`,
 `join_button`, `admission` or `microphone`. A successful join carries
-`muted_on_entry` (whether Meet had muted the agent) and `mic_confirmed` (whether the
-room can hear it) on `meeting joined`.
+`muted_on_entry` (whether Meet had muted the agent), `mic_confirmed` (whether the
+room can hear it), and `voice` and `voice_source` (the voice the call speaks with, and
+whether it came from `OPENAI_REALTIME_VOICE`, the agent's name, or the default when
+the name could not be read) on `meeting joined`.
 
 **It says it's in the call but couldn't confirm its microphone.** It is still in the
 meeting, still listening, and still retrying the unmute every ten seconds unless you asked
