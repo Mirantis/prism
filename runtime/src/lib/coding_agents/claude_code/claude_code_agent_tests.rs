@@ -843,7 +843,13 @@ async fn starts_nothing_and_removes_the_config_when_stopped_before_the_cli_start
         )]
     );
     assert!(harness.launches.lock().is_empty());
-    assert!(!std::path::Path::new(&harness.dirs()[0]).exists());
+    // The stop can come before the config is written; either way none is left.
+    assert!(
+        harness
+            .dirs()
+            .iter()
+            .all(|dir| !std::path::Path::new(dir).exists())
+    );
     assert!(run.exited());
 }
 

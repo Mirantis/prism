@@ -304,7 +304,22 @@ pub(crate) mod tests {
         v
     }
 
+    /// Inserts an agent row with `id` unless one exists, so rows that reference
+    /// it satisfy the foreign key.
+    pub(crate) fn ensure_agent(id: &str) {
+        let mut agent = crate::db::models::NewAgentWorkspace::new("u", "", "", "", "", "");
+        agent.id = id.to_string();
+        crate::db::run_sync(move |conn| {
+            diesel::insert_or_ignore_into(crate::db::schema::agent_workspaces::table)
+                .values(&agent)
+                .execute(conn)?;
+            Ok(())
+        })
+        .unwrap();
+    }
+
     pub(crate) fn insert_entry(id: &str, agent_id: &str, created_at: &str) {
+        ensure_agent(agent_id);
         let mut row = NewMemoryEntry::new(agent_id, id, "observation");
         row.id = id.to_string();
         row.created_at = DbDateTime(crate::support::parse_iso(created_at).unwrap());

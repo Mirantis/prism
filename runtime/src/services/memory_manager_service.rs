@@ -657,6 +657,7 @@ mod tests {
     use crate::db::testing::test_db;
 
     fn insert(id: &str, content: &str, category: &str, importance: i64, age_ms: i64) {
+        crate::services::memory_store::tests::ensure_agent("agent-1");
         let mut row = NewMemoryEntry::new("agent-1", content, category);
         row.id = id.to_string();
         row.importance = importance;
@@ -764,6 +765,7 @@ mod tests {
     #[serial_test::serial]
     async fn writes_deletes_cleans_up_and_counts() {
         let _db = test_db();
+        crate::services::memory_store::tests::ensure_agent("agent-1");
         let entry = MEMORY_MANAGER_SERVICE
             .write(
                 "u",

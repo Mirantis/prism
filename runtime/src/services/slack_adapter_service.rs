@@ -73,7 +73,7 @@ use crate::services::slack_working_indicator::{
     create_tool_status_listener,
 };
 use crate::services::thread_reply_classifier_service::{
-    THREAD_REPLY_CLASSIFIER_SERVICE, THREAD_TRANSCRIPT_LINES, ClassifyInput, ThreadAction,
+    ClassifyInput, THREAD_REPLY_CLASSIFIER_SERVICE, THREAD_TRANSCRIPT_LINES, ThreadAction,
     ThreadAuthor, ThreadAuthorKind, ThreadLine, ThreadPlatform, load_gate_agent,
 };
 use crate::support::js::{slice16, trim as js_trim};
@@ -393,7 +393,10 @@ pub(crate) async fn redeem_dm_code(
     }
 
     // Check if this Slack user is already linked to someone
-    let (connection, user) = (verification.connection_id.clone(), slack_user_id.to_string());
+    let (connection, user) = (
+        verification.connection_id.clone(),
+        slack_user_id.to_string(),
+    );
     let existing: Option<SlackMapping> = crate::db::read(move |conn| {
         Ok(m::slack_mappings
             .filter(m::connection_id.eq(&connection))
@@ -451,10 +454,9 @@ pub(crate) async fn redeem_channel_code(
 
     if chrono::Utc::now() > verification.expires_at {
         let expired = upper_code.clone();
-        let _ = crate::db::run(move |conn| {
-            delete_code(conn, &expired, SlackVerificationType::Channel)
-        })
-        .await;
+        let _ =
+            crate::db::run(move |conn| delete_code(conn, &expired, SlackVerificationType::Channel))
+                .await;
         return Ok(ChannelCodeOutcome::Expired);
     }
 
@@ -770,7 +772,11 @@ impl SlackAdapterService {
         // else: the flagged channel, else the oldest linked one as the default.
         let channel_mappings: Vec<&SlackMapping> = mappings
             .iter()
-            .filter(|m| m.slack_channel_id.as_deref().is_some_and(|id| !id.is_empty()))
+            .filter(|m| {
+                m.slack_channel_id
+                    .as_deref()
+                    .is_some_and(|id| !id.is_empty())
+            })
             .collect();
         let main_channel_id = channel_mappings
             .iter()
@@ -794,7 +800,8 @@ impl SlackAdapterService {
 
         for mapping in &mappings {
             // Deliver to DM channel (personal mode)
-            if let Some(dm_channel_id) = mapping.dm_channel_id.as_deref().filter(|id| !id.is_empty())
+            if let Some(dm_channel_id) =
+                mapping.dm_channel_id.as_deref().filter(|id| !id.is_empty())
             {
                 let Some(slack_app) = &slack_app else {
                     log_warn!("Slack app not found for team {}", connection.team_id);
@@ -886,7 +893,10 @@ impl SlackAdapterService {
 
             // Deliver to Slack channel (team mode) — only the main channel, so an
             // autonomous broadcast doesn't fan out to every linked channel.
-            if let Some(channel_id) = mapping.slack_channel_id.as_deref().filter(|id| !id.is_empty())
+            if let Some(channel_id) = mapping
+                .slack_channel_id
+                .as_deref()
+                .filter(|id| !id.is_empty())
             {
                 if Some(channel_id) == main_channel_id.as_deref() {
                     self.deliver_to_channel(
@@ -1077,7 +1087,11 @@ impl SlackAdapterService {
         .await?;
         let channels: Vec<&SlackMapping> = mappings
             .iter()
-            .filter(|m| m.slack_channel_id.as_deref().is_some_and(|id| !id.is_empty()))
+            .filter(|m| {
+                m.slack_channel_id
+                    .as_deref()
+                    .is_some_and(|id| !id.is_empty())
+            })
             .collect();
         let main_channel_id = channels
             .iter()
@@ -1087,7 +1101,10 @@ impl SlackAdapterService {
 
         let mut targets = Vec::new();
         for mapping in &mappings {
-            if let Some(channel_id) = mapping.slack_channel_id.as_deref().filter(|id| !id.is_empty())
+            if let Some(channel_id) = mapping
+                .slack_channel_id
+                .as_deref()
+                .filter(|id| !id.is_empty())
             {
                 targets.push(LinkedTarget {
                     key: format!("slack:{channel_id}"),
@@ -1099,7 +1116,8 @@ impl SlackAdapterService {
                     dm_user_id: None,
                 });
             }
-            if let Some(dm_channel_id) = mapping.dm_channel_id.as_deref().filter(|id| !id.is_empty())
+            if let Some(dm_channel_id) =
+                mapping.dm_channel_id.as_deref().filter(|id| !id.is_empty())
             {
                 targets.push(LinkedTarget {
                     key: format!("slack:{dm_channel_id}"),
@@ -1253,7 +1271,9 @@ impl SlackAdapterService {
         }
 
         Ok(MENTION_TOKEN
-            .replace_all(text, |found: &regex::Captures<'_>| format!("<@{}>", &found[1]))
+            .replace_all(text, |found: &regex::Captures<'_>| {
+                format!("<@{}>", &found[1])
+            })
             .into_owned())
     }
 
@@ -1831,7 +1851,9 @@ impl SlackAdapterService {
             if let Err(error) = socket.ack(envelope.envelope_id.as_deref()) {
                 log_error!(
                     "An unhandled error occurred while Bolt processed (type: {}, error: {})",
-                    body.get("type").and_then(Value::as_str).unwrap_or("undefined"),
+                    body.get("type")
+                        .and_then(Value::as_str)
+                        .unwrap_or("undefined"),
                     error
                 );
                 return;
@@ -2705,7 +2727,10 @@ impl SlackAdapterService {
                 )
                 .await
             {
-                log_warn!("[SlackAdapter] Failed to clear feedback ack block: {}", error);
+                log_warn!(
+                    "[SlackAdapter] Failed to clear feedback ack block: {}",
+                    error
+                );
             }
         });
     }
@@ -2913,8 +2938,9 @@ impl SlackAdapterService {
                     );
                     LinkResult {
                         success: true,
-                        message: "Your Slack channel is now linked. Mention me anytime you need help!"
-                            .to_string(),
+                        message:
+                            "Your Slack channel is now linked. Mention me anytime you need help!"
+                                .to_string(),
                         agent_name: verification.agent_name,
                     }
                 }
@@ -2976,7 +3002,10 @@ impl SlackAdapterService {
         let arriving_text = arriving.text.clone().unwrap_or_default();
         let messages = match fetched.iter().position(|m| m.ts == arriving_ts) {
             Some(at) => fetched[..=at].to_vec(),
-            None => fetched.into_iter().chain(std::iter::once(arriving)).collect(),
+            None => fetched
+                .into_iter()
+                .chain(std::iter::once(arriving))
+                .collect(),
         };
 
         // Bot never posted in this thread
@@ -3213,10 +3242,7 @@ impl SlackAdapterService {
         if files.len() > MAX_ATTACHMENTS_PER_MESSAGE {
             to_process = &files[..MAX_ATTACHMENTS_PER_MESSAGE];
             result.failures.push(SlackFileFailure {
-                filename: format!(
-                    "{} more file(s)",
-                    files.len() - MAX_ATTACHMENTS_PER_MESSAGE
-                ),
+                filename: format!("{} more file(s)", files.len() - MAX_ATTACHMENTS_PER_MESSAGE),
                 reason: format!(
                     "only the first {MAX_ATTACHMENTS_PER_MESSAGE} attachments per message are kept"
                 ),
@@ -3638,11 +3664,7 @@ impl SlackAdapterService {
         .await;
         if let Err(error) = upserted {
             // Log but don't fail if participant tracking fails
-            log_warn!(
-                "Failed to add participant {}: {}",
-                external_user_id,
-                error
-            );
+            log_warn!("Failed to add participant {}: {}", external_user_id, error);
         }
     }
 

@@ -209,6 +209,9 @@ mod tests {
     }
 
     fn insert(rows: Vec<NewLlmCall>) {
+        for row in &rows {
+            crate::services::memory_store::tests::ensure_agent(&row.agent_id);
+        }
         crate::db::run_sync(move |conn| {
             diesel::insert_into(l::llm_calls)
                 .values(&rows)

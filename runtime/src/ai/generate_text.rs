@@ -1355,9 +1355,12 @@ async fn execute_tool_call(
         context: context.clone(),
     };
     let started = Instant::now();
-    let outcome = AssertUnwindSafe(execute(call.input.clone(), options))
-        .catch_unwind()
-        .await;
+    let execution = dispatcher.execute_tool(
+        call_id,
+        &call.tool_call_id,
+        execute(call.input.clone(), options),
+    );
+    let outcome = AssertUnwindSafe(execution).catch_unwind().await;
     let elapsed = started.elapsed().as_secs_f64() * 1000.0;
     let dynamic = Some(tool.is_dynamic());
     let output = match outcome {

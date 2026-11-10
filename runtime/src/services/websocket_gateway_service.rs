@@ -1650,3 +1650,6 @@ impl WebSocketGatewayService {
 
 pub static WEB_SOCKET_GATEWAY_SERVICE: LazyLock<WebSocketGatewayService> =
     LazyLock::new(WebSocketGatewayService::new);
+
+#[cfg(test)]
+mod tests;

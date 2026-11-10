@@ -279,13 +279,118 @@ pub async fn origin_guard(req: Request, next: Next) -> Response {
         shown(&host),
         shown(&forwarded_host)
     );
-    let mut response = (
-        StatusCode::FORBIDDEN,
-        Json(json!({ "error": "Forbidden origin" })),
-    )
-        .into_response();
+    let mut response = crate::support::http::error_json(403, "Forbidden origin");
     if vary {
         vary_origin(response.headers_mut());
     }
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::support::http::testing::{request, send};
+
+    #[test]
+    fn allows_a_request_that_states_no_origin_or_no_host() {
+        assert!(is_allowed_origin(None, Some("localhost:3003"), None));
+        assert!(is_allowed_origin(None, None, None));
+        assert!(is_allowed_origin(Some("http://localhost:3003"), None, None));
+    }
+
+    #[test]
+    fn allows_loopback_origins_whatever_the_port() {
+        for origin in [
+            "http://localhost:5173",
+            "http://127.0.0.1:3003",
+            "http://[::1]:8080",
+        ] {
+            assert!(
+                is_allowed_origin(Some(origin), Some("localhost:3003"), None),
+                "{origin}"
+            );
+        }
+        assert!(is_allowed_origin(
+            Some("http://[::1]:3003"),
+            Some("[::1]:3003"),
+            None
+        ));
+    }
+
+    #[test]
+    fn refuses_a_foreign_host_while_the_bind_is_loopback() {
+        assert!(!is_allowed_origin(
+            Some("http://evil.example:3003"),
+            Some("evil.example:3003"),
+            None
+        ));
+        assert!(!is_allowed_origin(None, Some("evil.example:3003"), None));
+        assert!(!is_allowed_origin(
+            None,
+            Some("evil.example:3003"),
+            Some("")
+        ));
+        assert!(!is_allowed_origin(None, Some("not a host"), None));
+    }
+
+    #[test]
+    fn refuses_a_foreign_or_joined_origin() {
+        for origin in [
+            "https://evil.example",
+            "null",
+            "http://localhost:3003, https://evil.example",
+        ] {
+            assert!(
+                !is_allowed_origin(Some(origin), Some("localhost:3003"), None),
+                "{origin}"
+            );
+        }
+    }
+
+    #[test]
+    fn trusts_the_first_x_forwarded_host_of_a_proxy_in_front() {
+        assert!(is_allowed_origin(
+            Some("https://Web.Platform.Example"),
+            Some("runtime:3003"),
+            Some("web.platform.example, other.example")
+        ));
+        assert!(!is_allowed_origin(
+            Some("https://evil.example"),
+            Some("runtime:3003"),
+            Some("web.platform.example")
+        ));
+        assert!(!is_allowed_origin(
+            Some("https://web.platform.example"),
+            Some("runtime:3003"),
+            None
+        ));
+        assert!(is_allowed_origin(
+            None,
+            Some("agent.example.com"),
+            Some("agent.example.com")
+        ));
+    }
+
+    #[tokio::test]
+    async fn answers_403_for_a_foreign_origin_with_no_vary_while_no_list_is_set() {
+        let app = || {
+            axum::Router::new()
+                .route("/x", axum::routing::get(|| async { "ok" }))
+                .layer(axum::middleware::from_fn(origin_guard))
+        };
+        let mut req = request("GET", "/x", None);
+        req.headers_mut()
+            .insert("origin", "https://evil.example".parse().unwrap());
+        req.headers_mut()
+            .insert("host", "localhost:3003".parse().unwrap());
+        let res = send(app(), req).await;
+        assert_eq!(res.status, 403);
+        assert_eq!(res.json(), json!({ "error": "Forbidden origin" }));
+        assert!(res.header("vary").is_none());
+
+        let mut req = request("GET", "/x", None);
+        req.headers_mut()
+            .insert("host", "localhost:3003".parse().unwrap());
+        assert_eq!(send(app(), req).await.status, 200);
+    }
 }
