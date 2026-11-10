@@ -1054,3 +1054,6 @@ fn js_round(value: f64) -> i64 {
         floor
     }) as i64
 }
+
+#[cfg(test)]
+mod tests;

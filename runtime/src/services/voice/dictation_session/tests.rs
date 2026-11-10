@@ -133,17 +133,17 @@ async fn configures_a_transcription_only_session_with_no_turn_detection() {
 
 #[tokio::test]
 async fn reports_ready_once_the_upstream_accepts_the_configuration() {
-    let h = harness(Limits::default()).await;
+    let mut h = harness(Limits::default()).await;
     assert!(h.signal.calls().is_empty());
     h.accept();
-    assert!(h.started.await.unwrap());
+    assert!((&mut h.started).await.unwrap());
     assert_eq!(h.signal.calls(), vec![call("ready", None)]);
     h.session.cancel(DictationCancelReason::Cancelled);
 }
 
 #[tokio::test]
 async fn keeps_audio_sent_while_connecting_and_forwards_it_in_order_once_ready() {
-    let h = harness(Limits::default()).await;
+    let mut h = harness(Limits::default()).await;
     let first = pcm(20, 1);
     let second = pcm(20, 2);
     h.session.push_audio(&first);
@@ -153,7 +153,7 @@ async fn keeps_audio_sent_while_connecting_and_forwards_it_in_order_once_ready()
     assert_eq!(h.types(), vec!["session.update"]);
 
     h.accept();
-    h.started.await.unwrap();
+    (&mut h.started).await.unwrap();
     settle(20).await;
 
     let encode = |b: &[u8]| base64::engine::general_purpose::STANDARD.encode(b);
@@ -172,9 +172,9 @@ async fn keeps_audio_sent_while_connecting_and_forwards_it_in_order_once_ready()
 
 #[tokio::test]
 async fn commits_on_stop_and_answers_the_transcript_deltas_first() {
-    let h = harness(Limits::default()).await;
+    let mut h = harness(Limits::default()).await;
     h.accept();
-    h.started.await.unwrap();
+    (&mut h.started).await.unwrap();
     h.session.push_audio(&pcm(500, 0));
     h.session.commit();
     settle(20).await;
@@ -202,12 +202,12 @@ async fn commits_on_stop_and_answers_the_transcript_deltas_first() {
 
 #[tokio::test]
 async fn honours_a_stop_that_arrives_before_the_upstream_is_ready() {
-    let h = harness(Limits::default()).await;
+    let mut h = harness(Limits::default()).await;
     h.session.push_audio(&pcm(300, 0));
     h.session.commit();
 
     h.accept();
-    h.started.await.unwrap();
+    (&mut h.started).await.unwrap();
     settle(20).await;
 
     // The client has already let go, so it is not told to start recording.
@@ -225,9 +225,9 @@ async fn honours_a_stop_that_arrives_before_the_upstream_is_ready() {
 
 #[tokio::test]
 async fn answers_an_empty_transcript_without_committing_a_buffer_too_short_to_transcribe() {
-    let h = harness(Limits::default()).await;
+    let mut h = harness(Limits::default()).await;
     h.accept();
-    h.started.await.unwrap();
+    (&mut h.started).await.unwrap();
     h.session.push_audio(&pcm(40, 0));
     h.session.commit();
     settle(20).await;
@@ -238,9 +238,9 @@ async fn answers_an_empty_transcript_without_committing_a_buffer_too_short_to_tr
 
 #[tokio::test]
 async fn drops_the_recording_on_cancel_and_sends_nothing_back() {
-    let h = harness(Limits::default()).await;
+    let mut h = harness(Limits::default()).await;
     h.accept();
-    h.started.await.unwrap();
+    (&mut h.started).await.unwrap();
     h.session.push_audio(&pcm(500, 0));
     h.session.cancel(DictationCancelReason::Cancelled);
     settle(20).await;
@@ -252,13 +252,13 @@ async fn drops_the_recording_on_cancel_and_sends_nothing_back() {
 
 #[tokio::test]
 async fn commits_by_itself_when_a_recording_outlasts_the_cap_without_audio() {
-    let h = harness(Limits {
+    let mut h = harness(Limits {
         max_audio_ms: Some(150),
         ..Default::default()
     })
     .await;
     h.accept();
-    h.started.await.unwrap();
+    (&mut h.started).await.unwrap();
     h.session.push_audio(&pcm(120, 0));
     settle(250).await;
     assert_eq!(
@@ -270,13 +270,13 @@ async fn commits_by_itself_when_a_recording_outlasts_the_cap_without_audio() {
 
 #[tokio::test]
 async fn commits_by_itself_at_the_recording_cap() {
-    let h = harness(Limits {
+    let mut h = harness(Limits {
         max_audio_ms: Some(200),
         ..Default::default()
     })
     .await;
     h.accept();
-    h.started.await.unwrap();
+    (&mut h.started).await.unwrap();
     h.session.push_audio(&pcm(100, 0));
     h.session.push_audio(&pcm(100, 0));
     h.session.push_audio(&pcm(100, 0));
@@ -295,9 +295,9 @@ async fn commits_by_itself_at_the_recording_cap() {
 
 #[tokio::test]
 async fn reports_a_transcription_failure_as_an_error() {
-    let h = harness(Limits::default()).await;
+    let mut h = harness(Limits::default()).await;
     h.accept();
-    h.started.await.unwrap();
+    (&mut h.started).await.unwrap();
     h.session.push_audio(&pcm(500, 0));
     h.session.commit();
     h.server.emit(json!({
@@ -317,10 +317,10 @@ async fn reports_a_transcription_failure_as_an_error() {
 
 #[tokio::test]
 async fn fails_the_start_when_the_upstream_rejects_the_configuration() {
-    let h = harness(Limits::default()).await;
+    let mut h = harness(Limits::default()).await;
     h.server
         .emit(json!({ "type": "error", "error": { "message": "Invalid transcription model" } }));
-    assert!(!h.started.await.unwrap());
+    assert!(!(&mut h.started).await.unwrap());
     assert_eq!(
         h.signal.calls(),
         vec![call("error", Some("Invalid transcription model"))]
@@ -329,9 +329,9 @@ async fn fails_the_start_when_the_upstream_rejects_the_configuration() {
 
 #[tokio::test]
 async fn reports_an_upstream_that_goes_away_mid_recording() {
-    let h = harness(Limits::default()).await;
+    let mut h = harness(Limits::default()).await;
     h.accept();
-    h.started.await.unwrap();
+    (&mut h.started).await.unwrap();
     h.server.drop_from_server();
     settle(40).await;
     assert_eq!(
@@ -346,13 +346,13 @@ async fn reports_an_upstream_that_goes_away_mid_recording() {
 
 #[tokio::test]
 async fn gives_up_on_a_transcript_that_never_arrives() {
-    let h = harness(Limits {
+    let mut h = harness(Limits {
         result_timeout_ms: Some(50),
         ..Default::default()
     })
     .await;
     h.accept();
-    h.started.await.unwrap();
+    (&mut h.started).await.unwrap();
     h.session.push_audio(&pcm(500, 0));
     h.session.commit();
     settle(250).await;
@@ -367,12 +367,12 @@ async fn gives_up_on_a_transcript_that_never_arrives() {
 
 #[tokio::test]
 async fn gives_up_on_an_upstream_that_never_accepts_the_configuration() {
-    let h = harness(Limits {
+    let mut h = harness(Limits {
         connect_timeout_ms: Some(50),
         ..Default::default()
     })
     .await;
-    assert!(!h.started.await.unwrap());
+    assert!(!(&mut h.started).await.unwrap());
     assert_eq!(
         h.signal.calls(),
         vec![call(

@@ -45,5 +45,13 @@ mod tests {
         assert_eq!(visible_text("\u{200B}"), "");
         assert_eq!(visible_text("  \n "), "");
         assert_eq!(visible_text("  hi \n"), "hi");
+        assert_eq!(visible_text(" \u{200C}\u{200D}\u{2060}\u{FEFF}\u{AD} "), "");
+    }
+
+    #[test]
+    fn keeps_format_characters_inside_visible_text() {
+        assert_eq!(visible_text("  Deployed.\n"), "Deployed.");
+        assert_eq!(visible_text("\u{200B}done\u{200B}"), "\u{200B}done\u{200B}");
+        assert_eq!(visible_text("👩\u{200D}💻"), "👩\u{200D}💻");
     }
 }

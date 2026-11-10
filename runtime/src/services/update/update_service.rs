@@ -368,13 +368,15 @@ impl UpdateService {
                 .optional()?)
         })
         .await?;
+        let latest_version = self.latest_version.lock().clone();
+        let checked_at = self.checked_at.lock().as_ref().map(crate::support::iso);
         Ok(UpdateStatusReport {
             enabled,
             reason,
             current_version: self.host.app_version(),
-            latest_version: self.latest_version.lock().clone(),
+            latest_version,
             update_available: self.has_newer_version(),
-            checked_at: self.checked_at.lock().as_ref().map(crate::support::iso),
+            checked_at,
             applying: self.applying.load(Ordering::SeqCst),
             last_attempt: last.as_ref().map(to_attempt_report),
         })

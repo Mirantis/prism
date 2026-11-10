@@ -15,6 +15,7 @@ use super::llm_provider::{
     provider_options,
 };
 use super::tool_changes::bare_model_id;
+use crate::ai::providers::openai::tools::{ToolSearchArgs, tool_search};
 use crate::ai::{
     ToModelOutputOptions, Tool, ToolExecuteFunction, ToolExecutionOptions, ToolResultOutput,
     ToolType, execute_fn, to_model_output_fn, tool, zod_schema,
@@ -267,20 +268,12 @@ fn open_ai_call_id(id: &str) -> String {
 /// `execution: 'client'`): the runtime keeps the `ToolLoad` as the call's result
 /// and the model output is the wire's `{ tools }`.
 fn open_ai_load_tool(loader: Arc<ToolLoader>) -> Tool {
-    let mut args = Map::new();
-    args.insert("execution".into(), json!("client"));
-    args.insert("description".into(), json!(loader.description));
-    args.insert("parameters".into(), LOAD_REQUEST_JSON_SCHEMA.clone());
     let execute_loader = Arc::clone(&loader);
-    let output_loader = loader;
-    Tool {
-        tool_type: ToolType::Provider {
-            id: "openai.tool_search".into(),
-            args,
-            is_provider_executed: false,
-            supports_deferred_results: None,
-        },
-        input_schema: zod_schema(TOOL_SEARCH_INPUT_SCHEMA.clone()),
+    let output_loader = Arc::clone(&loader);
+    tool_search(ToolSearchArgs {
+        execution: Some("client".into()),
+        description: Some(loader.description.clone()),
+        parameters: LOAD_REQUEST_JSON_SCHEMA.as_object().cloned(),
         execute: Some(execute_fn(
             move |input: Value, _options: ToolExecutionOptions| {
                 let loader = Arc::clone(&execute_loader);
@@ -299,23 +292,8 @@ fn open_ai_load_tool(loader: Arc<ToolLoader>) -> Tool {
                 Ok(open_ai_output(&load, &loader))
             }
         })),
-        ..Default::default()
-    }
-}
-
-/// The OpenAI tool search's input schema (`arguments`, `call_id`) as the SDK's zod
-/// schema writes it.
-static TOOL_SEARCH_INPUT_SCHEMA: LazyLock<Value> = LazyLock::new(|| {
-    json!({
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "type": "object",
-        "properties": {
-            "arguments": {},
-            "call_id": { "type": ["string", "null"] }
-        },
-        "additionalProperties": false
     })
-});
+}
 
 fn open_ai_replay(call: &StoredToolLoad, loader: &ToolLoader) -> ReplayedToolLoad {
     let id = open_ai_call_id(&call.id);

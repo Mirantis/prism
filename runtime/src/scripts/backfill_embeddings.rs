@@ -220,6 +220,7 @@ mod tests {
     use crate::db::testing::test_db;
 
     fn insert(id: &str, embedding: Option<Vec<u8>>) {
+        crate::services::memory_store::tests::ensure_agent("agent-1");
         let mut row = NewMemoryEntry::new("agent-1", format!("memory {id}"), "fact");
         row.id = id.to_string();
         row.embedding = embedding;

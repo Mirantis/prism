@@ -1623,7 +1623,7 @@ mod tests {
     #[test]
     fn resolves_links_and_drops_ones_to_the_same_page() {
         let mut converter = Converter::new(
-            "https://example.com/docs/",
+            "https://example.com/docs/page",
             "https://example.com/docs/page#top",
             10_000,
         );
@@ -1690,14 +1690,14 @@ mod tests {
     }
 
     #[test]
-    fn uses_the_documents_base_and_title_on_the_whole_page() {
+    fn uses_the_documents_base_and_title() {
         let page = html_to_markdown(
             "<html><head><title> A\n title </title><base href=\"/sub/\"></head><body><p>Short <a href=\"x\">link</a></p></body></html>",
             "https://example.com/a/b",
         )
         .unwrap();
         assert_eq!(page.title, "A title");
-        assert_eq!(page.extractor, MarkdownExtractor::WholePage);
+        assert_eq!(page.extractor, MarkdownExtractor::Readability);
         assert_eq!(page.markdown, "Short [link](https://example.com/sub/x)");
     }
 
@@ -1741,6 +1741,35 @@ mod tests {
                     expected["markdown"].as_str().unwrap()
                 );
             }
+            checked += 1;
+        }
+        assert!(checked > 0);
+    }
+
+    /// Readability's content of the saved pages, with what the TypeScript converter
+    /// made of it, so the converter is checked apart from the extractor.
+    #[test]
+    fn converts_article_content_as_turndown_did() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/html_to_markdown");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(dir.join("converter")).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("content") {
+                continue;
+            }
+            let stem = path.file_stem().unwrap().to_str().unwrap();
+            let page: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(dir.join(format!("{stem}.json"))).unwrap(),
+            )
+            .unwrap();
+            let url = page["url"].as_str().unwrap();
+            let content = std::fs::read_to_string(&path).unwrap();
+            let expected = std::fs::read_to_string(path.with_extension("md")).unwrap();
+            let markdown = Converter::new(url, url, 1_000_000_000)
+                .turndown(&content)
+                .unwrap();
+            pretty_assertions::assert_eq!(js_trim(&markdown), expected, "{path:?}");
             checked += 1;
         }
         assert!(checked > 0);

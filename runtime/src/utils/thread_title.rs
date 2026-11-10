@@ -48,5 +48,23 @@ mod tests {
             "migrate the authentic..."
         );
         assert_eq!(derive_thread_title("   "), "");
+        assert_eq!(derive_thread_title(""), "");
+    }
+
+    #[test]
+    fn collapses_whitespace_and_keeps_a_short_message() {
+        assert_eq!(derive_thread_title("hello there"), "hello there");
+        assert_eq!(
+            derive_thread_title("   one   two  three   four "),
+            "one two three"
+        );
+        assert_eq!(derive_thread_title("alpha beta gamma"), "alpha beta gamma");
+    }
+
+    #[test]
+    fn trims_a_trailing_space_before_the_ellipsis() {
+        let title = derive_thread_title("aaaaaaaaaaaaaaaaaaaa bb cccccccc");
+        assert!(!title.contains(" ..."));
+        assert!(len16(&title) <= 24);
     }
 }

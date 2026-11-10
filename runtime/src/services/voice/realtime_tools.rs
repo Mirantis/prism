@@ -271,3 +271,236 @@ async fn execute_tool(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+    use crate::ai::{execute_fn, json_schema, zod_schema};
+
+    fn tool_returning(result: Value) -> Tool {
+        Tool {
+            description: Some("A tool".into()),
+            input_schema: zod_schema(json!({ "type": "object", "properties": {} })),
+            execute: Some(execute_fn(move |_input, _options| {
+                let result = result.clone();
+                async move { Ok(result) }
+            })),
+            ..Default::default()
+        }
+    }
+
+    fn options() -> RealtimeToolsOptions {
+        RealtimeToolsOptions {
+            label: "Meeting".into(),
+            truncation_guidance: "Say less.".into(),
+            ..Default::default()
+        }
+    }
+
+    fn names(tools: &PreparedTools) -> Vec<String> {
+        tools
+            .declarations()
+            .iter()
+            .map(|d| d.name.clone())
+            .collect()
+    }
+
+    #[test]
+    fn declares_a_tool_with_its_description_and_schema() {
+        let mut tools = ToolSet::new();
+        tools.insert(
+            "list_scheduled_tasks".into(),
+            Tool {
+                description: Some("List all scheduled tasks.".into()),
+                input_schema: json_schema(json!({
+                    "type": "object",
+                    "properties": { "limit": { "type": "number", "description": "How many" } },
+                })),
+                execute: Some(execute_fn(|_i, _o| async { Ok(json!({ "tasks": [] })) })),
+                ..Default::default()
+            },
+        );
+        let prepared = prepare_realtime_tools(&tools, options());
+        assert_eq!(prepared.count, 1);
+        let declaration = &prepared.declarations()[0];
+        assert_eq!(declaration.name, "list_scheduled_tasks");
+        assert_eq!(declaration.description, "List all scheduled tasks.");
+        assert_eq!(
+            declaration.parameters["properties"]["limit"]["type"],
+            "number"
+        );
+    }
+
+    #[test]
+    fn drops_tools_with_no_local_implementation_to_call() {
+        let mut tools = ToolSet::new();
+        tools.insert(
+            "provider_side".into(),
+            Tool {
+                description: Some("Runs elsewhere".into()),
+                ..Default::default()
+            },
+        );
+        tools.insert("real".into(), tool_returning(json!("ok")));
+        let prepared = prepare_realtime_tools(&tools, options());
+        assert_eq!(names(&prepared), vec!["real"]);
+    }
+
+    #[tokio::test]
+    async fn executes_a_tool_and_returns_its_result_as_text() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let record = seen.clone();
+        let mut tools = ToolSet::new();
+        tools.insert(
+            "list_tasks".into(),
+            Tool {
+                execute: Some(execute_fn(move |input, options: ToolExecutionOptions| {
+                    record.lock().push((input, options.tool_call_id));
+                    async { Ok(json!({ "count": 2, "tasks": ["a", "b"] })) }
+                })),
+                ..Default::default()
+            },
+        );
+        let prepared = prepare_realtime_tools(&tools, options());
+        let output = prepared.execute("list_tasks", "{\"limit\":5}").await;
+        assert_eq!(
+            serde_json::from_str::<Value>(&output).unwrap(),
+            json!({ "count": 2, "tasks": ["a", "b"] })
+        );
+        let seen = seen.lock();
+        assert_eq!(seen[0].0, json!({ "limit": 5 }));
+        assert!(seen[0].1.starts_with("meeting-"));
+    }
+
+    #[tokio::test]
+    async fn treats_empty_arguments_as_an_empty_object() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let record = seen.clone();
+        let mut tools = ToolSet::new();
+        tools.insert(
+            "ping".into(),
+            Tool {
+                execute: Some(execute_fn(move |input, _o| {
+                    record.lock().push(input);
+                    async { Ok(json!("done")) }
+                })),
+                ..Default::default()
+            },
+        );
+        let prepared = prepare_realtime_tools(&tools, options());
+        assert_eq!(prepared.execute("ping", "").await, "done");
+        assert_eq!(seen.lock()[0], json!({}));
+    }
+
+    #[tokio::test]
+    async fn reports_a_failing_tool_as_text_instead_of_failing_mid_call() {
+        let mut tools = ToolSet::new();
+        tools.insert(
+            "boom".into(),
+            Tool {
+                execute: Some(execute_fn(|_i, _o| async {
+                    Err(anyhow::anyhow!("cluster unreachable"))
+                })),
+                ..Default::default()
+            },
+        );
+        let prepared = prepare_realtime_tools(&tools, options());
+        assert_eq!(
+            prepared.execute("boom", "{}").await,
+            "{\"error\":\"cluster unreachable\"}"
+        );
+    }
+
+    #[tokio::test]
+    async fn reports_an_unknown_tool_and_malformed_arguments() {
+        let mut tools = ToolSet::new();
+        tools.insert("ping".into(), tool_returning(json!("ok")));
+        let prepared = prepare_realtime_tools(&tools, options());
+        assert_eq!(
+            prepared.execute("nope", "{}").await,
+            "{\"error\":\"Unknown tool: nope\"}"
+        );
+        assert_eq!(
+            prepared.execute("ping", "{not json").await,
+            "{\"error\":\"Invalid JSON arguments for ping\"}"
+        );
+    }
+
+    #[tokio::test]
+    async fn renders_a_string_result_verbatim() {
+        let mut tools = ToolSet::new();
+        tools.insert("say".into(), tool_returning(json!("three pods are down")));
+        let prepared = prepare_realtime_tools(&tools, options());
+        assert_eq!(prepared.execute("say", "{}").await, "three pods are down");
+    }
+
+    #[tokio::test]
+    async fn declares_a_deferred_tool_once_a_load_tools_call_names_it() {
+        let created = Arc::new(AtomicUsize::new(0));
+        let counter = created.clone();
+        let mut tools = ToolSet::new();
+        tools.insert("list_tasks".into(), tool_returning(json!([])));
+        tools.insert(
+            "gh__create_issue".into(),
+            Tool {
+                execute: Some(execute_fn(move |_i, _o| {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    async { Ok(json!({ "id": 7 })) }
+                })),
+                ..Default::default()
+            },
+        );
+        tools.insert(
+            LOAD_TOOLS_NAME.into(),
+            tool_returning(json!({
+                "loaded": ["gh__create_issue"],
+                "unmatched": [],
+                "suggestions": [],
+            })),
+        );
+        let prepared = prepare_realtime_tools(
+            &tools,
+            RealtimeToolsOptions {
+                deferred: Some(HashSet::from(["gh__create_issue".to_string()])),
+                catalog: Some("# Tool Catalog\n- gh__create_issue".into()),
+                ..options()
+            },
+        );
+        let before = prepared.declarations();
+        assert_eq!(names(&prepared), vec!["list_tasks", "load_tools"]);
+        assert_eq!(prepared.count, 3);
+        assert!(
+            prepared
+                .catalog
+                .as_deref()
+                .unwrap()
+                .contains("gh__create_issue")
+        );
+        assert_eq!(
+            prepared
+                .execute("gh__create_issue", "{\"title\":\"t\"}")
+                .await,
+            "{\"error\":\"Load gh__create_issue with load_tools first.\"}"
+        );
+        assert_eq!(created.load(Ordering::SeqCst), 0);
+
+        let loaded = prepared
+            .execute("load_tools", "{\"names\":[\"gh__create_issue\"]}")
+            .await;
+        assert_eq!(loaded, "Loaded: gh__create_issue.");
+
+        assert!(!Arc::ptr_eq(&prepared.declarations(), &before));
+        assert_eq!(
+            names(&prepared),
+            vec!["list_tasks", "gh__create_issue", "load_tools"]
+        );
+        assert_eq!(
+            prepared
+                .execute("gh__create_issue", "{\"title\":\"t\"}")
+                .await,
+            "{\"id\":7}"
+        );
+    }
+}
