@@ -1586,6 +1586,25 @@ impl Telemetry for LegacyOpenTelemetry {
         }
     }
 
+    fn execute_tool(
+        &self,
+        call_id: &str,
+        tool_call_id: &str,
+        execute: futures::future::BoxFuture<'static, anyhow::Result<Value>>,
+    ) -> futures::future::BoxFuture<'static, anyhow::Result<Value>> {
+        use futures::FutureExt as _;
+        use opentelemetry::context::FutureExt as _;
+        let tool_context = self
+            .call_states
+            .lock()
+            .get(call_id)
+            .and_then(|state| state.tool_spans.get(tool_call_id).cloned());
+        match tool_context {
+            Some(cx) => execute.with_context(cx).boxed(),
+            None => execute,
+        }
+    }
+
     fn on_error(&self, call_id: &str, error: &anyhow::Error, _meta: &TelemetryMeta) {
         let Some(state) = self.call_states.lock().remove(call_id) else {
             return;

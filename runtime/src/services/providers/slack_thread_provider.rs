@@ -800,10 +800,10 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    use crate::db::models::{ConversationThread, NewConversationMessage};
+    use crate::db::models::NewConversationMessage;
     use crate::db::testing::test_db;
     use crate::lib::slack_config::{
-        SlackConnectionRecord, __reset_slack_config_for_tests, set_slack_config_for_tests,
+        __reset_slack_config_for_tests, SlackConnectionRecord, set_slack_config_for_tests,
     };
     use crate::lib::slack_web_client::testing::{FakeSlackApi, fake_slack_api};
     use crate::services::slack_adapter_service::testing::install_app;
@@ -840,12 +840,18 @@ mod tests {
     fn reads_the_newest_messages_or_the_page_before_a_message() {
         let read: Vec<ConversationMessage> =
             ["m-1", "m-2", "m-3", "m-4", "m-5"].map(message).to_vec();
-        assert_eq!(ids(&recent_window(read.clone(), 2, None)), vec!["m-4", "m-5"]);
+        assert_eq!(
+            ids(&recent_window(read.clone(), 2, None)),
+            vec!["m-4", "m-5"]
+        );
         assert_eq!(
             ids(&recent_window(read.clone(), 2, Some("m-4"))),
             vec!["m-2", "m-3"]
         );
-        assert_eq!(ids(&recent_window(read.clone(), 2, Some("m-2"))), vec!["m-1"]);
+        assert_eq!(
+            ids(&recent_window(read.clone(), 2, Some("m-2"))),
+            vec!["m-1"]
+        );
     }
 
     #[test]
@@ -883,7 +889,7 @@ mod tests {
     fn slack_thread(external: bool) {
         insert_agent("agent-1", "owner", "Agent");
         insert_mapping(channel_mapping("agent-1", "C1", 1_000));
-        let mut thread = crate::db::models::NewConversationThread::new("owner", "agent-1");
+        let mut thread = crate::db::models::NewConversationThread::new("agent-1", "owner");
         thread.id = "thread-1".into();
         if external {
             thread.external_channel_id = Some("C1".into());
@@ -896,7 +902,6 @@ mod tests {
             Ok(())
         })
         .unwrap();
-        let _ = ConversationThread::as_select();
     }
 
     fn no_sleep() -> SleepFn {
@@ -910,7 +915,11 @@ mod tests {
                 return (200, json!({ "ok": true }));
             }
             let mut pages = pages.lock();
-            let page = if pages.len() > 1 { pages.remove(0) } else { pages[0].clone() };
+            let page = if pages.len() > 1 {
+                pages.remove(0)
+            } else {
+                pages[0].clone()
+            };
             (200, json!({ "ok": true, "messages": page }))
         }))
         .await
@@ -1083,12 +1092,17 @@ mod tests {
                     { "ts": "100.2", "user": "UBOT", "text": "line one line two" },
                 ] }),
             ),
-            "users.info" => (200, json!({ "ok": true, "user": { "real_name": "Ann: Lee" } })),
+            "users.info" => (
+                200,
+                json!({ "ok": true, "user": { "real_name": "Ann: Lee" } }),
+            ),
             _ => (200, json!({ "ok": true })),
         }))
         .await;
         let _app = install_app("T1", &api.url);
-        let messages = SlackThreadProvider::new().get_messages("thread-1", None).await;
+        let messages = SlackThreadProvider::new()
+            .get_messages("thread-1", None)
+            .await;
         let client = SlackThreadProvider::new()
             .get_messages(
                 "thread-1",
@@ -1101,7 +1115,10 @@ mod tests {
         __reset_slack_config_for_tests();
         let messages = messages.unwrap();
         assert_eq!(
-            messages.iter().map(|m| m.content.as_str()).collect::<Vec<_>>(),
+            messages
+                .iter()
+                .map(|m| m.content.as_str())
+                .collect::<Vec<_>>(),
             vec![
                 "<@U1:Ann Lee>: hey <@U2:Ann Lee> look",
                 "thinking",

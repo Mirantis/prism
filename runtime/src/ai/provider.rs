@@ -886,7 +886,18 @@ pub struct EmbeddingModelV4CallOptions {
 /// Token usage of an embedding call. A provider that reports none gives `NaN`.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct EmbeddingModelUsage {
+    #[serde(serialize_with = "serialize_js_number", deserialize_with = "deserialize_js_number")]
     pub tokens: f64,
+}
+
+/// `null` (how JSON writes `NaN`) reads back as `NaN`.
+fn deserialize_js_number<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+    Ok(Option::<f64>::deserialize(d)?.unwrap_or(f64::NAN))
+}
+
+/// A number as `JSON.stringify` writes it: `3`, not `3.0`; `NaN` as `null`.
+fn serialize_js_number<S: serde::Serializer>(value: &f64, s: S) -> Result<S::Ok, S::Error> {
+    crate::support::js::number(*value).serialize(s)
 }
 
 /// What a provider reports about an embedding response.

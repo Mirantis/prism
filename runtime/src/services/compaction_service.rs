@@ -42,7 +42,10 @@
 //! channel or the web chat as a conversation message.
 
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, LazyLock};
+use std::task::Context;
 
 use chrono::{DateTime, Utc};
 use diesel::prelude::*;
@@ -505,12 +508,35 @@ impl CompactionService {
         }
 
         let thread_id = fork.fork.thread_id.clone();
-        tokio::spawn(async move {
+        self.queue_on_thread(thread_id, self.run_auto_compaction(fork));
+    }
+
+    /// Queues `work` on the thread's lock before returning, as a turn would, so no
+    /// turn that asks for the lock later runs before it, and settles the thread
+    /// when it ends. The work itself starts on a task of its own, after this call
+    /// returns.
+    fn queue_on_thread(
+        &'static self,
+        thread_id: String,
+        work: impl Future<Output = ()> + Send + 'static,
+    ) {
+        let mut job: Pin<Box<dyn Future<Output = ()> + Send>> = Box::pin(async move {
             THREAD_TURN_SERVICE
-                .run(&thread_id, self.run_auto_compaction(fork))
+                .run(&thread_id, async move {
+                    // The first poll below only takes the place on the lock.
+                    tokio::task::yield_now().await;
+                    work.await;
+                })
                 .await;
             self.settle(&thread_id);
         });
+        // A pending lock request joins the lock's FIFO queue on its first poll; the
+        // spawned task polls it again with its own waker.
+        let waker = futures::task::noop_waker();
+        let mut cx = Context::from_waker(&waker);
+        if job.as_mut().poll(&mut cx).is_pending() {
+            tokio::spawn(job);
+        }
     }
 
     /// Idle path. After a chat turn under `CHAT_CACHE_TTL=1h`, a conversation of at
@@ -696,12 +722,7 @@ impl CompactionService {
         }
 
         let thread_id = fork.thread_id.clone();
-        tokio::spawn(async move {
-            THREAD_TURN_SERVICE
-                .run(&thread_id, self.run_overflow_compaction(fork))
-                .await;
-            self.settle(&thread_id);
-        });
+        self.queue_on_thread(thread_id, self.run_overflow_compaction(fork));
     }
 
     /// Manual path (`/compact` → REST): a compaction rebuilt from the stored thread

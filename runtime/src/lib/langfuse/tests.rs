@@ -367,6 +367,46 @@ async fn nests_a_tool_call_under_its_step() {
     );
 }
 
+#[tokio::test]
+async fn nests_a_model_call_made_inside_a_tool_under_the_tool_span() {
+    let (collector, integration, _provider) = pipeline();
+    let inner_integration = integration.clone();
+    let mut tools = ToolSet::new();
+    tools.insert(
+        "echo".into(),
+        Tool {
+            execute: Some(execute_fn(move |input, _| {
+                let integration = inner_integration.clone();
+                async move {
+                    generate_text(options(&integration, enabled("nested"))).await?;
+                    Ok(input)
+                }
+            })),
+            ..Default::default()
+        },
+    );
+    let mut options = options(&integration, enabled("probe"));
+    options.tools = Some(tools);
+    options.stop_when = Some(vec![step_count_is(5)]);
+    generate_text(options).await.unwrap();
+
+    let tool = collector.span("ai.toolCall");
+    let roots: Vec<SpanData> = collector
+        .spans()
+        .into_iter()
+        .filter(|span| span.name == "ai.generateText")
+        .collect();
+    assert_eq!(roots.len(), 2);
+    let nested = roots
+        .iter()
+        .find(|span| attr_text(span, "operation.name").as_deref() == Some("ai.generateText nested"))
+        .unwrap();
+    assert_eq!(nested.parent_span_id, tool.span_context.span_id());
+    assert_eq!(nested.span_context.trace_id(), tool.span_context.trace_id());
+    // Only the outer call starts a trace of its own.
+    assert_eq!(attr(nested, "langfuse.internal.is_app_root"), None);
+}
+
 #[test]
 fn stringifies_file_data_as_plain_text() {
     use crate::ai::provider::{DataContent, FileData, LanguageModelV4Message, LanguageModelV4Part};

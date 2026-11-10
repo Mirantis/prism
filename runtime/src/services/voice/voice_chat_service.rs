@@ -568,7 +568,8 @@ impl VoiceChatService {
                 },
                 None,
             ));
-            if self.state.lock().epoch != epoch {
+            let current = self.state.lock().epoch;
+            if current != epoch {
                 self.release_locals(locals).await;
                 return Ok(false);
             }
@@ -677,38 +678,42 @@ impl VoiceChatService {
         // waiting for. The service's own state is not touched here: the `stop()` that
         // cancelled this start has already freed the voice, and a session may be running on
         // it by now.
-        {
+        let stale = {
             let mut state = self.state.lock();
-            if state.epoch != epoch {
-                drop(state);
-                self.release_locals(locals).await;
-                return Ok(false);
+            let stale = state.epoch != epoch;
+            if !stale {
+                state.transport = Some(transport.clone());
+                state.conversation = Some(conversation.clone());
+                state.computer = computer.clone();
+                state.computer_use = locals.computer_use.clone();
+                // Only a client that shows the computer has a screen to record, and it is the
+                // same client that sends the pictures.
+                state.recording = computer.as_ref().map(|_| {
+                    Arc::new(Mutex::new(ScreenRecording::new(ScreenRecordingOptions {
+                        client_sample_rate: sample_rate,
+                        user_id: input.user_id.clone(),
+                    })))
+                });
+                state.signal = Some(input.signal.clone());
+                state.user_id = Some(input.user_id.clone());
+                state.summary_thread_id = summary_thread_id;
+                state.started_at = Some(clock_ms());
+                state.mode = mode;
+                state.started_from = surface;
+                state.state = ServiceState::Live;
             }
-            state.transport = Some(transport.clone());
-            state.conversation = Some(conversation.clone());
-            state.computer = computer.clone();
-            state.computer_use = locals.computer_use.clone();
-            // Only a client that shows the computer has a screen to record, and it is the
-            // same client that sends the pictures.
-            state.recording = computer.as_ref().map(|_| {
-                Arc::new(Mutex::new(ScreenRecording::new(ScreenRecordingOptions {
-                    client_sample_rate: sample_rate,
-                    user_id: input.user_id.clone(),
-                })))
-            });
-            state.signal = Some(input.signal.clone());
-            state.user_id = Some(input.user_id.clone());
-            state.summary_thread_id = summary_thread_id;
-            state.started_at = Some(clock_ms());
-            state.mode = mode;
-            state.started_from = surface;
-            state.state = ServiceState::Live;
+            stale
+        };
+        if stale {
+            self.release_locals(locals).await;
+            return Ok(false);
         }
         if let Some(computer_use) = &locals.computer_use {
             let signal = computer_use.signal.clone();
             tokio::spawn(async move {
                 signal.cancelled().await;
-                if self.state.lock().epoch == epoch {
+                let current = self.state.lock().epoch;
+                if current == epoch {
                     self.end(
                         epoch,
                         VoiceChatEndStatus::Completed,

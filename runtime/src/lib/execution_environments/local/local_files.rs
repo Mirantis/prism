@@ -57,9 +57,14 @@ impl ExecutionFiles for LocalFiles {
         let prefix = prefix.to_string();
         tokio::task::spawn_blocking(move || {
             let tmpdir = os_tmpdir();
-            tempfile::Builder::new()
-                .prefix(&prefix)
-                .rand_bytes(6)
+            let mut builder = tempfile::Builder::new();
+            builder.prefix(&prefix).rand_bytes(6);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                builder.permissions(std::fs::Permissions::from_mode(0o700));
+            }
+            builder
                 .tempdir_in(&tmpdir)
                 .map(|dir| dir.keep().to_string_lossy().into_owned())
                 .map_err(|err| {

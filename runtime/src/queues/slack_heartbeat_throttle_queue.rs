@@ -220,6 +220,10 @@ mod tests {
     }
 
     async fn advance(seconds: u64) {
+        // Let each timer task start its sleep before the clock moves.
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
         tokio::time::advance(Duration::from_secs(seconds)).await;
         for _ in 0..10 {
             tokio::task::yield_now().await;
