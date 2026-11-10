@@ -112,6 +112,7 @@ mod tests {
         let (tx, rx) = broadcast::channel(8);
         let (count, on_stall) = counter();
         let _watch = watch_socket(rx, on_stall);
+        settle().await;
         tokio::time::advance(STALL - Duration::from_millis(1)).await;
         settle().await;
         assert_eq!(count.load(Ordering::SeqCst), 0);

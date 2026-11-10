@@ -2052,3 +2052,184 @@ impl MeetingProvider for GoogleMeetProvider {
 
 pub static GOOGLE_MEET_PROVIDER: LazyLock<GoogleMeetProvider> =
     LazyLock::new(GoogleMeetProvider::new);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::meeting::browser_stack::testing::Live;
+
+    #[test]
+    fn accepts_a_meet_link_and_rejects_everything_else() {
+        let meet = GoogleMeetProvider::new();
+        assert!(meet.matches_url("https://meet.google.com/abc-defg-hij"));
+        assert!(meet.matches_url("https://meet.google.com/abc-defg-hij?authuser=0"));
+        assert!(!meet.matches_url("https://zoom.us/j/123"));
+        assert!(!meet.matches_url("https://meet.google.com.evil.example/abc"));
+        assert!(!meet.matches_url("http://meet.google.com/abc-defg-hij"));
+        assert!(!meet.matches_url("not a url"));
+    }
+
+    #[test]
+    fn names_itself_for_tools_logs_and_telemetry() {
+        let meet = GoogleMeetProvider::new();
+        assert_eq!(meet.name(), "google-meet");
+        assert_eq!(meet.display_name(), "Google Meet");
+    }
+
+    #[test]
+    fn reads_the_sender_off_a_chat_group_label() {
+        assert_eq!(
+            chat_sender_name("Mario Sarcher\n10:42 AM"),
+            Some("Mario Sarcher".into())
+        );
+        // The agent's own messages carry no name, only the time.
+        assert_eq!(chat_sender_name("10:42"), None);
+        // A group with no time is not one Meet draws a name in.
+        assert_eq!(chat_sender_name("Mario Sarcher"), None);
+        assert_eq!(chat_sender_name("!\n10.42"), None);
+    }
+
+    #[test]
+    fn takes_names_in_any_script_but_not_punctuation() {
+        assert!(plausible_name("Iris"));
+        assert!(plausible_name("山田太郎"));
+        assert!(!plausible_name("1"));
+        assert!(!plausible_name("--"));
+        assert!(!plausible_name(&"a".repeat(41)));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn counts_participants_three_ways_and_takes_the_largest() {
+        let Some(live) = Live::start().await else {
+            return;
+        };
+        let meet = GoogleMeetProvider::new();
+        live.show(r#"<div role="button"><span>People</span><div>3</div></div>"#)
+            .await;
+        assert_eq!(meet.participant_count(&live.page).await.unwrap(), Some(3));
+        live.show(
+            r#"<div data-participant-id="a"></div><div data-participant-id="b"></div><div data-participant-id="a"></div>"#,
+        )
+        .await;
+        assert_eq!(meet.participant_count(&live.page).await.unwrap(), Some(2));
+        live.show("<p>nothing about people</p>").await;
+        assert_eq!(meet.participant_count(&live.page).await.unwrap(), None);
+        live.stop().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn shares_through_the_source_menu_and_confirms_off_the_stop_control() {
+        let Some(live) = Live::start().await else {
+            return;
+        };
+        let meet = GoogleMeetProvider::new();
+        live.show(
+            r#"<button id="share" onclick="document.getElementById('menu').hidden=false">Share screen</button>
+            <div id="menu" hidden><div role="menuitem" onclick="document.getElementById('stop').hidden=false; document.getElementById('menu').hidden=true">Entire screen</div></div>
+            <button id="stop" hidden onclick="this.hidden=true">Stop sharing</button>"#,
+        )
+        .await;
+        assert_eq!(
+            meet.start_screen_share(&live.page).await.unwrap(),
+            ScreenShareOutcome::Sharing
+        );
+        assert_eq!(
+            meet.start_screen_share(&live.page).await.unwrap(),
+            ScreenShareOutcome::AlreadySharing
+        );
+        assert_eq!(
+            meet.stop_screen_share(&live.page).await.unwrap(),
+            ScreenShareOutcome::Stopped
+        );
+        assert_eq!(
+            meet.stop_screen_share(&live.page).await.unwrap(),
+            ScreenShareOutcome::NotSharing
+        );
+        live.stop().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sets_the_microphone_and_reads_it_back() {
+        let Some(live) = Live::start().await else {
+            return;
+        };
+        let meet = GoogleMeetProvider::new();
+        live.show(
+            r#"<button aria-label="Turn on microphone" data-is-muted="true"
+              onclick="const m=this.dataset.isMuted==='true'; this.dataset.isMuted=String(!m); this.setAttribute('aria-label', m ? 'Turn off microphone' : 'Turn on microphone')">mic</button>"#,
+        )
+        .await;
+        assert_eq!(meet.microphone_live(&live.page).await.unwrap(), Some(false));
+        assert_eq!(
+            meet.set_microphone(&live.page, true).await.unwrap(),
+            Some(true)
+        );
+        // Already in the requested state: no click.
+        assert_eq!(
+            meet.set_microphone(&live.page, true).await.unwrap(),
+            Some(true)
+        );
+        live.show("<p>no controls</p>").await;
+        assert_eq!(meet.set_microphone(&live.page, true).await.unwrap(), None);
+        live.stop().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn posts_a_chat_message_and_confirms_it_on_the_page() {
+        let Some(live) = Live::start().await else {
+            return;
+        };
+        let meet = GoogleMeetProvider::new();
+        live.show(
+            r#"<button aria-label="Chat with everyone" aria-expanded="false"
+              onclick="const open=this.getAttribute('aria-expanded')==='true'; this.setAttribute('aria-expanded', String(!open)); document.getElementById('panel').hidden=open">chat</button>
+            <div id="panel" hidden>
+              <div id="list"></div>
+              <textarea aria-label="Send a message" onkeydown="if(event.key==='Enter'){event.preventDefault(); const d=document.createElement('div'); d.textContent=this.value; document.getElementById('list').appendChild(d); this.value='';}"></textarea>
+            </div>"#,
+        )
+        .await;
+        assert_eq!(
+            meet.send_chat_message(&live.page, "https://example.com/doc")
+                .await
+                .unwrap(),
+            ChatSendResult::Sent
+        );
+        // The panel is closed again after the send.
+        assert_eq!(
+            live.page
+                .evaluate("document.getElementById('panel').hidden")
+                .await
+                .unwrap(),
+            serde_json::json!(true)
+        );
+        live.show("<p>no chat here</p>").await;
+        assert!(matches!(
+            meet.send_chat_message(&live.page, "x").await.unwrap(),
+            ChatSendResult::NotSent {
+                step: ChatSendStep::Panel,
+                ..
+            }
+        ));
+        live.stop().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn reports_a_confirmed_rejection_as_a_denial() {
+        let Some(live) = Live::start().await else {
+            return;
+        };
+        let meet = GoogleMeetProvider::new();
+        live.show("<h1>You can't join this video call</h1>").await;
+        assert_eq!(
+            meet.confirmed_rejection(&live.page)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some(CATCH_ALL_REJECTION)
+        );
+        live.show("<h1>Ready to join?</h1>").await;
+        assert_eq!(meet.confirmed_rejection(&live.page).await.unwrap(), None);
+        live.stop().await;
+    }
+}

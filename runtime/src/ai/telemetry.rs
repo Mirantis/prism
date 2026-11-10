@@ -6,6 +6,7 @@
 
 use std::sync::{Arc, LazyLock};
 
+use futures::future::BoxFuture;
 use indexmap::IndexMap;
 use parking_lot::RwLock;
 use serde_json::Value;
@@ -349,6 +350,16 @@ pub trait Telemetry: Send + Sync {
     fn on_embed_end(&self, _event: &EmbeddingModelCallEndEvent, _meta: &TelemetryMeta) {}
     fn on_end(&self, _event: &OperationEndEvent, _meta: &TelemetryMeta) {}
     fn on_error(&self, _call_id: &str, _error: &anyhow::Error, _meta: &TelemetryMeta) {}
+    /// `executeTool`: runs a tool's `execute` in the integration's context, so
+    /// the work it starts nests under the tool's span.
+    fn execute_tool(
+        &self,
+        _call_id: &str,
+        _tool_call_id: &str,
+        execute: BoxFuture<'static, anyhow::Result<Value>>,
+    ) -> BoxFuture<'static, anyhow::Result<Value>> {
+        execute
+    }
 }
 
 static INTEGRATIONS: LazyLock<RwLock<Vec<Arc<dyn Telemetry>>>> =
@@ -427,6 +438,20 @@ impl TelemetryDispatcher {
 
     pub fn on_language_model_call_end(&self, event: &LanguageModelCallEndEvent) {
         self.each(|i| i.on_language_model_call_end(event, &self.meta));
+    }
+
+    /// Wraps a tool's `execute` future in each integration's context.
+    pub fn execute_tool(
+        &self,
+        call_id: &str,
+        tool_call_id: &str,
+        execute: BoxFuture<'static, anyhow::Result<Value>>,
+    ) -> BoxFuture<'static, anyhow::Result<Value>> {
+        self.integrations
+            .iter()
+            .fold(execute, |future, integration| {
+                integration.execute_tool(call_id, tool_call_id, future)
+            })
     }
 
     pub fn on_tool_execution_start(&self, event: &ToolExecutionStartEvent) {

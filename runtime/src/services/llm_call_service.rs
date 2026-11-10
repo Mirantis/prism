@@ -378,6 +378,7 @@ mod tests {
     #[serial_test::serial]
     async fn records_calls_in_the_background_and_reads_the_newest_back() {
         let _db = test_db();
+        crate::services::memory_store::tests::ensure_agent("test-agent-id");
         for purpose in [
             LlmCallPurpose::Heartbeat,
             LlmCallPurpose::Compaction,

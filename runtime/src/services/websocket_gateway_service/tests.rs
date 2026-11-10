@@ -16,11 +16,12 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use super::*;
 use crate::db::models::{NewAgentWorkspace, NewConversationThread};
 use crate::db::schema::{agent_workspaces, conversation_threads};
+use crate::protocol::chat_protocol::SequencedEvent;
 use crate::protocol::chat_protocol::{TurnEventPayload, TurnState};
 use crate::services::context_usage_service::{ContextUsageEvent, ContextUsageSnapshot};
 use crate::services::conversation_service::ThreadCreated;
 use crate::services::message_delivery_service::MESSAGE_DELIVERY_SERVICE;
-use crate::services::websocket_adapter_service::WEB_SOCKET_ADAPTER_SERVICE;
+use crate::services::websocket_adapter_service::WebSocketAdapterService;
 use crate::types::{InvokeRequest, InvokeStep};
 
 const THREAD: &str = "d046783b-f46e-43b5-b4bb-247e6b1915bf";
@@ -80,7 +81,9 @@ struct Client {
 
 impl Client {
     async fn open(url: &str, headers: &[(&str, &str)]) -> Client {
-        Self::try_open(url, headers).await.expect("the handshake succeeds")
+        Self::try_open(url, headers)
+            .await
+            .expect("the handshake succeeds")
     }
 
     async fn try_open(
@@ -147,7 +150,11 @@ impl Client {
             if let Some(found) = self.frames.iter().find(|f| matches(f)) {
                 return found.clone();
             }
-            assert!(self.closed.is_none(), "closed {:?} before a match", self.closed);
+            assert!(
+                self.closed.is_none(),
+                "closed {:?} before a match",
+                self.closed
+            );
             assert!(self.read().await, "no matching frame arrived");
         }
     }
@@ -198,7 +205,10 @@ async fn answers_hello_with_the_stream_position_and_who_is_connected() {
     client.hello(None).await;
     let welcome = client.welcome().await;
     assert_eq!(welcome["payload"]["protocol"], PROTOCOL_VERSION);
-    assert_eq!(welcome["payload"]["streamId"], EVENT_STREAM_SERVICE.stream_id());
+    assert_eq!(
+        welcome["payload"]["streamId"],
+        EVENT_STREAM_SERVICE.stream_id()
+    );
     assert_eq!(welcome["payload"]["seq"], EVENT_STREAM_SERVICE.seq());
     assert_eq!(welcome["payload"]["resumed"], false);
     // The ingress gives an email, which is the id and the name. Brackets and colons
@@ -220,16 +230,16 @@ async fn names_the_connection_from_the_ingress_headers() {
     let url = serve().await;
     let emoji = "😀".repeat(200);
     let long_name = format!("Ada\u{7} {emoji}");
-    let encoded: String = long_name
-        .bytes()
-        .map(|b| format!("%{b:02X}"))
-        .collect();
+    let encoded: String = long_name.bytes().map(|b| format!("%{b:02X}")).collect();
     let cases: Vec<(Vec<(&str, &str)>, Value)> = vec![
         (
             vec![
                 ("x-forwarded-user", "ada@example.com"),
                 ("x-forwarded-user-id", "user-ada-1"),
-                ("x-forwarded-user-display-name", "Ada%20Lovelace%20%C3%85str%C3%B6m"),
+                (
+                    "x-forwarded-user-display-name",
+                    "Ada%20Lovelace%20%C3%85str%C3%B6m",
+                ),
             ],
             json!({ "id": "user-ada-1", "name": "Ada Lovelace Åström" }),
         ),
@@ -315,8 +325,22 @@ async fn answers_a_hello_sent_twice_once_and_sends_the_stream_once() {
     client.next(|f| f["seq"] == entry.seq).await;
     tokio::time::sleep(Duration::from_millis(50)).await;
     while client.read_ready().await {}
-    assert_eq!(client.frames.iter().filter(|f| f["type"] == "welcome").count(), 1);
-    assert_eq!(client.frames.iter().filter(|f| f["seq"] == entry.seq).count(), 1);
+    assert_eq!(
+        client
+            .frames
+            .iter()
+            .filter(|f| f["type"] == "welcome")
+            .count(),
+        1
+    );
+    assert_eq!(
+        client
+            .frames
+            .iter()
+            .filter(|f| f["seq"] == entry.seq)
+            .count(),
+        1
+    );
     assert!(client.closed.is_none());
     client.close().await;
 }
@@ -380,7 +404,12 @@ async fn sends_every_event_to_every_client_and_resumes_a_returning_one() {
         .collect();
     assert_eq!(
         order,
-        vec![json!("welcome"), json!(missed[0].seq), json!(missed[1].seq), json!(live.seq)]
+        vec![
+            json!("welcome"),
+            json!(missed[0].seq),
+            json!(missed[1].seq),
+            json!(live.seq)
+        ]
     );
 
     // A cursor from another process is told to reload, and nothing is replayed.
@@ -396,7 +425,8 @@ async fn sends_every_event_to_every_client_and_resumes_a_returning_one() {
 }
 
 fn send_frame(id: &str, message: Value) -> Value {
-    let mut payload = json!({ "id": MESSAGE, "threadId": THREAD, "content": "hello", "attachmentIds": [] });
+    let mut payload =
+        json!({ "id": MESSAGE, "threadId": THREAD, "content": "hello", "attachmentIds": [] });
     for (key, value) in message.as_object().unwrap() {
         payload[key] = value.clone();
     }
@@ -418,11 +448,18 @@ async fn refuses_requests_the_contract_or_the_service_refuses() {
     let url = serve().await;
     let mut client = ready(&url).await;
 
-    client.send(send_frame("req-2", json!({ "id": "local-123" }))).await;
+    client
+        .send(send_frame("req-2", json!({ "id": "local-123" })))
+        .await;
     let bad_id = client.next(|f| f["re"] == "req-2").await;
-    assert_eq!(bad_id["payload"], json!({ "code": "invalid", "message": "must be a uuid v4" }));
+    assert_eq!(
+        bad_id["payload"],
+        json!({ "code": "invalid", "message": "must be a uuid v4" })
+    );
 
-    client.send(send_frame("req-3", json!({ "content": "   " }))).await;
+    client
+        .send(send_frame("req-3", json!({ "content": "   " })))
+        .await;
     let empty = client.next(|f| f["re"] == "req-3").await;
     assert_eq!(empty["payload"]["code"], "invalid");
 
@@ -443,7 +480,11 @@ async fn refuses_requests_the_contract_or_the_service_refuses() {
         json!({ "type": "pong", "re": "p-1" })
     );
 
-    client.ws.send(WsMessage::Text("not json".into())).await.unwrap();
+    client
+        .ws
+        .send(WsMessage::Text("not json".into()))
+        .await
+        .unwrap();
     let not_json = client
         .next(|f| f["type"] == "nack" && f["payload"]["message"] == "A frame must be JSON.")
         .await;
@@ -465,8 +506,13 @@ async fn tells_a_client_over_the_rate_when_to_try_again_and_keeps_it_connected()
         .next(|f| f["type"] == "nack" && f["payload"]["code"] == "rate_limited")
         .await;
     assert!(limited["payload"]["retryAfterMs"].as_i64().unwrap() > 0);
-    client.send(json!({ "type": "ping", "id": "still-there" })).await;
-    assert_eq!(client.next(|f| f["re"] == "still-there").await["type"], "pong");
+    client
+        .send(json!({ "type": "ping", "id": "still-there" }))
+        .await;
+    assert_eq!(
+        client.next(|f| f["re"] == "still-there").await["type"],
+        "pong"
+    );
     client.close().await;
 }
 
@@ -609,7 +655,10 @@ fn normalized(mut ours: Value, recorded: &Value) -> Value {
             }
             ours["payload"]["createdAt"] = recorded["payload"]["createdAt"].clone();
             if recorded["payload"].get("agentMessageKind").is_none() {
-                ours["payload"].as_object_mut().unwrap().shift_remove("agentMessageKind");
+                ours["payload"]
+                    .as_object_mut()
+                    .unwrap()
+                    .shift_remove("agentMessageKind");
             }
         }
         _ => {}
@@ -635,9 +684,10 @@ async fn plays_the_recorded_session_frame_for_frame() {
     fresh_stream();
     seed().await;
     let url = serve().await;
-    *crate::services::thread_title_service::testing::GENERATE.write() = Some(Arc::new(|text: &str| {
-        text.rsplit(": ").next().map(str::to_string)
-    }));
+    *crate::services::thread_title_service::testing::GENERATE.write() =
+        Some(Arc::new(|text: &str| {
+            text.rsplit(": ").next().map(str::to_string)
+        }));
     *crate::services::conversation_engine_service::testing::INVOKE.write() = Some(recorded_model());
     // The conversation was started before the recording, which is the stream's first event.
     CONVERSATION_SERVICE.events.emit_thread(&ThreadCreated {
@@ -648,7 +698,11 @@ async fn plays_the_recorded_session_frame_for_frame() {
     });
 
     let session: Value = serde_json::from_str(SESSION).unwrap();
-    let senders = [("web", "ada@example.com"), ("phone", "grace@example.com"), ("old-client", "")];
+    let senders = [
+        ("web", "ada@example.com"),
+        ("phone", "grace@example.com"),
+        ("old-client", ""),
+    ];
     let mut clients: std::collections::HashMap<String, Client> = std::collections::HashMap::new();
     for entry in session["log"].as_array().unwrap() {
         let name = entry["client"].as_str().unwrap();
@@ -663,7 +717,12 @@ async fn plays_the_recorded_session_frame_for_frame() {
                     };
                     clients.insert(name.to_string(), Client::open(&url, &headers).await);
                 }
-                clients.get_mut(name).unwrap().send(entry["frame"].clone()).await;
+                // A resume names this process's stream, which the recording cannot.
+                let mut frame = entry["frame"].clone();
+                if let Some(resume) = frame["payload"].get_mut("resume") {
+                    resume["streamId"] = json!(EVENT_STREAM_SERVICE.stream_id());
+                }
+                clients.get_mut(name).unwrap().send(frame).await;
             }
             "received" => {
                 let client = clients.get_mut(name).unwrap();

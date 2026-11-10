@@ -17,24 +17,46 @@
 //! failure, the inactivity timeout and process shutdown alike.
 
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+use tokio::sync::oneshot;
 use tokio::task::AbortHandle;
 
-use crate::services::meeting::audio_stack::AudioStack;
-use crate::services::meeting::browser_control::{BrowserCommand, BrowserReading, BrowserResult};
-use crate::services::meeting::browser_stack::{BrowserStack, PageHandle};
+use crate::config::CONFIG;
+use crate::lib::log_redaction::err_json;
+use crate::lib::telemetry::track_event;
+use crate::services::meeting::audio_stack::{AudioStack, AudioStackOptions};
+use crate::services::meeting::browser_control::{
+    BrowserAction, BrowserCommand, BrowserReading, BrowserResult, PageCapture, capture,
+    normalize_url, read, run_browser_command, summarize_tabs,
+};
+use crate::services::meeting::browser_stack::{BrowserStack, BrowserStackOptions, PageHandle};
+use crate::services::meeting::gate_stats::mean_gate_latency_ms;
 use crate::services::meeting::meeting_provider_interface::{
-    ChatMessageRead, ChatReadStep, ChatSendStep, JoinStep, MeetingProvider, ScreenShareOutcome,
+    ChatMessageRead, ChatReadOptions, ChatReadResult, ChatReadStep, ChatSendResult, ChatSendStep,
+    JoinOptions, JoinOutcome, JoinStep, MeetingProvider, ScreenShareOutcome, SignInOptions,
     SpeakerDetails,
 };
 use crate::services::meeting::providers::google_meet::GOOGLE_MEET_PROVIDER;
+use crate::services::meeting::resampler::MEETING_SAMPLE_RATE;
 use crate::services::meeting::response_policy::{EffectiveMode, ResponseMode};
-use crate::services::meeting::voice_conversation::{VoiceConversation, VoiceConversationStats};
+use crate::services::meeting::tool_bridge::{MeetingToolBridgeInput, prepare_meeting_tools};
+use crate::services::meeting::voice_conversation::{
+    VoiceConversation, VoiceConversationOptions, VoiceConversationStats,
+};
 use crate::services::voice::realtime_tools::MAX_TOOL_RESULT_CHARS;
-use crate::services::voice::voice_instructions::VoiceInstructions;
+use crate::services::voice::voice_instructions::{
+    VoiceCall, VoiceInstructions, VoiceInstructionsInput, build_voice_instructions,
+};
+use crate::services::voice::voice_session_lock::{VOICE_SESSION_LOCK, VoiceSessionKind};
 use crate::support::js::len16;
+use crate::support::now_ms;
+use crate::utils::with_timeout::with_timeout;
+use crate::{log_debug, log_error, log_info, log_warn};
 
 /// How often to read the participant count.
 ///
@@ -920,7 +942,249 @@ impl MeetingBotService {
     /// sign-in. Admission, denial and the end of the call are logged as they happen, and
     /// `status()` answers for them on request.
     pub async fn join(&'static self, input: JoinMeetingInput) -> JoinMeetingResult {
-        todo!()
+        {
+            let state = self.state.lock();
+            if state.state == MeetingState::Leaving {
+                // Not "already in a call" — the last one has ended and its browser is still
+                // being let go of. Two different waits share this state, and only one of
+                // them is the long one: an abandoned startup parked in a sign-in, or an
+                // ordinary teardown a moment from finishing.
+                return JoinMeetingResult {
+                    state: state.state,
+                    step: None,
+                    message: if state.startup_epoch.is_none() {
+                        "I'm still releasing the previous call's browser. Give me a moment and ask again.".to_string()
+                    } else {
+                        "I'm still releasing the previous call — a sign-in already in progress has to finish first. Give me a moment and ask again.".to_string()
+                    },
+                };
+            }
+            if state.state != MeetingState::Idle {
+                return JoinMeetingResult {
+                    state: state.state,
+                    step: None,
+                    message: format!(
+                        "Already in a {} call ({}). Leave that one first.",
+                        state
+                            .provider
+                            .map(|p| p.display_name())
+                            .unwrap_or("meeting"),
+                        state.state.as_str()
+                    ),
+                };
+            }
+        }
+
+        let Some(provider) = self.find_provider(&input.url) else {
+            return idle_answer("That doesn't look like a supported meeting link.".to_string());
+        };
+
+        // Asked before a call's worth of infrastructure is built: a platform that will
+        // not take an unauthenticated bot says so here rather than in the lobby.
+        if let Some(misconfigured) = provider.configuration_error() {
+            return idle_answer(misconfigured);
+        }
+
+        // The agent has one voice, and a browser voice chat may be using it. The lock is
+        // held for exactly as long as this service is not `idle`.
+        if !VOICE_SESSION_LOCK.try_acquire(VoiceSessionKind::Meeting) {
+            return idle_answer(
+                "I'm in a voice chat right now. End that first and I'll join the call.".to_string(),
+            );
+        }
+
+        let epoch = {
+            let mut state = self.state.lock();
+            state.provider = Some(provider);
+            state.current = Some(input.clone());
+            state.response_mode = input.response_mode.unwrap_or(ResponseMode::Auto);
+            state.state = MeetingState::Launching;
+            state.started_at = Some(now_ms());
+            let epoch = state.epoch;
+            state.startup_epoch = Some(epoch);
+            epoch
+        };
+
+        let answer = self.start_call(provider, input, epoch).await;
+        self.release_startup_slot(epoch);
+        answer
+    }
+
+    /// The body of `join` from the moment the service is `launching`.
+    ///
+    /// The stack is built into locals and published onto the state only once the epoch
+    /// check says the call is still wanted: startup is many awaits long, and a `leave()` in
+    /// that window lets a *second* `join()` get well under way before this one resumes.
+    async fn start_call(
+        &'static self,
+        provider: &'static dyn MeetingProvider,
+        input: JoinMeetingInput,
+        epoch: u64,
+    ) -> JoinMeetingResult {
+        let mut locals = Locals::default();
+        match self
+            .build_and_request(provider, &input, epoch, &mut locals)
+            .await
+        {
+            Ok(answer) => answer,
+            Err(err) => {
+                let message = err.to_string();
+                log_error!(
+                    json!({ "err": err_json(&err) }),
+                    "[Meeting] Failed to start the meeting stack"
+                );
+                // Locals first, and unconditionally: the stack reaches the state only once
+                // the join is under way, so a failure before that leaves `teardown` with
+                // nothing to release.
+                self.release_locals(&mut locals).await;
+                if self.state.lock().epoch == epoch {
+                    self.teardown(TeardownStatus::Error).await;
+                }
+                idle_answer(format!("Could not join the meeting: {message}"))
+            }
+        }
+    }
+
+    /// Release a stack that was built for a call nobody is waiting for any more.
+    async fn release_locals(&self, locals: &mut Locals) {
+        if let Some(conversation) = locals.conversation.take() {
+            conversation.stop();
+        }
+        if let Some(browser) = locals.browser.take() {
+            browser.stop().await;
+        }
+        if let Some(audio) = locals.audio.take() {
+            audio.stop().await;
+        }
+    }
+
+    async fn build_and_request(
+        &'static self,
+        provider: &'static dyn MeetingProvider,
+        input: &JoinMeetingInput,
+        epoch: u64,
+        locals: &mut Locals,
+    ) -> anyhow::Result<JoinMeetingResult> {
+        // Instructions and tools first: they need the database and the model catalog,
+        // and failing here should cost nothing but a message.
+        let instructions = self.build_instructions(input).await?;
+        let tools = prepare_meeting_tools(MeetingToolBridgeInput {
+            user_id: input.user_id.clone(),
+            agent_id: input.agent_id.clone(),
+            thread_id: input.thread_id.clone(),
+            locked_in: instructions.locked_in,
+        })
+        .await?;
+
+        let audio = Arc::new(AudioStack::new());
+        locals.audio = Some(audio.clone());
+        let handles = audio.start(AudioStackOptions::default()).await?;
+        // Deaf or mute is not a state to sit in: a dead capture or playback process
+        // leaves the bot in the room unable to hear or speak. Same ending as a lost
+        // Realtime session.
+        (handles.on_lost)(Arc::new(move |reason| self.on_audio_lost(epoch, reason)));
+
+        let response_mode = self.state.lock().response_mode;
+        let conversation = VoiceConversation::new(VoiceConversationOptions {
+            on_response_finished: None,
+            instructions: instructions.instructions.clone(),
+            opening_context: instructions.opening_context.clone(),
+            tools,
+            sink: handles.playback_sink.clone(),
+            // The virtual audio devices run at the meeting rate, so both resamplers are in
+            // the path.
+            sample_rate: MEETING_SAMPLE_RATE,
+            response_mode,
+            // The name the prompt introduces it by: an agent that says one name and
+            // answers to another would stay silent when addressed by the one it gave.
+            agent_name: instructions.agent_name.clone(),
+            model: None,
+            voice: Some(CONFIG.openai_realtime_voice.clone()),
+            endpoint_override: None,
+            on_session_lost: Some(Arc::new(move |reason| self.on_session_lost(epoch, reason))),
+        })?;
+        locals.conversation = Some(conversation.clone());
+        conversation.start().await?;
+        // Bound to this call's session rather than to the state's, which may belong to
+        // whatever runs next.
+        let live = conversation.clone();
+        (handles.on_capture)(Arc::new(move |pcm| live.push_audio(&pcm)));
+
+        let browser = Arc::new(BrowserStack::new());
+        locals.browser = Some(browser.clone());
+        let page = browser
+            .start(BrowserStackOptions {
+                env: handles.browser_env.clone(),
+                profile_dir: None,
+            })
+            .await?;
+
+        // Before the epoch check below, deliberately: a login can take 20-45s, and a
+        // leave() during it must still find the browser and audio released. Never fails.
+        provider.sign_in(&page, SignInOptions::default()).await;
+
+        // A leave() or shutdown during setup already tore this call down. Release the
+        // stack here without publishing any of it onto a state that may describe a
+        // newer call.
+        if self.state.lock().epoch != epoch {
+            self.release_locals(locals).await;
+            return Ok(idle_answer(
+                "The meeting was cancelled before I could join.".to_string(),
+            ));
+        }
+
+        {
+            let mut state = self.state.lock();
+            state.audio = locals.audio.take();
+            state.conversation = locals.conversation.take();
+            state.browser = locals.browser.take();
+            state.page = Some(page.clone());
+        }
+        // The stack is on the state, so `teardown()` can release it — which is the whole
+        // job of the startup marker. Let go of it here: from this line on a teardown does
+        // real, awaited work.
+        self.release_startup_slot(epoch);
+
+        self.state.lock().state = MeetingState::WaitingAdmission;
+        // Two answers race: the request going in, and a failure before it went in.
+        let (submitted_tx, submitted_rx) = oneshot::channel::<()>();
+        let submitted_tx = Arc::new(Mutex::new(Some(submitted_tx)));
+        let request_submitted: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            if let Some(tx) = submitted_tx.lock().take() {
+                let _ = tx.send(());
+            }
+        });
+        // Not awaited beyond the race: the waiting room can outlast any chat turn, and
+        // `run_join` reports everything after the request itself.
+        let mut attempt =
+            tokio::spawn(self.run_join(provider, page, input.clone(), epoch, request_submitted));
+
+        let answer = tokio::select! {
+            Ok(()) = submitted_rx => JoinAnswer::Requested,
+            finished = &mut attempt => finished.unwrap_or_else(|err| JoinAnswer::Failed {
+                step: None,
+                reason: err.to_string(),
+            }),
+        };
+        Ok(match answer {
+            // The state the request left behind, rather than a fresh reading.
+            JoinAnswer::Requested => JoinMeetingResult {
+                state: MeetingState::WaitingAdmission,
+                step: None,
+                message: format!(
+                    "Requested to join the {} call. A host needs to admit me — ask me for my meeting status to find out whether I'm in.",
+                    provider.display_name()
+                ),
+            },
+            JoinAnswer::Cancelled => {
+                idle_answer("The meeting was cancelled before I could join.".to_string())
+            }
+            JoinAnswer::Failed { step, reason } => JoinMeetingResult {
+                state: MeetingState::Idle,
+                step,
+                message: format!("Could not join the meeting: {reason}"),
+            },
+        })
     }
 
     /// Mark this startup as finished building, and free the service if it was waiting.
@@ -930,7 +1194,26 @@ impl MeetingBotService {
     /// `teardown()` becomes `idle` here and releases the voice lock, since the shared
     /// browser profile was not free until this startup let go of it.
     fn release_startup_slot(&self, epoch: u64) {
-        todo!()
+        let release = {
+            let mut state = self.state.lock();
+            if state.startup_epoch != Some(epoch) {
+                return;
+            }
+            state.startup_epoch = None;
+            if state.state == MeetingState::Leaving {
+                state.state = MeetingState::Idle;
+                true
+            } else {
+                false
+            }
+        };
+        if release {
+            VOICE_SESSION_LOCK.release(VoiceSessionKind::Meeting);
+        }
+    }
+
+    fn epoch_is(&self, epoch: u64) -> bool {
+        self.state.lock().epoch == epoch
     }
 
     /// Await the join outcome, then either settle into the call or clean up.
@@ -947,29 +1230,375 @@ impl MeetingBotService {
         epoch: u64,
         request_submitted: Arc<dyn Fn() + Send + Sync>,
     ) -> JoinAnswer {
-        todo!()
+        match self
+            .settle_into_call(provider, &page, &input, epoch, request_submitted)
+            .await
+        {
+            Ok(answer) => answer,
+            Err(err) => {
+                // A teardown mid-wait closes the page underneath the provider, so the
+                // failure is expected there and belongs to a call that is already gone.
+                if !self.epoch_is(epoch) {
+                    return JoinAnswer::Cancelled;
+                }
+                let reason = err.to_string();
+                log_error!(
+                    json!({ "err": err_json(&err) }),
+                    "[Meeting] Join flow threw for the {} call",
+                    provider.display_name()
+                );
+                let step = self.state.lock().fail_step;
+                self.teardown(TeardownStatus::Error).await;
+                JoinAnswer::Failed { step, reason }
+            }
+        }
+    }
+
+    async fn settle_into_call(
+        &'static self,
+        provider: &'static dyn MeetingProvider,
+        page: &PageHandle,
+        input: &JoinMeetingInput,
+        epoch: u64,
+        request_submitted: Arc<dyn Fn() + Send + Sync>,
+    ) -> anyhow::Result<JoinAnswer> {
+        let join_options = JoinOptions {
+            url: input.url.clone(),
+            admission_timeout_ms: CONFIG.meeting_admission_timeout_ms.max(0) as u64,
+            on_request_submitted: request_submitted,
+        };
+
+        let mut outcome = provider.join(page, join_options.clone()).await?;
+        // The call was ended while we waited (leave, timeout, shutdown).
+        if !self.epoch_is(epoch) {
+            return Ok(JoinAnswer::Cancelled);
+        }
+
+        // The platform says the profile's session is stale. Sign in again and try the
+        // link once more — once, deliberately: a second failure is a real problem, and
+        // retrying in a loop would hammer Google's login with credentials that failed.
+        if outcome == JoinOutcome::ReauthRequired {
+            // `force`: the provider asks for this only once the session it was handed has
+            // failed to work, so checking again spends the settle budget for nothing.
+            provider.sign_in(page, SignInOptions { force: true }).await;
+            if !self.epoch_is(epoch) {
+                return Ok(JoinAnswer::Cancelled);
+            }
+
+            outcome = provider.join(page, join_options).await?;
+            if !self.epoch_is(epoch) {
+                return Ok(JoinAnswer::Cancelled);
+            }
+
+            // Twice in a row is not a stale cookie any more.
+            if outcome == JoinOutcome::ReauthRequired {
+                self.state.lock().fail_step = Some(JoinStep::Lobby);
+                let reason = "signing in again did not help, and the meeting still treats this browser as a guest, which it refuses automatically".to_string();
+                log_warn!(
+                    "[Meeting] Could not join the {} call: {}",
+                    provider.display_name(),
+                    reason
+                );
+                self.teardown(TeardownStatus::Denied).await;
+                return Ok(JoinAnswer::Failed {
+                    step: Some(JoinStep::Lobby),
+                    reason,
+                });
+            }
+        }
+
+        let denied = matches!(outcome, JoinOutcome::Denied { .. });
+        let (muted_on_entry, mic_confirmed) = match outcome {
+            JoinOutcome::Admitted {
+                muted_on_entry,
+                mic_confirmed,
+            } => (muted_on_entry, mic_confirmed),
+            JoinOutcome::Denied { reason, step } | JoinOutcome::Failed { reason, step } => {
+                // Handed to the one owning emitter in `teardown`, so the failing step rides
+                // the existing `meeting ended` event.
+                self.state.lock().fail_step = Some(step);
+                if denied {
+                    log_warn!(
+                        "[Meeting] Denied entry to the {} call at the \"{}\" step: {}",
+                        provider.display_name(),
+                        step.as_str(),
+                        reason
+                    );
+                } else {
+                    log_error!(
+                        "[Meeting] Joining the {} call failed at the \"{}\" step: {}",
+                        provider.display_name(),
+                        step.as_str(),
+                        reason
+                    );
+                }
+                self.teardown(if denied {
+                    TeardownStatus::Denied
+                } else {
+                    TeardownStatus::Error
+                })
+                .await;
+                return Ok(JoinAnswer::Failed {
+                    step: Some(step),
+                    reason,
+                });
+            }
+            JoinOutcome::ReauthRequired => unreachable!("a second refusal returned above"),
+        };
+
+        // The provider has the platform's word for the microphone. This is the layer under
+        // it: whether the browser ever opened a capture device at all. Reaching admission
+        // without an audio stack is a bug in this service, not a condition to tolerate.
+        let Some(audio) = self.state.lock().audio.clone() else {
+            anyhow::bail!("admitted to a call with no audio stack");
+        };
+
+        let capturing = audio.wait_for_mic_capture(MIC_CAPTURE_TIMEOUT_MS).await;
+        // The wait can outlive the call.
+        if !self.epoch_is(epoch) {
+            return Ok(JoinAnswer::Cancelled);
+        }
+
+        // Audible only if both halves agree. Either one failing is a call the agent can
+        // hear but not speak in — degraded, not over.
+        let audible = mic_confirmed && capturing;
+        let conversation = {
+            let mut state = self.state.lock();
+            state.mic_confirmed = audible;
+            // The first `is_mic_live` reading, taken from the join. `None` only where
+            // nothing was read at all.
+            state.is_mic_live = if audible {
+                Some(true)
+            } else if mic_confirmed || muted_on_entry {
+                Some(false)
+            } else {
+                None
+            };
+            // The join read the toggle open, so a muted reading later in the call came from
+            // somebody in it.
+            state.has_mic_been_on = mic_confirmed;
+            state.state = MeetingState::InCall;
+            state.joined_at = Some(now_ms());
+            state.conversation.clone()
+        };
+        if let Some(conversation) = &conversation {
+            conversation.set_audible(audible);
+        }
+
+        // Speaker attribution, before the agent has said a word, so the very first thing
+        // said in the call can already be attributed. Never fails.
+        if provider.capabilities().enable_speaker_attribution {
+            let page = self.state.lock().page.clone();
+            if let Some(page) = page {
+                provider.enable_speaker_attribution(&page).await;
+                if !self.epoch_is(epoch) {
+                    return Ok(JoinAnswer::Cancelled);
+                }
+            }
+        }
+
+        let response_mode = self.state.lock().response_mode;
+        let mut properties = IndexMap::new();
+        properties.insert(
+            "inference_provider".to_string(),
+            CONFIG
+                .realtime_provider
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
+        );
+        properties.insert(
+            "inference_source".to_string(),
+            CONFIG.realtime_source.as_str().to_string(),
+        );
+        properties.insert("provider".to_string(), provider.name().to_string());
+        properties.insert(
+            "response_mode".to_string(),
+            response_mode.as_str().to_string(),
+        );
+        // How often the platform auto-mutes a new joiner, and whether the unmute worked.
+        properties.insert("muted_on_entry".to_string(), muted_on_entry.to_string());
+        properties.insert("mic_confirmed".to_string(), audible.to_string());
+        track_event("meeting joined", Some(&input.user_id), Some(properties));
+
+        if audible {
+            log_info!(
+                "[Meeting] Admitted to the {} call, and audible to the room",
+                provider.display_name()
+            );
+            self.greet_the_room(provider.display_name());
+        } else {
+            // No greeting, and the model is told why. The warning names both readings,
+            // because they send an engineer to different places.
+            log_warn!(
+                "[Meeting] Admitted to the {} call but not audibly (mic control confirmed: {}, capture device open: {}) — listening, and retrying the unmute",
+                provider.display_name(),
+                mic_confirmed,
+                capturing
+            );
+            if let Some(conversation) = &conversation {
+                conversation.notify(&format!(
+                    "You are in the {} call, but I could not confirm your microphone is on, so the participants may not hear you. Don't greet anyone. I am retrying the unmute for you, and set_microphone with on: true is yours to try as well. Go no further than that control — the audio devices under the call are not something to repair from in here. Keep listening, and act on what you hear. If somebody responds to something you said, you are audible after all and can carry on normally.",
+                    provider.display_name()
+                ));
+            }
+        }
+
+        // Failing to read the room is not a reason to abandon a call already joined.
+        self.seed_participant_count(epoch).await;
+
+        // The await above can outlive the call; arming timers now would leave ones nobody
+        // clears.
+        if !self.epoch_is(epoch) {
+            return Ok(JoinAnswer::Cancelled);
+        }
+        self.start_watchdogs();
+        Ok(JoinAnswer::Requested)
     }
 
     /// Start the participant poll, the speaker poll and the duration cap.
+    ///
+    /// Each tick runs as its own task, so a teardown that stops the timers never stops the
+    /// work a tick already started.
     fn start_watchdogs(&'static self) {
-        todo!()
+        let poll = tokio::spawn(async move {
+            let period = Duration::from_millis(PARTICIPANT_POLL_MS);
+            let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+            loop {
+                ticks.tick().await;
+                tokio::spawn(self.check_participants());
+            }
+        });
+        let speaker = self
+            .state
+            .lock()
+            .provider
+            .filter(|provider| provider.capabilities().current_speaker)
+            .map(|_| {
+                tokio::spawn(async move {
+                    let period = Duration::from_millis(SPEAKER_POLL_MS);
+                    let mut ticks =
+                        tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+                    loop {
+                        ticks.tick().await;
+                        tokio::spawn(self.check_speaker());
+                    }
+                })
+            });
+        let minutes = CONFIG.meeting_timeout_minutes;
+        let cap = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis((minutes.max(0) as u64) * 60 * 1000)).await;
+            tokio::spawn(self.finish(
+                TeardownStatus::Timeout,
+                Some(format!("Left the call: it hit the {minutes}-minute limit")),
+            ));
+        });
+
+        let mut state = self.state.lock();
+        state.poll_timer = Some(poll.abort_handle());
+        state.speaker_timer = speaker.map(|task| task.abort_handle());
+        state.max_duration_timer = Some(cap.abort_handle());
     }
 
     /// Read the participant count a few times right after admission, since Meet admits the
     /// agent before it renders the other tiles and the first read is a reliable 1.
+    ///
+    /// Gives up quietly rather than seeding a 1. The policy's cautious default — wait to be
+    /// addressed — is the right place to stay when the room is unknown, and the poll will
+    /// correct it within one interval.
     async fn seed_participant_count(&self, epoch: u64) {
-        todo!()
+        for _ in 0..SEED_READ_ATTEMPTS {
+            let (page, provider, conversation) = {
+                let state = self.state.lock();
+                if state.epoch != epoch || state.state != MeetingState::InCall {
+                    return;
+                }
+                let (Some(page), Some(provider)) = (state.page.clone(), state.provider) else {
+                    return;
+                };
+                (page, provider, state.conversation.clone())
+            };
+
+            // A failed read keeps trying: the page is still settling.
+            let count = provider.participant_count(&page).await.ok().flatten();
+
+            // Anything above the agent itself means the room has rendered.
+            if let Some(count) = count.filter(|count| *count > 1) {
+                if let Some(conversation) = conversation {
+                    conversation.set_participant_count(Some(count));
+                }
+                return;
+            }
+
+            tokio::time::sleep(Duration::from_millis(SEED_READ_INTERVAL_MS)).await;
+        }
+
+        log_info!("[Meeting] Room not readable yet on admission — waiting for the poll");
     }
 
     /// Have the agent greet the room it was just admitted to.
+    ///
+    /// Held in one place because it happens at either of two moments: on admission when
+    /// the microphone came up with the call, or later, the first time a mid-call retry
+    /// gets it live. A room that could not hear the greeting was never greeted.
     fn greet_the_room(&self, display_name: &str) {
-        todo!()
+        let conversation = self.state.lock().conversation.clone();
+        if let Some(conversation) = conversation {
+            conversation.notify(&format!(
+                "You have just been admitted to the {display_name} call. Greet the participants in one short sentence and say what you can help with."
+            ));
+            conversation.speak_now();
+        }
     }
 
     /// Read the microphone on the participant poll, report a change, and work at getting
     /// an inaudible call audible.
     async fn check_microphone(&self, epoch: u64) {
-        todo!()
+        let (page, provider) = {
+            let state = self.state.lock();
+            (state.page.clone(), state.provider)
+        };
+        let (Some(page), Some(provider)) = (page, provider) else {
+            return;
+        };
+        if !provider.capabilities().microphone_live {
+            return;
+        }
+
+        // Under the click lock as well, and for the write rather than the read: a read that
+        // starts before a click and lands after it would put the replaced state back.
+        let live = match self.with_mic_click(provider.microphone_live(&page)).await {
+            Ok(live) => live,
+            Err(err) => {
+                // A teardown can close the page mid-read. The next poll asks again.
+                log_debug!("[Meeting] Could not read the microphone: Error: {}", err);
+                return;
+            }
+        };
+        {
+            let state = self.state.lock();
+            if state.epoch != epoch || state.state != MeetingState::InCall {
+                return;
+            }
+        }
+
+        self.record_mic_reading(live);
+        let (confirmed, desired, chat_busy) = {
+            let state = self.state.lock();
+            (
+                state.mic_confirmed,
+                state.mic_desired,
+                state.chat_panel_busy,
+            )
+        };
+        if confirmed || !desired {
+            return;
+        }
+        // The clicking half waits while the chat panel is busy: it sweeps dialogs and
+        // clicks the control bar on the same page.
+        if chat_busy {
+            return;
+        }
+        self.make_audible(epoch, live).await;
     }
 
     /// Record a microphone reading, and tell the agent when it stops matching what it asked
@@ -982,28 +1611,299 @@ impl MeetingBotService {
     /// An unreadable control changes the reading and says nothing, since the evidence for a
     /// mute is missing rather than present. It reaches the agent as `isMicLive: null`.
     fn record_mic_reading(&self, next: Option<bool>) {
-        todo!()
+        enum Notice {
+            Muted,
+            Back,
+        }
+        let (notice, conversation) = {
+            let mut state = self.state.lock();
+            if next == Some(true) {
+                state.has_mic_been_on = true;
+            }
+            state.is_mic_live = if next == Some(true) {
+                Some(state.mic_confirmed)
+            } else {
+                next
+            };
+
+            let notice = if next == Some(false)
+                && state.has_mic_been_on
+                && state.mic_desired
+                && !state.mic_mute_reported
+            {
+                state.mic_mute_reported = true;
+                Some(Notice::Muted)
+            } else if state.is_mic_live == Some(true) && state.mic_mute_reported {
+                state.mic_mute_reported = false;
+                Some(Notice::Back)
+            } else {
+                None
+            };
+            (notice, state.conversation.clone())
+        };
+
+        match notice {
+            Some(Notice::Muted) => {
+                log_warn!(
+                    "[Meeting] The microphone was muted mid-call and nobody here asked for it"
+                );
+                if let Some(conversation) = conversation {
+                    conversation.notify(
+                        "Your microphone has just been muted — something in the call did that, not you, so the participants cannot hear you now. Say nothing until it is back. If somebody asked you to be quiet, stay muted. Otherwise call set_microphone with on: true, and carry on if that works.",
+                    );
+                }
+            }
+            Some(Notice::Back) => {
+                log_info!("[Meeting] The microphone is live again");
+                if let Some(conversation) = conversation {
+                    conversation
+                        .notify("Your microphone is on again — the participants can hear you.");
+                }
+            }
+            None => {}
+        }
     }
 
     /// Click the microphone on, and confirm the capture device opened.
+    ///
+    /// Two halves have to hold: the platform's toggle open, and the browser capturing from the
+    /// virtual device. The toggle gets one click per poll while the join never got it open,
+    /// and the capture device is re-read every poll. The greeting waits for both.
     async fn make_audible(&self, epoch: u64, reading: Option<bool>) {
-        todo!()
+        let (page, provider, audio, has_been_on) = {
+            let state = self.state.lock();
+            (
+                state.page.clone(),
+                state.provider,
+                state.audio.clone(),
+                state.has_mic_been_on,
+            )
+        };
+        let (Some(page), Some(provider)) = (page, provider) else {
+            return;
+        };
+        if !provider.capabilities().set_microphone {
+            return;
+        }
+
+        let still_wanted = || {
+            let state = self.state.lock();
+            state.epoch == epoch && state.state == MeetingState::InCall && state.mic_desired
+        };
+
+        if reading != Some(true) {
+            // Somebody in the call made this mute, so the poll has already reported it.
+            // Undoing it is the agent's own call, through `set_microphone`.
+            if has_been_on {
+                return;
+            }
+            let live = match self
+                .with_mic_click(provider.set_microphone(&page, true))
+                .await
+            {
+                Ok(live) => live,
+                Err(err) => {
+                    log_debug!("[Meeting] Unmute retry failed: Error: {}", err);
+                    return;
+                }
+            };
+            // The agent asked to be muted while this click was queued behind the lock.
+            if !still_wanted() {
+                return;
+            }
+            self.record_mic_reading(live);
+            if live != Some(true) {
+                return;
+            }
+        }
+
+        // Both halves, every time.
+        let capturing = match &audio {
+            Some(audio) => audio.is_mic_captured().await,
+            None => false,
+        };
+        if !capturing {
+            return;
+        }
+
+        // Re-checked after the capture reading above: that is a real await.
+        if !still_wanted() {
+            return;
+        }
+
+        log_info!(
+            "[Meeting] Microphone is live after a mid-call retry — audible in the {} call now",
+            provider.display_name()
+        );
+        let conversation = {
+            let mut state = self.state.lock();
+            state.mic_confirmed = true;
+            state.is_mic_live = Some(true);
+            state.conversation.clone()
+        };
+        if let Some(conversation) = conversation {
+            conversation.set_audible(true);
+        }
+        self.greet_the_room(provider.display_name());
     }
 
     /// Ask the platform who is speaking, one read at a time.
+    ///
+    /// An overlap guard for the same reason the participant poll has one — the interval
+    /// fires on a wall clock — though here a skipped tick costs nothing.
     async fn check_speaker(&self) {
-        todo!()
+        let (page, provider, epoch) = {
+            let mut state = self.state.lock();
+            if state.state != MeetingState::InCall {
+                return;
+            }
+            let (Some(page), Some(provider)) = (state.page.clone(), state.provider) else {
+                return;
+            };
+            if !provider.capabilities().current_speaker || state.speaker_poll_in_flight {
+                return;
+            }
+            state.speaker_poll_in_flight = true;
+            (page, provider, state.epoch)
+        };
+
+        // A failure is a page that closed under the read; `current_speaker` answers `None`
+        // rather than failing otherwise.
+        if let Ok(reading) = provider.current_speaker(&page).await {
+            let conversation = {
+                let mut state = self.state.lock();
+                if state.epoch == epoch {
+                    if reading.is_some() {
+                        state.speaker_seen = true;
+                    }
+                    state.conversation.clone()
+                } else {
+                    None
+                }
+            };
+            if let Some(conversation) = conversation {
+                conversation.set_current_speaker(reading);
+            }
+        }
+        self.state.lock().speaker_poll_in_flight = false;
     }
 
     /// Run one participant poll unless one is still running.
+    ///
+    /// The interval re-fires on a wall clock, not on the previous poll finishing, so two
+    /// ticks could be in here at once — harmless for the count, and not harmless at all for
+    /// the unmute retry, which clicks a *toggle*. A tick is skipped outright rather than
+    /// queued: a delayed reading has no value the next one lacks.
     async fn check_participants(&self) {
-        todo!()
+        {
+            let mut state = self.state.lock();
+            if state.state != MeetingState::InCall
+                || state.page.is_none()
+                || state.provider.is_none()
+            {
+                return;
+            }
+            if state.poll_in_flight {
+                return;
+            }
+            state.poll_in_flight = true;
+        }
+        self.poll_once().await;
+        self.state.lock().poll_in_flight = false;
     }
 
     /// One participant poll: prepare attribution, read the count and the names, warn on
     /// unreadable counts, and leave a room that has stayed empty.
     async fn poll_once(&self) {
-        todo!()
+        // The microphone first, because it is the more urgent of the two.
+        let epoch = self.state.lock().epoch;
+        self.check_microphone(epoch).await;
+
+        let current = || {
+            let state = self.state.lock();
+            if state.state != MeetingState::InCall {
+                return None;
+            }
+            Some((
+                state.page.clone()?,
+                state.provider?,
+                state.chat_panel_busy,
+                state.conversation.clone(),
+            ))
+        };
+        let Some((page, provider, chat_busy, _)) = current() else {
+            return;
+        };
+
+        // Then the participants panel, asked on every poll: a panel is UI state that a
+        // re-render or a reconnect can take away. Skipped while the chat panel is busy, since
+        // Meet's side rail shows one panel at a time.
+        if provider.capabilities().enable_speaker_attribution && !chat_busy {
+            provider.enable_speaker_attribution(&page).await;
+            if current().is_none() {
+                return;
+            }
+        }
+        let Some((page, provider, _, conversation)) = current() else {
+            return;
+        };
+
+        let count = provider.participant_count(&page).await.ok().flatten();
+        if let Some(conversation) = &conversation {
+            conversation.set_participant_count(count);
+        }
+
+        // Same poll, because the roster changes for the same reason the count does. A
+        // failure here must not disturb the count.
+        if provider.capabilities().participant_names {
+            if let Ok(names) = provider.participant_names(&page).await {
+                if !names.is_empty() {
+                    if let Some(conversation) = &conversation {
+                        conversation.set_participant_names(&names);
+                    }
+                }
+            }
+        }
+
+        // `None` means "couldn't read it" — never a reason to leave a live call, nor to
+        // change how the agent behaves. A persistent `None` is a broken selector, so say so.
+        let Some(count) = count else {
+            let unreadable = {
+                let mut state = self.state.lock();
+                state.unreadable_counts += 1;
+                state.unreadable_counts
+            };
+            if unreadable == UNREADABLE_COUNTS_BEFORE_WARNING {
+                let mode = conversation
+                    .as_ref()
+                    .map(|c| c.response_mode().as_str())
+                    .unwrap_or("addressed");
+                log_warn!(
+                    "[Meeting] Can't read the participant count ({} tries) — staying in \"{}\" mode and not checking for an empty room",
+                    unreadable,
+                    mode
+                );
+            }
+            return;
+        };
+        self.state.lock().unreadable_counts = 0;
+
+        if count <= 1 {
+            let empty = {
+                let mut state = self.state.lock();
+                state.empty_readings += 1;
+                state.empty_readings
+            };
+            if empty >= EMPTY_READINGS_BEFORE_LEAVING {
+                self.finish(
+                    TeardownStatus::Completed,
+                    Some("Everyone else left the call, so left it too".to_string()),
+                )
+                .await;
+            }
+            return;
+        }
+        self.state.lock().empty_readings = 0;
     }
 
     /// Mute or unmute on request. Doesn't fail if nothing is running.
@@ -1016,7 +1916,120 @@ impl MeetingBotService {
     /// from one the call imposed even while the click is still going out. A request that does
     /// not take puts it back.
     pub async fn set_microphone(&self, on: bool) -> MeetingActionResult {
-        todo!()
+        let answer = |success: bool, message: &str| MeetingActionResult {
+            success,
+            message: message.to_string(),
+        };
+        let (page, provider, wanted, epoch) = {
+            let mut state = self.state.lock();
+            match state.state {
+                MeetingState::InCall => {}
+                MeetingState::Idle => {
+                    return answer(
+                        false,
+                        "You are not in a call, so there is no microphone to turn on or off.",
+                    );
+                }
+                other => {
+                    return answer(
+                        false,
+                        &format!(
+                            "You are {} the call, so the microphone is not yours to set yet.",
+                            if other == MeetingState::Leaving {
+                                "leaving"
+                            } else {
+                                "still joining"
+                            }
+                        ),
+                    );
+                }
+            }
+            let provider = state.provider;
+            let (Some(page), Some(provider)) = (
+                state.page.clone(),
+                provider.filter(|p| p.capabilities().set_microphone),
+            ) else {
+                return answer(
+                    false,
+                    &format!(
+                        "I cannot control the microphone on {}.",
+                        provider
+                            .map(|p| p.display_name())
+                            .unwrap_or("this platform")
+                    ),
+                );
+            };
+            // Before the await, so a poll that fires during the click already knows this
+            // mute was asked for.
+            let wanted = state.mic_desired;
+            state.mic_desired = on;
+            (page, provider, wanted, state.epoch)
+        };
+
+        let live = match self
+            .with_mic_click(provider.set_microphone(&page, on))
+            .await
+        {
+            Ok(live) => live,
+            Err(err) => {
+                self.state.lock().mic_desired = wanted;
+                log_debug!("[Meeting] Could not set the microphone: Error: {}", err);
+                return answer(false, "I could not reach the microphone control.");
+            }
+        };
+
+        let mut state = self.state.lock();
+        if state.epoch != epoch || state.state != MeetingState::InCall {
+            state.mic_desired = wanted;
+            return answer(false, "The call ended before that took effect.");
+        }
+
+        let Some(live) = live else {
+            state.mic_desired = wanted;
+            state.is_mic_live = None;
+            return answer(
+                false,
+                "I could not read the microphone control back, so I cannot say what state it is in. Check meeting_status before you speak.",
+            );
+        };
+
+        // A muted toggle settles audibility on its own. An open toggle is half the answer.
+        if live {
+            state.has_mic_been_on = true;
+        }
+        state.is_mic_live = Some(live && state.mic_confirmed);
+        // Accounted for on the outcome rather than on the request.
+        if live == on {
+            state.mic_mute_reported = !on;
+        }
+        if live != on {
+            state.mic_desired = wanted;
+            return answer(
+                false,
+                if on {
+                    "I clicked unmute and the microphone still reads muted."
+                } else {
+                    "I clicked mute and the microphone still reads live."
+                },
+            );
+        }
+
+        if on && !state.mic_confirmed {
+            // The toggle is open over an audio device nothing has read on this call.
+            return answer(
+                true,
+                "Your microphone is uncovered at the platform, but nothing has yet carried your voice on this call. I keep checking, and I tell you when the room can hear you.",
+            );
+        }
+
+        answer(
+            true,
+            if on {
+                "Your microphone is on — the participants can hear you."
+            } else {
+                "Your microphone is off — the participants cannot hear you until you turn it on."
+            },
+        )
     }
 
     /// Show the room the agent's screen.
@@ -1028,7 +2041,27 @@ impl MeetingBotService {
     /// Meet's controls. The room hears a pause, which the prompt's speak-before-a-tool
     /// rule covers.
     pub async fn start_screen_share(&self) -> MeetingActionResult {
-        todo!()
+        let outcome = self.drive_screen_share(ShareDirection::Start).await;
+        if let ScreenShareOutcome::Failed { reason } = outcome {
+            return MeetingActionResult {
+                success: false,
+                message: reason,
+            };
+        }
+
+        {
+            let mut state = self.state.lock();
+            state.sharing_screen = true;
+            state.shared_screen = true;
+        }
+        MeetingActionResult {
+            success: true,
+            message: if outcome == ScreenShareOutcome::AlreadySharing {
+                "I am already sharing my screen.".to_string()
+            } else {
+                "I am sharing my screen — the room can see it now.".to_string()
+            },
+        }
     }
 
     /// Run `work` while holding the microphone click lock, so two clicks never overlap.
@@ -1045,7 +2078,23 @@ impl MeetingBotService {
     /// `not_sharing` is a success: the room sees nothing, which is what was asked for.
     /// Somebody may have stopped the share from the meeting's own controls.
     pub async fn stop_screen_share(&self) -> MeetingActionResult {
-        todo!()
+        let outcome = self.drive_screen_share(ShareDirection::Stop).await;
+        if let ScreenShareOutcome::Failed { reason } = outcome {
+            return MeetingActionResult {
+                success: false,
+                message: reason,
+            };
+        }
+
+        self.state.lock().sharing_screen = false;
+        MeetingActionResult {
+            success: true,
+            message: if outcome == ScreenShareOutcome::NotSharing {
+                "I was not sharing my screen.".to_string()
+            } else {
+                "I have stopped sharing my screen.".to_string()
+            },
+        }
     }
 
     /// Run `work` in its turn on the front-tab queue.
@@ -1058,8 +2107,94 @@ impl MeetingBotService {
     }
 
     /// Start or stop presenting through the provider, on the front-tab queue.
+    ///
+    /// The part both share tools have in common: the state gate, the provider call and the
+    /// telemetry event. One place, so the two directions cannot drift apart.
     async fn drive_screen_share(&self, direction: ShareDirection) -> ScreenShareOutcome {
-        todo!()
+        let failed = |reason: &str| ScreenShareOutcome::Failed {
+            reason: reason.to_string(),
+        };
+        let (page, provider, browser, user_id) = {
+            let state = self.state.lock();
+            if state.state == MeetingState::Idle {
+                return failed("I am not in a meeting right now.");
+            }
+            let (true, Some(page), Some(provider)) = (
+                state.state == MeetingState::InCall,
+                state.page.clone(),
+                state.provider,
+            ) else {
+                return failed(if state.state == MeetingState::Leaving {
+                    "I am leaving the call, so there is nothing to share into."
+                } else {
+                    "I am still getting into the call — ask me again once I am in."
+                });
+            };
+            // Read before the awaits below: a teardown that lands during them clears
+            // `current`.
+            let user_id = state
+                .current
+                .as_ref()
+                .map(|current| current.user_id.clone())
+                .unwrap_or_else(|| "unknown".to_string());
+            (page, provider, state.browser.clone(), user_id)
+        };
+
+        let capabilities = provider.capabilities();
+        let supported = match direction {
+            ShareDirection::Start => capabilities.start_screen_share,
+            ShareDirection::Stop => capabilities.stop_screen_share,
+        };
+        if !supported {
+            return failed(&format!(
+                "I cannot share my screen in a {} call.",
+                provider.display_name()
+            ));
+        }
+
+        let outcome = self
+            .on_front_queue(async {
+                // The share controls belong to the meeting page, so that page goes in front
+                // for the clicks; a capture a background tab asks for is not reliably granted.
+                let _ = page.bring_to_front().await;
+                let driven = match direction {
+                    ShareDirection::Start => provider.start_screen_share(&page).await,
+                    ShareDirection::Stop => provider.stop_screen_share(&page).await,
+                };
+                let outcome = match driven {
+                    Ok(outcome) => outcome,
+                    Err(err) => {
+                        log_error!(
+                            json!({ "err": err_json(&err) }),
+                            "[Meeting] Screen share {} failed",
+                            match direction {
+                                ShareDirection::Start => "start",
+                                ShareDirection::Stop => "stop",
+                            }
+                        );
+                        failed("Something went wrong using the meeting controls.")
+                    }
+                };
+                // Back to the tab the room is meant to watch. Nothing is opened for this.
+                if let Some(browser) = &browser {
+                    let _ = browser.raise_active_tab().await;
+                }
+                outcome
+            })
+            .await;
+
+        let status = match &outcome {
+            ScreenShareOutcome::Sharing => "sharing",
+            ScreenShareOutcome::AlreadySharing => "already_sharing",
+            ScreenShareOutcome::Stopped => "stopped",
+            ScreenShareOutcome::NotSharing => "not_sharing",
+            ScreenShareOutcome::Failed { .. } => "failed",
+        };
+        let mut properties = IndexMap::new();
+        properties.insert("provider".to_string(), provider.name().to_string());
+        properties.insert("status".to_string(), status.to_string());
+        track_event("meeting screen share", Some(&user_id), Some(properties));
+        outcome
     }
 
     /// Show the model what is on the screen right now.
@@ -1076,7 +2211,53 @@ impl MeetingBotService {
     /// model that did not ask, while telling the one that did that it is looking at
     /// something it cannot see. The picture's note is `SCREEN_LOOK_NOTE`.
     pub async fn look_at_screen(&self, to_session: bool) -> ScreenLookResult {
-        todo!()
+        let refuse = |message: &str| ScreenLookResult {
+            success: false,
+            message: message.to_string(),
+            reading: None,
+        };
+        let (browser, conversation) = {
+            let state = self.state.lock();
+            if state.state == MeetingState::Idle {
+                return refuse("I am not in a meeting right now.");
+            }
+            let (true, Some(browser)) =
+                (state.state == MeetingState::InCall, state.browser.clone())
+            else {
+                return refuse("I am still getting into the call — ask me again once I am in.");
+            };
+            (browser, state.conversation.clone())
+        };
+
+        let Some(page) = browser.front() else {
+            return refuse("There is no browser window open.");
+        };
+
+        match capture(&page).await {
+            Ok(PageCapture { image_url, reading }) => {
+                let shown = to_session
+                    && conversation
+                        .map(|conversation| conversation.show_image(&image_url, SCREEN_LOOK_NOTE))
+                        .unwrap_or(false);
+                ScreenLookResult {
+                    success: true,
+                    message: if shown {
+                        "This is what my screen is showing.".to_string()
+                    } else {
+                        "Here is what the screen says. I cannot show you the picture of it from here."
+                            .to_string()
+                    },
+                    reading: Some(reading),
+                }
+            }
+            Err(err) => {
+                log_error!(
+                    json!({ "err": err_json(&err) }),
+                    "[Meeting] Screen capture failed"
+                );
+                refuse("I could not get a picture of the screen.")
+            }
+        }
     }
 
     /// Use the browser's second tab — the one the meeting is not in.
@@ -1084,21 +2265,182 @@ impl MeetingBotService {
     /// Same gate as `start_screen_share`. Before the call is up the only page is the lobby,
     /// and browsing there would leave the meeting on the way in.
     pub async fn browse(&self, command: BrowserCommand) -> BrowserResult {
-        todo!()
+        let browser = {
+            let mut state = self.state.lock();
+            if state.state == MeetingState::Idle {
+                return BrowserResult::message(false, "I am not in a meeting right now.");
+            }
+            let (true, Some(browser)) =
+                (state.state == MeetingState::InCall, state.browser.clone())
+            else {
+                return BrowserResult::message(
+                    false,
+                    if state.state == MeetingState::Leaving {
+                        "I am leaving the call, so the browser is being closed."
+                    } else {
+                        "I am still getting into the call — ask me again once I am in."
+                    },
+                );
+            };
+            state.browser_commands += 1;
+            browser
+        };
+
+        // Queued with the share flow: both move which tab is in front, and the model can
+        // call them at the same time.
+        self.on_front_queue(async {
+            match self.run_browse_command(&browser, &command).await {
+                Ok(mut result) => {
+                    // Every answer lists the tabs, so the model always knows what it can
+                    // switch to and which tab the room is seeing.
+                    result.tabs =
+                        Some(summarize_tabs(&browser.list_tabs(), browser.front().as_ref()).await);
+                    result
+                }
+                Err(err) => {
+                    log_error!(
+                        json!({ "err": err_json(&err) }),
+                        "[Meeting] Browser command failed"
+                    );
+                    BrowserResult::message(false, "I could not reach the browser.")
+                }
+            }
+        })
+        .await
     }
 
     /// Answer the tab commands here and send the rest to the working tab.
+    ///
+    /// The three tab commands are answered here rather than in `browser_control.rs`,
+    /// because the set of tabs belongs to the browser and not to any one page.
     async fn run_browse_command(
         &self,
         browser: &BrowserStack,
         command: &BrowserCommand,
-    ) -> BrowserResult {
-        todo!()
+    ) -> anyhow::Result<BrowserResult> {
+        match command.action {
+            BrowserAction::NewTab => {
+                // The address is checked before the tab exists, so a refusal never leaves a
+                // blank tab in front of the room.
+                if let Some(url) = command.url.as_deref().filter(|url| !url.is_empty()) {
+                    if normalize_url(url).is_none() {
+                        return Ok(BrowserResult::message(
+                            false,
+                            format!("\"{url}\" is not a web address I can open."),
+                        ));
+                    }
+                }
+
+                let page = browser.open_tab().await?;
+                if let Some(url) = command.url.as_deref().filter(|url| !url.is_empty()) {
+                    let navigate = BrowserCommand {
+                        action: BrowserAction::Navigate,
+                        url: Some(url.to_string()),
+                        tab: None,
+                        target: None,
+                        text: None,
+                        key: None,
+                        amount: None,
+                    };
+                    return Ok(run_browser_command(&page, &navigate).await);
+                }
+                Ok(BrowserResult::with_reading(
+                    true,
+                    "Opened a new tab.",
+                    read(&page).await,
+                ))
+            }
+
+            BrowserAction::SwitchTab => {
+                // A tab number that names no tab — 0 included — is refused as the wrong
+                // number instead of acting on the tab the agent is already in.
+                let page = match command.tab.and_then(tab_index) {
+                    Some(index) => browser.select_tab(index).await?,
+                    None => None,
+                };
+                let Some(page) = page else {
+                    return Ok(BrowserResult::message(
+                        false,
+                        format!(
+                            "There is no tab {}.",
+                            command
+                                .tab
+                                .map(crate::support::js::number_text)
+                                .unwrap_or_else(|| "of that number".to_string())
+                        ),
+                    ));
+                };
+                Ok(BrowserResult::with_reading(
+                    true,
+                    format!(
+                        "Switched to tab {}.",
+                        command
+                            .tab
+                            .map(crate::support::js::number_text)
+                            .unwrap_or_default()
+                    ),
+                    read(&page).await,
+                ))
+            }
+
+            BrowserAction::CloseTab => {
+                let tabs = browser.list_tabs();
+                let index = match command.tab {
+                    None => browser
+                        .front()
+                        .and_then(|front| tabs.iter().position(|tab| *tab == front)),
+                    Some(tab) => tab_index(tab),
+                };
+                let closed = match index {
+                    Some(index) => browser.close_tab(index).await?,
+                    None => false,
+                };
+                if !closed {
+                    return Ok(BrowserResult::message(
+                        false,
+                        "There is no such tab to close.",
+                    ));
+                }
+
+                let meeting_page = self.state.lock().page.clone();
+                match browser.front() {
+                    Some(page) if Some(&page) != meeting_page.as_ref() => Ok(
+                        BrowserResult::with_reading(true, "Closed the tab.", read(&page).await),
+                    ),
+                    _ => Ok(BrowserResult::message(
+                        true,
+                        "Closed the last tab. Nothing is open now.",
+                    )),
+                }
+            }
+
+            _ => Ok(run_browser_command(&browser.workbench().await?, command).await),
+        }
     }
 
     /// Leave on request. Safe when nothing is running.
     pub async fn leave(&self) -> LeaveResult {
-        todo!()
+        let platform = {
+            let state = self.state.lock();
+            if state.state == MeetingState::Leaving {
+                return LeaveResult {
+                    message: "I have left, but I am still releasing the previous call.".to_string(),
+                };
+            }
+            if state.state == MeetingState::Idle {
+                return LeaveResult {
+                    message: "I am not in a meeting right now.".to_string(),
+                };
+            }
+            state
+                .provider
+                .map(|p| p.display_name())
+                .unwrap_or("meeting")
+        };
+        self.finish(TeardownStatus::Completed, None).await;
+        LeaveResult {
+            message: format!("Left the {platform} call."),
+        }
     }
 
     /// Post one short message into the call's own chat.
@@ -1116,12 +2458,177 @@ impl MeetingBotService {
     /// The one emitter for `meeting chat sent`, at every outcome including the refusals, so
     /// a send that never reached the page is still visible as something the agent tried.
     pub async fn send_chat_message(&self, text: &str, user_id: &str) -> ChatSendOutcome {
-        todo!()
+        static WHITESPACE: LazyLock<regex::Regex> =
+            LazyLock::new(|| regex::Regex::new(r"\s+").expect("valid regex"));
+        let started_at = now_ms();
+        // Collapsed before anything measures or sends it: the composer submits on Enter, so
+        // a newline in the draft is half a message in the room.
+        let message = WHITESPACE
+            .replace_all(crate::support::js::trim(text), " ")
+            .into_owned();
+        let report = self.attempt_chat_send(&message).await;
+        let elapsed = now_ms() - started_at;
+
+        // Built by hand rather than from the report: the body must not be one field name
+        // away from a telemetry property.
+        let mut properties = IndexMap::new();
+        properties.insert(
+            "provider".to_string(),
+            self.state
+                .lock()
+                .provider
+                .map(|p| p.name())
+                .unwrap_or("none")
+                .to_string(),
+        );
+        properties.insert("status".to_string(), report.status.as_str().to_string());
+        properties.insert("length".to_string(), report.length.to_string());
+        properties.insert("duration_ms".to_string(), elapsed.to_string());
+        if let Some(step) = report.step {
+            properties.insert("fail_step".to_string(), step.as_str().to_string());
+        }
+        track_event("meeting chat sent", Some(user_id), Some(properties));
+
+        // Every send writes one line, and the message itself is in none of them.
+        let step = report
+            .step
+            .map(|step| format!(" step={}", step.as_str()))
+            .unwrap_or_default();
+        if report.sent {
+            log_debug!(
+                "[Meeting:Chat] {} chars={} {}ms{}",
+                report.status.as_str(),
+                report.length,
+                elapsed,
+                step
+            );
+        } else {
+            log_warn!(
+                "[Meeting:Chat] {} chars={} {}ms{}",
+                report.status.as_str(),
+                report.length,
+                elapsed,
+                step
+            );
+        }
+
+        ChatSendOutcome {
+            sent: report.sent,
+            message: report.message,
+        }
     }
 
     /// One send, with every refusal and failure named.
     async fn attempt_chat_send(&self, message: &str) -> ChatSendReport {
-        todo!()
+        let length = len16(message);
+        let report =
+            |sent: bool, status: ChatSendStatus, step: Option<ChatSendStep>, text: String| {
+                ChatSendReport {
+                    sent,
+                    message: text,
+                    status,
+                    step,
+                    length,
+                }
+            };
+
+        let (page, provider, epoch) = {
+            let mut state = self.state.lock();
+            let (true, Some(page), Some(provider)) = (
+                state.state == MeetingState::InCall,
+                state.page.clone(),
+                state.provider,
+            ) else {
+                // Reachable from an ordinary chat turn and from a scheduled run, so it says
+                // what is missing and what fixes it.
+                return report(
+                    false,
+                    ChatSendStatus::NotInCall,
+                    None,
+                    "I'm not in a call, so there's no meeting chat to post into. Nothing was posted — join a call first.".to_string(),
+                );
+            };
+            if !provider.capabilities().send_chat_message {
+                return report(
+                    false,
+                    ChatSendStatus::Unsupported,
+                    None,
+                    format!(
+                        "I can't post into the chat of a {} call. Say it instead.",
+                        provider.display_name()
+                    ),
+                );
+            }
+            if length == 0 {
+                return report(
+                    false,
+                    ChatSendStatus::Rejected,
+                    None,
+                    "There was no message to post.".to_string(),
+                );
+            }
+            if length > MEETING_CHAT_MAX_CHARS {
+                return report(
+                    false,
+                    ChatSendStatus::Rejected,
+                    None,
+                    format!(
+                        "That's {length} characters and I post at most {MEETING_CHAT_MAX_CHARS}. Send the link or the id on its own and say the rest out loud."
+                    ),
+                );
+            }
+            if state.chat_panel_busy {
+                return report(
+                    false,
+                    ChatSendStatus::Busy,
+                    None,
+                    "I'm still posting the previous message. Ask me again in a moment.".to_string(),
+                );
+            }
+            // The epoch is re-checked when the flag comes down: the send can outlive the
+            // call it belongs to, and must not clear the next call's flag.
+            state.chat_panel_busy = true;
+            (page, provider, state.epoch)
+        };
+
+        let sent = with_timeout(
+            provider.send_chat_message(&page, message),
+            CHAT_SEND_TIMEOUT_MS as i64,
+        )
+        .await;
+        {
+            let mut state = self.state.lock();
+            if state.epoch == epoch {
+                state.chat_panel_busy = false;
+            }
+        }
+
+        match sent {
+            Ok(ChatSendResult::Sent) => report(
+                true,
+                ChatSendStatus::Sent,
+                None,
+                "Posted it in the call's chat.".to_string(),
+            ),
+            // The reason is page prose, so it goes to the model and to the log line's
+            // `step=`, never to telemetry.
+            Ok(ChatSendResult::NotSent { step, reason }) => report(
+                false,
+                ChatSendStatus::Failed,
+                Some(step),
+                format!(
+                    "I couldn't post that in the call's chat ({reason}). Say it out loud instead — don't try again."
+                ),
+            ),
+            // A page that closed under the send, or the deadline above. No `step`: a failure
+            // can land at any of them.
+            Err(err) => report(
+                false,
+                ChatSendStatus::Failed,
+                None,
+                format!("I couldn't post that in the call's chat: {err}. Say it out loud instead."),
+            ),
+        }
     }
 
     /// Read the messages already in the call's own chat, once.
@@ -1143,40 +2650,412 @@ impl MeetingBotService {
     ///
     /// The one emitter for `meeting chat read`, at every outcome including the refusals.
     pub async fn read_chat_messages(&self, user_id: &str) -> ChatReadOutcome {
-        todo!()
+        let started_at = now_ms();
+        let report = self.attempt_chat_read().await;
+        let elapsed = now_ms() - started_at;
+
+        let mut properties = IndexMap::new();
+        properties.insert(
+            "provider".to_string(),
+            self.state
+                .lock()
+                .provider
+                .map(|p| p.name())
+                .unwrap_or("none")
+                .to_string(),
+        );
+        properties.insert("status".to_string(), report.status.as_str().to_string());
+        properties.insert("count".to_string(), report.count.to_string());
+        properties.insert("chars".to_string(), report.chars.to_string());
+        properties.insert("duration_ms".to_string(), elapsed.to_string());
+        if let Some(step) = report.step {
+            properties.insert("fail_step".to_string(), step.as_str().to_string());
+        }
+        track_event("meeting chat read", Some(user_id), Some(properties));
+
+        // One line per read, and no message text in it at any level.
+        let step = report
+            .step
+            .map(|step| format!(" step={}", step.as_str()))
+            .unwrap_or_default();
+        if report.success {
+            log_debug!(
+                "[Meeting:ChatRead] {} count={} chars={} {}ms{}",
+                report.status.as_str(),
+                report.count,
+                report.chars,
+                elapsed,
+                step
+            );
+        } else {
+            log_warn!(
+                "[Meeting:ChatRead] {} count={} chars={} {}ms{}",
+                report.status.as_str(),
+                report.count,
+                report.chars,
+                elapsed,
+                step
+            );
+        }
+
+        ChatReadOutcome {
+            success: report.success,
+            message: report.message,
+            incomplete: report.incomplete,
+        }
     }
 
     /// One read, with every refusal and failure named.
     async fn attempt_chat_read(&self) -> ChatReadReport {
-        todo!()
+        let blank =
+            |success: bool, status: ChatReadStatus, step: Option<ChatReadStep>, message: String| {
+                ChatReadReport {
+                    success,
+                    message,
+                    incomplete: false,
+                    status,
+                    step,
+                    count: 0,
+                    chars: 0,
+                }
+            };
+
+        let (page, provider, epoch) = {
+            let mut state = self.state.lock();
+            let (true, Some(page), Some(provider)) = (
+                state.state == MeetingState::InCall,
+                state.page.clone(),
+                state.provider,
+            ) else {
+                return blank(
+                    false,
+                    ChatReadStatus::NotInCall,
+                    None,
+                    "I'm not in a call, so there's no meeting chat to read.".to_string(),
+                );
+            };
+            if !provider.capabilities().read_chat_messages {
+                return blank(
+                    false,
+                    ChatReadStatus::Unsupported,
+                    None,
+                    format!(
+                        "I can't read the chat of a {} call. Ask me out loud.",
+                        provider.display_name()
+                    ),
+                );
+            }
+            if state.chat_panel_busy {
+                return blank(
+                    false,
+                    ChatReadStatus::Busy,
+                    None,
+                    "I'm still working in the chat panel. Ask me again in a moment.".to_string(),
+                );
+            }
+            state.chat_panel_busy = true;
+            (page, provider, state.epoch)
+        };
+
+        let read = with_timeout(
+            provider.read_chat_messages(
+                &page,
+                ChatReadOptions {
+                    limit: MEETING_CHAT_READ_LIMIT,
+                    max_chars_per_message: CHAT_READ_MAX_CHARS_PER_MESSAGE,
+                },
+            ),
+            CHAT_READ_TIMEOUT_MS as i64,
+        )
+        .await;
+        {
+            let mut state = self.state.lock();
+            if state.epoch == epoch {
+                state.chat_panel_busy = false;
+            }
+        }
+
+        match read {
+            // The reason is page prose, so it goes to the model and to the log line's
+            // `step=`, never to telemetry. It never says the chat was empty.
+            Ok(ChatReadResult::NotRead { step, reason }) => blank(
+                false,
+                ChatReadStatus::Failed,
+                Some(step),
+                format!(
+                    "I couldn't read the call's chat ({reason}). I don't know whether anyone typed anything — ask me out loud."
+                ),
+            ),
+            Ok(ChatReadResult::Read { messages, .. }) if messages.is_empty() => blank(
+                true,
+                ChatReadStatus::Empty,
+                None,
+                "Nobody has typed anything in the call's chat.".to_string(),
+            ),
+            Ok(ChatReadResult::Read {
+                messages,
+                truncated,
+            }) => fence_chat_messages(&messages, truncated),
+            // A page that closed under the read, or the deadline. The error is not quoted:
+            // an error from a page carries page text.
+            Err(_) => blank(
+                false,
+                ChatReadStatus::Failed,
+                None,
+                "I couldn't read the call's chat — the page didn't answer. Ask me out loud."
+                    .to_string(),
+            ),
+        }
     }
 
     /// End the call on the room emptying or the duration cap.
+    ///
+    /// `reason` is `None` for a user's own `leave()`, which needs no explanation. The polls
+    /// and the duration cap pass one, since an ending nobody asked for is the kind an
+    /// engineer reads the log to understand.
     async fn finish(&self, status: TeardownStatus, reason: Option<String>) {
-        todo!()
+        if !self.is_active() {
+            return;
+        }
+        if let Some(reason) = reason {
+            log_info!("[Meeting] {}", reason);
+        }
+        // Claim the ending before teardown reaches its own await. Closing the session is
+        // part of teardown, and the close fires `on_session_lost`.
+        self.state.lock().epoch += 1;
+        self.teardown(status).await;
     }
 
     /// The Realtime session closed on its own: the agent has no voice and no ears, so the
     /// call ends.
+    ///
+    /// Deliberately no reconnect: a fresh session would come back with none of the call's
+    /// context. Epoch-guarded like the join flow.
     fn on_session_lost(&'static self, epoch: u64, reason: String) {
-        todo!()
+        let platform = self
+            .state
+            .lock()
+            .provider
+            .map(|p| p.display_name())
+            .unwrap_or("meeting");
+        self.end_on_loss(
+            epoch,
+            format!("Lost the Realtime session mid-call, so left the {platform} call: {reason}"),
+        );
     }
 
     /// Capture or playback died: the agent is deaf or mute, so the call ends.
     fn on_audio_lost(&'static self, epoch: u64, reason: String) {
-        todo!()
+        let (platform, in_call) = {
+            let state = self.state.lock();
+            (
+                state
+                    .provider
+                    .map(|p| p.display_name())
+                    .unwrap_or("meeting"),
+                state.state == MeetingState::InCall,
+            )
+        };
+        // A process can die while the call is still in the lobby, where "left the call"
+        // would describe a room the agent was never in.
+        self.end_on_loss(
+            epoch,
+            if in_call {
+                format!(
+                    "Lost the audio pipeline in the {platform} call, so left it rather than sit there unable to hear or speak: {reason}"
+                )
+            } else {
+                format!(
+                    "Lost the audio pipeline on the way into the {platform} call, so gave up on joining rather than arrive unable to hear or speak: {reason}"
+                )
+            },
+        );
     }
 
     /// End the call this epoch belongs to after a loss, telling the log why.
     fn end_on_loss(&'static self, epoch: u64, log_line: String) {
-        todo!()
+        {
+            let state = self.state.lock();
+            if state.epoch != epoch || state.state == MeetingState::Idle {
+                return;
+            }
+        }
+        log_warn!("[Meeting] {}", log_line);
+        tokio::spawn(self.teardown(TeardownStatus::Error));
     }
 
     /// Release everything a call holds — the conversation, the browser, the audio stack and
     /// the timers — emit `meeting ended`, and return the service to `idle`, or to `leaving`
     /// while an abandoned startup still holds the shared browser profile.
+    ///
+    /// The single exit path for every ending, so there is one place to be sure nothing is
+    /// left running. Never fails: a teardown failure would otherwise mask the reason for
+    /// the teardown.
     async fn teardown(&self, status: TeardownStatus) {
-        todo!()
+        // Re-entrancy guard. Two endings can race, and both would otherwise emit
+        // `meeting ended`. First one in owns the ending.
+        let (was_active, page, provider, conversation, browser, audio) = {
+            let mut state = self.state.lock();
+            if state.state == MeetingState::Leaving {
+                return;
+            }
+            let was_active = state.state != MeetingState::Idle;
+            state.state = MeetingState::Leaving;
+            // Invalidate the in-flight join, if any: from here on its result is stale.
+            state.epoch += 1;
+            for timer in [
+                state.poll_timer.take(),
+                state.speaker_timer.take(),
+                state.max_duration_timer.take(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                timer.abort();
+            }
+            (
+                was_active,
+                state.page.clone(),
+                state.provider,
+                state.conversation.clone(),
+                state.browser.clone(),
+                state.audio.clone(),
+            )
+        };
+
+        if let (Some(page), Some(provider)) = (&page, provider) {
+            if let Err(err) = provider.leave(page).await {
+                log_debug!("[Meeting] leave() failed: Error: {}", err);
+            }
+        }
+
+        if let Some(conversation) = &conversation {
+            conversation.stop();
+        }
+        if let Some(browser) = &browser {
+            browser.stop().await;
+        }
+        if let Some(audio) = &audio {
+            audio.stop().await;
+        }
+
+        let ended = {
+            let state = self.state.lock();
+            match (was_active, state.started_at, &state.current, state.provider) {
+                (true, Some(started_at), Some(current), Some(provider)) => Some((
+                    started_at,
+                    current.user_id.clone(),
+                    provider,
+                    state.response_mode,
+                    state.fail_step,
+                    state.shared_screen,
+                    state.browser_commands,
+                )),
+                _ => None,
+            }
+        };
+        if let Some((started_at, user_id, provider, response_mode, fail_step, shared, commands)) =
+            ended
+        {
+            let stats = conversation.as_ref().map(|c| c.statistics());
+            let stat = |pick: fn(&VoiceConversationStats) -> i64| {
+                stats.as_ref().map(pick).unwrap_or(0).to_string()
+            };
+            let mut properties = IndexMap::new();
+            properties.insert(
+                "inference_provider".to_string(),
+                CONFIG
+                    .realtime_provider
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string()),
+            );
+            properties.insert(
+                "inference_source".to_string(),
+                CONFIG.realtime_source.as_str().to_string(),
+            );
+            properties.insert("provider".to_string(), provider.name().to_string());
+            properties.insert("status".to_string(), status.as_str().to_string());
+            properties.insert(
+                "response_mode".to_string(),
+                response_mode.as_str().to_string(),
+            );
+            // Which step a failed join got to. A bounded enum, never the prose reason.
+            if let Some(step) = fail_step {
+                properties.insert("fail_step".to_string(), step.as_str().to_string());
+            }
+            properties.insert(
+                "duration_ms".to_string(),
+                (now_ms() - started_at).to_string(),
+            );
+            properties.insert("screen_shared".to_string(), shared.to_string());
+            properties.insert("browser_commands".to_string(), commands.to_string());
+            properties.insert("responses".to_string(), stat(|s| s.responses));
+            properties.insert("tool_calls".to_string(), stat(|s| s.tool_calls));
+            properties.insert("interruptions".to_string(), stat(|s| s.interruptions));
+            properties.insert("utterances".to_string(), stat(|s| s.utterances));
+            properties.insert("suppressed".to_string(), stat(|s| s.suppressed));
+            properties.insert(
+                "addressed_matches".to_string(),
+                stat(|s| s.addressed_matches),
+            );
+            properties.insert("mode_switches".to_string(), stat(|s| s.mode_switches));
+            properties.insert("gate_calls".to_string(), stat(|s| s.gate_calls));
+            properties.insert("gate_failed".to_string(), stat(|s| s.gate_failed));
+            properties.insert(
+                "gate_latency_ms".to_string(),
+                mean_gate_latency_ms(stats.as_ref()).to_string(),
+            );
+            properties.insert("gate_superseded".to_string(), stat(|s| s.gate_superseded));
+            properties.insert("responses_failed".to_string(), stat(|s| s.responses_failed));
+            properties.insert(
+                "attribution_rate".to_string(),
+                attribution_rate(stats.as_ref()).to_string(),
+            );
+            track_event("meeting ended", Some(&user_id), Some(properties));
+        }
+
+        let release = {
+            let mut state = self.state.lock();
+            state.conversation = None;
+            state.browser = None;
+            state.audio = None;
+            state.page = None;
+            state.provider = None;
+            state.current = None;
+            state.joined_at = None;
+            state.started_at = None;
+            state.empty_readings = 0;
+            state.unreadable_counts = 0;
+            state.response_mode = ResponseMode::Auto;
+            // Reset to the pessimistic value: the next call has to earn "the room can hear
+            // me" the same way this one did.
+            state.mic_confirmed = false;
+            state.is_mic_live = None;
+            state.mic_desired = true;
+            state.has_mic_been_on = false;
+            state.mic_mute_reported = false;
+            state.sharing_screen = false;
+            state.shared_screen = false;
+            state.browser_commands = 0;
+            // A poll still in flight belongs to the call being torn down; its own epoch
+            // check stops it acting, but leaving this set would stall the next call's polls.
+            state.poll_in_flight = false;
+            state.speaker_poll_in_flight = false;
+            state.speaker_seen = false;
+            state.chat_panel_busy = false;
+            state.fail_step = None;
+            // Free only when nothing is still being built: an abandoned startup still holds
+            // the shared browser profile. It flips this to `idle` itself once it lets go.
+            state.state = if state.startup_epoch.is_none() {
+                MeetingState::Idle
+            } else {
+                MeetingState::Leaving
+            };
+            state.state == MeetingState::Idle
+        };
+        if release {
+            VOICE_SESSION_LOCK.release(VoiceSessionKind::Meeting);
+        }
     }
 
     /// Build the model's session instructions, naming the platform the room is on.
@@ -1184,13 +3063,69 @@ impl MeetingBotService {
         &self,
         input: &JoinMeetingInput,
     ) -> anyhow::Result<VoiceInstructions> {
-        todo!()
+        let (platform, response_mode) = {
+            let state = self.state.lock();
+            (
+                state
+                    .provider
+                    .map(|p| p.display_name())
+                    .unwrap_or("video call")
+                    .to_string(),
+                state.response_mode,
+            )
+        };
+        build_voice_instructions(VoiceInstructionsInput {
+            user_id: input.user_id.clone(),
+            agent_id: input.agent_id.clone(),
+            call: VoiceCall::Meeting { platform },
+            response_mode,
+        })
+        .await
     }
 
     /// Called from the process shutdown path so a container exit leaves the call.
     /// Logs `[Meeting] Shutting down — leaving the active call`.
     pub async fn shutdown(&self) -> anyhow::Result<()> {
-        todo!()
+        if !self.is_active() {
+            return Ok(());
+        }
+        log_info!("[Meeting] Shutting down — leaving the active call");
+        self.teardown(TeardownStatus::Completed).await;
+        Ok(())
+    }
+}
+
+/// The stack a startup builds before the call is published onto the state.
+#[derive(Default)]
+struct Locals {
+    audio: Option<Arc<AudioStack>>,
+    browser: Option<Arc<BrowserStack>>,
+    conversation: Option<Arc<VoiceConversation>>,
+}
+
+/// A join answered without a call: `idle` and a sentence.
+fn idle_answer(message: String) -> JoinMeetingResult {
+    JoinMeetingResult {
+        state: MeetingState::Idle,
+        step: None,
+        message,
+    }
+}
+
+/// The zero-based index of tab `number` as the model numbers tabs, when it names one.
+fn tab_index(number: f64) -> Option<usize> {
+    let index = number - 1.0;
+    (index >= 0.0 && index.fract() == 0.0).then_some(index as usize)
+}
+
+impl TeardownStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            TeardownStatus::Completed => "completed",
+            TeardownStatus::Denied => "denied",
+            TeardownStatus::Timeout => "timeout",
+            TeardownStatus::Error => "error",
+        }
     }
 }
 

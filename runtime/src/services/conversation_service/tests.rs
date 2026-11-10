@@ -621,7 +621,7 @@ async fn reads_a_thread_through_the_provider_registered_for_its_source() {
     let _db = crate::db::testing::test_db();
     seed_agent().await;
     thread("live", 1, |t| {
-        t.thread_source = ThreadSource::Teams;
+        t.thread_source = ThreadSource::Slack;
         t.external_thread_id = Some("conversation".into());
     })
     .await;
@@ -634,7 +634,7 @@ async fn reads_a_thread_through_the_provider_registered_for_its_source() {
         .unwrap()
         .messages;
     let live: Vec<ConversationMessage> = served.into_iter().filter(|m| !m.internal_step).collect();
-    CONVERSATION_SERVICE.register_thread_provider(ThreadSource::Teams, Arc::new(LiveRows(live)));
+    CONVERSATION_SERVICE.register_thread_provider(ThreadSource::Slack, Arc::new(LiveRows(live)));
 
     let recent = CONVERSATION_SERVICE
         .get_recent_messages("live", 10, None)

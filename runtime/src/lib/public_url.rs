@@ -161,7 +161,100 @@ pub struct PublicResolver;
 
 impl Resolve for PublicResolver {
     fn resolve(&self, name: Name) -> Resolving {
-        todo!()
+        Box::pin(async move {
+            let hostname = name.as_str().to_string();
+            let answers: Vec<std::net::SocketAddr> =
+                tokio::net::lookup_host((hostname.as_str(), 0))
+                    .await?
+                    .collect();
+            if let Some(refused) = answers
+                .iter()
+                .find(|a| !is_public_address(&a.ip().to_string()))
+            {
+                let err: Box<dyn std::error::Error + Send + Sync> = Box::new(
+                    PrivateAddressError::new(hostname.clone(), refused.ip().to_string()),
+                );
+                return Err(err);
+            }
+            let addrs: reqwest::dns::Addrs = Box::new(answers.into_iter());
+            Ok(addrs)
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn refuses_addresses_outside_the_public_internet() {
+        for address in [
+            "0.0.0.0",
+            "10.1.2.3",
+            "100.64.0.1",
+            "127.0.0.1",
+            "169.254.169.254",
+            "172.31.255.255",
+            "192.0.0.8",
+            "192.168.1.1",
+            "224.0.0.1",
+            "255.255.255.255",
+            "::",
+            "::1",
+            "::ffff:127.0.0.1",
+            "::ffff:a9fe:a9fe",
+            "::127.0.0.1",
+            "::ffff:0:127.0.0.1",
+            "64:ff9b::a00:1",
+            "64:ff9b:1::1",
+            "100::1",
+            "5f00::1",
+            "2002:7f00:1::",
+            "2001:0:4136:e378::1",
+            "2001:1ff:ffff::1",
+            "2001:db8::1",
+            "3fff::1",
+            "fd12:3456::1",
+            "fe80::1",
+            "fec0::1",
+            "ff02::1",
+            "localhost",
+        ] {
+            assert!(!is_public_address(address), "{address}");
+        }
+    }
+
+    #[test]
+    fn allows_public_addresses() {
+        for address in [
+            "1.1.1.1",
+            "172.32.0.1",
+            "100.128.0.1",
+            "2606:4700:4700::1111",
+            "2001:200::1",
+            "64:ff9b::808:808",
+            "2002:808:808::1",
+            "::ffff:8.8.8.8",
+        ] {
+            assert!(is_public_address(address), "{address}");
+        }
+    }
+
+    #[test]
+    fn refuses_a_private_literal_and_leaves_a_name_to_the_connection() {
+        assert_eq!(
+            assert_public_literal("[::1]").unwrap_err().address,
+            "::1".to_string()
+        );
+        assert!(assert_public_literal("127.0.0.1").is_err());
+        assert!(assert_public_literal("[2606:4700:4700::1111]").is_ok());
+        assert!(assert_public_literal("localhost").is_ok());
+    }
+
+    #[tokio::test]
+    async fn refuses_a_name_that_resolves_to_loopback() {
+        let resolved = PublicResolver.resolve("localhost".parse().unwrap()).await;
+        assert!(resolved.is_err());
     }
 }
 
