@@ -54,6 +54,7 @@ use crate::services::event_stream_service::EVENT_STREAM_SERVICE;
 use crate::services::message_delivery_service::MESSAGE_DELIVERY_SERVICE;
 use crate::services::pending_work_service::{PENDING_WORK_SERVICE, PendingWorkKind};
 use crate::services::web_chat_label::web_chat_label;
+use crate::support::after_accept::{AcceptGate, spawn_after_accept, within_gate};
 use crate::types::{AgentMessageOrigin, ResumedReply};
 use crate::{log_error, log_info};
 
@@ -88,6 +89,18 @@ pub struct Acceptance {
     pub seq: i64,
     pub queued: bool,
     pub duplicate: bool,
+    /// Holds back the work the message started (its turn, its title) until the
+    /// caller drops it, so a confirmation the caller sends first goes out before
+    /// anything that work sends.
+    gate: Option<AcceptGate>,
+}
+
+impl Acceptance {
+    /// Let the work the message started run now, for a caller that has nothing to
+    /// confirm first.
+    pub fn release_turn(&mut self) {
+        self.gate = None;
+    }
 }
 
 /// A refusal the client can act on, with the code it is sent under.
@@ -297,6 +310,13 @@ impl InboundMessageService {
     /// resend gets: the same check against the stored row. Refusals fail with
     /// `InboundMessageError`.
     pub async fn accept(&'static self, message: InboundMessage) -> anyhow::Result<Acceptance> {
+        let (accepted, gate) = within_gate(self.accept_ungated(message)).await;
+        let mut accepted = accepted?;
+        accepted.gate = Some(gate);
+        Ok(accepted)
+    }
+
+    async fn accept_ungated(&'static self, message: InboundMessage) -> anyhow::Result<Acceptance> {
         loop {
             let in_flight = self.accepting.lock().get(&message.id).cloned();
             if let Some(in_flight) = in_flight {
@@ -447,6 +467,7 @@ impl InboundMessageService {
             seq: EVENT_STREAM_SERVICE.seq(),
             queued,
             duplicate: false,
+            gate: None,
         })
     }
 
@@ -521,6 +542,7 @@ impl InboundMessageService {
             seq: EVENT_STREAM_SERVICE.seq(),
             queued,
             duplicate: true,
+            gate: None,
         })
     }
 
@@ -663,7 +685,7 @@ impl InboundMessageService {
         // how the turn ended rather than arriving before it is known.
         let end_hold =
             CONVERSATION_THREAD_ACTIVITY_SERVICE.begin_thread(&thread_id, &CONFIG.owner_user_id());
-        tokio::spawn(async move { self.run(waiting, end_hold).await });
+        spawn_after_accept(async move { self.run(waiting, end_hold).await });
     }
 
     /// Answer one message, then the next one waiting. Never fails.

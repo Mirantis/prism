@@ -2,6 +2,7 @@
 //! differently: JavaScript's date and number text, string lengths in UTF-16 code
 //! units, and serde helpers for the wire formats clients already read.
 
+pub mod after_accept;
 pub mod http;
 pub mod js;
 pub mod serde_iso;
