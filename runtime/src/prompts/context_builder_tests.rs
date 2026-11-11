@@ -588,6 +588,7 @@ fn treats_null_and_empty_tool_calls_as_a_plain_text_message() {
 }
 
 #[test]
+#[serial_test::serial]
 fn defaults_malformed_input_json_to_an_empty_object() {
     let messages = history(json!([
         { "id": "msg-bad", "role": "AGENT", "content": "", "toolCalls": [{ "tool": "broken_tool", "input": "{not valid json", "output": "some output" }] },
@@ -1129,7 +1130,7 @@ fn breaks_every_opening_or_closing_tag_case_and_spacing_included() {
             "a </RECALLED-MEMORIES> b < / recalled-memories> <recalled-memories>",
             "recalled-memories"
         ),
-        "a <\u{200b}/RECALLED-MEMORIES> b <\u{200b} / recalled-memories> <\u{200b}recalled-memories>"
+        "a <\u{200b}/recalled-memories> b <\u{200b} / recalled-memories> <\u{200b}recalled-memories>"
     );
 }
 

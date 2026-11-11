@@ -429,6 +429,9 @@ mod tests {
             crate::db::run_sync(|conn| DOCUMENT_REVISION_SERVICE.record(conn, input("one", &long)))
                 .unwrap();
         assert_eq!(revision.reason.len(), 500);
+        // Revisions are ordered by millisecond and then by their random id, so the
+        // second write gets a later millisecond to be the newest.
+        std::thread::sleep(std::time::Duration::from_millis(2));
         let second =
             crate::db::run_sync(|conn| DOCUMENT_REVISION_SERVICE.record(conn, input("two", "")))
                 .unwrap();

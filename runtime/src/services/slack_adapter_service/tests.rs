@@ -154,7 +154,7 @@ async fn post_to_target_refuses_broadcasts_bad_threads_and_strangers() {
         },
     ));
     let api = fake_slack_api(Arc::new(|method, _| match method {
-        "conversations.members" => (200, json!({ "ok": true, "members": ["U1"] })),
+        "conversations.members" => (200, json!({ "ok": true, "members": ["U11"] })),
         "chat.postMessage" => (200, json!({ "ok": true, "ts": "9.9" })),
         _ => (200, json!({ "ok": false, "error": "user_not_found" })),
     }))
@@ -201,7 +201,7 @@ async fn post_to_target_refuses_broadcasts_bad_threads_and_strangers() {
         "not_member"
     );
     let posted = adapter()
-        .post_to_target(&target, "hi <@U1:Ann>", None)
+        .post_to_target(&target, "hi <@U11:Ann>", None)
         .await
         .unwrap();
     crate::lib::slack_config::__reset_slack_config_for_tests();
@@ -209,7 +209,7 @@ async fn post_to_target_refuses_broadcasts_bad_threads_and_strangers() {
     assert_eq!(posted.history.unwrap().thread_key, "D1");
     assert_eq!(
         api.calls("chat.postMessage")[0].field("text").as_deref(),
-        Some("hi <@U1>")
+        Some("hi <@U11>")
     );
 }
 

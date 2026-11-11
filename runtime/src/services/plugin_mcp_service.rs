@@ -825,7 +825,7 @@ const handle = (m) => {
     send({ jsonrpc: '2.0', id: m.id, result: { tools: tools.map((name) => ({ name, description: name, inputSchema: { type: 'object' } })) } });
   } else if (m.method === 'tools/call') {
     if (m.params.name === 'crash') send({ jsonrpc: '2.0', method: 'notifications/message', params: {} });
-    const where = { cwd: process.cwd(), argv: process.argv.slice(2), root: process.env.PLUGIN_ROOT, data: process.env.PLUGIN_DATA, mode: process.env.MODE };
+    const where = { cwd: process.cwd(), argv: process.argv.slice(1), root: process.env.PLUGIN_ROOT, data: process.env.PLUGIN_DATA, mode: process.env.MODE };
     send({ jsonrpc: '2.0', id: m.id, result: { content: [{ type: 'text', text: JSON.stringify(where) }] } });
   }
 };

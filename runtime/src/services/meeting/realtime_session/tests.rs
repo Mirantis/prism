@@ -27,6 +27,8 @@ pub(crate) struct MockServer {
     pub port: u16,
     sent: Arc<Mutex<Vec<Value>>>,
     commands: mpsc::UnboundedSender<Command>,
+    /// Frames a test told the server to send to the session.
+    emitted: std::sync::atomic::AtomicUsize,
 }
 
 impl MockServer {
@@ -80,6 +82,7 @@ impl MockServer {
             port,
             sent,
             commands,
+            emitted: Default::default(),
         }
     }
 
@@ -93,12 +96,16 @@ impl MockServer {
 
     /// Push a server event to the session.
     pub(crate) fn emit(&self, event: Value) {
-        let _ = self.commands.send(Command::Emit(event));
+        if self.commands.send(Command::Emit(event)).is_ok() {
+            self.emitted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
     }
 
     /// Push a frame that is not JSON.
     pub(crate) fn emit_raw(&self, text: &str) {
-        let _ = self.commands.send(Command::Raw(text.to_string()));
+        if self.commands.send(Command::Raw(text.to_string())).is_ok() {
+            self.emitted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
     }
 
     /// Close the socket from the server's side, as OpenAI would on a drop.
@@ -116,12 +123,41 @@ pub(crate) async fn settle() {
     tokio::time::sleep(Duration::from_millis(20)).await;
 }
 
+/// Wait until the session has handled every frame the server sent it and the server
+/// holds every frame the session sent, for three checks in a row, since a handled
+/// frame can make the session send another. A wall-clock wait instead fails when
+/// the test suite loads the machine.
+async fn sync(session: &RealtimeSession, server: &MockServer) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let mut balanced = 0;
+    while balanced < 3 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the session and the server did not settle"
+        );
+        tokio::time::sleep(Duration::from_millis(2)).await;
+        let (sent, handled) = session.frame_counts();
+        let emitted = server.emitted.load(std::sync::atomic::Ordering::SeqCst);
+        let received = server.sent.lock().len();
+        balanced = if sent == received && handled == emitted {
+            balanced + 1
+        } else {
+            0
+        };
+    }
+}
+
 struct Harness {
     session: Arc<RealtimeSession>,
     server: MockServer,
 }
 
 impl Harness {
+    /// Wait until every frame in flight either way has arrived and been handled.
+    async fn sync(&self) {
+        sync(&self.session, &self.server).await;
+    }
+
     fn sent(&self) -> Vec<Value> {
         self.server.sent()
     }
@@ -187,9 +223,10 @@ async fn harness_with(instructions: &str, tools: Vec<RealtimeFunctionTool>) -> H
         ..Default::default()
     });
     session.connect().await.unwrap();
+    let harness = Harness { session, server };
     // Let the initial session.update land before a test inspects the frames.
-    settle().await;
-    Harness { session, server }
+    harness.sync().await;
+    harness
 }
 
 async fn harness() -> Harness {
@@ -402,7 +439,7 @@ mod events {
         let h = harness().await;
         let events = h.record();
         h.emit(json!({ "type": "input_audio_buffer.committed", "item_id": "item-7" }));
-        settle().await;
+        h.sync().await;
         let committed: Vec<String> = events
             .lock()
             .iter()
@@ -425,7 +462,7 @@ mod events {
         h.emit(json!({ "type": "conversation.item.added", "item": { "id": "fo-1", "type": "function_call_output", "call_id": "c1" } }));
         h.emit(json!({ "type": "conversation.item.added", "item": { "id": "ctx-1", "type": "message", "role": "user", "content": [{ "type": "input_text" }] } }));
         h.emit(json!({ "type": "conversation.item.added", "item": spoken("u-2") }));
-        settle().await;
+        h.sync().await;
 
         assert_eq!(
             h.session.recent_conversation_items(10),
@@ -443,7 +480,7 @@ mod events {
         let turn = json!({ "id": "u-1", "type": "message", "role": "user", "content": [{ "type": "input_audio" }] });
         h.emit(json!({ "type": "conversation.item.added", "item": turn.clone() }));
         h.emit(json!({ "type": "conversation.item.created", "item": turn }));
-        settle().await;
+        h.sync().await;
         assert_eq!(h.session.recent_conversation_items(10), vec!["u-1"]);
         h.session.close();
     }
@@ -462,7 +499,7 @@ mod events {
             "item_id": "item-8",
             "error": { "message": "audio too short" },
         }));
-        settle().await;
+        h.sync().await;
         assert!(events.lock().is_empty());
         h.session.close();
     }
@@ -476,7 +513,7 @@ mod events {
             "item_id": "item-7",
             "transcript": "  Prism, check the cluster  ",
         }));
-        settle().await;
+        h.sync().await;
         let seen: Vec<(String, String)> = events
             .lock()
             .iter()
@@ -517,7 +554,7 @@ mod events {
             "delta": base64::engine::general_purpose::STANDARD.encode(pcm),
             "item_id": "item-1",
         }));
-        settle().await;
+        h.sync().await;
         let received = audio(&events);
         assert_eq!(received.len(), 1);
         assert_eq!(received[0].0.as_ref(), &pcm);
@@ -534,7 +571,7 @@ mod events {
             "delta": base64::engine::general_purpose::STANDARD.encode([9u8, 9]),
             "item_id": "i",
         }));
-        settle().await;
+        h.sync().await;
         assert_eq!(audio(&events).len(), 1);
         h.session.close();
     }
@@ -545,7 +582,7 @@ mod events {
         let events = h.record();
         h.emit(json!({ "type": "input_audio_buffer.speech_started" }));
         h.emit(json!({ "type": "input_audio_buffer.speech_stopped" }));
-        settle().await;
+        h.sync().await;
         let seen: Vec<&str> = events
             .lock()
             .iter()
@@ -569,7 +606,7 @@ mod events {
             "name": "list_scheduled_tasks",
             "arguments": "{\"limit\":3}",
         }));
-        settle().await;
+        h.sync().await;
         let calls: Vec<RealtimeFunctionCall> = events
             .lock()
             .iter()
@@ -594,7 +631,7 @@ mod events {
         let h = harness().await;
         let events = h.record();
         h.emit(json!({ "type": "response.function_call_arguments.done", "arguments": "{}" }));
-        settle().await;
+        h.sync().await;
         assert!(events.lock().is_empty());
         h.session.close();
     }
@@ -604,7 +641,7 @@ mod events {
         let h = harness().await;
         let events = h.record();
         h.emit(json!({ "type": "error", "error": { "message": "rate limited" } }));
-        settle().await;
+        h.sync().await;
         let errors: Vec<String> = events
             .lock()
             .iter()
@@ -623,7 +660,7 @@ mod events {
         let h = harness().await;
         h.server.emit_raw("not json");
         h.emit(json!({ "type": "session.updated" }));
-        settle().await;
+        h.sync().await;
         assert!(h.session.is_open());
         h.session.close();
     }
@@ -633,8 +670,8 @@ mod events {
         let h = harness().await;
         let events = h.record();
         h.server.drop_from_server();
-        settle().await;
-        settle().await;
+        h.sync().await;
+        h.sync().await;
         let closed: Vec<String> = events
             .lock()
             .iter()
@@ -655,7 +692,7 @@ mod outbound {
     async fn base64_encodes_appended_audio() {
         let h = harness().await;
         h.session.send_audio(&[0x10, 0x20]);
-        settle().await;
+        h.sync().await;
         let append = h.first("input_audio_buffer.append").unwrap();
         assert_eq!(
             append["audio"],
@@ -668,7 +705,7 @@ mod outbound {
     async fn skips_an_empty_audio_buffer() {
         let h = harness().await;
         h.session.send_audio(&[]);
-        settle().await;
+        h.sync().await;
         assert!(h.all("input_audio_buffer.append").is_empty());
         h.session.close();
     }
@@ -678,10 +715,10 @@ mod outbound {
         let h = harness().await;
         h.emit(json!({ "type": "response.created", "response": { "id": "resp-1" } }));
         h.emit(json!({ "type": "response.output_audio.delta", "delta": silence_delta(2000), "item_id": "item-7", "response_id": "resp-1" }));
-        settle().await;
+        h.sync().await;
 
         h.session.interrupt(&[snapshot("item-7", 1234.6, 2000.0)]);
-        settle().await;
+        h.sync().await;
 
         assert!(h.first("response.cancel").is_some());
         let truncate = h.first("conversation.item.truncate").unwrap();
@@ -698,14 +735,14 @@ mod outbound {
         h.emit(json!({ "type": "response.created", "response": { "id": "resp-1" } }));
         h.emit(json!({ "type": "response.output_audio.delta", "delta": silence_delta(1000), "item_id": "preamble", "response_id": "resp-1" }));
         h.emit(json!({ "type": "response.output_audio.delta", "delta": silence_delta(1000), "item_id": "answer", "response_id": "resp-1" }));
-        settle().await;
+        h.sync().await;
 
         h.session.interrupt(&[
             // A fully-played preamble: sent == played, so the slack is clamped away.
             snapshot("preamble", 800.0, 800.0),
             snapshot("answer", 120.0, 1000.0),
         ]);
-        settle().await;
+        h.sync().await;
 
         let truncates = h.all("conversation.item.truncate");
         assert_eq!(truncates.len(), 2);
@@ -722,9 +759,9 @@ mod outbound {
         h.emit(
             json!({ "type": "response.output_audio.delta", "delta": "AAAA", "item_id": "item-8" }),
         );
-        settle().await;
+        h.sync().await;
         h.session.interrupt(&[snapshot("item-8", 100.0, 100.0)]);
-        settle().await;
+        h.sync().await;
         assert!(h.first("response.cancel").is_none());
         // The truncate still goes: the item exists even if generation finished.
         assert!(h.first("conversation.item.truncate").is_some());
@@ -737,14 +774,14 @@ mod outbound {
         let events = h.record();
         h.emit(json!({ "type": "response.created", "response": { "id": "resp-1" } }));
         h.emit(json!({ "type": "response.output_audio.delta", "delta": "AAAA", "item_id": "item-1", "response_id": "resp-1" }));
-        settle().await;
+        h.sync().await;
         assert_eq!(events.lock().len(), 1);
 
         h.session.interrupt(&[snapshot("item-1", 500.0, 500.0)]);
         h.emit(json!({ "type": "response.output_audio.delta", "delta": "BBBB", "item_id": "item-1", "response_id": "resp-1" }));
         // A *later item* of the same abandoned turn must be dropped too.
         h.emit(json!({ "type": "response.output_audio.delta", "delta": "CCCC", "item_id": "item-2", "response_id": "resp-1" }));
-        settle().await;
+        h.sync().await;
         assert_eq!(events.lock().len(), 1);
         h.session.close();
     }
@@ -755,12 +792,12 @@ mod outbound {
         let events = h.record();
         h.emit(json!({ "type": "response.created", "response": { "id": "resp-1" } }));
         h.emit(json!({ "type": "response.output_audio.delta", "delta": "AAAA", "item_id": "item-1", "response_id": "resp-1" }));
-        settle().await;
+        h.sync().await;
         h.session.interrupt(&[snapshot("item-1", 100.0, 100.0)]);
 
         h.emit(json!({ "type": "response.created", "response": { "id": "resp-2" } }));
         h.emit(json!({ "type": "response.output_audio.delta", "delta": "DDDD", "item_id": "item-2", "response_id": "resp-2" }));
-        settle().await;
+        h.sync().await;
 
         let items: Vec<String> = events
             .lock()
@@ -780,10 +817,10 @@ mod outbound {
         h.emit(json!({ "type": "response.created", "response": { "id": "resp-1" } }));
         // 8 base64 chars -> 6 bytes -> 3 samples -> ~0.125ms of generated audio.
         h.emit(json!({ "type": "response.output_audio.delta", "delta": "AAAAAAAA", "item_id": "item-x", "response_id": "resp-1" }));
-        settle().await;
+        h.sync().await;
         h.session
             .interrupt(&[snapshot("item-x", 99_999.0, 99_999.0)]);
-        settle().await;
+        h.sync().await;
         let truncate = h.first("conversation.item.truncate").unwrap();
         assert!(truncate["audio_end_ms"].as_i64().unwrap() < 10);
         h.session.close();
@@ -795,12 +832,12 @@ mod outbound {
         h.emit(json!({ "type": "response.created", "response": { "id": "resp-1" } }));
         h.emit(json!({ "type": "response.output_audio.delta", "delta": silence_delta(500), "item_id": "heard", "response_id": "resp-1" }));
         h.emit(json!({ "type": "response.output_audio.delta", "delta": silence_delta(500), "item_id": "unheard", "response_id": "resp-1" }));
-        settle().await;
+        h.sync().await;
         h.session.interrupt(&[
             snapshot("heard", 300.0, 300.0),
             snapshot("unheard", 0.0, 0.0),
         ]);
-        settle().await;
+        h.sync().await;
         let truncates = h.all("conversation.item.truncate");
         assert_eq!(truncates[1]["item_id"], "unheard");
         assert_eq!(truncates[1]["audio_end_ms"], 0);
@@ -813,10 +850,10 @@ mod outbound {
         h.emit(
             json!({ "type": "response.output_audio.delta", "delta": "AAAA", "item_id": "item-9" }),
         );
-        settle().await;
+        h.sync().await;
         h.session.interrupt(&[snapshot("item-9", 100.0, 100.0)]);
         h.session.interrupt(&[]);
-        settle().await;
+        h.sync().await;
         assert_eq!(h.all("conversation.item.truncate").len(), 1);
         h.session.close();
     }
@@ -825,7 +862,7 @@ mod outbound {
     async fn follows_a_tool_result_with_an_explicit_response_request() {
         let h = harness().await;
         h.session.send_function_output("call-1", "{\"ok\":true}");
-        settle().await;
+        h.sync().await;
         let item = h.first("conversation.item.create").unwrap();
         assert_eq!(
             item["item"],
@@ -839,13 +876,13 @@ mod outbound {
     async fn defers_a_response_request_until_the_open_response_finishes() {
         let h = harness().await;
         h.emit(json!({ "type": "response.created" }));
-        settle().await;
+        h.sync().await;
         h.session.send_function_output("call-1", "{\"ok\":true}");
-        settle().await;
+        h.sync().await;
         assert!(h.all("response.create").is_empty());
 
         h.emit(json!({ "type": "response.done" }));
-        settle().await;
+        h.sync().await;
         assert_eq!(h.all("response.create").len(), 1);
         h.session.close();
     }
@@ -855,11 +892,11 @@ mod outbound {
         let h = harness().await;
         h.emit(json!({ "type": "response.created" }));
         h.emit(json!({ "type": "response.output_audio.delta", "delta": "AAAA", "item_id": "i-1" }));
-        settle().await;
+        h.sync().await;
         h.session.send_function_output("call-1", "{\"ok\":true}");
         h.session.interrupt(&[snapshot("i-1", 200.0, 200.0)]);
         h.emit(json!({ "type": "response.done" }));
-        settle().await;
+        h.sync().await;
         assert!(h.all("response.create").is_empty());
         h.session.close();
     }
@@ -868,7 +905,7 @@ mod outbound {
     async fn injects_context_as_a_user_message() {
         let h = harness().await;
         h.session.send_context("You have just been admitted.");
-        settle().await;
+        h.sync().await;
         let item = h.first("conversation.item.create").unwrap();
         assert_eq!(item["item"]["role"], "user");
         assert_eq!(
@@ -883,7 +920,7 @@ mod outbound {
         let h = harness().await;
         h.session
             .send_image("data:image/jpeg;base64,AAAA", "This is your screen.");
-        settle().await;
+        h.sync().await;
         let item = h.first("conversation.item.create").unwrap();
         assert_eq!(item["item"]["type"], "message");
         assert_eq!(item["item"]["role"], "user");
@@ -915,7 +952,7 @@ mod outbound {
             ],
             "Your user recorded their screen.",
         );
-        settle().await;
+        h.sync().await;
         let items = h.all("conversation.item.create");
         assert_eq!(items.len(), 3);
         assert_eq!(
@@ -947,7 +984,7 @@ mod outbound {
         let h = harness().await;
         h.emit(json!({ "type": "conversation.item.added", "item": { "id": "u-1", "type": "message", "role": "user", "content": [{ "type": "input_audio" }] } }));
         h.emit(json!({ "type": "conversation.item.added", "item": { "id": "rec-1", "type": "message", "role": "user", "content": [{ "type": "input_text" }, { "type": "input_image" }, { "type": "input_audio" }] } }));
-        settle().await;
+        h.sync().await;
         assert_eq!(h.session.recent_conversation_items(10), vec!["u-1"]);
         h.session.close();
     }
@@ -956,7 +993,7 @@ mod outbound {
     async fn drops_sends_after_close_instead_of_failing() {
         let h = harness().await;
         h.session.close();
-        settle().await;
+        h.sync().await;
         h.session.send_audio(&[1, 2]);
         assert!(!h.session.is_open());
     }
@@ -969,7 +1006,7 @@ mod outbound {
             description: "Search".into(),
             parameters: json!({ "type": "object" }),
         }]);
-        settle().await;
+        h.sync().await;
         let updates = h.all("session.update");
         assert_eq!(
             updates[1],
@@ -1061,7 +1098,7 @@ mod probes {
                 reasoning_effort: Some("low".into()),
             },
         );
-        settle().await;
+        h.sync().await;
 
         let frame = h.probe_frame().unwrap();
         let response = &frame["response"];
@@ -1100,7 +1137,7 @@ mod probes {
         );
 
         h.emit(json!({ "type": "response.created", "response": { "id": "r-probe" } }));
-        settle().await;
+        h.sync().await;
         h.answer_probe("r-probe", "YES");
         assert_eq!(verdict.await.unwrap().as_deref(), Some("YES"));
         h.session.close();
@@ -1110,7 +1147,7 @@ mod probes {
     async fn matches_a_verdict_by_its_echoed_marker_when_the_open_event_was_missed() {
         let h = harness().await;
         let verdict = spawn_probe(&h.session, probe(500, "i-1"));
-        settle().await;
+        h.sync().await;
         let send_id = h.probe_frame().unwrap()["event_id"].clone();
         h.emit(json!({
             "type": "response.done",
@@ -1124,7 +1161,7 @@ mod probes {
     async fn reads_a_verdict_that_arrives_only_as_deltas() {
         let h = harness().await;
         let verdict = spawn_probe(&h.session, probe(500, "i-1"));
-        settle().await;
+        h.sync().await;
         h.emit(json!({ "type": "response.created", "response": { "id": "r-probe" } }));
         h.emit(json!({ "type": "response.output_text.delta", "response_id": "r-probe", "delta": "NO" }));
         h.emit(json!({ "type": "response.done", "response": { "id": "r-probe", "status": "completed" } }));
@@ -1136,23 +1173,23 @@ mod probes {
     async fn does_not_let_a_probe_finishing_release_the_conversation_slot() {
         let h = harness().await;
         h.emit(json!({ "type": "response.created", "response": { "id": "r-main" } }));
-        settle().await;
+        h.sync().await;
         let verdict = spawn_probe(&h.session, probe(500, "i-1"));
-        settle().await;
+        h.sync().await;
         h.emit(json!({ "type": "response.created", "response": { "id": "r-probe" } }));
-        settle().await;
+        h.sync().await;
 
         h.session.send_function_output("call-1", "{\"ok\":true}");
-        settle().await;
+        h.sync().await;
         assert!(h.main_requests().is_empty());
 
         h.answer_probe("r-probe", "YES");
         assert_eq!(verdict.await.unwrap().as_deref(), Some("YES"));
-        settle().await;
+        h.sync().await;
         assert!(h.main_requests().is_empty());
 
         h.emit(json!({ "type": "response.done", "response": { "id": "r-main", "status": "completed" } }));
-        settle().await;
+        h.sync().await;
         assert_eq!(h.main_requests().len(), 1);
         h.session.close();
     }
@@ -1162,7 +1199,7 @@ mod probes {
         let h = harness().await;
         let events = h.record();
         let verdict = spawn_probe(&h.session, probe(500, "i-1"));
-        settle().await;
+        h.sync().await;
         h.emit(json!({ "type": "response.created", "response": { "id": "r-probe" } }));
         h.answer_probe("r-probe", "NO");
         verdict.await.unwrap();
@@ -1180,19 +1217,19 @@ mod probes {
         let h = harness().await;
         h.emit(json!({ "type": "response.created", "response": { "id": "r-main" } }));
         h.emit(json!({ "type": "response.output_audio.delta", "delta": silence_delta(200), "item_id": "i-1" }));
-        settle().await;
+        h.sync().await;
         let verdict = spawn_probe(&h.session, probe(500, "i-2"));
-        settle().await;
+        h.sync().await;
         h.emit(json!({ "type": "response.created", "response": { "id": "r-probe" } }));
-        settle().await;
+        h.sync().await;
 
         h.session.interrupt(&[snapshot("i-1", 100.0, 200.0)]);
-        settle().await;
+        h.sync().await;
         assert_eq!(h.first("response.cancel").unwrap()["response_id"], "r-main");
 
         let events = h.record();
         h.emit(json!({ "type": "response.output_audio.delta", "delta": "AAAA", "item_id": "i-1", "response_id": "r-main" }));
-        settle().await;
+        h.sync().await;
         assert!(events.lock().is_empty());
 
         h.answer_probe("r-probe", "YES");
@@ -1204,13 +1241,13 @@ mod probes {
     async fn keeps_two_probes_apart_when_the_model_answers_them_out_of_order() {
         let h = harness().await;
         let first = spawn_probe(&h.session, probe(500, "i-1"));
-        settle().await;
+        h.sync().await;
         h.emit(json!({ "type": "response.created", "response": { "id": "r-1" } }));
-        settle().await;
+        h.sync().await;
         let second = spawn_probe(&h.session, probe(500, "i-2"));
-        settle().await;
+        h.sync().await;
         h.emit(json!({ "type": "response.created", "response": { "id": "r-2" } }));
-        settle().await;
+        h.sync().await;
 
         h.answer_probe("r-2", "YES");
         h.answer_probe("r-1", "NO");
@@ -1226,7 +1263,7 @@ mod probes {
         h.emit(json!({ "type": "response.created", "response": { "id": "r-probe" } }));
         assert_eq!(verdict.await.unwrap(), None);
         h.answer_probe("r-probe", "YES");
-        settle().await;
+        h.sync().await;
         assert!(h.session.is_open());
         h.session.close();
     }
@@ -1235,7 +1272,7 @@ mod probes {
     async fn fails_a_rejected_probe_by_its_event_id_without_touching_the_conversation() {
         let h = harness().await;
         let verdict = spawn_probe(&h.session, probe(500, "i-1"));
-        settle().await;
+        h.sync().await;
         let send_id = h.probe_frame().unwrap()["event_id"].clone();
         h.emit(json!({
             "type": "error",
@@ -1245,7 +1282,7 @@ mod probes {
         assert_eq!(verdict.await.unwrap(), None);
 
         h.session.request_response();
-        settle().await;
+        h.sync().await;
         assert_eq!(h.main_requests().len(), 1);
         h.session.close();
     }
@@ -1255,9 +1292,9 @@ mod probes {
         let h = harness().await;
         let events = h.record();
         let verdict = spawn_probe(&h.session, probe(500, "i-1"));
-        settle().await;
+        h.sync().await;
         h.emit(json!({ "type": "response.created", "response": { "id": "r-probe" } }));
-        settle().await;
+        h.sync().await;
         h.emit(json!({
             "type": "response.function_call_arguments.done",
             "response_id": "r-probe",
@@ -1265,7 +1302,7 @@ mod probes {
             "name": "shell_exec",
             "arguments": "{\"command\":\"rm -rf /\"}",
         }));
-        settle().await;
+        h.sync().await;
         assert!(
             !events
                 .lock()
@@ -1281,19 +1318,19 @@ mod probes {
     async fn attributes_an_opened_response_correctly_when_metadata_is_not_echoed() {
         let h = harness().await;
         h.session.request_response();
-        settle().await;
+        h.sync().await;
         h.emit(json!({ "type": "response.created", "response": { "id": "r-main" } }));
-        settle().await;
+        h.sync().await;
 
         let verdict = spawn_probe(&h.session, probe(500, "i-1"));
-        settle().await;
+        h.sync().await;
         h.emit(json!({ "type": "response.created", "response": { "id": "r-probe" } }));
         h.emit(json!({ "type": "response.output_text.delta", "response_id": "r-probe", "delta": "YES" }));
         h.emit(json!({ "type": "response.done", "response": { "id": "r-probe", "status": "completed" } }));
         assert_eq!(verdict.await.unwrap().as_deref(), Some("YES"));
 
         h.session.interrupt(&[]);
-        settle().await;
+        h.sync().await;
         assert_eq!(h.first("response.cancel").unwrap()["response_id"], "r-main");
         h.session.close();
     }
@@ -1303,22 +1340,22 @@ mod probes {
         let h = harness().await;
         h.emit(json!({ "type": "response.created", "response": { "id": "r-a" } }));
         h.emit(json!({ "type": "response.output_audio.delta", "delta": silence_delta(200), "item_id": "i-1" }));
-        settle().await;
+        h.sync().await;
 
         h.session.interrupt(&[snapshot("i-1", 100.0, 200.0)]);
         h.session.request_response();
-        settle().await;
+        h.sync().await;
         h.emit(json!({ "type": "response.created", "response": { "id": "r-b" } }));
-        settle().await;
+        h.sync().await;
 
         h.emit(
             json!({ "type": "response.done", "response": { "id": "r-a", "status": "cancelled" } }),
         );
-        settle().await;
+        h.sync().await;
 
         let before = h.all("response.cancel").len();
         h.session.interrupt(&[]);
-        settle().await;
+        h.sync().await;
         let cancels = h.all("response.cancel");
         assert_eq!(cancels.len(), before + 1);
         assert_eq!(cancels.last().unwrap()["response_id"], "r-b");
@@ -1329,13 +1366,13 @@ mod probes {
     async fn keeps_a_live_response_when_a_cancel_reports_nothing_to_cancel() {
         let h = harness().await;
         h.session.request_response();
-        settle().await;
+        h.sync().await;
         h.emit(json!({ "type": "response.created", "response": { "id": "r-live" } }));
-        settle().await;
+        h.sync().await;
         h.emit(json!({ "type": "error", "error": { "message": "Cancellation failed: no active response" } }));
-        settle().await;
+        h.sync().await;
         h.session.interrupt(&[]);
-        settle().await;
+        h.sync().await;
         assert_eq!(h.first("response.cancel").unwrap()["response_id"], "r-live");
         h.session.close();
     }
@@ -1344,7 +1381,7 @@ mod probes {
     async fn still_recognises_a_rejection_for_a_probe_that_has_already_given_up() {
         let h = harness().await;
         let verdict = spawn_probe(&h.session, probe(40, "i-1"));
-        settle().await;
+        h.sync().await;
         let send_id = h.probe_frame().unwrap()["event_id"].clone();
         assert_eq!(verdict.await.unwrap(), None);
 
@@ -1352,11 +1389,11 @@ mod probes {
             "type": "error",
             "error": { "message": "Conversation already has an active response in progress", "event_id": send_id },
         }));
-        settle().await;
+        h.sync().await;
 
         let before = h.main_requests().len();
         h.session.request_response();
-        settle().await;
+        h.sync().await;
         assert_eq!(h.main_requests().len(), before + 1);
         h.session.close();
     }
@@ -1365,7 +1402,7 @@ mod probes {
     async fn keeps_a_probe_attributable_for_longer_than_the_conversation_waits() {
         let h = harness().await;
         let verdict = spawn_probe(&h.session, probe(8_000, "i-1"));
-        settle().await;
+        h.sync().await;
         h.emit(json!({ "type": "response.created", "response": { "id": "r-probe" } }));
         h.emit(json!({ "type": "response.output_text.delta", "response_id": "r-probe", "delta": "YES" }));
         h.emit(json!({ "type": "response.done", "response": { "id": "r-probe", "status": "completed" } }));
@@ -1377,9 +1414,9 @@ mod probes {
     async fn answers_null_when_a_probe_completes_with_nothing_to_say() {
         let h = harness().await;
         let verdict = spawn_probe(&h.session, probe(500, "i-1"));
-        settle().await;
+        h.sync().await;
         h.emit(json!({ "type": "response.created", "response": { "id": "r-probe" } }));
-        settle().await;
+        h.sync().await;
         h.emit(json!({
             "type": "response.done",
             "response": {
@@ -1398,7 +1435,7 @@ mod probes {
     async fn resolves_a_probe_left_in_flight_when_the_call_ends() {
         let h = harness().await;
         let verdict = spawn_probe(&h.session, probe(10_000, "i-1"));
-        settle().await;
+        h.sync().await;
         h.session.close();
         assert_eq!(verdict.await.unwrap(), None);
     }
@@ -1417,7 +1454,7 @@ mod probes {
             })
             .await;
         assert_eq!(answer, None);
-        settle().await;
+        h.sync().await;
         assert_eq!(h.sent().len(), before);
     }
 
@@ -1427,26 +1464,26 @@ mod probes {
         let verdict = spawn_probe(&h.session, probe(500, "i-2"));
         // Let the probe's frame go out before the conversation's.
         tokio::task::yield_now().await;
-        settle().await;
+        h.sync().await;
         h.session.request_response();
-        settle().await;
+        h.sync().await;
 
         h.emit(json!({ "type": "response.created", "response": { "id": "r-probe" } }));
         h.emit(json!({ "type": "response.created", "response": { "id": "r-main" } }));
-        settle().await;
+        h.sync().await;
 
         h.session.interrupt(&[]);
-        settle().await;
+        h.sync().await;
         assert_eq!(h.first("response.cancel").unwrap()["response_id"], "r-main");
 
         h.answer_probe("r-probe", "YES");
         assert_eq!(verdict.await.unwrap().as_deref(), Some("YES"));
 
         h.emit(json!({ "type": "response.done", "response": { "id": "r-main", "status": "completed" } }));
-        settle().await;
+        h.sync().await;
         let before = h.main_requests().len();
         h.session.request_response();
-        settle().await;
+        h.sync().await;
         assert_eq!(h.main_requests().len(), before + 1);
         h.session.close();
     }
@@ -1455,17 +1492,17 @@ mod probes {
     async fn forgets_a_rejected_conversation_request_so_it_cannot_misplace_a_later_one() {
         let h = harness().await;
         h.session.request_response();
-        settle().await;
+        h.sync().await;
         let rejected = h.main_requests()[0]["event_id"].clone();
         h.emit(json!({
             "type": "error",
             "event_id": "event_server_side",
             "error": { "message": "Conversation already has an active response in progress", "event_id": rejected },
         }));
-        settle().await;
+        h.sync().await;
 
         let verdict = spawn_probe(&h.session, probe(500, "i-1"));
-        settle().await;
+        h.sync().await;
         h.emit(json!({ "type": "response.created", "response": { "id": "r-probe" } }));
         h.emit(json!({ "type": "response.output_text.delta", "response_id": "r-probe", "delta": "NO" }));
         h.emit(json!({ "type": "response.done", "response": { "id": "r-probe", "status": "completed" } }));
@@ -1478,11 +1515,11 @@ mod probes {
         let h = harness().await;
         let events = h.record();
         let verdict = spawn_probe(&h.session, probe(500, "i-1"));
-        settle().await;
+        h.sync().await;
         h.emit(json!({ "type": "response.created", "response": { "id": "r-probe" } }));
-        settle().await;
+        h.sync().await;
         h.emit(json!({ "type": "response.output_audio.delta", "delta": silence_delta(100), "item_id": "i-x", "response_id": "r-probe" }));
-        settle().await;
+        h.sync().await;
         assert!(events.lock().is_empty());
         h.answer_probe("r-probe", "NO");
         verdict.await.unwrap();
@@ -1503,7 +1540,7 @@ mod probes {
             "name": "shell_exec",
             "arguments": "{\"command\":\"rm -rf /\"}",
         }));
-        settle().await;
+        h.sync().await;
         assert!(events.lock().is_empty());
         h.session.close();
     }
@@ -1512,15 +1549,15 @@ mod probes {
     async fn does_not_let_a_response_we_know_is_out_of_band_claim_the_conversation_slot() {
         let h = harness().await;
         let verdict = spawn_probe(&h.session, probe(200, "i-1"));
-        settle().await;
+        h.sync().await;
         let send_id = h.probe_frame().unwrap()["event_id"].clone();
         assert_eq!(verdict.await.unwrap(), None);
 
         h.emit(json!({ "type": "response.created", "response": { "id": "r-late", "metadata": { "prism_oob": send_id } } }));
-        settle().await;
+        h.sync().await;
         let before = h.main_requests().len();
         h.session.request_response();
-        settle().await;
+        h.sync().await;
         assert_eq!(h.main_requests().len(), before + 1);
         h.session.close();
     }
@@ -1529,7 +1566,7 @@ mod probes {
     async fn settles_a_probe_when_the_server_drops_the_socket() {
         let h = harness().await;
         let verdict = spawn_probe(&h.session, probe(10_000, "i-1"));
-        settle().await;
+        h.sync().await;
         h.server.drop_from_server();
         let answer = tokio::time::timeout(Duration::from_secs(5), verdict)
             .await

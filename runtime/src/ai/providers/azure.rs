@@ -307,7 +307,11 @@ mod tests {
             match (result, case.get("error")) {
                 (Ok(result), None) => {
                     let actual = serde_json::to_value(&result).unwrap();
-                    assert_eq!(actual["embeddings"], case["result"]["embeddings"], "{name}");
+                    assert_eq!(
+                        js_stringify(&actual["embeddings"]),
+                        js_stringify(&case["result"]["embeddings"]),
+                        "{name}"
+                    );
                     assert_eq!(actual["usage"], case["result"]["usage"], "{name}");
                     assert_eq!(
                         actual["response"]["body"], case["result"]["response"]["body"],
