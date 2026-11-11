@@ -281,6 +281,7 @@ mod tests {
     #[tokio::test]
     #[serial_test::serial]
     async fn needs_a_password() {
+        let previous = CONFIG.agent_id();
         CONFIG.set_agent_id(Some("agent-1".into()));
         let response = call(
             router(),
@@ -289,6 +290,7 @@ mod tests {
             Some(json!({ "username": "demo-user" })),
         )
         .await;
+        CONFIG.set_agent_id(previous);
         assert_eq!(response.status, 400);
         assert_eq!(
             response.json(),
@@ -299,6 +301,7 @@ mod tests {
     #[tokio::test]
     #[serial_test::serial]
     async fn asks_for_continue_or_dismiss() {
+        let previous = CONFIG.agent_id();
         CONFIG.set_agent_id(Some("agent-1".into()));
         let response = call(
             router(),
@@ -307,6 +310,7 @@ mod tests {
             Some(json!({ "action": "later" })),
         )
         .await;
+        CONFIG.set_agent_id(previous);
         assert_eq!(response.status, 400);
         assert_eq!(
             response.json(),

@@ -20,6 +20,7 @@ use serde_json::{Value, json};
 use crate::ai::{FinishReason, GenerateTextOptions, Instructions, ModelMessage};
 use crate::lib::classification::get_gate_request;
 use crate::lib::log_redaction::err_json;
+use crate::support::after_accept::spawn_after_accept;
 use crate::lib::model_call::{ModelCallMeta, call_model};
 use crate::lib::telemetry::langfuse_telemetry;
 use crate::services::conversation_service::CONVERSATION_SERVICE;
@@ -188,7 +189,7 @@ impl ThreadTitleService {
             thread_id.to_string(),
             message.to_string(),
         );
-        tokio::spawn(async move {
+        spawn_after_accept(async move {
             match self
                 .generate_and_save(&agent_id, &user_id, &thread_id, &message)
                 .await

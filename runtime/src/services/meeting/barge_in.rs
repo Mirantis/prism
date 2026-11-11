@@ -116,9 +116,10 @@ impl BargeInPolicy {
         state.clear_timer();
         let generation = state.timer_generation;
         let weak: Weak<BargeInInner> = Arc::downgrade(&self.inner);
-        let grace = Duration::from_millis(self.inner.grace_ms);
+        // The deadline is fixed now, as `setTimeout` fixes it, not when the task first runs.
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(self.inner.grace_ms);
         let task = tokio::spawn(async move {
-            tokio::time::sleep(grace).await;
+            tokio::time::sleep_until(deadline).await;
             let Some(inner) = weak.upgrade() else { return };
             let policy = BargeInPolicy { inner };
             {

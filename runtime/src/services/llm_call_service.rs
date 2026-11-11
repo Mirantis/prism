@@ -331,6 +331,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn the_row_holds_the_counts_and_the_cache_split() {
         let mut call = input(LlmCallPurpose::Chat, Some(usage()));
         call.thread_id = Some("thread-1".to_string());
@@ -354,6 +355,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn bills_the_owner_and_records_which_subagent_ran_the_call() {
         let mut call = input(LlmCallPurpose::Subagent, Some(usage()));
         call.agent_id = Some("subagent-9".to_string());

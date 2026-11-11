@@ -480,7 +480,7 @@ async fn store(agent_id: &str, body: &AgentMessageBody) -> anyhow::Result<AgentM
         AgentMessageBodyKind::Message if body.expects_reply => AgentMessageKind::Ask,
         AgentMessageBodyKind::Message => AgentMessageKind::Message,
     };
-    let acceptance = INBOUND_MESSAGE_SERVICE
+    let mut acceptance = INBOUND_MESSAGE_SERVICE
         .accept(InboundMessage {
             id: body.id.clone(),
             thread_id,
@@ -495,6 +495,7 @@ async fn store(agent_id: &str, body: &AgentMessageBody) -> anyhow::Result<AgentM
             }),
         })
         .await?;
+    acceptance.release_turn();
     // The rest of this conversation between agents follows it here. The message
     // is stored either way, so a failure costs only where the next one goes.
     if let Err(err) = AGENT_CONVERSATION_SERVICE

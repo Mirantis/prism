@@ -15,6 +15,13 @@ use axum::Router;
 use axum::response::Response;
 use axum::routing::{get, post};
 use serde::Serialize;
+use serde_json::json;
+
+use crate::db::models::UpdateTrigger;
+use crate::lib::log_redaction::err_json;
+use crate::services::update::update_service::{UPDATE_SERVICE, UpdateInProgressError};
+use crate::support::http::{error_json, json};
+use crate::{log_error, log_warn};
 
 pub fn router() -> Router {
     Router::new()
@@ -30,19 +37,22 @@ pub struct UpdateAccepted {
     pub version: String,
 }
 
-/// `{ error }`, the body of every refusal and failure.
-#[derive(Debug, Clone, Serialize)]
-pub struct ErrorBody {
-    pub error: String,
-}
-
 /// GET /agents/update/status
 ///
 /// Sends `UPDATE_SERVICE.get_status()` unchanged. A failure is logged
 /// (`[Update] Failed to read update status`, with `err`) and answers 500 with the
 /// error's message.
 async fn update_status() -> Response {
-    todo!()
+    match UPDATE_SERVICE.get_status().await {
+        Ok(status) => json(200, status),
+        Err(err) => {
+            log_error!(
+                json!({ "err": err_json(&err) }),
+                "[Update] Failed to read update status"
+            );
+            error_json(500, err.to_string())
+        }
+    }
 }
 
 /// POST /agents/update
@@ -61,5 +71,65 @@ async fn update_status() -> Response {
 /// (an automatic apply won the race) answers 409 with its message; any other
 /// failure is logged (`[Update] Manual update failed`, with `err`) and answers 500.
 async fn start_update() -> Response {
-    todo!()
+    match apply_manual_update().await {
+        Ok(response) => response,
+        Err(err) if err.is::<UpdateInProgressError>() => error_json(409, err.to_string()),
+        Err(err) => {
+            log_error!(
+                json!({ "err": err_json(&err) }),
+                "[Update] Manual update failed"
+            );
+            error_json(500, err.to_string())
+        }
+    }
+}
+
+async fn apply_manual_update() -> anyhow::Result<Response> {
+    let status = UPDATE_SERVICE.get_status().await?;
+    if !status.enabled {
+        let reason = status.reason.map(|r| r.to_string()).unwrap_or_default();
+        return Ok(error_json(
+            409,
+            format!("Updates are not available in this install ({reason})."),
+        ));
+    }
+    if status.applying {
+        return Ok(error_json(409, "An update is already in progress."));
+    }
+
+    let Some(latest) = UPDATE_SERVICE.check_now().await else {
+        return Ok(error_json(
+            502,
+            "Could not check for updates. Try again later.",
+        ));
+    };
+    let fresh = UPDATE_SERVICE.get_status().await?;
+    if !fresh.update_available {
+        return Ok(error_json(
+            409,
+            format!("Already up to date ({}).", status.current_version),
+        ));
+    }
+
+    // The attempt row is persisted before the 202, so its outcome is recorded
+    // whatever happens next; a completion failure is also sent as a WS `failed`
+    // frame, which the clients watch.
+    let started = UPDATE_SERVICE
+        .start_apply(&latest, UpdateTrigger::Manual)
+        .await?;
+    let version = latest.clone();
+    tokio::spawn(async move {
+        let failure = match started.completion.await {
+            Ok(Ok(outcome)) => {
+                if outcome.will_exit {
+                    UPDATE_SERVICE.schedule_restart_exit(None);
+                }
+                return;
+            }
+            Ok(Err(err)) => err.to_string(),
+            Err(join) => join.to_string(),
+        };
+        log_warn!("[Update] manual update to {version} failed: {failure}");
+    });
+    Ok(json(202, UpdateAccepted { ok: true, version: latest }))
 }

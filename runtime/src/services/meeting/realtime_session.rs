@@ -484,6 +484,12 @@ struct SessionState {
     /// and the call goes mute for good.
     pending_creates: VecDeque<PendingCreate>,
     tools: Vec<RealtimeFunctionTool>,
+    /// Frames written to the socket, so a test can wait for the server to hold them.
+    #[cfg(test)]
+    frames_sent: std::sync::atomic::AtomicUsize,
+    /// Frames read and handled, so a test can wait for the session to have acted on them.
+    #[cfg(test)]
+    frames_handled: std::sync::atomic::AtomicUsize,
 }
 
 impl SessionState {
@@ -495,7 +501,11 @@ impl SessionState {
         let Some(outbound) = &self.outbound else {
             return;
         };
-        let _ = outbound.send(Message::text(payload.to_string()));
+        if outbound.send(Message::text(payload.to_string())).is_ok() {
+            #[cfg(test)]
+            self.frames_sent
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
     }
 
     /// Settle one waiting probe, once.
@@ -550,6 +560,10 @@ impl RealtimeSession {
                 main_create_counter: 0,
                 pending_creates: VecDeque::new(),
                 tools,
+                #[cfg(test)]
+                frames_sent: Default::default(),
+                #[cfg(test)]
+                frames_handled: Default::default(),
             }),
             this: this.clone(),
         })
@@ -623,9 +637,15 @@ impl RealtimeSession {
                     return;
                 };
                 match item {
-                    Ok(Message::Text(text)) => session.handle_message(text.as_str()),
+                    Ok(Message::Text(text)) => {
+                        session.handle_message(text.as_str());
+                        #[cfg(test)]
+                        session.count_handled_frame();
+                    }
                     Ok(Message::Binary(data)) => {
-                        session.handle_message(&String::from_utf8_lossy(&data))
+                        session.handle_message(&String::from_utf8_lossy(&data));
+                        #[cfg(test)]
+                        session.count_handled_frame();
                     }
                     Ok(Message::Close(frame)) => {
                         close = Some(
@@ -1866,6 +1886,24 @@ impl RealtimeSession {
     /// Write one frame to the socket, when it is open.
     fn send(&self, payload: Value) {
         self.state.lock().send(payload);
+    }
+
+    #[cfg(test)]
+    fn count_handled_frame(&self) {
+        self.state
+            .lock()
+            .frames_handled
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Frames written to the socket and frames read and handled, in that order.
+    #[cfg(test)]
+    pub(crate) fn frame_counts(&self) -> (usize, usize) {
+        let state = self.state.lock();
+        (
+            state.frames_sent.load(std::sync::atomic::Ordering::SeqCst),
+            state.frames_handled.load(std::sync::atomic::Ordering::SeqCst),
+        )
     }
 
     pub fn is_open(&self) -> bool {

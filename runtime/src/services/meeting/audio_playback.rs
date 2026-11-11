@@ -334,10 +334,11 @@ impl AudioPlayback {
                 return;
             }
             let weak: Weak<PlaybackInner> = Arc::downgrade(&self.inner);
+            // The schedule starts now, as `setInterval` starts it, not when the task first
+            // runs. The caller ticks now itself, so the first tick is one period away.
+            let period = Duration::from_millis(TICK_MS);
+            let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
             let task = tokio::spawn(async move {
-                let mut interval = tokio::time::interval(Duration::from_millis(TICK_MS));
-                // The first tick of an interval completes at once; the caller ticks now itself.
-                interval.tick().await;
                 loop {
                     interval.tick().await;
                     let Some(inner) = weak.upgrade() else { return };
@@ -563,10 +564,9 @@ mod tests {
     async fn catches_up_after_a_late_tick_instead_of_starving_the_device() {
         let (s, playback) = playback();
         playback.enqueue(audio(5000.0), "item-1");
-        // One late tick, as when the process is busy.
-        tokio::time::advance(Duration::from_millis(600)).await;
-        tokio::task::yield_now().await;
-        tokio::task::yield_now().await;
+        // 600 ms of timer time, as `vi.advanceTimersByTime(600)` runs it: each tick at
+        // its own time.
+        advance(600).await;
         assert!(s.total_ms() > 600.0, "{}", s.total_ms());
     }
 
