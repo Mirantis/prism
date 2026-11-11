@@ -1,5 +1,0 @@
-src/lib/llm-providers/bedrock-shared.ts -> runtime/src/lib/llm_providers/bedrock_shared.rs (59 lines) tests: src/lib/llm-providers/bedrock-shared.test.ts
-src/lib/llm-providers/bedrock/bedrock-provider.ts -> runtime/src/lib/llm_providers/bedrock/bedrock_provider.rs (133 lines) tests: src/lib/llm-providers/bedrock/bedrock-provider.test.ts
-src/lib/llm-providers/bedrock/converse-tool-images.ts -> runtime/src/lib/llm_providers/bedrock/converse_tool_images.rs (46 lines) tests: src/lib/llm-providers/bedrock/converse-tool-images.test.ts
-(new) runtime/src/ai/providers/amazon_bedrock/mod.rs — port @ai-sdk/amazon-bedrock (Converse model, SigV4 and bearer auth, Titan embeddings)
-(new) runtime/src/ai/providers/amazon_bedrock/anthropic.rs — port @ai-sdk/amazon-bedrock/anthropic (Anthropic Messages body over InvokeModel)

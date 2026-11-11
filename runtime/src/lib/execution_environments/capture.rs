@@ -374,14 +374,15 @@ mod tests {
 
     #[tokio::test]
     async fn keeps_the_budget_when_a_second_takeover_suspends_the_command_again() {
-        // 600 ms of a 1 s budget are spent first, so a second subtraction would leave none.
+        // 1.8 s of a 3 s budget are spent first, so a second subtraction would leave none.
+        // The command needs 0.2 s after that, which leaves a loaded host 1 s to spare.
         let processes = Arc::new(AgentProcesses::new());
-        let proc = start(&processes, "sleep 0.8; echo done");
+        let proc = start(&processes, "sleep 2; echo done");
         let run = tokio::spawn({
             let processes = processes.clone();
-            async move { collect_on(&processes, proc, options(1_000, None)).await }
+            async move { collect_on(&processes, proc, options(3_000, None)).await }
         });
-        tokio::time::sleep(Duration::from_millis(600)).await;
+        tokio::time::sleep(Duration::from_millis(1_800)).await;
         processes.suspend();
         processes.suspend();
         tokio::time::sleep(Duration::from_millis(1_200)).await;

@@ -1,5 +1,0 @@
-src/lib/llm-providers/openai-compatible.ts -> runtime/src/lib/llm_providers/openai_compatible.rs (71 lines)
-src/lib/llm-providers/openai/openai-provider.ts -> runtime/src/lib/llm_providers/openai/openai_provider.rs (82 lines) tests: src/lib/llm-providers/openai/openai-provider.test.ts
-src/lib/llm-providers/openrouter/openrouter-provider.ts -> runtime/src/lib/llm_providers/openrouter/openrouter_provider.rs (61 lines) tests: src/lib/llm-providers/openrouter/openrouter-provider.test.ts
-(new) runtime/src/ai/providers/openai.rs — port @ai-sdk/openai (Responses API model, embeddings)
-(new) runtime/src/ai/providers/azure.rs — port @ai-sdk/azure (embeddings)
