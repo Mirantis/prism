@@ -20,8 +20,7 @@ use crate::services::delivery_target_service::PostingCeiling;
 use crate::types::TaskLastSend;
 
 /// What `buildConversationHistory`, `buildUserMessage` and `buildSteeringMessage`
-/// produced in the TypeScript runtime for the same rows
-/// (`porting/scratch-context/dump-history.ts`).
+/// in the TypeScript runtime produced for the same rows.
 const HISTORY_FIXTURE: &str = include_str!("testdata/conversation_history.json");
 
 fn test_context(rows: Vec<ConversationMessage>) -> AgentContext {

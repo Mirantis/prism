@@ -28,7 +28,7 @@ use crate::services::meeting::browser_stack::{
     GotoOptions, LoadState, Locator, PageHandle, TextMatch, WaitForState,
 };
 use crate::services::meeting::meeting_provider_interface::SignInOptions;
-use crate::support::now_ms;
+use crate::services::meeting::audio_playback::clock_ms;
 use crate::{log_info, log_warn};
 
 /// Where an interactive sign-in starts. See `sign_in_to_google`.
@@ -126,19 +126,19 @@ pub async fn settled_url(
 ) -> anyhow::Result<String> {
     let timeout_ms = timeout_ms.unwrap_or(SESSION_SETTLE_TIMEOUT_MS) as i64;
     let stable_ms = stable_ms.unwrap_or(SESSION_STABLE_MS) as i64;
-    let deadline = crate::support::now_ms() + timeout_ms;
+    let deadline = clock_ms() + timeout_ms;
     let mut last = page.url();
-    let mut stable_since = crate::support::now_ms();
+    let mut stable_since = clock_ms();
 
-    while crate::support::now_ms() < deadline {
+    while clock_ms() < deadline {
         page.wait_for_timeout(250).await?;
         let current = page.url();
         if current != last {
             last = current;
-            stable_since = crate::support::now_ms();
+            stable_since = clock_ms();
             continue;
         }
-        if crate::support::now_ms() - stable_since >= stable_ms {
+        if clock_ms() - stable_since >= stable_ms {
             break;
         }
     }
@@ -336,13 +336,13 @@ async fn interactive_sign_in(
 pub async fn quiesce(page: &PageHandle, timeout_ms: Option<u64>, quiet_ms: Option<u64>) {
     let timeout_ms = timeout_ms.unwrap_or(QUIESCE_SETTLE_TIMEOUT_MS);
     let quiet_ms = quiet_ms.unwrap_or(QUIESCE_QUIET_MS) as i64;
-    let last_commit = Arc::new(AtomicI64::new(now_ms()));
+    let last_commit = Arc::new(AtomicI64::new(clock_ms()));
     let main = page.main_frame();
     let listener = {
         let last_commit = last_commit.clone();
         page.on_frame_navigated(Arc::new(move |frame| {
             if *frame == main {
-                last_commit.store(now_ms(), Ordering::SeqCst);
+                last_commit.store(clock_ms(), Ordering::SeqCst);
             }
         }))
     };
@@ -351,7 +351,7 @@ pub async fn quiesce(page: &PageHandle, timeout_ms: Option<u64>, quiet_ms: Optio
         // One budget for the whole attempt, the navigation included: the caller of a
         // failed sign-in is waiting on this, and a `goto` with a cap of its own would
         // spend that cap on top of the wait below.
-        let deadline = now_ms() + timeout_ms as i64;
+        let deadline = clock_ms() + timeout_ms as i64;
         let _ = page
             .goto(
                 "about:blank",
@@ -362,14 +362,14 @@ pub async fn quiesce(page: &PageHandle, timeout_ms: Option<u64>, quiet_ms: Optio
             )
             .await;
 
-        while now_ms() < deadline {
+        while clock_ms() < deadline {
             // The wait fails once the page is closed, and nothing in this file fails —
             // see the header. A closed page is also still enough for the caller.
             if page.wait_for_timeout(100).await.is_err() {
                 page.remove_frame_listener(listener);
                 return;
             }
-            if now_ms() - last_commit.load(Ordering::SeqCst) < quiet_ms {
+            if clock_ms() - last_commit.load(Ordering::SeqCst) < quiet_ms {
                 continue;
             }
             if page.url() == "about:blank" {
@@ -474,7 +474,10 @@ fn landing_of(url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
+
+    // The paused test clock, so the commit timings below hold under any load.
+    use tokio::time::Instant;
 
     use serde_json::json;
 
@@ -497,7 +500,7 @@ mod tests {
             .count()
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn reports_where_a_redirect_chain_came_to_rest_not_where_it_was_mid_flight() {
         let fake = Arc::new(FakeBrowser::new());
         let page = fake.page("https://myaccount.google.com/");
@@ -521,7 +524,7 @@ mod tests {
         assert!(started.elapsed() < Duration::from_millis(4_000));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn gives_up_at_the_deadline_rather_than_hanging_on_a_chain_that_never_settles() {
         let fake = Arc::new(FakeBrowser::new());
         let page = fake.page("https://accounts.google.com/a");
@@ -541,7 +544,7 @@ mod tests {
         assert!(started.elapsed() < Duration::from_millis(1_800));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn holds_the_page_until_a_commit_that_outlives_its_own_goto_has_landed() {
         let fake = Arc::new(FakeBrowser::new());
         let page = fake.page("about:blank");
@@ -559,7 +562,7 @@ mod tests {
         assert_eq!(navigations(&fake, &page), 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn parks_the_page_again_when_it_reads_somewhere_else_once_quiet() {
         let fake = FakeBrowser::new();
         let page = fake.page("https://accounts.google.com/signin/rejected");
@@ -567,7 +570,7 @@ mod tests {
         assert_eq!(navigations(&fake, &page), 2);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn returns_rather_than_failing_when_the_page_closes_while_it_waits() {
         let fake = Arc::new(FakeBrowser::new());
         let page = fake.page("https://accounts.google.com/x");

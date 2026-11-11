@@ -899,7 +899,8 @@ mod tests {
 
     /// The lines written so far, once there are `count` of them.
     async fn written(out: &std::path::Path, count: usize) -> Vec<String> {
-        for _ in 0..200 {
+        // Up to 10 s: the recording script is a real process, slow to start on a loaded host.
+        for _ in 0..1000 {
             let text = std::fs::read_to_string(out).unwrap_or_default();
             let lines: Vec<String> = text.lines().map(str::to_string).collect();
             if lines.len() >= count {
