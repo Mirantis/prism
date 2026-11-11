@@ -44,6 +44,7 @@ use crate::lib::model_catalog::{cancel_model_catalog_refresh, refresh_model_cata
 use crate::lib::single_agent_bootstrap::resolve_or_bootstrap_single_agent;
 use crate::lib::startup_telemetry::{TrackAgentStartedOptions, track_agent_started};
 use crate::lib::telemetry::{init_telemetry, shutdown_telemetry};
+use crate::lib::usage_telemetry::start_usage_telemetry;
 use crate::lib::tool_collection::init_meeting_tool_availability;
 use crate::queues::slack_heartbeat_throttle_queue::get_slack_heartbeat_throttle_queue;
 use crate::scripts::backfill_embeddings::run_backfill;
@@ -56,6 +57,7 @@ use crate::services::channel_adapter_interface::{
     DeliverableMessage, LinkedTarget, PostedMessage,
 };
 use crate::services::compaction_service::COMPACTION_SERVICE;
+use crate::services::runtime_state_service::RUNTIME_STATE_SERVICE;
 use crate::services::computer::computer_endpoint::COMPUTER_ENDPOINT;
 use crate::services::computer::computer_service::COMPUTER_SERVICE;
 use crate::services::computer::remote::computer_link_endpoint::COMPUTER_LINK_ENDPOINT;
@@ -96,6 +98,7 @@ use crate::{log_error, log_info, log_warn};
 
 /// The file janitor's hourly sweep, stopped by the shutdown.
 static FILE_JANITOR: LazyLock<Mutex<Option<JoinHandle<()>>>> = LazyLock::new(|| Mutex::new(None));
+static USAGE_TELEMETRY: LazyLock<Mutex<Option<JoinHandle<()>>>> = LazyLock::new(|| Mutex::new(None));
 
 /// The process entry. Loads `.env` before any thread starts (it writes the
 /// environment), builds the configuration, applies the database migrations the
@@ -246,7 +249,7 @@ async fn start() -> i32 {
     init_langfuse();
 
     // Initialize product telemetry (OTEL Logs → Collector → S3)
-    init_telemetry();
+    init_telemetry(|| RUNTIME_STATE_SERVICE.deployment_id()).await;
 
     // Refresh the model-window catalog in the background; lookups use the bundle until it lands.
     tokio::spawn(refresh_model_catalog());
@@ -627,6 +630,10 @@ async fn initialize() -> anyhow::Result<()> {
     // expired saved tool outputs now, then hourly.
     *FILE_JANITOR.lock() = Some(start_file_janitor().await);
 
+    // Report the agent's token use for each closed hour now, then every few
+    // minutes (see lib/usage_telemetry.rs). Nothing runs without an OTLP endpoint.
+    *USAGE_TELEMETRY.lock() = start_usage_telemetry(&agent.id);
+
     // Embed the memory entries that have no vector yet. In-process and best-effort:
     // it never blocks startup, and a failure costs a log line.
     tokio::spawn(async {
@@ -799,6 +806,9 @@ async fn shutdown(signal: &'static str, servers: Arc<Mutex<Option<Servers>>>) {
     }
     if let Some(janitor) = FILE_JANITOR.lock().take() {
         janitor.abort();
+    }
+    if let Some(usage) = USAGE_TELEMETRY.lock().take() {
+        usage.abort();
     }
     // A signal early in boot would otherwise leave the catalog fetch holding a
     // socket, so the server close waits and the 5 s force exit below fires.

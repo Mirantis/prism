@@ -23,7 +23,7 @@ use crate::constants::{
     MIN_HEARTBEAT_INTERVAL_MS, TOOL_OUTPUT_TTL_HOURS, TOOL_SEARCH_THRESHOLD_PERCENT,
 };
 use crate::lib::coding_agents::subscription::subscription_forced_in;
-use crate::lib::llm_providers::bedrock_model_id::is_anthropic_model_id;
+use crate::lib::llm_providers::bedrock_model_id::{is_anthropic_model_id, is_openai_bedrock_model_id};
 use crate::lib::llm_providers::llm_provider::CacheTtl;
 use crate::lib::loopback_host::is_loopback_hostname;
 use crate::lib::managed_realtime::{RealtimeSource, resolve_realtime_configuration};
@@ -1443,9 +1443,13 @@ impl Config {
             medium: model_override("CODEX_MODEL_MEDIUM"),
             large: model_override("CODEX_MODEL_LARGE"),
         };
+        // The Codex tier, by the same rule as `claude_code_tier`.
         let codex_tier =
             |override_model: &Option<String>, openai: &str, bedrock: &str| CodexTierModel {
-                openai: override_model.clone().unwrap_or_else(|| openai.to_string()),
+                openai: match override_model {
+                    Some(model) if !is_openai_bedrock_model_id(model) => model.clone(),
+                    _ => openai.to_string(),
+                },
                 bedrock: override_model
                     .clone()
                     .unwrap_or_else(|| bedrock.to_string()),
@@ -1811,9 +1815,9 @@ fn endpoint_for_log(url: Option<&str>) -> String {
     }
 }
 
-/// One Claude Code tier: an override that is a Bedrock ID serves Bedrock only,
-/// because the Anthropic API and a Claude subscription refuse it; the same agent
-/// can run its tasks on either, so the other backend keeps its own default.
+/// One coding agent tier: an override that is a Bedrock ID serves Bedrock only,
+/// because the vendor's API and subscription refuse it; the same agent can run
+/// its tasks on either, so the other backend keeps its own default.
 fn claude_code_tier(
     override_model: &Option<String>,
     default: &str,
