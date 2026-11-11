@@ -141,6 +141,29 @@ fn keeps_a_bedrock_id_for_a_claude_code_tier_on_bedrock_only() {
     }
 }
 
+#[test]
+fn keeps_a_bedrock_id_for_a_codex_tier_on_bedrock_only() {
+    for (tier, model, openai) in [
+        ("small", "openai.gpt-5.6-luna", "gpt-5.6-luna"),
+        ("medium", "us.openai.gpt-5.6-terra", "gpt-5.6-terra"),
+        (
+            "large",
+            "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.openai.gpt-5.6-sol",
+            "gpt-5.6-sol",
+        ),
+    ] {
+        let name = format!("CODEX_MODEL_{}", tier.to_uppercase());
+        let cfg = load(&[("LLM_PROVIDER", "anthropic"), (&name, model)]);
+        assert_eq!(
+            cfg.coding_agent_models.codex.get(tier),
+            Some(&CodexTierModel {
+                openai: openai.into(),
+                bedrock: model.into()
+            })
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // public Web UI address
 // ---------------------------------------------------------------------------
