@@ -20,7 +20,7 @@ use crate::db::models::AgentWorkspace;
 use crate::lib::environment::is_sea;
 use crate::lib::execution_environments::get_execution_environment::get_execution_environment;
 use crate::lib::model_catalog::model_catalog_state;
-use crate::lib::telemetry::{is_telemetry_enabled, track_event};
+use crate::lib::telemetry::{is_telemetry_enabled, llm_routing_for, track_event};
 use crate::log_warn;
 use crate::services::agent_workspace_service::AGENT_WORKSPACE_SERVICE;
 use crate::services::plugin_catalog_service::PLUGIN_CATALOG_SERVICE;
@@ -109,19 +109,7 @@ fn agent_started_props(config: &Config, census: &Census<'_>) -> IndexMap<String,
     };
     put("agent.id", census.agent_id.to_string());
     put("llm.provider", config.llm_provider.as_str().to_string());
-    // Whether the selected vendor's gateway chat mount is set. This is the
-    // deployment's shape, not where a request lands: an explicit `*_BASE_URL`
-    // can point off the gateway host, and the `[Startup] LLM provider` log
-    // reports that endpoint and its source.
-    put(
-        "llm.routing",
-        if is_set(&config.nexus_chat_base_url) {
-            "nexus"
-        } else {
-            "direct"
-        }
-        .to_string(),
-    );
+    put("llm.routing", llm_routing_for(config).to_string());
     put("llm.chat_model", config.chat_model_id.clone());
     put(
         "llm.classification_model",

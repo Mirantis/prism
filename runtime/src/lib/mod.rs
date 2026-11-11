@@ -66,3 +66,4 @@ pub mod webhook_signature;
 pub mod workspace_docs;
 pub mod workspace_seed;
 // @generated-modules-end
+pub mod usage_telemetry;

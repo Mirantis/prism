@@ -8,6 +8,7 @@
 //! Disabled (no-op) when OTEL_EXPORTER_OTLP_ENDPOINT is not set.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, SystemTime};
 
@@ -18,7 +19,8 @@ use opentelemetry::KeyValue;
 use opentelemetry::logs::{AnyValue, LogRecord as _, Logger as _, LoggerProvider as _, Severity};
 use opentelemetry_otlp::{Protocol, WithExportConfig, WithHttpConfig};
 use opentelemetry_sdk::Resource;
-use opentelemetry_sdk::logs::{SdkLogger, SdkLoggerProvider};
+use opentelemetry_sdk::error::OTelSdkResult;
+use opentelemetry_sdk::logs::{LogBatch, LogExporter, SdkLogger, SdkLoggerProvider};
 
 use crate::ai::TelemetryOptions;
 use crate::config::{CONFIG, Config};
@@ -30,6 +32,8 @@ const ATTR_DEPLOYMENT_ENVIRONMENT_NAME: &str = "deployment.environment.name";
 /// Not an OTel semantic convention: the product that launched this agent, set by
 /// that product's recipe. `service.*` stays the runtime's own name for every product.
 const ATTR_PRODUCT_NAME: &str = "product.name";
+/// The persisted id of this install, the attribute name Lens Agents uses for its own.
+const ATTR_DEPLOYMENT_ID: &str = "deployment.id";
 const ATTR_SERVICE_NAME: &str = "service.name";
 const ATTR_SERVICE_NAMESPACE: &str = "service.namespace";
 const ATTR_SERVICE_VERSION: &str = "service.version";
@@ -46,9 +50,38 @@ struct Pipeline {
     logger: SdkLogger,
 }
 
-/// Set by [`init_telemetry`]; `None` while telemetry is off.
+/// Set by [`init_telemetry`]; `None` while telemetry is off and after shutdown.
 static PIPELINE: LazyLock<parking_lot::RwLock<Option<Arc<Pipeline>>>> =
     LazyLock::new(|| parking_lot::RwLock::new(None));
+
+/// The batch processor reports no export result to its caller, so the exporter
+/// counts them for [`flush_telemetry`].
+static EXPORTS_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+static FAILED_EXPORTS: AtomicUsize = AtomicUsize::new(0);
+
+/// The OTLP exporter, counting the exports running and the exports that failed.
+#[derive(Debug)]
+struct CountingExporter<E>(E);
+
+impl<E: LogExporter> LogExporter for CountingExporter<E> {
+    async fn export(&self, batch: LogBatch<'_>) -> OTelSdkResult {
+        EXPORTS_IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
+        let result = self.0.export(batch).await;
+        EXPORTS_IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
+        if result.is_err() {
+            FAILED_EXPORTS.fetch_add(1, Ordering::SeqCst);
+        }
+        result
+    }
+
+    fn shutdown_with_timeout(&self, timeout: Duration) -> OTelSdkResult {
+        self.0.shutdown_with_timeout(timeout)
+    }
+
+    fn set_resource(&mut self, resource: &Resource) {
+        self.0.set_resource(resource);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // The HTTP client both OTLP pipelines export through
@@ -142,19 +175,41 @@ pub fn is_telemetry_enabled() -> bool {
     !CONFIG.otel_endpoint.is_empty()
 }
 
+/// Whether the selected vendor's gateway chat mount is set: `nexus` or `direct`.
+/// This is the deployment's shape, not where a request lands: an explicit
+/// `*_BASE_URL` can point off the gateway host, and the `[Startup] LLM provider`
+/// log reports that endpoint and its source.
+pub fn llm_routing() -> &'static str {
+    llm_routing_for(&CONFIG)
+}
+
+/// [`llm_routing`] for `config`.
+pub fn llm_routing_for(config: &Config) -> &'static str {
+    if config.nexus_chat_base_url.as_deref().is_some_and(|url| !url.is_empty()) {
+        "nexus"
+    } else {
+        "direct"
+    }
+}
+
 /// Resource attributes describe the *emitter* of every event on this stream.
 /// `service.version` identifies the deployed build so events can be broken down
 /// by version and regressions correlated to specific releases. `product.name`
-/// separates the agents a product launched from the others.
-fn resource_attributes(config: &Config) -> Vec<(&'static str, String)> {
-    let mut attributes = vec![
+/// separates the agents a product launched from the others. `deployment.id`
+/// separates one install from another and stays the same across restarts.
+fn resource_attributes(config: &Config, deployment_id: Option<&str>) -> Vec<(&'static str, String)> {
+    let mut attributes = Vec::new();
+    if let Some(id) = deployment_id {
+        attributes.push((ATTR_DEPLOYMENT_ID, id.to_string()));
+    }
+    attributes.extend([
         (ATTR_SERVICE_NAME, "prism-agent-runtime".to_string()),
         (ATTR_SERVICE_NAMESPACE, "prism-agent".to_string()),
         (
             ATTR_DEPLOYMENT_ENVIRONMENT_NAME,
             config.deployment_environment.clone(),
         ),
-    ];
+    ]);
     if !config.service_version.is_empty() {
         attributes.push((ATTR_SERVICE_VERSION, config.service_version.clone()));
     }
@@ -166,10 +221,10 @@ fn resource_attributes(config: &Config) -> Vec<(&'static str, String)> {
 
 /// The pipeline for `config`: OTLP/HTTP JSON to `<endpoint>/v1/logs`, with
 /// `x-api-key` when an API key is set, through a batch processor.
-fn build_pipeline(config: &Config) -> anyhow::Result<Pipeline> {
+fn build_pipeline(config: &Config, deployment_id: Option<&str>) -> anyhow::Result<Pipeline> {
     let resource = Resource::builder_empty()
         .with_attributes(
-            resource_attributes(config)
+            resource_attributes(config, deployment_id)
                 .into_iter()
                 .map(|(key, value)| KeyValue::new(key, value)),
         )
@@ -189,7 +244,7 @@ fn build_pipeline(config: &Config) -> anyhow::Result<Pipeline> {
     if !headers.is_empty() {
         builder = builder.with_headers(headers);
     }
-    let exporter = builder.build()?;
+    let exporter = CountingExporter(builder.build()?);
 
     let provider = SdkLoggerProvider::builder()
         .with_resource(resource)
@@ -199,14 +254,20 @@ fn build_pipeline(config: &Config) -> anyhow::Result<Pipeline> {
     Ok(Pipeline { provider, logger })
 }
 
-/// Builds the OTLP log pipeline when an endpoint is configured.
-pub fn init_telemetry() {
+/// Builds the OTLP log pipeline when an endpoint is configured. `deployment_id` is
+/// awaited only then, so a runtime without telemetry stores no id; the pipeline
+/// is built once it answers, so the first batch carries it.
+pub async fn init_telemetry<F>(deployment_id: impl FnOnce() -> F)
+where
+    F: std::future::Future<Output = Option<String>>,
+{
     if CONFIG.otel_endpoint.is_empty() {
         log_info!("[Telemetry] Not configured (no OTEL_EXPORTER_OTLP_ENDPOINT), skipping");
         return;
     }
 
-    let pipeline = match build_pipeline(&CONFIG) {
+    let deployment_id = deployment_id().await;
+    let pipeline = match build_pipeline(&CONFIG, deployment_id.as_deref()) {
         Ok(pipeline) => pipeline,
         Err(err) => {
             crate::log_error!(
@@ -293,10 +354,27 @@ fn emit(
     logger.emit(record);
 }
 
-/// Flushes and closes the pipeline, then logs `[Telemetry] Shutdown complete`.
-/// Does nothing when telemetry was never initialized.
-pub async fn shutdown_telemetry() {
+/// Export every buffered record now. Answers true when the collector accepted
+/// them: no export failed during the flush and none is still running. Answers
+/// false when telemetry is off or has shut down, since a record emitted then is
+/// dropped. A false answer can also come from another event's failed export.
+pub async fn flush_telemetry() -> bool {
     let Some(pipeline) = PIPELINE.read().clone() else {
+        return false;
+    };
+    let failed_before = FAILED_EXPORTS.load(Ordering::SeqCst);
+    let flushing = Arc::clone(&pipeline);
+    let _ = tokio::task::spawn_blocking(move || flushing.provider.force_flush()).await;
+    PIPELINE.read().is_some()
+        && FAILED_EXPORTS.load(Ordering::SeqCst) == failed_before
+        && EXPORTS_IN_FLIGHT.load(Ordering::SeqCst) == 0
+}
+
+/// Flushes and closes the pipeline, then logs `[Telemetry] Shutdown complete`.
+/// Does nothing when telemetry was never initialized. Events tracked from here
+/// on are dropped.
+pub async fn shutdown_telemetry() {
+    let Some(pipeline) = PIPELINE.write().take() else {
         return;
     };
     let shutdown = tokio::task::spawn_blocking(move || pipeline.provider.shutdown()).await;
@@ -406,14 +484,38 @@ mod tests {
         Config::load(&env, &mut |_, _| {}).expect("config loads")
     }
 
-    #[test]
-    fn track_event_is_a_no_op_when_not_configured() {
-        // The test configuration has no OTEL endpoint.
-        init_telemetry();
+    #[tokio::test]
+    async fn track_event_is_a_no_op_when_not_configured() {
+        // The test configuration has no OTEL endpoint, so the id is never read.
+        async fn unread() -> Option<String> {
+            panic!("the deployment id is read")
+        }
+        init_telemetry(unread).await;
         assert!(!is_telemetry_enabled());
         track_event("message feedback", Some("user-123"), None);
         track_event("message feedback", None, None);
         assert!(PIPELINE.read().is_none());
+        assert!(!flush_telemetry().await);
+    }
+
+    #[test]
+    fn puts_the_deployment_id_first_on_the_resource_when_known() {
+        let config = config_with(&[("OTEL_EXPORTER_OTLP_ENDPOINT", "http://example.test")]);
+        let attributes = resource_attributes(&config, Some("deploy-1"));
+        assert_eq!(attributes[0], ("deployment.id", "deploy-1".to_string()));
+        assert!(
+            !resource_attributes(&config, None)
+                .iter()
+                .any(|(k, _)| *k == "deployment.id")
+        );
+    }
+
+    #[test]
+    fn reports_routing_by_whether_the_gateway_mount_is_set() {
+        let direct = config_with(&[]);
+        assert_eq!(llm_routing_for(&direct), "direct");
+        let nexus = config_with(&[("NEXUS_API_URL", "https://nexus.example.test")]);
+        assert_eq!(llm_routing_for(&nexus), "nexus");
     }
 
     #[tokio::test]
@@ -430,7 +532,7 @@ mod tests {
             ("PRODUCT_NAME", "example-product"),
         ]);
         assert_eq!(
-            resource_attributes(&config),
+            resource_attributes(&config, None),
             vec![
                 ("service.name", "prism-agent-runtime".to_string()),
                 ("service.namespace", "prism-agent".to_string()),
@@ -444,7 +546,7 @@ mod tests {
     #[test]
     fn omits_service_version_and_product_name_when_not_configured() {
         let config = config_with(&[("OTEL_EXPORTER_OTLP_ENDPOINT", "http://example.test")]);
-        let attributes = resource_attributes(&config);
+        let attributes = resource_attributes(&config, None);
         assert!(!attributes.iter().any(|(k, _)| *k == "service.version"));
         assert!(!attributes.iter().any(|(k, _)| *k == "product.name"));
         assert!(attributes.contains(&("service.name", "prism-agent-runtime".to_string())));
@@ -489,7 +591,7 @@ mod tests {
             ("OTEL_EXPORTER_OTLP_API_KEY", "key-1"),
             ("DEPLOYMENT_ENVIRONMENT", "staging"),
         ]);
-        let pipeline = build_pipeline(&config).unwrap();
+        let pipeline = build_pipeline(&config, Some("deploy-1")).unwrap();
         let mut props = IndexMap::new();
         props.insert("feedback.rating".to_string(), "up".to_string());
         emit(
@@ -519,6 +621,10 @@ mod tests {
         assert_eq!(
             resource["deployment.environment.name"],
             serde_json::json!({ "stringValue": "staging" })
+        );
+        assert_eq!(
+            resource["deployment.id"],
+            serde_json::json!({ "stringValue": "deploy-1" })
         );
         let scope_logs = &resource_logs["scopeLogs"][0];
         assert_eq!(scope_logs["scope"]["name"], "product-telemetry");
