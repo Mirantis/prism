@@ -1,5 +1,0 @@
-src/lib/prisma-adapter.ts -> runtime/src/lib/prisma_adapter.rs (97 lines)
-src/lib/prisma.ts -> runtime/src/lib/prisma.rs (17 lines)
-src/lib/sqlite-bootstrap.ts -> runtime/src/lib/sqlite_bootstrap.rs (157 lines)
-src/lib/sqlite-path.ts -> runtime/src/lib/sqlite_path.rs (33 lines)
-src/sea/migrate.ts -> runtime/src/sea/migrate.rs (86 lines)

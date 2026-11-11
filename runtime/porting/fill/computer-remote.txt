@@ -1,5 +1,0 @@
-src/services/computer/remote/computer-link-endpoint.ts -> runtime/src/services/computer/remote/computer_link_endpoint.rs (280 lines)
-src/services/computer/remote/computer-link.ts -> runtime/src/services/computer/remote/computer_link.rs (189 lines)
-src/services/computer/remote/link-protocol.ts -> runtime/src/services/computer/remote/link_protocol.rs (166 lines)
-src/services/computer/remote/remote-computer.service.ts -> runtime/src/services/computer/remote/remote_computer_service.rs (175 lines)
-src/services/computer/remote/remote-computer.ts -> runtime/src/services/computer/remote/remote_computer.rs (749 lines)

@@ -1,8 +1,0 @@
-src/lib/agent-mcp-servers.ts -> runtime/src/lib/agent_mcp_servers.rs (43 lines) tests: src/lib/agent-mcp-servers.test.ts
-src/lib/execution-environments/exec-stdio-transport.ts -> runtime/src/lib/execution_environments/exec_stdio_transport.rs (109 lines)
-src/lib/mcp-client.ts -> runtime/src/lib/mcp_client.rs (104 lines) tests: src/lib/mcp-client.test.ts
-src/services/plugin-catalog.service.ts -> runtime/src/services/plugin_catalog_service.rs (416 lines)
-src/services/plugin-mcp-config.ts -> runtime/src/services/plugin_mcp_config.rs (393 lines)
-src/services/plugin-mcp.service.ts -> runtime/src/services/plugin_mcp_service.rs (474 lines)
-src/services/skill-catalog.service.ts -> runtime/src/services/skill_catalog_service.rs (307 lines)
-(new) runtime/src/ai/mcp/mod.rs — port @ai-sdk/mcp (MCP client: stdio over a custom transport, Streamable HTTP, legacy SSE; tools as AI SDK tools)
