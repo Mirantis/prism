@@ -19,8 +19,8 @@ use std::sync::Arc;
 
 use super::Database;
 
-/// The installed test database. Dropping it puts back the database it replaced and
-/// deletes the file.
+/// The installed test database. Dropping it puts back the database it replaced, and
+/// the agent and owner ids a test set for its rows, and deletes the file.
 pub struct TestDb {
     pub db: Arc<Database>,
     /// The database file.
@@ -28,6 +28,8 @@ pub struct TestDb {
     /// A `DATABASE_URL` naming the file.
     pub url: String,
     previous: Option<Arc<Database>>,
+    agent_id: Option<String>,
+    owner_user_id: String,
     dir: Option<tempfile::TempDir>,
 }
 
@@ -51,12 +53,16 @@ pub fn test_db() -> TestDb {
         path,
         url,
         previous,
+        agent_id: crate::config::CONFIG.agent_id(),
+        owner_user_id: crate::config::CONFIG.owner_user_id(),
         dir: Some(dir),
     }
 }
 
 impl Drop for TestDb {
     fn drop(&mut self) {
+        crate::config::CONFIG.set_agent_id(self.agent_id.take());
+        crate::config::CONFIG.set_owner_user_id(std::mem::take(&mut self.owner_user_id));
         crate::lib::sqlite_bootstrap::close_sqlite_vec();
         super::set_database(self.previous.take());
         // The pool's connections close with the last handle; the directory goes after.

@@ -37,6 +37,7 @@ fn load_err(pairs: &[(&str, &str)]) -> String {
 }
 
 #[test]
+#[serial_test::serial]
 fn unit_tests_read_the_fixed_test_configuration() {
     assert_eq!(CONFIG.agent_id().as_deref(), Some("test-agent-id"));
     assert_eq!(CONFIG.nexus_api_url, None);

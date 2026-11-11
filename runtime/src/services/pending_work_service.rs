@@ -201,14 +201,17 @@ impl PendingWorkService {
     /// again when a restart comes before the owner's own record of it. `payload` is
     /// stored as JSON. Fails when the row cannot be written, so the caller can
     /// refuse work it cannot keep.
-    pub async fn begin(
+    ///
+    /// The write is queued when `begin` is called, so a later `update` of the same row
+    /// lands after it even before the returned future is awaited.
+    pub fn begin(
         &self,
         kind: PendingWorkKind,
         key: &str,
         payload: serde_json::Value,
-    ) -> anyhow::Result<()> {
+    ) -> BoxFuture<'static, anyhow::Result<()>> {
         let row = NewPendingWork::new(kind.as_str(), key, payload.clone());
-        let done = self.write(kind, key, move || {
+        self.write(kind, key, move || {
             crate::db::run(move |conn| {
                 diesel::insert_into(pw::pending_work)
                     .values(&row)
@@ -222,8 +225,7 @@ impl PendingWorkService {
                 Ok(())
             })
             .boxed()
-        });
-        done.await
+        })
     }
 
     /// Replace what the owner needs to continue the work, e.g. once a session id
