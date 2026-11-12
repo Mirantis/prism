@@ -9,7 +9,7 @@ use parking_lot::Mutex;
 use serde_json::{Value, json};
 
 use super::*;
-use crate::services::meeting::realtime_session::tests::MockServer;
+use crate::services::meeting::realtime_session::tests::{MockServer, eventually};
 
 /// `ms` of pcm16 at 24 kHz filled with `byte`, the size a client frame has.
 fn pcm(ms: u64, byte: u8) -> Vec<u8> {
@@ -177,16 +177,13 @@ async fn commits_on_stop_and_answers_the_transcript_deltas_first() {
     (&mut h.started).await.unwrap();
     h.session.push_audio(&pcm(500, 0));
     h.session.commit();
-    settle(20).await;
-    assert_eq!(
-        h.sent().last().unwrap(),
-        &json!({ "type": "input_audio_buffer.commit" })
-    );
+    let commit = json!({ "type": "input_audio_buffer.commit" });
+    eventually("the commit", || h.sent().last() == Some(&commit)).await;
 
     h.server.emit(json!({ "type": "conversation.item.input_audio_transcription.delta", "item_id": "i1", "delta": "Hello, " }));
     h.server.emit(json!({ "type": "conversation.item.input_audio_transcription.delta", "item_id": "i1", "delta": "world." }));
     h.server.emit(json!({ "type": "conversation.item.input_audio_transcription.completed", "item_id": "i1", "transcript": " Hello, world. " }));
-    settle(20).await;
+    eventually("the transcript", || h.signal.calls().len() >= 4).await;
 
     assert_eq!(
         h.signal.calls(),
@@ -333,7 +330,13 @@ async fn reports_an_upstream_that_goes_away_mid_recording() {
     h.accept();
     (&mut h.started).await.unwrap();
     h.server.drop_from_server();
-    settle(40).await;
+    eventually("the error", || {
+        h.signal
+            .calls()
+            .last()
+            .is_some_and(|last| last.0 == "error")
+    })
+    .await;
     assert_eq!(
         h.signal.calls().last(),
         Some(&call(
