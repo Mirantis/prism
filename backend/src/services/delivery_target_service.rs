@@ -179,20 +179,11 @@ impl DeliveryTargetService {
         agent_id: &str,
         target: &DeliveryTarget,
     ) -> anyhow::Result<PostingCeiling> {
-        if target.deliver_to == "none" {
-            return Ok(PostingCeiling {
-                web_chat: false,
-                targets: Vec::new(),
-            });
-        }
-        if target.deliver_to == "chat" {
-            return Ok(PostingCeiling {
-                web_chat: true,
-                targets: Vec::new(),
-            });
-        }
-        let linked = OUTBOUND_MESSAGE_SERVICE.list_targets(agent_id).await?;
-        Ok(ceiling_over(target, linked))
+        let linked = match target.deliver_to.as_str() {
+            "none" | "chat" => Vec::new(),
+            _ => OUTBOUND_MESSAGE_SERVICE.list_targets(agent_id).await?,
+        };
+        Ok(ceiling_of(target, linked))
     }
 
     /// Read a channel list from a request, as the stored column value. The list
@@ -445,6 +436,21 @@ impl DeliveryTargetService {
             ),
             chosen_channels: Some(chosen_channels),
         })
+    }
+}
+
+/// The places a delivery setting allows, over the agent's linked targets.
+pub fn ceiling_of(target: &DeliveryTarget, linked: Vec<LinkedTarget>) -> PostingCeiling {
+    match target.deliver_to.as_str() {
+        "none" => PostingCeiling {
+            web_chat: false,
+            targets: Vec::new(),
+        },
+        "chat" => PostingCeiling {
+            web_chat: true,
+            targets: Vec::new(),
+        },
+        _ => ceiling_over(target, linked),
     }
 }
 

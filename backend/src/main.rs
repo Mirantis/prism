@@ -7,6 +7,7 @@
 //! - `prism-server coding-agent-exec --wrappers <dir> <claude|codex> [args…]` runs a
 //!   coding agent for the desktop's terminal.
 //! - `prism-server backfill-embeddings` embeds the memory entries that have none.
+//! - `prism-server eval` serves the prompt eval set (`evals/`) over stdin and stdout.
 
 use prism_runtime::lib::environment::is_sea;
 
@@ -43,6 +44,15 @@ fn main() {
                 env,
                 Default::default(),
             ));
+            std::process::exit(code);
+        }
+        Some("eval") => {
+            std::sync::LazyLock::force(&prism_runtime::lib::environment::DOTENV_LOAD_INFO);
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+            let code = runtime.block_on(prism_runtime::scripts::eval::main());
             std::process::exit(code);
         }
         Some("backfill-embeddings") => {
