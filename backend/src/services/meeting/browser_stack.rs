@@ -1177,6 +1177,41 @@ pub struct PageHandle {
     inner: Arc<PageInner>,
 }
 
+/// Playwright's preparation of a page for a screenshot with the caret hidden: every
+/// input, textarea and editable element, shadow roots included, gets a transparent
+/// `caret-color` until [`CLEANUP_AFTER_SCREENSHOT`] puts the old value back.
+const PREPARE_FOR_SCREENSHOT: &str = r#"(() => {
+  const roots = [];
+  const collect = (root) => {
+    roots.push(root);
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    do {
+      const node = walker.currentNode;
+      const shadowRoot = node instanceof Element ? node.shadowRoot : null;
+      if (shadowRoot) collect(shadowRoot);
+    } while (walker.nextNode());
+  };
+  collect(document);
+  const saved = new Map();
+  for (const root of roots) {
+    root.querySelectorAll('input,textarea,[contenteditable]').forEach((element) => {
+      saved.set(element, {
+        value: element.style.getPropertyValue('caret-color'),
+        priority: element.style.getPropertyPriority('caret-color'),
+      });
+      element.style.setProperty('caret-color', 'transparent', 'important');
+    });
+  }
+  window.__prismCleanupScreenshot = () => {
+    for (const [element, old] of saved) element.style.setProperty('caret-color', old.value, old.priority);
+    delete window.__prismCleanupScreenshot;
+  };
+  return true;
+})()"#;
+
+const CLEANUP_AFTER_SCREENSHOT: &str =
+    "window.__prismCleanupScreenshot ? (window.__prismCleanupScreenshot(), true) : false";
+
 /// Which JavaScript world an evaluation runs in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum World {
@@ -2287,13 +2322,33 @@ impl PageHandle {
         {
             params["quality"] = json!(quality);
         }
+        // As Playwright prepares a page: the text caret hidden and the fonts loaded, so
+        // the picture shows the page as it rests. A failed step leaves the page as it is.
+        let target = &self.inner.target_id;
+        let _ = self
+            .inner
+            .evaluate_in(target, World::Utility, PREPARE_FOR_SCREENSHOT)
+            .await;
+        let _ = self
+            .inner
+            .evaluate_in(
+                target,
+                World::Utility,
+                "document.fonts.ready.then(() => true)",
+            )
+            .await;
         let shot = tokio::time::timeout(
             Duration::from_millis(timeout_ms),
             self.inner.send("Page.captureScreenshot", params),
         )
-        .await
-        .map_err(|_| anyhow::anyhow!("page.screenshot: Timeout {timeout_ms}ms exceeded."))?
-        .map_err(|err| anyhow::anyhow!("page.screenshot: {}", err.into_anyhow()))?;
+        .await;
+        let _ = self
+            .inner
+            .evaluate_in(target, World::Utility, CLEANUP_AFTER_SCREENSHOT)
+            .await;
+        let shot = shot
+            .map_err(|_| anyhow::anyhow!("page.screenshot: Timeout {timeout_ms}ms exceeded."))?
+            .map_err(|err| anyhow::anyhow!("page.screenshot: {}", err.into_anyhow()))?;
         use base64::Engine as _;
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(shot["data"].as_str().unwrap_or_default())
@@ -4000,7 +4055,8 @@ mod tests {
             let Some(live) = Live::start().await else {
                 return;
             };
-            live.show("<title>Hello</title><p>x</p>").await;
+            live.show(r#"<title>Hello</title><p>x</p><input id="i" style="caret-color: red">"#)
+                .await;
             let page = &live.page;
             assert_eq!(page.title().await.unwrap(), "Hello");
             assert_eq!(
@@ -4025,6 +4081,13 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(&shot[..2], &[0xFF, 0xD8]);
+            // The caret is hidden for the picture only: the page's own style is back.
+            assert_eq!(
+                page.evaluate("document.getElementById('i').style.caretColor")
+                    .await
+                    .unwrap(),
+                json!("red")
+            );
             let err = page
                 .goto(
                     "http://nonexistent.invalid/",
