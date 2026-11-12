@@ -2,8 +2,7 @@
 # Run the built image the way a deployment runs it, with this checkout's `.env`.
 #
 # Nothing from the working tree but that file: the code, the web bundle and the Prisma
-# client are the image's own, so this is the image as it would ship. `npm run docker:dev`
-# is the other loop, which mounts the code in and recompiles on save.
+# client are the image's own, so this is the image as it would ship.
 #
 # The container is removed when it exits. The data volume is not: the agent's database,
 # its skills and its browser profile outlive a restart, as they do in a deployment.

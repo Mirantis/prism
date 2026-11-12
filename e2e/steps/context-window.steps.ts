@@ -19,7 +19,7 @@ import { DEFAULT_AGENT_ID } from '../fixtures/test-data';
 // The same vendored catalog the runtime resolves windows from. Read here rather
 // than hardcoding a number: the e2e agent's model is whatever the environment
 // configures, so a literal would silently encode the wrong denominator.
-import modelLimits from '../../src/lib/model-limits.generated.json';
+import modelLimits from '../../backend/src/lib/model_limits.generated.json';
 
 const { Given, When, Then } = createBdd();
 

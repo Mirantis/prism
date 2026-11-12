@@ -36,7 +36,9 @@ pub async fn serve(port: u16) -> anyhow::Result<(SocketAddr, Arc<MockStats>)> {
 
 async fn messages(State(stats): State<Arc<MockStats>>, body: String) -> Json<Value> {
     stats.requests.fetch_add(1, Ordering::Relaxed);
-    stats.request_bytes.fetch_add(body.len() as u64, Ordering::Relaxed);
+    stats
+        .request_bytes
+        .fetch_add(body.len() as u64, Ordering::Relaxed);
     let request: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
     let model = request["model"].as_str().unwrap_or("mock").to_string();
     let input_tokens = (body.len() / 4) as u64;
@@ -48,7 +50,12 @@ async fn messages(State(stats): State<Arc<MockStats>>, body: String) -> Json<Val
             .and_then(|tools| tools.iter().find(|t| t["name"] == name))
             .map(|t| t["input_schema"].clone())
             .unwrap_or(Value::Null);
-        return Json(reply(&model, vec![tool_use(name, sample(&schema))], "tool_use", input_tokens));
+        return Json(reply(
+            &model,
+            vec![tool_use(name, sample(&schema))],
+            "tool_use",
+            input_tokens,
+        ));
     }
 
     let messages = request["messages"].as_array().cloned().unwrap_or_default();
@@ -68,10 +75,21 @@ async fn messages(State(stats): State<Arc<MockStats>>, body: String) -> Json<Val
             .as_array()
             .is_some_and(|tools| tools.iter().any(|t| t["name"] == name))
     };
-    if last_user_text.contains("BENCH_TOOL") && !has_tool_result && has_tool("list_scheduled_tasks") {
-        return Json(reply(&model, vec![tool_use("list_scheduled_tasks", json!({}))], "tool_use", input_tokens));
+    if last_user_text.contains("BENCH_TOOL") && !has_tool_result && has_tool("list_scheduled_tasks")
+    {
+        return Json(reply(
+            &model,
+            vec![tool_use("list_scheduled_tasks", json!({}))],
+            "tool_use",
+            input_tokens,
+        ));
     }
-    Json(reply(&model, vec![json!({ "type": "text", "text": "ok" })], "end_turn", input_tokens))
+    Json(reply(
+        &model,
+        vec![json!({ "type": "text", "text": "ok" })],
+        "end_turn",
+        input_tokens,
+    ))
 }
 
 fn text_of(message: &Value) -> String {
@@ -118,7 +136,10 @@ fn sample(schema: &Value) -> Value {
     if let Some(values) = schema["enum"].as_array() {
         return values.first().cloned().unwrap_or(Value::Null);
     }
-    if let Some(any_of) = schema["anyOf"].as_array().or_else(|| schema["oneOf"].as_array()) {
+    if let Some(any_of) = schema["anyOf"]
+        .as_array()
+        .or_else(|| schema["oneOf"].as_array())
+    {
         return any_of.first().map(sample).unwrap_or(Value::Null);
     }
     match schema["type"].as_str() {

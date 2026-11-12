@@ -16,11 +16,12 @@ import Database from 'better-sqlite3';
 import { loadFeatureFromText, describeFeature } from '@amiceli/vitest-cucumber';
 import { BOOT_FRAME_TIMEOUT_MS, startPrism, type TuiSession } from '../harness';
 import { setupRuntime, runtimeRequest, type RuntimeTestEnv } from '../setup';
-import {
-  COMPACTION_TAIL_MESSAGES,
-  IDLE_COMPACTION_CACHE_SHARE,
-  IDLE_COMPACTION_MIN_TOKENS,
-} from '../../../src/constants';
+
+// The runtime's defaults (`COMPACTION_TAIL_MESSAGES`, `IDLE_COMPACTION_CACHE_SHARE` and
+// `IDLE_COMPACTION_MIN_TOKENS` in `backend/src/constants.rs`).
+const COMPACTION_TAIL_MESSAGES = 6;
+const IDLE_COMPACTION_CACHE_SHARE = 0.9;
+const IDLE_COMPACTION_MIN_TOKENS = 200_000;
 
 const feature = loadFeatureFromText(
   readFileSync(join(import.meta.dirname, '../features/idle-compaction.feature'), 'utf8'),

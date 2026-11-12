@@ -118,7 +118,12 @@ fn build_env(mock: &str, dir: &Path) -> Env {
     .into_iter()
     .map(|(k, v)| (k.to_string(), v))
     .collect();
-    Env { vars, dir: dir.to_path_buf(), port, db }
+    Env {
+        vars,
+        dir: dir.to_path_buf(),
+        port,
+        db,
+    }
 }
 
 async fn start(args: &RunArgs, env: &Env) -> anyhow::Result<(Runtime, f64)> {
@@ -127,9 +132,14 @@ async fn start(args: &RunArgs, env: &Env) -> anyhow::Result<(Runtime, f64)> {
     cmd.args(&parts[1..])
         .current_dir(&args.cwd)
         .stdin(Stdio::null())
-        .stdout(Stdio::from(std::fs::File::create(env.dir.join("runtime.log"))?))
+        .stdout(Stdio::from(std::fs::File::create(
+            env.dir.join("runtime.log"),
+        )?))
         .stderr(Stdio::from(
-            std::fs::OpenOptions::new().append(true).create(true).open(env.dir.join("runtime.log"))?,
+            std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(env.dir.join("runtime.log"))?,
         ))
         .kill_on_drop(true);
     for (k, v) in &env.vars {
@@ -142,7 +152,10 @@ async fn start(args: &RunArgs, env: &Env) -> anyhow::Result<(Runtime, f64)> {
     let deadline = started + Duration::from_secs(120);
     loop {
         if Instant::now() > deadline {
-            anyhow::bail!("runtime did not answer /health in 120 s; see {}", env.dir.join("runtime.log").display());
+            anyhow::bail!(
+                "runtime did not answer /health in 120 s; see {}",
+                env.dir.join("runtime.log").display()
+            );
         }
         if let Ok(res) = client.get(format!("{base}/health")).send().await {
             if res.status().is_success() {
@@ -152,14 +165,28 @@ async fn start(args: &RunArgs, env: &Env) -> anyhow::Result<(Runtime, f64)> {
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
     let boot_ms = started.elapsed().as_secs_f64() * 1000.0;
-    Ok((Runtime { child, base, port: env.port }, boot_ms))
+    Ok((
+        Runtime {
+            child,
+            base,
+            port: env.port,
+        },
+        boot_ms,
+    ))
 }
 
 async fn stop(mut runtime: Runtime) {
     if let Some(pid) = runtime.child.id() {
-        let _ = Command::new("kill").arg("-TERM").arg(pid.to_string()).status().await;
+        let _ = Command::new("kill")
+            .arg("-TERM")
+            .arg(pid.to_string())
+            .status()
+            .await;
     }
-    if tokio::time::timeout(Duration::from_secs(15), runtime.child.wait()).await.is_err() {
+    if tokio::time::timeout(Duration::from_secs(15), runtime.child.wait())
+        .await
+        .is_err()
+    {
         let _ = runtime.child.kill().await;
     }
 }
@@ -178,7 +205,12 @@ pub fn rss_kb(pid: u32) -> u64 {
 /// User plus system CPU time of a process, in milliseconds.
 pub fn cpu_ms(pid: u32) -> f64 {
     if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-        let fields: Vec<&str> = stat.rsplit(')').next().unwrap_or("").split_whitespace().collect();
+        let fields: Vec<&str> = stat
+            .rsplit(')')
+            .next()
+            .unwrap_or("")
+            .split_whitespace()
+            .collect();
         let ticks: f64 = fields.get(11).and_then(|v| v.parse().ok()).unwrap_or(0.0)
             + fields.get(12).and_then(|v| v.parse().ok()).unwrap_or(0.0);
         return ticks * 10.0;
@@ -199,7 +231,8 @@ pub fn cpu_ms(pid: u32) -> f64 {
 pub async fn run(args: RunArgs) -> anyhow::Result<()> {
     let (mock_addr, mock_stats) = crate::mock_llm::serve(0).await?;
     let mock = format!("http://{mock_addr}");
-    let dir = std::env::temp_dir().join(format!("prism-bench-{}-{}", args.name, std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("prism-bench-{}-{}", args.name, std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir)?;
     let env = build_env(&mock, &dir);
@@ -208,7 +241,10 @@ pub async fn run(args: RunArgs) -> anyhow::Result<()> {
     if let Some(prepare) = &args.prepare {
         let parts: Vec<&str> = prepare.split_whitespace().collect();
         let mut cmd = Command::new(parts[0]);
-        cmd.args(&parts[1..]).current_dir(&args.cwd).stdout(Stdio::null()).stderr(Stdio::null());
+        cmd.args(&parts[1..])
+            .current_dir(&args.cwd)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
         for (k, v) in &env.vars {
             cmd.env(k, v);
         }
@@ -242,7 +278,9 @@ pub async fn run(args: RunArgs) -> anyhow::Result<()> {
         idle_rss_kb,
         binary_or_bundle: args.cmd.clone(),
         scenarios,
-        mock_requests: mock_stats.requests.load(std::sync::atomic::Ordering::Relaxed),
+        mock_requests: mock_stats
+            .requests
+            .load(std::sync::atomic::Ordering::Relaxed),
     };
     std::fs::write(&args.out, serde_json::to_string_pretty(&result)?)?;
     eprintln!("[{}] wrote {}", args.name, args.out.display());

@@ -14,7 +14,7 @@
  * tool was called does not. It is a net rather than a gate: real Bedrock cannot be
  * made to batch the edit and the share into one tool block, so a run where it
  * sequences them passes without exercising the defect. The deterministic proof is
- * the unit test in `src/tools/__tests__/share-file.test.ts`.
+ * the unit tests in `backend/src/tools/share_file.rs`.
  */
 
 import fs from 'node:fs';
