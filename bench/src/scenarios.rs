@@ -188,19 +188,23 @@ async fn connect(port: u16) -> anyhow::Result<Socket> {
     }
 }
 
-/// `concurrency` clients opening a socket, completing the handshake and closing it.
-async fn ws_handshakes(rt: &Runtime, args: &RunArgs) -> ScenarioResult {
+/// Clients opening a socket, completing the handshake and closing it, a fixed number
+/// of times each. Half the gateway's 16 connections, so a socket still closing never
+/// counts toward the limit, and a fixed count, so a fast build does not run the
+/// client out of local ports.
+const HANDSHAKE_CLIENTS: usize = 8;
+const HANDSHAKES_PER_CLIENT: usize = 500;
+
+async fn ws_handshakes(rt: &Runtime, _args: &RunArgs) -> ScenarioResult {
     let probe = Probe::start(rt.pid());
-    let deadline = Instant::now() + Duration::from_secs(args.duration);
     let started = Instant::now();
-    let concurrency = args.concurrency.min(16);
     let mut tasks = Vec::new();
-    for _ in 0..concurrency {
+    for _ in 0..HANDSHAKE_CLIENTS {
         let port = rt.port;
         tasks.push(tokio::spawn(async move {
             let mut h = histogram();
             let mut errors = 0u64;
-            while Instant::now() < deadline {
+            for _ in 0..HANDSHAKES_PER_CLIENT {
                 let t = Instant::now();
                 match connect(port).await {
                     Ok(mut ws) => {
@@ -229,7 +233,7 @@ async fn ws_handshakes(rt: &Runtime, args: &RunArgs) -> ScenarioResult {
     let (cpu, peak) = probe.finish().await;
     result(
         "ws_handshake",
-        "Open /api/ws, hello → welcome, close (16 clients)",
+        "Open /api/ws, hello → welcome, close (8 clients, 500 each)",
         &h,
         errors,
         seconds,
@@ -250,41 +254,53 @@ async fn create_thread(client: &reqwest::Client, rt: &Runtime) -> anyhow::Result
     Ok(res["threadId"].as_str().unwrap_or_default().to_string())
 }
 
-/// Sends one message and waits for its conversation to go idle.
-async fn turn(ws: &mut Socket, thread_id: &str, content: &str) -> anyhow::Result<()> {
-    let request_id = uuid::Uuid::new_v4().to_string();
-    let frame = json!({
-        "type": "send",
-        "id": request_id,
-        "payload": { "message": { "id": uuid::Uuid::new_v4().to_string(), "threadId": thread_id, "content": content, "attachmentIds": [] } },
-    });
-    ws.send(Message::Text(frame.to_string().into())).await?;
+/// Sends one message and waits for its conversation to go idle, and answers how long
+/// that took from the accepted send. A send the gateway's rate limit refuses is sent
+/// again after the `retryAfterMs` it names, as a client does, so the scenario measures
+/// the turn and not the limit.
+async fn turn(ws: &mut Socket, thread_id: &str, content: &str) -> anyhow::Result<Duration> {
+    let message_id = uuid::Uuid::new_v4().to_string();
     let deadline = Instant::now() + Duration::from_secs(120);
-    let mut acked = false;
-    loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        let frame = tokio::time::timeout(remaining, ws.next())
-            .await
-            .map_err(|_| anyhow::anyhow!("turn timed out"))?
-            .ok_or_else(|| anyhow::anyhow!("socket closed"))??;
-        let Message::Text(text) = frame else { continue };
-        let value: Value = serde_json::from_str(&text)?;
-        match value["type"].as_str() {
-            Some("nack") if value["re"] == request_id.as_str() => {
-                anyhow::bail!("send refused: {text}")
-            }
-            Some("ack") if value["re"] == request_id.as_str() => acked = true,
-            Some("turn")
-                if acked
-                    && value["payload"]["threadId"] == thread_id
-                    && value["payload"]["state"] == "idle" =>
-            {
-                if value["payload"]["outcome"] == "failed" {
-                    anyhow::bail!("turn failed: {text}");
+    'attempt: loop {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let frame = json!({
+            "type": "send",
+            "id": request_id,
+            "payload": { "message": { "id": message_id, "threadId": thread_id, "content": content, "attachmentIds": [] } },
+        });
+        let started = Instant::now();
+        ws.send(Message::Text(frame.to_string().into())).await?;
+        let mut acked = false;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let frame = tokio::time::timeout(remaining, ws.next())
+                .await
+                .map_err(|_| anyhow::anyhow!("turn timed out"))?
+                .ok_or_else(|| anyhow::anyhow!("socket closed"))??;
+            let Message::Text(text) = frame else { continue };
+            let value: Value = serde_json::from_str(&text)?;
+            match value["type"].as_str() {
+                Some("nack") if value["re"] == request_id.as_str() => {
+                    if value["payload"]["code"] == "rate_limited" {
+                        let wait = value["payload"]["retryAfterMs"].as_u64().unwrap_or(100);
+                        tokio::time::sleep(Duration::from_millis(wait + 1)).await;
+                        continue 'attempt;
+                    }
+                    anyhow::bail!("send refused: {text}")
                 }
-                return Ok(());
+                Some("ack") if value["re"] == request_id.as_str() => acked = true,
+                Some("turn")
+                    if acked
+                        && value["payload"]["threadId"] == thread_id
+                        && value["payload"]["state"] == "idle" =>
+                {
+                    if value["payload"]["outcome"] == "failed" {
+                        anyhow::bail!("turn failed: {text}");
+                    }
+                    return Ok(started.elapsed());
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
 }
@@ -315,10 +331,9 @@ async fn turns(
     let mut h = histogram();
     let mut errors = 0;
     for thread_id in &threads {
-        let t = Instant::now();
         match turn(&mut ws, thread_id, content).await {
-            Ok(()) => {
-                h.record(t.elapsed().as_micros().max(1) as u64).ok();
+            Ok(took) => {
+                h.record(took.as_micros().max(1) as u64).ok();
             }
             Err(e) => {
                 errors += 1;
