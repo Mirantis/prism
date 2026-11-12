@@ -124,6 +124,26 @@ pub const LLM_CALL_PURPOSES: [LlmCallPurpose; 13] = [
     LlmCallPurpose::ModelRouting,
 ];
 
+/// The tokens of the model calls recorded while a [`counting_usage`] scope runs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct CountedUsage {
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+}
+
+tokio::task_local! {
+    static COUNTED_USAGE: std::sync::Arc<parking_lot::Mutex<CountedUsage>>;
+}
+
+/// Run `work`, and answer the tokens of every model call it recorded, with its output.
+/// The prompt eval set counts a sample's spend this way.
+pub async fn counting_usage<F: std::future::Future>(work: F) -> (F::Output, CountedUsage) {
+    let counted = std::sync::Arc::new(parking_lot::Mutex::new(CountedUsage::default()));
+    let output = COUNTED_USAGE.scope(counted.clone(), work).await;
+    let usage = *counted.lock();
+    (output, usage)
+}
+
 /// One model call to record.
 #[derive(Debug, Clone)]
 pub struct RecordInput {
@@ -204,6 +224,12 @@ impl LlmCallService {
     /// one would undercount the calls to keep the tokens tidy — and zero tokens is
     /// the honest record of a call whose cost the provider did not report.
     pub fn record(&self, input: RecordInput) {
+        let _ = COUNTED_USAGE.try_with(|counted| {
+            let usage = input.usage.as_ref();
+            let mut counted = counted.lock();
+            counted.input_tokens += usage.and_then(|u| u.input_tokens).unwrap_or(0);
+            counted.output_tokens += usage.and_then(|u| u.output_tokens).unwrap_or(0);
+        });
         // The owner pays, whoever ran the call. Filtering reads on this one column
         // keeps a past window's total from moving when a subagent link changes.
         let Some(row) = call_row(&input) else {
