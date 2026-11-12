@@ -1261,11 +1261,11 @@ impl HeartbeatService {
         }
     }
 
-    fn build_heartbeat_prompt(&self) -> String {
+    pub fn build_heartbeat_prompt(&self) -> String {
         HEARTBEAT_PROMPT.to_string()
     }
 
-    fn build_triggered_heartbeat_prompt(&self, triggers: &[HeartbeatTrigger]) -> String {
+    pub fn build_triggered_heartbeat_prompt(&self, triggers: &[HeartbeatTrigger]) -> String {
         let platforms = triggers
             .iter()
             .map(|trigger| trigger.platform.as_str())
