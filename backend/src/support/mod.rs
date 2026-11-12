@@ -5,6 +5,7 @@
 pub mod after_accept;
 pub mod http;
 pub mod js;
+pub mod path;
 pub mod serde_iso;
 
 use chrono::{DateTime, SecondsFormat, TimeZone, Utc};

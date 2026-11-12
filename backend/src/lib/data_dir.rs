@@ -192,22 +192,7 @@ fn home_dir() -> String {
         .unwrap_or_default()
 }
 
-/// `path.resolve(p)`: absolute against the working directory, then normalized.
-fn resolve_path(path: &str) -> String {
-    #[cfg(windows)]
-    {
-        return std::path::absolute(path)
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| path.to_string());
-    }
-    if path.starts_with('/') {
-        return normalize(path);
-    }
-    let cwd = std::env::current_dir()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    normalize(&format!("{cwd}/{path}"))
-}
+use crate::support::path::resolve as resolve_path;
 
 /// `path.join(base, name)` for an absolute `base`.
 fn join_path(base: &str, name: &str) -> String {
