@@ -26,6 +26,14 @@ pub struct DotenvLoadInfo {
     pub error: Option<anyhow::Error>,
 }
 
+/// Name the process's TLS provider. The dependency tree compiles in two rustls
+/// backends, and with no provider named a TLS connection that uses the process
+/// default (every `wss://` socket: Slack Socket Mode, the Realtime API) panics.
+/// The first call wins; later calls change nothing.
+pub fn install_tls_provider() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+}
+
 /// Whether this is the packaged binary, which carries its release version baked
 /// in at build time (`PRISM_VERSION`).
 pub fn is_sea() -> bool {
@@ -201,6 +209,15 @@ pub fn process_env() -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_a_tls_provider_so_a_default_client_config_builds() {
+        install_tls_provider();
+        install_tls_provider();
+        assert!(rustls::crypto::CryptoProvider::get_default().is_some());
+        // What `tokio-tungstenite` does for a `wss://` address; it panics with no provider.
+        let _ = rustls::ClientConfig::builder();
+    }
 
     #[test]
     fn parses_plain_quoted_and_commented_values() {

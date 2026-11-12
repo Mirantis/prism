@@ -12,6 +12,7 @@
 use prism_runtime::lib::environment::is_sea;
 
 fn main() {
+    prism_runtime::lib::environment::install_tls_provider();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("--version" | "-v") => {
