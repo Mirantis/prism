@@ -910,8 +910,16 @@ pub fn get_computer_tools(
 mod tests {
     use super::*;
 
-    #[test]
-    fn the_definitions_match_the_typescript_runtime() {
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn the_definitions_match_the_typescript_runtime() {
+        // The fixture holds the tools with no remote computer registered; the computers
+        // other tests add stay in the service's memory, so it is reloaded empty.
+        let _db = crate::db::testing::test_db();
+        REMOTE_COMPUTER_SERVICE
+            .load("agent-without-computers")
+            .await
+            .unwrap();
         let tools = get_computer_tools(None, None, Some("chat"));
         crate::tools::schema_fixture::assert_matches_fixture("computer:chat", &tools);
     }
