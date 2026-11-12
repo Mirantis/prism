@@ -49,14 +49,23 @@ impl Probe {
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
         });
-        Probe { pid, stop, peak, cpu_start: cpu_ms(pid), handle }
+        Probe {
+            pid,
+            stop,
+            peak,
+            cpu_start: cpu_ms(pid),
+            handle,
+        }
     }
 
     async fn finish(self) -> (f64, u64) {
         self.stop.store(true, Ordering::Relaxed);
         let _ = self.handle.await;
         self.peak.fetch_max(rss_kb(self.pid), Ordering::Relaxed);
-        (cpu_ms(self.pid) - self.cpu_start, self.peak.load(Ordering::Relaxed))
+        (
+            cpu_ms(self.pid) - self.cpu_start,
+            self.peak.load(Ordering::Relaxed),
+        )
     }
 }
 
@@ -64,7 +73,15 @@ fn histogram() -> Histogram<u64> {
     Histogram::new_with_bounds(1, 600_000_000, 3).expect("histogram")
 }
 
-fn result(name: &str, description: &str, h: &Histogram<u64>, errors: u64, seconds: f64, cpu: f64, peak: u64) -> ScenarioResult {
+fn result(
+    name: &str,
+    description: &str,
+    h: &Histogram<u64>,
+    errors: u64,
+    seconds: f64,
+    cpu: f64,
+    peak: u64,
+) -> ScenarioResult {
     let ms = |v: u64| v as f64 / 1000.0;
     let ops = h.len();
     ScenarioResult {
@@ -85,12 +102,25 @@ fn result(name: &str, description: &str, h: &Histogram<u64>, errors: u64, second
 }
 
 /// `concurrency` clients repeating `GET path` for `duration` seconds.
-async fn http_load(rt: &Runtime, args: &RunArgs, name: &str, description: &str, path: &str) -> ScenarioResult {
-    let client = reqwest::Client::builder().pool_max_idle_per_host(args.concurrency).build().unwrap();
+async fn http_load(
+    rt: &Runtime,
+    args: &RunArgs,
+    name: &str,
+    description: &str,
+    path: &str,
+) -> ScenarioResult {
+    let client = reqwest::Client::builder()
+        .pool_max_idle_per_host(args.concurrency)
+        .build()
+        .unwrap();
     let url = format!("{}{}", rt.base, path);
     // Warm up connections and caches.
     for _ in 0..20 {
-        let _ = client.get(&url).send().await.and_then(|r| r.error_for_status());
+        let _ = client
+            .get(&url)
+            .send()
+            .await
+            .and_then(|r| r.error_for_status());
     }
     let probe = Probe::start(rt.pid());
     let deadline = Instant::now() + Duration::from_secs(args.duration);
@@ -126,10 +156,12 @@ async fn http_load(rt: &Runtime, args: &RunArgs, name: &str, description: &str, 
     result(name, description, &h, errors, seconds, cpu, peak)
 }
 
-type Socket = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn connect(port: u16) -> anyhow::Result<Socket> {
-    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/api/ws")).await?;
+    let (mut ws, _) =
+        tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/api/ws")).await?;
     let hello = json!({
         "type": "hello",
         "id": "h1",
@@ -137,7 +169,13 @@ async fn connect(port: u16) -> anyhow::Result<Socket> {
     });
     ws.send(Message::Text(hello.to_string().into())).await?;
     loop {
-        let frame = ws.next().await.ok_or_else(|| anyhow::anyhow!("socket closed before welcome"))??;
+        let frame = ws
+            .next()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("socket closed before welcome"))??;
+        if let Message::Close(close) = &frame {
+            anyhow::bail!("closed before welcome: {close:?}");
+        }
         if let Message::Text(text) = frame {
             let value: Value = serde_json::from_str(&text)?;
             if value["type"] == "welcome" {
@@ -169,7 +207,12 @@ async fn ws_handshakes(rt: &Runtime, args: &RunArgs) -> ScenarioResult {
                         h.record(t.elapsed().as_micros().max(1) as u64).ok();
                         let _ = ws.close(None).await;
                     }
-                    Err(_) => errors += 1,
+                    Err(e) => {
+                        if errors == 0 {
+                            eprintln!("ws_handshake: {e}");
+                        }
+                        errors += 1;
+                    }
                 }
             }
             (h, errors)
@@ -196,7 +239,14 @@ async fn ws_handshakes(rt: &Runtime, args: &RunArgs) -> ScenarioResult {
 }
 
 async fn create_thread(client: &reqwest::Client, rt: &Runtime) -> anyhow::Result<String> {
-    let res: Value = client.post(format!("{}/threads", rt.base)).json(&json!({})).send().await?.error_for_status()?.json().await?;
+    let res: Value = client
+        .post(format!("{}/threads", rt.base))
+        .json(&json!({}))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
     Ok(res["threadId"].as_str().unwrap_or_default().to_string())
 }
 
@@ -220,10 +270,14 @@ async fn turn(ws: &mut Socket, thread_id: &str, content: &str) -> anyhow::Result
         let Message::Text(text) = frame else { continue };
         let value: Value = serde_json::from_str(&text)?;
         match value["type"].as_str() {
-            Some("nack") if value["re"] == request_id.as_str() => anyhow::bail!("send refused: {text}"),
+            Some("nack") if value["re"] == request_id.as_str() => {
+                anyhow::bail!("send refused: {text}")
+            }
             Some("ack") if value["re"] == request_id.as_str() => acked = true,
             Some("turn")
-                if acked && value["payload"]["threadId"] == thread_id && value["payload"]["state"] == "idle" =>
+                if acked
+                    && value["payload"]["threadId"] == thread_id
+                    && value["payload"]["state"] == "idle" =>
             {
                 if value["payload"]["outcome"] == "failed" {
                     anyhow::bail!("turn failed: {text}");
@@ -235,7 +289,15 @@ async fn turn(ws: &mut Socket, thread_id: &str, content: &str) -> anyhow::Result
     }
 }
 
-async fn turns(rt: &Runtime, args: &RunArgs, name: &str, description: &str, content: &str, thread: Option<&str>, count: usize) -> anyhow::Result<ScenarioResult> {
+async fn turns(
+    rt: &Runtime,
+    args: &RunArgs,
+    name: &str,
+    description: &str,
+    content: &str,
+    thread: Option<&str>,
+    count: usize,
+) -> anyhow::Result<ScenarioResult> {
     let client = reqwest::Client::new();
     let mut threads = Vec::new();
     for _ in 0..count {
@@ -287,7 +349,11 @@ fn seed_history(env: &Env, thread_id: &str, count: usize) -> anyhow::Result<()> 
     Ok(())
 }
 
-pub async fn run_all(args: &RunArgs, env: &Env, rt: &Runtime) -> anyhow::Result<Vec<ScenarioResult>> {
+pub async fn run_all(
+    args: &RunArgs,
+    env: &Env,
+    rt: &Runtime,
+) -> anyhow::Result<Vec<ScenarioResult>> {
     let client = reqwest::Client::new();
     let mut out = Vec::new();
 
@@ -308,7 +374,15 @@ pub async fn run_all(args: &RunArgs, env: &Env, rt: &Runtime) -> anyhow::Result<
         }
         let seconds = started.elapsed().as_secs_f64();
         let (cpu, peak) = probe.finish().await;
-        out.push(result("thread_create", "POST /threads, sequential, 200 threads", &h, errors, seconds, cpu, peak));
+        out.push(result(
+            "thread_create",
+            "POST /threads, sequential, 200 threads",
+            &h,
+            errors,
+            seconds,
+            cpu,
+            peak,
+        ));
     }
 
     let history_thread = create_thread(&client, rt).await?;
@@ -316,7 +390,16 @@ pub async fn run_all(args: &RunArgs, env: &Env, rt: &Runtime) -> anyhow::Result<
 
     out.push(http_load(rt, args, "http_health", "GET /health", "/health").await);
     out.push(http_load(rt, args, "http_agent_me", "GET /agents/me", "/agents/me").await);
-    out.push(http_load(rt, args, "http_threads", "GET /threads (200 threads)", "/threads").await);
+    out.push(
+        http_load(
+            rt,
+            args,
+            "http_threads",
+            "GET /threads (200 threads)",
+            "/threads",
+        )
+        .await,
+    );
     out.push(
         http_load(
             rt,
@@ -329,7 +412,16 @@ pub async fn run_all(args: &RunArgs, env: &Env, rt: &Runtime) -> anyhow::Result<
     );
     out.push(ws_handshakes(rt, args).await);
     out.push(
-        turns(rt, args, "chat_turn", "Chat turn over /api/ws on a new thread, text reply", "hello", None, args.turns).await?,
+        turns(
+            rt,
+            args,
+            "chat_turn",
+            "Chat turn over /api/ws on a new thread, text reply",
+            "hello",
+            None,
+            args.turns,
+        )
+        .await?,
     );
     out.push(
         turns(

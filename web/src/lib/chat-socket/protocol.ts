@@ -1,10 +1,10 @@
 /**
  * The web client's copy of the chat socket contract, `/api/ws` version 2.
  *
- * The runtime's schemas in `src/protocol/chat-protocol.ts` are the authority, and
+ * The runtime's schemas in `backend/src/protocol/chat_protocol.rs` are the authority, and
  * `docs/websocket-protocol.md` describes them. This workspace cannot import runtime
  * code, so the shapes are repeated here, and the contract test replays the recorded
- * session in `src/protocol/fixtures/` against them.
+ * session in `backend/src/protocol/fixtures/` against them.
  */
 
 export const PROTOCOL_VERSION = 2;

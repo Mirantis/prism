@@ -28,7 +28,7 @@ enum AgentHeartbeatStatus {
 }
 
 // How a turn's model is chosen. FIXED runs the per-mode model columns; AUTO
-// picks one of the tier columns per turn (`lib/model-routing.ts`).
+// picks one of the tier columns per turn (`lib/model_routing.rs`).
 enum AgentModelMode {
   FIXED
   AUTO
@@ -68,7 +68,7 @@ enum AgentType {
   SUBAGENT
 }
 
-// Webhook sender verification (see src/lib/webhook-signature.ts). Members are
+// Webhook sender verification (see backend/src/lib/webhook_signature.rs). Members are
 // lowercase, unlike the enums above, because these values are wire tokens: they
 // are what the management API accepts, what the SPA sends, and what the digest
 // names mean to the senders being verified.
@@ -515,8 +515,8 @@ model LlmCall {
 //
 // SQLite note: `embedding` holds a packed Float32Array as BLOB. Vector
 // search does NOT go through Prisma — use the `memory_entry_vec` vec0
-// virtual table via sqlite-vec. See src/lib/sqlite-bootstrap.ts for
-// setup and src/services/memory-store.ts for the query path.
+// virtual table via sqlite-vec. See backend/src/lib/sqlite_bootstrap.rs for
+// setup and backend/src/services/memory_store.rs for the query path.
 
 model MemoryEntry {
   id         String   @id @default(uuid())
@@ -727,7 +727,7 @@ model PendingSlackMessage {
 // delivers the rendered template directly (no LLM).
 //
 // Sender authentication is generic and provider-agnostic (see
-// src/lib/webhook-signature.ts): `authType` picks the scheme ('none' | 'token'
+// backend/src/lib/webhook_signature.rs): `authType` picks the scheme ('none' | 'token'
 // | 'hmac'), `authHeader` names the header that carries the credential,
 // `authPrefix` is an optional literal stripped from that value ('sha256=',
 // 'Bearer', …), and `authAlgorithm`/`authEncoding` shape the HMAC digest.
@@ -861,10 +861,10 @@ model UpdateAttempt {
 /// `local` or `docker`. `singleThread` holds the id of single-thread mode's one
 /// conversation, so no later write to another thread moves it.
 /// `codingAgentSubscription:<agent>` holds `on` while that coding agent's tasks
-/// run on the user's own subscription (`lib/coding-agents/subscription-switch.ts`).
+/// run on the user's own subscription (`lib/coding_agents/subscription_switch.rs`).
 /// `deploymentId` holds this install's `deployment.id` on product telemetry.
 /// `llmUsageReportedThrough` holds the end of the last hour of model calls that
-/// product telemetry reported (`lib/usage-telemetry.ts`).
+/// product telemetry reported (`lib/usage_telemetry.rs`).
 ///
 /// The table exists to make the storage migration run once per change of environment.
 /// That migration copies only what the destination lacks, so repeating it would
@@ -872,7 +872,7 @@ model UpdateAttempt {
 /// other, and a repeat copies it back. Recording where the last run happened is
 /// what keeps a deletion deleted.
 ///
-/// A table rather than a column on `AgentWorkspace`, because `index.ts` reads
+/// A table rather than a column on `AgentWorkspace`, because `index.rs` reads
 /// it about ninety lines before `resolveOrBootstrapSingleAgent` creates the row
 /// a column would sit on.
 model RuntimeState {

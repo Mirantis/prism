@@ -16,12 +16,9 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
 import Database from 'better-sqlite3';
 import { startRuntime, type RuntimeHandle } from './harness';
 
-const AGENT_RUNTIME_DIR = path.resolve(import.meta.dirname, '../..');
-const SQLITE_SCHEMA = path.join(AGENT_RUNTIME_DIR, 'prisma/sqlite/schema.prisma');
 
 export interface RuntimeTestEnv {
   /** Temp directory holding the SQLite DB. */
@@ -61,17 +58,7 @@ export async function setupRuntime(opts: SetupOptions = {}): Promise<RuntimeTest
   // Its own free port, so runtimes started side by side do not contend for the default.
   const agentMessagesPort = await findFreePort([port]);
 
-  // Apply the SQLite schema to the fresh DB. `db push` is the right tool for
-  // a one-shot dev/test DB — no migration history needed.
-  execSync(
-    `npx prisma db push --schema=${SQLITE_SCHEMA} --accept-data-loss`,
-    {
-      cwd: AGENT_RUNTIME_DIR,
-      env: { ...process.env, DATABASE_URL: `file:${dbPath}` },
-      stdio: 'pipe',
-    },
-  );
-
+  // The runtime creates the database on its first boot, from the migrations it carries.
   const runtimeEnv: NodeJS.ProcessEnv = {
     ...process.env,
     DATABASE_URL: `file:${dbPath}`,

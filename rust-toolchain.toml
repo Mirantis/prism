@@ -1,0 +1,5 @@
+# The one Rust toolchain for CI, the release archives and local builds. The image's
+# builder stage (`Dockerfile`, `FROM rust:…`) names the same version.
+[toolchain]
+channel = "1.94.0"
+components = ["rustfmt", "clippy"]

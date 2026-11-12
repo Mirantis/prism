@@ -1,6 +1,6 @@
 /**
  * Holds the terminal UI to the chat socket session the runtime recorded in
- * `src/protocol/fixtures/v2-session.json`: two clients on one conversation, a
+ * `backend/src/protocol/fixtures/v2-session.json`: two clients on one conversation, a
  * duplicate resend, a reconnect that resumes, a refused send, a ping and a
  * cancel. The phone's received frames are played through the real WsClient and
  * TuiAdapter, and the frames this client sends are compared with the recorded
@@ -26,7 +26,7 @@ import { FakeWebSocket } from './testing/fake-websocket.js';
 import { tuiAdapterService, TuiMessage, TurnEventPayload } from './tui-adapter.js';
 import { ChatEntry, upsertMessage, withHistory } from './transcript.js';
 
-const FIXTURE = fileURLToPath(new URL('../../src/protocol/fixtures/v2-session.json', import.meta.url));
+const FIXTURE = fileURLToPath(new URL('../../backend/src/protocol/fixtures/v2-session.json', import.meta.url));
 
 interface LogEntry {
   client: string;

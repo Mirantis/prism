@@ -1,10 +1,10 @@
 /**
  * The terminal UI's copy of the chat socket contract, `/api/ws`, version 2.
  *
- * The runtime's `src/protocol/chat-protocol.ts` is the authority, and
+ * The runtime's `backend/src/protocol/chat_protocol.rs` is the authority, and
  * `docs/websocket-protocol.md` describes it. This package cannot import the
  * runtime, so it keeps the shapes it reads and writes here. The recorded
- * session in `src/protocol/fixtures/` holds both copies to the same frames
+ * session in `backend/src/protocol/fixtures/` holds both copies to the same frames
  * (`protocol-contract.test.ts`).
  */
 

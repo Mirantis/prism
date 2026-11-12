@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build the container image from this checkout as `prism-agent:local`.
 #
-# The image is what `npm run docker:start` and `npm run docker:dev` run, and the only way
+# The image is what `npm run docker:start` runs, and the only way
 # to try anything that needs its toolchain: the agent's desktop, its browser, OCR and the
 # document skills all live in the image rather than on the host.
 #

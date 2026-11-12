@@ -7,6 +7,8 @@ node_modules
 dist
 web/dist
 cli/dist
+backend/target
+bench/target
 
 # Never in an image.
 .env

@@ -12,7 +12,7 @@ import { HomePage } from '../pages/home.page';
 import { ActivityPage } from '../pages/activity.page';
 import * as dbHelper from '../support/db-helper';
 import { DEFAULT_AGENT_ID, E2E_DATA_DIR, E2E_WORKSPACE } from '../fixtures/test-data';
-import { resolveClaudeConfigDir } from '../../src/lib/coding-agents/claude-code/home';
+
 
 const { Given, Then, After } = createBdd();
 
@@ -29,7 +29,8 @@ Given('the coding agent\'s settings deny writing {string}', async ({}, filename:
   // not write into.
   test.skip(Boolean(process.env.CLAUDE_CONFIG_DIR), 'CLAUDE_CONFIG_DIR points at a real Claude Code home.');
   fs.rmSync(path.join(E2E_WORKSPACE, filename), { force: true });
-  const home = resolveClaudeConfigDir(process.env, E2E_DATA_DIR);
+  // The runtime's Claude Code home, with no CLAUDE_CONFIG_DIR set.
+  const home = path.join(E2E_DATA_DIR, '.claude');
   fs.mkdirSync(home, { recursive: true });
   writtenSettings = path.join(home, 'settings.json');
   // A deny rule refuses the action in every permission mode, so the refusal
