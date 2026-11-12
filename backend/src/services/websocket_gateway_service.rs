@@ -84,6 +84,9 @@ pub const CHAT_PATH: &str = "/api/ws";
 /// fresh one would lock its owner out until the heartbeat caught up.
 pub const MAX_CONNECTIONS: usize = 16;
 
+/// How long a new socket waits, at the limit, for a socket that is closing to report it.
+const CLOSE_GRACE_MS: u64 = 20;
+
 /// How much may sit unsent on one socket before the gateway stops trying. A
 /// client that far behind is closed and resumes from the replay window, which
 /// costs the server nothing, instead of growing a queue in its memory.
@@ -798,6 +801,24 @@ impl WebSocketGatewayService {
             sends: Mutex::new(TokenBucket::new(10.0, 20.0)),
             requests: Mutex::new(TokenBucket::new(50.0, 100.0)),
         });
+
+        // A client that closed a socket and connected again at once has its close frame
+        // waiting on the old socket's reader, which may not have run yet. Waiting a moment
+        // for those closes to land lets the new socket take the place of the one going
+        // away, as Node, which handles events in arrival order, gives it; the oldest live
+        // socket is replaced only when every socket is still open after the wait.
+        let grace = tokio::time::Instant::now() + Duration::from_millis(CLOSE_GRACE_MS);
+        while tokio::time::Instant::now() < grace
+            && self
+                .connections
+                .lock()
+                .iter()
+                .filter(|socket| socket.open.load(Ordering::SeqCst))
+                .count()
+                >= MAX_CONNECTIONS
+        {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
 
         let (replaced, count) = {
             let mut connections = self.connections.lock();
