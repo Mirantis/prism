@@ -4,7 +4,7 @@
 # Base: node:26.12.1-bookworm-slim (glibc). The runtime is the Rust `prism-server`
 # binary; Node stays for the terminal UI and the coding agents' CLIs.
 
-# Stage 1: the runtime binary. Built on the same Debian release as the runner, so
+# Stage 1: the backend binary. Built on the same Debian release as the runner, so
 # it links against the same glibc. The database migrations are compiled in.
 FROM rust:1.94.0-bookworm AS runtime-builder
 
@@ -13,11 +13,11 @@ WORKDIR /build
 RUN apt-get update && apt-get install -y --no-install-recommends cmake && rm -rf /var/lib/apt/lists/*
 
 COPY prisma/sqlite/migrations ./prisma/sqlite/migrations
-COPY runtime ./runtime
+COPY backend ./backend
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/build/runtime/target \
-    cd runtime \
+    --mount=type=cache,target=/build/backend/target \
+    cd backend \
  && cargo build --release --locked --bin prism-server \
  && cp target/release/prism-server /build/prism-server
 
@@ -46,7 +46,7 @@ RUN npm run build --workspace=prism-agent-web
 COPY cli ./cli
 RUN npm run build --workspace=prism-cli
 
-# Stage 2: Production
+# Stage 3: Production
 FROM node:26.12.1-bookworm-slim AS runner
 
 WORKDIR /app
@@ -73,7 +73,7 @@ ENV HUSKY=0
 # from the shell-sandbox parity set. Python + pandoc, which mise CAN
 # provide, are added to the `mise use -g` line below instead.
 #
-# xvfb + pulseaudio are the voice-meeting toolchain (see src/services/meeting/):
+# xvfb + pulseaudio are the voice-meeting toolchain (see backend/src/services/meeting/):
 # a browser joins the call, Xvfb gives it a display because Meet's WebRTC path is
 # unreliable headless, and PulseAudio's null-sinks are the virtual speaker and
 # microphone the runtime exchanges audio through. This is the one place we
@@ -314,7 +314,7 @@ RUN mkdir -p /data/skills && chown -R node:node /data
 VOLUME ["/data"]
 
 # The persistent data dir for the runtime (skills, the coding agent's config). The
-# resolver (src/lib/data-dir.ts) uses PRISM_DATA_DIR when set, else ~/.prism —
+# resolver (backend/src/lib/data_dir.rs) uses PRISM_DATA_DIR when set, else ~/.prism —
 # so the container points it at the mounted /data volume here.
 ENV PRISM_DATA_DIR=/data
 

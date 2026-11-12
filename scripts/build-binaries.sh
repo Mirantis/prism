@@ -40,10 +40,10 @@ if [[ "$VERSION" =~ ^v[0-9]{4}\.[0-9]{1,2}\.[0-9]+$ ]]; then
 else
   PRISM_VERSION=$(node -p 'require("./package.json").version')
 fi
-PRISM_VERSION="$PRISM_VERSION" cargo build --release --locked --manifest-path runtime/Cargo.toml --bin prism-server
+PRISM_VERSION="$PRISM_VERSION" cargo build --release --locked --manifest-path backend/Cargo.toml --bin prism-server
 EXE=""
 [ "$PLATFORM" = "win32" ] && EXE=".exe"
-cp "runtime/target/release/prism-server$EXE" "dist-sea/$OS_ARCH/prism-server$EXE"
+cp "backend/target/release/prism-server$EXE" "dist-sea/$OS_ARCH/prism-server$EXE"
 rm -rf "dist-sea/$OS_ARCH/web"
 cp -R web/dist "dist-sea/$OS_ARCH/web"
 

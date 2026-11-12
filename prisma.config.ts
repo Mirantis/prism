@@ -5,7 +5,7 @@ import { defineConfig } from 'prisma/config';
 const SCHEMA_DIR = path.join(__dirname, 'prisma', 'sqlite');
 
 // A relative `file:` URL names a file in the schema's directory, the rule
-// `src/lib/sqlite-path.ts` applies to the runtime's connections.
+// `backend/src/lib/sqlite_path.rs` applies to the runtime's connections.
 function databaseUrl(): string | undefined {
   const url = process.env.DATABASE_URL;
   if (!url?.startsWith('file:')) return url;

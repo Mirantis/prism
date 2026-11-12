@@ -1,20 +1,33 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createBdd } from 'playwright-bdd';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { HomePage } from '../pages/home.page';
 import { DEFAULT_AGENT_ID, E2E_WORKSPACE } from '../fixtures/test-data';
-import { hasClaudeCodeCredentials } from '../../src/lib/coding-agents/claude-code/credentials';
-import { readSavedLogin } from '../../src/lib/coding-agents/claude-code/authenticated-home';
-import { getExecutionEnvironment } from '../../src/lib/execution-environments/get-execution-environment';
-import { codexAuthMethod, readCodexLogin } from '../../src/lib/coding-agents/codex/credentials';
-import { isAnthropicModelId, isOpenAiBedrockModelId } from '../../src/lib/llm-providers/bedrock-model-id';
 import { getPrisma } from '../support/db-helper';
-import type { ToolCallRecord } from '../../src/types';
+import { isAnthropicModelId, isOpenAiBedrockModelId } from '../support/model-ids';
+import type { ToolCallRecord } from '../support/tool-call-record';
 
 const { Given, When, Then } = createBdd();
 const filename = 'coding-agent-example.txt';
 const file = path.join(E2E_WORKSPACE, filename);
+
+interface CodingAgentRow {
+  agent: 'claude-code' | 'codex';
+  available: boolean;
+  account: { plan: string; email: string } | null;
+}
+
+/** What the runtime reports about each coding agent: its credentials and its subscription login. */
+async function codingAgents(request: APIRequestContext): Promise<CodingAgentRow[]> {
+  const response = await request.get('/agents/coding-agents');
+  expect(response.ok()).toBe(true);
+  return ((await response.json()) as { agents: CodingAgentRow[] }).agents;
+}
+
+async function codingAgent(request: APIRequestContext, agent: CodingAgentRow['agent']): Promise<CodingAgentRow | undefined> {
+  return (await codingAgents(request)).find(row => row.agent === agent);
+}
 
 Given('a coding task file contains {string}', async ({}, content: string) => {
   fs.writeFileSync(file, content);
@@ -74,42 +87,29 @@ Then('the coding task completed through delegation', async ({ page }) => {
   await expect(new HomePage(page).getAgentMessages()).toHaveCount(2);
 });
 
-Given('both coding agents have test credentials', async () => {
-  const hasBoth = (await hasClaudeCodeCredentials(process.env)) &&
-    codexAuthMethod(process.env);
+Given('both coding agents have test credentials', async ({ request }) => {
+  const hasBoth = (await codingAgents(request)).every(row => row.available);
   test.skip(!hasBoth, 'Agent selection needs credentials for both Claude Code and Codex.');
 });
 
 Given('Codex has a saved test login', async () => {
-  test.skip(!process.env.CODEX_HOME || codexAuthMethod(process.env) !== 'saved',
-    'Saved-login coverage needs CODEX_HOME with auth.json and empty API key environment variables.');
-  expect(process.env.OPENAI_API_KEY).toBe('');
-  expect(process.env.CODEX_API_KEY || '').toBe('');
-});
-
-Given('Claude Code has a saved subscription login', async () => {
-  // Read on this machine, where the runtime's tasks run unless they run in its container.
-  test.skip(process.env.EXECUTION_ENVIRONMENT === 'docker',
-    'The container keeps its own Claude home, which this process cannot read.');
-  const home = process.env.CLAUDE_CONFIG_DIR ?? '';
-  const needs = 'Subscription coverage needs CLAUDE_CODE_SUBSCRIPTION=true and CLAUDE_CONFIG_DIR signed in to a Claude subscription with claude auth login.';
-  test.skip(!home || process.env.CLAUDE_CODE_SUBSCRIPTION !== 'true', needs);
-  // This worker has no SHELL_WORKSPACE_ROOT, so its workspace root is /home/node,
-  // which a host may not have. The probe runs in the runtime's workspace instead.
-  // Opted in, a probe that gives no answer fails the scenario rather than skipping it.
-  const login = await readSavedLogin({ ...getExecutionEnvironment(), workspaceRoot: () => E2E_WORKSPACE }, process.env, home);
-  test.skip(login !== 'subscription', needs);
-});
-
-Given('Codex has a saved ChatGPT login', async () => {
-  test.skip(process.env.EXECUTION_ENVIRONMENT === 'docker',
-    'The container keeps its own Codex home, which this process cannot read.');
   const home = process.env.CODEX_HOME ?? '';
+  test.skip(!home || !fs.existsSync(path.join(home, 'auth.json')) ||
+    Boolean(process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY),
+  'Saved-login coverage needs CODEX_HOME with auth.json and empty API key environment variables.');
+});
+
+// The runtime reads each home's login with the agent's own CLI, where its tasks run.
+Given('Claude Code has a saved subscription login', async ({ request }) => {
+  const needs = 'Subscription coverage needs CLAUDE_CODE_SUBSCRIPTION=true and CLAUDE_CONFIG_DIR signed in to a Claude subscription with claude auth login.';
+  test.skip(!process.env.CLAUDE_CONFIG_DIR || process.env.CLAUDE_CODE_SUBSCRIPTION !== 'true', needs);
+  test.skip(!(await codingAgent(request, 'claude-code'))?.account, needs);
+});
+
+Given('Codex has a saved ChatGPT login', async ({ request }) => {
   const needs = 'Subscription coverage needs CODEX_SUBSCRIPTION=true and CODEX_HOME signed in to ChatGPT with codex login.';
-  test.skip(!home || process.env.CODEX_SUBSCRIPTION !== 'true', needs);
-  // Read in the runtime's workspace, for the reason the Claude step gives.
-  const login = await readCodexLogin({ ...getExecutionEnvironment(), workspaceRoot: () => E2E_WORKSPACE }, process.env, home);
-  test.skip(login !== 'chatgpt', needs);
+  test.skip(!process.env.CODEX_HOME || process.env.CODEX_SUBSCRIPTION !== 'true', needs);
+  test.skip(!(await codingAgent(request, 'codex'))?.account, needs);
 });
 
 async function askHowClaudeCodeIsSignedIn(page: Page, model?: string): Promise<void> {

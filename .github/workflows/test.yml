@@ -27,17 +27,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run tests with coverage
-        run: npm run test:coverage
-
       - name: Run workspace tests
         run: npm run test:run --workspaces --if-present
 
-      - name: Build the package
-        run: npm run build
+      - name: Build the web UI
+        run: npm run build:web
 
-  runtime:
-    name: runtime (${{ matrix.os }})
+  backend:
+    name: backend (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -53,18 +50,18 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            runtime/target
-          key: test-runtime-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'runtime/Cargo.lock') }}-${{ github.sha }}
+            backend/target
+          key: test-backend-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'backend/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            test-runtime-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'runtime/Cargo.lock') }}-
+            test-backend-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'backend/Cargo.lock') }}-
 
       - name: Check formatting
         if: runner.os == 'Linux'
-        run: cargo fmt --manifest-path runtime/Cargo.toml --check
+        run: cargo fmt --manifest-path backend/Cargo.toml --check
 
       - name: Lint
         if: runner.os == 'Linux'
-        run: cargo clippy --manifest-path runtime/Cargo.toml --locked --all-targets -- -D warnings
+        run: cargo clippy --manifest-path backend/Cargo.toml --locked --all-targets --all-features -- -D warnings
 
       # The Prisma CLI interop tests run `prisma migrate deploy` against what the
       # runtime's migrator wrote, so Node and the workspace's packages are here too.
@@ -79,13 +76,13 @@ jobs:
 
       - name: Run tests
         if: runner.os != 'Windows'
-        run: cargo test --manifest-path runtime/Cargo.toml --locked
+        run: cargo test --manifest-path backend/Cargo.toml --locked --all-features
 
       # Windows ships the standalone binary; the tests lean on Unix tools, so this
       # checks that every target builds there.
       - name: Build on Windows
         if: runner.os == 'Windows'
-        run: cargo check --manifest-path runtime/Cargo.toml --locked --all-targets
+        run: cargo check --manifest-path backend/Cargo.toml --locked --all-targets
 
       - if: github.event_name == 'push'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -93,5 +90,5 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            runtime/target
+            backend/target
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}

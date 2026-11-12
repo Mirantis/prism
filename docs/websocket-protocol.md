@@ -3,8 +3,8 @@
 This page is for people writing a client for Prism's chat. It describes version
 2 of the chat socket, `/api/ws`, which the web UI and the terminal UI speak too.
 
-The schemas in `src/protocol/chat-protocol.ts` are the authority. The frames in
-`src/protocol/fixtures/` are real examples.
+The schemas in `backend/src/protocol/chat_protocol.rs` are the authority. The frames in
+`backend/src/protocol/fixtures/` are real examples.
 
 ## What the protocol promises
 

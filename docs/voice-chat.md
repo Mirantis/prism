@@ -39,8 +39,8 @@ browser asks for the microphone the first time. A call and a
 
 The terminal UI has no voice control. Another client starts a call by speaking
 the runtime's voice frames on the chat connection —
-`src/services/voice/socket-audio.ts` and
-`src/services/websocket-gateway.service.ts` define them.
+`backend/src/services/voice/socket_audio.rs` and
+`backend/src/services/websocket_gateway_service.rs` define them.
 
 The agent speaks the language you speak, and switches when you do.
 

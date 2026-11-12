@@ -6,7 +6,7 @@
  */
 
 import { PrismaClient, Prisma } from '@prisma/client';
-import { createSqliteAdapter } from '../../src/lib/prisma-adapter';
+import { createSqliteAdapter } from './prisma-adapter';
 import { DEFAULT_AGENT_ID, TEST_USER, DEFAULT_AGENT_SEED } from '../fixtures/test-data';
 
 let prisma: PrismaClient | null = null;

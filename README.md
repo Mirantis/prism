@@ -444,17 +444,14 @@ Prism Agent exposes the following surfaces:
 
 | Command | What it does |
 |---------|--------------|
-| `npm install` | Install dependencies and generate the database client |
-| `npm run dev` | Start in watch mode (auto-restart on changes) |
+| `npm install` | Install the web, CLI and e2e dependencies |
+| `npm run dev` | Build and start the backend (`cargo run`) |
 | `npm run worktree -- <name>` | Create a worktree and launch Claude Code (requires `claude` on PATH) |
 | `npm run worktree -- --codex <name>` | Create a worktree and launch Codex (requires `codex` on PATH) |
-| `npm run build` | TypeScript compile to `dist/` |
-| `npm start` | Run the compiled build |
-| `npm test` | Run the test suite in watch mode |
-| `npm run test:run` | Single test run |
-| `npm run test:coverage` | Coverage report |
-| `npm run db:migrate` | Apply database migrations |
-| `npm run prisma:generate` | Regenerate the database client |
+| `npm run build` | Release build of the backend, and the Web UI |
+| `npm start` | Run the release build |
+| `npm test` | Run the backend's tests (`cargo test`) |
+| `npm run db:migrate` | Author a database migration |
 
 ## License
 

@@ -11,8 +11,8 @@ directly to users via local channel adapters (WebSocket, Slack).
 The GitHub repository is [`lensapp/prism-agent`](https://github.com/lensapp/prism-agent).
 `CLAUDE.md` is a symlink to this file, so both names read the same rules.
 
-Runtime source paths in this file are relative to `src/` — `invoke.ts` is
-`src/invoke.ts`. A path outside the runtime source starts from the repo root:
+Runtime source paths in this file are relative to `backend/src/` — `invoke.rs` is
+`backend/src/invoke.rs`. A path outside the runtime source starts from the repo root:
 `prisma/`, `docs/`, `web/`, `cli/`, `e2e/`, `scripts/`.
 
 ## Repair doctrine
@@ -36,10 +36,10 @@ to clear.
 
 - **Models and providers stay generic.** No call site names a model or a
   vendor. Chat, classification and embeddings go through the `LlmProvider` seam
-  (`lib/llm-providers/`, chosen by `create-provider.ts`), so a new model is a
+  (`lib/llm_providers/`, chosen by `create_provider.rs`), so a new model is a
   config value and a new vendor is one folder plus one entry in the selector.
 - **Channels stay generic.** A delivery surface is a `ChannelAdapter`
-  (`services/channel-adapter.interface.ts`) registered with
+  (`services/channel_adapter_interface.rs`) registered with
   `messageDeliveryService`. Behavior that every channel needs belongs in a
   service; the WebSocket gateway and the Slack adapter subscribe to it and own
   none of it.
@@ -48,15 +48,15 @@ to clear.
   module compares a channel name, declares a field for one channel or imports
   from a channel's modules, and no comment there describes one channel. Shared
   code that needs a per-channel answer asks through an optional `ChannelAdapter`
-  member or a registry the channel joins in `index.ts`, and a channel passes its
+  member or a registry the channel joins in `index.rs`, and a channel passes its
   data in generic fields. Channel names stay typed: `ChannelName` and
-  `CHAT_PLATFORMS` in `services/channel-adapter.interface.ts` are the one list,
+  `CHAT_PLATFORMS` in `services/channel_adapter_interface.rs` are the one list,
   and a value read from storage goes through `isChatPlatform`. The code that
-  wires the channels (`index.ts`, `server.ts`) and reads their environment
+  wires the channels (`index.rs`, `server.rs`) and reads their environment
   variables names each one, and a column or API field keeps the name the schema
   or its clients give it.
 - **Coding agents stay generic.** The `coding_agent` tools hand a task to a
-  `CodingAgent` (`lib/coding-agents/`, chosen by `get-coding-agent.ts` from
+  `CodingAgent` (`lib/coding_agents/`, chosen by `get_coding_agent.rs` from
   `CODING_AGENT` or the task's `agent` parameter), and the adapter runs it end to end:
   how the agent is launched, read and given a home is its business alone. A new agent is one
   folder plus one entry in the selector.
@@ -71,8 +71,8 @@ to clear.
   the `coding_agent` call alone; an operator refuses more with deny rules in Claude
   Code's managed settings.
 - **Execution environments stay generic.** Where a command runs and what
-  filesystem it sees is an `ExecutionEnvironment` (`lib/execution-environments/`,
-  chosen by `get-execution-environment.ts`). Every process the agent starts
+  filesystem it sees is an `ExecutionEnvironment` (`lib/execution_environments/`,
+  chosen by `get_execution_environment.rs`). Every process the agent starts
   goes through `runShell` or
   `runProgram`, which hand it to `agentProcesses`, so a secure takeover stops
   it in either environment. A read or write goes through `env.files` when the
@@ -80,14 +80,14 @@ to clear.
   scratch dir, skills, plugins and the saved copies of oversized tool results.
   The database
   and the runtime's own processes — the updater, the meeting and computer stacks
-  — stay outside. `capture.ts` is the one bounded, timed, cancellable run,
+  — stay outside. `capture.rs` is the one bounded, timed, cancellable run,
   shared by `shell_exec` and every probe. A new environment is one folder plus
   one entry in the selector.
 - **An environment is chosen per deployment, and per path.** `detect()` prefers
   `docker` when an engine answers, stays `local` when the runtime is itself in a
   container, and takes `EXECUTION_ENVIRONMENT` over both. Selection is async, so
   it is a memoized boot probe (`ensureExecutionEnvironmentDetected`) awaited by
-  `index.ts` and by `collectTools`, while `getExecutionEnvironment()` stays
+  `index.rs` and by `collectTools`, while `getExecutionEnvironment()` stays
   synchronous and answers `local` until it settles — that is what leaves the
   existing call sites unchanged and settles the tools block before the first
   turn. A call site holding a cwd asks `getExecutionEnvironmentFor(cwd)`
@@ -95,9 +95,9 @@ to clear.
   thread rooted outside it runs on the host.
 - **Docker keeps the agent's storage in named volumes.** Every durable path is
   a volume the engine owns, mounted at a fixed path under `/prism`
-  (`docker/volumes.ts`), so the environment works on a remote engine and costs
+  (`docker/volumes.rs`), so the environment works on a remote engine and costs
   no host bind mount on macOS. The runtime cannot open those files, so
-  `docker/docker-files.ts` serves `ExecutionFiles` through one `docker exec` per
+  `docker/docker_files.rs` serves `ExecutionFiles` through one `docker exec` per
   call — affordable because no such path is hot. `Dockerfile.exec` creates each
   mount point, which is what makes a fresh volume writable by a container
   running as the runtime's uid, and that list has to stay in step with
@@ -105,10 +105,10 @@ to clear.
   container alone. The database, the media store and the browser profiles stay
   on the host and out of the container entirely. The container's config holds no
   credential: a command's env is passed on each `docker exec`, and
-  `docker-env.ts` keeps the runtime's own secret families (each chat platform,
+  `docker_env.rs` keeps the runtime's own secret families (each chat platform,
   the meeting account, Langfuse, OTel, `NEXUS_*`) and every host path out of it. The
   container is created once, so one that disappears mid-run is reported once
-  (`container-lost.ts`) and comes back on the next restart. A command
+  (`container_lost.rs`) and comes back on the next restart. A command
   is one `docker exec` under `setsid --wait`, recording its process group into a
   pid file **inside** the container that the kill reads on the same side — `exec`
   replaces a command line, so a name given to the wrapper is gone the moment the
@@ -120,7 +120,7 @@ to clear.
   `lastExecutionEnvironment` (the `runtime_state` table, read before the agent
   row is resolved) different from the current one copies the workspace, skills,
   plugins, plugin data and the runtime's own coding-agent homes across, in either
-  direction (`storage-migration.ts`). No record reads as `local`, which is where
+  direction (`storage_migration.rs`). No record reads as `local`, which is where
   every install ran before the record existed. Only an entry the destination does
   not already have is copied, so a round trip merges rather than clobbers. A
   failed entry is removed from the target and the record is left unchanged, so
@@ -133,16 +133,16 @@ to clear.
   session on the host with the storage elsewhere.
 - **An environment owns the agent's directories, not just its workspace.**
   `environment.paths()` answers for skills, plugins, plugin data, saved tool
-  outputs and each coding agent's home; `lib/data-dir.ts` keeps what is the
+  outputs and each coding agent's home; `lib/data_dir.rs` keeps what is the
   runtime's alone. A plugin's MCP server therefore starts in the environment too
-  (`exec-stdio-transport.ts`), and its `mcp.json` is read there. A call that has
+  (`exec_stdio_transport.rs`), and its `mcp.json` is read there. A call that has
   a path reads and writes through `filesFor(path)`, never the deployment's
   environment directly, so a thread rooted in a host repository sees the same
   files as its shell; a saved tool output goes beside that shell too.
 - **Computers stay generic.** The computer tools, viewers and help requests act
-  on a `Computer` (`services/computer/computer.ts`): the runtime's own desktop
+  on a `Computer` (`services/computer/computer.rs`): the runtime's own desktop
   (`AgentComputer`) or a remote one that links in over `/api/computer-link`
-  (`remote/remote-computer.ts`, protocol in `docs/computer-link-protocol.md`).
+  (`remote/remote_computer.rs`, protocol in `docs/computer-link-protocol.md`).
   Each computer is a `ComputerSession` with its own `ComputerAccess`, and
   `computerService` is the set of them; an invocation owns one computer at a
   time. A remote computer's client does what has to happen on that machine, and
@@ -163,9 +163,9 @@ to clear.
   config key, the plugin or skill format, or data an existing install already
   holds.
 - **A new HTTP route gets its own file.** One area is one router under
-  `src/routes/`, mounted in `src/server.ts`, as `locked-in.ts`,
-  `agent-guide.ts`, `threads.ts` and `messages.ts` each are. Add no new route to
-  `src/routes/management.ts`, which already holds most of the runtime's REST
+  `backend/src/routes/`, mounted in `backend/src/server.rs`, as `locked_in.rs`,
+  `agent_guide.rs`, `threads.rs` and `messages.rs` each are. Add no new route to
+  `backend/src/routes/management.rs`, which already holds most of the runtime's REST
   surface: heartbeat and cron control, agent identity, and the Web UI's CRUD.
 - **SQLite holds runtime state.** Caches, queues, registries, indexes, cursors,
   checkpoints and plugin scratch data live in the embedded database — never in a
@@ -188,14 +188,14 @@ to clear.
   migration in `prisma/sqlite/migrations/` waits for an explicit yes from the
   user. Every existing install has to run that migration, and there is no way
   back.
-- **No hand-written SQL at runtime.** Runtime reads and writes go through Prisma
-  or a service, not through hand-written SQL strings. Raw SQL is for schema
-  DDL, migrations, database bootstrap (`lib/sqlite-bootstrap.ts`), and the
-  narrow primitives Prisma cannot express — the `sqlite-vec` vector search in
-  `services/memory-store.ts` — and the read-only `runtime_state` read of the
-  subscription switch in `lib/coding-agents/terminal.ts`, which the desktop
-  terminal's wrapper (`scripts/coding-agent-exec.ts`) runs as a separate
-  process that does not start Prisma. Each such site is a named exception.
+- **No hand-written SQL at runtime.** Runtime reads and writes go through
+  Diesel's query builder or a service, not through hand-written SQL strings. Raw
+  SQL is for schema DDL, migrations, database bootstrap (`lib/sqlite_bootstrap.rs`),
+  and the narrow primitives the query builder cannot express — the `sqlite-vec`
+  vector search in `services/memory_store.rs` — and the read-only `runtime_state`
+  read of the subscription switch in `lib/coding_agents/terminal.rs`, which the
+  desktop terminal's wrapper (`scripts/coding_agent_exec.rs`) runs as a separate
+  process that does not open the database pool. Each such site is a named exception.
 - **Lean code.** Cover what production really produces: real states, tagged
   upgrade paths, security boundaries, and the contracts of the dependencies you
   call. Public input, hostile input and malformed input you have actually
@@ -331,11 +331,6 @@ as Slack, whose API calls no other suite makes.
 Both suites need Node 24+ and AWS/Bedrock credentials in the shell (see
 `e2e/README.md`).
 
-Before and after a change to prompt text, run the prompt eval set
-(`src/evals/`): `npm run eval:prompts` runs each scenario three times against the
-configured model and prints a pass rate per scenario, and `--baseline <file>`
-prints an earlier run's rates beside this run's. Run it by hand.
-
 A test may assert on an observed example — a real transcript line, a captured
 provider response, a payload the runtime actually produced. Recorded output is
 stronger evidence than an invented fixture.
@@ -359,7 +354,7 @@ commit messages or PR descriptions. Use an invented name, such as
 ## Telemetry
 
 Every new **user-facing feature must also emit product telemetry** for its key
-lifecycle events via `trackEvent(name, userId, props)` (`lib/telemetry.ts`).
+lifecycle events via `trackEvent(name, userId, props)` (`lib/telemetry.rs`).
 Cover at least creation and terminal outcomes (success + failure/error paths) so
 the feature is observable in production. Rules:
 
@@ -387,8 +382,7 @@ out in writing: `isEnabled: false` for the thread reply classifier,
 `langfuseTelemetry(…, { recordContent: false })` for the meeting gate. The chat
 path traces its content deliberately and is not covered by that. Per-call
 identifiers ride `runtimeContext` plus `includeRuntimeContext`, never a
-telemetry field. `lib/langfuse-tracing.test.ts` pins each case against the real
-SDK.
+telemetry field. `lib/langfuse/tests.rs` pins each case.
 
 ## Documentation
 
@@ -471,7 +465,7 @@ These substitutions come from review comments on this repo:
 | out loud (of code, docs or data) | explicitly, or delete the phrase |
 
 `out loud` stays correct where the speech is literal, as in the voice-meeting
-code and docs (`src/prompts/meeting-prompt.ts`, `docs/voice-meetings.md`).
+code and docs (`backend/src/prompts/meeting_prompt.rs`, `docs/voice-meetings.md`).
 
 - **No personification.** Code, files, tests, PRs and rooms do not prove,
   know, learn, admit, want or decide. Attribute the action to a person or to a
@@ -548,10 +542,10 @@ One `AGENT_ID` per container, with embedded SQLite and sqlite-vec at
 nothing, because its token is read-only, and `pr-image-cleanup.yml` deletes the
 `pr-<n>` tags when the PR closes. The provider sections of
 `docs/configuration.md` (Provider selection, Credentials, Models, Voice
-meetings, Voice chat) and the headers in `lib/llm-providers/` describe each
+meetings, Voice chat) and the headers in `lib/llm_providers/` describe each
 vendor. These rules hold across vendors:
 
-- `config.ts` resolves each vendor's endpoint once: the explicit `*_BASE_URL`,
+- `config.rs` resolves each vendor's endpoint once: the explicit `*_BASE_URL`,
   else the gateway mount, else the vendor's own host. A factory receives that
   endpoint and chooses nothing.
 - The keyless path follows an origin comparison (`isGatewayEndpoint`), not the
@@ -570,7 +564,7 @@ vendor. These rules hold across vendors:
 - Lens Agents' Prism template passes the project's backend id through as
   `LLM_PROVIDER`, so a provider name matches the gateway's.
 - Memory embeddings are their own seam (`EMBEDDING_PROVIDER`,
-  `lib/embedding-providers/`), so a chat vendor without embedding models borrows
+  `lib/embedding_providers/`), so a chat vendor without embedding models borrows
   another's, and a new embedding vendor changes no chat code.
 - Voice Realtime selects its endpoint and credential together, and a connection
   error never triggers provider failover.
@@ -599,10 +593,8 @@ esbuild plugin) and switching the SEA config to `mainFormat: "module"`.
 
 ## Local development
 
-The recommended local dev loop for **all** agent-runtime work — services,
-MCP tools, prompts, conversation engine, heartbeats, cron, Slack adapter,
-WS gateway, and the bundled Web UI under `web/` — is `tsx watch` against an
-embedded SQLite file, with optional Vite for UI HMR.
+The local dev loop for backend work and the bundled Web UI under `web/` is the
+backend binary against an embedded SQLite file, with Vite for UI HMR.
 
 ```bash
 # First time only:
@@ -611,62 +603,35 @@ $EDITOR .env                          # uncomment DATABASE_URL
 
 # Every time:
 npm run dev:single
-# → runtime on :3003 (tsx watch), Vite on :5173 (HMR + proxy)
+# → backend on :3003 (cargo run), Vite on :5173 (HMR + proxy)
 ```
 
-`dev:single` applies pending Prisma migrations to SQLite before
-launching tsx-watch + Vite concurrently. You never run migrate manually.
-The SQLite `DATABASE_URL` comes from `.env`, which the runtime auto-loads
-via dotenv.
-
-`prisma.config.ts` points every Prisma command at
-`prisma/sqlite/schema.prisma` and at the database file the runtime opens.
+The backend applies the migrations under `prisma/sqlite/migrations` when it starts,
+from the copies it is built with, so you never run migrate manually. It loads `.env`
+itself. After a backend change, stop `dev:single` and start it again.
 
 **`prisma migrate dev` does not work against a dev database that has
-already run.** It describes the whole database, and once
-`sqliteBootstrap` has created the `sqlite-vec` virtual tables
-(`memory_entry_vec*`) that fails with "Error describing the database" —
-the schema engine has no `vec0` module. Use `migrate deploy` (what
-`dev:single` runs) to apply migrations. To author a new one, point
-`DATABASE_URL` at a throwaway file so `migrate dev` sees a fresh
-database, then commit the generated migration.
-
-A worktree's `node_modules` is a symlink to the repo's, so every worktree
-shares **one** generated Prisma client at `node_modules/.prisma/client`
-(`@prisma/client` is a shim that re-exports it). The client is generated
-code with the column list baked in, so `prisma generate` in a worktree
-whose schema has an extra column — run directly, or implicitly by
-`npm run dev` (`predev`) — makes every *other*
-worktree's runtime query a column its database lacks: "The column X does
-not exist in the current database".
-
-Regenerating with this worktree's schema fixes it, and `npm run dev`
-already does that via `predev` — so the failure only bites a runtime that
-was already running when another worktree generated. There is no cheap
-isolation: a custom `generator client { output = … }` stops Prisma wiring
-`@prisma/client`, so every import would have to change. Just don't run
-Prisma commands in two worktrees while a runtime is up.
+already run.** It describes the whole database, and once the backend has created
+the `sqlite-vec` virtual tables (`memory_entry_vec*`) that fails with "Error
+describing the database": the schema engine has no `vec0` module. To author a new
+migration, point `DATABASE_URL` at a throwaway file so `migrate dev` sees a fresh
+database, then commit the generated migration. `prisma.config.ts` points every
+Prisma command at `prisma/sqlite/schema.prisma`.
 
 With a container engine running — Docker Desktop, Podman — `dev:single` runs the
 agent's commands in a container and pulls the exec image the first time. Set
 `EXECUTION_ENVIRONMENT=local` in `.env` to keep them on the host.
 
-Browser → `http://localhost:5173`. UI edits hot-reload in <1s, runtime
-TypeScript edits restart the server in ~1s. The Vite proxy forwards `/agents`
-and `/api/ws` to `:3003` so the SPA code doesn't know it's not hitting the
-same origin.
+Browser → `http://localhost:5173`. UI edits hot-reload in <1s. The Vite proxy
+forwards `/agents` and `/api/ws` to `:3003` so the SPA code doesn't know it's not
+hitting the same origin.
 
-The runtime auto-loads `.env` via dotenv. Slack and Bedrock are optional —
-`lib/slack-config.ts` and `lib/llm-providers/bedrock/bedrock-provider.ts`
-fail-open when their tokens are unset. The SPA shell, navigation, profile,
-`/agents/me`, `/agents/:id/details`, `/agents/:id/cron-tasks` work with zero
-extra env. Add `AWS_BEARER_TOKEN_BEDROCK` (or AWS SigV4) in `.env` for chat;
-`SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` for Slack flows. See `.env.example`
-for the full env block.
-
-### Runtime code changes
-
-`tsx watch` restarts on every save (~1s).
+Slack and Bedrock are optional — `lib/slack_config.rs` and
+`lib/llm_providers/bedrock/bedrock_provider.rs` fail-open when their tokens are
+unset. The SPA shell, navigation, profile, `/agents/me`, `/agents/:id/details`,
+`/agents/:id/cron-tasks` work with zero extra env. Add `AWS_BEARER_TOKEN_BEDROCK`
+(or AWS SigV4) in `.env` for chat; `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` for Slack
+flows. See `.env.example` for the full env block.
 
 ### The container image (`npm run docker:build`, `npm run docker:start`)
 
@@ -675,24 +640,13 @@ as a build secret so mise resolves its tools against an authenticated rate limit
 arguments reach `docker build`. `docker:start` then runs that image the way a deployment
 runs it, with only this checkout's `.env` mounted in and the `prism-data` volume for the
 agent's database, skills and browser profile. `PRISM_IMAGE`, `PRISM_PORT`,
-`PRISM_WEBHOOK_PORT` and `PRISM_VOLUME` override the defaults. Use these two to try anything that needs the image's
-own toolchain from a clean start; use `docker:dev` below to iterate on code inside it.
-
-### The container image with live code (`npm run docker:dev`)
-
-`scripts/docker-dev.sh` runs the local image with this checkout's `.env`,
-`prisma/`, `dist/` and `web/dist` mounted in, compiles `src/` on the host with
-`tsc --watch`, and restarts the server in the container on every emit. Ctrl+C stops
-it and removes the container. `PRISM_IMAGE`, `PRISM_PORT`, `PRISM_WEBHOOK_PORT`,
-`PRISM_CONTAINER` and `PRISM_VOLUME` override the defaults. The image still supplies `node_modules` and
-the generated Prisma client, so the script warns when its `package-lock.json` or
-Prisma schema differs from the checkout's; pull a newer image or build one with
-`npm run docker:build` then. This is the loop for anything that needs the image's
-toolchain: in the container the voice chat's browser runs on an XFCE desktop on the
-virtual display, and the Computer page shows that whole desktop, captured with
-`ffmpeg`. A click on it takes the desktop's pointer and keyboard through the browser's
-pointer lock, and Esc gives them back. The runtime always builds that desktop itself, so a
-host without the image's desktop packages does not offer the page at all.
+`PRISM_WEBHOOK_PORT` and `PRISM_VOLUME` override the defaults. This is the loop for
+anything that needs the image's toolchain: in the container the voice chat's browser
+runs on an XFCE desktop on the virtual display, and the Computer page shows that whole
+desktop, captured with `ffmpeg`. A click on it takes the desktop's pointer and keyboard
+through the browser's pointer lock, and Esc gives them back. The backend always builds
+that desktop itself, so a host without the image's desktop packages does not offer the
+page at all.
 
 ### Production-shape preview (no HMR, no Vite)
 
@@ -717,11 +671,11 @@ Vite-proxy-shaped that would mask a real bug.
 - **Self-sufficient** - Builds its own context locally: reads agent data and conversation history directly from its own embedded SQLite database.
 - **Owns conversation engine** - Runs `ConversationEngineService` locally: manages chat flow, thread management, and iterates `invokeStream()` directly (no HTTP, no queue) so each step is delivered as it arrives.
 - **Owns message delivery** - Runs `MessageDeliveryService` locally: stores messages via `conversationService` and delivers via local adapters. User-initiated messages deliver only to the originating channel; autonomous messages (heartbeat/cron) broadcast to all connected channels.
-- **Owns channel adapters** - WebSocket and Slack adapters run locally, registered with `messageDeliveryService` in `index.ts`.
+- **Owns channel adapters** - WebSocket and Slack adapters run locally, registered with `messageDeliveryService` in `index.rs`.
 - **Owns scheduling** - Heartbeat timers and cron jobs run in-process (not in the backend).
-- **Owns Slack connections** - Runs Bolt apps with Socket Mode, receives and routes messages, handles verification codes, calls Slack APIs directly. The one connection is synthesized from `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` env vars (validated via `auth.test` on boot; see `lib/slack-config.ts`). Bot token in env may be a platform credential sentinel that the MITM proxy rewrites on the wire; a `SlackWebClient` subclass (`lib/slack-web-client.ts`) strips the body `token` field so auth flows only via the `Authorization` header.
-- **Owns agent data** - Agent CRUD, ownership validation, platform token management, and subagent relationships via `agentWorkspaceService` (direct Prisma access). `CreateAgentInput` requires a pre-generated `id` field -- the backend generates the UUID and passes it when creating the `AgentWorkspace`. Note: `orgId` and `teamId` are NOT in `AgentWorkspace` -- they live exclusively in the backend-only `Agent` table.
-- **Direct database access** - Has its own Prisma client (SQLite) for agent data (CRUD, ownership, subagents), conversation data (threads, messages, active thread resolution), agent field updates (heartbeat timestamp, heartbeat status), cron task state (list, update run timestamps, delete one-shot tasks), the pending Slack messages a heartbeat trigger answers, and Slack mapping CRUD. Vector search over `memory_entries.embedding` goes through a sibling `better-sqlite3` handle that loads the `sqlite-vec` extension (see `lib/sqlite-bootstrap.ts`).
+- **Owns Slack connections** - Runs Bolt apps with Socket Mode, receives and routes messages, handles verification codes, calls Slack APIs directly. The one connection is synthesized from `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` env vars (validated via `auth.test` on boot; see `lib/slack_config.rs`). Bot token in env may be a platform credential sentinel that the MITM proxy rewrites on the wire; a `SlackWebClient` subclass (`lib/slack_web_client.rs`) strips the body `token` field so auth flows only via the `Authorization` header.
+- **Owns agent data** - Agent CRUD, ownership validation, platform token management, and subagent relationships via `agentWorkspaceService` (direct database access). `CreateAgentInput` requires a pre-generated `id` field -- the backend generates the UUID and passes it when creating the `AgentWorkspace`. Note: `orgId` and `teamId` are NOT in `AgentWorkspace` -- they live exclusively in the backend-only `Agent` table.
+- **Direct database access** - Reads and writes its embedded SQLite database itself (Diesel, `backend/src/db/`) for agent data (CRUD, ownership, subagents), conversation data (threads, messages, active thread resolution), agent field updates (heartbeat timestamp, heartbeat status), cron task state (list, update run timestamps, delete one-shot tasks), the pending Slack messages a heartbeat trigger answers, and Slack mapping CRUD. Vector search over `memory_entries.embedding` uses the `sqlite-vec` extension (see `lib/sqlite_bootstrap.rs`).
 - **No direct imports from backend** - Communicates via HTTP and MCP only.
 - **SOLID** - Each service (heartbeat, cron, invoke, conversation engine, message delivery) has a single responsibility.
 
@@ -732,37 +686,37 @@ Vite-proxy-shaped that would mask a real bug.
 The runtime is self-contained: there is no backend, no `/internal/api`
 calls, and no internal API secret. The container owns exactly one
 `AgentWorkspace` (identified by the `AGENT_ID` env), reads its Slack
-connection from env (`lib/slack-config.ts`), and persists everything
+connection from env (`lib/slack_config.rs`), and persists everything
 locally.
 
 1. **Owns its data** — agent CRUD/ownership/subagents, conversation
    threads + messages, active-thread resolution, agent field updates
    (heartbeat timestamp/status), cron task state, Slack mappings, and the
    pending Slack-message queue all live in the embedded SQLite DB
-   (`file:/data/agent.db`) accessed via Prisma. Vector search over
-   `memory_entries.embedding` goes through a sibling `better-sqlite3`
-   handle that loads the `sqlite-vec` extension (`lib/sqlite-bootstrap.ts`).
+   (`file:/data/agent.db`), accessed through `backend/src/db/`. Vector search
+   over `memory_entries.embedding` uses the `sqlite-vec` extension
+   (`lib/sqlite_bootstrap.rs`).
 
 2. **Exposes a Management API** (`/agents/*`) consumed by its local
    clients — the bundled web SPA and `prism-cli` (not a backend): chat and
    thread/message CRUD, heartbeat start/stop/trigger + status, cron
    schedule/unschedule, Slack link/verification codes + mapping queries and
    mutations, and skills list/run. The Slack and Teams routes are in
-   `src/routes/slack.ts` and `src/routes/teams.ts`.
+   `backend/src/routes/slack.rs` and `backend/src/routes/teams.rs`.
 
 ### Tools
 
-1. **Built-ins** — direct AI SDK tools in `src/tools/` (memory, agent config, cron,
+1. **Built-ins** — direct AI SDK tools in `backend/src/tools/` (memory, agent config, cron,
    goals, shell, the coding sub-agent, share-file, web pages, skills, meetings), assembled by
-   `lib/tool-collection.ts#collectTools` and filtered per invocation mode. There is
+   `lib/tool_collection.rs#collectTools` and filtered per invocation mode. There is
    **no internal MCP server** — these are in-process closures, not an HTTP surface.
 2. **Lens Agents MCP** — kubectl, GitHub, AWS tools (external, via `NEXUS_MCP_URL`).
 3. **Plugin MCP** — whatever an installed Agent Plugin declares in its `mcp.json`;
-   stdio, Streamable HTTP or legacy SSE (`services/plugin-mcp.service.ts`).
+   stdio, Streamable HTTP or legacy SSE (`services/plugin_mcp_service.rs`).
 
 #### Tool naming
 
-`lib/tool-names.ts` is the single owner of what a tool may be *called* when it
+`lib/tool_names.rs` is the single owner of what a tool may be *called* when it
 reaches a model: the charset `[A-Za-z0-9_-]` sanitized per `__` segment, no
 leading digit (JS enumerates integer-like keys first, reordering the tools block
 behind the prompt cache's back), and **64** characters — Bedrock Converse's
@@ -777,16 +731,16 @@ fails the *whole* request (Lens Agents pre-namespaces a proxied connector as
 `<uuid>__<connector>__<tool>`, and a 36-char UUID blows the budget on its own).
 Renaming the map key is the whole fix, since an MCP tool's `execute` closes over
 the name the *server* gave it and the call still goes out under that name.
-`parseToolCalls` in `prompts/context-builder.ts` runs stored names through the
+`parseToolCalls` in `prompts/context_builder.rs` runs stored names through the
 same deterministic, idempotent function, so replayed history agrees with the
 tools block.
 
 #### Declared tools
 
 On a model whose provider declares `toolChanges` (the allowlist in
-`lib/llm-providers/tool-changes.ts`; each entry is measured live, and the PR
+`lib/llm_providers/tool_changes.rs`; each entry is measured live, and the PR
 that adds an entry shows the measurement), a conversation declares one tool list
-per model for its life (`services/tool-ledger.service.ts`), so the tools block
+per model for its life (`services/tool_ledger_service.rs`), so the tools block
 stays the same when the tool set changes. A tool joins on first sight, with
 `deferLoading` when it joins after the first request, and stays; one not
 available this turn refuses its calls, and a changed definition replaces the
@@ -801,12 +755,12 @@ and refuses every call, because under `none` the SDK sends no tools block.
 #### Deferred tools
 
 On a model whose provider declares `deferredTools`,
-`lib/tool-search/plan.ts` sends the MCP and plugin tools (`deferrable` from
+`lib/tool_search/plan.rs` sends the MCP and plugin tools (`deferrable` from
 `collectTools`) with `defer_loading` when their definitions exceed
 `TOOL_SEARCH_THRESHOLD_PERCENT` of the window, estimated at two characters per
 token. A built-in is never deferred. The model sees a bounded `# Tool Catalog`
 at the end of the stable system part, and loads a tool with `load_tools` (names
-or a BM25 query over the deferred set, `lib/tool-search/tool-index.ts`), whose result is
+or a BM25 query over the deferred set, `lib/tool_search/tool_index.rs`), whose result is
 the vendor's load: `tool_reference` parts on Anthropic, a client
 `tool_search_output` on OpenAI. The provider then serves the full definition and
 the model calls the real tool by its real name, so the risk gate and every other
@@ -819,7 +773,7 @@ definition. The Realtime API has no deferral: a voice session declares the
 deferred tools itself, with a `session.update`, once a load names them.
 
 A provider declares it for every Claude or GPT model whose id names no version
-known to refuse (`lib/llm-providers/deferred-tools.ts`): Claude before 4, and GPT
+known to refuse (`lib/llm_providers/deferred_tools.rs`): Claude before 4, and GPT
 before 5.6, where gpt-5.5 and gpt-5.4 fail to replay a load. A new release defers
 with no code change. When the API refuses a turn's first request with a 400 and
 the request deferred tools, `invokeStream` sends it again with every tool in full.
@@ -829,26 +783,26 @@ restarts; loads replay as text.
 
 ## Owners and seams
 
-The tree under `src/` and each file's header comment describe the modules, and
+The tree under `backend/src/` and each file's header comment describe the modules, and
 `docs/` describes the features. These owners and seams hold across the tree:
 
-- In the runtime, `lib/model-call.ts` is the only module that calls
+- In the runtime, `lib/model_call.rs` is the only module that calls
   `generateText` / `generateObject`, and it records each call's usage.
-- `selectTurnModel` (`lib/model-routing.ts`) is the one owner of which model a
+- `selectTurnModel` (`lib/model_routing.rs`) is the one owner of which model a
   turn runs on. A failed or unknown label runs large. Without a medium tier,
   unsure means large; with one, unsure means medium.
 - `deliveryTargetService.ceiling` is the one owner of where a heartbeat, unbound
   scheduled-task or webhook run may post.
 - `cronSchedulerService.updateTask` is the one task edit.
-- `resolveWorkspace` (`lib/execution-environments/workspace.ts`) is the single
+- `resolveWorkspace` (`lib/execution_environments/workspace.rs`) is the single
   owner of the per-thread-versus-default workspace fallback.
-- `get-coding-agent.ts` keeps one adapter instance per agent, so the adapter
+- `get_coding_agent.rs` keeps one adapter instance per agent, so the adapter
   that prepared the home runs every task. It is a `Record`, so a configured name
   without an adapter fails to compile.
-- `lib/coding-agents/subscription.ts` and `terminal.ts` import nothing that
+- `lib/coding_agents/subscription.rs` and `terminal.rs` import nothing that
   reads the configuration, so `coding-agent-exec` loads them without starting
   the runtime.
-- `bedrock-model-id.ts` imports nothing, so `config.ts` can use it.
+- `bedrock_model_id.rs` imports nothing, so `config.rs` can use it.
 - A Converse family gets a prompt-cache breakpoint only from
   `CONVERSE_PROMPT_CACHE_FAMILIES`, because a `cachePoint` block on a model
   without support fails every turn.
@@ -856,7 +810,7 @@ The tree under `src/` and each file's header comment describe the modules, and
   Google code stays in `providers/google-meet/`, so a new platform is one
   folder. The addressed-audio gate fails closed. No meeting data goes into a
   conversation thread.
-- `voice-session-lock.ts` allows one voice session at a time across voice chat
+- `voice_session_lock.rs` allows one voice session at a time across voice chat
   and meetings; dictation does not take it.
 - `computerService` owns `ComputerSummary` (the REST list and the chat
   `computer` event).
@@ -871,13 +825,13 @@ The tree under `src/` and each file's header comment describe the modules, and
   MCP config is written 0600 in its own temp dir and removed before the run's
   stream ends. The subscription `--settings` restate the overriding variables,
   so a repository's `.claude/settings.json` cannot bring one back.
-- `lib/origin-guard.ts` runs ahead of every route on the main port, `/health`
+- `lib/origin_guard.rs` runs ahead of every route on the main port, `/health`
   included, and on the `/api/ws` handshake. On a loopback bind it requires a loopback `Host`
   unless the request states `X-Forwarded-Host`, which closes DNS rebinding.
 - The Teams SDK validates the Bot Framework JWT before the handler runs.
-- An outbound read (`lib/public-url.ts`) connects only to public internet
+- An outbound read (`lib/public_url.rs`) connects only to public internet
   addresses, and every DNS answer is checked.
-- `lib/tool-output-store.ts` keeps no database row; the file's mtime is its
+- `lib/tool_output_store.rs` keeps no database row; the file's mtime is its
   whole lifecycle. Compaction keeps those files, since `read_compacted_history`
   returns the notices that name them.
 
@@ -888,7 +842,7 @@ The tree under `src/` and each file's header comment describe the modules, and
 3. Assert `AGENT_ID` is set (or auto-bootstrap one on first boot).
 4. Load the one agent identified by `AGENT_ID`. In single-thread mode, choose its one conversation (create one if it has none) and store its id in `runtime_state`; in multi-thread mode, clear that id.
 5. Read the work a restart interrupted: `pendingWorkService.interrupted()`.
-6. Initialize the channel adapters — `lib/slack-config.ts` synthesizes one Slack connection from env (`SLACK_BOT_TOKEN`) via `auth.test`.
+6. Initialize the channel adapters — `lib/slack_config.rs` synthesizes one Slack connection from env (`SLACK_BOT_TOKEN`) via `auth.test`.
 7. Continue the interrupted work: `pendingWorkService.resumeAll()` gives each owner its `pending_work` rows.
 8. Start the heartbeat timer (a check already due runs about a minute later), then answer the trigger messages still pending
 9. Fetch all active cron tasks directly from the database via `cronSchedulerService.listActiveCronTasks()`
@@ -901,7 +855,7 @@ On shutdown, `pendingWorkService.shutdown()` runs first: the work in flight stop
 ## Environment Variables
 
 `docs/configuration.md` lists the operator variables and their defaults,
-`.env.example` is the annotated template, and `src/config.ts` reads them.
+`.env.example` is the annotated template, and `backend/src/config.rs` reads them.
 `SERVICE_VERSION` is set by the workflows under `.github/workflows/`.
 
 A `__nexus_cred:<uuid>__` sentinel works only in a header, because the sandbox
@@ -915,7 +869,7 @@ There are three entry points for chat, all handled locally by the agent-runtime:
 
 1. **WebSocket**: Client -> Lens Agents ingress -> WS gateway -> `inboundMessageService.accept()` (stores the message, confirms it) -> `conversationEngineService.chat()` (local, no HTTP)
 2. **Slack**: Bolt Socket Mode message -> `conversationEngineService.chat()` (local, no HTTP)
-3. **Agent messages**: delivery service -> `POST /agents/agent-messages` (`routes/agent-messages.ts`, the service's API token id as the ingress names it, 403 when the ingress names a person) -> `inboundMessageService.accept()` into the web conversation that holds its `conversationId` -> `conversationEngineService.chat()`
+3. **Agent messages**: delivery service -> `POST /agents/agent-messages` (`routes/agent_messages.rs`, the service's API token id as the ingress names it, 403 when the ingress names a person) -> `inboundMessageService.accept()` into the web conversation that holds its `conversationId` -> `conversationEngineService.chat()`
 
 In every case, `conversationEngineService.chat()` manages the thread, **iterates `invokeStream()` directly** (no queue, no HTTP), and `messageDeliveryService.publish()`'es each text-bearing step the moment its `onStepFinish` fires. Each delivery uses a `channelContext` that scopes the publish to the originating channel only (WebSocket or Slack), so users see intermediate text from multi-step responses in real time instead of one big block at the end.
 
@@ -936,7 +890,7 @@ row, a steered message and a coalesced follow-up keep it. It is never in
 only `inboundMessageService` sets it, for the agent-message route.
 
 - **The model reads it inside a tag**, never as the person's words:
-  `prompts/agent-message-prompt.ts` renders `<agent-message from=… agent-id=…
+  `prompts/agent_message_prompt.rs` renders `<agent-message from=… agent-id=…
   message-id=… expects-reply=…>` or `<agent-notice>`, with the text escaped,
   after a fixed sentence that says another agent wrote it, not the person.
   History, `buildSteeringMessage` and the coalesced prompt use the one renderer,
@@ -952,8 +906,6 @@ only `inboundMessageService` sets it, for the agent-message route.
 - **The other agents** are the hosting platform's to describe: it provides the
   tools to find them and to message them. The runtime adds no roster, so the
   system prompt and the history are the same with or without other agents.
-  `src/evals/colleague-scenarios.ts` measures what the agent does with such
-  tools.
 - **Who may post** is the delivery service alone, as the ingress names it: a
   person the ingress names gets 403, and otherwise `x-forwarded-token-id` must
   equal `AGENT_MESSAGES_TOKEN_ID` (`config.agentMessagesTokenId`, compared in
@@ -961,15 +913,15 @@ only `inboundMessageService` sets it, for the agent-message route.
   ingress drops a caller's own copy of the header, so it is trustworthy only
   for requests through the ingress.
 - **Its own port.** `POST /agents/agent-messages` is served by
-  `createAgentMessagesApp` (`server.ts`) on `AGENT_MESSAGES_PORT` (default
+  `createAgentMessagesApp` (`server.rs`) on `AGENT_MESSAGES_PORT` (default
   3005, on `PRISM_HOST`), with a 1 MB JSON body limit and nothing else: no
   origin guard, no CORS, no other route. `createApp` does not mount it, so the
   main port answers 404. `createAgentMessagesServer` gives no server when
   `AGENT_MESSAGES_TOKEN_ID` is unset, so the port is not opened at all.
-  Otherwise `index.ts` opens it after the API and closes it with the webhook
+  Otherwise `index.rs` opens it after the API and closes it with the webhook
   receiver on shutdown; a port that cannot be opened is logged and the runtime
   keeps running.
-- **`GET /agents/state`** (`routes/agent-state.ts`) answers `working` or `idle`
+- **`GET /agents/state`** (`routes/agent_state.rs`) answers `working` or `idle`
   from `isAgentIdle`.
 
 ### Turn Steering (mid-turn messages)
@@ -1075,7 +1027,7 @@ turn boundary and re-registered it last, which accidentally masked that. The
 composer is now `cli/src/components/TextInput.tsx`, a small vendored fork that
 ignores every Ctrl chord, so the ordering no longer matters.
 
-**Trailing-user tripwire.** `warnOnTrailingAssistant()` (in `invoke.ts`) runs
+**Trailing-user tripwire.** `warnOnTrailingAssistant()` (in `invoke.rs`) runs
 before every `generateText` call — initial, per-step, and early-stopping — and
 logs a warning plus a single `invocation trailing assistant` telemetry event per
 invocation when the array does not end on a `user` (or `tool`) message. Detection
@@ -1092,11 +1044,11 @@ A heartbeat, unbound scheduled-task or webhook run gets `postingCeiling` (`deliv
 
 ## Step Limit and Early Stopping
 
-The `generateText()` call inside `invokeStream()` is capped at **100 steps** (`STEP_LIMIT` in `constants.ts`) using `stopWhen: stepCountIs(STEP_LIMIT)`. This prevents runaway agent loops.
+The `generateText()` call inside `invokeStream()` is capped at **100 steps** (`STEP_LIMIT` in `constants.rs`) using `stopWhen: stepCountIs(STEP_LIMIT)`. This prevents runaway agent loops.
 
-When the step limit is reached, a follow-up `generateText()` call is made **without tools**, appending the `EARLY_STOPPING_PROMPT` (from `prompts/early-stopping-prompt.ts`). This asks the model to summarize its findings so far and produce a useful final response for the user. The summary is pushed onto the same step channel as a final `InvokeStep`, so streaming consumers (chat) see it as just another step and the `invoke()` drain wrapper aggregates it into the response like any other step.
+When the step limit is reached, a follow-up `generateText()` call is made **without tools**, appending the `EARLY_STOPPING_PROMPT` (from `prompts/early_stopping_prompt.rs`). This asks the model to summarize its findings so far and produce a useful final response for the user. The summary is pushed onto the same step channel as a final `InvokeStep`, so streaming consumers (chat) see it as just another step and the `invoke()` drain wrapper aggregates it into the response like any other step.
 
-### Shared Constants (`constants.ts`)
+### Shared Constants (`constants.rs`)
 
 | Constant | Value | Purpose |
 |----------|-------|---------|
@@ -1107,12 +1059,12 @@ The main `invokeStream()`/`invoke()` calls send no sampling params (`temperature
 
 ## LLM Error Handling
 
-`lib/llm-errors.ts#buildErrorStep(error)` is the **single owner** of LLM/runtime error → user-facing text. It distinguishes gateway RFC 7807 `budget-exceeded` 429s (returns a friendly "spending limit reached" message and tags the step with `error: { type: 'budget_exceeded', detail }`) from generic errors (returns a "I encountered an error…" step tagged `error: { type: 'generic', detail }`, with the response body's `detail` field when present). The SDK wraps retried failures with a `lastError` field — `buildErrorStep` unwraps it before classifying. The heartbeat, cron and webhook services post an error result for the agent, since a failed run could not post it.
+`lib/llm_errors.rs#buildErrorStep(error)` is the **single owner** of LLM/runtime error → user-facing text. It distinguishes gateway RFC 7807 `budget-exceeded` 429s (returns a friendly "spending limit reached" message and tags the step with `error: { type: 'budget_exceeded', detail }`) from generic errors (returns a "I encountered an error…" step tagged `error: { type: 'generic', detail }`, with the response body's `detail` field when present). The SDK wraps retried failures with a `lastError` field — `buildErrorStep` unwraps it before classifying. The heartbeat, cron and webhook services post an error result for the agent, since a failed run could not post it.
 
 It's used only inside `invokeStream()`'s catch paths (context-fetch failure, `generateText` rejection). Errors are pushed onto the step channel rather than thrown, so consumers don't need a separate error-handling path: chat just sees a final friendly step and delivers it; `invoke()` aggregates the text and surfaces the structured `error` field on `InvokeResponse` so heartbeat/cron can detect budget exhaustion programmatically.
 
 **No error is logged raw.** `logger` installs one global pino serializer for the `err`
-key (`lib/log-redaction.ts`), and it is an **allow-list**: `name`/`message`/`stack`/
+key (`lib/log_redaction.rs`), and it is an **allow-list**: `name`/`message`/`stack`/
 `code`/`errno`/`syscall`/`statusCode`/`url`/`isRetryable`/`reason`, plus `cause`,
 `lastError` and each entry of `errors` reduced to `{ name, message }` (that list
 bounded at five), plus `$metadata.httpStatusCode` lifted out as `statusCode` since an AWS
@@ -1136,7 +1088,7 @@ interpolating an error into a template string bypasses this entirely.
 
 The interval is measured from the last run. Each cycle arms one `setTimeout` for
 the absolute time the next check is due, in steps of at most one interval
-(`services/heartbeat-schedule.ts` does the arithmetic). `recordCycle` moves that
+(`services/heartbeat_schedule.rs` does the arithmetic). `recordCycle` moves that
 time on every terminal path of a timer run, an error included; a Slack-triggered
 run moves it once it completes. A check already due runs about a minute later,
 which is the delay floor.
@@ -1185,7 +1137,7 @@ The heartbeat's duplicate guard is its send record (`lastSend`): the newest ten 
 
 ### Channel-Triggered Heartbeats
 
-A channel that starts the heartbeat with its own messages is a `HeartbeatTriggerSource`, registered with `heartbeatService.registerTriggerSource` in `index.ts`. Slack's is `slackMessageQueueService`. When a Slack message arrives in a heartbeat trigger channel, the Slack adapter enqueues it in the `PendingSlackMessage` table, claims the trigger's throttle and calls `heartbeatService.triggerFrom(slackMessageQueueService)`. The heartbeat reads the source's pending messages, runs once with them in its prompt, removes them once the run ends, and reports the source's channel as `heartbeat.trigger`.
+A channel that starts the heartbeat with its own messages is a `HeartbeatTriggerSource`, registered with `heartbeatService.registerTriggerSource` in `index.rs`. Slack's is `slackMessageQueueService`. When a Slack message arrives in a heartbeat trigger channel, the Slack adapter enqueues it in the `PendingSlackMessage` table, claims the trigger's throttle and calls `heartbeatService.triggerFrom(slackMessageQueueService)`. The heartbeat reads the source's pending messages, runs once with them in its prompt, removes them once the run ends, and reports the source's channel as `heartbeat.trigger`.
 
 - `triggerFrom(source)` returns `'queued'` when it started a run, or `'ignored'` when no heartbeat is registered or one is already running. Ignored messages stay queued for the next run.
 - **Timer-based heartbeats also read them**: a timer heartbeat reads every registered source before it invokes the LLM, so queued messages are never orphaned.
@@ -1197,7 +1149,7 @@ The default `heartbeatMd` contains only headers and comments (no active checks).
 
 ## Empty Message Filtering
 
-The `context-builder.ts` skips messages with empty or whitespace-only content when building the LLM message array. This acts as a safety net for messages sourced from external providers (e.g., the `SlackThreadProvider` may return file-only messages with no text).
+The `context_builder.rs` skips messages with empty or whitespace-only content when building the LLM message array. This acts as a safety net for messages sourced from external providers (e.g., the `SlackThreadProvider` may return file-only messages with no text).
 
 ## Slack Adapter
 
@@ -1208,11 +1160,11 @@ The agent-runtime owns the full Slack adapter implementation. It manages Bolt ap
 - **Bolt apps**: One `App` instance per Slack workspace connection, using Socket Mode for real-time events. `clientOptions` on the `App` constructor passes a `fetch` to the underlying WebClient that strips the body `token` field so auth flows only via the `Authorization` header — necessary when the bot token is a platform credential sentinel that only the MITM proxy can rewrite.
 - **Connection data**: source depends on mode.
   - **Multi-tenant**: SlackConnection records (tokens, workspace info) are fetched from the backend via `backendClient.getActiveSlackConnections()` at startup and `backendClient.getSlackConnection()` at runtime. Agent-runtime does NOT directly access the backend's `SlackConnection` table; the backend exclusively owns it. Connection CRUD (create, update, deactivate) is handled by the backend's org-scoped endpoints.
-  - **Single-agent**: one synthetic connection is built by `lib/slack-config.ts` from the `SLACK_BOT_TOKEN` env var (validated via `auth.test` on boot). No backend, no decrypt, no encryption key. `SlackWebClient` (in `lib/slack-web-client.ts`) is the subclass that strips the body `token`.
+  - **Single-agent**: one synthetic connection is built by `lib/slack_config.rs` from the `SLACK_BOT_TOKEN` env var (validated via `auth.test` on boot). No backend, no decrypt, no encryption key. `SlackWebClient` (in `lib/slack_web_client.rs`) is the subclass that strips the body `token`.
 - **Message routing**: Incoming Slack messages are processed locally via `conversationEngineService.chat()` (no HTTP to backend)
 - **Response delivery**: Local `messageDeliveryService` -> local `slackAdapterService` -> local Bolt apps (no round-trip to backend)
-- **Heartbeat throttle**: Handled locally with `setTimeout`
-- **Verification codes**: DM and channel link verification done locally via Prisma
+- **Heartbeat throttle**: Handled locally with a timer
+- **Verification codes**: DM and channel link verification done locally against the database
 
 ### Message Flow
 
@@ -1226,7 +1178,7 @@ The Teams messaging endpoint is `POST /agents/teams/messages` on `TEAMS_PORT`.
 
 ## WebSocket Gateway
 
-The agent-runtime owns the chat socket, `/api/ws`, which the web UI, the TUI and any other client share. `docs/websocket-protocol.md` is its contract for client authors; `protocol/chat-protocol.ts` holds the schemas, and `protocol/fixtures/v2-session.json` is a session recorded from a real runtime that every client's tests replay.
+The agent-runtime owns the chat socket, `/api/ws`, which the web UI, the TUI and any other client share. `docs/websocket-protocol.md` is its contract for client authors; `protocol/chat_protocol.rs` holds the schemas, and `protocol/fixtures/v2-session.json` is a session recorded from a real runtime that every client's tests replay.
 
 ### WebSocket Architecture
 
@@ -1242,20 +1194,20 @@ The `agentMd` workspace file is the agent's operating manual. It appears in the
 system prompt as `# Agent Guide`. The seeded guide contains guidance on when the
 agent asks first and when it uses the heartbeat or a scheduled task; an agent keeps
 the guide it was created with. It is included in the `AgentContext` type and built
-into the system prompt by `context-builder.ts` (between Soul and User sections).
+into the system prompt by `context_builder.rs` (between Soul and User sections).
 
 **No tool writes it.** It is the one workspace document outside
-`tools/agent-config.ts`, so the document that tells the agent how to work cannot
+`tools/agent_config.rs`, so the document that tells the agent how to work cannot
 drift from the agent's own edits. The user owns it, through one service call
 reachable at two URLs:
 
-- `PATCH /agents/documents/agentMd` (`routes/document-revisions.ts` →
+- `PATCH /agents/documents/agentMd` (`routes/document_revisions.rs` →
   `agentWorkspaceService.updateWorkspaceDoc`), body `{ content, reason? }`, the
   whole document. An empty string clears it, which drops the section from the
   prompt. The write goes through `writeWorkspaceDoc`, so it records a revision
   with `actor: 'user'`, `method: 'rest'` and the caller's `reason` — the editor's
   optional note about what changed.
-- `PATCH /agents/agent-guide` (`routes/agent-guide.ts`), body
+- `PATCH /agents/agent-guide` (`routes/agent_guide.rs`), body
   `{ agentMd, reason? }`, is a thin alias on the same service call. It exists for
   the shipped terminal UI, whose binary calls that URL.
 - The web Profile page's **Agent** tab
@@ -1268,7 +1220,7 @@ and there is none here — so the editors keep working while the lock is on. Tha
 holds for the other six documents too: `updateWorkspaceDoc` takes no lock, since
 the user editing a document is not the agent rewriting itself.
 
-**It is also the tool risk gate's policy.** `lib/tool-risk-gate.ts` puts the
+**It is also the tool risk gate's policy.** `lib/tool_risk_gate.rs` puts the
 guide in the classifier's **system** prompt, not in the evidence JSON — the rules
 at the top of that prompt declare the evidence untrusted, so guide text there
 would be correctly ignored. On any point the guide addresses it **outranks the
@@ -1277,8 +1229,8 @@ and refuse what they permit. That authority is the operator's, since they run th
 container and hold the credentials.
 
 **The trust root is weaker than "no tool writes it" suggests, and the prompt no
-longer claims otherwise.** `routes/agent-guide.ts` takes no credential from
-inside the container and `tools/shell/workspace.ts` is explicit that its check is
+longer claims otherwise.** `routes/agent_guide.rs` takes no credential from
+inside the container and `tools/shell/workspace.rs` is explicit that its check is
 not a security boundary, so `shell_exec` reaches both `PATCH
 localhost:3003/agents/documents/agentMd` and `/data/agent.db`, and a `coding_agent`
 sub-agent's own commands and MCP tool calls never reach this gate at all. Withholding the ordinary
@@ -1300,7 +1252,7 @@ weighed and declined.
 `resolvePolicy` is the one owner of what the classifier reads. `gate.policy` on
 both gate telemetry events reports its verdict — `none`, `default` or `custom` —
 and `default` **sends no policy at all**: every agent is created holding a seeded
-guide and keeps it. `isDefaultAgentGuide` (`templates/default-workspace.ts`)
+guide and keeps it. `isDefaultAgentGuide` (`templates/default_workspace.rs`)
 recognises by digest the current template and the one seeded from v2026.6.18060952
 until this template, whose `## Safety` section reads "read-only by default", which
 as a rule outranking the ordinary-work list refuses the file edits and builds the
@@ -1327,9 +1279,9 @@ the newest revision is what the document reads now.
 - **One write path.** `agentWorkspaceService.writeWorkspaceDoc` replaces the
   column and records the revision in one `prisma.$transaction`, so a document and
   its history cannot disagree. Three call sites reach it: the agent's own
-  document tools (`tools/agent-config.ts`), `updateWorkspaceDoc` (the user's REST
+  document tools (`tools/agent_config.rs`), `updateWorkspaceDoc` (the user's REST
   editor, for any of the seven), and the restore.
-  Add a fourth rather than a second write path. `lib/workspace-docs.ts` owns the
+  Add a fourth rather than a second write path. `lib/workspace_docs.rs` owns the
   field list and the actor (`agent` | `user`) and method (`seed` | `replace` |
   `edit` | `clear` | `rest` | `rollback`) words.
 - **Append-only.** A restore writes a `rollback` revision instead of removing the
@@ -1341,7 +1293,7 @@ the newest revision is what the document reads now.
 - **Bounded at 500 revisions per document**
   (`MAX_REVISIONS_PER_DOCUMENT`), trimmed inside the insert's transaction. A
   constant, not a setting.
-- **Four routes**, `routes/document-revisions.ts`: the write
+- **Four routes**, `routes/document_revisions.rs`: the write
   (`PATCH /agents/documents/:field`), the history without the content
   (`GET /agents/documents/:field/revisions`), one revision with it (`…/:id`), and
   the restore (`POST …/:id/restore`). One `readField` allow-list
@@ -1368,7 +1320,7 @@ frontmatter with required `name` + `description`, optional `scripts/`/
 - **Where skills live.** Two sources, merged by `skillCatalogService` with
   workspace winning a name clash (project > personal, like Claude Code):
   - **Global** — `<DATA>/skills`, the persistent data dir resolved by
-    `src/lib/data-dir.ts`: `/data` inside the container, `~/.prism` outside
+    `backend/src/lib/data_dir.rs`: `/data` inside the container, `~/.prism` outside
     (local dev, SEA binary), overridable via `PRISM_DATA_DIR` (or
     `PRISM_SKILLS_DIR`). One physical copy — no duplicates.
   - **Workspace** — the repo the CLI was started in: `<workspaceRoot>/.claude/skills`
@@ -1385,7 +1337,7 @@ frontmatter with required `name` + `description`, optional `scripts/`/
   discovers the same skills — without touching the user's real `~/.claude`.
 - **Progressive disclosure.** `skillCatalogService` (mtime-cached) parses only
   `name` + `description` for the `# Skills` system-prompt section; the `skill`
-  tool (`src/tools/skills/index.ts`) loads a skill's full `SKILL.md` body on
+  tool (`backend/src/tools/skills/mod.rs`) loads a skill's full `SKILL.md` body on
   demand. The tool is omitted when no skills are installed.
 - **Clients (web + CLI).** `/skills` (or `/skills list`) lists available skills
   (workspace ones labeled) via `GET /agents/skills` — scoped to the thread's
@@ -1413,7 +1365,7 @@ need. The standard defines exactly two component types and nothing else.
   directory name is the plugin id; the manifest `name` is display only, so the
   id never depends on a lossy slugification. Installation is out of band, as for
   skills — drop a folder in, and the catalog refreshes on the plugins-dir mtime.
-- **`plugin.json`** (`plugin-catalog.service.ts`) is a closed schema: `$schema`
+- **`plugin.json`** (`plugin_catalog_service.rs`) is a closed schema: `$schema`
   and `name` required, eight optional metadata fields. `$schema` is a **version
   gate matched by exact string against a local allowlist and never fetched**
   (spec §5.2). Three outcomes are distinguished — supported, an Agent Plugins
@@ -1426,7 +1378,7 @@ need. The standard defines exactly two component types and nothing else.
   **last**, so a plugin can add a skill but never shadows a workspace or global
   one. Everything downstream (the `skill` tool, its emptiness gate, both REST
   endpoints, the `# Skills` prompt section) picks that up unchanged.
-- **`# Plugins` prompt section** (`buildPluginsSection` in `context-builder.ts`)
+- **`# Plugins` prompt section** (`buildPluginsSection` in `context_builder.rs`)
   carries what nothing else can: which plugin a skill or tool came from, the
   `<plugin>__<server>__<tool>` naming scheme (the tools block has the names but
   can't explain them), and the plugins dir path, which is what makes "the agent
@@ -1434,14 +1386,14 @@ need. The standard defines exactly two component types and nothing else.
   plugin skills are named, not re-described, since `# Skills` already pays for
   their descriptions. Collapses to one sentence when no plugin is installed, so
   the common case stays cheap. Cacheable on the same terms as `# Skills`.
-- **MCP servers** (`plugin-mcp-config.ts` parses, `plugin-mcp.service.ts`
+- **MCP servers** (`plugin_mcp_config.rs` parses, `plugin_mcp_service.rs`
   connects). stdio uses `@ai-sdk/mcp/mcp-stdio`; the spec's `streamable-http` is
   translated to the SDK's `http` at the parse boundary. `client.tools()` is
   called **once at connect**, not per turn — that keeps one child process per
   server instead of per turn and makes the tools block byte-identical across
   turns and across the chat/compaction paths, which is what the prompt cache
   needs. Connection is lazy and coalesced; a failed server sticks until its
-  `mcp.json` changes. `shutdownAll()` runs from `index.ts` so a SIGTERM doesn't
+  `mcp.json` changes. `shutdownAll()` runs from `index.rs` so a SIGTERM doesn't
   orphan children.
 - **Deliberate leniencies, both reported as diagnostics.** `mcp.json` may omit
   `$schema` (assumed 1.0.0) and a server may omit `type` (assumed `stdio`),
@@ -1452,7 +1404,7 @@ need. The standard defines exactly two component types and nothing else.
   version is still refused: absent means unstated, present-and-different is a
   real declaration.
 - **Tool names** are `<pluginId>__<serverName>__<toolName>`, shortened when
-  needed by the shared rule in `lib/tool-names.ts` (see **Tool naming** under
+  needed by the shared rule in `lib/tool_names.rs` (see **Tool naming** under
   Tools). In `collectTools()` plugin tools merge **last** behind an explicit
   guard, and `filterToolsByMode()` now wraps the *merged* map so MCP tools no
   longer bypass mode gating.
