@@ -1265,6 +1265,9 @@ mod tests {
     async fn writes_a_document_with_its_revision_and_restores_an_earlier_one() {
         let _db = test_db();
         let agent = create("test-agent-id", None).await;
+        // Revisions are ordered by millisecond and then by their random id, so the write
+        // gets a later millisecond than the seed to be the newest.
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
         let stored = AGENT_WORKSPACE_SERVICE
             .update_workspace_doc(
