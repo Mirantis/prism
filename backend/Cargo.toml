@@ -44,6 +44,8 @@ http-body-util = "0.1"
 bytes = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots", "stream", "multipart", "gzip", "brotli", "deflate", "http2"] }
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
+# The process-wide TLS provider: two backends are compiled in, so rustls needs one named.
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
 url = "2"
 
 # Data
