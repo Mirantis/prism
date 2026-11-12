@@ -13,26 +13,4 @@ pub fn resolve_workspace(workspace_root: Option<&str>) -> String {
     }
 }
 
-/// `path.resolve(p)` for one argument: an absolute path normalized, a relative
-/// one joined onto this process's cwd first.
-pub(crate) fn path_resolve(p: &str) -> String {
-    let joined = if p.starts_with('/') {
-        p.to_string()
-    } else {
-        let cwd = std::env::current_dir()
-            .map(|d| d.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| "/".to_string());
-        format!("{cwd}/{p}")
-    };
-    let mut parts: Vec<&str> = Vec::new();
-    for part in joined.split('/') {
-        match part {
-            "" | "." => {}
-            ".." => {
-                parts.pop();
-            }
-            other => parts.push(other),
-        }
-    }
-    format!("/{}", parts.join("/"))
-}
+pub(crate) use crate::support::path::resolve as path_resolve;
