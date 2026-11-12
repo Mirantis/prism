@@ -84,6 +84,10 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo check --manifest-path backend/Cargo.toml --locked --all-targets
 
+      - name: Run path tests on Windows
+        if: runner.os == 'Windows'
+        run: cargo test --manifest-path backend/Cargo.toml --locked --lib -- support::path tools::shell::workspace
+
       - if: github.event_name == 'push'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
