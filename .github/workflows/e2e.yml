@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'runtime/**'
+      - 'backend/**'
       - 'rust-toolchain.toml'
       - 'prisma/**'
       - 'prisma.config.ts'
@@ -18,7 +18,7 @@ on:
       - '.github/actions/e2e-setup/**'
   pull_request:
     paths:
-      - 'runtime/**'
+      - 'backend/**'
       - 'rust-toolchain.toml'
       - 'prisma/**'
       - 'prisma.config.ts'
@@ -49,8 +49,8 @@ concurrency:
 
 jobs:
   # The runtime binary every suite starts, built once per run.
-  runtime:
-    name: runtime binary
+  backend:
+    name: backend binary
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -62,13 +62,13 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            runtime/target
-          key: e2e-runtime-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'runtime/Cargo.lock') }}-${{ github.sha }}
+            backend/target
+          key: e2e-backend-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'backend/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            e2e-runtime-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'runtime/Cargo.lock') }}-
+            e2e-backend-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'backend/Cargo.lock') }}-
 
       - name: Build the runtime
-        run: cargo build --release --locked --manifest-path runtime/Cargo.toml --bin prism-server
+        run: cargo build --release --locked --manifest-path backend/Cargo.toml --bin prism-server --features e2e-llm-cache
 
       - if: github.event_name == 'push'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -76,13 +76,13 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            runtime/target
+            backend/target
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: prism-server
-          path: runtime/target/release/prism-server
+          path: backend/target/release/prism-server
           if-no-files-found: error
           retention-days: 3
 
@@ -90,7 +90,7 @@ jobs:
   # on :3003 and its own database, and the suite stays serial inside a shard.
   # `run-web-suite.ts` gives each shard an equal share of the recorded duration.
   e2e-web:
-    needs: runtime
+    needs: backend
     name: e2e-web (${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
     # A few times a shard's usual run: the limit stops a hang, not a slow green run.
@@ -163,7 +163,7 @@ jobs:
   # The TUI suite in shards. Each spec file already boots its own runtime on a free
   # port against its own database, so Vitest's `--shard` splits it by file.
   e2e-tui:
-    needs: runtime
+    needs: backend
     name: e2e-tui (${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
     # Above the longest single TUI step (435s, see tui/vitest.config.ts) plus a shard.
@@ -207,7 +207,7 @@ jobs:
 
   # One HTML report for the web shards, and one status for both suites.
   e2e:
-    needs: [runtime, e2e-web, e2e-tui]
+    needs: [backend, e2e-web, e2e-tui]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -249,7 +249,7 @@ jobs:
   # job because the runtime settles on one environment at boot: running it
   # beside the others would mean two different tests under one name.
   e2e-docker:
-    needs: runtime
+    needs: backend
     runs-on: ubuntu-latest
     # One scenario and one LLM turn, behind an image build that is usually a
     # cache hit. Sized for a cold cache, where the build is most of it.
@@ -261,9 +261,9 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: prism-server
-          path: runtime/target/release
+          path: backend/target/release
 
-      - run: chmod +x runtime/target/release/prism-server
+      - run: chmod +x backend/target/release/prism-server
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -347,7 +347,7 @@ jobs:
   # The @single-thread feature. Its own job for the same reason as e2e-docker: the
   # runtime reads its thread mode at boot. Its scenarios make no model call.
   e2e-single-thread:
-    needs: runtime
+    needs: backend
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -377,7 +377,7 @@ jobs:
   # The @tool-search feature. Its own job because the runtime reads the tool-search
   # threshold at boot, and 0 defers the demo plugin's MCP tool.
   e2e-tool-search:
-    needs: runtime
+    needs: backend
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -421,7 +421,7 @@ jobs:
   # Every Slack-touching e2e test, serialized repo-wide: two of these running at
   # once share one Slack app and steal each other's events.
   e2e-slack:
-    needs: runtime
+    needs: backend
     runs-on: ubuntu-latest
     timeout-minutes: 25
 

@@ -9,8 +9,8 @@
  *
  * The `agent locked write refused` event is not asserted here. The writer tools
  * are withheld from a locked turn, so the refusal is reachable only on a
- * mid-turn flip. It is covered in `src/tools/__tests__/agent-config.test.ts` and
- * `src/tools/__tests__/memory.test.ts`.
+ * mid-turn flip. It is covered by the tests in `backend/src/tools/agent_config.rs` and
+ * `backend/src/tools/memory.rs`.
  *
  * The locked and unlocked scenarios are pairs, and neither half stands alone.
  * "The stored soul document is unchanged" also passes when the turn failed for a
