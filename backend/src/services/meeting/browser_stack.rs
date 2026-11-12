@@ -3581,16 +3581,25 @@ pub(crate) mod testing {
 
     /// A real headless browser with one tab, for tests that need a DOM. `start` answers
     /// `None` on a host without Chrome, and those tests then pass without running.
+    ///
+    /// One runs at a time: a browser is the heaviest thing a test starts, and several at
+    /// once beside the rest of the suite push the page reads past their deadlines.
     pub(crate) struct Live {
         pub browser: BrowserHandle,
         pub page: PageHandle,
         process: Child,
         _profile: tempfile::TempDir,
+        // Last, so it is released after the browser is gone.
+        _one_at_a_time: tokio::sync::OwnedMutexGuard<()>,
     }
+
+    static ONE_BROWSER: std::sync::LazyLock<Arc<tokio::sync::Mutex<()>>> =
+        std::sync::LazyLock::new(|| Arc::new(tokio::sync::Mutex::new(())));
 
     impl Live {
         pub async fn start() -> Option<Live> {
             let chrome = chrome()?;
+            let one_at_a_time = ONE_BROWSER.clone().lock_owned().await;
             let profile = tempfile::tempdir().ok()?;
             let port = free_port().await.ok()?;
             let process = tokio::process::Command::new(chrome)
@@ -3625,6 +3634,7 @@ pub(crate) mod testing {
                 page,
                 process,
                 _profile: profile,
+                _one_at_a_time: one_at_a_time,
             })
         }
 
