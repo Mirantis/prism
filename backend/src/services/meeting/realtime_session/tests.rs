@@ -125,6 +125,19 @@ pub(crate) async fn settle() {
     tokio::time::sleep(Duration::from_millis(20)).await;
 }
 
+/// Wait until `check` holds, for up to 10 s, for a test that holds no session to sync
+/// with: frames cross a real socket, so a fixed wait fails on a loaded host.
+pub(crate) async fn eventually(what: &str, mut check: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !check() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for {what}"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
 /// Wait until the session has handled every frame the server sent it and the server
 /// holds every frame the session sent, for three checks in a row, since a handled
 /// frame can make the session send another. A wall-clock wait instead fails when

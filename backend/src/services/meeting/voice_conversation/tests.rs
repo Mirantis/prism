@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use super::*;
 use crate::services::meeting::meeting_provider_interface::SpeakerDetails;
-use crate::services::meeting::realtime_session::tests::{MockServer, settle};
+use crate::services::meeting::realtime_session::tests::{MockServer, eventually, settle};
 use crate::services::meeting::transcript_log;
 
 struct NullSink;
@@ -139,6 +139,14 @@ async fn sends_the_opening_context_once_as_a_user_item_after_the_configuration()
         o.opening_context = Some(OPENING.into())
     })
     .await;
+    eventually("the opening context", || {
+        h.sent()
+            .iter()
+            .any(|f| f["type"] == "conversation.item.create")
+    })
+    .await;
+    // A second copy would follow at once; it is given the time to.
+    settle().await;
     let types: Vec<String> = h
         .sent()
         .iter()
