@@ -331,6 +331,13 @@ as Slack, whose API calls no other suite makes.
 Both suites need Node 24+ and AWS/Bedrock credentials in the shell (see
 `e2e/README.md`).
 
+Before and after a change to prompt text, run the prompt eval set (`evals/`):
+`npm run eval:prompts` builds the backend, runs each scenario three times against
+the configured model and prints a pass rate per scenario, and `--baseline <file>`
+prints an earlier run's rates beside this run's. Run it by hand. The eval set
+imports no backend code: it runs each scenario through `prism-server eval`, which
+builds the request with the backend's own prompt builders, tools and gates.
+
 A test may assert on an observed example — a real transcript line, a captured
 provider response, a payload the runtime actually produced. Recorded output is
 stronger evidence than an invented fixture.
@@ -913,6 +920,7 @@ only `inboundMessageService` sets it, for the agent-message route.
 - **The other agents** are the hosting platform's to describe: it provides the
   tools to find them and to message them. The runtime adds no roster, so the
   system prompt and the history are the same with or without other agents.
+  `evals/colleague-scenarios.ts` measures what the agent does with such tools.
 - **Who may post** is the delivery service alone, as the ingress names it: a
   person the ingress names gets 403, and otherwise `x-forwarded-token-id` must
   equal `AGENT_MESSAGES_TOKEN_ID` (`config.agentMessagesTokenId`, compared in

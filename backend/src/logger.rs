@@ -152,10 +152,25 @@ pub fn write(level: Level, fields: Option<Value>, msg: &str) {
         text.push('\n');
         text
     };
+    if TO_STDERR.load(std::sync::atomic::Ordering::Relaxed) {
+        let stderr = std::io::stderr();
+        let mut lock = stderr.lock();
+        let _ = lock.write_all(line.as_bytes());
+        let _ = lock.flush();
+        return;
+    }
     let stdout = std::io::stdout();
     let mut lock = stdout.lock();
     let _ = lock.write_all(line.as_bytes());
     let _ = lock.flush();
+}
+
+static TO_STDERR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Write every log line to stderr from now on, for a command whose stdout carries a
+/// protocol.
+pub fn write_to_stderr() {
+    TO_STDERR.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 fn pretty_line(
