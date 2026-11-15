@@ -19,6 +19,7 @@ import { isLoopbackHostname } from './lib/loopback-host';
 import { type OriginPattern, parseOriginPatterns } from './lib/origin-patterns';
 import { subscriptionForcedIn } from './lib/coding-agents/subscription';
 import { isAnthropicModelId, isOpenAiBedrockModelId } from './lib/llm-providers/bedrock-model-id';
+import { LOCAL_OWNER_USER_ID } from './lib/local-owner';
 
 /**
  * Centralized configuration — single place for all env var reads.
@@ -1067,7 +1068,7 @@ export const config = {
   // row's `userId`.
   // OWNER_USER_ID's default is the "local-owner" sentinel: per-message
   // Slack mappings overlay the real `lensUserId` once the user links.
-  ownerUserId: process.env.OWNER_USER_ID || '00000000-0000-0000-0000-000000000001',
+  ownerUserId: process.env.OWNER_USER_ID || LOCAL_OWNER_USER_ID,
   agentName: process.env.AGENT_NAME || 'Prism',
   teamName: process.env.TEAM_NAME || 'Local',
 

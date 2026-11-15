@@ -5,7 +5,7 @@ interface CapturedExporter {
   export: (records: unknown[], done: ExportDone) => void;
 }
 
-const { loggerProviderArgs, collector } = vi.hoisted(() => ({
+const { loggerProviderArgs, collector, emitted } = vi.hoisted(() => ({
   loggerProviderArgs: [] as Array<{
     resource?: { attributes?: Record<string, unknown>; waitForAsyncAttributes?: () => Promise<void> };
   }>,
@@ -15,6 +15,7 @@ const { loggerProviderArgs, collector } = vi.hoisted(() => ({
     exporter: undefined as CapturedExporter | undefined,
     unanswered: undefined as ExportDone | undefined,
   },
+  emitted: [] as Array<{ attributes?: Record<string, unknown> }>,
 }));
 
 vi.mock('../config', () => ({
@@ -28,7 +29,7 @@ vi.mock('../config', () => ({
 }));
 
 vi.mock('../logger', () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
 vi.mock('@opentelemetry/exporter-logs-otlp-http', () => ({
@@ -46,7 +47,7 @@ vi.mock('@opentelemetry/sdk-logs', () => ({
       loggerProviderArgs.push(args);
     }
     getLogger() {
-      return { emit: () => {} };
+      return { emit: (record: (typeof emitted)[number]) => emitted.push(record) };
     }
     // As the batch processor does: hand the buffer to the exporter and wait for its answer.
     forceFlush() {
@@ -66,11 +67,13 @@ vi.mock('@opentelemetry/sdk-logs', () => ({
   },
 }));
 
-import { flushTelemetry, initTelemetry, shutdownTelemetry } from './telemetry';
+import { flushTelemetry, initTelemetry, shutdownTelemetry, trackEvent } from './telemetry';
+import { LOCAL_OWNER_USER_ID } from './local-owner';
 
 describe('telemetry (enabled path)', () => {
   beforeEach(() => {
     loggerProviderArgs.length = 0;
+    emitted.length = 0;
     collector.answer = 0;
     initTelemetry(async () => 'deployment-1');
   });
@@ -100,6 +103,18 @@ describe('telemetry (enabled path)', () => {
     expect(attrs['product.name']).toBe('example-product');
     expect(attrs['service.name']).toBe('prism-agent-runtime');
     expect(attrs['service.namespace']).toBe('prism-agent');
+  });
+
+  it('sends no user.id for the local-owner placeholder', () => {
+    trackEvent('agent started', LOCAL_OWNER_USER_ID);
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]?.attributes).not.toHaveProperty('user.id');
+  });
+
+  it('sends a real owner id as user.id', () => {
+    trackEvent('agent started', 'user-real-1');
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]?.attributes?.['user.id']).toBe('user-real-1');
   });
 
   it('reports false for a flush whose export the collector refused, and true for the next one', async () => {
