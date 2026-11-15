@@ -22,6 +22,7 @@ import { v7 as uuidv7 } from 'uuid';
 import { config } from '../config';
 import { logger } from '../logger';
 import { isLangfuseEnabled } from './langfuse';
+import { LOCAL_OWNER_USER_ID } from './local-owner';
 
 // `deployment.environment.name` lives in the incubating semconv export, which our
 // tsconfig (`moduleResolution: node10`) can't follow via subpath. The attribute
@@ -135,7 +136,8 @@ export function trackEvent(
     ...properties,
     'event.id': uuidv7(),
   };
-  if (userId) {
+  // Send no user.id for the local-owner placeholder. `deployment.id` identifies the install.
+  if (userId && userId !== LOCAL_OWNER_USER_ID) {
     attributes['user.id'] = userId;
   }
 
