@@ -1,0 +1,39 @@
+apiVersion: lns.run/v1
+kind: sandbox
+name: prism-agent
+spec:
+  image: ghcr.io/lensapp/prism-agent:latest
+  env:
+    NEXUS_API_URL: ""
+    OTEL_EXPORTER_OTLP_ENDPOINT: ""
+    SHELL_WORKSPACE_ROOT: /home/node/work
+    # The guest has no /etc/hosts yet (lensapp/lens-sandbox#268), so the TUI's
+    # default http://localhost:3003 cannot resolve; pin the runtime URL to the
+    # loopback IP for `lns exec -it <run> prism`.
+    PRISM_HTTP_URL: http://127.0.0.1:3003
+  resources:
+    cpu: 4
+    memory: 6Gi
+  # Seed the TUI settings into the prism-settings volume, copy-if-missing so
+  # user edits persist: the TUI's defaults assume `localhost` resolves (it
+  # doesn't in the guest, lensapp/lens-sandbox#268) and show a wrong hardcoded
+  # model label. A fileset can't target the volume's own path, hence the
+  # /opt seed + boot-time copy.
+  command: sh -c '[ -e /home/node/.prism/settings.json ] || cp /opt/prism-seed/settings.json /home/node/.prism/; exec ./start.sh'
+  filesets:
+    - inline:
+        settings.json: '{"httpUrl":"http://127.0.0.1:3003","modelId":"openrouter/free"}'
+      guestPath: /opt/prism-seed
+  volumes:
+    - type: volume
+      source: prism-data
+      target: /data
+    - type: volume
+      source: prism-work
+      target: /home/node/work
+    - type: volume
+      source: prism-settings
+      target: /home/node/.prism
+  ports:
+    - container: 3003
+      host: 3003

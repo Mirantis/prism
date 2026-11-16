@@ -44,3 +44,6 @@ tmp/
 # Agent exports (`.prism` archives from the export endpoint) — host-local, often
 # large, and full of real conversation data
 *.prism
+
+# LNS local perference
+lns-local-mixin.yaml

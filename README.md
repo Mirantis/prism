@@ -101,10 +101,11 @@ checked against policy:
 ```bash
 curl -fsSL https://get.lns.run | bash   # install the lns CLI (macOS on Apple Silicon)
 
-lns run --cpus 2 --mem 2048 \
-  -p 3003:3003 -v prism-data:/data \
-  ghcr.io/lensapp/prism-agent:latest \
-  -- /bin/sh -c './start.sh > /dev/null 2>&1 & exec prism'
+# Run the prism agent in sandbox using OpenRouter as the inference provider
+lns run --name=prism-agent -d -P --yes lenshq/prism --mixin hub.lns.run/lenshq/openrouter
+
+# Launch prism TUI
+lns exec -it prism-agent prism
 ```
 
 The flags mirror the Docker command below: the agent's SQLite database
