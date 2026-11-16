@@ -1588,9 +1588,10 @@ impl Config {
             nexus_litellm_base_url,
             agent_id: RwLock::new(e.get("AGENT_ID").map(str::to_string)),
             agent_messages_token_id,
-            owner_user_id: RwLock::new(
-                e.or_default("OWNER_USER_ID", "00000000-0000-0000-0000-000000000001"),
-            ),
+            owner_user_id: RwLock::new(e.or_default(
+                "OWNER_USER_ID",
+                crate::lib::local_owner::LOCAL_OWNER_USER_ID,
+            )),
             agent_name: e.or_default("AGENT_NAME", "Prism"),
             team_name: e.or_default("TEAM_NAME", "Local"),
             agent_defaults,
