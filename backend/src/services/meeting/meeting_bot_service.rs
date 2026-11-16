@@ -48,6 +48,7 @@ use crate::services::meeting::tool_bridge::{MeetingToolBridgeInput, prepare_meet
 use crate::services::meeting::voice_conversation::{
     VoiceConversation, VoiceConversationOptions, VoiceConversationStats,
 };
+use crate::services::voice::agent_voice::{AgentVoice, voice_for_agent};
 use crate::services::voice::realtime_tools::MAX_TOOL_RESULT_CHARS;
 use crate::services::voice::voice_instructions::{
     VoiceCall, VoiceInstructions, VoiceInstructionsInput, build_voice_instructions,
@@ -641,6 +642,8 @@ struct MeetingBotState {
     audio: Option<Arc<AudioStack>>,
     browser: Option<Arc<BrowserStack>>,
     conversation: Option<Arc<VoiceConversation>>,
+    /// The voice the current call speaks with, for `meeting joined`.
+    agent_voice: Option<AgentVoice>,
     page: Option<PageHandle>,
     poll_timer: Option<AbortHandle>,
     speaker_timer: Option<AbortHandle>,
@@ -789,6 +792,7 @@ impl MeetingBotService {
                 audio: None,
                 browser: None,
                 conversation: None,
+                agent_voice: None,
                 page: None,
                 poll_timer: None,
                 speaker_timer: None,
@@ -1085,6 +1089,7 @@ impl MeetingBotService {
         (handles.on_lost)(Arc::new(move |reason| self.on_audio_lost(epoch, reason)));
 
         let response_mode = self.state.lock().response_mode;
+        let agent_voice = voice_for_agent(&instructions.agent_name).await;
         let conversation = VoiceConversation::new(VoiceConversationOptions {
             on_response_finished: None,
             instructions: instructions.instructions.clone(),
@@ -1099,7 +1104,7 @@ impl MeetingBotService {
             // answers to another would stay silent when addressed by the one it gave.
             agent_name: instructions.agent_name.clone(),
             model: None,
-            voice: Some(CONFIG.openai_realtime_voice.clone()),
+            voice: Some(agent_voice.voice.clone()),
             endpoint_override: None,
             on_session_lost: Some(Arc::new(move |reason| self.on_session_lost(epoch, reason))),
         })?;
@@ -1137,6 +1142,7 @@ impl MeetingBotService {
             let mut state = self.state.lock();
             state.audio = locals.audio.take();
             state.conversation = locals.conversation.take();
+            state.agent_voice = Some(agent_voice);
             state.browser = locals.browser.take();
             state.page = Some(page.clone());
         }
@@ -1418,6 +1424,21 @@ impl MeetingBotService {
         // How often the platform auto-mutes a new joiner, and whether the unmute worked.
         properties.insert("muted_on_entry".to_string(), muted_on_entry.to_string());
         properties.insert("mic_confirmed".to_string(), audible.to_string());
+        let agent_voice = self.state.lock().agent_voice.clone();
+        properties.insert(
+            "voice".to_string(),
+            agent_voice
+                .as_ref()
+                .map_or("unknown", |voice| voice.voice.as_str())
+                .to_string(),
+        );
+        properties.insert(
+            "voice_source".to_string(),
+            agent_voice
+                .as_ref()
+                .map_or("unknown", |voice| voice.source.as_str())
+                .to_string(),
+        );
         track_event("meeting joined", Some(&input.user_id), Some(properties));
 
         if audible {
@@ -3015,6 +3036,7 @@ impl MeetingBotService {
         let release = {
             let mut state = self.state.lock();
             state.conversation = None;
+            state.agent_voice = None;
             state.browser = None;
             state.audio = None;
             state.page = None;

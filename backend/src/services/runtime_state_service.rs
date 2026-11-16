@@ -21,6 +21,9 @@ pub const SINGLE_THREAD: &str = "singleThread";
 /// This install's `deployment.id` on product telemetry.
 pub const DEPLOYMENT_ID: &str = "deploymentId";
 
+/// How the agent's names were read for its voice: a JSON object of name to reading.
+pub const AGENT_VOICE_READINGS: &str = "agentVoiceReadings";
+
 /// The end of the last closed hour that `llm usage aggregated` reported, as an ISO time.
 pub const LLM_USAGE_REPORTED_THROUGH: &str = "llmUsageReportedThrough";
 

@@ -1,4 +1,5 @@
 // @generated-modules-start
+pub mod agent_voice;
 pub mod dictation_session;
 pub mod realtime_tools;
 pub mod screen_recording;
