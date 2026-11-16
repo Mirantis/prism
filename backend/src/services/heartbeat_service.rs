@@ -59,8 +59,11 @@ use crate::{log_error, log_info, log_warn};
 const HEARTBEAT_BUDGET_NOTICE: &str =
     "This heartbeat check stopped: your organization's AI spending limit has been reached.";
 
-/// How many stored heartbeat messages a restart reads to restore the send record.
-const SEND_RECORD_ROWS: i64 = 20;
+/// How many stored heartbeat messages a restart reads at most, newest first, to
+/// restore the send record. The record keeps `HEARTBEAT_SENDS` distinct sends, so
+/// the cap loses a send only when the newest 200 messages hold fewer than
+/// `HEARTBEAT_SENDS` distinct sends.
+const SEND_RECORD_MAX_ROWS: i64 = 200;
 
 /// How a heartbeat run ended: it posted, posted nothing, or ended in an error the runtime delivered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,6 +85,9 @@ impl HeartbeatOutcome {
 
 /// How many heartbeat intervals back a restart reads sends into the send record.
 const HEARTBEAT_SEND_RESTORE_INTERVALS: i64 = 3;
+
+/// The shortest window a restart reads sends from, so a daily check does not repeat after a restart.
+const HEARTBEAT_SEND_RESTORE_MIN_MS: i64 = 24 * 60 * 60_000;
 
 /// How many sends the send record keeps, and how many run results.
 const HEARTBEAT_SENDS: usize = 10;
@@ -523,12 +529,13 @@ impl HeartbeatService {
     }
 
     /// The send record holds the sends and results of the runs of the last
-    /// `HEARTBEAT_SEND_RESTORE_INTERVALS` intervals after the newest revision of the
-    /// Heartbeat document, read from the stored heartbeat rows of the web threads.
-    /// The trades: a run that posted nothing is not stored, so the record can miss a
-    /// report that a condition cleared; a send older than the window is sent again;
-    /// and a document written straight into the database has no revision, so
-    /// earlier sends are read as made under it.
+    /// `HEARTBEAT_SEND_RESTORE_INTERVALS` intervals, or of the last day when that is
+    /// longer, after the newest revision of the Heartbeat document, read from the
+    /// stored heartbeat rows of the web threads. The trades: a run that posted
+    /// nothing is not stored, so the record can miss a report that a condition
+    /// cleared; a send older than the window is sent again; and a document written
+    /// straight into the database has no revision, so earlier sends are read as
+    /// made under it.
     async fn restore_send_record(state: StateHandle, checks: String) {
         let (agent_id, interval_ms) = {
             let s = state.lock();
@@ -536,29 +543,33 @@ impl HeartbeatService {
         };
         let read: anyhow::Result<Option<HeartbeatSendRecord>> = async {
             let owner = agent_id.clone();
+            let edited = crate::db::run(move |conn| {
+                DOCUMENT_REVISION_SERVICE.newest(conn, &owner, WorkspaceDocField::HeartbeatMd)
+            })
+            .await?;
+            let window_ms =
+                (HEARTBEAT_SEND_RESTORE_INTERVALS * interval_ms).max(HEARTBEAT_SEND_RESTORE_MIN_MS);
+            let since = (now_ms() - window_ms).max(
+                edited
+                    .map(|revision| revision.created_at.timestamp_millis())
+                    .unwrap_or(0),
+            );
+            let since_at = DateTime::<Utc>::from_timestamp_millis(since).unwrap_or_default();
+            let owner = agent_id.clone();
             let rows: Vec<(String, DateTime<Utc>, Option<Value>)> = crate::db::run(move |conn| {
                 Ok(m::conversation_messages
                     .inner_join(t::conversation_threads)
                     .filter(m::role.eq(MessageRole::Agent))
                     .filter(m::triggered_by.eq(MessageTrigger::Heartbeat))
                     .filter(t::agent_id.eq(&owner))
+                    .filter(m::created_at.ge(crate::db::sql_types::DbDateTime(since_at)))
                     .filter(t::external_thread_id.is_null())
                     .order(m::created_at.desc())
-                    .limit(SEND_RECORD_ROWS)
+                    .limit(SEND_RECORD_MAX_ROWS)
                     .select((m::content, m::created_at, m::tool_calls))
                     .load(conn)?)
             })
             .await?;
-            let owner = agent_id.clone();
-            let edited = crate::db::run(move |conn| {
-                DOCUMENT_REVISION_SERVICE.newest(conn, &owner, WorkspaceDocField::HeartbeatMd)
-            })
-            .await?;
-            let since = (now_ms() - HEARTBEAT_SEND_RESTORE_INTERVALS * interval_ms).max(
-                edited
-                    .map(|revision| revision.created_at.timestamp_millis())
-                    .unwrap_or(0),
-            );
             let sends: Vec<Vec<SentMessageEntry>> = rows
                 .iter()
                 .map(|(_, _, tool_calls)| {
@@ -569,9 +580,6 @@ impl HeartbeatService {
             // Oldest first and in a live run's order, so a newer copy of a send replaces an older one.
             for i in (0..rows.len()).rev() {
                 let at = rows[i].1.timestamp_millis();
-                if at < since {
-                    continue;
-                }
                 record = merge_sends(record, &sends[i], at, &checks);
                 // A live run records no result for a run without a reply or one stopped by the spending limit.
                 let text = js::trim(&rows[i].0);
@@ -1624,5 +1632,196 @@ mod tests {
         service.note_report(&state, "  disk still 91%  ");
         let record = service.send_record_for_prompt(&state).unwrap();
         assert_eq!(record.reports.unwrap()[0].text, "disk still 91%");
+    }
+
+    mod restore {
+        use chrono::Duration as ChronoDuration;
+
+        use super::*;
+        use crate::db::models::{NewAgentWorkspace, NewConversationMessage, NewConversationThread};
+        use crate::db::schema::{agent_workspaces, conversation_messages, conversation_threads};
+        use crate::db::testing::{TestDb, test_db};
+
+        const AGENT: &str = "agent-1";
+        const HOUR_MS: i64 = 60 * 60_000;
+
+        fn seed(test: &TestDb, rows: Vec<(&str, i64, Option<(&str, &str)>)>) {
+            let rows: Vec<NewConversationMessage> = rows
+                .into_iter()
+                .enumerate()
+                .map(|(i, (content, minutes_ago, sent))| {
+                    let mut message = NewConversationMessage::new(
+                        "thread-1",
+                        MessageRole::Agent,
+                        content,
+                        MessageTrigger::Heartbeat,
+                    );
+                    message.id = format!("m-{i}");
+                    message.created_at = (Utc::now() - ChronoDuration::minutes(minutes_ago)).into();
+                    message.tool_calls = sent.map(|(target, text)| {
+                        json!([{
+                            "tool": "send_message",
+                            "input": json!({ "target": target, "text": text }).to_string(),
+                            "output": "{}",
+                            "success": true,
+                            "timestamp": "2025-01-15T00:00:00.000Z",
+                        }])
+                    });
+                    message
+                })
+                .collect();
+            test.db
+                .run_sync(move |conn| {
+                    let mut agent = NewAgentWorkspace::new("user-1", "", "", "", "checks", "");
+                    agent.id = AGENT.into();
+                    diesel::insert_into(agent_workspaces::table)
+                        .values(&agent)
+                        .execute(conn)?;
+                    let mut thread = NewConversationThread::new(AGENT, "user-1");
+                    thread.id = "thread-1".into();
+                    diesel::insert_into(conversation_threads::table)
+                        .values(&thread)
+                        .execute(conn)?;
+                    diesel::insert_into(conversation_messages::table)
+                        .values(&rows)
+                        .execute(conn)?;
+                    Ok(())
+                })
+                .unwrap();
+        }
+
+        async fn restored_messages(interval_ms: i64) -> Option<String> {
+            let state: StateHandle = Arc::new(Mutex::new(HeartbeatState {
+                user_id: "user-1".into(),
+                agent_id: AGENT.into(),
+                timeout: None,
+                interval_ms,
+                due_at: 0,
+                last_run: None,
+                is_running: false,
+                consecutive_errors: 0,
+                last_send: None,
+                restored: futures::future::ready(()).boxed().shared(),
+            }));
+            HeartbeatService::restore_send_record(Arc::clone(&state), "checks".into()).await;
+            HeartbeatService::new()
+                .send_record_for_prompt(&state)
+                .map(|record| record.messages)
+        }
+
+        #[tokio::test]
+        #[serial_test::serial]
+        async fn restores_the_sends_of_the_last_day_on_a_short_interval() {
+            let test = test_db();
+            seed(
+                &test,
+                vec![
+                    (
+                        "Posted the inbox summary.",
+                        20 * 60,
+                        Some(("chat", "New email.")),
+                    ),
+                    (
+                        "Posted the reminder.",
+                        26 * 60,
+                        Some(("chat", "Dentist at 15:00.")),
+                    ),
+                ],
+            );
+            assert_eq!(
+                restored_messages(2 * HOUR_MS).await.as_deref(),
+                Some("- To chat (20h ago): New email.")
+            );
+        }
+
+        #[tokio::test]
+        #[serial_test::serial]
+        async fn restores_a_send_just_inside_the_last_day_and_none_just_outside_it() {
+            let test = test_db();
+            seed(
+                &test,
+                vec![
+                    (
+                        "Posted the inbox summary.",
+                        23 * 60 + 59,
+                        Some(("chat", "New email.")),
+                    ),
+                    (
+                        "Posted the reminder.",
+                        24 * 60 + 1,
+                        Some(("chat", "Dentist at 15:00.")),
+                    ),
+                ],
+            );
+            assert_eq!(
+                restored_messages(2 * HOUR_MS).await.as_deref(),
+                Some("- To chat (23h ago): New email.")
+            );
+        }
+
+        #[tokio::test]
+        #[serial_test::serial]
+        async fn restores_the_sends_of_three_intervals_when_they_span_more_than_a_day() {
+            let test = test_db();
+            seed(
+                &test,
+                vec![
+                    (
+                        "Posted the disk alert.",
+                        30 * 60,
+                        Some(("#oncall", "Disk is 95% full.")),
+                    ),
+                    (
+                        "Posted the build failure.",
+                        37 * 60,
+                        Some(("#ops", "Build failed.")),
+                    ),
+                ],
+            );
+            assert_eq!(
+                restored_messages(12 * HOUR_MS).await.as_deref(),
+                Some("- To #oncall (1d ago): Disk is 95% full.")
+            );
+        }
+
+        #[tokio::test]
+        #[serial_test::serial]
+        async fn restores_no_record_when_every_send_is_older_than_a_day() {
+            let test = test_db();
+            seed(
+                &test,
+                vec![(
+                    "Posted the build failure.",
+                    25 * 60,
+                    Some(("#ops", "Build failed.")),
+                )],
+            );
+            assert_eq!(restored_messages(HOUR_MS).await, None);
+        }
+
+        #[tokio::test]
+        #[serial_test::serial]
+        async fn restores_every_send_of_the_last_day_when_the_day_holds_many_messages() {
+            let test = test_db();
+            let mut rows: Vec<(&str, i64, Option<(&str, &str)>)> = (1..=23)
+                .map(|hours| {
+                    (
+                        "Posted the build status.",
+                        hours * 60,
+                        Some(("#ops", "Build failed.")),
+                    )
+                })
+                .collect();
+            rows.push((
+                "Posted the inbox summary.",
+                23 * 60 + 30,
+                Some(("chat", "New email.")),
+            ));
+            seed(&test, rows);
+            assert_eq!(
+                restored_messages(2 * HOUR_MS).await.as_deref(),
+                Some("- To #ops (1h ago): Build failed.\n- To chat (23h ago): New email.")
+            );
+        }
     }
 }
