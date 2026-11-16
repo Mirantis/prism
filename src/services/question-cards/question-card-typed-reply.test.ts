@@ -99,6 +99,19 @@ describe('an answer message that the next boot stores', () => {
   });
 });
 
+describe('a task notification while a card waits', () => {
+  it('leaves the card open', async () => {
+    await engine.acceptUserMessage(
+      { agentId: AGENT, userId: USER, message: 'The task finished.', taskNotification: { taskId: 'task-1' } },
+      THREAD,
+      'task-1',
+    );
+
+    expect(await statusOf(cardRow)).toBe('waiting');
+    expect(await opened.client.conversationMessage.count({ where: { id: 'task-1' } })).toBe(1);
+  });
+});
+
 describe('a typed reply while a card waits', () => {
   it('stores the reply, closes the card, and shows the card once both are committed', async () => {
     let seenAtShow: { status: string; reply: number } | undefined;
