@@ -51,6 +51,7 @@ use crate::services::meeting::voice_conversation::{
     StopWithTextRequest, VoiceConversation, VoiceConversationOptions,
 };
 use crate::services::message_delivery_service::{MESSAGE_DELIVERY_SERVICE, PublishOptions};
+use crate::services::voice::agent_voice::voice_for_agent;
 use crate::services::voice::realtime_tools::{RealtimeToolsOptions, prepare_realtime_tools};
 use crate::services::voice::screen_recording::{
     RecordingEndReason, RecordingResult, ScreenRecording, ScreenRecordingOptions, format_offset,
@@ -645,6 +646,7 @@ impl VoiceChatService {
         locals.transport = Some(transport.clone());
 
         let computer_use = locals.computer_use.clone();
+        let agent_voice = voice_for_agent(&voice.agent_name).await;
         let conversation = VoiceConversation::new(VoiceConversationOptions {
             instructions: voice.instructions.clone(),
             opening_context: voice.opening_context.clone(),
@@ -654,7 +656,7 @@ impl VoiceChatService {
             response_mode: mode.response_mode(),
             agent_name: voice.agent_name.clone(),
             model: None,
-            voice: Some(CONFIG.openai_realtime_voice.clone()),
+            voice: Some(agent_voice.voice.clone()),
             endpoint_override: None,
             on_session_lost: Some(Arc::new(move |reason: String| {
                 tokio::spawn(async move {
@@ -759,6 +761,11 @@ impl VoiceChatService {
         props.insert("response_mode".to_string(), mode.as_str().to_string());
         props.insert("surface".to_string(), surface.as_str().to_string());
         props.insert("computer".to_string(), computer.is_some().to_string());
+        props.insert("voice".to_string(), agent_voice.voice.clone());
+        props.insert(
+            "voice_source".to_string(),
+            agent_voice.source.as_str().to_string(),
+        );
         track_event("voice chat started", Some(&input.user_id), Some(props));
         Ok(true)
     }

@@ -42,6 +42,7 @@ pub enum LlmCallPurpose {
     GoalGate,
     RiskGate,
     ModelRouting,
+    AgentVoice,
     /// A chat platform's thread reply classifier, named for the platform
     /// (`<platform>-thread-gate`).
     ThreadGate(ChatPlatform),
@@ -64,6 +65,7 @@ impl LlmCallPurpose {
             LlmCallPurpose::GoalGate => "goal-gate",
             LlmCallPurpose::RiskGate => "risk-gate",
             LlmCallPurpose::ModelRouting => "model-routing",
+            LlmCallPurpose::AgentVoice => "agent-voice",
             LlmCallPurpose::ThreadGate(platform) => {
                 return Cow::Owned(format!("{}-thread-gate", platform.as_str()));
             }
@@ -108,7 +110,7 @@ impl<'de> Deserialize<'de> for LlmCallPurpose {
 
 /// Every fixed purpose, so a test can assert the enum and the recorders agree.
 /// A value here with no recorder is spend nobody is counting.
-pub const LLM_CALL_PURPOSES: [LlmCallPurpose; 13] = [
+pub const LLM_CALL_PURPOSES: [LlmCallPurpose; 14] = [
     LlmCallPurpose::Chat,
     LlmCallPurpose::Heartbeat,
     LlmCallPurpose::Cron,
@@ -122,6 +124,7 @@ pub const LLM_CALL_PURPOSES: [LlmCallPurpose; 13] = [
     LlmCallPurpose::GoalGate,
     LlmCallPurpose::RiskGate,
     LlmCallPurpose::ModelRouting,
+    LlmCallPurpose::AgentVoice,
 ];
 
 /// The tokens of the model calls recorded while a [`counting_usage`] scope runs.

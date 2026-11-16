@@ -1573,14 +1573,38 @@ fn reads_the_openai_key_verbatim() {
 }
 
 #[test]
-fn pins_the_realtime_model_and_voice() {
+fn pins_the_realtime_model() {
     let cfg = load(&[]);
     assert_eq!(cfg.openai_realtime_model, "gpt-realtime-2.1");
-    assert_eq!(cfg.openai_realtime_voice, "marin");
     assert_eq!(
         load(&[("OPENAI_REALTIME_MODEL", "gpt-realtime-mini")]).openai_realtime_model,
         "gpt-realtime-mini"
     );
+}
+
+#[test]
+fn has_the_voice_follow_the_agents_name_when_none_is_set() {
+    let cfg = load(&[]);
+    assert_eq!(cfg.openai_realtime_voice, "auto");
+    assert_eq!(
+        cfg.openai_realtime_name_voices,
+        NameVoices {
+            default: "marin",
+            man: "cedar"
+        }
+    );
+}
+
+#[test]
+fn reads_auto_in_any_case() {
+    assert_eq!(
+        load(&[("OPENAI_REALTIME_VOICE", " Auto ")]).openai_realtime_voice,
+        "auto"
+    );
+}
+
+#[test]
+fn takes_a_voice_that_is_set_for_every_call() {
     assert_eq!(
         load(&[("OPENAI_REALTIME_VOICE", "cedar")]).openai_realtime_voice,
         "cedar"

@@ -85,6 +85,7 @@ use crate::services::slack_adapter_service::SLACK_ADAPTER_SERVICE;
 use crate::services::slack_message_queue_service::SLACK_MESSAGE_QUEUE_SERVICE;
 use crate::services::teams::teams_adapter_service::TEAMS_ADAPTER_SERVICE;
 use crate::services::update::update_service::UPDATE_SERVICE;
+use crate::services::voice::agent_voice::warm_voice;
 use crate::services::voice::voice_chat_service::VOICE_CHAT_SERVICE;
 use crate::services::webhook_receiver_service::WEBHOOK_RECEIVER_SERVICE;
 use crate::services::webhook_service::WEBHOOK_SERVICE;
@@ -496,6 +497,8 @@ async fn initialize() -> anyhow::Result<()> {
         "[Startup] resolving agent workspace"
     );
     let agent = resolve_or_bootstrap_single_agent().await?;
+    // The name is read before the first call needs its voice.
+    warm_voice(&agent.name);
     // Chosen, and created if need be, before any work or request can name a thread,
     // so two first requests never make two.
     if CONFIG.thread_mode == ThreadMode::Single {
