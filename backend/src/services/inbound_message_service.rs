@@ -43,8 +43,8 @@ use crate::protocol::chat_protocol::{
 };
 use crate::services::channel_adapter_interface::ChannelName;
 use crate::services::conversation_engine_service::{
-    CONVERSATION_ENGINE_SERVICE, ChatInput, ChatMetadata, ChatTurnEnd, StoredMessage,
-    UserMessageInput,
+    CONVERSATION_ENGINE_SERVICE, ChatInput, ChatMetadata, ChatTurnEnd, ChatWork, StoredMessage,
+    UserMessageInput, chat_work_for,
 };
 use crate::services::conversation_service::CONVERSATION_SERVICE;
 use crate::services::conversation_thread_activity_service::{
@@ -80,6 +80,8 @@ pub struct InboundMessage {
     pub sender: Option<InboundSender>,
     /// Set when another agent of the project sent it, and `sender` is then `None`.
     pub agent_message: Option<AgentMessageOrigin>,
+    /// The runtime wrote it in the person's name, so it leaves a waiting question card open.
+    pub runtime_written: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -178,6 +180,20 @@ fn sender_input(message: &InboundMessage) -> SenderInput {
     SenderInput {
         metadata,
         agent_message: None,
+    }
+}
+
+/// What the engine stores for a message.
+fn engine_input(message: &InboundMessage, agent_id: String) -> UserMessageInput {
+    let sender = sender_input(message);
+    UserMessageInput {
+        agent_id,
+        user_id: CONFIG.owner_user_id(),
+        message: message.content.clone(),
+        attachment_ids: Some(message.attachment_ids.clone()),
+        metadata: Some(sender.metadata),
+        agent_message: sender.agent_message,
+        runtime_written: message.runtime_written,
     }
 }
 
@@ -393,6 +409,7 @@ impl InboundMessageService {
                 attachment_ids: Vec::new(),
                 sender: None,
                 agent_message: origin_of(message),
+                runtime_written: false,
             },
             title_set: None,
             resumed: Some(resumed),
@@ -424,17 +441,9 @@ impl InboundMessageService {
             return self.accept_duplicate(existing, inbound).await;
         }
 
-        let sender = sender_input(&inbound);
         let stored = CONVERSATION_ENGINE_SERVICE
             .accept_user_message(
-                &UserMessageInput {
-                    agent_id,
-                    user_id: CONFIG.owner_user_id(),
-                    message: inbound.content.clone(),
-                    attachment_ids: Some(inbound.attachment_ids.clone()),
-                    metadata: Some(sender.metadata),
-                    agent_message: sender.agent_message,
-                },
+                &engine_input(&inbound, agent_id),
                 &inbound.thread_id,
                 Some(&inbound.id),
             )
@@ -564,8 +573,16 @@ impl InboundMessageService {
         Ok(false)
     }
 
+    /// What `pending_work` holds for `message` until its answer ends, as `accept` writes it.
+    pub fn pending_work_for(&self, message: &InboundMessage) -> ChatWork {
+        chat_work_for(
+            &engine_input(message, CONFIG.agent_id().unwrap_or_default()),
+            &message.thread_id,
+        )
+    }
+
     /// Only this agent's web conversations that clients may see take messages from the socket.
-    async fn check_thread(&self, thread_id: &str, agent_id: &str) -> anyhow::Result<()> {
+    pub async fn check_thread(&self, thread_id: &str, agent_id: &str) -> anyhow::Result<()> {
         let filter = CONVERSATION_SERVICE
             .client_thread_filter(agent_id, &CONFIG.owner_user_id())
             .await?;

@@ -10,7 +10,7 @@ use std::sync::{Arc, LazyLock};
 
 use chrono::{DateTime, Utc};
 use diesel::prelude::*;
-use diesel::sqlite::Sqlite;
+use diesel::sqlite::{Sqlite, SqliteConnection};
 use indexmap::IndexMap;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -969,6 +969,17 @@ impl ConversationService {
         thread_id: &str,
         input: MessageInput,
     ) -> anyhow::Result<AddedMessage> {
+        Ok(self.add_message_with(thread_id, input, |_| Ok(())).await?.0)
+    }
+
+    /// `add_message`, with `with_message`: a write that commits with the new row, or
+    /// not at all. Answers what that write answered.
+    pub async fn add_message_with<T: Send + 'static>(
+        &self,
+        thread_id: &str,
+        input: MessageInput,
+        with_message: impl FnOnce(&mut SqliteConnection) -> anyhow::Result<T> + Send + 'static,
+    ) -> anyhow::Result<(AddedMessage, T)> {
         let mut row = NewConversationMessage::new(
             thread_id,
             input.role,
@@ -985,11 +996,14 @@ impl ConversationService {
         row.sender_name = input.sender_name.clone();
         row.external_message_id = input.external_message_id.clone();
         row.internal_step = input.internal_step.unwrap_or(false);
-        let message = crate::db::run(move |conn| {
-            Ok(diesel::insert_into(m::conversation_messages)
-                .values(&row)
-                .returning(ConversationMessage::as_returning())
-                .get_result(conn)?)
+        let (message, written) = crate::db::run(move |conn| {
+            conn.transaction(|conn| {
+                let created = diesel::insert_into(m::conversation_messages)
+                    .values(&row)
+                    .returning(ConversationMessage::as_returning())
+                    .get_result(conn)?;
+                Ok((created, with_message(conn)?))
+            })
         })
         .await?;
 
@@ -1056,7 +1070,7 @@ impl ConversationService {
             }
         }
 
-        Ok(AddedMessage { message, title_set })
+        Ok((AddedMessage { message, title_set }, written))
     }
 
     /// Store the external message ID on a persisted message: the id the channel

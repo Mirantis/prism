@@ -879,6 +879,7 @@ pub fn get_computer_tools(
                             thread_id: Some(thread_id),
                             message: input.instruction,
                             steer_only: Some(true),
+                            runtime_written: true,
                             metadata: Some(ChatMetadata {
                                 channel: Some(context.context.channel),
                                 channel_id: context.context.channel_id,

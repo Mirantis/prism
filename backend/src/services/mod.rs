@@ -37,6 +37,7 @@ pub mod plugin_mcp_config;
 pub mod plugin_mcp_service;
 pub mod program_status_service;
 pub mod providers;
+pub mod question_cards;
 pub mod resume_replies;
 pub mod runtime_state_service;
 pub mod session_manager_service;

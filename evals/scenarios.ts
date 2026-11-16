@@ -1710,6 +1710,47 @@ export const SCENARIOS: Scenario[] = [
     },
   },
 
+  // ---- Question cards ----------------------------------------------------
+  {
+    id: 'questions.several-decisions-use-the-card',
+    expect: 'An agent with several decisions to ask puts them in one ask_questions call.',
+    grader: 'tool call',
+    run: async () => {
+      const trace = await runTurn({
+        mode: 'chat',
+        threadId: 'eval-thread',
+        history: [
+          {
+            user:
+              'Plan the launch of our new newsletter for example-product. Before you write anything, ask me what you ' +
+              'need to know: the monthly budget, the channels to promote it on, and the launch month are all still open.',
+          },
+        ],
+        // One step, so the text is what the model wrote beside the call.
+        maxSteps: 1,
+        stubs: { ask_questions: () => texts().askQuestionsResult },
+      });
+      const asks = trace.calls.filter((c) => c.tool === 'ask_questions');
+      const questions = asks[0]?.input.questions;
+      const asked = asks.length === 1 && Array.isArray(questions) && questions.length >= 2;
+      return { pass: asked && trace.text.trim() === '', detail: describeTrace(trace) };
+    },
+  },
+  {
+    id: 'questions.plain-request-needs-no-card',
+    expect: 'A request with nothing to decide is answered without ask_questions.',
+    grader: 'tool call',
+    run: async () => {
+      const trace = await runTurn({
+        mode: 'chat',
+        threadId: 'eval-thread',
+        history: [{ user: 'What is 17 plus 25? Reply with the number.' }],
+        maxSteps: 2,
+      });
+      return { pass: !trace.calls.some((c) => c.tool === 'ask_questions'), detail: describeTrace(trace) };
+    },
+  },
+
   // ---- Computer help -----------------------------------------------------
   {
     id: 'computer.help-alerts-the-user',

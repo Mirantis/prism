@@ -34,6 +34,7 @@ use crate::services::delivery_target_service::PostingCeiling;
 use crate::services::outbound_message_service::SEND_MESSAGE_TOOL_NAME;
 use crate::services::plugin_mcp_service::PLUGIN_MCP_SERVICE;
 use crate::tools::agent_config::get_agent_config_tools;
+use crate::tools::ask_questions::get_ask_questions_tools;
 use crate::tools::attachments::get_attachment_tools;
 use crate::tools::coding_agent_sign_in::get_coding_agent_sign_in_tools;
 use crate::tools::computer::get_computer_tools;
@@ -134,9 +135,9 @@ pub struct CollectedTools {
 /// 1. Awaits the coding-agent detection (the shell tools name the available coding
 ///    agents in their descriptions) and, in chat mode, the installed sign-in CLIs.
 /// 2. Builds the built-ins in this key order: memory, computer (when the mode has a
-///    computer), cron, goals, coding-agent sign-in, agent config, shell, share
-///    file, send message (left out when the posting ceiling reaches nowhere:
-///    neither web chat nor any target), attachments, web fetch, conversation
+///    computer), cron, goals, coding-agent sign-in, ask questions (chat only),
+///    agent config, shell, share file, send message (left out when the posting
+///    ceiling reaches nowhere: neither web chat nor any target), attachments, web fetch, conversation
 ///    history (when the thread is stored in the database), skills, meeting (when
 ///    available; `in_meeting_session` is `mode == "meeting"`).
 /// 3. Fetches the platform MCP tools (`CONFIG.nexus_mcp_url`) and the plugin tools,
@@ -202,6 +203,16 @@ pub async fn collect_tools(input: CollectToolsInput) -> anyhow::Result<Collected
         origin_channel_id,
         &sign_in_agents,
     ));
+    // A person is there to answer only in chat.
+    if mode == "chat" {
+        built_in_tools.extend(get_ask_questions_tools(
+            &input.user_id,
+            &input.agent_id,
+            thread_id,
+            origin_channel,
+            origin_channel_id,
+        ));
+    }
     built_in_tools.extend(get_agent_config_tools()?);
     built_in_tools.extend(get_shell_tools(
         workspace_root,

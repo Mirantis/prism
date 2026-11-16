@@ -70,15 +70,18 @@ const MAX_AGENT_GUIDE_CHARS: usize = 8_000;
 /// credential read — the very verdict it is recording. `memory_delete` stays
 /// evaluated, since that is the one memory operation that loses something.
 ///
+/// `ask_questions` posts only into the conversation that its reply goes to.
+///
 /// Matching is by bare name, which is safe because `lib/tool_collection.rs` merges
 /// every other source behind a guard: nothing can answer to a built-in's name, so a
 /// name on this list is the built-in it names.
-pub const ALWAYS_ALLOWED_TOOL_NAMES: [&str; 9] = [
+pub const ALWAYS_ALLOWED_TOOL_NAMES: [&str; 10] = [
     "memory_search",
     "memory_write",
     "list_scheduled_tasks",
     "get_goal",
     "skill",
+    "ask_questions",
     "coding_agent_status",
     "coding_agent_stop",
     "shell_stdout",

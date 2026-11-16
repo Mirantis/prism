@@ -54,7 +54,7 @@ pub const AGENT_MESSAGES_BODY_LIMIT_BYTES: usize = 1024 * 1024;
 
 /// The routes of the API, in the order `app.use` mounts them: health, then under
 /// `/agents` management, slack, teams, computer, coding agents, computers,
-/// locked-in, agent guide, model selection, heartbeat delivery, document
+/// question cards, locked-in, agent guide, model selection, heartbeat delivery, document
 /// revisions, update, activity, cron tasks and agent state; then threads and
 /// messages at the root, ahead of the SPA fallback so these explicit routes win
 /// over the static catch-all.
@@ -70,6 +70,8 @@ fn api_routes() -> Router {
         .merge(routes::coding_agents::router())
         // The agent's computers, its own and remote ones (/agents/computers)
         .merge(routes::computers::router())
+        // Answers to the agent's question cards (/agents/question-cards)
+        .merge(routes::question_cards::router())
         // Locked-in mode (PATCH /agents/locked-in)
         .merge(routes::locked_in::router())
         // Agent guide editing (PATCH /agents/agent-guide)

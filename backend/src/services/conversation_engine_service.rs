@@ -39,6 +39,8 @@ use crate::services::conversation_thread_activity_service::CONVERSATION_THREAD_A
 use crate::services::llm_call_service::LlmCallPurpose;
 use crate::services::message_delivery_service::{MESSAGE_DELIVERY_SERVICE, PublishOptions};
 use crate::services::pending_work_service::{PENDING_WORK_SERVICE, PendingWorkKind};
+use crate::services::question_cards::question_card_schema::ASK_QUESTIONS_TOOL_NAME;
+use crate::services::question_cards::question_card_service::QUESTION_CARD_SERVICE;
 use crate::services::thread_title_service::THREAD_TITLE_SERVICE;
 use crate::services::thread_turn_service::{PendingMessage, THREAD_TURN_SERVICE, ThreadClaim};
 use crate::support::{js, now_ms};
@@ -149,6 +151,10 @@ pub struct ChatInput {
     /// agent's, and the model reads it as a colleague's request. Only the runtime's
     /// own agent-message route sets it: `metadata` can come from a request body.
     pub agent_message: Option<AgentMessageOrigin>,
+    /// The runtime wrote this message in the person's name, so it leaves a waiting
+    /// question card open. Only the runtime's own callers set it: `metadata` can
+    /// come from a request body.
+    pub runtime_written: bool,
     /// The shared-channel label of the thread, read again before each turn of the
     /// exchange, so a follow-up turn sees a person who first wrote during the turn
     /// before it. Takes precedence over `metadata.channel_label`.
@@ -165,6 +171,8 @@ pub struct UserMessageInput {
     pub attachment_ids: Option<Vec<String>>,
     pub metadata: Option<ChatMetadata>,
     pub agent_message: Option<AgentMessageOrigin>,
+    /// See `ChatInput::runtime_written`.
+    pub runtime_written: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -211,6 +219,8 @@ pub struct ChatWorkMessage {
     pub attachment_ids: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_message: Option<AgentMessageOrigin>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub runtime_written: bool,
 }
 
 /// A message owed an answer, as `pending_work` holds it: where its thread is and
@@ -236,6 +246,25 @@ pub struct ChatWork {
     /// the turn's last reply. A resumed exchange's first reply delivers them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unsent_attachment_ids: Option<Vec<String>>,
+}
+
+/// What `pending_work` holds from before a message is stored until the exchange
+/// that answers it ends. The row holds the message, so a restart before the
+/// insert lands stores it at boot.
+pub fn chat_work_for(input: &UserMessageInput, thread_id: &str) -> ChatWork {
+    ChatWork {
+        thread_id: thread_id.to_string(),
+        agent_id: input.agent_id.clone(),
+        user_id: input.user_id.clone(),
+        metadata: input.metadata.clone(),
+        message: Some(ChatWorkMessage {
+            message: input.message.clone(),
+            attachment_ids: input.attachment_ids.clone(),
+            agent_message: input.agent_message.clone(),
+            runtime_written: input.runtime_written,
+        }),
+        ..ChatWork::default()
+    }
 }
 
 /// The attachments that chat work holds: the uploads of a message not linked yet,
@@ -770,6 +799,7 @@ impl ConversationEngineService {
                     attachment_ids: input.attachment_ids.clone(),
                     metadata: metadata.clone(),
                     agent_message: agent_origin.clone(),
+                    runtime_written: input.runtime_written,
                 };
                 let (thread_id, message_id) = (thread_id.clone(), message_id.clone());
                 tokio::spawn(async move {
@@ -906,11 +936,18 @@ impl ConversationEngineService {
             },
         );
         let abort_signal = controller.clone();
+        let mut store_failed = false;
 
         let ran = claim
             .run(async {
                 let turns = async {
-                    title_set = stored.await?;
+                    title_set = match stored.await {
+                        Ok(title_set) => title_set,
+                        Err(error) => {
+                            store_failed = true;
+                            return Err(error);
+                        }
+                    };
 
                     if let Some(resumed) = &input.resumed {
                         // The tool calls the interrupted turn made after its last stored
@@ -1140,15 +1177,19 @@ impl ConversationEngineService {
                 })),
             }),
         }
-        // A shutdown leaves owed what no turn answered in full, so the next boot
-        // answers it. Any other end, a cancel or a failure included, owes nothing.
+        // A shutdown keeps the rows of the messages no turn answered in full, and the
+        // next boot answers them. Any other end removes the rows, except the row of a
+        // message that could not be stored. The next boot stores and answers that
+        // message, so a caller who sent it again gets two replies.
         let owed = exchange.lock().owed.clone();
         PENDING_WORK_SERVICE.finish(
             PendingWorkKind::Chat,
             if shutdown.is_cancelled() {
                 answered
             } else {
-                owed
+                owed.into_iter()
+                    .filter(|id| !(store_failed && *id == message_id))
+                    .collect()
             },
         );
         self.unregister_canceller(&thread_id, canceller);
@@ -1218,22 +1259,13 @@ impl ConversationEngineService {
         let message_id = id.map_or_else(|| Uuid::new_v4().to_string(), str::to_string);
 
         // Owed an answer from before it is stored until the exchange that answers it
-        // ends, so no restart in between loses it. The row holds the message until
-        // then, so a restart before the insert lands stores it at boot.
-        let work = ChatWork {
-            thread_id: thread_id.to_string(),
-            agent_id: input.agent_id.clone(),
-            user_id: input.user_id.clone(),
-            metadata: input.metadata.clone(),
-            message: Some(ChatWorkMessage {
-                message: input.message.clone(),
-                attachment_ids: input.attachment_ids.clone(),
-                agent_message: input.agent_message.clone(),
-            }),
-            ..ChatWork::default()
-        };
+        // ends, so no restart in between loses it.
         PENDING_WORK_SERVICE
-            .begin(PendingWorkKind::Chat, &message_id, work_json(&work))
+            .begin(
+                PendingWorkKind::Chat,
+                &message_id,
+                work_json(&chat_work_for(input, thread_id)),
+            )
             .await?;
 
         // The message text arrives already prefixed with the sender's mention
@@ -1262,7 +1294,25 @@ impl ConversationEngineService {
                     .and_then(|metadata| metadata.sender_name.clone());
             }
         }
-        let added = CONVERSATION_SERVICE.add_message(thread_id, row).await?;
+        // A reply the person typed stands in for the answers to any card still waiting.
+        // The reply and the card's new status commit together, and clients see the card after that.
+        let typed = input.agent_message.is_none() && !input.runtime_written;
+        let (added, closed_cards) = if typed {
+            let thread = thread_id.to_string();
+            CONVERSATION_SERVICE
+                .add_message_with(thread_id, row, move |conn| {
+                    QUESTION_CARD_SERVICE.close_waiting_in_chat(conn, &thread)
+                })
+                .await?
+        } else {
+            (
+                CONVERSATION_SERVICE.add_message(thread_id, row).await?,
+                Vec::new(),
+            )
+        };
+        QUESTION_CARD_SERVICE
+            .show_closed_in_chat(&input.agent_id, &input.user_id, closed_cards)
+            .await;
 
         // First user message named the thread: announce the placeholder title and
         // kick off the cheap-model upgrade (fire-and-forget, never blocks the
@@ -1535,6 +1585,31 @@ impl ConversationEngineService {
                         },
                     )
                     .await?,
+            );
+        }
+
+        // A question card is the turn's whole reply: the row keeps its tool call for the
+        // model and shows nothing under the card.
+        let asked = all_tool_calls
+            .iter()
+            .any(|call| call.tool == ASK_QUESTIONS_TOOL_NAME && call.success);
+        if agent_message.is_none()
+            && asked
+            && all_blocks.is_empty()
+            && all_attachment_ids.is_empty()
+        {
+            let mut row = MessageInput::new(
+                response.clone(),
+                MessageRole::Agent,
+                MessageTrigger::UserInput,
+            );
+            row.tool_calls = Some(serde_json::to_value(&all_tool_calls)?);
+            row.internal_step = Some(true);
+            agent_message = Some(
+                CONVERSATION_SERVICE
+                    .add_message(thread_id, row)
+                    .await?
+                    .message,
             );
         }
 

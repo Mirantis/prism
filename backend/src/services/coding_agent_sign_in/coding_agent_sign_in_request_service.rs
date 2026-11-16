@@ -377,6 +377,7 @@ impl CodingAgentSignInRequestService {
             agent_id: agent_id.to_string(),
             user_id: user_id.to_string(),
             message: format!("I signed in to {}.", PROVIDERS.get(request.agent)),
+            runtime_written: true,
             metadata: Some(ChatMetadata {
                 channel: Some(context.context.channel),
                 channel_id: context.context.channel_id.clone(),

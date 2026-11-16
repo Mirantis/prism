@@ -851,6 +851,93 @@
       "description": "Ask the user to sign a coding agent in to their own subscription, so its coding tasks run on it: claude-code on their Claude plan, codex on their ChatGPT plan. Call it when the user asks for that, or when a coding task failed because nobody is signed in to the subscription. It posts a card the user signs in from. Never ask for a sign-in code or link in chat, and never use one the user pastes in chat: point them to the card instead. Then finish this turn; when the sign-in succeeds, the user tells you so in a new message."
     }
   ],
+  "ask-questions": [
+    {
+      "type": "function",
+      "name": "ask_questions",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "intro": {
+            "description": "One short plain-text line shown above the questions.",
+            "type": "string",
+            "maxLength": 300
+          },
+          "questions": {
+            "minItems": 1,
+            "maxItems": 7,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 300,
+                  "description": "The question."
+                },
+                "header": {
+                  "description": "A short topic label, such as \"Budget\".",
+                  "type": "string",
+                  "maxLength": 40
+                },
+                "options": {
+                  "minItems": 2,
+                  "maxItems": 4,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "label": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 80,
+                        "description": "The answer, in a few words."
+                      },
+                      "detail": {
+                        "description": "One line on what this answer means.",
+                        "type": "string",
+                        "maxLength": 200
+                      }
+                    },
+                    "required": [
+                      "label"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "recommended": {
+                  "description": "The label of the option you recommend, written exactly as that label.",
+                  "type": "string"
+                },
+                "allowOther": {
+                  "default": true,
+                  "description": "Offer \"Other…\" with a text field.",
+                  "type": "boolean"
+                },
+                "multiSelect": {
+                  "default": false,
+                  "description": "Let the user choose several options.",
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "text",
+                "options"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "questions"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Ask the user one or more questions as a card with answer options they can click. Use it when you need their decisions before you can go on, above all when there are several: put every question in one call, in the order they should answer them. Give each question 2 to 4 options, and name one as recommended when you have a view. The user can always leave a question blank or, unless allowOther is false, write their own answer. Do not write the questions in your reply as well. Put any lead-in in intro, and write no other text in this reply. For a single open question with no natural options, ask in plain text instead. Call it once, then end your turn and write nothing else. The answers arrive as the user's next message, one line per question; a blank question reads \"no answer\"."
+    }
+  ],
   "agent-config": [
     {
       "type": "function",
