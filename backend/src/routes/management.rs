@@ -2754,6 +2754,7 @@ async fn run_skill(Path(skill_name): Path<String>, body: JsonBody) -> Response {
             user_id: CONFIG.owner_user_id(),
             agent_id: agent_id.clone(),
             message: directive,
+            runtime_written: true,
             thread_id: Some(thread_id.clone()),
             metadata: Some(ChatMetadata {
                 channel: Some(ChannelName::Websocket),

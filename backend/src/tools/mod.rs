@@ -1,5 +1,6 @@
 // @generated-modules-start
 pub mod agent_config;
+pub mod ask_questions;
 pub mod attachments;
 pub mod coding_agent_sign_in;
 pub mod computer;
