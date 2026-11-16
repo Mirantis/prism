@@ -20,6 +20,7 @@ pub mod langfuse;
 pub mod last_response_text;
 pub mod llm_errors;
 pub mod llm_providers;
+pub mod local_owner;
 pub mod locked_in;
 pub mod log_redaction;
 pub mod loopback_host;

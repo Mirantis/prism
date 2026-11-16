@@ -25,6 +25,7 @@ use opentelemetry_sdk::logs::{LogBatch, LogExporter, SdkLogger, SdkLoggerProvide
 use crate::ai::TelemetryOptions;
 use crate::config::{CONFIG, Config};
 use crate::lib::langfuse::is_langfuse_enabled;
+use crate::lib::local_owner::LOCAL_OWNER_USER_ID;
 use crate::{log_debug, log_info};
 
 /// `deployment.environment.name` is a stable attribute name per the OTel spec.
@@ -325,14 +326,15 @@ pub fn track_event(
 }
 
 /// A record's attributes: the properties, then `event.id`, then `user.id` when
-/// the user is known.
+/// the user is known. The local-owner placeholder sends no `user.id`, since
+/// `deployment.id` identifies the install.
 fn record_attributes(
     user_id: Option<&str>,
     properties: Option<IndexMap<String, String>>,
 ) -> IndexMap<String, String> {
     let mut attributes = properties.unwrap_or_default();
     attributes.insert("event.id".to_string(), uuid::Uuid::now_v7().to_string());
-    if let Some(user_id) = user_id.filter(|id| !id.is_empty()) {
+    if let Some(user_id) = user_id.filter(|id| !id.is_empty() && *id != LOCAL_OWNER_USER_ID) {
         attributes.insert("user.id".to_string(), user_id.to_string());
     }
     attributes
@@ -658,7 +660,7 @@ mod tests {
 
     #[test]
     fn omits_user_id_when_unknown() {
-        for user in [None, Some("")] {
+        for user in [None, Some(""), Some(LOCAL_OWNER_USER_ID)] {
             let attributes = record_attributes(user, None);
             let keys: Vec<&str> = attributes.keys().map(String::as_str).collect();
             assert_eq!(keys, vec!["event.id"]);
