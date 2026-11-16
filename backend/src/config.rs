@@ -723,7 +723,10 @@ pub struct Config {
     pub realtime_source: RealtimeSource,
     pub realtime_provider: Option<String>,
     pub realtime_unavailable_reason: Option<String>,
+    /// OPENAI_REALTIME_VOICE, trimmed and lowercased, default `auto`.
     pub openai_realtime_voice: String,
+    /// The two voices `auto` picks from.
+    pub openai_realtime_name_voices: NameVoices,
     /// OPENAI_REALTIME_REASONING_EFFORT, default `high`; empty sends no setting
     /// and leaves the choice to the API (`None`).
     pub openai_realtime_reasoning_effort: Option<RealtimeReasoningEffort>,
@@ -740,6 +743,22 @@ pub struct Config {
     /// The gateway's own origin, for `is_gateway_endpoint`.
     nexus_origin: Option<String>,
 }
+
+/// The voices `OPENAI_REALTIME_VOICE=auto` picks from by the agent's name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NameVoices {
+    /// The voice of a name read as a woman's, or as neither a woman's nor a man's.
+    pub default: &'static str,
+    /// The voice of a name read as a man's.
+    pub man: &'static str,
+}
+
+/// `marin` is markedly better for conversation than the API's `alloy` default,
+/// and is also the voice of a name read as neither a woman's nor a man's.
+const NAME_VOICES: NameVoices = NameVoices {
+    default: "marin",
+    man: "cedar",
+};
 
 /// The configuration of this process, built from the environment once, after
 /// `.env` is loaded. A value that stops startup prints its error and exits.
@@ -1220,8 +1239,18 @@ impl Config {
         let openai_realtime_model = e.or_default("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1");
         // One resolver owns managed discovery and explicit/direct voice.
         let realtime_configuration = resolve_realtime_configuration(env)?;
-        // `marin` is markedly better for conversation than the API's `alloy`.
-        let openai_realtime_voice = e.or_default("OPENAI_REALTIME_VOICE", "marin");
+        // `auto`, the default, has the voice follow the agent's name: `cedar` for a
+        // man's name, `marin` for any other (`services/voice/agent_voice.rs`). Any
+        // other value is the voice of every call.
+        let openai_realtime_voice = {
+            let voice = crate::support::js::trim(e.or("OPENAI_REALTIME_VOICE").unwrap_or("auto"))
+                .to_lowercase();
+            if voice.is_empty() {
+                "auto".to_string()
+            } else {
+                voice
+            }
+        };
         // Empty sends nothing and lets the API pick. An unrecognized level falls
         // back to `high` rather than failing the boot.
         let openai_realtime_reasoning_effort = match e.get("OPENAI_REALTIME_REASONING_EFFORT") {
@@ -1667,6 +1696,7 @@ impl Config {
             realtime_provider: realtime_configuration.provider,
             realtime_unavailable_reason: realtime_configuration.unavailable_reason,
             openai_realtime_voice,
+            openai_realtime_name_voices: NAME_VOICES,
             openai_realtime_reasoning_effort,
             openai_transcription_model,
             noise_reduction,

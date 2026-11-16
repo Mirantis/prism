@@ -34,6 +34,7 @@ use crate::lib::workspace_docs::{DocumentWriteActor, DocumentWriteMethod, Worksp
 use crate::lib::workspace_seed::WorkspaceSeed;
 use crate::log_info;
 use crate::services::document_revision_service::{DOCUMENT_REVISION_SERVICE, RecordRevisionInput};
+use crate::services::voice::agent_voice::warm_voice;
 use crate::templates::default_workspace::get_default_workspace_files;
 
 // Format-only validation for the per-agent model override. Letters/digits and
@@ -648,6 +649,8 @@ impl AgentWorkspaceService {
                 ("agent.name", updated.name.clone()),
             ]),
         );
+        // The next call speaks with the new name's voice, without waiting to read it.
+        warm_voice(&updated.name);
         Ok(updated)
     }
 
