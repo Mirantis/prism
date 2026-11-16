@@ -41,6 +41,7 @@ use tokio::task::{AbortHandle, JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 use crate::config::CONFIG;
+use crate::lib::forwarded_sender::{ForwardedSender, header_of, sender_of};
 use crate::lib::log_redaction::err_json;
 use crate::lib::origin_guard::is_allowed_origin;
 use crate::lib::telemetry::track_event;
@@ -92,15 +93,6 @@ const CLOSE_GRACE_MS: u64 = 20;
 /// costs the server nothing, instead of growing a queue in its memory.
 pub const MAX_BUFFERED_BYTES: usize = 4 * 1024 * 1024;
 
-/// The most code points kept from each ingress header value.
-const MAX_SENDER_CHARS: usize = 128;
-
-/// The headers the Lens Agents ingress names the signed-in caller in. It strips any
-/// copy a client sent, and omits the id and the display name when it has none.
-const FORWARDED_USER_HEADER: &str = "x-forwarded-user";
-const FORWARDED_USER_ID_HEADER: &str = "x-forwarded-user-id";
-const FORWARDED_USER_DISPLAY_NAME_HEADER: &str = "x-forwarded-user-display-name";
-
 /// How often the protocol-level heartbeat pings every socket, terminating one that
 /// did not answer the previous ping.
 const HEARTBEAT_INTERVAL_MS: u64 = 30_000;
@@ -116,16 +108,6 @@ const CLOSE_TIMEOUT_MS: u64 = 30_000;
 /// stale by the time it plays, and the queue grows for as long as the call runs. Dropping
 /// keeps the delay bounded, which is what a media transport would have done here.
 const MAX_BUFFERED_AUDIO_BYTES: usize = VOICE_AUDIO_FORMAT.sample_rate as usize * 2 * 2;
-
-static SENDER_UNSAFE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"[<>:\x00-\x1f\x7f]").expect("valid regex"));
-
-/// Who the ingress says is on a connection. Display and attribution only.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChatSender {
-    pub id: String,
-    pub name: String,
-}
 
 /// One chat socket: its state, and the handle the gateway sends through.
 pub struct ChatSocket {
@@ -148,7 +130,7 @@ pub struct ChatSocket {
     /// Set while a `hello` is being answered, so a second one cannot start another.
     greeting: AtomicBool,
     /// Who the ingress says is on this connection. Display and attribution only.
-    sender: Option<ChatSender>,
+    sender: Option<ForwardedSender>,
     hello_timer: Mutex<Option<AbortHandle>>,
     /// Stops this socket's stream subscription.
     unsubscribe: Mutex<Option<Unsubscribe>>,
@@ -372,72 +354,6 @@ impl DictationSignal for SocketDictationSignal {
             },
         );
     }
-}
-
-/// One header value, or `None` when the header is absent. Repeated headers read as
-/// Node joins them, with `, `.
-fn header_of(headers: &HeaderMap, name: &str) -> Option<String> {
-    let values: Vec<String> = headers
-        .get_all(name)
-        .iter()
-        .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned())
-        .collect();
-    if values.is_empty() {
-        None
-    } else {
-        Some(values.join(", "))
-    }
-}
-
-/// A header value made safe to show: no angle brackets, colons or control characters, and capped.
-fn clean_sender(value: Option<&str>) -> Option<String> {
-    let value = value.filter(|v| !v.is_empty())?;
-    let cleaned = SENDER_UNSAFE.replace_all(value, "");
-    let capped: String = js::trim(&cleaned).chars().take(MAX_SENDER_CHARS).collect();
-    (!capped.is_empty()).then_some(capped)
-}
-
-/// `decodeURIComponent`: `None` for a malformed escape or bytes that are not UTF-8.
-fn decode_uri_component(value: &str) -> Option<String> {
-    let bytes = value.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' {
-            let hex = value.get(i + 1..i + 3)?;
-            out.push(u8::from_str_radix(hex, 16).ok()?);
-            i += 3;
-        } else {
-            out.push(bytes[i]);
-            i += 1;
-        }
-    }
-    String::from_utf8(out).ok()
-}
-
-/// The display name header, which the ingress always percent-encodes.
-fn decoded_display_name(value: Option<&str>) -> Option<String> {
-    let value = value.filter(|v| !v.is_empty())?;
-    clean_sender(Some(&decode_uri_component(value)?))
-}
-
-/// Who is on this connection, from the ingress's headers. The id is the signed-in
-/// person's user id. The name is their display name. Each falls back to
-/// `x-forwarded-user`, the person's email or user id, when the ingress omits it.
-///
-/// **Attribution and display only.** The ingress writes the headers for a private
-/// port after it signed the caller in, and strips any copy a client sent. A
-/// runtime reached some other way — local development, or bound wider on purpose
-/// — would read whatever a client wrote, so nothing is ever decided on them.
-fn sender_of(headers: &HeaderMap) -> Option<ChatSender> {
-    let legacy = clean_sender(header_of(headers, FORWARDED_USER_HEADER).as_deref());
-    let id = clean_sender(header_of(headers, FORWARDED_USER_ID_HEADER).as_deref())
-        .or_else(|| legacy.clone())?;
-    let name =
-        decoded_display_name(header_of(headers, FORWARDED_USER_DISPLAY_NAME_HEADER).as_deref())
-            .or(legacy)
-            .unwrap_or_else(|| id.clone());
-    Some(ChatSender { id, name })
 }
 
 /// A payload field, when the client sent it as a string with something in it.
@@ -782,7 +698,7 @@ impl WebSocketGatewayService {
     /// (`the client disconnected`, `disconnected`; a failure logged as
     /// `Failed to end the voice chat of a disconnected client`); its dictation is
     /// cancelled (`disconnected`); and `WebSocket disconnected - code: {code}` is logged.
-    async fn handle_connection(&'static self, socket: WebSocket, sender: Option<ChatSender>) {
+    async fn handle_connection(&'static self, socket: WebSocket, sender: Option<ForwardedSender>) {
         let (mut sink, mut stream) = socket.split();
         let (outbound, mut queue) = mpsc::unbounded_channel::<Message>();
         let ws = Arc::new(ChatSocket {
@@ -1269,6 +1185,7 @@ impl WebSocketGatewayService {
                     name: sender.name.clone(),
                 }),
                 agent_message: None,
+                runtime_written: false,
             })
             .await;
         match accepted {

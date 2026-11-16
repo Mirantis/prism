@@ -66,6 +66,7 @@ use crate::services::web_chat_label::WEB_CHAT_LABEL;
 use crate::services::webhook_service::render_webhook_turn_prompt;
 use crate::support::js::len16;
 use crate::templates::default_workspace::get_default_workspace_files;
+use crate::tools::ask_questions::ask_questions_result;
 use crate::tools::computer::{ALERT_THE_USER, get_computer_tools};
 use crate::tools::meeting::{MeetingToolsInput, get_meeting_tools};
 use crate::types::{
@@ -246,6 +247,7 @@ fn info() -> Value {
             "heartbeatPrompt": HEARTBEAT_PROMPT,
             "alertTheUser": ALERT_THE_USER,
             "defaultHeartbeatMd": get_default_workspace_files().heartbeat_md,
+            "askQuestionsResult": ask_questions_result(),
         },
     })
 }
@@ -413,6 +415,8 @@ struct TurnParams {
     context: ContextOverrides,
     posting_ceiling: Option<PostingCeiling>,
     heartbeat_triggers: Option<Vec<HeartbeatTrigger>>,
+    /// A turn bound to a stored conversation, for the tools only such a turn gets.
+    thread_id: Option<String>,
 }
 
 fn purpose_of(mode: InvokeMode) -> anyhow::Result<LlmCallPurpose> {
@@ -451,7 +455,7 @@ async fn turn(
         computer_use: None,
         user_id: EVAL_USER_ID.to_string(),
         agent_id: agent_id.clone(),
-        thread_id: None,
+        thread_id: params.thread_id.clone(),
         mode: mode.as_str().to_string(),
         origin_channel: Some(match params.channel.as_ref().map(|c| c.platform) {
             Some(ChatPlatform::Slack) => ChannelName::Slack,

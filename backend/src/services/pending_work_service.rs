@@ -19,6 +19,7 @@ use std::sync::{Arc, LazyLock};
 
 use chrono::{DateTime, Utc};
 use diesel::prelude::*;
+use diesel::sqlite::SqliteConnection;
 use futures::FutureExt;
 use futures::future::{BoxFuture, Shared};
 use indexmap::IndexMap;
@@ -223,6 +224,38 @@ impl PendingWorkService {
                     })
                     .execute(conn)?;
                 Ok(())
+            })
+            .boxed()
+        })
+    }
+
+    /// Run the owner's write and record the work in one transaction. When
+    /// `owner_write` answers false, no row is written and this answers false too.
+    pub fn begin_with(
+        &self,
+        kind: PendingWorkKind,
+        key: &str,
+        payload: serde_json::Value,
+        owner_write: impl FnOnce(&mut SqliteConnection) -> anyhow::Result<bool> + Send + 'static,
+    ) -> BoxFuture<'static, anyhow::Result<bool>> {
+        let row = NewPendingWork::new(kind.as_str(), key, payload.clone());
+        self.write(kind, key, move || {
+            crate::db::run(move |conn| {
+                conn.transaction(|conn| {
+                    if !owner_write(conn)? {
+                        return Ok(false);
+                    }
+                    diesel::insert_into(pw::pending_work)
+                        .values(&row)
+                        .on_conflict((pw::kind, pw::key))
+                        .do_update()
+                        .set(&PendingWorkChangeset {
+                            payload: Some(DbJson(payload)),
+                            ..PendingWorkChangeset::default()
+                        })
+                        .execute(conn)?;
+                    Ok(true)
+                })
             })
             .boxed()
         })
@@ -457,12 +490,12 @@ impl PendingWorkService {
 
     /// Run `run` after the earlier writes to the row, and before the later ones. The
     /// write starts at once; the returned future answers how it went.
-    fn write(
+    fn write<T: Send + 'static>(
         &self,
         kind: PendingWorkKind,
         key: &str,
-        run: impl FnOnce() -> BoxFuture<'static, anyhow::Result<()>> + Send + 'static,
-    ) -> BoxFuture<'static, anyhow::Result<()>> {
+        run: impl FnOnce() -> BoxFuture<'static, anyhow::Result<T>> + Send + 'static,
+    ) -> BoxFuture<'static, anyhow::Result<T>> {
         let id = format!("{}:{}", kind.as_str(), key);
         let number = self.next_write.fetch_add(1, Ordering::Relaxed);
         let (sender, receiver) = tokio::sync::oneshot::channel();
@@ -591,6 +624,29 @@ mod tests {
         service.end(PendingWorkKind::Chat, vec!["msg-1", "msg-2", "msg-1"]);
         service.flush().await;
         assert!(stored().await.is_empty());
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn records_the_work_with_the_write_that_decides_it() {
+        let _db = crate::db::testing::test_db();
+        let service = PendingWorkService::new();
+        let recorded = service
+            .begin_with(PendingWorkKind::Chat, "k", json!({ "a": 1 }), |_| Ok(true))
+            .await
+            .unwrap();
+        assert!(recorded);
+        assert_eq!(
+            stored().await,
+            vec![("chat".to_string(), "k".to_string(), json!({ "a": 1 }), 0)]
+        );
+
+        let refused = service
+            .begin_with(PendingWorkKind::Chat, "n", json!({ "a": 2 }), |_| Ok(false))
+            .await
+            .unwrap();
+        assert!(!refused);
+        assert_eq!(stored().await.len(), 1);
     }
 
     #[tokio::test]

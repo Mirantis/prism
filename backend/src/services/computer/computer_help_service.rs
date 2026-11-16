@@ -807,6 +807,7 @@ impl ComputerHelpService {
             message: format!(
                 "I finished helping with the computer. The help request was: {reason}\n\nInspect the current screen, then continue the original request."
             ),
+            runtime_written: true,
             metadata: Some(ChatMetadata {
                 channel: Some(context.context.channel),
                 channel_id: context.context.channel_id.clone(),

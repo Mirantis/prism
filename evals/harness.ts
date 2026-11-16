@@ -36,6 +36,8 @@ export interface BackendTexts {
   heartbeatPrompt: string;
   alertTheUser: string;
   defaultHeartbeatMd: string;
+  /** What `ask_questions` answers once the card is posted. */
+  askQuestionsResult: Record<string, unknown>;
 }
 
 interface BackendInfo {
@@ -204,6 +206,8 @@ interface TurnInput {
   postingCeiling?: PostingCeiling;
   /** The channel messages that started a heartbeat. */
   heartbeatTriggers?: HeartbeatTrigger[];
+  /** A turn bound to a stored conversation, for the tools only such a turn gets. */
+  threadId?: string;
 }
 
 export interface ToolCallRecord {
@@ -307,6 +311,7 @@ export async function runTurn(input: TurnInput): Promise<TurnTrace> {
       context: input.context ?? {},
       postingCeiling: input.postingCeiling,
       heartbeatTriggers: input.heartbeatTriggers,
+      threadId: input.threadId,
     },
     (tool, toolInput) => (stubs[tool] ?? DEFAULT_STUBS[tool] ?? (() => ({ success: true })))(toolInput),
   );

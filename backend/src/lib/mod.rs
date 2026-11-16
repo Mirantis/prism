@@ -13,6 +13,7 @@ pub mod embedding_providers;
 pub mod environment;
 pub mod execution_environments;
 pub mod file_janitor;
+pub mod forwarded_sender;
 pub mod has_binary;
 pub mod html_to_markdown;
 pub mod inference_gate;

@@ -736,6 +736,84 @@ impl AgentMessageKind {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuestionCardOption {
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionCardQuestion {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header: Option<String>,
+    pub options: Vec<QuestionCardOption>,
+    /// The label of the option the agent recommends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended: Option<String>,
+    pub allow_other: bool,
+    pub multi_select: bool,
+}
+
+/// One question's answer: indexes into its options, and the person's own words. A blank has neither.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuestionCardAnswer {
+    pub options: Vec<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub other: Option<String>,
+}
+
+/// Who answered a card, from the ingress headers. For display only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuestionCardPerson {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestionCardStatus {
+    Waiting,
+    Answered,
+    AnsweredInChat,
+}
+
+impl QuestionCardStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Waiting => "waiting",
+            Self::Answered => "answered",
+            Self::AnsweredInChat => "answered_in_chat",
+        }
+    }
+}
+
+/// A block on an AGENT message: the agent's questions, with answer options to choose from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename = "question_card", rename_all = "camelCase")]
+pub struct QuestionCardBlock {
+    pub id: String,
+    pub status: QuestionCardStatus,
+    /// One short line from the agent, in plain text, shown above the questions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intro: Option<String>,
+    pub questions: Vec<QuestionCardQuestion>,
+    /// The most UTF-16 code units the answer route takes for one question's own answer.
+    pub other_max_length: u64,
+    /// In the order of `questions`. Set when `status` is `answered`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answers: Option<Vec<QuestionCardAnswer>>,
+    /// Null when the ingress headers hold no person. Set when `status` is `answered`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "::serde_with::rust::double_option"
+    )]
+    pub answered_by: Option<Option<QuestionCardPerson>>,
+}
+
 /// One message, for any role. A client upserts it by `id`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
