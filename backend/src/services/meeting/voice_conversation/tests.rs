@@ -552,8 +552,12 @@ async fn declares_what_a_load_tools_call_loaded_before_it_sends_the_calls_output
         "name": "load_tools",
         "arguments": "{\"names\":[\"gh__create_issue\"]}",
     }));
-    settle().await;
-    settle().await;
+    eventually("the call's output", || {
+        h.sent().iter().any(|f| {
+            f["type"] == "conversation.item.create" && f["item"]["type"] == "function_call_output"
+        })
+    })
+    .await;
     let sent = h.sent();
     let update = sent
         .iter()
