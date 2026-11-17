@@ -487,7 +487,7 @@ fn appended_lengths(h: &Harness) -> Vec<usize> {
 async fn halves_the_rate_of_what_the_caller_pushes() {
     let h = harness().await;
     h.conversation.push_audio(&[0u8; 960]);
-    settle().await;
+    eventually("the appended audio", || !appended_lengths(&h).is_empty()).await;
     assert_eq!(appended_lengths(&h), vec![480]);
     h.conversation.stop();
 }
@@ -496,7 +496,7 @@ async fn halves_the_rate_of_what_the_caller_pushes() {
 async fn sends_what_the_caller_pushes_untouched_when_the_transport_speaks_24khz() {
     let h = harness_with(REALTIME_SAMPLE_RATE, |_| {}).await;
     h.conversation.push_audio(&[0u8; 480]);
-    settle().await;
+    eventually("the appended audio", || !appended_lengths(&h).is_empty()).await;
     assert_eq!(appended_lengths(&h), vec![480]);
     h.conversation.stop();
 }
