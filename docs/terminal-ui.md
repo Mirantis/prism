@@ -49,6 +49,11 @@ too late for the running turn is answered together in one follow-up rather than
 one reply per message. Escape still means "stop the turn" — it never clears what
 you have typed, and a cancelled turn leaves your draft intact.
 
+**Run a shell command with `!`.** Type `! <command>`, for example `! aws sso login`,
+to run the command in your own terminal, with prompts and browser sign-ins
+working as usual. The command, its exit code and its output then go to the
+agent as your message, and the agent continues from there.
+
 **Other clients on the same conversation.** A message someone else sends to this
 conversation, from the web or a phone, shows under their name. While the agent
 works on another conversation, the spinner says it is waiting for that one to
