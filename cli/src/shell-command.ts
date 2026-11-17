@@ -12,6 +12,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { stripVTControlCharacters } from 'node:util';
 
 /** The composer prefix that runs a shell command. */
@@ -46,11 +47,10 @@ export async function runShellCommand(command: string): Promise<ShellRun> {
   try {
     if (process.platform === 'win32') {
       const { exitCode, output } = await runPiped(command);
-      return { command, exitCode, output: cleanTerminalOutput(output) };
+      return { command, exitCode, output: output.finish() };
     }
     const exitCode = await runRecorded(command, log);
-    const recorded = fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '';
-    return { command, exitCode, output: cleanTerminalOutput(stripScriptBanner(recorded)) };
+    return { command, exitCode, output: readRecording(log).finish(stripScriptBanner) };
   } finally {
     process.off('SIGINT', ignoreSigint);
     fs.rmSync(dir, { recursive: true, force: true });
@@ -73,43 +73,117 @@ function runRecorded(command: string, log: string): Promise<number> {
   });
 }
 
-function runPiped(command: string): Promise<{ exitCode: number; output: string }> {
+function runPiped(command: string): Promise<{ exitCode: number; output: OutputCapture }> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, { shell: true, stdio: ['inherit', 'pipe', 'pipe'] });
-    let output = '';
+    const output = new OutputCapture();
+    // One decoder per stream, so a character split across two chunks is not lost.
+    const outText = new StringDecoder('utf8');
+    const errText = new StringDecoder('utf8');
     child.stdout.on('data', (chunk: Buffer) => {
       process.stdout.write(chunk);
-      output += chunk.toString('utf8');
+      output.push(outText.write(chunk));
     });
     child.stderr.on('data', (chunk: Buffer) => {
       process.stderr.write(chunk);
-      output += chunk.toString('utf8');
+      output.push(errText.write(chunk));
     });
     child.on('error', reject);
-    child.on('close', (code, signal) => resolve({ exitCode: code ?? (signal ? 128 : 1), output }));
+    child.on('close', (code, signal) => {
+      output.push(outText.end());
+      output.push(errText.end());
+      resolve({ exitCode: code ?? (signal ? 128 : 1), output });
+    });
   });
 }
 
+/** Read the `script` log a chunk at a time, so a huge recording is never held whole. */
+function readRecording(log: string): OutputCapture {
+  const output = new OutputCapture();
+  if (!fs.existsSync(log)) return output;
+  const fd = fs.openSync(log, 'r');
+  try {
+    const decoder = new StringDecoder('utf8');
+    const buffer = Buffer.alloc(64 * 1024);
+    let read: number;
+    while ((read = fs.readSync(fd, buffer, 0, buffer.length, null)) > 0) {
+      output.push(decoder.write(buffer.subarray(0, read)));
+    }
+    output.push(decoder.end());
+  } finally {
+    fs.closeSync(fd);
+  }
+  return output;
+}
+
+/** Each kept end of the raw output. Cleaning never lengthens text, so both ends and the marker fit the limit. */
+const CAPTURE_END_CHARS = Math.floor((MAX_SHELL_OUTPUT_CHARS - 100) / 2);
+
+/**
+ * The output as it arrives, kept to its first and last `CAPTURE_END_CHARS`
+ * characters, so a command that prints gigabytes uses bounded memory.
+ */
+export class OutputCapture {
+  private head = '';
+  private tail = '';
+  private cut = 0;
+
+  push(text: string): void {
+    if (!text) return;
+    if (this.head.length < CAPTURE_END_CHARS) {
+      const room = CAPTURE_END_CHARS - this.head.length;
+      this.head += text.slice(0, room);
+      text = text.slice(room);
+      if (!text) return;
+    }
+    this.tail += text;
+    // Trimmed only when twice the limit, so appending stays linear.
+    if (this.tail.length > 2 * CAPTURE_END_CHARS) {
+      this.cut += this.tail.length - CAPTURE_END_CHARS;
+      this.tail = this.tail.slice(-CAPTURE_END_CHARS);
+    }
+  }
+
+  /** The text a reader saw. `prepare` edits the raw text first, told whether it is the whole output or one cut end. */
+  finish(prepare: (text: string, part: 'whole' | 'head' | 'tail') => string = (t) => t): string {
+    if (this.tail.length > CAPTURE_END_CHARS) {
+      this.cut += this.tail.length - CAPTURE_END_CHARS;
+      this.tail = this.tail.slice(-CAPTURE_END_CHARS);
+    }
+    if (this.cut === 0) return cleanTerminalOutput(prepare(this.head + this.tail, 'whole'));
+    return [
+      cleanTerminalOutput(prepare(this.head, 'head')),
+      `[… ${this.cut} characters cut …]`,
+      cleanTerminalOutput(prepare(this.tail, 'tail')),
+    ].join('\n');
+  }
+}
+
 /** util-linux `script` writes a start and an end line into the log, even with `-q`. */
-function stripScriptBanner(text: string): string {
-  return text
-    .replace(/^Script started on [^\n]*\n/, '')
-    .replace(/\n?Script done on [^\n]*\n?$/, '');
+function stripScriptBanner(text: string, part: 'whole' | 'head' | 'tail'): string {
+  if (part !== 'tail') text = text.replace(/^Script started on [^\n]*\n/, '');
+  if (part !== 'head') text = text.replace(/\n?Script done on [^\n]*\n?$/, '');
+  return text;
 }
 
 /**
  * Reduce a terminal recording to the text a reader saw: no escape sequences,
- * a line redrawn with `\r` keeps its last version, and a backspace removes the
- * character before it.
+ * and on each line `\r` and backspace move the cursor back, so what is printed
+ * after them overwrites what was there, as on a terminal.
  */
 export function cleanTerminalOutput(raw: string): string {
   const lines = stripVTControlCharacters(raw)
     .replace(/\r+\n/g, '\n')
     .split('\n')
     .map((line) => {
-      let current = line.slice(line.lastIndexOf('\r') + 1);
-      while (current.includes('\b')) current = current.replace(/[^\x08]?\x08/, '');
-      return current.trimEnd();
+      const screen: string[] = [];
+      let cursor = 0;
+      for (const ch of line) {
+        if (ch === '\r') cursor = 0;
+        else if (ch === '\b') cursor = Math.max(0, cursor - 1);
+        else screen[cursor++] = ch;
+      }
+      return screen.join('').trimEnd();
     });
   return lines.join('\n').trim();
 }

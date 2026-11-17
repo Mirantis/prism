@@ -3,6 +3,7 @@ import {
   cleanTerminalOutput,
   formatShellRecord,
   MAX_SHELL_OUTPUT_CHARS,
+  OutputCapture,
   parseShellRecord,
   shellCommandOf,
 } from './shell-command.js';
@@ -43,5 +44,43 @@ describe('formatShellRecord / parseShellRecord', () => {
 
   it('leaves an ordinary message alone', () => {
     expect(parseShellRecord('please run ! aws sso login')).toBeNull();
+  });
+});
+
+describe('cleanTerminalOutput overwrites like a terminal', () => {
+  it('keeps a line that ends in a carriage return', () => {
+    expect(cleanTerminalOutput('Login succeeded\r')).toBe('Login succeeded');
+  });
+
+  it('overwrites only the characters printed after a carriage return', () => {
+    expect(cleanTerminalOutput('abcdef\rXY\n')).toBe('XYcdef');
+  });
+
+  it('erases with backspace, space, backspace', () => {
+    expect(cleanTerminalOutput('abc\b \b\n')).toBe('ab');
+  });
+});
+
+describe('OutputCapture', () => {
+  it('keeps a short output whole', () => {
+    const capture = new OutputCapture();
+    capture.push('one\r\n');
+    capture.push('two\r\n');
+    expect(capture.finish()).toBe('one\ntwo');
+  });
+
+  it('keeps the start and the end of a huge output, within the record limit', () => {
+    const capture = new OutputCapture();
+    capture.push('FIRST\n');
+    const line = 'x'.repeat(99) + '\n';
+    for (let i = 0; i < 20_000; i++) capture.push(line);
+    capture.push('LAST\n');
+    const output = capture.finish();
+    expect(output.startsWith('FIRST\n')).toBe(true);
+    expect(output.endsWith('\nLAST')).toBe(true);
+    expect(output).toMatch(/\[… \d+ characters cut …\]/);
+    expect(output.length).toBeLessThanOrEqual(MAX_SHELL_OUTPUT_CHARS);
+    const parsed = parseShellRecord(formatShellRecord({ command: 'x', exitCode: 0, output }));
+    expect(parsed!.output).toBe(output);
   });
 });
