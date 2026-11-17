@@ -1,8 +1,8 @@
 /**
  * One conversation on every open client: a second browser context on the same agent.
  *
- * Another person is a socket of its own that names them in the headers the Lens
- * Agents ingress writes for a signed-in caller: `x-forwarded-user` (their email),
+ * Another person is a socket of its own that names them in the headers the Mirantis
+ * Agent Platform ingress writes for a signed-in caller: `x-forwarded-user` (their email),
  * `x-forwarded-user-id` and the percent-encoded `x-forwarded-user-display-name`.
  * A browser cannot set a header on a WebSocket handshake, so they are not a
  * browser here.

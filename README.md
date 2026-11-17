@@ -1,32 +1,21 @@
 # Prism Agent
 
-[![Test](https://github.com/lensapp/prism-agent/actions/workflows/test.yml/badge.svg)](https://github.com/lensapp/prism-agent/actions/workflows/test.yml)
-[![Lint](https://github.com/lensapp/prism-agent/actions/workflows/lint.yml/badge.svg)](https://github.com/lensapp/prism-agent/actions/workflows/lint.yml)
-[![E2E Tests](https://github.com/lensapp/prism-agent/actions/workflows/e2e.yml/badge.svg)](https://github.com/lensapp/prism-agent/actions/workflows/e2e.yml)
-[![Docker Build](https://github.com/lensapp/prism-agent/actions/workflows/docker-build.yml/badge.svg)](https://github.com/lensapp/prism-agent/actions/workflows/docker-build.yml)
-[![Create Binary](https://github.com/lensapp/prism-agent/actions/workflows/create-binary.yml/badge.svg)](https://github.com/lensapp/prism-agent/actions/workflows/create-binary.yml)
-[![Release Canary](https://github.com/lensapp/prism-agent/actions/workflows/release-canary.yml/badge.svg)](https://github.com/lensapp/prism-agent/actions/workflows/release-canary.yml)
-[![Release Production](https://github.com/lensapp/prism-agent/actions/workflows/release-production.yml/badge.svg)](https://github.com/lensapp/prism-agent/actions/workflows/release-production.yml)
-
 > Standalone agent runtime: long-lived AI agent with persistent memory,
-> scheduled work, heartbeat checks, and Slack/WebSocket chat — running
-> in a single container.
+> scheduled work, heartbeat checks, and chat over the Web UI, the TUI, Slack and
+> Microsoft Teams — running in a single container.
 
 ## What Prism Agent is
 
-Prism Agent is self-contained. One container, one embedded database, no
-external services. State, conversation flow, scheduled work, channel adapters,
-and tool execution all run in-process. The only hard runtime dependency is an
-LLM provider.
-
-The agent is not a chatbot session — it persists between conversations,
-maintains its own memory, runs heartbeat checks on a schedule, can put work on
-its own calendar, and can act over a shell.
+Prism Agent is an AI agent that keeps working between your conversations. It
+remembers what you tell it, watches the things you ask it to check, and runs
+tasks on a schedule. It uses a shell to do real work, such as editing files and
+running commands. You can talk to it from the web, the terminal, Slack or
+Microsoft Teams.
 
 ## Documentation
 
 Full user docs live in **[`docs/`](docs/README.md)** — installation (native,
-Docker, Lens Sandbox), the [Web UI](docs/web-ui.md) and
+and Docker), the [Web UI](docs/web-ui.md) and
 [Terminal UI](docs/terminal-ui.md), [Slack](docs/slack.md),
 [Microsoft Teams](docs/teams.md), and a guide to every
 feature: [identity](docs/agent-identity.md), [memory](docs/memory.md),
@@ -48,73 +37,14 @@ feature: [identity](docs/agent-identity.md), [memory](docs/memory.md),
 #### macOS / Linux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lensapp/prism-agent/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Mirantis/prism/main/install.sh | bash
 ```
-
-Installs the `prism` (terminal UI) and `prism-server` (runtime) binaries
-into `~/.prism`, puts `prism` on your `PATH`, and registers `prism-server`
-to run always via launchd (macOS) / systemd (Linux).
-
-`AWS_BEARER_TOKEN_BEDROCK` is required for chat. If it's exported in your
-shell when you run the installer, it's baked into `~/.prism/.env`
-automatically and the service comes up working out of the box:
-
-```bash
-export AWS_BEARER_TOKEN_BEDROCK=<your-key>
-curl -fsSL https://raw.githubusercontent.com/lensapp/prism-agent/main/install.sh | bash
-```
-
-Otherwise the installer writes `~/.prism/.env` with empty placeholders —
-edit it and restart the service
-(`launchctl kickstart -k "gui/$(id -u)/com.prism.server"` on macOS,
-`systemctl --user restart prism-server` on Linux).
 
 #### Windows
 
 ```powershell
-irm https://raw.githubusercontent.com/lensapp/prism-agent/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/Mirantis/prism/main/install.ps1 | iex
 ```
-
-Installs `prism.exe` and `prism-server.exe` into `%USERPROFILE%\.prism`, adds
-that directory to your user `PATH`, and registers a `PrismServer` scheduled
-task that starts `prism-server` at logon and restarts it on failure. Needs no
-admin elevation, and pulls in no dependencies — Windows already ships
-everything the installer uses.
-
-As on macOS/Linux, export `AWS_BEARER_TOKEN_BEDROCK` before running to bake it
-into `%USERPROFILE%\.prism\.env` so the service comes up working:
-
-```powershell
-$env:AWS_BEARER_TOKEN_BEDROCK="<your-key>"
-irm https://raw.githubusercontent.com/lensapp/prism-agent/main/install.ps1 | iex
-```
-
-Otherwise edit `%USERPROFILE%\.prism\.env` and restart the service
-(`Restart-ScheduledTask -TaskName PrismServer`).
-
-### Using Lens Sandbox
-
-[Lens Sandbox](https://github.com/lensapp/lens-sandbox) runs the same
-published image inside a local microVM, with inbound and outbound access
-checked against policy:
-
-```bash
-curl -fsSL https://get.lns.run | bash   # install the lns CLI (macOS on Apple Silicon)
-
-lns run --cpus 2 --mem 2048 \
-  -p 3003:3003 -v prism-data:/data \
-  ghcr.io/lensapp/prism-agent:latest \
-  -- /bin/sh -c './start.sh > /dev/null 2>&1 & exec prism'
-```
-
-The flags mirror the Docker command below: the agent's SQLite database
-persists in the `prism-data` named volume (`lns volume ls`), and the run
-attaches to your terminal interactively by default. The sandbox supplies
-the Bedrock credential at the network boundary, so you don't pass it into
-the run. Start it from a project directory, where `lns` keeps the policy
-governing the run. The first time the agent reaches out, the service raises
-an approval prompt for the outbound connection; answering "always" remembers
-it so future runs proceed without asking.
 
 ### Using Docker
 
@@ -124,42 +54,9 @@ Start the agent and boot into terminal ui:
 docker run -it -p 3003:3003 -v prism-data:/data -e AWS_BEARER_TOKEN_BEDROCK ghcr.io/lensapp/prism-agent:latest /bin/sh -c './start.sh > /dev/null 2>&1 & exec prism'
 ```
 
-`AWS_BEARER_TOKEN_BEDROCK` must be set in your shell environment — `-e
-AWS_BEARER_TOKEN_BEDROCK` (no `=`) passes the value through from the
-parent shell. The agent's SQLite database is persisted in the
-`prism-data` named volume across container restarts.
-
 ## Features
 
-### Conversational interface
-
-Real-time chat over WebSocket, Slack, and Microsoft Teams. Supports DMs and
-channel conversations and multi-turn threads.
-
-### LLM models
-
-Default models:
-
-- **Main loop**: Claude Opus 5
-- **Classification gates**: Claude Haiku (fast heartbeat delivery and optional tool-risk decisions)
-- **Embeddings**: Amazon Titan v2 (Bedrock default; other platforms via `EMBEDDING_PROVIDER`)
-
-All three are configurable. Heartbeat and scheduled (cron) runs use the main
-loop model by default, but each can be pointed at its own model — e.g. a
-cheaper model for routine heartbeats while chat stays on a stronger one. Set
-them from the Profile page, the TUI (`/heartbeat-model`, `/cron-model`), or as
-bootstrap defaults in `~/.prism/settings.json`; leave them empty to inherit the
-main model.
-In **Auto** mode the agent picks a small, medium or large model for each turn
-instead; see [Auto model selection](docs/configuration.md#auto-model-selection).
-
-Prompt caching is built in: the stable parts of the system prompt — identity,
-curated memory, vision, operating manual — cache across turns; only the dynamic
-parts (timestamps, recalled memories) re-process.
-
-### Tools the agent can use
-
-Out of the box, the agent has tools for:
+### Capabilities
 
 - **Memory** — search, write, delete entries in its long-term memory store.
 - **Self-management** — edit its own personality, the profile of its user,
@@ -168,154 +65,58 @@ Out of the box, the agent has tools for:
 - **Scheduling** — create, list, run, and delete scheduled tasks using
   natural language (`"in 5 minutes"`, `"every weekday at 9am"`) or raw
   cron expressions.
+- **[Heartbeat](docs/heartbeat.md)** — run the checks in the heartbeat document on a
+  schedule, every 8 hours by default. The agent posts only when a check finds
+  something new, to the places the user allows.
 - **Shell** — run commands, read/write/edit files, spawn long-running
   processes, manage their I/O, and delegate coding tasks to Claude Code or Codex.
 - **Web pages** — read a public page's text without opening a browser.
-
-### Memory
-
-Two layers, both persisted in the embedded database:
-
-1. **Curated memory** — a markdown summary the agent maintains itself, always
-   present in its system prompt. Bounded, durable, low-latency recall of the
-   things the agent has decided are worth keeping permanently.
-2. **Searchable memory** — an embedding-indexed store for everything else,
-   queryable by meaning rather than keyword. Embeddings come from the
-   configured embedding platform (Bedrock Titan v2 by default); vector search
-   runs on the embedded SQLite database.
+- **[Computer use](docs/computer.md)** — use websites and desktop apps on its own
+  desktop and browser, in chat, goals or scheduled tasks. Open **Computer** in
+  the Web UI to watch it work or take control. It needs the container image.
+- **[Webhooks](docs/webhooks.md)** — let external systems push events to the agent
+  on port 3004, once **Webhook receiver** is on in the Web UI. Each webhook has
+  its own endpoint, an optional prompt template filled from the payload, and a
+  delivery target. A sender proves itself with a shared token or an HMAC
+  signature.
+- **[Voice meetings](docs/voice-meetings.md)** — join a Google Meet call on request
+  and take part by voice, with its tools available during the call. It needs the
+  container image and a Realtime credential. Work it cannot finish in the call
+  becomes a one-off task whose result arrives in your chat.
+- **[Voice chat](docs/voice-chat.md)** — talk to the agent directly over the chat
+  connection, with its tools available while you speak. It needs the same
+  Realtime credential as a meeting and works wherever chat works.
+- **[Voice messages](docs/dictation.md)** — speak into the Web UI's chat microphone,
+  and your words arrive in the thread as a message. It uses the same Realtime
+  credential, and the agent does not speak back.
 
 ### The agent's "self"
 
 Each agent is defined by a small set of markdown documents:
 
-| Document | Purpose | Usually maintained by |
-|----------|---------|-----------------------|
-| **Soul** | Personality, values, boundaries | User |
-| **User** | What the agent knows about the person it's working for | Agent |
-| **Memory** | Curated long-term knowledge | Agent |
-| **Vision** | The user's goals for the agent | User |
-| **Agent guide** | The operating manual the agent follows | User |
-| **Heartbeat** | The checks the agent performs on its schedule | User |
-| **Bootstrap** | First-run onboarding instructions, cleared once complete | Agent |
+| Document | Purpose |
+|----------|---------|
+| **Soul** | Personality, values, boundaries |
+| **User** | What the agent knows about the person it's working for |
+| **Memory** | Curated long-term knowledge |
+| **Vision** | The user's goals for the agent |
+| **Agent guide** | The operating manual the agent follows |
+| **Heartbeat** | The checks the agent performs on its schedule |
+| **Bootstrap** | First-run onboarding instructions, cleared once complete |
 
 Together they form the agent's identity — change them and the agent changes.
-Every write records a revision, so the Profile page lists a document's history,
-shows the difference between two revisions, and restores an earlier one.
 
-### Heartbeat
+### LLM models
 
-An always-on monitoring loop. Default cadence is every 8 hours, configurable
-per agent. On each tick, the agent runs the checks defined in its heartbeat
-document, and posts a message only when a check finds something new. It sees
-what earlier heartbeats posted, so it doesn't re-page on the same finding. The
-user sets where a heartbeat may post.
+Default models:
 
-Heartbeats can also be **Slack-triggered**: messages in designated trigger
-channels queue, and incoming traffic wakes the heartbeat between scheduled
-runs. Pending messages are drained atomically so no message is orphaned, even
-if multiple arrive while the agent is busy.
+- **Main loop**: Claude Opus 5
+- **Classification gates**: Claude Haiku
+- **Embeddings**: Amazon Titan v2 (Bedrock default; other platforms via `EMBEDDING_PROVIDER`)
 
-The heartbeat's reasoning runs on the main model by default, or a
-heartbeat-specific model if one is set.
-
-### Scheduled tasks
-
-The agent puts work on its own calendar. Tasks can be one-shot or recurring,
-specified in natural language or cron syntax, and survive restarts. One-shot
-tasks delete themselves after running; recurring tasks track their last run,
-their next run, and consecutive errors. The agent can list, run-now, or
-cancel its own tasks. A scheduled run posts what its instruction asks for, to
-a place the task's delivery setting allows: an unconditional "send me X" task
-posts every run, and a conditional check with nothing to report posts nothing.
-Scheduled runs use the main model by default, or a
-scheduled-task-specific model if one is set. A one-shot task can also
-**continue in the current conversation** when it fires — so the agent can
-"wait" for something and resume in the same thread (the same Slack thread,
-web, or terminal conversation) instead of starting a new one.
-
-### Webhooks
-
-Webhooks start disabled. Turn on **Webhook receiver** in the Web UI to open
-port 3004; turning it off closes the port and keeps your subscriptions.
-External systems push events at the agent instead of the agent polling for
-them. Each webhook is a named subscription — created on the Web UI's
-**Webhooks** page — with its own endpoint (`POST /agents/webhooks/<name>` on
-port 3004), an optional event-type filter, an optional prompt template with
-payload substitution (`{field.path}`, `{__raw__}`), and a delivery target (all
-channels, web chat, Slack, Teams, or none). Agent runs are asynchronous
-(`202 Accepted` + run id, result delivered to your channels); a prompt that
-sets a condition keeps a reply with nothing to report out of them. A
-**deliver-only** mode posts the rendered template directly with zero LLM cost.
-Each subscription can require its sender to prove itself — a shared token in
-a header or an HMAC signature of the body, configured generically (you name the
-header, prefix and digest), so GitHub, GitLab, PagerDuty, Alertmanager and
-anything else are just recipes.
-New subscriptions default to shared-token authentication. Set the header and
-secret to match your sender, or choose an HMAC signature —
-see [docs/webhooks.md](docs/webhooks.md).
-
-### Agent messages
-
-Through a delivery service, the other agents of a project can send the agent
-messages. Each one shows in the web conversation under "{name} · Agent",
-and the agent answers it as a colleague's request, never as your approval. The
-platform that hosts the agent provides the tools to find and message other
-agents. See
-[docs/agent-messages.md](docs/agent-messages.md).
-
-### Voice meetings
-
-The agent can join a **Google Meet** call and take part by voice — ask it in chat and
-it requests to join signed into its own Google account, a host admits it like any
-other participant, and from then on it listens and speaks in the room. It keeps its
-tools during the call, so it can look something up and say the answer without leaving.
-Interrupt it and it yields the floor; a short "mm-hm" won't cut it off. Needs the
-container image (which ships Chromium, Xvfb and PulseAudio) plus managed OpenAI
-or a direct voice credential. Realtime audio uses the Lens endpoint when managed
-OpenAI is configured, independently of the chat provider. Speaking is how it answers, and it can
-put one short line — a link, an id, a command to paste — into the call's own chat panel.
-Work it can't finish in the call it schedules as a one-off task, and that result lands in
-your chat afterwards. Nothing else leaves a call, and nothing about the meeting is
-recorded. It has its full toolset otherwise (everything but `share_file` and the
-message tools), including the
-tools that change its own configuration.
-A meeting isn't an authenticated channel and the guardrail is prompt-level — it
-announces and confirms before anything destructive — so a meeting link effectively
-grants the agent's authority, over itself included. See
-[docs/voice-meetings.md](docs/voice-meetings.md).
-
-### Voice chat
-
-A client can also talk to the agent **directly**, with no meeting in between: the
-audio rides the same chat connection, and the agent keeps its tools and its
-authority while you speak. It needs the same Realtime credential as a meeting and
-nothing else, so it works wherever chat works — a hosted sandbox and the
-installed binary included. See [docs/voice-chat.md](docs/voice-chat.md).
-
-### Voice messages
-
-The Web UI's chat microphone turns speech into a message: speak, press send, and
-your words arrive in the thread. It uses the same Realtime credential, and the agent
-does not speak back. See [docs/dictation.md](docs/dictation.md).
-
-### Sessions and idle handling
-
-A configurable daily reset (default 4 AM local time) and idle timeouts give
-the agent a clean break between logical "days." This keeps long-running
-context from compounding indefinitely.
-
-### Safety controls
-
-- **Step limit** — at most 100 tool-use steps per turn. When the agent hits
-  the cap, a tool-less follow-up call asks it to summarize what it found
-  rather than spinning further.
-- **Output cap** — 16,000 tokens per generation.
-- **Per-tool output limits** — large tool responses are truncated before
-  reaching the model, so a single tool call can't flood context.
-- **Posting ceiling** — a heartbeat, scheduled-task or webhook run's
-  `send_message` posts only to the places its delivery setting allows. The
-  run's other tools (`shell_exec`, MCP and plugin tools) are not limited by
-  it. A run that fails is posted for the agent.
+All three are configurable. Heartbeat and scheduled runs can each use their own
+model. In **Auto** mode the agent picks a small, medium or large model for each
+turn; see [Auto model selection](docs/configuration.md#auto-model-selection).
 
 ### Observability
 
@@ -324,93 +125,6 @@ context from compounding indefinitely.
   latency. Enabled by setting Langfuse keys; disabled otherwise.
 - **OpenTelemetry log export** to a configured collector. Disabled when no
   endpoint is set.
-
-## How it runs
-
-One container, one agent. The embedded database lives in the container at
-`/data/agent.db` (or `prisma/sqlite/agent.db` next to the schema when running
-locally without Docker) and is the only persistence.
-
-## Getting started
-
-### Local development
-
-```bash
-npm install
-AWS_BEARER_TOKEN_BEDROCK=<bedrock-key> npm run dev
-```
-
-The runtime listens on port `3003`. Health check:
-
-```bash
-curl http://localhost:3003/health
-```
-
-On first boot with an empty database, Prism Agent auto-creates the workspace
-using `AGENT_NAME`, `TEAM_NAME`, `OWNER_USER_ID`, and the documents in
-`PRISM_WORKSPACE_SEED_DIR`. Subsequent boots find the existing workspace and
-reuse it.
-
-### Docker
-
-```bash
-docker build -t prism .
-docker run -p 3003:3003 \
-  -v prism-data:/data \
-  -e AWS_BEARER_TOKEN_BEDROCK=<bedrock-key> \
-  prism
-```
-
-Mount a volume at `/data` so the agent's database survives container
-restarts.
-
-## Configuration
-
-### Credentials
-
-| Variable | Purpose |
-|----------|---------|
-| `AWS_BEARER_TOKEN_BEDROCK` | Bedrock API key. The AI SDK auto-selects bearer auth when this is set |
-| `SLACK_BOT_TOKEN` | Slack bot token. Validated via `auth.test` on boot when set |
-| `SLACK_APP_TOKEN` | Slack app-level token for Socket Mode |
-| `TEAMS_APP_ID` / `TEAMS_APP_PASSWORD` / `TEAMS_APP_TENANT_ID` | Microsoft Teams: Entra app registration client ID, client secret, and tenant. All three enable the Teams adapter; needs the messaging endpoint reachable over public HTTPS — see [Microsoft Teams](docs/teams.md) |
-
-### Optional
-
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `PORT` | HTTP port | `3003` |
-| `WEBHOOK_PORT` | HTTP port webhook senders POST to | `3004` |
-| `AGENT_MESSAGES_PORT` | HTTP port the other agents' messages arrive on ([agent messages](docs/agent-messages.md)); the main port does not serve them. Must differ from `PORT` and `WEBHOOK_PORT` | `3005` |
-| `PRISM_HOST` | Interface to listen on. The default accepts connections from this machine only; `0.0.0.0` accepts them from the network, which the Docker image sets so a published port works | `127.0.0.1` (Docker: `0.0.0.0`) |
-| `PRISM_ALLOWED_ORIGINS` | Comma-separated web origins on other sites whose pages may use the runtime (API, chat and Computer desktop), as `https://app.example.com` or `https://app.example.com:*` for any port. Set it only when an authenticating proxy is in front; with a loopback `PRISM_HOST` the runtime refuses to start | empty |
-| `PRISM_PROGRAM_STATUS` | Whether the runtime reports the agent's state on its output for a terminal or [Lens Sandbox](docs/lens-sandbox.md#the-agents-state-in-lns) to show: `on` or `off` | `on` when the output is a terminal |
-| `LLM_PROVIDER` | LLM platform: `bedrock`, `azure`, `bedrock-mantle`, `openai`, `openrouter`, `anthropic`, or `litellm` — see [Configuration](docs/configuration.md#provider-selection) for the non-default platforms' credentials and model IDs | `bedrock` |
-| `EMBEDDING_PROVIDER` | Memory-embedding platform, independent of `LLM_PROVIDER`: `bedrock`, `azure-openai`, `openai`, `openrouter`, or `none` — see [Configuration](docs/configuration.md#memory-embeddings) | derived from `LLM_PROVIDER` |
-| `DATABASE_URL` | SQLite URL. The local default resolves to `prisma/sqlite/agent.db`; the Docker image's `start.sh` overrides to `file:/data/agent.db` so the mounted `/data` volume is used | `file:./agent.db` (Docker: `file:/data/agent.db`) |
-| `AGENT_ID` | Pin the agent's UUID. When unset, a fresh UUID is generated on first boot and reused on subsequent boots via the workspace row in the DB | generated |
-| `AGENT_MESSAGES_TOKEN_ID` | The API token id the ingress names in `x-forwarded-token-id` for the delivery service of [agent messages](docs/agent-messages.md); deliveries from any other caller are refused. The header is trustworthy only for requests that arrive through the ingress. Unset, the agent-messages port is not opened. | unset |
-| `NEXUS_API_URL` | Base URL of the Lens Agents instance used for WebSocket authorization and the MCP/LLM proxy | `http://localhost:3002` |
-| `AGENT_NAME` | Display name on first boot | `Prism` |
-| `TEAM_NAME` | Team name on first boot | `Local` |
-| `OWNER_USER_ID` | Owner user ID on first boot. The default is a local sentinel — Slack identity linking later overlays the real `lensUserId` per-message | `00000000-0000-0000-0000-000000000001` |
-| `PRISM_WORKSPACE_SEED_DIR` | A directory of documents (`soulMd.md`, `agentMd.md`, …) the agent starts with on first boot instead of the defaults — see [Configuration](docs/configuration.md#core) | unset |
-| `BEDROCK_MODEL_ID` | Main model | `global.anthropic.claude-opus-5-5` |
-| `BEDROCK_CLASSIFICATION_MODEL_ID` | Classification gate model | `global.anthropic.claude-haiku-5-5` |
-| `BEDROCK_EMBEDDING_MODEL_ID` | Embedding model | `amazon.titan-embed-text-v2:0` |
-| `AWS_REGION` | AWS region | `us-east-1` |
-| `CONTEXT_WINDOW_TOKENS` | Context window to assume for the context-usage indicator; only needed for a model the catalog doesn't know | derived from the model ID |
-| `MODELS_DEV_URL` | Opt in to refreshing the model-window catalog from a registry at startup (e.g. `https://models.dev/api.json`); unset means no outbound call, bundled catalog only | — (disabled) |
-| `SLACK_EXPECTED_APP_ID` | Optional safety check on the Slack app identity | — |
-| `OPENAI_API_KEY` | Enables [voice meetings](docs/voice-meetings.md) and [voice chat](docs/voice-chat.md) (legacy direct-OpenAI voice credential; managed voice resolves its own endpoint and key); also the chat credential when `LLM_PROVIDER=openai`, and the default embedding credential when `LLM_PROVIDER=anthropic` | — (disabled) |
-| `ANTHROPIC_API_KEY` | Chat credential when `LLM_PROVIDER=anthropic` (the first-party Anthropic API; always direct — no gateway mount) | — |
-| `OPENAI_REALTIME_MODEL` | Realtime model for the agent's voice, in a meeting and in a voice chat (pinned snapshot) | `gpt-realtime-2.1` |
-| `MEETING_TIMEOUT_MINUTES` | Hard cap on one meeting call | `60` |
-| `LANGFUSE_SECRET_KEY` | Enables Langfuse tracing when set | — |
-| `LANGFUSE_PUBLIC_KEY` | Langfuse public key | — |
-| `LANGFUSE_BASE_URL` | Langfuse server | `http://localhost:3100` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Enables OpenTelemetry log export | — |
-| `OTEL_EXPORTER_OTLP_API_KEY` | API key sent as `x-api-key` to the collector | — |
 
 ## Interfaces
 
@@ -421,40 +135,13 @@ Prism Agent exposes the following surfaces:
   inspect scheduled tasks,
   and watch heartbeat history. Available on the same port as the runtime.
 - **TUI** — a terminal UI for chatting with the agent and managing its
-  state from the shell. Useful for headless servers and SSH sessions, and
-  the natural fit when running Prism Agent alongside jahe-CLI.
-- **WebSocket** — real-time chat for a UI or CLI. Streamed responses,
-  status updates, and tool-call events.
+  state from the shell. Useful for headless servers and SSH sessions.
 - **Slack** — runs in Socket Mode. Once the agent's Slack workspace is wired
   up, DMs and channel mentions reach the agent directly without a public
-  webhook. Six-character verification codes link Slack identities to the
-  agent's user.
-- **Microsoft Teams** — Azure Bot Service delivers messages to
-  `POST /agents/teams/messages` on the runtime's bot port (`3979`), which
-  serves nothing else. Publish that port over public HTTPS and keep the main
-  port private (see [Microsoft Teams](docs/teams.md)). Personal
-  chats and channel @mentions, threaded replies, the same six-character
-  verification-code linking as Slack.
-- **Management API** — REST endpoints for agent lifecycle, scheduling,
-  thread management, and Slack/Teams mappings. Useful for building a UI or
-  driving Prism Agent from a control plane.
-- **Health endpoint** — `GET /health` for orchestrators.
-
-## Development
-
-| Command | What it does |
-|---------|--------------|
-| `npm install` | Install dependencies and generate the database client |
-| `npm run dev` | Start in watch mode (auto-restart on changes) |
-| `npm run worktree -- <name>` | Create a worktree and launch Claude Code (requires `claude` on PATH) |
-| `npm run worktree -- --codex <name>` | Create a worktree and launch Codex (requires `codex` on PATH) |
-| `npm run build` | TypeScript compile to `dist/` |
-| `npm start` | Run the compiled build |
-| `npm test` | Run the test suite in watch mode |
-| `npm run test:run` | Single test run |
-| `npm run test:coverage` | Coverage report |
-| `npm run db:migrate` | Apply database migrations |
-| `npm run prisma:generate` | Regenerate the database client |
+  webhook.
+- **[Microsoft Teams](docs/teams.md)** — chat with the agent in personal chats and by
+  @mentioning it in a channel, with threaded replies. You link an account or a
+  channel with a verification code, as in Slack.
 
 ## License
 

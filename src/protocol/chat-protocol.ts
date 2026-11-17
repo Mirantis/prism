@@ -195,7 +195,7 @@ export interface MessageEventPayload {
   createdAt: string;
   attachments: AttachmentPayload[] | null;
   /**
-   * Who wrote a USER message, when the Lens Agents sign-in named the connection.
+   * Who wrote a USER message, when the Mirantis Agent Platform sign-in named the connection.
    * `senderId` tells one person from another; compare it with `welcome.you.id`.
    * `senderName` is for display. Neither is ever used to decide what is allowed.
    */

@@ -15,7 +15,7 @@ Teams is optional. The runtime starts fine without it; add it when you want it.
 | Variable | Value |
 |----------|-------|
 | `TEAMS_APP_ID` | The Entra app registration's Application (client) ID. |
-| `TEAMS_APP_PASSWORD` | The app registration's client secret. On Lens Agents, the placeholder of the credential that holds it (see below). |
+| `TEAMS_APP_PASSWORD` | The app registration's client secret. On Mirantis Agent Platform, the placeholder of the credential that holds it (see below). |
 | `TEAMS_APP_TENANT_ID` | The Entra tenant the app is registered in. |
 
 All three required variables must be set for the adapter to start; otherwise it
@@ -45,14 +45,14 @@ devtunnel host -p 3979 --allow-anonymous
 
 With Docker, publish the bot port as well: `-p 3979:3979`.
 
-**On Lens Agents**, expose two ports in the agent's revision: `web` on `3003`
+**On Mirantis Agent Platform**, expose two ports in the agent's revision: `web` on `3003`
 with `private` access, and `teams` on `3979` with `public` access. The messaging
 endpoint is then `https://teams--<sandbox-slug>.<ingress-host>/agents/teams/messages`.
 The sandbox's network policy must allow `login.microsoftonline.com`,
 `login.botframework.com` and `smba.trafficmanager.net`, plus
 `*.sharepoint.com` for files.
 
-Keep the client secret in Lens Agents, not in the sandbox. Create an **OAuth
+Keep the client secret in Mirantis Agent Platform, not in the sandbox. Create an **OAuth
 client credentials** credential with:
 
 | Field | Value |
@@ -64,7 +64,7 @@ client credentials** credential with:
 | Injection | `smba.trafficmanager.net`, header `Authorization`, format `Bearer {value}` |
 
 Grant it to the sandbox as `TEAMS_APP_PASSWORD`. The sandbox then holds only
-the credential's placeholder, and Lens Agents supplies the bot's token. A file
+the credential's placeholder, and Mirantis Agent Platform supplies the bot's token. A file
 or image shared in a channel reaches the agent as a notice with its name, since
 this credential grants the bot's scope only.
 

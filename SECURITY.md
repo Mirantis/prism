@@ -2,7 +2,7 @@
 
 Prism Agent is security-sensitive software. It runs an autonomous LLM agent that executes shell
 commands and edits files on the host it runs on, and reaches external systems through MCP — kubectl,
-GitHub and AWS through the Lens Agents MCP server, plus whatever an installed Agent Plugin adds. It
+GitHub and AWS through the Mirantis Agent Platform MCP server, plus whatever an installed Agent Plugin adds. It
 holds credentials for Slack, for its model provider, and — when voice meetings are enabled — for OpenAI
 and a Google account. It owns its own conversation, memory and attachment store. Credential
 handling, the tool surface, the network surface, and what untrusted input can drive the agent to do
@@ -24,8 +24,8 @@ Include as much detail as possible:
 - Impact and the security boundary you believe is crossed
 - Reproduction steps or proof of concept
 - Environment details: how the runtime is deployed (container, native install, or SEA binary),
-  which `LLM_PROVIDER` is configured, whether it reaches the model directly or through the Lens
-  Agents gateway, the runtime version, and the channel involved (WebSocket, Slack, webhook,
+  which `LLM_PROVIDER` is configured, whether it reaches the model directly or through the Mirantis
+  Agent Platform gateway, the runtime version, and the channel involved (WebSocket, Slack, webhook,
   heartbeat, cron, or a voice meeting)
 - Whether the issue involves credential exposure, tool abuse, or prompt-driven exfiltration
 
@@ -40,7 +40,7 @@ Security-sensitive areas include:
   file editing (`shell_exec`, `shell_write_file`, `shell_edit_file`, `coding_agent`), memory, agent
   configuration, cron, goals, skills, attachments, file sharing, and meetings. The shell tools run
   with the runtime's own privileges, so anything that can steer the agent can reach them.
-- **The MCP tool surface** — the external Lens Agents MCP server (kubectl, GitHub, AWS) and the MCP
+- **The MCP tool surface** — the external Mirantis Agent Platform MCP server (kubectl, GitHub, AWS) and the MCP
   servers an installed Agent Plugin declares. Whether the agent can be driven to invoke a tool, or
   reach a resource, beyond what its configuration intends. Plugin servers are started as child
   processes from the plugins directory, so what is placed in that directory is a trust decision.
@@ -61,7 +61,7 @@ Security-sensitive areas include:
   only guard, self-configuration included, so a sentence agreed in a call can change the agent for
   later turns on every channel.
 - **Credential handling** — tokens arrive through the environment and must stay on request headers,
-  never in prompts, logs, tool results, or message bodies. Some secrets may be Lens Agents
+  never in prompts, logs, tool results, or message bodies. Some secrets may be Mirantis Agent Platform
   credential sentinels that only the gateway can resolve; the Slack client strips the request
   body's `token` field so Slack auth rides the `Authorization` header alone.
 

@@ -9,8 +9,8 @@
  * - observe: decisions are measured, but every tool still executes
  * - enforce: rejected calls do not execute; classifier failures fail closed
  *
- * This is defense in depth, not a sandbox. OS permissions and the Lens policy
- * boundary remain authoritative.
+ * This is defense in depth, not a sandbox. OS permissions and the sandbox network
+ * policy remain authoritative.
  */
 
 import { createHash } from 'node:crypto';

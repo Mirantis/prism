@@ -1,5 +1,5 @@
 /**
- * `shell_exec` tool — in-process port of the upstream Lens Agents shell
+ * `shell_exec` tool — in-process port of the upstream Mirantis Agent Platform shell
  * sandbox's `shell_exec` handler.
  *
  * Runs a single shell command in the execution environment with a timeout.

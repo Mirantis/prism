@@ -14,7 +14,7 @@
  */
 
 import { logger } from '../../logger';
-import { RELEASE_VERSION_RE, UPDATE_GITHUB_REPO } from '../../constants';
+import { RELEASE_VERSION_RE, UPDATE_IMAGE_REPO } from '../../constants';
 
 const REGISTRY = 'https://ghcr.io';
 const FETCH_TIMEOUT_MS = 10_000;
@@ -55,7 +55,7 @@ interface TagsPage {
 export async function fetchLatestReleaseVersion(): Promise<string | null> {
   try {
     const tokenRes = await fetch(
-      `${REGISTRY}/token?service=ghcr.io&scope=repository:${UPDATE_GITHUB_REPO}:pull`,
+      `${REGISTRY}/token?service=ghcr.io&scope=repository:${UPDATE_IMAGE_REPO}:pull`,
       { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) },
     );
     if (!tokenRes.ok) {
@@ -69,7 +69,7 @@ export async function fetchLatestReleaseVersion(): Promise<string | null> {
     }
 
     let latest: string | null = null;
-    let url: string | null = `${REGISTRY}/v2/${UPDATE_GITHUB_REPO}/tags/list?n=100`;
+    let url: string | null = `${REGISTRY}/v2/${UPDATE_IMAGE_REPO}/tags/list?n=100`;
     for (let page = 0; url && page < MAX_TAG_PAGES; page++) {
       const res: Response = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` },

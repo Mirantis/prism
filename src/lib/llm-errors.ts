@@ -12,7 +12,7 @@ import type { InvokeStep } from '../types';
 /**
  * Check if an error is a gateway budget-exceeded 429.
  *
- * The Lens Agents gateway returns RFC 7807 problem details with
+ * The Mirantis Agent Platform gateway returns RFC 7807 problem details with
  * `type: "budget-exceeded"`.
  * Unlike throttling 429s, these won't resolve by waiting.
  */

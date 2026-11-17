@@ -1,4 +1,4 @@
-/** Who a request names as its sender, from the headers the Lens Agents ingress writes. */
+/** Who a request names as its sender, from the headers the Mirantis Agent Platform ingress writes. */
 
 import type { IncomingMessage } from 'node:http';
 
@@ -6,7 +6,7 @@ import type { IncomingMessage } from 'node:http';
 const MAX_SENDER_CHARS = 128;
 
 /**
- * The headers the Lens Agents ingress names the signed-in caller in. It strips any
+ * The headers the Mirantis Agent Platform ingress names the signed-in caller in. It strips any
  * copy a client sent, and omits the id and the display name when it has none.
  */
 const FORWARDED_USER_HEADER = 'x-forwarded-user';

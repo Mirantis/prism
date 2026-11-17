@@ -1,12 +1,12 @@
 /**
  * MCP Client Library
  *
- * Connects the agent runtime to the Lens Agents MCP server (kubectl, GitHub,
+ * Connects the agent runtime to the Mirantis Agent Platform MCP server (kubectl, GitHub,
  * AWS tools) with the AI SDK's MCP client.
  *
  * Every tool collection uses one client per URL, because a client holds a
  * gateway session and the tools it returns run through that client. Each
- * collection lists the tools again, so a connection added in Lens Agents
+ * collection lists the tools again, so a connection added in Mirantis Agent Platform
  * appears on the next turn. A failed listing replaces the client, which is how
  * an expired session recovers.
  */

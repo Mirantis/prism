@@ -602,7 +602,7 @@ class TeamsAdapterService implements ChannelAdapter {
     const mapping = await teamsMappingService.findUserMapping(connection.id, teamsUserId);
     if (!mapping?.lensUserId) {
       await this.sendChunks(conversationId, undefined, [
-        "Hi! I don't recognize this Microsoft Teams account yet. Open the Lens Agents web app → " +
+        "Hi! I don't recognize this Microsoft Teams account yet. Open the Mirantis Agent Platform web app → " +
           'Channels → Microsoft Teams, generate a link code, and send the 6-character code to me here.',
       ]);
       return;
@@ -676,7 +676,7 @@ class TeamsAdapterService implements ChannelAdapter {
     const mapping = await teamsMappingService.findByConversationId(channelConversationId);
     if (!mapping?.lensUserId) {
       await this.sendChunks(channelConversationId, rootMessageId, [
-        "This channel isn't linked to an agent yet. Open the Lens Agents web app → Channels → " +
+        "This channel isn't linked to an agent yet. Open the Mirantis Agent Platform web app → Channels → " +
           'Microsoft Teams, generate a channel link code, and @mention me with the 6-character code.',
       ]);
       return;
@@ -867,14 +867,14 @@ class TeamsAdapterService implements ChannelAdapter {
     });
 
     if (!verification) {
-      return { success: false, message: 'Invalid code. Please generate a new code from the Lens Agents web app.' };
+      return { success: false, message: 'Invalid code. Please generate a new code from the Mirantis Agent Platform web app.' };
     }
 
     if (new Date() > verification.expiresAt) {
       await prisma.teamsVerificationCode
         .delete({ where: { code_type: { code: upperCode, type: 'DM' } } })
         .catch(() => {});
-      return { success: false, message: 'Code expired. Please generate a new code from the Lens Agents web app.' };
+      return { success: false, message: 'Code expired. Please generate a new code from the Mirantis Agent Platform web app.' };
     }
 
     const existingLink = await prisma.teamsMapping.findFirst({
@@ -942,14 +942,14 @@ class TeamsAdapterService implements ChannelAdapter {
     });
 
     if (!verification) {
-      return { success: false, message: 'Invalid code. Please generate a new code from the Lens Agents web app.' };
+      return { success: false, message: 'Invalid code. Please generate a new code from the Mirantis Agent Platform web app.' };
     }
 
     if (new Date() > verification.expiresAt) {
       await prisma.teamsVerificationCode
         .delete({ where: { code_type: { code: upperCode, type: 'CHANNEL' } } })
         .catch(() => {});
-      return { success: false, message: 'Code expired. Please generate a new code from the Lens Agents web app.' };
+      return { success: false, message: 'Code expired. Please generate a new code from the Mirantis Agent Platform web app.' };
     }
 
     const existing = await prisma.teamsMapping.findUnique({

@@ -1,5 +1,5 @@
 /**
- * `apply_edit` ported from the upstream Lens Agents shell sandbox's file
+ * `apply_edit` ported from the upstream Mirantis Agent Platform shell sandbox's file
  * handlers.
  *
  * Exact-match replacement with a whitespace-tolerant line-trimmed

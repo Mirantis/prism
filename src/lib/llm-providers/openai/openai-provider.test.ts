@@ -2,7 +2,7 @@
  * OpenAI Provider Tests — the official OpenAI API
  *
  * Chat and classification dispatch through the same @ai-sdk/openai client,
- * direct or through the Lens Agents openai mount.
+ * direct or through the Mirantis Agent Platform openai mount.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

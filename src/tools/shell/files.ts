@@ -4,7 +4,7 @@
  *   - shell_write_file
  *   - shell_edit_file
  *
- * Mirror the upstream input schemas + behavior from the Lens Agents shell
+ * Mirror the upstream input schemas + behavior from the Mirantis Agent Platform shell
  * sandbox's shell schemas and file handlers.
  *
  * Security model (inherited from upstream): `resolvePath` resolves

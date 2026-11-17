@@ -122,7 +122,7 @@ const llmProvider: LlmProviderName = isValidLlmProvider
 const invalidLlmProvider =
   rawLlmProvider === '' || isValidLlmProvider ? null : rawLlmProvider;
 
-// Lens Agents LLM proxy base URL for native Bedrock (bedrock-runtime). Mirrors
+// Mirantis Agent Platform LLM proxy base URL for native Bedrock (bedrock-runtime). Mirrors
 // the gateway's route mounts:
 //   /projects/{projectId}/llm/bedrock/{region}  (explicit project — PROJECT_ID set)
 //   /llm/bedrock/{region}                        (auto-resolve project — PROJECT_ID unset)
@@ -137,7 +137,7 @@ const nexusLlmBaseUrl = nexusApiUrl
       : `${nexusApiUrl}/llm/bedrock/${awsRegion}`)
   : null;
 
-// Lens Agents LLM proxy base URLs for Azure. Mirrors the Bedrock route mount
+// Mirantis Agent Platform LLM proxy base URLs for Azure. Mirrors the Bedrock route mount
 // above (`nexusLlmBaseUrl`), swapping the vendor segment. The gateway exposes
 // the two Foundry surfaces separately (`…/llm/azure/anthropic/{path}` → the resource's
 // `/anthropic` surface; `…/llm/azure/openai/{path}` → its `/openai` surface):
@@ -155,7 +155,7 @@ const nexusAzureRoot = nexusApiUrl
 const nexusAzureBaseUrl = nexusAzureRoot ? `${nexusAzureRoot}/anthropic/v1` : null;
 const nexusAzureOpenAiBaseUrl = nexusAzureRoot ? `${nexusAzureRoot}/openai/v1` : null;
 
-// Lens Agents LLM proxy base URL for bedrock-mantle's Anthropic surface,
+// Mirantis Agent Platform LLM proxy base URL for bedrock-mantle's Anthropic surface,
 // mounted as `…/llm/bedrock-mantle/anthropic/{region}/{path}` and
 // forwarded verbatim to `https://bedrock-mantle.{region}.api.aws/anthropic/{path}`.
 // Ends at `/v1` because the anthropic SDK appends `/messages`, so the proxied
@@ -169,7 +169,7 @@ const nexusBedrockMantleBaseUrl = nexusApiUrl
       : `${nexusApiUrl}/llm/bedrock-mantle/anthropic/${awsRegion}/v1`)
   : null;
 
-// Lens Agents LLM proxy base URL for OpenAI, mounted as `…/llm/openai/{path}`
+// Mirantis Agent Platform LLM proxy base URL for OpenAI, mounted as `…/llm/openai/{path}`
 // and forwarded verbatim to the gateway's configured
 // OpenAI root (`https://api.openai.com` unless the operator points it at an
 // OpenAI-compatible endpoint). Ends at `/v1` because the openai SDK appends
@@ -186,7 +186,7 @@ const nexusOpenAiBaseUrl = nexusApiUrl
       : `${nexusApiUrl}/llm/openai/v1`)
   : null;
 
-// Lens Agents LLM proxy base URL for OpenRouter, mounted as
+// Mirantis Agent Platform LLM proxy base URL for OpenRouter, mounted as
 // `…/llm/openrouter/openai/{path}`. OpenRouter's own API is OpenAI-compatible,
 // so this speaks the same protocol as the `openai` mount — only the mount and
 // the model-id convention differ. Ends at `/v1` because the openai SDK appends
@@ -201,7 +201,7 @@ const nexusOpenRouterBaseUrl = nexusApiUrl
       : `${nexusApiUrl}/llm/openrouter/openai/v1`)
   : null;
 
-// Lens Agents LLM proxy base URL for LiteLLM's Anthropic surface, mounted as
+// Mirantis Agent Platform LLM proxy base URL for LiteLLM's Anthropic surface, mounted as
 // `…/llm/litellm/anthropic/{path}`. Ends at `/v1` because the anthropic SDK
 // appends `/messages`. Keyless: the gateway injects the LiteLLM key, and it
 // meters this backend by the cost LiteLLM reports, so it must be this mount.
@@ -248,7 +248,7 @@ const originOf = (url: string | undefined | null): string | undefined => {
 const nexusOrigin = originOf(nexusApiUrl);
 
 /**
- * Whether the Lens Agents gateway serves `url`, and so holds the vendor
+ * Whether the Mirantis Agent Platform gateway serves `url`, and so holds the vendor
  * credential for it. `URL.origin` lowercases the host and drops a default port,
  * and it ignores the path, so any mount on the gateway host matches. An unset or
  * unparseable value on either side answers false: such an endpoint fails in
@@ -1013,7 +1013,7 @@ export const config = {
 
   // OpenAI (used when LLM_PROVIDER=openai). Chat/classification/embeddings all
   // speak the OpenAI API on one surface, at `openaiEndpoint`: OPENAI_BASE_URL if
-  // set, else the Lens Agents `…/llm/openai/v1` mount when NEXUS_API_URL is set,
+  // set, else the Mirantis Agent Platform `…/llm/openai/v1` mount when NEXUS_API_URL is set,
   // else api.openai.com. The key is `openaiApiKey` below; voice resolves its
   // credential separately. On the gateway no local chat key is needed.
   openaiModelId,
@@ -1024,7 +1024,7 @@ export const config = {
 
   // OpenRouter (used when LLM_PROVIDER=openrouter). Same OpenAI surface, a
   // different vendor behind it, at `openrouterEndpoint`: OPENROUTER_BASE_URL if
-  // set, else the Lens Agents `…/llm/openrouter/openai/v1` mount when
+  // set, else the Mirantis Agent Platform `…/llm/openrouter/openai/v1` mount when
   // NEXUS_API_URL is set, else openrouter.ai. Direct it needs
   // `openrouterApiKey`; on the gateway that key is held for you. Model ids are
   // `vendor/model`.
@@ -1047,7 +1047,7 @@ export const config = {
 
   // LiteLLM (used when LLM_PROVIDER=litellm): an operator's own LiteLLM proxy,
   // spoken to in the Anthropic Messages format at `litellmEndpoint`:
-  // LITELLM_BASE_URL if set, else the Lens Agents `…/llm/litellm/anthropic/v1`
+  // LITELLM_BASE_URL if set, else the Mirantis Agent Platform `…/llm/litellm/anthropic/v1`
   // mount when NEXUS_API_URL is set. Direct it needs `litellmApiKey`. Model ids
   // are the operator's aliases, defaulting to Prism's default models' names.
   litellmModelId,
@@ -1096,7 +1096,7 @@ export const config = {
   slackExpectedAppId: process.env.SLACK_EXPECTED_APP_ID,
 
   // Microsoft Teams — a Single Tenant Entra app registration behind an Azure
-  // Bot resource. TEAMS_APP_PASSWORD is the client secret, or on Lens Agents the
+  // Bot resource. TEAMS_APP_PASSWORD is the client secret, or on Mirantis Agent Platform the
   // sentinel of an OAuth client-credentials credential: the sandbox proxy answers
   // the SDK's token request itself, since the grant sends the secret in the body.
   teamsAppId: process.env.TEAMS_APP_ID,
@@ -1106,8 +1106,8 @@ export const config = {
   // nothing else, so it is the one port a deployment publishes to Microsoft.
   teamsPort: parseInt(process.env.TEAMS_PORT || '3979', 10),
 
-  // External MCP server URL — injected directly as NEXUS_MCP_URL by the Lens
-  // Agents sandbox (project-scoped /projects/:id/mcp; the MITM proxy injects the
+  // External MCP server URL — injected directly as NEXUS_MCP_URL by the Mirantis
+  // Agent Platform sandbox (project-scoped /projects/:id/mcp; the MITM proxy injects the
   // Authorization header for that path). Already a complete URL — do NOT append
   // /mcp. null when unset so call sites can skip the external server entirely.
   nexusMcpUrl: process.env.NEXUS_MCP_URL ?? null,
@@ -1117,7 +1117,7 @@ export const config = {
   langfusePublicKey: process.env.LANGFUSE_PUBLIC_KEY,
   langfuseBaseUrl: process.env.LANGFUSE_BASE_URL || 'http://localhost:3100',
 
-  // Lens Agents LLM proxy base URL for native Bedrock (see the derivation
+  // Mirantis Agent Platform LLM proxy base URL for native Bedrock (see the derivation
   // above). Also carries mantle's embedding leg, since Titan is
   // bedrock-runtime-only.
   nexusLlmBaseUrl,

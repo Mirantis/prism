@@ -6,7 +6,7 @@
  * `@ai-sdk/anthropic` at a custom baseURL, like the Azure provider. Model ids
  * are the operator's aliases and go to the proxy unchanged.
  *
- * Routing: the `baseURL` argument is `LITELLM_BASE_URL`, else the Lens Agents
+ * Routing: the `baseURL` argument is `LITELLM_BASE_URL`, else the Mirantis Agent Platform
  * `…/llm/litellm/anthropic/v1` mount. `config.litellmEndpoint` decides between
  * them. A proxy has no public host, so with neither there is no endpoint.
  *

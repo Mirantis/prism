@@ -35,7 +35,7 @@ appears when the first two are present:
 1. **The container image.** It ships the browser and audio toolchain (Chromium,
    Xvfb, PulseAudio). A native install via the `prism` binary has no browser to
    drive, so the feature is container-only.
-2. **A Realtime credential.** Enable managed OpenAI or Azure in the Lens sandbox policy,
+2. **A Realtime credential.** Enable managed OpenAI or Azure in the Mirantis Agent Platform policy,
    or set `OPENAI_REALTIME_API_KEY` for direct voice. Standalone direct setups
    without managed inference variables or a custom `OPENAI_BASE_URL` can also
    use `OPENAI_API_KEY`. Managed
@@ -63,7 +63,7 @@ docker run -d \
 ```
 
 `AWS_BEARER_TOKEN_BEDROCK` and `OPENAI_API_KEY` are only ever sent as request
-headers, so in a Lens sandbox they can be managed credentials that the platform
+headers, so on Mirantis Agent Platform they can be managed credentials that the platform
 swaps at the network boundary — no real secret lands in the container.
 `GOOGLE_BOT_PASSWORD` cannot: the browser types it into Google's own sign-in form
 over TLS to Google, so the container has to hold the real value.

@@ -33,7 +33,7 @@ if [ ! -x "$DIST/prism-server" ] || [ ! -x "$DIST/prism" ]; then
   # platform. Lets the installer also work via `curl … | bash` (no checkout
   # required). Override locally by setting PRISM_DIST.
   echo "No local build at $DIST; fetching the latest release from GitHub…"
-  TAG=$(curl -fsSL https://api.github.com/repos/lensapp/prism-agent/releases/latest \
+  TAG=$(curl -fsSL https://api.github.com/repos/Mirantis/prism/releases/latest \
         | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' \
         | sed -E 's/.*"([^"]+)"$/\1/' \
         | head -n1)
@@ -43,7 +43,7 @@ if [ ! -x "$DIST/prism-server" ] || [ ! -x "$DIST/prism" ]; then
   fi
   OS_ARCH="${plat}-${a}"
   ARCHIVE="prism-${TAG}-${OS_ARCH}.tar.gz"
-  URL="https://github.com/lensapp/prism-agent/releases/download/${TAG}/${ARCHIVE}"
+  URL="https://github.com/Mirantis/prism/releases/download/${TAG}/${ARCHIVE}"
   TMP="$(mktemp -d)"
   trap 'rm -rf "$TMP"' EXIT
   echo "Downloading ${ARCHIVE} (${TAG})…"

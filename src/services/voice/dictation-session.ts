@@ -2,7 +2,7 @@
  * One dictation: the client's microphone in, the words it heard out, and nothing spoken back.
  *
  * A dictation is a Realtime session on the same managed endpoint and model voice chat uses,
- * and Lens Agents meters it there. Turn detection is off and no response is ever asked for,
+ * and Mirantis Agent Platform meters it there. Turn detection is off and no response is ever asked for,
  * so the only usage it produces is the transcription: the buffer holds everything the client
  * sent until the client commits it, and the one transcript of that one item is the result.
  *

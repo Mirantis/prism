@@ -33,7 +33,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PACKAGE: ${{ matrix.package }}
-          VERSIONS_API: /orgs/${{ github.repository_owner }}/packages/container/${{ matrix.package }}/versions
+          VERSIONS_API: /orgs/lensapp/packages/container/${{ matrix.package }}/versions
           PR_PREFIX: pr-${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail

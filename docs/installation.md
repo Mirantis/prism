@@ -16,7 +16,7 @@ install.
 ### macOS / Linux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lensapp/prism-agent/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Mirantis/prism/main/install.sh | bash
 ```
 
 If `AWS_BEARER_TOKEN_BEDROCK` is exported in your shell when you run the
@@ -25,7 +25,7 @@ up working:
 
 ```bash
 export AWS_BEARER_TOKEN_BEDROCK=<your-key>
-curl -fsSL https://raw.githubusercontent.com/lensapp/prism-agent/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Mirantis/prism/main/install.sh | bash
 ```
 
 Otherwise the installer writes `~/.prism/.env` with empty placeholders — edit
@@ -34,14 +34,14 @@ that file to add your key, then restart the service (see below).
 ### Windows (PowerShell)
 
 ```powershell
-irm https://raw.githubusercontent.com/lensapp/prism-agent/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/Mirantis/prism/main/install.ps1 | iex
 ```
 
 As on macOS/Linux, export the key first to bake it in:
 
 ```powershell
 $env:AWS_BEARER_TOKEN_BEDROCK="<your-key>"
-irm https://raw.githubusercontent.com/lensapp/prism-agent/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/Mirantis/prism/main/install.ps1 | iex
 ```
 
 The Windows installer needs no admin elevation and pulls in no dependencies —
@@ -124,7 +124,7 @@ Native binaries are published for:
 - **Linux** — x64 and arm64
 - **Windows** — x64 (runs under emulation on arm64)
 
-Binaries are attached to each [GitHub Release](https://github.com/lensapp/prism-agent/releases).
+Binaries are attached to each [GitHub Release](https://github.com/Mirantis/prism/releases).
 The installer downloads the latest release automatically.
 
 ## Automatic updates
@@ -153,7 +153,7 @@ definition (the launchd plist, systemd unit, or scheduled task). If a release
 changes those, re-run the installer.
 
 To roll back, install a specific release: download its archive from the
-[releases page](https://github.com/lensapp/prism-agent/releases), extract it,
+[releases page](https://github.com/Mirantis/prism/releases), extract it,
 and run the bundled installer with `PRISM_DIST` pointing at the extracted
 platform directory.
 
@@ -187,7 +187,7 @@ deletes the `prism` symlink **only if it points at your install**, and removes
 you installed:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lensapp/prism-agent/main/cleanup-local-prism.sh | bash -s -- -y
+curl -fsSL https://raw.githubusercontent.com/Mirantis/prism/main/cleanup-local-prism.sh | bash -s -- -y
 ```
 
 The `-s -- -y` passes `-y` through to the script so it doesn't try to read a
