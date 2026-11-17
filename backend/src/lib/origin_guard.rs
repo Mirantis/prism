@@ -172,8 +172,9 @@ pub fn is_allowed_origin(
 }
 
 /// A header's value as Node gives it: each byte read as Latin-1, so a value that is
-/// not UTF-8 is still present, and repeated headers joined with `, `.
-fn header_text(headers: &HeaderMap, name: &str) -> Option<String> {
+/// not UTF-8 is still present, and repeated headers joined with `, `. The one header
+/// reader for this module and `forwarded_sender`.
+pub fn header_text(headers: &HeaderMap, name: &str) -> Option<String> {
     let values: Vec<String> = headers
         .get_all(name)
         .iter()
