@@ -43,6 +43,20 @@ function userMessages(dbPath: string): string[] {
   }
 }
 
+async function runFromComposer(line: string): Promise<void> {
+  session.send(line);
+  // Let the composer commit the typed line before Enter.
+  await sleep(300);
+  session.send(KEYS.ENTER);
+}
+
+/** A chat message typed after the command is stored, so the composer has the terminal back. */
+async function sendFromComposer(text: string): Promise<void> {
+  await runFromComposer(text);
+  await waitForStoredMessage(env.dbPath, 'USER', text, 30_000);
+  expect(userMessages(env.dbPath)).toHaveLength(2);
+}
+
 describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachScenario, AfterEachScenario, Scenario }) => {
   BeforeAllScenarios(async () => {
     env = await setupRuntime();
@@ -89,5 +103,38 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     And('the agent replies', async () => {
       await waitForMessageCount(env.dbPath, 'AGENT', 1, 300_000);
     });
+  });
+
+  // The command's text is echoed in the composer, so each marker is printed by
+  // shell arithmetic and appears in the output only when the command runs it.
+  Scenario('A command that asks a question reads the answer typed in the terminal', ({ When, And, Then }) => {
+    When('I run {string} from the composer', (_ctx, line: string) => runFromComposer(line));
+    And('the command asks {string} and I answer {string}', async (_ctx, question: string, answer: string) => {
+      await session.waitForFrame(question, 30_000);
+      session.send(answer);
+      await sleep(100);
+      session.send(KEYS.ENTER);
+    });
+    Then('the stored user message records the output {string}', async (_ctx, output: string) => {
+      await waitForStoredMessage(env.dbPath, 'USER', '<user-shell-command>', 30_000);
+      const [record] = userMessages(env.dbPath);
+      expect(record).toContain('<exit-code>0</exit-code>');
+      expect(record).toContain(output);
+    });
+    And('the composer sends {string} as the next message', (_ctx, text: string) => sendFromComposer(text));
+  });
+
+  Scenario('Ctrl+C stops a waiting command and Prism keeps running', ({ When, And, Then }) => {
+    When('I run {string} from the composer', (_ctx, line: string) => runFromComposer(line));
+    And('the command prints {string} and I interrupt it', async (_ctx, marker: string) => {
+      await session.waitForFrame(marker, 30_000);
+      session.send(KEYS.CTRL_C);
+    });
+    Then('the stored user message records a non-zero exit code', async () => {
+      await waitForStoredMessage(env.dbPath, 'USER', '<user-shell-command>', 30_000);
+      const [record] = userMessages(env.dbPath);
+      expect(record).toMatch(/<exit-code>[1-9]\d*<\/exit-code>/);
+    });
+    And('the composer sends {string} as the next message', (_ctx, text: string) => sendFromComposer(text));
   });
 });
