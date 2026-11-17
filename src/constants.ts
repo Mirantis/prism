@@ -130,7 +130,7 @@ export const IDLE_COMPACTION_CACHE_SHARE = 0.9;
 export const RELEASE_VERSION_RE = /^v\d{4}\.\d{1,2}\.\d+$/;
 
 /** GHCR container package whose tag list the version check reads. */
-export const UPDATE_IMAGE_REPO = 'lensapp/prism-agent';
+export const UPDATE_IMAGE_REPO = 'mirantis/prism';
 
 /** GitHub repository whose Releases hold the SEA archives. */
 export const UPDATE_GITHUB_REPO = 'Mirantis/prism';

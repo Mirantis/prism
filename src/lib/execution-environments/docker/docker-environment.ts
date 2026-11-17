@@ -21,7 +21,7 @@ import { runDockerProgram, runDockerShell, type DockerExecContext } from './dock
 import { CONTAINER_PATHS, servesPath } from './volumes';
 
 /** Hardcoded: the image is a component of this runtime, not a deployment choice. */
-export const EXEC_IMAGE_REPO = 'ghcr.io/lensapp/prism-agent-exec';
+export const EXEC_IMAGE_REPO = 'ghcr.io/mirantis/prism-exec';
 
 /** The tag a build with no version of its own takes, and the one that moves. */
 export const EXEC_IMAGE_FALLBACK_TAG = 'latest';

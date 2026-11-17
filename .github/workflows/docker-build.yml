@@ -119,7 +119,7 @@ jobs:
           # this builds a Dockerfile taken from PR head, so the collector key
           # must stay out of its reach. The Dockerfile's own defaults leave
           # telemetry off, and an operator sets the OTel env at `docker run`.
-          outputs: ${{ needs.tag.outputs.push == 'true' && 'type=image,name=ghcr.io/lensapp/prism-agent,push-by-digest=true,name-canonical=true,push=true' || 'type=cacheonly' }}
+          outputs: ${{ needs.tag.outputs.push == 'true' && 'type=image,name=ghcr.io/mirantis/prism,push-by-digest=true,name-canonical=true,push=true' || 'type=cacheonly' }}
           secret-files: |
             github_token=${{ runner.temp }}/.gh-token-secret
           build-args: |
@@ -197,7 +197,7 @@ jobs:
           context: .
           file: Dockerfile.exec
           platforms: ${{ matrix.platform }}
-          outputs: ${{ needs.tag.outputs.push == 'true' && 'type=image,name=ghcr.io/lensapp/prism-agent-exec,push-by-digest=true,name-canonical=true,push=true' || 'type=cacheonly' }}
+          outputs: ${{ needs.tag.outputs.push == 'true' && 'type=image,name=ghcr.io/mirantis/prism-exec,push-by-digest=true,name-canonical=true,push=true' || 'type=cacheonly' }}
           secret-files: |
             github_token=${{ runner.temp }}/.gh-token-secret
           cache-from: |
@@ -253,7 +253,7 @@ jobs:
 
       - name: Create and push manifest
         env:
-          GHCR_REPO: ghcr.io/lensapp/prism-agent-exec
+          GHCR_REPO: ghcr.io/mirantis/prism-exec
           IMAGE_TAG: ${{ needs.tag.outputs.image_tag }}
         run: |
           set -euo pipefail
@@ -292,7 +292,7 @@ jobs:
 
       - name: Create and push manifest
         env:
-          GHCR_REPO: ghcr.io/lensapp/prism-agent
+          GHCR_REPO: ghcr.io/mirantis/prism
           IMAGE_TAG: ${{ needs.tag.outputs.image_tag }}
         run: |
           set -euo pipefail

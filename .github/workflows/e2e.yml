@@ -253,7 +253,7 @@ jobs:
           context: .
           file: Dockerfile.exec
           load: true
-          tags: ghcr.io/lensapp/prism-agent-exec:e2e-${{ github.sha }}
+          tags: ghcr.io/mirantis/prism-exec:e2e-${{ github.sha }}
           secret-files: |
             github_token=${{ runner.temp }}/.gh-token-secret
           cache-from: |
