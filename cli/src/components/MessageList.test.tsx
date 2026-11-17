@@ -4,6 +4,7 @@ import { render } from 'ink-testing-library';
 import { MessageList } from './MessageList.js';
 import type { ChatEntry } from '../transcript.js';
 import type { TuiMessage } from '../tui-adapter.js';
+import { formatShellRecord } from '../shell-command.js';
 
 function makeMsg(overrides: Partial<TuiMessage> & { id: string; role: TuiMessage['role']; content: string }): TuiMessage {
   return {
@@ -26,6 +27,19 @@ describe('MessageList', () => {
       <MessageList agentName="Prism" self={undefined} entries={[]} expandedMessageId={null} />,
     );
     expect(lastFrame() ?? '').toBe('');
+  });
+
+  it('shows a shell command record as the command, its exit code and its output', () => {
+    const content = formatShellRecord({ command: 'aws sso login', exitCode: 1, output: 'Token expired' });
+    const entries = [entry(makeMsg({ id: 'u1', role: 'USER', content }))];
+    const { lastFrame } = render(
+      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId={null} />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('! aws sso login');
+    expect(frame).toContain('exit code 1');
+    expect(frame).toContain('Token expired');
+    expect(frame).not.toContain('<user-shell-command>');
   });
 
   it('labels user messages with "You" and shows the content', () => {
