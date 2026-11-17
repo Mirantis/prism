@@ -216,7 +216,7 @@ fn agent_props() -> IndexMap<String, String> {
 pub struct ComputerAccess {
     /// This gate, for the window a disconnect ends in the background.
     me: Weak<ComputerAccess>,
-    /// This gate's identity, as the secure guard counts its holders.
+    /// This gate's identity; with a window's number, the key it holds the secure guard by.
     holder: u64,
     clear_secrets: Option<ClearSecrets>,
     kind: ComputerKind,
@@ -591,10 +591,10 @@ impl ComputerAccess {
     }
 
     fn begin_secure(&self, client_id: &str, help_id: &str) {
-        {
+        let number = {
             let mut state = self.state.lock();
-            // A window that is clearing up is replaced rather than joined: its guards are
-            // already in force, and the one ending will find itself superseded.
+            // A window that is clearing up is replaced rather than joined. The new one
+            // holds the guard under its own number, so the one ending cannot free it.
             if state
                 .secure_window
                 .as_ref()
@@ -611,8 +611,9 @@ impl ComputerAccess {
                 started_at: now_ms(),
                 ending: false,
             });
-        }
-        hold_secure_guard(self.holder);
+            number
+        };
+        hold_secure_guard((self.holder, number));
         let mut props = agent_props();
         props.insert("computer.help_id".to_string(), help_id.to_string());
         track_event(
@@ -656,22 +657,20 @@ impl ComputerAccess {
                 "[Computer] Could not clear what a secure takeover left behind"
             );
         }
-        // A takeover that began while this one was clearing holds the guards now, and
-        // releasing them here would leave that window unguarded.
-        let current = {
+        // A takeover that began while this one was clearing is the open window now and
+        // stays. It holds the guard under its own number, so releasing this window's
+        // hold leaves that one guarded.
+        {
             let mut state = self.state.lock();
-            let current = state
+            if state
                 .secure_window
                 .as_ref()
-                .is_some_and(|window| window.number == open.number);
-            if current {
+                .is_some_and(|window| window.number == open.number)
+            {
                 state.secure_window = None;
             }
-            current
-        };
-        if current {
-            release_secure_guard(self.holder);
         }
+        release_secure_guard((self.holder, open.number));
         let mut props = agent_props();
         props.insert("computer.help_id".to_string(), open.help_id.clone());
         props.insert("exit".to_string(), exit.as_str().to_string());
