@@ -51,7 +51,7 @@ irm https://raw.githubusercontent.com/Mirantis/prism/main/install.ps1 | iex
 Start the agent and boot into terminal ui:
 
 ```bash
-docker run -it -p 3003:3003 -v prism-data:/data -e AWS_BEARER_TOKEN_BEDROCK ghcr.io/lensapp/prism-agent:latest /bin/sh -c './start.sh > /dev/null 2>&1 & exec prism'
+docker run -it -p 3003:3003 -v prism-data:/data -e AWS_BEARER_TOKEN_BEDROCK ghcr.io/mirantis/prism:latest /bin/sh -c './start.sh > /dev/null 2>&1 & exec prism'
 ```
 
 ## Features

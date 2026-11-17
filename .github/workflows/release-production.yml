@@ -85,7 +85,7 @@ jobs:
           context: .
           file: Dockerfile
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=ghcr.io/lensapp/prism-agent,push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=ghcr.io/mirantis/prism,push-by-digest=true,name-canonical=true,push=true
           secret-files: |
             github_token=${{ runner.temp }}/.gh-token-secret
             otel_api_key=${{ runner.temp }}/.otel-api-key-secret
@@ -142,7 +142,7 @@ jobs:
 
       - name: Create and push manifest
         env:
-          GHCR_REPO: ghcr.io/lensapp/prism-agent
+          GHCR_REPO: ghcr.io/mirantis/prism
           VERSION: ${{ needs.prepare.outputs.version }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
@@ -244,7 +244,7 @@ jobs:
           context: .
           file: Dockerfile.exec
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=ghcr.io/lensapp/prism-agent-exec,push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=ghcr.io/mirantis/prism-exec,push-by-digest=true,name-canonical=true,push=true
           secret-files: |
             github_token=${{ runner.temp }}/.gh-token-secret
           cache-from: type=gha,scope=release-exec-${{ matrix.platform }}
@@ -294,7 +294,7 @@ jobs:
 
       - name: Create and push manifest
         env:
-          GHCR_REPO: ghcr.io/lensapp/prism-agent-exec
+          GHCR_REPO: ghcr.io/mirantis/prism-exec
           VERSION: ${{ needs.prepare.outputs.version }}
           IMAGE_TAG: ${{ github.sha }}
         run: |

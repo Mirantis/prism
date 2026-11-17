@@ -59,7 +59,7 @@ docker run -d \
   -e GOOGLE_BOT_EMAIL=prism-bot@example.com \
   -e GOOGLE_BOT_PASSWORD=... \
   -p 3003:3003 -v prism-data:/data \
-  ghcr.io/lensapp/prism-agent:latest
+  ghcr.io/mirantis/prism:latest
 ```
 
 `AWS_BEARER_TOKEN_BEDROCK` and `OPENAI_API_KEY` are only ever sent as request
