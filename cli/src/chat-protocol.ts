@@ -93,7 +93,7 @@ export interface OutgoingMessage {
 }
 
 /**
- * Who a connection is, as the Lens Agents sign-in named it. `id` tells one person
+ * Who a connection is, as the Mirantis Agent Platform sign-in named it. `id` tells one person
  * from another; `name` is for display. Both are null when the sign-in said nothing.
  */
 export interface Viewer {

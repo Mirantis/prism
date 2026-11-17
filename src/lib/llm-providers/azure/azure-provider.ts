@@ -10,7 +10,7 @@
  * resource's hosts.
  *
  * Routing: the `baseURL` argument is the resolved chat endpoint —
- * `AZURE_FOUNDRY_BASE_URL`, else the Lens Agents Azure gateway chat route
+ * `AZURE_FOUNDRY_BASE_URL`, else the Mirantis Agent Platform Azure gateway chat route
  * (`…/llm/azure/anthropic/v1`, mirroring Bedrock's `…/llm/bedrock/{region}`),
  * else the Foundry resource. `config.azureChatEndpoint` decides between them.
  *
@@ -47,7 +47,7 @@ export function createAzureProvider(baseURL?: string): LlmProvider {
   //
   // On the gateway the real Foundry key (`api-key` from its NEXUS_AZURE_TOKEN)
   // is injected on the outbound leg, so no local key is needed — but the SDKs
-  // insist on one, so fall back to a decoy (the same pattern the Lens Agents
+  // insist on one, so fall back to a decoy (the same pattern the Mirantis Agent Platform
   // sandbox uses for its provisioned ANTHROPIC_API_KEY).
   const decoyableKey = config.azureApiKey || (gatewayServesIt ? 'nexus-managed' : undefined);
   const anthropic = createAnthropic({
@@ -71,7 +71,7 @@ export function createAzureProvider(baseURL?: string): LlmProvider {
 
 /**
  * The settings Azure still needs, by variable name; empty when it can serve
- * requests. Through the Lens Agents gateway it needs none, since the gateway
+ * requests. Through the Mirantis Agent Platform gateway it needs none, since the gateway
  * holds the Foundry key. Direct mode needs an api-key and a Foundry endpoint.
  */
 export function missingAzureSettings(): string[] {

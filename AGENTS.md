@@ -8,7 +8,7 @@ scheduling in-process, manages Slack connections via Bolt SDK with Socket Mode,
 runs the conversation engine and message delivery locally, and delivers results
 directly to users via local channel adapters (WebSocket, Slack).
 
-The GitHub repository is [`lensapp/prism-agent`](https://github.com/lensapp/prism-agent).
+The GitHub repository is [`Mirantis/prism`](https://github.com/Mirantis/prism).
 `CLAUDE.md` is a symlink to this file, so both names read the same rules.
 
 Runtime source paths in this file are relative to `src/` — `invoke.ts` is
@@ -567,7 +567,7 @@ vendor. These rules hold across vendors:
   model rather than return a 400.
 - LiteLLM structured output uses `jsonTool`, since an alias can route to a
   non-Anthropic upstream. OpenRouter model ids are `vendor/model`.
-- Lens Agents' Prism template passes the project's backend id through as
+- Mirantis Agent Platform' Prism template passes the project's backend id through as
   `LLM_PROVIDER`, so a provider name matches the gateway's.
 - Memory embeddings are their own seam (`EMBEDDING_PROVIDER`,
   `lib/embedding-providers/`), so a chat vendor without embedding models borrows
@@ -756,7 +756,7 @@ locally.
    goals, shell, the coding sub-agent, share-file, web pages, skills, meetings), assembled by
    `lib/tool-collection.ts#collectTools` and filtered per invocation mode. There is
    **no internal MCP server** — these are in-process closures, not an HTTP surface.
-2. **Lens Agents MCP** — kubectl, GitHub, AWS tools (external, via `NEXUS_MCP_URL`).
+2. **Mirantis Agent Platform MCP** — kubectl, GitHub, AWS tools (external, via `NEXUS_MCP_URL`).
 3. **Plugin MCP** — whatever an installed Agent Plugin declares in its `mcp.json`;
    stdio, Streamable HTTP or legacy SSE (`services/plugin-mcp.service.ts`).
 
@@ -773,7 +773,7 @@ It runs as the **last** step of `collectTools()`, the only assembly point every
 request goes through — chat, compaction, and the voice-meeting bridge, which
 re-declares the same keys to the Realtime API under the same limit — because a
 name an MCP server advertises is not ours to choose and one a provider rejects
-fails the *whole* request (Lens Agents pre-namespaces a proxied connector as
+fails the *whole* request (Mirantis Agent Platform pre-namespaces a proxied connector as
 `<uuid>__<connector>__<tool>`, and a 36-char UUID blows the budget on its own).
 Renaming the map key is the whole fix, since an MCP tool's `execute` closes over
 the name the *server* gave it and the call still goes out under that name.
@@ -863,7 +863,7 @@ The tree under `src/` and each file's header comment describe the modules, and
 - Removing a computer retires its access gate: runs on it fail at their next
   step, and their turns are not cancelled.
 - The Teams bot endpoint has a listener of its own that serves one route,
-  because a Lens Agents `public` port has no path filter. The handler acks at
+  because a Mirantis Agent Platform `public` port has no path filter. The handler acks at
   once, since a turn runs minutes against Bot Framework's ~15 s window. Every
   reply is a proactive send to a stored conversation id, never to a persisted
   `serviceUrl`, which a caller can forge.
@@ -905,7 +905,7 @@ On shutdown, `pendingWorkService.shutdown()` runs first: the work in flight stop
 `SERVICE_VERSION` is set by the workflows under `.github/workflows/`.
 
 A `__nexus_cred:<uuid>__` sentinel works only in a header, because the sandbox
-proxy rewrites headers only. So on Lens Agents, `TEAMS_APP_PASSWORD` is the
+proxy rewrites headers only. So on Mirantis Agent Platform, `TEAMS_APP_PASSWORD` is the
 sentinel of an OAuth client-credentials credential; elsewhere it is the app
 registration's client secret. `GOOGLE_BOT_PASSWORD` is always the real value.
 
@@ -913,7 +913,7 @@ registration's client secret. `GOOGLE_BOT_PASSWORD` is always the real value.
 
 There are three entry points for chat, all handled locally by the agent-runtime:
 
-1. **WebSocket**: Client -> Lens Agents ingress -> WS gateway -> `inboundMessageService.accept()` (stores the message, confirms it) -> `conversationEngineService.chat()` (local, no HTTP)
+1. **WebSocket**: Client -> Mirantis Agent Platform ingress -> WS gateway -> `inboundMessageService.accept()` (stores the message, confirms it) -> `conversationEngineService.chat()` (local, no HTTP)
 2. **Slack**: Bolt Socket Mode message -> `conversationEngineService.chat()` (local, no HTTP)
 3. **Agent messages**: delivery service -> `POST /agents/agent-messages` (`routes/agent-messages.ts`, the service's API token id as the ingress names it, 403 when the ingress names a person) -> `inboundMessageService.accept()` into the web conversation that holds its `conversationId` -> `conversationEngineService.chat()`
 
@@ -1230,7 +1230,7 @@ The agent-runtime owns the chat socket, `/api/ws`, which the web UI, the TUI and
 
 ### WebSocket Architecture
 
-- **Auth**: terminated at the Lens Agents ingress; every socket is the owner. The ingress's `x-forwarded-user-id` and percent-encoded `x-forwarded-user-display-name` name the person, and `x-forwarded-user` is used for whichever of the two is missing. They are for attribution and display only, never for a decision.
+- **Auth**: terminated at the Mirantis Agent Platform ingress; every socket is the owner. The ingress's `x-forwarded-user-id` and percent-encoded `x-forwarded-user-display-name` name the person, and `x-forwarded-user` is used for whichever of the two is missing. They are for attribution and display only, never for a decision.
 - **One stream, numbered**: every message (the person's own included), turn state, thread and desktop change is an event with a `seq`, sent to every socket. A reconnecting client names its cursor and is replayed the gap from memory, or told `resumed: false` and reloads history over REST. A message published with nobody connected is therefore never lost.
 - **Store first**: a send is stored under the client's uuid before anything else and only then confirmed, so a client resends anything unconfirmed and the same id is never stored twice.
 - **One turn at a time for the agent**: a message for another conversation waits, shown to every client as `queued`. The wait is also what keeps the agent quiet while a person holds the computer.

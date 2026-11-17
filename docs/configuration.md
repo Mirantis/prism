@@ -48,7 +48,7 @@ differences from `bedrock` matter in practice:
   use `anthropic.claude-haiku-4-5`, not
   `anthropic.claude-haiku-4-5-20251001-v1:0`.
 - **Mantle serves no embedding models.** Memory embeddings stay on Titan over
-  `bedrock-runtime`, which means AWS credentials (or the Lens Agents gateway)
+  `bedrock-runtime`, which means AWS credentials (or the Mirantis Agent Platform gateway)
   still have to reach regular Bedrock for that leg; set
   `BEDROCK_MANTLE_EMBEDDING_MODEL_ID=''` to skip embeddings instead.
 
@@ -71,21 +71,21 @@ bare first-party names (`claude-opus-5`). It is the one **direct-only**
 platform — no gateway mount serves `api.anthropic.com`, so the key is always
 required and chat stays direct even when `NEXUS_API_URL` is set. Anthropic
 serves no embedding models: memory embeddings default to OpenAI
-(`text-embedding-3-small`) when `OPENAI_API_KEY` is set or when the Lens
-Agents gateway holds the key (`NEXUS_API_URL` set), and are otherwise
+(`text-embedding-3-small`) when `OPENAI_API_KEY` is set or when the Mirantis
+Agent Platform gateway holds the key (`NEXUS_API_URL` set), and are otherwise
 disabled — see [Memory embeddings](#memory-embeddings).
 
 `litellm` runs the agent on your own [LiteLLM](https://docs.litellm.ai) proxy.
 Set `LITELLM_BASE_URL` to the proxy's address and `LITELLM_API_KEY` to a
-LiteLLM key. On Lens Agents, choose LiteLLM as the project's inference backend
+LiteLLM key. On Mirantis Agent Platform, choose LiteLLM as the project's inference backend
 instead. The agent asks the proxy for `claude-opus-5-5` and `claude-haiku-5-5`.
 If your proxy names its models differently, the startup log lists the names it
 serves: set `LITELLM_MODEL_ID` and `LITELLM_CLASSIFICATION_MODEL_ID` to them.
 Memory embeddings are off until you turn them on in
 [Memory embeddings](#memory-embeddings).
 
-Each platform except `anthropic` can run **direct** or **through the Lens
-Agents LLM gateway**. Routing is automatic: set `NEXUS_API_URL` and chat and
+Each platform except `anthropic` can run **direct** or **through the Mirantis
+Agent Platform LLM gateway**. Routing is automatic: set `NEXUS_API_URL` and chat and
 classification route through the gateway (`…/llm/bedrock/{region}` for
 Bedrock, `…/llm/azure/anthropic/v1` for Azure,
 `…/llm/bedrock-mantle/anthropic/{region}/v1` for mantle, `…/llm/openai/v1` for
@@ -105,25 +105,25 @@ grouped per platform.
 
 | Variable | Purpose |
 |----------|---------|
-| `AWS_BEARER_TOKEN_BEDROCK` | **(Bedrock, Mantle)** Bedrock API key — one credential for both AWS endpoints. On Bedrock the AI SDK auto-selects bearer auth when this is set; on mantle it is sent as the `x-api-key` header and is **required** for direct mode, which has no SigV4 path. Not needed when routing through the Lens Agents gateway. |
+| `AWS_BEARER_TOKEN_BEDROCK` | **(Bedrock, Mantle)** Bedrock API key — one credential for both AWS endpoints. On Bedrock the AI SDK auto-selects bearer auth when this is set; on mantle it is sent as the `x-api-key` header and is **required** for direct mode, which has no SigV4 path. Not needed when routing through the Mirantis Agent Platform gateway. |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | **(Bedrock)** AWS SigV4 credentials, as an alternative to the bearer token. Mantle chat cannot use these, but they still serve the Titan embedding leg under `bedrock-mantle`. |
 | `BEDROCK_MANTLE_BASE_URL` | **(Mantle)** Override the derived mantle chat endpoint (must end at `/anthropic/v1`). |
-| `AZURE_API_KEY` | **(Azure)** Foundry resource key, sent as the `x-api-key` header. Required for direct mode only — when routing through the Lens Agents gateway it holds the key for both chat and embeddings. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
+| `AZURE_API_KEY` | **(Azure)** Foundry resource key, sent as the `x-api-key` header. Required for direct mode only — when routing through the Mirantis Agent Platform gateway it holds the key for both chat and embeddings. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
 | `AZURE_RESOURCE_NAME` | **(Azure, direct)** Foundry resource name — derives the chat endpoint `https://{resource}.services.ai.azure.com/anthropic/v1` and the embeddings endpoint `https://{resource}.openai.azure.com`. |
 | `AZURE_FOUNDRY_BASE_URL` | **(Azure)** Override the derived Foundry Anthropic chat endpoint (must end at `/anthropic/v1`). |
-| `OPENAI_API_KEY` | **(OpenAI)** API key, sent as a bearer header. Required for direct mode only — through the Lens Agents gateway it holds the key. Shared with [voice meetings](voice-meetings.md): setting it also enables the meeting tools when the browser/audio toolchain is present. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
+| `OPENAI_API_KEY` | **(OpenAI)** API key, sent as a bearer header. Required for direct mode only — through the Mirantis Agent Platform gateway it holds the key. Shared with [voice meetings](voice-meetings.md): setting it also enables the meeting tools when the browser/audio toolchain is present. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
 | `OPENAI_BASE_URL` | **(OpenAI)** Override the chat/embeddings endpoint (must serve the Responses API). Does not move the voice-meeting Realtime WebSocket. |
-| `OPENROUTER_API_KEY` | **(OpenRouter)** API key, sent as a bearer header. Required for direct mode only — through the Lens Agents gateway it holds the key. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
+| `OPENROUTER_API_KEY` | **(OpenRouter)** API key, sent as a bearer header. Required for direct mode only — through the Mirantis Agent Platform gateway it holds the key. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
 | `OPENROUTER_BASE_URL` | **(OpenRouter)** Override the chat/embeddings endpoint (must serve the Responses API). Defaults to `https://openrouter.ai/api/v1`. |
 | `ANTHROPIC_API_KEY` | **(Anthropic)** API key, sent as the `x-api-key` header. Always required — this platform is direct-only, so there is no gateway mode to hold the key. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
 | `ANTHROPIC_BASE_URL` | **(Anthropic)** Override the chat endpoint (must end at `/v1`). |
-| `LITELLM_API_KEY` | **(LiteLLM)** LiteLLM key, sent as the `x-api-key` header. Required for direct mode only — through the Lens Agents gateway it holds the key. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
+| `LITELLM_API_KEY` | **(LiteLLM)** LiteLLM key, sent as the `x-api-key` header. Required for direct mode only — through the Mirantis Agent Platform gateway it holds the key. May be a `__nexus_cred:<uuid>__` sentinel the proxy rewrites on the wire. |
 | `LITELLM_BASE_URL` | **(LiteLLM)** Your proxy's address, for example `https://litellm.example.com`. Required for direct mode only. |
 | `SLACK_BOT_TOKEN` | Slack bot token (`xoxb-…`). Enables the Slack adapter; validated via `auth.test` on boot. |
 | `SLACK_APP_TOKEN` | Slack app-level token (`xapp-…`) for Socket Mode. |
 | `SLACK_EXPECTED_APP_ID` | Optional safety check — the bot token's app ID must match this if set. |
 | `TEAMS_APP_ID` | Microsoft Teams: the Entra app registration's client ID. All three Teams variables must be set to enable the adapter. |
-| `TEAMS_APP_PASSWORD` | Microsoft Teams: the app registration's client secret. On Lens Agents, the placeholder of an OAuth client credentials credential ([Teams](teams.md)). |
+| `TEAMS_APP_PASSWORD` | Microsoft Teams: the app registration's client secret. On Mirantis Agent Platform, the placeholder of an OAuth client credentials credential ([Teams](teams.md)). |
 | `TEAMS_APP_TENANT_ID` | Microsoft Teams: the Entra tenant of the app registration. |
 | `TEAMS_PORT` | Microsoft Teams: the bot endpoint's own port, the one to publish over public HTTPS. Default `3979`. |
 
@@ -140,7 +140,7 @@ public HTTPS (see [Microsoft Teams](teams.md#the-public-messaging-endpoint)).
 | `AGENT_MESSAGES_PORT` | HTTP port the other agents' messages arrive on, on the `PRISM_HOST` interface ([agent messages](agent-messages.md)). It serves `POST /agents/agent-messages` alone, and the main port does not serve it. Must differ from `PORT` and `WEBHOOK_PORT`; a taken port is logged and the rest of the runtime keeps running | `3005` |
 | `PRISM_HOST` | Network interface the runtime listens on. The default accepts connections from this machine only. Set it to `0.0.0.0` to accept them from the network — the Docker image does, so a published port works. The name is prefixed because a bare `HOST` is the machine's own hostname in some environments. | `127.0.0.1` (`0.0.0.0` in Docker) |
 | `PRISM_ALLOWED_ORIGINS` | Comma-separated web origins on other sites whose pages may call the runtime, open its chat connection and use the [Computer](computer.md) desktop with pointer and keyboard. Write each as `https://app.example.com`, or `https://app.example.com:*` for any port. Set it only when an authenticating proxy is in front of the runtime: with a loopback `PRISM_HOST` the runtime refuses to start. | empty |
-| `PRISM_PROGRAM_STATUS` | Whether the runtime reports the agent's state on its output, so that a terminal or [Lens Sandbox](lens-sandbox.md#the-agents-state-in-lns) can show when the agent waits for you, has finished or has failed: `on` or `off`. | `on` when the output is a terminal |
+| `PRISM_PROGRAM_STATUS` | Whether the runtime reports the agent's state on its output, so that a terminal can show when the agent waits for you, has finished or has failed: `on` or `off`. | `on` when the output is a terminal |
 | `DATABASE_URL` | SQLite URL for the agent database. The Docker image's `start.sh` sets this to `file:/data/agent.db`; locally it resolves next to the Prisma schema. | `file:/data/agent.db` (Docker) |
 | `AGENT_ID` | Pin the agent's UUID. Unset → a fresh UUID is generated on first boot and reused thereafter. | generated |
 | `AGENT_MESSAGES_TOKEN_ID` | The API token id the ingress names in `x-forwarded-token-id` for the delivery service of [agent messages](agent-messages.md); deliveries from any other caller are refused. The header is trustworthy only for requests that arrive through the ingress. Unset, the agent-messages port is not opened. | unset |
@@ -420,8 +420,8 @@ The gate checks the `coding_agent` call that starts a coding task.
 do after that.
 
 This gate is defense in depth, not a sandbox: both the main agent and the risk
-classifier are language models and can make mistakes. Keep OS permissions and
-[Lens Sandbox](lens-sandbox.md) policy as the hard security boundary.
+classifier are language models and can make mistakes. Keep OS permissions as
+the hard security boundary.
 
 ## Chat verbosity
 
@@ -683,7 +683,7 @@ for that.
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `NEXUS_MCP_URL` | Endpoint of an external [MCP server](tools.md#external-tools-mcp). When set, its tools are exposed to the agent. | — (no external tools) |
-| `NEXUS_API_URL` | Base URL of a Lens Agents instance, used for the LLM proxy and WebSocket authorization. When set, LLM calls route through that gateway (for any platform). It is **not** a fallback for `NEXUS_MCP_URL`. | — |
+| `NEXUS_API_URL` | Base URL of a Mirantis Agent Platform instance, used for the LLM proxy and WebSocket authorization. When set, LLM calls route through that gateway (for any platform). It is **not** a fallback for `NEXUS_MCP_URL`. | — |
 
 ## Voice meetings
 
@@ -798,7 +798,7 @@ carries a request or response body.
 
 With OpenTelemetry enabled, the runtime emits an `agent started` event once per
 boot describing the deployment: the LLM provider, whether calls route through
-the Lens Agents gateway, the model identifiers, on/off flags for Slack, that
+the Mirantis Agent Platform gateway, the model identifiers, on/off flags for Slack, that
 gateway, the external MCP server and Langfuse, the host shape (packaged binary
 or not, Node version, platform, architecture), and counts of cron tasks,
 installed skills, installed plugins and subagents. Like
@@ -811,7 +811,7 @@ install it came from.
 
 For each closed UTC hour, the runtime sends one `llm usage aggregated` event per
 model it called, a few minutes after the hour ends. The event has the hour, the
-provider, the model, the agent id, whether calls route through the Lens Agents
+provider, the model, the agent id, whether calls route through the Mirantis Agent Platform
 gateway, and the number of model calls. It also has input, output, cache-write and
 cache-read token counts. The input count is the whole prompt, cache reads and
 writes included. The events count every call on the chat model and the

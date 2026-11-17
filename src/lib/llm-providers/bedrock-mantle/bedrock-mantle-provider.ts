@@ -23,7 +23,7 @@
  * is the one chokepoint every override flows through, and it keeps the stored
  * value portable if the operator switches back to `LLM_PROVIDER=bedrock`.
  *
- * Routing: a `baseURL` argument (the Lens Agents mantle mount, computed from
+ * Routing: a `baseURL` argument (the Mirantis Agent Platform mantle mount, computed from
  * `NEXUS_API_URL` as `…/llm/bedrock-mantle/anthropic/{region}/v1`) overrides
  * the direct endpoint; unset → straight to the AWS endpoint.
  *
@@ -87,7 +87,7 @@ export function toBareBedrockModelId(modelId: string): string {
  * Returns a callable `(modelId) => LanguageModel` for chat.
  *
  * `baseURL` is the resolved chat endpoint — `BEDROCK_MANTLE_BASE_URL`, else the
- * Lens Agents mantle mount, else the AWS mantle host for the region.
+ * Mirantis Agent Platform mantle mount, else the AWS mantle host for the region.
  * `config.bedrockMantleChatEndpoint` decides between them. An endpoint on the
  * gateway carries the credential itself; anywhere else needs the Bedrock API key.
  */

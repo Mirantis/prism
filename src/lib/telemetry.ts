@@ -31,7 +31,7 @@ const ATTR_DEPLOYMENT_ENVIRONMENT_NAME = 'deployment.environment.name';
 // Not an OTel semantic convention: the product that launched this agent, set by
 // that product's recipe. `service.*` stays the runtime's own name for every product.
 const ATTR_PRODUCT_NAME = 'product.name';
-// The persisted id of this install, the attribute name Lens Agents uses for its own.
+// The persisted id of this install, the attribute name Mirantis Agent Platform uses for its own.
 const ATTR_DEPLOYMENT_ID = 'deployment.id';
 
 // `ExportResultCode.SUCCESS` in `@opentelemetry/core`, which is not a direct dependency.

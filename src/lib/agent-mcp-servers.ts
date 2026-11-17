@@ -1,6 +1,6 @@
 /**
  * The MCP servers the runtime connects for the agent, as one list a coding
- * agent's adapter can hand to its agent: the Lens Agents endpoint and every
+ * agent's adapter can hand to its agent: the Mirantis Agent Platform endpoint and every
  * server an installed plugin declares.
  */
 import { createHash } from 'crypto';
@@ -10,7 +10,7 @@ import type { CodingAgentMcpServer } from './coding-agents/coding-agent';
 import { getExecutionEnvironment } from './execution-environments/get-execution-environment';
 import { sanitizeToolNameSegment } from './tool-names';
 
-/** The name the Lens Agents endpoint has in the list. */
+/** The name the Mirantis Agent Platform endpoint has in the list. */
 const NEXUS_SERVER_NAME = 'nexus';
 
 /**

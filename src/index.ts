@@ -279,7 +279,7 @@ const initialize = async () => {
 
     // AGENT_ID is optional — when unset, `resolveOrBootstrapSingleAgent`
     // either picks up the existing row via findFirst() or creates a
-    // fresh one with a generated UUID. Auth is handled by Lens Agents inbound
+    // fresh one with a generated UUID. Auth is handled by Mirantis Agent Platform inbound
     // routing in front of the runtime; the container itself trusts
     // every incoming connection.
     logger.info(
@@ -485,7 +485,7 @@ const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResp
   // Plugin MCP servers are child processes we spawned; close them explicitly so
   // a bare SIGTERM to the runtime doesn't orphan them.
   await pluginMcpService.shutdownAll();
-  // Close the Lens Agents MCP client. On the legacy protocol this ends its gateway session.
+  // Close the Mirantis Agent Platform MCP client. On the legacy protocol this ends its gateway session.
   await closeMCPClients();
   await getSlackHeartbeatThrottleQueue().stop();
   // Work whose result was delivered during the teardown records that before the exit.

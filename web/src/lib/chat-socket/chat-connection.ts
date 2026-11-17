@@ -56,7 +56,7 @@ export interface ChatListener {
 export interface ChatConnectionState {
   status: ConnectionStatus;
   /**
-   * Who the Lens Agents sign-in says this connection is, undefined until the
+   * Who the Mirantis Agent Platform sign-in says this connection is, undefined until the
    * first `welcome` says. Until then nobody knows whose messages are whose.
    */
   you: Viewer | undefined;

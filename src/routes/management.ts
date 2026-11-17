@@ -4,7 +4,7 @@
  * Express router exposing the runtime's REST surface — the agent-runtime
  * owns its own data, so these routes are the canonical CRUD layer for
  * heartbeat, cron, threads, agent identity, and subagent wiring. Each
- * channel's routes are in its own router. Called by the bundled Web UI. Lens Agents inbound routing
+ * channel's routes are in its own router. Called by the bundled Web UI. Mirantis Agent Platform inbound routing
  * terminates auth in front of the container; routes are not protected
  * by an internal secret.
  *

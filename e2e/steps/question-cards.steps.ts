@@ -4,7 +4,7 @@
  * One scenario has the agent call the tool. The others seed a waiting card on an
  * agent message, so they make no model call to get one.
  *
- * Another person is a request with the headers the Lens Agents ingress writes. A
+ * Another person is a request with the headers the Mirantis Agent Platform ingress writes. A
  * browser cannot set a header on a WebSocket handshake, so the browser here has
  * no identity and sees "Answered" for its own answer.
  */

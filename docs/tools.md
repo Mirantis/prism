@@ -20,7 +20,7 @@ behavior.
 
 The gate covers every tool call, apart from low-risk helpers that bypass it to
 avoid a classification round trip for every poll. It is an additional
-check rather than a confinement boundary; OS and Lens Sandbox policy still
+check rather than a confinement boundary; OS permissions still
 determine what the runtime can actually access.
 
 Your **[Agent Guide](agent-identity.md)** is the gate's policy. Write a rule in
@@ -136,14 +136,11 @@ agent runs, its commands fail until you restart the agent.
 > read/write/edit tools reject paths outside the workspace, but running a
 > command does not — `shell_exec` can run anything the runtime's OS user is
 > permitted to. There the workspace is a default working directory rather than a
-> boundary. Neither case limits the network; for that, run Prism Agent under
-> **[Lens Sandbox](lens-sandbox.md)**.
+> boundary.
 
 In the published container image, the shell comes with common tooling
 preinstalled — `git`, `gh` (GitHub CLI), `kubectl`, `aws`, `jq`, `yq`, and
-`ripgrep` — so the agent can do real operational work out of the box. (Running
-under **[Lens Sandbox](lens-sandbox.md)**, every outbound connection those tools
-make is checked against your policy.)
+`ripgrep` — so the agent can do real operational work out of the box.
 
 ## Skills
 
@@ -314,7 +311,7 @@ share it accordingly.
 The meeting tools themselves only exist when the runtime can actually host a call: the
 container image's browser/audio toolchain plus `OPENAI_API_KEY` (which a
 direct-mode `LLM_PROVIDER=openai` deployment already carries — one routed
-through the Lens Agents gateway can run keyless, and then has no meeting tools).
+through the Mirantis Agent Platform gateway can run keyless, and then has no meeting tools).
 Joining and leaving are chat-only — a heartbeat or scheduled run can't dial
 into a meeting, or hang up on one, by itself.
 

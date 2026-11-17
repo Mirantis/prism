@@ -3,7 +3,7 @@
  *
  * This is what makes the voice in the meeting the agent rather than a narrator:
  * the tools an ordinary chat turn gets — memory, cron, goals, shell, skills, plus
- * everything the Lens Agents MCP endpoint serves — are offered to the Realtime session as
+ * everything the Mirantis Agent Platform MCP endpoint serves — are offered to the Realtime session as
  * function tools and executed in this process when called. `filterToolsByMode` makes two
  * changes for `meeting`: it drops `share_file` and the message tools, because a meeting
  * runs neither the invoke loop nor the conversation engine that deliver and store what

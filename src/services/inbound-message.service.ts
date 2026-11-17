@@ -53,7 +53,7 @@ export interface InboundMessage {
   content: string;
   attachmentIds: string[];
   /**
-   * Who sent it, as the Lens Agents sign-in named the connection: a stable id,
+   * Who sent it, as the Mirantis Agent Platform sign-in named the connection: a stable id,
    * which tells one person's messages from another's, and a name to show. The
    * sign-in gives an email, or a user id, which serves as both today.
    */

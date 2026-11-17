@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: Review a lensapp/prism-agent pull request, branch or local diff. Aims for simplicity and small changes, always checks security, and asks comments to give the reason, not a restatement of the code. Covers scope and diff size, root cause, lean code, security, where code belongs, comment/doc/PR prose under the house writing rules, product behavior, upgrade paths, races, tests, telemetry, the prompt cache and migrations. Use when asked to review a PR, a branch or uncommitted work in prism-agent, to re-review after fixes, or to self-review before opening a PR.
+description: Review a Mirantis/prism pull request, branch or local diff. Aims for simplicity and small changes, always checks security, and asks comments to give the reason, not a restatement of the code. Covers scope and diff size, root cause, lean code, security, where code belongs, comment/doc/PR prose under the house writing rules, product behavior, upgrade paths, races, tests, telemetry, the prompt cache and migrations. Use when asked to review a PR, a branch or uncommitted work in prism-agent, to re-review after fixes, or to self-review before opening a PR.
 ---
 
 # Code review
@@ -19,8 +19,8 @@ Each finding serves one of these goals:
 ## 1. Gather
 
 - Find the target:
-  - A PR: `gh pr view <n> --repo lensapp/prism-agent --json number,title,body,url,headRefOid,files`
-    and `gh pr diff <n> --repo lensapp/prism-agent`.
+  - A PR: `gh pr view <n> --repo Mirantis/prism --json number,title,body,url,headRefOid,files`
+    and `gh pr diff <n> --repo Mirantis/prism`.
   - A branch: `git diff origin/main...<branch>`.
   - Nothing named: the branch commits and the working tree against `origin/main`.
 - Read the diff, the files and every search at one snapshot: the target's head.
@@ -273,7 +273,7 @@ Report in chat by default. When the user asks you to post, send one review with
 the inline comments at the PR's head commit:
 
 ```bash
-gh api repos/lensapp/prism-agent/pulls/<n>/reviews -X POST --input review.json
+gh api repos/Mirantis/prism/pulls/<n>/reviews -X POST --input review.json
 ```
 
 `review.json` holds `commit_id`, `event` (`COMMENT` unless the user asks you to

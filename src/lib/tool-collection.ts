@@ -129,7 +129,7 @@ export interface CollectedTools {
 
 /**
  * Collect the tools an invocation of `mode` sends: built-ins (direct AI SDK
- * tools, no MCP round trip) filtered by mode, every tool the Lens Agents MCP
+ * tools, no MCP round trip) filtered by mode, every tool the Mirantis Agent Platform MCP
  * endpoint exposes, and the Task tool when subagents are configured.
  */
 export async function collectTools(input: CollectToolsInput): Promise<CollectedTools> {
@@ -206,7 +206,7 @@ export async function collectTools(input: CollectToolsInput): Promise<CollectedT
       : {}),
   };
 
-  // Register every tool the Lens Agents MCP endpoint exposes. In the sandbox this
+  // Register every tool the Mirantis Agent Platform MCP endpoint exposes. In the sandbox this
   // is the project-scoped endpoint, which already excludes first-party shell
   // tools by design (those are local built-ins above), so no tool allowlist
   // is sent — we want the full surface it serves.

@@ -59,7 +59,7 @@ binary frames. A frame is at most 1 MB.
      `POST /threads` returns it. A runtime that sends no `threadMode` keeps many.
    - `snapshot.turns` lists every conversation that is working (`running`) or
      waiting (`queued`). A conversation that is not listed is idle.
-   - `you` is who the Lens Agents sign-in says this connection is, or nulls when
+   - `you` is who the Mirantis Agent Platform sign-in says this connection is, or nulls when
      it did not say. Compare `you.id` with a message's `senderId` to tell your
      own messages from someone else's. Until the first `welcome`, draw every
      message as your own.

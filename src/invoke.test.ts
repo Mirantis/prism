@@ -321,7 +321,7 @@ function stepDriver(prepareStep: PrepareStep, initialMessages: StepMessage[]) {
 
 describe('invoke', () => {
   beforeEach(() => {
-    // Built-in tools are direct AI SDK now; only the Lens Agents MCP url
+    // Built-in tools are direct AI SDK now; only the Mirantis Agent Platform MCP url
     // (cross-process) still matters here.
     config.nexusMcpUrl = 'http://localhost:3002/mcp';
     config.toolRiskGateMode = 'off';
@@ -885,19 +885,19 @@ describe('invoke', () => {
     });
   });
 
-  it('adds Lens Agents MCP tools when nexusMcpUrl is configured', async () => {
+  it('adds Mirantis Agent Platform MCP tools when nexusMcpUrl is configured', async () => {
     mockGetMCPTools.mockResolvedValue({ kubectl: {} });
 
     await invoke(createTestInvokeRequest());
 
-    // Only the Lens Agents MCP server is reached via getMCPTools now (built-ins are direct).
+    // Only the Mirantis Agent Platform MCP server is reached via getMCPTools now (built-ins are direct).
     expect(mockGetMCPTools).toHaveBeenCalledTimes(1);
 
     const callArgs = mockGenerateText.mock.calls[0][0];
     expect(callArgs.tools).toHaveProperty('kubectl');
   });
 
-  it('calls Lens Agents MCP with the configured URL and no tool allowlist', async () => {
+  it('calls Mirantis Agent Platform MCP with the configured URL and no tool allowlist', async () => {
     mockGetMCPTools.mockResolvedValue({});
 
     await invoke(createTestInvokeRequest());
@@ -923,7 +923,7 @@ describe('invoke', () => {
   });
 
   it('shortens a platform MCP name too long for the provider, keeping the tool itself', async () => {
-    // Lens Agents pre-namespaces a proxied connector as `<uuid>__<connector>__<tool>`,
+    // Mirantis Agent Platform pre-namespaces a proxied connector as `<uuid>__<connector>__<tool>`,
     // and a 36-char UUID puts that over Bedrock's 64-character toolSpec.name cap
     // — which rejects the whole request, so one such name kills every turn.
     const long = '75166a14-fd0b-4bbb-b6d6-ddbd008bb95b__atlassian__addCommentToJiraIssue';
@@ -999,7 +999,7 @@ describe('invoke', () => {
     expect(toolNames).toContain('demo__probe__search');
   });
 
-  it('does not add Lens Agents MCP tools when nexusMcpUrl is unset', async () => {
+  it('does not add Mirantis Agent Platform MCP tools when nexusMcpUrl is unset', async () => {
     config.nexusMcpUrl = null;
     mockGetAgentContext.mockResolvedValue(createTestAgentContext({ isBootstrapPhase: false }));
 

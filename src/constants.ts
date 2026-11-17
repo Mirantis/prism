@@ -129,11 +129,11 @@ export const IDLE_COMPACTION_CACHE_SHARE = 0.9;
  */
 export const RELEASE_VERSION_RE = /^v\d{4}\.\d{1,2}\.\d+$/;
 
-/**
- * GitHub repository that owns both update surfaces: the GHCR container package
- * (version checks read its tag list) and the GitHub Releases (SEA archives).
- */
-export const UPDATE_GITHUB_REPO = 'lensapp/prism-agent';
+/** GHCR container package whose tag list the version check reads. */
+export const UPDATE_IMAGE_REPO = 'lensapp/prism-agent';
+
+/** GitHub repository whose Releases hold the SEA archives. */
+export const UPDATE_GITHUB_REPO = 'Mirantis/prism';
 
 /** Delay before the first update check so it never competes with startup. */
 export const UPDATE_FIRST_CHECK_DELAY_MS = 60 * 1000;

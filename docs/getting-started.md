@@ -29,14 +29,14 @@ up working out of the box.
 
 ```bash
 export AWS_BEARER_TOKEN_BEDROCK=<your-key>
-curl -fsSL https://raw.githubusercontent.com/lensapp/prism-agent/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Mirantis/prism/main/install.sh | bash
 ```
 
 ### Windows (PowerShell)
 
 ```powershell
 $env:AWS_BEARER_TOKEN_BEDROCK="<your-key>"
-irm https://raw.githubusercontent.com/lensapp/prism-agent/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/Mirantis/prism/main/install.ps1 | iex
 ```
 
 The installer downloads the latest release, installs the `prism` and
@@ -45,8 +45,7 @@ puts `prism` on your `PATH`, and registers `prism-server` to run always in the
 background. See **[Install natively](installation.md)** for exactly what gets
 installed and how to manage the service.
 
-Prefer a container? See **[Run with Docker](docker.md)** or
-**[Run with Lens Sandbox](lens-sandbox.md)** instead.
+Prefer a container? See **[Run with Docker](docker.md)** instead.
 
 ## First run
 

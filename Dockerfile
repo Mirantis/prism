@@ -60,13 +60,13 @@ ENV CHECKPOINT_DISABLE=1
 
 # openssl for Prisma; wget for the healthcheck probe.
 # git/ca-certificates/curl/libatomic1/gcc/libc-dev/make/zstd are baked
-# into the upstream Lens Agents shell sandbox image — needed by `gh`'s git
+# into the upstream Mirantis Agent Platform shell sandbox image — needed by `gh`'s git
 # interop, by mise's install + plugin compile path, and by tools that
 # pull zstd-compressed archives. ripgrep is also installed via apt
 # instead of via mise because mise's aqua backend lacks a linux/arm64
 # build for it; Debian's package is single-binary and works everywhere.
 # Ships so `shell_exec` from agents has the same toolchain surface as
-# the upstream Lens Agents shell sandbox.
+# the upstream Mirantis Agent Platform shell sandbox.
 #
 # poppler-utils (pdftoppm/pdftotext/pdfimages), tesseract-ocr, and the
 # fonts stack are the document-skills toolchain — the Anthropic pdf/docx/
@@ -151,13 +151,13 @@ RUN npm ci --workspace=prism-cli --include-workspace-root --omit=dev --ignore-sc
 # Coding-agent CLIs inherit credentials from the runtime environment.
 RUN npm install -g @anthropic-ai/claude-code @openai/codex
 
-# Operator CLIs via mise — parity with the upstream Lens Agents shell
+# Operator CLIs via mise — parity with the upstream Mirantis Agent Platform shell
 # sandbox image.
 # Without these, FU-5's `shell_exec` is mostly useless beyond `ls /data`:
 # agents asking the obvious "list pods in cluster X" / "open a PR" /
 # "list S3 buckets" hit `command not found`. Installed under the `node`
 # user so the shims live in /home/node and stay accessible at runtime
-# (the outer Lens Agents sandbox drops privileges to `node`).
+# (the outer Mirantis Agent Platform sandbox drops privileges to `node`).
 #
 # Same tool set as upstream, plus the document-skills interpreter, split
 # between mise and apt:

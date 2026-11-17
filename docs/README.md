@@ -16,11 +16,8 @@ These docs walk you from a first install through every feature the agent has.
 
 ## Running Prism Agent
 
-Three ways to run the same agent. Pick one.
+Two ways to run the same agent. Pick one.
 
-- **[Run with Lens Sandbox](lens-sandbox.md)** — run the same image inside a
-  local microVM with every outbound connection checked against a policy you
-  control.
 - **[Run with Docker](docker.md)** — pull the published image and run the
   agent in a container with a persistent data volume.
 - **[Install natively](installation.md)** — the one-line installer puts the

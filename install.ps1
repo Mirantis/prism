@@ -11,7 +11,7 @@
 # no admin elevation).
 #
 # Run via the one-liner:
-#   irm https://raw.githubusercontent.com/lensapp/prism-agent/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/Mirantis/prism/main/install.ps1 | iex
 # or from a built checkout (after scripts/build-sea.mjs + collect-natives.mjs),
 # or point $env:PRISM_DIST at a directory containing the artifacts.
 #
@@ -49,12 +49,12 @@ try {
   if (-not $dist -or -not (Test-Path (Join-Path $dist 'prism.exe'))) {
     Write-Host "No local build found; fetching the latest release from GitHub..."
     $headers = @{ 'User-Agent' = 'prism-installer' }
-    $tag = (Invoke-RestMethod -Uri 'https://api.github.com/repos/lensapp/prism-agent/releases/latest' -Headers $headers).tag_name
+    $tag = (Invoke-RestMethod -Uri 'https://api.github.com/repos/Mirantis/prism/releases/latest' -Headers $headers).tag_name
     if (-not $tag) {
       throw "Could not resolve the latest release. Set `$env:PRISM_DIST to a local build to install offline."
     }
     $archive = "prism-$tag-$osArch.zip"
-    $url = "https://github.com/lensapp/prism-agent/releases/download/$tag/$archive"
+    $url = "https://github.com/Mirantis/prism/releases/download/$tag/$archive"
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("prism-" + [System.IO.Path]::GetRandomFileName())
     New-Item -ItemType Directory -Path $tmp -Force | Out-Null
     $zipPath = Join-Path $tmp $archive

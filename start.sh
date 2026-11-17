@@ -52,8 +52,8 @@ fi
 # What to hand over is whatever the live bundle holds that the image did not ship,
 # compared by content against the record the build left in $CA_BASE. Identity rather
 # than position, so a bundle that gets reordered or regenerated cannot make public
-# roots look like the difference. The bundle path is the one lens-sandbox-core
-# hardcodes as CA_BUNDLE_PATH in src/ca.rs, where it appends.
+# roots look like the difference. The bundle path is the system bundle, where a sandbox
+# supervisor appends its CAs.
 CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 CA_BASE=/app/.ca-certificates.base
 POLICY_DIRS='/etc/chromium/policies/managed /etc/opt/chrome/policies/managed'

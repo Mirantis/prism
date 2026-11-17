@@ -299,7 +299,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
     }
 
     // 3. Create provider and model — createProvider picks the configured
-    // vendor (Bedrock/Azure) and routing (direct vs the Lens Agents gateway).
+    // vendor (Bedrock/Azure) and routing (direct vs the Mirantis Agent Platform gateway).
     const provider = createProvider();
     const turnModel = await selectTurnModel(context, request, provider);
     const { modelId } = turnModel;

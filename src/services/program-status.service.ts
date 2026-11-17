@@ -3,7 +3,7 @@
  *
  * Owns the agent's state as the runtime reports it on its stdout with OSC 7501
  * (`lib/program-status.ts`), so that a supervisor that reads the runtime's output,
- * such as LNS in a sandbox, can tell the user when the agent waits for them, has
+ * such as a sandbox supervisor, can tell the user when the agent waits for them, has
  * finished or has failed. `PRISM_PROGRAM_STATUS` turns the reports on or off, and
  * without it the runtime reports when stdout is a terminal.
  *
