@@ -5,6 +5,7 @@ use std::sync::LazyLock;
 use http::HeaderMap;
 use regex::Regex;
 
+use crate::lib::origin_guard::header_text;
 use crate::support::js;
 
 /// The most code points kept from each ingress header value.
@@ -26,19 +27,10 @@ pub struct ForwardedSender {
     pub name: String,
 }
 
-/// One header value, or `None` when the header is absent. Repeated headers read as
-/// Node joins them, with `, `.
+/// One header value, or `None` when the header is absent: each byte read as Latin-1
+/// and repeated headers joined with `, `, as Node gives it.
 pub fn header_of(headers: &HeaderMap, name: &str) -> Option<String> {
-    let values: Vec<String> = headers
-        .get_all(name)
-        .iter()
-        .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned())
-        .collect();
-    if values.is_empty() {
-        None
-    } else {
-        Some(values.join(", "))
-    }
+    header_text(headers, name)
 }
 
 /// A header value made safe to show: no angle brackets, colons or control characters, and capped.
@@ -56,8 +48,12 @@ fn decode_uri_component(value: &str) -> Option<String> {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' {
-            let hex = value.get(i + 1..i + 3)?;
-            out.push(u8::from_str_radix(hex, 16).ok()?);
+            // Exactly two hex digits, as `decodeURIComponent` reads them: no sign.
+            let hex = bytes.get(i + 1..i + 3)?;
+            if !hex.iter().all(u8::is_ascii_hexdigit) {
+                return None;
+            }
+            out.push(u8::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok()?);
             i += 3;
         } else {
             out.push(bytes[i]);
@@ -90,4 +86,46 @@ pub fn sender_of(headers: &HeaderMap) -> Option<ForwardedSender> {
             .or(legacy)
             .unwrap_or_else(|| id.clone());
     Some(ForwardedSender { id, name })
+}
+
+#[cfg(test)]
+mod tests {
+    use http::HeaderValue;
+
+    use super::*;
+
+    fn headers(pairs: &[(&'static str, &[u8])]) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        for (name, value) in pairs {
+            map.append(*name, HeaderValue::from_bytes(value).unwrap());
+        }
+        map
+    }
+
+    #[test]
+    fn reads_header_bytes_as_latin_1_like_node() {
+        let map = headers(&[("x-forwarded-user", b"j\xe4ri\xc3\xa4")]);
+        assert_eq!(
+            header_of(&map, "x-forwarded-user").as_deref(),
+            Some("j\u{e4}ri\u{c3}\u{a4}")
+        );
+        let sender = sender_of(&map).unwrap();
+        assert_eq!(sender.id, "j\u{e4}ri\u{c3}\u{a4}");
+    }
+
+    #[test]
+    fn refuses_a_signed_escape_and_falls_back_like_decode_uri_component() {
+        assert_eq!(decode_uri_component("%+5"), None);
+        assert_eq!(decode_uri_component("%-1"), None);
+        assert_eq!(decode_uri_component("%4"), None);
+        assert_eq!(
+            decode_uri_component("J%C3%A4ri").as_deref(),
+            Some("J\u{e4}ri")
+        );
+        let map = headers(&[
+            ("x-forwarded-user", b"jari@example.com"),
+            ("x-forwarded-user-display-name", b"%+5"),
+        ]);
+        assert_eq!(sender_of(&map).unwrap().name, "jari@example.com");
+    }
 }
