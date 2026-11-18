@@ -69,7 +69,7 @@ describe('fetchLatestReleaseVersion', () => {
       .mockResolvedValueOnce(
         jsonResponse(
           { tags: ['latest', 'canary', '1aa190771c3698cf', 'v2026.5.26071530', 'v2026.8.5090000'] },
-          { link: '</v2/lensapp/prism-agent/tags/list?n=100&last=x>; rel="next"' },
+          { link: '</v2/mirantis/prism/tags/list?n=100&last=x>; rel="next"' },
         ),
       )
       .mockResolvedValueOnce(jsonResponse({ tags: ['v2026.8.24083158', 'pr-12-foo'] }));
@@ -79,9 +79,9 @@ describe('fetchLatestReleaseVersion', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
     const tokenUrl = String(fetchMock.mock.calls[0]![0]);
     expect(tokenUrl).toContain('ghcr.io/token');
-    expect(tokenUrl).toContain('repository:lensapp/prism-agent:pull');
+    expect(tokenUrl).toContain('repository:mirantis/prism:pull');
     const page2 = String(fetchMock.mock.calls[2]![0]);
-    expect(page2).toBe('https://ghcr.io/v2/lensapp/prism-agent/tags/list?n=100&last=x');
+    expect(page2).toBe('https://ghcr.io/v2/mirantis/prism/tags/list?n=100&last=x');
   });
 
   it.each([

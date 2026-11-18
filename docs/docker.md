@@ -3,7 +3,7 @@
 Prism Agent is published as a multi-arch container image. One container runs one
 agent, with its database persisted in a mounted volume.
 
-- **Image:** `ghcr.io/lensapp/prism-agent:latest`
+- **Image:** `ghcr.io/mirantis/prism:latest`
 - **Architectures:** linux/amd64, linux/arm64
 - **Ports:** 3003 (Web UI and API), 3004 ([webhooks](webhooks.md))
 - **Data:** the agent's SQLite database lives at `/data/agent.db` inside the
@@ -36,7 +36,7 @@ the image for you.
 
 ```bash
 docker run -it -p 3003:3003 -v prism-data:/data -e AWS_BEARER_TOKEN_BEDROCK \
-  ghcr.io/lensapp/prism-agent:latest \
+  ghcr.io/mirantis/prism:latest \
   /bin/sh -c './start.sh > /dev/null 2>&1 & exec prism'
 ```
 
@@ -64,7 +64,7 @@ docker run -d --name prism \
   -p 3003:3003 \
   -v prism-data:/data \
   -e AWS_BEARER_TOKEN_BEDROCK=<your-key> \
-  ghcr.io/lensapp/prism-agent:latest
+  ghcr.io/mirantis/prism:latest
 ```
 
 The image's default command runs `start.sh`, which applies database migrations,

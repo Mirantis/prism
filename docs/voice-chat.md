@@ -20,7 +20,7 @@ A Realtime credential, from managed OpenAI/Azure or `OPENAI_REALTIME_API_KEY` /
 or custom `OPENAI_BASE_URL`), shared with voice meetings — see
 [Configuration](configuration.md#voice-chat).
 
-If outbound traffic is filtered, allow the resolved voice endpoint: Lens for
+If outbound traffic is filtered, allow the resolved voice endpoint: Mirantis Agent Platform for
 managed voice, or `api.openai.com` for direct voice.
 
 Nothing else. The audio travels on the connection your client already uses for
