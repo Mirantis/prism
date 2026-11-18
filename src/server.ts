@@ -51,6 +51,7 @@ import { activityRouter } from './routes/activity';
 import { cronTasksRouter } from './routes/cron-tasks';
 import { agentMessagesRouter } from './routes/agent-messages';
 import { agentStateRouter } from './routes/agent-state';
+import { llmProviderRouter } from './routes/llm-provider';
 
 export function createApp() {
   const app = express();
@@ -108,6 +109,9 @@ export function createApp() {
   // Whether this agent is working, for the other agents of the project
   // (GET /agents/state). Their messages arrive on `AGENT_MESSAGES_PORT`.
   app.use('/agents', agentStateRouter);
+
+  // Whether the LLM provider has what it needs (GET /agents/llm-provider).
+  app.use('/agents', llmProviderRouter);
 
   // Thread and message routes: /threads, /latest-thread and /messages.
   // Mounted at the root and registered before the SPA fallback so these

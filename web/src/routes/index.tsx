@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { Page } from '@/components/layout/page';
 import { AgentHero } from '@/components/overview/agent-hero';
+import { LlmProviderBanner } from '@/components/overview/llm-provider-banner';
 import { OverviewStats } from '@/components/overview/overview-stats';
 import { RecentConversations } from '@/components/overview/recent-conversations';
 import { SetupChecklist } from '@/components/overview/setup-checklist';
@@ -22,6 +23,7 @@ function OverviewPage() {
 
   return (
     <Page className="space-y-6">
+      <LlmProviderBanner />
       <AgentHero details={details} />
       <OverviewStats />
       {/* One conversation has no list to pick from: Chat in the sidebar opens it. */}

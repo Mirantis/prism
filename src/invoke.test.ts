@@ -336,7 +336,7 @@ describe('invoke', () => {
     mockGetSkillTools.mockReturnValue({});
     mockWithToolRiskGate.mockImplementation((tools) => tools);
 
-    mockMissingProviderSettings.mockReturnValue([]);
+    mockMissingProviderSettings.mockResolvedValue([]);
     mockBeginTurn.mockReturnValue({ end: mockEndTurn });
     mockCreateBedrockProvider.mockReturnValue(Object.assign(() => 'model-instance', { cachePoint: () => ({ anthropic: { cacheControl: { type: 'ephemeral' } } }) }));
     mockGetMCPTools.mockResolvedValue({});
@@ -397,7 +397,7 @@ describe('invoke', () => {
 
   it('names the missing settings when the LLM provider is not configured', async () => {
     config.llmProvider = 'litellm';
-    mockMissingProviderSettings.mockReturnValue(['LITELLM_BASE_URL', 'LITELLM_API_KEY']);
+    mockMissingProviderSettings.mockResolvedValue(['LITELLM_BASE_URL', 'LITELLM_API_KEY']);
 
     const result = await invoke(createTestInvokeRequest());
 
@@ -2039,7 +2039,7 @@ describe('invoke', () => {
     });
 
     it('should not set status when the LLM provider is not configured', async () => {
-      mockMissingProviderSettings.mockReturnValue(['AWS_BEARER_TOKEN_BEDROCK']);
+      mockMissingProviderSettings.mockResolvedValue(['AWS_BEARER_TOKEN_BEDROCK']);
 
       await invoke(createTestInvokeRequest());
 
@@ -2134,7 +2134,7 @@ describe('invoke', () => {
     });
 
     it('emits nothing when preflight short-circuits (provider unconfigured)', async () => {
-      mockMissingProviderSettings.mockReturnValue(['AWS_BEARER_TOKEN_BEDROCK']);
+      mockMissingProviderSettings.mockResolvedValue(['AWS_BEARER_TOKEN_BEDROCK']);
 
       await invoke(createTestInvokeRequest());
 

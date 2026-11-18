@@ -225,7 +225,7 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
   const startTime = Date.now();
 
   // Preflight: short-circuit before any DB call.
-  const missingSettings = missingProviderSettings();
+  const missingSettings = await missingProviderSettings();
   if (missingSettings.length > 0) {
     logger.error(
       { provider: config.llmProvider, missingSettings },

@@ -11,6 +11,7 @@ const {
   mockAnthropicModel,
   mockGenericModel,
   mockDefaultProvider,
+  mockHasAwsCredentialSource,
 } = vi.hoisted(() => {
   const mockAnthropicModel = vi.fn((modelId: string) => ({ provider: 'anthropic', modelId }));
   const mockGenericModel = vi.fn((modelId: string) => ({ provider: 'generic', modelId }));
@@ -24,6 +25,7 @@ const {
       secretAccessKey: 'chain-secret',
       sessionToken: 'chain-token',
     })),
+    mockHasAwsCredentialSource: vi.fn(async () => false),
   };
 });
 
@@ -39,7 +41,11 @@ vi.mock('@aws-sdk/credential-provider-node', () => ({
   defaultProvider: mockDefaultProvider,
 }));
 
-import { createBedrockProvider } from './bedrock-provider';
+vi.mock('./aws-credential-source', () => ({
+  hasAwsCredentialSource: mockHasAwsCredentialSource,
+}));
+
+import { createBedrockProvider, missingBedrockSettings } from './bedrock-provider';
 import { ANTHROPIC_TOOL_CHANGES } from '../tool-changes';
 import { ANTHROPIC_DEFERRED_TOOLS } from '../deferred-tools';
 
@@ -224,5 +230,37 @@ describe('createBedrockProvider', () => {
     'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/a1b2c3d4e5f6',
   ])('defers no tool on %s', (modelId) => {
     expect(createBedrockProvider().deferredTools?.(modelId)).toBeUndefined();
+  });
+});
+
+describe('missingBedrockSettings', () => {
+  beforeEach(() => {
+    config.nexusLlmBaseUrl = null;
+    config.bedrockApiKey = undefined;
+    config.awsAccessKeyId = undefined;
+    config.awsSecretAccessKey = undefined;
+    mockHasAwsCredentialSource.mockReset().mockResolvedValue(false);
+  });
+
+  it('asks for the bearer token when nothing supplies a credential', async () => {
+    expect(await missingBedrockSettings()).toEqual(['AWS_BEARER_TOKEN_BEDROCK']);
+  });
+
+  it.each([
+    ['the gateway serves Bedrock', () => { config.nexusLlmBaseUrl = 'https://gateway.example.com/llm/bedrock/us-east-1'; }],
+    ['a bearer token is set', () => { config.bedrockApiKey = 'example-token'; }],
+    ['explicit keys are set', () => {
+      config.awsAccessKeyId = 'AKIAEXAMPLE';
+      config.awsSecretAccessKey = 'example-secret';
+    }],
+  ])('needs nothing and looks for no AWS source when %s', async (_case, arrange) => {
+    arrange();
+    expect(await missingBedrockSettings()).toEqual([]);
+    expect(mockHasAwsCredentialSource).not.toHaveBeenCalled();
+  });
+
+  it('needs nothing when the AWS default chain has a source', async () => {
+    mockHasAwsCredentialSource.mockResolvedValue(true);
+    expect(await missingBedrockSettings()).toEqual([]);
   });
 });

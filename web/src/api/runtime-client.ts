@@ -23,6 +23,7 @@ import type {
   TeamsLinkStatus,
   TeamsWorkspace,
   ModelInfo,
+  LlmProviderStatus,
   OverrideModelInfo,
   ModelSelectionInfo,
   ModelSelectionPatch,
@@ -123,6 +124,7 @@ export const runtimeApi = {
 
   // Model selector
   getModel: () => request<ModelInfo>('/agents/model'),
+  getLlmProvider: () => request<LlmProviderStatus>('/agents/llm-provider'),
   updateModel: (model: string | null) =>
     request<ModelInfo>('/agents/model', {
       method: 'PATCH',

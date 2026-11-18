@@ -13,6 +13,7 @@
     "test:e2e:web": "npx bddgen && npx tsx support/run-web-suite.ts --grep-invert @slack",
     "test:e2e:docker": "npx bddgen && npx playwright test --grep \"Execution environment\"",
     "test:e2e:single-thread": "npx bddgen && npx playwright test --grep @single-thread",
+    "test:e2e:no-llm-provider": "npx bddgen && E2E_NO_LLM_PROVIDER=true npx playwright test --grep @no-llm-provider",
     "test:e2e:tool-search": "npx bddgen && npx playwright test --grep @tool-search",
     "test:e2e:slack:web": "npx bddgen && npx playwright test --grep @slack",
     "test:e2e:slack:tui": "vitest run -c tui/vitest.config.ts tui/tests/bedrock-mantle-slack.test.ts",

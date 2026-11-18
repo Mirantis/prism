@@ -45,7 +45,7 @@
  */
 
 import { config } from '../../config';
-import { createBedrockProvider } from './bedrock/bedrock-provider';
+import { createBedrockProvider, missingBedrockSettings } from './bedrock/bedrock-provider';
 import { createAzureProvider, missingAzureSettings } from './azure/azure-provider';
 import {
   createBedrockMantleProvider,
@@ -82,9 +82,10 @@ export function createProvider(): LlmProvider {
 /**
  * The settings the selected provider still needs, by variable name; empty when
  * it can serve requests. Every model id has a default, so what can be missing
- * is a key or an endpoint.
+ * is a key or an endpoint. Bedrock can wait on the network while the AWS chain
+ * looks for a source.
  */
-export function missingProviderSettings(): string[] {
+export async function missingProviderSettings(): Promise<string[]> {
   switch (config.llmProvider) {
     case 'azure':
       return missingAzureSettings();
@@ -99,8 +100,6 @@ export function missingProviderSettings(): string[] {
     case 'litellm':
       return missingLiteLlmSettings();
     default:
-      // Bedrock finds its credentials through the AWS SDK's own chain (the task
-      // role in ECS) when a request is made.
-      return [];
+      return missingBedrockSettings();
   }
 }

@@ -31,7 +31,7 @@ import { runtimeStateService } from './services/runtime-state.service';
 import { pendingWorkService } from './services/pending-work.service';
 import { resumeReplies } from './services/resume-replies';
 import { initLangfuse, shutdownLangfuse } from './lib/langfuse';
-import { initTelemetry, shutdownTelemetry } from './lib/telemetry';
+import { initTelemetry, shutdownTelemetry, trackEvent } from './lib/telemetry';
 import { trackAgentStarted } from './lib/startup-telemetry';
 import { startUsageTelemetry } from './lib/usage-telemetry';
 import { heartbeatService } from './services/heartbeat.service';
@@ -215,14 +215,18 @@ const initialize = async () => {
       },
       '[Startup] LLM provider',
     );
-    const missingSettings = missingProviderSettings();
-    if (missingSettings.length > 0) {
+    // Not awaited: a check that waits on the network must not hold up boot.
+    void missingProviderSettings().then((missingSettings) => {
+      if (missingSettings.length === 0) return;
       logger.warn(
         { provider: config.llmProvider, missingSettings },
         '[Startup] the LLM provider is missing settings; chat answers with a notice until they are set',
       );
-    }
-    // Not awaited: a check that waits on the network must not hold up boot.
+      trackEvent('llm provider unconfigured', config.ownerUserId, {
+        'llm.provider': config.llmProvider,
+        'llm.missing_settings': missingSettings.join(','),
+      });
+    });
     void provider.startupCheck?.();
 
     if (config.invalidLlmProvider) {

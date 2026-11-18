@@ -32,6 +32,7 @@ function stubApi(): { [K in keyof ApiClient]: ReturnType<typeof vi.fn> } {
     setAgentGuide: vi.fn(),
     getModel: vi.fn(),
     setModel: vi.fn(),
+    getLlmProvider: vi.fn(),
     getHeartbeatModel: vi.fn(),
     setHeartbeatModel: vi.fn(),
     getCronModel: vi.fn(),
