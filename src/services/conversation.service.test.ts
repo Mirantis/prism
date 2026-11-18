@@ -466,6 +466,27 @@ describe('ConversationService', () => {
       });
     });
 
+    it('announces the stored message with its thread and trigger', async () => {
+      mockPrisma.conversationMessage.create.mockResolvedValue({ id: 'm1' });
+      mockPrisma.conversationThread.update.mockResolvedValue(createTestThread({ userId: 'user-1', agentId: 'agent-1' }));
+      const stored = vi.fn();
+      conversationService.events.on('message', stored);
+
+      await conversationService.addMessage('thread-123', {
+        content: 'Daily report',
+        role: 'AGENT',
+        triggeredBy: 'CRON_TASK',
+      });
+      conversationService.events.off('message', stored);
+
+      expect(stored).toHaveBeenCalledWith({
+        userId: 'user-1',
+        agentId: 'agent-1',
+        threadId: 'thread-123',
+        triggeredBy: 'CRON_TASK',
+      });
+    });
+
     it('names the thread after the first user message and reports titleSet', async () => {
       mockPrisma.conversationMessage.create.mockResolvedValue({ id: 'm1' });
       mockPrisma.conversationThread.update.mockResolvedValue(createTestThread());

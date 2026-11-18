@@ -52,7 +52,7 @@ import { teamsAdapterService } from './services/teams/teams-adapter.service';
 import { webSocketAdapterService } from './services/websocket-adapter.service';
 import { webSocketGatewayService } from './services/websocket-gateway.service';
 import { messageDeliveryService } from './services/message-delivery.service';
-import { conversationService } from './services/conversation.service';
+import { conversationService, type MessageStored } from './services/conversation.service';
 import { slackMessageQueueService } from './services/slack-message-queue.service';
 import { SlackThreadProvider } from './services/providers/slack-thread.provider';
 import { ThreadSource } from '@prisma/client';
@@ -381,6 +381,9 @@ const initialize = async () => {
     // Re-arm the idle compactions the restart dropped; best effort, a failure only
     // leaves a conversation to its next turn.
     compactionService.restoreIdle().catch((err) => logger.warn({ err }, '[Compaction] could not restore idle compactions'));
+    // A scheduled task, heartbeat or webhook run stores rows in a conversation that no
+    // turn measures; the compaction service sizes the conversation after each.
+    conversationService.events.on('message', (stored: MessageStored) => compactionService.afterMessageStored(stored));
 
     await sessionManagerService.initialize();
     logger.info('Session manager initialized');

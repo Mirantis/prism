@@ -98,6 +98,14 @@ export interface ThreadCreated {
   createdAt: Date;
 }
 
+/** A message was stored in a thread — emitted as `'message'` on `conversationService.events`. */
+export interface MessageStored {
+  userId: string;
+  agentId: string;
+  threadId: string;
+  triggeredBy: MessageTrigger;
+}
+
 /**
  * A client's copy of a stored message names its sender as the chat socket's
  * `message` event does, so history and live messages have one shape: a client
@@ -130,7 +138,10 @@ export interface ThreadWithMessages extends ConversationThread {
 // ============================================================================
 
 class ConversationService {
-  /** Emits `'thread'` ({@link ThreadCreated}) when a web thread is created. */
+  /**
+   * Emits `'thread'` ({@link ThreadCreated}) when a web thread is created, and
+   * `'message'` ({@link MessageStored}) when a message is stored in a thread.
+   */
   readonly events = new EventEmitter();
   private databaseProvider = new DatabaseThreadProvider();
   private liveProviders = new Map<ThreadSource, ThreadMessageProvider>();
@@ -559,6 +570,14 @@ class ConversationService {
       // metric steps at deploy for a reason that is not user behaviour.
       'message.internal': String(Boolean(input.internalStep)),
     });
+    if (thread) {
+      this.events.emit('message', {
+        userId: thread.userId,
+        agentId: thread.agentId,
+        threadId,
+        triggeredBy: input.triggeredBy,
+      } satisfies MessageStored);
+    }
 
     // Name the thread after the user's first message (first 3 words, capped).
     // `title: null` makes this atomic and one-shot — it fires only for the very
