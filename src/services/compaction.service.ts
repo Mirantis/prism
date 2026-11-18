@@ -88,6 +88,7 @@ import { messageDeliveryService } from './message-delivery.service';
 import { isContextOverflowError } from '../lib/llm-errors';
 import { agentWorkspaceService } from './agent-workspace.service';
 import { compactionModel } from '../lib/model-routing';
+import { resolveModelSelection } from '../lib/model-selection';
 import { summaryToolOptions, toolLedgerService } from './tool-ledger.service';
 import { contextService } from './context.service';
 import { contextUsageService, type ContextUsageSnapshot } from './context-usage.service';
@@ -179,7 +180,7 @@ export interface CompactionEvent {
 }
 
 /** One finished summary, before it is committed: the report plus the rows it covers. */
-type CompleteInput = Omit<FinishInput, 'messagesCompacted' | 'tail'> & { rows: ForkRow[] };
+type CompleteInput = Omit<FinishInput, 'messagesCompacted' | 'tail' | 'laterChars'> & { rows: ForkRow[] };
 
 interface FinishInput {
   userId: string;
@@ -195,6 +196,8 @@ interface FinishInput {
   messagesCompacted: number;
   /** The rows the commit kept verbatim. */
   tail: ForkRow[];
+  /** Characters of the rows stored after the summarized context was read. */
+  laterChars: number;
 }
 
 class CompactionService {
@@ -206,6 +209,12 @@ class CompactionService {
    * request from double-queuing behind an auto one.
    */
   private readonly inFlight = new Set<string>();
+
+  /**
+   * The newest stored row of each thread that a stored run wrote while a compaction
+   * of it was queued or running. `settle` sizes that thread again.
+   */
+  private readonly storedDuringCompaction = new Map<string, MessageStored>();
 
   /**
    * One timer per idle chat conversation. `restoreIdle` re-arms them at boot from
@@ -223,6 +232,10 @@ class CompactionService {
   private settle(threadId: string): void {
     this.inFlight.delete(threadId);
     this.events.emit('settled', threadId);
+    const stored = this.storedDuringCompaction.get(threadId);
+    if (!stored) return;
+    this.storedDuringCompaction.delete(threadId);
+    this.afterMessageStored(stored);
   }
 
   /**
@@ -391,14 +404,15 @@ class CompactionService {
     if (stored.triggeredBy === 'USER_INPUT') return;
     if (config.compactionThresholdPercent === null) return; // disabled by operator
     const { userId, agentId, threadId } = stored;
-    void this.storedGrowth(threadId)
+    if (this.deferWhileCompacting(stored)) return;
+    void this.storedGrowth(agentId, threadId)
       .then((due) => {
-        if (!due || this.inFlight.has(threadId)) return;
+        if (!due || this.deferWhileCompacting(stored)) return;
         this.inFlight.add(threadId);
         return threadTurnService
           .run(threadId, async () => {
             // A turn or compaction that held the thread first has measured or compacted it.
-            const still = await this.storedGrowth(threadId);
+            const still = await this.storedGrowth(agentId, threadId);
             if (!still) return;
             this.cancelIdle(threadId);
             // A conversation no turn has measured has no warm cache to read.
@@ -415,12 +429,26 @@ class CompactionService {
   }
 
   /**
+   * Keeps a row stored while the thread's compaction is queued or running for
+   * `settle`, which sizes the thread again once that compaction has committed.
+   */
+  private deferWhileCompacting(stored: MessageStored): boolean {
+    if (!this.inFlight.has(stored.threadId)) return false;
+    this.storedDuringCompaction.set(stored.threadId, stored);
+    return true;
+  }
+
+  /**
    * A DATABASE thread's size as its last measurement plus the rows stored after it,
    * at `CHARS_PER_TOKEN`, when that reaches the threshold; null otherwise. The
    * measurement is the newer of the thread's last turn and its last compaction. A
-   * thread no turn has measured is sized from all its uncompacted rows.
+   * thread no turn has measured is sized from all its uncompacted rows, against the
+   * window of the model its compaction would run on.
    */
-  private async storedGrowth(threadId: string): Promise<{ measuredAt: Date | undefined } | null> {
+  private async storedGrowth(
+    agentId: string,
+    threadId: string,
+  ): Promise<{ measuredAt: Date | undefined } | null> {
     const threshold = config.compactionThresholdPercent;
     if (threshold === null) return null;
     const thread = await prisma.conversationThread.findUnique({
@@ -432,20 +460,14 @@ class CompactionService {
     const measuredAt = [lastTurn?.createdAt, thread.compactedAt ?? undefined]
       .filter((at): at is Date => at !== undefined)
       .reduce<Date | undefined>((newest, at) => (newest && newest >= at ? newest : at), undefined);
-    const windowTokens = contextWindowFor(thread.contextModel ?? '')?.tokens ?? COMPACTION_FALLBACK_WINDOW_TOKENS;
+    const modelId = thread.contextModel ?? (await unmeasuredCompactionModel(agentId, threadId));
+    const windowTokens = contextWindowFor(modelId)?.tokens ?? COMPACTION_FALLBACK_WINDOW_TOKENS;
     if (windowTokens < MIN_PLAUSIBLE_CONTEXT) return null;
     const rows = await prisma.conversationMessage.findMany({
       where: { threadId, isCompacted: false, ...(measuredAt && { createdAt: { gt: measuredAt } }) },
       select: { content: true, toolCalls: true, blocks: true },
     });
-    const chars = rows.reduce(
-      (sum, row) =>
-        sum +
-        row.content.length +
-        (row.toolCalls === null ? 0 : JSON.stringify(row.toolCalls).length) +
-        (row.blocks === null ? 0 : JSON.stringify(row.blocks).length),
-      0,
-    );
+    const chars = storedChars(rows);
     const measured = measuredAt ? (thread.contextTokens ?? 0) : 0;
     const usedTokens = measured + Math.ceil(chars / CHARS_PER_TOKEN);
     return (100 * usedTokens) / windowTokens >= threshold ? { measuredAt } : null;
@@ -816,8 +838,8 @@ class CompactionService {
 
   /** Shared last step of every runner: commit the summary, report it. */
   private async complete(input: CompleteInput): Promise<void> {
-    const { messagesCompacted, tail } = await this.commit(input.threadId, input.summary, input.rows);
-    await this.finish({ ...input, messagesCompacted, tail });
+    const { messagesCompacted, tail, laterChars } = await this.commit(input.threadId, input.summary, input.rows);
+    await this.finish({ ...input, messagesCompacted, tail, laterChars });
   }
 
   /**
@@ -836,9 +858,9 @@ class CompactionService {
     threadId: string,
     summary: string,
     rows: ForkRow[],
-  ): Promise<{ messagesCompacted: number; tail: ForkRow[] }> {
+  ): Promise<{ messagesCompacted: number; tail: ForkRow[]; laterChars: number }> {
     const { compactable, tail } = splitTail(rows);
-    if (compactable.length === 0) return { messagesCompacted: 0, tail };
+    if (compactable.length === 0) return { messagesCompacted: 0, tail, laterChars: 0 };
 
     const thread = await prisma.conversationThread.findUnique({
       where: { id: threadId },
@@ -867,6 +889,10 @@ class CompactionService {
           },
         }),
       ]);
+      logger.info(
+        `[Compaction] compacted ${compactable.length} message(s) in thread ${threadId} (${summary.length} chars of summary)`,
+      );
+      return { messagesCompacted: compactable.length, tail, laterChars: 0 };
     } else {
       const ids = compactable.map((r) => r.id);
       const newest = await prisma.conversationMessage.findFirst({
@@ -874,6 +900,7 @@ class CompactionService {
         orderBy: { createdAt: 'desc' },
         select: { createdAt: true },
       });
+      const compactedAt = new Date();
       await prisma.$transaction([
         prisma.conversationMessage.updateMany({
           where: { id: { in: ids } },
@@ -883,26 +910,38 @@ class CompactionService {
           where: { id: threadId },
           data: {
             compactionSummary: summary,
-            compactedAt: new Date(),
+            compactedAt,
             compactedThroughTs: newest?.createdAt.toISOString() ?? null,
           },
         }),
       ]);
+      // A stored run can write rows after the summarized context was read. They stay
+      // verbatim, and the size this compaction stores counts them, because the stored-run
+      // sizing reads only the rows stored after `compactedAt`.
+      const later = await prisma.conversationMessage.findMany({
+        where: {
+          threadId,
+          isCompacted: false,
+          createdAt: { lte: compactedAt },
+          id: { notIn: rows.map((r) => r.id) },
+        },
+        select: { content: true, toolCalls: true, blocks: true },
+      });
+      logger.info(
+        `[Compaction] compacted ${compactable.length} message(s) in thread ${threadId} (${summary.length} chars of summary)`,
+      );
+      return { messagesCompacted: compactable.length, tail, laterChars: storedChars(later) };
     }
-
-    logger.info(
-      `[Compaction] compacted ${compactable.length} message(s) in thread ${threadId} (${summary.length} chars of summary)`,
-    );
-    return { messagesCompacted: compactable.length, tail };
   }
 
   /** Shared completion: meter estimate, completed event, finished telemetry. */
   private async finish(input: FinishInput): Promise<void> {
     const tailChars = input.tail.reduce((n, r) => n + r.contentChars, 0);
-    // ~4 chars/token over the rebuilt context (summary message + verbatim tail).
+    // ~4 chars/token over the rebuilt context (summary message, verbatim tail and
+    // the rows stored after the summarized context was read).
     // Undershoots — the system prompt and tools aren't counted — and
     // self-corrects on the next turn's provider-reported usage.
-    const estimatedTokens = Math.ceil((input.summary.length + tailChars) / 4);
+    const estimatedTokens = Math.ceil((input.summary.length + tailChars + input.laterChars) / 4);
 
     const snapshot = contextUsageService.applyEstimate({
       userId: input.userId,
@@ -1062,6 +1101,30 @@ export function toForkRows(
     fromUser: m.role === 'USER' && !m.internalStep,
     contentChars: m.content.length + (m.toolCalls ? JSON.stringify(m.toolCalls).length : 0),
   }));
+}
+
+/** The characters stored rows add to a request: text, tool calls and blocks. */
+function storedChars(rows: Array<{ content: string; toolCalls: unknown; blocks: unknown }>): number {
+  return rows.reduce<number>(
+    (sum, row) =>
+      sum +
+      row.content.length +
+      (row.toolCalls === null ? 0 : JSON.stringify(row.toolCalls).length) +
+      (row.blocks === null ? 0 : JSON.stringify(row.blocks).length),
+    0,
+  );
+}
+
+/**
+ * The model a compaction of a thread no turn has measured would run on: the agent's
+ * model in Fixed mode, the largest tier in Auto mode.
+ */
+async function unmeasuredCompactionModel(agentId: string, threadId: string): Promise<string> {
+  const agent = await prisma.agentWorkspace.findUniqueOrThrow({
+    where: { id: agentId },
+    select: { model: true, modelMode: true, smallModel: true, mediumModel: true, largeModel: true },
+  });
+  return compactionModel({ model: agent.model, modelSelection: resolveModelSelection(agent) }, threadId, createProvider());
 }
 
 /**

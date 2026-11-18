@@ -31,6 +31,7 @@ const { mockPrisma } = vi.hoisted(() => ({
       findMany: vi.fn().mockResolvedValue([]),
       count: vi.fn(),
     },
+    agentWorkspace: { findUniqueOrThrow: vi.fn() },
     $transaction: vi.fn(async (ops: unknown[]) => ops),
   },
 }));
@@ -42,6 +43,7 @@ const { mockConfig } = vi.hoisted(() => ({
     compactionTailMessages: 6,
     idleCompaction: true,
     chatCacheTtl: '5m' as '5m' | '1h',
+    modelSelection: { mode: 'fixed', tiers: { small: null, medium: null, large: null } },
   },
 }));
 vi.mock('../config', () => ({ config: mockConfig }));
@@ -75,7 +77,10 @@ vi.mock('../lib/telemetry', () => ({
 }));
 
 vi.mock('../lib/model-catalog', () => ({ MIN_PLAUSIBLE_CONTEXT: 1_000 }));
-vi.mock('../lib/context-window', () => ({ contextWindowFor: () => null }));
+const { mockContextWindowFor } = vi.hoisted(() => ({
+  mockContextWindowFor: vi.fn((_modelId: string): { tokens: number } | null => null),
+}));
+vi.mock('../lib/context-window', () => ({ contextWindowFor: mockContextWindowFor }));
 vi.mock('../lib/langfuse', () => ({ isLangfuseEnabled: () => false }));
 
 // Implementations set via .mockResolvedValue/.mockReturnValue are re-applied in
@@ -521,6 +526,25 @@ describe('finish', () => {
         'context.tokens_after': String(expected),
         'context.window_tokens': '200000',
       }),
+    );
+  });
+
+  it('counts the rows stored after the summarized context was read', async () => {
+    // The commit reads them after the context, which the fork read before the turn.
+    mockPrisma.conversationMessage.findMany.mockResolvedValue([
+      { content: 'Scheduled Task', toolCalls: [{ result: 'x'.repeat(4_000) }], blocks: null },
+    ]);
+    compactionService.maybeAutoCompact(makeFork());
+    await flushAuto();
+
+    const laterChars = 'Scheduled Task'.length + JSON.stringify([{ result: 'x'.repeat(4_000) }]).length;
+    expect(mockPrisma.conversationMessage.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ threadId: THREAD, isCompacted: false, id: { notIn: expect.any(Array) } }),
+      }),
+    );
+    expect(mockApplyEstimate).toHaveBeenCalledWith(
+      expect.objectContaining({ usedTokens: Math.ceil((11 + 600 + laterChars) / 4) }),
     );
   });
 
@@ -1466,6 +1490,58 @@ describe('after a stored run', () => {
 
     expect(mockPrisma.conversationMessage.findMany).not.toHaveBeenCalled();
     expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("sizes a conversation no turn has measured against its compaction model's window", async () => {
+    mockPrisma.conversationThread.findUnique.mockResolvedValue(thread({ contextTokens: null, contextModel: null }));
+    mockNewestThreadCall.mockResolvedValue(null);
+    mockPrisma.agentWorkspace.findUniqueOrThrow.mockResolvedValue({
+      model: 'agent-model',
+      modelMode: 'FIXED',
+      smallModel: null,
+      mediumModel: null,
+      largeModel: null,
+    });
+    // A 200K window, as `CONTEXT_WINDOW_TOKENS=200000` gives every model.
+    mockContextWindowFor.mockImplementation((modelId: string) => (modelId ? { tokens: 200_000 } : null));
+    // About 190K tokens: over 90% of 200K, far under 90% of the 1M fallback.
+    mockPrisma.conversationMessage.findMany.mockResolvedValue(storedRows(380_000, 380_000));
+
+    compactionService.afterMessageStored(stored());
+    await settle();
+
+    expect(mockContextWindowFor).toHaveBeenCalledWith('agent-model');
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    mockContextWindowFor.mockImplementation(() => null);
+  });
+
+  it('sizes the conversation again for a row stored while it was being compacted', async () => {
+    let release!: () => void;
+    const compacting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mockPrisma.conversationMessage.findMany.mockResolvedValue(storedRows(120_000, 120_000));
+    // The first compaction waits until the stored run has written its row.
+    mockGenerateText.mockImplementationOnce(async () => {
+      await compacting;
+      return { text: 'THE SUMMARY', usage: {} };
+    });
+
+    compactionService.afterMessageStored(stored());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(compactionService.hasInFlight()).toBe(true);
+    const sizedBefore = mockPrisma.conversationThread.findUnique.mock.calls.length;
+
+    compactionService.afterMessageStored(stored());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockPrisma.conversationThread.findUnique.mock.calls.length).toBe(sizedBefore);
+
+    release();
+    await settle();
+    await settle();
+
+    expect(mockPrisma.conversationThread.findUnique.mock.calls.length).toBeGreaterThan(sizedBefore);
+    expect(mockGenerateText).toHaveBeenCalledTimes(2);
   });
 
   it('skips the compaction when a turn that held the thread first compacted it', async () => {
