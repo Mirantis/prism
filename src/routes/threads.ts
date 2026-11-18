@@ -6,7 +6,8 @@
  * handler reads `config.agentId`.
  *
  *   GET  /latest-thread — { threadId }
- *   GET  /threads       — ThreadSummary[] (resumable threads, newest first)
+ *   GET  /threads       — ThreadSummary[] (resumable threads, newest first;
+ *                         `?workspaceRoot` keeps the ones rooted in that folder)
  *   POST /threads       — { threadId } (starts a new thread)
  */
 
@@ -37,12 +38,16 @@ router.get('/latest-thread', async (_req: Request, res: Response) => {
   }
 });
 
-router.get('/threads', async (_req: Request, res: Response) => {
+router.get('/threads', async (req: Request, res: Response) => {
   try {
     if (!config.agentId) {
       res.status(503).json({ error: 'Agent not initialized (agentId unset)' });
       return;
     }
+    // A client that works in one folder lists that folder's threads, so the 50
+    // are that folder's newest and not every folder's.
+    const root: unknown = req.query.workspaceRoot;
+    const workspaceRoot = typeof root === 'string' && root ? root : undefined;
     // Resumable threads only (newest first): threadSource DATABASE drops the
     // threads a channel reads live, which reopen only there. 50 bounds the response
     // while leaving a scrollable list plenty of rows. Each row is labelled with
@@ -50,7 +55,7 @@ router.get('/threads', async (_req: Request, res: Response) => {
     const threads = await conversationService.listThreads(
       config.ownerUserId,
       config.agentId,
-      { threadSource: ThreadSource.DATABASE, limit: 50 },
+      { threadSource: ThreadSource.DATABASE, limit: 50, ...(workspaceRoot ? { workspaceRoot } : {}) },
     );
     // Resolve the git branch once per unique workspace root — many threads in
     // the same repo would otherwise each spawn a redundant `git` subprocess.

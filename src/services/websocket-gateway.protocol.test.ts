@@ -11,7 +11,7 @@ import { createServer, Server } from 'http';
 import type { AddressInfo } from 'net';
 import WebSocket, { WebSocketServer } from 'ws';
 
-const { mockInbox, MockInboundMessageError } = vi.hoisted(() => {
+const { mockInbox, MockInboundMessageError, mockTrackEvent } = vi.hoisted(() => {
   class MockInboundMessageError extends Error {
     constructor(readonly code: string, message: string) {
       super(message);
@@ -19,6 +19,7 @@ const { mockInbox, MockInboundMessageError } = vi.hoisted(() => {
   }
   return {
     MockInboundMessageError,
+    mockTrackEvent: vi.fn(),
     mockInbox: {
       accept: vi.fn(),
       cancel: vi.fn(),
@@ -31,6 +32,8 @@ vi.mock('./inbound-message.service', () => ({
   inboundMessageService: mockInbox,
   InboundMessageError: MockInboundMessageError,
 }));
+
+vi.mock('../lib/telemetry', () => ({ trackEvent: mockTrackEvent }));
 
 import { webSocketGatewayService, MAX_CONNECTIONS } from './websocket-gateway.service';
 import { eventStreamService } from './event-stream.service';
@@ -135,6 +138,7 @@ describe('Chat protocol v2', () => {
     mockInbox.cancel.mockReset();
     mockInbox.cancel.mockResolvedValue(true);
     mockInbox.turns.mockReturnValue([]);
+    mockTrackEvent.mockReset();
   });
 
   afterAll(async () => {
@@ -303,6 +307,20 @@ describe('Chat protocol v2', () => {
       // The welcome, then the missed events in order, then the live one — nothing
       // twice and nothing out of order.
       expect(back.frames.map((f) => f.seq ?? f.type)).toEqual(['welcome', missed[0]!.seq, missed[1]!.seq, live.seq]);
+    });
+
+    it('reports the client of a new connection, and of one that came back', async () => {
+      const first = await connect();
+      first.hello();
+      const { streamId, seq } = (await first.welcome()).payload;
+      const back = await connect();
+      back.hello({ streamId, seq });
+      await back.welcome();
+
+      expect(mockTrackEvent.mock.calls.map(([event, , properties]) => [event, properties['socket.client']])).toEqual([
+        ['chat socket connected', 'test'],
+        ['chat socket resumed', 'test'],
+      ]);
     });
 
     it('tells a client with a cursor from another process to reload', async () => {

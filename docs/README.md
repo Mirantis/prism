@@ -40,6 +40,8 @@ How you talk to the agent.
 - **[Terminal UI](terminal-ui.md)** — the `prism` TUI for chatting and managing
   the agent from the shell, including slash commands, the `--resume` picker, and
   the schedules/config panels.
+- **[Editors](editors.md)** — use the agent from Zed, a JetBrains IDE or any
+  other editor that supports the Agent Client Protocol.
 - **[Slack](slack.md)** — run the agent in Slack DMs and channels: linking,
   threads, formatting, and Slack-triggered heartbeats.
 - **[Microsoft Teams](teams.md)** — run the agent in Teams personal chats and

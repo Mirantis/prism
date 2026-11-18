@@ -171,6 +171,28 @@ describe('ConversationService', () => {
       });
     });
 
+    it('with a workspace root, lists the threads rooted in that folder', async () => {
+      mockPrisma.conversationThread.findMany.mockResolvedValue([]);
+
+      await conversationService.listThreads('user-123', 'agent-123', {
+        threadSource: 'DATABASE',
+        limit: 50,
+        workspaceRoot: '/repo/a',
+      });
+
+      expect(mockPrisma.conversationThread.findMany).toHaveBeenCalledWith({
+        where: {
+          agentId: 'agent-123',
+          userId: 'user-123',
+          workspaceRoot: '/repo/a',
+          threadSource: 'DATABASE',
+          externalThreadId: null,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      });
+    });
+
     it("another source's filter is untouched (no externalThreadId constraint)", async () => {
       mockPrisma.conversationThread.findMany.mockResolvedValue([]);
 

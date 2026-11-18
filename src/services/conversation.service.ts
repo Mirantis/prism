@@ -476,18 +476,20 @@ class ConversationService {
   }
 
   /**
-   * List all threads for a user
+   * List a user's threads, newest first. With `workspaceRoot`, only the threads
+   * rooted in that folder, so the limit counts those alone.
    */
   async listThreads(
     userId: string,
     agentId: string,
-    options?: { limit?: number; threadSource?: ThreadSource }
+    options?: { limit?: number; threadSource?: ThreadSource; workspaceRoot?: string }
   ): Promise<ConversationThread[]> {
     return prisma.conversationThread.findMany({
       where: {
         agentId,
         userId,
         ...(await this.clientThreadFilter(agentId, userId)),
+        ...(options?.workspaceRoot ? { workspaceRoot: options.workspaceRoot } : {}),
         // The DATABASE set is the web/CLI-resumable one. Genuine web/CLI threads
         // are always created with externalThreadId: null (getOrCreateLatestThread
         // / startNewThread); externalId-keyed DATABASE threads (a channel's

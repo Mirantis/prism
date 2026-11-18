@@ -197,6 +197,18 @@ describe('Thread Routes', () => {
       expect(mockGetGitBranch).toHaveBeenCalledWith('/repo/a');
     });
 
+    it('lists only the threads of the folder a client asks for, so the limit counts those', async () => {
+      mockListThreads.mockResolvedValue([]);
+
+      await request(makeApp()).get('/threads').query({ workspaceRoot: '/repo/a' });
+
+      expect(mockListThreads).toHaveBeenCalledWith('owner-user-1', 'test-agent-id', {
+        threadSource: 'DATABASE',
+        limit: 50,
+        workspaceRoot: '/repo/a',
+      });
+    });
+
     it('includes a derived context percentage for threads that have run a turn', async () => {
       mockListThreads.mockResolvedValue([
         {

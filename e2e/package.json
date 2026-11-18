@@ -19,6 +19,7 @@
     "test:run": "vitest run -c vitest.unit.config.ts"
   },
   "devDependencies": {
+    "@agentclientprotocol/sdk": "2.7.0",
     "@amiceli/vitest-cucumber": "^8.0.0",
     "@aws-sdk/client-s3": "^3.1149.0",
     "@playwright/test": "^1.64.0",

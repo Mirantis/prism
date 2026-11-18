@@ -21,12 +21,14 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "2.7.0",
     "chalk": "^6.0.1",
     "ink": "8.0.0",
     "marked": "15.0.12",
     "marked-terminal": "7.3.0",
     "react": "^19.3.0",
-    "ws": "^8.22.0"
+    "ws": "^8.22.0",
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/react": "19.3.0",
