@@ -49,7 +49,7 @@ const mockUsersInfo = vi.fn();
 
 const mockGetAppForTeam = vi.fn();
 const mockDownloadSlackFiles = vi.fn();
-const mockStoredExternalFileIds = vi.fn();
+const mockStoredChannelFileIds = vi.fn();
 
 vi.mock('../slack-adapter.service', () => ({
   slackAdapterService: {
@@ -60,7 +60,7 @@ vi.mock('../slack-adapter.service', () => ({
 
 vi.mock('../attachment.service', () => ({
   attachmentService: {
-    storedExternalFileIds: (...args: unknown[]) => mockStoredExternalFileIds(...args),
+    storedChannelFileIds: (...args: unknown[]) => mockStoredChannelFileIds(...args),
   },
 }));
 
@@ -911,7 +911,7 @@ describe('Requirement: Slack Thread Provider', () => {
 
     beforeEach(() => {
       mockUsersInfo.mockResolvedValue({ user: { real_name: 'Alice', name: 'alice' } });
-      mockStoredExternalFileIds.mockResolvedValue(new Set());
+      mockStoredChannelFileIds.mockResolvedValue(new Set());
       mockDownloadSlackFiles.mockResolvedValue({ attachmentIds: [], failures: [] });
     });
 
@@ -927,11 +927,11 @@ describe('Requirement: Slack Thread Provider', () => {
 
       await provider.getMessages(threadId);
 
-      expect(mockDownloadSlackFiles).toHaveBeenCalledExactlyOnceWith([file('F1')], { externalTs: threadTs, threadId });
+      expect(mockDownloadSlackFiles).toHaveBeenCalledExactlyOnceWith([file('F1')], { externalTs: threadTs, threadId, threadScoped: true, signal: expect.any(AbortSignal) });
     });
 
     it('downloads only the files that are not stored', async () => {
-      mockStoredExternalFileIds.mockResolvedValue(new Set(['F1', 'F3']));
+      mockStoredChannelFileIds.mockResolvedValue(new Set(['F1', 'F3']));
       mockConversationsReplies.mockResolvedValue({
         messages: [
           { user: 'U100', text: 'the trace', ts: threadTs, files: [file('F1')] },
@@ -942,8 +942,8 @@ describe('Requirement: Slack Thread Provider', () => {
 
       await provider.getMessages(threadId);
 
-      expect(mockStoredExternalFileIds).toHaveBeenCalledExactlyOnceWith(['F1', 'F2', 'F3']);
-      expect(mockDownloadSlackFiles).toHaveBeenCalledExactlyOnceWith([file('F2')], { externalTs: replyTs, threadId });
+      expect(mockStoredChannelFileIds).toHaveBeenCalledExactlyOnceWith(threadId, ['F1', 'F2', 'F3']);
+      expect(mockDownloadSlackFiles).toHaveBeenCalledExactlyOnceWith([file('F2')], { externalTs: replyTs, threadId, threadScoped: true, signal: expect.any(AbortSignal) });
     });
 
     it('reads the first files of a message up to the per-message limit', async () => {
@@ -956,6 +956,51 @@ describe('Requirement: Slack Thread Provider', () => {
       await provider.getMessages(threadId);
 
       expect(mockDownloadSlackFiles.mock.calls[0][0]).toEqual(files.slice(0, MAX_ATTACHMENTS_PER_MESSAGE));
+    });
+
+    it('reads at most one budget of files per read, and the next read stores the rest', async () => {
+      const files = Array.from({ length: MAX_ATTACHMENTS_PER_MESSAGE }, (_, i) => file(`F${i}`));
+      const more = Array.from({ length: 3 }, (_, i) => file(`G${i}`));
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'U100', text: 'logs', ts: threadTs, files },
+          { user: 'U100', text: 'more logs', ts: replyTs, files: more },
+        ],
+        response_metadata: {},
+      });
+
+      await provider.getMessages(threadId);
+      expect(mockDownloadSlackFiles).toHaveBeenCalledOnce();
+      expect(mockDownloadSlackFiles.mock.calls[0][0]).toEqual(files);
+
+      mockDownloadSlackFiles.mockClear();
+      mockStoredChannelFileIds.mockResolvedValue(new Set(files.map((f) => f.id)));
+      await provider.getMessages(threadId);
+      expect(mockDownloadSlackFiles).toHaveBeenCalledExactlyOnceWith(more, expect.objectContaining({ externalTs: replyTs }));
+    });
+
+    it('names the files the agent cannot read on their message, and keeps a message with only such a file', async () => {
+      const files = Array.from({ length: MAX_ATTACHMENTS_PER_MESSAGE + 2 }, (_, i) => file(`F${i}`));
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'U100', text: '', ts: threadTs, files: [file('BIG')] },
+          { user: 'U100', text: 'logs', ts: replyTs, files },
+        ],
+        response_metadata: {},
+      });
+      mockDownloadSlackFiles.mockImplementation(async (batch: Array<{ id: string }>) => ({
+        attachmentIds: [],
+        failures: batch[0].id === 'BIG' ? [{ filename: 'BIG.log', reason: 'it exceeds the 10 MB limit' }] : [],
+      }));
+
+      const messages = await provider.getMessages(threadId);
+
+      const parent = messages.find((m) => m.externalMessageId === threadTs)!;
+      expect(parent.content).toBe(
+          '<@U100:Alice>: (a file on this message could not be read, so you do not have its contents: "BIG.log": it exceeds the 10 MB limit)',
+      );
+      const reply = messages.find((m) => m.externalMessageId === replyTs)!;
+      expect(reply.content).toContain('"2 more file(s)": only the first');
     });
 
     it("stores no file of the agent's own message, and none for the client view", async () => {
@@ -971,7 +1016,7 @@ describe('Requirement: Slack Thread Provider', () => {
       expect(mockDownloadSlackFiles).not.toHaveBeenCalled();
 
       await provider.getMessages(threadId);
-      expect(mockDownloadSlackFiles).toHaveBeenCalledExactlyOnceWith([file('F1')], { externalTs: threadTs, threadId });
+      expect(mockDownloadSlackFiles).toHaveBeenCalledExactlyOnceWith([file('F1')], { externalTs: threadTs, threadId, threadScoped: true, signal: expect.any(AbortSignal) });
     });
   });
 

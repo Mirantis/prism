@@ -16,7 +16,7 @@ import { getSlackConnection } from '../../lib/slack-source';
 import { MAX_ATTACHMENTS_PER_MESSAGE } from '../../constants';
 import { attachmentService } from '../attachment.service';
 import { ThreadMessageProvider, MessageReadOptions } from '../thread-provider.interface';
-import { slackAdapterService, type SlackFileMeta } from '../slack-adapter.service';
+import { slackAdapterService, type SlackFileFailure, type SlackFileMeta } from '../slack-adapter.service';
 import { pollUntil, PollUntilOptions } from '../../utils/poll-until';
 
 interface SlackMessage {
@@ -24,6 +24,28 @@ interface SlackMessage {
   text?: string;
   ts: string;
   files?: SlackFileMeta[];
+}
+
+/** The most files one thread read downloads; the next read stores the rest. */
+const HISTORY_FILES_PER_READ = MAX_ATTACHMENTS_PER_MESSAGE;
+/** How long one thread read spends storing files before it gives the turn the history. */
+const HISTORY_FILES_DEADLINE_MS = 20_000;
+
+/**
+ * The message with a line naming the files on it the agent cannot read, and why,
+ * so a message with only such a file stays in the history and the agent can tell
+ * the person what failed.
+ */
+function withFileNote(message: ConversationMessage, notes: Map<string, SlackFileFailure[]>): ConversationMessage {
+  const failures = message.externalMessageId ? notes.get(message.externalMessageId) : undefined;
+  if (!failures?.length) return message;
+  const list = failures.map((f) => `"${f.filename}": ${f.reason}`).join('; ');
+  const note = `(${failures.length > 1 ? 'files' : 'a file'} on this message could not be read, so you do not have ${failures.length > 1 ? 'their' : 'its'} contents: ${list})`;
+  if (message.content) return { ...message, content: `${message.content}\n${note}` };
+  const sender = message.senderExternalId
+    ? `<@${message.senderExternalId}:${(message.senderName ?? '').replace(/[<>:\x00-\x1f]/g, '').trim() || message.senderExternalId}>: `
+    : '';
+  return { ...message, content: `${sender}${note}` };
 }
 
 /** What started a reply we stored. */
@@ -182,7 +204,8 @@ export class SlackThreadProvider implements ThreadMessageProvider {
 
     if (clientView) return slackDerived;
 
-    await this.storeMissingFiles(threadId, rawMessages, botUserId);
+    const fileNotes = await this.storeMissingFiles(threadId, rawMessages, botUserId);
+    const withNotes = fileNotes.size === 0 ? slackDerived : slackDerived.map((m) => withFileNote(m, fileNotes));
 
     // Model view: interleave the persisted internal steps. Both the internal rows
     // and (via createdAtByTs) our own delivered replies are ordered by our DB
@@ -198,8 +221,8 @@ export class SlackThreadProvider implements ThreadMessageProvider {
     // the question it answers. The replay is then a different shape from the live
     // send, which costs that thread one re-write; nothing breaks.
     const internal = await this.getInternalStepMessages(threadId);
-    if (internal.length === 0) return slackDerived;
-    return [...internal, ...slackDerived].sort(
+    if (internal.length === 0) return withNotes;
+    return [...internal, ...withNotes].sort(
       (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
     );
   }
@@ -209,18 +232,50 @@ export class SlackThreadProvider implements ThreadMessageProvider {
    * and its message ts, so the history has the files of every message in the
    * thread. The agent's own messages are left out: their files are the ones it
    * shared.
+   *
+   * One read stores at most {@link HISTORY_FILES_PER_READ} files and stops at
+   * {@link HISTORY_FILES_DEADLINE_MS}, aborting a download in flight, so a thread
+   * with many files holds its turn for a bounded time; the next read stores the
+   * rest. Returns, by message ts, the files the agent cannot read: past the
+   * per-message count, or refused by the download this read.
    */
-  private async storeMissingFiles(threadId: string, messages: SlackMessage[], botUserId: string): Promise<void> {
-    const carriers = messages
-      .filter((m) => m.user !== botUserId && m.files?.length)
-      .map((m) => ({ ts: m.ts, files: m.files!.slice(0, MAX_ATTACHMENTS_PER_MESSAGE) }));
-    if (carriers.length === 0) return;
+  private async storeMissingFiles(
+    threadId: string,
+    messages: SlackMessage[],
+    botUserId: string,
+  ): Promise<Map<string, SlackFileFailure[]>> {
+    const notes = new Map<string, SlackFileFailure[]>();
+    const carriers = messages.filter((m) => m.user !== botUserId && m.files?.length);
+    if (carriers.length === 0) return notes;
 
-    const stored = await attachmentService.storedExternalFileIds(carriers.flatMap((c) => c.files.map((f) => f.id)));
-    for (const { ts, files } of carriers) {
-      const missing = files.filter((f) => !stored.has(f.id));
-      if (missing.length > 0) await slackAdapterService.downloadSlackFiles(missing, { externalTs: ts, threadId });
+    for (const m of carriers) {
+      const over = m.files!.length - MAX_ATTACHMENTS_PER_MESSAGE;
+      if (over > 0) {
+        notes.set(m.ts, [{
+          filename: `${over} more file(s)`,
+          reason: `only the first ${MAX_ATTACHMENTS_PER_MESSAGE} attachments per message are kept`,
+        }]);
+      }
     }
+
+    const kept = carriers.map((m) => ({ ts: m.ts, files: m.files!.slice(0, MAX_ATTACHMENTS_PER_MESSAGE) }));
+    const stored = await attachmentService.storedChannelFileIds(threadId, kept.flatMap((c) => c.files.map((f) => f.id)));
+    const signal = AbortSignal.timeout(HISTORY_FILES_DEADLINE_MS);
+    let budget = HISTORY_FILES_PER_READ;
+    for (const { ts, files } of kept) {
+      if (budget <= 0 || signal.aborted) break;
+      const missing = files.filter((f) => !stored.has(f.id)).slice(0, budget);
+      if (missing.length === 0) continue;
+      budget -= missing.length;
+      const { failures } = await slackAdapterService.downloadSlackFiles(missing, {
+        externalTs: ts,
+        threadId,
+        threadScoped: true,
+        signal,
+      });
+      if (failures.length > 0) notes.set(ts, [...(notes.get(ts) ?? []), ...failures]);
+    }
+    return notes;
   }
 
   /**

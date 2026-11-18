@@ -60,7 +60,7 @@ export interface CreateAttachmentInput {
   source: 'web' | ChatPlatform | 'agent';
   threadId?: string;
   messageId?: string;
-  /** The channel's own id for the file, unique across stored attachments. */
+  /** The channel's own id for the file (or {@link threadScopedFileId}), unique across stored attachments. */
   externalFileId?: string;
   externalTs?: string;
 }
@@ -275,6 +275,16 @@ const META_SELECT = {
   storagePath: true,
 } as const;
 
+/**
+ * The stored key of a channel file a thread read stored for `threadId`. A
+ * channel file id is unique across stored attachments, and the same file can sit
+ * in two threads (a DM message and the Slack thread under it), so the copy a
+ * thread read stores is keyed per thread.
+ */
+export function threadScopedFileId(threadId: string, externalFileId: string): string {
+  return `${threadId}:${externalFileId}`;
+}
+
 class AttachmentService {
   /** Persist an uploaded/downloaded file: bytes to the media dir, metadata to the DB. */
   async create(input: CreateAttachmentInput): Promise<MessageAttachment> {
@@ -488,14 +498,28 @@ class AttachmentService {
     return row !== null;
   }
 
-  /** Of the given channel file ids, the ones already stored. */
-  async storedExternalFileIds(externalFileIds: string[]): Promise<Set<string>> {
+  /**
+   * Of the given channel file ids, the ones already stored for this thread: under
+   * the plain id (the file of a message that started a turn here) or under
+   * {@link threadScopedFileId} (a file a thread read stored). A file stored for
+   * another thread does not count, as the attachment tools read a file only in
+   * its own thread.
+   */
+  async storedChannelFileIds(threadId: string, externalFileIds: string[]): Promise<Set<string>> {
     if (externalFileIds.length === 0) return new Set();
+    const byKey = new Map<string, string>();
+    for (const id of externalFileIds) {
+      byKey.set(id, id);
+      byKey.set(threadScopedFileId(threadId, id), id);
+    }
     const rows = await prisma.messageAttachment.findMany({
-      where: { slackFileId: { in: externalFileIds } },
+      where: { threadId, slackFileId: { in: [...byKey.keys()] } },
       select: { slackFileId: true },
     });
-    return new Set(rows.flatMap((row) => (row.slackFileId ? [row.slackFileId] : [])));
+    return new Set(rows.flatMap((row) => {
+      const id = row.slackFileId ? byKey.get(row.slackFileId) : undefined;
+      return id ? [id] : [];
+    }));
   }
 
   /** Delete an unlinked (pre-send) attachment — used by chip removal. Returns deleted count. */
@@ -602,20 +626,25 @@ class AttachmentService {
 
   /**
    * Reap abandoned pre-send uploads that never got linked to a message, except the
-   * ids in `keep`. A channel file stored for a thread is kept: a live-read thread
-   * shows it by the channel's message id, with no stored message to link it to.
+   * ids in `keep`. A channel file stored for a thread is kept while that thread
+   * exists: a live-read thread shows it by the channel's message id, with no
+   * stored message to link it to. `threadId` has no foreign key, so a deleted
+   * thread's files are reaped here.
    */
   async deleteOrphans(olderThanMs: number, keep: string[] = []): Promise<number> {
     const cutoff = new Date(Date.now() - olderThanMs);
-    const victims = await prisma.messageAttachment.findMany({
-      where: {
-        messageId: null,
-        OR: [{ slackFileId: null }, { threadId: null }],
-        createdAt: { lt: cutoff },
-        id: { notIn: keep },
-      },
-      select: { id: true, storagePath: true },
+    const candidates = await prisma.messageAttachment.findMany({
+      where: { messageId: null, createdAt: { lt: cutoff }, id: { notIn: keep } },
+      select: { id: true, storagePath: true, slackFileId: true, threadId: true },
     });
+    const threadIds = [...new Set(candidates.flatMap((c) => (c.slackFileId && c.threadId ? [c.threadId] : [])))];
+    const liveThreads = threadIds.length === 0
+      ? new Set<string>()
+      : new Set(
+          (await prisma.conversationThread.findMany({ where: { id: { in: threadIds } }, select: { id: true } }))
+            .map((t) => t.id),
+        );
+    const victims = candidates.filter((c) => !(c.slackFileId && c.threadId && liveThreads.has(c.threadId)));
     let deleted = 0;
     for (const v of victims) {
       // Re-check `messageId: null` in the delete itself: a send can link the
