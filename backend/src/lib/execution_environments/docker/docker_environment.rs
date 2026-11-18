@@ -27,7 +27,7 @@ use crate::lib::execution_environments::execution_environment::{
 };
 
 /// Hardcoded: the image is a component of this runtime, not a deployment choice.
-pub const EXEC_IMAGE_REPO: &str = "ghcr.io/lensapp/prism-agent-exec";
+pub const EXEC_IMAGE_REPO: &str = "ghcr.io/mirantis/prism-exec";
 
 /// The tag a build with no version of its own takes, and the one that moves.
 pub const EXEC_IMAGE_FALLBACK_TAG: &str = "latest";
