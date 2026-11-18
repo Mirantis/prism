@@ -13,14 +13,17 @@ import { ConversationMessage, MessageTrigger, Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
 import prisma from '../../lib/prisma';
 import { getSlackConnection } from '../../lib/slack-source';
+import { MAX_ATTACHMENTS_PER_MESSAGE } from '../../constants';
+import { attachmentService } from '../attachment.service';
 import { ThreadMessageProvider, MessageReadOptions } from '../thread-provider.interface';
-import { slackAdapterService } from '../slack-adapter.service';
+import { slackAdapterService, type SlackFileMeta } from '../slack-adapter.service';
 import { pollUntil, PollUntilOptions } from '../../utils/poll-until';
 
 interface SlackMessage {
   user?: string;
   text?: string;
   ts: string;
+  files?: SlackFileMeta[];
 }
 
 /** What started a reply we stored. */
@@ -129,8 +132,9 @@ export class SlackThreadProvider implements ThreadMessageProvider {
    *
    * The model view (the default) also merges the thread's concise-mode
    * internal steps — AGENT rows persisted for replay but never posted to
-   * Slack, so absent from the live `conversations.replies` read. The client
-   * view (`view: 'client'`) skips that merge.
+   * Slack, so absent from the live `conversations.replies` read — and stores
+   * the files of the messages it read. The client view (`view: 'client'`)
+   * skips both.
    */
   private async fetchSlackMessages(threadId: string, opts?: MessageReadOptions): Promise<ConversationMessage[]> {
     const thread = await prisma.conversationThread.findUnique({
@@ -178,6 +182,8 @@ export class SlackThreadProvider implements ThreadMessageProvider {
 
     if (clientView) return slackDerived;
 
+    await this.storeMissingFiles(threadId, rawMessages, botUserId);
+
     // Model view: interleave the persisted internal steps. Both the internal rows
     // and (via createdAtByTs) our own delivered replies are ordered by our DB
     // clock, so an internal step sorts before its turn's delivered final; the
@@ -196,6 +202,25 @@ export class SlackThreadProvider implements ThreadMessageProvider {
     return [...internal, ...slackDerived].sort(
       (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
     );
+  }
+
+  /**
+   * Store the files of the messages that started no turn, each for this thread
+   * and its message ts, so the history has the files of every message in the
+   * thread. The agent's own messages are left out: their files are the ones it
+   * shared.
+   */
+  private async storeMissingFiles(threadId: string, messages: SlackMessage[], botUserId: string): Promise<void> {
+    const carriers = messages
+      .filter((m) => m.user !== botUserId && m.files?.length)
+      .map((m) => ({ ts: m.ts, files: m.files!.slice(0, MAX_ATTACHMENTS_PER_MESSAGE) }));
+    if (carriers.length === 0) return;
+
+    const stored = await attachmentService.storedExternalFileIds(carriers.flatMap((c) => c.files.map((f) => f.id)));
+    for (const { ts, files } of carriers) {
+      const missing = files.filter((f) => !stored.has(f.id));
+      if (missing.length > 0) await slackAdapterService.downloadSlackFiles(missing, { externalTs: ts, threadId });
+    }
   }
 
   /**

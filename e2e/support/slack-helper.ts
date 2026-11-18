@@ -110,6 +110,8 @@ export function getBotUserId(): string {
 /**
  * Poll for a bot reply in a Slack thread.
  * Returns the reply text, or null if no reply arrives before timeout.
+ * `botUserId` names the bot for a thread the test user replies in too, since a
+ * message from the test user's token has a `bot_id` as well.
  */
 export async function waitForBotReply(
   client: WebClient,
@@ -117,6 +119,7 @@ export async function waitForBotReply(
   threadTs: string,
   timeoutMs = 60_000,
   intervalMs = 2_000,
+  botUserId?: string,
 ): Promise<string | null> {
   return pollUntil(
     async () => {
@@ -125,7 +128,8 @@ export async function waitForBotReply(
       // is part of the predicate, not an afterthought: a file-share reply can
       // carry none, and returning '' would end the wait on a message that says
       // nothing.
-      return result.messages?.find((m) => m.bot_id && m.ts !== threadTs && m.text)?.text ?? null;
+      const fromBot = (m: { bot_id?: string; user?: string }) => (botUserId ? m.user === botUserId : Boolean(m.bot_id));
+      return result.messages?.find((m) => fromBot(m) && m.ts !== threadTs && m.text)?.text ?? null;
     },
     { timeoutMs, intervalMs, label: `bot reply in ${channel}/${threadTs}` },
   );

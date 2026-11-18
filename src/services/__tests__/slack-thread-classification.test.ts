@@ -44,6 +44,7 @@ type ThreadMessage = {
   ts?: string;
   bot_id?: string;
   bot_profile?: { name?: string };
+  files?: Array<{ id: string; name?: string }>;
 };
 type ArrivingMessage = { user: string; text: string; ts: string };
 
@@ -187,6 +188,24 @@ describe('Slack thread classification', () => {
 
       const { prompt } = mockGenerateObject.mock.calls[0][0];
       expect(prompt.split('\n')[2]).toBe('[Bot: Deploy Bot]: v2 is out');
+    });
+
+    it('names the files of a message, with or without text', async () => {
+      armThread(reads());
+
+      await classify([
+        PARENT,
+        BOT_REPLY,
+        { user: 'U1', text: 'here are the logs', ts: '250.0', files: [{ id: 'F1', name: 'a.log' }, { id: 'F2', name: 'b.log' }] },
+        // A file-only reply as the thread read returns it: no text.
+        { user: 'U1', text: '', ts: '300.0', files: [{ id: 'F3', name: 'trace.log' }] },
+      ]);
+
+      const { prompt } = mockGenerateObject.mock.calls[0][0];
+      expect(prompt.split('\n').slice(2)).toEqual([
+        '[Person: Ana Example]: here are the logs (shared files: a.log, b.log)',
+        '[Person: Ana Example]: (shared a file: trace.log)',
+      ]);
     });
 
     it('asks users.info once per person while the answer is fresh', async () => {
