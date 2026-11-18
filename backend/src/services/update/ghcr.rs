@@ -246,11 +246,11 @@ mod tests {
         assert_eq!(
             next_page_url(
                 REGISTRY,
-                Some(r#"</v2/lensapp/prism-agent/tags/list?n=100&last=x>; rel="next""#)
+                Some(r#"</v2/mirantis/prism/tags/list?n=100&last=x>; rel="next""#)
             )
             .unwrap()
             .as_deref(),
-            Some("https://ghcr.io/v2/lensapp/prism-agent/tags/list?n=100&last=x")
+            Some("https://ghcr.io/v2/mirantis/prism/tags/list?n=100&last=x")
         );
         assert_eq!(
             next_page_url(REGISTRY, Some(r#"<https://evil.test/x>; rel="next""#)).unwrap(),
@@ -319,7 +319,7 @@ mod tests {
             (
                 200,
                 serde_json::json!({ "tags": ["latest", "canary", "1aa190771c3698cf", "v2026.5.26071530", "v2026.8.5090000"] }),
-                Some(r#"</v2/lensapp/prism-agent/tags/list?n=100&last=x>; rel="next""#.to_string()),
+                Some(r#"</v2/mirantis/prism/tags/list?n=100&last=x>; rel="next""#.to_string()),
             ),
             ok(serde_json::json!({ "tags": ["v2026.8.24083158", "pr-12-foo"] })),
         ])
@@ -332,11 +332,8 @@ mod tests {
         let requests = state.requests.lock().clone();
         assert_eq!(requests.len(), 3);
         assert!(requests[0].starts_with("/token"));
-        assert!(requests[0].contains("repository:lensapp/prism-agent:pull"));
-        assert_eq!(
-            requests[2],
-            "/v2/lensapp/prism-agent/tags/list?n=100&last=x"
-        );
+        assert!(requests[0].contains("repository:mirantis/prism:pull"));
+        assert_eq!(requests[2], "/v2/mirantis/prism/tags/list?n=100&last=x");
     }
 
     #[tokio::test]
