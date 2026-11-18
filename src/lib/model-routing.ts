@@ -90,7 +90,7 @@ export async function selectTurnModel(
  * tier when no turn of it ran on a tier.
  */
 export async function compactionModel(
-  context: AgentContext,
+  context: Pick<AgentContext, 'model' | 'modelSelection'>,
   threadId: string,
   provider: LlmProvider,
 ): Promise<string> {
