@@ -39,7 +39,7 @@ appears when the first two are present:
    or set `OPENAI_REALTIME_API_KEY` for direct voice. Standalone direct setups
    without managed inference variables or a custom `OPENAI_BASE_URL` can also
    use `OPENAI_API_KEY`. Managed
-   voice uses the Lens endpoint independently of the chat provider; explicit
+   voice uses the Mirantis Agent Platform endpoint independently of the chat provider; explicit
    endpoint overrides remain supported. See [Configuration](configuration.md#voice-meetings).
 3. **A Google account for the agent** (`GOOGLE_BOT_EMAIL` / `GOOGLE_BOT_PASSWORD`).
    This one is not optional in practice — see below. Note the password has to be the
@@ -74,7 +74,7 @@ If your deployment filters outbound traffic, a meeting needs these:
 
 | Host | Why |
 |------|-----|
-| `api.openai.com:443` | Direct Realtime voice only. Managed voice connects to the Lens endpoint instead |
+| `api.openai.com:443` | Direct Realtime voice only. Managed voice connects to the Mirantis Agent Platform endpoint instead |
 | `meet.google.com:443` | The call itself |
 | `accounts.google.com:443` | Signing the agent in |
 | `myaccount.google.com:443` | Checking whether the profile is still signed in. Easy to miss, and blocking it makes every join run a full login |
@@ -115,7 +115,7 @@ browser rather than the proxy. The runtime adds `127.0.0.1`, `localhost` and `::
 deployment, include the literal `127.0.0.1` rather than only `localhost`, since the
 match is on the URL host and no name resolution happens.
 
-**If the proxy intercepts TLS, the container hands Chromium the CA itself.** A Lens
+**If the proxy intercepts TLS, the container hands Chromium the CA itself.** A Mirantis Agent Platform
 sandbox terminates TLS at its boundary proxy and makes that trustworthy by appending
 its CAs to the system bundle and pointing `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS` and
 friends at it. Chromium ignores all of that, so `start.sh` writes the sandbox's CAs to
