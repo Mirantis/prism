@@ -111,7 +111,7 @@ pub static RELEASE_VERSION_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^v[0-9]{4}\.[0-9]{1,2}\.[0-9]+$").expect("valid regex"));
 
 /// GHCR container package whose tag list the version check reads.
-pub const UPDATE_IMAGE_REPO: &str = "lensapp/prism-agent";
+pub const UPDATE_IMAGE_REPO: &str = "mirantis/prism";
 
 /// GitHub repository whose Releases hold the packaged archives.
 pub const UPDATE_GITHUB_REPO: &str = "Mirantis/prism";
