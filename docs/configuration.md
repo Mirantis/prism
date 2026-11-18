@@ -791,7 +791,7 @@ carries a request or response body.
 | `LANGFUSE_SECRET_KEY` | Enables Langfuse LLM tracing when set | — |
 | `LANGFUSE_PUBLIC_KEY` | Langfuse public key | — |
 | `LANGFUSE_BASE_URL` | Langfuse server URL | `http://localhost:3100` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Enables OpenTelemetry export when set | — |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Enables OpenTelemetry export when set. Set it to your own collector, or to an empty value to turn export off | Mirantis collector (published container image); — (otherwise) |
 | `OTEL_EXPORTER_OTLP_API_KEY` | Collector auth, sent as `x-api-key` | — |
 | `DEPLOYMENT_ENVIRONMENT` | Tags OTel records (`production` / `staging` / `development`) | `production` (published images) |
 | `PRODUCT_NAME` | Tags OTel records with the `product.name` resource attribute, so one product's agents can be filtered from the rest | — (omitted) |

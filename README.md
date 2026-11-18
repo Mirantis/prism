@@ -14,6 +14,19 @@ the AI provider your company already uses, acts within the rules you set, and
 finishes what it starts, even through a restart. It is a focused product: a
 small set of features, each one tested end to end.
 
+Built and used by Mirantis.
+
+## Why we built it
+
+We couldn't find an autonomous agent we could trust with our own work, so we
+built one for our needs. If you find it useful too, great.
+
+As an AI company, we also need a deep understanding of agent harnesses and the
+freedom to innovate without being limited by other people's concepts. Prism
+keeps us at the leading edge of AI and agentic work, and lets us deliver what we
+learn in a form that suits enterprise needs. That's why we built it, and why we
+keep building it.
+
 ## Documentation
 
 Full user docs live in **[`docs/`](docs/README.md)** — installation (native,
@@ -76,8 +89,17 @@ sign-in, model credentials and tools; see
 - **[Heartbeat](docs/heartbeat.md)** — run the checks in the heartbeat document on a
   schedule, every 8 hours by default. The agent posts only when a check finds
   something new, to the places the user allows.
+- **[Goals](docs/cli-reference.md)** — set a background goal with `/goal` and the
+  agent pursues it across turns until it is done, paused or stopped.
 - **[Shell](docs/tools.md#shell)** — run commands, read/write/edit files, spawn long-running
-  processes, manage their I/O, and delegate coding tasks to Claude Code or Codex.
+  processes, and manage their I/O.
+- **[Coding agents](docs/tools.md#coding-sub-agent)** — hand coding tasks to Claude Code
+  or Codex, on an API key or your own subscription, and follow them to the end.
+- **[Skills](docs/skills.md)** — reusable instructions in the open Agent Skills format,
+  so skills written for other tools work unchanged. The agent loads one when a
+  task matches.
+- **[Plugins](docs/plugins.md)** — skills and MCP tool servers packaged in one folder,
+  following the open Agent Plugins standard.
 - **[Web pages](docs/tools.md#reading-web-pages)** — read a public page's text without opening a browser.
 - **[Computer use](docs/computer.md)** — use websites and desktop apps on its own
   desktop and browser, in chat, goals or scheduled tasks. Open **Computer** in
@@ -97,6 +119,10 @@ sign-in, model credentials and tools; see
 - **[Voice messages](docs/dictation.md)** — speak into the Web UI's chat microphone,
   and your words arrive in the thread as a message. It uses the same Realtime
   credential, and the agent does not speak back.
+- **Operator controls** — a [tool risk gate](docs/configuration.md#tool-risk-gate)
+  that checks tool calls against the policy in the Agent Guide, and
+  [locked-in mode](docs/configuration.md#locked-in-mode), which stops the agent
+  from rewriting its own identity and memory.
 
 ### The agent's "self"
 
@@ -131,8 +157,10 @@ turn; see [Auto model selection](docs/configuration.md#auto-model-selection).
 - **Structured logs** by default (Pino).
 - **Langfuse tracing** for every LLM call — model, tokens, tool calls,
   latency. Enabled by setting Langfuse keys; disabled otherwise.
-- **OpenTelemetry log export** to a configured collector. Disabled when no
-  endpoint is set.
+- **OpenTelemetry export** of product telemetry: identifiers, flags and counts,
+  never message content or credentials. The published container image sends it
+  to Mirantis; set `OTEL_EXPORTER_OTLP_ENDPOINT` to your own collector, or to an
+  empty value to turn it off. See [Observability](docs/configuration.md#observability).
 
 ## Interfaces
 
