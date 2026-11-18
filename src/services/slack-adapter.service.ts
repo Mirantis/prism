@@ -59,7 +59,7 @@ import {
 import { SlackThreadProvider } from './providers/slack-thread.provider';
 import { getSlackHeartbeatThrottleQueue } from '../queues/slack-heartbeat-throttle-queue';
 import { getActiveSlackConnections, getSlackConnection } from '../lib/slack-source';
-import { attachmentService, detectMediaType, classifyMediaType } from './attachment.service';
+import { attachmentService, detectMediaType, classifyMediaType, threadScopedFileId } from './attachment.service';
 import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB, MAX_ATTACHMENTS_PER_MESSAGE } from '../constants';
 import { BOUNDED_SLACK_CLIENT_OPTIONS, stripBodyToken } from '../lib/slack-web-client';
 import { getProxyDispatcher } from '../lib/proxy-dispatcher';
@@ -146,7 +146,7 @@ export interface SlackFileMeta {
 }
 
 /** A file we couldn't ingest, surfaced to the agent so it can tell the user. */
-interface SlackFileFailure {
+export interface SlackFileFailure {
   filename: string;
   reason: string;
 }
@@ -2064,10 +2064,14 @@ class SlackAdapterService implements ChannelAdapter {
    * anything that fails to download. `externalTs` records the carrying
    * message's ts so the live-read Slack channel provider can re-associate the
    * file on later turns; `threadId` scopes that lookup.
+   *
+   * `threadScoped` (a thread read) keys the file to `threadId`, so a file already
+   * stored for another thread is stored again for this one. `signal` aborts a
+   * download in flight; the file then fails with the abort reason.
    */
   async downloadSlackFiles(
     files: SlackFileMeta[],
-    ctx: { externalTs?: string; threadId?: string },
+    ctx: { externalTs?: string; threadId?: string; threadScoped?: boolean; signal?: AbortSignal },
   ): Promise<SlackFileDownloadResult> {
     const attachmentIds: string[] = [];
     const failures: SlackFileFailure[] = [];
@@ -2103,7 +2107,8 @@ class SlackAdapterService implements ChannelAdapter {
           continue;
         }
 
-        if (await attachmentService.existsByExternalFileId(file.id)) {
+        const storedKey = ctx.threadScoped && ctx.threadId ? threadScopedFileId(ctx.threadId, file.id) : file.id;
+        if (await attachmentService.existsByExternalFileId(storedKey)) {
           logger.info('[SlackAdapter] file %s already stored; skipping', file.id);
           continue;
         }
@@ -2115,7 +2120,7 @@ class SlackAdapterService implements ChannelAdapter {
           continue;
         }
 
-        const buffer = await this.fetchSlackFile(url, botToken);
+        const buffer = await this.fetchSlackFile(url, botToken, ctx.signal);
         if (buffer.byteLength === 0) {
           logger.warn('[SlackAdapter] file %s downloaded empty; skipping', file.id);
           failures.push({ filename, reason: 'it downloaded as an empty file' });
@@ -2135,7 +2140,7 @@ class SlackAdapterService implements ChannelAdapter {
           data: buffer,
           category: classifyMediaType(mediaType),
           source: 'slack',
-          externalFileId: file.id,
+          externalFileId: storedKey,
           externalTs: ctx.externalTs,
           threadId: ctx.threadId,
         });
@@ -2180,11 +2185,12 @@ class SlackAdapterService implements ChannelAdapter {
    * returns an HTML login page (HTTP 200) — not a 401 — when the token can't
    * read the file, so a non-binary content type is treated as an auth failure.
    */
-  private async fetchSlackFile(url: string, botToken: string): Promise<Buffer> {
+  private async fetchSlackFile(url: string, botToken: string, signal?: AbortSignal): Promise<Buffer> {
     // Loose shape: `dispatcher` is an undici extension to fetch's init that the
     // two bundled Dispatcher type copies (undici vs undici-types) disagree on.
     const init: Record<string, unknown> = {
       headers: { Authorization: `Bearer ${botToken}` },
+      ...(signal ? { signal } : {}),
     };
     const dispatcher = await getProxyDispatcher();
     if (dispatcher) init.dispatcher = dispatcher;
