@@ -1,6 +1,9 @@
-# Prism Agent
-
-## What Prism Agent is
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/prism-header-dark.svg">
+    <img src="docs/images/prism-header-light.svg" alt="Prism Agent">
+  </picture>
+</p>
 
 **Prism Agent is an enterprise-ready AI agent that keeps working after the
 conversation ends.** It remembers what you tell it, watches what you ask it to
