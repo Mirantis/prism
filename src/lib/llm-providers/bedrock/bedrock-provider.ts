@@ -48,6 +48,7 @@ import {
   type LlmProvider,
 } from '../llm-provider';
 import { converseToolImages } from './converse-tool-images';
+import { hasAwsCredentialSource } from './aws-credential-source';
 import {
   ANTHROPIC_DEFERRED_TOOLS,
   deferredToolsWhen,
@@ -93,6 +94,17 @@ export function createBedrockProvider(baseURL?: string): LlmProvider {
       supportsToolChanges(modelId) ? ANTHROPIC_TOOL_CHANGES : undefined,
     deferredTools: deferredToolsWhen(supportsAnthropicDeferredTools, ANTHROPIC_DEFERRED_TOOLS),
   });
+}
+
+/**
+ * The settings Bedrock still needs: none through the gateway, with a bearer token
+ * or explicit keys, or when the AWS default chain has a source. The bearer token
+ * is the one the docs ask for.
+ */
+export async function missingBedrockSettings(): Promise<string[]> {
+  if (config.nexusLlmBaseUrl || config.bedrockApiKey) return [];
+  if (config.awsAccessKeyId && config.awsSecretAccessKey) return [];
+  return (await hasAwsCredentialSource()) ? [] : ['AWS_BEARER_TOKEN_BEDROCK'];
 }
 
 /**

@@ -14,6 +14,7 @@ const {
   mockCreateOpenRouterProvider,
   mockCreateAnthropicProvider,
   mockCreateLiteLlmProvider,
+  mockMissingBedrockSettings,
   mockMissingAzureSettings,
   mockMissingBedrockMantleSettings,
   mockMissingOpenAiSettings,
@@ -28,6 +29,7 @@ const {
   mockCreateOpenRouterProvider: vi.fn(() => 'openrouter-provider'),
   mockCreateAnthropicProvider: vi.fn(() => 'anthropic-provider'),
   mockCreateLiteLlmProvider: vi.fn(() => 'litellm-provider'),
+  mockMissingBedrockSettings: vi.fn((): string[] => []),
   mockMissingAzureSettings: vi.fn((): string[] => []),
   mockMissingBedrockMantleSettings: vi.fn((): string[] => []),
   mockMissingOpenAiSettings: vi.fn((): string[] => []),
@@ -38,6 +40,7 @@ const {
 
 vi.mock('./bedrock/bedrock-provider', () => ({
   createBedrockProvider: mockCreateBedrockProvider,
+  missingBedrockSettings: mockMissingBedrockSettings,
 }));
 vi.mock('./azure/azure-provider', () => ({
   createAzureProvider: mockCreateAzureProvider,
@@ -234,24 +237,21 @@ describe('missingProviderSettings', () => {
     vi.clearAllMocks();
   });
 
-  it('bedrock needs nothing here: the AWS SDK finds its credentials at request time', () => {
-    expect(missingProviderSettings()).toEqual([]);
-    expect(mockMissingAzureSettings).not.toHaveBeenCalled();
-    expect(mockMissingBedrockMantleSettings).not.toHaveBeenCalled();
-  });
 
   it.each([
+    ['bedrock', mockMissingBedrockSettings, 'AWS_BEARER_TOKEN_BEDROCK'],
     ['azure', mockMissingAzureSettings, 'AZURE_API_KEY'],
     ['bedrock-mantle', mockMissingBedrockMantleSettings, 'AWS_BEARER_TOKEN_BEDROCK'],
     ['openai', mockMissingOpenAiSettings, 'OPENAI_API_KEY'],
     ['openrouter', mockMissingOpenRouterSettings, 'OPENROUTER_API_KEY'],
     ['anthropic', mockMissingAnthropicSettings, 'ANTHROPIC_API_KEY'],
     ['litellm', mockMissingLiteLlmSettings, 'LITELLM_API_KEY'],
-  ] as const)('%s answers with its own provider\'s list', (provider, mock, setting) => {
+  ] as const)('%s answers with its own provider\'s list', async (provider, mock, setting) => {
     config.llmProvider = provider;
     mock.mockReturnValue([setting]);
-    expect(missingProviderSettings()).toEqual([setting]);
+    expect(await missingProviderSettings()).toEqual([setting]);
     for (const other of [
+      mockMissingBedrockSettings,
       mockMissingAzureSettings,
       mockMissingBedrockMantleSettings,
       mockMissingOpenAiSettings,

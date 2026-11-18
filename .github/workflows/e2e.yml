@@ -323,6 +323,34 @@ jobs:
             e2e/playwright-report/
           retention-days: 7
 
+  # The @no-llm-provider feature. Its own job because the runtime reads its LLM
+  # credentials at boot, and this one starts with none. Its scenarios make no model call.
+  e2e-no-llm-provider:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: ./.github/actions/e2e-setup
+        with:
+          web: 'true'
+
+      - name: Run the no-LLM-provider E2E scenarios
+        run: npm run test:e2e:no-llm-provider --workspace=prism-agent-e2e
+        env:
+          CI: true
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-results-no-llm-provider
+          path: |
+            e2e/test-results/
+            e2e/playwright-report/
+          retention-days: 7
+
   # The @tool-search feature. Its own job because the runtime reads the tool-search
   # threshold at boot, and 0 defers the demo plugin's MCP tool.
   e2e-tool-search:

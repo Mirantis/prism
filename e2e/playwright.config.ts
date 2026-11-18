@@ -16,6 +16,7 @@ import {
 import { MOCK_REALTIME_PORT } from './support/mock-realtime-port';
 import { WEBHOOK_PORT } from './support/webhook-port';
 import { AGENT_MESSAGES_PORT } from './support/agent-messages-port';
+import { noLlmProviderEnv } from './support/no-llm-provider-env';
 
 // Load e2e environment variables (.env.e2e.local overrides for secrets)
 config({ path: path.resolve(__dirname, '.env.e2e') });
@@ -313,6 +314,11 @@ export default defineConfig({
         // where there may be none — so it is handed the Chromium this suite already
         // installs rather than the run depending on what the host happens to have.
         PRISM_CHROMIUM_PATH: process.env.E2E_CHROMIUM_PATH || chromium.executablePath(),
+        // Last, so it replaces the credentials above: the @no-llm-provider run
+        // starts the runtime with none.
+        ...(process.env.E2E_NO_LLM_PROVIDER === 'true'
+          ? noLlmProviderEnv(path.join(E2E_DATA_DIR, 'no-aws'))
+          : {}),
       },
     },
     {

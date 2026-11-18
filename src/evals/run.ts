@@ -234,7 +234,7 @@ async function main(): Promise<void> {
       if (scenarios.length === 0) throw new Error(`No scenario matches ${options.only.join(', ')}`);
 
       const models = harness.modelsInUse();
-      const missing = missingProviderSettings();
+      const missing = await missingProviderSettings();
       if (missing.length > 0) throw new Error(`The ${models.provider} LLM provider needs ${missing.join(' and ')}.`);
       const identity: RunIdentity = {
         evalSet: evalSetDigest(),

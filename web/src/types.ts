@@ -216,6 +216,12 @@ export interface ModelInfo {
   model: string;
 }
 
+/** The selected LLM provider and the settings it still needs, by variable name. */
+export interface LlmProviderStatus {
+  provider: string;
+  missingSettings: string[];
+}
+
 /**
  * A scoped model override (heartbeat/cron). `model` is the raw override
  * (`null` when unset); `effective` is the model that scope would actually use

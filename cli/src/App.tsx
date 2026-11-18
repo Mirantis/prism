@@ -17,6 +17,7 @@ import { useCompaction } from './hooks/use-compaction.js';
 import { useUpdateNotice } from './hooks/use-update-notice.js';
 import { useProgramStatus } from './hooks/use-program-status.js';
 import { Header } from './components/Header.js';
+import { LlmProviderWarning } from './components/llm-provider-warning.js';
 import { MessageList } from './components/MessageList.js';
 import { Input } from './components/Input.js';
 import { SpinnerRow } from './components/SpinnerRow.js';
@@ -632,6 +633,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
   return (
     <Box key="chat" flexDirection="column" paddingX={1} display={suspended ? 'none' : 'flex'}>
       <Header agentName={agent.name} />
+      <LlmProviderWarning api={apiClient} />
       {showSignIn && (
         <SignInPanel
           api={apiClient}
