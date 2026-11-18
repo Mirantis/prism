@@ -110,9 +110,11 @@ pub const IDLE_COMPACTION_CACHE_SHARE: f64 = 0.9;
 pub static RELEASE_VERSION_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^v[0-9]{4}\.[0-9]{1,2}\.[0-9]+$").expect("valid regex"));
 
-/// GitHub repository that owns both update surfaces: the GHCR container package
-/// (version checks read its tag list) and the GitHub Releases (packaged archives).
-pub const UPDATE_GITHUB_REPO: &str = "lensapp/prism-agent";
+/// GHCR container package whose tag list the version check reads.
+pub const UPDATE_IMAGE_REPO: &str = "lensapp/prism-agent";
+
+/// GitHub repository whose Releases hold the packaged archives.
+pub const UPDATE_GITHUB_REPO: &str = "Mirantis/prism";
 
 /// Delay before the first update check so it never competes with startup.
 pub const UPDATE_FIRST_CHECK_DELAY_MS: i64 = 60 * 1000;

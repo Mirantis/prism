@@ -489,8 +489,8 @@ async fn initialize() -> anyhow::Result<()> {
     log_config_warnings();
 
     // AGENT_ID is optional — when unset, the bootstrap either picks up the existing
-    // row or creates a fresh one with a generated UUID. Auth is handled by Lens
-    // Agents inbound routing in front of the runtime; the container itself trusts
+    // row or creates a fresh one with a generated UUID. Auth is handled by Mirantis
+    // Agent Platform inbound routing in front of the runtime; the container itself trusts
     // every incoming connection.
     log_info!(
         json!({ "agentId": CONFIG.agent_id().unwrap_or_else(|| "<unset, will resolve>".to_string()) }),
@@ -844,7 +844,7 @@ async fn shutdown(signal: &'static str, servers: Arc<Mutex<Option<Servers>>>) {
     // Plugin MCP servers are child processes we spawned; close them explicitly so a
     // bare SIGTERM to the runtime doesn't orphan them.
     PLUGIN_MCP_SERVICE.shutdown_all().await;
-    // Close the Lens Agents MCP client. On the legacy protocol this ends its gateway session.
+    // Close the Mirantis Agent Platform MCP client. On the legacy protocol this ends its gateway session.
     close_mcp_clients().await;
     get_slack_heartbeat_throttle_queue().stop().await;
     // Work whose result was delivered during the teardown records that before the exit.

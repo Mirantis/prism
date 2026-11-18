@@ -6,7 +6,7 @@
 //! `/responses`, not just `/chat/completions`.
 //!
 //! Routing: the `base_url` argument is the resolved endpoint — `OPENAI_BASE_URL`,
-//! else the Lens Agents OpenAI mount (`…/llm/openai/v1`), else `None` for
+//! else the Mirantis Agent Platform OpenAI mount (`…/llm/openai/v1`), else `None` for
 //! api.openai.com. `CONFIG.openai_endpoint` decides between them, so nothing is
 //! chosen here. The gateway appends the client path to its configured OpenAI root
 //! and injects the API key on the outbound leg. Realtime voice resolves its own

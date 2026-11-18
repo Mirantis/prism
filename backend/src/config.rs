@@ -511,7 +511,7 @@ pub struct Config {
 
     /// OpenAI (used when LLM_PROVIDER=openai). Chat, classification and
     /// embeddings speak the OpenAI API on one surface, at `openai_endpoint`:
-    /// OPENAI_BASE_URL if set, else the Lens Agents `…/llm/openai/v1` mount when
+    /// OPENAI_BASE_URL if set, else the Mirantis Agent Platform `…/llm/openai/v1` mount when
     /// NEXUS_API_URL is set, else api.openai.com (`None`).
     pub openai_model_id: String,
     pub openai_classification_model_id: String,
@@ -577,7 +577,7 @@ pub struct Config {
     pub slack_expected_app_id: Option<String>,
 
     /// Microsoft Teams: a Single Tenant Entra app registration behind an Azure
-    /// Bot resource. TEAMS_APP_PASSWORD is the client secret, or on Lens Agents
+    /// Bot resource. TEAMS_APP_PASSWORD is the client secret, or on Mirantis Agent Platform
     /// the sentinel of an OAuth client-credentials credential.
     pub teams_app_id: Option<String>,
     pub teams_app_password: Option<String>,
@@ -586,7 +586,7 @@ pub struct Config {
     /// nothing else, so it is the one port a deployment publishes to Microsoft.
     pub teams_port: u16,
 
-    /// External MCP server URL, injected as NEXUS_MCP_URL by the Lens Agents
+    /// External MCP server URL, injected as NEXUS_MCP_URL by the Mirantis Agent Platform
     /// sandbox. Already a complete URL; do NOT append /mcp. `None` when unset.
     pub nexus_mcp_url: Option<String>,
 
@@ -595,7 +595,7 @@ pub struct Config {
     pub langfuse_public_key: Option<String>,
     pub langfuse_base_url: String,
 
-    /// Lens Agents LLM proxy base URL for native Bedrock. Also carries mantle's
+    /// Mirantis Agent Platform LLM proxy base URL for native Bedrock. Also carries mantle's
     /// embedding leg, since Titan is bedrock-runtime-only.
     pub nexus_llm_base_url: Option<String>,
     /// The selected vendor's gateway chat mount. An override may send chat
@@ -810,7 +810,7 @@ pub fn config() -> &'static Config {
     &CONFIG
 }
 
-/// Whether the Lens Agents gateway serves `url`, and so holds the vendor
+/// Whether the Mirantis Agent Platform gateway serves `url`, and so holds the vendor
 /// credential for it. The origin lowercases the host and drops a default port,
 /// and it ignores the path, so any mount on the gateway host matches. An unset or
 /// unparseable value on either side answers false: such an endpoint fails in the

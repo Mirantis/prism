@@ -4,7 +4,7 @@
 //! the agent uses this to start long-running tasks (e.g. `npm run test`), feed
 //! them stdin, drain their stdout/stderr, and kill them.
 //!
-//! Port of the relevant bits of the upstream Lens Agents shell sandbox's
+//! Port of the relevant bits of the upstream Mirantis Agent Platform shell sandbox's
 //! process handlers, minus the cross-process MCP plumbing — the runtime
 //! calls these directly from its tools.
 //!

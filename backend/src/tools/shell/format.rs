@@ -1,4 +1,4 @@
-//! `format_file_content` ported from the upstream Lens Agents shell sandbox's
+//! `format_file_content` ported from the upstream Mirantis Agent Platform shell sandbox's
 //! file handlers.
 //!
 //! Returns the file with each line prefixed by its 1-indexed line

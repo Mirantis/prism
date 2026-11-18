@@ -15,7 +15,7 @@
 //! the user turn beside it, since most Converse models read no image in a result.
 //!
 //! Routing: `create_bedrock_provider(base_url)` runs direct to AWS (unset) or
-//! through the Lens Agents LLM gateway (a `base_url` — the gateway re-signs, tracks
+//! through the Mirantis Agent Platform LLM gateway (a `base_url` — the gateway re-signs, tracks
 //! usage, and audits, so no local credentials are used). Direct mode has two auth
 //! paths, picked automatically by the SDK from the environment:
 //!
@@ -56,7 +56,7 @@ use serde_json::json;
 ///  - Anything else routes through the generic Converse-API provider.
 ///
 /// `base_url` selects routing: unset → direct AWS (credentials via explicit keys or
-/// the default credential chain); set → the Lens Agents gateway, which does its own
+/// the default credential chain); set → the Mirantis Agent Platform gateway, which does its own
 /// signing (so no local credentials are attached).
 pub fn create_bedrock_provider(base_url: Option<&str>) -> LlmProvider {
     log_info!(

@@ -58,7 +58,7 @@ use crate::support::after_accept::{AcceptGate, spawn_after_accept, within_gate};
 use crate::types::{AgentMessageOrigin, ResumedReply};
 use crate::{log_error, log_info};
 
-/// Who sent a message, as the Lens Agents sign-in named the connection.
+/// Who sent a message, as the Mirantis Agent Platform sign-in named the connection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InboundSender {
     /// A stable id, which tells one person's messages from another's.
@@ -74,7 +74,7 @@ pub struct InboundMessage {
     pub thread_id: String,
     pub content: String,
     pub attachment_ids: Vec<String>,
-    /// Who sent it, as the Lens Agents sign-in named the connection: a stable id,
+    /// Who sent it, as the Mirantis Agent Platform sign-in named the connection: a stable id,
     /// which tells one person's messages from another's, and a name to show. The
     /// sign-in gives an email, or a user id, which serves as both today.
     pub sender: Option<InboundSender>,

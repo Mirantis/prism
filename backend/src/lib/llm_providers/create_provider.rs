@@ -4,7 +4,7 @@
 //!  - Vendor: `CONFIG.llm_provider` (`bedrock` default, `azure`, `bedrock-mantle`,
 //!    `openai`, `openrouter`, `anthropic`, or `litellm`).
 //!  - Endpoint: each vendor's factory takes the endpoint config resolved for it —
-//!    the explicit `*_BASE_URL` override, else the Lens Agents gateway mount, else
+//!    the explicit `*_BASE_URL` override, else the Mirantis Agent Platform gateway mount, else
 //!    the vendor's own host. The factory receives one endpoint and chooses nothing,
 //!    so the precedence is written once.
 //!
@@ -13,7 +13,7 @@
 //! route is in use.
 //!
 //! **bedrock-mantle** is AWS's second Bedrock inference endpoint
-//! (`bedrock-mantle.{region}.api.aws`; a Lens Agents managed-inference backend), not
+//! (`bedrock-mantle.{region}.api.aws`; a Mirantis Agent Platform managed-inference backend), not
 //! a variant of the `bedrock` branch: it serves neither InvokeModel nor Converse, so
 //! it needs its own factory. Of its three surfaces — OpenAI Responses, OpenAI Chat
 //! Completions, and Anthropic Messages — only `/anthropic/v1` is implemented, which
@@ -23,7 +23,7 @@
 //! inference profiles, so the mantle dispatcher strips `us.`/`eu.`/… prefixes).
 //!
 //! **openai** is the one vendor serving OpenAI models rather than Claude, on a
-//! single surface: chat and classification ride one base URL — the Lens Agents
+//! single surface: chat and classification ride one base URL — the Mirantis Agent Platform
 //! `…/llm/openai/v1` mount or api.openai.com direct. Realtime voice resolves its
 //! managed or direct endpoint separately in config. **openrouter** rides the same
 //! OpenAI-compatible surface at openrouter.ai (or the `…/llm/openrouter/openai/v1`
