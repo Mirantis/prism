@@ -776,7 +776,8 @@ see [Voice chat](voice-chat.md#starting-a-call).
 
 ## Observability
 
-All optional; each is off until its variable is set. Langfuse traces every LLM
+All optional; each is off until its variable is set, except that the published
+container image sets the OpenTelemetry endpoint (see the table below). Langfuse traces every LLM
 call (model, tokens, tool calls, latency), with prompts and completions included
 — except the call that decides what to do with a threaded Slack message, which is
 not traced at all, since its prompt is the channel's recent messages. Nothing said
