@@ -5,7 +5,7 @@
 //! (`resolve_or_bootstrap_single_agent`); a document it lacks keeps the default.
 //!
 //! Only that first boot reads the directory. A platform that writes the files
-//! on every start (Lens Agents start files) therefore overwrites nothing the
+//! on every start (Mirantis Agent Platform start files) therefore overwrites nothing the
 //! agent or its user changed later.
 //!
 //! `memoryMd` is not seedable: memory is what the agent learns, not a document a

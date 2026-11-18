@@ -8,7 +8,7 @@
 //! hatch when an operator splits the resource's hosts.
 //!
 //! Routing: the `base_url` argument is the resolved chat endpoint —
-//! `AZURE_FOUNDRY_BASE_URL`, else the Lens Agents Azure gateway chat route
+//! `AZURE_FOUNDRY_BASE_URL`, else the Mirantis Agent Platform Azure gateway chat route
 //! (`…/llm/azure/anthropic/v1`, mirroring Bedrock's `…/llm/bedrock/{region}`), else
 //! the Foundry resource. `CONFIG.azure_chat_endpoint` decides between them.
 //!
@@ -38,7 +38,7 @@ use crate::log_info;
 fn azure_settings(config: &Config, base_url: Option<&str>) -> AnthropicProviderSettings {
     // On the gateway the real Foundry key (`api-key` from its NEXUS_AZURE_TOKEN) is
     // injected on the outbound leg, so no local key is needed — but the SDKs insist
-    // on one, so fall back to a decoy (the same pattern the Lens Agents sandbox uses
+    // on one, so fall back to a decoy (the same pattern the Mirantis Agent Platform sandbox uses
     // for its provisioned ANTHROPIC_API_KEY).
     let decoyable_key = config
         .azure_api_key
@@ -94,7 +94,7 @@ fn create_azure_provider_for(config: &Config, base_url: Option<&str>) -> LlmProv
 }
 
 /// The settings Azure still needs, by variable name; empty when it can serve
-/// requests. Through the Lens Agents gateway it needs none, since the gateway holds
+/// requests. Through the Mirantis Agent Platform gateway it needs none, since the gateway holds
 /// the Foundry key. Direct mode needs an api-key and a Foundry endpoint.
 pub fn missing_azure_settings() -> Vec<String> {
     missing_azure_settings_for(&CONFIG)

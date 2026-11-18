@@ -1,5 +1,5 @@
 //! A Slack Web API client whose bot-token auth flows **only** via the
-//! `Authorization` header, never in a request body. This lets the Lens Agents
+//! `Authorization` header, never in a request body. This lets the Mirantis Agent Platform
 //! sandbox MITM proxy inject the real token via its header-rewriting credential
 //! injection (`__nexus_cred:<uuid>__` sentinel in env → real `xoxb-…` at the
 //! proxy); the body never carries the sentinel, so Slack never sees the

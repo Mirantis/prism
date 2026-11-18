@@ -5,7 +5,7 @@
 //! drain accumulated stdout/stderr, and kill them — all without
 //! blocking other tool calls.
 //!
-//! Port of the upstream Lens Agents shell sandbox's process handlers,
+//! Port of the upstream Mirantis Agent Platform shell sandbox's process handlers,
 //! with the per-process state map living in `process_manager`.
 
 use serde::{Deserialize, Serialize};

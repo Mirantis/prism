@@ -1,4 +1,4 @@
-//! Workspace path helpers, ported from the upstream Lens Agents shell
+//! Workspace path helpers, ported from the upstream Mirantis Agent Platform shell
 //! sandbox.
 //!
 //! - `resolve_path` turns a tool-supplied path into an absolute path.

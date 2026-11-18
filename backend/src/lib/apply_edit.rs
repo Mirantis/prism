@@ -1,6 +1,6 @@
 //! Targeted find-and-replace editing utility.
 //!
-//! Ported from the upstream Lens Agents shell sandbox client with simplification:
+//! Ported from the upstream Mirantis Agent Platform shell sandbox client with simplification:
 //! no `replaceAll` parameter — ambiguous matches always error.
 
 use serde::ser::SerializeMap;

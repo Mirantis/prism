@@ -1,4 +1,4 @@
-//! Who a request names as its sender, from the headers the Lens Agents ingress writes.
+//! Who a request names as its sender, from the headers the Mirantis Agent Platform ingress writes.
 
 use std::sync::LazyLock;
 
@@ -11,7 +11,7 @@ use crate::support::js;
 /// The most code points kept from each ingress header value.
 const MAX_SENDER_CHARS: usize = 128;
 
-/// The headers the Lens Agents ingress names the signed-in caller in. It strips any
+/// The headers the Mirantis Agent Platform ingress names the signed-in caller in. It strips any
 /// copy a client sent, and omits the id and the display name when it has none.
 const FORWARDED_USER_HEADER: &str = "x-forwarded-user";
 const FORWARDED_USER_ID_HEADER: &str = "x-forwarded-user-id";

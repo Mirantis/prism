@@ -20,7 +20,7 @@
 //! override flows through, and it keeps the stored value portable if the operator
 //! switches back to `LLM_PROVIDER=bedrock`.
 //!
-//! Routing: a `base_url` argument (the Lens Agents mantle mount, computed from
+//! Routing: a `base_url` argument (the Mirantis Agent Platform mantle mount, computed from
 //! `NEXUS_API_URL` as `…/llm/bedrock-mantle/anthropic/{region}/v1`) overrides the
 //! direct endpoint; unset → straight to the AWS endpoint.
 //!
@@ -107,7 +107,7 @@ fn bedrock_mantle_settings(config: &Config, base_url: &str) -> AnthropicProvider
 /// Create a Bedrock Mantle provider.
 ///
 /// `base_url` is the resolved chat endpoint — `BEDROCK_MANTLE_BASE_URL`, else the
-/// Lens Agents mantle mount, else the AWS mantle host for the region.
+/// Mirantis Agent Platform mantle mount, else the AWS mantle host for the region.
 /// `CONFIG.bedrock_mantle_chat_endpoint` decides between them. An endpoint on the
 /// gateway has the credential itself; anywhere else needs the Bedrock API key.
 pub fn create_bedrock_mantle_provider(base_url: &str) -> LlmProvider {

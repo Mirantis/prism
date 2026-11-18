@@ -655,7 +655,7 @@ async fn answers_an_unlinked_personal_chat_with_a_typing_cue_and_link_guidance()
     assert_eq!(posted[0].1["from"], json!({ "id": "28:bot" }));
     assert_eq!(
         mock.messages()[0].1,
-        "Hi! I don't recognize this Microsoft Teams account yet. Open the Lens Agents web app → \
+        "Hi! I don't recognize this Microsoft Teams account yet. Open the Mirantis Agent Platform web app → \
          Channels → Microsoft Teams, generate a link code, and send the 6-character code to me here."
     );
     // A proactive send names the app as its sender and carries the bot's token.
@@ -913,7 +913,7 @@ async fn answers_an_unknown_code_as_invalid() {
 
     assert_eq!(
         mock.messages()[0].1,
-        "❌ Invalid code. Please generate a new code from the Lens Agents web app."
+        "❌ Invalid code. Please generate a new code from the Mirantis Agent Platform web app."
     );
 
     TEAMS_ADAPTER_SERVICE.shutdown().await.unwrap();
@@ -1073,7 +1073,7 @@ async fn answers_an_unlinked_channel_with_threaded_link_guidance() {
         mock.messages(),
         vec![(
             "19:chan@thread.tacv2;messageid=1755000000000".to_string(),
-            "This channel isn't linked to an agent yet. Open the Lens Agents web app → Channels → \
+            "This channel isn't linked to an agent yet. Open the Mirantis Agent Platform web app → Channels → \
              Microsoft Teams, generate a channel link code, and @mention me with the 6-character code."
                 .to_string()
         )]

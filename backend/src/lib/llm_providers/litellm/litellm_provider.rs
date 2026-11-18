@@ -5,7 +5,7 @@
 //! custom base URL, like the Azure provider. Model ids are the operator's aliases
 //! and go to the proxy unchanged.
 //!
-//! Routing: the `base_url` argument is `LITELLM_BASE_URL`, else the Lens Agents
+//! Routing: the `base_url` argument is `LITELLM_BASE_URL`, else the Mirantis Agent Platform
 //! `…/llm/litellm/anthropic/v1` mount. `CONFIG.litellm_endpoint` decides between
 //! them. A proxy has no public host, so with neither there is no endpoint.
 //!
