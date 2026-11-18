@@ -79,50 +79,61 @@ sign-in, model credentials and tools; see
 
 ### Capabilities
 
-- **[Memory](docs/memory.md)** — search, write, delete entries in its long-term memory store.
-- **[Self-management](docs/agent-identity.md)** — edit its own personality, the profile of its user,
-  its curated memory, vision, operating manual, heartbeat checks, and
-  runtime settings, all from inside the conversation.
+#### Work that continues
+
+- **[Goals](docs/cli-reference.md)** — set a background goal with `/goal` and the
+  agent pursues it across turns until it is done, paused or stopped.
 - **[Scheduling](docs/scheduled-tasks.md)** — create, list, run, and delete scheduled tasks using
   natural language (`"in 5 minutes"`, `"every weekday at 9am"`) or raw
   cron expressions.
 - **[Heartbeat](docs/heartbeat.md)** — run the checks in the heartbeat document on a
   schedule, every 8 hours by default. The agent posts only when a check finds
   something new, to the places the user allows.
-- **[Goals](docs/cli-reference.md)** — set a background goal with `/goal` and the
-  agent pursues it across turns until it is done, paused or stopped.
-- **[Shell](docs/tools.md#shell)** — run commands, read/write/edit files, spawn long-running
-  processes, and manage their I/O.
-- **[Coding agents](docs/tools.md#coding-sub-agent)** — hand coding tasks to Claude Code
-  or Codex, on an API key or your own subscription, and follow them to the end.
-- **[Skills](docs/skills.md)** — reusable instructions in the open Agent Skills format,
-  so skills written for other tools work unchanged. The agent loads one when a
-  task matches.
-- **[Plugins](docs/plugins.md)** — skills and MCP tool servers packaged in one folder,
-  following the open Agent Plugins standard.
-- **[Web pages](docs/tools.md#reading-web-pages)** — read a public page's text without opening a browser.
-- **[Computer use](docs/computer.md)** — use websites and desktop apps on its own
-  desktop and browser, in chat, goals or scheduled tasks. Open **Computer** in
-  the Web UI to watch it work or take control. It needs the container image.
 - **[Webhooks](docs/webhooks.md)** — let external systems push events to the agent
   on port 3004, once **Webhook receiver** is on in the Web UI. Each webhook has
   its own endpoint, an optional prompt template filled from the payload, and a
   delivery target. A sender proves itself with a shared token or an HMAC
   signature.
+- **[Memory](docs/memory.md)** — search, write, delete entries in its long-term memory store.
+- **[Self-management](docs/agent-identity.md)** — edit its own personality, the profile of its user,
+  its curated memory, vision, operating manual, heartbeat checks, and
+  runtime settings, all from inside the conversation.
+
+#### Does the work
+
+- **[Shell](docs/tools.md#shell)** — run commands, read/write/edit files, spawn long-running
+  processes, and manage their I/O.
+- **[Coding agents](docs/tools.md#coding-sub-agent)** — hand coding tasks to Claude Code
+  or Codex, on an API key or your own subscription, and follow them to the end.
+- **[Web pages](docs/tools.md#reading-web-pages)** — read a public page's text without opening a browser.
+- **[Computer use](docs/computer.md)** — use websites and desktop apps on its own
+  desktop and browser, in chat, goals or scheduled tasks. Open **Computer** in
+  the Web UI to watch it work or take control. It needs the container image.
+- **[Skills](docs/skills.md)** — reusable instructions in the open Agent Skills format,
+  so skills written for other tools work unchanged. The agent loads one when a
+  task matches.
+- **[Plugins](docs/plugins.md)** — skills and MCP tool servers packaged in one folder,
+  following the open Agent Plugins standard.
+
+#### Talk to it
+
+- **[Voice chat](docs/voice-chat.md)** — talk to the agent directly over the chat
+  connection, with its tools available while you speak. It needs a Realtime
+  credential and works wherever chat works.
 - **[Voice meetings](docs/voice-meetings.md)** — join a Google Meet call on request
   and take part by voice, with its tools available during the call. It needs the
-  container image and a Realtime credential. Work it cannot finish in the call
+  container image and the same Realtime credential. Work it cannot finish in the call
   becomes a one-off task whose result arrives in your chat.
-- **[Voice chat](docs/voice-chat.md)** — talk to the agent directly over the chat
-  connection, with its tools available while you speak. It needs the same
-  Realtime credential as a meeting and works wherever chat works.
 - **[Voice messages](docs/dictation.md)** — speak into the Web UI's chat microphone,
   and your words arrive in the thread as a message. It uses the same Realtime
   credential, and the agent does not speak back.
-- **Operator controls** — a [tool risk gate](docs/configuration.md#tool-risk-gate)
-  that checks tool calls against the policy in the Agent Guide, and
-  [locked-in mode](docs/configuration.md#locked-in-mode), which stops the agent
-  from rewriting its own identity and memory.
+
+#### Operator controls
+
+- **[Tool risk gate](docs/configuration.md#tool-risk-gate)** — check each tool call
+  against the policy in the Agent Guide, and block the ones it classifies as unsafe.
+- **[Locked-in mode](docs/configuration.md#locked-in-mode)** — stop the agent from
+  rewriting its own identity documents and long-term memory.
 
 ### The agent's "self"
 
