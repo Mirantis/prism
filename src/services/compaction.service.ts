@@ -15,9 +15,10 @@
  *   cached tools, live message array). Reusing them makes the summarize call a
  *   "forked request": the provider's prompt cache already holds the
  *   tools+system+history prefix, so the fork is mostly a cache read.
- * - `compactNow()` — the manual `/compact` path (REST) — and the idle path
- *   (`armIdle`, `restoreIdle`) share `compactRebuilt`. It rebuilds the request from
- *   stored rows with the tool list the next chat turn would declare, so it reads the
+ * - `compactNow()` — the manual `/compact` path (REST) — the idle path
+ *   (`armIdle`, `restoreIdle`) and the stored-run path (`afterMessageStored`, for
+ *   rows a run without a turn in the conversation stores) share `compactRebuilt`.
+ *   It rebuilds the request from stored rows with the tool list the next chat turn would declare, so it reads the
  *   tools+system+history prefix a recent turn cached: nothing per-turn sits in the
  *   system prompt (the date changes once a day, and a turn's recalled memories are a
  *   stored row this path replays like any other).
@@ -51,6 +52,7 @@ import { prisma } from '../lib/prisma';
 import { config } from '../config';
 import { logger } from '../logger';
 import {
+  COMPACTION_FALLBACK_WINDOW_TOKENS,
   COMPACTION_TAIL_TOKENS,
   IDLE_COMPACTION_MIN_TOKENS,
   IDLE_COMPACTION_CACHE_SHARE,
@@ -70,7 +72,7 @@ import {
   type ProviderOptionsFragment,
 } from '../lib/llm-providers/llm-provider';
 import { llmCallService, type LlmCallPurpose } from './llm-call.service';
-import { conversationService } from './conversation.service';
+import { conversationService, type MessageStored } from './conversation.service';
 
 import { collectTools, withToolsCacheControl } from '../lib/tool-collection';
 import { withToolOutputCapture } from '../lib/tool-output-limiter';
@@ -378,6 +380,78 @@ class CompactionService {
   }
 
   /**
+   * Stored-run path. A run without a turn in the conversation, such as a scheduled
+   * task, a heartbeat or a webhook, stores rows there that no turn has measured, so
+   * `maybeAutoCompact` never sees them. After such a row is stored, the conversation
+   * is sized as its last measurement plus an estimate of the rows stored since, and
+   * one at or over the threshold is compacted before the next turn reads it. A chat
+   * turn's own rows are measured at its end. Synchronous, never throws.
+   */
+  afterMessageStored(stored: MessageStored): void {
+    if (stored.triggeredBy === 'USER_INPUT') return;
+    if (config.compactionThresholdPercent === null) return; // disabled by operator
+    const { userId, agentId, threadId } = stored;
+    void this.storedGrowth(threadId)
+      .then((due) => {
+        if (!due || this.inFlight.has(threadId)) return;
+        this.inFlight.add(threadId);
+        return threadTurnService
+          .run(threadId, async () => {
+            // A turn or compaction that held the thread first has measured or compacted it.
+            const still = await this.storedGrowth(threadId);
+            if (!still) return;
+            this.cancelIdle(threadId);
+            // A conversation no turn has measured has no warm cache to read.
+            const lastCallAt = still.measuredAt ?? new Date(0);
+            await this.compactRebuilt({ userId, agentId, threadId }, 'auto', 'threshold', lastCallAt);
+          })
+          .catch((err) => {
+            logger.error({ err, threadId }, '[Compaction] stored-run compaction failed');
+            this.fail(userId, agentId, threadId, 'auto', errorText(err));
+          })
+          .finally(() => this.settle(threadId));
+      })
+      .catch((err) => logger.warn({ err, threadId }, '[Compaction] could not size a conversation after a stored run'));
+  }
+
+  /**
+   * A DATABASE thread's size as its last measurement plus the rows stored after it,
+   * at `CHARS_PER_TOKEN`, when that reaches the threshold; null otherwise. The
+   * measurement is the newer of the thread's last turn and its last compaction. A
+   * thread no turn has measured is sized from all its uncompacted rows.
+   */
+  private async storedGrowth(threadId: string): Promise<{ measuredAt: Date | undefined } | null> {
+    const threshold = config.compactionThresholdPercent;
+    if (threshold === null) return null;
+    const thread = await prisma.conversationThread.findUnique({
+      where: { id: threadId },
+      select: { threadSource: true, contextTokens: true, contextModel: true, compactedAt: true },
+    });
+    if (thread?.threadSource !== 'DATABASE') return null;
+    const lastTurn = await llmCallService.newestThreadCall(threadId, THREAD_TURN_PURPOSES);
+    const measuredAt = [lastTurn?.createdAt, thread.compactedAt ?? undefined]
+      .filter((at): at is Date => at !== undefined)
+      .reduce<Date | undefined>((newest, at) => (newest && newest >= at ? newest : at), undefined);
+    const windowTokens = contextWindowFor(thread.contextModel ?? '')?.tokens ?? COMPACTION_FALLBACK_WINDOW_TOKENS;
+    if (windowTokens < MIN_PLAUSIBLE_CONTEXT) return null;
+    const rows = await prisma.conversationMessage.findMany({
+      where: { threadId, isCompacted: false, ...(measuredAt && { createdAt: { gt: measuredAt } }) },
+      select: { content: true, toolCalls: true, blocks: true },
+    });
+    const chars = rows.reduce(
+      (sum, row) =>
+        sum +
+        row.content.length +
+        (row.toolCalls === null ? 0 : JSON.stringify(row.toolCalls).length) +
+        (row.blocks === null ? 0 : JSON.stringify(row.blocks).length),
+      0,
+    );
+    const measured = measuredAt ? (thread.contextTokens ?? 0) : 0;
+    const usedTokens = measured + Math.ceil(chars / CHARS_PER_TOKEN);
+    return (100 * usedTokens) / windowTokens >= threshold ? { measuredAt } : null;
+  }
+
+  /**
    * Manual path (`/compact` → REST): a compaction rebuilt from the stored thread
    * under the thread mutex (see `compactRebuilt`).
    */
@@ -405,7 +479,7 @@ class CompactionService {
   private async compactRebuilt(
     input: { userId: string; agentId: string; threadId: string },
     trigger: 'auto' | 'manual',
-    reason: 'manual' | 'idle',
+    reason: 'manual' | 'idle' | 'threshold',
     lastCallAt?: Date,
   ): Promise<void> {
     const { userId, agentId, threadId } = input;

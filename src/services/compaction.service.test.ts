@@ -1335,3 +1335,152 @@ describe('idle compaction', () => {
     });
   });
 });
+
+describe('after a stored run', () => {
+  const MEASURED_AT = new Date('2026-11-11T18:37:41.000Z');
+  const stored = (triggeredBy = 'CRON_TASK') => ({
+    userId: 'user-1',
+    agentId: 'agent-1',
+    threadId: THREAD,
+    triggeredBy: triggeredBy as never,
+  });
+  const thread = (overrides: Record<string, unknown> = {}) => ({
+    threadSource: 'DATABASE',
+    contextTokens: 850_000,
+    contextModel: 'model-x',
+    compactedAt: null,
+    workspaceRoot: null,
+    ...overrides,
+  });
+  /** Rows stored since the measurement: each holds `toolChars` characters of tool calls. */
+  const storedRows = (...toolChars: number[]) =>
+    toolChars.map((chars) => ({ content: 'Scheduled Task', toolCalls: [{ result: 'x'.repeat(chars) }], blocks: null }));
+
+  beforeEach(() => {
+    mockPrisma.conversationThread.findUnique.mockResolvedValue(thread());
+    mockNewestThreadCall.mockResolvedValue({ purpose: 'chat', model: 'model-x', createdAt: MEASURED_AT });
+    mockGetAgentContext.mockResolvedValue({
+      model: 'model-x',
+      modelSelection: { mode: 'fixed', tiers: { small: null, medium: null, large: null } },
+      lockedIn: false,
+      recentMessages: Array.from({ length: 8 }, (_, i) => ({
+        id: `m${i}`,
+        role: i % 2 === 0 ? 'USER' : 'AGENT',
+        content: 'x'.repeat(100),
+        externalMessageId: null,
+        internalStep: false,
+      })),
+    });
+  });
+
+  /** Let the sizing reads, and any compaction they queue, finish. */
+  async function settle(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await flushAuto();
+  }
+
+  it('compacts a conversation that rows stored since its last turn bring to the threshold', async () => {
+    // 850K measured plus 240K characters of tool calls, about 60K tokens: over 90% of the 1M fallback window.
+    mockPrisma.conversationMessage.findMany.mockResolvedValue(storedRows(120_000, 120_000));
+    const events = captureEvents();
+
+    compactionService.afterMessageStored(stored());
+    await settle();
+
+    expect(mockPrisma.conversationMessage.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { threadId: THREAD, isCompacted: false, createdAt: { gt: MEASURED_AT } } }),
+    );
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    expect(events.at(-1)).toMatchObject({ status: 'completed', trigger: 'auto' });
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      'compaction finished',
+      'user-1',
+      expect.objectContaining({ 'compaction.reason': 'threshold' }),
+    );
+    expect(compactionService.hasInFlight()).toBe(false);
+  });
+
+  it('leaves a conversation under the threshold', async () => {
+    // 850K plus about 25K tokens stays under 900K.
+    mockPrisma.conversationMessage.findMany.mockResolvedValue(storedRows(100_000));
+
+    compactionService.afterMessageStored(stored());
+    await settle();
+
+    expect(mockRun).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
+  });
+
+  it('counts only the rows stored after the newer of the last turn and the last compaction', async () => {
+    const compactedAt = new Date('2026-11-12T06:00:00.000Z');
+    mockPrisma.conversationThread.findUnique.mockResolvedValue(thread({ contextTokens: 30_000, compactedAt }));
+    mockPrisma.conversationMessage.findMany.mockResolvedValue([]);
+
+    compactionService.afterMessageStored(stored());
+    await settle();
+
+    expect(mockPrisma.conversationMessage.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ createdAt: { gt: compactedAt } }) }),
+    );
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it('sizes a conversation no turn has measured from all its stored rows', async () => {
+    mockPrisma.conversationThread.findUnique.mockResolvedValue(thread({ contextTokens: null }));
+    mockNewestThreadCall.mockResolvedValue(null);
+    // About 950K tokens of stored runs, and no measurement to add them to.
+    mockPrisma.conversationMessage.findMany.mockResolvedValue(storedRows(1_900_000, 1_900_000));
+
+    compactionService.afterMessageStored(stored());
+    await settle();
+
+    expect(mockPrisma.conversationMessage.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { threadId: THREAD, isCompacted: false } }),
+    );
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    // No turn warmed a cache for this conversation, so the summary writes no cache entry.
+    expect(JSON.stringify(mockGenerateText.mock.calls[0][0])).not.toContain('cacheControl');
+  });
+
+  it("does not size a chat turn's own rows, which the turn measures at its end", async () => {
+    compactionService.afterMessageStored(stored('USER_INPUT'));
+    await settle();
+
+    expect(mockPrisma.conversationThread.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the operator disabled auto-compaction', async () => {
+    mockConfig.compactionThresholdPercent = null;
+
+    compactionService.afterMessageStored(stored());
+    await settle();
+
+    expect(mockPrisma.conversationThread.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('does not size a live-read thread, whose history is not stored rows', async () => {
+    mockPrisma.conversationThread.findUnique.mockResolvedValue(thread({ threadSource: 'SLACK' }));
+
+    compactionService.afterMessageStored(stored());
+    await settle();
+
+    expect(mockPrisma.conversationMessage.findMany).not.toHaveBeenCalled();
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it('skips the compaction when a turn that held the thread first compacted it', async () => {
+    mockPrisma.conversationMessage.findMany
+      .mockResolvedValueOnce(storedRows(120_000, 120_000))
+      .mockResolvedValue([]);
+    mockPrisma.conversationThread.findUnique
+      .mockResolvedValueOnce(thread())
+      .mockResolvedValue(thread({ contextTokens: 30_000, compactedAt: new Date('2026-11-12T06:00:00.000Z') }));
+
+    compactionService.afterMessageStored(stored());
+    await settle();
+
+    expect(mockRun).toHaveBeenCalledTimes(1);
+    expect(mockGenerateText).not.toHaveBeenCalled();
+    expect(compactionService.hasInFlight()).toBe(false);
+  });
+});
