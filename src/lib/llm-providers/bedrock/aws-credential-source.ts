@@ -1,8 +1,4 @@
-/**
- * Whether the AWS default credential chain has a source to read: the
- * environment, a shared config or credentials file, SSO, a credential process,
- * web identity, or the container and instance metadata endpoints.
- */
+/** Whether the AWS default credential chain has a source to read. */
 
 import { defaultProvider } from '@aws-sdk/credential-provider-node';
 
