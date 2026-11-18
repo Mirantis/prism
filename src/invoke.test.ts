@@ -406,8 +406,10 @@ describe('invoke', () => {
       {
         text: 'I am not fully configured yet: the litellm LLM provider needs LITELLM_BASE_URL and LITELLM_API_KEY.',
         toolCalls: [],
+        error: { type: 'generic', detail: 'missing LITELLM_BASE_URL, LITELLM_API_KEY' },
       },
     ]);
+    expect(result.error).toEqual({ type: 'generic', detail: 'missing LITELLM_BASE_URL, LITELLM_API_KEY' });
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
 

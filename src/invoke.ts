@@ -231,11 +231,13 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
       { provider: config.llmProvider, missingSettings },
       'LLM provider not configured, returning placeholder response',
     );
+    // An error, so autonomous runs deliver the notice instead of withholding it.
     yield {
       text:
         `I am not fully configured yet: the ${config.llmProvider} LLM provider needs ` +
         `${missingSettings.join(' and ')}.`,
       toolCalls: [],
+      error: { type: 'generic', detail: `missing ${missingSettings.join(', ')}` },
     };
     return;
   }
