@@ -183,6 +183,9 @@ Prism Agent exposes the following surfaces:
   and watch heartbeat history. Available on the same port as the runtime.
 - **[TUI](docs/terminal-ui.md)** — a terminal UI for chatting with the agent and managing its
   state from the shell. Useful for headless servers and SSH sessions.
+- **[Editors](docs/editors.md)** — use the agent from Zed, a JetBrains IDE or any other
+  editor that supports the Agent Client Protocol. The agent works in the project the
+  editor has open.
 - **[Slack](docs/slack.md)** — runs in Socket Mode. Once the agent's Slack workspace is wired
   up, DMs and channel mentions reach the agent directly without a public
   webhook.

@@ -105,7 +105,8 @@ see a gap, reconnect and resume from the last `seq` you applied.
   - A conversation's work ends only at `turn` `idle`. A `message` event does not
     end it: the agent can post several messages in one turn.
 - **`thread`** `{ threadId, title, createdAt? }`: a conversation was created, or
-  it got a new title. Add it to your list.
+  it got a new title. Add it to your list. `GET /threads` gives the list, newest
+  first. Add `workspaceRoot=<folder>` for the conversations rooted in that folder.
 - **`context`**, **`compaction`**, **`computer`**, **`update`**: how full a
   conversation's context is, compaction progress, the agent's computer, and
   runtime updates.

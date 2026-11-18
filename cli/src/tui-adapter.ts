@@ -217,7 +217,7 @@ function coerceAttachments(raw: unknown): AttachmentMeta[] | null {
   return valid.length > 0 ? valid : null;
 }
 
-function coerceThreadSummary(raw: unknown): ThreadSummary | null {
+export function coerceThreadSummary(raw: unknown): ThreadSummary | null {
   if (!raw || typeof raw !== 'object') return null;
   const t = raw as {
     id?: unknown;
@@ -238,7 +238,7 @@ function coerceThreadSummary(raw: unknown): ThreadSummary | null {
   };
 }
 
-function coerceMessage(raw: unknown): TuiMessage | null {
+export function coerceMessage(raw: unknown): TuiMessage | null {
   if (!raw || typeof raw !== 'object') return null;
   const m = raw as RawMessage;
   if (typeof m.id !== 'string' || typeof m.content !== 'string') return null;
@@ -357,7 +357,7 @@ class TuiAdapter {
 
   markConnected(_userId: string): void {
     if (this.client) return;
-    const client = new WsClient({ url: this.wsUrl, clientVersion: CLIENT_VERSION });
+    const client = new WsClient({ url: this.wsUrl, clientName: 'prism-cli', clientVersion: CLIENT_VERSION });
     this.client = client;
     client.events.on('welcome', (welcome: WelcomePayload) => this.onWelcome(welcome));
     client.events.on('event', (event: StreamEvent) => this.onEvent(event));

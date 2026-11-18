@@ -31,7 +31,6 @@ import {
 const INITIAL_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 30_000;
 const STABLE_AFTER_MS = 30_000;
-const CLIENT_NAME = 'prism-cli';
 
 // A send's request id is its message id with this prefix, so an `ack` or a
 // `nack` names the message it answers without a table of requests.
@@ -77,6 +76,7 @@ function sentMessageId(re: string | null | undefined): string | null {
 export class WsClient {
   readonly events = new EventEmitter();
   private readonly url: string;
+  private readonly clientName: string;
   private readonly clientVersion: string;
   private ws: WebSocket | null = null;
   /** True between `welcome` and the socket closing. Nothing but `hello` is sent before. */
@@ -93,8 +93,10 @@ export class WsClient {
   private stableTimer: NodeJS.Timeout | null = null;
   private readonly retryTimers = new Set<NodeJS.Timeout>();
 
-  constructor(opts: { url: string; clientVersion: string }) {
+  /** `clientName` is what this client calls itself in `hello`. */
+  constructor(opts: { url: string; clientName: string; clientVersion: string }) {
     this.url = opts.url;
+    this.clientName = opts.clientName;
     this.clientVersion = opts.clientVersion;
     this.connect();
   }
@@ -146,7 +148,7 @@ export class WsClient {
       id: this.nextId('hello'),
       payload: {
         protocol: PROTOCOL_VERSION,
-        client: { name: CLIENT_NAME, version: this.clientVersion },
+        client: { name: this.clientName, version: this.clientVersion },
         ...(this.cursor ? { resume: { ...this.cursor } } : {}),
       },
     });

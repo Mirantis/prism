@@ -483,14 +483,19 @@ class WebSocketGatewayService {
     ws.ready = true;
     ws.greeting = false;
 
-    if (resume) {
-      trackEvent('chat socket resumed', config.ownerUserId, {
+    if (!resume) {
+      trackEvent('chat socket connected', config.ownerUserId, {
         ...(config.agentId ? { 'agent.id': config.agentId } : {}),
-        'socket.outcome': replay !== null ? 'resumed' : 'resync',
-        'socket.replayed': String(replay?.length ?? 0),
         'socket.client': hello.payload.client.name,
       });
+      return;
     }
+    trackEvent('chat socket resumed', config.ownerUserId, {
+      ...(config.agentId ? { 'agent.id': config.agentId } : {}),
+      'socket.outcome': replay !== null ? 'resumed' : 'resync',
+      'socket.replayed': String(replay?.length ?? 0),
+      'socket.client': hello.payload.client.name,
+    });
   }
 
   private async dispatch(ws: ChatSocket, frame: ClientFrame): Promise<void> {

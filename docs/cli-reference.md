@@ -14,6 +14,7 @@ prism [command] [flags]
 |---------|-------------|
 | `prism` | Start the terminal UI. |
 | `prism update` | Check for a newer release and install it. The server downloads, verifies, and restarts; the command waits until the new version is up. |
+| `prism acp` | Serve the Agent Client Protocol on standard input and output. An [editor](editors.md) starts it; you do not run it yourself. |
 
 ## Flags
 

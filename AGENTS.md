@@ -1235,6 +1235,7 @@ The agent-runtime owns the chat socket, `/api/ws`, which the web UI, the TUI and
 - **Store first**: a send is stored under the client's uuid before anything else and only then confirmed, so a client resends anything unconfirmed and the same id is never stored twice.
 - **One turn at a time for the agent**: a message for another conversation waits, shown to every client as `queued`. The wait is also what keeps the agent quiet while a person holds the computer.
 - **Response delivery**: `messageDeliveryService.publish()` -> `websocketAdapterService` -> `eventStreamService.publish()`; a person's message and in-place edits go through `messageDeliveryService.mirror()`.
+- **Editors are a client of this socket**: `prism acp` (`cli/src/acp/`) serves the Agent Client Protocol on stdio for the editor that starts it, and speaks the chat socket and REST to the runtime. An ACP session is one conversation, and the session id is the thread id.
 
 ## Agent Guide (agentMd)
 

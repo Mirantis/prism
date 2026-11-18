@@ -20,6 +20,7 @@ if (args.includes('--help') || args.includes('-h')) {
   console.log(
     'prism — Prism Agent terminal UI (connects to prism-server at $PRISM_HTTP_URL, default http://127.0.0.1:3003).\n' +
       '  update     Check for a newer Prism release and install it.\n' +
+      '  acp        Serve the Agent Client Protocol on stdio, for an editor to start.\n' +
       '  --resume   Pick a previous conversation to resume instead of starting fresh.\n' +
       '             An agent in single-thread mode always opens its one conversation.',
   );
@@ -29,6 +30,8 @@ if (args[0] === 'update') {
   // Non-interactive: triggers the server-side update over the management API
   // and waits for the restarted runtime to report the new version.
   void import('./update-cli.js').then(({ runUpdateCommand }) => runUpdateCommand());
+} else if (args[0] === 'acp') {
+  void import('./acp/acp-command.js').then(({ runAcpCommand }) => runAcpCommand());
 } else {
   main();
 }

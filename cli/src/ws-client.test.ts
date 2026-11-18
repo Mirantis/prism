@@ -42,7 +42,7 @@ describe('WsClient', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     FakeWebSocket.reset();
-    client = new WsClient({ url: 'ws://example.test/api/ws', clientVersion: 'test' });
+    client = new WsClient({ url: 'ws://example.test/api/ws', clientName: 'prism-cli', clientVersion: 'test' });
   });
 
   afterEach(() => {
