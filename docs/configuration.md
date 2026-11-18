@@ -730,7 +730,7 @@ chat while Azure serves voice. OpenRouter and Bedrock Mantle's OpenAI-compatible
 chat endpoints do not qualify for Realtime. OpenAI-compatible chat support
 alone does not establish Realtime support.
 
-Only direct voice requires egress to `api.openai.com`; managed voice uses the Lens
+Only direct voice requires egress to `api.openai.com`; managed voice uses the Mirantis Agent Platform
 endpoint and its metering/budget controls. Remote sockets require WSS; plaintext
 WS is accepted only on loopback. Selection happens at startup; restart existing
 sandboxes after updating Prism or their discovery environment. A connection
@@ -829,4 +829,4 @@ These affect the native [installer](installation.md), not the running agent:
 
 ## Public Web UI address
 
-Computer help links and file links in Microsoft Teams use the public address supplied by Lens through `NEXUS_INGRESS_ORIGINS_WEB` (or the name of the exposed Web UI port). Set `PRISM_PUBLIC_URL` for standalone deployments or to override that address, including any path prefix.
+Computer help links and file links in Microsoft Teams use the public address supplied by Mirantis Agent Platform through `NEXUS_INGRESS_ORIGINS_WEB` (or the name of the exposed Web UI port). Set `PRISM_PUBLIC_URL` for standalone deployments or to override that address, including any path prefix.

@@ -16,7 +16,7 @@ These docs walk you from a first install through every feature the agent has.
 
 ## Running Prism Agent
 
-Two ways to run the same agent. Pick one.
+Three ways to run the same agent. Pick one.
 
 - **[Run with Docker](docker.md)** — pull the published image and run the
   agent in a container with a persistent data volume.
@@ -24,6 +24,8 @@ Two ways to run the same agent. Pick one.
   `prism` (terminal UI) and `prism-server` (runtime) binaries on your machine
   and runs the runtime as a background service (launchd / systemd / Scheduled
   Task). Best for everyday local use.
+- **[Mirantis Agent Platform](agent-platform.md)** — run the agent in a
+  platform sandbox: sign-in, model credentials, ports and tools.
 
 ## Interfaces
 

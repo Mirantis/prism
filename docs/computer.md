@@ -59,7 +59,7 @@ To write a computer client of your own, see the [computer link protocol](compute
 
 ## Links from Slack
 
-Lens-hosted deployments supply the public address automatically through `NEXUS_INGRESS_ORIGINS_WEB` (or the name of the exposed Web UI port). Set `PRISM_PUBLIC_URL` for standalone deployments or to override that address, including any path prefix.
+Mirantis Agent Platform deployments supply the public address automatically through `NEXUS_INGRESS_ORIGINS_WEB` (or the name of the exposed Web UI port). Set `PRISM_PUBLIC_URL` for standalone deployments or to override that address, including any path prefix.
 
 ## Troubleshooting
 

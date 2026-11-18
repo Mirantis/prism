@@ -1,16 +1,15 @@
 # Prism Agent
 
-> Standalone agent runtime: long-lived AI agent with persistent memory,
-> scheduled work, heartbeat checks, and chat over the Web UI, the TUI, Slack and
-> Microsoft Teams — running in a single container.
-
 ## What Prism Agent is
 
-Prism Agent is an AI agent that keeps working between your conversations. It
-remembers what you tell it, watches the things you ask it to check, and runs
-tasks on a schedule. It uses a shell to do real work, such as editing files and
-running commands. You can talk to it from the web, the terminal, Slack or
-Microsoft Teams.
+**Prism Agent is an enterprise-ready AI agent that keeps working after the
+conversation ends.** It remembers what you tell it, watches what you ask it to
+watch, and completes tasks on the schedule you set. It does the work itself,
+from editing files to running commands, and your team reaches it where they
+already work: the web, the terminal, Slack and Microsoft Teams. Prism works with
+the AI provider your company already uses, acts within the rules you set, and
+finishes what it starts, even through a restart. It is a focused product: a
+small set of features, each one tested end to end.
 
 ## Documentation
 
@@ -54,23 +53,29 @@ Start the agent and boot into terminal ui:
 docker run -it -p 3003:3003 -v prism-data:/data -e AWS_BEARER_TOKEN_BEDROCK ghcr.io/lensapp/prism-agent:latest /bin/sh -c './start.sh > /dev/null 2>&1 & exec prism'
 ```
 
+### Using Mirantis Agent Platform
+
+Create the agent from the platform's Prism template. The platform supplies
+sign-in, model credentials and tools; see
+[Mirantis Agent Platform](docs/agent-platform.md).
+
 ## Features
 
 ### Capabilities
 
-- **Memory** — search, write, delete entries in its long-term memory store.
-- **Self-management** — edit its own personality, the profile of its user,
+- **[Memory](docs/memory.md)** — search, write, delete entries in its long-term memory store.
+- **[Self-management](docs/agent-identity.md)** — edit its own personality, the profile of its user,
   its curated memory, vision, operating manual, heartbeat checks, and
   runtime settings, all from inside the conversation.
-- **Scheduling** — create, list, run, and delete scheduled tasks using
+- **[Scheduling](docs/scheduled-tasks.md)** — create, list, run, and delete scheduled tasks using
   natural language (`"in 5 minutes"`, `"every weekday at 9am"`) or raw
   cron expressions.
 - **[Heartbeat](docs/heartbeat.md)** — run the checks in the heartbeat document on a
   schedule, every 8 hours by default. The agent posts only when a check finds
   something new, to the places the user allows.
-- **Shell** — run commands, read/write/edit files, spawn long-running
+- **[Shell](docs/tools.md#shell)** — run commands, read/write/edit files, spawn long-running
   processes, manage their I/O, and delegate coding tasks to Claude Code or Codex.
-- **Web pages** — read a public page's text without opening a browser.
+- **[Web pages](docs/tools.md#reading-web-pages)** — read a public page's text without opening a browser.
 - **[Computer use](docs/computer.md)** — use websites and desktop apps on its own
   desktop and browser, in chat, goals or scheduled tasks. Open **Computer** in
   the Web UI to watch it work or take control. It needs the container image.
@@ -130,13 +135,13 @@ turn; see [Auto model selection](docs/configuration.md#auto-model-selection).
 
 Prism Agent exposes the following surfaces:
 
-- **WebUI** — a built-in browser UI served by the runtime. Chat with the
+- **[WebUI](docs/web-ui.md)** — a built-in browser UI served by the runtime. Chat with the
   agent, browse threads, view and edit all seven identity documents,
   inspect scheduled tasks,
   and watch heartbeat history. Available on the same port as the runtime.
-- **TUI** — a terminal UI for chatting with the agent and managing its
+- **[TUI](docs/terminal-ui.md)** — a terminal UI for chatting with the agent and managing its
   state from the shell. Useful for headless servers and SSH sessions.
-- **Slack** — runs in Socket Mode. Once the agent's Slack workspace is wired
+- **[Slack](docs/slack.md)** — runs in Socket Mode. Once the agent's Slack workspace is wired
   up, DMs and channel mentions reach the agent directly without a public
   webhook.
 - **[Microsoft Teams](docs/teams.md)** — chat with the agent in personal chats and by
