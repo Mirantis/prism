@@ -829,7 +829,7 @@ pub struct MessageEventPayload {
     /// ISO 8601 with milliseconds. Clients order a thread by `(createdAt, id)`.
     pub created_at: String,
     pub attachments: Option<Vec<AttachmentPayload>>,
-    /// Who wrote a USER message, when the Lens Agents sign-in named the connection.
+    /// Who wrote a USER message, when the Mirantis Agent Platform sign-in named the connection.
     /// `sender_id` tells one person from another; compare it with `welcome.you.id`.
     /// `sender_name` is for display. Neither is ever used to decide what is allowed.
     pub sender_id: Option<String>,

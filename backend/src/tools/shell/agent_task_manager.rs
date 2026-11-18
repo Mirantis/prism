@@ -1,6 +1,6 @@
 //! Agent task manager for `coding_agent` / `coding_agent_status` / `coding_agent_stop`.
 //!
-//! Port of the upstream Lens Agents shell sandbox's agent task manager. Hands
+//! Port of the upstream Mirantis Agent Platform shell sandbox's agent task manager. Hands
 //! each task to the configured `CodingAgent`, buffers the run's text for
 //! drain-on-read polling, and tracks completion state. How the agent is
 //! launched and read is the adapter's business (`lib::coding_agents`); this

@@ -1392,7 +1392,7 @@ async fn run_invocation(
     }
 
     // Create provider and model: `create_provider` picks the configured vendor and
-    // routing (direct vs the Lens Agents gateway).
+    // routing (direct vs the Mirantis Agent Platform gateway).
     let provider = create_provider();
     let turn_model = select_turn_model(context, &RoutedRequest::from(&request), &provider).await?;
     let model_id = turn_model.model_id.clone();

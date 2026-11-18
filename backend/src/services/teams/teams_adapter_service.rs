@@ -1531,7 +1531,7 @@ impl TeamsAdapterService {
             self.send_chunks(
                 &conversation_id,
                 None,
-                &["Hi! I don't recognize this Microsoft Teams account yet. Open the Lens Agents web app → \
+                &["Hi! I don't recognize this Microsoft Teams account yet. Open the Mirantis Agent Platform web app → \
                    Channels → Microsoft Teams, generate a link code, and send the 6-character code to me here."
                     .to_string()],
             )
@@ -1665,7 +1665,7 @@ impl TeamsAdapterService {
             self.send_chunks(
                 &channel_conversation_id,
                 Some(&root_message_id),
-                &["This channel isn't linked to an agent yet. Open the Lens Agents web app → Channels → \
+                &["This channel isn't linked to an agent yet. Open the Mirantis Agent Platform web app → Channels → \
                    Microsoft Teams, generate a channel link code, and @mention me with the 6-character code."
                     .to_string()],
             )
@@ -1977,14 +1977,14 @@ impl TeamsAdapterService {
         let upper_code = code.to_uppercase();
         let Some(verification) = find_code(&upper_code, TeamsVerificationType::Dm).await? else {
             return Ok(VerificationResult::failed(
-                "Invalid code. Please generate a new code from the Lens Agents web app.",
+                "Invalid code. Please generate a new code from the Mirantis Agent Platform web app.",
             ));
         };
 
         if Utc::now() > verification.expires_at {
             let _ = delete_code(&upper_code, TeamsVerificationType::Dm).await;
             return Ok(VerificationResult::failed(
-                "Code expired. Please generate a new code from the Lens Agents web app.",
+                "Code expired. Please generate a new code from the Mirantis Agent Platform web app.",
             ));
         }
 
@@ -2076,14 +2076,14 @@ impl TeamsAdapterService {
         let Some(verification) = find_code(&upper_code, TeamsVerificationType::Channel).await?
         else {
             return Ok(VerificationResult::failed(
-                "Invalid code. Please generate a new code from the Lens Agents web app.",
+                "Invalid code. Please generate a new code from the Mirantis Agent Platform web app.",
             ));
         };
 
         if Utc::now() > verification.expires_at {
             let _ = delete_code(&upper_code, TeamsVerificationType::Channel).await;
             return Ok(VerificationResult::failed(
-                "Code expired. Please generate a new code from the Lens Agents web app.",
+                "Code expired. Please generate a new code from the Mirantis Agent Platform web app.",
             ));
         }
 

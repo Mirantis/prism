@@ -1,5 +1,5 @@
 //! `coding_agent` + `coding_agent_status` + `coding_agent_stop` tools —
-//! in-process port of the upstream Lens Agents handlers.
+//! in-process port of the upstream Mirantis Agent Platform handlers.
 //!
 //! The agent dispatches a task with `coding_agent({ prompt, ... })`, gets back
 //! a `taskId`, then polls `coding_agent_status({ taskId })` for drain-on-read

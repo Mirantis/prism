@@ -1,5 +1,5 @@
 //! The MCP servers the runtime connects for the agent, as one list a coding
-//! agent's adapter can hand to its agent: the Lens Agents endpoint and every
+//! agent's adapter can hand to its agent: the Mirantis Agent Platform endpoint and every
 //! server an installed plugin declares.
 
 use std::collections::HashSet;
@@ -14,7 +14,7 @@ use crate::lib::tool_names::sanitize_tool_name_segment;
 use crate::services::plugin_mcp_config::ResolvedServer;
 use crate::services::plugin_mcp_service::{ConfiguredServer, PLUGIN_MCP_SERVICE};
 
-/// The name the Lens Agents endpoint has in the list.
+/// The name the Mirantis Agent Platform endpoint has in the list.
 const NEXUS_SERVER_NAME: &str = "nexus";
 
 /// A plugin's server is named `<plugin id>__<server name>`, sanitized as the

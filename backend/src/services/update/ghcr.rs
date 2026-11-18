@@ -18,7 +18,7 @@ use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::constants::{RELEASE_VERSION_RE, UPDATE_GITHUB_REPO};
+use crate::constants::{RELEASE_VERSION_RE, UPDATE_IMAGE_REPO};
 use crate::log_debug;
 
 const REGISTRY: &str = "https://ghcr.io";
@@ -86,7 +86,7 @@ async fn fetch_latest(registry: &str) -> anyhow::Result<Option<String>> {
     let timeout = Duration::from_millis(FETCH_TIMEOUT_MS);
     let token_res = CLIENT
         .get(format!(
-            "{registry}/token?service=ghcr.io&scope=repository:{UPDATE_GITHUB_REPO}:pull"
+            "{registry}/token?service=ghcr.io&scope=repository:{UPDATE_IMAGE_REPO}:pull"
         ))
         .timeout(timeout)
         .send()
@@ -108,9 +108,7 @@ async fn fetch_latest(registry: &str) -> anyhow::Result<Option<String>> {
     };
 
     let mut latest: Option<String> = None;
-    let mut url = Some(format!(
-        "{registry}/v2/{UPDATE_GITHUB_REPO}/tags/list?n=100"
-    ));
+    let mut url = Some(format!("{registry}/v2/{UPDATE_IMAGE_REPO}/tags/list?n=100"));
     let mut page = 0;
     while let Some(current) = url.take() {
         if page >= MAX_TAG_PAGES {

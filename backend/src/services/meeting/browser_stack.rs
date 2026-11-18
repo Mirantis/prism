@@ -162,7 +162,7 @@ pub fn build_browser_args(port: u16, user_data_dir: &str) -> Vec<String> {
         // seccomp profile with no `SYS_ADMIN`, so the zygote fails to fork and the
         // browser dies at launch. Disabled deliberately rather than discovered in
         // production. The isolation that matters is the outer one — this whole
-        // runtime already runs inside the Lens Agents sandbox with filtered egress, and
+        // runtime already runs inside the Mirantis Agent Platform sandbox with filtered egress, and
         // the browser visits exactly one origin we chose.
         "--no-sandbox".into(),
         "--disable-setuid-sandbox".into(),
