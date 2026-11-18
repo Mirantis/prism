@@ -48,15 +48,25 @@ const mockConversationsReplies = vi.fn();
 const mockUsersInfo = vi.fn();
 
 const mockGetAppForTeam = vi.fn();
+const mockDownloadSlackFiles = vi.fn();
+const mockStoredExternalFileIds = vi.fn();
 
 vi.mock('../slack-adapter.service', () => ({
   slackAdapterService: {
     getAppForTeam: (...args: unknown[]) => mockGetAppForTeam(...args),
+    downloadSlackFiles: (...args: unknown[]) => mockDownloadSlackFiles(...args),
+  },
+}));
+
+vi.mock('../attachment.service', () => ({
+  attachmentService: {
+    storedExternalFileIds: (...args: unknown[]) => mockStoredExternalFileIds(...args),
   },
 }));
 
 // Import after mocking
 import { SlackThreadProvider } from '../providers/slack-thread.provider';
+import { MAX_ATTACHMENTS_PER_MESSAGE } from '../../constants';
 
 beforeEach(() => {
   mockGetSlackConnection.mockReset();
@@ -892,6 +902,76 @@ describe('Requirement: Slack Thread Provider', () => {
       const messages = await provider.getMessages(threadId);
 
       expect(messages.map((m) => m.content)).toEqual(['<@U100:Alice>: do the thing', 'Let me check that.', 'Done.']);
+    });
+  });
+
+  describe('Scenario: Files on thread messages', () => {
+    const file = (id: string) => ({ id, name: `${id}.log`, url_private_download: `https://files.slack.com/${id}` });
+    const replyTs = '1710000001.000000';
+
+    beforeEach(() => {
+      mockUsersInfo.mockResolvedValue({ user: { real_name: 'Alice', name: 'alice' } });
+      mockStoredExternalFileIds.mockResolvedValue(new Set());
+      mockDownloadSlackFiles.mockResolvedValue({ attachmentIds: [], failures: [] });
+    });
+
+    it('stores the file of a message that started no turn, for this thread and that message', async () => {
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          // The parent has a file and no mention, so no event handler downloaded it.
+          { user: 'U100', text: '', ts: threadTs, files: [file('F1')] },
+          { user: 'U100', text: `<@${botUserId}> read the file above`, ts: replyTs },
+        ],
+        response_metadata: {},
+      });
+
+      await provider.getMessages(threadId);
+
+      expect(mockDownloadSlackFiles).toHaveBeenCalledExactlyOnceWith([file('F1')], { externalTs: threadTs, threadId });
+    });
+
+    it('downloads only the files that are not stored', async () => {
+      mockStoredExternalFileIds.mockResolvedValue(new Set(['F1', 'F3']));
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'U100', text: 'the trace', ts: threadTs, files: [file('F1')] },
+          { user: 'U100', text: 'two more', ts: replyTs, files: [file('F2'), file('F3')] },
+        ],
+        response_metadata: {},
+      });
+
+      await provider.getMessages(threadId);
+
+      expect(mockStoredExternalFileIds).toHaveBeenCalledExactlyOnceWith(['F1', 'F2', 'F3']);
+      expect(mockDownloadSlackFiles).toHaveBeenCalledExactlyOnceWith([file('F2')], { externalTs: replyTs, threadId });
+    });
+
+    it('reads the first files of a message up to the per-message limit', async () => {
+      const files = Array.from({ length: MAX_ATTACHMENTS_PER_MESSAGE + 2 }, (_, i) => file(`F${i}`));
+      mockConversationsReplies.mockResolvedValue({
+        messages: [{ user: 'U100', text: 'logs', ts: threadTs, files }],
+        response_metadata: {},
+      });
+
+      await provider.getMessages(threadId);
+
+      expect(mockDownloadSlackFiles.mock.calls[0][0]).toEqual(files.slice(0, MAX_ATTACHMENTS_PER_MESSAGE));
+    });
+
+    it("stores no file of the agent's own message, and none for the client view", async () => {
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { user: 'U100', text: 'logs', ts: threadTs, files: [file('F1')] },
+          { user: botUserId, text: 'here is the report', ts: replyTs, files: [file('F2')] },
+        ],
+        response_metadata: {},
+      });
+
+      await provider.getMessages(threadId, { view: 'client' });
+      expect(mockDownloadSlackFiles).not.toHaveBeenCalled();
+
+      await provider.getMessages(threadId);
+      expect(mockDownloadSlackFiles).toHaveBeenCalledExactlyOnceWith([file('F1')], { externalTs: threadTs, threadId });
     });
   });
 

@@ -107,6 +107,7 @@ type GateMessage = {
   bot_id?: string;
   bot_profile?: { name?: string };
   username?: string;
+  files?: SlackFileMeta[];
 };
 
 /** The fields of `users.info` the adapter reads. */
@@ -134,8 +135,8 @@ export interface SlackApp {
   botUserId: string;
 }
 
-/** Subset of a Slack file object on a message event. */
-interface SlackFileMeta {
+/** The fields of a Slack file object, on a message event or in a thread read, that the runtime reads. */
+export interface SlackFileMeta {
   id: string;
   name?: string;
   mimetype?: string;
@@ -164,6 +165,11 @@ interface SlackFileDownloadResult {
 function describeSharedFiles(files: SlackFileMeta[]): string {
   const names = files.map((f) => f.name || 'file').join(', ');
   return files.length > 1 ? `(shared files: ${names})` : `(shared a file: ${names})`;
+}
+
+/** A thread message as the reply gate reads it: its text, then the files it has. */
+function gateText(message: GateMessage): string {
+  return [message.text, message.files?.length ? describeSharedFiles(message.files) : ''].filter(Boolean).join(' ');
 }
 
 // ============================================================================
@@ -1355,7 +1361,7 @@ class SlackAdapterService implements ChannelAdapter {
         channelId,
         threadTs,
         mapping.connection.teamId,
-        { user: slackUserId, text: queueText, ts: messageTs },
+        { user: slackUserId, text: messageText, ts: messageTs, files },
       );
 
       if (result.action === 'ignore') {
@@ -1874,7 +1880,7 @@ class SlackAdapterService implements ChannelAdapter {
     channelId: string,
     threadTs: string,
     teamId: string,
-    arriving: Required<Pick<GateMessage, 'user' | 'text' | 'ts'>>,
+    arriving: Required<Pick<GateMessage, 'user' | 'text' | 'ts'>> & Pick<GateMessage, 'files'>,
   ): Promise<{ result: ThreadParticipation; messages: GateMessage[] }> {
     const slackApp = this.apps.get(teamId);
     if (!slackApp) return { result: { action: 'ignore' }, messages: [] };
@@ -1939,7 +1945,7 @@ class SlackAdapterService implements ChannelAdapter {
     // A mention of the bot names the agent, as the agent's own lines do.
     const agentMention = `<@${botUserId}:${agent.name.replace(/[<>:\x00-\x1f]/g, '').trim() || botUserId}>`;
     const textOf = (m: GateMessage) =>
-      this.resolveMentions((m.text ?? '').replaceAll(`<@${botUserId}>`, agentMention), teamId);
+      this.resolveMentions(gateText(m).replaceAll(`<@${botUserId}>`, agentMention), teamId);
     const lines = await Promise.all(read.map(async (m) => ({ author: await authorOf(m), text: await textOf(m) })));
     return threadReplyClassifierService.classify({
       platform: { channel: this.name, name: 'Slack' },
@@ -2059,7 +2065,7 @@ class SlackAdapterService implements ChannelAdapter {
    * message's ts so the live-read Slack channel provider can re-associate the
    * file on later turns; `threadId` scopes that lookup.
    */
-  private async downloadSlackFiles(
+  async downloadSlackFiles(
     files: SlackFileMeta[],
     ctx: { externalTs?: string; threadId?: string },
   ): Promise<SlackFileDownloadResult> {

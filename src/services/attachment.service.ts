@@ -484,6 +484,16 @@ class AttachmentService {
     return row !== null;
   }
 
+  /** Of the given channel file ids, the ones already stored. */
+  async storedExternalFileIds(externalFileIds: string[]): Promise<Set<string>> {
+    if (externalFileIds.length === 0) return new Set();
+    const rows = await prisma.messageAttachment.findMany({
+      where: { slackFileId: { in: externalFileIds } },
+      select: { slackFileId: true },
+    });
+    return new Set(rows.flatMap((row) => (row.slackFileId ? [row.slackFileId] : [])));
+  }
+
   /** Delete an unlinked (pre-send) attachment — used by chip removal. Returns deleted count. */
   async deleteUnlinked(id: string): Promise<number> {
     // Capture the file handle before the row goes — after deleteMany nothing
@@ -586,11 +596,20 @@ class AttachmentService {
     return new Set(rows.map((r) => r.storagePath).filter((p): p is string => p !== null));
   }
 
-  /** Reap abandoned pre-send uploads that never got linked to a message, except the ids in `keep`. */
+  /**
+   * Reap abandoned pre-send uploads that never got linked to a message, except the
+   * ids in `keep`. A channel file stored for a thread is kept: a live-read thread
+   * shows it by the channel's message id, with no stored message to link it to.
+   */
   async deleteOrphans(olderThanMs: number, keep: string[] = []): Promise<number> {
     const cutoff = new Date(Date.now() - olderThanMs);
     const victims = await prisma.messageAttachment.findMany({
-      where: { messageId: null, createdAt: { lt: cutoff }, id: { notIn: keep } },
+      where: {
+        messageId: null,
+        OR: [{ slackFileId: null }, { threadId: null }],
+        createdAt: { lt: cutoff },
+        id: { notIn: keep },
+      },
       select: { id: true, storagePath: true },
     });
     let deleted = 0;

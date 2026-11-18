@@ -310,11 +310,12 @@ describe('Requirement: Channel message mention detection', () => {
         user: SLACK_USER_ID,
         text: 'just a follow-up',
         ts: MESSAGE_TS,
+        files: [],
       });
       expect(mockConversationEngineService.chat).not.toHaveBeenCalled();
     });
 
-    it('hands the gate the shared-files description when the message carries only a file', async () => {
+    it('hands the gate the files of a message that carries only a file', async () => {
       const mapping = makeMapping();
       mockSlackMappingService.findByChannelId.mockResolvedValue(mapping);
 
@@ -334,8 +335,9 @@ describe('Requirement: Channel message mention detection', () => {
       // An empty transcript line says nothing about the message; the file does.
       expect(isBotInThread).toHaveBeenCalledWith(CHANNEL_ID, THREAD_TS, TEAM_ID, {
         user: SLACK_USER_ID,
-        text: '(shared a file: trace.log)',
+        text: '',
         ts: MESSAGE_TS,
+        files: [{ name: 'trace.log' }],
       });
     });
   });
