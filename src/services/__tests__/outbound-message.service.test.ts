@@ -169,13 +169,14 @@ describe('Requirement: the agent sends only to a linked target, and never a broa
       });
     });
 
-    it("stores a routed post in the routed thread, marked with the posted ts as the agent's own", async () => {
+    it("stores a post in the channel's database thread, marked with the posted ts as the agent's own", async () => {
       slack.postToTarget.mockResolvedValue({
         messageId: '1712345678.000100',
         history: {
           userId: 'user-2',
           threadKey: '1712345678.000100',
-          routed: { channelId: 'C0RELEASE', ts: '1712345678.000100' },
+          channelId: 'C0RELEASE',
+          externalMessageId: '1712345678.000100',
         },
       });
       mockConversationService.getOrCreateThreadByExternalId.mockResolvedValue({ id: 'thread-routed' });

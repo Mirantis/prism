@@ -94,10 +94,15 @@ export interface PostedHistory {
   userId: string;
   threadKey: string;
   /**
-   * For a routed Slack thread: the channel the stored thread is in, and the
-   * posted ts, which marks the row as the agent's own when the thread is read.
+   * The channel the stored thread is in, when the channel's inbound path opens
+   * the thread with one. The thread is then a database thread in that channel.
    */
-  routed?: { channelId: string; ts: string };
+  channelId?: string;
+  /**
+   * The posted message's id on the platform. It marks the stored row as the
+   * agent's own when the thread is read.
+   */
+  externalMessageId?: string;
 }
 
 /**

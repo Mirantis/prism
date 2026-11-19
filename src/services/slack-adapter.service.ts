@@ -668,18 +668,29 @@ class SlackAdapterService implements ChannelAdapter {
     return { messageId: ts, ...(history ? { history } : {}) };
   }
 
-  /** The stored thread a routed post belongs to: the one the inbound path opens for its root. */
+  /**
+   * The stored thread a routed post belongs to: the one the inbound path opens
+   * for its root. The message is already posted, so a failed owner lookup is
+   * logged and leaves the post unstored: an error would make the agent send it
+   * again.
+   */
   private async routedPostHistory(target: LinkedTarget, threadKey: string, ts: string): Promise<PostedHistory | undefined> {
-    const userId =
-      target.kind === 'dm'
-        ? target.dmUserId
-        : (
-            await prisma.slackMapping.findFirst({
-              where: { slackChannelId: target.conversationId },
-              select: { lensUserId: true },
-            })
-          )?.lensUserId;
-    return userId ? { userId, threadKey, routed: { channelId: target.conversationId, ts } } : undefined;
+    let userId: string | null | undefined;
+    try {
+      userId =
+        target.kind === 'dm'
+          ? target.dmUserId
+          : (
+              await prisma.slackMapping.findFirst({
+                where: { slackChannelId: target.conversationId },
+                select: { lensUserId: true },
+              })
+            )?.lensUserId;
+    } catch (err: unknown) {
+      logger.error({ err }, '[Slack] posted, but the owner of the routed thread could not be read');
+      return undefined;
+    }
+    return userId ? { userId, threadKey, channelId: target.conversationId, externalMessageId: ts } : undefined;
   }
 
   /**

@@ -151,18 +151,18 @@ class OutboundMessageService {
     text: string,
   ): Promise<void> {
     try {
-      const { userId, threadKey, routed } = history;
-      const thread = routed
+      const { userId, threadKey, channelId, externalMessageId } = history;
+      const thread = channelId
         ? await conversationService.getOrCreateThreadByExternalId(userId, input.agentId, threadKey, {
             source: ThreadSource.DATABASE,
-            channelId: routed.channelId,
+            channelId,
           })
         : await conversationService.getOrCreateThreadByExternalId(userId, input.agentId, threadKey);
       await conversationService.addMessage(thread.id, {
         content: text,
         role: 'AGENT',
         triggeredBy: input.trigger,
-        ...(routed && { externalMessageId: routed.ts }),
+        ...(externalMessageId && { externalMessageId }),
       });
     } catch (err: unknown) {
       logger.error({ err }, '[OutboundMessage] posted, but the message could not be stored in the target history');

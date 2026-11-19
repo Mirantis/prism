@@ -163,7 +163,8 @@ describe('Requirement: the agent posts only to its linked Slack targets', () => 
           history: {
             userId: 'owner-1',
             threadKey: '1712345678.000100',
-            routed: { channelId: 'C0RELEASE', ts: '1712345678.000100' },
+            channelId: 'C0RELEASE',
+            externalMessageId: '1712345678.000100',
           },
         });
         expect(mockPrisma.slackMapping.findFirst).toHaveBeenCalledWith({
@@ -175,9 +176,23 @@ describe('Requirement: the agent posts only to its linked Slack targets', () => 
           history: {
             userId: 'user-1',
             threadKey: '1712345678.000001',
-            routed: { channelId: 'D0OWNER', ts: '1712345678.000100' },
+            channelId: 'D0OWNER',
+            externalMessageId: '1712345678.000100',
           },
         });
+      } finally {
+        mockSlackMode.mockReturnValue('socket');
+      }
+    });
+
+    it('in routed mode, still reports the post as sent when the owner lookup fails after posting', async () => {
+      mockSlackMode.mockReturnValue('routed');
+      mockPrisma.slackMapping.findFirst.mockRejectedValue(new Error('SQLITE_BUSY'));
+      try {
+        expect(await slackAdapterService.postToTarget(RELEASE, 'Deploy finished')).toEqual({
+          messageId: '1712345678.000100',
+        });
+        expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
       } finally {
         mockSlackMode.mockReturnValue('socket');
       }
