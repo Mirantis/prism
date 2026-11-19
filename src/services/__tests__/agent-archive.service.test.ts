@@ -34,6 +34,7 @@ vi.mock('zlib', () => ({
 
 vi.mock('better-sqlite3', () => ({
   default: class FakeDatabase {
+    pragma(): void {}
     prepare(sql: string) {
       return {
         get: () => ({ integrity_check: mockDbBehavior.integrity }),
