@@ -11,6 +11,7 @@ const {
   mockCreateAzureProvider,
   mockCreateBedrockMantleProvider,
   mockCreateOpenAiProvider,
+  mockCreateChatGptProvider,
   mockCreateOpenRouterProvider,
   mockCreateAnthropicProvider,
   mockCreateLiteLlmProvider,
@@ -18,6 +19,7 @@ const {
   mockMissingAzureSettings,
   mockMissingBedrockMantleSettings,
   mockMissingOpenAiSettings,
+  mockMissingChatGptSettings,
   mockMissingOpenRouterSettings,
   mockMissingAnthropicSettings,
   mockMissingLiteLlmSettings,
@@ -26,6 +28,7 @@ const {
   mockCreateAzureProvider: vi.fn(() => 'azure-provider'),
   mockCreateBedrockMantleProvider: vi.fn(() => 'bedrock-mantle-provider'),
   mockCreateOpenAiProvider: vi.fn(() => 'openai-provider'),
+  mockCreateChatGptProvider: vi.fn(() => 'chatgpt-provider'),
   mockCreateOpenRouterProvider: vi.fn(() => 'openrouter-provider'),
   mockCreateAnthropicProvider: vi.fn(() => 'anthropic-provider'),
   mockCreateLiteLlmProvider: vi.fn(() => 'litellm-provider'),
@@ -33,6 +36,7 @@ const {
   mockMissingAzureSettings: vi.fn((): string[] => []),
   mockMissingBedrockMantleSettings: vi.fn((): string[] => []),
   mockMissingOpenAiSettings: vi.fn((): string[] => []),
+  mockMissingChatGptSettings: vi.fn((): string[] => []),
   mockMissingOpenRouterSettings: vi.fn((): string[] => []),
   mockMissingAnthropicSettings: vi.fn((): string[] => []),
   mockMissingLiteLlmSettings: vi.fn((): string[] => []),
@@ -53,6 +57,10 @@ vi.mock('./bedrock-mantle/bedrock-mantle-provider', () => ({
 vi.mock('./openai/openai-provider', () => ({
   createOpenAiProvider: mockCreateOpenAiProvider,
   missingOpenAiSettings: mockMissingOpenAiSettings,
+}));
+vi.mock('./chatgpt/chatgpt-provider', () => ({
+  createChatGptProvider: mockCreateChatGptProvider,
+  missingChatGptSettings: mockMissingChatGptSettings,
 }));
 vi.mock('./openrouter/openrouter-provider', () => ({
   createOpenRouterProvider: mockCreateOpenRouterProvider,
@@ -219,6 +227,14 @@ describe('createProvider', () => {
     expect(mockCreateAnthropicProvider).toHaveBeenCalledWith();
   });
 
+  it('chatgpt → direct ChatGPT subscription provider (ignores gateway mounts)', () => {
+    config.llmProvider = 'chatgpt';
+    config.nexusOpenAiBaseUrl = MOUNT.openai;
+    expect(createProvider()).toBe('chatgpt-provider');
+    expect(mockCreateChatGptProvider).toHaveBeenCalledWith();
+    expect(mockCreateOpenAiProvider).not.toHaveBeenCalled();
+  });
+
   it('litellm → the resolved LiteLLM endpoint, never another backend\'s mount', () => {
     // The gateway meters LiteLLM by the cost LiteLLM reports, on its own mount.
     config.llmProvider = 'litellm';
@@ -243,6 +259,7 @@ describe('missingProviderSettings', () => {
     ['azure', mockMissingAzureSettings, 'AZURE_API_KEY'],
     ['bedrock-mantle', mockMissingBedrockMantleSettings, 'AWS_BEARER_TOKEN_BEDROCK'],
     ['openai', mockMissingOpenAiSettings, 'OPENAI_API_KEY'],
+    ['chatgpt', mockMissingChatGptSettings, 'ChatGPT sign-in'],
     ['openrouter', mockMissingOpenRouterSettings, 'OPENROUTER_API_KEY'],
     ['anthropic', mockMissingAnthropicSettings, 'ANTHROPIC_API_KEY'],
     ['litellm', mockMissingLiteLlmSettings, 'LITELLM_API_KEY'],
@@ -255,6 +272,7 @@ describe('missingProviderSettings', () => {
       mockMissingAzureSettings,
       mockMissingBedrockMantleSettings,
       mockMissingOpenAiSettings,
+      mockMissingChatGptSettings,
       mockMissingOpenRouterSettings,
       mockMissingAnthropicSettings,
       mockMissingLiteLlmSettings,

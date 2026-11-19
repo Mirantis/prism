@@ -52,6 +52,7 @@ import {
   missingBedrockMantleSettings,
 } from './bedrock-mantle/bedrock-mantle-provider';
 import { createOpenAiProvider, missingOpenAiSettings } from './openai/openai-provider';
+import { createChatGptProvider, missingChatGptSettings } from './chatgpt/chatgpt-provider';
 import {
   createOpenRouterProvider,
   missingOpenRouterSettings,
@@ -68,6 +69,8 @@ export function createProvider(): LlmProvider {
       return createBedrockMantleProvider(config.bedrockMantleChatEndpoint);
     case 'openai':
       return createOpenAiProvider(config.openaiEndpoint);
+    case 'chatgpt':
+      return createChatGptProvider();
     case 'openrouter':
       return createOpenRouterProvider(config.openrouterEndpoint);
     case 'anthropic':
@@ -93,6 +96,8 @@ export async function missingProviderSettings(): Promise<string[]> {
       return missingBedrockMantleSettings();
     case 'openai':
       return missingOpenAiSettings();
+    case 'chatgpt':
+      return missingChatGptSettings();
     case 'openrouter':
       return missingOpenRouterSettings();
     case 'anthropic':

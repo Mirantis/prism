@@ -63,12 +63,12 @@ export function createOpenAiProvider(baseURL?: string): LlmProvider {
  * explicit mode, which writes nothing without breakpoints. Under `5m` such a request
  * writes its prompt once; that is the trade for sending nothing an earlier model refuses.
  */
-function openAiCacheRequest(_modelId: string, ttl: CacheTtl, write: boolean): ProviderOptionsFragment {
+export function openAiCacheRequest(_modelId: string, ttl: CacheTtl, write: boolean): ProviderOptionsFragment {
   if (ttl !== '1h') return {};
   return { openai: { promptCacheOptions: write ? { ttl: '12h' } : { mode: 'explicit' } } };
 }
 
-function openAiCacheTtlMs(_modelId: string, ttl: CacheTtl): number {
+export function openAiCacheTtlMs(_modelId: string, ttl: CacheTtl): number {
   return ttl === '1h' ? 12 * 60 * 60 * 1000 : 30 * 60 * 1000;
 }
 

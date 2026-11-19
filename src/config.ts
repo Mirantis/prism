@@ -107,6 +107,7 @@ const LLM_PROVIDERS = [
   'azure',
   'bedrock-mantle',
   'openai',
+  'chatgpt',
   'openrouter',
   'anthropic',
   'litellm',
@@ -220,6 +221,8 @@ const nexusChatBaseUrls: Record<LlmProviderName, string | null> = {
   azure: nexusAzureBaseUrl,
   'bedrock-mantle': nexusBedrockMantleBaseUrl,
   openai: nexusOpenAiBaseUrl,
+  // Sign in with ChatGPT tokens are local to the user and go direct to api.openai.com.
+  chatgpt: null,
   openrouter: nexusOpenRouterBaseUrl,
   // No gateway mount serves api.anthropic.com, so anthropic chat is always
   // direct, even with NEXUS_API_URL set.
@@ -439,6 +442,7 @@ const chatEndpoints: Record<LlmProviderName, { endpoint?: string; override?: str
   azure: { endpoint: azureChatEndpoint, override: azureFoundryOverride },
   'bedrock-mantle': { endpoint: bedrockMantleChatEndpoint, override: bedrockMantleOverride },
   openai: { endpoint: openaiEndpoint, override: openaiOverride },
+  chatgpt: { endpoint: undefined, override: undefined },
   openrouter: { endpoint: openrouterEndpoint, override: openrouterOverride },
   anthropic: { endpoint: anthropicBaseUrl, override: anthropicBaseUrl },
   litellm: { endpoint: litellmEndpoint, override: litellmOverride },
@@ -484,6 +488,10 @@ const modelIds = {
     classification: bedrockMantleClassificationModelId,
   },
   openai: {
+    chat: openaiModelId,
+    classification: openaiClassificationModelId,
+  },
+  chatgpt: {
     chat: openaiModelId,
     classification: openaiClassificationModelId,
   },
@@ -544,6 +552,7 @@ const EMBEDDING_PROVIDER_DEFAULTS: Record<LlmProviderName, EmbeddingProviderName
   azure: 'azure-openai',
   'bedrock-mantle': 'bedrock',
   openai: 'openai',
+  chatgpt: openaiApiKey || nexusOpenAiBaseUrl ? 'openai' : 'none',
   openrouter: 'openrouter',
   anthropic: openaiApiKey || nexusOpenAiBaseUrl ? 'openai' : 'none',
   litellm: 'none',

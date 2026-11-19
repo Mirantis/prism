@@ -6,6 +6,8 @@ import type {
   CodingAgentId,
   CodingAgentSignIn,
   CodingAgentSummary,
+  ChatGptAuthStatus,
+  ChatGptSignInStart,
   ConversationMessage,
   ConversationThread,
   CronTask,
@@ -170,6 +172,11 @@ export const runtimeApi = {
     ),
   signOutCodingAgent: (agent: CodingAgentId) =>
     request<CodingAgentSummary>(`/agents/coding-agents/${agent}/sign-out`, { method: 'POST' }),
+
+  // Sign in with ChatGPT (`LLM_PROVIDER=chatgpt`)
+  chatGptAuthStatus: () => request<ChatGptAuthStatus>('/agents/chatgpt-auth/status'),
+  startChatGptSignIn: () => request<ChatGptSignInStart>('/agents/chatgpt-auth/start', { method: 'POST' }),
+  signOutChatGpt: () => request<ChatGptAuthStatus>('/agents/chatgpt-auth/sign-out', { method: 'POST' }),
 
   // Verbose (delivery mode)
   updateVerbose: (verbose: boolean) =>

@@ -11,7 +11,7 @@ The runtime talks to one LLM provider per container, chosen by `LLM_PROVIDER`:
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `LLM_PROVIDER` | LLM platform: `bedrock` (AWS), `azure` (Claude via Microsoft Foundry), `bedrock-mantle` (AWS's second Bedrock inference endpoint), `openai` (the official OpenAI API), `openrouter`, `anthropic` (the first-party Anthropic API), or `litellm` (your own LiteLLM proxy). Any other value falls back to `bedrock`, and the startup log warns. | `bedrock` |
+| `LLM_PROVIDER` | LLM platform: `bedrock` (AWS), `azure` (Claude via Microsoft Foundry), `bedrock-mantle` (AWS's second Bedrock inference endpoint), `openai` (the official OpenAI API), `chatgpt` (your ChatGPT subscription via Sign in with ChatGPT), `openrouter`, `anthropic` (the first-party Anthropic API), or `litellm` (your own LiteLLM proxy). Any other value falls back to `bedrock`, and the startup log warns. | `bedrock` |
 
 The four Claude platforms serve **Claude** through the Anthropic Messages API
 — `azure` mode runs the agent on Claude deployed in [Microsoft Foundry](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-claude)
@@ -65,6 +65,18 @@ authenticated with the same `OPENAI_API_KEY` that enables
 [voice meetings](voice-meetings.md) — setting it for chat also switches the
 meeting tools on where the browser/audio toolchain is present.
 
+`chatgpt` runs the agent on **OpenAI models under your ChatGPT subscription**
+via OpenAI's Sign in with ChatGPT OAuth flow. It is direct-only (tokens stay
+local to the runtime and call `api.openai.com` directly) and uses the same
+`OPENAI_MODEL_ID` and `OPENAI_CLASSIFICATION_MODEL_ID` model settings as
+`openai`. After starting the runtime with `LLM_PROVIDER=chatgpt`, open
+**Profile → ChatGPT subscription** in the web UI and click **Sign in with
+ChatGPT** to authorize Prism in your browser. If a sign-in fails or a session
+expires, sign in again from the same card (or sign out first to reset the
+session). ChatGPT plans do not cover embeddings, so memory embeddings default to
+OpenAI when `OPENAI_API_KEY` or `NEXUS_API_URL` is set and are otherwise
+disabled — see [Memory embeddings](#memory-embeddings).
+
 `anthropic` runs the agent on **Claude at the first-party Anthropic API**
 (`api.anthropic.com`), authenticated with `ANTHROPIC_API_KEY`. Model IDs are
 bare first-party names (`claude-opus-5`). It is the one **direct-only**
@@ -84,7 +96,7 @@ serves: set `LITELLM_MODEL_ID` and `LITELLM_CLASSIFICATION_MODEL_ID` to them.
 Memory embeddings are off until you turn them on in
 [Memory embeddings](#memory-embeddings).
 
-Each platform except `anthropic` can run **direct** or **through the Mirantis
+Each platform except `anthropic` and `chatgpt` can run **direct** or **through the Mirantis
 Agent Platform LLM gateway**. Routing is automatic: set `NEXUS_API_URL` and chat and
 classification route through the gateway (`…/llm/bedrock/{region}` for
 Bedrock, `…/llm/azure/anthropic/v1` for Azure,
@@ -601,7 +613,7 @@ separate from `LLM_PROVIDER`:
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `EMBEDDING_PROVIDER` | Embedding platform: `bedrock` (Titan on `bedrock-runtime`), `azure-openai` (a `text-embedding-3` deployment on the Foundry resource), `openai` (the OpenAI API), `openrouter` (openrouter.ai's OpenAI-compatible `/embeddings`), or `none` (embeddings off — memory still works, vector search returns nothing). Unset — or any other value — derives the default from `LLM_PROVIDER`: `bedrock` and `bedrock-mantle` → `bedrock`, `azure` → `azure-openai`, `openai` → `openai`, `openrouter` → `openrouter` (whose embedding model defaults to off), `anthropic` → `openai` when `OPENAI_API_KEY` or `NEXUS_API_URL` is set (the gateway holds the key) and `none` otherwise (Anthropic serves no embedding models), `litellm` → `none`. | derived |
+| `EMBEDDING_PROVIDER` | Embedding platform: `bedrock` (Titan on `bedrock-runtime`), `azure-openai` (a `text-embedding-3` deployment on the Foundry resource), `openai` (the OpenAI API), `openrouter` (openrouter.ai's OpenAI-compatible `/embeddings`), or `none` (embeddings off — memory still works, vector search returns nothing). Unset — or any other value — derives the default from `LLM_PROVIDER`: `bedrock` and `bedrock-mantle` → `bedrock`, `azure` → `azure-openai`, `openai` → `openai`, `openrouter` → `openrouter` (whose embedding model defaults to off), `anthropic` and `chatgpt` → `openai` when `OPENAI_API_KEY` or `NEXUS_API_URL` is set (the gateway holds the key) and `none` otherwise, `litellm` → `none`. | derived |
 
 The embedding model itself still comes from the selected platform's
 `*_EMBEDDING_MODEL_ID` variable above, with the same credentials. With
