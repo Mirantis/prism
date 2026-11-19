@@ -57,6 +57,9 @@ function stripHostAuthState(dbPath: string): void {
       .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'runtime_state'`)
       .get();
     if (!hasTable) return;
+    // Overwrite deleted cells with zeros so raw token bytes are not recoverable
+    // from SQLite free space inside exported `.prism` archives.
+    db.pragma('secure_delete = ON');
     const placeholders = STRIPPED_RUNTIME_STATE_KEYS.map(() => '?').join(', ');
     db.prepare(`DELETE FROM runtime_state WHERE key IN (${placeholders})`).run(
       ...STRIPPED_RUNTIME_STATE_KEYS,

@@ -182,6 +182,7 @@ async function commitTokensIfCurrent(
   tokens: StoredChatGptTokens,
   issuedClientId?: string,
   expectedTokens?: StoredChatGptTokens | null,
+  advanceGeneration = false,
 ): Promise<boolean> {
   let committed = false;
   await enqueuePersist(async () => {
@@ -193,15 +194,22 @@ async function commitTokensIfCurrent(
     }
     if (sessionGeneration !== expectedGeneration) return;
     cachedTokens = tokens;
+    if (advanceGeneration) {
+      sessionGeneration += 1;
+    }
     await runtimeStateService.set(CHATGPT_AUTH_TOKENS, JSON.stringify(tokens));
     committed = true;
   });
   return committed;
 }
 
-async function clearTokensIfCurrent(expectedGeneration?: number): Promise<void> {
+async function clearTokensIfCurrent(
+  expectedGeneration?: number,
+  expectedTokens?: StoredChatGptTokens | null,
+): Promise<void> {
   await enqueuePersist(async () => {
     if (expectedGeneration !== undefined && sessionGeneration !== expectedGeneration) return;
+    if (expectedTokens !== undefined && cachedTokens !== expectedTokens) return;
     cachedTokens = null;
     await runtimeStateService.delete(CHATGPT_AUTH_TOKENS);
   });
@@ -382,6 +390,8 @@ export const chatGptAuthService = {
       attempt.generation,
       tokens,
       effectiveClientId && attempt.isDynamicRegistration ? effectiveClientId : undefined,
+      undefined,
+      true,
     );
     if (!committed) {
       trackEvent('chatgpt auth failed', config.ownerUserId, { 'auth.reason': 'superseded' });
@@ -415,7 +425,7 @@ export const chatGptAuthService = {
 
     if (!cachedTokens.refreshToken) {
       if (forceRefresh || cachedTokens.expiresAt <= Date.now()) {
-        await clearTokensIfCurrent(sessionGeneration);
+        await clearTokensIfCurrent(sessionGeneration, cachedTokens);
         throw new ChatGptAuthError('ChatGPT session expired. Please sign in again.', 401);
       }
       return cachedTokens.accessToken;
@@ -434,7 +444,7 @@ export const chatGptAuthService = {
     const current = cachedTokens;
     const clientId = await loadClientId();
     if (!current?.refreshToken || !clientId) {
-      await clearTokensIfCurrent(generation);
+      await clearTokensIfCurrent(generation, current);
       throw new ChatGptAuthError('ChatGPT session cannot be refreshed. Please sign in again.', 401);
     }
 
@@ -457,7 +467,7 @@ export const chatGptAuthService = {
         'auth.status_code': String(response.status),
       });
       if (response.status === 400 || response.status === 401) {
-        await clearTokensIfCurrent(generation);
+        await clearTokensIfCurrent(generation, current);
       }
       const detail = payload.error_description || payload.error || `HTTP ${response.status}`;
       throw new ChatGptAuthError(`ChatGPT token refresh failed (${detail}). Please sign in again.`, 401);
