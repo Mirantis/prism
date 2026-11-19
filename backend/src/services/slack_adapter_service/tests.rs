@@ -96,7 +96,7 @@ async fn resolves_inbound_mentions_and_rewrites_outbound_ones() {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn the_thread_gate_ignores_threads_without_the_bot_and_reacts_to_tags_of_others() {
+async fn the_thread_gate_ignores_threads_without_the_bot_and_classifies_tags_of_others() {
     let api = fake_slack_api(Arc::new(|method, request| match method {
         "conversations.replies" if request.field("ts").as_deref() == Some("1.0") => (
             200,
@@ -128,7 +128,7 @@ async fn the_thread_gate_ignores_threads_without_the_bot_and_reacts_to_tags_of_o
     let (verdict, _) = adapter()
         .is_bot_in_thread("C1", "2.0", "T-gate", arriving("2.2", "<@U3> can you?"))
         .await;
-    assert_eq!(verdict, ThreadParticipation::React);
+    assert_eq!(verdict, ThreadParticipation::Respond);
 
     let (verdict, messages) = adapter()
         .is_bot_in_thread("C1", "2.0", "T-gate", arriving("2.2", "thanks <@UBOT>"))
@@ -357,13 +357,6 @@ fn drops_the_address_of_a_routed_message_and_keeps_other_handles() {
     );
 }
 
-#[test]
-fn a_reply_that_tags_somebody_else_is_addressed_to_them() {
-    assert!(tags_somebody_else("<@U2> look", "UBOT"));
-    assert!(!tags_somebody_else("<@UBOT> look", "UBOT"));
-    assert!(!tags_somebody_else("look", "UBOT"));
-}
-
 #[tokio::test]
 #[serial_test::serial]
 async fn stores_the_messages_before_the_one_that_brought_the_agent_in_once() {
@@ -541,7 +534,7 @@ async fn judges_a_thread_reply_on_the_stored_thread() {
         .stored_thread_gate(&thread.id, arriving("<@U2> can you check?"), "UBOT")
         .await
         .unwrap();
-    assert_eq!(verdict, ThreadParticipation::React);
+    assert_eq!(verdict, ThreadParticipation::Respond);
 }
 
 #[tokio::test]

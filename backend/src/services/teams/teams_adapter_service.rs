@@ -1694,12 +1694,12 @@ impl TeamsAdapterService {
 
     /// A message that does not mention the bot gets an answer only when it is a
     /// reply in a linked channel's reply chain the bot has answered in, and the
-    /// thread classifier finds it asks the bot for something. A reply in such a
+    /// thread classifier finds it gives the bot something to do. A reply in such a
     /// chain that gets no answer is stored in the thread, so the next turn and
     /// the next classification read it. A message the agent sent to the channel
     /// has a thread, so a reply under it is classified too. Replies under
     /// heartbeat and scheduled-task output have no thread to find, so they need a
-    /// mention. A reply that mentions somebody is addressed to them and ignored.
+    /// mention.
     ///
     /// An ignored reply is stored directly rather than through chat/claim-or-offer:
     /// it is history for the next turn and the next classification to read, not a
@@ -1739,13 +1739,9 @@ impl TeamsAdapterService {
         };
 
         let sender = self.sender(activity);
-        // A reply that mentions somebody is addressed to them.
-        let action = if self.mentions_anyone(activity) {
-            ThreadAction::Ignore
-        } else {
-            self.classify_reply(&thread.id, &mapping.agent_id, &sender, text)
-                .await?
-        };
+        let action = self
+            .classify_reply(&thread.id, &mapping.agent_id, &sender, text)
+            .await?;
 
         if action == ThreadAction::Respond {
             cue.signal().await;
@@ -2323,15 +2319,6 @@ impl TeamsAdapterService {
                         .as_ref()
                         .is_some_and(|m| m.id == activity.recipient.id)
             })
-    }
-
-    fn mentions_anyone(&self, activity: &TeamsActivity) -> bool {
-        activity
-            .entities
-            .as_deref()
-            .unwrap_or_default()
-            .iter()
-            .any(|entity| entity.entity_type == "mention")
     }
 
     /// The AAD object id when Teams sends one, else the Bot Framework id.
