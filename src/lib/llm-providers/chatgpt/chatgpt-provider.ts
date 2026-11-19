@@ -43,13 +43,13 @@ async function chatGptFetch(input: Parameters<typeof globalThis.fetch>[0], init?
   return globalThis.fetch(input, withBearer(init, refreshed));
 }
 
-export function createChatGptProvider(): LlmProvider {
+export function createChatGptProvider(baseURL: string = CHATGPT_API_RESOURCE): LlmProvider {
   logger.info({ routing: 'direct' }, 'Creating ChatGPT subscription provider');
 
   const provider = createOpenAiCompatibleProvider({
     // The real OAuth bearer token is injected per request by `chatGptFetch`.
     apiKey: 'chatgpt-oauth',
-    baseURL: CHATGPT_API_RESOURCE,
+    baseURL,
     fetch: chatGptFetch,
   });
 

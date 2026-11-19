@@ -70,7 +70,7 @@ export function createProvider(): LlmProvider {
     case 'openai':
       return createOpenAiProvider(config.openaiEndpoint);
     case 'chatgpt':
-      return createChatGptProvider();
+      return createChatGptProvider(config.chatgptChatEndpoint);
     case 'openrouter':
       return createOpenRouterProvider(config.openrouterEndpoint);
     case 'anthropic':

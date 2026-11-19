@@ -643,7 +643,6 @@ export interface ChatGptAuthStatus {
 /** Response of `POST /agents/chatgpt-auth/start`. */
 export interface ChatGptSignInStart {
   authorizeUrl: string;
-  state: string;
 }
 
 /** One row of `GET /agents/coding-agents`. */

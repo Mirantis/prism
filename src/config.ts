@@ -435,6 +435,10 @@ const openrouterEndpoint =
 // undefined → no endpoint at all, and `isLiteLlmConfigured` answers false.
 const litellmEndpoint = litellmOverride ?? nexusLiteLlmBaseUrl ?? undefined;
 
+// Sign in with ChatGPT always calls api.openai.com directly (tokens stay local).
+const CHATGPT_DIRECT_BASE_URL = 'https://api.openai.com/v1';
+const chatgptChatEndpoint = CHATGPT_DIRECT_BASE_URL;
+
 // The selected vendor's chat endpoint and the override that supplied it, for the
 // startup log. Anthropic has no mount, so its override is its whole endpoint.
 const chatEndpoints: Record<LlmProviderName, { endpoint?: string; override?: string }> = {
@@ -442,7 +446,7 @@ const chatEndpoints: Record<LlmProviderName, { endpoint?: string; override?: str
   azure: { endpoint: azureChatEndpoint, override: azureFoundryOverride },
   'bedrock-mantle': { endpoint: bedrockMantleChatEndpoint, override: bedrockMantleOverride },
   openai: { endpoint: openaiEndpoint, override: openaiOverride },
-  chatgpt: { endpoint: undefined, override: undefined },
+  chatgpt: { endpoint: chatgptChatEndpoint, override: undefined },
   openrouter: { endpoint: openrouterEndpoint, override: openrouterOverride },
   anthropic: { endpoint: anthropicBaseUrl, override: anthropicBaseUrl },
   litellm: { endpoint: litellmEndpoint, override: litellmOverride },
@@ -547,14 +551,16 @@ type EmbeddingProviderName = (typeof EMBEDDING_PROVIDERS)[number];
 // (NEXUS_API_URL set), and otherwise runs without vectors. litellm runs without
 // them: its embedding models are the operator's aliases, so none is right by
 // default.
+const openaiKeyOrGatewayEmbedding: EmbeddingProviderName =
+  openaiApiKey || nexusOpenAiBaseUrl ? 'openai' : 'none';
 const EMBEDDING_PROVIDER_DEFAULTS: Record<LlmProviderName, EmbeddingProviderName> = {
   bedrock: 'bedrock',
   azure: 'azure-openai',
   'bedrock-mantle': 'bedrock',
   openai: 'openai',
-  chatgpt: openaiApiKey || nexusOpenAiBaseUrl ? 'openai' : 'none',
+  chatgpt: openaiKeyOrGatewayEmbedding,
   openrouter: 'openrouter',
-  anthropic: openaiApiKey || nexusOpenAiBaseUrl ? 'openai' : 'none',
+  anthropic: openaiKeyOrGatewayEmbedding,
   litellm: 'none',
 };
 const rawEmbeddingProvider = (process.env.EMBEDDING_PROVIDER || '').trim().toLowerCase();
@@ -1029,6 +1035,7 @@ export const config = {
   openaiClassificationModelId,
   openaiEmbeddingModelId,
   openaiEndpoint,
+  chatgptChatEndpoint,
   nexusOpenAiBaseUrl,
 
   // OpenRouter (used when LLM_PROVIDER=openrouter). Same OpenAI surface, a

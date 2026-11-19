@@ -46,6 +46,14 @@ function makeIdToken(payload: Record<string, unknown>): string {
   return `${header}.${body}.sig`;
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
 describe('chatGptAuthService', () => {
   const originalFetch = globalThis.fetch;
 
@@ -70,7 +78,7 @@ describe('chatGptAuthService', () => {
     expect(url.searchParams.get('scope')).toBe(CHATGPT_OAUTH_SCOPES);
     expect(url.searchParams.get('resource')).toBe(CHATGPT_API_RESOURCE);
     expect(url.searchParams.get('code_challenge_method')).toBe('S256');
-    expect(url.searchParams.get('state')).toBe(first.state);
+    expect(url.searchParams.get('state')).toBeTruthy();
 
     // Subsequent sign-in reuses the same persistent host ID.
     const second = await chatGptAuthService.startSignIn('http://127.0.0.1:3003/agents/chatgpt-auth/callback');
@@ -83,13 +91,37 @@ describe('chatGptAuthService', () => {
     );
   });
 
-  it('reuses saved issued client_id and omits agent_name_hint on subsequent sign-ins', async () => {
+  it('reuses saved issued client_id, omits agent_name_hint, and ignores forged callback client_id', async () => {
     store.set('chatgptAuthClientId', 'oaiapp_existing123');
     const { authorizeUrl } = await chatGptAuthService.startSignIn('http://127.0.0.1:3003/agents/chatgpt-auth/callback');
     const url = new URL(authorizeUrl);
+    const state = url.searchParams.get('state')!;
 
     expect(url.searchParams.get('client_id')).toBe('oaiapp_existing123');
     expect(url.searchParams.get('agent_name_hint')).toBeNull();
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          access_token: 'access-existing',
+          refresh_token: 'refresh-existing',
+          expires_in: 3600,
+          scope: CHATGPT_OAUTH_SCOPES,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    globalThis.fetch = fetchMock;
+
+    await chatGptAuthService.handleCallback({
+      code: 'code-1',
+      state,
+      clientId: 'oaiapp_forged',
+    });
+
+    const body = fetchMock.mock.calls[0][1].body as URLSearchParams;
+    expect(body.get('client_id')).toBe('oaiapp_existing123');
+    expect(store.get('chatgptAuthClientId')).toBe('oaiapp_existing123');
   });
 
   it('exchanges callback code, persists issued client_id + tokens, and exposes signed-in status', async () => {
@@ -107,7 +139,8 @@ describe('chatGptAuthService', () => {
     );
     globalThis.fetch = fetchMock;
 
-    const { state } = await chatGptAuthService.startSignIn('http://127.0.0.1:3003/agents/chatgpt-auth/callback');
+    const { authorizeUrl } = await chatGptAuthService.startSignIn('http://127.0.0.1:3003/agents/chatgpt-auth/callback');
+    const state = new URL(authorizeUrl).searchParams.get('state')!;
     const status = await chatGptAuthService.handleCallback({
       code: 'auth-code-123',
       state,
@@ -134,6 +167,28 @@ describe('chatGptAuthService', () => {
     );
   });
 
+  it('rejects dynamic registration callback when neither callback nor token response supplies a client_id', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          access_token: 'access-no-client',
+          refresh_token: 'refresh-1',
+          expires_in: 3600,
+          scope: CHATGPT_OAUTH_SCOPES,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const { authorizeUrl } = await chatGptAuthService.startSignIn('http://127.0.0.1:3003/agents/chatgpt-auth/callback');
+    const state = new URL(authorizeUrl).searchParams.get('state')!;
+    await expect(
+      chatGptAuthService.handleCallback({ code: 'code-1', state }),
+    ).rejects.toMatchObject({ statusCode: 502 });
+    expect(chatGptAuthService.isSignedIn()).toBe(false);
+    expect(store.has('chatgptAuthTokens')).toBe(false);
+  });
+
   it('rejects callback when state is unknown or reused', async () => {
     await expect(
       chatGptAuthService.handleCallback({ code: 'abc', state: 'bogus' }),
@@ -152,7 +207,8 @@ describe('chatGptAuthService', () => {
       ),
     );
 
-    const { state } = await chatGptAuthService.startSignIn('http://127.0.0.1:3003/agents/chatgpt-auth/callback');
+    const { authorizeUrl } = await chatGptAuthService.startSignIn('http://127.0.0.1:3003/agents/chatgpt-auth/callback');
+    const state = new URL(authorizeUrl).searchParams.get('state')!;
     await expect(
       chatGptAuthService.handleCallback({ code: 'code-1', state, clientId: 'oaiapp_1' }),
     ).rejects.toMatchObject({ statusCode: 403 });
@@ -195,7 +251,71 @@ describe('chatGptAuthService', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('clears tokens on 401 refresh failure while keeping host ID and client ID', async () => {
+  it('rejects a delayed refresh that finishes after signOut without restoring memory or SQLite', async () => {
+    store.set('chatgptAuthClientId', 'oaiapp_refresh');
+    store.set(
+      'chatgptAuthTokens',
+      JSON.stringify({
+        accessToken: 'expired-access',
+        refreshToken: 'refresh-old',
+        expiresAt: Date.now() - 1000,
+        scope: CHATGPT_DIRECT_USAGE_SCOPE,
+        email: 'user@example.com',
+      }),
+    );
+    await chatGptAuthService.load();
+
+    const gate = deferred<Response>();
+    globalThis.fetch = vi.fn().mockReturnValue(gate.promise);
+
+    const refreshPromise = chatGptAuthService.getAccessToken();
+    await chatGptAuthService.signOut();
+
+    gate.resolve(
+      new Response(
+        JSON.stringify({ access_token: 'stale-fresh', refresh_token: 'stale-refresh', expires_in: 3600 }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    await expect(refreshPromise).rejects.toThrow(ChatGptAuthError);
+    expect(chatGptAuthService.isSignedIn()).toBe(false);
+    expect(store.has('chatgptAuthTokens')).toBe(false);
+  });
+
+  it('rejects a delayed OAuth callback that finishes after signOut without restoring memory or SQLite', async () => {
+    const gate = deferred<Response>();
+    globalThis.fetch = vi.fn().mockReturnValue(gate.promise);
+
+    const { authorizeUrl } = await chatGptAuthService.startSignIn('http://127.0.0.1:3003/agents/chatgpt-auth/callback');
+    const state = new URL(authorizeUrl).searchParams.get('state')!;
+
+    const callbackPromise = chatGptAuthService.handleCallback({
+      code: 'code-late',
+      state,
+      clientId: 'oaiapp_late',
+    });
+
+    await chatGptAuthService.signOut();
+
+    gate.resolve(
+      new Response(
+        JSON.stringify({
+          access_token: 'late-access',
+          refresh_token: 'late-refresh',
+          expires_in: 3600,
+          scope: CHATGPT_OAUTH_SCOPES,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    await expect(callbackPromise).rejects.toMatchObject({ statusCode: 409 });
+    expect(chatGptAuthService.isSignedIn()).toBe(false);
+    expect(store.has('chatgptAuthTokens')).toBe(false);
+  });
+
+  it('clears tokens on 400 refresh failure while keeping host ID and client ID', async () => {
     store.set('chatgptAuthHostId', 'urn:uuid:host-1');
     store.set('chatgptAuthClientId', 'oaiapp_keep');
     store.set(
@@ -221,7 +341,7 @@ describe('chatGptAuthService', () => {
     expect(store.has('chatgptAuthTokens')).toBe(false);
   });
 
-  it('signOut clears tokens but preserves host ID and issued client ID', async () => {
+  it('signOut clears tokens and pending attempts while preserving host ID and issued client ID', async () => {
     store.set('chatgptAuthHostId', 'urn:uuid:host-1');
     store.set('chatgptAuthClientId', 'oaiapp_keep');
     store.set(
@@ -235,6 +355,8 @@ describe('chatGptAuthService', () => {
       }),
     );
     await chatGptAuthService.load();
+    const { authorizeUrl } = await chatGptAuthService.startSignIn('http://127.0.0.1:3003/agents/chatgpt-auth/callback');
+    const pendingState = new URL(authorizeUrl).searchParams.get('state')!;
     expect(chatGptAuthService.isSignedIn()).toBe(true);
 
     const after = await chatGptAuthService.signOut();
@@ -242,6 +364,9 @@ describe('chatGptAuthService', () => {
     expect(store.get('chatgptAuthHostId')).toBe('urn:uuid:host-1');
     expect(store.get('chatgptAuthClientId')).toBe('oaiapp_keep');
     expect(store.has('chatgptAuthTokens')).toBe(false);
+    await expect(
+      chatGptAuthService.handleCallback({ code: 'c', state: pendingState }),
+    ).rejects.toThrow(ChatGptAuthError);
     expect(mockTrackEvent).toHaveBeenCalledWith('chatgpt auth signed out', expect.any(String), {});
   });
 });

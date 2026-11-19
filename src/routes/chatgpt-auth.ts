@@ -3,7 +3,7 @@
  *
  * Mounted under `/agents` in `src/server.ts`:
  *   GET  /agents/chatgpt-auth/status   — { enabled, signedIn, email, expiresAt }
- *   POST /agents/chatgpt-auth/start    — { authorizeUrl, state }
+ *   POST /agents/chatgpt-auth/start    — { authorizeUrl }
  *   GET  /agents/chatgpt-auth/callback — OAuth 2.0 PKCE browser callback
  *   POST /agents/chatgpt-auth/sign-out — clears stored tokens
  */
@@ -17,12 +17,24 @@ export const chatGptAuthRouter = Router();
 
 const CALLBACK_PATH = '/agents/chatgpt-auth/callback';
 
+function firstHeaderValue(header: string | string[] | undefined): string | undefined {
+  const value = Array.isArray(header) ? header[0] : header;
+  return value?.split(',')[0].trim() || undefined;
+}
+
 function callbackUrlFor(req: Request): string {
   if (config.publicUrl) {
     return `${config.publicUrl}${CALLBACK_PATH}`;
   }
-  const host = req.get('host') || `127.0.0.1:${config.port}`;
-  const proto = req.protocol === 'https' ? 'https' : 'http';
+  const forwardedHost = firstHeaderValue(req.headers['x-forwarded-host']);
+  const forwardedProto = firstHeaderValue(req.headers['x-forwarded-proto'])?.toLowerCase();
+  const host = forwardedHost || req.get('host') || `127.0.0.1:${config.port}`;
+  const proto =
+    forwardedProto === 'https' || forwardedProto === 'http'
+      ? forwardedProto
+      : req.protocol === 'https'
+        ? 'https'
+        : 'http';
   return `${proto}://${host}${CALLBACK_PATH}`;
 }
 
@@ -66,8 +78,8 @@ chatGptAuthRouter.get('/chatgpt-auth/status', (_req: Request, res: Response) => 
 
 chatGptAuthRouter.post('/chatgpt-auth/start', async (req: Request, res: Response) => {
   try {
-    const result = await chatGptAuthService.startSignIn(callbackUrlFor(req));
-    res.status(201).json(result);
+    const { authorizeUrl } = await chatGptAuthService.startSignIn(callbackUrlFor(req));
+    res.status(201).json({ authorizeUrl });
   } catch (err) {
     logger.error({ err }, '[ChatGptAuth] Failed to start sign-in');
     res.status(500).json({ error: 'Could not start Sign in with ChatGPT.' });
