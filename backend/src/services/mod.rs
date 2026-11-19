@@ -24,6 +24,7 @@ pub mod goal_service;
 pub mod heartbeat_schedule;
 pub mod heartbeat_service;
 pub mod inbound_message_service;
+pub mod inline_image_placement;
 pub mod llm_call_service;
 pub mod llm_usage_service;
 pub mod meeting;

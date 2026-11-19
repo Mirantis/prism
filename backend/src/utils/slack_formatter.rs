@@ -8,6 +8,7 @@
 //!            inline code, code blocks, links, images (as links)
 //! Not supported: Tables, syntax highlighting, horizontal rules
 
+use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use indexmap::IndexSet;
@@ -15,6 +16,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::lib::inline_images::{attachment_ref_id, find_image_refs, replace_image_refs};
 use crate::support::js::{len16, trim as js_trim};
 use crate::utils::text_chunker::split_content;
 
@@ -61,6 +63,17 @@ pub enum SlackBlock {
         block_id: String,
         elements: Vec<ButtonElement>,
     },
+    /// An image the bot uploaded, named by its Slack file id.
+    Image {
+        slack_file: SlackFile,
+        alt_text: String,
+    },
+}
+
+/// A Slack file an image block names.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlackFile {
+    pub id: String,
 }
 
 impl SlackBlock {
@@ -78,6 +91,7 @@ impl SlackBlock {
 
 /// Individual block text limit
 const BLOCK_TEXT_LIMIT: usize = 3000;
+const ALT_TEXT_LIMIT: usize = 2000;
 
 // ============================================================================
 // Feedback buttons (👍 / 👎 on agent responses)
@@ -211,6 +225,47 @@ pub struct FormatSlackMessageOptions {
     /// When set, append a 👍/👎 feedback actions block keyed by this message id.
     /// The caller is responsible for gating (length / cadence / terminal-only).
     pub feedback_message_id: Option<String>,
+    /// Attachment id → Slack file id of the images the text places, each shown as
+    /// an image block at its place. Any other `attachment:` image reads as its
+    /// description.
+    pub images: HashMap<String, String>,
+}
+
+enum TextOrImage {
+    Text(String),
+    Image(SlackBlock),
+}
+
+/// The content as text pieces and the image blocks between them.
+fn split_at_images(content: &str, images: Option<&HashMap<String, String>>) -> Vec<TextOrImage> {
+    let mut parts = Vec::new();
+    let mut at = 0;
+    for image in find_image_refs(content) {
+        let Some(file_id) = attachment_ref_id(&image.target).and_then(|id| images?.get(id)) else {
+            continue;
+        };
+        parts.push(TextOrImage::Text(describe_images(
+            &content[at..image.start],
+        )));
+        let alt = js_trim(&image.alt);
+        let alt = if alt.is_empty() { "image" } else { alt };
+        parts.push(TextOrImage::Image(SlackBlock::Image {
+            slack_file: SlackFile {
+                id: file_id.clone(),
+            },
+            alt_text: alt.chars().take(ALT_TEXT_LIMIT).collect(),
+        }));
+        at = image.end;
+    }
+    parts.push(TextOrImage::Text(describe_images(&content[at..])));
+    parts
+}
+
+/// Each `attachment:` image as its description, which Slack's markdown can show.
+pub fn describe_images(content: &str) -> String {
+    replace_image_refs(content, &find_image_refs(content), |image| {
+        attachment_ref_id(&image.target).map(|_| image.alt.clone())
+    })
 }
 
 /// A message ready for `chat.postMessage`: the fallback text and the blocks.
@@ -257,17 +312,27 @@ pub fn format_slack_message(
 
     // Convert tables to text format (markdown blocks don't support tables)
     let processed_content = convert_tables_to_text(content);
-    let processed_length = len16(&processed_content);
 
-    // Split into chunks if content is too long
-    if processed_length > 0 && processed_length <= BLOCK_TEXT_LIMIT {
-        // Single markdown block
-        blocks.push(SlackBlock::markdown(processed_content));
-    } else if processed_length > BLOCK_TEXT_LIMIT {
-        // Split by paragraphs/sections to stay within limits
-        for section in split_content(&processed_content, BLOCK_TEXT_LIMIT) {
-            if !js_trim(&section).is_empty() {
-                blocks.push(SlackBlock::markdown(section));
+    for part in split_at_images(&processed_content, options.map(|o| &o.images)) {
+        let text = match part {
+            TextOrImage::Image(block) => {
+                blocks.push(block);
+                continue;
+            }
+            TextOrImage::Text(text) => text,
+        };
+        let length = len16(&text);
+        if length > 0 && length <= BLOCK_TEXT_LIMIT {
+            // Single markdown block
+            if !js_trim(&text).is_empty() {
+                blocks.push(SlackBlock::markdown(text));
+            }
+        } else if length > BLOCK_TEXT_LIMIT {
+            // Split by paragraphs/sections to stay within limits
+            for section in split_content(&text, BLOCK_TEXT_LIMIT) {
+                if !js_trim(&section).is_empty() {
+                    blocks.push(SlackBlock::markdown(section));
+                }
             }
         }
     }
@@ -283,10 +348,11 @@ pub fn format_slack_message(
     // Ensure we have at least one block
     let only_context = blocks.len() == 1 && matches!(blocks[0], SlackBlock::Context { .. });
     if blocks.is_empty() || only_context {
-        let text = if content.is_empty() {
-            "(empty message)"
+        let described = describe_images(content);
+        let text = if described.is_empty() {
+            "(empty message)".to_string()
         } else {
-            content
+            described
         };
         blocks.push(SlackBlock::markdown(text));
     }
@@ -307,7 +373,7 @@ pub fn format_slack_message(
 
     FormattedSlackMessage {
         // Fallback plain text for notifications
-        text: content.to_string(),
+        text: describe_images(content),
         blocks,
     }
 }
@@ -644,6 +710,7 @@ mod tests {
             None,
             Some(&FormatSlackMessageOptions {
                 feedback_message_id: Some("msg-42".into()),
+                ..Default::default()
             }),
         );
         let actions = result
@@ -675,6 +742,7 @@ mod tests {
             Some(&[json!({ "tool": "kubectl" })]),
             Some(&FormatSlackMessageOptions {
                 feedback_message_id: Some("msg-42".into()),
+                ..Default::default()
             }),
         );
         assert!(matches!(
@@ -702,6 +770,7 @@ mod tests {
             Some(&[json!({ "tool": "shell_exec" })]),
             Some(&FormatSlackMessageOptions {
                 feedback_message_id: Some("m-1".into()),
+                ..Default::default()
             }),
         );
         assert_eq!(
@@ -721,5 +790,52 @@ mod tests {
     #[test]
     fn tells_the_agent_to_mention_someone_with_their_token() {
         assert!(slack_channel_label("alerts").contains("writing their token"));
+    }
+
+    const CHART: &str = "3f2a9c1e-5b7d-4e8a-9c21-7d4e5f6a8b90";
+
+    fn charted() -> String {
+        format!("Rates fell.\n\n![Euribor, past year](attachment:{CHART})\n\nThey bottomed in May.")
+    }
+
+    #[test]
+    fn shows_an_uploaded_image_as_an_image_block_at_its_place() {
+        let formatted = format_slack_message(
+            &charted(),
+            None,
+            None,
+            Some(&FormatSlackMessageOptions {
+                images: HashMap::from([(CHART.to_string(), "F_CHART".to_string())]),
+                ..Default::default()
+            }),
+        );
+        let blocks = serde_json::to_value(&formatted.blocks).unwrap();
+        let kinds: Vec<&str> = blocks
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| b["type"].as_str().unwrap())
+            .collect();
+        assert_eq!(kinds, ["markdown", "image", "markdown"]);
+        assert_eq!(
+            blocks[1],
+            serde_json::json!({ "type": "image", "slack_file": { "id": "F_CHART" }, "alt_text": "Euribor, past year" })
+        );
+        assert_eq!(
+            formatted.text,
+            "Rates fell.\n\nEuribor, past year\n\nThey bottomed in May."
+        );
+    }
+
+    #[test]
+    fn writes_an_image_it_has_no_upload_for_as_its_description_and_leaves_a_web_image_as_written() {
+        let content = format!("{}\n\n![logo](https://example.com/logo.png)", charted());
+        let formatted = format_slack_message(&content, None, None, None);
+        assert_eq!(
+            formatted.blocks,
+            vec![SlackBlock::markdown(
+                "Rates fell.\n\nEuribor, past year\n\nThey bottomed in May.\n\n![logo](https://example.com/logo.png)"
+            )]
+        );
     }
 }

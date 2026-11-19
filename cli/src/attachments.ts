@@ -120,3 +120,33 @@ export function listPathSuggestions(partial: string, cwd = process.cwd()): PathS
       };
     });
 }
+
+/**
+ * The files of the latest run that delivered any. A chat turn is every reply
+ * since the user's last message, oldest first: a verbose turn places a chart in
+ * one step's reply and attaches a CSV to the last, and `/save` offers both. A
+ * goal, scheduled or heartbeat message is a run of its own, offered only when
+ * it is the newest message with files. With no files since the user's last
+ * message, the newest run that has any.
+ */
+export function latestTurnAttachments(
+  messages: ReadonlyArray<{ role: string; triggeredBy?: string; attachments?: AttachmentMeta[] | null }>,
+): AttachmentMeta[] {
+  const turn: AttachmentMeta[][] = [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!;
+    if (m.role === 'USER') {
+      if (turn.length > 0) break;
+      continue;
+    }
+    if (m.role !== 'AGENT' || !Array.isArray(m.attachments) || m.attachments.length === 0) continue;
+    const chatReply = (m.triggeredBy ?? 'USER_INPUT') === 'USER_INPUT';
+    // A bound scheduled task can reply on the thread while a chat turn runs
+    // there: skip its message so the turn's earlier replies still count.
+    if (turn.length > 0 && !chatReply) continue;
+    turn.unshift(m.attachments);
+    if (!chatReply) break;
+  }
+  const seen = new Set<string>();
+  return turn.flat().filter((a) => !seen.has(a.id) && seen.add(a.id));
+}

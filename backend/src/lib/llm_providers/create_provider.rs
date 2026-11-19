@@ -45,7 +45,9 @@ use crate::lib::llm_providers::anthropic::anthropic_provider::{
 use crate::lib::llm_providers::azure::azure_provider::{
     create_azure_provider, missing_azure_settings,
 };
-use crate::lib::llm_providers::bedrock::bedrock_provider::create_bedrock_provider;
+use crate::lib::llm_providers::bedrock::bedrock_provider::{
+    create_bedrock_provider, missing_bedrock_settings,
+};
 use crate::lib::llm_providers::bedrock_mantle::bedrock_mantle_provider::{
     create_bedrock_mantle_provider, missing_bedrock_mantle_settings,
 };
@@ -100,8 +102,9 @@ pub fn create_provider() -> LlmProvider {
 
 /// The settings the selected provider still needs, by variable name; empty when it
 /// can serve requests. Every model id has a default, so what can be missing is a
-/// key or an endpoint.
-pub fn missing_provider_settings() -> Vec<String> {
+/// key or an endpoint. Bedrock can wait on the network while the AWS chain looks for
+/// a source.
+pub async fn missing_provider_settings() -> Vec<String> {
     match CONFIG.llm_provider {
         LlmProviderName::Azure => missing_azure_settings(),
         LlmProviderName::BedrockMantle => missing_bedrock_mantle_settings(),
@@ -109,9 +112,7 @@ pub fn missing_provider_settings() -> Vec<String> {
         LlmProviderName::Openrouter => missing_open_router_settings(),
         LlmProviderName::Anthropic => missing_anthropic_settings(),
         LlmProviderName::Litellm => missing_lite_llm_settings(),
-        // Bedrock finds its credentials through the AWS SDK's own chain (the task
-        // role in ECS) when a request is made.
-        LlmProviderName::Bedrock => Vec::new(),
+        LlmProviderName::Bedrock => missing_bedrock_settings().await,
     }
 }
 
@@ -252,11 +253,5 @@ mod tests {
         // The gateway meters LiteLLM by the cost LiteLLM reports, on its own mount.
         let config = test_config(&[("LLM_PROVIDER", "litellm"), GATEWAY]);
         assert_eq!(route(&config), ProviderRoute::Litellm(Some(LITELLM_MOUNT)));
-    }
-
-    #[test]
-    fn bedrock_needs_no_settings_since_the_aws_sdk_finds_its_credentials_at_request_time() {
-        // The unit test configuration runs bedrock.
-        assert!(missing_provider_settings().is_empty());
     }
 }

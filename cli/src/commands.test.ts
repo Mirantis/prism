@@ -32,6 +32,7 @@ function stubApi(): { [K in keyof ApiClient]: ReturnType<typeof vi.fn> } {
     setAgentGuide: vi.fn(),
     getModel: vi.fn(),
     setModel: vi.fn(),
+    getLlmProvider: vi.fn(),
     getHeartbeatModel: vi.fn(),
     setHeartbeatModel: vi.fn(),
     getCronModel: vi.fn(),
@@ -1017,6 +1018,41 @@ describe('/save', () => {
       }),
     );
     expect(out).toMatch(/failed to save/i);
+  });
+
+  it('gives a second file of the same name its own path', async () => {
+    const dir = tmpDir();
+    const api = stubApi();
+    api.downloadAttachment.mockImplementation(async (id: string) => Buffer.from(id));
+    const out = await cmd('/save').run(
+      makeCtx({
+        api: api as unknown as ApiClient,
+        recentAttachments: [meta('first', 'chart.png'), meta('second', 'chart.png')],
+        rawArgs: dir,
+      }),
+    );
+    expect(fs.readFileSync(path.join(dir, 'chart.png'), 'utf8')).toBe('first');
+    expect(fs.readFileSync(path.join(dir, 'chart-2.png'), 'utf8')).toBe('second');
+    expect(out).toContain('Saved 2 file(s)');
+  });
+
+  it('saves the other files when one download fails, and names the failure', async () => {
+    const dir = tmpDir();
+    const api = stubApi();
+    api.downloadAttachment.mockImplementation(async (id: string) => {
+      if (id === 'expired') throw new ApiError('gone', 410);
+      return Buffer.from(id);
+    });
+    const out = await cmd('/save').run(
+      makeCtx({
+        api: api as unknown as ApiClient,
+        recentAttachments: [meta('expired', 'old.csv'), meta('fresh', 'new.csv')],
+        rawArgs: dir,
+      }),
+    );
+    expect(fs.readFileSync(path.join(dir, 'new.csv'), 'utf8')).toBe('fresh');
+    expect(out).toContain('Saved 1 file(s)');
+    expect(out).toContain('Failed to save old.csv: gone');
   });
 });
 

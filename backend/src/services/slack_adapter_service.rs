@@ -81,8 +81,8 @@ use crate::types::ChannelTriggerMessage;
 use crate::utils::poll_until::PollUntilOptions;
 use crate::utils::slack_formatter::{
     FEEDBACK_ACK_BLOCK_ID, FEEDBACK_ACTION_DOWN, FEEDBACK_ACTION_UP, FEEDBACK_BLOCK_ID,
-    FeedbackRating, FormatSlackMessageOptions, FormattedSlackMessage, build_feedback_ack_block,
-    format_slack_message, slack_channel_label,
+    FeedbackRating, FormatSlackMessageOptions, FormattedSlackMessage, SlackBlock,
+    build_feedback_ack_block, format_slack_message, slack_channel_label,
 };
 use crate::{log_debug, log_error, log_info, log_warn};
 
@@ -809,29 +809,22 @@ impl SlackAdapterService {
                 };
 
                 let delivered: anyhow::Result<()> = async {
-                    let formatted = self
-                        .prepare_outbound_message(
-                            &row.content,
-                            &connection.team_id,
-                            Some(row.triggered_by.as_str()),
-                            row.tool_calls.as_ref(),
-                            include_feedback.then(|| FormatSlackMessageOptions {
-                                feedback_message_id: Some(row.id.clone()),
-                            }),
-                        )
-                        .await;
-
-                    let dm_response = slack_app
-                        .client
-                        .api_call(
-                            "chat.postMessage",
+                    let (dm_response, files) = self
+                        .post_showing_images(
+                            &slack_app.client,
+                            attachments,
+                            Outbound {
+                                content: &row.content,
+                                team_id: &connection.team_id,
+                                triggered_by: Some(row.triggered_by.as_str()),
+                                tool_calls: row.tool_calls.as_ref(),
+                                feedback_message_id: include_feedback.then(|| row.id.clone()),
+                            },
                             json!({
                                 "channel": dm_channel_id,
                                 // Reply into the DM thread if the incoming message was in one;
                                 // absent posts the reply top-level.
                                 "thread_ts": channel_context.and_then(|c| c.channel_thread_id.clone()),
-                                "text": formatted.text,
-                                "blocks": formatted.blocks,
                                 "metadata": {
                                     "event_type": "lens_platform_message",
                                     "event_payload": {
@@ -856,7 +849,7 @@ impl SlackAdapterService {
                         &slack_app.client,
                         dm_channel_id,
                         ts.as_deref(),
-                        attachments,
+                        &files,
                     )
                     .await;
 
@@ -973,21 +966,6 @@ impl SlackAdapterService {
         };
 
         let delivered: anyhow::Result<()> = async {
-            let formatted = self
-                .prepare_outbound_message(
-                    content,
-                    &team_id,
-                    triggered_by,
-                    tool_calls,
-                    match (include_feedback, message_id) {
-                        (true, Some(id)) => Some(FormatSlackMessageOptions {
-                            feedback_message_id: Some(id.to_string()),
-                        }),
-                        _ => None,
-                    },
-                )
-                .await;
-
             let mut payload = serde_json::Map::new();
             payload.insert("threadId".into(), json!(thread_id));
             if let Some(id) = message_id {
@@ -996,15 +974,23 @@ impl SlackAdapterService {
             if let Some(trigger) = triggered_by {
                 payload.insert("triggeredBy".into(), json!(trigger));
             }
-            let response = slack_app
-                .client
-                .api_call(
-                    "chat.postMessage",
+            let (response, files) = self
+                .post_showing_images(
+                    &slack_app.client,
+                    attachments,
+                    Outbound {
+                        content,
+                        team_id: &team_id,
+                        triggered_by,
+                        tool_calls,
+                        feedback_message_id: match (include_feedback, message_id) {
+                            (true, Some(id)) => Some(id.to_string()),
+                            _ => None,
+                        },
+                    },
                     json!({
                         "channel": channel_id,
                         "thread_ts": thread_ts, // Reply in thread if specified
-                        "text": formatted.text,
-                        "blocks": formatted.blocks,
                         "metadata": {
                             "event_type": "lens_platform_message",
                             "event_payload": payload,
@@ -1040,7 +1026,7 @@ impl SlackAdapterService {
                 &slack_app.client,
                 channel_id,
                 ts.as_deref().or(thread_ts),
-                attachments,
+                &files,
             )
             .await;
 
@@ -1328,6 +1314,118 @@ impl SlackAdapterService {
         Ok(members)
     }
 
+    /// Post a reply with the images its text places as image blocks at their place.
+    /// Each image is uploaded to no channel first, so a block can name it. When
+    /// Slack refuses the message with them, the text is posted with each image's
+    /// description, and the images go with the files uploaded after it. Answers
+    /// the posted message and the files it does not show.
+    async fn post_showing_images(
+        &self,
+        client: &SlackWebClient,
+        attachments: &[AttachmentMeta],
+        outbound: Outbound<'_>,
+        message: serde_json::Value,
+    ) -> anyhow::Result<(serde_json::Value, Vec<AttachmentMeta>)> {
+        let format = |images: HashMap<String, String>| {
+            self.prepare_outbound_message(
+                outbound.content,
+                outbound.team_id,
+                outbound.triggered_by,
+                outbound.tool_calls,
+                Some(FormatSlackMessageOptions {
+                    feedback_message_id: outbound.feedback_message_id.clone(),
+                    images,
+                }),
+            )
+        };
+        let post = |formatted: FormattedSlackMessage| {
+            let mut args = message.clone();
+            args["text"] = json!(formatted.text);
+            args["blocks"] = json!(formatted.blocks);
+            client.api_call("chat.postMessage", args)
+        };
+        let images = self.upload_inline_images(client, attachments).await;
+        if images.is_empty() {
+            let response = post(format(images).await).await?;
+            return Ok((response, attachments.to_vec()));
+        }
+        let formatted = format(images.clone()).await;
+        // The formatter can cut blocks past Slack's limit, so an image counts as
+        // shown only when its block is still in the message.
+        let shown: HashSet<String> = formatted
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                SlackBlock::Image { slack_file, .. } => Some(slack_file.id.clone()),
+                _ => None,
+            })
+            .collect();
+        match post(formatted).await {
+            Ok(response) => {
+                let files = attachments
+                    .iter()
+                    .filter(|a| !images.get(&a.id).is_some_and(|id| shown.contains(id)))
+                    .cloned()
+                    .collect();
+                Ok((response, files))
+            }
+            // Only a refused block is worth a second post. Any other failure
+            // (not_in_channel, channel_not_found, …) would fail the same way again.
+            Err(error)
+                if slack_platform_error_code(&error).as_deref() == Some("invalid_blocks") =>
+            {
+                log_warn!(
+                    "[Slack] message with {} image block(s) refused (invalid_blocks); posting the images after it",
+                    shown.len()
+                );
+                let response = post(format(HashMap::new()).await).await?;
+                Ok((response, attachments.to_vec()))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Attachment id → Slack file id of each inline image Slack took.
+    async fn upload_inline_images(
+        &self,
+        client: &SlackWebClient,
+        attachments: &[AttachmentMeta],
+    ) -> HashMap<String, String> {
+        let mut images = HashMap::new();
+        for meta in attachments.iter().filter(|a| a.inline == Some(true)) {
+            let uploaded: anyhow::Result<Option<String>> = async {
+                let Some(file) = attachment_bytes(meta).await? else {
+                    return Ok(None);
+                };
+                let upload = client
+                    .files_upload_v2(FileUpload {
+                        channel_id: String::new(),
+                        thread_ts: None,
+                        filename: meta.filename.clone(),
+                        file: Bytes::from(file),
+                    })
+                    .await?;
+                Ok(upload
+                    .pointer("/files/0/files/0/id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string))
+            }
+            .await;
+            match uploaded {
+                Ok(Some(file_id)) => {
+                    images.insert(meta.id.clone(), file_id);
+                }
+                Ok(None) => {}
+                Err(error) => log_warn!(
+                    "[Slack] inline image {} not uploaded: {}",
+                    meta.filename,
+                    error
+                ),
+            }
+        }
+        images
+    }
+
     /// Upload agent-shared files to Slack via `files.uploadV2`, threaded under
     /// `thread_ts` when provided so they sit with the message that referenced them.
     ///
@@ -1346,25 +1444,14 @@ impl SlackAdapterService {
         }
         for meta in attachments {
             let uploaded: anyhow::Result<()> = async {
-                let Some(row) = ATTACHMENT_SERVICE.get_by_id(&meta.id).await? else {
-                    log_warn!(
-                        "[Slack] shared attachment {} not found; skipping upload",
-                        meta.id
-                    );
-                    return Ok(());
-                };
-                let Some(file_bytes) = ATTACHMENT_SERVICE.load_bytes(&row).await? else {
-                    log_warn!(
-                        "[Slack] shared attachment {} has no content (expired); skipping upload",
-                        meta.id
-                    );
+                let Some(file_bytes) = attachment_bytes(meta).await? else {
                     return Ok(());
                 };
                 client
                     .files_upload_v2(FileUpload {
                         channel_id: channel_id.to_string(),
                         thread_ts: thread_ts.filter(|ts| !ts.is_empty()).map(str::to_string),
-                        filename: row.filename.clone(),
+                        filename: meta.filename.clone(),
                         file: Bytes::from(file_bytes),
                     })
                     .await?;
@@ -3947,6 +4034,34 @@ impl ChannelAdapter for SlackAdapterService {
     async fn shutdown(&self) -> anyhow::Result<()> {
         SlackAdapterService::shutdown(self).await
     }
+}
+
+/// What a reply's Slack message is formatted from.
+struct Outbound<'a> {
+    content: &'a str,
+    team_id: &'a str,
+    triggered_by: Option<&'a str>,
+    tool_calls: Option<&'a serde_json::Value>,
+    feedback_message_id: Option<String>,
+}
+
+/// A shared attachment's bytes, or `None` (logged) when it is gone or expired.
+async fn attachment_bytes(meta: &AttachmentMeta) -> anyhow::Result<Option<Vec<u8>>> {
+    let Some(row) = ATTACHMENT_SERVICE.get_by_id(&meta.id).await? else {
+        log_warn!(
+            "[Slack] shared attachment {} not found; skipping upload",
+            meta.id
+        );
+        return Ok(None);
+    };
+    let bytes = ATTACHMENT_SERVICE.load_bytes(&row).await?;
+    if bytes.is_none() {
+        log_warn!(
+            "[Slack] shared attachment {} has no content (expired); skipping upload",
+            meta.id
+        );
+    }
+    Ok(bytes)
 }
 
 pub static SLACK_ADAPTER_SERVICE: LazyLock<SlackAdapterService> =

@@ -48,6 +48,7 @@ use crate::services::delivery_target_service::{
     DELIVER_TARGETS, DELIVERY_TARGET_SERVICE, DeliverTo, DeliveryTarget, TargetPublishOptions,
     TargetTrigger, is_valid_deliver_to_str, parse_comma_list,
 };
+use crate::services::inline_image_placement::place_reply_images;
 use crate::services::message_delivery_service::{MESSAGE_DELIVERY_SERVICE, PublishOptions};
 use crate::services::outbound_message_service::{
     OUTBOUND_MESSAGE_SERVICE, WITHHELD_RUN_TEXT, WithheldRun, sent_message_list, sent_messages,
@@ -1669,15 +1670,25 @@ impl CronSchedulerService {
             // A continuation replies in its conversation, with no "Scheduled Task"
             // header. An empty reply is a wait with nothing to say yet.
             if !response_text.is_empty() {
+                // A continuation places images as a chat reply does (see share_file's
+                // description). Its run gives `invoke` no workspace root, so placement
+                // reads the default workspace too.
+                let (content, attachment_ids) = place_reply_images(
+                    bound,
+                    &response_text,
+                    result.attachment_ids.as_deref().unwrap_or_default(),
+                    None,
+                )
+                .await;
                 MESSAGE_DELIVERY_SERVICE
                     .publish(
                         &task.user_id,
                         bound,
-                        &response_text,
+                        &content,
                         MessageTrigger::CronTask,
                         PublishOptions {
                             tool_calls,
-                            attachment_ids: result.attachment_ids.clone(),
+                            attachment_ids: Some(attachment_ids).filter(|ids| !ids.is_empty()),
                             channel_context,
                             ..PublishOptions::default()
                         },

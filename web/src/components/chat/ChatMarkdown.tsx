@@ -1,15 +1,25 @@
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import type { Attachment } from '@/types';
 import CodeBlock from './code-block';
+import InlineImage, { ATTACHMENT_SCHEME } from './inline-image';
 
 interface ChatMarkdownProps {
   content: string;
+  /** The message's files, which the images in its text name. */
+  attachments?: Attachment[] | null;
 }
 
-export default function ChatMarkdown({ content }: ChatMarkdownProps) {
+/** An `attachment:` reference reaches the image renderer; every other URL is sanitized as before. */
+function urlTransform(url: string): string {
+  return url.startsWith(ATTACHMENT_SCHEME) ? url : defaultUrlTransform(url);
+}
+
+export default function ChatMarkdown({ content, attachments }: ChatMarkdownProps) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
+      urlTransform={urlTransform}
       components={{
         h1: ({ children }) => <h3 className="mt-5 mb-3 text-lg font-semibold text-strong first:mt-0">{children}</h3>,
         h2: ({ children }) => <h4 className="mt-4 mb-2 text-base font-semibold text-strong first:mt-0">{children}</h4>,
@@ -56,6 +66,9 @@ export default function ChatMarkdown({ content }: ChatMarkdownProps) {
           >
             {children}
           </a>
+        ),
+        img: ({ src, alt }) => (
+          <InlineImage src={typeof src === 'string' ? src : undefined} alt={alt} attachments={attachments} />
         ),
         hr: () => <hr className="my-4 border-border" />,
         strong: ({ children }) => <strong className="font-semibold text-strong">{children}</strong>,

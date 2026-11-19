@@ -187,6 +187,12 @@ export interface ModelSelectionInfo {
   tiers: Record<'small' | 'medium' | 'large', { override: string | null; effective: string | null }>;
 }
 
+/** The selected LLM provider and the settings it still needs, by variable name. */
+export interface LlmProviderStatus {
+  provider: string;
+  missingSettings: string[];
+}
+
 export interface ApiClient {
   getMe(): Promise<{ agentId: string; userId: string; name: string }>;
   getDetails(): Promise<AgentDetails>;
@@ -194,6 +200,7 @@ export interface ApiClient {
   setAgentGuide(agentMd: string): Promise<{ agentMd: string }>;
   getModel(): Promise<{ model: string | null }>;
   setModel(model: string | null): Promise<{ model: string | null }>;
+  getLlmProvider(): Promise<LlmProviderStatus>;
   getHeartbeatModel(): Promise<{ model: string | null; effective: string }>;
   setHeartbeatModel(model: string | null): Promise<{ model: string | null; effective: string }>;
   getCronModel(): Promise<{ model: string | null; effective: string }>;
@@ -303,6 +310,10 @@ export class HttpApiClient implements ApiClient {
 
   setModel(model: string | null): Promise<{ model: string | null }> {
     return this.request('PATCH', '/agents/model', { model });
+  }
+
+  getLlmProvider(): Promise<LlmProviderStatus> {
+    return this.request('GET', '/agents/llm-provider');
   }
 
   getHeartbeatModel(): Promise<{ model: string | null; effective: string }> {

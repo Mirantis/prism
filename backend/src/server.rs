@@ -10,6 +10,7 @@
 //!      /               — Prism Agent Web UI (static SPA bundle from web/dist)
 //!
 //!      /agents/state   — whether the agent is working, for the other agents
+//!      /agents/llm-provider — the LLM provider's missing settings, for the clients' warning
 //! ```
 //!
 //! Webhook ingestion (POST /agents/webhooks/:name) has a listener of its own on
@@ -91,6 +92,8 @@ fn api_routes() -> Router {
         // Whether this agent is working, for the other agents of the project
         // (GET /agents/state). Their messages arrive on `AGENT_MESSAGES_PORT`.
         .merge(routes::agent_state::router())
+        // Whether the LLM provider has what it needs (GET /agents/llm-provider).
+        .merge(routes::llm_provider::router())
         // Thread and message routes: /threads, /latest-thread and /messages.
         .merge(routes::threads::router())
         .merge(routes::messages::router())

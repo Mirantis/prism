@@ -90,8 +90,8 @@ use crate::support::js::{self, len16};
 use crate::support::{now_iso, now_ms};
 use crate::tools::share_file::SHARE_FILE_TOOL_NAME;
 use crate::types::{
-    AgentContext, InvokeError, InvokeMode, InvokeRequest, InvokeResponse, InvokeStep,
-    ToolCallRecord, UIBlock,
+    AgentContext, InvokeError, InvokeErrorType, InvokeMode, InvokeRequest, InvokeResponse,
+    InvokeStep, ToolCallRecord, UIBlock,
 };
 use crate::utils::async_channel::AsyncChannel;
 use crate::{log_error, log_info, log_warn};
@@ -508,7 +508,7 @@ async fn stream_invocation(mut request: InvokeRequest, out: &StepOut) -> anyhow:
     let start_time = now_ms();
 
     // Preflight: short-circuit before any DB call.
-    let missing_settings = missing_provider_settings();
+    let missing_settings = missing_provider_settings().await;
     if !missing_settings.is_empty() {
         log_error!(
             json!({ "provider": CONFIG.llm_provider.as_str(), "missingSettings": missing_settings }),
@@ -521,6 +521,11 @@ async fn stream_invocation(mut request: InvokeRequest, out: &StepOut) -> anyhow:
                 missing_settings.join(" and ")
             ),
             tool_calls: Vec::new(),
+            // An error, so autonomous runs deliver the notice instead of withholding it.
+            error: Some(InvokeError {
+                kind: InvokeErrorType::Generic,
+                detail: Some(format!("missing {}", missing_settings.join(", "))),
+            }),
             ..Default::default()
         })
         .await;

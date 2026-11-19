@@ -38,6 +38,8 @@ export interface Attachment {
   category: AttachmentCategory;
   /** Content deleted by the retention sweep (7 days) — metadata only. */
   expired?: boolean;
+  /** The message's text shows this image at its place, as `![alt](attachment:<id>)`. */
+  inline?: boolean;
 }
 
 export interface ConversationMessage {
@@ -214,6 +216,12 @@ export interface DocumentRevisionHistory {
 
 export interface ModelInfo {
   model: string;
+}
+
+/** The selected LLM provider and the settings it still needs, by variable name. */
+export interface LlmProviderStatus {
+  provider: string;
+  missingSettings: string[];
 }
 
 /**

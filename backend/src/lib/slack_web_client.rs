@@ -603,7 +603,7 @@ impl SlackWebClient {
 
     /// `files.uploadV2` for one file: `files.getUploadURLExternal`, the bytes posted
     /// to the URL it names, then `files.completeUploadExternal` into the channel
-    /// (and its thread when given). Answers `{ ok: true, files: [<completion>] }`.
+    /// (and its thread when given), or into no channel when `channel_id` is empty. Answers `{ ok: true, files: [<completion>] }`.
     pub async fn files_upload_v2(&self, upload: FileUpload) -> anyhow::Result<Value> {
         log_debug!("files.uploadV2() start");
         let length = upload.file.len();
@@ -642,7 +642,10 @@ impl SlackWebClient {
         };
         let mut complete = Map::new();
         complete.insert("files".into(), json!([{ "id": file_id, "title": title }]));
-        complete.insert("channel_id".into(), json!(upload.channel_id));
+        // No channel uploads the file to none, for a block to name.
+        if !upload.channel_id.is_empty() {
+            complete.insert("channel_id".into(), json!(upload.channel_id));
+        }
         if let Some(thread_ts) = upload.thread_ts.filter(|ts| !ts.is_empty()) {
             complete.insert("thread_ts".into(), json!(thread_ts));
         }

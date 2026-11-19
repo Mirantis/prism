@@ -26,6 +26,8 @@ const { adapterStub, apiStub, mockEditText } = vi.hoisted(() => {
     apiStub: {
       listCronTasks: vi.fn().mockResolvedValue([]),
       getDetails: vi.fn().mockResolvedValue({}),
+      // The LLM provider warning asks once on mount; a configured provider keeps it hidden.
+      getLlmProvider: vi.fn().mockResolvedValue({ provider: 'bedrock', missingSettings: [] }),
       createGoal: vi.fn().mockResolvedValue({ objective: 'x', maxTurns: 100 }),
       getThreadGoal: vi.fn().mockResolvedValue(null),
       uploadAttachment: vi.fn().mockResolvedValue({

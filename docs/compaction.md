@@ -15,6 +15,12 @@ scrollback; compaction only changes what the model sees.
   `COMPACTION_THRESHOLD_PERCENT` of the model's window (default **90%**), the
   runtime compacts the thread in the background. The summarization reuses the
   turn's own prompt-cache prefix, so it is fast and cheap.
+- **After a scheduled task, heartbeat or webhook run.** Such a run can store its
+  result and tool output in the conversation without a turn there. The runtime
+  then adds an estimate of what was stored to the last measured occupancy, and
+  compacts the thread when the total reaches `COMPACTION_THRESHOLD_PERCENT`. So
+  runs that report into a conversation nobody uses for days cannot grow it past
+  the window.
 - **Manually.** Run **`/compact`** in the web chat or the terminal UI to
   compact the current conversation at any time. If there is nothing to compact
   yet, the command says so.

@@ -52,6 +52,7 @@ pub fn message_event_payload(message: &DeliverableMessage) -> MessageEventPayloa
                     size_bytes: meta.size_bytes,
                     category: meta.category.as_str().to_string(),
                     expired: Some(meta.expired),
+                    inline: meta.inline,
                 })
                 .collect()
         }),

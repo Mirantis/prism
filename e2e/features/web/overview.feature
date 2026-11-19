@@ -8,7 +8,8 @@ Feature: Overview setup checklist
 
   Scenario: A new agent starts with its first conversation
     When I navigate to the overview page
-    Then the "conversation" setup step is not done
+    Then the overview shows no LLM provider warning
+    And the "conversation" setup step is not done
     And the "conversation" setup step is marked as next
 
   Scenario: An empty conversation does not count as the first one
