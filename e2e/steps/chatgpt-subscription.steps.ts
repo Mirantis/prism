@@ -39,11 +39,11 @@ Given(
 );
 
 Then('the ChatGPT subscription card is not shown', async ({ page }) => {
-  await expect(page.getByText('ChatGPT subscription')).toHaveCount(0);
+  await expect(page.getByText('ChatGPT subscription', { exact: true })).toHaveCount(0);
 });
 
 When('I click Sign in with ChatGPT', async ({ page }) => {
-  await expect(page.getByText('ChatGPT subscription')).toBeVisible();
+  await expect(page.getByText('ChatGPT subscription', { exact: true })).toBeVisible();
   await expect(page.getByText('Not signed in')).toBeVisible();
   // Prevent the browser from opening an external popup tab during the test.
   await page.evaluate(() => {
