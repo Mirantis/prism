@@ -122,10 +122,13 @@ switching to a DM link, and vice-versa.
   Whatever arrives too late for that turn is answered together in one follow-up
   message rather than one reply per message.
 - **Files.** You can share files with the agent in Slack, and it can share files
-  back (uploaded via the Slack API). If a file can't be read (too large, or a
-  permissions issue), the agent tells you why. Shared file content is kept for
-  7 days (see [Tools](tools.md#attachments)); after that the agent still sees
-  that the file existed but must ask you to share it again to read it.
+  back (uploaded via the Slack API). In a thread, the agent reads the files on
+  every message, also on a message that did not mention it. Each turn stores up
+  to 10 such files, so a thread with more has them all after a few turns. If a
+  file can't be read (too large, or a permissions issue), the agent tells you why. Shared file
+  content is kept for 7 days (see [Tools](tools.md#attachments)); after that the
+  agent still sees that the file existed but must ask you to share it again to
+  read it.
 - **Feedback.** Final messages carry 👍 / 👎 buttons; tapping one records
   feedback.
 

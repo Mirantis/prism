@@ -1,7 +1,8 @@
 /**
  * Slack File Sharing Step Definitions
  *
- * Inbound: a user uploads a file (mentioning the bot) and the agent reads it.
+ * Inbound: a user uploads a file, on the message that mentions the bot or on an
+ * earlier message of the thread, and the agent reads it.
  * Outbound: the user asks the agent to create a file; the agent shares it back
  * via files.uploadV2 and it lands in the thread.
  *
@@ -45,6 +46,24 @@ When(
   },
 );
 
+When(
+  'I upload a file named {string} containing {string}',
+  async ({}, filename: string, content: string) => {
+    const slack = getSlackState();
+    // No mention: the channel handler does not answer this message.
+    slack.messageTs = await uploadFileToChannel(slack.userClient!, slack.channelId, { filename, content });
+  },
+);
+
+When("I reply in the file's thread mentioning the bot {string}", async ({}, text: string) => {
+  const slack = getSlackState();
+  await slack.userClient!.chat.postMessage({
+    channel: slack.channelId,
+    thread_ts: slack.messageTs,
+    text: `<@${slack.botUserId}> ${text}`,
+  });
+});
+
 Then('the bot should reply about the file within {int} seconds', async ({}, timeoutSeconds: number) => {
   const slack = getSlackState();
   fileReplyText = await waitForBotReply(
@@ -52,6 +71,8 @@ Then('the bot should reply about the file within {int} seconds', async ({}, time
     slack.channelId,
     slack.messageTs,
     timeoutSeconds * 1_000,
+    2_000,
+    slack.botUserId,
   );
   expect(fileReplyText, 'bot did not reply to the uploaded file in time').toBeTruthy();
 });

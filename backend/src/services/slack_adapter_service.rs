@@ -45,7 +45,7 @@ use crate::lib::telemetry::track_event;
 use crate::queues::slack_heartbeat_throttle_queue::get_slack_heartbeat_throttle_queue;
 use crate::services::attachment_service::{
     ATTACHMENT_SERVICE, AttachmentMeta, AttachmentSource, CreateAttachmentInput,
-    classify_media_type, detect_media_type,
+    classify_media_type, detect_media_type, thread_scoped_file_id,
 };
 use crate::services::channel_adapter_interface::{
     ChannelAdapter, ChannelContext, ChannelDestination, ChannelName, ChatPlatform,
@@ -154,6 +154,22 @@ struct GateMessage {
     bot_profile: Option<GateBotProfile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     username: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    files: Vec<SlackFileMeta>,
+}
+
+/// A thread message as the reply gate reads it: its text, then the files it has.
+fn gate_text(message: &GateMessage) -> String {
+    let files = if message.files.is_empty() {
+        String::new()
+    } else {
+        describe_shared_files(&message.files)
+    };
+    [message.text.clone().unwrap_or_default(), files]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -242,12 +258,13 @@ pub struct ConnectedWorkspace {
     pub bot_user_id: String,
 }
 
-/// Subset of a Slack file object on a message event.
+/// The fields of a Slack file object, on a message event or in a thread read, that
+/// the runtime reads.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct SlackFileMeta {
-    id: String,
+pub(crate) struct SlackFileMeta {
+    pub(crate) id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
+    pub(crate) name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     mimetype: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -256,6 +273,22 @@ struct SlackFileMeta {
     url_private: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     url_private_download: Option<String>,
+}
+
+/// Where to download a Slack file from (`Ok`), or why it cannot be downloaded
+/// (`Err`), decided from the file's metadata alone, so a file that can never be
+/// stored takes no download.
+pub(crate) fn slack_file_source(file: &SlackFileMeta) -> Result<&str, String> {
+    if let Some(size) = file.size
+        && size > MAX_FILE_SIZE_BYTES
+    {
+        return Err(format!("it exceeds the {MAX_FILE_SIZE_MB} MB limit"));
+    }
+    file.url_private_download
+        .as_deref()
+        .filter(|u| !u.is_empty())
+        .or(file.url_private.as_deref().filter(|u| !u.is_empty()))
+        .ok_or_else(|| "Slack returned no download URL for it".to_string())
 }
 
 impl SlackFileMeta {
@@ -270,24 +303,32 @@ impl SlackFileMeta {
 
 /// A file we couldn't ingest, surfaced to the agent so it can tell the user.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct SlackFileFailure {
-    filename: String,
-    reason: String,
+pub(crate) struct SlackFileFailure {
+    pub(crate) filename: String,
+    pub(crate) reason: String,
 }
 
 #[derive(Debug, Clone, Default)]
-struct SlackFileDownloadResult {
-    attachment_ids: Vec<String>,
-    failures: Vec<SlackFileFailure>,
+pub(crate) struct SlackFileDownloadResult {
+    pub(crate) attachment_ids: Vec<String>,
+    pub(crate) failures: Vec<SlackFileFailure>,
 }
 
 /// Where a downloaded file came from: the carrying message's ts and the thread
 /// that scopes a later lookup.
 #[derive(Debug, Clone, Default)]
-struct SlackFileContext {
-    external_ts: Option<String>,
-    thread_id: Option<String>,
+pub(crate) struct SlackFileContext {
+    pub(crate) external_ts: Option<String>,
+    pub(crate) thread_id: Option<String>,
+    /// A thread read's download: the file is keyed to `thread_id`, so a file already
+    /// stored for another thread is stored again for this one.
+    pub(crate) thread_scoped: bool,
+    /// Ends a download in flight; the file then fails with `DOWNLOAD_STOPPED`.
+    pub(crate) signal: Option<CancellationToken>,
 }
+
+/// Why a file failed when its read's deadline stopped the download.
+const DOWNLOAD_STOPPED: &str = "the thread read ran out of time to download it";
 
 /// The outcome of a link code check, as the reply to the user words it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2213,6 +2254,7 @@ impl SlackAdapterService {
                     SlackFileContext {
                         external_ts: event_ts.map(str::to_string),
                         thread_id: None,
+                        ..SlackFileContext::default()
                     },
                 )
                 .await?;
@@ -2489,8 +2531,9 @@ impl SlackAdapterService {
                     &mapping_team_id,
                     GateMessage {
                         user: Some(slack_user_id.to_string()),
-                        text: Some(queue_text.clone()),
+                        text: Some(message_text.to_string()),
                         ts: Some(message_ts.to_string()),
+                        files: files.clone(),
                         ..GateMessage::default()
                     },
                 )
@@ -2592,6 +2635,7 @@ impl SlackAdapterService {
                     SlackFileContext {
                         external_ts: Some(message_ts.to_string()),
                         thread_id: Some(thread.id.clone()),
+                        ..SlackFileContext::default()
                     },
                 )
                 .await?;
@@ -3144,11 +3188,7 @@ impl SlackAdapterService {
 
         let lines = futures::future::join_all(read.iter().map(|m| {
             let agent_name = agent.name.clone();
-            let text = m
-                .text
-                .clone()
-                .unwrap_or_default()
-                .replace(&bare_bot, &agent_mention);
+            let text = gate_text(m).replace(&bare_bot, &agent_mention);
             async move {
                 let author = if m.user.as_deref() == Some(bot_user_id) {
                     ThreadAuthor {
@@ -3312,7 +3352,7 @@ impl SlackAdapterService {
     /// anything that fails to download. `external_ts` records the carrying
     /// message's ts so the live-read Slack channel provider can re-associate the
     /// file on later turns; `thread_id` scopes that lookup.
-    async fn download_slack_files(
+    pub(crate) async fn download_slack_files(
         &self,
         files: &[SlackFileMeta],
         ctx: SlackFileContext,
@@ -3356,44 +3396,42 @@ impl SlackAdapterService {
         for file in to_process {
             let filename = file.filename();
             let stored: anyhow::Result<()> = async {
-                if let Some(size) = file.size
-                    && size > MAX_FILE_SIZE_BYTES
-                {
-                    log_warn!(
-                        "[SlackAdapter] skipping oversized file {} ({} bytes)",
-                        filename,
-                        size
-                    );
-                    result.failures.push(SlackFileFailure {
-                        filename: filename.clone(),
-                        reason: format!("it exceeds the {MAX_FILE_SIZE_MB} MB limit"),
-                    });
-                    return Ok(());
-                }
+                let url = match slack_file_source(file) {
+                    Ok(url) => url,
+                    Err(reason) => {
+                        log_warn!(
+                            "[SlackAdapter] cannot download file {}: {}",
+                            file.id,
+                            reason
+                        );
+                        result.failures.push(SlackFileFailure {
+                            filename: filename.clone(),
+                            reason,
+                        });
+                        return Ok(());
+                    }
+                };
 
+                let stored_key = match (&ctx.thread_id, ctx.thread_scoped) {
+                    (Some(thread_id), true) => thread_scoped_file_id(thread_id, &file.id),
+                    _ => file.id.clone(),
+                };
                 if ATTACHMENT_SERVICE
-                    .exists_by_external_file_id(&file.id)
+                    .exists_by_external_file_id(&stored_key)
                     .await?
                 {
                     log_info!("[SlackAdapter] file {} already stored; skipping", file.id);
                     return Ok(());
                 }
 
-                let url = file
-                    .url_private_download
-                    .as_deref()
-                    .filter(|u| !u.is_empty())
-                    .or(file.url_private.as_deref().filter(|u| !u.is_empty()));
-                let Some(url) = url else {
-                    log_warn!("[SlackAdapter] file {} has no download URL", file.id);
-                    result.failures.push(SlackFileFailure {
-                        filename: filename.clone(),
-                        reason: "Slack returned no download URL for it".to_string(),
-                    });
-                    return Ok(());
+                let fetched = self.fetch_slack_file(url, &bot_token);
+                let buffer = match &ctx.signal {
+                    Some(signal) => tokio::select! {
+                        buffer = fetched => buffer?,
+                        _ = signal.cancelled() => anyhow::bail!(DOWNLOAD_STOPPED),
+                    },
+                    None => fetched.await?,
                 };
-
-                let buffer = self.fetch_slack_file(url, &bot_token).await?;
                 if buffer.is_empty() {
                     log_warn!("[SlackAdapter] file {} downloaded empty; skipping", file.id);
                     result.failures.push(SlackFileFailure {
@@ -3425,7 +3463,7 @@ impl SlackAdapterService {
                         source: AttachmentSource::Platform(ChatPlatform::Slack),
                         thread_id: ctx.thread_id.clone(),
                         message_id: None,
-                        external_file_id: Some(file.id.clone()),
+                        external_file_id: Some(stored_key),
                         external_ts: ctx.external_ts.clone(),
                     })
                     .await?;

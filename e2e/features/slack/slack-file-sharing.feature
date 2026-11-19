@@ -13,6 +13,12 @@ Feature: Slack file sharing
     Then the bot should reply about the file within 90 seconds
     And the file reply should contain "SLACKIN42"
 
+  Scenario: The agent reads a file posted earlier in the thread
+    When I upload a file named "notes.txt" containing "The thread code is THREADIN7."
+    And I reply in the file's thread mentioning the bot "read the file on the first message of this thread and reply with only the code in it"
+    Then the bot should reply about the file within 90 seconds
+    And the file reply should contain "THREADIN7"
+
   # @slow triples the per-test budget, which also has to cover the Background —
   # otherwise the 120s wait below and the 120s test timeout are the same number.
   @slow

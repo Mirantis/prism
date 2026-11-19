@@ -9,6 +9,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -18,13 +19,18 @@ use regex::Regex;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use tokio_util::sync::CancellationToken;
 
+use crate::constants::MAX_ATTACHMENTS_PER_MESSAGE;
 use crate::db::models::{ConversationMessage, MessageRole, MessageTrigger, SlackMapping};
 use crate::db::schema::conversation_messages::dsl as cm;
 use crate::db::schema::conversation_threads::dsl as ct;
 use crate::db::schema::slack_mappings::dsl as m;
 use crate::lib::slack_source::get_slack_connection;
-use crate::services::slack_adapter_service::SLACK_ADAPTER_SERVICE;
+use crate::services::attachment_service::ATTACHMENT_SERVICE;
+use crate::services::slack_adapter_service::{
+    SLACK_ADAPTER_SERVICE, SlackFileContext, SlackFileFailure, SlackFileMeta, slack_file_source,
+};
 use crate::services::thread_provider_interface::{
     MessageReadOptions, MessageView, ThreadMessageProvider,
 };
@@ -39,6 +45,64 @@ struct SlackMessage {
     #[serde(default)]
     text: Option<String>,
     ts: String,
+    #[serde(default)]
+    files: Vec<SlackFileMeta>,
+}
+
+/// The most files one thread read downloads; the next read stores the rest.
+const HISTORY_FILES_PER_READ: usize = MAX_ATTACHMENTS_PER_MESSAGE;
+/// How long one thread read spends storing files before it gives the turn the history.
+const HISTORY_FILES_DEADLINE: Duration = Duration::from_secs(20);
+
+/// The message with a line naming the files on it the agent cannot read, and why,
+/// so a message with only such a file stays in the history and the agent can tell
+/// the person what failed.
+fn with_file_note(
+    mut message: ConversationMessage,
+    notes: &HashMap<String, Vec<SlackFileFailure>>,
+) -> ConversationMessage {
+    let Some(failures) = message
+        .external_message_id
+        .as_ref()
+        .and_then(|ts| notes.get(ts))
+        .filter(|failures| !failures.is_empty())
+    else {
+        return message;
+    };
+    let list = failures
+        .iter()
+        .map(|f| format!("\"{}\": {}", f.filename, f.reason))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let many = failures.len() > 1;
+    let note = format!(
+        "({} on this message could not be read, so you do not have {} contents: {list})",
+        if many { "files" } else { "a file" },
+        if many { "their" } else { "its" },
+    );
+    if !message.content.is_empty() {
+        message.content = format!("{}\n{note}", message.content);
+        return message;
+    }
+    let sender = match &message.sender_external_id {
+        Some(id) => {
+            let name: String = message
+                .sender_name
+                .as_deref()
+                .unwrap_or("")
+                .chars()
+                .filter(|c| !matches!(c, '<' | '>' | ':') && (*c as u32) > 0x1f)
+                .collect();
+            let name = js_trim(&name);
+            format!(
+                "<@{id}:{}>: ",
+                if name.is_empty() { id.as_str() } else { name }
+            )
+        }
+        None => String::new(),
+    };
+    message.content = format!("{sender}{note}");
+    message
 }
 
 /// What started a reply we stored.
@@ -233,8 +297,9 @@ impl SlackThreadProvider {
     /// `compactedThroughTs` watermark, and also merges the thread's concise-mode
     /// internal steps — rows persisted for replay but never posted to Slack, so
     /// absent from the live `conversations.replies` read — sorted by `createdAt`
-    /// with the internal steps first on a tie (stable sort). The client view
-    /// (`view: Client`) is unwindowed and skips that merge.
+    /// with the internal steps first on a tie (stable sort), and stores the files of
+    /// the messages it read (`store_missing_files`). The client view (`view: Client`)
+    /// is unwindowed and skips both.
     async fn fetch_slack_messages(
         &self,
         thread_id: &str,
@@ -288,6 +353,19 @@ impl SlackThreadProvider {
             ),
             self.get_agent_message_maps(thread_id),
         )?;
+        // The model view stores the files of the messages it read; the client view
+        // does not.
+        let carriers: Vec<SlackMessage> = if client_view {
+            Vec::new()
+        } else {
+            raw_messages
+                .iter()
+                .filter(|m| {
+                    m.user.as_deref() != Some(resolved.bot_user_id.as_str()) && !m.files.is_empty()
+                })
+                .cloned()
+                .collect()
+        };
         let slack_derived = self
             .map_to_conversation_messages(
                 thread_id,
@@ -301,6 +379,16 @@ impl SlackThreadProvider {
         if client_view {
             return Ok(slack_derived);
         }
+
+        let file_notes = self.store_missing_files(thread_id, carriers).await?;
+        let slack_derived: Vec<ConversationMessage> = if file_notes.is_empty() {
+            slack_derived
+        } else {
+            slack_derived
+                .into_iter()
+                .map(|m| with_file_note(m, &file_notes))
+                .collect()
+        };
 
         // Model view: interleave the persisted internal steps. Both the internal rows
         // and (via created_at_by_ts) our own delivered replies are ordered by our DB
@@ -323,6 +411,117 @@ impl SlackThreadProvider {
             internal.into_iter().chain(slack_derived).collect();
         merged.sort_by_key(|message| message.created_at.timestamp_millis());
         Ok(merged)
+    }
+
+    /// Store the files of the messages that started no turn, each for this thread
+    /// and its message ts, so the history has the files of every message in the
+    /// thread. `carriers` leaves out the agent's own messages: their files are the
+    /// ones it shared.
+    ///
+    /// One read downloads at most `HISTORY_FILES_PER_READ` files, newest message
+    /// first, and stops at `HISTORY_FILES_DEADLINE`, aborting a download in flight,
+    /// so a thread with many files holds its turn for a bounded time; the next read
+    /// stores the rest. A file its metadata rules out takes no download, and an older
+    /// file that fails every download cannot keep a newer one out. Returns, by
+    /// message ts, the files the agent cannot read: past the per-message count, ruled
+    /// out by their metadata, or refused by the download this read.
+    async fn store_missing_files(
+        &self,
+        thread_id: &str,
+        carriers: Vec<SlackMessage>,
+    ) -> anyhow::Result<HashMap<String, Vec<SlackFileFailure>>> {
+        let mut notes: HashMap<String, Vec<SlackFileFailure>> = HashMap::new();
+        if carriers.is_empty() {
+            return Ok(notes);
+        }
+        for m in &carriers {
+            if m.files.len() > MAX_ATTACHMENTS_PER_MESSAGE {
+                notes.insert(
+                    m.ts.clone(),
+                    vec![SlackFileFailure {
+                        filename: format!(
+                            "{} more file(s)",
+                            m.files.len() - MAX_ATTACHMENTS_PER_MESSAGE
+                        ),
+                        reason: format!(
+                            "only the first {MAX_ATTACHMENTS_PER_MESSAGE} attachments per message are kept"
+                        ),
+                    }],
+                );
+            }
+        }
+        let kept: Vec<(String, Vec<SlackFileMeta>)> = carriers
+            .into_iter()
+            .map(|m| {
+                let files = m
+                    .files
+                    .into_iter()
+                    .take(MAX_ATTACHMENTS_PER_MESSAGE)
+                    .collect();
+                (m.ts, files)
+            })
+            .collect();
+        let ids: Vec<String> = kept
+            .iter()
+            .flat_map(|(_, files)| files.iter().map(|f| f.id.clone()))
+            .collect();
+        let stored = ATTACHMENT_SERVICE
+            .stored_channel_file_ids(thread_id, &ids)
+            .await?;
+        let mut fetchable: Vec<(String, Vec<SlackFileMeta>)> = Vec::new();
+        for (ts, files) in kept {
+            let mut downloadable = Vec::new();
+            for file in files.into_iter().filter(|f| !stored.contains(&f.id)) {
+                match slack_file_source(&file) {
+                    Ok(_) => downloadable.push(file),
+                    Err(reason) => notes.entry(ts.clone()).or_default().push(SlackFileFailure {
+                        filename: file
+                            .name
+                            .clone()
+                            .filter(|n| !n.is_empty())
+                            .unwrap_or_else(|| "file".to_string()),
+                        reason,
+                    }),
+                }
+            }
+            fetchable.push((ts, downloadable));
+        }
+
+        let signal = CancellationToken::new();
+        let deadline = {
+            let signal = signal.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(HISTORY_FILES_DEADLINE).await;
+                signal.cancel();
+            })
+        };
+        let mut budget = HISTORY_FILES_PER_READ;
+        for (ts, files) in fetchable.into_iter().rev() {
+            if budget == 0 || signal.is_cancelled() {
+                break;
+            }
+            let missing: Vec<SlackFileMeta> = files.into_iter().take(budget).collect();
+            if missing.is_empty() {
+                continue;
+            }
+            budget -= missing.len();
+            let downloaded = SLACK_ADAPTER_SERVICE
+                .download_slack_files(
+                    &missing,
+                    SlackFileContext {
+                        external_ts: Some(ts.clone()),
+                        thread_id: Some(thread_id.to_string()),
+                        thread_scoped: true,
+                        signal: Some(signal.clone()),
+                    },
+                )
+                .await?;
+            if !downloaded.failures.is_empty() {
+                notes.entry(ts).or_default().extend(downloaded.failures);
+            }
+        }
+        deadline.abort();
+        Ok(notes)
     }
 
     /// Internal steps for this thread: rows persisted for model replay but never
@@ -1128,5 +1327,37 @@ mod tests {
         assert_eq!(messages[2].triggered_by, MessageTrigger::CronTask);
         assert_eq!(messages[2].sender_name, None);
         assert_eq!(client.unwrap().len(), 2);
+    }
+
+    fn noted(content: &str, sender: Option<(&str, &str)>, failures: usize) -> String {
+        let mut message = ConversationMessage {
+            content: content.to_string(),
+            external_message_id: Some("1700.0001".into()),
+            sender_external_id: sender.map(|(id, _)| id.to_string()),
+            sender_name: sender.map(|(_, name)| name.to_string()),
+            ..message("m")
+        };
+        let list: Vec<SlackFileFailure> = (0..failures)
+            .map(|i| SlackFileFailure {
+                filename: format!("f{i}.png"),
+                reason: "it exceeds the 10 MB limit".into(),
+            })
+            .collect();
+        message = with_file_note(message, &HashMap::from([("1700.0001".to_string(), list)]));
+        message.content
+    }
+
+    #[test]
+    fn notes_the_files_on_a_message_the_agent_cannot_read() {
+        assert_eq!(
+            noted("see this", None, 1),
+            "see this\n(a file on this message could not be read, so you do not have its contents: \"f0.png\": it exceeds the 10 MB limit)"
+        );
+        // A message with only such files keeps its sender, with the name made safe.
+        assert_eq!(
+            noted("", Some(("U1", "A<n>a")), 2),
+            "<@U1:Ana>: (files on this message could not be read, so you do not have their contents: \"f0.png\": it exceeds the 10 MB limit; \"f1.png\": it exceeds the 10 MB limit)"
+        );
+        assert_eq!(noted("hi", None, 0), "hi");
     }
 }
