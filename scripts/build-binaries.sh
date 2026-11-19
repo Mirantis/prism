@@ -11,8 +11,8 @@
 #   SKIP_ARCHIVE   stop before packaging (no tar/zip) when non-empty
 #
 # Output:
-#   dist-sea/<plat>-<arch>/                prism, prism-server, web/, LICENSE, NOTICE,
-#                                          THIRD_PARTY_NOTICES, install.sh
+#   dist-sea/<plat>-<arch>/                prism, prism-server, web/, node_modules/ (placeholder),
+#                                          LICENSE, NOTICE, THIRD_PARTY_NOTICES, install.sh
 #                                          (macOS/Linux) or install.ps1 (Windows)
 #   prism-<version>-<plat>-<arch>.tar.gz   (macOS/Linux)
 #   prism-<version>-<plat>-<arch>.zip      (Windows, via 7z)
@@ -46,6 +46,16 @@ EXE=""
 cp "backend/target/release/prism-server$EXE" "dist-sea/$OS_ARCH/prism-server$EXE"
 rm -rf "dist-sea/$OS_ARCH/web"
 cp -R web/dist "dist-sea/$OS_ARCH/web"
+
+# The updater in a TypeScript-runtime install refuses an archive without
+# node_modules/ and swaps that directory in, so the archive keeps a placeholder
+# for those installs to update. The installers and the Rust updater copy only
+# the entries they name, and the Rust updater moves an install's node_modules/
+# to the update trash.
+rm -rf "dist-sea/$OS_ARCH/node_modules"
+mkdir -p "dist-sea/$OS_ARCH/node_modules"
+echo "Prism needs nothing in this directory. Releases keep it so an older install can update." \
+  > "dist-sea/$OS_ARCH/node_modules/README.txt"
 
 # License, attribution and third-party notices ship inside the archive, and
 # install.sh / install.ps1 copy them into $PRISM_HOME. This runs before the smoke
