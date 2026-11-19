@@ -30,24 +30,28 @@ use std::sync::Arc;
 
 use serde_json::json;
 
+use crate::ai::providers::openai::api::FetchFunction;
 use crate::ai::providers::openai::{OpenAIProviderSettings, create_openai};
 use crate::ai::{LanguageModel, with_llm_cache};
 use crate::lib::llm_providers::llm_provider::{
     CacheTtl, ClassificationSamplingParams, LlmProvider, NO_CACHE_POINT, provider_options,
 };
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct OpenAiCompatibleOptions {
     /// Key sent as the bearer header; `None` leaves the SDK's env fallback.
     pub api_key: Option<String>,
     /// Endpoint ending at `/v1`; `None` → the SDK default, api.openai.com.
     pub base_url: Option<String>,
+    /// The `fetch` requests go through, for a bearer token that changes per request.
+    pub fetch: Option<FetchFunction>,
 }
 
 pub fn create_open_ai_compatible_provider(options: OpenAiCompatibleOptions) -> LlmProvider {
     let openai = Arc::new(create_openai(OpenAIProviderSettings {
         api_key: options.api_key,
         base_url: options.base_url,
+        fetch: options.fetch,
         ..Default::default()
     }));
 

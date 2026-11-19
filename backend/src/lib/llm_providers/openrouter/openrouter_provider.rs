@@ -62,6 +62,7 @@ fn open_router_options(config: &Config, base_url: &str) -> OpenAiCompatibleOptio
             .filter(|key| !key.is_empty())
             .or_else(|| gateway_serves_it.then(|| "nexus-managed".to_string())),
         base_url: Some(base_url.to_string()),
+        fetch: None,
     }
 }
 

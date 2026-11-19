@@ -69,6 +69,8 @@ fn api_routes() -> Router {
         .merge(routes::computer::router())
         // The coding agents' subscriptions (/agents/coding-agents)
         .merge(routes::coding_agents::router())
+        // Sign in with ChatGPT for `LLM_PROVIDER=chatgpt` (/agents/chatgpt-auth/*)
+        .merge(routes::chatgpt_auth::router())
         // The agent's computers, its own and remote ones (/agents/computers)
         .merge(routes::computers::router())
         // Answers to the agent's question cards (/agents/question-cards)

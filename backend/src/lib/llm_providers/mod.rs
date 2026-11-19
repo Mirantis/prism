@@ -5,6 +5,7 @@ pub mod bedrock;
 pub mod bedrock_mantle;
 pub mod bedrock_model_id;
 pub mod bedrock_shared;
+pub mod chatgpt;
 pub mod create_provider;
 pub mod deferred_tools;
 pub mod litellm;

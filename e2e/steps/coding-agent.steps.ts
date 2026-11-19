@@ -146,6 +146,7 @@ Then("the coding task's result reaches the conversation as a task notification",
 Then(
   'an agent reply after the task notification contains {string} within {int} seconds',
   async ({}, text: string, seconds: number) => {
+    await expect.poll(async () => (await taskNotifications()).length, { timeout: 60_000, intervals: [1_000] }).toBeGreaterThan(0);
     const [notification] = await taskNotifications();
     const after = () =>
       dbHelper.getPrisma().conversationMessage.findFirst({

@@ -5,6 +5,7 @@ import { TuiMessage } from '../tui-adapter.js';
 import type { Viewer } from '../chat-protocol.js';
 import { formatFileSize } from '../attachments.js';
 import { ChatEntry } from '../transcript.js';
+import { parseShellRecord, SHELL_PREFIX } from '../shell-command.js';
 
 /** Mirrors `ToolOutputTruncation` in the runtime's src/types.ts. */
 interface ToolOutputTruncation {
@@ -97,6 +98,7 @@ const MessageRow: React.FC<MessageRowProps> = ({ agentName, self, message, expan
   const body = isAgent ? renderMarkdown(message.content) : message.content;
   const calls = isAgent && isToolCallArray(message.toolCalls) ? message.toolCalls : [];
   const hasCalls = calls.length > 0;
+  const shellRun = isUser ? parseShellRecord(message.content) : null;
 
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -106,7 +108,15 @@ const MessageRow: React.FC<MessageRowProps> = ({ agentName, self, message, expan
         {message.triggeredBy === 'CRON_TASK' && <Text dimColor> · cron</Text>}
       </Box>
       <Box paddingLeft={2} flexDirection="column">
-        <Text>{body}</Text>
+        {shellRun ? (
+          <>
+            <Text bold>{`${SHELL_PREFIX} ${shellRun.command}`}</Text>
+            {shellRun.exitCode !== 0 && <Text color="red">{`exit code ${shellRun.exitCode}`}</Text>}
+            {shellRun.output && <Text dimColor>{truncate(shellRun.output, 1600)}</Text>}
+          </>
+        ) : (
+          <Text>{body}</Text>
+        )}
         {failed && <Text color="red">{`✗ not sent: ${failed}`}</Text>}
         {Array.isArray(message.attachments) && message.attachments.length > 0 && (
           <Text dimColor>

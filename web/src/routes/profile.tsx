@@ -39,6 +39,7 @@ import { useAgent } from '@/lib/agent-context';
 import { formatInterval } from '@/lib/format';
 import { RestoreBackupDialog } from '@/components/profile/restore-backup-dialog';
 import { ModelSettingsCard } from '@/components/profile/model-settings-card';
+import { ChatGptAuthCard } from '@/components/profile/chatgpt-auth-card';
 import { VerbosityField } from '@/components/profile/verbosity-field';
 import { LockedInField } from '@/components/profile/locked-in-field';
 import { DocumentWorkspace } from '@/components/profile/document-workspace';
@@ -138,6 +139,8 @@ function ProfilePage() {
       </Card>
 
       <ModelSettingsCard />
+
+      <ChatGptAuthCard />
 
       <StatusPanel details={details} isLoading={isLoading} />
 

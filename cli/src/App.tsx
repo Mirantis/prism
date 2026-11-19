@@ -39,6 +39,7 @@ import {
   SlashCommand,
 } from './commands.js';
 import { AttachmentMeta, formatFileSize, latestTurnAttachments, listPathSuggestions } from './attachments.js';
+import { formatShellRecord, runShellCommand, shellCommandOf, type ShellRun } from './shell-command.js';
 
 export interface AppProps {
   userId: string;
@@ -500,6 +501,33 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
     isActive: !suspended && activePanel === null && !signInOpen && resumePhase === 'chat',
   });
 
+  // Drawn at once under the id it is sent with. The runtime's copy arrives with
+  // the same id and takes this row's place.
+  const sendMessage = useCallback(
+    (text: string, attachments: AttachmentMeta[]) => {
+      const id = randomUUID();
+      setEntries((prev) =>
+        appendLocal(prev, {
+          id,
+          threadId: activeThreadId ?? '',
+          role: 'USER',
+          content: text,
+          triggeredBy: 'USER_INPUT',
+          toolCalls: null,
+          blocks: null,
+          createdAt: new Date().toISOString(),
+          attachments: attachments.length > 0 ? attachments : null,
+        }),
+      );
+      tuiAdapterService.submitUserMessage({
+        id,
+        text,
+        attachmentIds: attachments.map((a) => a.id),
+      });
+    },
+    [activeThreadId],
+  );
+
   const onSubmit = useCallback(
     async (text: string) => {
       // The slash popup is open: Enter accepts the highlighted row, the same as
@@ -524,6 +552,26 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
         setHistory((h) => (h[h.length - 1] === trimmed ? h : [...h, trimmed]));
       }
       setHistoryIndex(null);
+
+      // `! <command>` runs in this terminal, and the command with its output
+      // goes to the agent as the user's message. Staged files wait for a chat send.
+      const shellCommand = shellCommandOf(trimmed);
+      if (shellCommand !== null) {
+        setInputValue('');
+        if (!shellCommand) {
+          appendSystemMessage('Type a shell command after !, for example: ! aws sso login');
+          return;
+        }
+        let run: ShellRun;
+        try {
+          run = await suspendInput(() => runShellCommand(shellCommand));
+        } catch (err) {
+          appendSystemMessage(`Could not run the command: ${(err as Error).message}`);
+          return;
+        }
+        sendMessage(formatShellRecord(run), []);
+        return;
+      }
 
       // Slash-command dispatch: if the head word is a registered command, run
       // it locally (with any arguments) instead of sending it to the agent.
@@ -551,32 +599,13 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
       // same attachments twice.
       const toSend = staged;
       setStaged([]);
-      // Drawn at once under the id it is sent with. The runtime's copy arrives
-      // with the same id and takes this row's place.
-      const id = randomUUID();
-      setEntries((prev) =>
-        appendLocal(prev, {
-          id,
-          threadId: activeThreadId ?? '',
-          role: 'USER',
-          content: trimmed,
-          triggeredBy: 'USER_INPUT',
-          toolCalls: null,
-          blocks: null,
-          createdAt: new Date().toISOString(),
-          attachments: toSend.length > 0 ? toSend : null,
-        }),
-      );
-      tuiAdapterService.submitUserMessage({
-        id,
-        text: trimmed,
-        attachmentIds: toSend.map((a) => a.id),
-      });
+      sendMessage(trimmed, toSend);
     },
     [
       runCommand,
+      sendMessage,
+      suspendInput,
       staged,
-      activeThreadId,
       slashMode,
       filteredCommands,
       acceptHighlightedCommand,
