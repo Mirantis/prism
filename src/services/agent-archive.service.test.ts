@@ -92,10 +92,15 @@ describe('agent-archive ChatGPT credential stripping', () => {
     cleanup();
 
     const exportedDb = path.join(tmpDir, 'exported.db');
-    fs.writeFileSync(exportedDb, zlib.gunzipSync(gz));
+    const rawBytes = zlib.gunzipSync(gz);
+    fs.writeFileSync(exportedDb, rawBytes);
 
     const exportedState = readRuntimeState(exportedDb);
     expect(exportedState).toEqual({ deploymentId: 'dep-1' });
+    // Raw SQLite file bytes must not retain any deleted credential strings.
+    expect(rawBytes.includes('refresh-secret')).toBe(false);
+    expect(rawBytes.includes('urn:uuid:host-1')).toBe(false);
+    expect(rawBytes.includes('oaiapp_1')).toBe(false);
     // Live DB retains its credentials untouched.
     const liveState = readRuntimeState(dbPath);
     expect(liveState[CHATGPT_AUTH_TOKENS]).toBeDefined();

@@ -315,6 +315,55 @@ describe('chatGptAuthService', () => {
     expect(store.has('chatgptAuthTokens')).toBe(false);
   });
 
+  it('does not erase newer sign-in tokens when an older refresh fails with 400/401', async () => {
+    store.set('chatgptAuthClientId', 'oaiapp_existing');
+    store.set(
+      'chatgptAuthTokens',
+      JSON.stringify({
+        accessToken: 'old-expired',
+        refreshToken: 'old-refresh',
+        expiresAt: Date.now() - 1000,
+        scope: CHATGPT_DIRECT_USAGE_SCOPE,
+        email: 'old@example.com',
+      }),
+    );
+    await chatGptAuthService.load();
+
+    const refreshGate = deferred<Response>();
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(refreshGate.promise)
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            access_token: 'new-access',
+            refresh_token: 'new-refresh',
+            expires_in: 3600,
+            scope: CHATGPT_OAUTH_SCOPES,
+            id_token: makeIdToken({ email: 'new@example.com' }),
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      );
+    globalThis.fetch = fetchMock;
+
+    // Start refresh for old tokens; before it returns, user completes a new sign-in.
+    const staleRefresh = chatGptAuthService.getAccessToken();
+    const { authorizeUrl } = await chatGptAuthService.startSignIn('http://127.0.0.1:3003/agents/chatgpt-auth/callback');
+    const state = new URL(authorizeUrl).searchParams.get('state')!;
+    const status = await chatGptAuthService.handleCallback({ code: 'new-code', state });
+    expect(status.signedIn).toBe(true);
+    expect(status.email).toBe('new@example.com');
+
+    // Old refresh now fails with 400 invalid_grant; newer session must remain intact.
+    refreshGate.resolve(new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 }));
+    await expect(staleRefresh).rejects.toThrow(ChatGptAuthError);
+
+    expect(chatGptAuthService.isSignedIn()).toBe(true);
+    expect(await chatGptAuthService.getAccessToken()).toBe('new-access');
+    expect(JSON.parse(store.get('chatgptAuthTokens')!).accessToken).toBe('new-access');
+  });
+
   it('clears tokens on 400 refresh failure while keeping host ID and client ID', async () => {
     store.set('chatgptAuthHostId', 'urn:uuid:host-1');
     store.set('chatgptAuthClientId', 'oaiapp_keep');
