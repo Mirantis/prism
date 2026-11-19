@@ -17,6 +17,7 @@ import { MAX_ATTACHMENTS_PER_MESSAGE } from '../../constants';
 import { attachmentService } from '../attachment.service';
 import { ThreadMessageProvider, MessageReadOptions } from '../thread-provider.interface';
 import { slackAdapterService, type SlackFileFailure, type SlackFileMeta } from '../slack-adapter.service';
+import { slackFileSource } from '../slack-file-source';
 import { pollUntil, PollUntilOptions } from '../../utils/poll-until';
 
 interface SlackMessage {
@@ -233,11 +234,14 @@ export class SlackThreadProvider implements ThreadMessageProvider {
    * thread. The agent's own messages are left out: their files are the ones it
    * shared.
    *
-   * One read stores at most {@link HISTORY_FILES_PER_READ} files and stops at
-   * {@link HISTORY_FILES_DEADLINE_MS}, aborting a download in flight, so a thread
-   * with many files holds its turn for a bounded time; the next read stores the
-   * rest. Returns, by message ts, the files the agent cannot read: past the
-   * per-message count, or refused by the download this read.
+   * One read downloads at most {@link HISTORY_FILES_PER_READ} files, newest
+   * message first, and stops at {@link HISTORY_FILES_DEADLINE_MS}, aborting a
+   * download in flight, so a thread with many files holds its turn for a bounded
+   * time; the next read stores the rest. A file its metadata rules out takes no
+   * download, and an older file that fails every download cannot keep a newer one
+   * out. Returns, by message ts, the files the agent cannot read: past the
+   * per-message count, ruled out by their metadata, or refused by the download
+   * this read.
    */
   private async storeMissingFiles(
     threadId: string,
@@ -260,11 +264,21 @@ export class SlackThreadProvider implements ThreadMessageProvider {
 
     const kept = carriers.map((m) => ({ ts: m.ts, files: m.files!.slice(0, MAX_ATTACHMENTS_PER_MESSAGE) }));
     const stored = await attachmentService.storedChannelFileIds(threadId, kept.flatMap((c) => c.files.map((f) => f.id)));
+    const fetchable = kept.map(({ ts, files }) => {
+      const unstored = files.filter((f) => !stored.has(f.id));
+      const refused = unstored.flatMap((f) => {
+        const source = slackFileSource(f);
+        return 'reason' in source ? [{ filename: f.name || 'file', reason: source.reason }] : [];
+      });
+      if (refused.length > 0) notes.set(ts, [...(notes.get(ts) ?? []), ...refused]);
+      return { ts, files: unstored.filter((f) => 'url' in slackFileSource(f)) };
+    });
+
     const signal = AbortSignal.timeout(HISTORY_FILES_DEADLINE_MS);
     let budget = HISTORY_FILES_PER_READ;
-    for (const { ts, files } of kept) {
+    for (const { ts, files } of fetchable.reverse()) {
       if (budget <= 0 || signal.aborted) break;
-      const missing = files.filter((f) => !stored.has(f.id)).slice(0, budget);
+      const missing = files.slice(0, budget);
       if (missing.length === 0) continue;
       budget -= missing.length;
       const { failures } = await slackAdapterService.downloadSlackFiles(missing, {
