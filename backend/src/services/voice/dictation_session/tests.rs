@@ -154,7 +154,14 @@ async fn keeps_audio_sent_while_connecting_and_forwards_it_in_order_once_ready()
 
     h.accept();
     (&mut h.started).await.unwrap();
-    settle(20).await;
+    eventually("both appends", || {
+        h.types()
+            .iter()
+            .filter(|t| *t == "input_audio_buffer.append")
+            .count()
+            == 2
+    })
+    .await;
 
     let encode = |b: &[u8]| base64::engine::general_purpose::STANDARD.encode(b);
     let appended: Vec<Value> = h
@@ -205,7 +212,10 @@ async fn honours_a_stop_that_arrives_before_the_upstream_is_ready() {
 
     h.accept();
     (&mut h.started).await.unwrap();
-    settle(20).await;
+    eventually("the commit", || {
+        h.types().last().map(String::as_str) == Some("input_audio_buffer.commit")
+    })
+    .await;
 
     // The client has already let go, so it is not told to start recording.
     assert!(!h.signal.calls().iter().any(|(kind, _)| kind == "ready"));
@@ -227,7 +237,10 @@ async fn answers_an_empty_transcript_without_committing_a_buffer_too_short_to_tr
     (&mut h.started).await.unwrap();
     h.session.push_audio(&pcm(40, 0));
     h.session.commit();
-    settle(20).await;
+    eventually("the empty result", || {
+        h.signal.calls().last() == Some(&call("result", Some("")))
+    })
+    .await;
 
     assert!(!h.types().iter().any(|t| t == "input_audio_buffer.commit"));
     assert_eq!(h.signal.calls().last(), Some(&call("result", Some(""))));
@@ -257,7 +270,10 @@ async fn commits_by_itself_when_a_recording_outlasts_the_cap_without_audio() {
     h.accept();
     (&mut h.started).await.unwrap();
     h.session.push_audio(&pcm(120, 0));
-    settle(250).await;
+    eventually("the commit", || {
+        h.sent().last() == Some(&json!({ "type": "input_audio_buffer.commit" }))
+    })
+    .await;
     assert_eq!(
         h.sent().last().unwrap(),
         &json!({ "type": "input_audio_buffer.commit" })
@@ -277,7 +293,10 @@ async fn commits_by_itself_at_the_recording_cap() {
     h.session.push_audio(&pcm(100, 0));
     h.session.push_audio(&pcm(100, 0));
     h.session.push_audio(&pcm(100, 0));
-    settle(20).await;
+    eventually("the commit", || {
+        h.sent().last() == Some(&json!({ "type": "input_audio_buffer.commit" }))
+    })
+    .await;
     let types = h.types();
     assert_eq!(
         types
@@ -302,7 +321,13 @@ async fn reports_a_transcription_failure_as_an_error() {
         "item_id": "i1",
         "error": { "message": "audio unreadable" },
     }));
-    settle(20).await;
+    eventually("the error", || {
+        h.signal
+            .calls()
+            .last()
+            .is_some_and(|last| last.0 == "error")
+    })
+    .await;
     assert_eq!(
         h.signal.calls().last(),
         Some(&call(
@@ -358,7 +383,13 @@ async fn gives_up_on_a_transcript_that_never_arrives() {
     (&mut h.started).await.unwrap();
     h.session.push_audio(&pcm(500, 0));
     h.session.commit();
-    settle(250).await;
+    eventually("the timeout", || {
+        h.signal
+            .calls()
+            .last()
+            .is_some_and(|last| last.0 == "error")
+    })
+    .await;
     assert_eq!(
         h.signal.calls().last(),
         Some(&call(
