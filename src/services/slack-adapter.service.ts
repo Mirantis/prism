@@ -61,6 +61,7 @@ import { getSlackHeartbeatThrottleQueue } from '../queues/slack-heartbeat-thrott
 import { getActiveSlackConnections, getSlackConnection } from '../lib/slack-source';
 import { attachmentService, detectMediaType, classifyMediaType, threadScopedFileId } from './attachment.service';
 import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB, MAX_ATTACHMENTS_PER_MESSAGE } from '../constants';
+import { slackFileSource } from './slack-file-source';
 import { BOUNDED_SLACK_CLIENT_OPTIONS, stripBodyToken } from '../lib/slack-web-client';
 import { getProxyDispatcher } from '../lib/proxy-dispatcher';
 import { config } from '../config';
@@ -2101,9 +2102,10 @@ class SlackAdapterService implements ChannelAdapter {
     for (const file of toProcess) {
       const filename = file.name || 'file';
       try {
-        if (typeof file.size === 'number' && file.size > MAX_FILE_SIZE_BYTES) {
-          logger.warn('[SlackAdapter] skipping oversized file %s (%d bytes)', filename, file.size);
-          failures.push({ filename, reason: `it exceeds the ${MAX_FILE_SIZE_MB} MB limit` });
+        const source = slackFileSource(file);
+        if ('reason' in source) {
+          logger.warn('[SlackAdapter] cannot download file %s: %s', file.id, source.reason);
+          failures.push({ filename, reason: source.reason });
           continue;
         }
 
@@ -2113,14 +2115,7 @@ class SlackAdapterService implements ChannelAdapter {
           continue;
         }
 
-        const url = file.url_private_download || file.url_private;
-        if (!url) {
-          logger.warn('[SlackAdapter] file %s has no download URL', file.id);
-          failures.push({ filename, reason: 'Slack returned no download URL for it' });
-          continue;
-        }
-
-        const buffer = await this.fetchSlackFile(url, botToken, ctx.signal);
+        const buffer = await this.fetchSlackFile(source.url, botToken, ctx.signal);
         if (buffer.byteLength === 0) {
           logger.warn('[SlackAdapter] file %s downloaded empty; skipping', file.id);
           failures.push({ filename, reason: 'it downloaded as an empty file' });
