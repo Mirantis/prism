@@ -5,7 +5,8 @@
 //! `config.agent_id`.
 //!
 //! - `GET  /latest-thread`: `{ threadId }`
-//! - `GET  /threads`: `ThreadSummary[]` (resumable threads, newest first)
+//! - `GET  /threads`: `ThreadSummary[]` (resumable threads, newest first;
+//!   `?workspaceRoot` keeps the ones rooted in that folder)
 //! - `POST /threads`: `{ threadId }` (starts a new thread)
 
 use std::collections::HashMap;
@@ -25,7 +26,7 @@ use crate::log_error;
 use crate::services::conversation_service::{
     CONVERSATION_SERVICE, ListThreadsOptions, StartThreadOptions,
 };
-use crate::support::http::{JsonBody, error_json, json};
+use crate::support::http::{JsonBody, QueryParams, error_json, json};
 use crate::utils::git_branch::get_git_branch;
 
 /// The thread routes, at the root (`/latest-thread`, `/threads`).
@@ -103,11 +104,17 @@ async fn latest_thread() -> Response {
 /// a channel reads live, which reopen only there. 50 bounds the response while
 /// leaving a scrollable list plenty of rows. Each row is labelled with the git
 /// branch of its workspace root when set.
-async fn list_threads() -> Response {
+async fn list_threads(query: QueryParams) -> Response {
     let agent_id = match agent_id() {
         Ok(id) => id,
         Err(response) => return response,
     };
+    // A client that works in one folder lists that folder's threads, so the 50
+    // are that folder's newest and not every folder's.
+    let workspace_root = query
+        .str("workspaceRoot")
+        .filter(|root| !root.is_empty())
+        .map(str::to_string);
     let result = async {
         let threads = CONVERSATION_SERVICE
             .list_threads(
@@ -116,6 +123,7 @@ async fn list_threads() -> Response {
                 Some(ListThreadsOptions {
                     thread_source: Some(ThreadSource::Database),
                     limit: Some(50),
+                    workspace_root,
                 }),
             )
             .await?;

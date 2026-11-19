@@ -267,6 +267,8 @@ pub struct ListThreadsOptions {
     /// Default 20.
     pub limit: Option<i64>,
     pub thread_source: Option<ThreadSource>,
+    /// Only the threads rooted in this folder, so the limit counts those alone.
+    pub workspace_root: Option<String>,
 }
 
 /// A thread with its compaction summary, for context building.
@@ -916,7 +918,8 @@ impl ConversationService {
             .map(|thread| thread.id))
     }
 
-    /// List the threads of a user, newest first.
+    /// List the threads of a user, newest first. With `workspace_root`, only the
+    /// threads rooted in that folder, so the limit counts those alone.
     ///
     /// The DATABASE set is the web/CLI-resumable one. Genuine web/CLI threads are
     /// always created with externalThreadId: null; externalId-keyed DATABASE threads
@@ -939,6 +942,9 @@ impl ConversationService {
                     .into_boxed(),
                 &filter,
             );
+            if let Some(root) = options.workspace_root {
+                query = query.filter(t::workspace_root.eq(root));
+            }
             match options.thread_source {
                 Some(ThreadSource::Database) => {
                     query = query
