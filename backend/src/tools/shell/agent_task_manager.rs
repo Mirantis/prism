@@ -631,17 +631,21 @@ impl AgentTaskManager {
             woken,
         )
         .await;
-        entry.reading.store(false, Ordering::SeqCst);
 
         // The entry might have been reaped while we waited — by a concurrent
         // stop_task, or by kill_all. The state we still hold has the real
         // outcome, so report that rather than inventing a failure; its output has
         // already been delivered to whoever reaped it.
         let still_there = self.tasks.lock().get(task_id).cloned();
-        match still_there {
-            None => Ok(drain_task(&mut entry.state.lock())),
-            Some(entry) => Ok(self.drain_and_maybe_reap(task_id, &entry)),
-        }
+        let status = match still_there {
+            None => drain_task(&mut entry.state.lock()),
+            Some(entry) => self.drain_and_maybe_reap(task_id, &entry),
+        };
+        // `reading` clears only after the drain has set `result_read`. Cleared
+        // earlier, a `report()` that runs in the gap sees neither flag and also
+        // sends the result as a task notification.
+        entry.reading.store(false, Ordering::SeqCst);
+        Ok(status)
     }
 
     /// Terminate a running task and hand back whatever it produced before it died.
