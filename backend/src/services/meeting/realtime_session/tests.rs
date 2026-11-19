@@ -142,7 +142,7 @@ pub(crate) async fn eventually(what: &str, mut check: impl FnMut() -> bool) {
 /// holds every frame the session sent, for three checks in a row, since a handled
 /// frame can make the session send another. A wall-clock wait instead fails when
 /// the test suite loads the machine.
-async fn sync(session: &RealtimeSession, server: &MockServer) {
+pub(crate) async fn sync(session: &RealtimeSession, server: &MockServer) {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     let mut balanced = 0;
     while balanced < 3 {
