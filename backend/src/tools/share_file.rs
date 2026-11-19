@@ -43,7 +43,7 @@ use crate::services::attachment_service::{
     ATTACHMENT_SERVICE, AttachmentSource, CreateAttachmentInput, classify_media_type,
     detect_media_type,
 };
-use crate::tools::shell::workspace::{is_inside_workspace, resolve_path};
+use crate::tools::shell::workspace::{basename, is_inside_workspace, resolve_path};
 use crate::{log_info, log_warn};
 
 pub const SHARE_FILE_TOOL_NAME: &str = "share_file";
@@ -130,11 +130,6 @@ pub struct ShareFileDeps {
 /// constant rather than a setting: an operator has no way to know a better
 /// value, and the wait costs no wall-clock in the normal case.
 pub const PENDING_WRITE_TIMEOUT_MS: u64 = 20_000;
-
-/// `path.basename(p)` of a normalized POSIX path.
-fn basename(p: &str) -> &str {
-    p.trim_end_matches('/').rsplit('/').next().unwrap_or("")
-}
 
 /// Read a workspace file and persist it as an agent-sourced attachment.
 /// Pure (no closure over user/agent) so it's unit-testable; `workspace`

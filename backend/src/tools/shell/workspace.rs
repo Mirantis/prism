@@ -28,6 +28,12 @@ pub fn is_inside_workspace(full_path: &str, workspace: &str) -> bool {
     rules::is_inside_workspace(full_path, workspace)
 }
 
+/// The last segment of `p`, as Node's `path.basename`: a Windows path from
+/// `resolve_path` uses `\`, so splitting on `/` alone would return it whole.
+pub fn basename(p: &str) -> &str {
+    rules::basename(p)
+}
+
 /// Collapse `.` and `..` in the segments after `root`: a `..` above an
 /// absolute root is dropped, one in a relative path kept.
 fn collapse<'a>(segments: impl Iterator<Item = &'a str>, is_abs: bool) -> Vec<&'a str> {
@@ -69,6 +75,10 @@ mod posix {
             return normalize(input_path);
         }
         normalize(&super::join(workspace, input_path, '/'))
+    }
+
+    pub fn basename(p: &str) -> &str {
+        p.trim_end_matches('/').rsplit('/').next().unwrap_or("")
     }
 
     pub fn is_inside_workspace(full_path: &str, workspace: &str) -> bool {
@@ -138,6 +148,20 @@ mod win32 {
         normalize(&super::join(workspace, input_path, '\\'))
     }
 
+    pub fn basename(p: &str) -> &str {
+        // A drive prefix (`C:name`) is not part of the name.
+        let chars: Vec<char> = p.chars().take(2).collect();
+        let p = if chars.len() == 2 && chars[0].is_ascii_alphabetic() && chars[1] == ':' {
+            &p[2..]
+        } else {
+            p
+        };
+        p.trim_end_matches(is_sep)
+            .rsplit(is_sep)
+            .next()
+            .unwrap_or("")
+    }
+
     pub fn is_inside_workspace(full_path: &str, workspace: &str) -> bool {
         let normalized = normalize(full_path);
         let normalized_workspace = normalize(workspace);
@@ -158,6 +182,22 @@ mod win32 {
 #[cfg(test)]
 mod tests {
     use super::{posix, win32};
+
+    #[test]
+    fn basename_follows_the_platform_separators() {
+        assert_eq!(posix::basename("/work/out/report.pdf"), "report.pdf");
+        assert_eq!(posix::basename("/work/out/"), "out");
+        assert_eq!(
+            posix::basename(r"C:\work\report.pdf"),
+            r"C:\work\report.pdf"
+        );
+        assert_eq!(win32::basename(r"C:\work\out\report.pdf"), "report.pdf");
+        assert_eq!(win32::basename("C:/work/chart.png"), "chart.png");
+        assert_eq!(win32::basename(r"\\server\share\a\b.txt"), "b.txt");
+        assert_eq!(win32::basename(r"C:\work\out\"), "out");
+        assert_eq!(win32::basename("C:report.pdf"), "report.pdf");
+        assert_eq!(win32::basename(r"C:\"), "");
+    }
 
     #[test]
     fn resolves_relative_paths_from_the_workspace_root() {
