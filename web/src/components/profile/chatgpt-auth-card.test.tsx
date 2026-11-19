@@ -56,7 +56,6 @@ describe('ChatGptAuthCard', () => {
     });
     mockApi.startChatGptSignIn.mockResolvedValue({
       authorizeUrl: 'https://auth.openai.com/api/accounts/authorize?state=xyz',
-      state: 'xyz',
     });
 
     renderCard();
@@ -69,6 +68,10 @@ describe('ChatGptAuthCard', () => {
         '_blank',
         'noopener,noreferrer',
       ),
+    );
+    const fallbackLink = await screen.findByRole('link', { name: /open the ChatGPT sign-in page/i });
+    expect(fallbackLink.getAttribute('href')).toBe(
+      'https://auth.openai.com/api/accounts/authorize?state=xyz',
     );
     openSpy.mockRestore();
   });

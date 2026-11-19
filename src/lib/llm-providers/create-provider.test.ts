@@ -97,6 +97,7 @@ describe('createProvider', () => {
     config.azureChatEndpoint = undefined;
     config.bedrockMantleChatEndpoint = 'https://bedrock-mantle.us-east-1.api.aws/anthropic/v1';
     config.openaiEndpoint = undefined;
+    config.chatgptChatEndpoint = 'https://api.openai.com/v1';
     config.openrouterEndpoint = 'https://openrouter.ai/api/v1';
     config.litellmEndpoint = undefined;
     vi.clearAllMocks();
@@ -231,7 +232,7 @@ describe('createProvider', () => {
     config.llmProvider = 'chatgpt';
     config.nexusOpenAiBaseUrl = MOUNT.openai;
     expect(createProvider()).toBe('chatgpt-provider');
-    expect(mockCreateChatGptProvider).toHaveBeenCalledWith();
+    expect(mockCreateChatGptProvider).toHaveBeenCalledWith('https://api.openai.com/v1');
     expect(mockCreateOpenAiProvider).not.toHaveBeenCalled();
   });
 

@@ -66,14 +66,13 @@ authenticated with the same `OPENAI_API_KEY` that enables
 meeting tools on where the browser/audio toolchain is present.
 
 `chatgpt` runs the agent on **OpenAI models under your ChatGPT subscription**
-via OpenAI's Sign in with ChatGPT OAuth flow. It is direct-only (tokens stay
-local to the runtime and call `api.openai.com` directly) and uses the same
-`OPENAI_MODEL_ID` and `OPENAI_CLASSIFICATION_MODEL_ID` model settings as
-`openai`. After starting the runtime with `LLM_PROVIDER=chatgpt`, open
-**Profile → ChatGPT subscription** in the web UI and click **Sign in with
-ChatGPT** to authorize Prism in your browser. If a sign-in fails or a session
-expires, sign in again from the same card (or sign out first to reset the
-session). Under OpenAI's Sign in with ChatGPT Terms, this self-serve flow is
+via OpenAI's Sign in with ChatGPT OAuth flow. The runtime calls
+`api.openai.com` directly and uses the same `OPENAI_MODEL_ID` and
+`OPENAI_CLASSIFICATION_MODEL_ID` model settings as `openai`. After starting the
+runtime with `LLM_PROVIDER=chatgpt`, open **Profile → ChatGPT subscription** in
+the web UI and click **Sign in with ChatGPT** to authorize Prism in your
+browser. If a sign-in fails or a session expires, sign in again from the same
+card. Under OpenAI's Sign in with ChatGPT Terms, this self-serve flow is
 for local or self-hosted single-user installs only — tokens must stay under the
 user's own control, and one subscription cannot be pooled or shared to serve
 other users (managed multi-tenant deployments require a separate OpenAI

@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import express from 'express';
+import { config } from '../config';
 
 const { mockService } = vi.hoisted(() => ({
   mockService: {
@@ -28,7 +29,16 @@ app.use(express.json());
 app.use('/agents', chatGptAuthRouter);
 
 describe('chatgpt auth routes', () => {
-  beforeEach(() => vi.clearAllMocks());
+  const originalPublicUrl = config.publicUrl;
+
+  beforeEach(() => {
+    config.publicUrl = null;
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    config.publicUrl = originalPublicUrl;
+  });
 
   it('returns auth status', async () => {
     const status = { enabled: true, signedIn: false, email: null, expiresAt: null };
@@ -38,17 +48,44 @@ describe('chatgpt auth routes', () => {
     expect(res.body).toEqual(status);
   });
 
-  it('starts sign-in with callback URL derived from the request host', async () => {
+  it('starts sign-in with callback URL derived from the request host and returns authorizeUrl only', async () => {
     mockService.startSignIn.mockResolvedValue({
       authorizeUrl: 'https://auth.openai.com/api/accounts/authorize?state=abc',
-      state: 'abc',
     });
     const res = await request(app)
       .post('/agents/chatgpt-auth/start')
       .set('Host', '127.0.0.1:3003');
     expect(res.status).toBe(201);
-    expect(res.body.state).toBe('abc');
+    expect(res.body).toEqual({
+      authorizeUrl: 'https://auth.openai.com/api/accounts/authorize?state=abc',
+    });
     expect(mockService.startSignIn).toHaveBeenCalledWith('http://127.0.0.1:3003/agents/chatgpt-auth/callback');
+  });
+
+  it('uses first X-Forwarded-Host and X-Forwarded-Proto behind an HTTPS reverse proxy when publicUrl is unset', async () => {
+    mockService.startSignIn.mockResolvedValue({
+      authorizeUrl: 'https://auth.openai.com/api/accounts/authorize?state=proxy',
+    });
+    const res = await request(app)
+      .post('/agents/chatgpt-auth/start')
+      .set('Host', '127.0.0.1:3003')
+      .set('X-Forwarded-Host', 'prism.example.com, internal.proxy')
+      .set('X-Forwarded-Proto', 'https, http');
+    expect(res.status).toBe(201);
+    expect(mockService.startSignIn).toHaveBeenCalledWith('https://prism.example.com/agents/chatgpt-auth/callback');
+  });
+
+  it('prefers config.publicUrl over forwarded headers', async () => {
+    config.publicUrl = 'https://configured.example.com';
+    mockService.startSignIn.mockResolvedValue({
+      authorizeUrl: 'https://auth.openai.com/api/accounts/authorize?state=pub',
+    });
+    const res = await request(app)
+      .post('/agents/chatgpt-auth/start')
+      .set('X-Forwarded-Host', 'ignored.example.com')
+      .set('X-Forwarded-Proto', 'http');
+    expect(res.status).toBe(201);
+    expect(mockService.startSignIn).toHaveBeenCalledWith('https://configured.example.com/agents/chatgpt-auth/callback');
   });
 
   it('renders an HTML confirmation page on callback success', async () => {

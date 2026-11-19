@@ -33,6 +33,38 @@ import { config } from '../config';
 import { trackEvent } from '../lib/telemetry';
 import { logger } from '../logger';
 import { resolvePrismaSqlitePath } from '../lib/sqlite-path';
+import {
+  CHATGPT_AUTH_CLIENT_ID,
+  CHATGPT_AUTH_HOST_ID,
+  CHATGPT_AUTH_TOKENS,
+} from './runtime-state.service';
+
+/**
+ * Per-install ChatGPT OAuth rows that must never leave the machine in a backup
+ * or be restored onto another install (restoring a shared refresh token causes
+ * token rotation conflicts and leaks live credentials in `.prism` archives).
+ */
+const STRIPPED_RUNTIME_STATE_KEYS = [
+  CHATGPT_AUTH_TOKENS,
+  CHATGPT_AUTH_HOST_ID,
+  CHATGPT_AUTH_CLIENT_ID,
+] as const;
+
+function stripHostAuthState(dbPath: string): void {
+  const db = new Database(dbPath);
+  try {
+    const hasTable = db
+      .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'runtime_state'`)
+      .get();
+    if (!hasTable) return;
+    const placeholders = STRIPPED_RUNTIME_STATE_KEYS.map(() => '?').join(', ');
+    db.prepare(`DELETE FROM runtime_state WHERE key IN (${placeholders})`).run(
+      ...STRIPPED_RUNTIME_STATE_KEYS,
+    );
+  } finally {
+    db.close();
+  }
+}
 import { loadSqliteVec, EMBEDDING_DIMENSION } from '../lib/sqlite-bootstrap';
 
 export class ArchiveValidationError extends Error {
@@ -101,6 +133,10 @@ export async function exportAgent(agentName: string): Promise<{
   } finally {
     handle.close();
   }
+
+  // Strip host-bound OAuth credentials from the snapshot so `.prism` backups
+  // never carry live ChatGPT refresh tokens or collide on host/client IDs.
+  stripHostAuthState(snapshotPath);
 
   const stream = fs.createReadStream(snapshotPath).pipe(zlib.createGzip());
   const filename = `${slugify(agentName)}-${dateStamp(new Date())}.prism`;
@@ -194,6 +230,9 @@ export async function importAgent(buffer: Buffer): Promise<void> {
     staged?.close();
     live?.close();
   }
+
+  // Strip host-bound OAuth credentials from older backups before promoting.
+  stripHostAuthState(stagingPath);
 
   // 3. Atomic rename — staging → `<db>.next`. From this point on, the
   // boot-time swap (`apply-pending-import.ts`) will pick it up. Rename

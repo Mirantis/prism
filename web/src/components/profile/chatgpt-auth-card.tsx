@@ -1,11 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, KeyRound, LogOut } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { runtimeApi } from '@/api/runtime-client';
 
-export const CHATGPT_AUTH_QUERY_KEY = ['chatgpt-auth-status'] as const;
+const CHATGPT_AUTH_QUERY_KEY = ['chatgpt-auth-status'] as const;
+
+/** Matches the backend 15-minute PKCE pending-attempt lifetime. */
+const PENDING_POLL_MS = 15 * 60_000;
 
 /**
  * Profile card for signing Prism into the user's ChatGPT subscription when
@@ -13,8 +16,10 @@ export const CHATGPT_AUTH_QUERY_KEY = ['chatgpt-auth-status'] as const;
  */
 export function ChatGptAuthCard() {
   const queryClient = useQueryClient();
-  const [waitingForCallback, setWaitingForCallback] = useState(false);
+  const [pendingAuthorizeUrl, setPendingAuthorizeUrl] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  const waitingForCallback = pendingAuthorizeUrl !== null;
 
   const { data: status } = useQuery({
     queryKey: CHATGPT_AUTH_QUERY_KEY,
@@ -23,14 +28,20 @@ export function ChatGptAuthCard() {
   });
 
   if (waitingForCallback && status?.signedIn) {
-    setWaitingForCallback(false);
+    setPendingAuthorizeUrl(null);
   }
+
+  useEffect(() => {
+    if (!waitingForCallback) return;
+    const timer = window.setTimeout(() => setPendingAuthorizeUrl(null), PENDING_POLL_MS);
+    return () => window.clearTimeout(timer);
+  }, [waitingForCallback]);
 
   const startMut = useMutation({
     mutationFn: () => runtimeApi.startChatGptSignIn(),
     onSuccess: ({ authorizeUrl }) => {
       setActionError(null);
-      setWaitingForCallback(true);
+      setPendingAuthorizeUrl(authorizeUrl);
       window.open(authorizeUrl, '_blank', 'noopener,noreferrer');
     },
     onError: (err: Error) => {
@@ -42,7 +53,7 @@ export function ChatGptAuthCard() {
     mutationFn: () => runtimeApi.signOutChatGpt(),
     onSuccess: (next) => {
       setActionError(null);
-      setWaitingForCallback(false);
+      setPendingAuthorizeUrl(null);
       queryClient.setQueryData(CHATGPT_AUTH_QUERY_KEY, next);
     },
     onError: (err: Error) => {
@@ -102,6 +113,20 @@ export function ChatGptAuthCard() {
             </Button>
           )}
         </div>
+        {pendingAuthorizeUrl && !status.signedIn && (
+          <p className="text-xs text-muted-foreground">
+            If the browser tab did not open,{' '}
+            <a
+              href={pendingAuthorizeUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline underline-offset-2 hover:text-foreground"
+            >
+              open the ChatGPT sign-in page
+            </a>
+            .
+          </p>
+        )}
         {actionError && (
           <p role="alert" className="text-sm text-destructive">
             {actionError}

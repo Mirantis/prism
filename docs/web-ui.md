@@ -295,6 +295,11 @@ The agent's identity and runtime controls.
   Buttons let you **Start**, **Stop**, or **Trigger now**, and you can edit the
   interval inline (1–10080 minutes). **May post to** sets where a heartbeat may
   post. See **[Heartbeat](heartbeat.md#where-a-check-posts)**.
+- **ChatGPT subscription.** Shown when the runtime is configured with
+  `LLM_PROVIDER=chatgpt`. Displays whether Prism is signed in to your ChatGPT
+  account, with **Sign in with ChatGPT** to start the browser authorization flow
+  and **Sign out** to disconnect the session. See
+  **[Configuration → Provider selection](configuration.md#provider-selection)**.
 - **Coding agents.** One row each for Claude Code and Codex shows whether its
   coding tasks use the deployment's models or your own subscription, with the
   plan and email you signed in with. **Sign in** opens a dialog that links to
