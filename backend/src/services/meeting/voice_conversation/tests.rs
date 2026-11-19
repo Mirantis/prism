@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use super::*;
 use crate::services::meeting::meeting_provider_interface::SpeakerDetails;
-use crate::services::meeting::realtime_session::tests::{MockServer, eventually, settle};
+use crate::services::meeting::realtime_session::tests::{MockServer, eventually, settle, sync};
 use crate::services::meeting::transcript_log;
 
 struct NullSink;
@@ -52,6 +52,13 @@ struct Harness {
 }
 
 impl Harness {
+    /// Wait until every frame in flight either way has arrived and been handled, then
+    /// give the tasks those frames started a turn to run.
+    async fn settle(&self) {
+        sync(&self.conversation.session, &self.server).await;
+        settle().await;
+    }
+
     fn sent(&self) -> Vec<Value> {
         self.server.sent()
     }
@@ -88,8 +95,7 @@ impl Harness {
             "type": "response.done",
             "response": { "id": "r-gate", "status": "completed", "output": [{ "content": [{ "text": verdict }] }] },
         }));
-        settle().await;
-        settle().await;
+        self.settle().await;
     }
 
     fn commit(&self, item_id: &str) {
@@ -110,7 +116,7 @@ async fn harness_with(
     change(&mut options);
     let conversation = VoiceConversation::new(options).unwrap();
     conversation.start().await.unwrap();
-    settle().await;
+    sync(&conversation.session, &server).await;
     Harness {
         conversation,
         server,
@@ -146,7 +152,7 @@ async fn sends_the_opening_context_once_as_a_user_item_after_the_configuration()
     })
     .await;
     // A second copy would follow at once; it is given the time to.
-    settle().await;
+    h.settle().await;
     let types: Vec<String> = h
         .sent()
         .iter()
@@ -234,16 +240,21 @@ async fn hints_the_transcriber_when_the_log_will_carry_the_words() {
         .map(|s| s.to_string())
         .collect();
     h.conversation.set_participant_names(&names);
-    settle().await;
-    let update = h.of_type("session.update").pop().unwrap();
-    let keywords = update["session"]["audio"]["input"]["transcription"]["keywords"].clone();
+    let keywords = || {
+        h.of_type("session.update").pop().unwrap()["session"]["audio"]["input"]
+            ["transcription"]["keywords"]
+            .clone()
+    };
     // The agent's own name leads.
-    assert_eq!(keywords, json!(["Emma", "Lee", "Mario Sarcher"]));
+    eventually("the roster's keywords", || {
+        keywords() == json!(["Emma", "Lee", "Mario Sarcher"])
+    })
+    .await;
 
     // Re-sending an unchanged roster would mutate a live session every poll.
     let before = h.sent().len();
     h.conversation.set_participant_names(&names);
-    settle().await;
+    h.settle().await;
     assert_eq!(h.sent().len(), before);
     transcript_log::set_full_for_test(None);
     h.conversation.stop();
@@ -255,7 +266,7 @@ async fn sends_no_transcriber_config_at_all_when_nothing_will_read_it() {
     let h = harness().await;
     h.conversation
         .set_participant_names(&["Emma".into(), "Mario Sarcher".into()]);
-    settle().await;
+    h.settle().await;
     assert!(
         !serde_json::to_string(&h.of_type("session.update"))
             .unwrap()
@@ -270,7 +281,7 @@ async fn tells_the_model_who_is_in_the_room_either_way() {
     let h = harness().await;
     h.conversation
         .set_participant_names(&["Emma".into(), "Mario Sarcher".into(), "Lee".into()]);
-    settle().await;
+    h.settle().await;
     let context = h.of_type("conversation.item.create");
     assert_eq!(
         context[0]["item"]["content"][0]["text"],
@@ -285,11 +296,11 @@ async fn ignores_a_reordering_of_the_same_people() {
     let h = harness().await;
     h.conversation
         .set_participant_names(&["Emma".into(), "Mario Sarcher".into(), "Lee".into()]);
-    settle().await;
+    h.settle().await;
     let before = h.sent().len();
     h.conversation
         .set_participant_names(&["Lee".into(), "Emma".into(), "Mario Sarcher".into()]);
-    settle().await;
+    h.settle().await;
     assert_eq!(h.sent().len(), before);
     h.conversation.stop();
 }
@@ -298,7 +309,7 @@ async fn ignores_a_reordering_of_the_same_people() {
 async fn does_not_tell_the_model_it_is_alone_when_the_scrape_found_only_itself() {
     let h = harness().await;
     h.conversation.set_participant_names(&["Emma".into()]);
-    settle().await;
+    h.settle().await;
     assert!(h.of_type("conversation.item.create").is_empty());
     h.conversation.stop();
 }
@@ -307,7 +318,7 @@ async fn does_not_tell_the_model_it_is_alone_when_the_scrape_found_only_itself()
 async fn asks_about_the_utterance_that_just_closed_and_answers_when_told_to() {
     let h = harness().await;
     h.commit("item-1");
-    settle().await;
+    h.settle().await;
     let probe = h.probes().pop().unwrap();
     assert_eq!(probe["response"]["conversation"], "none");
     let referenced: Vec<String> = probe["response"]["input"]
@@ -329,7 +340,7 @@ async fn asks_about_the_utterance_that_just_closed_and_answers_when_told_to() {
 async fn stays_quiet_when_the_utterance_was_not_for_the_agent() {
     let h = harness().await;
     h.commit("item-2");
-    settle().await;
+    h.settle().await;
     h.answer_gate("NO").await;
     assert!(h.spoken_requests().is_empty());
     let stats = h.conversation.statistics();
@@ -341,11 +352,11 @@ async fn stays_quiet_when_the_utterance_was_not_for_the_agent() {
 async fn answers_an_utterance_once_even_if_the_turn_closes_twice() {
     let h = harness().await;
     h.commit("item-3");
-    settle().await;
+    h.settle().await;
     h.answer_gate("YES").await;
     let probes = h.probes().len();
     h.commit("item-3");
-    settle().await;
+    h.settle().await;
     assert_eq!(h.spoken_requests().len(), 1);
     assert_eq!(h.probes().len(), probes);
     h.conversation.stop();
@@ -355,17 +366,19 @@ async fn answers_an_utterance_once_even_if_the_turn_closes_twice() {
 async fn drops_a_verdict_once_a_later_utterance_has_closed() {
     let h = harness().await;
     h.commit("item-first");
-    settle().await;
+    h.settle().await;
     let first = h.probes()[0].clone();
     h.commit("item-second");
-    settle().await;
+    h.settle().await;
     // Answer the first probe only.
     h.server.emit(json!({ "type": "response.created", "response": { "id": "r-1", "metadata": first["response"]["metadata"] } }));
     h.server.emit(json!({ "type": "response.done", "response": { "id": "r-1", "status": "completed", "output": [{ "content": [{ "text": "YES" }] }] } }));
-    settle().await;
-    settle().await;
+    eventually("the superseded verdict", || {
+        h.conversation.statistics().gate_superseded == 1
+    })
+    .await;
+    h.settle().await;
     assert!(h.spoken_requests().is_empty());
-    assert_eq!(h.conversation.statistics().gate_superseded, 1);
     h.conversation.stop();
 }
 
@@ -373,18 +386,20 @@ async fn drops_a_verdict_once_a_later_utterance_has_closed() {
 async fn does_not_let_a_duplicated_commit_rewind_the_supersession_guard() {
     let h = harness().await;
     h.commit("item-a");
-    settle().await;
+    h.settle().await;
     let first = h.probes()[0].clone();
     h.commit("item-b");
-    settle().await;
+    h.settle().await;
     h.commit("item-a");
-    settle().await;
+    h.settle().await;
     h.server.emit(json!({ "type": "response.created", "response": { "id": "r-a", "metadata": first["response"]["metadata"] } }));
     h.server.emit(json!({ "type": "response.done", "response": { "id": "r-a", "status": "completed", "output": [{ "content": [{ "text": "YES" }] }] } }));
-    settle().await;
-    settle().await;
+    eventually("the superseded verdict", || {
+        h.conversation.statistics().gate_superseded == 1
+    })
+    .await;
+    h.settle().await;
     assert!(h.spoken_requests().is_empty());
-    assert_eq!(h.conversation.statistics().gate_superseded, 1);
     h.conversation.stop();
 }
 
@@ -392,10 +407,9 @@ async fn does_not_let_a_duplicated_commit_rewind_the_supersession_guard() {
 async fn counts_a_verdict_that_never_came_so_a_deaf_agent_is_visible() {
     let h = harness().await;
     h.commit("item-4");
-    settle().await;
+    h.settle().await;
     h.server.drop_from_server();
-    settle().await;
-    settle().await;
+    h.settle().await;
     assert!(h.spoken_requests().is_empty());
     let stats = h.conversation.statistics();
     assert_eq!((stats.gate_calls, stats.gate_failed), (1, 1));
@@ -447,8 +461,7 @@ async fn counts_how_often_a_closed_utterance_had_a_speaker_attached() {
     h.conversation
         .set_current_speaker(Some(reading("Emma Lee")));
     h.commit("item-40");
-    settle().await;
-    settle().await;
+    h.settle().await;
     let stats = h.conversation.statistics();
     assert_eq!(
         (stats.attributed_utterances, stats.unattributed_utterances),
@@ -461,8 +474,7 @@ async fn counts_how_often_a_closed_utterance_had_a_speaker_attached() {
 async fn counts_an_unattributed_utterance_when_the_platform_said_nothing() {
     let h = harness().await;
     h.commit("item-41");
-    settle().await;
-    settle().await;
+    h.settle().await;
     let stats = h.conversation.statistics();
     assert_eq!(
         (stats.attributed_utterances, stats.unattributed_utterances),
@@ -517,9 +529,9 @@ async fn refuses_a_rate_it_has_no_converter_for() {
 async fn sends_nothing_after_the_conversation_stops() {
     let h = harness().await;
     h.conversation.stop();
-    settle().await;
+    h.settle().await;
     h.conversation.push_audio(&[0u8; 960]);
-    settle().await;
+    h.settle().await;
     assert!(appended_lengths(&h).is_empty());
 }
 
@@ -599,7 +611,7 @@ async fn asks_the_whole_call_then_closes_without_reporting_a_lost_session() {
             })
             .await
     });
-    settle().await;
+    h.settle().await;
     let request = h.probes().pop().unwrap();
     assert_eq!(request["response"]["instructions"], "Summarize the call.");
     // No input, so the model reads every item of the call.
@@ -612,7 +624,7 @@ async fn asks_the_whole_call_then_closes_without_reporting_a_lost_session() {
         answer.await.unwrap().as_deref(),
         Some("You asked about the deploy.")
     );
-    settle().await;
+    h.settle().await;
     assert!(h.lost.lock().is_empty());
     let again = h
         .conversation
@@ -643,6 +655,6 @@ async fn answers_no_utterance_that_closes_while_it_writes() {
     });
     tokio::time::sleep(Duration::from_millis(5)).await;
     h.commit("item-late");
-    settle().await;
+    h.settle().await;
     assert!(h.spoken_requests().is_empty());
 }
