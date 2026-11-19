@@ -611,9 +611,14 @@ impl ComputerAccess {
                 started_at: now_ms(),
                 ending: false,
             });
+            // Hold the guard before `state` is released. A viewer that leaves right
+            // after would otherwise run `close_window` to the end first, release a key
+            // that is not there yet, and leave this hold behind with no window to free
+            // it. `close_window` takes `state` and the guard's lock one after the
+            // other, never both, so this order cannot deadlock.
+            hold_secure_guard((self.holder, number));
             number
         };
-        hold_secure_guard((self.holder, number));
         let mut props = agent_props();
         props.insert("computer.help_id".to_string(), help_id.to_string());
         track_event(
