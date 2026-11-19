@@ -59,6 +59,8 @@ export interface PublishOptions {
    * time (attachmentService caps and only claims unlinked rows).
    */
   attachmentIds?: string[];
+  /** A verbose turn's step, which the turn delivers before its reply. */
+  step?: boolean;
   /**
    * Per-message context: routing (channel/channelId/channelThreadId) + rendering
    * hints (e.g. `includeFeedback`). The caller (conversation engine for
@@ -154,6 +156,7 @@ export class MessageDeliveryService {
       triggerName: options?.triggerName,
       toolCalls: options?.toolCalls,
       blocks: options?.blocks,
+      step: options?.step,
     });
 
     // 2. Link any agent-shared files to this message and load their metadata

@@ -3,12 +3,35 @@
  */
 
 import { createBdd } from 'playwright-bdd';
-import { expect } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import * as dbHelper from '../support/db-helper';
 import { HomePage } from '../pages/home.page';
 import { DEFAULT_AGENT_ID } from '../fixtures/test-data';
 
 const { Given, When, Then } = createBdd();
+
+interface MessagePayload { id: string; role: string; step?: boolean }
+
+/** The `message` events the chat socket delivered in the last turn, in arrival order, one per id. */
+let delivered: MessagePayload[] = [];
+
+function agentMessages(messages: MessagePayload[]): MessagePayload[] {
+  return messages.filter((message) => message.role === 'AGENT');
+}
+
+/** The marks of a turn's agent messages: every one but the reply is a step. */
+function expectStepsThenReply(messages: MessagePayload[]): void {
+  const marks = agentMessages(messages).map((message) => message.step);
+  expect(marks.length).toBeGreaterThan(1);
+  expect(marks).toEqual([...Array(marks.length - 1).fill(true), false]);
+}
+
+/** The latest thread's client history, read from the runtime: the SPA's dev server proxies only `/agents`. */
+async function history(page: Page): Promise<MessagePayload[]> {
+  const res = await page.request.get(`${process.env.AGENT_RUNTIME_URL}/messages?limit=50`);
+  expect(res.ok()).toBe(true);
+  return (await res.json()) as MessagePayload[];
+}
 
 Given('the agent is in concise mode', async () => {
   const prisma = dbHelper.getPrisma();
@@ -27,6 +50,17 @@ Given('the agent is in verbose mode', async () => {
 });
 
 When('a multi-step chat turn completes', async ({ page }) => {
+  delivered = [];
+  page.on('websocket', (socket) => {
+    socket.on('framereceived', ({ payload }) => {
+      if (typeof payload !== 'string') return;
+      let frame: { type?: string; payload?: MessagePayload };
+      try { frame = JSON.parse(payload); } catch { return; }
+      const message = frame.payload;
+      if (frame.type !== 'message' || !message?.id) return;
+      delivered = [...delivered.filter((seen) => seen.id !== message.id), message];
+    });
+  });
   const homePage = new HomePage(page);
   await homePage.navigate();
   // Coerce a genuine intermediate text step: narrate, then use a tool, then a
@@ -105,6 +139,26 @@ Then('only one agent message is shown', async ({ page }) => {
   // rows used to reappear. They must stay hidden.
   const agentMessages = homePage.getAgentMessages();
   await expect(agentMessages).toHaveCount(1, { timeout: 15_000 });
+});
+
+Then('the delivered agent message arrives unmarked', async () => {
+  const marks = agentMessages(delivered).map((message) => message.step);
+  expect(marks).toEqual([false]);
+});
+
+Then('the history marks no agent message as a step', async ({ page }) => {
+  const marks = agentMessages(await history(page)).map((message) => message.step);
+  expect(marks.length).toBeGreaterThan(0);
+  expect(marks.every((step) => step === false)).toBe(true);
+});
+
+Then('every delivered agent message but the reply arrives marked as a step', async () => {
+  await expect.poll(() => agentMessages(delivered).at(-1)?.step, { timeout: 30_000 }).toBe(false);
+  expectStepsThenReply(delivered);
+});
+
+Then('the history marks every agent message but the reply as a step', async ({ page }) => {
+  expectStepsThenReply(await history(page));
 });
 
 Then('multiple agent messages are delivered via the channel', async ({ page }) => {

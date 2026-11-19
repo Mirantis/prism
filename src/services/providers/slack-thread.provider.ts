@@ -23,8 +23,8 @@ interface SlackMessage {
   ts: string;
 }
 
-/** What started a reply we stored. */
-type StoredTrigger = Pick<ConversationMessage, 'triggeredBy' | 'triggerName'>;
+/** What started a reply we stored, and whether it is a verbose turn's step. */
+type StoredReply = Pick<ConversationMessage, 'triggeredBy' | 'triggerName' | 'step'>;
 
 const USER_NAME_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -161,7 +161,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
     const clientView = opts?.view === 'client';
     const compactedThroughTs = clientView ? null : thread.compactedThroughTs;
 
-    const [rawMessages, { contentByTs, toolCallsByTs, createdAtByTs, triggerByTs }] = await Promise.all([
+    const [rawMessages, { contentByTs, toolCallsByTs, createdAtByTs, storedByTs }] = await Promise.all([
       this.fetchAllReplies(channelId, threadTs, teamId, compactedThroughTs ?? undefined),
       this.getAgentMessageMaps(threadId),
     ]);
@@ -173,7 +173,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
       contentByTs,
       toolCallsByTs,
       createdAtByTs,
-      triggerByTs,
+      storedByTs,
     );
 
     if (clientView) return slackDerived;
@@ -323,7 +323,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
     dbContentByTs: Map<string, string>,
     toolCallsByTs: Map<string, Prisma.JsonValue>,
     createdAtByTs: Map<string, Date>,
-    triggerByTs: Map<string, StoredTrigger>,
+    storedByTs: Map<string, StoredReply>,
   ): Promise<ConversationMessage[]> {
     // Choose the authoritative body for a message. For the agent's own
     // replies, prefer the lossless stored DB content (which preserves
@@ -394,8 +394,8 @@ export class SlackThreadProvider implements ThreadMessageProvider {
         content,
         // A reply we stored keeps its trigger, so a scheduled task's reply is not
         // read as an answer to the person.
-        triggeredBy: (isOurAgent && triggerByTs.get(msg.ts)?.triggeredBy) || MessageTrigger.USER_INPUT,
-        triggerName: (isOurAgent && triggerByTs.get(msg.ts)?.triggerName) || null,
+        triggeredBy: (isOurAgent && storedByTs.get(msg.ts)?.triggeredBy) || MessageTrigger.USER_INPUT,
+        triggerName: (isOurAgent && storedByTs.get(msg.ts)?.triggerName) || null,
         toolCalls: (isOurAgent && toolCallsByTs.get(msg.ts)) || null,
         blocks: null,
         senderExternalId: msg.user || null,
@@ -404,6 +404,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
         isCompacted: false,
         // Slack-derived rows are always delivered messages, never internal steps.
         internalStep: false,
+        step: (isOurAgent && storedByTs.get(msg.ts)?.step) || false,
         createdAt,
       };
     });
@@ -426,7 +427,7 @@ export class SlackThreadProvider implements ThreadMessageProvider {
     contentByTs: Map<string, string>;
     toolCallsByTs: Map<string, Prisma.JsonValue>;
     createdAtByTs: Map<string, Date>;
-    triggerByTs: Map<string, StoredTrigger>;
+    storedByTs: Map<string, StoredReply>;
   }> {
     // Only delivered agent replies carry a ts (`externalMessageId`). This set is
     // disjoint from the concise internal steps merged in fetchSlackMessages
@@ -445,23 +446,24 @@ export class SlackThreadProvider implements ThreadMessageProvider {
         createdAt: true,
         triggeredBy: true,
         triggerName: true,
+        step: true,
       },
     });
 
     const contentByTs = new Map<string, string>();
     const toolCallsByTs = new Map<string, Prisma.JsonValue>();
     const createdAtByTs = new Map<string, Date>();
-    const triggerByTs = new Map<string, StoredTrigger>();
+    const storedByTs = new Map<string, StoredReply>();
     for (const msg of dbMessages) {
       if (!msg.externalMessageId) continue;
       contentByTs.set(msg.externalMessageId, msg.content);
       createdAtByTs.set(msg.externalMessageId, msg.createdAt);
-      triggerByTs.set(msg.externalMessageId, { triggeredBy: msg.triggeredBy, triggerName: msg.triggerName });
+      storedByTs.set(msg.externalMessageId, { triggeredBy: msg.triggeredBy, triggerName: msg.triggerName, step: msg.step });
       if (msg.toolCalls != null) {
         toolCallsByTs.set(msg.externalMessageId, msg.toolCalls);
       }
     }
-    return { contentByTs, toolCallsByTs, createdAtByTs, triggerByTs };
+    return { contentByTs, toolCallsByTs, createdAtByTs, storedByTs };
   }
 
   /**

@@ -191,6 +191,11 @@ export interface MessageEventPayload {
   toolCalls: unknown[] | null;
   blocks: unknown[] | null;
   isCompacted: boolean;
+  /**
+   * A verbose turn's step: an `AGENT` message the turn delivers before its reply.
+   * Clients fold the steps above the reply that follows them. False on every other message.
+   */
+  step: boolean;
   /** ISO 8601 with milliseconds. Clients order a thread by `(createdAt, id)`. */
   createdAt: string;
   attachments: AttachmentPayload[] | null;
