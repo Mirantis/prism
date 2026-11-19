@@ -1474,7 +1474,7 @@ async fn run_invocation(
             mode: CONFIG.tool_risk_gate_mode,
             invocation_mode: mode.to_string(),
             initial_prompt: request.prompt.clone(),
-            initial_prompt_from_agent: Some(request.prompt_from_agent),
+            initial_prompt_source: request.prompt_source,
             // Read as policy by the classifier, not as evidence; see the gate.
             agent_guide: Some(context.agent_md.clone()),
             user_id: request.user_id.clone(),

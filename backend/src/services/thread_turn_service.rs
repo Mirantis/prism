@@ -49,7 +49,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
-use crate::types::AgentMessageOrigin;
+use crate::types::{AgentMessageOrigin, TaskNotificationOrigin};
 use crate::{log_info, log_warn};
 
 /// A message waiting to reach the turn that owns a thread.
@@ -67,6 +67,9 @@ pub struct PendingMessage {
     /// Set when another agent sent it, so the turn reads it as that agent's.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_message: Option<AgentMessageOrigin>,
+    /// Set when the runtime wrote it to report a task that ended, so it is nobody's request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_notification: Option<TaskNotificationOrigin>,
 }
 
 /// One claim's messages, oldest first. Compared by identity (`Arc::ptr_eq`).
@@ -512,6 +515,7 @@ mod tests {
             text: text.to_string(),
             attachment_ids: attachment_ids.iter().map(|id| id.to_string()).collect(),
             agent_message: None,
+            task_notification: None,
         }
     }
 

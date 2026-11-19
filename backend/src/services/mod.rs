@@ -49,6 +49,7 @@ pub mod slack_message_queue_service;
 pub mod slack_socket_retire;
 pub mod slack_socket_watchdog;
 pub mod slack_working_indicator;
+pub mod task_notification_service;
 pub mod teams;
 pub mod thread_provider_interface;
 pub mod thread_reply_classifier_service;

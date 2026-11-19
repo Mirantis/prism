@@ -25,6 +25,7 @@ use crate::prompts::agent_message_prompt::{
     AgentMessageColumns, agent_message_columns, agent_message_origin, render_agent_message,
 };
 use crate::prompts::computer_prompt::{COMPUTER_INSTRUCTIONS, REMOTE_COMPUTER_INSTRUCTIONS};
+use crate::prompts::memory_block_tags::{RECALLED_TAG, RECENT_TAG, memory_block_opening};
 use crate::prompts::webhook_prompt_tags::{WEBHOOK_EVENT_DATA_TAG, WEBHOOK_PROMPT_TAG};
 use crate::services::attachment_service::{AttachmentCategory, AttachmentMeta, human_file_size};
 use crate::services::channel_adapter_interface::{LinkedTarget, LinkedTargetKind, WEB_CHAT_TARGET};
@@ -447,13 +448,6 @@ pub async fn build_recent_memories(context: &AgentContext) -> anyhow::Result<Opt
     } else {
         Some(block)
     })
-}
-
-const RECALLED_TAG: &str = "recalled-memories";
-const RECENT_TAG: &str = "recent-memories";
-
-fn memory_block_opening(tag: &str) -> String {
-    format!("\n\nContext:\n<{tag}>\n")
 }
 
 /// The stored and sent form of a memory block: one string, so the two cannot drift.

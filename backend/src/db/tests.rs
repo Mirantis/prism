@@ -568,6 +568,10 @@ fn refuses_an_enum_value_the_schema_does_not_declare() {
 fn enums_keep_the_stored_text() {
     assert_eq!(MessageTrigger::AgentMessage.as_str(), "AGENT_MESSAGE");
     assert_eq!(
+        MessageTrigger::TaskNotification.as_str(),
+        "TASK_NOTIFICATION"
+    );
+    assert_eq!(
         "CRON_TASK".parse::<MessageTrigger>().unwrap(),
         MessageTrigger::CronTask
     );

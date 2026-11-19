@@ -38,6 +38,7 @@ use crate::lib::log_redaction::err_json;
 use crate::lib::telemetry::track_event;
 use crate::prompts::agent_message_prompt::{AgentMessageColumns, agent_message_origin};
 use crate::prompts::context_builder::with_sender_tag;
+use crate::prompts::task_notification_prompt::task_notification_origin;
 use crate::protocol::chat_protocol::{
     NackCode, StreamEvent, TURN_FAILED, TurnEventPayload, TurnOutcome, TurnState, turn_error,
 };
@@ -55,7 +56,7 @@ use crate::services::message_delivery_service::MESSAGE_DELIVERY_SERVICE;
 use crate::services::pending_work_service::{PENDING_WORK_SERVICE, PendingWorkKind};
 use crate::services::web_chat_label::web_chat_label;
 use crate::support::after_accept::{AcceptGate, spawn_after_accept, within_gate};
-use crate::types::{AgentMessageOrigin, ResumedReply};
+use crate::types::{AgentMessageOrigin, ResumedReply, TaskNotificationOrigin};
 use crate::{log_error, log_info};
 
 /// Who sent a message, as the Mirantis Agent Platform sign-in named the connection.
@@ -82,6 +83,8 @@ pub struct InboundMessage {
     pub agent_message: Option<AgentMessageOrigin>,
     /// The runtime wrote it in the person's name, so it leaves a waiting question card open.
     pub runtime_written: bool,
+    /// Set on the runtime's report that a coding task ended, which only a stored row carries.
+    pub task_notification: Option<TaskNotificationOrigin>,
 }
 
 #[derive(Debug, Clone)]
@@ -156,6 +159,7 @@ fn outcome_of(ended: &ChatTurnEnd) -> TurnEnding {
 struct SenderInput {
     metadata: ChatMetadata,
     agent_message: Option<AgentMessageOrigin>,
+    task_notification: Option<TaskNotificationOrigin>,
 }
 
 fn sender_input(message: &InboundMessage) -> SenderInput {
@@ -167,6 +171,14 @@ fn sender_input(message: &InboundMessage) -> SenderInput {
         return SenderInput {
             metadata,
             agent_message: Some(agent_message.clone()),
+            task_notification: None,
+        };
+    }
+    if let Some(task_notification) = &message.task_notification {
+        return SenderInput {
+            metadata,
+            agent_message: None,
+            task_notification: Some(task_notification.clone()),
         };
     }
     let metadata = match &message.sender {
@@ -180,6 +192,7 @@ fn sender_input(message: &InboundMessage) -> SenderInput {
     SenderInput {
         metadata,
         agent_message: None,
+        task_notification: None,
     }
 }
 
@@ -194,6 +207,7 @@ fn engine_input(message: &InboundMessage, agent_id: String) -> UserMessageInput 
         metadata: Some(sender.metadata),
         agent_message: sender.agent_message,
         runtime_written: message.runtime_written,
+        task_notification: sender.task_notification,
     }
 }
 
@@ -227,6 +241,20 @@ fn track_received(message: &InboundMessage, duplicate: bool) {
 }
 
 /// The origin columns of a stored message.
+/// A stored row as the queue holds it. The row keeps who sent it; the turn reads the sender from there.
+fn stored_inbound(message: &ConversationMessage) -> InboundMessage {
+    InboundMessage {
+        id: message.id.clone(),
+        thread_id: message.thread_id.clone(),
+        content: message.content.clone(),
+        attachment_ids: Vec::new(),
+        sender: None,
+        agent_message: origin_of(message),
+        runtime_written: false,
+        task_notification: task_notification_origin(&message.id, Some(message.triggered_by)),
+    }
+}
+
 fn origin_of(message: &ConversationMessage) -> Option<AgentMessageOrigin> {
     agent_message_origin(&AgentMessageColumns {
         triggered_by: Some(message.triggered_by.as_str().to_string()),
@@ -402,17 +430,23 @@ impl InboundMessageService {
     /// message, behind the ones accepted before it.
     pub fn resume(&'static self, message: &ConversationMessage, resumed: ResumedReply) {
         let waiting = Waiting {
-            message: InboundMessage {
-                id: message.id.clone(),
-                thread_id: message.thread_id.clone(),
-                content: message.content.clone(),
-                attachment_ids: Vec::new(),
-                sender: None,
-                agent_message: origin_of(message),
-                runtime_written: false,
-            },
+            message: stored_inbound(message),
             title_set: None,
             resumed: Some(resumed),
+        };
+        tokio::spawn(async move {
+            self.schedule_stored(waiting).await;
+        });
+    }
+
+    /// Answer a message the runtime stored itself, such as a task notification: a
+    /// turn running on its thread reads it at its next step, and otherwise it waits
+    /// like any message, behind the ones accepted before it.
+    pub fn answer_stored(&'static self, message: &ConversationMessage) {
+        let waiting = Waiting {
+            message: stored_inbound(message),
+            title_set: None,
+            resumed: None,
         };
         tokio::spawn(async move {
             self.schedule_stored(waiting).await;
@@ -779,6 +813,7 @@ impl InboundMessageService {
             resumed: waiting.resumed.clone(),
             metadata: Some(sender.metadata),
             agent_message: sender.agent_message,
+            task_notification: sender.task_notification,
             channel_label_for: Some(Arc::new(|thread_id: String| {
                 async move { web_chat_label(&thread_id).await }.boxed()
             })),
@@ -867,7 +902,7 @@ impl Default for InboundMessageService {
 }
 
 /// The stored message with this id, if there is one.
-async fn find_message(id: &str) -> anyhow::Result<Option<ConversationMessage>> {
+pub(crate) async fn find_message(id: &str) -> anyhow::Result<Option<ConversationMessage>> {
     let id = id.to_string();
     crate::db::run(move |conn| {
         Ok(m::conversation_messages

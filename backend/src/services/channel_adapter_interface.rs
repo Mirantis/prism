@@ -328,6 +328,14 @@ pub trait ChannelAdapter: Send + Sync {
         None
     }
 
+    /// Answer a message the runtime stored in one of this channel's conversations,
+    /// such as a task notification, for a channel that answers its messages in a
+    /// queue of its own. A channel without it starts the answer's turn at once.
+    /// `Some(())` when the channel took the message.
+    fn answer_stored(&self, message: &ConversationMessage) -> Option<()> {
+        None
+    }
+
     /// The ids of the agent's linked shared channels, which a webhook or a
     /// scheduled task can choose to post to.
     async fn linked_channel_ids(&self, agent_id: &str) -> Option<anyhow::Result<Vec<String>>> {

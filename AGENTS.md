@@ -932,6 +932,27 @@ only `inboundMessageService` sets it, for the agent-message route.
 - **`GET /agents/state`** (`routes/agent_state.rs`) answers `working` or `idle`
   from `isAgentIdle`.
 
+### Task notifications
+
+A `coding_agent` task started in a chat turn records that conversation in its
+`notify` target, kept in its `coding-task` row, and the agent ends its turn instead
+of waiting. When the task ends, `tools/shell/agent_task_manager.rs` renders the result
+(`prompts/task_notification_prompt.rs`) and `TASK_NOTIFICATION_SERVICE` stores it as
+a hidden USER row under the task's id. The row is then answered like a message:
+handed to a turn running on the thread, or answered by a turn of its own. A
+channel with a queue of its own (`ChannelAdapter::answer_stored`, the web socket's)
+takes the row into it, so it waits behind another conversation's turn, and a
+restart resumes it there as a task notification too.
+
+- **Not the person's.** The turn's `prompt_source` is `task`: no feedback prompt,
+  and the risk gate reads it as `taskNotification`, which authorizes nothing,
+  with the person's request in its earlier messages. Those leave out the turns'
+  memory blocks and resume notices, which are not the person talking.
+- **Once per task.** The task keeps its result until the row is stored, and a
+  stored row is not stored again, so a restart in between reports it once.
+- **Read once.** A task stopped with `coding_agent_stop`, or whose result a poll
+  handed out or is waiting to, reports nothing. Other runs still poll.
+
 ### Turn Steering (mid-turn messages)
 
 There is **one live turn per thread**. `chat()` decides offer-vs-own before it

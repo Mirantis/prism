@@ -33,6 +33,7 @@ use crate::services::conversation_service::CONVERSATION_SERVICE;
 use crate::services::delivery_target_service::PostingCeiling;
 use crate::services::outbound_message_service::SEND_MESSAGE_TOOL_NAME;
 use crate::services::plugin_mcp_service::PLUGIN_MCP_SERVICE;
+use crate::services::task_notification_service::TaskNotificationTarget;
 use crate::tools::agent_config::get_agent_config_tools;
 use crate::tools::ask_questions::get_ask_questions_tools;
 use crate::tools::attachments::get_attachment_tools;
@@ -214,9 +215,22 @@ pub async fn collect_tools(input: CollectToolsInput) -> anyhow::Result<Collected
         ));
     }
     built_in_tools.extend(get_agent_config_tools()?);
+    // A task started in a chat conversation reports its end there, and the agent ends
+    // its turn meanwhile. Every other run polls for the result.
+    let task_notifications = match thread_id {
+        Some(thread_id) if mode == "chat" => Some(TaskNotificationTarget {
+            thread_id: thread_id.to_string(),
+            agent_id: input.agent_id.clone(),
+            user_id: input.user_id.clone(),
+            origin_channel: Some(origin_channel.as_str().to_string()),
+            origin_channel_id: origin_channel_id.map(str::to_string),
+        }),
+        _ => None,
+    };
     built_in_tools.extend(get_shell_tools(
         workspace_root,
         input.pending_file_writes.clone(),
+        task_notifications,
     ));
     // Same workspace root as the shell tools: write-then-share has to agree on what
     // a relative path means, and the write/read sequencing compares resolved paths.

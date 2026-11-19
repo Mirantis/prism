@@ -13,6 +13,7 @@ use crate::db::models::ConversationMessage;
 use crate::db::schema::conversation_messages::dsl as m;
 use crate::lib::log_redaction::err_json;
 use crate::prompts::agent_message_prompt::{AgentMessageColumns, agent_message_origin};
+use crate::prompts::task_notification_prompt::task_notification_origin;
 use crate::services::attachment_service::ATTACHMENT_SERVICE;
 use crate::services::conversation_engine_service::{
     CONVERSATION_ENGINE_SERVICE, ChatInput, ChatWork, StoredMessage, UserMessageInput,
@@ -171,6 +172,7 @@ pub async fn resume_replies(items: Vec<PendingWorkItem>) -> anyhow::Result<()> {
             resumed: Some(resumed),
             metadata: newest_work.metadata.clone(),
             agent_message: agent_message_origin(&origin_columns(newest)),
+            task_notification: task_notification_origin(&newest.id, Some(newest.triggered_by)),
             ..ChatInput::default()
         };
         tokio::spawn(async move {
@@ -221,6 +223,7 @@ async fn store_message(id: &str, work: &ChatWork) -> bool {
         attachment_ids: message.attachment_ids.clone(),
         agent_message: message.agent_message.clone(),
         runtime_written: message.runtime_written,
+        task_notification: message.task_notification.clone(),
     };
     match CONVERSATION_ENGINE_SERVICE
         .accept_user_message(&input, &work.thread_id, Some(id))

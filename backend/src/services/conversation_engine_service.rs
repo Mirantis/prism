@@ -31,6 +31,7 @@ use crate::lib::tool_lifecycle::ToolLifecycleListener;
 use crate::prompts::agent_message_prompt::{agent_message_columns, render_agent_message};
 use crate::prompts::context_builder::{ConversationMessage as HistoryRow, SteeringMessage};
 use crate::prompts::resume_prompt::RESUMED_REPLY_NOTICE;
+use crate::prompts::task_notification_prompt::TASK_NOTIFICATION_TRIGGER;
 use crate::services::agent_workspace_service::AGENT_WORKSPACE_SERVICE;
 use crate::services::attachment_service::ATTACHMENT_SERVICE;
 use crate::services::channel_adapter_interface::{ChannelContext, ChannelName};
@@ -46,7 +47,8 @@ use crate::services::thread_turn_service::{PendingMessage, THREAD_TURN_SERVICE, 
 use crate::support::{js, now_ms};
 use crate::types::{
     AgentMessageOrigin, HistoryReadListener, InvokeError, InvokeErrorType, InvokeMode,
-    InvokeRequest, InvokeStep, ResumedReply, SteeringSource, ToolCallRecord, UIBlock,
+    InvokeRequest, InvokeStep, PromptSource, ResumedReply, SteeringSource, TaskNotificationOrigin,
+    ToolCallRecord, UIBlock,
 };
 use crate::{log_error, log_info};
 
@@ -155,6 +157,10 @@ pub struct ChatInput {
     /// question card open. Only the runtime's own callers set it: `metadata` can
     /// come from a request body.
     pub runtime_written: bool,
+    /// Set when the runtime wrote the message to report that a coding task the agent
+    /// started in this conversation ended. `message` is the rendered notification,
+    /// stored hidden from clients. Only `TASK_NOTIFICATION_SERVICE` sets it.
+    pub task_notification: Option<TaskNotificationOrigin>,
     /// The shared-channel label of the thread, read again before each turn of the
     /// exchange, so a follow-up turn sees a person who first wrote during the turn
     /// before it. Takes precedence over `metadata.channel_label`.
@@ -173,6 +179,8 @@ pub struct UserMessageInput {
     pub agent_message: Option<AgentMessageOrigin>,
     /// See `ChatInput::runtime_written`.
     pub runtime_written: bool,
+    /// See `ChatInput::task_notification`.
+    pub task_notification: Option<TaskNotificationOrigin>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -221,6 +229,8 @@ pub struct ChatWorkMessage {
     pub agent_message: Option<AgentMessageOrigin>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub runtime_written: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_notification: Option<TaskNotificationOrigin>,
 }
 
 /// A message owed an answer, as `pending_work` holds it: where its thread is and
@@ -262,6 +272,7 @@ pub fn chat_work_for(input: &UserMessageInput, thread_id: &str) -> ChatWork {
             attachment_ids: input.attachment_ids.clone(),
             agent_message: input.agent_message.clone(),
             runtime_written: input.runtime_written,
+            task_notification: input.task_notification.clone(),
         }),
         ..ChatWork::default()
     }
@@ -306,6 +317,23 @@ fn prompt_text(text: &str, origin: Option<&AgentMessageOrigin>) -> String {
     }
 }
 
+/// Who wrote the messages a turn answers: the person when any of them is theirs,
+/// else other agents when any is theirs, else the runtime.
+fn prompt_source_of<'a>(messages: impl IntoIterator<Item = &'a PendingMessage>) -> PromptSource {
+    let messages: Vec<&PendingMessage> = messages.into_iter().collect();
+    if messages
+        .iter()
+        .any(|m| m.agent_message.is_none() && m.task_notification.is_none())
+    {
+        return PromptSource::Person;
+    }
+    if messages.iter().any(|m| m.agent_message.is_some()) {
+        PromptSource::Agent
+    } else {
+        PromptSource::Task
+    }
+}
+
 /// A call's input with each long string in it cut, so it stays JSON and replays
 /// with its arguments. Fails when a long input is not JSON.
 fn cut_input(input: &str) -> anyhow::Result<String> {
@@ -344,8 +372,8 @@ struct StreamTurnParams {
     prompt: String,
     /// Restate `prompt` as the trailing user message (coalesced follow-up).
     append_prompt: bool,
-    /// The turn answers the person, not only other agents, so the person may rate it.
-    from_person: bool,
+    /// Who wrote the messages the turn answers. Only a turn that answers the person may be rated.
+    prompt_source: PromptSource,
     appended_message_ids: Vec<String>,
     /// Snapshot taken once inside the lock; gates intermediate delivery.
     verbose: bool,
@@ -755,6 +783,7 @@ impl ConversationEngineService {
             text: message.clone(),
             attachment_ids: input.attachment_ids.clone().unwrap_or_default(),
             agent_message: agent_origin.clone(),
+            task_notification: input.task_notification.clone(),
         };
         let steer_only = input.steer_only == Some(true);
         // A reply a restart interrupted is never handed over: what its exchange stores
@@ -800,6 +829,7 @@ impl ConversationEngineService {
                     metadata: metadata.clone(),
                     agent_message: agent_origin.clone(),
                     runtime_written: input.runtime_written,
+                    task_notification: input.task_notification.clone(),
                 };
                 let (thread_id, message_id) = (thread_id.clone(), message_id.clone());
                 tokio::spawn(async move {
@@ -997,7 +1027,7 @@ impl ConversationEngineService {
                     let mut prompt = prompt_text(&message, agent_origin.as_ref());
                     let mut append_prompt = false;
                     // Feedback is the person's to give, on a reply to something they asked.
-                    let mut from_person = agent_origin.is_none();
+                    let mut prompt_source = prompt_source_of([&pending]);
                     let mut appended_message_ids: Vec<String> = Vec::new();
                     // A resumed exchange stores rows after its message on purpose, and its
                     // history ends on the resume notice.
@@ -1072,7 +1102,7 @@ impl ConversationEngineService {
                                 workspace_root: workspace_root.clone(),
                                 prompt: prompt.clone(),
                                 append_prompt,
-                                from_person,
+                                prompt_source,
                                 appended_message_ids: appended_message_ids.clone(),
                                 verbose,
                                 channel_context: channel_context.clone(),
@@ -1144,7 +1174,7 @@ impl ConversationEngineService {
                             .collect::<Vec<_>>()
                             .join("\n\n");
                         append_prompt = true;
-                        from_person = leftover.iter().any(|p| p.agent_message.is_none());
+                        prompt_source = prompt_source_of(&leftover);
                         appended_message_ids = leftover.iter().map(|p| p.id.clone()).collect();
                         prompt_message_id = None;
                         runtime_notices = None;
@@ -1275,6 +1305,12 @@ impl ConversationEngineService {
             MessageInput::new(&input.message, MessageRole::User, MessageTrigger::UserInput);
         row.id = Some(message_id);
         match &input.agent_message {
+            _ if input.task_notification.is_some() => {
+                // Hidden: no client shows it. Its row's id is the task's, so the
+                // origin needs no column of its own.
+                row.triggered_by = TASK_NOTIFICATION_TRIGGER;
+                row.internal_step = Some(true);
+            }
             Some(origin) => {
                 let columns = agent_message_columns(origin);
                 row.triggered_by = MessageTrigger::AgentMessage;
@@ -1296,7 +1332,9 @@ impl ConversationEngineService {
         }
         // A reply the person typed stands in for the answers to any card still waiting.
         // The reply and the card's new status commit together, and clients see the card after that.
-        let typed = input.agent_message.is_none() && !input.runtime_written;
+        let typed = input.agent_message.is_none()
+            && input.task_notification.is_none()
+            && !input.runtime_written;
         let (added, closed_cards) = if typed {
             let thread = thread_id.to_string();
             CONVERSATION_SERVICE
@@ -1353,9 +1391,10 @@ impl ConversationEngineService {
         // on every device — the sender's included, which reads the copy as the
         // confirmation that it was stored. Any other channel shows the message
         // itself.
-        if origin
-            .as_ref()
-            .is_some_and(|origin| origin.shows_whole_conversation())
+        if input.task_notification.is_none()
+            && origin
+                .as_ref()
+                .is_some_and(|origin| origin.shows_whole_conversation())
         {
             MESSAGE_DELIVERY_SERVICE
                 .show_in_conversation(&input.user_id, &added.message)
@@ -1437,7 +1476,7 @@ impl ConversationEngineService {
             agent_id: agent_id.clone(),
             mode: InvokeMode::Chat,
             prompt: prompt.clone(),
-            prompt_from_agent: !params.from_person,
+            prompt_source: Some(params.prompt_source),
             append_prompt: params.append_prompt,
             appended_message_ids: Some(params.appended_message_ids.clone()),
             prompt_message_id: params.prompt_message_id.clone(),
@@ -1553,7 +1592,7 @@ impl ConversationEngineService {
         // The stream is done. The buffered step (if any) is the LAST text step:
         // attach the accumulated blocks and the feedback decision here.
         if let Some(buffered) = &buffered_step {
-            let include_feedback = params.from_person
+            let include_feedback = params.prompt_source == PromptSource::Person
                 && self
                     .should_show_feedback(
                         thread_id,
@@ -1676,6 +1715,48 @@ fn stream_of(
         return invoke(request);
     }
     invoke_stream(request)
+}
+
+#[cfg(test)]
+mod prompt_source_tests {
+    use super::*;
+
+    fn pending(agent: bool, task: bool) -> PendingMessage {
+        PendingMessage {
+            id: "m".into(),
+            text: "t".into(),
+            attachment_ids: Vec::new(),
+            agent_message: agent.then(|| AgentMessageOrigin {
+                kind: crate::protocol::chat_protocol::AgentMessageKind::Message,
+                sender_id: "a".into(),
+                sender_name: "A".into(),
+                message_id: "x".into(),
+            }),
+            task_notification: task.then(|| TaskNotificationOrigin {
+                task_id: "task-1".into(),
+            }),
+        }
+    }
+
+    #[test]
+    fn names_the_person_when_any_message_is_theirs_else_agents_else_the_runtime() {
+        assert_eq!(
+            prompt_source_of(&[pending(false, false)]),
+            PromptSource::Person
+        );
+        assert_eq!(
+            prompt_source_of(&[pending(false, true), pending(false, false)]),
+            PromptSource::Person
+        );
+        assert_eq!(
+            prompt_source_of(&[pending(false, true), pending(true, false)]),
+            PromptSource::Agent
+        );
+        assert_eq!(
+            prompt_source_of(&[pending(false, true)]),
+            PromptSource::Task
+        );
+    }
 }
 
 /// What tests set in place of the model.

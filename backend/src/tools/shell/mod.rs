@@ -25,6 +25,7 @@ use crate::ai::{
 use crate::config::CONFIG;
 use crate::lib::execution_environments::workspace::resolve_workspace;
 use crate::lib::pending_file_writes::PendingFileWrites;
+use crate::services::task_notification_service::TaskNotificationTarget;
 use workspace::resolve_path;
 
 pub const SHELL_EXEC_DESCRIPTION: &str = "Run a single shell command. Returns { stdout, stderr, exitCode }. Each stream is capped; pass `limit` to read more. Truncated output ends with \"... (truncated; exceeded N bytes)\". Credentials and config files for any integrations connected to this project are injected into your sandbox automatically. When a user asks you to interact with external resources, run the appropriate CLI with this tool — don't refuse based on assumed lack of access. If the CLI isn't on `$PATH`, try installing it via `mise install <tool>@latest` and then re-run. If an integration isn't wired up for a task, the CLI will return a clear error you can relay back. For multi-step workflows or interactive tasks use coding_agent instead.";
@@ -34,11 +35,11 @@ pub const SHELL_WRITE_FILE_DESCRIPTION: &str = "Write a file. Overwrites existin
 pub const SHELL_EDIT_FILE_DESCRIPTION: &str = "Perform exact string replacement in a file. Read the file with shell_read_file first. Fails if old_string is not found, or matches multiple times without replace_all. Falls back to whitespace-tolerant matching if the exact match fails; replace_all needs an exact match.";
 /// The literal parts of the `coding_agent` description, around: `availableAgents`, `config.codingAgent`.
 pub const CODING_AGENT_DESCRIPTION_PARTS: [&str; 3] = [
-    "Start an autonomous sub-agent with its own shell, file access, web access where the sandbox allows it, and an agentic loop. Use it for any task of many dependent steps, not only for code. For example: research a topic on the internet, or across files, logs, documents and data; analyze command output, test results, metrics or a database, and investigate an incident; create reports, summaries, comparisons and HTML overviews; produce diagrams (Mermaid, Graphviz, SVG), charts, slides, spreadsheets and web pages; draft or review a document, a ticket, a specification or a plan; process, convert or transform files; write, debug, build and test code. When a Task subagent's description matches the work, use Task instead.\n\nPrefer it over a long chain of hand-run shell calls, because the sub-agent keeps those steps in its own context. A task runs for minutes and you poll it for the result, so for a single command or a short, fixed sequence, use the shell tools directly. When the result is a file for the user, have the sub-agent write it to the workspace, then share it with share_file if you have that tool.\n\nmode=\"edit\" (the default) can create and change files. mode=\"plan\" tells the sub-agent to analyze and report without changing anything: use it to analyze or research files, logs and data. For a self-contained deliverable, such as a report, a diagram or a converted file, one mode=\"edit\" call is enough. For a change to existing work, plan, then edit: call once with mode=\"plan\", then call again with mode=\"edit\" and the sessionId from the plan response. If a plan comes back with open questions, settle them (ask the user if you cannot) and resume the same session in mode=\"plan\" with your answers in the prompt. Switch to edit only when no open questions remain. To continue earlier work, resume its sessionId instead of starting cold.\n\nAvailable agent values: ",
+    "Start an autonomous sub-agent with its own shell, file access, web access where the sandbox allows it, and an agentic loop. Use it for any task of many dependent steps, not only for code. For example: research a topic on the internet, or across files, logs, documents and data; analyze command output, test results, metrics or a database, and investigate an incident; create reports, summaries, comparisons and HTML overviews; produce diagrams (Mermaid, Graphviz, SVG), charts, slides, spreadsheets and web pages; draft or review a document, a ticket, a specification or a plan; process, convert or transform files; write, debug, build and test code. When a Task subagent's description matches the work, use Task instead.\n\nPrefer it over a long chain of hand-run shell calls, because the sub-agent keeps those steps in its own context. A task runs for minutes, so for a single command or a short, fixed sequence, use the shell tools directly. When the result is a file for the user, have the sub-agent write it to the workspace, then share it with share_file if you have that tool.\n\nmode=\"edit\" (the default) can create and change files. mode=\"plan\" tells the sub-agent to analyze and report without changing anything: use it to analyze or research files, logs and data. For a self-contained deliverable, such as a report, a diagram or a converted file, one mode=\"edit\" call is enough. For a change to existing work, plan, then edit: call once with mode=\"plan\", then call again with mode=\"edit\" and the sessionId from the plan response. If a plan comes back with open questions, settle them (ask the user if you cannot) and resume the same session in mode=\"plan\" with your answers in the prompt. Switch to edit only when no open questions remain. To continue earlier work, resume its sessionId instead of starting cold.\n\nAvailable agent values: ",
     ". Default agent: ",
-    "; pass agent to override it, and use the same agent when you resume a session. Returns { taskId, agent } immediately; poll with coding_agent_status, or stop with coding_agent_stop. Choose model and effort for each task: their fields say what each tier is for, and an omitted value keeps the deployment default. Max 3 concurrent tasks.",
+    "; pass agent to override it, and use the same agent when you resume a session. Returns { taskId, agent } immediately. In a chat conversation, the task's result arrives as a task notification that starts a new turn when the task ends: after starting it, end your turn unless you have other work, and do not sleep, poll or schedule a check for it. In other runs, poll with coding_agent_status. Stop a task with coding_agent_stop. Choose model and effort for each task: their fields say what each tier is for, and an omitted value keeps the deployment default. Max 3 concurrent tasks.",
 ];
-pub const CODING_AGENT_STATUS_DESCRIPTION: &str = "Poll a running coding_agent task. Returns { agent, output, completed, result, turns, stopReason, sessionId, refusals } — output is drained on read, so subsequent calls return only new output. When completed is true, result/turns/stopReason/sessionId are populated. refusals lists each action the sub-agent's permission checks refused; a task that otherwise finished then has stopReason \"refused\".";
+pub const CODING_AGENT_STATUS_DESCRIPTION: &str = "Read a coding_agent task's progress, and its result once it ends. In a chat conversation the result also arrives as a task notification, so there is no need to wait for it here. Returns { agent, output, completed, result, turns, stopReason, sessionId, refusals } — output is drained on read, so subsequent calls return only new output. When completed is true, result/turns/stopReason/sessionId are populated. refusals lists each action the sub-agent's permission checks refused; a task that otherwise finished then has stopReason \"refused\".";
 pub const CODING_AGENT_STOP_DESCRIPTION: &str = "Terminate a running coding_agent task. Use when it is heading the wrong way, looping, stuck, or no longer needed, rather than waiting out its turn budget. Returns the same shape as coding_agent_status: any output produced before termination, completed:true, and stopReason:\"stopped\". sessionId comes back whenever the sub-agent got far enough to report one — pass it to coding_agent({ prompt, agent, sessionId }) to resume the abandoned work with its context instead of starting over. The taskId is invalid afterwards and its concurrency slot is freed immediately.";
 pub const SHELL_SPAWN_DESCRIPTION: &str = "Start a long-running shell command as a background process. Returns { processId } immediately. Use for builds, watchers, test loops, anything that takes more than a few seconds or that you want to interact with via stdin. Use shell_stdout to drain output and check status; shell_stdin to feed input; shell_kill to terminate. Max 10 concurrent processes. For one-shot commands use shell_exec instead.";
 pub const SHELL_STDIN_DESCRIPTION: &str =
@@ -83,6 +84,7 @@ pub fn coding_agent_description(available_agents: &str, default_agent: &str) -> 
 pub fn get_shell_tools(
     workspace_root: Option<&str>,
     pending_writes: Option<Arc<dyn PendingFileWrites>>,
+    task_notifications: Option<TaskNotificationTarget>,
 ) -> ToolSet {
     let workspace = resolve_workspace(workspace_root);
     // Named in the tool description so the model knows what it is delegating
@@ -199,10 +201,11 @@ pub fn get_shell_tools(
             input_schema: zod_schema(coding_agent::build_coding_agent_input_schema()),
             execute: Some(execute_fn(move |input, _| {
                 let workspace = agent_workspace.clone();
+                let notify = task_notifications.clone();
                 async move {
                     let input: coding_agent::CodingAgentInput = serde_json::from_value(input)?;
                     Ok(serde_json::to_value(
-                        coding_agent::run_coding_agent(input, &workspace).await?,
+                        coding_agent::run_coding_agent(input, &workspace, notify).await?,
                     )?)
                 }
             })),
@@ -374,7 +377,7 @@ mod tests {
         let previous = CONFIG.available_coding_agents();
         CONFIG
             .set_available_coding_agents(vec![CodingAgentName::ClaudeCode, CodingAgentName::Codex]);
-        let tools = get_shell_tools(Some("/workspace"), None);
+        let tools = get_shell_tools(Some("/workspace"), None, None);
         CONFIG.set_available_coding_agents(previous);
         crate::tools::schema_fixture::assert_matches_fixture("shell", &tools);
     }
@@ -384,7 +387,7 @@ mod tests {
     fn names_no_agent_in_the_description_before_any_is_detected() {
         let previous = CONFIG.available_coding_agents();
         CONFIG.set_available_coding_agents(vec![]);
-        let tools = get_shell_tools(Some("/workspace"), None);
+        let tools = get_shell_tools(Some("/workspace"), None, None);
         CONFIG.set_available_coding_agents(previous);
         let description = tools["coding_agent"].description.clone().unwrap();
         assert!(

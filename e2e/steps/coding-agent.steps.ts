@@ -48,14 +48,14 @@ Then('the activity shows a {string} tool call', async ({ page, $testInfo }, labe
 });
 
 /** Tool calls stored on the agent's messages, across every thread the scenario made. */
-async function storedToolCalls(): Promise<Array<{ tool?: string; output?: string }>> {
+async function storedToolCalls(): Promise<Array<{ tool?: string; input?: string; output?: string }>> {
   const rows = await dbHelper.getPrisma().conversationMessage.findMany({
     where: { thread: { agentId: DEFAULT_AGENT_ID }, role: 'AGENT' },
     select: { toolCalls: true },
     orderBy: { createdAt: 'asc' },
   });
   return rows.flatMap((row) =>
-    Array.isArray(row.toolCalls) ? (row.toolCalls as Array<{ tool?: string; output?: string }>) : [],
+    Array.isArray(row.toolCalls) ? (row.toolCalls as Array<{ tool?: string; input?: string; output?: string }>) : [],
   );
 }
 
@@ -112,4 +112,69 @@ Then(
 
 Then('the stored tool calls do not include {string}', async ({}, name: string) => {
   expect(await storedToolNames()).not.toContain(name);
+});
+
+/** The task notifications stored in the scenario's conversations, oldest first. */
+function taskNotifications() {
+  return dbHelper.getPrisma().conversationMessage.findMany({
+    where: { thread: { agentId: DEFAULT_AGENT_ID }, triggeredBy: 'TASK_NOTIFICATION' },
+    orderBy: { createdAt: 'asc' },
+  });
+}
+
+/** The first delivered agent reply that contains `text`. */
+async function replyContaining(text: string) {
+  const replies = await dbHelper.getPrisma().conversationMessage.findMany({
+    where: { thread: { agentId: DEFAULT_AGENT_ID }, role: 'AGENT', internalStep: false },
+    orderBy: { createdAt: 'asc' },
+  });
+  const reply = replies.find((row) => row.content.includes(text));
+  expect(reply, `no reply contains ${text}`).toBeTruthy();
+  return reply!;
+}
+
+Then("the coding task's result reaches the conversation as a task notification", async () => {
+  // The task is a real Claude Code run, so its start alone can take a minute.
+  await expect.poll(async () => (await taskNotifications()).length, { timeout: 240_000, intervals: [2_000] }).toBe(1);
+  const [notification] = await taskNotifications();
+  // Hidden: the model reads it, and no client shows it.
+  expect(notification.internalStep).toBe(true);
+  expect(notification.role).toBe('USER');
+  expect(notification.content).toContain('<task-notification ');
+});
+
+Then(
+  'an agent reply after the task notification contains {string} within {int} seconds',
+  async ({}, text: string, seconds: number) => {
+    const [notification] = await taskNotifications();
+    const after = () =>
+      dbHelper.getPrisma().conversationMessage.findFirst({
+        where: {
+          thread: { agentId: DEFAULT_AGENT_ID },
+          role: 'AGENT',
+          internalStep: false,
+          createdAt: { gt: notification.createdAt },
+          content: { contains: text },
+        },
+      });
+    await expect.poll(after, { timeout: seconds * 1_000, intervals: [1_000] }).not.toBeNull();
+    const reply = await after();
+    expect(reply!.createdAt.getTime() - notification.createdAt.getTime()).toBeLessThan(seconds * 1_000);
+  },
+);
+
+Then('the reply with {string} came before the task notification', async ({}, text: string) => {
+  const reply = await replyContaining(text);
+  const [notification] = await taskNotifications();
+  if (notification) expect(reply.createdAt.getTime()).toBeLessThan(notification.createdAt.getTime());
+});
+
+Then('the agent set no timer for the coding task', async () => {
+  const calls = await storedToolCalls();
+  const commands = calls
+    .filter((call) => call.tool === 'shell_exec' || call.tool === 'shell_spawn')
+    .map((call) => String(call.input ?? ''));
+  expect(commands.filter((command) => /\bsleep\b/.test(command))).toEqual([]);
+  expect(calls.map((call) => call.tool)).not.toContain('schedule_task');
+  expect(calls.filter((call) => call.tool === 'coding_agent_status').length).toBeLessThanOrEqual(1);
 });
