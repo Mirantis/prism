@@ -37,6 +37,9 @@ export const CHATGPT_OAUTH_SCOPES = [
 /** Refresh the access token this many milliseconds before it expires. */
 const EXPIRY_BUFFER_MS = 60_000;
 
+/** Upper bound on OAuth token endpoint requests so a stalled auth server cannot hang all turns. */
+const TOKEN_REQUEST_TIMEOUT_MS = 30_000;
+
 /** Pending browser PKCE attempts expire after 15 minutes. */
 export const CHATGPT_PENDING_TTL_MS = 15 * 60_000;
 const MAX_PENDING_ATTEMPTS = 20;
@@ -339,6 +342,7 @@ export const chatGptAuthService = {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body,
+      signal: AbortSignal.timeout(TOKEN_REQUEST_TIMEOUT_MS),
     });
 
     const payload = (await response.json().catch(() => ({}))) as TokenEndpointResponse;
@@ -412,9 +416,6 @@ export const chatGptAuthService = {
    */
   async getAccessToken(forceRefresh = false): Promise<string> {
     if (!cachedTokens) {
-      await this.load();
-    }
-    if (!cachedTokens) {
       throw new ChatGptAuthError('Not signed in to ChatGPT. Sign in from Profile to use your ChatGPT plan.', 401);
     }
 
@@ -459,6 +460,7 @@ export const chatGptAuthService = {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body,
+      signal: AbortSignal.timeout(TOKEN_REQUEST_TIMEOUT_MS),
     });
 
     const payload = (await response.json().catch(() => ({}))) as TokenEndpointResponse;
