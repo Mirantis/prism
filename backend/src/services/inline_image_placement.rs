@@ -23,7 +23,7 @@ use crate::services::attachment_service::{
     ATTACHMENT_SERVICE, AttachmentCategory, AttachmentSource, CreateAttachmentInput,
     classify_media_type, detect_media_type,
 };
-use crate::tools::shell::workspace::{is_inside_workspace, resolve_path};
+use crate::tools::shell::workspace::{basename, is_inside_workspace, resolve_path};
 use crate::{log_error, log_info};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -183,12 +183,7 @@ async fn capture_image(
             return Ok(None);
         }
     };
-    let filename = full_path
-        .trim_end_matches('/')
-        .rsplit('/')
-        .next()
-        .unwrap_or("")
-        .to_string();
+    let filename = basename(&full_path).to_string();
     let media_type = detect_media_type(&data, &filename, None);
     if classify_media_type(&media_type) != AttachmentCategory::Image {
         log_info!(

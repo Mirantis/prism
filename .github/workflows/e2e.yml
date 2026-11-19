@@ -377,6 +377,7 @@ jobs:
   # The @no-llm-provider feature. Its own job because the runtime reads its LLM
   # credentials at boot, and this one starts with none. Its scenarios make no model call.
   e2e-no-llm-provider:
+    needs: backend
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
