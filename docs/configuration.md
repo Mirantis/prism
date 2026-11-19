@@ -73,9 +73,13 @@ local to the runtime and call `api.openai.com` directly) and uses the same
 **Profile → ChatGPT subscription** in the web UI and click **Sign in with
 ChatGPT** to authorize Prism in your browser. If a sign-in fails or a session
 expires, sign in again from the same card (or sign out first to reset the
-session). ChatGPT plans do not cover embeddings, so memory embeddings default to
-OpenAI when `OPENAI_API_KEY` or `NEXUS_API_URL` is set and are otherwise
-disabled — see [Memory embeddings](#memory-embeddings).
+session). Under OpenAI's Sign in with ChatGPT Terms, this self-serve flow is
+for local or self-hosted single-user installs only — tokens must stay under the
+user's own control, and one subscription cannot be pooled or shared to serve
+other users (managed multi-tenant deployments require a separate OpenAI
+agreement or API keys). ChatGPT plans do not cover embeddings, so memory
+embeddings default to OpenAI when `OPENAI_API_KEY` or `NEXUS_API_URL` is set
+and are otherwise disabled — see [Memory embeddings](#memory-embeddings).
 
 `anthropic` runs the agent on **Claude at the first-party Anthropic API**
 (`api.anthropic.com`), authenticated with `ANTHROPIC_API_KEY`. Model IDs are
