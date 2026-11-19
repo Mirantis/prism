@@ -22,6 +22,7 @@ import { logger } from '../../logger';
 import { trackEvent } from '../../lib/telemetry';
 import { getExecutionEnvironmentFor } from '../../lib/execution-environments/get-execution-environment';
 import type { ExecProcess, ProcessMark } from '../../lib/execution-environments/execution-environment';
+import { agentProcesses } from '../../lib/agent-processes';
 import { stopLeftoverProcess } from '../../lib/execution-environments/leftover-process';
 import { pendingWorkService, type PendingWorkItem } from '../../services/pending-work.service';
 import type { TaskNotificationTarget } from '../../services/task-notification.service';
@@ -60,6 +61,14 @@ interface MonitorWork {
   process?: ProcessMark;
   /** Events sent so far, which the notice after a restart reports. */
   events?: number;
+  /** Events not stored in the conversation yet, sent again before the last notice. */
+  unsent?: MonitorEvent[];
+}
+
+/** One event, under the id its notification is stored as. */
+interface MonitorEvent {
+  id: string;
+  text: string;
 }
 
 interface Monitor {
@@ -78,6 +87,8 @@ interface Monitor {
   deadline: NodeJS.Timeout;
   /** When recent notifications went out, for the rate limit. */
   sent: number[];
+  /** Event sends not settled yet. */
+  sending: Promise<void>[];
   /** Why the runtime stopped the command, when it did. */
   reason?: MonitorEndReason;
   /** Set by `monitor_stop`: the agent stopped it, so no notice goes out. */
@@ -133,12 +144,10 @@ class MonitorManager {
       droppedLines: 0,
       deadline: setTimeout(() => this.halt(monitor, 'timeout'), timeoutMs).unref(),
       sent: [],
+      sending: [],
     };
     this.monitors.set(id, monitor);
-    if (proc.mark) {
-      work.process = proc.mark;
-      pendingWorkService.update('monitor', id, { ...work });
-    }
+    this.recordProcess(monitor);
 
     proc.stdout?.setEncoding('utf8');
     proc.stdout?.on('data', (chunk: string) => this.read(monitor, chunk));
@@ -184,6 +193,7 @@ class MonitorManager {
     for (const item of items) {
       const work = item.payload as unknown as MonitorWork;
       const events = work.events ?? 0;
+      const unsent = (work.unsent ?? []).map((event) => this.sendEvent(item.key, work, event));
       trackEvent('monitor ended', work.notify.userId, {
         'agent.id': work.notify.agentId,
         'monitor.id': item.key,
@@ -191,7 +201,7 @@ class MonitorManager {
         'monitor.events': String(events),
       });
       const text = renderMonitorEnd({ monitorId: item.key, description: work.description, reason: 'restart', events });
-      await this.deliver(work.notify, text, item.key).then(
+      await Promise.all([...unsent, this.deliver(work.notify, text, item.key)]).then(
         () => pendingWorkService.end('monitor', item.key),
         (err) => logger.error({ err, monitorId: item.key }, '[Monitor] Could not report the monitor a restart stopped'),
       );
@@ -207,6 +217,30 @@ class MonitorManager {
   }
 
   // ---------- internal ----------
+
+  /** A command a secure takeover holds starts on `resume`, and only then has a process to record. */
+  private recordProcess(monitor: Monitor): void {
+    const save = (): boolean => {
+      if (!monitor.proc.mark) return false;
+      monitor.work.process = monitor.proc.mark;
+      pendingWorkService.update('monitor', monitor.id, { ...monitor.work });
+      return true;
+    };
+    if (save()) return;
+    const onResume = () => {
+      if (save()) agentProcesses.off('resume', onResume);
+    };
+    agentProcesses.on('resume', onResume);
+    void monitor.proc.ended.then(() => agentProcesses.off('resume', onResume));
+  }
+
+  /** Store one event; once it is stored, its row no longer lists it. */
+  private sendEvent(monitorId: string, work: MonitorWork, event: MonitorEvent): Promise<void> {
+    return this.deliver(work.notify, event.text, event.id).then(() => {
+      work.unsent = work.unsent?.filter((pending) => pending.id !== event.id);
+      pendingWorkService.update('monitor', monitorId, { ...work });
+    });
+  }
 
   private read(monitor: Monitor, chunk: string): void {
     if (monitor.ended) return;
@@ -241,15 +275,20 @@ class MonitorManager {
     }
     monitor.sent.push(now);
     monitor.events++;
-    monitor.work.events = monitor.events;
-    pendingWorkService.update('monitor', monitor.id, { ...monitor.work });
     const shown = monitor.batch.splice(0).map((line) =>
       line.length > MAX_LINE_CHARS ? `${line.slice(0, MAX_LINE_CHARS)}…` : line,
     );
     if (dropped > 0) shown.push(`[${dropped} more lines]`);
     const text = renderMonitorEvent({ monitorId: monitor.id, description: monitor.params.description, lines: shown });
-    void this.deliver(monitor.params.notify, text).catch((err) =>
-      logger.error({ err, monitorId: monitor.id }, '[Monitor] Could not send an event'),
+    const event = { id: `${monitor.id}:${monitor.events}`, text };
+    // In the row before it is sent: an event a failed store or a restart lost is sent again.
+    monitor.work.events = monitor.events;
+    monitor.work.unsent = [...(monitor.work.unsent ?? []), event];
+    pendingWorkService.update('monitor', monitor.id, { ...monitor.work });
+    monitor.sending.push(
+      this.sendEvent(monitor.id, monitor.work, event).catch((err) =>
+        logger.error({ err, monitorId: monitor.id }, '[Monitor] Could not send an event'),
+      ),
     );
   }
 
@@ -294,18 +333,18 @@ class MonitorManager {
     });
     logger.info({ monitorId: monitor.id, reason, events: monitor.events }, '[Monitor] ended');
 
-    if (reason === 'stopped') {
-      pendingWorkService.end('monitor', monitor.id);
-      return;
-    }
-    const text = renderMonitorEnd({
-      monitorId: monitor.id,
-      description,
-      reason,
-      events: monitor.events,
-      exitCode: monitor.proc.exitCode,
-    });
-    void this.deliver(notify, text, monitor.id).then(
+    const text =
+      reason === 'stopped'
+        ? null
+        : renderMonitorEnd({ monitorId: monitor.id, description, reason, events: monitor.events, exitCode: monitor.proc.exitCode });
+    // Once the sends settle, the events still listed are the ones whose store failed.
+    void Promise.all(monitor.sending)
+      .then(() => {
+        const sends = (monitor.work.unsent ?? []).map((event) => this.sendEvent(monitor.id, monitor.work, event));
+        if (text) sends.push(this.deliver(notify, text, monitor.id));
+        return Promise.all(sends);
+      })
+      .then(
       () => pendingWorkService.end('monitor', monitor.id),
       (err) => logger.error({ err, monitorId: monitor.id }, '[Monitor] Could not report the end of a monitor'),
     );

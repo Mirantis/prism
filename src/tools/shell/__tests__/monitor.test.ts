@@ -27,6 +27,7 @@ vi.mock('../../../lib/execution-environments/leftover-process', () => ({ stopLef
 vi.mock('../../../lib/telemetry', () => ({ trackEvent: vi.fn() }));
 
 import { runMonitor, runMonitorStop } from '../monitor';
+import { agentProcesses } from '../../../lib/agent-processes';
 import { MAX_MONITORS, __resetMonitorManagerForTests, getMonitorManager } from '../monitor-manager';
 
 const notify = { threadId: 'thread-1', agentId: 'agent-1', userId: 'user-1', originChannel: 'websocket' };
@@ -210,5 +211,49 @@ describe('monitor', () => {
 
     expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
     expect(getMonitorManager().runningCount()).toBe(MAX_MONITORS);
+  });
+  it('records the process of a command a secure takeover held, once it starts', async () => {
+    agentProcesses.suspend();
+    let monitorId: string;
+    try {
+      ({ monitorId } = await runMonitor({ command: 'sleep 30', description: 'deploy' }, workspace, notify));
+      expect(mocks.update).not.toHaveBeenCalled();
+    } finally {
+      agentProcesses.resume();
+    }
+
+    expect(mocks.update).toHaveBeenCalledWith('monitor', monitorId, {
+      description: 'deploy',
+      notify,
+      process: expect.objectContaining({ pid: expect.any(Number) }),
+    });
+  });
+
+  it('sends an event whose store failed again before the last notice, and keeps the row until it is stored', async () => {
+    mocks.deliver.mockRejectedValueOnce(new Error('database is locked'));
+    const { monitorId } = await runMonitor({ command: 'echo one; sleep 0.5; exit 0', description: 'job' }, workspace, notify);
+    await waitFor(() => mocks.end.mock.calls.some((call) => (call as unknown[])[1] === monitorId));
+
+    const calls = mocks.deliver.mock.calls as unknown as [unknown, string, string][];
+    expect(calls.map((call) => call[1])).toEqual([`${monitorId}:1`, `${monitorId}:1`, monitorId]);
+    expect(calls[1][2]).toContain('\none\n');
+    expect(mocks.update).toHaveBeenLastCalledWith('monitor', monitorId, expect.objectContaining({ unsent: [] }));
+  });
+
+  it('sends the events a restart left unsent before telling the conversation the watch ended', async () => {
+    await getMonitorManager().resume([
+      {
+        key: 'monitor-1',
+        payload: { description: 'deploy', notify, events: 1, unsent: [{ id: 'monitor-1:1', text: 'event one' }] },
+        attempts: 1,
+        createdAt: new Date(),
+      } as never,
+    ]);
+
+    expect(mocks.deliver.mock.calls).toEqual([
+      [notify, 'monitor-1:1', 'event one'],
+      [notify, 'monitor-1', expect.stringContaining('reason="restart" events="1"')],
+    ]);
+    expect(mocks.end).toHaveBeenCalledWith('monitor', 'monitor-1');
   });
 });
