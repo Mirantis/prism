@@ -301,12 +301,12 @@ describe('Slack thread classification', () => {
       await expect(gate(ARRIVING)).resolves.toMatchObject({ result: { action: 'respond' } });
     });
 
-    it('reacts when the arriving message tags somebody other than the bot', async () => {
+    it('hands the classifier a message that tags somebody other than the bot', async () => {
       armThread(reads(PARENT, BOT_REPLY));
 
-      const { result } = await gate({ user: 'U1', text: 'thanks <@UOTHER01>', ts: '300.0' });
+      const { result } = await gate({ user: 'U1', text: '<@UOTHER01> please review, and merge it after', ts: '300.0' });
 
-      expect(result).toEqual({ action: 'react' });
+      expect(result).toEqual({ action: 'respond' });
     });
 
     it('does not read a tag of the bot itself as a branch', async () => {

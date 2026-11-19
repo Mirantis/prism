@@ -85,7 +85,89 @@ const CHATTER: Line[] = [
   ['ben', 'lunch is included too'],
 ];
 
+/** A mention of the agent, as the Slack adapter renders it in the transcript. */
+const ATLAS_MENTION = '<@U00ATLAS00:Atlas>';
+
+/** A production deploy the agent started, which waits for a person's approval. */
+const DEPLOY_STARTED: Line[] = [
+  ['ana', `${ATLAS_MENTION} trigger production deploy`],
+  [
+    'agent',
+    '<@U01ANA0001:Ana Example> I started the production deploy as [run 4401](https://ci.example.com/runs/4401). It promotes main HEAD `75b7f23`, and staging deploy 4398 passed on that same commit. ' +
+      'The run will stop at the `production` environment approval before the terraform apply and the promotion, so someone needs to approve it there.\n\n' +
+      'There are 12 commits since the last prod deploy `dfab7a2` ([compare](https://git.example.com/compare/dfab7a2...75b7f23)):\n' +
+      '• **Installation telemetry:** installation events now go out even when the telemetry opt-out is on. Activation now requires accepting the privacy policy and is sent only once the deployment id is known. ' +
+      "If these events can't be sent, it warns once. This includes migration `128_installation_activation_reported`.\n" +
+      '• **Ceiling policy UI:** the ceiling change is now checked against all ceiling policies. The UI says when the chosen policy already lets the cut requests through.\n' +
+      "• **Light mode:** there's a toggle in the user menu. Status colours have 4.5:1 contrast as text, and the editors use the light theme.\n" +
+      '• **Sandbox access:** sandbox exec, shell and port-forward now accept API tokens (`75b7f23`, my PR).',
+  ],
+];
+
 const CASES: GateCase[] = [
+  {
+    id: 'approval-of-waiting-run',
+    expect: 'A bare "approved" for the run the agent said waits for approval is acted on.',
+    platform: 'slack',
+    label: 'respond',
+    thread: [...DEPLOY_STARTED, ['ana', 'approved']],
+  },
+  {
+    id: 'nudge-after-silence',
+    expect: 'A nudge about a message the agent left without an answer is acted on.',
+    platform: 'slack',
+    label: 'respond',
+    thread: [
+      ...DEPLOY_STARTED,
+      ['ana', 'approved'],
+      ['ana', `${ATLAS_MENTION} remember: when a production deploy is approved you should watch that the deploy goes through smoothly`],
+      ['ana', 'no feedback ^'],
+    ],
+  },
+  {
+    id: 'failure-in-watched-work',
+    expect: 'A report of a failure in work the agent is watching is acted on, though nobody addresses the agent.',
+    platform: 'slack',
+    label: 'respond',
+    thread: [
+      ['ana', 'Atlas, deploy checkout v2 to prod and keep an eye on it'],
+      ['agent', 'Deploying checkout v2 to prod. I will watch the rollout.'],
+      ['ben', 'checkout pods are crashlooping in prod'],
+    ],
+  },
+  {
+    id: 'wait-condition-met',
+    expect: 'News that the condition the agent waits for is met is acted on.',
+    platform: 'slack',
+    label: 'respond',
+    thread: [
+      ['ana', 'Atlas, deploy billing-api v3.2 today'],
+      ['agent', 'billing-api v3.2 needs the orders migration first. I will deploy it when the migration is done.'],
+      ['ben', 'migration is done'],
+    ],
+  },
+  {
+    id: 'tag-other-and-agent-work',
+    expect: 'A message that tags a colleague and also gives the agent work is acted on.',
+    platform: 'slack',
+    label: 'respond',
+    thread: [
+      ['ana', 'payments-api has a fix in #301'],
+      ['agent', 'The checks on #301 pass.'],
+      ['ana', '<@U02BEN0002:Ben Example> can you review #301? Atlas, merge it once Ben approves'],
+    ],
+  },
+  {
+    id: 'unrelated-status-update',
+    expect: 'A status update that touches no work of the agent is left alone.',
+    platform: 'slack',
+    label: 'ignore',
+    thread: [
+      ['ben', `${ATLAS_MENTION} is main green?`],
+      ['agent', 'Main is green: the last 5 runs passed.'],
+      ['ana', 'fyi the office wifi is down, working from the cafe'],
+    ],
+  },
   {
     id: 'approval-after-agent-question',
     expect: 'An approval of what the agent asked to do is answered.',

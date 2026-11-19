@@ -694,7 +694,7 @@ class TeamsAdapterService implements ChannelAdapter {
   /**
    * A message that does not mention the bot gets an answer only when it is a
    * reply in a linked channel's reply chain the bot has answered in, and the
-   * thread classifier finds it asks the bot for something. A reply in such a
+   * thread classifier finds it gives the bot something to do. A reply in such a
    * chain that gets no answer is stored in the thread, so the next turn and
    * the next classification read it. A message the agent sent to the channel
    * has a thread, so a reply under it is classified too. Replies under
@@ -720,10 +720,7 @@ class TeamsAdapterService implements ChannelAdapter {
     if (!thread) return;
 
     const sender = this.sender(activity);
-    // A reply that mentions somebody is addressed to them.
-    const action = this.mentionsAnyone(activity)
-      ? 'ignore'
-      : (await this.classifyReply(thread.id, mapping.agentId, sender, text)).action;
+    const { action } = await this.classifyReply(thread.id, mapping.agentId, sender, text);
 
     if (action === 'respond') {
       await signalWork();
@@ -1143,10 +1140,6 @@ class TeamsAdapterService implements ChannelAdapter {
     return (activity.entities ?? []).some(
       (entity) => entity.type === 'mention' && entity.mentioned?.id === activity.recipient.id
     );
-  }
-
-  private mentionsAnyone(activity: IMessageActivity): boolean {
-    return (activity.entities ?? []).some((entity) => entity.type === 'mention');
   }
 
   /** The AAD object id when Teams sends one, else the Bot Framework id. */

@@ -39,7 +39,7 @@ const hasSlack = Boolean(BOT_TOKEN && APP_TOKEN && USER_TOKEN && BOT_USER_ID);
 /** Echoed by the opening mention's reply, so a late one is identifiable. */
 const MENTION_MARKER = 'MANTLESLACK1';
 
-/** The chatter the classifier must judge — no @mention, or the heuristic short-circuits. */
+/** The chatter the classifier must judge, without an @mention. */
 const FOLLOW_UP_TEXT =
   'thanks Dana, I will take the rest of this one — no need for anyone else to jump in';
 
@@ -173,16 +173,13 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, Scenario }) =
 
       When('a human posts a follow-up aimed at another person', async () => {
         if (skip()) return;
-        // No @mention: a mention of another user would trip the pre-LLM
-        // heuristic branch, which reacts without ever calling the classifier —
-        // and this scenario is about the classifier.
         await postFollowUp();
       });
 
       Then('the classifier decides to ignore the follow-up', async () => {
         if (skip()) return;
         // The log line names the LLM branch, so it separates a real
-        // classification from the heuristic shortcut and the catch's fallback.
+        // classification from the catch's fallback.
         // Re-post while the chatter is dropped, then wait out the model call.
         const delivered = await postUntilReceived(postFollowUp, 'chatter');
         expect(delivered, 'runtime never received the follow-up').toBe(true);

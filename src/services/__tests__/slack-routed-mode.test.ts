@@ -228,15 +228,14 @@ describe('Routed channel messages', () => {
     expect(mockChat).not.toHaveBeenCalled();
   });
 
-  it('reacts to a thread reply that tags somebody else, and keeps it', async () => {
-    const event = routed('thread_reply');
+  it('classifies a thread reply that tags somebody else, since it can still give the agent work', async () => {
+    mockClassify.mockResolvedValue({ action: 'respond' });
 
-    await channelMessage('<@U0BOB> can you look?', THREAD_TS, event);
+    await channelMessage('<@U0BOB> can you look, and merge it after?', THREAD_TS, routed('thread_reply'));
 
-    expect(adapter.addReaction).toHaveBeenCalledWith(CHANNEL, MESSAGE_TS, TEAM, 'eyes');
-    expect(mockClassify).not.toHaveBeenCalled();
-    expect(mockConversationService.addMessage).toHaveBeenCalledWith('thread-1', expect.objectContaining({ role: 'USER' }));
-    expect(mockChat).not.toHaveBeenCalled();
+    expect(mockClassify).toHaveBeenCalledTimes(1);
+    expect(adapter.addReaction).not.toHaveBeenCalledWith(CHANNEL, MESSAGE_TS, TEAM, 'eyes');
+    expect(mockChat).toHaveBeenCalledWith(expect.objectContaining({ threadId: 'thread-1' }));
   });
 
   it('answers a thread reply the classifier finds is for the agent', async () => {

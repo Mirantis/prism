@@ -159,9 +159,9 @@ switching to a personal link, and vice-versa.
 - **Personal chats.** It replies to everything you send. The chat history is
   kept separate from the web chat, so Teams messages don't show up there.
 - **Channels.** The agent answers when you **@mention** it. In a thread it has
-  answered in, or under a message it sent to the channel, it also answers a
-  reply that asks it for something, with or without a mention, and leaves
-  replies meant for other people alone. It reads those replies as part of the
+  answered in, or under a message it sent to the channel, it also acts on a
+  reply that gives it something to do, with or without a mention, and leaves
+  other replies alone. It reads those replies as part of the
   thread. The agent knows **which channel** it's replying in (the channel name
   is part of its context).
 - **Threads.** The agent replies **in the thread** of the message that
