@@ -21,6 +21,15 @@ export const AGENT_VOICE_READINGS = 'agentVoiceReadings';
 /** The end of the last closed hour that `llm usage aggregated` reported, as an ISO time. */
 export const LLM_USAGE_REPORTED_THROUGH = 'llmUsageReportedThrough';
 
+/** Persistent host identifier (`urn:uuid:...`) for Sign in with ChatGPT dynamic registration. */
+export const CHATGPT_AUTH_HOST_ID = 'chatgptAuthHostId';
+
+/** Dynamically issued `oaiapp_...` client ID from Sign in with ChatGPT. */
+export const CHATGPT_AUTH_CLIENT_ID = 'chatgptAuthClientId';
+
+/** Stored OAuth tokens (JSON) for Sign in with ChatGPT (`LLM_PROVIDER=chatgpt`). */
+export const CHATGPT_AUTH_TOKENS = 'chatgptAuthTokens';
+
 export const runtimeStateService = {
   /** The stored value, or null when nothing has written this key yet. */
   async get(key: string): Promise<string | null> {

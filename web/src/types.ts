@@ -632,6 +632,20 @@ export interface CodingAgentSignIn {
   error: string | null;
 }
 
+/** Status of Sign in with ChatGPT (`GET /agents/chatgpt-auth/status`). */
+export interface ChatGptAuthStatus {
+  enabled: boolean;
+  signedIn: boolean;
+  email: string | null;
+  expiresAt: number | null;
+}
+
+/** Response of `POST /agents/chatgpt-auth/start`. */
+export interface ChatGptSignInStart {
+  authorizeUrl: string;
+  state: string;
+}
+
 /** One row of `GET /agents/coding-agents`. */
 export interface CodingAgentSummary {
   agent: CodingAgentId;

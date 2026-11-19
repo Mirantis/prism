@@ -37,13 +37,16 @@ export interface OpenAiCompatibleOptions {
   apiKey?: string;
   /** Endpoint ending at `/v1`; undefined → the SDK default, api.openai.com. */
   baseURL?: string;
+  /** Optional custom fetch (e.g. for OAuth bearer injection and token refresh). */
+  fetch?: typeof globalThis.fetch;
 }
 
 export function createOpenAiCompatibleProvider({
   apiKey,
   baseURL,
+  fetch,
 }: OpenAiCompatibleOptions): LlmProvider {
-  const openai = createOpenAI({ apiKey, baseURL });
+  const openai = createOpenAI({ apiKey, baseURL, ...(fetch ? { fetch } : {}) });
 
   const dispatcher = (modelId: string) => openai(modelId);
   return Object.assign(dispatcher, {

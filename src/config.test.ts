@@ -631,6 +631,19 @@ describe('config', () => {
       expect((await loadConfig()).openaiEndpoint).toBe('https://gw.example/openai/v1');
     });
 
+    it('selects chatgpt (case-insensitive) and resolves OpenAI model IDs with embeddings disabled by default', async () => {
+      delete process.env.OPENAI_API_KEY;
+      delete process.env.NEXUS_API_URL;
+      delete process.env.EMBEDDING_PROVIDER;
+      process.env.LLM_PROVIDER = 'ChatGPT';
+      const cfg = await loadConfig();
+      expect(cfg.llmProvider).toBe('chatgpt');
+      expect(cfg.chatModelId).toBe('gpt-5.6-sol');
+      expect(cfg.classificationModelId).toBe('gpt-5.6-luna');
+      expect(cfg.embeddingProvider).toBe('none');
+      expect(cfg.embeddingModelId).toBe('');
+    });
+
     it('selects anthropic (case-insensitive) and resolves bare first-party model IDs', async () => {
       process.env.LLM_PROVIDER = 'Anthropic';
       const cfg = await loadConfig();

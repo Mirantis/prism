@@ -52,6 +52,7 @@ import { cronTasksRouter } from './routes/cron-tasks';
 import { agentMessagesRouter } from './routes/agent-messages';
 import { agentStateRouter } from './routes/agent-state';
 import { llmProviderRouter } from './routes/llm-provider';
+import { chatGptAuthRouter } from './routes/chatgpt-auth';
 
 export function createApp() {
   const app = express();
@@ -75,6 +76,9 @@ export function createApp() {
 
   // The coding agents' subscriptions (/agents/coding-agents)
   app.use('/agents', codingAgentsRouter);
+
+  // Sign in with ChatGPT for `LLM_PROVIDER=chatgpt` (/agents/chatgpt-auth/*)
+  app.use('/agents', chatGptAuthRouter);
 
   // The agent's computers, its own and remote ones (/agents/computers)
   app.use('/agents', computersRouter);
