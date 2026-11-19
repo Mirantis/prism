@@ -169,6 +169,33 @@ describe('Requirement: the agent sends only to a linked target, and never a broa
       });
     });
 
+    it("stores a routed post in the routed thread, marked with the posted ts as the agent's own", async () => {
+      slack.postToTarget.mockResolvedValue({
+        messageId: '1712345678.000100',
+        history: {
+          userId: 'user-2',
+          threadKey: '1712345678.000100',
+          routed: { channelId: 'C0RELEASE', ts: '1712345678.000100' },
+        },
+      });
+      mockConversationService.getOrCreateThreadByExternalId.mockResolvedValue({ id: 'thread-routed' });
+
+      await send({ target: 'slack:C0RELEASE', text: 'Deploy finished, 2 warnings' });
+
+      expect(mockConversationService.getOrCreateThreadByExternalId).toHaveBeenCalledWith(
+        'user-2',
+        'agent-1',
+        '1712345678.000100',
+        { source: 'DATABASE', channelId: 'C0RELEASE' },
+      );
+      expect(mockConversationService.addMessage).toHaveBeenCalledWith('thread-routed', {
+        content: 'Deploy finished, 2 warnings',
+        role: 'AGENT',
+        triggeredBy: 'CRON_TASK',
+        externalMessageId: '1712345678.000100',
+      });
+    });
+
     it('stores nothing when the adapter names no stored thread', async () => {
       await send();
 

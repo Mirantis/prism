@@ -27,6 +27,7 @@ import {
   describeTarget,
   LinkedTarget,
   MENTION_TOKEN,
+  PostedHistory,
   PostedMessage,
   SendRefusedError,
 } from './channel-adapter.interface';
@@ -626,7 +627,9 @@ class SlackAdapterService implements ChannelAdapter {
    * given, and returns its ts. A Slack error reaches the caller, a tool that
    * reports the outcome to the agent. A top-level DM is the one conversation
    * whose history is stored rather than read from Slack, keyed by the DM
-   * channel as the inbound DM path keys it.
+   * channel as the inbound DM path keys it. In routed mode every thread is
+   * stored, so a post into a channel or a thread is stored too, in the thread
+   * `storedThread` keys by the root's ts.
    */
   async postToTarget(target: LinkedTarget, text: string, thread?: string): Promise<PostedMessage> {
     const connection = await getSlackConnection();
@@ -655,11 +658,28 @@ class SlackAdapterService implements ChannelAdapter {
       text: formatted.text,
       blocks: formatted.blocks,
     });
+    const ts = String(response.ts);
     const history =
       target.kind === 'dm' && thread === undefined && target.dmUserId
         ? { userId: target.dmUserId, threadKey: target.conversationId }
-        : undefined;
-    return { messageId: String(response.ts), ...(history ? { history } : {}) };
+        : slackMode() === 'routed'
+          ? await this.routedPostHistory(target, thread ?? ts, ts)
+          : undefined;
+    return { messageId: ts, ...(history ? { history } : {}) };
+  }
+
+  /** The stored thread a routed post belongs to: the one the inbound path opens for its root. */
+  private async routedPostHistory(target: LinkedTarget, threadKey: string, ts: string): Promise<PostedHistory | undefined> {
+    const userId =
+      target.kind === 'dm'
+        ? target.dmUserId
+        : (
+            await prisma.slackMapping.findFirst({
+              where: { slackChannelId: target.conversationId },
+              select: { lensUserId: true },
+            })
+          )?.lensUserId;
+    return userId ? { userId, threadKey, routed: { channelId: target.conversationId, ts } } : undefined;
   }
 
   /**
@@ -1302,8 +1322,10 @@ class SlackAdapterService implements ChannelAdapter {
 
   /**
    * Store the messages of a Slack thread from before `messageTs`, once, when
-   * the stored thread has none. The agent's own posts keep their stored text;
-   * another agent's post is stored as a message from its sender.
+   * the stored thread has nothing but the agent's own `send_message` posts.
+   * The agent's own posts keep their stored text; another agent's post is
+   * stored as a message from its sender. Posts already in the thread are
+   * written again in their place among the others.
    */
   private async readJoinedThread(
     threadId: string,
@@ -1312,7 +1334,13 @@ class SlackAdapterService implements ChannelAdapter {
     messageTs: string,
     teamId: string,
   ): Promise<void> {
-    if ((await conversationService.getRecentMessages(threadId, 1)).length > 0) return;
+    // A `send_message` post is the only row stored with its ts before the
+    // thread is joined; anything else means the thread was read already.
+    const joined = await prisma.conversationMessage.findFirst({
+      where: { threadId, NOT: { role: 'AGENT', externalMessageId: { not: null } } },
+      select: { id: true },
+    });
+    if (joined) return;
     const slackApp = this.apps.get(teamId);
     if (!slackApp) return;
 
@@ -1334,9 +1362,10 @@ class SlackAdapterService implements ChannelAdapter {
 
     const own = await prisma.conversationMessage.findMany({
       where: { role: 'AGENT', externalMessageId: { in: earlier.map((m) => m.ts) } },
-      select: { externalMessageId: true, content: true, triggeredBy: true, triggerName: true },
+      select: { id: true, threadId: true, externalMessageId: true, content: true, triggeredBy: true, triggerName: true },
     });
     const ownByTs = new Map(own.map((m) => [m.externalMessageId, m]));
+    const replacing = own.filter((m) => m.threadId === threadId).map((m) => m.id);
     // Every sender is looked up before anything is stored, and the messages are
     // stored together, so a restart in between leaves none of them and the
     // replayed event reads the thread again.
@@ -1349,6 +1378,7 @@ class SlackAdapterService implements ChannelAdapter {
           content: mine.content,
           triggeredBy: mine.triggeredBy,
           ...(mine.triggerName ? { triggerName: mine.triggerName } : {}),
+          ...(mine.threadId === threadId ? { externalMessageId: message.ts } : {}),
         });
         continue;
       }
@@ -1366,7 +1396,7 @@ class SlackAdapterService implements ChannelAdapter {
         senderName,
       });
     }
-    await conversationService.addMessages(threadId, messages);
+    await conversationService.addMessages(threadId, messages, { replacing });
   }
 
   /**

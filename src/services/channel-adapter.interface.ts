@@ -86,7 +86,18 @@ export interface PostedMessage {
    * to and the key the channel's inbound path gives it. Set when that thread is
    * read from the database, so the message has to be stored there to be seen.
    */
-  history?: { userId: string; threadKey: string };
+  history?: PostedHistory;
+}
+
+/** Where `storeInTargetHistory` stores a posted message. */
+export interface PostedHistory {
+  userId: string;
+  threadKey: string;
+  /**
+   * For a routed Slack thread: the channel the stored thread is in, and the
+   * posted ts, which marks the row as the agent's own when the thread is read.
+   */
+  routed?: { channelId: string; ts: string };
 }
 
 /**
