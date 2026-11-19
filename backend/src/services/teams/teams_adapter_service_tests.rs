@@ -1230,54 +1230,6 @@ async fn messages_of(thread_id: &str) -> Vec<ConversationMessage> {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn stores_a_reply_that_mentions_somebody_else_without_a_turn_or_a_typing_cue() {
-    let _db = test_db();
-    let mock = MockBotFramework::start().await;
-    let app = connected(&mock).await;
-    let agent = insert_agent("Prism").await;
-    insert_channel(
-        &agent,
-        "19:chan@thread.tacv2",
-        Some("Incidents"),
-        Some("lens-1"),
-        false,
-        0,
-    )
-    .await;
-    let thread = insert_thread(
-        "lens-1",
-        &agent,
-        Some("19:chan@thread.tacv2;messageid=1755000000000"),
-    )
-    .await;
-
-    receive(
-        &mock,
-        &app,
-        channel_activity(json!({
-            "text": "<at>Bob</at> what time is it?",
-            "entities": [{ "type": "mention", "mentioned": { "id": "29:bob", "name": "Bob" }, "text": "<at>Bob</at>" }],
-        })),
-    )
-    .await;
-
-    let stored = messages_of(&thread).await;
-    assert_eq!(stored.len(), 1);
-    assert_eq!(stored[0].role, MessageRole::User);
-    assert_eq!(stored[0].triggered_by, MessageTrigger::UserInput);
-    assert_eq!(
-        stored[0].content,
-        "<@aad-user-1:Jane Doe>: Bob what time is it?"
-    );
-    assert_eq!(stored[0].sender_external_id.as_deref(), Some("aad-user-1"));
-    assert_eq!(stored[0].sender_name.as_deref(), Some("Jane Doe"));
-    assert!(mock.posted().is_empty());
-
-    TEAMS_ADAPTER_SERVICE.shutdown().await.unwrap();
-}
-
-#[tokio::test]
-#[serial_test::serial]
 async fn ignores_unmentioned_messages_outside_a_chain_the_bot_answered_in() {
     let _db = test_db();
     let mock = MockBotFramework::start().await;

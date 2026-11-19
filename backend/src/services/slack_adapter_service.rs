@@ -212,13 +212,6 @@ fn without_address(text: &str, bot_user_id: &str, route: SlackRoute) -> String {
 /// A read of a joined Slack thread that concurrent messages of the thread share.
 type JoinedThreadRead = Shared<BoxFuture<'static, Result<(), Arc<anyhow::Error>>>>;
 
-/// Whether a message tags somebody other than the bot, which addresses it to them.
-fn tags_somebody_else(text: &str, bot_user_id: &str) -> bool {
-    BARE_MENTION
-        .captures_iter(text)
-        .any(|captures| &captures[1] != bot_user_id)
-}
-
 // ============================================================================
 // Types
 // ============================================================================
@@ -284,12 +277,11 @@ impl SlackUserInfo {
 }
 
 /// The participation rule's verdict. `Respond` passes the message on to the
-/// thread classifier; `React` puts 👀 on a message addressed to another person.
+/// thread classifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ThreadParticipation {
     Respond,
     Ignore,
-    React,
 }
 
 /// A Socket Mode app the adapter started. `stop` ends its watch and retires its client.
@@ -2853,17 +2845,6 @@ impl SlackAdapterService {
                     );
                     return Ok(());
                 }
-                ThreadParticipation::React => {
-                    self.add_reaction(channel_id, message_ts, &mapping_team_id, "eyes")
-                        .await;
-                    keep_unanswered().await?;
-                    log_info!(
-                        "Channel message not answered: thread message addressed to another person, reacted (agent={}, channel={})",
-                        agent_id,
-                        channel_label
-                    );
-                    return Ok(());
-                }
                 ThreadParticipation::Respond => {}
             }
 
@@ -3470,7 +3451,6 @@ impl SlackAdapterService {
             })
             .unwrap_or_default();
         let arriving_ts = arriving.ts.clone();
-        let arriving_text = arriving.text.clone().unwrap_or_default();
         let messages = match fetched.iter().position(|m| m.ts == arriving_ts) {
             Some(at) => fetched[..=at].to_vec(),
             None => fetched
@@ -3487,15 +3467,7 @@ impl SlackAdapterService {
             return (ThreadParticipation::Ignore, messages);
         }
 
-        // The arriving message tags somebody other than the bot, so it is
-        // addressed to that person. Only this message is read: a tag earlier in
-        // the thread is addressed to somebody else and leaves a later message
-        // aimed at the bot answerable.
-        if tags_somebody_else(&arriving_text, &slack_app.bot_user_id) {
-            return (ThreadParticipation::React, messages);
-        }
-
-        // Bot is participating and the message is not addressed elsewhere — pass to LLM
+        // A message that tags somebody else can still give the bot work, so the classifier decides.
         (ThreadParticipation::Respond, messages)
     }
 
@@ -4625,8 +4597,8 @@ impl SlackAdapterService {
 
     /// The participation verdict for a thread reply the router did not address
     /// to the agent. The router sends such a reply only from a thread the agent
-    /// takes part in, so the verdict is `React` when the reply tags somebody
-    /// else, else `Respond`. The transcript is the stored thread.
+    /// takes part in, so the verdict is `Respond`, which passes it to the
+    /// classifier. The transcript is the stored thread.
     async fn stored_thread_gate(
         &self,
         thread_id: &str,
@@ -4655,14 +4627,8 @@ impl SlackAdapterService {
                 }
             })
             .collect();
-        let tags_other = tags_somebody_else(arriving.text.as_deref().unwrap_or(""), bot_user_id);
         messages.push(arriving);
-        let action = if tags_other {
-            ThreadParticipation::React
-        } else {
-            ThreadParticipation::Respond
-        };
-        Ok((action, messages))
+        Ok((ThreadParticipation::Respond, messages))
     }
 
     /// Store a routed thread reply the agent does not answer.
