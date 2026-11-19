@@ -2246,6 +2246,7 @@ async fn list_threads(query: QueryParams) -> Response {
                 Some(ListThreadsOptions {
                     limit,
                     thread_source,
+                    workspace_root: None,
                 }),
             )
             .await?;

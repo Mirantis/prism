@@ -184,11 +184,39 @@ async fn lists_the_newest_threads_first_up_to_the_limit() {
             Some(ListThreadsOptions {
                 limit: Some(2),
                 thread_source: None,
+                workspace_root: None,
             }),
         )
         .await
         .unwrap();
     assert_eq!(two.len(), 2);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn with_a_workspace_root_lists_the_threads_rooted_in_that_folder() {
+    let _db = crate::db::testing::test_db();
+    seed_agent().await;
+    thread("a-old", 1, |t| t.workspace_root = Some("/repo/a".into())).await;
+    thread("b", 2, |t| t.workspace_root = Some("/repo/b".into())).await;
+    thread("a-new", 3, |t| t.workspace_root = Some("/repo/a".into())).await;
+    thread("none", 4, |_| {}).await;
+    let threads = CONVERSATION_SERVICE
+        .list_threads(
+            USER,
+            AGENT,
+            Some(ListThreadsOptions {
+                limit: Some(1),
+                thread_source: Some(ThreadSource::Database),
+                workspace_root: Some("/repo/a".into()),
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        threads.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
+        ["a-new"]
+    );
 }
 
 #[tokio::test]
@@ -210,6 +238,7 @@ async fn lists_database_threads_without_the_ones_a_channel_keys() {
             Some(ListThreadsOptions {
                 limit: None,
                 thread_source: Some(ThreadSource::Database),
+                workspace_root: None,
             }),
         )
         .await
@@ -225,6 +254,7 @@ async fn lists_database_threads_without_the_ones_a_channel_keys() {
             Some(ListThreadsOptions {
                 limit: None,
                 thread_source: Some(ThreadSource::Slack),
+                workspace_root: None,
             }),
         )
         .await

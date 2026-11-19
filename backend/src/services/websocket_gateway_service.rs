@@ -985,8 +985,9 @@ impl WebSocketGatewayService {
     /// A `hello` that does not parse or names another protocol is answered
     /// `protocol_unsupported`
     /// `This runtime speaks chat protocol {PROTOCOL_VERSION}. Update the app to connect.`
-    /// and closed with `protocolUnsupported`. A resume emits `chat socket resumed`
-    /// (`socket.outcome` `resumed` or `resync`, `socket.replayed`, `socket.client`).
+    /// and closed with `protocolUnsupported`. A new connection emits `chat socket connected`
+    /// (`socket.client`); a resume emits `chat socket resumed` (`socket.outcome` `resumed`
+    /// or `resync`, `socket.replayed`, `socket.client`).
     fn handle_hello(&'static self, ws: &Arc<ChatSocket>, raw: Value) {
         let hello = match parse_hello_frame(&raw) {
             Ok(hello) if hello.payload.protocol == PROTOCOL_VERSION => hello,
@@ -1066,34 +1067,44 @@ impl WebSocketGatewayService {
                 unsubscribe();
             }
 
-            if resume.is_some() {
-                let mut props = IndexMap::new();
-                if let Some(agent_id) = CONFIG.agent_id().filter(|id| !id.is_empty()) {
-                    props.insert("agent.id".to_string(), agent_id);
-                }
-                props.insert(
-                    "socket.outcome".to_string(),
-                    if replayed.is_some() {
-                        "resumed"
-                    } else {
-                        "resync"
-                    }
-                    .to_string(),
-                );
-                props.insert(
-                    "socket.replayed".to_string(),
-                    replayed.unwrap_or(0).to_string(),
-                );
+            let mut props = IndexMap::new();
+            if let Some(agent_id) = CONFIG.agent_id().filter(|id| !id.is_empty()) {
+                props.insert("agent.id".to_string(), agent_id);
+            }
+            if resume.is_none() {
                 props.insert(
                     "socket.client".to_string(),
                     hello.payload.client.name.clone(),
                 );
                 track_event(
-                    "chat socket resumed",
+                    "chat socket connected",
                     Some(&CONFIG.owner_user_id()),
                     Some(props),
                 );
+                return;
             }
+            props.insert(
+                "socket.outcome".to_string(),
+                if replayed.is_some() {
+                    "resumed"
+                } else {
+                    "resync"
+                }
+                .to_string(),
+            );
+            props.insert(
+                "socket.replayed".to_string(),
+                replayed.unwrap_or(0).to_string(),
+            );
+            props.insert(
+                "socket.client".to_string(),
+                hello.payload.client.name.clone(),
+            );
+            track_event(
+                "chat socket resumed",
+                Some(&CONFIG.owner_user_id()),
+                Some(props),
+            );
         });
     }
 
