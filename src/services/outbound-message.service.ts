@@ -16,6 +16,7 @@ import {
   ChannelName,
   describeTarget,
   LinkedTarget,
+  PostedHistory,
   PostedMessage,
   SendRefusedError,
   WEB_CHAT_NAME,
@@ -146,16 +147,23 @@ class OutboundMessageService {
    */
   private async storeInTargetHistory(
     input: SendInput,
-    history: { userId: string; threadKey: string },
+    history: PostedHistory,
     text: string,
   ): Promise<void> {
     try {
-      const thread = await conversationService.getOrCreateThreadByExternalId(
-        history.userId,
-        input.agentId,
-        history.threadKey,
-      );
-      await conversationService.addMessage(thread.id, { content: text, role: 'AGENT', triggeredBy: input.trigger });
+      const { userId, threadKey, routed } = history;
+      const thread = routed
+        ? await conversationService.getOrCreateThreadByExternalId(userId, input.agentId, threadKey, {
+            source: ThreadSource.DATABASE,
+            channelId: routed.channelId,
+          })
+        : await conversationService.getOrCreateThreadByExternalId(userId, input.agentId, threadKey);
+      await conversationService.addMessage(thread.id, {
+        content: text,
+        role: 'AGENT',
+        triggeredBy: input.trigger,
+        ...(routed && { externalMessageId: routed.ts }),
+      });
     } catch (err: unknown) {
       logger.error({ err }, '[OutboundMessage] posted, but the message could not be stored in the target history');
     }

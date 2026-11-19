@@ -8,9 +8,10 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockPrisma, mockGetSlackConnection, mockSlackMappingService } = vi.hoisted(() => ({
+const { mockPrisma, mockGetSlackConnection, mockSlackMappingService, mockSlackMode } = vi.hoisted(() => ({
+  mockSlackMode: vi.fn(() => 'socket'),
   mockPrisma: {
-    slackMapping: { findMany: vi.fn() },
+    slackMapping: { findMany: vi.fn(), findFirst: vi.fn() },
   },
   mockGetSlackConnection: vi.fn(),
   mockSlackMappingService: {
@@ -20,6 +21,10 @@ const { mockPrisma, mockGetSlackConnection, mockSlackMappingService } = vi.hoist
 }));
 
 vi.mock('../../lib/prisma', () => ({ default: mockPrisma }));
+vi.mock('../../lib/slack-config', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/slack-config')>()),
+  slackMode: mockSlackMode,
+}));
 vi.mock('../../lib/slack-source', () => ({
   getSlackConnection: mockGetSlackConnection,
   getActiveSlackConnections: vi.fn(),
@@ -147,6 +152,35 @@ describe('Requirement: the agent posts only to its linked Slack targets', () => 
       expect(await slackAdapterService.postToTarget(DM, 'Hi', '1712345678.000001')).toEqual({
         messageId: '1712345678.000100',
       });
+    });
+
+    it('in routed mode, names the stored thread of a channel post or a thread post, with the posted ts', async () => {
+      mockSlackMode.mockReturnValue('routed');
+      mockPrisma.slackMapping.findFirst.mockResolvedValue({ lensUserId: 'owner-1' });
+      try {
+        expect(await slackAdapterService.postToTarget(RELEASE, 'Deploy finished')).toEqual({
+          messageId: '1712345678.000100',
+          history: {
+            userId: 'owner-1',
+            threadKey: '1712345678.000100',
+            routed: { channelId: 'C0RELEASE', ts: '1712345678.000100' },
+          },
+        });
+        expect(mockPrisma.slackMapping.findFirst).toHaveBeenCalledWith({
+          where: { slackChannelId: 'C0RELEASE' },
+          select: { lensUserId: true },
+        });
+        expect(await slackAdapterService.postToTarget(DM, 'Hi', '1712345678.000001')).toEqual({
+          messageId: '1712345678.000100',
+          history: {
+            userId: 'user-1',
+            threadKey: '1712345678.000001',
+            routed: { channelId: 'D0OWNER', ts: '1712345678.000100' },
+          },
+        });
+      } finally {
+        mockSlackMode.mockReturnValue('socket');
+      }
     });
   });
 

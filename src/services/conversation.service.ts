@@ -602,12 +602,17 @@ class ConversationService {
    * Add several messages to a thread in one transaction, so either all of them
    * are stored or none is. The rows keep the given order: each is dated a
    * millisecond after the one before it, and the last a millisecond before now.
+   * `replacing` names rows of the thread the inputs write again, which the same
+   * transaction deletes.
    */
-  async addMessages(threadId: string, inputs: MessageInput[]): Promise<void> {
+  async addMessages(threadId: string, inputs: MessageInput[], options: { replacing?: string[] } = {}): Promise<void> {
     if (inputs.length === 0) return;
     const now = Date.now();
     const [thread] = await prisma.$transaction([
       prisma.conversationThread.update({ where: { id: threadId }, data: { updatedAt: new Date(now) } }),
+      ...(options.replacing?.length
+        ? [prisma.conversationMessage.deleteMany({ where: { threadId, id: { in: options.replacing } } })]
+        : []),
       ...inputs.map((input, index) =>
         prisma.conversationMessage.create({
           data: { ...messageData(threadId, input), createdAt: new Date(now - inputs.length + index) },

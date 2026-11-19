@@ -41,7 +41,7 @@ const {
   mockChat: vi.fn(),
   mockClassify: vi.fn(),
   mockPrisma: {
-    conversationMessage: { findMany: vi.fn() },
+    conversationMessage: { findMany: vi.fn(), findFirst: vi.fn() },
     conversationParticipant: { upsert: vi.fn() },
     slackMapping: { findFirst: vi.fn() },
   },
@@ -169,6 +169,7 @@ beforeEach(() => {
   mockConversationService.addMessages.mockResolvedValue(undefined);
   mockChat.mockResolvedValue({});
   mockPrisma.conversationMessage.findMany.mockResolvedValue([]);
+  mockPrisma.conversationMessage.findFirst.mockResolvedValue({ id: 'm1' });
 });
 
 describe('Routed channel messages', () => {
@@ -266,10 +267,17 @@ describe('A Slack thread the agent joins', () => {
       ],
     });
     mockPrisma.conversationMessage.findMany.mockResolvedValue([
-      { externalMessageId: THREAD_TS, content: 'Disk usage is at **91%**.', triggeredBy: 'HEARTBEAT', triggerName: null },
+      {
+        id: 'own-1',
+        threadId: 'thread-0',
+        externalMessageId: THREAD_TS,
+        content: 'Disk usage is at **91%**.',
+        triggeredBy: 'HEARTBEAT',
+        triggerName: null,
+      },
     ]);
     adapter.getUserInfo = vi.fn().mockResolvedValue({ real_name: 'Bob' });
-    mockConversationService.getRecentMessages.mockResolvedValueOnce([]);
+    mockPrisma.conversationMessage.findFirst.mockResolvedValueOnce(null);
 
     await channelMessage('can you clean it up?', THREAD_TS, routed('mention'));
 
@@ -295,9 +303,57 @@ describe('A Slack thread the agent joins', () => {
             senderName: 'Bob',
           },
         ],
+        { replacing: [] },
       ],
     ]);
     expect(mockChat).toHaveBeenCalled();
+  });
+
+  it("reads a thread that holds only the agent's own posts, and writes them again in their place", async () => {
+    const replies = connectedApp();
+    replies.mockResolvedValue({
+      messages: [
+        { ts: THREAD_TS, user: BOT, bot_id: 'B0BOT', text: 'Deploy finished, 2 warnings' },
+        { ts: '1761732040.000100', user: 'U0BOB', text: 'which ones?' },
+        { ts: MESSAGE_TS, user: ALICE, text: 'can you list them?' },
+      ],
+    });
+    // The scheduled run's `send_message` post, stored in this thread with its ts.
+    mockPrisma.conversationMessage.findMany.mockResolvedValue([
+      {
+        id: 'posted-1',
+        threadId: 'thread-1',
+        externalMessageId: THREAD_TS,
+        content: 'Deploy finished, 2 warnings',
+        triggeredBy: 'CRON',
+        triggerName: null,
+      },
+    ]);
+    adapter.getUserInfo = vi.fn().mockResolvedValue({ real_name: 'Bob' });
+    mockPrisma.conversationMessage.findFirst.mockResolvedValueOnce(null);
+
+    await channelMessage('can you list them?', THREAD_TS, routed('mention'));
+
+    expect(mockPrisma.conversationMessage.findFirst).toHaveBeenCalledWith({
+      where: { threadId: 'thread-1', NOT: { role: 'AGENT', externalMessageId: { not: null } } },
+      select: { id: true },
+    });
+    expect(mockConversationService.addMessages.mock.calls).toEqual([
+      [
+        'thread-1',
+        [
+          { role: 'AGENT', content: 'Deploy finished, 2 warnings', triggeredBy: 'CRON', externalMessageId: THREAD_TS },
+          {
+            role: 'USER',
+            content: '<@U0BOB:Bob>: which ones?',
+            triggeredBy: 'USER_INPUT',
+            senderExternalId: 'U0BOB',
+            senderName: 'Bob',
+          },
+        ],
+        { replacing: ['posted-1'] },
+      ],
+    ]);
   });
 
   it('stores none of the earlier messages until every sender is looked up', async () => {
@@ -313,7 +369,7 @@ describe('A Slack thread the agent joins', () => {
       .fn()
       .mockResolvedValueOnce({ real_name: 'Bob' })
       .mockRejectedValueOnce(new Error('process stopped'));
-    mockConversationService.getRecentMessages.mockResolvedValueOnce([]);
+    mockPrisma.conversationMessage.findFirst.mockResolvedValueOnce(null);
     const event = routed('mention');
 
     await channelMessage('can you clean it up?', THREAD_TS, event).catch(() => undefined);
@@ -335,7 +391,7 @@ describe('A Slack thread the agent joins', () => {
   it('starts without the earlier messages when Slack refuses the read', async () => {
     const replies = connectedApp();
     replies.mockRejectedValue(Object.assign(new Error('not_allowed'), { data: { error: 'not_allowed' } }));
-    mockConversationService.getRecentMessages.mockResolvedValueOnce([]);
+    mockPrisma.conversationMessage.findFirst.mockResolvedValueOnce(null);
 
     await channelMessage('can you clean it up?', THREAD_TS, routed('mention'));
 
