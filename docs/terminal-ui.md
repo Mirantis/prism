@@ -14,8 +14,7 @@ By default it connects to a runtime at `http://localhost:3003`. Point it
 elsewhere with `PRISM_HTTP_URL` or the `~/.prism/settings.json` file — see the
 **[CLI reference](cli-reference.md)** for all flags and settings.
 
-When no LLM provider is configured, `prism` shows a warning under the header that
-names the setting to add.
+When your provider needs setup, `prism` lists its requirements under **Connect a model provider**.
 
 ## Starting and resuming conversations
 
