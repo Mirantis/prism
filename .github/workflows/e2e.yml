@@ -485,7 +485,7 @@ jobs:
           # Under the SLACK_E2E_* names rather than SLACK_BOT_TOKEN, except for
           # SLACK_APP_TOKEN: `setupRuntime` spreads process.env into every
           # runtime it boots, and the deployed names would put every runtime on
-          # Socket Mode. The spec passes the two it needs through explicitly.
+          # Socket Mode. Each spec passes the tokens it needs through explicitly.
           SLACK_APP_TOKEN: ${{ secrets.SLACK_E2E_APP_TOKEN }}
           SLACK_E2E_BOT_TOKEN: ${{ secrets.SLACK_E2E_BOT_TOKEN }}
           SLACK_E2E_USER_TOKEN: ${{ secrets.SLACK_E2E_USER_TOKEN }}

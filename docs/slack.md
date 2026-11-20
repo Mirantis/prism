@@ -2,7 +2,8 @@
 
 Prism Agent can run in Slack — responding to direct messages and channel mentions,
 holding threaded conversations, and waking on activity in designated channels.
-Slack runs over **Socket Mode**, so no public webhook or inbound URL is needed.
+A Slack app of your own runs over **Socket Mode**, so no public webhook or inbound
+URL is needed. An agent can also run on a [shared Slack app](#a-shared-slack-app).
 
 Slack is optional. The runtime starts fine without it; add it when you want it.
 
@@ -50,7 +51,9 @@ environment (the `.env` file for a native install, `-e` flags for Docker). See
 
 Before the agent will talk to you, it needs to know who you are. Linking is
 started from the **[Web UI → Channels](web-ui.md#channels)** page, which
-issues a short-lived six-character code.
+issues a short-lived six-character code. On a
+[shared Slack app](#a-shared-slack-app) you link your account and channels where
+the agent was added to Slack instead, and the agent ignores link codes.
 
 ### Personal Mode — DM the agent
 
@@ -137,6 +140,23 @@ Autonomous messages from the agent — [heartbeat](heartbeat.md) alerts and
 Mode, heartbeat alerts go to the [main channel](#the-main-channel) and scheduled
 tasks go to the channel they were created in; in Personal Mode they arrive in
 your DM.
+
+## A shared Slack app
+
+An agent can run on a Slack app that many agents share. The platform that hosts
+the agent sets it up, so there is no Slack app to create:
+
+| Variable | Value |
+|----------|-------|
+| `SLACK_API_URL` | The shared app's Slack API proxy. Every Slack call of the agent goes there. |
+| `SLACK_BOT_TOKEN` | The agent's token for that proxy. |
+| `SLACK_PORT` | *(optional)* The port the shared app's router delivers the agent's Slack messages to. Default `3980`. |
+
+Leave `SLACK_APP_TOKEN` unset. Slack stays off until the agent is added to a
+Slack workspace, and turns on without a restart when it is. When you bring the
+agent into a thread that already has messages, it reads them once.
+
+To run the shared app yourself, see [Slack router protocol](slack-router-protocol.md).
 
 ## Slack-triggered heartbeats
 

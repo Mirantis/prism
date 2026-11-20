@@ -332,7 +332,7 @@ export async function clearCronTasks(port: number): Promise<void> {
  * `exclude` (one already handed out for the same runtime, which nothing has
  * bound yet) is skipped, since the kernel may hand it out again.
  */
-async function findFreePort(exclude: readonly number[] = []): Promise<number> {
+export async function findFreePort(exclude: readonly number[] = []): Promise<number> {
   for (;;) {
     const port = await bindEphemeralPort();
     if (!exclude.includes(port)) return port;

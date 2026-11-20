@@ -193,11 +193,20 @@ pub const WEB_CHAT_TARGET: &str = "chat";
 pub const WEB_CHAT_NAME: &str = "Web chat";
 
 /// The stored thread a reply to a posted message continues.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PostedHistory {
     pub user_id: String,
     pub thread_key: String,
+    /// The channel the stored thread is in, when the channel's inbound path
+    /// opens the thread with one. The thread is then a database thread in that
+    /// channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_id: Option<String>,
+    /// The posted message's id on the platform. It marks the stored row as the
+    /// agent's own when the thread is read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_message_id: Option<String>,
 }
 
 /// A message `post_to_target` posted.
