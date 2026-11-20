@@ -203,12 +203,17 @@ impl MonitorManager {
         // Tool calls run in parallel on several workers, so the slot is reserved first and
         // checked after: two starts at four running cannot both pass a read-then-increment.
         // The reservation is released only once the monitor is in `monitors`, or `begin` fails.
-        let reserved = self.starting.fetch_add(1, Ordering::SeqCst) + 1;
-        if reserved + self.monitors.lock().len() > MAX_MONITORS {
-            self.starting.fetch_sub(1, Ordering::SeqCst);
-            anyhow::bail!(
-                "At most {MAX_MONITORS} monitors run at once. Stop one with monitor_stop first."
-            );
+        // Both happen under the `monitors` lock, so reserving under it too reads a count in which
+        // no start is in `starting` and `monitors` at once.
+        {
+            let monitors = self.monitors.lock();
+            let reserved = self.starting.fetch_add(1, Ordering::SeqCst) + 1;
+            if reserved + monitors.len() > MAX_MONITORS {
+                self.starting.fetch_sub(1, Ordering::SeqCst);
+                anyhow::bail!(
+                    "At most {MAX_MONITORS} monitors run at once. Stop one with monitor_stop first."
+                );
+            }
         }
         // Before the command: a restart in between finds the row and tells the conversation.
         if let Err(err) = PENDING_WORK_SERVICE
