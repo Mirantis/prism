@@ -1003,6 +1003,7 @@ fn reports_a_drained_status_with_the_wire_names() {
         agent: CodingAgentName::ClaudeCode,
         output_buffer: "out".to_string(),
         completed: false,
+        reporting: false,
         result: Some("r".to_string()),
         turns: Some(1),
         stop_reason: Some(TaskStopReason::Refused),
@@ -1083,6 +1084,39 @@ fn notifying(prompt: &str) -> AgentTaskParams {
         notify: Some(target()),
         ..Default::default()
     }
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn counts_an_ended_task_as_running_until_its_notification_is_stored() {
+    let h = harness();
+    let release = Arc::new(tokio::sync::Notify::new());
+    let gate = release.clone();
+    let deliver: DeliverNotification = Arc::new(move |_, _, _| {
+        let gate = gate.clone();
+        Box::pin(async move {
+            gate.notified().await;
+            Ok(())
+        })
+    });
+    let agent = h.agent.clone();
+    let manager = Arc::new(
+        AgentTaskManager::new(Some(Arc::new(move |_| {
+            let agent: Arc<dyn CodingAgent> = agent.clone();
+            Ok(agent)
+        })))
+        .with_deliver(deliver),
+    );
+    let h = Harness { manager, ..h };
+    h.manager.start_task(notifying("plan it")).await.unwrap();
+    h.run()
+        .finish(CodingAgentStopReason::EndTurn, 1, "ok", None);
+    settle().await;
+
+    assert_eq!(h.manager.running_count(), 1);
+    release.notify_one();
+    settle().await;
+    assert_eq!(h.manager.running_count(), 0);
 }
 
 #[tokio::test]

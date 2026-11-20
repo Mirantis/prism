@@ -198,6 +198,9 @@ pub struct TaskState {
     pub agent: CodingAgentName,
     pub output_buffer: String,
     pub completed: bool,
+    /// Set with `completed` when the run ends, and cleared once report() has stored
+    /// the task notification or sends none, so the task counts as running until then.
+    pub reporting: bool,
     pub result: Option<String>,
     pub turns: Option<i64>,
     pub stop_reason: Option<TaskStopReason>,
@@ -301,13 +304,16 @@ impl AgentTaskManager {
         self
     }
 
-    /// Number of tasks that haven't completed yet.
+    /// Number of tasks that haven't completed yet, or whose report is not stored yet.
     pub fn running_count(&self) -> usize {
         let running = self
             .tasks
             .lock()
             .values()
-            .filter(|entry| !entry.state.lock().completed)
+            .filter(|entry| {
+                let state = entry.state.lock();
+                !state.completed || state.reporting
+            })
             .count();
         self.starting.load(Ordering::SeqCst) + running
     }
@@ -446,6 +452,7 @@ impl AgentTaskManager {
                     agent: name,
                     output_buffer: String::new(),
                     completed: true,
+                    reporting: false,
                     result: finished.result,
                     turns: finished.turns,
                     stop_reason: finished.stop_reason,
@@ -519,6 +526,7 @@ impl AgentTaskManager {
             agent: agent.id(),
             output_buffer: String::new(),
             completed: false,
+            reporting: false,
             result: None,
             turns: None,
             stop_reason: None,
@@ -820,6 +828,7 @@ impl AgentTaskManager {
             return;
         };
         let Some(target) = entry.params.notify.clone() else {
+            entry.state.lock().reporting = false;
             return;
         };
         if entry.result_read.load(Ordering::SeqCst)
@@ -827,6 +836,7 @@ impl AgentTaskManager {
             || entry.stop_called.load(Ordering::SeqCst)
             || PENDING_WORK_SERVICE.shutdown_signal().is_cancelled()
         {
+            entry.state.lock().reporting = false;
             return;
         }
         let outcome = {
@@ -848,7 +858,9 @@ impl AgentTaskManager {
         let task_id = task_id.to_string();
         tokio::spawn(async move {
             let text = notification_text(outcome, entry.params.workdir.as_deref()).await;
-            match (manager.deliver)(target, task_id.clone(), text).await {
+            let delivered = (manager.deliver)(target, task_id.clone(), text).await;
+            entry.state.lock().reporting = false;
+            match delivered {
                 Ok(()) => {
                     let current = manager.tasks.lock().get(&task_id).cloned();
                     if current.is_some_and(|current| Arc::ptr_eq(&current, &entry)) {
@@ -974,6 +986,7 @@ impl AgentTaskManager {
                 state.refusals = kept_refusals;
             }
             state.completed = true;
+            state.reporting = true;
             state.result = Some(result);
             state.turns = Some(turns);
             state.stop_reason = Some(stop_reason);
