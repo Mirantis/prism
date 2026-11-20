@@ -22,6 +22,9 @@ pub const PROVIDER_UTILS_VERSION: &str = "5.0.58";
 /// chunks, before it fails the request.
 const READ_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// How long Node's `fetch` (undici) waits for a connection.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// One HTTP request a provider sends: always a `POST` of a JSON text.
 #[derive(Debug, Clone)]
 pub struct FetchRequest {
@@ -58,10 +61,12 @@ pub type FetchFunction = Arc<
         + Sync,
 >;
 
-/// Node's global `fetch` reads no proxy variables, so this client reads none.
+/// Node's global `fetch` reads no proxy variables, so this client reads none. Like
+/// undici, a connect fails after ten seconds rather than the OS's two minutes.
 static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
         .no_proxy()
+        .connect_timeout(CONNECT_TIMEOUT)
         .read_timeout(READ_TIMEOUT)
         .build()
         .expect("the provider HTTP client builds")

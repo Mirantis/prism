@@ -975,13 +975,41 @@ async fn deliver(body: JsonBody) -> Response {
         if !body.has("userId") || !body.has("message") {
             return Ok(error_json(400, "Missing required fields: userId, message"));
         }
-        let message: DeliverableMessage = serde_json::from_value(body.get("message"))?;
-        let channel_context = match body.get("channelContext") {
+        // The TypeScript route passed `message` and `channelContext` on as sent, so a
+        // partial one was delivered: the fields the adapter does not need get defaults.
+        let raw_context = body.get("channelContext");
+        let mut raw_message = body.get("message");
+        if let Value::Object(message) = &mut raw_message {
+            let context_thread = raw_context.get("threadId").cloned();
+            let defaults = [
+                ("id", json!("")),
+                ("threadId", context_thread.unwrap_or_else(|| json!(""))),
+                ("role", json!("AGENT")),
+                ("content", json!("")),
+                ("triggeredBy", json!("SYSTEM")),
+                ("isCompacted", json!(false)),
+                ("internalStep", json!(false)),
+                (
+                    "createdAt",
+                    json!(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+                ),
+            ];
+            for (key, value) in defaults {
+                if message.get(key).is_none_or(Value::is_null) {
+                    message.insert(key.into(), value);
+                }
+            }
+        }
+        let message: DeliverableMessage = serde_json::from_value(raw_message)?;
+        let channel_context = match raw_context {
             Value::Object(mut context) => {
                 let thread_ts = context.remove("threadTs");
                 context.remove("channelThreadId");
                 if let Some(thread_ts) = thread_ts.filter(|ts| !ts.is_null()) {
                     context.insert("channelThreadId".into(), thread_ts);
+                }
+                if context.get("threadId").is_none_or(Value::is_null) {
+                    context.insert("threadId".into(), json!(message.inner.thread_id));
                 }
                 Some(serde_json::from_value::<ChannelContext>(Value::Object(
                     context,

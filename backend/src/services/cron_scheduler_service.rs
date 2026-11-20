@@ -731,7 +731,9 @@ impl CronSchedulerService {
                 is_one_shot: false,
             }),
         );
-        if at_boot && missed_run(&task, &|date| matcher.matches(date)) && !self.gives_up(&task) {
+        let catching_up =
+            at_boot && missed_run(&task, &|date| matcher.matches(date)) && !self.gives_up(&task);
+        if catching_up {
             log_info!(
                 "[CronScheduler] Recurring \"{}\" missed a run - executing now",
                 task.name
@@ -741,7 +743,9 @@ impl CronSchedulerService {
                 self.execute_task(missed, true).await;
             });
         }
-        if !self.running_tasks.lock().contains_key(&task.id) {
+        // The spawned catch-up run is not in `running_tasks` yet, so it is skipped by name: it
+        // stores the next run when it completes, and a stop part-way leaves the missed run due.
+        if !catching_up && !self.running_tasks.lock().contains_key(&task.id) {
             let task_id = task.id.clone();
             tokio::spawn(async move { self.record_run(&task_id, None).await });
         }
