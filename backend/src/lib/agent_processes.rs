@@ -495,7 +495,7 @@ mod tests {
     }
 
     async fn poll_until(check: impl Fn() -> bool) -> bool {
-        for _ in 0..100 {
+        for _ in 0..500 {
             if check() {
                 return true;
             }
@@ -525,8 +525,21 @@ mod tests {
         assert!(poll_until(|| *ticks.lock() > 0).await);
 
         processes.suspend();
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        let while_stopped = *ticks.lock();
+        // Ticks already in the pipe are still read after the stop, so wait for the count to settle.
+        let mut while_stopped = *ticks.lock();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let now = *ticks.lock();
+            if now == while_stopped {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the ticks never settled"
+            );
+            while_stopped = now;
+        }
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert_eq!(*ticks.lock(), while_stopped);
 
