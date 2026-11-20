@@ -76,9 +76,9 @@ vi.mock('../config', () => ({
         large: { default: 'opus', bedrock: 'opus' },
       },
       codex: {
-        small: { openai: 'gpt-5.6-luna', bedrock: 'openai.gpt-5.6-luna' },
-        medium: { openai: 'gpt-5.6-terra', bedrock: 'openai.gpt-5.6-terra' },
-        large: { openai: 'gpt-5.6-sol', bedrock: 'openai.gpt-5.6-sol' },
+        small: { openai: 'gpt-5.6-terra', bedrock: 'openai.gpt-5.6-terra' },
+        medium: { openai: 'gpt-5.6-sol', bedrock: 'openai.gpt-5.6-sol' },
+        large: { openai: 'gpt-6-astra', bedrock: 'openai.gpt-6-astra' },
       },
     },
     availableCodingAgents: ['claude-code'],
