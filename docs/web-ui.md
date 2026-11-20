@@ -31,8 +31,8 @@ Below them are your most recent conversations, and a setup checklist that ticks
 off each step you have done and marks the next one. (To rename the agent, use the
 Name field on the [Profile](#profile) page.)
 
-When your provider needs setup, the Overview lists what to add. Copy a variable name
-or open **Provider setup guide** for instructions.
+When your provider needs setup, the Overview lists what to add. Copy a variable name,
+open Profile for a sign-in, or open **Provider setup guide** for instructions.
 
 On a native install, a strip under the header announces a newer release with an
 **Update now** button, shows "Backend updating…" while the runtime restarts, and
