@@ -153,9 +153,91 @@ pub fn number_from(text: &str) -> Option<f64> {
     trimmed.parse::<f64>().ok()
 }
 
+/// `JSON.parse` of a UTF-8 frame. `JSON.parse` accepts a lone surrogate escape such as
+/// `\ud83d`, which `JSON.stringify` writes for a text holding half of an emoji pair;
+/// `serde_json` refuses it, and a Rust string cannot hold it. A text that fails to parse
+/// is parsed again with each lone surrogate escape read as U+FFFD, the character a
+/// UTF-8 encoder writes for it.
+pub fn json_parse(bytes: &[u8]) -> serde_json::Result<Value> {
+    match serde_json::from_slice(bytes) {
+        Ok(value) => Ok(value),
+        Err(err) => match replace_lone_surrogate_escapes(bytes) {
+            Some(fixed) => serde_json::from_slice(&fixed),
+            None => Err(err),
+        },
+    }
+}
+
+/// `bytes` with each `\uXXXX` escape of an unpaired surrogate inside a string replaced
+/// by `\ufffd`, or `None` when it has none.
+fn replace_lone_surrogate_escapes(bytes: &[u8]) -> Option<Vec<u8>> {
+    fn unit_at(bytes: &[u8], at: usize) -> Option<u16> {
+        if bytes.get(at) != Some(&b'\\') || bytes.get(at + 1) != Some(&b'u') {
+            return None;
+        }
+        let hex = std::str::from_utf8(bytes.get(at + 2..at + 6)?).ok()?;
+        u16::from_str_radix(hex, 16).ok()
+    }
+    let is_high = |unit: u16| (0xD800..0xDC00).contains(&unit);
+    let is_low = |unit: u16| (0xDC00..0xE000).contains(&unit);
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut changed = false;
+    let mut in_string = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        let byte = bytes[i];
+        if !in_string {
+            in_string = byte == b'"';
+            out.push(byte);
+            i += 1;
+            continue;
+        }
+        match byte {
+            b'"' => {
+                in_string = false;
+                out.push(byte);
+                i += 1;
+            }
+            b'\\' => match unit_at(bytes, i) {
+                Some(unit) if is_high(unit) && unit_at(bytes, i + 6).is_some_and(is_low) => {
+                    out.extend_from_slice(&bytes[i..i + 12]);
+                    i += 12;
+                }
+                Some(unit) if is_high(unit) || is_low(unit) => {
+                    out.extend_from_slice(b"\\ufffd");
+                    changed = true;
+                    i += 6;
+                }
+                _ => {
+                    // Any other escape: copy it whole, so an escaped `\\` or `"` is not misread.
+                    out.extend_from_slice(&bytes[i..(i + 2).min(bytes.len())]);
+                    i += 2;
+                }
+            },
+            _ => {
+                out.push(byte);
+                i += 1;
+            }
+        }
+    }
+    changed.then_some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_lone_surrogate_escapes_as_json_parse_does() {
+        let value = json_parse(br#"{"text":"hi \ud83d","ok":"\ud83d\ude00","k\udc00":1}"#).unwrap();
+        assert_eq!(value["text"], "hi \u{fffd}");
+        assert_eq!(value["ok"], "😀");
+        assert_eq!(value["k\u{fffd}"], 1);
+        // An escaped backslash before `ud83d` is text, not an escape.
+        let value = json_parse(br#"{"text":"\\ud83d"}"#).unwrap();
+        assert_eq!(value["text"], "\\ud83d");
+        assert!(json_parse(b"{not json").is_err());
+    }
 
     #[test]
     fn counts_and_cuts_in_utf16_units() {

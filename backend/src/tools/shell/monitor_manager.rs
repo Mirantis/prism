@@ -193,25 +193,31 @@ impl MonitorManager {
     /// Start a watch. Fails at `MAX_MONITORS`, and without running the command
     /// when the monitor cannot be recorded, since a restart would lose it.
     pub async fn start(self: &Arc<Self>, params: MonitorParams) -> anyhow::Result<String> {
-        // A step's tool calls run in parallel, so the slot is taken before the await.
-        if self.running_count() >= MAX_MONITORS {
-            anyhow::bail!(
-                "At most {MAX_MONITORS} monitors run at once. Stop one with monitor_stop first."
-            );
-        }
         let id = uuid::Uuid::new_v4().to_string();
         let work = MonitorWork {
             description: params.description.clone(),
             notify: params.notify.clone(),
             ..MonitorWork::default()
         };
-        self.starting.fetch_add(1, Ordering::SeqCst);
+        let payload = serde_json::to_value(&work)?;
+        // Tool calls run in parallel on several workers, so the slot is reserved first and
+        // checked after: two starts at four running cannot both pass a read-then-increment.
+        // The reservation is released only once the monitor is in `monitors`, or `begin` fails.
+        let reserved = self.starting.fetch_add(1, Ordering::SeqCst) + 1;
+        if reserved + self.monitors.lock().len() > MAX_MONITORS {
+            self.starting.fetch_sub(1, Ordering::SeqCst);
+            anyhow::bail!(
+                "At most {MAX_MONITORS} monitors run at once. Stop one with monitor_stop first."
+            );
+        }
         // Before the command: a restart in between finds the row and tells the conversation.
-        let begun = PENDING_WORK_SERVICE
-            .begin(PendingWorkKind::Monitor, &id, serde_json::to_value(&work)?)
-            .await;
-        self.starting.fetch_sub(1, Ordering::SeqCst);
-        begun?;
+        if let Err(err) = PENDING_WORK_SERVICE
+            .begin(PendingWorkKind::Monitor, &id, payload)
+            .await
+        {
+            self.starting.fetch_sub(1, Ordering::SeqCst);
+            return Err(err);
+        }
 
         let environment = get_execution_environment_for(Some(&params.workdir));
         let proc = environment.run_shell(
@@ -228,14 +234,19 @@ impl MonitorManager {
             .min(MAX_TIMEOUT_MS);
         let stopped_by_agent = Arc::new(AtomicBool::new(false));
         let exited = Arc::new(AtomicBool::new(false));
-        self.monitors.lock().insert(
-            id.clone(),
-            Running {
-                proc: proc.clone(),
-                stopped_by_agent: stopped_by_agent.clone(),
-                exited: exited.clone(),
-            },
-        );
+        {
+            let mut monitors = self.monitors.lock();
+            monitors.insert(
+                id.clone(),
+                Running {
+                    proc: proc.clone(),
+                    stopped_by_agent: stopped_by_agent.clone(),
+                    exited: exited.clone(),
+                },
+            );
+            // Under the lock, so a concurrent count never misses this monitor.
+            self.starting.fetch_sub(1, Ordering::SeqCst);
+        }
         let work = Arc::new(Mutex::new(work));
         Self::record_process(&id, &proc, &work);
 
@@ -358,10 +369,12 @@ impl MonitorManager {
             persist(id, &work);
             true
         };
+        // Subscribe before the check: a resume on another worker in between would otherwise
+        // send its event before this task listens, and the mark would never be recorded.
+        let mut events = AGENT_PROCESSES.subscribe();
         if save(proc) {
             return;
         }
-        let mut events = AGENT_PROCESSES.subscribe();
         let proc = proc.clone();
         let work = work.clone();
         let id = id.to_string();
@@ -370,7 +383,9 @@ impl MonitorManager {
                 tokio::select! {
                     _ = proc.ended() => return,
                     event = events.recv() => match event {
-                        Ok(AgentProcessesEvent::Resume) => {
+                        // A lagged receiver may have missed the resume, so it checks too.
+                        Ok(AgentProcessesEvent::Resume)
+                        | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                             if let Some(mark) = proc.mark() {
                                 let mut work = work.lock();
                                 work.process = Some(mark);
@@ -378,7 +393,7 @@ impl MonitorManager {
                                 return;
                             }
                         }
-                        Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                        Ok(_) => {}
                         Err(_) => return,
                     },
                 }
