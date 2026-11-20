@@ -16,8 +16,10 @@ describe('LlmProviderWarning', () => {
     const { lastFrame } = render(<LlmProviderWarning api={api} />);
     await flush();
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('No LLM provider is configured');
-    expect(frame).toContain('Set AZURE_API_KEY and AZURE_RESOURCE_NAME for the azure');
+    expect(frame).toContain('Connect a model provider');
+    expect(frame).toContain('Required for azure');
+    expect(frame).toContain('AZURE_API_KEY');
+    expect(frame).toContain('AZURE_RESOURCE_NAME');
   });
 
   it('shows nothing when the provider needs nothing', async () => {

@@ -11,6 +11,8 @@ Feature: No LLM provider
   Scenario: The Overview warns that no LLM provider is configured
     When I navigate to the overview page
     Then the overview warns that no LLM provider is configured, naming "AWS_BEARER_TOKEN_BEDROCK"
+    When I copy the provider setting "AWS_BEARER_TOKEN_BEDROCK"
+    Then the clipboard holds "AWS_BEARER_TOKEN_BEDROCK"
 
   Scenario: A message is answered with the setting the provider needs
     When I navigate to the agent chat page

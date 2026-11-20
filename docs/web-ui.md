@@ -31,8 +31,8 @@ Below them are your most recent conversations, and a setup checklist that ticks
 off each step you have done and marks the next one. (To rename the agent, use the
 Name field on the [Profile](#profile) page.)
 
-When no LLM provider is configured, a warning at the top of the Overview names the
-setting to add. The agent answers messages after you add it and restart Prism.
+When your provider needs setup, the Overview lists what to add. Copy a variable name
+or open **Provider setup guide** for instructions.
 
 On a native install, a strip under the header announces a newer release with an
 **Update now** button, shows "Backend updating…" while the runtime restarts, and

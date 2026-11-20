@@ -41,7 +41,7 @@ describeFeature(feature, ({ BeforeAllScenarios, AfterAllScenarios, BeforeEachSce
     Then(
       'the screen warns that no LLM provider is configured, naming {string}',
       async (_ctx, setting: string) => {
-        await session.waitForFrame(/No LLM provider is configured/, 20_000);
+        await session.waitForFrame(/Connect a model provider/, 20_000);
         expect(session.output()).toContain(setting);
       },
     );
