@@ -21,7 +21,7 @@ Then(
   'the overview warns that no LLM provider is configured, naming {string}',
   async ({ page }, setting: string) => {
     const banner = page.getByTestId('llm-provider-banner');
-    await expect(banner.getByRole('heading', { name: 'Connect a model provider' })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Connect a model provider' })).toBeVisible();
     await expect(banner.getByRole('link', { name: 'Provider setup guide' })).toHaveAttribute(
       'href', 'https://github.com/Mirantis/prism/blob/main/docs/configuration.md#provider-selection',
     );
