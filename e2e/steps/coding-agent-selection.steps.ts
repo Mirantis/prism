@@ -29,7 +29,23 @@ async function codingAgent(request: APIRequestContext, agent: CodingAgentRow['ag
   return (await codingAgents(request)).find(row => row.agent === agent);
 }
 
-Given('a coding task file contains {string}', async ({}, content: string) => {
+/**
+ * Wait until no turn, coding task or task notification is in flight. The tool tells the
+ * agent to end its turn and take the result as a task notification, so a turn can end
+ * while its task still runs.
+ */
+async function waitForIdleAgent(request: APIRequestContext) {
+  await expect
+    .poll(async () => ((await (await request.get('/agents/state')).json()) as { state: string }).state, {
+      timeout: 240_000,
+      intervals: [1_000],
+    })
+    .toBe('idle');
+}
+
+Given('a coding task file contains {string}', async ({ request }, content: string) => {
+  // A task an earlier attempt left running would write the file after this.
+  await waitForIdleAgent(request);
   fs.writeFileSync(file, content);
 });
 
@@ -43,6 +59,7 @@ When('I ask the coding agent to plan a change', async ({ page }) => {
   );
   await home.sendMessage();
   await home.waitForStreamComplete(180_000);
+  await waitForIdleAgent(page.request);
 });
 
 Then('the coding task file contains {string}', async ({}, content: string) => {
@@ -57,6 +74,7 @@ When('I ask the coding agent to implement its plan', async ({ page }) => {
   );
   await home.sendMessage();
   await home.waitForStreamComplete(180_000);
+  await waitForIdleAgent(page.request);
 });
 
 async function codingCalls(): Promise<ToolCallRecord[]> {
@@ -75,16 +93,23 @@ Then('the coding task completed through delegation', async ({ page }) => {
   expect(starts).toHaveLength(2);
   expect(JSON.parse(starts[0].input)).toMatchObject({ mode: 'plan', model: 'small', effort: 'low' });
   expect(JSON.parse(starts[1].input)).toMatchObject({ mode: 'edit', model: 'medium', effort: 'high', sessionId: expect.any(String) });
+  // The plan's session comes from a poll that read the result, or from its task notification.
   const statuses = calls.filter(call => call.tool === 'coding_agent_status' && call.success)
     .map(call => JSON.parse(call.output));
-  const plan = statuses.find(status => status.completed && status.stopReason === 'end_turn');
-  expect(plan?.sessionId).toBeTruthy();
-  expect(JSON.parse(starts[1].input).sessionId).toBe(plan.sessionId);
+  const polled = statuses.find(status => status.completed && status.stopReason === 'end_turn')?.sessionId;
+  const notified = (await getPrisma().conversationMessage.findMany({
+    where: { thread: { agentId: DEFAULT_AGENT_ID }, triggeredBy: 'TASK_NOTIFICATION' },
+    orderBy: { createdAt: 'asc' },
+    select: { content: true },
+  })).map(row => /session-id="([^"]+)"/.exec(row.content)?.[1]).find(Boolean);
+  const planSession = polled ?? notified;
+  expect(planSession).toBeTruthy();
+  expect(JSON.parse(starts[1].input).sessionId).toBe(planSession);
   if (process.env.CODING_AGENT) {
     expect(starts.map(call => JSON.parse(call.output).agent))
       .toEqual([process.env.CODING_AGENT, process.env.CODING_AGENT]);
   }
-  await expect(new HomePage(page).getAgentMessages()).toHaveCount(2);
+  expect(await new HomePage(page).getAgentMessages().count()).toBeGreaterThanOrEqual(2);
 });
 
 Given('both coding agents have test credentials', async ({ request }) => {
