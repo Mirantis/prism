@@ -28,6 +28,7 @@
     "postinstall": "npm run prisma:generate",
     "prisma:generate": "prisma generate --schema=prisma/sqlite/schema.prisma",
     "test": "cargo test --manifest-path backend/Cargo.toml",
+    "generate:model-limits": "cargo run --manifest-path backend/Cargo.toml --bin prism-server -- generate-model-limits",
     "eval:prompts": "cargo build --release --manifest-path backend/Cargo.toml --bin prism-server && tsx evals/run.ts",
     "lint": "oxlint",
     "lint:md": "markdownlint-cli2 \"**/*.md\"",

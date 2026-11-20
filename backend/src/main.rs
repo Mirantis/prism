@@ -7,6 +7,8 @@
 //! - `prism-server coding-agent-exec --wrappers <dir> <claude|codex> [args…]` runs a
 //!   coding agent for the desktop's terminal.
 //! - `prism-server backfill-embeddings` embeds the memory entries that have none.
+//! - `prism-server generate-model-limits` regenerates the bundled model catalog
+//!   from models.dev (`npm run generate:model-limits`).
 //! - `prism-server eval` serves the prompt eval set (`evals/`) over stdin and stdout.
 
 use prism_runtime::lib::environment::is_sea;
@@ -54,6 +56,14 @@ fn main() {
                 .build()
                 .expect("runtime");
             let code = runtime.block_on(prism_runtime::scripts::eval::main());
+            std::process::exit(code);
+        }
+        Some("generate-model-limits") => {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+            let code = runtime.block_on(prism_runtime::scripts::generate_model_limits::main());
             std::process::exit(code);
         }
         Some("backfill-embeddings") => {

@@ -913,7 +913,8 @@ impl WebSocketGatewayService {
             return;
         }
 
-        let raw: Value = match serde_json::from_slice(&data) {
+        // As `JSON.parse` does, a lone surrogate escape is accepted, so the message is stored.
+        let raw: Value = match js::json_parse(&data) {
             Ok(raw) => raw,
             Err(_) => {
                 self.nack(ws, None, NackCode::Invalid, "A frame must be JSON.");

@@ -1,7 +1,7 @@
 //! The model catalog: which input-context window each model has.
 //!
 //! Two layers. The **bundled floor** (`model_limits.generated.json`, vendored from
-//! models.dev by `scripts/generate_model_limits.rs`) is always present and always
+//! models.dev by `src/scripts/generate_model_limits.rs`) is always present and always
 //! sufficient on its own — by default it is the only layer. Setting
 //! `MODELS_DEV_URL` opts into a **remote overlay** fetched once at startup, so a
 //! model released since the last build gets a real window instead of being
@@ -179,7 +179,7 @@ pub fn model_catalog_state() -> CatalogState {
 /// Turn a raw models.dev payload into a provider-scoped catalog, or `None` when
 /// it's unusable as a whole.
 ///
-/// Pure, and shared with `scripts/generate_model_limits.rs` so the filter
+/// Pure, and shared with `src/scripts/generate_model_limits.rs` so the filter
 /// predicate cannot drift between build time and runtime. The two differ only in
 /// error policy: the generator throws on shape drift, the runtime degrades.
 ///
