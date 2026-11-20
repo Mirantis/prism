@@ -1,0 +1,2241 @@
+{
+  "memory": [
+    {
+      "type": "function",
+      "name": "memory_search",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "query": {
+            "description": "What to search for in memory, by meaning",
+            "type": "string"
+          },
+          "categories": {
+            "description": "Filter by categories",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "limit": {
+            "description": "Maximum results (default: 25)",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "since": {
+            "description": "Only entries recorded at or after this time. Give a UTC date (2026-10-06, the whole day) or a date-time with an offset (2026-10-06T14:30:00Z).",
+            "type": "string"
+          },
+          "until": {
+            "description": "Only entries recorded at or before this time. Give a UTC date (2026-10-06, the whole day) or a date-time with an offset (2026-10-06T14:30:00Z).",
+            "type": "string"
+          },
+          "sort": {
+            "description": "relevance (default) puts the closest matches first, newest the most recent",
+            "type": "string",
+            "enum": [
+              "relevance",
+              "newest"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "description": "Search your memory for relevant information. Without a query, lists the most recent entries."
+    },
+    {
+      "type": "function",
+      "name": "memory_write",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "What to remember"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "observation",
+              "action",
+              "decision",
+              "event"
+            ],
+            "description": "Category of information"
+          },
+          "importance": {
+            "description": "Importance score 1-10 (default: 5)",
+            "type": "number"
+          }
+        },
+        "required": [
+          "content",
+          "category"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Store important information to your memory. User preferences go here, with the category observation."
+    },
+    {
+      "type": "function",
+      "name": "memory_delete",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "entryIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "IDs of memory entries to delete"
+          },
+          "reason": {
+            "description": "Brief reason for deletion",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entryIds"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Delete memory entries that are no longer relevant."
+    }
+  ],
+  "computer:chat": [
+    {
+      "type": "function",
+      "name": "computer_elements",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "filter": {
+            "description": "Only controls whose name contains this.",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "description": "Read the desktop the way `computer_browse` reads a page: every visible control by name and position — menu items, buttons, tabs, fields, windows — grouped by program. Use the names with `computer_click_text`. Pass `filter` to list only names containing some words. A program that does not describe itself shows nothing here; use `computer_screen` for those."
+    },
+    {
+      "type": "function",
+      "name": "computer_windows",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "description": "List the open windows on your desktop by title, with their position and size."
+    },
+    {
+      "type": "function",
+      "name": "computer_window",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The window title, or a distinctive part of it."
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "focus",
+              "close",
+              "maximize",
+              "restore",
+              "minimize"
+            ]
+          }
+        },
+        "required": [
+          "title",
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Manage a window by its title: bring it to the front, close it, maximise it, restore it, or minimise it. Use this instead of aiming at the small buttons in a title bar. Answers with a fresh picture."
+    },
+    {
+      "type": "function",
+      "name": "computer_click_text",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The words on the target, as they appear on screen."
+          },
+          "occurrence": {
+            "description": "Which match to click when there are several, 1 being the topmost. Defaults to 1.",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "button": {
+            "description": "Defaults to left.",
+            "type": "string",
+            "enum": [
+              "left",
+              "middle",
+              "right"
+            ]
+          },
+          "double": {
+            "description": "True for a double-click.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Click a control or some words by name — a menu row, a button, a tab, a link, a file name. Give the name as it appears; the desktop's own controls are looked up first and clicked at their exact centre, and words with no control behind them are read off the screen. Prefer this over `computer_click` with coordinates whenever the target has a name, since it does not miss. If the name appears more than once, `occurrence` picks which, counted from the top. Answers with a fresh picture after the click, or says the name is not on screen."
+    },
+    {
+      "type": "function",
+      "name": "computer_find_text",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The words to look for, as they appear on screen."
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Find a control or some words on your desktop by name and get their exact coordinates, without clicking. Use it to check whether something is on screen, to tell apart several places the same name appears, or to get a precise point for `computer_move`, `computer_drag` or `computer_scroll`."
+    },
+    {
+      "type": "function",
+      "name": "computer_move",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "number",
+            "description": "Pixels from the left edge."
+          },
+          "y": {
+            "type": "number",
+            "description": "Pixels from the top edge."
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Put the pointer somewhere on your desktop without clicking, and see it there. Use it before clicking a small target such as a menu row: the picture that comes back shows the pointer, so you can check it sits on the target and then call `computer_click` with no coordinates to click right there. Pixel coordinates in the 1280 by 720 picture from `computer_screen`: x from the left edge, y from the top. Aim at the middle of the button or row."
+    },
+    {
+      "type": "function",
+      "name": "computer_click",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "x": {
+            "description": "Pixels from the left edge. Omit to click where the pointer is.",
+            "type": "number"
+          },
+          "y": {
+            "description": "Pixels from the top edge. Omit to click where the pointer is.",
+            "type": "number"
+          },
+          "button": {
+            "description": "Defaults to left.",
+            "type": "string",
+            "enum": [
+              "left",
+              "middle",
+              "right"
+            ]
+          },
+          "double": {
+            "description": "True for a double-click.",
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "description": "Click on your desktop: a menu, a button, a window, a text field to focus. With coordinates it clicks there; without, it clicks where the pointer already is, which is how to commit a spot you checked with `computer_move`. Pixel coordinates in the 1280 by 720 picture from `computer_screen`: x from the left edge, y from the top. Aim at the middle of the button or row. Answers with a fresh picture of the screen after the click; the pointer in it shows where the click landed."
+    },
+    {
+      "type": "function",
+      "name": "computer_drag",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "fromX": {
+            "type": "number",
+            "description": "Where to press: pixels from the left edge."
+          },
+          "fromY": {
+            "type": "number",
+            "description": "Where to press: pixels from the top edge."
+          },
+          "toX": {
+            "type": "number",
+            "description": "Where to release: pixels from the left edge."
+          },
+          "toY": {
+            "type": "number",
+            "description": "Where to release: pixels from the top edge."
+          },
+          "button": {
+            "description": "Defaults to left.",
+            "type": "string",
+            "enum": [
+              "left",
+              "middle",
+              "right"
+            ]
+          }
+        },
+        "required": [
+          "fromX",
+          "fromY",
+          "toX",
+          "toY"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Drag on your desktop: press at one point, move to another, release. This is how to move a window or a slider, or to select text. It walks the path in steps so the program sees the motion. Pixel coordinates in the 1280 by 720 picture from `computer_screen`: x from the left edge, y from the top. Aim at the middle of the button or row. Answers with a fresh picture after the release."
+    },
+    {
+      "type": "function",
+      "name": "computer_type",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The text to type, as is."
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Type text on your desktop, into whatever has the keyboard focus — click a field or a terminal first. Answers with a fresh picture of the screen."
+    },
+    {
+      "type": "function",
+      "name": "computer_key",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "keys": {
+            "type": "string",
+            "description": "A key name, or names joined with \"+\", in X11 keysym spelling."
+          }
+        },
+        "required": [
+          "keys"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Press one key or a chord on your desktop, such as \"Return\", \"Escape\", \"Tab\", \"ctrl+l\", \"alt+F4\" or \"super\". Answers with a fresh picture of the screen."
+    },
+    {
+      "type": "function",
+      "name": "computer_scroll",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "number",
+            "description": "Pixels from the left edge."
+          },
+          "y": {
+            "type": "number",
+            "description": "Pixels from the top edge."
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "up",
+              "down"
+            ]
+          },
+          "clicks": {
+            "description": "Wheel clicks; defaults to 3.",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "direction"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Scroll the mouse wheel over a point on your desktop. Pixel coordinates in the 1280 by 720 picture from `computer_screen`: x from the left edge, y from the top. Aim at the middle of the button or row. Answers with a fresh picture of the screen."
+    },
+    {
+      "type": "function",
+      "name": "computer_browse",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "navigate",
+              "click",
+              "type",
+              "press",
+              "scroll",
+              "read",
+              "new_tab",
+              "switch_tab",
+              "close_tab"
+            ],
+            "description": "\"navigate\" opens a URL in the tab you are in, \"click\" presses something, \"type\" enters text, \"press\" sends one key (Enter, Escape, PageDown), \"scroll\" moves the page, \"read\" just reports where you are. \"new_tab\" opens another tab (pass a url to land on a page), \"switch_tab\" moves to a tab by number, \"close_tab\" closes one."
+          },
+          "url": {
+            "description": "For \"navigate\", and for a \"new_tab\" that should open a page.",
+            "type": "string"
+          },
+          "tab": {
+            "description": "For \"switch_tab\" and \"close_tab\": the tab number from the last answer. \"close_tab\" without one closes the tab you are in.",
+            "type": "number"
+          },
+          "target": {
+            "description": "For \"click\", and optionally for \"type\": the words on the link, button or field, as they came back in the last reading. A CSS selector also works.",
+            "type": "string"
+          },
+          "text": {
+            "description": "For \"type\": what to enter.",
+            "type": "string"
+          },
+          "key": {
+            "description": "For \"press\": the key name, e.g. Enter.",
+            "type": "string"
+          },
+          "amount": {
+            "description": "For \"scroll\": pixels to scroll, negative to go up. Defaults to 600.",
+            "type": "number"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Use your web browser: open a page, click things, type, scroll, and work in several tabs. Every command answers with where the page is, what it says, the names of the links, buttons and fields on it, and the list of open tabs. Click and type by those names, and switch tabs by those numbers. Use it for labeled page controls in a web page. To only read a page, use web_fetch, which is faster. One command per call."
+    },
+    {
+      "type": "function",
+      "name": "computer_screen",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "userRequested": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "description": "Inspect your current desktop and browser. Inspect it again after navigation or user help. During human takeover, set userRequested only when the user explicitly asks you to inspect the screen. Automatic inspection waits for hand-back. While the user completes a help request, every inspection waits for hand-back."
+    },
+    {
+      "type": "function",
+      "name": "computer_help",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "tab": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "credentials": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "description": "When computer work is blocked by a step only the user can complete, ask them for help, such as signing in, solving a CAPTCHA, or approving a device. Call it immediately; do not wait for the user to ask you to request help, and pass tab for the tab that needs help. Set credentials for any sign-in screen — one asking for a username and a password, for the username alone, or for the password alone — and the user is asked for their username and password where they are, and the runtime types both in, screen by screen. Never ask for either in chat, never offer to try one, and never report the sign-in and stop for instructions: make the call. A CAPTCHA, a device approval, or a second factor leaves credentials false. Preserves this help request and releases the computer for independent work. Explain what the user needs to do. Continue independent tasks; when only blocked work remains, end this turn and wait for the user."
+    },
+    {
+      "type": "function",
+      "name": "computer_continue",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "helpId": {
+            "type": "string"
+          },
+          "dismiss": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "helpId"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Resolve a computer help request after the user explicitly says they finished helping, or dismiss it at their request. Then inspect the screen before continuing. The commands you started are paused while the user takes over the computer to help, so also check whatever you left running. Use the help ID from computer_help."
+    }
+  ],
+  "cron:chat": [
+    {
+      "type": "function",
+      "name": "schedule_task",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Short name for the task"
+          },
+          "schedule": {
+            "type": "string",
+            "description": "When to run: \"in 30 seconds\", \"in 2 minutes\", \"every hour\", \"at 3pm\", cron expression"
+          },
+          "instruction": {
+            "type": "string",
+            "description": "What to do when the task runs"
+          },
+          "continueInThread": {
+            "description": "Continue in this conversation/thread when the task runs, instead of reporting as a scheduled task in the latest conversation. Use this to \"wait\" and resume the conversation here. Only valid for one-off schedules like \"in 10 minutes\".",
+            "type": "boolean"
+          },
+          "deliverTo": {
+            "type": "string",
+            "enum": [
+              "all",
+              "chat",
+              "slack",
+              "teams",
+              "none"
+            ],
+            "description": "Where the result goes: \"all\" (every connected channel), \"chat\" (web chat only), a channel name (its direct conversation, else its main channel), or \"none\" (run without posting). Default \"all\". A task that continues in the thread replies there."
+          },
+          "channelIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Linked channel ids of the deliverTo channel to post to, instead of its default destination"
+          }
+        },
+        "required": [
+          "name",
+          "schedule",
+          "instruction"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Schedule a task to run at a specific time or interval. When the user asks to be reminded or alerted, set it up at once; use it also to check again later on something that is not ready yet. Set continueInThread to resume in this conversation thread instead of reporting as a scheduled task — this is how you \"wait\" for something and pick the conversation back up here."
+    },
+    {
+      "type": "function",
+      "name": "list_scheduled_tasks",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "description": "List all scheduled tasks."
+    },
+    {
+      "type": "function",
+      "name": "update_scheduled_task",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "taskId": {
+            "type": "string",
+            "description": "The task ID to change"
+          },
+          "name": {
+            "description": "New short name for the task",
+            "type": "string"
+          },
+          "schedule": {
+            "description": "New time to run: \"in 30 seconds\", \"in 2 minutes\", \"every hour\", \"at 3pm\", cron expression",
+            "type": "string"
+          },
+          "instruction": {
+            "description": "New instruction: what to do when the task runs",
+            "type": "string"
+          },
+          "deliverTo": {
+            "type": "string",
+            "enum": [
+              "all",
+              "chat",
+              "slack",
+              "teams",
+              "none"
+            ],
+            "description": "Where the result goes: \"all\" (every connected channel), \"chat\" (web chat only), a channel name (its direct conversation, else its main channel), or \"none\" (run without posting). Default \"all\". A task that continues in the thread replies there."
+          },
+          "channelIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Linked channel ids of the deliverTo channel to post to, instead of its default destination"
+          }
+        },
+        "required": [
+          "taskId"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Change the name, schedule, instruction or delivery of a scheduled task. A field you leave out keeps its value."
+    },
+    {
+      "type": "function",
+      "name": "delete_scheduled_task",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "taskId": {
+            "type": "string",
+            "description": "The task ID to delete"
+          }
+        },
+        "required": [
+          "taskId"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Delete a scheduled task."
+    }
+  ],
+  "cron:heartbeat": [
+    {
+      "type": "function",
+      "name": "schedule_task",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Short name for the task"
+          },
+          "schedule": {
+            "type": "string",
+            "description": "When to run: \"in 30 seconds\", \"in 2 minutes\", \"every hour\", \"at 3pm\", cron expression"
+          },
+          "instruction": {
+            "type": "string",
+            "description": "What to do when the task runs"
+          },
+          "continueInThread": {
+            "description": "Continue in this conversation/thread when the task runs, instead of reporting as a scheduled task in the latest conversation. Use this to \"wait\" and resume the conversation here. Only valid for one-off schedules like \"in 10 minutes\".",
+            "type": "boolean"
+          },
+          "deliverTo": {
+            "type": "string",
+            "enum": [
+              "all",
+              "chat",
+              "slack",
+              "teams",
+              "none"
+            ],
+            "description": "Where the result goes: \"all\" (every connected channel), \"chat\" (web chat only), a channel name (its direct conversation, else its main channel), or \"none\" (run without posting). Default \"all\". A task that continues in the thread replies there."
+          },
+          "channelIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Linked channel ids of the deliverTo channel to post to, instead of its default destination"
+          }
+        },
+        "required": [
+          "name",
+          "schedule",
+          "instruction"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Schedule a task to run at a specific time or interval. When the user asks to be reminded or alerted, set it up at once; use it also to check again later on something that is not ready yet. Set continueInThread to resume in this conversation thread instead of reporting as a scheduled task — this is how you \"wait\" for something and pick the conversation back up here."
+    },
+    {
+      "type": "function",
+      "name": "list_scheduled_tasks",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "description": "List all scheduled tasks."
+    },
+    {
+      "type": "function",
+      "name": "update_scheduled_task",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "taskId": {
+            "type": "string",
+            "description": "The task ID to change"
+          },
+          "name": {
+            "description": "New short name for the task",
+            "type": "string"
+          },
+          "schedule": {
+            "description": "New time to run: \"in 30 seconds\", \"in 2 minutes\", \"every hour\", \"at 3pm\", cron expression",
+            "type": "string"
+          },
+          "instruction": {
+            "description": "New instruction: what to do when the task runs",
+            "type": "string"
+          },
+          "deliverTo": {
+            "type": "string",
+            "enum": [
+              "all",
+              "chat",
+              "slack",
+              "teams",
+              "none"
+            ],
+            "description": "Where the result goes: \"all\" (every connected channel), \"chat\" (web chat only), a channel name (its direct conversation, else its main channel), or \"none\" (run without posting). Default \"all\". A task that continues in the thread replies there."
+          },
+          "channelIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Linked channel ids of the deliverTo channel to post to, instead of its default destination"
+          }
+        },
+        "required": [
+          "taskId"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Change the name, schedule, instruction or delivery of a scheduled task. A field you leave out keeps its value."
+    },
+    {
+      "type": "function",
+      "name": "delete_scheduled_task",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "taskId": {
+            "type": "string",
+            "description": "The task ID to delete"
+          }
+        },
+        "required": [
+          "taskId"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Delete a scheduled task."
+    }
+  ],
+  "goals": [
+    {
+      "type": "function",
+      "name": "create_goal",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "objective": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000,
+            "description": "The completion condition / objective to pursue, in plain language."
+          },
+          "tokenBudget": {
+            "description": "Optional cap on total tokens to spend on this goal before it stops.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "objective"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Start a durable goal: an objective you will pursue autonomously across many turns, unattended, until it is achieved or stopped. Create a goal only when the user explicitly asks for ongoing, multi-turn, self-driven work toward an objective (e.g. \"keep working until the tests pass\", \"make this a goal\", \"keep going until X\"). Do not create a goal for an ordinary one-off task you can just do now. Only one active goal per conversation — creating a new one replaces the existing one."
+    },
+    {
+      "type": "function",
+      "name": "get_goal",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "description": "Get the current active goal for this conversation (objective, status, turns used, token spend). Returns nothing active if there is no goal running."
+    }
+  ],
+  "coding-agent-sign-in": [
+    {
+      "type": "function",
+      "name": "coding_agent_sign_in",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "agent": {
+            "type": "string",
+            "enum": [
+              "claude-code",
+              "codex"
+            ]
+          }
+        },
+        "required": [
+          "agent"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Ask the user to sign a coding agent in to their own subscription, so its coding tasks run on it: claude-code on their Claude plan, codex on their ChatGPT plan. Call it when the user asks for that, or when a coding task failed because nobody is signed in to the subscription. It posts a card the user signs in from. Never ask for a sign-in code or link in chat, and never use one the user pastes in chat: point them to the card instead. Then finish this turn; when the sign-in succeeds, the user tells you so in a new message."
+    }
+  ],
+  "ask-questions": [
+    {
+      "type": "function",
+      "name": "ask_questions",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "intro": {
+            "description": "One short plain-text line shown above the questions.",
+            "type": "string",
+            "maxLength": 300
+          },
+          "questions": {
+            "minItems": 1,
+            "maxItems": 7,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 300,
+                  "description": "The question."
+                },
+                "header": {
+                  "description": "A short topic label, such as \"Budget\".",
+                  "type": "string",
+                  "maxLength": 40
+                },
+                "options": {
+                  "minItems": 2,
+                  "maxItems": 4,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "label": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 80,
+                        "description": "The answer, in a few words."
+                      },
+                      "detail": {
+                        "description": "One line on what this answer means.",
+                        "type": "string",
+                        "maxLength": 200
+                      }
+                    },
+                    "required": [
+                      "label"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "recommended": {
+                  "description": "The label of the option you recommend, written exactly as that label.",
+                  "type": "string"
+                },
+                "allowOther": {
+                  "default": true,
+                  "description": "Offer \"Other…\" with a text field.",
+                  "type": "boolean"
+                },
+                "multiSelect": {
+                  "default": false,
+                  "description": "Let the user choose several options.",
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "text",
+                "options"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "questions"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Ask the user one or more questions as a card with answer options they can click. Use it when you need their decisions before you can go on, above all when there are several: put every question in one call, in the order they should answer them. Give each question 2 to 4 options, and name one as recommended when you have a view. The user can always leave a question blank or, unless allowOther is false, write their own answer. Do not write the questions in your reply as well. Put any lead-in in intro, and write no other text in this reply. For a single open question with no natural options, ask in plain text instead. Call it once, then end your turn and write nothing else. The answers arrive as the user's next message, one line per question; a blank question reads \"no answer\"."
+    }
+  ],
+  "agent-config": [
+    {
+      "type": "function",
+      "name": "rename_self",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The new name for this agent. Use a name of up to 64 characters, with letters, digits and spaces. It may also contain - ' . and &."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Rename this agent. Use only when the user explicitly asks you to change your name. The new name is persisted and picked up on the next chat turn."
+    },
+    {
+      "type": "function",
+      "name": "update_soul",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "newContent": {
+            "description": "Complete replacement content. Use for major restructuring or initial setup.",
+            "type": "string"
+          },
+          "edits": {
+            "description": "Targeted find-and-replace edits. Preferred for small changes — only specify what changed.",
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "oldText": {
+                  "type": "string",
+                  "description": "Exact text to find in current content"
+                },
+                "newText": {
+                  "type": "string",
+                  "description": "Text to replace it with"
+                }
+              },
+              "required": [
+                "oldText",
+                "newText"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "changeDescription": {
+            "type": "string",
+            "description": "Brief description of what changed"
+          }
+        },
+        "required": [
+          "changeDescription"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Update your soul (personality, values, boundaries)."
+    },
+    {
+      "type": "function",
+      "name": "update_memory",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "newContent": {
+            "description": "Complete replacement content. Use for major restructuring or initial setup.",
+            "type": "string"
+          },
+          "edits": {
+            "description": "Targeted find-and-replace edits. Preferred for small changes — only specify what changed.",
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "oldText": {
+                  "type": "string",
+                  "description": "Exact text to find in current content"
+                },
+                "newText": {
+                  "type": "string",
+                  "description": "Text to replace it with"
+                }
+              },
+              "required": [
+                "oldText",
+                "newText"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "changeDescription": {
+            "type": "string",
+            "description": "Brief description of what changed"
+          }
+        },
+        "required": [
+          "changeDescription"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Update your curated memory summary (always in context). Critical facts go here."
+    },
+    {
+      "type": "function",
+      "name": "update_user_profile",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "newContent": {
+            "description": "Complete replacement content. Use for major restructuring or initial setup.",
+            "type": "string"
+          },
+          "edits": {
+            "description": "Targeted find-and-replace edits. Preferred for small changes — only specify what changed.",
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "oldText": {
+                  "type": "string",
+                  "description": "Exact text to find in current content"
+                },
+                "newText": {
+                  "type": "string",
+                  "description": "Text to replace it with"
+                }
+              },
+              "required": [
+                "oldText",
+                "newText"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "changeDescription": {
+            "type": "string",
+            "description": "Brief description of what changed"
+          }
+        },
+        "required": [
+          "changeDescription"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Update the user profile with information learned from conversation."
+    },
+    {
+      "type": "function",
+      "name": "update_heartbeat_config",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "newContent": {
+            "description": "Complete replacement content. Use for major restructuring or initial setup.",
+            "type": "string"
+          },
+          "edits": {
+            "description": "Targeted find-and-replace edits. Preferred for small changes — only specify what changed.",
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "oldText": {
+                  "type": "string",
+                  "description": "Exact text to find in current content"
+                },
+                "newText": {
+                  "type": "string",
+                  "description": "Text to replace it with"
+                }
+              },
+              "required": [
+                "oldText",
+                "newText"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "changeDescription": {
+            "type": "string",
+            "description": "Brief description of what changed"
+          }
+        },
+        "required": [
+          "changeDescription"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Update heartbeat configuration."
+    },
+    {
+      "type": "function",
+      "name": "update_settings",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "setting": {
+            "type": "string",
+            "enum": [
+              "heartbeatIntervalMs",
+              "timezone",
+              "verbose"
+            ],
+            "description": "Which setting"
+          },
+          "value": {
+            "description": "The new value",
+            "type": [
+              "number",
+              "string",
+              "boolean"
+            ]
+          }
+        },
+        "required": [
+          "setting",
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Update agent behavioral settings (timezone, heartbeatIntervalMs, verbose). verbose controls chat delivery: false (default) delivers only the final message; true streams every intermediate step."
+    },
+    {
+      "type": "function",
+      "name": "update_vision",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "newContent": {
+            "description": "Complete replacement content. Use for major restructuring or initial setup.",
+            "type": "string"
+          },
+          "edits": {
+            "description": "Targeted find-and-replace edits. Preferred for small changes — only specify what changed.",
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "oldText": {
+                  "type": "string",
+                  "description": "Exact text to find in current content"
+                },
+                "newText": {
+                  "type": "string",
+                  "description": "Text to replace it with"
+                }
+              },
+              "required": [
+                "oldText",
+                "newText"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "changeDescription": {
+            "type": "string",
+            "description": "Brief description of what changed"
+          }
+        },
+        "required": [
+          "changeDescription"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Update the user's vision document."
+    },
+    {
+      "type": "function",
+      "name": "clear_bootstrap",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "confirmationMessage": {
+            "type": "string",
+            "description": "A brief message acknowledging the end of bootstrap"
+          }
+        },
+        "required": [
+          "confirmationMessage"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Clear the bootstrap instructions after onboarding is complete."
+    }
+  ],
+  "shell": [
+    {
+      "type": "function",
+      "name": "shell_exec",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "The shell command to execute"
+          },
+          "workdir": {
+            "description": "Working directory (default: workspace root). Relative paths resolve from the workspace root; absolute paths are used as-is.",
+            "type": "string"
+          },
+          "timeout": {
+            "description": "Timeout in milliseconds (default: 30000). Max 20 minutes.",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1200000
+          },
+          "limit": {
+            "description": "Maximum number of bytes to capture per stream (default: 10000, max: 10 MiB).",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10485760
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Run a single shell command. Returns { stdout, stderr, exitCode }. Each stream is capped; pass `limit` to read more. Truncated output ends with \"... (truncated; exceeded N bytes)\". Credentials and config files for any integrations connected to this project are injected into your sandbox automatically. When a user asks you to interact with external resources, run the appropriate CLI with this tool — don't refuse based on assumed lack of access. If the CLI isn't on `$PATH`, try installing it via `mise install <tool>@latest` and then re-run. If an integration isn't wired up for a task, the CLI will return a clear error you can relay back. For multi-step workflows or interactive tasks use coding_agent instead."
+    },
+    {
+      "type": "function",
+      "name": "shell_read_file",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File path. Relative paths are resolved from the workspace root."
+          },
+          "offset": {
+            "description": "Line number to start reading from (1-indexed, default: 1)",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "limit": {
+            "description": "Maximum number of lines to read (default: 2000)",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Read a file. Output is line-numbered. Use offset/limit to read specific sections."
+    },
+    {
+      "type": "function",
+      "name": "shell_write_file",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File path. Relative paths are resolved from the workspace root."
+          },
+          "content": {
+            "type": "string",
+            "description": "File content to write"
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Write a file. Overwrites existing files. Use shell_edit_file for modifying existing files; only use this for new files or full rewrites."
+    },
+    {
+      "type": "function",
+      "name": "shell_edit_file",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File path. Relative paths are resolved from the workspace root."
+          },
+          "old_string": {
+            "type": "string",
+            "description": "The exact text to find and replace"
+          },
+          "new_string": {
+            "type": "string",
+            "description": "The replacement text (must differ from old_string)"
+          },
+          "replace_all": {
+            "description": "Replace all occurrences (default: false, requires unique match)",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path",
+          "old_string",
+          "new_string"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Perform exact string replacement in a file. Read the file with shell_read_file first. Fails if old_string is not found, or matches multiple times without replace_all. Falls back to whitespace-tolerant matching if the exact match fails; replace_all needs an exact match."
+    },
+    {
+      "type": "function",
+      "name": "coding_agent",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "agent": {
+            "description": "Sub-agent to use. Available values: claude-code, codex. Default: claude-code. Use the same agent when resuming a session.",
+            "type": "string",
+            "enum": [
+              "claude-code",
+              "codex"
+            ]
+          },
+          "prompt": {
+            "type": "string",
+            "description": "The task for the sub-agent to perform"
+          },
+          "model": {
+            "description": "Model tier for this task. Small is for mechanical work and focused reads. Medium is for routine work and investigation. Large is for cross-cutting analysis and design. Omit to keep the deployment model.",
+            "type": "string",
+            "enum": [
+              "small",
+              "medium",
+              "large"
+            ]
+          },
+          "effort": {
+            "description": "Reasoning effort for this task. Low is for straightforward tasks with clear steps. Medium is for tasks that need some investigation. High is for difficult reasoning and complex tradeoffs. Omit to keep the deployment effort.",
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          },
+          "workdir": {
+            "description": "Working directory. Relative paths resolve from the workspace root; absolute paths pass through.",
+            "type": "string"
+          },
+          "appendSystemPrompt": {
+            "description": "Extra instructions appended to the sub-agent's default system prompt. Its built-in tool, todo and search conventions are always kept.",
+            "type": "string"
+          },
+          "mode": {
+            "description": "\"edit\" (default) can create and change files. \"plan\" tells the sub-agent to analyze and report without changing anything. Pass sessionId from plan to edit to preserve context.",
+            "type": "string",
+            "enum": [
+              "edit",
+              "plan"
+            ]
+          },
+          "maxTurns": {
+            "description": "Claude Code turn limit (default: 100, max: 200). Codex runs one task to completion; use coding_agent_stop to cancel.",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "sessionId": {
+            "description": "Session ID from a previous coding_agent call to resume context. Pass this when transitioning plan → edit.",
+            "type": "string"
+          },
+          "debug": {
+            "description": "Enable debug logging",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Start an autonomous sub-agent with its own shell, file access, web access where the sandbox allows it, and an agentic loop. Use it for any task of many dependent steps, not only for code. For example: research a topic on the internet, or across files, logs, documents and data; analyze command output, test results, metrics or a database, and investigate an incident; create reports, summaries, comparisons and HTML overviews; produce diagrams (Mermaid, Graphviz, SVG), charts, slides, spreadsheets and web pages; draft or review a document, a ticket, a specification or a plan; process, convert or transform files; write, debug, build and test code. When a Task subagent's description matches the work, use Task instead.\n\nPrefer it over a long chain of hand-run shell calls, because the sub-agent keeps those steps in its own context. A task runs for minutes, so for a single command or a short, fixed sequence, use the shell tools directly. When the result is a file for the user, have the sub-agent write it to the workspace, then share it with share_file if you have that tool.\n\nmode=\"edit\" (the default) can create and change files. mode=\"plan\" tells the sub-agent to analyze and report without changing anything: use it to analyze or research files, logs and data. For a self-contained deliverable, such as a report, a diagram or a converted file, one mode=\"edit\" call is enough. For a change to existing work, plan, then edit: call once with mode=\"plan\", then call again with mode=\"edit\" and the sessionId from the plan response. If a plan comes back with open questions, settle them (ask the user if you cannot) and resume the same session in mode=\"plan\" with your answers in the prompt. Switch to edit only when no open questions remain. To continue earlier work, resume its sessionId instead of starting cold.\n\nAvailable agent values: claude-code, codex. Default agent: claude-code; pass agent to override it, and use the same agent when you resume a session. Returns { taskId, agent } immediately. In a chat conversation, the task's result arrives as a task notification that starts a new turn when the task ends: after starting it, end your turn unless you have other work, and do not sleep, poll or schedule a check for it. In other runs, poll with coding_agent_status. Stop a task with coding_agent_stop. Choose model and effort for each task: their fields say what each tier is for, and an omitted value keeps the deployment default. Max 3 concurrent tasks."
+    },
+    {
+      "type": "function",
+      "name": "coding_agent_status",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "taskId": {
+            "type": "string",
+            "description": "Task ID returned by coding_agent"
+          },
+          "waitMs": {
+            "description": "Max ms to wait for new output if none is buffered (default: 5000)",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 30000
+          }
+        },
+        "required": [
+          "taskId"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Read a coding_agent task's progress, and its result once it ends. In a chat conversation the result also arrives as a task notification, so there is no need to wait for it here. Returns { agent, output, completed, result, turns, stopReason, sessionId, refusals } — output is drained on read, so subsequent calls return only new output. When completed is true, result/turns/stopReason/sessionId are populated. refusals lists each action the sub-agent's permission checks refused; a task that otherwise finished then has stopReason \"refused\"."
+    },
+    {
+      "type": "function",
+      "name": "coding_agent_stop",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "taskId": {
+            "type": "string",
+            "description": "Task ID returned by coding_agent"
+          }
+        },
+        "required": [
+          "taskId"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Terminate a running coding_agent task. Use when it is heading the wrong way, looping, stuck, or no longer needed, rather than waiting out its turn budget. Returns the same shape as coding_agent_status: any output produced before termination, completed:true, and stopReason:\"stopped\". sessionId comes back whenever the sub-agent got far enough to report one — pass it to coding_agent({ prompt, agent, sessionId }) to resume the abandoned work with its context instead of starting over. The taskId is invalid afterwards and its concurrency slot is freed immediately."
+    },
+    {
+      "type": "function",
+      "name": "shell_spawn",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "The shell command to start as a background process"
+          },
+          "workdir": {
+            "description": "Working directory (default: workspace root). Relative paths resolve from the workspace root; absolute paths are used as-is.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Start a long-running shell command as a background process. Returns { processId } immediately. Use for builds, watchers, test loops, anything that takes more than a few seconds or that you want to interact with via stdin. Use shell_stdout to drain output and check status; shell_stdin to feed input; shell_kill to terminate. Max 10 concurrent processes. For one-shot commands use shell_exec instead."
+    },
+    {
+      "type": "function",
+      "name": "shell_stdin",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "processId": {
+            "type": "string",
+            "description": "Process ID returned by shell_spawn"
+          },
+          "data": {
+            "type": "string",
+            "description": "Data to write to the process's stdin (raw, no automatic newline)"
+          }
+        },
+        "required": [
+          "processId",
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Write data to a running process's stdin. Returns { ok: true } or { error }."
+    },
+    {
+      "type": "function",
+      "name": "shell_stdout",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "processId": {
+            "type": "string",
+            "description": "Process ID returned by shell_spawn"
+          },
+          "drainStderr": {
+            "description": "If true, drain stderr instead of stdout (default: false). Call once per stream.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "processId"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Drain accumulated output from a running process. Returns { stdout, stderr, exitCode, signal, running, truncated }. Output is drained-on-read — subsequent calls return only new bytes. exitCode is null while running."
+    },
+    {
+      "type": "function",
+      "name": "shell_kill",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "processId": {
+            "type": "string",
+            "description": "Process ID returned by shell_spawn"
+          },
+          "signal": {
+            "description": "Signal to send (default: SIGTERM).",
+            "type": "string",
+            "enum": [
+              "SIGTERM",
+              "SIGKILL",
+              "SIGINT",
+              "SIGHUP"
+            ]
+          }
+        },
+        "required": [
+          "processId"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Send a signal to a running process. Default SIGTERM; pass SIGKILL for force-kill, SIGINT for Ctrl-C semantics, SIGHUP for hangup. Returns { ok: true } if the signal was delivered to a running process, { ok: false } if the process was already gone."
+    }
+  ],
+  "share-file": [
+    {
+      "type": "function",
+      "name": "share_file",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path to the file to share. Relative paths resolve from the workspace root; the file must live inside the workspace."
+          },
+          "filename": {
+            "description": "Optional display name shown to the user (defaults to the file’s base name). Use this to give a friendlier name than the on-disk path.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Share a file from your workspace with the user as a downloadable attachment. Use this whenever the user asks for a file, report, export, document, or generated artifact — first create it on disk (e.g. with shell_write_file or shell_exec), then call share_file with its path. Announcing a file you have not shared yet leaves the user with nothing to open. The file is delivered as a download in the web/CLI chat and uploaded natively to Slack. Max 10 MB per file. Do not paste large file contents into your reply or invent download links — use this tool. To show an image (PNG, JPEG, GIF or WebP) inside your reply instead, write ![description](path) where it belongs: the path of an image file in your workspace, or attachment:<id> for an image in this conversation. That needs no share_file call. When your reply explains an image, such as a chart, show it inline; share it as a file when the user wants a file to keep."
+    }
+  ],
+  "send-message:chat": [
+    {
+      "type": "function",
+      "name": "list_message_targets",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "description": "List the channels and DMs linked to you, which send_message can post to."
+    },
+    {
+      "type": "function",
+      "name": "send_message",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "A target from list_message_targets, or #name of a linked channel when the name is unique"
+          },
+          "thread": {
+            "description": "Post into this thread of the target: the id of the thread's first message, such as a messageId send_message returned",
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "description": "The message, in markdown"
+          }
+        },
+        "required": [
+          "target",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Post a message into a channel, a thread in one, or a DM that is linked to you, or into web chat when list_message_targets lists it. In a conversation your reply already goes to that conversation; use this tool to reach another one. Only the targets list_message_targets shows are allowed. To mention a person so they are notified, write <@ID> with the id from a <@ID:Name> tag in a message you have seen. The person must be a member of the target. @channel, @here, @everyone and group mentions are refused. A refusal says why; fix the cause before you try again."
+    }
+  ],
+  "send-message:heartbeat": [
+    {
+      "type": "function",
+      "name": "list_message_targets",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "description": "List the channels and DMs linked to you, which send_message can post to."
+    },
+    {
+      "type": "function",
+      "name": "send_message",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "A target from list_message_targets, or #name of a linked channel when the name is unique"
+          },
+          "thread": {
+            "description": "Post into this thread of the target: the id of the thread's first message, such as a messageId send_message returned",
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "description": "The message, in markdown"
+          }
+        },
+        "required": [
+          "target",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Post a message into a channel, a thread in one, or a DM that is linked to you, or into web chat when list_message_targets lists it. In a conversation your reply already goes to that conversation; use this tool to reach another one. Only the targets list_message_targets shows are allowed. To mention a person so they are notified, write <@ID> with the id from a <@ID:Name> tag in a message you have seen. The person must be a member of the target. @channel, @here, @everyone and group mentions are refused. A refusal says why; fix the cause before you try again."
+    }
+  ],
+  "attachments": [
+    {
+      "type": "function",
+      "name": "hydrate_attachment",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "attachmentId": {
+            "type": "string",
+            "description": "The id of the attachment to hydrate (from the message metadata)."
+          }
+        },
+        "required": [
+          "attachmentId"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Make a message attachment available on the workspace filesystem. Attachment bytes are not on disk until you call this: the filename in the attachment stub is not a path, so shell tools (`cat`, `grep`, `jq`, `unzip`, `python`) will fail with 'no such file' until the file is hydrated. Returns the absolute path to the hydrated file — use that path in shell commands. Use it for text, code, archives and data files, and for any file you want to inspect with `file`, `pdftotext`, `exiftool` or `hexdump`."
+    },
+    {
+      "type": "function",
+      "name": "view_attachment",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "attachmentId": {
+            "type": "string",
+            "description": "The id of the image or PDF attachment to view (from the message metadata)."
+          }
+        },
+        "required": [
+          "attachmentId"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Look at an image or read a PDF attachment without writing it to disk. Images (PNG, JPEG, GIF, WebP) are returned inline for visual inspection; a PDF is attached to the conversation as a document you can read directly. For other file types or oversized files, use hydrate_attachment instead."
+    }
+  ],
+  "web-fetch": [
+    {
+      "type": "function",
+      "name": "web_fetch",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The http or https address of the page."
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Read a public web page as text: its main text as markdown, with its title and final address. Use it to read a page instead of opening it in the browser. It runs no JavaScript and sends no sign-in, so open a page that needs either in the browser."
+    }
+  ],
+  "conversation-history": [
+    {
+      "type": "function",
+      "name": "read_compacted_history",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "query": {
+            "description": "Return only the messages whose text or tool calls contain this, ignoring case.",
+            "type": "string",
+            "minLength": 1
+          },
+          "offset": {
+            "description": "How many messages to skip, for the next page. Without a query this is the position of the first message. Default 0.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "position": {
+            "description": "Read the message at this position in full, uncut. Ignores query and offset.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "start": {
+            "description": "With position: the character to start from, for the next part of a long message. Default 0.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      },
+      "description": "Read the earlier messages of this conversation that its summary replaced, oldest first, with their tool calls and results. Use it when you need an exact detail the summary does not give: a command, an error, a value, what the user said word for word. Each message has a position. A page cuts long texts; give a query to see the part around a match. Give a position as offset, without a query, to read from that message onward; a smaller offset reads the messages before it. Give position to read one message in full."
+    }
+  ],
+  "skills": [
+    {
+      "type": "function",
+      "name": "skill",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The skill name, exactly as shown in the # Skills list"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Load the full instructions for an available Agent Skill by name, then follow them. The available skills (name + one-line description) are listed in the \"# Skills\" section of your system prompt. Call this only when a skill is relevant to the current task. Don't guess a skill's contents from its description."
+    }
+  ],
+  "meeting:chat": [
+    {
+      "type": "function",
+      "name": "join_meeting",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The meeting link — a Google Meet URL, e.g. https://meet.google.com/abc-defg-hij"
+          },
+          "responseMode": {
+            "description": "How much you speak up. \"auto\" (the default, and almost always right) reads the room: with one other person you answer everything, with more you answer only what is said to you. \"open\" always answers every utterance — only for a call you know stays one-to-one. \"addressed\" always answers only what is said to you.",
+            "type": "string",
+            "enum": [
+              "auto",
+              "open",
+              "addressed"
+            ]
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Join a video call as a live voice participant — you will speak and listen in real time. Google Meet links are supported today; the platform is taken from the URL. Returns once the request to join is in, or once the attempt has failed, which it names a step for; a host still has to admit you, so call meeting_status to find out whether you got in. Only one call at a time."
+    },
+    {
+      "type": "function",
+      "name": "leave_meeting",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "description": "Leave the call you are currently in, whichever platform it is on. There is only ever one, so this needs no arguments."
+    },
+    {
+      "type": "function",
+      "name": "set_microphone",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "on": {
+            "type": "boolean",
+            "description": "true turns the microphone on, false turns it off."
+          }
+        },
+        "required": [
+          "on"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Turn your own microphone on or off in the call you are in. Off means the participants cannot hear you at all; on uncovers it at the platform, and the reply says whether the room can actually hear you. Use it when somebody asks you to mute, and to turn yourself back on afterwards — you stay muted until you do. It reports the state it read back, so a reply saying the microphone still reads muted means the click did not take and nobody is hearing you."
+    },
+    {
+      "type": "function",
+      "name": "share_screen",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "description": "Start sharing your screen in the call you are in, so the room can see it. Use this tool to show something in the browser or demonstrate UI features of an application. What they see is the whole screen your browser runs on, so open the page with `browse` first — whatever is in front is what shows. It takes several seconds. Stop it with `stop_screen_share`."
+    },
+    {
+      "type": "function",
+      "name": "stop_screen_share",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "description": "Stop sharing your screen, staying in the call. Says so plainly when you were not sharing anything."
+    },
+    {
+      "type": "function",
+      "name": "browse",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "navigate",
+              "click",
+              "type",
+              "press",
+              "scroll",
+              "read",
+              "new_tab",
+              "switch_tab",
+              "close_tab"
+            ],
+            "description": "\"navigate\" opens a URL in the tab you are in, \"click\" presses something, \"type\" enters text, \"press\" sends one key (Enter, Escape, PageDown), \"scroll\" moves the page, \"read\" just reports where you are. \"new_tab\" opens another tab (pass a url to land on a page), \"switch_tab\" moves to a tab by number, \"close_tab\" closes one. The tab you are in is the tab the room sees."
+          },
+          "url": {
+            "description": "For \"navigate\", and for a \"new_tab\" that should open a page.",
+            "type": "string"
+          },
+          "tab": {
+            "description": "For \"switch_tab\" and \"close_tab\": the tab number from the last answer. \"close_tab\" without one closes the tab you are in.",
+            "type": "number"
+          },
+          "target": {
+            "description": "For \"click\", and optionally for \"type\": the words on the link, button or field, as they came back in the last reading. A CSS selector also works.",
+            "type": "string"
+          },
+          "text": {
+            "description": "For \"type\": what to enter.",
+            "type": "string"
+          },
+          "key": {
+            "description": "For \"press\": the key name, e.g. Enter.",
+            "type": "string"
+          },
+          "amount": {
+            "description": "For \"scroll\": pixels to scroll, negative to go up. Defaults to 600.",
+            "type": "number"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Use a web browser: open a page, click things, type, scroll, and work in several tabs. It runs beside the meeting, on the same screen `share_screen` presents — so this is how you put something in front of the room, and how you look something up on the web in a call. To only read a page you have the address of, web_fetch is faster. Every command answers with where the page is, what it says, the names of the links, buttons and fields on it, and the list of open tabs. Click and type by those names, and switch tabs by those numbers. One command per call, and only while you are in a meeting."
+    },
+    {
+      "type": "function",
+      "name": "see_screen",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "description": "See what your screen is showing right now — a picture of it, plus the text and controls of the page. This is the same screen the room sees while you are sharing, so use it to check that what you meant to show is up, to find your way around a page `browse` reported oddly, or to answer a question about what is on screen. Takes a couple of seconds."
+    },
+    {
+      "type": "function",
+      "name": "meeting_speaker",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "description": "Find out who is speaking in the call, and who said the thing you are answering. The meeting audio reaches you as one mixed channel with no speaker labels, so this is the only way you can know — but the runtime reads it off the platform, so it is instant and costs nothing. Use it when a name matters: who asked you something, who to answer, who is in the room. It tells you plainly when it cannot say, and when the voice was a group of people sharing one microphone rather than one person."
+    },
+    {
+      "type": "function",
+      "name": "send_meeting_chat",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The message, as plain text on one line — usually a link or an identifier with a few words of context."
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Post one short plain-text message into the chat of the call you are in. Use it for what speech mangles: a link, an id, a command to paste. Say the rest out loud — speech is how you talk to the room. At most 500 characters, no formatting and no line breaks. It needs a live call: with none there is nothing to post into, and it tells you so instead of sending. If it fails, say the content out loud instead of trying again."
+    },
+    {
+      "type": "function",
+      "name": "read_meeting_chat",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "description": "Read the messages people have typed in the chat of the call you are in. Use it when somebody asks you to look at the chat, or says they have pasted something there. Nothing tells you a message arrived, so this is the only way to see one. It shows at most the newest 20 messages, oldest first, each with the name the call shows for whoever sent it. A message too long to show whole ends with [message cut], so you can say that you have only part of it."
+    },
+    {
+      "type": "function",
+      "name": "meeting_status",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "description": "Check whether you are in a call and how it is going, whichever platform it is on: state, which platform, how long, how many times you have spoken or used a tool, whether you are currently answering everything or only when addressed, and whether the room can hear you. `isMicLive` is true when it can, false when it cannot, and null when the runtime could not read your microphone at all — worth checking before you take silence from the room to mean nobody is there."
+    }
+  ],
+  "meeting:meeting": [
+    {
+      "type": "function",
+      "name": "join_meeting",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The meeting link — a Google Meet URL, e.g. https://meet.google.com/abc-defg-hij"
+          },
+          "responseMode": {
+            "description": "How much you speak up. \"auto\" (the default, and almost always right) reads the room: with one other person you answer everything, with more you answer only what is said to you. \"open\" always answers every utterance — only for a call you know stays one-to-one. \"addressed\" always answers only what is said to you.",
+            "type": "string",
+            "enum": [
+              "auto",
+              "open",
+              "addressed"
+            ]
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Join a video call as a live voice participant — you will speak and listen in real time. Google Meet links are supported today; the platform is taken from the URL. Returns once the request to join is in, or once the attempt has failed, which it names a step for; a host still has to admit you, so call meeting_status to find out whether you got in. Only one call at a time."
+    },
+    {
+      "type": "function",
+      "name": "leave_meeting",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "description": "Leave the call you are currently in, whichever platform it is on. There is only ever one, so this needs no arguments."
+    },
+    {
+      "type": "function",
+      "name": "set_microphone",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "on": {
+            "type": "boolean",
+            "description": "true turns the microphone on, false turns it off."
+          }
+        },
+        "required": [
+          "on"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Turn your own microphone on or off in the call you are in. Off means the participants cannot hear you at all; on uncovers it at the platform, and the reply says whether the room can actually hear you. Use it when somebody asks you to mute, and to turn yourself back on afterwards — you stay muted until you do. It reports the state it read back, so a reply saying the microphone still reads muted means the click did not take and nobody is hearing you."
+    },
+    {
+      "type": "function",
+      "name": "share_screen",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "description": "Start sharing your screen in the call you are in, so the room can see it. Use this tool to show something in the browser or demonstrate UI features of an application. What they see is the whole screen your browser runs on, so open the page with `browse` first — whatever is in front is what shows. It takes several seconds. Stop it with `stop_screen_share`."
+    },
+    {
+      "type": "function",
+      "name": "stop_screen_share",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "description": "Stop sharing your screen, staying in the call. Says so plainly when you were not sharing anything."
+    },
+    {
+      "type": "function",
+      "name": "browse",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "navigate",
+              "click",
+              "type",
+              "press",
+              "scroll",
+              "read",
+              "new_tab",
+              "switch_tab",
+              "close_tab"
+            ],
+            "description": "\"navigate\" opens a URL in the tab you are in, \"click\" presses something, \"type\" enters text, \"press\" sends one key (Enter, Escape, PageDown), \"scroll\" moves the page, \"read\" just reports where you are. \"new_tab\" opens another tab (pass a url to land on a page), \"switch_tab\" moves to a tab by number, \"close_tab\" closes one. The tab you are in is the tab the room sees."
+          },
+          "url": {
+            "description": "For \"navigate\", and for a \"new_tab\" that should open a page.",
+            "type": "string"
+          },
+          "tab": {
+            "description": "For \"switch_tab\" and \"close_tab\": the tab number from the last answer. \"close_tab\" without one closes the tab you are in.",
+            "type": "number"
+          },
+          "target": {
+            "description": "For \"click\", and optionally for \"type\": the words on the link, button or field, as they came back in the last reading. A CSS selector also works.",
+            "type": "string"
+          },
+          "text": {
+            "description": "For \"type\": what to enter.",
+            "type": "string"
+          },
+          "key": {
+            "description": "For \"press\": the key name, e.g. Enter.",
+            "type": "string"
+          },
+          "amount": {
+            "description": "For \"scroll\": pixels to scroll, negative to go up. Defaults to 600.",
+            "type": "number"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Use a web browser: open a page, click things, type, scroll, and work in several tabs. It runs beside the meeting, on the same screen `share_screen` presents — so this is how you put something in front of the room, and how you look something up on the web in a call. To only read a page you have the address of, web_fetch is faster. Every command answers with where the page is, what it says, the names of the links, buttons and fields on it, and the list of open tabs. Click and type by those names, and switch tabs by those numbers. One command per call, and only while you are in a meeting."
+    },
+    {
+      "type": "function",
+      "name": "see_screen",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "description": "See what your screen is showing right now — a picture of it, plus the text and controls of the page. This is the same screen the room sees while you are sharing, so use it to check that what you meant to show is up, to find your way around a page `browse` reported oddly, or to answer a question about what is on screen. Takes a couple of seconds."
+    },
+    {
+      "type": "function",
+      "name": "meeting_speaker",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "description": "Find out who is speaking in the call, and who said the thing you are answering. The meeting audio reaches you as one mixed channel with no speaker labels, so this is the only way you can know — but the runtime reads it off the platform, so it is instant and costs nothing. Use it when a name matters: who asked you something, who to answer, who is in the room. It tells you plainly when it cannot say, and when the voice was a group of people sharing one microphone rather than one person."
+    },
+    {
+      "type": "function",
+      "name": "send_meeting_chat",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The message, as plain text on one line — usually a link or an identifier with a few words of context."
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Post one short plain-text message into the chat of the call you are in. Use it for what speech mangles: a link, an id, a command to paste. Say the rest out loud — speech is how you talk to the room. At most 500 characters, no formatting and no line breaks. It needs a live call: with none there is nothing to post into, and it tells you so instead of sending. If it fails, say the content out loud instead of trying again."
+    },
+    {
+      "type": "function",
+      "name": "read_meeting_chat",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "description": "Read the messages people have typed in the chat of the call you are in. Use it when somebody asks you to look at the chat, or says they have pasted something there. Nothing tells you a message arrived, so this is the only way to see one. It shows at most the newest 20 messages, oldest first, each with the name the call shows for whoever sent it. A message too long to show whole ends with [message cut], so you can say that you have only part of it."
+    },
+    {
+      "type": "function",
+      "name": "meeting_status",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "description": "Check whether you are in a call and how it is going, whichever platform it is on: state, which platform, how long, how many times you have spoken or used a tool, whether you are currently answering everything or only when addressed, and whether the room can hear you. `isMicLive` is true when it can, false when it cannot, and null when the runtime could not read your microphone at all — worth checking before you take silence from the room to mean nobody is there."
+    }
+  ],
+  "task": [
+    {
+      "type": "function",
+      "name": "Task",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "description": "A short (3-5 word) description of the task",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "The task for the agent to perform",
+            "type": "string"
+          },
+          "subagent_type": {
+            "description": "The type of specialized agent to use for this task",
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "prompt",
+          "subagent_type"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Launch a new agent to handle complex, multi-step tasks autonomously. Use a subagent whenever the task matches its description. Each invocation begins with a clean slate: the agent does not see this conversation, so give it clear and detailed instructions with all the context it needs, and say whether it should change anything or only research. Its output is not shown to the user, so tell the user the outcome."
+    }
+  ]
+}

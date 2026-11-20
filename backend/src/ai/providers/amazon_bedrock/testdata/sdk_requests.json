@@ -1,0 +1,5769 @@
+{
+  "converse": [
+    {
+      "name": "text",
+      "modelId": "us.moonshotai.kimi-k3",
+      "options": {
+        "prompt": [
+          {
+            "role": "system",
+            "content": "You are helpful."
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hello"
+              }
+            ]
+          }
+        ],
+        "maxOutputTokens": 1000,
+        "temperature": 0.3,
+        "headers": {
+          "user-agent": "ai/7.0.137",
+          "x-extra": "one"
+        }
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json",
+          "x-amzn-requestid": "req-1",
+          "date": "Fri, 06 Nov 2026 12:00:00 GMT"
+        },
+        "body": {
+          "output": {
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "text": "Hi there"
+                }
+              ]
+            }
+          },
+          "stopReason": "end_turn",
+          "usage": {
+            "inputTokens": 10,
+            "outputTokens": 3,
+            "totalTokens": 13
+          },
+          "metrics": {
+            "latencyMs": 120
+          }
+        }
+      },
+      "provider": "amazon-bedrock",
+      "supportedUrls": {
+        "image/*": [
+          "/^s3:\\/\\//"
+        ],
+        "video/*": [
+          "/^s3:\\/\\//"
+        ]
+      },
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.moonshotai.kimi-k3/converse",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "x-extra": "one",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "system": [
+            {
+              "text": "You are helpful."
+            }
+          ],
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "text": "Hello"
+                }
+              ]
+            }
+          ],
+          "inferenceConfig": {
+            "maxTokens": 1000,
+            "temperature": 0.3
+          }
+        }
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Hi there"
+          }
+        ],
+        "finishReason": {
+          "unified": "stop",
+          "raw": "end_turn"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 10,
+            "noCache": 10,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "outputTokens": {
+            "total": 3,
+            "text": 3
+          },
+          "raw": {
+            "inputTokens": 10,
+            "outputTokens": 3,
+            "totalTokens": 13
+          }
+        },
+        "response": {
+          "id": "req-1",
+          "timestamp": "2026-11-06T12:00:00.000Z",
+          "modelId": "us.moonshotai.kimi-k3",
+          "headers": {
+            "content-type": "application/json",
+            "date": "Fri, 06 Nov 2026 12:00:00 GMT",
+            "x-amzn-requestid": "req-1"
+          }
+        },
+        "warnings": [],
+        "request": {
+          "body": {
+            "system": [
+              {
+                "text": "You are helpful."
+              }
+            ],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "text": "Hello"
+                  }
+                ]
+              }
+            ],
+            "inferenceConfig": {
+              "maxTokens": 1000,
+              "temperature": 0.3
+            }
+          }
+        },
+        "providerMetadata": {
+          "amazonBedrock": {
+            "stopSequence": null
+          },
+          "bedrock": {
+            "stopSequence": null
+          }
+        }
+      }
+    },
+    {
+      "name": "tools",
+      "modelId": "us.moonshotai.kimi-k3",
+      "options": {
+        "prompt": [
+          {
+            "role": "system",
+            "content": "Use tools."
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Look at the screen."
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Looking."
+              },
+              {
+                "type": "tool-call",
+                "toolCallId": "call-1",
+                "toolName": "computer_screen",
+                "input": {
+                  "zoom": 2
+                }
+              },
+              {
+                "type": "tool-call",
+                "toolCallId": "call-2",
+                "toolName": "shell_exec",
+                "input": "not an object"
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "content": [
+              {
+                "type": "tool-result",
+                "toolCallId": "call-1",
+                "toolName": "computer_screen",
+                "output": {
+                  "type": "content",
+                  "value": [
+                    {
+                      "type": "text",
+                      "text": "{\"success\":true}"
+                    },
+                    {
+                      "type": "file",
+                      "mediaType": "image/jpeg",
+                      "data": {
+                        "type": "data",
+                        "data": "ZmFrZSBqcGVnIGJ5dGVz"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "type": "tool-result",
+                "toolCallId": "call-2",
+                "toolName": "shell_exec",
+                "output": {
+                  "type": "json",
+                  "value": {
+                    "exitCode": 0,
+                    "out": "ok"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "content": [
+              {
+                "type": "tool-result",
+                "toolCallId": "call-3",
+                "toolName": "shell_exec",
+                "output": {
+                  "type": "error-text",
+                  "value": "boom"
+                }
+              },
+              {
+                "type": "tool-result",
+                "toolCallId": "call-4",
+                "toolName": "shell_exec",
+                "output": {
+                  "type": "execution-denied"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "And now?"
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "name": "computer_screen",
+            "description": "Inspect the screen.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "zoom": {
+                  "type": "number"
+                }
+              },
+              "required": [],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          },
+          {
+            "type": "function",
+            "name": "shell_exec",
+            "description": "",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "command"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          },
+          {
+            "type": "function",
+            "name": "strict_tool",
+            "description": "Strict.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "a": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "a"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            },
+            "strict": true
+          }
+        ],
+        "toolChoice": {
+          "type": "auto"
+        }
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json",
+          "x-amzn-requestid": "req-1",
+          "date": "Fri, 06 Nov 2026 12:00:00 GMT"
+        },
+        "body": {
+          "output": {
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "text": "Running it."
+                },
+                {
+                  "toolUse": {
+                    "toolUseId": "tooluse_1",
+                    "name": "shell_exec",
+                    "input": {
+                      "command": "ls"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "stopReason": "tool_use",
+          "usage": {
+            "inputTokens": 100,
+            "outputTokens": 20,
+            "totalTokens": 220,
+            "cacheReadInputTokens": 50,
+            "cacheWriteInputTokens": 50,
+            "cacheDetails": [
+              {
+                "inputTokens": 50,
+                "ttl": "5m"
+              }
+            ]
+          },
+          "metrics": {
+            "latencyMs": 120
+          }
+        }
+      },
+      "provider": "amazon-bedrock",
+      "supportedUrls": {
+        "image/*": [
+          "/^s3:\\/\\//"
+        ],
+        "video/*": [
+          "/^s3:\\/\\//"
+        ]
+      },
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.moonshotai.kimi-k3/converse",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "system": [
+            {
+              "text": "Use tools."
+            }
+          ],
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "text": "Look at the screen."
+                }
+              ]
+            },
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "text": "Looking."
+                },
+                {
+                  "toolUse": {
+                    "toolUseId": "call-1",
+                    "name": "computer_screen",
+                    "input": {
+                      "zoom": 2
+                    }
+                  }
+                },
+                {
+                  "toolUse": {
+                    "toolUseId": "call-2",
+                    "name": "shell_exec",
+                    "input": {
+                      "rawInvalidInput": "not an object"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "role": "user",
+              "content": [
+                {
+                  "toolResult": {
+                    "toolUseId": "call-1",
+                    "content": [
+                      {
+                        "text": "{\"success\":true}"
+                      },
+                      {
+                        "image": {
+                          "format": "jpeg",
+                          "source": {
+                            "bytes": "ZmFrZSBqcGVnIGJ5dGVz"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "toolResult": {
+                    "toolUseId": "call-2",
+                    "content": [
+                      {
+                        "text": "{\"exitCode\":0,\"out\":\"ok\"}"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "toolResult": {
+                    "toolUseId": "call-3",
+                    "content": [
+                      {
+                        "text": "boom"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "toolResult": {
+                    "toolUseId": "call-4",
+                    "content": [
+                      {
+                        "text": "Tool call execution denied."
+                      }
+                    ]
+                  }
+                },
+                {
+                  "text": "And now?"
+                }
+              ]
+            }
+          ],
+          "toolConfig": {
+            "tools": [
+              {
+                "toolSpec": {
+                  "name": "computer_screen",
+                  "description": "Inspect the screen.",
+                  "inputSchema": {
+                    "json": {
+                      "type": "object",
+                      "properties": {
+                        "zoom": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [],
+                      "additionalProperties": false,
+                      "$schema": "http://json-schema.org/draft-07/schema#"
+                    }
+                  }
+                }
+              },
+              {
+                "toolSpec": {
+                  "name": "shell_exec",
+                  "inputSchema": {
+                    "json": {
+                      "type": "object",
+                      "properties": {
+                        "command": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "command"
+                      ],
+                      "additionalProperties": false,
+                      "$schema": "http://json-schema.org/draft-07/schema#"
+                    }
+                  }
+                }
+              },
+              {
+                "toolSpec": {
+                  "name": "strict_tool",
+                  "description": "Strict.",
+                  "strict": true,
+                  "inputSchema": {
+                    "json": {
+                      "type": "object",
+                      "properties": {
+                        "a": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "a"
+                      ],
+                      "additionalProperties": false,
+                      "$schema": "http://json-schema.org/draft-07/schema#"
+                    }
+                  }
+                }
+              }
+            ],
+            "toolChoice": {
+              "auto": {}
+            }
+          }
+        }
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Running it."
+          },
+          {
+            "type": "tool-call",
+            "toolCallId": "tooluse_1",
+            "toolName": "shell_exec",
+            "input": "{\"command\":\"ls\"}"
+          }
+        ],
+        "finishReason": {
+          "unified": "tool-calls",
+          "raw": "tool_use"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 200,
+            "noCache": 100,
+            "cacheRead": 50,
+            "cacheWrite": 50
+          },
+          "outputTokens": {
+            "total": 20,
+            "text": 20
+          },
+          "raw": {
+            "inputTokens": 100,
+            "outputTokens": 20,
+            "totalTokens": 220,
+            "cacheReadInputTokens": 50,
+            "cacheWriteInputTokens": 50,
+            "cacheDetails": [
+              {
+                "inputTokens": 50,
+                "ttl": "5m"
+              }
+            ]
+          }
+        },
+        "response": {
+          "id": "req-1",
+          "timestamp": "2026-11-06T12:00:00.000Z",
+          "modelId": "us.moonshotai.kimi-k3",
+          "headers": {
+            "content-type": "application/json",
+            "date": "Fri, 06 Nov 2026 12:00:00 GMT",
+            "x-amzn-requestid": "req-1"
+          }
+        },
+        "warnings": [],
+        "request": {
+          "body": {
+            "system": [
+              {
+                "text": "Use tools."
+              }
+            ],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "text": "Look at the screen."
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "text": "Looking."
+                  },
+                  {
+                    "toolUse": {
+                      "toolUseId": "call-1",
+                      "name": "computer_screen",
+                      "input": {
+                        "zoom": 2
+                      }
+                    }
+                  },
+                  {
+                    "toolUse": {
+                      "toolUseId": "call-2",
+                      "name": "shell_exec",
+                      "input": {
+                        "rawInvalidInput": "not an object"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "toolResult": {
+                      "toolUseId": "call-1",
+                      "content": [
+                        {
+                          "text": "{\"success\":true}"
+                        },
+                        {
+                          "image": {
+                            "format": "jpeg",
+                            "source": {
+                              "bytes": "ZmFrZSBqcGVnIGJ5dGVz"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "toolResult": {
+                      "toolUseId": "call-2",
+                      "content": [
+                        {
+                          "text": "{\"exitCode\":0,\"out\":\"ok\"}"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "toolResult": {
+                      "toolUseId": "call-3",
+                      "content": [
+                        {
+                          "text": "boom"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "toolResult": {
+                      "toolUseId": "call-4",
+                      "content": [
+                        {
+                          "text": "Tool call execution denied."
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "text": "And now?"
+                  }
+                ]
+              }
+            ],
+            "toolConfig": {
+              "tools": [
+                {
+                  "toolSpec": {
+                    "name": "computer_screen",
+                    "description": "Inspect the screen.",
+                    "inputSchema": {
+                      "json": {
+                        "type": "object",
+                        "properties": {
+                          "zoom": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [],
+                        "additionalProperties": false,
+                        "$schema": "http://json-schema.org/draft-07/schema#"
+                      }
+                    }
+                  }
+                },
+                {
+                  "toolSpec": {
+                    "name": "shell_exec",
+                    "inputSchema": {
+                      "json": {
+                        "type": "object",
+                        "properties": {
+                          "command": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "command"
+                        ],
+                        "additionalProperties": false,
+                        "$schema": "http://json-schema.org/draft-07/schema#"
+                      }
+                    }
+                  }
+                },
+                {
+                  "toolSpec": {
+                    "name": "strict_tool",
+                    "description": "Strict.",
+                    "strict": true,
+                    "inputSchema": {
+                      "json": {
+                        "type": "object",
+                        "properties": {
+                          "a": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "a"
+                        ],
+                        "additionalProperties": false,
+                        "$schema": "http://json-schema.org/draft-07/schema#"
+                      }
+                    }
+                  }
+                }
+              ],
+              "toolChoice": {
+                "auto": {}
+              }
+            }
+          }
+        },
+        "providerMetadata": {
+          "amazonBedrock": {
+            "usage": {
+              "cacheWriteInputTokens": 50,
+              "cacheDetails": [
+                {
+                  "inputTokens": 50,
+                  "ttl": "5m"
+                }
+              ]
+            },
+            "stopSequence": null
+          },
+          "bedrock": {
+            "usage": {
+              "cacheWriteInputTokens": 50,
+              "cacheDetails": [
+                {
+                  "inputTokens": 50,
+                  "ttl": "5m"
+                }
+              ]
+            },
+            "stopSequence": null
+          }
+        }
+      }
+    },
+    {
+      "name": "tool-choice-tool",
+      "modelId": "meta.llama3-70b-instruct-v1:0",
+      "options": {
+        "prompt": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Weather?"
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "name": "weather",
+            "description": "Weather.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          },
+          {
+            "type": "function",
+            "name": "other",
+            "description": "Other.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {},
+              "required": [],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          },
+          {
+            "type": "provider",
+            "id": "openai.web_search",
+            "name": "web_search",
+            "args": {}
+          }
+        ],
+        "toolChoice": {
+          "type": "tool",
+          "toolName": "weather"
+        }
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json",
+          "x-amzn-requestid": "req-1",
+          "date": "Fri, 06 Nov 2026 12:00:00 GMT"
+        },
+        "body": {
+          "output": {
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "toolUse": {
+                    "toolUseId": "t1",
+                    "name": "weather",
+                    "input": {}
+                  }
+                }
+              ]
+            }
+          },
+          "stopReason": "tool_use",
+          "usage": {
+            "inputTokens": 10,
+            "outputTokens": 3,
+            "totalTokens": 13
+          },
+          "metrics": {
+            "latencyMs": 120
+          }
+        }
+      },
+      "provider": "amazon-bedrock",
+      "supportedUrls": {
+        "image/*": [
+          "/^s3:\\/\\//"
+        ],
+        "video/*": [
+          "/^s3:\\/\\//"
+        ]
+      },
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/meta.llama3-70b-instruct-v1%3A0/converse",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "system": [],
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "text": "Weather?"
+                }
+              ]
+            }
+          ],
+          "toolConfig": {
+            "tools": [
+              {
+                "toolSpec": {
+                  "name": "weather",
+                  "description": "Weather.",
+                  "inputSchema": {
+                    "json": {
+                      "type": "object",
+                      "properties": {
+                        "city": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [],
+                      "additionalProperties": false,
+                      "$schema": "http://json-schema.org/draft-07/schema#"
+                    }
+                  }
+                }
+              }
+            ],
+            "toolChoice": {
+              "tool": {
+                "name": "weather"
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "content": [
+          {
+            "type": "tool-call",
+            "toolCallId": "t1",
+            "toolName": "weather",
+            "input": "{}"
+          }
+        ],
+        "finishReason": {
+          "unified": "tool-calls",
+          "raw": "tool_use"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 10,
+            "noCache": 10,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "outputTokens": {
+            "total": 3,
+            "text": 3
+          },
+          "raw": {
+            "inputTokens": 10,
+            "outputTokens": 3,
+            "totalTokens": 13
+          }
+        },
+        "response": {
+          "id": "req-1",
+          "timestamp": "2026-11-06T12:00:00.000Z",
+          "modelId": "meta.llama3-70b-instruct-v1:0",
+          "headers": {
+            "content-type": "application/json",
+            "date": "Fri, 06 Nov 2026 12:00:00 GMT",
+            "x-amzn-requestid": "req-1"
+          }
+        },
+        "warnings": [
+          {
+            "type": "unsupported",
+            "feature": "tool openai.web_search"
+          }
+        ],
+        "request": {
+          "body": {
+            "system": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "text": "Weather?"
+                  }
+                ]
+              }
+            ],
+            "toolConfig": {
+              "tools": [
+                {
+                  "toolSpec": {
+                    "name": "weather",
+                    "description": "Weather.",
+                    "inputSchema": {
+                      "json": {
+                        "type": "object",
+                        "properties": {
+                          "city": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [],
+                        "additionalProperties": false,
+                        "$schema": "http://json-schema.org/draft-07/schema#"
+                      }
+                    }
+                  }
+                }
+              ],
+              "toolChoice": {
+                "tool": {
+                  "name": "weather"
+                }
+              }
+            }
+          }
+        },
+        "providerMetadata": {
+          "amazonBedrock": {
+            "stopSequence": null
+          },
+          "bedrock": {
+            "stopSequence": null
+          }
+        }
+      }
+    },
+    {
+      "name": "tool-choice-required-and-none",
+      "modelId": "meta.llama3-70b-instruct-v1:0",
+      "options": {
+        "prompt": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Go"
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "name": "weather",
+            "description": "Weather.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {},
+              "required": [],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          }
+        ],
+        "toolChoice": {
+          "type": "none"
+        }
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json",
+          "x-amzn-requestid": "req-1",
+          "date": "Fri, 06 Nov 2026 12:00:00 GMT"
+        },
+        "body": {
+          "output": {
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "text": "ok"
+                }
+              ]
+            }
+          },
+          "stopReason": "end_turn",
+          "usage": {
+            "inputTokens": 10,
+            "outputTokens": 3,
+            "totalTokens": 13
+          },
+          "metrics": {
+            "latencyMs": 120
+          }
+        }
+      },
+      "provider": "amazon-bedrock",
+      "supportedUrls": {
+        "image/*": [
+          "/^s3:\\/\\//"
+        ],
+        "video/*": [
+          "/^s3:\\/\\//"
+        ]
+      },
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/meta.llama3-70b-instruct-v1%3A0/converse",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "system": [],
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "text": "Go"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ok"
+          }
+        ],
+        "finishReason": {
+          "unified": "stop",
+          "raw": "end_turn"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 10,
+            "noCache": 10,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "outputTokens": {
+            "total": 3,
+            "text": 3
+          },
+          "raw": {
+            "inputTokens": 10,
+            "outputTokens": 3,
+            "totalTokens": 13
+          }
+        },
+        "response": {
+          "id": "req-1",
+          "timestamp": "2026-11-06T12:00:00.000Z",
+          "modelId": "meta.llama3-70b-instruct-v1:0",
+          "headers": {
+            "content-type": "application/json",
+            "date": "Fri, 06 Nov 2026 12:00:00 GMT",
+            "x-amzn-requestid": "req-1"
+          }
+        },
+        "warnings": [],
+        "request": {
+          "body": {
+            "system": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "text": "Go"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "providerMetadata": {
+          "amazonBedrock": {
+            "stopSequence": null
+          },
+          "bedrock": {
+            "stopSequence": null
+          }
+        }
+      }
+    },
+    {
+      "name": "tool-choice-required",
+      "modelId": "meta.llama3-70b-instruct-v1:0",
+      "options": {
+        "prompt": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Go"
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "name": "weather",
+            "description": "Weather.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {},
+              "required": [],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          }
+        ],
+        "toolChoice": {
+          "type": "required"
+        }
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json",
+          "x-amzn-requestid": "req-1",
+          "date": "Fri, 06 Nov 2026 12:00:00 GMT"
+        },
+        "body": {
+          "output": {
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "text": "ok"
+                }
+              ]
+            }
+          },
+          "stopReason": "end_turn",
+          "usage": {
+            "inputTokens": 10,
+            "outputTokens": 3,
+            "totalTokens": 13
+          },
+          "metrics": {
+            "latencyMs": 120
+          }
+        }
+      },
+      "provider": "amazon-bedrock",
+      "supportedUrls": {
+        "image/*": [
+          "/^s3:\\/\\//"
+        ],
+        "video/*": [
+          "/^s3:\\/\\//"
+        ]
+      },
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/meta.llama3-70b-instruct-v1%3A0/converse",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "system": [],
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "text": "Go"
+                }
+              ]
+            }
+          ],
+          "toolConfig": {
+            "tools": [
+              {
+                "toolSpec": {
+                  "name": "weather",
+                  "description": "Weather.",
+                  "inputSchema": {
+                    "json": {
+                      "type": "object",
+                      "properties": {},
+                      "required": [],
+                      "additionalProperties": false,
+                      "$schema": "http://json-schema.org/draft-07/schema#"
+                    }
+                  }
+                }
+              }
+            ],
+            "toolChoice": {
+              "any": {}
+            }
+          }
+        }
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ok"
+          }
+        ],
+        "finishReason": {
+          "unified": "stop",
+          "raw": "end_turn"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 10,
+            "noCache": 10,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "outputTokens": {
+            "total": 3,
+            "text": 3
+          },
+          "raw": {
+            "inputTokens": 10,
+            "outputTokens": 3,
+            "totalTokens": 13
+          }
+        },
+        "response": {
+          "id": "req-1",
+          "timestamp": "2026-11-06T12:00:00.000Z",
+          "modelId": "meta.llama3-70b-instruct-v1:0",
+          "headers": {
+            "content-type": "application/json",
+            "date": "Fri, 06 Nov 2026 12:00:00 GMT",
+            "x-amzn-requestid": "req-1"
+          }
+        },
+        "warnings": [],
+        "request": {
+          "body": {
+            "system": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "text": "Go"
+                  }
+                ]
+              }
+            ],
+            "toolConfig": {
+              "tools": [
+                {
+                  "toolSpec": {
+                    "name": "weather",
+                    "description": "Weather.",
+                    "inputSchema": {
+                      "json": {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                        "additionalProperties": false,
+                        "$schema": "http://json-schema.org/draft-07/schema#"
+                      }
+                    }
+                  }
+                }
+              ],
+              "toolChoice": {
+                "any": {}
+              }
+            }
+          }
+        },
+        "providerMetadata": {
+          "amazonBedrock": {
+            "stopSequence": null
+          },
+          "bedrock": {
+            "stopSequence": null
+          }
+        }
+      }
+    },
+    {
+      "name": "json-response-format",
+      "modelId": "us.moonshotai.kimi-k3",
+      "options": {
+        "prompt": [
+          {
+            "role": "system",
+            "content": "Classify."
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Is this spam?"
+              }
+            ]
+          }
+        ],
+        "maxOutputTokens": 16,
+        "temperature": 0,
+        "responseFormat": {
+          "type": "json",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "spam": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "spam"
+            ],
+            "additionalProperties": false,
+            "$schema": "http://json-schema.org/draft-07/schema#"
+          }
+        },
+        "providerOptions": {
+          "anthropic": {
+            "thinking": {
+              "type": "disabled"
+            }
+          }
+        }
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json",
+          "x-amzn-requestid": "req-1",
+          "date": "Fri, 06 Nov 2026 12:00:00 GMT"
+        },
+        "body": {
+          "output": {
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "toolUse": {
+                    "toolUseId": "tooluse_j",
+                    "name": "json",
+                    "input": {
+                      "spam": false
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "stopReason": "tool_use",
+          "usage": {
+            "inputTokens": 10,
+            "outputTokens": 3,
+            "totalTokens": 13
+          },
+          "metrics": {
+            "latencyMs": 120
+          }
+        }
+      },
+      "provider": "amazon-bedrock",
+      "supportedUrls": {
+        "image/*": [
+          "/^s3:\\/\\//"
+        ],
+        "video/*": [
+          "/^s3:\\/\\//"
+        ]
+      },
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.moonshotai.kimi-k3/converse",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "system": [
+            {
+              "text": "Classify."
+            }
+          ],
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "text": "Is this spam?"
+                }
+              ]
+            }
+          ],
+          "inferenceConfig": {
+            "maxTokens": 16,
+            "temperature": 0
+          },
+          "toolConfig": {
+            "tools": [
+              {
+                "toolSpec": {
+                  "name": "json",
+                  "description": "Respond with a JSON object.",
+                  "inputSchema": {
+                    "json": {
+                      "type": "object",
+                      "properties": {
+                        "spam": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "spam"
+                      ],
+                      "additionalProperties": false,
+                      "$schema": "http://json-schema.org/draft-07/schema#"
+                    }
+                  }
+                }
+              }
+            ],
+            "toolChoice": {
+              "any": {}
+            }
+          }
+        }
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"spam\":false}"
+          }
+        ],
+        "finishReason": {
+          "unified": "stop",
+          "raw": "tool_use"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 10,
+            "noCache": 10,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "outputTokens": {
+            "total": 3,
+            "text": 3
+          },
+          "raw": {
+            "inputTokens": 10,
+            "outputTokens": 3,
+            "totalTokens": 13
+          }
+        },
+        "response": {
+          "id": "req-1",
+          "timestamp": "2026-11-06T12:00:00.000Z",
+          "modelId": "us.moonshotai.kimi-k3",
+          "headers": {
+            "content-type": "application/json",
+            "date": "Fri, 06 Nov 2026 12:00:00 GMT",
+            "x-amzn-requestid": "req-1"
+          }
+        },
+        "warnings": [],
+        "request": {
+          "body": {
+            "system": [
+              {
+                "text": "Classify."
+              }
+            ],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "text": "Is this spam?"
+                  }
+                ]
+              }
+            ],
+            "inferenceConfig": {
+              "maxTokens": 16,
+              "temperature": 0
+            },
+            "toolConfig": {
+              "tools": [
+                {
+                  "toolSpec": {
+                    "name": "json",
+                    "description": "Respond with a JSON object.",
+                    "inputSchema": {
+                      "json": {
+                        "type": "object",
+                        "properties": {
+                          "spam": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "spam"
+                        ],
+                        "additionalProperties": false,
+                        "$schema": "http://json-schema.org/draft-07/schema#"
+                      }
+                    }
+                  }
+                }
+              ],
+              "toolChoice": {
+                "any": {}
+              }
+            }
+          }
+        },
+        "providerMetadata": {
+          "amazonBedrock": {
+            "isJsonResponseFromTool": true,
+            "stopSequence": null
+          },
+          "bedrock": {
+            "isJsonResponseFromTool": true,
+            "stopSequence": null
+          }
+        }
+      }
+    },
+    {
+      "name": "cache-points",
+      "modelId": "us.amazon.nova-pro-v1:0",
+      "options": {
+        "prompt": [
+          {
+            "role": "system",
+            "content": "Stable prefix.",
+            "providerOptions": {
+              "bedrock": {
+                "cachePoint": {
+                  "type": "default"
+                }
+              }
+            }
+          },
+          {
+            "role": "system",
+            "content": "Second system."
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "First",
+                "providerOptions": {
+                  "amazonBedrock": {
+                    "cachePoint": {
+                      "type": "default",
+                      "ttl": "1h"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "text",
+                "text": "Second"
+              }
+            ],
+            "providerOptions": {
+              "bedrock": {
+                "cachePoint": {
+                  "type": "default"
+                }
+              }
+            }
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Answer"
+              }
+            ],
+            "providerOptions": {
+              "bedrock": {
+                "cachePoint": {
+                  "type": "default"
+                }
+              }
+            }
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Next"
+              }
+            ]
+          }
+        ],
+        "providerOptions": {
+          "bedrock": {
+            "additionalModelRequestFields": {
+              "top_k": 5
+            },
+            "requestMetadata": {
+              "team": "a"
+            },
+            "serviceTier": "flex",
+            "extraField": {
+              "passed": true
+            }
+          }
+        }
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json",
+          "x-amzn-requestid": "req-1",
+          "date": "Fri, 06 Nov 2026 12:00:00 GMT"
+        },
+        "body": {
+          "output": {
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "text": "cached"
+                }
+              ]
+            }
+          },
+          "stopReason": "end_turn",
+          "usage": {
+            "inputTokens": 4,
+            "outputTokens": 1,
+            "totalTokens": 5,
+            "cacheReadInputTokens": 100
+          },
+          "metrics": {
+            "latencyMs": 120
+          },
+          "serviceTier": {
+            "type": "flex"
+          },
+          "performanceConfig": {
+            "latency": "standard"
+          },
+          "trace": {
+            "guardrail": {}
+          }
+        }
+      },
+      "provider": "amazon-bedrock",
+      "supportedUrls": {
+        "image/*": [
+          "/^s3:\\/\\//"
+        ],
+        "video/*": [
+          "/^s3:\\/\\//"
+        ]
+      },
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-pro-v1%3A0/converse",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "system": [
+            {
+              "text": "Stable prefix."
+            },
+            {
+              "cachePoint": {
+                "type": "default"
+              }
+            },
+            {
+              "text": "Second system."
+            }
+          ],
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "text": "First"
+                },
+                {
+                  "cachePoint": {
+                    "type": "default",
+                    "ttl": "1h"
+                  }
+                },
+                {
+                  "text": "Second"
+                },
+                {
+                  "cachePoint": {
+                    "type": "default"
+                  }
+                }
+              ]
+            },
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "text": "Answer"
+                },
+                {
+                  "cachePoint": {
+                    "type": "default"
+                  }
+                }
+              ]
+            },
+            {
+              "role": "user",
+              "content": [
+                {
+                  "text": "Next"
+                }
+              ]
+            }
+          ],
+          "additionalModelRequestFields": {
+            "top_k": 5
+          },
+          "serviceTier": {
+            "type": "flex"
+          },
+          "requestMetadata": {
+            "team": "a"
+          },
+          "extraField": {
+            "passed": true
+          }
+        }
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "cached"
+          }
+        ],
+        "finishReason": {
+          "unified": "stop",
+          "raw": "end_turn"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 104,
+            "noCache": 4,
+            "cacheRead": 100,
+            "cacheWrite": 0
+          },
+          "outputTokens": {
+            "total": 1,
+            "text": 1
+          },
+          "raw": {
+            "inputTokens": 4,
+            "outputTokens": 1,
+            "totalTokens": 5,
+            "cacheReadInputTokens": 100
+          }
+        },
+        "response": {
+          "id": "req-1",
+          "timestamp": "2026-11-06T12:00:00.000Z",
+          "modelId": "us.amazon.nova-pro-v1:0",
+          "headers": {
+            "content-type": "application/json",
+            "date": "Fri, 06 Nov 2026 12:00:00 GMT",
+            "x-amzn-requestid": "req-1"
+          }
+        },
+        "warnings": [],
+        "request": {
+          "body": {
+            "system": [
+              {
+                "text": "Stable prefix."
+              },
+              {
+                "cachePoint": {
+                  "type": "default"
+                }
+              },
+              {
+                "text": "Second system."
+              }
+            ],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "text": "First"
+                  },
+                  {
+                    "cachePoint": {
+                      "type": "default",
+                      "ttl": "1h"
+                    }
+                  },
+                  {
+                    "text": "Second"
+                  },
+                  {
+                    "cachePoint": {
+                      "type": "default"
+                    }
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "text": "Answer"
+                  },
+                  {
+                    "cachePoint": {
+                      "type": "default"
+                    }
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "text": "Next"
+                  }
+                ]
+              }
+            ],
+            "additionalModelRequestFields": {
+              "top_k": 5
+            },
+            "serviceTier": {
+              "type": "flex"
+            },
+            "requestMetadata": {
+              "team": "a"
+            },
+            "extraField": {
+              "passed": true
+            }
+          }
+        },
+        "providerMetadata": {
+          "amazonBedrock": {
+            "trace": {
+              "guardrail": {}
+            },
+            "performanceConfig": {
+              "latency": "standard"
+            },
+            "serviceTier": {
+              "type": "flex"
+            },
+            "stopSequence": null
+          },
+          "bedrock": {
+            "trace": {
+              "guardrail": {}
+            },
+            "performanceConfig": {
+              "latency": "standard"
+            },
+            "serviceTier": {
+              "type": "flex"
+            },
+            "stopSequence": null
+          }
+        }
+      }
+    },
+    {
+      "name": "documents",
+      "modelId": "us.amazon.nova-pro-v1:0",
+      "options": {
+        "prompt": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Read these."
+              },
+              {
+                "type": "file",
+                "mediaType": "application/pdf",
+                "filename": "Quarterly Report (Q3) — final!.pdf",
+                "data": {
+                  "type": "data",
+                  "data": "JVBERi0xLjQgZmFrZSBwZGY="
+                },
+                "providerOptions": {
+                  "bedrock": {
+                    "citations": {
+                      "enabled": true
+                    }
+                  }
+                }
+              },
+              {
+                "type": "file",
+                "mediaType": "text/plain",
+                "data": {
+                  "type": "text",
+                  "text": "plain notes"
+                }
+              },
+              {
+                "type": "file",
+                "mediaType": "text/markdown",
+                "filename": "notes.md",
+                "data": {
+                  "type": "data",
+                  "data": "IyBoaQ=="
+                }
+              },
+              {
+                "type": "file",
+                "mediaType": "image/png",
+                "data": {
+                  "type": "data",
+                  "data": "iVBORw0KGgpmYWtlIHBuZyBieXRlcw=="
+                }
+              },
+              {
+                "type": "file",
+                "mediaType": "image/png",
+                "data": {
+                  "type": "url",
+                  "url": "s3://bucket/key.png"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json",
+          "x-amzn-requestid": "req-1",
+          "date": "Fri, 06 Nov 2026 12:00:00 GMT"
+        },
+        "body": {
+          "output": {
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "citationsContent": {
+                    "content": [
+                      {
+                        "text": "Cited one. "
+                      },
+                      {
+                        "text": "Cited two."
+                      },
+                      {}
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "stopReason": "end_turn",
+          "usage": {
+            "inputTokens": 10,
+            "outputTokens": 3,
+            "totalTokens": 13
+          },
+          "metrics": {
+            "latencyMs": 120
+          }
+        }
+      },
+      "provider": "amazon-bedrock",
+      "supportedUrls": {
+        "image/*": [
+          "/^s3:\\/\\//"
+        ],
+        "video/*": [
+          "/^s3:\\/\\//"
+        ]
+      },
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-pro-v1%3A0/converse",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "system": [],
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "text": "Read these."
+                },
+                {
+                  "document": {
+                    "format": "pdf",
+                    "name": "Quarterly Report (Q3)  final",
+                    "source": {
+                      "bytes": "JVBERi0xLjQgZmFrZSBwZGY="
+                    },
+                    "citations": {
+                      "enabled": true
+                    }
+                  }
+                },
+                {
+                  "document": {
+                    "format": "txt",
+                    "name": "document-1",
+                    "source": {
+                      "bytes": "cGxhaW4gbm90ZXM="
+                    }
+                  }
+                },
+                {
+                  "document": {
+                    "format": "md",
+                    "name": "notes",
+                    "source": {
+                      "bytes": "IyBoaQ=="
+                    }
+                  }
+                },
+                {
+                  "image": {
+                    "format": "png",
+                    "source": {
+                      "bytes": "iVBORw0KGgpmYWtlIHBuZyBieXRlcw=="
+                    }
+                  }
+                },
+                {
+                  "image": {
+                    "format": "png",
+                    "source": {
+                      "s3Location": {
+                        "uri": "s3://bucket/key.png"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Cited one. "
+          },
+          {
+            "type": "text",
+            "text": "Cited two."
+          }
+        ],
+        "finishReason": {
+          "unified": "stop",
+          "raw": "end_turn"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 10,
+            "noCache": 10,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "outputTokens": {
+            "total": 3,
+            "text": 3
+          },
+          "raw": {
+            "inputTokens": 10,
+            "outputTokens": 3,
+            "totalTokens": 13
+          }
+        },
+        "response": {
+          "id": "req-1",
+          "timestamp": "2026-11-06T12:00:00.000Z",
+          "modelId": "us.amazon.nova-pro-v1:0",
+          "headers": {
+            "content-type": "application/json",
+            "date": "Fri, 06 Nov 2026 12:00:00 GMT",
+            "x-amzn-requestid": "req-1"
+          }
+        },
+        "warnings": [],
+        "request": {
+          "body": {
+            "system": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "text": "Read these."
+                  },
+                  {
+                    "document": {
+                      "format": "pdf",
+                      "name": "Quarterly Report (Q3)  final",
+                      "source": {
+                        "bytes": "JVBERi0xLjQgZmFrZSBwZGY="
+                      },
+                      "citations": {
+                        "enabled": true
+                      }
+                    }
+                  },
+                  {
+                    "document": {
+                      "format": "txt",
+                      "name": "document-1",
+                      "source": {
+                        "bytes": "cGxhaW4gbm90ZXM="
+                      }
+                    }
+                  },
+                  {
+                    "document": {
+                      "format": "md",
+                      "name": "notes",
+                      "source": {
+                        "bytes": "IyBoaQ=="
+                      }
+                    }
+                  },
+                  {
+                    "image": {
+                      "format": "png",
+                      "source": {
+                        "bytes": "iVBORw0KGgpmYWtlIHBuZyBieXRlcw=="
+                      }
+                    }
+                  },
+                  {
+                    "image": {
+                      "format": "png",
+                      "source": {
+                        "s3Location": {
+                          "uri": "s3://bucket/key.png"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "providerMetadata": {
+          "amazonBedrock": {
+            "stopSequence": null
+          },
+          "bedrock": {
+            "stopSequence": null
+          }
+        }
+      }
+    },
+    {
+      "name": "tool-content-without-tools",
+      "modelId": "us.moonshotai.kimi-k3",
+      "options": {
+        "prompt": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hi"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool-call",
+                "toolCallId": "c1",
+                "toolName": "x",
+                "input": {}
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "content": [
+              {
+                "type": "tool-result",
+                "toolCallId": "c1",
+                "toolName": "x",
+                "output": {
+                  "type": "text",
+                  "value": "r"
+                }
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Done."
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Summarize"
+              }
+            ]
+          }
+        ],
+        "toolChoice": {
+          "type": "none"
+        }
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json",
+          "x-amzn-requestid": "req-1",
+          "date": "Fri, 06 Nov 2026 12:00:00 GMT"
+        },
+        "body": {
+          "output": {
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "text": "Summary"
+                }
+              ]
+            }
+          },
+          "stopReason": "end_turn",
+          "usage": {
+            "inputTokens": 10,
+            "outputTokens": 3,
+            "totalTokens": 13
+          },
+          "metrics": {
+            "latencyMs": 120
+          }
+        }
+      },
+      "provider": "amazon-bedrock",
+      "supportedUrls": {
+        "image/*": [
+          "/^s3:\\/\\//"
+        ],
+        "video/*": [
+          "/^s3:\\/\\//"
+        ]
+      },
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.moonshotai.kimi-k3/converse",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "system": [],
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "text": "Hi"
+                }
+              ]
+            },
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "text": "Done."
+                }
+              ]
+            },
+            {
+              "role": "user",
+              "content": [
+                {
+                  "text": "Summarize"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Summary"
+          }
+        ],
+        "finishReason": {
+          "unified": "stop",
+          "raw": "end_turn"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 10,
+            "noCache": 10,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "outputTokens": {
+            "total": 3,
+            "text": 3
+          },
+          "raw": {
+            "inputTokens": 10,
+            "outputTokens": 3,
+            "totalTokens": 13
+          }
+        },
+        "response": {
+          "id": "req-1",
+          "timestamp": "2026-11-06T12:00:00.000Z",
+          "modelId": "us.moonshotai.kimi-k3",
+          "headers": {
+            "content-type": "application/json",
+            "date": "Fri, 06 Nov 2026 12:00:00 GMT",
+            "x-amzn-requestid": "req-1"
+          }
+        },
+        "warnings": [
+          {
+            "type": "unsupported",
+            "feature": "toolContent",
+            "details": "Tool calls and results removed from conversation because Bedrock does not support tool content without active tools."
+          }
+        ],
+        "request": {
+          "body": {
+            "system": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "text": "Hi"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "text": "Done."
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "text": "Summarize"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "providerMetadata": {
+          "amazonBedrock": {
+            "stopSequence": null
+          },
+          "bedrock": {
+            "stopSequence": null
+          }
+        }
+      }
+    },
+    {
+      "name": "mistral",
+      "modelId": "mistral.mistral-large-2402-v1:0",
+      "options": {
+        "prompt": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hi"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool-call",
+                "toolCallId": "tooluse_bpe71yCfRu2b5i-nKGDr5g",
+                "toolName": "my.tool name",
+                "input": {}
+              },
+              {
+                "type": "tool-call",
+                "toolCallId": "abcDEF123",
+                "toolName": "...",
+                "input": {}
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "content": [
+              {
+                "type": "tool-result",
+                "toolCallId": "tooluse_bpe71yCfRu2b5i-nKGDr5g",
+                "toolName": "my.tool name",
+                "output": {
+                  "type": "text",
+                  "value": "r"
+                }
+              },
+              {
+                "type": "tool-result",
+                "toolCallId": "abcDEF123",
+                "toolName": "...",
+                "output": {
+                  "type": "text",
+                  "value": "r2"
+                }
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "name": "mytoolname",
+            "description": "x",
+            "inputSchema": {
+              "type": "object",
+              "properties": {},
+              "required": [],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          }
+        ]
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json",
+          "x-amzn-requestid": "req-1",
+          "date": "Fri, 06 Nov 2026 12:00:00 GMT"
+        },
+        "body": {
+          "output": {
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "toolUse": {
+                    "toolUseId": "tooluse_abc-def_ghi",
+                    "name": "mytoolname",
+                    "input": {}
+                  }
+                }
+              ]
+            }
+          },
+          "stopReason": "tool_use",
+          "usage": {
+            "inputTokens": 10,
+            "outputTokens": 3,
+            "totalTokens": 13
+          },
+          "metrics": {
+            "latencyMs": 120
+          }
+        }
+      },
+      "provider": "amazon-bedrock",
+      "supportedUrls": {
+        "image/*": [
+          "/^s3:\\/\\//"
+        ],
+        "video/*": [
+          "/^s3:\\/\\//"
+        ]
+      },
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/mistral.mistral-large-2402-v1%3A0/converse",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "system": [],
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "text": "Hi"
+                }
+              ]
+            },
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "toolUse": {
+                    "toolUseId": "8eHypBDcw",
+                    "name": "mytoolname",
+                    "input": {}
+                  }
+                },
+                {
+                  "toolUse": {
+                    "toolUseId": "abcDEF123",
+                    "name": "_",
+                    "input": {}
+                  }
+                }
+              ]
+            },
+            {
+              "role": "user",
+              "content": [
+                {
+                  "toolResult": {
+                    "toolUseId": "8eHypBDcw",
+                    "content": [
+                      {
+                        "text": "r"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "toolResult": {
+                    "toolUseId": "abcDEF123",
+                    "content": [
+                      {
+                        "text": "r2"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "toolConfig": {
+            "tools": [
+              {
+                "toolSpec": {
+                  "name": "mytoolname",
+                  "description": "x",
+                  "inputSchema": {
+                    "json": {
+                      "type": "object",
+                      "properties": {},
+                      "required": [],
+                      "additionalProperties": false,
+                      "$schema": "http://json-schema.org/draft-07/schema#"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "result": {
+        "content": [
+          {
+            "type": "tool-call",
+            "toolCallId": "UIYxxmnTu",
+            "toolName": "mytoolname",
+            "input": "{}"
+          }
+        ],
+        "finishReason": {
+          "unified": "tool-calls",
+          "raw": "tool_use"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 10,
+            "noCache": 10,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "outputTokens": {
+            "total": 3,
+            "text": 3
+          },
+          "raw": {
+            "inputTokens": 10,
+            "outputTokens": 3,
+            "totalTokens": 13
+          }
+        },
+        "response": {
+          "id": "req-1",
+          "timestamp": "2026-11-06T12:00:00.000Z",
+          "modelId": "mistral.mistral-large-2402-v1:0",
+          "headers": {
+            "content-type": "application/json",
+            "date": "Fri, 06 Nov 2026 12:00:00 GMT",
+            "x-amzn-requestid": "req-1"
+          }
+        },
+        "warnings": [],
+        "request": {
+          "body": {
+            "system": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "text": "Hi"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "toolUse": {
+                      "toolUseId": "8eHypBDcw",
+                      "name": "mytoolname",
+                      "input": {}
+                    }
+                  },
+                  {
+                    "toolUse": {
+                      "toolUseId": "abcDEF123",
+                      "name": "_",
+                      "input": {}
+                    }
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "toolResult": {
+                      "toolUseId": "8eHypBDcw",
+                      "content": [
+                        {
+                          "text": "r"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "toolResult": {
+                      "toolUseId": "abcDEF123",
+                      "content": [
+                        {
+                          "text": "r2"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ],
+            "toolConfig": {
+              "tools": [
+                {
+                  "toolSpec": {
+                    "name": "mytoolname",
+                    "description": "x",
+                    "inputSchema": {
+                      "json": {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                        "additionalProperties": false,
+                        "$schema": "http://json-schema.org/draft-07/schema#"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "providerMetadata": {
+          "amazonBedrock": {
+            "stopSequence": null
+          },
+          "bedrock": {
+            "stopSequence": null
+          }
+        }
+      }
+    },
+    {
+      "name": "reasoning",
+      "modelId": "us.deepseek.r1-v1:0",
+      "options": {
+        "prompt": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Think"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "reasoning",
+                "text": " signed thought ",
+                "providerOptions": {
+                  "bedrock": {
+                    "signature": "sig-1"
+                  }
+                }
+              },
+              {
+                "type": "reasoning",
+                "text": "",
+                "providerOptions": {
+                  "amazonBedrock": {
+                    "redactedData": "red-1"
+                  }
+                }
+              },
+              {
+                "type": "reasoning",
+                "text": "",
+                "providerOptions": {
+                  "bedrock": {
+                    "redactedContent": "enc-1"
+                  }
+                }
+              },
+              {
+                "type": "reasoning",
+                "text": "unsigned"
+              },
+              {
+                "type": "text",
+                "text": "   "
+              },
+              {
+                "type": "text",
+                "text": "Answer "
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "More"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "  prefill  "
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json",
+          "x-amzn-requestid": "req-1",
+          "date": "Fri, 06 Nov 2026 12:00:00 GMT"
+        },
+        "body": {
+          "output": {
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "reasoningContent": {
+                    "reasoningText": {
+                      "text": "thinking",
+                      "signature": "sig-2"
+                    }
+                  }
+                },
+                {
+                  "reasoningContent": {
+                    "reasoningText": {
+                      "text": "plain thinking"
+                    }
+                  }
+                },
+                {
+                  "reasoningContent": {
+                    "redactedReasoning": {
+                      "data": "red-2"
+                    }
+                  }
+                },
+                {
+                  "reasoningContent": {
+                    "redactedContent": "enc-2"
+                  }
+                },
+                {
+                  "text": "Final"
+                }
+              ]
+            }
+          },
+          "stopReason": "end_turn",
+          "usage": {
+            "inputTokens": 10,
+            "outputTokens": 3,
+            "totalTokens": 13
+          },
+          "metrics": {
+            "latencyMs": 120
+          }
+        }
+      },
+      "provider": "amazon-bedrock",
+      "supportedUrls": {
+        "image/*": [
+          "/^s3:\\/\\//"
+        ],
+        "video/*": [
+          "/^s3:\\/\\//"
+        ]
+      },
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.deepseek.r1-v1%3A0/converse",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "system": [],
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "text": "Think"
+                }
+              ]
+            },
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "reasoningContent": {
+                    "reasoningText": {
+                      "text": " signed thought ",
+                      "signature": "sig-1"
+                    }
+                  }
+                },
+                {
+                  "reasoningContent": {
+                    "redactedReasoning": {
+                      "data": "red-1"
+                    }
+                  }
+                },
+                {
+                  "reasoningContent": {
+                    "redactedContent": "enc-1"
+                  }
+                },
+                {
+                  "text": "   "
+                },
+                {
+                  "text": "Answer "
+                }
+              ]
+            },
+            {
+              "role": "user",
+              "content": [
+                {
+                  "text": "More"
+                }
+              ]
+            },
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "text": "prefill"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "result": {
+        "content": [
+          {
+            "type": "reasoning",
+            "text": "thinking",
+            "providerMetadata": {
+              "amazonBedrock": {
+                "signature": "sig-2"
+              },
+              "bedrock": {
+                "signature": "sig-2"
+              }
+            }
+          },
+          {
+            "type": "reasoning",
+            "text": "plain thinking"
+          },
+          {
+            "type": "reasoning",
+            "text": "",
+            "providerMetadata": {
+              "amazonBedrock": {
+                "redactedData": "red-2"
+              },
+              "bedrock": {
+                "redactedData": "red-2"
+              }
+            }
+          },
+          {
+            "type": "reasoning",
+            "text": "",
+            "providerMetadata": {
+              "amazonBedrock": {
+                "redactedContent": "enc-2"
+              },
+              "bedrock": {
+                "redactedContent": "enc-2"
+              }
+            }
+          },
+          {
+            "type": "text",
+            "text": "Final"
+          }
+        ],
+        "finishReason": {
+          "unified": "stop",
+          "raw": "end_turn"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 10,
+            "noCache": 10,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "outputTokens": {
+            "total": 3,
+            "text": 3
+          },
+          "raw": {
+            "inputTokens": 10,
+            "outputTokens": 3,
+            "totalTokens": 13
+          }
+        },
+        "response": {
+          "id": "req-1",
+          "timestamp": "2026-11-06T12:00:00.000Z",
+          "modelId": "us.deepseek.r1-v1:0",
+          "headers": {
+            "content-type": "application/json",
+            "date": "Fri, 06 Nov 2026 12:00:00 GMT",
+            "x-amzn-requestid": "req-1"
+          }
+        },
+        "warnings": [],
+        "request": {
+          "body": {
+            "system": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "text": "Think"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "reasoningContent": {
+                      "reasoningText": {
+                        "text": " signed thought ",
+                        "signature": "sig-1"
+                      }
+                    }
+                  },
+                  {
+                    "reasoningContent": {
+                      "redactedReasoning": {
+                        "data": "red-1"
+                      }
+                    }
+                  },
+                  {
+                    "reasoningContent": {
+                      "redactedContent": "enc-1"
+                    }
+                  },
+                  {
+                    "text": "   "
+                  },
+                  {
+                    "text": "Answer "
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "text": "More"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "text": "prefill"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "providerMetadata": {
+          "amazonBedrock": {
+            "stopSequence": null
+          },
+          "bedrock": {
+            "stopSequence": null
+          }
+        }
+      }
+    },
+    {
+      "name": "sampling-gpt-oss",
+      "modelId": "openai.gpt-oss-120b-1:0",
+      "options": {
+        "prompt": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hi"
+              }
+            ]
+          }
+        ],
+        "temperature": 1.5,
+        "topP": 0.9,
+        "topK": 40,
+        "stopSequences": [
+          "END"
+        ],
+        "frequencyPenalty": 0.1,
+        "presencePenalty": 0.2,
+        "seed": 7
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json",
+          "x-amzn-requestid": "req-1",
+          "date": "Fri, 06 Nov 2026 12:00:00 GMT"
+        },
+        "body": {
+          "output": {
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "text": "ok"
+                }
+              ]
+            }
+          },
+          "stopReason": "max_tokens",
+          "usage": {
+            "inputTokens": 10,
+            "outputTokens": 3,
+            "totalTokens": 13
+          },
+          "metrics": {
+            "latencyMs": 120
+          }
+        }
+      },
+      "provider": "amazon-bedrock",
+      "supportedUrls": {
+        "image/*": [
+          "/^s3:\\/\\//"
+        ],
+        "video/*": [
+          "/^s3:\\/\\//"
+        ]
+      },
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/openai.gpt-oss-120b-1%3A0/converse",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "system": [],
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "text": "Hi"
+                }
+              ]
+            }
+          ],
+          "inferenceConfig": {
+            "temperature": 1,
+            "topP": 0.9,
+            "topK": 40
+          }
+        }
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ok"
+          }
+        ],
+        "finishReason": {
+          "unified": "length",
+          "raw": "max_tokens"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 10,
+            "noCache": 10,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "outputTokens": {
+            "total": 3,
+            "text": 3
+          },
+          "raw": {
+            "inputTokens": 10,
+            "outputTokens": 3,
+            "totalTokens": 13
+          }
+        },
+        "response": {
+          "id": "req-1",
+          "timestamp": "2026-11-06T12:00:00.000Z",
+          "modelId": "openai.gpt-oss-120b-1:0",
+          "headers": {
+            "content-type": "application/json",
+            "date": "Fri, 06 Nov 2026 12:00:00 GMT",
+            "x-amzn-requestid": "req-1"
+          }
+        },
+        "warnings": [
+          {
+            "type": "unsupported",
+            "feature": "frequencyPenalty"
+          },
+          {
+            "type": "unsupported",
+            "feature": "presencePenalty"
+          },
+          {
+            "type": "unsupported",
+            "feature": "seed"
+          },
+          {
+            "type": "unsupported",
+            "feature": "temperature",
+            "details": "1.5 exceeds bedrock maximum of 1.0. clamped to 1.0"
+          },
+          {
+            "type": "unsupported",
+            "feature": "stopSequences",
+            "details": "stopSequences is not supported by this OpenAI model on the Converse API"
+          }
+        ],
+        "request": {
+          "body": {
+            "system": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "text": "Hi"
+                  }
+                ]
+              }
+            ],
+            "inferenceConfig": {
+              "temperature": 1,
+              "topP": 0.9,
+              "topK": 40
+            }
+          }
+        },
+        "providerMetadata": {
+          "amazonBedrock": {
+            "stopSequence": null
+          },
+          "bedrock": {
+            "stopSequence": null
+          }
+        }
+      }
+    },
+    {
+      "name": "sampling-gpt",
+      "modelId": "us.openai.gpt-5.6-luna",
+      "options": {
+        "prompt": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hi"
+              }
+            ]
+          }
+        ],
+        "temperature": -0.5,
+        "topP": 0.9,
+        "stopSequences": [
+          "END"
+        ]
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json",
+          "x-amzn-requestid": "req-1",
+          "date": "Fri, 06 Nov 2026 12:00:00 GMT"
+        },
+        "body": {
+          "output": {
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "text": "ok"
+                }
+              ]
+            }
+          },
+          "stopReason": "guardrail_intervened",
+          "usage": {
+            "inputTokens": 10,
+            "outputTokens": 3,
+            "totalTokens": 13
+          },
+          "metrics": {
+            "latencyMs": 120
+          }
+        }
+      },
+      "provider": "amazon-bedrock",
+      "supportedUrls": {
+        "image/*": [
+          "/^s3:\\/\\//"
+        ],
+        "video/*": [
+          "/^s3:\\/\\//"
+        ]
+      },
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.openai.gpt-5.6-luna/converse",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "system": [],
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "text": "Hi"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ok"
+          }
+        ],
+        "finishReason": {
+          "unified": "content-filter",
+          "raw": "guardrail_intervened"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 10,
+            "noCache": 10,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "outputTokens": {
+            "total": 3,
+            "text": 3
+          },
+          "raw": {
+            "inputTokens": 10,
+            "outputTokens": 3,
+            "totalTokens": 13
+          }
+        },
+        "response": {
+          "id": "req-1",
+          "timestamp": "2026-11-06T12:00:00.000Z",
+          "modelId": "us.openai.gpt-5.6-luna",
+          "headers": {
+            "content-type": "application/json",
+            "date": "Fri, 06 Nov 2026 12:00:00 GMT",
+            "x-amzn-requestid": "req-1"
+          }
+        },
+        "warnings": [
+          {
+            "type": "unsupported",
+            "feature": "temperature",
+            "details": "temperature is not supported by this OpenAI model on the Converse API"
+          },
+          {
+            "type": "unsupported",
+            "feature": "topP",
+            "details": "topP is not supported by this OpenAI model on the Converse API"
+          },
+          {
+            "type": "unsupported",
+            "feature": "stopSequences",
+            "details": "stopSequences is not supported by this OpenAI model on the Converse API"
+          }
+        ],
+        "request": {
+          "body": {
+            "system": [],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "text": "Hi"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "providerMetadata": {
+          "amazonBedrock": {
+            "stopSequence": null
+          },
+          "bedrock": {
+            "stopSequence": null
+          }
+        }
+      }
+    },
+    {
+      "name": "error-json",
+      "modelId": "us.moonshotai.kimi-k3",
+      "options": {
+        "prompt": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hi"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "statusText": "Bad Request",
+        "headers": {
+          "content-type": "application/json",
+          "x-amzn-errortype": "ValidationException"
+        },
+        "body": {
+          "message": "Invalid model",
+          "type": "ValidationException"
+        }
+      },
+      "provider": "amazon-bedrock",
+      "supportedUrls": {
+        "image/*": [
+          "/^s3:\\/\\//"
+        ],
+        "video/*": [
+          "/^s3:\\/\\//"
+        ]
+      },
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.moonshotai.kimi-k3/converse",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "system": [],
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "text": "Hi"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "error": {
+        "name": "AI_APICallError",
+        "message": "Invalid model",
+        "statusCode": 400,
+        "isRetryable": false,
+        "responseBody": "{\"message\":\"Invalid model\",\"type\":\"ValidationException\"}",
+        "data": {
+          "message": "Invalid model",
+          "type": "ValidationException"
+        }
+      }
+    },
+    {
+      "name": "error-empty",
+      "modelId": "us.moonshotai.kimi-k3",
+      "options": {
+        "prompt": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hi"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "status": 503,
+        "statusText": "Service Unavailable",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": ""
+      },
+      "provider": "amazon-bedrock",
+      "supportedUrls": {
+        "image/*": [
+          "/^s3:\\/\\//"
+        ],
+        "video/*": [
+          "/^s3:\\/\\//"
+        ]
+      },
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.moonshotai.kimi-k3/converse",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "system": [],
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "text": "Hi"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "error": {
+        "name": "AI_APICallError",
+        "message": "Service Unavailable",
+        "statusCode": 503,
+        "isRetryable": true,
+        "responseBody": ""
+      }
+    },
+    {
+      "name": "error-not-json",
+      "modelId": "us.moonshotai.kimi-k3",
+      "options": {
+        "prompt": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hi"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "status": 429,
+        "statusText": "Too Many Requests",
+        "headers": {
+          "content-type": "text/plain"
+        },
+        "body": "slow down"
+      },
+      "provider": "amazon-bedrock",
+      "supportedUrls": {
+        "image/*": [
+          "/^s3:\\/\\//"
+        ],
+        "video/*": [
+          "/^s3:\\/\\//"
+        ]
+      },
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.moonshotai.kimi-k3/converse",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "system": [],
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "text": "Hi"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "error": {
+        "name": "AI_APICallError",
+        "message": "Too Many Requests",
+        "statusCode": 429,
+        "isRetryable": true,
+        "responseBody": "slow down"
+      }
+    },
+    {
+      "name": "invalid-response",
+      "modelId": "us.moonshotai.kimi-k3",
+      "options": {
+        "prompt": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hi"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "output": {}
+        }
+      },
+      "provider": "amazon-bedrock",
+      "supportedUrls": {
+        "image/*": [
+          "/^s3:\\/\\//"
+        ],
+        "video/*": [
+          "/^s3:\\/\\//"
+        ]
+      },
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.moonshotai.kimi-k3/converse",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "system": [],
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "text": "Hi"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "error": {
+        "name": "AI_APICallError",
+        "message": "Invalid JSON response",
+        "statusCode": 200,
+        "isRetryable": false,
+        "responseBody": "{\"output\":{}}"
+      }
+    }
+  ],
+  "anthropic": [
+    {
+      "name": "anthropic-text",
+      "modelId": "global.anthropic.claude-opus-5-5",
+      "options": {
+        "prompt": [
+          {
+            "role": "system",
+            "content": "You are Prism.",
+            "providerOptions": {
+              "anthropic": {
+                "cacheControl": {
+                  "type": "ephemeral"
+                }
+              }
+            }
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hello"
+              }
+            ]
+          }
+        ],
+        "maxOutputTokens": 16000,
+        "headers": {
+          "user-agent": "ai/7.0.137"
+        }
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json",
+          "x-amzn-requestid": "req-a",
+          "date": "Fri, 06 Nov 2026 12:00:00 GMT"
+        },
+        "body": {
+          "id": "msg_1",
+          "type": "message",
+          "role": "assistant",
+          "model": "claude",
+          "content": [
+            {
+              "type": "text",
+              "text": "Hi"
+            }
+          ],
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 10,
+            "output_tokens": 3
+          }
+        }
+      },
+      "provider": "bedrock.anthropic.messages",
+      "supportedUrls": {},
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/global.anthropic.claude-opus-5-5/invoke",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "max_tokens": 16000,
+          "system": [
+            {
+              "type": "text",
+              "text": "You are Prism.",
+              "cache_control": {
+                "type": "ephemeral"
+              }
+            }
+          ],
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Hello"
+                }
+              ]
+            }
+          ],
+          "anthropic_version": "bedrock-2023-05-31"
+        }
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Hi"
+          }
+        ],
+        "finishReason": {
+          "unified": "stop",
+          "raw": "end_turn"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 10,
+            "noCache": 10,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "outputTokens": {
+            "total": 3
+          },
+          "raw": {
+            "input_tokens": 10,
+            "output_tokens": 3
+          }
+        },
+        "request": {
+          "body": {
+            "model": "global.anthropic.claude-opus-5-5",
+            "max_tokens": 16000,
+            "system": [
+              {
+                "type": "text",
+                "text": "You are Prism.",
+                "cache_control": {
+                  "type": "ephemeral"
+                }
+              }
+            ],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "response": {
+          "id": "msg_1",
+          "modelId": "claude",
+          "headers": {
+            "content-type": "application/json",
+            "date": "Fri, 06 Nov 2026 12:00:00 GMT",
+            "x-amzn-requestid": "req-a"
+          },
+          "body": {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hi"
+              }
+            ],
+            "stop_reason": "end_turn",
+            "stop_sequence": null,
+            "usage": {
+              "input_tokens": 10,
+              "output_tokens": 3
+            }
+          }
+        },
+        "warnings": [],
+        "providerMetadata": {
+          "anthropic": {
+            "usage": {
+              "input_tokens": 10,
+              "output_tokens": 3
+            },
+            "stopSequence": null,
+            "iterations": null,
+            "container": null,
+            "contextManagement": null
+          }
+        }
+      }
+    },
+    {
+      "name": "anthropic-tools",
+      "modelId": "us.anthropic.claude-opus-4-7",
+      "options": {
+        "prompt": [
+          {
+            "role": "system",
+            "content": "Use tools."
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Run ls"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool-call",
+                "toolCallId": "toolu_1",
+                "toolName": "shell_exec",
+                "input": {
+                  "command": "ls"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "content": [
+              {
+                "type": "tool-result",
+                "toolCallId": "toolu_1",
+                "toolName": "shell_exec",
+                "output": {
+                  "type": "content",
+                  "value": [
+                    {
+                      "type": "text",
+                      "text": "a.txt"
+                    },
+                    {
+                      "type": "file",
+                      "mediaType": "image/jpeg",
+                      "data": {
+                        "type": "data",
+                        "data": "ZmFrZSBqcGVnIGJ5dGVz"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "name": "shell_exec",
+            "description": "Run a command.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "command"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          },
+          {
+            "type": "function",
+            "name": "memory_search",
+            "description": "Search.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "q": {
+                  "type": "string"
+                }
+              },
+              "required": [],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            },
+            "providerOptions": {
+              "anthropic": {
+                "cacheControl": {
+                  "type": "ephemeral",
+                  "ttl": "1h"
+                }
+              }
+            }
+          }
+        ],
+        "toolChoice": {
+          "type": "tool",
+          "toolName": "shell_exec"
+        },
+        "maxOutputTokens": 1000
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json",
+          "x-amzn-requestid": "req-a",
+          "date": "Fri, 06 Nov 2026 12:00:00 GMT"
+        },
+        "body": {
+          "id": "msg_1",
+          "type": "message",
+          "role": "assistant",
+          "model": "claude",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "toolu_2",
+              "name": "shell_exec",
+              "input": {
+                "command": "pwd"
+              }
+            }
+          ],
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 10,
+            "output_tokens": 3,
+            "cache_creation_input_tokens": 5,
+            "cache_read_input_tokens": 7
+          }
+        }
+      },
+      "provider": "bedrock.anthropic.messages",
+      "supportedUrls": {},
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-opus-4-7/invoke",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "max_tokens": 1000,
+          "system": [
+            {
+              "type": "text",
+              "text": "Use tools."
+            }
+          ],
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Run ls"
+                }
+              ]
+            },
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "tool_use",
+                  "id": "toolu_1",
+                  "name": "shell_exec",
+                  "input": {
+                    "command": "ls"
+                  }
+                }
+              ]
+            },
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "tool_use_id": "toolu_1",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "a.txt"
+                    },
+                    {
+                      "type": "image",
+                      "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": "ZmFrZSBqcGVnIGJ5dGVz"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "tools": [
+            {
+              "name": "shell_exec",
+              "description": "Run a command.",
+              "input_schema": {
+                "type": "object",
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "command"
+                ],
+                "additionalProperties": false,
+                "$schema": "http://json-schema.org/draft-07/schema#"
+              }
+            },
+            {
+              "name": "memory_search",
+              "description": "Search.",
+              "input_schema": {
+                "type": "object",
+                "properties": {
+                  "q": {
+                    "type": "string"
+                  }
+                },
+                "required": [],
+                "additionalProperties": false,
+                "$schema": "http://json-schema.org/draft-07/schema#"
+              },
+              "cache_control": {
+                "type": "ephemeral",
+                "ttl": "1h"
+              }
+            }
+          ],
+          "tool_choice": {
+            "type": "tool",
+            "name": "shell_exec"
+          },
+          "anthropic_version": "bedrock-2023-05-31"
+        }
+      },
+      "result": {
+        "content": [
+          {
+            "type": "tool-call",
+            "toolCallId": "toolu_2",
+            "toolName": "shell_exec",
+            "input": "{\"command\":\"pwd\"}"
+          }
+        ],
+        "finishReason": {
+          "unified": "tool-calls",
+          "raw": "tool_use"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 22,
+            "noCache": 10,
+            "cacheRead": 7,
+            "cacheWrite": 5
+          },
+          "outputTokens": {
+            "total": 3
+          },
+          "raw": {
+            "input_tokens": 10,
+            "output_tokens": 3,
+            "cache_creation_input_tokens": 5,
+            "cache_read_input_tokens": 7
+          }
+        },
+        "request": {
+          "body": {
+            "model": "us.anthropic.claude-opus-4-7",
+            "max_tokens": 1000,
+            "system": [
+              {
+                "type": "text",
+                "text": "Use tools."
+              }
+            ],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Run ls"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "shell_exec",
+                    "input": {
+                      "command": "ls"
+                    }
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_1",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "a.txt"
+                      },
+                      {
+                        "type": "image",
+                        "source": {
+                          "type": "base64",
+                          "media_type": "image/jpeg",
+                          "data": "ZmFrZSBqcGVnIGJ5dGVz"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "shell_exec",
+                "description": "Run a command.",
+                "input_schema": {
+                  "type": "object",
+                  "properties": {
+                    "command": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "command"
+                  ],
+                  "additionalProperties": false,
+                  "$schema": "http://json-schema.org/draft-07/schema#"
+                }
+              },
+              {
+                "name": "memory_search",
+                "description": "Search.",
+                "input_schema": {
+                  "type": "object",
+                  "properties": {
+                    "q": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [],
+                  "additionalProperties": false,
+                  "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "cache_control": {
+                  "type": "ephemeral",
+                  "ttl": "1h"
+                }
+              }
+            ],
+            "tool_choice": {
+              "type": "tool",
+              "name": "shell_exec"
+            }
+          }
+        },
+        "response": {
+          "id": "msg_1",
+          "modelId": "claude",
+          "headers": {
+            "content-type": "application/json",
+            "date": "Fri, 06 Nov 2026 12:00:00 GMT",
+            "x-amzn-requestid": "req-a"
+          },
+          "body": {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_2",
+                "name": "shell_exec",
+                "input": {
+                  "command": "pwd"
+                }
+              }
+            ],
+            "stop_reason": "tool_use",
+            "stop_sequence": null,
+            "usage": {
+              "input_tokens": 10,
+              "output_tokens": 3,
+              "cache_creation_input_tokens": 5,
+              "cache_read_input_tokens": 7
+            }
+          }
+        },
+        "warnings": [],
+        "providerMetadata": {
+          "anthropic": {
+            "usage": {
+              "input_tokens": 10,
+              "output_tokens": 3,
+              "cache_creation_input_tokens": 5,
+              "cache_read_input_tokens": 7
+            },
+            "stopSequence": null,
+            "iterations": null,
+            "container": null,
+            "contextManagement": null
+          }
+        }
+      }
+    },
+    {
+      "name": "anthropic-gate",
+      "modelId": "global.anthropic.claude-haiku-5-5",
+      "options": {
+        "prompt": [
+          {
+            "role": "system",
+            "content": "Answer yes or no."
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Is it?"
+              }
+            ]
+          }
+        ],
+        "maxOutputTokens": 16,
+        "providerOptions": {
+          "anthropic": {
+            "thinking": {
+              "type": "disabled"
+            }
+          }
+        }
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json",
+          "x-amzn-requestid": "req-a",
+          "date": "Fri, 06 Nov 2026 12:00:00 GMT"
+        },
+        "body": {
+          "id": "msg_1",
+          "type": "message",
+          "role": "assistant",
+          "model": "claude",
+          "content": [
+            {
+              "type": "text",
+              "text": "yes"
+            }
+          ],
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 10,
+            "output_tokens": 3
+          }
+        }
+      },
+      "provider": "bedrock.anthropic.messages",
+      "supportedUrls": {},
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/global.anthropic.claude-haiku-5-5/invoke",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "max_tokens": 16,
+          "system": [
+            {
+              "type": "text",
+              "text": "Answer yes or no."
+            }
+          ],
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Is it?"
+                }
+              ]
+            }
+          ],
+          "thinking": {
+            "type": "disabled"
+          },
+          "anthropic_version": "bedrock-2023-05-31"
+        }
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "yes"
+          }
+        ],
+        "finishReason": {
+          "unified": "stop",
+          "raw": "end_turn"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 10,
+            "noCache": 10,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "outputTokens": {
+            "total": 3
+          },
+          "raw": {
+            "input_tokens": 10,
+            "output_tokens": 3
+          }
+        },
+        "request": {
+          "body": {
+            "model": "global.anthropic.claude-haiku-5-5",
+            "max_tokens": 16,
+            "thinking": {
+              "type": "disabled"
+            },
+            "system": [
+              {
+                "type": "text",
+                "text": "Answer yes or no."
+              }
+            ],
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Is it?"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "response": {
+          "id": "msg_1",
+          "modelId": "claude",
+          "headers": {
+            "content-type": "application/json",
+            "date": "Fri, 06 Nov 2026 12:00:00 GMT",
+            "x-amzn-requestid": "req-a"
+          },
+          "body": {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude",
+            "content": [
+              {
+                "type": "text",
+                "text": "yes"
+              }
+            ],
+            "stop_reason": "end_turn",
+            "stop_sequence": null,
+            "usage": {
+              "input_tokens": 10,
+              "output_tokens": 3
+            }
+          }
+        },
+        "warnings": [],
+        "providerMetadata": {
+          "anthropic": {
+            "usage": {
+              "input_tokens": 10,
+              "output_tokens": 3
+            },
+            "stopSequence": null,
+            "iterations": null,
+            "container": null,
+            "contextManagement": null
+          }
+        }
+      }
+    },
+    {
+      "name": "anthropic-json",
+      "modelId": "global.anthropic.claude-haiku-5-5",
+      "options": {
+        "prompt": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Classify"
+              }
+            ]
+          }
+        ],
+        "maxOutputTokens": 64,
+        "responseFormat": {
+          "type": "json",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok"
+            ],
+            "additionalProperties": false,
+            "$schema": "http://json-schema.org/draft-07/schema#"
+          }
+        },
+        "providerOptions": {
+          "anthropic": {
+            "thinking": {
+              "type": "disabled"
+            }
+          }
+        }
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json",
+          "x-amzn-requestid": "req-a",
+          "date": "Fri, 06 Nov 2026 12:00:00 GMT"
+        },
+        "body": {
+          "id": "msg_1",
+          "type": "message",
+          "role": "assistant",
+          "model": "claude",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "toolu_j",
+              "name": "json",
+              "input": {
+                "ok": true
+              }
+            }
+          ],
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 10,
+            "output_tokens": 3
+          }
+        }
+      },
+      "provider": "bedrock.anthropic.messages",
+      "supportedUrls": {},
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/global.anthropic.claude-haiku-5-5/invoke",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "max_tokens": 64,
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Classify"
+                }
+              ]
+            }
+          ],
+          "thinking": {
+            "type": "disabled"
+          },
+          "tools": [
+            {
+              "name": "json",
+              "description": "Respond with a JSON object.",
+              "input_schema": {
+                "type": "object",
+                "properties": {
+                  "ok": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "ok"
+                ],
+                "additionalProperties": false,
+                "$schema": "http://json-schema.org/draft-07/schema#"
+              }
+            }
+          ],
+          "tool_choice": {
+            "type": "any"
+          },
+          "anthropic_version": "bedrock-2023-05-31"
+        }
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true}"
+          }
+        ],
+        "finishReason": {
+          "unified": "stop",
+          "raw": "tool_use"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 10,
+            "noCache": 10,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "outputTokens": {
+            "total": 3
+          },
+          "raw": {
+            "input_tokens": 10,
+            "output_tokens": 3
+          }
+        },
+        "request": {
+          "body": {
+            "model": "global.anthropic.claude-haiku-5-5",
+            "max_tokens": 64,
+            "thinking": {
+              "type": "disabled"
+            },
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Classify"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "json",
+                "description": "Respond with a JSON object.",
+                "input_schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ],
+                  "additionalProperties": false,
+                  "$schema": "http://json-schema.org/draft-07/schema#"
+                }
+              }
+            ],
+            "tool_choice": {
+              "type": "any",
+              "disable_parallel_tool_use": true
+            }
+          }
+        },
+        "response": {
+          "id": "msg_1",
+          "modelId": "claude",
+          "headers": {
+            "content-type": "application/json",
+            "date": "Fri, 06 Nov 2026 12:00:00 GMT",
+            "x-amzn-requestid": "req-a"
+          },
+          "body": {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "toolu_j",
+                "name": "json",
+                "input": {
+                  "ok": true
+                }
+              }
+            ],
+            "stop_reason": "tool_use",
+            "stop_sequence": null,
+            "usage": {
+              "input_tokens": 10,
+              "output_tokens": 3
+            }
+          }
+        },
+        "warnings": [],
+        "providerMetadata": {
+          "anthropic": {
+            "usage": {
+              "input_tokens": 10,
+              "output_tokens": 3
+            },
+            "stopSequence": null,
+            "iterations": null,
+            "container": null,
+            "contextManagement": null
+          }
+        }
+      }
+    },
+    {
+      "name": "anthropic-deferred",
+      "modelId": "global.anthropic.claude-opus-5-5",
+      "options": {
+        "prompt": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hi"
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "name": "shell_exec",
+            "description": "Run.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {},
+              "required": [],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          },
+          {
+            "type": "function",
+            "name": "mcp__deferred",
+            "description": "Deferred.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {},
+              "required": [],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            },
+            "providerOptions": {
+              "anthropic": {
+                "deferLoading": true
+              }
+            }
+          }
+        ],
+        "maxOutputTokens": 100
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json",
+          "x-amzn-requestid": "req-a",
+          "date": "Fri, 06 Nov 2026 12:00:00 GMT"
+        },
+        "body": {
+          "id": "msg_1",
+          "type": "message",
+          "role": "assistant",
+          "model": "claude",
+          "content": [
+            {
+              "type": "text",
+              "text": "ok"
+            }
+          ],
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 10,
+            "output_tokens": 3
+          }
+        }
+      },
+      "provider": "bedrock.anthropic.messages",
+      "supportedUrls": {},
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/global.anthropic.claude-opus-5-5/invoke",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "max_tokens": 100,
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Hi"
+                }
+              ]
+            }
+          ],
+          "tools": [
+            {
+              "name": "shell_exec",
+              "description": "Run.",
+              "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false,
+                "$schema": "http://json-schema.org/draft-07/schema#"
+              }
+            },
+            {
+              "name": "mcp__deferred",
+              "description": "Deferred.",
+              "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false,
+                "$schema": "http://json-schema.org/draft-07/schema#"
+              },
+              "defer_loading": true
+            }
+          ],
+          "anthropic_version": "bedrock-2023-05-31"
+        }
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ok"
+          }
+        ],
+        "finishReason": {
+          "unified": "stop",
+          "raw": "end_turn"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 10,
+            "noCache": 10,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "outputTokens": {
+            "total": 3
+          },
+          "raw": {
+            "input_tokens": 10,
+            "output_tokens": 3
+          }
+        },
+        "request": {
+          "body": {
+            "model": "global.anthropic.claude-opus-5-5",
+            "max_tokens": 100,
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hi"
+                  }
+                ]
+              }
+            ],
+            "tools": [
+              {
+                "name": "shell_exec",
+                "description": "Run.",
+                "input_schema": {
+                  "type": "object",
+                  "properties": {},
+                  "required": [],
+                  "additionalProperties": false,
+                  "$schema": "http://json-schema.org/draft-07/schema#"
+                }
+              },
+              {
+                "name": "mcp__deferred",
+                "description": "Deferred.",
+                "input_schema": {
+                  "type": "object",
+                  "properties": {},
+                  "required": [],
+                  "additionalProperties": false,
+                  "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "defer_loading": true
+              }
+            ]
+          }
+        },
+        "response": {
+          "id": "msg_1",
+          "modelId": "claude",
+          "headers": {
+            "content-type": "application/json",
+            "date": "Fri, 06 Nov 2026 12:00:00 GMT",
+            "x-amzn-requestid": "req-a"
+          },
+          "body": {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude",
+            "content": [
+              {
+                "type": "text",
+                "text": "ok"
+              }
+            ],
+            "stop_reason": "end_turn",
+            "stop_sequence": null,
+            "usage": {
+              "input_tokens": 10,
+              "output_tokens": 3
+            }
+          }
+        },
+        "warnings": [],
+        "providerMetadata": {
+          "anthropic": {
+            "usage": {
+              "input_tokens": 10,
+              "output_tokens": 3
+            },
+            "stopSequence": null,
+            "iterations": null,
+            "container": null,
+            "contextManagement": null
+          }
+        }
+      }
+    },
+    {
+      "name": "anthropic-arn",
+      "modelId": "arn:aws:bedrock:us-east-1:123456789012:inference-profile/global.anthropic.claude-opus-5-5",
+      "options": {
+        "prompt": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hi"
+              }
+            ]
+          }
+        ],
+        "maxOutputTokens": 100
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json",
+          "x-amzn-requestid": "req-a",
+          "date": "Fri, 06 Nov 2026 12:00:00 GMT"
+        },
+        "body": {
+          "id": "msg_1",
+          "type": "message",
+          "role": "assistant",
+          "model": "claude",
+          "content": [
+            {
+              "type": "text",
+              "text": "ok"
+            }
+          ],
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 10,
+            "output_tokens": 3
+          }
+        }
+      },
+      "provider": "bedrock.anthropic.messages",
+      "supportedUrls": {},
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/arn%3Aaws%3Abedrock%3Aus-east-1%3A123456789012%3Ainference-profile%2Fglobal.anthropic.claude-opus-5-5/invoke",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "max_tokens": 100,
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Hi"
+                }
+              ]
+            }
+          ],
+          "anthropic_version": "bedrock-2023-05-31"
+        }
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ok"
+          }
+        ],
+        "finishReason": {
+          "unified": "stop",
+          "raw": "end_turn"
+        },
+        "usage": {
+          "inputTokens": {
+            "total": 10,
+            "noCache": 10,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "outputTokens": {
+            "total": 3
+          },
+          "raw": {
+            "input_tokens": 10,
+            "output_tokens": 3
+          }
+        },
+        "request": {
+          "body": {
+            "model": "arn:aws:bedrock:us-east-1:123456789012:inference-profile/global.anthropic.claude-opus-5-5",
+            "max_tokens": 100,
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hi"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "response": {
+          "id": "msg_1",
+          "modelId": "claude",
+          "headers": {
+            "content-type": "application/json",
+            "date": "Fri, 06 Nov 2026 12:00:00 GMT",
+            "x-amzn-requestid": "req-a"
+          },
+          "body": {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude",
+            "content": [
+              {
+                "type": "text",
+                "text": "ok"
+              }
+            ],
+            "stop_reason": "end_turn",
+            "stop_sequence": null,
+            "usage": {
+              "input_tokens": 10,
+              "output_tokens": 3
+            }
+          }
+        },
+        "warnings": [],
+        "providerMetadata": {
+          "anthropic": {
+            "usage": {
+              "input_tokens": 10,
+              "output_tokens": 3
+            },
+            "stopSequence": null,
+            "iterations": null,
+            "container": null,
+            "contextManagement": null
+          }
+        }
+      }
+    },
+    {
+      "name": "anthropic-error",
+      "modelId": "global.anthropic.claude-opus-5-5",
+      "options": {
+        "prompt": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hi"
+              }
+            ]
+          }
+        ],
+        "maxOutputTokens": 100
+      },
+      "response": {
+        "status": 400,
+        "statusText": "Bad Request",
+        "headers": {
+          "content-type": "application/json",
+          "x-amzn-errortype": "ValidationException"
+        },
+        "body": {
+          "message": "messages: text content blocks must be non-empty"
+        }
+      },
+      "provider": "bedrock.anthropic.messages",
+      "supportedUrls": {},
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/global.anthropic.claude-opus-5-5/invoke",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "max_tokens": 100,
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Hi"
+                }
+              ]
+            }
+          ],
+          "anthropic_version": "bedrock-2023-05-31"
+        }
+      },
+      "error": {
+        "name": "AI_APICallError",
+        "message": "messages: text content blocks must be non-empty",
+        "statusCode": 400,
+        "isRetryable": false,
+        "responseBody": "{\"type\":\"error\",\"error\":{\"type\":\"error\",\"message\":\"messages: text content blocks must be non-empty\"}}",
+        "data": {
+          "type": "error",
+          "error": {
+            "type": "error",
+            "message": "messages: text content blocks must be non-empty"
+          }
+        }
+      }
+    },
+    {
+      "name": "anthropic-error-not-json",
+      "modelId": "global.anthropic.claude-opus-5-5",
+      "options": {
+        "prompt": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hi"
+              }
+            ]
+          }
+        ],
+        "maxOutputTokens": 100
+      },
+      "response": {
+        "status": 429,
+        "statusText": "Too Many Requests",
+        "headers": {
+          "content-type": "text/plain"
+        },
+        "body": "Too many tokens, please wait before trying again."
+      },
+      "provider": "bedrock.anthropic.messages",
+      "supportedUrls": {},
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/global.anthropic.claude-opus-5-5/invoke",
+        "method": "POST",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "max_tokens": 100,
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Hi"
+                }
+              ]
+            }
+          ],
+          "anthropic_version": "bedrock-2023-05-31"
+        }
+      },
+      "error": {
+        "name": "AI_APICallError",
+        "message": "Too many tokens, please wait before trying again.",
+        "statusCode": 429,
+        "isRetryable": true,
+        "responseBody": "{\"type\":\"error\",\"error\":{\"type\":\"error\",\"message\":\"Too many tokens, please wait before trying again.\"}}",
+        "data": {
+          "type": "error",
+          "error": {
+            "type": "error",
+            "message": "Too many tokens, please wait before trying again."
+          }
+        }
+      }
+    }
+  ],
+  "embedding": [
+    {
+      "name": "titan",
+      "modelId": "amazon.titan-embed-text-v2:0",
+      "options": {
+        "values": [
+          "hello world"
+        ],
+        "providerOptions": {
+          "bedrock": {
+            "dimensions": 1024
+          }
+        }
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "embedding": [
+            0.1,
+            -0.2,
+            0.5
+          ],
+          "inputTextTokenCount": 3
+        }
+      },
+      "maxEmbeddingsPerCall": 1,
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/amazon.titan-embed-text-v2%3A0/invoke",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "inputText": "hello world",
+          "dimensions": 1024
+        }
+      },
+      "result": {
+        "embeddings": [
+          [
+            0.1,
+            -0.2,
+            0.5
+          ]
+        ],
+        "usage": {
+          "tokens": 3
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "titan-no-options",
+      "modelId": "amazon.titan-embed-text-v2:0",
+      "options": {
+        "values": [
+          "x"
+        ]
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "embedding": [
+            1,
+            2
+          ],
+          "inputTextTokenCount": 1
+        }
+      },
+      "maxEmbeddingsPerCall": 1,
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/amazon.titan-embed-text-v2%3A0/invoke",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "inputText": "x"
+        }
+      },
+      "result": {
+        "embeddings": [
+          [
+            1,
+            2
+          ]
+        ],
+        "usage": {
+          "tokens": 1
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "cohere",
+      "modelId": "us.cohere.embed-v4:0",
+      "options": {
+        "values": [
+          "a",
+          "b"
+        ],
+        "dimensions": 512
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json",
+          "x-amzn-bedrock-input-token-count": "4"
+        },
+        "body": {
+          "embeddings": {
+            "float": [
+              [
+                0.1
+              ],
+              [
+                0.2
+              ]
+            ]
+          }
+        }
+      },
+      "maxEmbeddingsPerCall": 96,
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.cohere.embed-v4%3A0/invoke",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "input_type": "search_query",
+          "texts": [
+            "a",
+            "b"
+          ],
+          "output_dimension": 512
+        }
+      },
+      "result": {
+        "embeddings": [
+          [
+            0.1
+          ],
+          [
+            0.2
+          ]
+        ],
+        "usage": {
+          "tokens": 4
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "cohere-v3",
+      "modelId": "cohere.embed-english-v3",
+      "options": {
+        "values": [
+          "a"
+        ],
+        "providerOptions": {
+          "bedrock": {
+            "inputType": "search_document"
+          }
+        }
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "embeddings": [
+            [
+              0.3,
+              0.4
+            ]
+          ]
+        }
+      },
+      "maxEmbeddingsPerCall": 96,
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/cohere.embed-english-v3/invoke",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "input_type": "search_document",
+          "texts": [
+            "a"
+          ]
+        }
+      },
+      "result": {
+        "embeddings": [
+          [
+            0.3,
+            0.4
+          ]
+        ],
+        "usage": {
+          "tokens": null
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "nova",
+      "modelId": "amazon.nova-2-multimodal-embeddings-v1:0",
+      "options": {
+        "values": [
+          "a"
+        ]
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "embeddings": [
+            {
+              "embeddingType": "TEXT",
+              "embedding": [
+                0.5
+              ]
+            }
+          ],
+          "inputTokenCount": 2
+        }
+      },
+      "maxEmbeddingsPerCall": 1,
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/amazon.nova-2-multimodal-embeddings-v1%3A0/invoke",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "taskType": "SINGLE_EMBEDDING",
+          "singleEmbeddingParams": {
+            "embeddingPurpose": "GENERIC_INDEX",
+            "embeddingDimension": 1024,
+            "text": {
+              "truncationMode": "END",
+              "value": "a"
+            }
+          }
+        }
+      },
+      "result": {
+        "embeddings": [
+          [
+            0.5
+          ]
+        ],
+        "usage": {
+          "tokens": 2
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "titan-error",
+      "modelId": "amazon.titan-embed-text-v2:0",
+      "options": {
+        "values": [
+          "x"
+        ]
+      },
+      "response": {
+        "status": 403,
+        "statusText": "Forbidden",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "message": "Access denied"
+        }
+      },
+      "maxEmbeddingsPerCall": 1,
+      "request": {
+        "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/amazon.titan-embed-text-v2%3A0/invoke",
+        "headers": {
+          "content-type": "application/json",
+          "user-agent": "<user-agent>",
+          "authorization": "Bearer test-key"
+        },
+        "body": {
+          "inputText": "x"
+        }
+      },
+      "error": {
+        "name": "AI_APICallError",
+        "message": "Access denied",
+        "statusCode": 403,
+        "isRetryable": false
+      }
+    }
+  ],
+  "sigv4": [
+    {
+      "name": "converse-post",
+      "url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.moonshotai.kimi-k3/converse",
+      "headers": {
+        "content-type": "application/json",
+        "user-agent": "ai/7.0.137 ai-sdk-amazon-bedrock/5.0.113"
+      },
+      "body": "{\"messages\":[{\"role\":\"user\",\"content\":[{\"text\":\"Hi\"}]}]}",
+      "region": "us-east-1",
+      "accessKeyId": "AKIDEXAMPLE",
+      "secretAccessKey": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+      "datetime": "20261106T120000Z",
+      "canonicalString": "POST\n/model/us.moonshotai.kimi-k3/converse\n\nhost:bedrock-runtime.us-east-1.amazonaws.com\nx-amz-date:20261106T120000Z\n\nhost;x-amz-date\n45e583fed2564dc00e823303d7609f8587af7f685b993cb0f998afc0d480b01d",
+      "signedHeaders": {
+        "authorization": "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20261106/us-east-1/bedrock/aws4_request, SignedHeaders=host;x-amz-date, Signature=2d354dc6bc32a8636a12a76e8bf2d2b04537c52285378b6799212a57360341ff",
+        "content-type": "application/json",
+        "user-agent": "ai/7.0.137 ai-sdk-amazon-bedrock/5.0.113",
+        "x-amz-date": "20261106T120000Z"
+      }
+    },
+    {
+      "name": "invoke-arn-with-session",
+      "url": "https://bedrock-runtime.eu-central-1.amazonaws.com/model/arn%3Aaws%3Abedrock%3Aeu-central-1%3A123456789012%3Ainference-profile%2Feu.anthropic.claude-opus-4-7/invoke",
+      "headers": {
+        "content-type": "application/json",
+        "anthropic-beta": "fine-grained-tool-streaming-2025-05-14",
+        "user-agent": "x",
+        "x-custom": "  spaced   value  "
+      },
+      "body": "{\"anthropic_version\":\"bedrock-2023-05-31\",\"max_tokens\":10,\"messages\":[]}",
+      "region": "eu-central-1",
+      "accessKeyId": "ASIAEXAMPLE",
+      "secretAccessKey": "secret/with+chars",
+      "sessionToken": "session-token-value",
+      "datetime": "20260101T000000Z",
+      "canonicalString": "POST\n/model/arn%253Aaws%253Abedrock%253Aeu-central-1%253A123456789012%253Ainference-profile%252Feu.anthropic.claude-opus-4-7/invoke\n\nanthropic-beta:fine-grained-tool-streaming-2025-05-14\nhost:bedrock-runtime.eu-central-1.amazonaws.com\nx-amz-date:20260101T000000Z\nx-amz-security-token:session-token-value\nx-custom:spaced value\n\nanthropic-beta;host;x-amz-date;x-amz-security-token;x-custom\n27caf631d33dedd1d6e452b28d9244f265a8036d3ad70105bf7992a4d31bf46f",
+      "signedHeaders": {
+        "anthropic-beta": "fine-grained-tool-streaming-2025-05-14",
+        "authorization": "AWS4-HMAC-SHA256 Credential=ASIAEXAMPLE/20260101/eu-central-1/bedrock/aws4_request, SignedHeaders=anthropic-beta;host;x-amz-date;x-amz-security-token;x-custom, Signature=34b08fd7fd9f3d9ec0d111b3d3a5557f39f19219b1c5129eacc3c1812d51a0b1",
+        "content-type": "application/json",
+        "user-agent": "x",
+        "x-amz-date": "20260101T000000Z",
+        "x-amz-security-token": "session-token-value",
+        "x-custom": "spaced   value"
+      }
+    },
+    {
+      "name": "model-id-with-colon-and-query",
+      "url": "https://gateway.example.com:8443/llm/bedrock/us-east-1/model/amazon.titan-embed-text-v2%3A0/invoke?b=2&a=1&a=0",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"inputText\":\"hello ü\"}",
+      "region": "us-east-1",
+      "accessKeyId": "AKID",
+      "secretAccessKey": "SECRET",
+      "datetime": "20261106T235959Z",
+      "canonicalString": "POST\n/llm/bedrock/us-east-1/model/amazon.titan-embed-text-v2%253A0/invoke\na=0&a=1&b=2\nhost:gateway.example.com:8443\nx-amz-date:20261106T235959Z\n\nhost;x-amz-date\n81da4a3bbe7af22e29f9a15e7984ae44e267fdee088b5e66fc4d0c31fbc6cf8d",
+      "signedHeaders": {
+        "authorization": "AWS4-HMAC-SHA256 Credential=AKID/20261106/us-east-1/bedrock/aws4_request, SignedHeaders=host;x-amz-date, Signature=38c10fdf53b7acdbb2668e5401576c3c1d817bba649fa96cc5d939cdb12efa62",
+        "content-type": "application/json",
+        "x-amz-date": "20261106T235959Z"
+      }
+    }
+  ]
+}

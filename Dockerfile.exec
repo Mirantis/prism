@@ -96,7 +96,7 @@ RUN chmod -R a+rX /opt/mise \
 # remove another's files.
 #
 # Keep this list in step with CONTAINER_PATHS in
-# src/lib/execution-environments/docker/volumes.ts: a path missing here becomes
+# backend/src/lib/execution_environments/docker/volumes.rs: a path missing here becomes
 # a root-owned volume the agent cannot write.
 RUN mkdir -p /prism/workspace /prism/skills /prism/plugins /prism/plugin-data \
              /prism/tool-outputs /prism/claude /prism/codex /prism/home \

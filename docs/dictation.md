@@ -21,7 +21,7 @@ send when you are done, or ✕ to discard the recording.
 
 Another client speaks the dictation frames on the chat connection:
 `dictation_start`, binary pcm16 audio, and `dictation_stop`, with
-`commit: false` to discard. `src/services/websocket-gateway.service.ts` defines
+`commit: false` to discard. `backend/src/services/websocket_gateway_service.rs` defines
 them.
 
 ## When it doesn't work

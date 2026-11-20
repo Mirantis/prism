@@ -1,7 +1,8 @@
 name: E2E setup
 description: >-
-  Node, the workspace's node_modules and the Prisma client for the e2e jobs, plus what
-  the web suite needs when `web` is set.
+  The runtime binary the `runtime` job built, Node, the workspace's node_modules and the
+  Prisma client for the e2e jobs, plus what the web suite needs when `web` is set. A job
+  using it needs the `runtime` job.
 
 inputs:
   web:
@@ -11,6 +12,14 @@ inputs:
 runs:
   using: composite
   steps:
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      with:
+        name: prism-server
+        path: backend/target/release
+
+    - shell: bash
+      run: chmod +x backend/target/release/prism-server
+
     - id: node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
       with:
@@ -41,6 +50,24 @@ runs:
 
     - shell: bash
       run: npx prisma generate --schema prisma/sqlite/schema.prisma
+
+    # The runners' Ubuntu mirror is slow at times, and the packages below have outrun the
+    # job's timeout. apt keeps what it downloads in a cached folder, so a run fetches only
+    # the packages an earlier run did not.
+    - if: inputs.web == 'true'
+      id: apt-archives
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ~/.cache/apt-archives
+        key: e2e-apt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/e2e-setup/action.yml') }}
+        restore-keys: |
+          e2e-apt-${{ runner.os }}-${{ runner.arch }}-
+
+    - if: inputs.web == 'true'
+      shell: bash
+      run: |
+        mkdir -p ~/.cache/apt-archives/partial
+        echo "Dir::Cache::Archives \"$HOME/.cache/apt-archives\";" | sudo tee /etc/apt/apt.conf.d/90-e2e-archives > /dev/null
 
     - if: inputs.web == 'true'
       id: playwright
@@ -78,3 +105,11 @@ runs:
           xvfb pulseaudio pulseaudio-utils \
           xfce4 xfce4-terminal dbus-x11 \
           ffmpeg xdotool wmctrl x11-xserver-utils tesseract-ocr
+        # apt runs as root; the cache step reads the folder as the runner's user.
+        sudo chown -R "$USER" ~/.cache/apt-archives
+
+    - if: inputs.web == 'true' && steps.apt-archives.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ~/.cache/apt-archives
+        key: ${{ steps.apt-archives.outputs.cache-primary-key }}

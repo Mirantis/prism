@@ -27,24 +27,21 @@ cp .env.example .env
 $EDITOR .env                  # uncomment DATABASE_URL
 
 # Every time:
-npm run dev:single            # runtime on :3003 (tsx watch), Vite on :5173 (HMR + proxy)
+npm run dev:single            # backend on :3003 (cargo run), Vite on :5173 (HMR + proxy)
 ```
 
-`dev:single` applies pending Prisma migrations to SQLite before launching
-tsx-watch and Vite together — you never run migrate manually. Slack and Bedrock
+The backend applies pending migrations to SQLite when it starts, so you never run
+migrate manually. Slack and Bedrock
 are optional and fail-open when their tokens are unset; the SPA shell and most
 read-only views work with zero extra env. Add `AWS_BEARER_TOKEN_BEDROCK` (or AWS
 SigV4) for chat, and `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` for Slack flows. See
 [`.env.example`](.env.example) for the full env block.
 
-Browser → `http://localhost:5173`. UI edits hot-reload in under a second; runtime
-TypeScript edits restart the server in about a second.
+Browser → `http://localhost:5173`. UI edits hot-reload in under a second; after a
+backend change, stop `dev:single` and start it again.
 
-To use the container desktop while editing, build the local image once with
-`npm run docker:build`, then run `npm run docker:dev`. The script watches runtime
-and Web UI changes. Reload the Web UI after a frontend change. Rebuild the image
-when dependencies, the database schema, or container tools change. Set
-`PRISM_IMAGE` to use another image; the script pulls it when needed.
+To use the container desktop, build the local image with `npm run docker:build`,
+then run it with `npm run docker:start`. Rebuild the image after a change.
 
 ## The Verification Gate
 
@@ -53,27 +50,25 @@ Run these from the repo root before opening a pull request:
 ```bash
 npm run lint        # oxlint
 npm run lint:md     # markdownlint-cli2 over **/*.md
-npm run test:run    # vitest (single run)
-npm run build       # tsc + Web UI build
+npm test            # cargo test for the backend
+npm run build       # backend release build + Web UI build
 
 npm run test:run --workspaces --if-present   # cli + web workspace suites
 ```
 
-`npm run test:coverage` produces a coverage report when you want one. The
-`commit-msg` and `prepare-commit-msg` Husky hooks run on every commit; CI runs
+The `commit-msg` and `prepare-commit-msg` Husky hooks run on every commit; CI runs
 lint, tests, and the build.
 
 ## Tests
 
-New behavior should ship with tests. The suite runs on [vitest](https://vitest.dev):
+New behavior should ship with tests.
 
-- Unit and service tests live alongside the code they cover.
+- Backend tests are Rust tests beside the code they cover, under `backend/src`;
+  `npm test` runs them with `cargo test`.
 - Prefer testing observable behavior through a service's public surface over
   reaching into internals.
-- `npm test` runs vitest in watch mode for the inner loop; `npm run test:run`
-  is the one-shot form used by the gate and CI.
-- The root run covers `src/**` only. The `cli/` and `web/` workspaces each have
-  their own vitest config, so their suites need the `--workspaces` form above.
+- The `cli/` and `web/` workspaces each have their own vitest config, so their
+  suites need the `--workspaces` form above.
 
 ## Pull Request Guidelines
 

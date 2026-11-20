@@ -18,6 +18,8 @@
     "node_modules/**",
     "**/node_modules/**",
     ".claude/**",
+    // What the HTML-to-Markdown converter produces, compared byte for byte by its tests
+    "backend/tests/fixtures/**",
     // A symlink to AGENTS.md — the glob sees both paths, so skip one
     "CLAUDE.md"
   ]

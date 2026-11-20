@@ -16,9 +16,8 @@ export default defineConfig({
     // vitest one, which is the less useful of the two failures.
     testTimeout: 600_000,
     // Same trade as testTimeout, which the ceiling above already makes for
-    // tests but this line used to undercut for hooks: `beforeAll` runs
-    // `npx prisma db push` and then boots a runtime behind
-    // `waitForReady(60_000)` (tui/setup.ts), so any boot slower than ~55s hit
+    // tests but this line used to undercut for hooks: `beforeAll` boots a
+    // runtime behind `waitForReady(60_000)` (tui/setup.ts), so any boot slower than ~55s hit
     // vitest's hook ceiling first and reported a bare hook timeout instead of
     // the harness error that names the phase and prints the runtime log tail.
     hookTimeout: 180_000,

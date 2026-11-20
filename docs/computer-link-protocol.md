@@ -4,7 +4,7 @@ This page is for people writing the client that connects a computer to Prism, so
 the agent can use it. It describes version 1 of the computer link,
 `/api/computer-link`.
 
-The schemas in `src/services/computer/remote/link-protocol.ts` are the authority.
+The schemas in `backend/src/services/computer/remote/link_protocol.rs` are the authority.
 
 ## Adding the computer
 

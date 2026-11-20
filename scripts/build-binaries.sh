@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
 #
-# Build the distributable `prism` + `prism-server` SEA binaries for the host
-# platform and (unless SKIP_ARCHIVE is set) package an archive ready for the
+# Build the distributable `prism` (terminal UI, a Node SEA) and `prism-server`
+# (the Rust runtime) binaries for the host platform and (unless SKIP_ARCHIVE is set) package an archive ready for the
 # GitHub Releases upload. `.github/workflows/create-binary.yml` wraps this
 # script so the build pipeline lives in one place.
 #
 # Env:
 #   VERSION        version string used in the archive filename (default: dev)
 #   SKIP_SMOKE     skip scripts/smoke-sea.mjs when non-empty
-#   SKIP_ARCHIVE   stop after collect-natives (no tar/zip) when non-empty
+#   SKIP_ARCHIVE   stop before packaging (no tar/zip) when non-empty
 #
 # Output:
-#   dist-sea/<plat>-<arch>/                prism, prism-server, node_modules/,
-#                                          web/, LICENSE, NOTICE,
-#                                          THIRD_PARTY_NOTICES, install.sh
+#   dist-sea/<plat>-<arch>/                prism, prism-server, web/, node_modules/ (placeholder),
+#                                          LICENSE, NOTICE, THIRD_PARTY_NOTICES, install.sh
 #                                          (macOS/Linux) or install.ps1 (Windows)
 #   prism-<version>-<plat>-<arch>.tar.gz   (macOS/Linux)
 #   prism-<version>-<plat>-<arch>.zip      (Windows, via 7z)
 #
-# Assumes dependencies are already installed (`npm ci` first).
+# Assumes dependencies are already installed (`npm ci` first) and a Rust
+# toolchain is on PATH.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -31,8 +31,31 @@ PLATFORM=$(node -e 'process.stdout.write(process.platform)')
 
 npm run build:web
 node scripts/build-sea.mjs prism
-node scripts/build-sea.mjs prism-server
-node scripts/collect-natives.mjs
+
+# The runtime reports this version (`prism-server --version`) and, because it is
+# set, applies the standalone install's defaults. A non-release VERSION builds
+# as the package version, as the terminal UI does.
+if [[ "$VERSION" =~ ^v[0-9]{4}\.[0-9]{1,2}\.[0-9]+$ ]]; then
+  PRISM_VERSION="$VERSION"
+else
+  PRISM_VERSION=$(node -p 'require("./package.json").version')
+fi
+PRISM_VERSION="$PRISM_VERSION" cargo build --release --locked --manifest-path backend/Cargo.toml --bin prism-server
+EXE=""
+[ "$PLATFORM" = "win32" ] && EXE=".exe"
+cp "backend/target/release/prism-server$EXE" "dist-sea/$OS_ARCH/prism-server$EXE"
+rm -rf "dist-sea/$OS_ARCH/web"
+cp -R web/dist "dist-sea/$OS_ARCH/web"
+
+# The updater in a TypeScript-runtime install refuses an archive without
+# node_modules/ and swaps that directory in, so the archive keeps a placeholder
+# for those installs to update. The installers and the Rust updater copy only
+# the entries they name, and the Rust updater moves an install's node_modules/
+# to the update trash.
+rm -rf "dist-sea/$OS_ARCH/node_modules"
+mkdir -p "dist-sea/$OS_ARCH/node_modules"
+echo "Prism needs nothing in this directory. Releases keep it so an older install can update." \
+  > "dist-sea/$OS_ARCH/node_modules/README.txt"
 
 # License, attribution and third-party notices ship inside the archive, and
 # install.sh / install.ps1 copy them into $PRISM_HOME. This runs before the smoke

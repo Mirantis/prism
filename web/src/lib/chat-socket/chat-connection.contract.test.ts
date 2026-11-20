@@ -19,7 +19,7 @@ interface Recording {
 }
 
 const recording = JSON.parse(
-  readFileSync(new URL('../../../../src/protocol/fixtures/v2-session.json', import.meta.url), 'utf8'),
+  readFileSync(new URL('../../../../backend/src/protocol/fixtures/v2-session.json', import.meta.url), 'utf8'),
 ) as Recording;
 
 function framesOf(client: string, direction: 'sent' | 'received') {

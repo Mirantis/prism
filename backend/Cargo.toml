@@ -1,0 +1,138 @@
+[package]
+name = "prism-runtime"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+license = "Apache-2.0"
+publish = false
+default-run = "prism-server"
+
+[lib]
+name = "prism_runtime"
+path = "src/crate_root.rs"
+
+[[bin]]
+name = "prism-server"
+path = "src/main.rs"
+
+[lints.clippy]
+# The crate keeps the TypeScript runtime's shapes: callback types spelled where they are
+# used, and enums and error types whose variants hold what the TypeScript objects held.
+type_complexity = "allow"
+large_enum_variant = "allow"
+result_large_err = "allow"
+
+[features]
+# The e2e LLM cache (`ai::cache`), which records and replays model calls on disk. Only
+# the e2e suites' build turns it on; a release build has no way to enable it.
+e2e-llm-cache = []
+
+[dependencies]
+# Async runtime and HTTP
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io", "codec", "rt"] }
+tokio-stream = { version = "0.1", features = ["sync", "io-util"] }
+futures = "0.3"
+async-trait = "0.1"
+axum = { version = "0.8", features = ["ws", "multipart", "macros"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["fs", "limit", "set-header", "normalize-path"] }
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
+http = "1"
+http-body-util = "0.1"
+bytes = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots", "stream", "multipart", "gzip", "brotli", "deflate", "http2"] }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
+# The process-wide TLS provider: two backends are compiled in, so rustls needs one named.
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
+url = "2"
+
+# Data
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
+serde_with = "3"
+diesel = { version = "2.2", features = ["sqlite", "r2d2", "returning_clauses_for_sqlite_3_35", "64-column-tables"] }
+libsqlite3-sys = { version = "0.30", features = ["bundled"] }
+sqlite-vec = "0.1"
+r2d2 = "0.8"
+scheduled-thread-pool = "0.2"
+
+# Utilities
+anyhow = "1"
+thiserror = "2"
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+regex = "1"
+fancy-regex = "0.14"
+parking_lot = "0.12"
+dashmap = "6"
+indexmap = { version = "2", features = ["serde"] }
+once_cell = "1"
+sha1 = "0.10"
+sha2 = "0.10"
+hmac = "0.12"
+md-5 = "0.10"
+base64 = "0.22"
+hex = "0.4"
+rand = "0.9"
+subtle = "2"
+dotenvy = "0.15"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "registry"] }
+hostname = "0.4"
+libc = "0.2"
+shell-words = "1"
+glob = "0.3"
+walkdir = "2"
+tempfile = "3"
+mime = "0.3"
+mime_guess = "2"
+infer = "0.19"
+percent-encoding = "2"
+urlencoding = "2"
+semver = "1"
+flate2 = "1"
+tar = "0.4"
+jsonschema = { version = "0.30", default-features = false }
+serde_yaml = "0.9"
+unicode-segmentation = "1"
+humantime = "2"
+unicode-normalization = "0.1.26"
+dom_smoothie = "0.19.0"
+dom_query = "0.29.0"
+html5ever = "0.40.1"
+encoding_rs = "0.8"
+croner = "4.0.3"
+jsonwebtoken = { version = "11.1.0", features = ["aws_lc_rs"] }
+aws-sigv4 = "1.4.5"
+aws-credential-types = "1.2.14"
+aws-config = { version = "1.8.18", default-features = false, features = ["rustls", "rt-tokio", "behavior-version-latest", "credentials-process", "sso"] }
+opentelemetry = "0.33.1"
+opentelemetry_sdk = "0.33.1"
+opentelemetry-otlp = { version = "0.33.1", default-features = false, features = ["http-json", "http-proto", "logs", "trace", "reqwest-client", "reqwest-rustls"] }
+opentelemetry-http = { version = "0.33.1", default-features = false }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["signal", "process", "fs", "user"] }
+
+[dev-dependencies]
+serial_test = "3"
+pretty_assertions = "1"
+tokio = { version = "1", features = ["full", "test-util"] }
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+opt-level = 1
+
+[profile.test]
+debug = "line-tables-only"
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+debug = "line-tables-only"
