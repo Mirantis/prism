@@ -165,12 +165,6 @@ interface JoinedThreadMessage {
   text?: string;
 }
 
-/**
- * The participation rule's verdict. `respond` passes the message on to the
- * thread classifier; `react` puts 👀 on a message addressed to another person.
- */
-type ThreadParticipation = ThreadAction | { action: 'react' };
-
 /** A Socket Mode app the adapter started. `stop` ends its watch and retires its client. */
 interface SocketHandle {
   stop(): Promise<void>;
@@ -237,11 +231,6 @@ function withoutAddress(text: string, botUserId: string, route: SlackRoute): str
     USER_GROUP,
     (_markup, label: string | undefined) => label ?? '',
   );
-}
-
-/** Whether a message tags somebody other than the bot, which addresses it to them. */
-function tagsSomebodyElse(text: string, botUserId: string): boolean {
-  return [...text.matchAll(/<@([A-Z0-9]+)>/g)].some((match) => match[1] !== botUserId);
 }
 
 // ============================================================================
@@ -1413,14 +1402,14 @@ class SlackAdapterService implements ChannelAdapter {
   /**
    * The participation verdict for a thread reply the router did not address
    * to the agent. The router sends such a reply only from a thread the agent
-   * takes part in, so the verdict is `react` when the reply tags somebody
-   * else, else `respond`. The transcript is the stored thread.
+   * takes part in, so the verdict is `respond`, which passes it to the
+   * classifier. The transcript is the stored thread.
    */
   private async storedThreadGate(
     threadId: string,
     arriving: Required<Pick<GateMessage, 'user' | 'text' | 'ts'>> & Pick<GateMessage, 'files'>,
     botUserId: string,
-  ): Promise<{ result: ThreadParticipation; messages: GateMessage[] }> {
+  ): Promise<{ result: ThreadAction; messages: GateMessage[] }> {
     const history = await conversationService.getRecentMessages(threadId, THREAD_TRANSCRIPT_LINES - 1);
     const messages: GateMessage[] = history.map((m) =>
       m.role === 'AGENT'
@@ -1428,8 +1417,7 @@ class SlackAdapterService implements ChannelAdapter {
         : { user: m.senderExternalId ?? undefined, username: m.senderName ?? undefined, text: m.content.replace(SENDER_TAG, '') },
     );
     messages.push(arriving);
-    const action = tagsSomebodyElse(arriving.text, botUserId) ? 'react' : 'respond';
-    return { result: { action }, messages };
+    return { result: { action: 'respond' }, messages };
   }
 
   /** Store a routed thread reply the agent does not answer. */
@@ -1849,17 +1837,6 @@ class SlackAdapterService implements ChannelAdapter {
       if (result.action === 'ignore') {
         logger.info(
           'Channel message not answered: thread message where bot is not participating (agent=%s, channel=%s)',
-          mapping.agentId,
-          mapping.slackChannelName || channelId
-        );
-        return;
-      }
-
-      if (result.action === 'react') {
-        await this.addReaction(channelId, messageTs, mapping.connection.teamId, 'eyes');
-        await keepUnanswered();
-        logger.info(
-          'Channel message not answered: thread message addressed to another person, reacted (agent=%s, channel=%s)',
           mapping.agentId,
           mapping.slackChannelName || channelId
         );
@@ -2362,17 +2339,17 @@ class SlackAdapterService implements ChannelAdapter {
   /**
    * Check if bot is participating in a thread (heuristic pass)
    *
-   * Judges `arriving`, the message this call was triggered by, and returns a
-   * ThreadParticipation plus the thread messages so the caller can forward them
-   * to the LLM classifier without re-fetching. The returned transcript ends on
-   * `arriving`, which is the message the caller reacts to or answers.
+   * Judges `arriving`, the message this call was triggered by, and returns the
+   * verdict plus the thread messages so the caller can forward them to the LLM
+   * classifier without re-fetching. The returned transcript ends on `arriving`,
+   * which is the message the caller answers.
    */
   private async isBotInThread(
     channelId: string,
     threadTs: string,
     teamId: string,
     arriving: Required<Pick<GateMessage, 'user' | 'text' | 'ts'>> & Pick<GateMessage, 'files'>,
-  ): Promise<{ result: ThreadParticipation; messages: GateMessage[] }> {
+  ): Promise<{ result: ThreadAction; messages: GateMessage[] }> {
     const slackApp = this.apps.get(teamId);
     if (!slackApp) return { result: { action: 'ignore' }, messages: [] };
 
@@ -2393,15 +2370,7 @@ class SlackAdapterService implements ChannelAdapter {
       // Bot never posted in this thread
       if (!messages.some((m) => m.user === slackApp.botUserId)) return { result: { action: 'ignore' }, messages };
 
-      // The arriving message tags somebody other than the bot, so it is
-      // addressed to that person. Only this message is read: a tag earlier in
-      // the thread is addressed to somebody else and leaves a later message
-      // aimed at the bot answerable.
-      if (tagsSomebodyElse(arriving.text, slackApp.botUserId)) {
-        return { result: { action: 'react' }, messages };
-      }
-
-      // Bot is participating and the message is not addressed elsewhere — pass to LLM
+      // A message that tags somebody else can still give the bot work, so the classifier decides.
       return { result: { action: 'respond' }, messages };
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : String(error);

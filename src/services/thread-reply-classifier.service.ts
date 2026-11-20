@@ -2,7 +2,7 @@
  * Thread Reply Classifier
  *
  * Decides what the bot does with a reply that does not mention it, in a chat
- * thread the bot takes part in: answer it or leave it. Each channel adapter
+ * thread the bot takes part in: act on it or leave it. Each channel adapter
  * decides first whether the bot takes part in the thread, and then asks here
  * about the last line of the transcript.
  */
@@ -106,13 +106,13 @@ function transcriptOf(lines: ThreadLine[]): string {
 
 /**
  * The respond and no_reply definitions set where the boundary falls: an edit
- * here changes which messages the agent answers, so compare it on the `gate.`
+ * here changes which messages the agent acts on, so compare it on the `gate.`
  * cases of the prompt eval set before shipping it.
  */
 function systemPrompt(platformName: string, agent: GateAgent): string {
   const name = authorName(agent.name);
   return [
-    `You decide whether an AI agent answers the last message of a ${platformName} thread.`,
+    `You decide whether an AI agent acts on the last message of a ${platformName} thread: replies to it, or does work because of it.`,
     '',
     `The agent is ${name}. Its role, from its own description:`,
     '<agent-role>',
@@ -123,10 +123,15 @@ function systemPrompt(platformName: string, agent: GateAgent): string {
     `The thread is oldest first. Each message starts with its author: [You: ${name}] is the agent, [Bot: name] is another bot, [Person: name] is a person. A message over several lines continues on indented lines. A mention has the form <@ID:Name>. When the thread is longer than the messages shown, the first message is the one that started the thread.`,
     '',
     'Return a JSON object with:',
-    '- action: "respond" if the last message is for the agent. It continues an exchange with the agent: it answers the agent\'s question, follows up on what the agent said or did, approves or authorizes it ("yes", "go ahead", "merge it"), or corrects it. Or it asks the thread for work that is in the agent\'s role, and that nobody else in the thread was asked for or is doing. An instruction counts even when it asks for no answer, because the agent answers it by doing the work.',
-    '- action: "no_reply" if the last message is for somebody else. It answers, thanks or asks another person or bot, it continues an exchange that the agent takes no part in, or it asks for work that another bot does or was asked to do. A greeting, a thanks or an aside that asks nobody for work is also "no_reply".',
+    '- action: "respond" if the last message gives the agent something to do. That is so when the message:',
+    '  - continues an exchange with the agent: it answers the agent\'s question, follows up on what the agent said or did, approves or authorizes it ("approved", "go ahead", "merge it"), or corrects it;',
+    '  - asks the agent for something, also inside a message that addresses other people too;',
+    '  - asks the thread for work in the agent\'s role that nobody else was asked for or took on;',
+    '  - changes work the agent started, watches or waits for: a failure in it, a condition the agent waits for that is now met, or an approval the agent asked for.',
+    '  An instruction counts even when it asks for no answer, because the agent acts on it by doing the work.',
+    '- action: "no_reply" if the last message gives the agent nothing to do. It answers, thanks or asks another person or bot about work that is theirs or that they took on, it continues an exchange that the agent takes no part in, or it asks for work that another bot does or a person took on. A greeting, a thanks or an aside is also "no_reply".',
     '',
-    'Decide by who the message is for, not by whether it is a question. A question to another member is "no_reply", also when the agent knows the answer.',
+    'Decide by whether the agent has something to do, not by whether the message is a question or whom it names. A question to another member is "no_reply", also when the agent knows the answer.',
   ].join('\n');
 }
 

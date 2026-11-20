@@ -374,25 +374,21 @@ describe('Requirement: Channel message mention detection', () => {
       expect(mockConversationEngineService.chat).not.toHaveBeenCalled();
     });
 
-    it('reacts with eyes, without the classifier, to a reply that tags another person', async () => {
-      (slackAdapterService as any).isBotInThread = vi.fn().mockResolvedValue({
-        result: { action: 'react' },
-        messages: [],
-      });
+    it('answers a reply that tags another person when the classifier finds work for the bot', async () => {
+      const messages = [{ user: SLACK_USER_ID, text: '<@U_DANA> please review, and merge it after', ts: MESSAGE_TS }];
+      (slackAdapterService as any).isBotInThread = vi.fn().mockResolvedValue({ result: { action: 'respond' }, messages });
+      classifyThreadMessage.mockResolvedValue({ action: 'respond' });
+      mockConversationService.getOrCreateThreadByExternalId.mockResolvedValue({ id: 'thread-001' });
+      mockConversationEngineService.chat.mockResolvedValue(undefined);
 
       await handleChannelMessage(
         CONNECTION_ID, CHANNEL_ID, SLACK_USER_ID,
-        'thanks <@U_DANA>',
+        '<@U_DANA> please review, and merge it after',
         THREAD_TS, MESSAGE_TS, mockSay, BOT_USER_ID, TEAM_ID
       );
 
-      expect(reactionsAdd).toHaveBeenCalledExactlyOnceWith({
-        channel: CHANNEL_ID,
-        timestamp: MESSAGE_TS,
-        name: 'eyes',
-      });
-      expect(classifyThreadMessage).not.toHaveBeenCalled();
-      expect(mockConversationEngineService.chat).not.toHaveBeenCalled();
+      expect(classifyThreadMessage).toHaveBeenCalledWith(messages, BOT_USER_ID, 'agent-001', TEAM_ID);
+      expect(mockConversationEngineService.chat).toHaveBeenCalled();
     });
   });
 

@@ -916,20 +916,18 @@ describe('TeamsAdapterService', () => {
       expect(mockClassify.mock.calls[0][0].lines.some((line: { author: { kind: string } }) => line.author.kind === 'agent')).toBe(false);
     });
 
-    it('leaves a reply that mentions somebody else to them', async () => {
+    it('classifies a reply that mentions somebody else, since it can still give the bot work', async () => {
+      mockClassify.mockResolvedValue({ action: 'respond' });
+
       await receive(
         channelActivity({
-          text: '<at>Bob</at> what time is it?',
+          text: '<at>Bob</at> please review, and merge it after',
           entities: [{ type: 'mention', mentioned: { id: '29:bob', name: 'Bob' }, text: '<at>Bob</at>' }],
         })
       );
 
-      expect(mockClassify).not.toHaveBeenCalled();
-      expect(mockConversationService.addMessage).toHaveBeenCalledWith(
-        'thread-1',
-        expect.objectContaining({ role: 'USER', senderName: 'Jane Doe' })
-      );
-      expect(mockChat).not.toHaveBeenCalled();
+      expect(mockClassify).toHaveBeenCalledTimes(1);
+      expect(mockChat).toHaveBeenCalled();
     });
 
     it('ignores a reply in a chain the bot has not answered in', async () => {
