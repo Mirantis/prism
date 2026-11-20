@@ -355,16 +355,17 @@ mod tests {
 
     #[tokio::test]
     async fn does_not_count_the_time_a_secure_takeover_holds_the_command_stopped() {
-        // Longer stopped than the whole budget, and the command itself needs almost none.
+        // Longer stopped than the whole budget. The command needs 0.2 s of a 2 s budget,
+        // which leaves a loaded host 1.8 s to start it and finish after the resume.
         let processes = Arc::new(AgentProcesses::new());
         let proc = start(&processes, "sleep 0.2; echo done");
         let run = tokio::spawn({
             let processes = processes.clone();
-            async move { collect_on(&processes, proc, options(800, None)).await }
+            async move { collect_on(&processes, proc, options(2_000, None)).await }
         });
         tokio::time::sleep(Duration::from_millis(20)).await;
         processes.suspend();
-        tokio::time::sleep(Duration::from_millis(1_500)).await;
+        tokio::time::sleep(Duration::from_millis(3_000)).await;
         processes.resume();
 
         let result = run.await.unwrap();

@@ -462,7 +462,7 @@ mod tests {
         // cat echoes input; wait for it to land in the buffer.
         wait_for(
             || manager().peek(&id, |s| s.stdout.len()).unwrap_or(0) > 0,
-            2000,
+            10_000,
         )
         .await;
 
@@ -479,17 +479,16 @@ mod tests {
         reset_process_manager_for_tests();
         let (_guard, ws) = workspace();
         let id = spawn("sh -c \"echo done; exit 7\"", &ws).await;
+        // The output can land just after the exit.
         wait_for(
             || {
                 manager()
-                    .peek(&id, |s| s.exit_code.is_some())
+                    .peek(&id, |s| s.exit_code.is_some() && !s.stdout.is_empty())
                     .unwrap_or(false)
             },
-            2000,
+            10_000,
         )
         .await;
-        // The output can land just after the exit.
-        tokio::time::sleep(Duration::from_millis(50)).await;
         let result = drained(drain(&id, false).await);
         assert_eq!(result.stdout.trim(), "done");
         assert!(!result.running);
@@ -505,13 +504,14 @@ mod tests {
         wait_for(
             || {
                 manager()
-                    .peek(&id, |s| s.exit_code == Some(0))
+                    .peek(&id, |s| {
+                        s.exit_code == Some(0) && !s.stdout.is_empty() && !s.stderr.is_empty()
+                    })
                     .unwrap_or(false)
             },
-            2000,
+            10_000,
         )
         .await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
 
         let out = drained(drain(&id, false).await);
         assert_eq!(out.stdout.trim(), "out");
@@ -532,7 +532,7 @@ mod tests {
             kill(&id, Some(KillSignal::Sigkill)).await,
             ShellKillResult { ok: true }
         );
-        wait_for(|| manager().running_count() == 0, 3000).await;
+        wait_for(|| manager().running_count() == 0, 10_000).await;
         assert_eq!(
             manager().peek(&id, |s| s.signal),
             Some(Some(Signal::SIGKILL))
@@ -546,7 +546,11 @@ mod tests {
         let (_guard, ws) = workspace();
         let id = spawn("sleep 30", &ws).await;
         kill(&id, Some(KillSignal::Sigkill)).await;
-        wait_for(|| manager().peek(&id, |s| s.exited).unwrap_or(false), 3000).await;
+        wait_for(
+            || manager().peek(&id, |s| s.exited).unwrap_or(false),
+            10_000,
+        )
+        .await;
         // First drain after exit: returns final state then reaps.
         let first = drained(drain(&id, false).await);
         assert!(!first.running);
@@ -569,7 +573,7 @@ mod tests {
         assert_eq!(manager().running_count(), 1);
         kill(&id, Some(KillSignal::Sigkill)).await;
         assert!(manager().peek(&id, |_| ()).is_some());
-        wait_for(|| manager().running_count() == 0, 3000).await;
+        wait_for(|| manager().running_count() == 0, 10_000).await;
     }
 
     #[tokio::test]

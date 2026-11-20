@@ -506,6 +506,8 @@ async fn judges_a_thread_reply_on_the_stored_thread() {
         .add_message(&thread.id, asked)
         .await
         .unwrap();
+    // The thread reads in createdAt order, so the reply gets a later millisecond.
+    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
     CONVERSATION_SERVICE
         .add_message(
             &thread.id,
