@@ -91,7 +91,8 @@ const baseProps = {
   userId: 'local',
   agent: { id: 'remote', name: 'Prism' },
   modelId: 'us.anthropic.claude-opus-4-7',
-};
+  graphics: { protocol: 'text', cell: null },
+} as const;
 
 describe('App', () => {
   beforeEach(() => {

@@ -134,6 +134,12 @@ days unless [`ATTACHMENT_TTL_HOURS`](configuration.md#core) sets another time;
 expired attachments show `(expired)` in the history and `/save` reports that the
 content is gone.
 
+### Images in replies
+
+In kitty and Ghostty, an image the agent places in its reply shows at its place
+in the text. Other terminals, and kitty or Ghostty inside tmux or screen, show
+`[image: …]` there.
+
 ## Panels
 
 Panels replace the chat view temporarily; **Escape** closes them.
@@ -195,7 +201,7 @@ to the runtime automatically with backoff, buffering anything you send while
 it's offline.
 
 Next to the model, it shows how much of the model's context window this
-conversation has consumed — e.g. `| context 58%`. It changes colour as the window
+conversation has consumed — e.g. `| context 58%`. It changes color as the window
 fills. It is hidden if the runtime does not recognize the model's context window —
 see `CONTEXT_WINDOW_TOKENS` in the **[configuration reference](configuration.md)**
 for how to set the window size in that case.

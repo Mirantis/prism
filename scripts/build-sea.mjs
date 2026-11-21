@@ -16,6 +16,7 @@
 import { build } from 'esbuild';
 import { inject } from 'postject';
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import {
   mkdirSync,
   copyFileSync,
@@ -107,6 +108,25 @@ const virtualMigrations = {
   },
 };
 
+// esbuild plugin: a binary has no package directory to read the WebP decoder's
+// WebAssembly from, so `cli/src/images/webp-decoder-wasm.ts` is replaced with
+// a module that holds the bytes.
+const inlineWebpDecoder = {
+  name: 'inline-webp-decoder',
+  setup(b) {
+    b.onLoad({ filter: /[\\/]cli[\\/]src[\\/]images[\\/]webp-decoder-wasm\.ts$/ }, () => {
+      const wasm = createRequire(path.join(ROOT, 'cli', 'package.json')).resolve(
+        '@jsquash/webp/codec/dec/webp_dec.wasm',
+      );
+      const base64 = readFileSync(wasm).toString('base64');
+      return {
+        contents: `export async function webpDecoderWasm() { return Buffer.from(${JSON.stringify(base64)}, 'base64'); }`,
+        loader: 'js',
+      };
+    });
+  },
+};
+
 const BUILD = path.join(ROOT, 'build', 'sea');
 const OUTDIR = path.join(ROOT, 'dist-sea', `${process.platform}-${process.arch}`);
 mkdirSync(BUILD, { recursive: true });
@@ -131,7 +151,7 @@ await build({
   outfile: bundlePath,
   external: cfg.external,
   define: { 'process.env.PRISM_VERSION': JSON.stringify(version) },
-  plugins: [stubOptional, virtualMigrations],
+  plugins: [stubOptional, virtualMigrations, inlineWebpDecoder],
   // ESM output: give esbuild's `__require` shim a real require + provide the
   // CJS globals bundled deps expect (signal-exit etc. `require('assert')`).
   banner: {

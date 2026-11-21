@@ -4,6 +4,7 @@ import { render } from 'ink';
 import { App } from './App.js';
 import { loadConfig } from './config.js';
 import { tuiAdapterService, ThreadSummary } from './tui-adapter.js';
+import { detectTerminalGraphics } from './images/terminal-graphics.js';
 
 // The CLI doesn't know — and isn't told — the userId or agentId. The
 // runtime owns both and substitutes them when our envelopes omit them.
@@ -43,7 +44,11 @@ function main(): void {
   // from the start keeps a Ctrl+C typed during boot a key press rather than a SIGINT.
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
 
-  function start(resumeData?: { sessions: ThreadSummary[]; cwd: string }): void {
+  // The terminal answers the graphics probe as input, so it runs before Ink reads stdin.
+  const graphics = detectTerminalGraphics(process.stdin, process.stdout);
+
+  async function start(resumeData?: { sessions: ThreadSummary[]; cwd: string }): Promise<void> {
+    const terminalGraphics = await graphics;
     render(
       <App
         userId="local"
@@ -51,6 +56,7 @@ function main(): void {
         modelId={cfg.modelId}
         hideCursor={cfg.hideCursor}
         hideStatusBar={cfg.hideStatusBar}
+        graphics={terminalGraphics}
         resume={resumeData}
       />,
       { exitOnCtrlC: false, interactive: true },
@@ -63,7 +69,7 @@ function main(): void {
     // single-thread mode has nothing to pick: the CLI opens its one conversation.
     void (async () => {
       if ((await tuiAdapterService.threadMode()) === 'single') {
-        start();
+        await start();
         return;
       }
       const sessions = await tuiAdapterService.listSessions();
@@ -71,9 +77,9 @@ function main(): void {
         console.log('No sessions to resume.');
         process.exit(0);
       }
-      start({ sessions, cwd: process.cwd() });
+      await start({ sessions, cwd: process.cwd() });
     })();
   } else {
-    start();
+    void start();
   }
 }

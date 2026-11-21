@@ -1,10 +1,19 @@
 import React from 'react';
-import { describe, it, expect } from 'vitest';
+import { stripVTControlCharacters } from 'node:util';
+import { describe, it, expect, vi } from 'vitest';
 import { render } from 'ink-testing-library';
 import { MessageList } from './MessageList.js';
 import type { ChatEntry } from '../transcript.js';
 import type { TuiMessage } from '../tui-adapter.js';
 import { formatShellRecord } from '../shell-command.js';
+import type { TerminalGraphics } from '../images/terminal-graphics.js';
+
+const TEXT_ONLY: TerminalGraphics = { protocol: 'text', cell: null };
+
+// A two-by-two white picture stands in for every downloaded attachment.
+vi.mock('../images/attachment-images.js', () => ({
+  loadAttachmentImage: async () => ({ width: 2, height: 2, data: new Uint8Array(16).fill(255) }),
+}));
 
 function makeMsg(overrides: Partial<TuiMessage> & { id: string; role: TuiMessage['role']; content: string }): TuiMessage {
   return {
@@ -24,7 +33,7 @@ function entry(m: TuiMessage): ChatEntry {
 describe('MessageList', () => {
   it('renders nothing visible for an empty entry list', () => {
     const { lastFrame } = render(
-      <MessageList agentName="Prism" self={undefined} entries={[]} expandedMessageId={null} />,
+      <MessageList agentName="Prism" self={undefined} entries={[]} expandedMessageId={null} graphics={TEXT_ONLY} />,
     );
     expect(lastFrame() ?? '').toBe('');
   });
@@ -33,7 +42,7 @@ describe('MessageList', () => {
     const content = formatShellRecord({ command: 'aws sso login', exitCode: 1, output: 'Token expired' });
     const entries = [entry(makeMsg({ id: 'u1', role: 'USER', content }))];
     const { lastFrame } = render(
-      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId={null} />,
+      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId={null} graphics={TEXT_ONLY} />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('! aws sso login');
@@ -45,7 +54,7 @@ describe('MessageList', () => {
   it('labels user messages with "You" and shows the content', () => {
     const entries = [entry(makeMsg({ id: 'u1', role: 'USER', content: 'hi there' }))];
     const { lastFrame } = render(
-      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId={null} />,
+      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId={null} graphics={TEXT_ONLY} />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('You');
@@ -60,7 +69,7 @@ describe('MessageList', () => {
     ];
     const self = { id: 'grace@example.com', name: 'grace@example.com' };
     const { lastFrame } = render(
-      <MessageList agentName="Prism" self={self} entries={entries} expandedMessageId={null} />,
+      <MessageList agentName="Prism" self={self} entries={entries} expandedMessageId={null} graphics={TEXT_ONLY} />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('▌ ada@example.com');
@@ -73,7 +82,7 @@ describe('MessageList', () => {
       entry(makeMsg({ id: 'u1', role: 'USER', content: 'mine', senderId: 'grace@example.com', senderName: 'grace@example.com' })),
     ];
     const { lastFrame } = render(
-      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId={null} />,
+      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId={null} graphics={TEXT_ONLY} />,
     );
     expect(lastFrame() ?? '').toContain('▌ You');
     expect(lastFrame() ?? '').not.toContain('grace@example.com');
@@ -86,7 +95,7 @@ describe('MessageList', () => {
       entry(makeMsg({ ...fromAgent, id: 'a2', content: 'Writer did not answer.', senderId: 'messaging', senderName: 'Messaging', agentMessageKind: 'notice' })),
     ];
     const { lastFrame } = render(
-      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId={null} />,
+      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId={null} graphics={TEXT_ONLY} />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('▌ Researcher · Agent');
@@ -99,7 +108,7 @@ describe('MessageList', () => {
       { ...entry(makeMsg({ id: 'u1', role: 'USER', content: 'hello' })), local: true, failed: 'There is no such conversation.' },
     ];
     const { lastFrame } = render(
-      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId={null} />,
+      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId={null} graphics={TEXT_ONLY} />,
     );
     expect(lastFrame() ?? '').toContain('✗ not sent: There is no such conversation.');
   });
@@ -118,7 +127,7 @@ describe('MessageList', () => {
       ),
     ];
     const { lastFrame } = render(
-      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId={null} />,
+      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId={null} graphics={TEXT_ONLY} />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('see attached');
@@ -128,7 +137,7 @@ describe('MessageList', () => {
   it('renders no attachment line when attachments is null', () => {
     const entries = [entry(makeMsg({ id: 'u3', role: 'USER', content: 'plain', attachments: null }))];
     const { lastFrame } = render(
-      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId={null} />,
+      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId={null} graphics={TEXT_ONLY} />,
     );
     expect(lastFrame() ?? '').not.toContain('📎');
   });
@@ -136,7 +145,7 @@ describe('MessageList', () => {
   it('labels agent messages with the agent name and renders markdown content', () => {
     const entries = [entry(makeMsg({ id: 'a1', role: 'AGENT', content: 'reply text' }))];
     const { lastFrame } = render(
-      <MessageList agentName="Bobby" self={undefined} entries={entries} expandedMessageId={null} />,
+      <MessageList agentName="Bobby" self={undefined} entries={entries} expandedMessageId={null} graphics={TEXT_ONLY} />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('Bobby');
@@ -163,7 +172,7 @@ describe('MessageList', () => {
       ),
     ];
     const { lastFrame } = render(
-      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId={null} />,
+      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId={null} graphics={TEXT_ONLY} />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('used shell_exec');
@@ -191,7 +200,7 @@ describe('MessageList', () => {
       ),
     ];
     const { lastFrame } = render(
-      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId="a4" />,
+      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId="a4" graphics={TEXT_ONLY} />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('cut');
@@ -219,7 +228,7 @@ describe('MessageList', () => {
       ),
     ];
     const { lastFrame } = render(
-      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId="a5" />,
+      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId="a5" graphics={TEXT_ONLY} />,
     );
     expect(lastFrame() ?? '').not.toContain('cut');
   });
@@ -244,11 +253,67 @@ describe('MessageList', () => {
       ),
     ];
     const { lastFrame } = render(
-      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId="a3" />,
+      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId="a3" graphics={TEXT_ONLY} />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('TOOL_IN');
     expect(frame).toContain('TOOL_OUT');
     expect(frame).toContain('ctrl+o to collapse');
+  });
+
+  it("draws an image the agent places between the reply's text in a kitty terminal", async () => {
+    const id = '3f2a9c1e-5b7d-4e8a-9c21-7d4e5f6a8b90';
+    const entries = [
+      entry(
+        makeMsg({
+          id: 'a5',
+          role: 'AGENT',
+          content: `PRISMBEFORE\n\n![chart](attachment:${id})\n\nPRISMAFTER`,
+          attachments: [
+            { id, filename: 'chart.png', mediaType: 'image/png', sizeBytes: 90, category: 'image', inline: true },
+          ],
+        }),
+      ),
+    ];
+    const { stdout } = render(
+      <MessageList
+        agentName="Prism"
+        self={undefined}
+        entries={entries}
+        expandedMessageId={null}
+        graphics={{ protocol: 'kitty', cell: { width: 1, height: 2 } }}
+      />,
+    );
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    const frame = stdout.frames.filter((f) => !f.startsWith('\x1b_G')).at(-1) ?? '';
+    const lines = stripVTControlCharacters(frame).split('\n').map((line) => line.trim());
+    const before = lines.indexOf('PRISMBEFORE');
+    expect(lines.slice(before, before + 5)).toEqual([
+      'PRISMBEFORE',
+      '',
+      '\u{10EEEE}\u0305\u0305\u{10EEEE}',
+      '',
+      'PRISMAFTER',
+    ]);
+  });
+
+  it('keeps the description of an image inside its line in any other terminal', () => {
+    const id = '3f2a9c1e-5b7d-4e8a-9c21-7d4e5f6a8b90';
+    const entries = [
+      entry(
+        makeMsg({
+          id: 'a6',
+          role: 'AGENT',
+          content: `See ![chart](attachment:${id}) for May.`,
+          attachments: [
+            { id, filename: 'chart.png', mediaType: 'image/png', sizeBytes: 90, category: 'image', inline: true },
+          ],
+        }),
+      ),
+    ];
+    const { lastFrame } = render(
+      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId={null} graphics={TEXT_ONLY} />,
+    );
+    expect(lastFrame() ?? '').toContain('See [image: chart] for May.');
   });
 });
