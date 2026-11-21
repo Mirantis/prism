@@ -106,6 +106,12 @@ describe('contextWindowFor', () => {
       expect(contextWindowFor('amazon.titan-embed-text-v2:0')).toBeNull();
     });
 
+    it('resolves the spellings a coding agent and OpenRouter use', () => {
+      expect(contextWindowFor('claude-haiku-5-5[1m]')).toEqual({ tokens: 1_000_000 });
+      expect(contextWindowFor('anthropic/claude-haiku-5-5')).toEqual({ tokens: 1_000_000 });
+      expect(contextWindowFor('openai.gpt-5.6-terra')).not.toBeNull();
+    });
+
     it('returns null for an empty model ID', () => {
       expect(contextWindowFor('')).toBeNull();
     });

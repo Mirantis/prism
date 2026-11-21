@@ -1,4 +1,5 @@
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, Link } from '@tanstack/react-router';
+import { ArrowRight } from 'lucide-react';
 import { LlmUsageCards } from '@/components/activity/llm-usage-cards';
 import { LlmUsageByModel } from '@/components/activity/llm-usage-by-model';
 import { ToolCallList } from '@/components/activity/tool-call-list';
@@ -17,7 +18,15 @@ function ActivityPage() {
       <PageHeader title="Activity" description="What the agent has spent, and what it has done." />
 
       <section className="space-y-3">
-        <SectionHeader title="LLM usage" description="Tokens used in the last 24 hours." />
+        <SectionHeader
+          title="LLM usage"
+          description="Tokens used in the last 24 hours."
+          actions={
+            <Link to="/spending" className="inline-flex items-center gap-1 text-sm text-primary-soft hover:underline" data-testid="activity-spending-link">
+              See spending <ArrowRight aria-hidden="true" className="size-3.5" />
+            </Link>
+          }
+        />
         <LlmUsageCards />
         <LlmUsageByModel />
       </section>

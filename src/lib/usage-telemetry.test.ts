@@ -113,6 +113,17 @@ afterEach(async () => {
 });
 
 describe('reportClosedHours', () => {
+  it("reports the agent's own model alone, leaving out the coding agent's and the voice models' calls", async () => {
+    await recordCall(H10 + 1000, CHAT_MODEL, { inputTokens: 1000 });
+    for (const [purpose, model] of [['coding-agent', 'claude-sonnet-5-5'], ['voice-chat', 'gpt-realtime-2.1']]) {
+      await db().llmCall.create({ data: { agentId: OWNER, purpose, model, inputTokens: 500, createdAt: new Date(H10 + 2000) } });
+    }
+
+    await reportAt(NOW);
+
+    expect(events().map((e) => e['usage.model'])).toEqual([CHAT_MODEL]);
+  });
+
   it('sends one event per closed hour and model, with the counts of that hour', async () => {
     await recordCall(H10 + 1000, CHAT_MODEL, { inputTokens: 1000, outputTokens: 100, cacheReadTokens: 700, cacheWriteTokens: 200 });
     await recordCall(H10 + 2000, CHAT_MODEL, { inputTokens: 500, outputTokens: 50, cacheReadTokens: 400, cacheWriteTokens: 0 });

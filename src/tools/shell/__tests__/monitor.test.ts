@@ -100,7 +100,8 @@ describe('monitor', () => {
     await waitFor(() => sent().some((text) => text.includes('reason="too-many-events"')), 15_000);
 
     expect(sent().filter((text) => text.includes('<task-notification monitor-id=') && !text.includes('status=')).length).toBe(12);
-  });
+    // The command prints for 10 s, and the wait above allows 15 s of it.
+  }, 20_000);
 
   it('sends nothing for a monitor the agent stopped', async () => {
     const { monitorId } = await runMonitor({ command: 'sleep 30', description: 'deploy' }, workspace, notify);

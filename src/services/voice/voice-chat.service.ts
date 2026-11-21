@@ -24,6 +24,7 @@
  * one.
  */
 
+import { randomUUID } from 'node:crypto';
 import { ThreadSource } from '@prisma/client';
 import { logger } from '../../logger';
 import { config } from '../../config';
@@ -410,6 +411,7 @@ class VoiceChatService {
         voice: agentVoice.voice,
         onSessionLost: (reason) => void this.end(epoch, 'error', reason),
         onResponseFinished: () => { if (computerUse) computerService.yield(computerUse); },
+        spend: { purpose: 'voice-chat', requestId: randomUUID(), ...(threadId ? { threadId } : {}) },
       });
       // Attached before the session opens, so the first tool call has somewhere to put its
       // picture. Nothing reaches it until the model asks for something.

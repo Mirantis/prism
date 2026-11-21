@@ -57,6 +57,16 @@ interface PermissionDenial {
   tool_input: Record<string, unknown>;
 }
 
+/** One model's usage on the `result` line, with the CLI's own cost estimate. */
+interface ModelUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadInputTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheCreationEphemeral1hInputTokens?: number;
+  costUSD?: number;
+}
+
 /** One line of `--output-format stream-json`. */
 interface StreamLine {
   type?: string;
@@ -70,6 +80,8 @@ interface StreamLine {
   num_turns?: number;
   session_id?: string;
   permission_denials?: PermissionDenial[];
+  /** On the `result` line: every model the run used, its own side calls included. */
+  modelUsage?: Record<string, ModelUsage>;
 }
 
 /** The optional environment is a test hook; production runs the real binary. */
@@ -112,7 +124,7 @@ export function createClaudeCodeAgent(environment?: ExecutionEnvironment): Codin
                 // process: the CLI runs in the execution environment.
                 CLAUDE_CONFIG_DIR: home,
               },
-              parseLine: (line) => parseLine(line, task),
+              parseLine: (line) => parseLine(line, task, subscription),
             },
             target,
           );
@@ -195,7 +207,7 @@ function buildArgs(
   return args;
 }
 
-function parseLine(line: string, task: CodingAgentTask): CodingAgentEvent[] {
+function parseLine(line: string, task: CodingAgentTask, subscription: boolean): CodingAgentEvent[] {
   const parsed = JSON.parse(line) as StreamLine;
   const events: CodingAgentEvent[] = [];
 
@@ -225,6 +237,22 @@ function parseLine(line: string, task: CodingAgentTask): CodingAgentEvent[] {
       }
     }
   } else if (parsed.type === 'result') {
+    // A run stopped before this line reports no usage.
+    for (const [model, usage] of Object.entries(parsed.modelUsage ?? {})) {
+      events.push({
+        type: 'usage',
+        usage: {
+          model,
+          inputTokens: usage.inputTokens ?? 0,
+          cacheReadTokens: usage.cacheReadInputTokens ?? 0,
+          cacheWriteTokens: usage.cacheCreationInputTokens ?? 0,
+          longCacheWriteTokens: usage.cacheCreationEphemeral1hInputTokens ?? 0,
+          outputTokens: usage.outputTokens ?? 0,
+          ...(typeof usage.costUSD === 'number' ? { costUsd: usage.costUSD } : {}),
+          subscription,
+        },
+      });
+    }
     const refusals = (parsed.permission_denials ?? []).map(refusalOf);
     events.push({
       type: 'result',

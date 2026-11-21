@@ -110,6 +110,7 @@ export interface VoiceConversationOptions {
   model?: string;
   voice?: string;
   endpointOverride?: RealtimeSessionOptions['endpointOverride'];
+  spend: RealtimeSessionOptions['spend'];
   /**
    * The session died on its own — the agent has no voice and no ears any more.
    *
@@ -250,6 +251,7 @@ export class VoiceConversation {
       voice: options.voice,
       agentName: options.agentName,
       endpointOverride: options.endpointOverride,
+      spend: options.spend,
     });
 
     this.responsePolicy = new ResponsePolicy({ mode: options.responseMode });

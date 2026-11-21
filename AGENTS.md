@@ -834,6 +834,9 @@ The tree under `src/` and each file's header comment describe the modules, and
 
 - In the runtime, `lib/model-call.ts` is the only module that calls
   `generateText` / `generateObject`, and it records each call's usage.
+- `llmCallService` prices every recorded call and takes its request and thread
+  from `lib/spend-context.ts`. The chat engine sets that context per turn and
+  `invoke()` per run, so no call site passes a request id.
 - `selectTurnModel` (`lib/model-routing.ts`) is the one owner of which model a
   turn runs on. A failed or unknown label runs large. Without a medium tier,
   unsure means large; with one, unsure means medium.

@@ -1,4 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { computerHelpNotices } from './prompts/computer-prompt';
+import { currentSpendContext, withSpendContext, type SpendContext } from './lib/spend-context';
 import { computerHelpService, waitsForAnswer } from './services/computer/computer-help.service';
 import { hasComputerForMode } from './services/computer/supported';
 import { computerService } from './services/computer/computer.service';
@@ -945,6 +947,20 @@ async function* streamInvocation(request: InvokeRequest, ending: TurnEnding = {}
  * invokeStream() — this wrapper has no try/catch, since errors arrive as
  * yielded steps (with optional structured `error` metadata).
  */
+/**
+ * The spend context of an `invoke()` run: its own request, started by its mode. A
+ * subagent runs inside its parent's request.
+ */
+function spendContextFor(request: InvokeRequest): SpendContext {
+  const parent = currentSpendContext();
+  if (request.mode === 'subagent') return parent ?? { requestId: randomUUID(), threadId: request.threadId };
+  return {
+    requestId: request.requestId ?? randomUUID(),
+    threadId: request.threadId,
+    source: { kind: request.mode, ...(request.sourceId ? { id: request.sourceId } : {}) },
+  };
+}
+
 export async function invoke(request: InvokeRequest): Promise<InvokeResponse> {
   // Best-effort lookup so the log line below carries the agent name.
   // invokeStream() does its own context fetch; we re-query here purely
@@ -962,10 +978,15 @@ export async function invoke(request: InvokeRequest): Promise<InvokeResponse> {
   const steps: InvokeStep[] = [];
   let errorMeta: InvokeError | undefined;
 
-  for await (const step of invokeStream(request)) {
-    steps.push(step);
-    if (step.error) errorMeta = step.error;
-  }
+  // A run's calls are its own request, so an autonomous run started from inside a
+  // chat turn is not spent on that turn's message.
+  const spend = spendContextFor(request);
+  await withSpendContext(spend, async () => {
+    for await (const step of invokeStream(request)) {
+      steps.push(step);
+      if (step.error) errorMeta = step.error;
+    }
+  });
 
   const allToolCalls = steps.flatMap((s) => s.toolCalls);
   const response = joinStepTexts(steps) || '';

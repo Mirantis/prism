@@ -43,6 +43,11 @@
   --chart-3: var(--lds-color-workspace-orange);
   --chart-4: var(--lds-color-workspace-purple);
   --chart-5: var(--lds-color-workspace-teal);
+  /* The spending chart's three series, checked for color-blind separation on --card.
+     The design system's orange is too light there, so its series takes a deeper step. */
+  --spend-main: var(--lds-color-workspace-blue);
+  --spend-coding-agent: color-mix(in srgb, var(--lds-color-workspace-orange) 79%, black);
+  --spend-voice: var(--lds-color-workspace-teal);
   --sidebar: var(--lds-color-bg-secondary);
   --sidebar-foreground: var(--lds-color-text-primary);
   --sidebar-primary: var(--lds-color-primary);
@@ -69,6 +74,9 @@
   --color-chart-3: var(--chart-3);
   --color-chart-2: var(--chart-2);
   --color-chart-1: var(--chart-1);
+  --color-spend-main: var(--spend-main);
+  --color-spend-coding-agent: var(--spend-coding-agent);
+  --color-spend-voice: var(--spend-voice);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);

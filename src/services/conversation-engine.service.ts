@@ -14,6 +14,7 @@ import type { ChannelName } from './channel-adapter.interface';
 import { conversationService } from './conversation.service';
 import { threadTurnService, type PendingMessage } from './thread-turn.service';
 import { threadTitleService } from './thread-title.service';
+import { withSpendContext } from '../lib/spend-context';
 import { conversationThreadActivityService } from './conversation-thread-activity.service';
 import { attachmentService } from './attachment.service';
 import { placeInlineImages, type PlacedImages } from './inline-image-placement';
@@ -677,12 +678,15 @@ Answer with one word: WORTHY or SKIP.`;
           // attachment that failed to download), so they belong to the first turn
           // only — repeating them in a follow-up would re-report stale events.
           let runtimeNotices = input.runtimeNotices;
+          // The model calls of a turn are spent on the first message it answers.
+          // A message steered into the turn joins that message's request.
+          let requestId = owed[0];
 
           for (;;) {
             const turnMetadata = input.channelLabelFor
               ? { ...metadata, channelLabel: await input.channelLabelFor(threadId) }
               : metadata;
-            const streamed = await this.streamTurn({
+            const streamed = await withSpendContext({ requestId, threadId, source: { kind: 'chat' } }, () => this.streamTurn({
               userId,
               agentId,
               threadId,
@@ -709,7 +713,7 @@ Answer with one word: WORTHY or SKIP.`;
                 for (const row of rows) read.set(row.id, new Set((row.attachments ?? []).map((att) => att.id)));
                 take(claim.drain(isRead));
               },
-            });
+            }));
 
             if (streamed.text) responseTexts.push(streamed.text);
             images.inline += streamed.images.inline;
@@ -749,6 +753,7 @@ Answer with one word: WORTHY or SKIP.`;
             appendPrompt = true;
             promptSource = promptSourceOf(leftover);
             appendedMessageIds = leftover.map((p) => p.id);
+            requestId = leftover[0].id;
             promptMessageId = undefined;
             runtimeNotices = undefined;
           }

@@ -472,20 +472,40 @@ model LlmCall {
 
   threadId String?
 
+  /// The request the call served: the user message a chat turn answers, or the run's own id.
+  requestId String?
+  /// What started the request: `chat`, `heartbeat`, `cron`, `webhook`, `goal`, `voice-chat`, `meeting` or `dictation`.
+  sourceKind String?
+  /// The scheduled task, webhook or goal that started it, where the kind has one.
+  sourceId   String?
+
   totalTokens      Int @default(0)
   inputTokens      Int @default(0)
   outputTokens     Int @default(0)
   cacheReadTokens  Int @default(0)
   cacheWriteTokens Int @default(0)
   noCacheTokens    Int @default(0)
+  /// The audio part of `noCacheTokens`.
+  audioInputTokens  Int @default(0)
+  /// The audio part of `outputTokens`.
+  audioOutputTokens Int @default(0)
+
+  /// Estimated cost in millionths of a US dollar; null when no price is known for the model.
+  costMicroUsd Int?
+  /// Where the cost came from: `catalog`, `reported` or `subscription`.
+  costSource   String?
 
   createdAt DateTime @default(now())
+  /// `createdAt` cut down to its 15-minute bucket, which period totals group by.
+  bucket    DateTime @default(now())
 
   agentWorkspace AgentWorkspace @relation(fields: [agentId], references: [id], onDelete: Cascade)
 
   @@index([agentId, createdAt])
   // A thread's newest call, which Auto model selection reads every turn.
   @@index([agentId, threadId, createdAt])
+  @@index([agentId, requestId])
+  @@index([agentId, bucket])
   @@map("llm_calls")
 }
 

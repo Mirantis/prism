@@ -488,6 +488,109 @@ export interface ModelUsage {
   outputTokens: number;
 }
 
+// ============================================================================
+// Spending page (GET /agents/spending/*)
+// ============================================================================
+
+export interface SpendTotals {
+  costUsd: number;
+  calls: number;
+  /** Calls with no price, which `costUsd` leaves out. */
+  unpricedCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+/** Whose models the spend went to. */
+export type SpendKind = 'main' | 'coding-agent' | 'voice';
+
+export type SpendCategory =
+  | 'conversations'
+  | 'coding-agent'
+  | 'voice'
+  | 'heartbeat'
+  | 'scheduled-tasks'
+  | 'webhooks'
+  | 'goals'
+  | 'background';
+
+export type SourcedSpendCategory = 'scheduled-tasks' | 'webhooks' | 'goals';
+
+export interface SpendBreakdown extends SpendTotals {
+  byKind: Array<SpendTotals & { kind: SpendKind }>;
+  byCategory: Array<SpendTotals & { category: SpendCategory }>;
+  byModel: Array<SpendTotals & { model: string }>;
+  byPurpose: Array<SpendTotals & { purpose: string }>;
+}
+
+export type SpendPeriodLength = 'day' | 'week' | 'month';
+
+export interface PeriodSpend extends SpendTotals {
+  /** The period's first local date, `YYYY-MM-DD`. */
+  start: string;
+  from: string;
+  to: string;
+  costUsdByKind: Record<SpendKind, number>;
+}
+
+export interface SpendPeriods {
+  period: SpendPeriodLength;
+  timezone: string;
+  periods: PeriodSpend[];
+}
+
+export interface ThreadSpend extends SpendTotals {
+  threadId: string;
+  title: string | null;
+  requests: number;
+  firstCallAt: string;
+  lastCallAt: string;
+}
+
+export interface ThreadSpendPage {
+  threads: ThreadSpend[];
+  nextOffset: number | null;
+}
+
+export type RequestKind =
+  | 'message'
+  | 'agent-message'
+  | 'task-result'
+  | 'chat'
+  | 'heartbeat'
+  | 'cron'
+  | 'webhook'
+  | 'goal'
+  | 'voice-chat'
+  | 'meeting'
+  | 'dictation'
+  | 'other';
+
+export interface RequestSpend extends SpendTotals {
+  requestId: string;
+  kind: RequestKind;
+  preview: string | null;
+  firstCallAt: string;
+}
+
+export interface ThreadSpendDetail extends SpendBreakdown {
+  threadId: string;
+  title: string | null;
+  requests: RequestSpend[];
+}
+
+export interface RequestSpendDetail extends SpendBreakdown {
+  requestId: string;
+  threadId: string | null;
+}
+
+export interface SourceSpend extends SpendTotals {
+  sourceId: string | null;
+  name: string | null;
+}
+
 /** One tool call in the Activity feed (GET /agents/activity/tool-calls). */
 export interface ToolCallHistoryEntry extends ToolCallRecord {
   id: string;
