@@ -178,6 +178,7 @@ vi.mock('../pending-work.service', () => ({
 
 // Import after mocking. `threadTurnService` is the real per-thread primitive —
 // turn ordering is part of what the steering scenarios assert.
+import { currentSpendContext } from '../../lib/spend-context';
 import { attachmentsHeldByChatWork, conversationEngineService, type ChatTurnEnd } from '../conversation-engine.service';
 import { threadTurnService } from '../thread-turn.service';
 import { RESUMED_REPLY_NOTICE } from '../../prompts/resume-prompt';
@@ -258,6 +259,20 @@ describe('Requirement: Conversation Engine', () => {
           prompt: message,
         })
       );
+    });
+
+    it('spends the model calls of a turn on the message it answers', async () => {
+      let spend: ReturnType<typeof currentSpendContext>;
+      mockInvokeStream.mockImplementationOnce(async function* () {
+        spend = currentSpendContext();
+        yield { text: 'ok', toolCalls: [] };
+      });
+
+      await conversationEngineService.chat({ userId: 'user-123', agentId: 'agent-123', message: 'hi' });
+
+      const stored = mockAddMessage.mock.calls.find(([, input]) => input.role === 'USER')![1];
+      expect(stored.id).toEqual(expect.any(String));
+      expect(spend!).toEqual({ requestId: stored.id, threadId: 'thread-123', source: { kind: 'chat' } });
     });
 
     it('forwards the abortSignal into invokeStream so a cancel stops generation', async () => {

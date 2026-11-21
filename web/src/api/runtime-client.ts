@@ -38,6 +38,14 @@ import type {
   WebhookSubscription,
   UpdateStatus,
   LlmUsageSummary,
+  RequestSpendDetail,
+  SourcedSpendCategory,
+  SourceSpend,
+  SpendBreakdown,
+  SpendPeriodLength,
+  SpendPeriods,
+  ThreadSpendDetail,
+  ThreadSpendPage,
   ToolCallHistoryPage,
   WebhookRunDetail,
   WebhookRunPage,
@@ -507,7 +515,31 @@ export const runtimeApi = {
   },
   getWebhookRun: (id: string) =>
     request<WebhookRunDetail>(`/agents/activity/webhook-runs/${encodeURIComponent(id)}`),
+
+  // Spending
+  spendingSummary: (range: SpendRange) =>
+    request<SpendBreakdown & { from: string; to: string }>(`/agents/spending?${rangeQuery(range)}`),
+  spendingPeriods: (period: SpendPeriodLength, count: number) =>
+    request<SpendPeriods>(`/agents/spending/periods?period=${period}&count=${count}`),
+  spendingThreads: (range: SpendRange, opts: { limit: number; offset: number }) =>
+    request<ThreadSpendPage>(`/agents/spending/threads?${rangeQuery(range)}&limit=${opts.limit}&offset=${opts.offset}`),
+  spendingThread: (threadId: string) =>
+    request<ThreadSpendDetail>(`/agents/spending/threads/${encodeURIComponent(threadId)}`),
+  spendingRequest: (requestId: string) =>
+    request<RequestSpendDetail>(`/agents/spending/requests/${encodeURIComponent(requestId)}`),
+  spendingSources: (category: SourcedSpendCategory, range: SpendRange) =>
+    request<{ sources: SourceSpend[] }>(`/agents/spending/sources?category=${category}&${rangeQuery(range)}`),
 };
+
+/** A time range, as ISO strings. */
+export interface SpendRange {
+  from: string;
+  to: string;
+}
+
+function rangeQuery(range: SpendRange): string {
+  return new URLSearchParams({ from: range.from, to: range.to }).toString();
+}
 
 /** URL to download/preview a stored attachment by id. */
 export function attachmentUrl(id: string): string {

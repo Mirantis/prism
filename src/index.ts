@@ -80,7 +80,8 @@ import { chatGptAuthService } from './services/chatgpt-auth.service';
 import { getProcessManager } from './tools/shell/process-manager';
 import { getAgentTaskManager } from './tools/shell/agent-task-manager';
 import { getMonitorManager } from './tools/shell/monitor-manager';
-import { cancelModelCatalogRefresh, refreshModelCatalog } from './lib/model-catalog';
+import { cancelModelCatalogRefresh } from './lib/model-catalog';
+import { startModelCatalogRefresh } from './services/model-catalog-refresh';
 import { createProvider, missingProviderSettings } from './lib/llm-providers/create-provider';
 import { runBackfill } from './scripts/backfill-embeddings';
 
@@ -93,11 +94,6 @@ initLangfuse();
 // Initialize product telemetry (OTEL Logs → Collector → S3)
 initTelemetry(() => runtimeStateService.deploymentId());
 
-// Refresh the model-window catalog in the background; lookups use the bundle until it lands.
-void refreshModelCatalog().catch((err) => {
-  logger.warn({ err }, '[ModelCatalog] refresh failed; using the bundled catalog');
-});
-
 const app = createApp();
 const httpServer = createServer(app);
 // Other agents' messages, on a port of their own (`AGENT_MESSAGES_PORT`), and
@@ -106,6 +102,7 @@ const agentMessagesServer = createAgentMessagesServer();
 
 let fileJanitorTimer: NodeJS.Timeout | undefined;
 let usageTelemetryTimer: NodeJS.Timeout | undefined;
+let modelCatalogTimer: NodeJS.Timeout | undefined;
 
 // Register channel adapters for unified message delivery
 // Note: Must be registered BEFORE server starts accepting connections
@@ -409,6 +406,10 @@ const initialize = async () => {
     // minutes (see lib/usage-telemetry.ts). Nothing runs without an OTLP endpoint.
     usageTelemetryTimer = startUsageTelemetry(agent.id);
 
+    // Model windows and prices: the stored catalog now, models.dev in the background
+    // and then daily (see services/model-catalog-refresh.ts).
+    modelCatalogTimer = await startModelCatalogRefresh();
+
     // Embed the memory entries that have no vector yet. In-process and
     // best-effort: it never blocks startup, and a failure costs a log line.
     void runBackfill().catch((err) => {
@@ -467,6 +468,7 @@ const shutdown = async (server: Server<typeof IncomingMessage, typeof ServerResp
   agentMessagesServer?.closeAllConnections();
   if (fileJanitorTimer) clearInterval(fileJanitorTimer);
   if (usageTelemetryTimer) clearInterval(usageTelemetryTimer);
+  if (modelCatalogTimer) clearInterval(modelCatalogTimer);
   // A SIGTERM early in boot would otherwise leave the catalog fetch holding a
   // socket, so server.close() waits and the 5s force-exit below fires.
   cancelModelCatalogRefresh();

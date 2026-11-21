@@ -385,25 +385,18 @@ describe('config', () => {
   });
 
   describe('MODELS_DEV_URL', () => {
-    it('is null when unset, so the runtime makes no outbound call by default', async () => {
-      delete process.env.MODELS_DEV_URL;
-      const cfg = await loadConfig();
-      expect(cfg.modelsDevUrl).toBeNull();
+    it('is models.dev when unset, empty or blank', async () => {
+      for (const value of [undefined, '', '   ']) {
+        if (value === undefined) delete process.env.MODELS_DEV_URL;
+        else process.env.MODELS_DEV_URL = value;
+        const cfg = await loadConfig();
+        expect(cfg.modelsDevUrl).toBe('https://models.dev/api.json');
+      }
     });
 
-    it('is null when explicitly empty', async () => {
-      // The e2e suites and the SEA smoke test pin the refresh off this way, which
-      // matters because they inherit ambient env — a developer's .env must not
-      // leak the feature into them.
-      process.env.MODELS_DEV_URL = '';
-      const cfg = await loadConfig();
-      expect(cfg.modelsDevUrl).toBeNull();
-    });
-
-    it('is null when whitespace-only', async () => {
-      // A blank .env line reads as "off" rather than as an unreachable URL that
-      // would warn on every boot.
-      process.env.MODELS_DEV_URL = '   ';
+    it('is null when off, so the runtime makes no outbound call', async () => {
+      // The e2e suites and the SEA smoke test pin the refresh off this way.
+      process.env.MODELS_DEV_URL = ' OFF ';
       const cfg = await loadConfig();
       expect(cfg.modelsDevUrl).toBeNull();
     });

@@ -1,6 +1,7 @@
 import {
   Activity,
   Bot,
+  CircleDollarSign,
   Clock,
   LayoutDashboard,
   MessageSquare,
@@ -10,7 +11,7 @@ import {
 } from 'lucide-react';
 
 export interface NavItem {
-  to: '/' | '/chat' | '/channels' | '/cron' | '/webhooks' | '/profile' | '/computer' | '/activity';
+  to: '/' | '/chat' | '/channels' | '/cron' | '/webhooks' | '/profile' | '/computer' | '/activity' | '/spending';
   label: string;
   icon: typeof Bot;
 }
@@ -38,6 +39,7 @@ export const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
       { to: '/profile', label: 'Profile', icon: Bot },
       { to: '/computer', label: 'Computer', icon: MonitorPlay },
       { to: '/activity', label: 'Activity', icon: Activity },
+      { to: '/spending', label: 'Spending', icon: CircleDollarSign },
     ],
   },
 ];

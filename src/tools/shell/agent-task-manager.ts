@@ -35,7 +35,10 @@ import type {
   CodingAgentRun,
   CodingAgentStopReason,
   CodingAgentTask,
+  CodingAgentUsage,
 } from '../../lib/coding-agents/coding-agent';
+import { currentSpendContext, type SpendContext } from '../../lib/spend-context';
+import { llmCallService } from '../../services/llm-call.service';
 import { getExecutionEnvironmentFor } from '../../lib/execution-environments/get-execution-environment';
 import type { ProcessMark } from '../../lib/execution-environments/execution-environment';
 import { stopLeftoverProcess } from '../../lib/execution-environments/leftover-process';
@@ -76,6 +79,8 @@ export interface AgentTaskParams {
   debug?: boolean;
   /** The conversation the task reports to when it ends. Absent: the agent polls for the result. */
   notify?: TaskNotificationTarget;
+  /** The request and thread the task's tokens are spent on, which outlive the turn that started it. */
+  spend?: SpendContext;
 }
 
 export interface AgentTaskStatus {
@@ -167,7 +172,8 @@ export class AgentTaskManager {
     const name = params.agent ?? config.codingAgent;
     const agent = this.resolveAgent(name);
     const taskId = randomUUID();
-    const work: CodingTaskWork = { params: { ...params, agent: name } };
+    const spend = params.spend ?? currentSpendContext();
+    const work: CodingTaskWork = { params: { ...params, agent: name, ...(spend ? { spend } : {}) } };
     this.starting++;
     try {
       await pendingWorkService.begin('coding-task', taskId, work);
@@ -576,6 +582,8 @@ export class AgentTaskManager {
         texts.push(event.text);
         appendBuffer(state, event.text);
         this.notify(entry);
+      } else if (event.type === 'usage') {
+        recordUsage(entry.params, event.usage);
       } else if (event.type === 'session') {
         // Recorded as it arrives so a *stopped* task can be resumed — including
         // when stopTask has to give up on this loop ever ending and finalize the
@@ -638,6 +646,28 @@ export class AgentTaskManager {
     logger.info({ taskId, stopReason, turns: outcome.turns }, '[AgentTask] completed');
     this.report(taskId);
   }
+}
+
+function recordUsage(params: AgentTaskParams, usage: CodingAgentUsage): void {
+  const prompt = usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
+  llmCallService.recordTokens({
+    purpose: 'coding-agent',
+    model: usage.model,
+    threadId: params.spend?.threadId ?? params.notify?.threadId,
+    requestId: params.spend?.requestId,
+    source: params.spend?.source,
+    tokens: {
+      totalTokens: prompt + usage.outputTokens,
+      inputTokens: prompt,
+      outputTokens: usage.outputTokens,
+      cacheReadTokens: usage.cacheReadTokens,
+      cacheWriteTokens: usage.cacheWriteTokens,
+      longCacheWriteTokens: usage.longCacheWriteTokens,
+      noCacheTokens: usage.inputTokens,
+    },
+    subscription: usage.subscription,
+    reportedCostUsd: usage.costUsd,
+  });
 }
 
 async function deliverNotification(target: TaskNotificationTarget, taskId: string, text: string): Promise<void> {

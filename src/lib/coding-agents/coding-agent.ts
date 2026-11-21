@@ -108,9 +108,27 @@ export interface CodingAgentRefusal {
   target: string;
 }
 
+/** The tokens one model spent on a task, as the agent reported them. */
+export interface CodingAgentUsage {
+  model: string;
+  /** The uncached part of the prompt. */
+  inputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  /** The part of `cacheWriteTokens` written with the one-hour lifetime. */
+  longCacheWriteTokens: number;
+  outputTokens: number;
+  /** The cost the agent reported for these tokens, in US dollars. */
+  costUsd?: number;
+  /** The run is billed to a subscription, not per token. */
+  subscription: boolean;
+}
+
 export type CodingAgentEvent =
   /** Output for the caller, streamed as it is produced. */
   | { type: 'text'; text: string }
+  /** Tokens spent, reported when the agent reports them: once a run, or once a turn. */
+  | { type: 'usage'; usage: CodingAgentUsage }
   /** The id a later task passes as `sessionId` to resume this one's context. */
   | { type: 'session'; sessionId: string }
   /**

@@ -46,6 +46,7 @@ import {
   resolveRealtimeEndpoint,
   type RealtimeEndpoint,
 } from './openai-endpoint';
+import { recordRealtimeUsage, type RealtimeSpend } from './realtime-usage';
 
 /**
  * How long to wait for `response.created` after asking for a response.
@@ -252,6 +253,8 @@ export interface RealtimeSessionOptions {
   agentName?: string;
   /** Injected in tests so they can point at a local mock server. */
   endpointOverride?: RealtimeEndpoint;
+  /** Where the session's tokens are spent. */
+  spend: RealtimeSpend;
 }
 
 /** Emitted when the model calls one of the agent's tools. */
@@ -641,6 +644,7 @@ export class RealtimeSession extends EventEmitter {
       }
 
       case 'conversation.item.input_audio_transcription.completed': {
+        recordRealtimeUsage(this.options.spend, config.openaiTranscriptionModel, event.usage);
         const transcript = event.transcript;
         const itemId = typeof event.item_id === 'string' ? event.item_id : '';
         if (typeof transcript === 'string' && transcript.trim()) {
@@ -733,6 +737,8 @@ export class RealtimeSession extends EventEmitter {
               output?: { content?: { text?: string; transcript?: string }[] }[];
             }
           | undefined;
+        // Every response bills, a probe and a stale one included.
+        recordRealtimeUsage(this.options.spend, this.options.model || config.openaiRealtimeModel, done?.usage);
         // A probe finishing must release nothing: the conversation's own response
         // may still be generating, and clearing the slot here would both fire a
         // deferred duplicate and count the probe as something the room heard.

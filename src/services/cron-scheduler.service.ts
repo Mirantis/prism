@@ -708,6 +708,7 @@ class CronSchedulerService {
         userId: task.userId,
         agentId: task.agentId,
         mode: 'cron',
+        sourceId: task.id,
         prompt: boundThreadId ? instruction : scheduledRunPrompt(instruction, lastSend),
         afterRestart: opts.afterRestart,
         abortSignal: pendingWorkService.shutdownSignal,

@@ -451,6 +451,7 @@ export class WebhookService {
       userId: agent.userId,
       agentId: agent.id,
       mode: 'webhook',
+      sourceId: subscription.id,
       prompt,
       afterRestart,
       abortSignal: pendingWorkService.shutdownSignal,

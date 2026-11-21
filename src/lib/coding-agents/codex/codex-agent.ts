@@ -33,7 +33,15 @@ interface StreamLine {
   item?: { type: string; text?: string };
   error?: { message: string };
   message?: string;
+  /** On `turn.completed`. `input_tokens` includes the cached and the cache-written ones. */
+  usage?: { input_tokens?: number; cached_input_tokens?: number; cache_write_input_tokens?: number; output_tokens?: number };
 }
+
+/** The model a Bedrock task runs on when it names no tier. */
+const BEDROCK_DEFAULT_MODEL = 'openai.gpt-5.6-terra';
+
+/** The name a usage row gets when Codex runs the model its own configuration chooses. */
+const UNNAMED_MODEL = 'codex';
 
 export function createCodexAgent(environment?: ExecutionEnvironment): CodingAgent {
   const target = () => environment ?? getExecutionEnvironment();
@@ -74,7 +82,7 @@ export function createCodexAgent(environment?: ExecutionEnvironment): CodingAgen
           CODEX_HOME: home,
           ...(task.debug ? { RUST_LOG: 'debug' } : {}),
         },
-        parseLine: createParser(),
+        parseLine: createParser(modelFor(task, authMethod) ?? UNNAMED_MODEL, subscription),
       }, runIn);
       const run = subscription
         ? deferredRun(task.taskId, 'Codex', async (signal) => {
@@ -130,7 +138,7 @@ function buildArgs(task: CodingAgentTask, authMethod: CodexAuthMethod | undefine
     // Bedrock identifies these models with the vendor prefix `openai.`; the
     // OpenAI endpoint uses bare ids. Tier defaults below follow the same rule.
     args.push('-c', 'model_provider="amazon-bedrock"');
-    if (!task.modelTier) args.push('-c', 'model="openai.gpt-5.6-terra"');
+    if (!task.modelTier) args.push('-c', `model="${BEDROCK_DEFAULT_MODEL}"`);
     args.push('-c', `model_providers.amazon-bedrock.aws.region=${JSON.stringify(bedrockRegion(task.env))}`);
   } else if (authMethod === 'subscription') {
     // A repository's `.codex/config.toml` cannot move the task off this login:
@@ -144,9 +152,7 @@ function buildArgs(task: CodingAgentTask, authMethod: CodexAuthMethod | undefine
   // An omitted tier or effort must emit no selection flag here, preserving
   // deployment configuration and the existing Bedrock default above. Keep
   // both optional on resume too; a default tier would silently replace it.
-  if (task.modelTier) {
-    args.push('--model', config.codingAgentModels.codex[task.modelTier][useBedrock ? 'bedrock' : 'openai']);
-  }
+  if (task.modelTier) args.push('--model', modelFor(task, authMethod)!);
   if (task.effort) args.push('-c', `model_reasoning_effort="${task.effort}"`);
   if (task.appendSystemPrompt) {
     args.push('-c', `developer_instructions=${JSON.stringify(task.appendSystemPrompt)}`);
@@ -161,8 +167,15 @@ function buildArgs(task: CodingAgentTask, authMethod: CodexAuthMethod | undefine
   return args;
 }
 
+/** The model a task runs on, or undefined where Codex's own configuration chooses it. */
+function modelFor(task: CodingAgentTask, authMethod: CodexAuthMethod | undefined): string | undefined {
+  const useBedrock = authMethod === 'bedrock';
+  if (task.modelTier) return config.codingAgentModels.codex[task.modelTier][useBedrock ? 'bedrock' : 'openai'];
+  return useBedrock ? BEDROCK_DEFAULT_MODEL : undefined;
+}
+
 // Codex reports one turn for the whole exec task, including its tool calls.
-function createParser(): (line: string) => CodingAgentEvent[] {
+function createParser(model: string, subscription: boolean): (line: string) => CodingAgentEvent[] {
   let answer = '';
   let error = '';
   return (line) => {
@@ -184,7 +197,24 @@ function createParser(): (line: string) => CodingAgentEvent[] {
         message: event.error?.message || error || 'Codex task failed' }];
     }
     if (event.type === 'turn.completed') {
-      return [{ type: 'result', stopReason: 'end_turn', turns: 1, message: answer }];
+      const input = event.usage?.input_tokens ?? 0;
+      const cached = event.usage?.cached_input_tokens ?? 0;
+      const written = event.usage?.cache_write_input_tokens ?? 0;
+      const usage: CodingAgentEvent[] = event.usage
+        ? [{
+          type: 'usage',
+          usage: {
+            model,
+            inputTokens: Math.max(0, input - cached - written),
+            cacheReadTokens: cached,
+            cacheWriteTokens: written,
+            longCacheWriteTokens: 0,
+            outputTokens: event.usage.output_tokens ?? 0,
+            subscription,
+          },
+        }]
+        : [];
+      return [...usage, { type: 'result', stopReason: 'end_turn', turns: 1, message: answer }];
     }
     return [];
   };

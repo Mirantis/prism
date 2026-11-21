@@ -2,8 +2,8 @@
  * Regenerate `src/lib/model-limits.generated.json` from the models.dev registry.
  *
  * The runtime needs each model's input-context window to show how much context a
- * conversation has used,
- * but neither provider it talks to exposes that number: Anthropic's Models API
+ * conversation has used, and each model's prices to estimate what the agent spends.
+ * No provider it talks to exposes the window: Anthropic's Models API
  * (the only source of `max_input_tokens`) is first-party only, and Bedrock's
  * `GetFoundationModel` has no context-length field at all. So models.dev is the
  * source, and this script vendors it so the committed JSON is an always-available
@@ -27,19 +27,24 @@ import path from 'node:path';
 // Shared with the runtime so the filter predicate can't drift between build time
 // and boot time. Only the error policy differs: this script throws on shape
 // drift, the runtime degrades to the committed floor.
-import { REGISTRY_PROVIDERS, isUsableRegistryEntry } from '../lib/model-catalog';
+import {
+  REGISTRY_PROVIDERS,
+  catalogEntryOf,
+  isUsableRegistryEntry,
+  type CatalogEntry,
+  type RegistryModel,
+} from '../lib/model-catalog';
 
-const SOURCE = process.env.MODELS_DEV_URL || 'https://models.dev/api.json';
+// `off` stops the runtime's own fetch, not this script's.
+const configured = process.env.MODELS_DEV_URL?.trim();
+const SOURCE = configured && configured.toLowerCase() !== 'off' ? configured : 'https://models.dev/api.json';
 // Anchored on cwd rather than this file: npm scripts run from the repo root, and
 // the compiled copy under `dist/scripts/` (which nobody runs) would resolve the
 // wrong path from `__dirname`.
 const OUT = path.resolve(process.cwd(), 'src', 'lib', 'model-limits.generated.json');
 
-interface RegistryModel {
-  limit?: { context?: number; output?: number };
-}
 type Registry = Record<string, { models?: Record<string, RegistryModel> } | undefined>;
-type Snapshot = Record<string, Record<string, { context: number; output: number | null }>>;
+type Snapshot = Record<string, Record<string, CatalogEntry>>;
 
 async function main(): Promise<void> {
   const res = await fetch(SOURCE, { signal: AbortSignal.timeout(30_000) });
@@ -60,10 +65,7 @@ async function main(): Promise<void> {
       .filter(([id, model]) => isUsableRegistryEntry(id, model, registryId))
       // Sort so the committed file has a stable, reviewable diff.
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(
-        ([id, model]) =>
-          [id, { context: model.limit!.context!, output: model.limit?.output ?? null }] as const,
-      );
+      .map(([id, model]) => [id, catalogEntryOf(model)] as const);
 
     if (entries.length === 0) throw new Error(`no usable models found under "${registryId}"`);
     snapshot[provider] = Object.fromEntries(entries);

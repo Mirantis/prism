@@ -12,7 +12,7 @@ to the runtime.)
 ![Prism Agent Web UI](images/web-ui.png)
 
 The left sidebar groups the pages: **Overview** and **Chat**; **Channels**,
-**Scheduled Tasks** and **Webhooks**; **Profile** and **Activity**. **New chat** at
+**Scheduled Tasks** and **Webhooks**; **Profile**, **Activity** and **Spending**. **New chat** at
 its top starts a conversation from any page, and the dot on the agent's mark shows
 what it is doing right now (green idle, blue working, red error). Press **Ctrl+B**
 (**⌘B** on a Mac), or the button at the top left, to collapse the sidebar to icons.
@@ -334,9 +334,9 @@ What the agent has spent, and what it has done.
   the exact count beneath it. A table below the cards splits the same window by
   model.
 
-  Counts every text-generation call, including the ones that produce no
-  message. Voice meetings and memory embeddings each run on their own surface,
-  billed separately from these figures.
+  Counts every model call, including the ones that produce no message, the
+  coding agent's and the voice models'. Memory embeddings are not counted.
+  **See spending** opens the [Spending](#spending) page.
 
   **Cache hit rate** reads `—` when the provider reports no cache breakdown, and
   `0%` when it reports one and nothing was served from cache. See
@@ -364,6 +364,22 @@ What the agent has spent, and what it has done.
 
   Long values are cut: 2,000 characters of parameters and 10,000 of output, with
   a note in place of the rest.
+
+## Spending
+
+What the agent spent on models, estimated from each model's list price. See
+**[Spending](spending.md)** for what the estimate covers.
+
+- **Today**, **This month** and **Last month**. This month is compared with the
+  same days of last month.
+- **Spending over time.** A bar per day for the last 30 days, or per week or
+  month, split into the agent's own model, the coding agent and voice. Hover a
+  bar for its amounts; select one to show only that period below it.
+- **Where it went.** The period's spend by category (conversations, the coding
+  agent, voice, heartbeat, scheduled tasks, webhooks, goals and background work)
+  or by model. Expand scheduled tasks, webhooks or goals to see each one.
+- **Top conversations.** Conversations ranked by spend. Select one to see the
+  cost of each message you sent in it; expand a message to see its model calls.
 
 ## Behind the scenes
 

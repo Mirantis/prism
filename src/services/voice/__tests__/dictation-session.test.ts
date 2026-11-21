@@ -6,6 +6,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
 import { DictationSession, type DictationSignal } from '../dictation-session';
+import { recordRealtimeUsage } from '../../meeting/realtime-usage';
+
+vi.mock('../../meeting/realtime-usage', () => ({ recordRealtimeUsage: vi.fn() }));
 
 vi.mock('../../../logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -158,9 +161,19 @@ describe('DictationSession', () => {
 
     active.upstream.emit({ type: 'conversation.item.input_audio_transcription.delta', item_id: 'i1', delta: 'Hello, ' });
     active.upstream.emit({ type: 'conversation.item.input_audio_transcription.delta', item_id: 'i1', delta: 'world.' });
-    active.upstream.emit({ type: 'conversation.item.input_audio_transcription.completed', item_id: 'i1', transcript: ' Hello, world. ' });
+    active.upstream.emit({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'i1',
+      transcript: ' Hello, world. ',
+      usage: { type: 'tokens', input_tokens: 25, output_tokens: 4 },
+    });
     await settle();
 
+    expect(recordRealtimeUsage).toHaveBeenCalledWith(
+      expect.objectContaining({ purpose: 'dictation' }),
+      'gpt-live-transcribe',
+      { type: 'tokens', input_tokens: 25, output_tokens: 4 },
+    );
     expect(active.signal.calls).toEqual([
       ['ready'],
       ['delta', 'Hello, '],

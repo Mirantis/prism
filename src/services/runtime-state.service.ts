@@ -18,6 +18,9 @@ export const DEPLOYMENT_ID = 'deploymentId';
 /** How the agent's names were read for its voice: a JSON object of name to reading. */
 export const AGENT_VOICE_READINGS = 'agentVoiceReadings';
 
+/** The last model catalog overlay fetched from models.dev, as JSON, so a restart without network keeps it. */
+export const MODEL_CATALOG_OVERLAY = 'modelCatalogOverlay';
+
 /** The end of the last closed hour that `llm usage aggregated` reported, as an ISO time. */
 export const LLM_USAGE_REPORTED_THROUGH = 'llmUsageReportedThrough';
 

@@ -189,6 +189,13 @@ export interface InvokeRequest {
    */
   promptMessageId?: string;
   /**
+   * The request an `invoke()` run's model calls are spent on. Absent: a new id per
+   * run. A subagent run spends on its parent's request.
+   */
+  requestId?: string;
+  /** The scheduled task, webhook or goal an `invoke()` run serves, which its spending is listed under. */
+  sourceId?: string;
+  /**
    * The run starts work that a restart may have stopped part-way. The model is
    * told in a message after the prompt, so the cached prefix before it holds.
    */

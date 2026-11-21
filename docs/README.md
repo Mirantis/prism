@@ -86,6 +86,8 @@ What the agent can do.
   standard) that bundle skills together with the MCP tool servers they need.
 - **[Tools](tools.md)** — everything the agent can call: memory, self-management,
   scheduling, skills, shell, file sharing, and the coding sub-agent.
+- **[Spending](spending.md)** — what the agent spends on models, per day, week or
+  month, per conversation and per message.
 
 ## Reference
 

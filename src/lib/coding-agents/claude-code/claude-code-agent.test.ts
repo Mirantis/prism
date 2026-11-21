@@ -246,6 +246,25 @@ describe('run: the Claude subscription', () => {
       });
     });
 
+    it('reports the usage of a run on the subscription as billed to it', async () => {
+      const { run, launched } = start({ env }, SUBSCRIPTION_STATUS);
+      const { child } = await launched();
+      child.emitLine(JSON.stringify({
+        type: 'result', subtype: 'success', result: 'ok', num_turns: 1,
+        modelUsage: { 'claude-opus-5-5': { inputTokens: 10, outputTokens: 20, costUSD: 0.01 } },
+      }));
+      child.finish(0);
+
+      const usage = (await Array.fromAsync(run.events)).filter((event) => event.type === 'usage');
+      expect(usage).toEqual([{
+        type: 'usage',
+        usage: {
+          model: 'claude-opus-5-5', inputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0,
+          longCacheWriteTokens: 0, outputTokens: 20, costUsd: 0.01, subscription: true,
+        },
+      }]);
+    });
+
     it.each([
       ['no login', SIGNED_OUT, NO_SUBSCRIPTION],
       ['a login other than a subscription', '{"loggedIn":true,"authMethod":"api_key"}', NO_SUBSCRIPTION],
@@ -598,6 +617,30 @@ describe('run: reading the stream', () => {
       { type: 'session', sessionId: 'sess-42' },
       { type: 'result', stopReason: 'end_turn', turns: 7, message: 'final' },
     ]);
+  });
+
+  it('reports the usage of every model the run used, with the cost the CLI estimated', async () => {
+    // The `modelUsage` of a result line captured from Claude Code, which writes its
+    // cache with the one-hour lifetime.
+    const events = await eventsFor([{
+      type: 'result', subtype: 'success', result: 'OK', num_turns: 1,
+      modelUsage: {
+        'claude-haiku-5-5': {
+          inputTokens: 2, outputTokens: 4, cacheReadInputTokens: 0, cacheCreationInputTokens: 143355,
+          webSearchRequests: 0, costUSD: 0.14336600000000002, contextWindow: 1000000, maxOutputTokens: 128000,
+          thinkingTokens: 0, cacheCreationEphemeral5mInputTokens: 0, cacheCreationEphemeral1hInputTokens: 143355,
+          canonicalModel: 'claude-haiku-5-5', provider: 'firstParty', costBasis: 'list',
+        },
+      },
+    }]);
+
+    expect(events.filter((event) => event.type === 'usage')).toEqual([{
+      type: 'usage',
+      usage: {
+        model: 'claude-haiku-5-5', inputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 143355,
+        longCacheWriteTokens: 143355, outputTokens: 4, costUsd: 0.14336600000000002, subscription: false,
+      },
+    }]);
   });
 
   it.each([
