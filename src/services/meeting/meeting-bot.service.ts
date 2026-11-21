@@ -18,6 +18,7 @@
  * failure, the inactivity timeout and process shutdown alike.
  */
 
+import { randomUUID } from 'node:crypto';
 import { logger } from '../../logger';
 import { config } from '../../config';
 import { trackEvent } from '../../lib/telemetry';
@@ -839,6 +840,7 @@ export class MeetingBotService {
         agentName,
         voice: agentVoice.voice,
         onSessionLost: (reason) => this.onSessionLost(epoch, reason),
+        spend: { purpose: 'meeting', requestId: randomUUID() },
       });
       await conversation.start();
       // Bound to this call's session rather than to `this.conversation`, which at

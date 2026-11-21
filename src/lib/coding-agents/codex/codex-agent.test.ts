@@ -228,8 +228,41 @@ describe('Codex adapter', () => {
     ])).toEqual([
       { type: 'session', sessionId: 'session-1' },
       { type: 'text', text: 'Project inspected.' },
+      {
+        type: 'usage',
+        usage: {
+          model: 'codex', inputTokens: 12, cacheReadTokens: 0, cacheWriteTokens: 0, longCacheWriteTokens: 0,
+          outputTokens: 4, subscription: false,
+        },
+      },
       { type: 'result', stopReason: 'end_turn', turns: 1, message: 'Project inspected.' },
     ] satisfies CodingAgentEvent[]);
+  });
+
+  it('reports the tokens of a turn against the model the task asked for, cached input apart', async () => {
+    const child = new FakeChild();
+    const run = createCodexAgent(fakeExecutionEnvironment({ runProgram: () => child.asExecProcess() }))
+      .run({ ...task, modelTier: 'small' });
+    // A `turn.completed` line captured from Codex.
+    child.emitLine(JSON.stringify({
+      type: 'turn.completed',
+      usage: { input_tokens: 19830, cached_input_tokens: 8448, cache_write_input_tokens: 0, output_tokens: 40, reasoning_output_tokens: 33 },
+    }));
+    child.finish(0);
+
+    const usage = (await Array.fromAsync(run.events)).filter((event) => event.type === 'usage');
+    expect(usage).toEqual([{
+      type: 'usage',
+      usage: {
+        model: config.codingAgentModels.codex.small.openai,
+        inputTokens: 11382,
+        cacheReadTokens: 8448,
+        cacheWriteTokens: 0,
+        longCacheWriteTokens: 0,
+        outputTokens: 40,
+        subscription: false,
+      },
+    }]);
   });
 
   it('reports terminal failures', async () => {

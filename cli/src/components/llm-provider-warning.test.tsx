@@ -14,9 +14,9 @@ describe('LlmProviderWarning', () => {
       }),
     };
     const { lastFrame } = render(<LlmProviderWarning api={api} />);
-    await flush();
+    // Ink renders the answer a frame later, which a loaded runner can delay past one tick.
+    await vi.waitFor(() => expect(lastFrame()).toContain('Connect a model provider'));
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('Connect a model provider');
     expect(frame).toContain('Required for azure');
     expect(frame).toContain('AZURE_API_KEY');
     expect(frame).toContain('AZURE_RESOURCE_NAME');

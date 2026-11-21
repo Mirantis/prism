@@ -13,6 +13,8 @@ import { logger } from '../../../logger';
 import { VoiceConversation, type VoiceConversationOptions } from '../voice-conversation';
 import { MEETING_SAMPLE_RATE, REALTIME_SAMPLE_RATE } from '../resampler';
 
+vi.mock('../realtime-usage', () => ({ recordRealtimeUsage: vi.fn() }));
+
 vi.mock('../../../logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -76,6 +78,7 @@ async function harness(): Promise<Harness> {
     sampleRate: MEETING_SAMPLE_RATE,
     endpointOverride: { url: `ws://127.0.0.1:${port}`, headers: {} },
     onSessionLost: (reason) => lost.push(reason),
+    spend: { purpose: 'meeting', requestId: 'call-1' },
   });
   await conversation.start();
   await connected;
@@ -133,6 +136,7 @@ async function speakingHarness(
     responseMode: 'addressed',
     sampleRate,
     endpointOverride: { url: `ws://127.0.0.1:${port}`, headers: {} },
+    spend: { purpose: 'meeting', requestId: 'call-1' },
     ...options,
   });
   await conversation.start();
@@ -654,6 +658,7 @@ describe('taking captured audio in', () => {
           // Pointed at nothing: the rate is refused before anything connects, and
           // a session left resolving the real endpoint outlives the test.
           endpointOverride: { url: 'ws://127.0.0.1:1', headers: {} },
+          spend: { purpose: 'meeting', requestId: 'call-1' },
         }),
     ).toThrow(/16000/);
   });

@@ -1,12 +1,13 @@
 /**
- * The model catalog: which input-context window each model has.
+ * The model catalog: which input-context window each model has, and what its
+ * tokens cost.
  *
  * Two layers. The **bundled floor** (`model-limits.generated.json`, vendored from
  * models.dev by `src/scripts/generate-model-limits.ts`) is always present and
- * always sufficient on its own — by default it is the only layer. Setting
- * `MODELS_DEV_URL` opts into a **remote overlay** fetched once at startup, so a
- * model released since the last build gets a real window instead of being silently
- * unmeasurable.
+ * always sufficient on its own. A **remote overlay** from `MODELS_DEV_URL`
+ * (models.dev unless an operator sets `off`) is fetched at boot and once a day
+ * (`services/model-catalog-refresh.ts`), so a model released or repriced since
+ * the last build gets a real window and price.
  *
  * Why models.dev is the source at all: none of the providers this runtime talks
  * to report a context window. Anthropic's Models API — the only source of
@@ -39,7 +40,7 @@
  * would otherwise force compaction on every turn); the newest tail messages are
  * always preserved and nothing is deleted (originals stay in the DB); and the
  * nothing-to-compact + once-per-exchange guards cap the damage at wasted
- * summarize calls.
+ * summarize calls. A price from here reaches the spending estimate alone.
  */
 import { config } from '../config';
 import { logger } from '../logger';
@@ -47,10 +48,32 @@ import { getProxyDispatcher } from './proxy-dispatcher';
 import { trackEvent } from './telemetry';
 import bundled from './model-limits.generated.json';
 
+/** A model's prices, in US dollars per million tokens, as models.dev lists them. */
+export interface ModelPrice {
+  input: number;
+  output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  inputAudio?: number;
+  outputAudio?: number;
+  /** Higher prices for a prompt above `above` tokens, lowest threshold first. */
+  tiers?: PriceTier[];
+}
+
+export interface PriceTier {
+  above: number;
+  input: number;
+  output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+}
+
 export interface CatalogEntry {
   /** Max input tokens the model accepts. */
   context: number;
   output: number | null;
+  /** Absent where models.dev lists no price. */
+  cost?: ModelPrice;
 }
 
 /** Provider (`bedrock` | `azure` | `openai` | `anthropic`) -> model ID -> limits. */
@@ -59,7 +82,7 @@ export type ModelCatalog = Record<string, Record<string, CatalogEntry | undefine
 export type CatalogState =
   /** No refresh configured — the bundled floor is the whole story. */
   | 'disabled'
-  /** A refresh is in flight; reads are served from the bundled floor. */
+  /** A refresh is in flight; reads are served from the current catalog. */
   | 'pending'
   /** No refresh has run (or none will) and the floor is current. */
   | 'bundled'
@@ -106,8 +129,25 @@ export const MIN_PLAUSIBLE_CONTEXT = 1_000;
 /** Beyond this ratio to the bundled value, a remote entry is worth a warning. */
 const DIVERGENCE_FACTOR = 2;
 
-interface RegistryModel {
+interface RegistryTier {
+  input?: unknown;
+  output?: unknown;
+  cache_read?: unknown;
+  cache_write?: unknown;
+  tier?: { type?: unknown; size?: unknown };
+}
+
+export interface RegistryModel {
   limit?: { context?: number; output?: number };
+  cost?: {
+    input?: unknown;
+    output?: unknown;
+    cache_read?: unknown;
+    cache_write?: unknown;
+    input_audio?: unknown;
+    output_audio?: unknown;
+    tiers?: unknown;
+  };
 }
 
 /**
@@ -121,27 +161,68 @@ export function isUsableRegistryEntry(id: string, model: RegistryModel, registry
   return typeof context === 'number' && Number.isFinite(context) && context >= MIN_PLAUSIBLE_CONTEXT;
 }
 
+/** A registry price field, or undefined when it is not a usable rate. */
+function rate(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+/** The rate fields that are present, so an absent one stays absent in the JSON. */
+function rates(fields: Record<string, number | undefined>): Record<string, number> {
+  return Object.fromEntries(Object.entries(fields).filter((entry): entry is [string, number] => entry[1] !== undefined));
+}
+
+/** A registry entry's price, or undefined when it lists no input and output rate. */
+function priceOf(cost: RegistryModel['cost']): ModelPrice | undefined {
+  const input = rate(cost?.input);
+  const output = rate(cost?.output);
+  if (input === undefined || output === undefined) return undefined;
+
+  const tiers = (Array.isArray(cost?.tiers) ? (cost.tiers as RegistryTier[]) : [])
+    .flatMap((tier): PriceTier[] => {
+      const above = rate(tier?.tier?.size);
+      const tierInput = rate(tier?.input);
+      const tierOutput = rate(tier?.output);
+      if (tier?.tier?.type !== 'context' || above === undefined || tierInput === undefined || tierOutput === undefined) {
+        return [];
+      }
+      return [{
+        above,
+        input: tierInput,
+        output: tierOutput,
+        ...rates({ cacheRead: rate(tier.cache_read), cacheWrite: rate(tier.cache_write) }),
+      }];
+    })
+    .sort((a, b) => a.above - b.above);
+
+  return {
+    input,
+    output,
+    ...rates({
+      cacheRead: rate(cost?.cache_read),
+      cacheWrite: rate(cost?.cache_write),
+      inputAudio: rate(cost?.input_audio),
+      outputAudio: rate(cost?.output_audio),
+    }),
+    ...(tiers.length > 0 ? { tiers } : {}),
+  };
+}
+
+/** The catalog entry for a usable registry entry. Shared with the generator. */
+export function catalogEntryOf(model: RegistryModel): CatalogEntry {
+  const cost = priceOf(model.cost);
+  return { context: model.limit!.context!, output: model.limit?.output ?? null, ...(cost ? { cost } : {}) };
+}
+
 /**
  * Copy the imported JSON into our own objects. A plain reference would hand the
  * module singleton to every caller of `bundledModelCatalog()`, and the merge in
  * `installRemoteCatalog` must not be able to reach it.
  */
-function copy(
-  raw: Record<string, Record<string, { context: number; output: number | null }> | undefined>,
-): ModelCatalog {
-  const out: ModelCatalog = {};
-  for (const [provider, models] of Object.entries(raw)) {
-    if (!models) continue;
-    const copied: Record<string, CatalogEntry> = {};
-    for (const [id, limits] of Object.entries(models)) {
-      copied[id] = { context: limits.context, output: limits.output };
-    }
-    out[provider] = copied;
-  }
-  return out;
+function copy(raw: Record<string, Record<string, CatalogEntry> | undefined>): ModelCatalog {
+  return structuredClone(raw) as ModelCatalog;
 }
 
-const bundledCatalog: ModelCatalog = copy(bundled);
+const bundledCatalog: ModelCatalog = copy(bundled as Record<string, Record<string, CatalogEntry>>);
 
 let effective: ModelCatalog = bundledCatalog;
 let state: CatalogState = 'bundled';
@@ -158,6 +239,68 @@ export function bundledModelCatalog(): ModelCatalog {
 
 export function modelCatalogState(): CatalogState {
   return state;
+}
+
+/**
+ * Bedrock cross-region inference profiles prefix the model ID with a geo scope
+ * (`us.`, `eu.`, `au.`, `jp.`, `global.`). models.dev lists most of these
+ * explicitly, but new geos appear before the registry catches up, so strip a
+ * known prefix and retry rather than going dark on `sa.anthropic.claude-opus-5`.
+ */
+const REGION_PREFIX = /^(?:us|eu|apac|au|jp|ca|sa|in|global)\./;
+
+/** Bedrock version suffixes (`-v1:0`, `-v2:1`, `-v1`) that some ID spellings omit. */
+const VERSION_SUFFIX = /-v\d+(?::\d+)?$/;
+
+/**
+ * The catalog entry for `modelId`, or null when no spelling of it is listed.
+ *
+ * The active provider's own entry wins, since the registry tracks providers and
+ * regions separately and their limits and prices differ; another provider's entry
+ * for the same model is the fallback, so an operator can point `LLM_PROVIDER=azure`
+ * at a Bedrock-style ID and a coding agent on another vendor still resolves.
+ */
+export function findCatalogEntry(modelId: string): CatalogEntry | null {
+  if (!modelId) return null;
+  const catalog = effective;
+  const preferred = catalog[config.llmProvider];
+  const others = Object.entries(catalog)
+    .filter(([provider]) => provider !== config.llmProvider)
+    .map(([, models]) => models);
+
+  for (const candidate of idCandidates(modelId)) {
+    for (const models of [preferred, ...others]) {
+      const hit = models?.[candidate];
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
+/** `modelId` plus progressively-normalized spellings, most specific first. */
+function idCandidates(modelId: string): string[] {
+  const seen = new Set<string>();
+  // A context-size marker (`claude-opus-5-5[1m]`) and an OpenRouter-style vendor
+  // segment (`anthropic/claude-opus-5`) are not part of any registry id.
+  const plain = modelId.replace(/\[[^\]]*\]$/, '').replace(/^[a-z0-9-]+\//, '');
+  const bare = plain.replace(REGION_PREFIX, '');
+
+  for (const id of [
+    modelId,
+    plain,
+    bare,
+    plain.replace(VERSION_SUFFIX, ''),
+    bare.replace(VERSION_SUFFIX, ''),
+    // Azure deployment names are bare (`claude-opus-5`) while Bedrock IDs carry
+    // an `anthropic.` vendor segment; try across that boundary too. Bedrock names
+    // OpenAI's models `openai.gpt-…`, which the `openai` provider lists bare.
+    bare.replace(/^(?:anthropic|openai)\./, ''),
+    bare.replace(/^(?:anthropic|openai)\./, '').replace(VERSION_SUFFIX, ''),
+  ]) {
+    if (id) seen.add(id);
+  }
+
+  return [...seen];
 }
 
 /**
@@ -187,7 +330,7 @@ export function reshapeRegistry(raw: unknown): ModelCatalog | null {
     for (const [id, model] of Object.entries(models)) {
       if (!model || typeof model !== 'object') continue;
       if (!isUsableRegistryEntry(id, model, registryId)) continue;
-      entries[id] = { context: model.limit!.context!, output: model.limit?.output ?? null };
+      entries[id] = catalogEntryOf(model);
       total++;
     }
 
@@ -285,20 +428,18 @@ class RejectedPayload extends Error {
 let controller: AbortController | undefined;
 
 /**
- * Fetch models.dev once and install the result as an overlay.
+ * Fetch models.dev once and install the result as an overlay. Answers the overlay
+ * it installed, or null.
  *
- * **Total — never rejects.** Every failure degrades to the bundled floor, which
- * was already serving lookups, so there is nothing for a caller to handle. Call it
- * fire-and-forget; do not await it on the boot path.
+ * **Total — never rejects.** Every failure keeps the catalog that was already
+ * serving lookups, so there is nothing for a caller to handle.
  */
-export async function refreshModelCatalog(): Promise<void> {
+export async function refreshModelCatalog(): Promise<ModelCatalog | null> {
   const url = config.modelsDevUrl;
   if (!url) {
     state = 'disabled';
-    // debug, not info: this is the default, so an info line would add one entry to
-    // every boot log saying nothing happened.
-    logger.debug('[ModelCatalog] MODELS_DEV_URL unset; using the bundled catalog (no outbound call)');
-    return;
+    logger.info('[ModelCatalog] MODELS_DEV_URL is off; using the bundled catalog');
+    return null;
   }
 
   state = 'pending';
@@ -328,26 +469,28 @@ export async function refreshModelCatalog(): Promise<void> {
     }
 
     emitOutcome('remote', startedAt, { remote, counts });
+    return remote;
   } catch (err) {
     // Our own abort means shutdown, which is not an outcome worth reporting.
     if (err instanceof Error && err.name === 'AbortError') {
       state = 'bundled';
       logger.debug('[ModelCatalog] refresh canceled');
-      return;
+      return null;
     }
 
     state = 'failed';
     if (err instanceof RejectedPayload) {
-      logger.warn(`[ModelCatalog] models.dev payload rejected (${err.message}); using the bundled catalog`);
+      logger.warn(`[ModelCatalog] models.dev payload rejected (${err.message}); keeping the current catalog`);
       emitOutcome(err.kind === 'shape' || err.kind === 'parse' ? 'rejected' : 'failed', startedAt, {
         kind: err.kind,
       });
-      return;
+      return null;
     }
 
     const kind: FailureKind = err instanceof Error && err.name === 'TimeoutError' ? 'timeout' : 'network';
-    logger.warn({ err }, '[ModelCatalog] refresh failed; using the bundled catalog');
+    logger.warn({ err }, '[ModelCatalog] refresh failed; keeping the current catalog');
     emitOutcome('failed', startedAt, { kind });
+    return null;
   } finally {
     controller = undefined;
   }

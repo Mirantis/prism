@@ -138,6 +138,46 @@ describe('model catalog', () => {
       });
     });
 
+    it('keeps the prices, with the long-context tiers lowest first, and drops what is not a rate', () => {
+      // Field names and values as models.dev lists them.
+      const reshaped = reshapeRegistry({
+        openai: {
+          models: {
+            'gpt-5.5': {
+              limit: { context: 1_050_000, output: 128_000 },
+              cost: {
+                input: 5, output: 30, cache_read: 0.5,
+                tiers: [
+                  { input: 10, output: 45, cache_read: 1, tier: { type: 'context', size: 272_000 } },
+                  { input: 99, output: 99, tier: { type: 'requests', size: 10 } },
+                ],
+                context_over_200k: { input: 10, output: 45, cache_read: 1 },
+              },
+            },
+            'gpt-realtime-2.1': {
+              limit: { context: 128_000, output: 32_000 },
+              cost: { input: 4, output: 24, cache_read: 0.4, input_audio: 32, output_audio: 64 },
+            },
+            'gpt-free-text': { limit: { context: 128_000 }, cost: { input: 'n/a', output: 1 } },
+          },
+        },
+      });
+
+      expect(reshaped?.openai).toEqual({
+        'gpt-5.5': {
+          context: 1_050_000,
+          output: 128_000,
+          cost: { input: 5, output: 30, cacheRead: 0.5, tiers: [{ above: 272_000, input: 10, output: 45, cacheRead: 1 }] },
+        },
+        'gpt-realtime-2.1': {
+          context: 128_000,
+          output: 32_000,
+          cost: { input: 4, output: 24, cacheRead: 0.4, inputAudio: 32, outputAudio: 64 },
+        },
+        'gpt-free-text': { context: 128_000, output: null },
+      });
+    });
+
     it('ignores providers it is not configured for', () => {
       const reshaped = reshapeRegistry({
         ...registry(),
@@ -321,10 +361,10 @@ describe('refreshModelCatalog', () => {
     fetchSpy.mockRestore();
   });
 
-  it('makes no outbound call when the URL is empty', async () => {
+  it('makes no outbound call when the URL is off', async () => {
     config.modelsDevUrl = null;
 
-    await refreshModelCatalog();
+    expect(await refreshModelCatalog()).toBeNull();
 
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(modelCatalogState()).toBe('disabled');

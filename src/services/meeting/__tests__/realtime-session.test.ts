@@ -8,10 +8,15 @@ import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
 import { config } from '../../../config';
 import { logger } from '../../../logger';
 import { RealtimeSession } from '../realtime-session';
+import { recordRealtimeUsage } from '../realtime-usage';
 
 vi.mock('../../../logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
+
+vi.mock('../realtime-usage', () => ({ recordRealtimeUsage: vi.fn() }));
+
+const SPEND = { purpose: 'meeting', requestId: 'call-1' } as const;
 
 /** Every `warn` line emitted so far, joined — enough to assert one was written. */
 function warnings(): string {
@@ -74,6 +79,7 @@ function makeSession(options: {
     instructions: options.instructions ?? 'You are Prism.',
     tools: options.tools ?? [],
     endpointOverride: { url: `ws://127.0.0.1:${options.port}`, headers: {} },
+    spend: SPEND,
   });
 }
 
@@ -233,6 +239,26 @@ describe('RealtimeSession configuration', () => {
 });
 
 describe('RealtimeSession events', () => {
+  it('records the usage of every finished response and transcription', async () => {
+    active = await harness();
+    vi.mocked(recordRealtimeUsage).mockClear();
+    const usage = { input_tokens: 120, output_tokens: 40, input_token_details: { audio_tokens: 100 } };
+
+    active.emit({ type: 'response.done', response: { id: 'resp-1', status: 'completed', usage } });
+    active.emit({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item-1',
+      transcript: 'hello',
+      usage: { type: 'tokens', input_tokens: 30, output_tokens: 2 },
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(vi.mocked(recordRealtimeUsage).mock.calls).toEqual([
+      [SPEND, config.openaiRealtimeModel, usage],
+      [SPEND, config.openaiTranscriptionModel, { type: 'tokens', input_tokens: 30, output_tokens: 2 }],
+    ]);
+  });
+
   it('reports a committed utterance, which is the cue to decide on answering', async () => {
     active = await harness();
     const committed: string[] = [];
@@ -747,6 +773,7 @@ describe('RealtimeSession connection failure', () => {
     const session = new RealtimeSession({
       instructions: 'x', tools: [],
       endpointOverride: { url: `ws://127.0.0.1:${port}/?secret=hidden`, headers: { Authorization: 'Bearer hidden-key' } },
+      spend: SPEND,
     });
     try {
       await expect(session.connect()).rejects.toThrow(/Unexpected server response: 403/);
@@ -768,6 +795,7 @@ describe('RealtimeSession connection failure', () => {
       tools: [],
       // Port 1 is reserved and refuses connections.
       endpointOverride: { url: 'ws://127.0.0.1:1', headers: {} },
+      spend: SPEND,
     });
 
     await expect(session.connect()).rejects.toThrow(/Realtime connection failed/);

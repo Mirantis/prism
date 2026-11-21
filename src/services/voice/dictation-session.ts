@@ -14,6 +14,7 @@
  * session is connecting wait for it, and a cancel ends it wherever it is.
  */
 
+import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import { logger } from '../../logger';
 import { config } from '../../config';
@@ -23,6 +24,7 @@ import {
   resolveRealtimeEndpoint,
   type RealtimeEndpoint,
 } from '../meeting/openai-endpoint';
+import { recordRealtimeUsage, type RealtimeSpend } from '../meeting/realtime-usage';
 import { REALTIME_SAMPLE_RATE } from '../meeting/resampler';
 import { isAudioFrameUsable, maxFrameBytes } from './socket-audio';
 
@@ -85,6 +87,7 @@ export class DictationSession {
   private transcript = '';
   private timer: NodeJS.Timeout | null = null;
   private readonly startedAt = Date.now();
+  private readonly spend: RealtimeSpend = { purpose: 'dictation', requestId: randomUUID() };
   private readonly maxAudioMs: number;
   private readonly maxAudioBytes: number;
   private readonly maxFrame = maxFrameBytes(REALTIME_SAMPLE_RATE);
@@ -221,6 +224,7 @@ export class DictationSession {
       }
 
       case 'conversation.item.input_audio_transcription.completed': {
+        recordRealtimeUsage(this.spend, config.openaiTranscriptionModel, event.usage);
         const text = typeof event.transcript === 'string' ? event.transcript : this.transcript;
         const trimmed = text.trim();
         this.options.signal.result(trimmed);

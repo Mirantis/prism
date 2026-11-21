@@ -356,7 +356,7 @@ class GoalService {
           return;
         }
 
-        const complete = await this.shouldDeclareGoalComplete(goal.objective, turn.text);
+        const complete = await this.shouldDeclareGoalComplete(goal, turn.text);
 
         const budgetLabel = goal.tokenBudget ? `/${goal.tokenBudget}` : '';
 
@@ -434,6 +434,9 @@ class GoalService {
         agentId: goal.agentId,
         mode: 'goal',
         threadId: goal.threadId,
+        // Every turn of a goal, and its completion checks, is one request.
+        requestId: goal.id,
+        sourceId: goal.id,
         originChannel: goalChannel(goal),
         originChannelId: goal.originChannelId ?? undefined,
         prompt: buildGoalContinuationPrompt({
@@ -589,17 +592,17 @@ class GoalService {
    * gate error can never prematurely complete a goal (the turn/stall caps bound
    * the loop regardless).
    */
-  private async shouldDeclareGoalComplete(objective: string, latestTurnText: string): Promise<boolean> {
+  private async shouldDeclareGoalComplete(goal: Goal, latestTurnText: string): Promise<boolean> {
     if (!latestTurnText.trim()) return false;
 
     try {
       const { model, providerOptions, samplingParams } = getGateRequest();
-      const result = await callModel({ purpose: 'goal-gate' }, {
+      const result = await callModel({ purpose: 'goal-gate', threadId: goal.threadId, requestId: goal.id, source: { kind: 'goal', id: goal.id } }, {
         model,
         providerOptions,
         system: GOAL_COMPLETION_GATE_PROMPT,
         messages: [
-          { role: 'user' as const, content: `## Objective\n${objective}\n\n## Agent's Latest Update\n${latestTurnText}` },
+          { role: 'user' as const, content: `## Objective\n${goal.objective}\n\n## Agent's Latest Update\n${latestTurnText}` },
         ],
         // 16 is the OpenAI Responses API minimum (a cap — the verdict is one word).
         maxOutputTokens: 16,
