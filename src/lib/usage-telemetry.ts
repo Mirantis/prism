@@ -21,6 +21,7 @@ import { logger } from '../logger';
 import { prisma } from './prisma';
 import { flushTelemetry, isTelemetryEnabled, llmRouting, trackEvent } from './telemetry';
 import { LLM_USAGE_REPORTED_THROUGH, runtimeStateService } from '../services/runtime-state.service';
+import { OTHER_MODEL_PURPOSES } from '../services/llm-call.service';
 
 const HOUR_MS = 60 * 60 * 1000;
 /** How often a pass runs, so an hour goes out a few minutes after it closes. */
@@ -79,8 +80,13 @@ export async function reportClosedHours(agentId: string): Promise<void> {
  * with the mark left where it was, when the collector did not accept them.
  */
 async function reportWindow(agentId: string, start: number, end: number): Promise<boolean> {
+  // The agent's own model alone: the event names one provider, the one config gives.
   const rows = await prisma.llmCall.findMany({
-    where: { agentId, createdAt: { gte: new Date(start), lt: new Date(end) } },
+    where: {
+      agentId,
+      createdAt: { gte: new Date(start), lt: new Date(end) },
+      purpose: { notIn: [...OTHER_MODEL_PURPOSES] },
+    },
     select: {
       model: true,
       createdAt: true,

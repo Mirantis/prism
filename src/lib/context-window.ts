@@ -9,9 +9,8 @@
  * lifecycle but no context length.
  *
  * This module is a pure resolver; `lib/model-catalog.ts` owns the data as two
- * layers — a bundled floor that always answers, plus an overlay fetched once at
- * boot when `MODELS_DEV_URL` opts into it, so a newly-released model isn't
- * unmeasurable until the next release. Reads here are synchronous, which is what
+ * layers — a bundled floor that always answers, plus an overlay fetched from
+ * models.dev, so a newly-released model isn't unmeasurable until the next release. Reads here are synchronous, which is what
  * lets an unfinished refresh fall back to the floor for free.
  *
  * Unknown IDs return `null` rather than a guess. A wrong window silently
@@ -19,7 +18,7 @@
  * callers must render nothing when this returns `null`.
  */
 import { config } from '../config';
-import { modelCatalog } from './model-catalog';
+import { findCatalogEntry } from './model-catalog';
 
 export interface ContextWindow {
   /** Max input tokens the model accepts. */
@@ -76,17 +75,6 @@ export function buildContextSnapshot(
 }
 
 /**
- * Bedrock cross-region inference profiles prefix the model ID with a geo scope
- * (`us.`, `eu.`, `au.`, `jp.`, `global.`). models.dev lists most of these
- * explicitly, but new geos appear before the registry catches up, so strip a
- * known prefix and retry rather than going dark on `sa.anthropic.claude-opus-5`.
- */
-const REGION_PREFIX = /^(?:us|eu|apac|au|jp|ca|sa|global)\./;
-
-/** Bedrock version suffixes (`-v1:0`, `-v2:1`, `-v1`) that some ID spellings omit. */
-const VERSION_SUFFIX = /-v\d+(?::\d+)?$/;
-
-/**
  * The input-context window for `modelId`, or `null` when it can't be determined.
  *
  * `modelId` must be the *resolved* model — what `invokeStream()` actually passed
@@ -105,53 +93,6 @@ export function contextWindowFor(modelId: string): ContextWindow | null {
     return { tokens: override };
   }
 
-  // Read the catalog once: it's the bundled floor plus any overlay the boot-time
-  // refresh installed, already merged, so this is a plain property read.
-  const catalog = modelCatalog();
-
-  // Prefer the active provider's own entry. Every `context` value in the bundled
-  // floor happens to agree across providers and regions, so this preference is
-  // not yet observable there — but the registry tracks them separately and they
-  // do diverge in practice (`au.anthropic.claude-sonnet-4-6` reports a 128k
-  // output cap where every other region reports 64k), and a remote overlay can
-  // introduce a context divergence at any time.
-  const preferred = catalog[config.llmProvider];
-  const others = Object.entries(catalog)
-    .filter(([provider]) => provider !== config.llmProvider)
-    .map(([, models]) => models);
-
-  for (const candidate of idCandidates(modelId)) {
-    // Exact provider match first, then the other provider(s) as a fallback —
-    // an operator can point LLM_PROVIDER=azure at a Bedrock-style ID.
-    for (const models of [preferred, ...others]) {
-      const hit = models?.[candidate];
-      // Source comes from the entry, not from a global "did the fetch work" flag:
-      // after a successful refresh a model present only in the bundle must still
-      // honestly report `snapshot`.
-      if (hit) return { tokens: hit.context };
-    }
-  }
-
-  return null;
-}
-
-/** `modelId` plus progressively-normalized spellings, most specific first. */
-function idCandidates(modelId: string): string[] {
-  const seen = new Set<string>();
-  const bare = modelId.replace(REGION_PREFIX, '');
-
-  for (const id of [
-    modelId,
-    bare,
-    modelId.replace(VERSION_SUFFIX, ''),
-    bare.replace(VERSION_SUFFIX, ''),
-    // Azure deployment names are bare (`claude-opus-5`) while Bedrock IDs carry
-    // an `anthropic.` vendor segment; try across that boundary too.
-    bare.replace(/^anthropic\./, ''),
-    bare.replace(/^anthropic\./, '').replace(VERSION_SUFFIX, ''),
-  ]) {
-    if (id) seen.add(id);
-  }
-
-  return [...seen];
+  const entry = findCatalogEntry(modelId);
+  return entry ? { tokens: entry.context } : null;
 }

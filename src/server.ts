@@ -5,6 +5,7 @@
  *      /agents/*       — management routes (heartbeat, chat, cron lifecycle)
  *                        + self-update (/agents/update, /agents/update/status)
  *                        + activity reads (/agents/activity/*)
+ *                        + estimated model spend (/agents/spending/*)
  *      /threads, /latest-thread — thread resolve/list/open
  *      /messages       — thread history replay
  *      /               — Prism Agent Web UI (static SPA bundle from web/dist)
@@ -48,6 +49,7 @@ import { documentRevisionsRouter } from './routes/document-revisions';
 import { updateRouter } from './routes/update';
 import { originGuard } from './lib/origin-guard';
 import { activityRouter } from './routes/activity';
+import { spendingRouter } from './routes/spending';
 import { cronTasksRouter } from './routes/cron-tasks';
 import { agentMessagesRouter } from './routes/agent-messages';
 import { agentStateRouter } from './routes/agent-state';
@@ -106,6 +108,9 @@ export function createApp() {
 
   // GET /agents/activity/*
   app.use('/agents', activityRouter);
+
+  // GET /agents/spending/*
+  app.use('/agents', spendingRouter);
 
   // Scheduled tasks (/agents/cron-tasks)
   app.use('/agents', cronTasksRouter);

@@ -269,6 +269,7 @@ vi.mock('./services/program-status.service', () => ({
 
 
 import { invoke, invokeStream, extractAttachmentIds } from './invoke';
+import { currentSpendContext, withSpendContext } from './lib/spend-context';
 import { ANTHROPIC_TOOL_CHANGES } from './lib/llm-providers/tool-changes';
 import {
   ANTHROPIC_DEFERRED_TOOLS,
@@ -357,6 +358,41 @@ describe('invoke', () => {
     mockGenerateText.mockResolvedValue({
       text: 'Here are your pods.',
       steps: [{ text: 'Here are your pods.', toolCalls: [], toolResults: [] }],
+    });
+  });
+
+  describe('the request a run spends on', () => {
+    /** The spend context each recorded model call ran in. */
+    let spends: Array<ReturnType<typeof currentSpendContext>> = [];
+
+    beforeEach(() => {
+      spends = [];
+      mockRecordLlmCall.mockImplementation(() => spends.push(currentSpendContext()));
+    });
+
+    it('gives each run a request of its own, on its thread', async () => {
+      await invoke(createTestInvokeRequest({ mode: 'heartbeat', threadId: 'thread-1' }));
+      await invoke(createTestInvokeRequest({ mode: 'heartbeat', threadId: 'thread-1' }));
+
+      const [first, second] = spends;
+      expect(first).toEqual({ requestId: expect.any(String), threadId: 'thread-1', source: { kind: 'heartbeat' } });
+      expect(second!.requestId).not.toBe(first!.requestId);
+    });
+
+    it('keeps the request a caller names, and not the request of the turn it was started from', async () => {
+      await withSpendContext({ requestId: 'message-1', threadId: 'thread-1' }, () =>
+        invoke(createTestInvokeRequest({ mode: 'goal', threadId: 'thread-2', requestId: 'goal-1', sourceId: 'goal-1' })),
+      );
+
+      expect(spends).toEqual([{ requestId: 'goal-1', threadId: 'thread-2', source: { kind: 'goal', id: 'goal-1' } }]);
+    });
+
+    it("spends a subagent's run on its parent's request", async () => {
+      await withSpendContext({ requestId: 'message-1', threadId: 'thread-1' }, () =>
+        invoke(createTestInvokeRequest({ mode: 'subagent' })),
+      );
+
+      expect(spends).toEqual([{ requestId: 'message-1', threadId: 'thread-1' }]);
     });
   });
 

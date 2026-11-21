@@ -51,7 +51,15 @@ vi.mock('../../../lib/tool-output-store', async (importOriginal) => ({
   writeToolOutput: mockWriteToolOutput,
 }));
 
+const { mockRecordTokens } = vi.hoisted(() => ({ mockRecordTokens: vi.fn() }));
+
+vi.mock('../../../services/llm-call.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../services/llm-call.service')>()),
+  llmCallService: { recordTokens: mockRecordTokens },
+}));
+
 import { config } from '../../../config';
+import { withSpendContext } from '../../../lib/spend-context';
 import { trackEvent } from '../../../lib/telemetry';
 import { RESUMED_CODING_TASK_PROMPT } from '../../../prompts/resume-prompt';
 import { buildCodingAgentInput, runCodingAgent } from '../coding-agent';
@@ -208,6 +216,45 @@ describe('AgentTaskManager', () => {
     getTask = m.getTask;
     mockBeginWork.mockResolvedValue(undefined);
     mockStopLeftover.mockResolvedValue(false);
+  });
+
+  it('records the tokens the agent reports against the request and thread that started the task', async () => {
+    const { taskId } = await withSpendContext({ requestId: 'message-1', threadId: 'thread-1', source: { kind: 'chat' } }, () =>
+      manager.startTask(sampleParams),
+    );
+    // Kept with the task, so a relaunch after a restart records against them too.
+    expect(mockBeginWork).toHaveBeenCalledWith('coding-task', taskId, {
+      params: { ...sampleParams, agent: config.codingAgent, spend: { requestId: 'message-1', threadId: 'thread-1', source: { kind: 'chat' } } },
+    });
+
+    getRun().emit({
+      type: 'usage',
+      usage: {
+        model: 'claude-haiku-5-5', inputTokens: 2, cacheReadTokens: 10, cacheWriteTokens: 143_355,
+        longCacheWriteTokens: 143_355, outputTokens: 4, costUsd: 0.14, subscription: false,
+      },
+    });
+    getRun().finish(SUCCESS);
+    await pollUntilComplete(manager, taskId);
+
+    expect(mockRecordTokens).toHaveBeenCalledWith({
+      purpose: 'coding-agent',
+      model: 'claude-haiku-5-5',
+      threadId: 'thread-1',
+      requestId: 'message-1',
+      source: { kind: 'chat' },
+      tokens: {
+        totalTokens: 143_371,
+        inputTokens: 143_367,
+        outputTokens: 4,
+        cacheReadTokens: 10,
+        cacheWriteTokens: 143_355,
+        longCacheWriteTokens: 143_355,
+        noCacheTokens: 2,
+      },
+      subscription: false,
+      reportedCostUsd: 0.14,
+    });
   });
 
   it('routes mixed agents through one task manager and one concurrency limit', async () => {

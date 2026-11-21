@@ -15,11 +15,16 @@ import {
 } from 'ai';
 import { inferenceGate } from './inference-gate';
 import { llmCallService, type LlmCallPurpose } from '../services/llm-call.service';
+import type { SpendSource } from './spend-context';
 
 export interface ModelCallMeta {
   purpose: LlmCallPurpose;
   /** The thread this call belongs to, where it has one. */
   threadId?: string;
+  /** The request this call served, where the spend context names another. */
+  requestId?: string;
+  /** What started that request, where the spend context names another. */
+  source?: SpendSource;
   /** The subagent the call ran for, where it was not the owner's own work. */
   agentId?: string;
 }
