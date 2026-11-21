@@ -22,15 +22,21 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "2.7.0",
+    "@jsquash/webp": "1.5.0",
     "chalk": "^6.0.1",
     "ink": "8.0.0",
+    "jpeg-js": "0.4.4",
     "marked": "15.0.12",
     "marked-terminal": "7.3.0",
+    "omggif": "1.0.10",
+    "pngjs": "7.0.0",
     "react": "^19.3.0",
     "ws": "^8.22.0",
     "zod": "^4.6.6"
   },
   "devDependencies": {
+    "@types/omggif": "1.0.5",
+    "@types/pngjs": "6.0.5",
     "@types/react": "19.3.0",
     "@types/ws": "^8.18.2",
     "ink-testing-library": "^4.0.0",
