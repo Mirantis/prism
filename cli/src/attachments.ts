@@ -24,6 +24,8 @@ export interface AttachmentMeta {
   category: AttachmentCategory;
   /** Content deleted by the server's retention sweep (7 days) — metadata only. */
   expired?: boolean;
+  /** An image the message's text places with an `attachment:` reference. */
+  inline?: boolean;
 }
 
 /**

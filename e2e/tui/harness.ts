@@ -213,7 +213,18 @@ export interface StartPrismOptions {
    * workspace skills. Defaults to the prism-cli package dir.
    */
   cwd?: string;
+  /** The terminal the CLI asks what it can draw. Default: one that answers only the device attributes. */
+  terminal?: keyof typeof PROBE_ANSWERS;
 }
+
+/**
+ * What a terminal answers to the CLI's start-up probe (`cli/src/images/terminal-graphics.ts`).
+ * Every terminal answers the device attributes, which ends the CLI's wait.
+ */
+const PROBE_ANSWERS = {
+  plain: '\x1b[?62;22c',
+  kitty: '\x1b_Gi=31;OK\x1b\\\x1b[6;20;10t\x1bP>|kitty(0.36.4)\x1b\\\x1b[?62;c',
+};
 
 export interface TuiSession {
   /** Snapshot of stdout so far, with ANSI escape sequences stripped. */
@@ -270,8 +281,13 @@ export function startPrism(opts: StartPrismOptions): TuiSession {
   let exitCode: number | null = null;
   let exitSignal: number | null = null;
 
+  let probeAnswered = false;
   child.onData((data) => {
     buffer += data;
+    if (!probeAnswered && buffer.includes('\x1b[c')) {
+      probeAnswered = true;
+      child.write(PROBE_ANSWERS[opts.terminal ?? 'plain']);
+    }
   });
 
   const exitPromise = new Promise<number>((resolve) => {

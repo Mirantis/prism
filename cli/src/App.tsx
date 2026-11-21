@@ -40,6 +40,7 @@ import {
 } from './commands.js';
 import { AttachmentMeta, formatFileSize, latestTurnAttachments, listPathSuggestions } from './attachments.js';
 import { formatShellRecord, runShellCommand, shellCommandOf, type ShellRun } from './shell-command.js';
+import type { TerminalGraphics } from './images/terminal-graphics.js';
 
 export interface AppProps {
   userId: string;
@@ -47,6 +48,8 @@ export interface AppProps {
   modelId: string;
   hideCursor?: boolean;
   hideStatusBar?: boolean;
+  /** How this terminal draws an image, asked of it at start-up. */
+  graphics: TerminalGraphics;
   /**
    * When set (the `--resume` flag), the CLI first shows a picker of these
    * prior threads instead of starting a fresh session. Selecting one resumes
@@ -67,7 +70,7 @@ function spinnerLabel(turn: TurnState): string {
   return 'compacting conversation…';
 }
 
-export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hideStatusBar, resume }) => {
+export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hideStatusBar, graphics, resume }) => {
   const { exit } = useApp();
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   // In resume mode, the thread picker owns the screen until the user selects a
@@ -685,6 +688,7 @@ export const App: React.FC<AppProps> = ({ userId, agent, modelId, hideCursor, hi
             self={self}
             entries={entries}
             expandedMessageId={expandedMessageId}
+            graphics={graphics}
           />
           {staged.length > 0 && (
             <Box paddingX={2}>
