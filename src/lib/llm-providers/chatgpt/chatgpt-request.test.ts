@@ -65,6 +65,32 @@ describe('ChatGPT subscription requests', () => {
     expect(result.usage.totalTokens).toBe(91);
   });
 
+  it('fails a stream that closes before the response finished', async () => {
+    const truncated = RECORDED_STREAM.slice(0, RECORDED_STREAM.indexOf('event: response.completed'));
+    answerWith(truncated);
+
+    await expect(
+      generateText({ model: createChatGptProvider()('gpt-6.2-sol'), prompt: 'hi', tools: { add }, maxRetries: 0 }),
+    ).rejects.toThrow(/before the response finished/);
+  });
+
+  it('retries a retryable error that arrives after output started', async () => {
+    const afterText = RECORDED_STREAM.indexOf('event: response.output_text.done');
+    const failed = `${RECORDED_STREAM.slice(0, afterText)}event: error\ndata: ${JSON.stringify({
+      type: 'error',
+      code: 'server_error',
+      message: 'The server had an error while processing your request.',
+      param: null,
+      sequence_number: 6,
+    })}\n\n`;
+    const requests = answerWith(failed, RECORDED_STREAM);
+
+    const result = await generateText({ model: createChatGptProvider()('gpt-6.2-sol'), prompt: 'hi', tools: { add } });
+
+    expect(requests).toHaveLength(2);
+    expect(result.text).toBe('adding');
+  });
+
   // With store off, the API keeps no reasoning between steps: the next step
   // sends it back encrypted, or the model reasons without it.
   it("sends a step's encrypted reasoning back with the next step", async () => {
