@@ -578,6 +578,8 @@ export interface RequestSpend extends SpendTotals {
 export interface ThreadSpendDetail extends SpendBreakdown {
   threadId: string;
   title: string | null;
+  /** Whether web chat opens the conversation: false for a channel's thread. */
+  opensInChat: boolean;
   requests: RequestSpend[];
 }
 

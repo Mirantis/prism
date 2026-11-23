@@ -51,9 +51,10 @@ describe('SpendingThreadsTable', () => {
   });
 
   it('reads each Show more page from the last page\'s offset, at the same page size', async () => {
-    // Far past the route's 200-row limit: every request still asks for one page.
+    // Far past the route's 200-row limit: every request still asks for one page. A page
+    // holds one row, since only the offsets the table asks for are under test.
     mockThreads.mockImplementation(async (_range, { limit, offset }: { limit: number; offset: number }) => ({
-      threads: Array.from({ length: limit }, (_, i) => thread(offset + i)),
+      threads: [thread(offset)],
       nextOffset: offset + limit,
     }));
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -63,15 +64,14 @@ describe('SpendingThreadsTable', () => {
       </QueryClientProvider>,
     );
 
-    await waitFor(() => expect(screen.getAllByTestId('spending-thread-row')).toHaveLength(20));
+    await waitFor(() => expect(screen.getAllByTestId('spending-thread-row')).toHaveLength(1));
     for (let page = 2; page <= 12; page++) {
       fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
-      await waitFor(() => expect(screen.getAllByTestId('spending-thread-row')).toHaveLength(page * 20));
+      await waitFor(() => expect(screen.getAllByTestId('spending-thread-row')).toHaveLength(page));
     }
 
     expect(mockThreads.mock.calls.map(([, opts]) => opts)).toEqual(
       Array.from({ length: 12 }, (_, i) => ({ limit: 20, offset: i * 20 })),
     );
-    // 240 rows take about 2 s alone and over 4 s beside the rest of the suite.
-  }, 15_000);
+  });
 });

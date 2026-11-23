@@ -21,5 +21,14 @@ Feature: Model spending
     And my conversation is listed under top conversations
     When I open my conversation's spending
     Then my message is listed there with its cost
+    And the sheet links to my conversation
     When I expand my message's spending
     Then its calls include the agent's replies
+
+  Scenario: The Spending page shows a channel conversation by the names in its mentions
+    Given a channel conversation whose message mentions people has spent on models
+    When I open the spending page
+    Then the channel conversation is listed under top conversations by the names in its title
+    When I open the channel conversation's spending
+    Then its title and its message show the names in their mentions
+    And the sheet has no link to open the conversation

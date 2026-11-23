@@ -95,12 +95,17 @@ const PURPOSE_LABEL: Record<string, string> = {
   dictation: 'Dictation',
 };
 
+/** A stored mention `<@ID:Name>`, with the id of any channel. A cut title can end inside its name. */
+const NAMED_MENTION = /<@[^>:\s]+:([^>]*)(?:>|$)/g;
+/** A mention a title cut before its name: `<@` and part of an id, then the end or the ellipsis. */
+const CUT_MENTION = /\s*<@[^>:\s.…]*(?=(?:\.\.\.|…)?$)/;
+
 /**
  * The text with each stored mention `<@ID:Name>` read as its name. A title can be cut
- * inside a mention, so one with no closing `>` reads as the rest of the text.
+ * inside a mention: a cut name reads as far as it goes, and a cut id is dropped.
  */
 export function withMentionNames(text: string): string {
-  return text.replace(/<@[A-Z0-9]+:([^>]*)(?:>|$)/g, '$1');
+  return text.replace(CUT_MENTION, '').replace(NAMED_MENTION, '$1');
 }
 
 /** A model id without its region and vendor prefix: `global.anthropic.claude-opus-5-5` reads `claude-opus-5-5`. */

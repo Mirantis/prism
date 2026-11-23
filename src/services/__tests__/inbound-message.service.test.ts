@@ -42,6 +42,7 @@ import { conversationThreadActivityService } from '../conversation-thread-activi
 import { trackEvent } from '../../lib/telemetry';
 import type { ChatTurnEnd } from '../conversation-engine.service';
 import { WEB_CHAT_LABEL } from '../web-chat-label';
+import { WEB_THREAD } from '../web-thread';
 
 const THREAD_A = 'thread-a';
 const THREAD_B = 'thread-b';
@@ -98,11 +99,7 @@ describe('InboundMessageService', () => {
     inboundMessageService.resetForTests();
     eventStreamService.resetForTests();
     mockConfig.agentId = 'agent-1';
-    mockPrisma.conversationThread.findUnique.mockResolvedValue({
-      agentId: 'agent-1',
-      userId: 'owner-1',
-      threadSource: 'DATABASE',
-    });
+    mockPrisma.conversationThread.findUnique.mockResolvedValue({ agentId: 'agent-1' });
     mockPrisma.conversationMessage.findUnique.mockResolvedValue(null);
     mockPrisma.conversationMessage.findFirst.mockResolvedValue(null);
     mockEngine.acceptUserMessage.mockImplementation(async (_input, threadId, id) => ({
@@ -168,12 +165,11 @@ describe('InboundMessageService', () => {
     });
 
     it('refuses a conversation that is not one of this agent’s web threads', async () => {
-      mockPrisma.conversationThread.findUnique.mockResolvedValue({
-        agentId: 'agent-1',
-        userId: 'owner-1',
-        threadSource: 'SLACK',
-      });
+      mockPrisma.conversationThread.findUnique.mockResolvedValue(null);
       await expect(inboundMessageService.accept(inbound('m-1'))).rejects.toMatchObject({ code: 'unknown_thread' });
+      expect(mockPrisma.conversationThread.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ id: THREAD_A, ...WEB_THREAD }) }),
+      );
       expect(mockEngine.acceptUserMessage).not.toHaveBeenCalled();
     });
 
@@ -604,22 +600,19 @@ describe('InboundMessageService', () => {
   });
 
   describe('Scenario: a conversation that is not a web thread of this agent', () => {
-    it('refuses to cancel a Slack thread', async () => {
-      mockPrisma.conversationThread.findUnique.mockResolvedValue({
-        agentId: 'agent-1',
-        userId: 'owner-1',
-        threadSource: 'SLACK',
-      });
-      await expect(inboundMessageService.cancel('slack-thread')).rejects.toMatchObject({ code: 'unknown_thread' });
+    // A channel's thread holds an external id, stored history or not, so the web-thread
+    // query finds no row for it.
+    it('refuses to cancel a channel thread', async () => {
+      mockPrisma.conversationThread.findUnique.mockResolvedValue(null);
+      await expect(inboundMessageService.cancel('channel-thread')).rejects.toMatchObject({ code: 'unknown_thread' });
+      expect(mockPrisma.conversationThread.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ id: 'channel-thread', ...WEB_THREAD }) }),
+      );
       expect(mockEngine.cancel).not.toHaveBeenCalled();
     });
 
     it('refuses a send to another agent’s thread', async () => {
-      mockPrisma.conversationThread.findUnique.mockResolvedValue({
-        agentId: 'agent-2',
-        userId: 'owner-1',
-        threadSource: 'DATABASE',
-      });
+      mockPrisma.conversationThread.findUnique.mockResolvedValue({ agentId: 'agent-2' });
       await expect(inboundMessageService.accept(inbound('m-1'))).rejects.toMatchObject({ code: 'unknown_thread' });
       expect(mockEngine.acceptUserMessage).not.toHaveBeenCalled();
     });
@@ -675,11 +668,7 @@ describe('InboundMessageService: a message from another agent', () => {
     inboundMessageService.resetForTests();
     eventStreamService.resetForTests();
     mockConfig.agentId = 'agent-1';
-    mockPrisma.conversationThread.findUnique.mockResolvedValue({
-      agentId: 'agent-1',
-      userId: 'owner-1',
-      threadSource: 'DATABASE',
-    });
+    mockPrisma.conversationThread.findUnique.mockResolvedValue({ agentId: 'agent-1' });
     mockPrisma.conversationMessage.findUnique.mockResolvedValue(null);
     mockPrisma.conversationMessage.findFirst.mockResolvedValue(null);
     mockEngine.acceptUserMessage.mockImplementation(async (_input, threadId, id) => ({

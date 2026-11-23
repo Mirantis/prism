@@ -206,7 +206,7 @@ describe('thread and request', () => {
     );
 
     const thread = await spendingService.thread('thread-a');
-    expect(thread).toMatchObject({ threadId: 'thread-a', costUsd: 0.00556, calls: 6 });
+    expect(thread).toMatchObject({ threadId: 'thread-a', opensInChat: true, costUsd: 0.00556, calls: 6 });
     expect(thread!.requests.map(({ requestId, kind, preview, costUsd, calls }) => ({ requestId, kind, preview, costUsd, calls }))).toEqual([
       { requestId: 'run-1', kind: 'cron', preview: null, costUsd: 0.00005, calls: 1 },
       { requestId: 'task-1', kind: 'task-result', preview: null, costUsd: 0.0002, calls: 1 },
@@ -244,6 +244,26 @@ describe('thread and request', () => {
       { sourceId: 'deleted-task', name: null, costUsd: 0.0005, calls: 1 },
       { sourceId: null, name: null, costUsd: 0.0002, calls: 1 },
     ]);
+  });
+
+  it('opens only a web thread in chat', async () => {
+    await db().conversationThread.createMany({
+      data: [
+        { id: 'web', agentId: OWNER, userId: 'user-1' },
+        // A channel's thread with stored history: the source is the database, the id is the channel's.
+        { id: 'stored-channel', agentId: OWNER, userId: 'user-1', externalThreadId: '1700000000.000100' },
+        { id: 'live-channel', agentId: OWNER, userId: 'user-1', threadSource: 'SLACK', externalThreadId: '1700000000.000200' },
+      ],
+    });
+    await record(
+      { at: '2026-11-20T10:00:00Z', threadId: 'web', requestId: 'r-1' },
+      { at: '2026-11-20T10:00:00Z', threadId: 'stored-channel', requestId: 'r-2' },
+      { at: '2026-11-20T10:00:00Z', threadId: 'live-channel', requestId: 'r-3' },
+    );
+
+    expect((await spendingService.thread('web'))!.opensInChat).toBe(true);
+    expect((await spendingService.thread('stored-channel'))!.opensInChat).toBe(false);
+    expect((await spendingService.thread('live-channel'))!.opensInChat).toBe(false);
   });
 
   it('answers null for a thread or a request with no calls', async () => {
