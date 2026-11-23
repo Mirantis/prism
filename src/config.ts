@@ -339,7 +339,7 @@ const bedrockMantleClassificationModelId =
 const bedrockMantleEmbeddingModelId =
   process.env.BEDROCK_MANTLE_EMBEDDING_MODEL_ID ?? bedrockEmbeddingModelId;
 // OpenAI model IDs (used when LLM_PROVIDER=openai). Chat defaults to the
-// GPT-5.6 flagship; classification to the fast tier — the provider pins the
+// flagship; classification to the fast tier — the provider pins the
 // gates to `reasoningEffort: 'none'` and omits their temperature param (see
 // openai-provider.ts), which is what keeps the gates' tiny token budgets
 // valid on a GPT-5.x model. Embeddings are truncated to 1024 dims by
@@ -363,7 +363,7 @@ const openaiEmbeddingModelId = process.env.OPENAI_EMBEDDING_MODEL_ID ?? 'text-em
 // (`openai/text-embedding-3-small` truncates to it) to switch memory embeddings
 // on. `??` not `||`, matching the sibling vars, so '' keeps them off
 // explicitly.
-const openrouterModelId = process.env.OPENROUTER_MODEL_ID || 'openai/gpt-5.6-sol';
+const openrouterModelId = process.env.OPENROUTER_MODEL_ID || 'openai/gpt-6.2-sol';
 const openrouterClassificationModelId =
   process.env.OPENROUTER_CLASSIFICATION_MODEL_ID || 'openai/gpt-5.6-luna';
 const openrouterEmbeddingModelId = process.env.OPENROUTER_EMBEDDING_MODEL_ID ?? '';

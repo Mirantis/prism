@@ -18,7 +18,7 @@ interface OpenPart {
   providerMetadata?: ProviderMetadata;
 }
 
-export async function collectStream({ stream, request, response }: StreamResult): Promise<GenerateResult> {
+async function collectStream({ stream, request, response }: StreamResult): Promise<GenerateResult> {
   const content: Content[] = [];
   const open = new Map<string, OpenPart>();
   let finish: Pick<GenerateResult, 'finishReason' | 'usage' | 'providerMetadata'> | undefined;
