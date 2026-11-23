@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Box, Text } from 'ink';
+import { Box, Text, useWindowSize } from 'ink';
 import { chatColumnWidth, renderMarkdown, renderMessageParts } from '../markdown.js';
 import { TuiMessage } from '../tui-adapter.js';
 import type { Viewer } from '../chat-protocol.js';
@@ -7,9 +7,8 @@ import { formatFileSize } from '../attachments.js';
 import { ChatEntry } from '../transcript.js';
 import { parseShellRecord, SHELL_PREFIX } from '../shell-command.js';
 import type { TerminalGraphics } from '../images/terminal-graphics.js';
-import { DEFAULT_CELL, MAX_IMAGE_ROWS } from '../images/image-size.js';
+import { DEFAULT_CELL, MAX_IMAGE_ROWS, imageColumns } from '../images/image-size.js';
 import { InlineImage } from './inline-image.js';
-import { useTerminalSize } from '../hooks/use-terminal-size.js';
 
 /** Mirrors `ToolOutputTruncation` in the runtime's src/types.ts. */
 interface ToolOutputTruncation {
@@ -116,7 +115,7 @@ const AgentBody: React.FC<{ message: TuiMessage; screen: Screen }> = ({ message,
             alt={part.alt}
             attachments={message.attachments}
             cell={screen.graphics.cell ?? DEFAULT_CELL}
-            maxCols={width}
+            maxCols={imageColumns(screen.columns)}
             maxRows={maxRows}
           />
         ),
@@ -212,7 +211,7 @@ const MessageRow: React.FC<MessageRowProps> = ({ agentName, self, message, expan
 
 export const MessageList: React.FC<Props> = ({ agentName, self, entries, expandedMessageId, graphics }) => {
   // A resize renders the messages again, so text reflows and images refit to the new width.
-  const { columns, rows } = useTerminalSize();
+  const { columns, rows } = useWindowSize();
   const screen = useMemo(() => ({ columns, rows, graphics }), [columns, rows, graphics]);
   // Only render the most recent N entries — the parent <Box> is bound by the
   // terminal height anyway, but limiting keeps re-render cost low for long

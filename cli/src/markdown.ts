@@ -31,8 +31,63 @@ function image(href: string, _title: string | null, text: string): string {
   return href.startsWith('attachment:') ? mark(href, text) : `![${text}](${href})`;
 }
 
-/** marked-terminal prints the inline markdown of a list item as written, image references included. */
-const WRITTEN_IMAGE = /!\[([^\]]*)\]\((attachment:[^)\s]+)\)/g;
+/** The characters that delimit a marker. Text that already holds them loses them before rendering. */
+const MARKER_CHARS = /[\uE000\uE001]/g;
+
+type Token = { type: string; raw: string; href?: string; text?: string; tokens?: Token[] };
+
+function isPlaced(token: Token): boolean {
+  return token.type === 'image' && token.href!.startsWith('attachment:');
+}
+
+function placesImage(tokens: Token[] | undefined): boolean {
+  return tokens?.some((token) => isPlaced(token) || placesImage(token.tokens)) ?? false;
+}
+
+/**
+ * `source` as written, with each image it places replaced by a marker. Code
+ * spans and escaped markdown keep their text.
+ */
+function writtenWithMarkers(source: string, tokens: Token[]): string {
+  let out = '';
+  let rest = source;
+  for (const token of tokens) {
+    const at = rest.indexOf(token.raw);
+    if (at < 0) return source;
+    let piece = token.raw;
+    if (isPlaced(token)) piece = mark(token.href!, token.text ?? '');
+    else if (token.type !== 'codespan' && placesImage(token.tokens)) piece = writtenWithMarkers(token.raw, token.tokens!);
+    out += rest.slice(0, at) + piece;
+    rest = rest.slice(at + token.raw.length);
+  }
+  return out + rest;
+}
+
+/**
+ * marked-terminal prints the text of a tight list item as written, without its
+ * inline markdown. An image that text places still becomes a marker.
+ */
+function listText(this: unknown, token: Token): string | false {
+  if (typeof token !== 'object' || !token.tokens || !placesImage(token.tokens)) return false;
+  return writtenWithMarkers(token.text ?? token.raw, token.tokens);
+}
+
+/**
+ * A table cell cannot hold an image block, so an image a cell places reads as
+ * its description there.
+ */
+function describeImagesInCell(tokens: Token[]): void {
+  for (const token of tokens) {
+    if (isPlaced(token)) Object.assign(token, { type: 'text', text: `[image: ${token.text?.trim() || 'image'}]`, tokens: undefined });
+    else if (token.tokens) describeImagesInCell(token.tokens);
+  }
+}
+
+function walkTokens(token: Token): void {
+  if (token.type !== 'table') return;
+  const table = token as unknown as { header: { tokens: Token[] }[]; rows: { tokens: Token[] }[][] };
+  for (const cell of [...table.header, ...table.rows.flat()]) describeImagesInCell(cell.tokens);
+}
 
 const SGR = /\x1b\[[0-9;]*m/g;
 
@@ -46,6 +101,7 @@ function rendererFor(width: number): Marked {
     renderer = new Marked();
     renderer.use(
       markedTerminal({ reflowText: true, width, image }) as Parameters<typeof renderer.use>[0],
+      { renderer: { text: listText }, walkTokens } as unknown as Parameters<typeof renderer.use>[0],
     );
     renderers.set(width, renderer);
   }
@@ -56,7 +112,7 @@ function rendererFor(width: number): Marked {
 function renderWithMarkers(content: string, width: number): string | null {
   placed = [];
   try {
-    const rendered = rendererFor(Math.max(40, width)).parse(content) as unknown;
+    const rendered = rendererFor(Math.max(40, width)).parse(content.replace(MARKER_CHARS, '')) as unknown;
     return typeof rendered === 'string' ? rendered.trimEnd() : null;
   } catch {
     return null;
@@ -77,7 +133,6 @@ export function chatColumnWidth(terminalColumns: number | undefined): number {
 export function renderMessageParts(content: string, width: number): MessagePart[] {
   const rendered = renderWithMarkers(content, width);
   if (rendered === null) return [{ kind: 'text', text: content }];
-  const out = rendered.replace(WRITTEN_IMAGE, (_all, text: string, href: string) => mark(href, text));
   const images = placed;
   const parts: MessagePart[] = [];
   let lines: string[] = [];
@@ -85,7 +140,7 @@ export function renderMessageParts(content: string, width: number): MessagePart[
     if (lines.length > 0) parts.push({ kind: 'text', text: lines.join('\n') });
     lines = [];
   };
-  for (const line of out.split('\n')) {
+  for (const line of rendered.split('\n')) {
     const pieces = line.split(MARKER);
     if (pieces.length === 1) {
       lines.push(line);
@@ -94,8 +149,10 @@ export function renderMessageParts(content: string, width: number): MessagePart[
     for (let i = 0; i < pieces.length; i++) {
       const piece = pieces[i]!;
       if (i % 2 === 1) {
+        const placedImage = images[Number(piece)];
+        if (!placedImage) continue;
         flush();
-        parts.push({ kind: 'image', ...images[Number(piece)]! });
+        parts.push({ kind: 'image', ...placedImage });
       } else if (!isBlank(piece)) {
         // Drop the space that separated the text from the image, keeping its color codes.
         let text = i > 0 ? piece.replace(/^((?:\x1b\[[0-9;]*m)*) +/, '$1') : piece;
@@ -118,5 +175,8 @@ export function renderMarkdown(content: string, width?: number): string {
   const out = renderWithMarkers(content, width ?? chatColumnWidth(process.stdout.columns));
   if (out === null) return content;
   const images = placed;
-  return out.replace(MARKERS, (_all, index: string) => `[image: ${images[Number(index)]!.alt}]`);
+  return out.replace(MARKERS, (_all, index: string) => {
+    const placedImage = images[Number(index)];
+    return placedImage ? `[image: ${placedImage.alt}]` : '';
+  });
 }

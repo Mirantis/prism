@@ -1,6 +1,14 @@
 /** The tallest picture, in rows, about the height the web chat gives one. */
 export const MAX_IMAGE_ROWS = 24;
 
+/**
+ * The widest picture, in columns: the chat column without the floor that keeps
+ * text readable, so a picture never wraps in a narrow terminal.
+ */
+export function imageColumns(terminalColumns: number): number {
+  return Math.max(1, terminalColumns - 6);
+}
+
 /** A cell when the terminal did not report its size: twice as tall as wide. */
 export const DEFAULT_CELL = { width: 10, height: 20 };
 

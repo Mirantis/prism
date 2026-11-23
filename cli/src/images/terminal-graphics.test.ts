@@ -5,6 +5,7 @@ import {
   detectTerminalGraphics,
   drawsPlaceholders,
   graphicsFrom,
+  isLateProbeReply,
   parseProbeReplies,
 } from './terminal-graphics.js';
 
@@ -94,5 +95,41 @@ describe('detectTerminalGraphics', () => {
     const { stdin, stdout } = fakeTerminal(`x${PLAIN_REPLIES}`);
     await detectTerminalGraphics(stdin, stdout, 1_000);
     expect(String(stdin.read())).toBe('x');
+  });
+
+  it('waits longer for a terminal that has begun to answer by the deadline', async () => {
+    const stdin = Object.assign(new PassThrough(), { isTTY: true }) as unknown as NodeJS.ReadStream & PassThrough;
+    const stdout = {
+      isTTY: true,
+      write() {
+        // The first answers arrive in time, the device attributes after the deadline.
+        setImmediate(() => stdin.write('\x1b_Gi=31;OK\x1b\\\x1b[6;20;10t\x1bP>|kitty(0.36.4)\x1b\\\x1b[?6'));
+        setTimeout(() => stdin.write('2;c'), 60);
+        return true;
+      },
+    } as unknown as NodeJS.WriteStream;
+    const graphics = await detectTerminalGraphics(stdin, stdout, 20, 1_000);
+    expect(graphics.protocol).toBe('kitty');
+    expect(stdin.read()).toBeNull();
+  });
+
+  it('does not type an answer the wait ended in the middle of', async () => {
+    const { stdin, stdout } = fakeTerminal('x\x1b[?62;');
+    await detectTerminalGraphics(stdin, stdout, 20, 20);
+    expect(String(stdin.read())).toBe('x');
+  });
+});
+
+describe('isLateProbeReply', () => {
+  it('knows the device attributes and the cell size as Ink passes them on', () => {
+    expect(isLateProbeReply('[?62;22c')).toBe(true);
+    expect(isLateProbeReply('\x1b[?1;2c')).toBe(true);
+    expect(isLateProbeReply('[6;20;10t')).toBe(true);
+  });
+
+  it('leaves typed text alone', () => {
+    expect(isLateProbeReply('c')).toBe(false);
+    expect(isLateProbeReply('[?]')).toBe(false);
+    expect(isLateProbeReply('see [6] t')).toBe(false);
   });
 });

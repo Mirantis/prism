@@ -76,32 +76,59 @@ export function graphicsFrom(replies: ProbeReplies): TerminalGraphics {
 /** Long enough for a terminal across an SSH connection; a local one answers within milliseconds. */
 const PROBE_TIMEOUT_MS = 1500;
 
+/** How much longer to wait for the rest of the answers once some have arrived by the deadline. */
+const LATE_REPLY_MS = 3000;
+
+/** The start of an answer that the wait ended in the middle of: never a key to type. */
+const PARTIAL_REPLY = /\x1b(?:\[\??[\d;]*|_G[^\x1b]*|P>\|[^\x1b]*)?$/;
+
+/**
+ * Whether Ink's input is a whole answer to the probe that arrived after the
+ * wait: the device attributes or the cell size, which Ink passes on without
+ * their escape. The composer drops it instead of typing it.
+ */
+export function isLateProbeReply(input: string): boolean {
+  return /^\x1b?\[\?[\d;]*c$/.test(input) || /^\x1b?\[6;\d+;\d+t$/.test(input);
+}
+
 /**
  * Ask the terminal what it can draw. Call it with stdin in raw mode and before
  * Ink reads stdin: the answers arrive as input. Keys typed during the wait go
- * back to stdin for Ink to read.
+ * back to stdin for Ink to read. A terminal that has begun to answer by the
+ * deadline gets a little longer to finish, so its answers are not typed.
  */
 export function detectTerminalGraphics(
   stdin: NodeJS.ReadStream,
   stdout: NodeJS.WriteStream,
   timeoutMs = PROBE_TIMEOUT_MS,
+  lateReplyMs = LATE_REPLY_MS,
 ): Promise<TerminalGraphics> {
   if (!stdin.isTTY || !stdout.isTTY) return Promise.resolve(graphicsFrom(parseProbeReplies('')));
   return new Promise((resolve) => {
     let received = '';
+    let extended = false;
     const finish = (): void => {
       clearTimeout(timer);
       stdin.off('data', onData);
       stdin.pause();
       const replies = parseProbeReplies(received);
-      if (replies.rest) stdin.unshift(Buffer.from(replies.rest, 'utf8'));
+      const rest = replies.complete ? replies.rest : replies.rest.replace(PARTIAL_REPLY, '');
+      if (rest) stdin.unshift(Buffer.from(rest, 'utf8'));
       resolve(graphicsFrom(replies));
+    };
+    const deadline = (): void => {
+      if (!extended && received.includes('\x1b')) {
+        extended = true;
+        timer = setTimeout(finish, lateReplyMs);
+        return;
+      }
+      finish();
     };
     const onData = (chunk: Buffer | string): void => {
       received += chunk.toString();
       if (parseProbeReplies(received).complete) finish();
     };
-    const timer = setTimeout(finish, timeoutMs);
+    let timer = setTimeout(deadline, timeoutMs);
     stdin.on('data', onData);
     stdout.write(PROBE);
   });

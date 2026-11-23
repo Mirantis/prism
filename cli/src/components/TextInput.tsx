@@ -25,6 +25,7 @@
 import React, { useState, useEffect } from 'react';
 import { Text, useInput } from 'ink';
 import chalk from 'chalk';
+import { isLateProbeReply } from '../images/terminal-graphics.js';
 
 interface Props {
   value: string;
@@ -84,7 +85,9 @@ export const TextInput: React.FC<Props> = ({
         // and clamp the cursor.
         key.escape ||
         // The fix. Subsumes upstream's lone `ctrl && input === 'c'` case.
-        key.ctrl
+        key.ctrl ||
+        // The terminal's answer to the start-up graphics probe, arriving late over a slow link.
+        isLateProbeReply(input)
       ) {
         return;
       }

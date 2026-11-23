@@ -136,9 +136,12 @@ content is gone.
 
 ### Images in replies
 
-In kitty and Ghostty, an image the agent places in its reply shows at its place
-in the text. Other terminals, and kitty or Ghostty inside tmux or screen, show
-`[image: …]` there.
+At start-up the terminal UI asks the terminal whether it supports the kitty
+graphics protocol and which terminal it is. When the terminal answers the
+graphics query and names itself as kitty 0.28 or later, or Ghostty, an image
+the agent places in its reply is drawn at its place in the text. Every other
+terminal, and kitty or Ghostty inside tmux or screen, shows `[image: …]` there.
+An image in a table cell always shows as `[image: …]`.
 
 ## Panels
 
@@ -201,7 +204,7 @@ to the runtime automatically with backoff, buffering anything you send while
 it's offline.
 
 Next to the model, it shows how much of the model's context window this
-conversation has consumed — e.g. `| context 58%`. It changes color as the window
+conversation has consumed — e.g. `| context 58%`. It changes colour as the window
 fills. It is hidden if the runtime does not recognize the model's context window —
 see `CONTEXT_WINDOW_TOKENS` in the **[configuration reference](configuration.md)**
 for how to set the window size in that case.

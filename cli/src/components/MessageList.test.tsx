@@ -284,7 +284,9 @@ describe('MessageList', () => {
         graphics={{ protocol: 'kitty', cell: { width: 1, height: 2 } }}
       />,
     );
-    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    // The picture loads, then draws: wait until a frame holds its placeholder.
+    const drawn = (): boolean => stdout.frames.some((f) => f.includes('\u{10EEEE}'));
+    for (let i = 0; i < 200 && !drawn(); i++) await new Promise((r) => setImmediate(r));
     const frame = stdout.frames.filter((f) => !f.startsWith('\x1b_G')).at(-1) ?? '';
     const lines = stripVTControlCharacters(frame).split('\n').map((line) => line.trim());
     const before = lines.indexOf('PRISMBEFORE');
@@ -315,5 +317,16 @@ describe('MessageList', () => {
       <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId={null} graphics={TEXT_ONLY} />,
     );
     expect(lastFrame() ?? '').toContain('See [image: chart] for May.');
+  });
+
+  it.each([
+    ['a kitty terminal', { protocol: 'kitty', cell: { width: 1, height: 2 } } as TerminalGraphics],
+    ['any other terminal', TEXT_ONLY],
+  ])('renders agent text that holds the image marker characters in %s', (_name, graphics) => {
+    const entries = [entry(makeMsg({ id: 'a7', role: 'AGENT', content: 'copied \uE0000\uE001 text' }))];
+    const { lastFrame } = render(
+      <MessageList agentName="Prism" self={undefined} entries={entries} expandedMessageId={null} graphics={graphics} />,
+    );
+    expect(stripVTControlCharacters(lastFrame() ?? '')).toContain('copied 0 text');
   });
 });
