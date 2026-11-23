@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeImage } from './decode-image.js';
+import { decodeImage, declaredSize, MAX_DECODED_PIXELS } from './decode-image.js';
 
 // Two by two: red, green / blue, white. Written by ffmpeg and cwebp.
 const PNG =
@@ -45,5 +45,52 @@ describe('decodeImage', () => {
 
   it('refuses a type it has no decoder for', async () => {
     await expect(decodeImage(bytes(PNG), 'image/svg+xml')).rejects.toThrow('no decoder for image/svg+xml');
+  });
+
+  it.each([
+    ['image/png', PNG],
+    ['image/gif', GIF],
+    ['image/webp', WEBP],
+  ])('reads the size a %s header declares', (mediaType, base64) => {
+    expect(declaredSize(bytes(base64), mediaType)).toEqual({ width: 2, height: 2 });
+  });
+
+  it('reads the size of a lossy and an extended WebP', () => {
+    const lossy = new Uint8Array(30);
+    lossy.set(Buffer.from('RIFF\0\0\0\0WEBPVP8 ', 'latin1'));
+    new DataView(lossy.buffer).setUint16(26, 300, true);
+    new DataView(lossy.buffer).setUint16(28, 200, true);
+    expect(declaredSize(lossy, 'image/webp')).toEqual({ width: 300, height: 200 });
+    const extended = new Uint8Array(30);
+    extended.set(Buffer.from('RIFF\0\0\0\0WEBPVP8X', 'latin1'));
+    extended.set([0x0f, 0x27, 0x00, 0x1f, 0x4e, 0x00], 24); // 9999 + 1, 19999 + 1
+    expect(declaredSize(extended, 'image/webp')).toEqual({ width: 10000, height: 20000 });
+  });
+
+  it('refuses a GIF whose header declares a huge screen, before allocating it', async () => {
+    const gif = bytes(GIF);
+    new DataView(gif.buffer, gif.byteOffset).setUint16(6, 20000, true);
+    new DataView(gif.buffer, gif.byteOffset).setUint16(8, 20000, true);
+    await expect(decodeImage(gif, 'image/gif')).rejects.toThrow('too large to decode');
+  });
+
+  it('refuses a PNG whose header declares more pixels than the budget', async () => {
+    const png = bytes(PNG);
+    new DataView(png.buffer, png.byteOffset).setUint32(16, 12000);
+    new DataView(png.buffer, png.byteOffset).setUint32(20, 12000);
+    await expect(decodeImage(png, 'image/png')).rejects.toThrow('too large to decode');
+  });
+
+  it('refuses a JPEG of more pixels than the budget', async () => {
+    const jpg = bytes(JPEG);
+    // The SOF0 frame header holds the height, then the width.
+    const sof = jpg.findIndex((b, i) => b === 0xff && jpg[i + 1] === 0xc0);
+    new DataView(jpg.buffer, jpg.byteOffset).setUint16(sof + 5, 9000);
+    new DataView(jpg.buffer, jpg.byteOffset).setUint16(sof + 7, 9000);
+    await expect(decodeImage(jpg, 'image/jpeg')).rejects.toThrow('maxResolutionInMP');
+  });
+
+  it('allows a picture within the budget', () => {
+    expect(MAX_DECODED_PIXELS).toBeGreaterThanOrEqual(2048 * 2048);
   });
 });
