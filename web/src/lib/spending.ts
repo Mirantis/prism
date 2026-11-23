@@ -95,6 +95,14 @@ const PURPOSE_LABEL: Record<string, string> = {
   dictation: 'Dictation',
 };
 
+/**
+ * The text with each stored mention `<@ID:Name>` read as its name. A title can be cut
+ * inside a mention, so one with no closing `>` reads as the rest of the text.
+ */
+export function withMentionNames(text: string): string {
+  return text.replace(/<@[A-Z0-9]+:([^>]*)(?:>|$)/g, '$1');
+}
+
 /** A model id without its region and vendor prefix: `global.anthropic.claude-opus-5-5` reads `claude-opus-5-5`. */
 export function shortModel(model: string): string {
   return model.replace(/^(?:[a-z]{2,6}\.)?(?:anthropic|openai)\./, '');

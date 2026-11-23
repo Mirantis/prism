@@ -33,6 +33,15 @@ export type CompactedMessage = Pick<ConversationMessage, 'role' | 'content' | 't
   position: number;
 };
 
+/**
+ * A conversation started in the web UI or the terminal. A channel's threads all hold an
+ * external id and are read in the channel, so a client never opens one.
+ */
+export const WEB_THREAD = {
+  threadSource: ThreadSource.DATABASE,
+  externalThreadId: null,
+} satisfies Prisma.ConversationThreadWhereInput;
+
 const COMPACTED_SEARCH_BATCH = 200;
 
 /** The order that defines a compacted message's position, and the fields a read returns. */
@@ -461,7 +470,7 @@ class ConversationService {
   }
 
   /**
-   * Get a thread by ID (with ownership check). With `page`, it holds that page of
+   * Get a web thread by ID (with ownership check). With `page`, it holds that page of
    * messages instead of the whole history.
    */
   async getThread(
@@ -475,19 +484,18 @@ class ConversationService {
         id: threadId,
         agentId,
         userId,
+        ...WEB_THREAD,
         ...(await this.clientThreadFilter(agentId, userId)),
       },
     });
 
     if (!thread) return null;
 
-    const provider = this.providerFor(thread.threadSource);
-
     // CLIENT history (web SPA): hide concise-mode internal steps. The model path
     // (getThreadContext) reads without this option so it still replays them.
     const read = page
-      ? await provider.getRecentMessages(threadId, page.limit, { view: 'client', before: page.before })
-      : await provider.getMessages(threadId, { view: 'client' });
+      ? await this.databaseProvider.getRecentMessages(threadId, page.limit, { view: 'client', before: page.before })
+      : await this.databaseProvider.getMessages(threadId, { view: 'client' });
     const messages = await this.withHiddenStepToolCalls(threadId, read);
 
     // Attach file metadata (no bytes) so the web UI renders chips on history.
@@ -504,14 +512,14 @@ class ConversationService {
   }
 
   /**
-   * Lightweight ownership/existence check: returns the thread id when it
-   * belongs to this agent+user, else null. Unlike getThread it does NOT load
+   * Lightweight ownership/existence check: returns the thread id when it is a web
+   * thread of this agent+user, else null. Unlike getThread it does NOT load
    * the thread's messages or attachment metadata, so callers that only need to
    * authorize a thread id (e.g. the CLI's /messages replay) stay cheap.
    */
   async getOwnedThreadId(userId: string, agentId: string, threadId: string): Promise<string | null> {
     const thread = await prisma.conversationThread.findFirst({
-      where: { id: threadId, agentId, userId, ...(await this.clientThreadFilter(agentId, userId)) },
+      where: { id: threadId, agentId, userId, ...WEB_THREAD, ...(await this.clientThreadFilter(agentId, userId)) },
       select: { id: true },
     });
     return thread?.id ?? null;
@@ -539,7 +547,7 @@ class ConversationService {
         // not resumable threads — exclude them so they don't surface in Recents
         // or the resume picker. Listing another source is untouched.
         ...(options?.threadSource === ThreadSource.DATABASE
-          ? { threadSource: ThreadSource.DATABASE, externalThreadId: null }
+          ? WEB_THREAD
           : options?.threadSource
             ? { threadSource: options.threadSource }
             : {}),

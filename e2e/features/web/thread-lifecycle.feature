@@ -36,3 +36,13 @@ Feature: Thread Lifecycle
     When I navigate to the agent chat page
     Then I should not see the message "slack message" in the conversation
     And I should not see the message "slack response" in the conversation
+
+  Scenario: A Slack thread does not open in webchat by its address
+    Given I have a stored Slack thread with the following messages:
+      | role  | content              |
+      | USER  | stored slack message |
+      | AGENT | stored slack reply   |
+    When I open that Slack thread's chat address
+    Then the chat leaves that Slack thread
+    And I should not see the message "stored slack message" in the conversation
+    And I should not see the message "stored slack reply" in the conversation

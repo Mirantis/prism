@@ -12,7 +12,7 @@
 
 import { config } from '../config';
 import prisma from '../lib/prisma';
-import { conversationService } from './conversation.service';
+import { conversationService, WEB_THREAD } from './conversation.service';
 import { runtimeStateService } from './runtime-state.service';
 
 const conversationKey = (conversationId: string) => `agentConversation:${conversationId}`;
@@ -31,8 +31,7 @@ class AgentConversationService {
         id: threadId,
         agentId,
         userId: config.ownerUserId,
-        externalThreadId: null,
-        threadSource: 'DATABASE',
+        ...WEB_THREAD,
         AND: await conversationService.clientThreadFilter(agentId, config.ownerUserId),
       },
       select: { id: true },

@@ -1,5 +1,4 @@
 import { useQuery } from '@tanstack/react-query';
-import { Skeleton } from '@/components/ui/skeleton';
 import { runtimeApi, type SpendRange } from '@/api/runtime-client';
 import { useAgent } from '@/lib/agent-context';
 import { formatUsd, unnamedSource } from '@/lib/spending';
@@ -13,7 +12,7 @@ export function SpendingSourceList({ category, range }: { category: SourcedSpend
     queryFn: () => runtimeApi.spendingSources(category, range),
   });
 
-  if (isPending) return <Skeleton className="ml-6 h-4 w-48" />;
+  if (isPending) return <div className="h-4" />;
   if (isError) return <p className="pl-6 text-xs text-muted-foreground">Could not be read.</p>;
 
   return (

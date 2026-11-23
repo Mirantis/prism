@@ -3,7 +3,7 @@ import { ChevronRight } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import { formatRelativeTime } from '@/lib/format';
-import { REQUEST_KIND_LABEL, formatUsd } from '@/lib/spending';
+import { REQUEST_KIND_LABEL, formatUsd, withMentionNames } from '@/lib/spending';
 import type { RequestSpend } from '@/types';
 import { SpendingRequestDetails } from './spending-request-details';
 
@@ -18,7 +18,7 @@ export function SpendingRequestRow({ request }: { request: RequestSpend }) {
           <ChevronRight aria-hidden="true" className={cn('mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')} />
           <div className="min-w-0 flex-1">
             <p className={cn('truncate text-sm', request.preview ? 'text-foreground' : 'text-muted-foreground italic')}>
-              {request.preview ?? REQUEST_KIND_LABEL[request.kind]}
+              {request.preview ? withMentionNames(request.preview) : REQUEST_KIND_LABEL[request.kind]}
             </p>
             <p className="text-xs text-muted-foreground">
               {request.preview ? `${REQUEST_KIND_LABEL[request.kind]} · ` : ''}
