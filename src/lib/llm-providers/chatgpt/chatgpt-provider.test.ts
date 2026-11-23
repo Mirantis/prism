@@ -44,7 +44,7 @@ describe('createChatGptProvider', () => {
         fetch: expect.any(Function),
       }),
     );
-    expect(provider('gpt-5.6-sol')).toEqual({ provider: 'chatgpt', modelId: 'gpt-5.6-sol' });
+    expect(provider('gpt-5.6-sol')).toMatchObject({ provider: 'chatgpt', modelId: 'gpt-5.6-sol' });
     expect(provider.deferredTools?.('gpt-5.6-sol')).toEqual(OPENAI_DEFERRED_TOOLS);
     expect(cacheRequestOptions(provider, 'gpt-5.6-sol', '1h', true)).toEqual({
       openai: { promptCacheOptions: { ttl: '12h' } },

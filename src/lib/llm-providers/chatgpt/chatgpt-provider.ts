@@ -8,6 +8,7 @@
  * identical to the `openai` provider.
  */
 
+import type { LanguageModelMiddleware } from 'ai';
 import { logger } from '../../../logger';
 import {
   CHATGPT_API_RESOURCE,
@@ -20,7 +21,8 @@ import {
 } from '../deferred-tools';
 import { openAiCacheRequest, openAiCacheTtlMs } from '../openai/openai-provider';
 import { createOpenAiCompatibleProvider } from '../openai-compatible';
-import type { LlmProvider } from '../llm-provider';
+import { STREAM_ONLY } from './stream-only';
+import { mergeProviderOptions, type LlmProvider } from '../llm-provider';
 
 function withBearer(init: RequestInit | undefined, token: string): RequestInit {
   const headers = new Headers(init?.headers);
@@ -43,6 +45,15 @@ async function chatGptFetch(input: Parameters<typeof globalThis.fetch>[0], init?
   return globalThis.fetch(input, withBearer(init, refreshed));
 }
 
+// A ChatGPT subscription token is refused for stored responses, so every call
+// sends `store: false`; the SDK then asks for the reasoning back encrypted.
+const NO_STORE: LanguageModelMiddleware = {
+  transformParams: async ({ params }) => ({
+    ...params,
+    providerOptions: mergeProviderOptions(params.providerOptions, { openai: { store: false } }),
+  }),
+};
+
 export function createChatGptProvider(baseURL: string = CHATGPT_API_RESOURCE): LlmProvider {
   logger.info({ routing: 'direct' }, 'Creating ChatGPT subscription provider');
 
@@ -51,6 +62,8 @@ export function createChatGptProvider(baseURL: string = CHATGPT_API_RESOURCE): L
     apiKey: 'chatgpt-oauth',
     baseURL,
     fetch: chatGptFetch,
+    // The endpoint also answers only streamed requests.
+    middleware: [NO_STORE, STREAM_ONLY],
   });
 
   return Object.assign(provider, {

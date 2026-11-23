@@ -30,6 +30,7 @@
  */
 
 import { createOpenAI } from '@ai-sdk/openai';
+import { wrapLanguageModel, type LanguageModelMiddleware } from 'ai';
 import { NO_CACHE_POINT, type LlmProvider } from './llm-provider';
 
 export interface OpenAiCompatibleOptions {
@@ -39,16 +40,20 @@ export interface OpenAiCompatibleOptions {
   baseURL?: string;
   /** Optional custom fetch (e.g. for OAuth bearer injection and token refresh). */
   fetch?: typeof globalThis.fetch;
+  /** Applied to every model the provider returns, for every call it makes. */
+  middleware?: LanguageModelMiddleware | LanguageModelMiddleware[];
 }
 
 export function createOpenAiCompatibleProvider({
   apiKey,
   baseURL,
   fetch,
+  middleware,
 }: OpenAiCompatibleOptions): LlmProvider {
   const openai = createOpenAI({ apiKey, baseURL, ...(fetch ? { fetch } : {}) });
 
-  const dispatcher = (modelId: string) => openai(modelId);
+  const dispatcher = (modelId: string) =>
+    middleware ? wrapLanguageModel({ model: openai(modelId), middleware }) : openai(modelId);
   return Object.assign(dispatcher, {
     // No breakpoints: OpenAI caches long prompts automatically, so there is
     // nothing to mark and the empty fragment spreads into `providerOptions` as
