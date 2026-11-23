@@ -14,6 +14,7 @@ use crate::services::meeting::meeting_bot_service::MEETING_BOT_SERVICE;
 use crate::services::thread_turn_service::THREAD_TURN_SERVICE;
 use crate::services::voice::voice_chat_service::VOICE_CHAT_SERVICE;
 use crate::tools::shell::agent_task_manager::get_agent_task_manager;
+use crate::tools::shell::monitor_manager::get_monitor_manager;
 use crate::tools::shell::process_manager::get_process_manager;
 
 /// The in-process work the check reads, apart from the processes a tool started.
@@ -40,7 +41,9 @@ fn has_work_in_flight() -> bool {
 ///   moment its turn is scheduled;
 /// - a `shell_spawn` child or a `coding_agent` task, started by one tool call
 ///   and polled from later turns — killing one leaves the agent's next status
-///   poll with nothing to report.
+///   poll with nothing to report;
+/// - a `monitor`, which waits for its command's output long after the turn
+///   that started it.
 ///
 /// Also false while the meeting bot is in a call, a cron task or a goal loop
 /// runs, a compaction is in flight, or a voice chat is live.
@@ -50,5 +53,6 @@ pub async fn is_agent_idle() -> bool {
     }
     get_process_manager().running_count() == 0
         && get_agent_task_manager().running_count() == 0
+        && get_monitor_manager().running_count() == 0
         && !VOICE_CHAT_SERVICE.is_live()
 }

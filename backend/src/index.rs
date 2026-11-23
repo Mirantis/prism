@@ -56,6 +56,7 @@ use crate::services::channel_adapter_interface::{
     ChannelAdapter, ChannelContext, ChannelDestination, ChannelName, DefaultDestination,
     DeliverableMessage, LinkedTarget, PostedMessage,
 };
+use crate::services::chatgpt_auth_service::CHATGPT_AUTH_SERVICE;
 use crate::services::compaction_service::COMPACTION_SERVICE;
 use crate::services::computer::computer_endpoint::COMPUTER_ENDPOINT;
 use crate::services::computer::computer_service::COMPUTER_SERVICE;
@@ -93,6 +94,7 @@ use crate::services::websocket_adapter_service::WEB_SOCKET_ADAPTER_SERVICE;
 use crate::services::websocket_gateway_service::WEB_SOCKET_GATEWAY_SERVICE;
 use crate::support::js;
 use crate::tools::shell::agent_task_manager::get_agent_task_manager;
+use crate::tools::shell::monitor_manager::get_monitor_manager;
 use crate::tools::shell::process_manager::get_process_manager;
 use crate::types::ResumedReply;
 use crate::{log_error, log_info, log_warn};
@@ -395,6 +397,16 @@ fn resumers() -> HashMap<PendingWorkKind, PendingWorkResumer> {
         PendingWorkKind::Heartbeat,
         Arc::new(|items, given_up| HEARTBEAT_SERVICE.resume(items, given_up).boxed()),
     );
+    resumers.insert(
+        PendingWorkKind::Monitor,
+        Arc::new(|items, given_up| {
+            async move {
+                get_monitor_manager().resume(items, given_up).await;
+                Ok(())
+            }
+            .boxed()
+        }),
+    );
     resumers
 }
 
@@ -445,6 +457,7 @@ async fn initialize() -> anyhow::Result<()> {
     // that won.
     ensure_coding_agents_detected().await;
     load_subscription_switches().await;
+    CHATGPT_AUTH_SERVICE.load().await;
     for name in CONFIG.available_coding_agents() {
         let coding_agent = get_coding_agent(Some(name))?;
         let home = coding_agent.prepare_home().await?;
@@ -849,6 +862,7 @@ async fn shutdown(signal: &'static str, servers: Arc<Mutex<Option<Servers>>>) {
     // the container behind.
     get_process_manager().kill_all(None);
     get_agent_task_manager().kill_all();
+    get_monitor_manager().kill_all();
     get_execution_environment().shutdown().await;
 
     WEB_SOCKET_GATEWAY_SERVICE.close_all();

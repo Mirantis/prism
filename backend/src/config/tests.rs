@@ -807,6 +807,22 @@ fn selects_openai_case_insensitively_and_resolves_the_neutral_model_ids() {
 }
 
 #[test]
+fn selects_chatgpt_with_the_openai_model_ids_and_no_embeddings_by_default() {
+    let cfg = load(&[("LLM_PROVIDER", "ChatGPT")]);
+    assert_eq!(cfg.llm_provider, LlmProviderName::Chatgpt);
+    assert_eq!(cfg.chat_model_id, "gpt-5.6-sol");
+    assert_eq!(cfg.classification_model_id, "gpt-5.6-luna");
+    assert_eq!(cfg.embedding_provider, EmbeddingProviderName::None);
+    assert_eq!(cfg.embedding_model_id, "");
+    // Sign in with ChatGPT tokens are the user's own, so no gateway mount serves them.
+    let gateway = load(&[
+        ("LLM_PROVIDER", "chatgpt"),
+        ("NEXUS_API_URL", "https://gateway.example.com"),
+    ]);
+    assert_eq!(gateway.nexus_chat_base_url, None);
+}
+
+#[test]
 fn an_empty_openai_embedding_model_disables_embeddings() {
     let cfg = load(&[
         ("LLM_PROVIDER", "openai"),

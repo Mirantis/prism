@@ -57,6 +57,8 @@ pub enum LlmProviderName {
     BedrockMantle,
     #[serde(rename = "openai")]
     Openai,
+    #[serde(rename = "chatgpt")]
+    Chatgpt,
     #[serde(rename = "openrouter")]
     Openrouter,
     #[serde(rename = "anthropic")]
@@ -65,11 +67,15 @@ pub enum LlmProviderName {
     Litellm,
 }
 
-pub const LLM_PROVIDERS: [LlmProviderName; 7] = [
+/// Sign in with ChatGPT always calls api.openai.com directly (tokens stay local).
+pub const CHATGPT_CHAT_ENDPOINT: &str = "https://api.openai.com/v1";
+
+pub const LLM_PROVIDERS: [LlmProviderName; 8] = [
     LlmProviderName::Bedrock,
     LlmProviderName::Azure,
     LlmProviderName::BedrockMantle,
     LlmProviderName::Openai,
+    LlmProviderName::Chatgpt,
     LlmProviderName::Openrouter,
     LlmProviderName::Anthropic,
     LlmProviderName::Litellm,
@@ -82,6 +88,7 @@ impl LlmProviderName {
             Self::Azure => "azure",
             Self::BedrockMantle => "bedrock-mantle",
             Self::Openai => "openai",
+            Self::Chatgpt => "chatgpt",
             Self::Openrouter => "openrouter",
             Self::Anthropic => "anthropic",
             Self::Litellm => "litellm",
@@ -968,6 +975,8 @@ impl Config {
             LlmProviderName::Azure => nexus_azure_base_url.clone(),
             LlmProviderName::BedrockMantle => nexus_bedrock_mantle_base_url.clone(),
             LlmProviderName::Openai => nexus_openai_base_url.clone(),
+            // Sign in with ChatGPT tokens are local to the user and go direct to api.openai.com.
+            LlmProviderName::Chatgpt => None,
             LlmProviderName::Openrouter => nexus_openrouter_base_url.clone(),
             LlmProviderName::Anthropic => None,
             LlmProviderName::Litellm => nexus_litellm_base_url.clone(),
@@ -1103,6 +1112,7 @@ impl Config {
                 bedrock_mantle_override.clone(),
             ),
             LlmProviderName::Openai => (openai_endpoint.clone(), openai_override.clone()),
+            LlmProviderName::Chatgpt => (Some(CHATGPT_CHAT_ENDPOINT.to_string()), None),
             LlmProviderName::Openrouter => (
                 Some(openrouter_endpoint.clone()),
                 openrouter_override.clone(),
@@ -1133,7 +1143,7 @@ impl Config {
                 bedrock_mantle_model_id.clone(),
                 bedrock_mantle_classification_model_id.clone(),
             ),
-            LlmProviderName::Openai => (
+            LlmProviderName::Openai | LlmProviderName::Chatgpt => (
                 openai_model_id.clone(),
                 openai_classification_model_id.clone(),
             ),
@@ -1193,7 +1203,7 @@ impl Config {
             LlmProviderName::Azure => EmbeddingProviderName::AzureOpenai,
             LlmProviderName::Openai => EmbeddingProviderName::Openai,
             LlmProviderName::Openrouter => EmbeddingProviderName::Openrouter,
-            LlmProviderName::Anthropic => {
+            LlmProviderName::Anthropic | LlmProviderName::Chatgpt => {
                 if openai_api_key.as_deref().is_some_and(|k| !k.is_empty())
                     || nexus_openai_base_url.is_some()
                 {

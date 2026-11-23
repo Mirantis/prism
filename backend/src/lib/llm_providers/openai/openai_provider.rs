@@ -70,6 +70,7 @@ fn open_ai_options(config: &Config, base_url: Option<&str>) -> OpenAiCompatibleO
             .or_else(|| gateway_serves_it.then(|| "nexus-managed".to_string())),
         // None → the SDK's own default, https://api.openai.com/v1.
         base_url: base_url.map(str::to_string),
+        fetch: None,
     }
 }
 
@@ -79,7 +80,11 @@ fn open_ai_options(config: &Config, base_url: Option<&str>) -> OpenAiCompatibleO
 /// explicit mode, which writes nothing without breakpoints. Under `5m` such a
 /// request writes its prompt once; that is the trade for sending nothing an earlier
 /// model refuses.
-fn open_ai_cache_request(_model_id: &str, ttl: CacheTtl, write: bool) -> ProviderOptionsFragment {
+pub(crate) fn open_ai_cache_request(
+    _model_id: &str,
+    ttl: CacheTtl,
+    write: bool,
+) -> ProviderOptionsFragment {
     if ttl != CacheTtl::OneHour {
         return provider_options(json!({}));
     }
@@ -91,7 +96,7 @@ fn open_ai_cache_request(_model_id: &str, ttl: CacheTtl, write: bool) -> Provide
     provider_options(json!({ "openai": { "promptCacheOptions": options } }))
 }
 
-fn open_ai_cache_ttl_ms(_model_id: &str, ttl: CacheTtl) -> i64 {
+pub(crate) fn open_ai_cache_ttl_ms(_model_id: &str, ttl: CacheTtl) -> i64 {
     if ttl == CacheTtl::OneHour {
         12 * 60 * 60 * 1000
     } else {

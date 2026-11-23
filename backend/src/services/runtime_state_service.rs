@@ -27,6 +27,15 @@ pub const AGENT_VOICE_READINGS: &str = "agentVoiceReadings";
 /// The end of the last closed hour that `llm usage aggregated` reported, as an ISO time.
 pub const LLM_USAGE_REPORTED_THROUGH: &str = "llmUsageReportedThrough";
 
+/// Persistent host identifier (`urn:uuid:...`) for Sign in with ChatGPT dynamic registration.
+pub const CHATGPT_AUTH_HOST_ID: &str = "chatgptAuthHostId";
+
+/// Dynamically issued `oaiapp_...` client ID from Sign in with ChatGPT.
+pub const CHATGPT_AUTH_CLIENT_ID: &str = "chatgptAuthClientId";
+
+/// Stored OAuth tokens (JSON) for Sign in with ChatGPT (`LLM_PROVIDER=chatgpt`).
+pub const CHATGPT_AUTH_TOKENS: &str = "chatgptAuthTokens";
+
 pub struct RuntimeStateService;
 
 impl RuntimeStateService {

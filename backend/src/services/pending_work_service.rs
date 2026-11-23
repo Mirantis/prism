@@ -49,6 +49,8 @@ pub enum PendingWorkKind {
     Cron,
     #[serde(rename = "heartbeat")]
     Heartbeat,
+    #[serde(rename = "monitor")]
+    Monitor,
 }
 
 impl PendingWorkKind {
@@ -59,6 +61,7 @@ impl PendingWorkKind {
             PendingWorkKind::Webhook => "webhook",
             PendingWorkKind::Cron => "cron",
             PendingWorkKind::Heartbeat => "heartbeat",
+            PendingWorkKind::Monitor => "monitor",
         }
     }
 }
@@ -72,12 +75,13 @@ impl std::fmt::Display for PendingWorkKind {
 /// Each kind of work that survives a restart, in the order the boot gives it
 /// back: a resumed reply or run can poll a coding task, so the tasks come back
 /// first.
-pub const PENDING_WORK_KINDS: [PendingWorkKind; 5] = [
+pub const PENDING_WORK_KINDS: [PendingWorkKind; 6] = [
     PendingWorkKind::CodingTask,
     PendingWorkKind::Chat,
     PendingWorkKind::Webhook,
     PendingWorkKind::Cron,
     PendingWorkKind::Heartbeat,
+    PendingWorkKind::Monitor,
 ];
 
 /// Boots that may give one piece of work back. Work that stops its own process
@@ -756,6 +760,7 @@ mod tests {
                 (PendingWorkKind::Webhook, vec!["run-1".to_string()], vec![]),
                 (PendingWorkKind::Cron, vec![], vec![]),
                 (PendingWorkKind::Heartbeat, vec![], vec![]),
+                (PendingWorkKind::Monitor, vec![], vec![]),
             ]
         );
     }
