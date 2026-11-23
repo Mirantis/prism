@@ -14,7 +14,7 @@
 //! is classified `unreadable` and shown to the model as a plain text note
 //! (see `prompts/context_builder.rs`).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
 use std::sync::LazyLock;
 
@@ -68,6 +68,14 @@ impl AttachmentCategory {
             _ => AttachmentCategory::Unreadable,
         }
     }
+}
+
+/// The stored key of a channel file a thread read stored for `thread_id`. A channel
+/// file id is unique across stored attachments, and the same file can sit in two
+/// threads (a DM message and the Slack thread under it), so the copy a thread read
+/// stores is keyed per thread.
+pub fn thread_scoped_file_id(thread_id: &str, external_file_id: &str) -> String {
+    format!("{thread_id}:{external_file_id}")
 }
 
 /// Metadata-only view (no bytes) — safe to serialize into JSON responses.
@@ -127,7 +135,8 @@ pub struct CreateAttachmentInput {
     pub source: AttachmentSource,
     pub thread_id: Option<String>,
     pub message_id: Option<String>,
-    /// The channel's own id for the file, unique across stored attachments.
+    /// The channel's own id for the file (or `thread_scoped_file_id`), unique across
+    /// stored attachments.
     pub external_file_id: Option<String>,
     pub external_ts: Option<String>,
 }
@@ -844,6 +853,41 @@ impl AttachmentService {
     }
 
     /// True when a channel's file id was already stored (at-least-once redelivery).
+    /// Of the given channel file ids, the ones already stored for this thread: under
+    /// the plain id (the file of a message that started a turn here) or under
+    /// `thread_scoped_file_id` (a file a thread read stored). A file stored for
+    /// another thread does not count, as the attachment tools read a file only in
+    /// its own thread.
+    pub async fn stored_channel_file_ids(
+        &self,
+        thread_id: &str,
+        external_file_ids: &[String],
+    ) -> anyhow::Result<HashSet<String>> {
+        if external_file_ids.is_empty() {
+            return Ok(HashSet::new());
+        }
+        let mut by_key: HashMap<String, String> = HashMap::new();
+        for id in external_file_ids {
+            by_key.insert(id.clone(), id.clone());
+            by_key.insert(thread_scoped_file_id(thread_id, id), id.clone());
+        }
+        let keys: Vec<String> = by_key.keys().cloned().collect();
+        let thread = thread_id.to_string();
+        let rows: Vec<Option<String>> = crate::db::run(move |conn| {
+            Ok(a::message_attachments
+                .filter(a::thread_id.eq(&thread))
+                .filter(a::slack_file_id.eq_any(&keys))
+                .select(a::slack_file_id)
+                .load(conn)?)
+        })
+        .await?;
+        Ok(rows
+            .into_iter()
+            .flatten()
+            .filter_map(|key| by_key.get(&key).cloned())
+            .collect())
+    }
+
     pub async fn exists_by_external_file_id(&self, external_file_id: &str) -> anyhow::Result<bool> {
         let external_file_id = external_file_id.to_string();
         let row: Option<String> = crate::db::run(move |conn| {
@@ -1022,11 +1066,12 @@ impl AttachmentService {
             crate::support::now_ms() - older_than_ms,
         ));
         let keep = keep.to_vec();
-        let victims: Vec<(String, Option<String>)> = crate::db::run(move |conn| {
+        type Candidate = (String, Option<String>, Option<String>, Option<String>);
+        let candidates: Vec<Candidate> = crate::db::run(move |conn| {
             let mut query = a::message_attachments
                 .filter(a::message_id.is_null())
                 .filter(a::created_at.lt(cutoff))
-                .select((a::id, a::storage_path))
+                .select((a::id, a::storage_path, a::slack_file_id, a::thread_id))
                 .into_boxed();
             if !keep.is_empty() {
                 query = query.filter(a::id.ne_all(keep));
@@ -1034,6 +1079,38 @@ impl AttachmentService {
             Ok(query.load(conn)?)
         })
         .await?;
+        // A channel file stored for a thread is kept while that thread exists: a
+        // live-read thread shows it by the channel's message id, with no stored
+        // message to link it to. `threadId` has no foreign key, so a deleted
+        // thread's files are reaped here.
+        let thread_ids: Vec<String> = candidates
+            .iter()
+            .filter(|(_, _, file_id, _)| file_id.is_some())
+            .filter_map(|(_, _, _, thread_id)| thread_id.clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        let live_threads: HashSet<String> = if thread_ids.is_empty() {
+            HashSet::new()
+        } else {
+            crate::db::run(move |conn| {
+                use crate::db::schema::conversation_threads::dsl as t;
+                Ok(t::conversation_threads
+                    .filter(t::id.eq_any(&thread_ids))
+                    .select(t::id)
+                    .load::<String>(conn)?)
+            })
+            .await?
+            .into_iter()
+            .collect()
+        };
+        let victims: Vec<(String, Option<String>)> = candidates
+            .into_iter()
+            .filter(|(_, _, file_id, thread_id)| {
+                !(file_id.is_some() && thread_id.as_ref().is_some_and(|t| live_threads.contains(t)))
+            })
+            .map(|(id, storage_path, _, _)| (id, storage_path))
+            .collect();
         let mut deleted = 0;
         for (id, storage_path) in victims {
             // Re-check `message_id IS NULL` in the delete itself: a send can link the
@@ -1645,6 +1722,95 @@ mod tests {
         assert_eq!(
             ATTACHMENT_SERVICE.delete_orphans(1000, &[]).await.unwrap(),
             1
+        );
+    }
+
+    /// A two-day-old channel file no message holds. Its content has expired, so no
+    /// media file is involved.
+    fn channel_row(id: &str, file_id: Option<&str>, thread_id: Option<&str>, ts: Option<&str>) {
+        let mut new_row =
+            NewMessageAttachment::new(format!("{id}.log"), "text/plain", 3, "text", "slack");
+        new_row.id = id.to_string();
+        new_row.slack_file_id = file_id.map(str::to_string);
+        new_row.thread_id = thread_id.map(str::to_string);
+        new_row.external_ts = ts.map(str::to_string);
+        new_row.created_at = DbDateTime(crate::support::from_ms(
+            crate::support::now_ms() - 2 * DAY_MS,
+        ));
+        insert(new_row);
+    }
+
+    const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn keeps_a_channel_file_while_its_thread_exists_and_still_shows_it_on_its_message() {
+        let test = test_db();
+        let _g = DataDirGuard::new();
+        test.db
+            .run_sync(|conn| {
+                use crate::db::models::{NewAgentWorkspace, NewConversationThread};
+                use crate::db::schema::{agent_workspaces, conversation_threads};
+                let mut agent = NewAgentWorkspace::new("user-1", "", "", "", "", "");
+                agent.id = "agent-1".into();
+                diesel::insert_into(agent_workspaces::table)
+                    .values(&agent)
+                    .execute(conn)?;
+                let mut thread = NewConversationThread::new("agent-1", "user-1");
+                thread.id = "thread-1".into();
+                diesel::insert_into(conversation_threads::table)
+                    .values(&thread)
+                    .execute(conn)?;
+                Ok(())
+            })
+            .unwrap();
+        channel_row("upload", None, None, None);
+        channel_row("no-thread", Some("F1"), None, None);
+        channel_row(
+            "thread-file",
+            Some("F2"),
+            Some("thread-1"),
+            Some("1700.0001"),
+        );
+        channel_row(
+            "deleted-thread-file",
+            Some("F3"),
+            Some("deleted-thread"),
+            Some("1700.0002"),
+        );
+
+        assert_eq!(
+            ATTACHMENT_SERVICE
+                .delete_orphans(DAY_MS, &[])
+                .await
+                .unwrap(),
+            3
+        );
+
+        let shown = ATTACHMENT_SERVICE
+            .get_meta_by_external_ts("thread-1", &["1700.0001".to_string()])
+            .await
+            .unwrap();
+        let ids: Vec<&str> = shown["1700.0001"].iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["thread-file"]);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn tells_which_channel_file_ids_are_stored_for_a_thread_not_another_threads() {
+        let _db = test_db();
+        channel_row("a1", Some("F1"), Some("thread-1"), None);
+        let scoped = thread_scoped_file_id("thread-1", "F2");
+        channel_row("a2", Some(&scoped), Some("thread-1"), None);
+        channel_row("b3", Some("F3"), Some("thread-2"), None);
+
+        let ids = ["F1", "F2", "F3"].map(str::to_string);
+        assert_eq!(
+            ATTACHMENT_SERVICE
+                .stored_channel_file_ids("thread-1", &ids)
+                .await
+                .unwrap(),
+            HashSet::from(["F1".to_string(), "F2".to_string()])
         );
     }
 
