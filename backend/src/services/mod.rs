@@ -48,6 +48,8 @@ pub mod slack_adapter_service;
 pub mod slack_heartbeat_trigger_service;
 pub mod slack_mapping_service;
 pub mod slack_message_queue_service;
+pub mod slack_router_envelope;
+pub mod slack_router_service;
 pub mod slack_socket_retire;
 pub mod slack_socket_watchdog;
 pub mod slack_working_indicator;

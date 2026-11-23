@@ -8,6 +8,11 @@
 //!
 //! If `SLACK_EXPECTED_APP_ID` is set, the bot token's `app_id` must match.
 //! Unset means "any app accepted".
+//!
+//! In routed mode the token belongs to a proxy, which binds it to a workspace
+//! when the agent is added to Slack. Until then `auth.test` answers
+//! `invalid_auth`, and the connection stays absent until the router reports the
+//! agent connected ([`reload_slack_config`]).
 
 use futures::FutureExt;
 use futures::future::{BoxFuture, Shared};
@@ -16,8 +21,44 @@ use serde_json::json;
 use std::sync::{Arc, LazyLock};
 
 use crate::config::CONFIG;
-use crate::lib::slack_web_client::{SlackWebClient, WebClientOptions};
+use crate::lib::slack_web_client::{SlackWebClient, WebClientOptions, slack_platform_error_code};
 use crate::log_info;
+
+/// How Slack events reach this runtime: over a Socket Mode connection of the
+/// app's own, from a router through the `slack` listener, or not at all, which
+/// leaves a bot token that only posts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlackMode {
+    Socket,
+    Routed,
+    PostOnly,
+}
+
+impl SlackMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SlackMode::Socket => "socket",
+            SlackMode::Routed => "routed",
+            SlackMode::PostOnly => "post-only",
+        }
+    }
+}
+
+/// The mode the environment selects: `SLACK_APP_TOKEN` for Socket Mode, else
+/// `SLACK_API_URL` for routed mode.
+pub fn slack_mode() -> SlackMode {
+    if std::env::var("SLACK_APP_TOKEN").is_ok_and(|token| !token.is_empty()) {
+        return SlackMode::Socket;
+    }
+    if CONFIG.slack_api_url.is_some() {
+        SlackMode::Routed
+    } else {
+        SlackMode::PostOnly
+    }
+}
+
+/// The `auth.test` errors of a proxy token that is not bound to a workspace yet.
+const UNBOUND_TOKEN_ERRORS: [&str; 2] = ["invalid_auth", "not_authed"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -45,6 +86,11 @@ struct SlackConfigCache {
     cached: Option<Option<SlackConnectionRecord>>,
     /// The load in progress, cleared when it settles.
     inflight: Option<SlackConfigLoad>,
+    /// Bumped by every reload and clear. A load started before the bump neither
+    /// fills the cache nor answers its callers with its own record: a
+    /// `disconnected` envelope that lands while boot's `auth.test` is still out
+    /// must not be undone when that call returns.
+    generation: u64,
 }
 
 static CACHE: LazyLock<parking_lot::Mutex<SlackConfigCache>> =
@@ -55,6 +101,7 @@ async fn load_from_env() -> anyhow::Result<Option<SlackConnectionRecord>> {
     load_with(
         CONFIG.slack_bot_token.as_deref(),
         CONFIG.slack_expected_app_id.as_deref(),
+        slack_mode(),
     )
     .await
 }
@@ -72,6 +119,7 @@ async fn load_from_env() -> anyhow::Result<Option<SlackConnectionRecord>> {
 async fn load_with(
     bot_token: Option<&str>,
     expected_app_id: Option<&str>,
+    mode: SlackMode,
 ) -> anyhow::Result<Option<SlackConnectionRecord>> {
     let Some(bot_token) = bot_token.filter(|token| !token.is_empty()) else {
         log_info!("[SlackConfig] SLACK_BOT_TOKEN not set — Slack disabled");
@@ -96,7 +144,20 @@ async fn load_with(
             ..WebClientOptions::default()
         }),
     );
-    let auth_result = client.auth_test().await?;
+    let auth_result = match client.auth_test().await {
+        Ok(result) => result,
+        Err(error) => {
+            let unbound = slack_platform_error_code(&error)
+                .is_some_and(|code| UNBOUND_TOKEN_ERRORS.contains(&code.as_str()));
+            if unbound && mode == SlackMode::Routed {
+                log_info!(
+                    "[SlackConfig] the agent is not in a Slack workspace yet; Slack waits for the router"
+                );
+                return Ok(None);
+            }
+            return Err(error);
+        }
+    };
     let team_id = auth_result.team_id.unwrap_or_default();
     let team_name = auth_result
         .team
@@ -147,7 +208,8 @@ async fn load_with(
 }
 
 /// Get the env-sourced Slack connection, cached after first successful load.
-/// Returns `None` when `SLACK_BOT_TOKEN` is unset (Slack disabled).
+/// Returns `None` when `SLACK_BOT_TOKEN` is unset (Slack disabled), or while a
+/// routed agent is in no Slack workspace.
 /// Fails on validation failure so startup fails loudly; a failed load is not
 /// cached, and every caller that waited on it gets the same error.
 pub async fn get_slack_config() -> anyhow::Result<Option<SlackConnectionRecord>> {
@@ -158,46 +220,82 @@ pub async fn get_slack_config() -> anyhow::Result<Option<SlackConnectionRecord>>
 async fn get_or_load(
     load: impl FnOnce() -> BoxFuture<'static, anyhow::Result<Option<SlackConnectionRecord>>>,
 ) -> anyhow::Result<Option<SlackConnectionRecord>> {
-    let inflight = {
+    let (inflight, generation) = {
         let mut cache = CACHE.lock();
         if let Some(cached) = &cache.cached {
             return Ok(cached.clone());
         }
+        let generation = cache.generation;
         match &cache.inflight {
-            Some(inflight) => inflight.clone(),
+            Some(inflight) => (inflight.clone(), generation),
             None => {
                 let started = load();
                 let shared = async move {
                     let result = started.await.map_err(Arc::new);
                     let mut cache = CACHE.lock();
-                    if let Ok(record) = &result {
-                        cache.cached = Some(record.clone());
+                    // A reload or a clear came after this load started: the
+                    // newer state wins, and this load fills nothing.
+                    if cache.generation == generation {
+                        if let Ok(record) = &result {
+                            cache.cached = Some(record.clone());
+                        }
+                        cache.inflight = None;
                     }
-                    cache.inflight = None;
                     result
                 }
                 .boxed()
                 .shared();
                 cache.inflight = Some(shared.clone());
-                shared
+                (shared, generation)
             }
         }
     };
-    inflight.await.map_err(|err| anyhow::anyhow!("{}", err))
+    let result = inflight.await;
+    if CACHE.lock().generation != generation {
+        return Box::pin(get_slack_config()).await;
+    }
+    result.map_err(|err| anyhow::anyhow!("{}", err))
+}
+
+/// Validate the token again: the router reported the agent added to a workspace.
+pub async fn reload_slack_config() -> anyhow::Result<Option<SlackConnectionRecord>> {
+    {
+        let mut cache = CACHE.lock();
+        cache.generation += 1;
+        cache.cached = None;
+        cache.inflight = None;
+    }
+    get_slack_config().await
+}
+
+/// Forget the connection: the router reported the agent removed from its workspace.
+pub fn clear_slack_config() {
+    let mut cache = CACHE.lock();
+    cache.generation += 1;
+    cache.cached = Some(None);
+    cache.inflight = None;
 }
 
 /// Test-only: reset the cached singleton. Not for production use.
 #[doc(hidden)]
 pub fn __reset_slack_config_for_tests() {
-    *CACHE.lock() = SlackConfigCache::default();
+    let mut cache = CACHE.lock();
+    let generation = cache.generation + 1;
+    *cache = SlackConfigCache {
+        generation,
+        ..SlackConfigCache::default()
+    };
 }
 
 /// Test-only: the record every later `get_slack_config` answers.
 #[cfg(test)]
 pub(crate) fn set_slack_config_for_tests(record: Option<SlackConnectionRecord>) {
-    *CACHE.lock() = SlackConfigCache {
+    let mut cache = CACHE.lock();
+    let generation = cache.generation + 1;
+    *cache = SlackConfigCache {
         cached: Some(record),
         inflight: None,
+        generation,
     };
 }
 
@@ -220,8 +318,14 @@ mod tests {
     #[tokio::test]
     #[serial_test::serial]
     async fn answers_none_when_no_bot_token_is_set() {
-        assert_eq!(load_with(None, None).await.unwrap(), None);
-        assert_eq!(load_with(Some(""), None).await.unwrap(), None);
+        assert_eq!(
+            load_with(None, None, SlackMode::Socket).await.unwrap(),
+            None
+        );
+        assert_eq!(
+            load_with(Some(""), None, SlackMode::Socket).await.unwrap(),
+            None
+        );
     }
 
     #[tokio::test]
@@ -233,7 +337,7 @@ mod tests {
         ))
         .await;
         set_test_api_url(Some(api.url.clone()));
-        let result = load_with(Some("__nexus_cred:abc-123__"), None).await;
+        let result = load_with(Some("__nexus_cred:abc-123__"), None, SlackMode::Socket).await;
         set_test_api_url(None);
         assert_eq!(result.unwrap().unwrap().team_id, "T999");
         // auth.test went out with the sentinel verbatim — the proxy swaps it on the wire.
@@ -255,7 +359,7 @@ mod tests {
         ))
         .await;
         set_test_api_url(Some(api.url.clone()));
-        let record = load_with(Some("xoxb-TEST"), None).await;
+        let record = load_with(Some("xoxb-TEST"), None, SlackMode::Socket).await;
         set_test_api_url(None);
         let record = record.unwrap().unwrap();
         assert_eq!(
@@ -285,7 +389,7 @@ mod tests {
         ))
         .await;
         set_test_api_url(Some(api.url.clone()));
-        let record = load_with(Some("xoxb-TEST"), Some("A_EXPECTED")).await;
+        let record = load_with(Some("xoxb-TEST"), Some("A_EXPECTED"), SlackMode::Socket).await;
         set_test_api_url(None);
         assert_eq!(record.unwrap().unwrap().team_id, "T123");
         assert_eq!(
@@ -303,7 +407,7 @@ mod tests {
         ))
         .await;
         set_test_api_url(Some(api.url.clone()));
-        let err = load_with(Some("xoxb-TEST"), Some("A_EXPECTED"))
+        let err = load_with(Some("xoxb-TEST"), Some("A_EXPECTED"), SlackMode::Socket)
             .await
             .unwrap_err();
         set_test_api_url(None);
@@ -322,7 +426,9 @@ mod tests {
         ))
         .await;
         set_test_api_url(Some(api.url.clone()));
-        let err = load_with(Some("xoxb-TEST"), None).await.unwrap_err();
+        let err = load_with(Some("xoxb-TEST"), None, SlackMode::Socket)
+            .await
+            .unwrap_err();
         set_test_api_url(None);
         assert_eq!(
             err.to_string(),
@@ -339,7 +445,9 @@ mod tests {
         ))
         .await;
         set_test_api_url(Some(api.url.clone()));
-        let err = load_with(Some("xoxb-TEST"), None).await.unwrap_err();
+        let err = load_with(Some("xoxb-TEST"), None, SlackMode::Socket)
+            .await
+            .unwrap_err();
         set_test_api_url(None);
         assert_eq!(
             err.to_string(),
@@ -377,5 +485,52 @@ mod tests {
         let loaded = get_or_load(|| async { Ok(None) }.boxed()).await.unwrap();
         __reset_slack_config_for_tests();
         assert_eq!(loaded, None);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn a_routed_token_not_bound_to_a_workspace_yet_is_no_connection() {
+        let api = fake_slack_api(answers(
+            json!({ "ok": false, "error": "invalid_auth" }),
+            json!({ "ok": true }),
+        ))
+        .await;
+        set_test_api_url(Some(api.url.clone()));
+        let routed = load_with(Some("xoxb-PROXY"), None, SlackMode::Routed).await;
+        let socket = load_with(Some("xoxb-TEST"), None, SlackMode::Socket).await;
+        set_test_api_url(None);
+        assert_eq!(routed.unwrap(), None);
+        assert!(socket.unwrap_err().to_string().contains("invalid_auth"));
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn a_clear_during_a_load_wins_over_the_load() {
+        __reset_slack_config_for_tests();
+        let (release, released) = tokio::sync::oneshot::channel::<()>();
+        let load = tokio::spawn(get_or_load(move || {
+            async move {
+                let _ = released.await;
+                Ok(Some(SlackConnectionRecord {
+                    id: "T1".into(),
+                    team_id: "T1".into(),
+                    team_name: "Acme".into(),
+                    bot_token: "xoxb".into(),
+                    bot_id: "B1".into(),
+                    bot_user_id: "U1".into(),
+                    installed_at: String::new(),
+                    is_active: true,
+                }))
+            }
+            .boxed()
+        }));
+        tokio::task::yield_now().await;
+        clear_slack_config();
+        release.send(()).unwrap();
+        let answered = load.await.unwrap().unwrap();
+        let cached = get_slack_config().await.unwrap();
+        __reset_slack_config_for_tests();
+        assert_eq!(answered, None);
+        assert_eq!(cached, None);
     }
 }

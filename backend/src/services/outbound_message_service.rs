@@ -22,10 +22,10 @@ use crate::lib::telemetry::track_event;
 use crate::lib::visible_text::visible_text;
 use crate::log_error;
 use crate::services::channel_adapter_interface::{
-    ChannelAdapter, ChannelName, LinkedTarget, LinkedTargetKind, PostedMessage, SendRefusedError,
-    WEB_CHAT_NAME, WEB_CHAT_TARGET, describe_target,
+    ChannelAdapter, ChannelName, LinkedTarget, LinkedTargetKind, PostedHistory, PostedMessage,
+    SendRefusedError, WEB_CHAT_NAME, WEB_CHAT_TARGET, describe_target,
 };
-use crate::services::conversation_service::{CONVERSATION_SERVICE, MessageInput};
+use crate::services::conversation_service::{CONVERSATION_SERVICE, LiveThread, MessageInput};
 use crate::services::delivery_target_service::PostingCeiling;
 use crate::services::message_delivery_service::{
     MESSAGE_DELIVERY_SERVICE, MessageTrigger, PublishOptions,
@@ -200,8 +200,7 @@ impl OutboundMessageService {
             let posted = self.post(&resolved, &text, &input).await?;
             self.track(&input, SendOutcome::Sent, target.as_ref(), None);
             if let Some(history) = posted.history {
-                self.store_in_target_history(&input, &history.user_id, &history.thread_key, &text)
-                    .await;
+                self.store_in_target_history(&input, &history, &text).await;
             }
             Ok(SentMessage {
                 key: resolved.target.key.clone(),
@@ -273,20 +272,27 @@ impl OutboundMessageService {
     async fn store_in_target_history(
         &self,
         input: &SendInput,
-        user_id: &str,
-        thread_key: &str,
+        history: &PostedHistory,
         text: &str,
     ) {
         let stored = async {
+            // A thread the inbound path opens in a channel is a database thread
+            // in that channel.
+            let live = history.channel_id.as_ref().map(|channel_id| LiveThread {
+                source: ThreadSource::Database,
+                channel_id: channel_id.clone(),
+            });
             let thread = CONVERSATION_SERVICE
-                .get_or_create_thread_by_external_id(user_id, &input.agent_id, thread_key, None)
-                .await?;
-            CONVERSATION_SERVICE
-                .add_message(
-                    &thread.id,
-                    MessageInput::new(text, MessageRole::Agent, input.trigger),
+                .get_or_create_thread_by_external_id(
+                    &history.user_id,
+                    &input.agent_id,
+                    &history.thread_key,
+                    live,
                 )
-                .await
+                .await?;
+            let mut message = MessageInput::new(text, MessageRole::Agent, input.trigger);
+            message.external_message_id = history.external_message_id.clone();
+            CONVERSATION_SERVICE.add_message(&thread.id, message).await
         }
         .await;
         if let Err(err) = stored {

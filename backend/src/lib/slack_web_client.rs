@@ -230,6 +230,35 @@ fn js_string(value: Option<&Value>) -> String {
     }
 }
 
+/// Whether a request to `url` may carry the bot token: the `SLACK_API_URL`
+/// origin, and Slack's own hosts over HTTPS. In routed mode the token is the
+/// proxy's and the agent does not reach Slack, so only the proxy's origin.
+pub fn may_receive_slack_token(url: &str) -> bool {
+    may_receive_slack_token_with(
+        url,
+        crate::config::CONFIG.slack_api_url.as_deref(),
+        crate::lib::slack_config::slack_mode() == crate::lib::slack_config::SlackMode::Routed,
+    )
+}
+
+fn may_receive_slack_token_with(url: &str, slack_api_url: Option<&str>, routed: bool) -> bool {
+    let Ok(target) = url::Url::parse(url) else {
+        return false;
+    };
+    if let Some(api) = slack_api_url.and_then(|api| url::Url::parse(api).ok())
+        && target.origin() == api.origin()
+    {
+        return true;
+    }
+    if routed {
+        return false;
+    }
+    target.scheme() == "https"
+        && target
+            .host_str()
+            .is_some_and(|host| host == "slack.com" || host.ends_with(".slack.com"))
+}
+
 /// A failed Slack call, named as the Slack SDK names it.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum SlackApiError {
@@ -510,7 +539,10 @@ impl SlackWebClient {
         ensure_log_fields_registered();
         #[cfg(test)]
         let slack_api_url = slack_api_url.or_else(|| TEST_API_URL.read().clone());
-        let mut slack_api_url = slack_api_url.unwrap_or_else(|| DEFAULT_SLACK_API_URL.to_string());
+        // `SLACK_API_URL`, when set, is the base of every client that names none.
+        let mut slack_api_url = slack_api_url
+            .or_else(|| crate::config::CONFIG.slack_api_url.clone())
+            .unwrap_or_else(|| DEFAULT_SLACK_API_URL.to_string());
         if !slack_api_url.ends_with('/') {
             slack_api_url.push('/');
         }
@@ -1023,6 +1055,59 @@ pub(crate) mod testing {
 mod tests {
     use super::testing::*;
     use super::*;
+
+    #[test]
+    fn sends_the_token_to_slack_and_the_api_proxy_only() {
+        let proxy = Some("https://proxy.example/api/");
+        // Socket mode: Slack over HTTPS, and the proxy when one is set.
+        assert!(may_receive_slack_token_with(
+            "https://files.slack.com/f/1",
+            None,
+            false
+        ));
+        assert!(may_receive_slack_token_with(
+            "https://slack.com/x",
+            None,
+            false
+        ));
+        assert!(!may_receive_slack_token_with(
+            "http://files.slack.com/f/1",
+            None,
+            false
+        ));
+        assert!(!may_receive_slack_token_with(
+            "https://evilslack.com/f",
+            None,
+            false
+        ));
+        assert!(!may_receive_slack_token_with(
+            "https://example.com/f",
+            None,
+            false
+        ));
+        assert!(may_receive_slack_token_with(
+            "https://proxy.example/files/1",
+            proxy,
+            false
+        ));
+        assert!(!may_receive_slack_token_with("not a url", proxy, false));
+        // Routed: the proxy's origin alone.
+        assert!(may_receive_slack_token_with(
+            "https://proxy.example/files/1",
+            proxy,
+            true
+        ));
+        assert!(!may_receive_slack_token_with(
+            "https://files.slack.com/f/1",
+            proxy,
+            true
+        ));
+        assert!(!may_receive_slack_token_with(
+            "https://proxy.example:8443/f",
+            proxy,
+            true
+        ));
+    }
 
     fn quick_retries() -> WebClientOptions {
         WebClientOptions {

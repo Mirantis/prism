@@ -582,6 +582,13 @@ pub struct Config {
     /// Slack: bot token and optional app-id safety check.
     pub slack_bot_token: Option<String>,
     pub slack_expected_app_id: Option<String>,
+    /// `SLACK_API_URL`: a Slack Web API proxy in front of slack.com, ending
+    /// with `/`. With the bot token and no app token it also selects routed
+    /// mode, where a router delivers Slack events.
+    pub slack_api_url: Option<String>,
+    /// `SLACK_PORT`: routed mode's listener, which serves
+    /// `POST /agents/slack/router` and nothing else.
+    pub slack_port: u16,
 
     /// Microsoft Teams: a Single Tenant Entra app registration behind an Azure
     /// Bot resource. TEAMS_APP_PASSWORD is the client secret, or on Mirantis Agent Platform
@@ -1638,6 +1645,8 @@ impl Config {
             nexus_api_url,
             slack_bot_token: e.get("SLACK_BOT_TOKEN").map(str::to_string),
             slack_expected_app_id: e.get("SLACK_EXPECTED_APP_ID").map(str::to_string),
+            slack_api_url: read_slack_api_url(&e)?,
+            slack_port: parse_port(e.or("SLACK_PORT").unwrap_or("3980"), "SLACK_PORT")?,
             teams_app_id: e.get("TEAMS_APP_ID").map(str::to_string),
             teams_app_password: e.get("TEAMS_APP_PASSWORD").map(str::to_string),
             teams_app_tenant_id: e.get("TEAMS_APP_TENANT_ID").map(str::to_string),
@@ -1763,6 +1772,27 @@ fn parse_port(text: &str, name: &str) -> anyhow::Result<u16> {
         .filter(|p| (0..=65535).contains(p))
         .map(|p| p as u16)
         .ok_or_else(|| anyhow::anyhow!("{name} must be a port number"))
+}
+
+/// `SLACK_API_URL`: the Slack Web API base URL every Slack client calls. The
+/// method name is appended to it, so it ends with `/`. An invalid URL stops
+/// startup, since every Slack call would fail later.
+fn read_slack_api_url(e: &Reader<'_>) -> anyhow::Result<Option<String>> {
+    let Some(value) = e
+        .get("SLACK_API_URL")
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    else {
+        return Ok(None);
+    };
+    if !Url::parse(value).is_ok_and(|url| matches!(url.scheme(), "http" | "https")) {
+        anyhow::bail!("SLACK_API_URL must be an http(s) URL, got \"{value}\"");
+    }
+    Ok(Some(if value.ends_with('/') {
+        value.to_string()
+    } else {
+        format!("{value}/")
+    }))
 }
 
 fn trim_trailing_slashes(text: &str) -> &str {

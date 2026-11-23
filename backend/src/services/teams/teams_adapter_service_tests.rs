@@ -1860,6 +1860,7 @@ async fn sends_a_mention_as_an_at_tag_with_a_matching_entity_and_returns_the_mes
             history: Some(PostedHistory {
                 user_id: "user-1".to_string(),
                 thread_key: "19:release@thread.tacv2;messageid=1712345678901".to_string(),
+                ..PostedHistory::default()
             }),
         }
     );
@@ -1906,6 +1907,7 @@ async fn replies_into_a_reply_chain_keyed_by_its_root() {
         Some(PostedHistory {
             user_id: "user-1".to_string(),
             thread_key: "19:release@thread.tacv2;messageid=1712345678000".to_string(),
+            ..PostedHistory::default()
         })
     );
 
@@ -1926,6 +1928,7 @@ async fn names_the_personal_chats_thread_for_a_dm_post_and_no_thread_for_an_unow
         Some(PostedHistory {
             user_id: "user-2".to_string(),
             thread_key: "a:personal-chat".to_string(),
+            ..PostedHistory::default()
         })
     );
 

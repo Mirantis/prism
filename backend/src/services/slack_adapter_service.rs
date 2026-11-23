@@ -29,8 +29,9 @@ use tokio_util::sync::CancellationToken;
 use crate::config::CONFIG;
 use crate::constants::{MAX_ATTACHMENTS_PER_MESSAGE, MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB};
 use crate::db::models::{
-    ConversationMessage, NewConversationParticipant, NewSlackMapping, SlackMapping,
-    SlackVerificationCode, SlackVerificationType, ThreadSource,
+    ConversationMessage, ConversationThread, MessageRole, MessageTrigger,
+    NewConversationParticipant, NewSlackMapping, SlackMapping, SlackVerificationCode,
+    SlackVerificationType, ThreadSource,
 };
 use crate::db::schema::conversation_messages::dsl as cm;
 use crate::db::schema::conversation_participants::dsl as cp;
@@ -39,10 +40,14 @@ use crate::db::schema::slack_mappings::dsl as m;
 use crate::db::schema::slack_verification_codes::dsl as vc;
 use crate::lib::log_redaction::err_json;
 use crate::lib::proxy_dispatcher::get_proxy_dispatcher;
+use crate::lib::slack_config::{SlackMode, clear_slack_config, reload_slack_config, slack_mode};
 use crate::lib::slack_source::{get_active_slack_connections, get_slack_connection};
-use crate::lib::slack_web_client::{FileUpload, SlackWebClient, slack_platform_error_code};
+use crate::lib::slack_web_client::{
+    FileUpload, SlackWebClient, may_receive_slack_token, slack_platform_error_code,
+};
 use crate::lib::telemetry::track_event;
 use crate::queues::slack_heartbeat_throttle_queue::get_slack_heartbeat_throttle_queue;
+use crate::services::agent_workspace_service::AGENT_WORKSPACE_SERVICE;
 use crate::services::attachment_service::{
     ATTACHMENT_SERVICE, AttachmentMeta, AttachmentSource, CreateAttachmentInput,
     classify_media_type, detect_media_type, thread_scoped_file_id,
@@ -55,6 +60,7 @@ use crate::services::channel_adapter_interface::{
 use crate::services::conversation_engine_service::{
     CONVERSATION_ENGINE_SERVICE, ChatInput, ChatMetadata,
 };
+use crate::services::conversation_service::MessageInput;
 use crate::services::conversation_service::{CONVERSATION_SERVICE, LiveThread};
 use crate::services::heartbeat_service::HEARTBEAT_SERVICE;
 use crate::services::providers::slack_thread_provider::SlackThreadProvider;
@@ -63,6 +69,8 @@ use crate::services::slack_mapping_service::SLACK_MAPPING_SERVICE;
 use crate::services::slack_message_queue_service::{
     SLACK_MESSAGE_QUEUE_SERVICE, slack_trigger_source,
 };
+use crate::services::slack_router_envelope::{LinkOp, RoutedLink, SlackEnvelope, SlackRoute};
+use crate::services::slack_router_service::{HandOff, SLACK_ROUTER_SERVICE, SlackRouterHandlers};
 use crate::services::slack_socket_mode::{
     EnvelopeHandler, SocketEnvelope, SocketModeApp, SocketModeClient,
 };
@@ -128,12 +136,88 @@ static BARE_MENTION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<@([A-Z0-9]
 static SLACK_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Z0-9]+$").unwrap());
 
 /// The message a code that matches no stored code answers.
-const CODE_NOT_VALID: &str =
-    "That code is not valid. Generate a new code in Prism Agent, under Settings → Channels.";
+fn code_not_valid(agent_name: &str) -> String {
+    format!(
+        "That code is not valid. Generate a new code for {agent_name} under Settings → Channels."
+    )
+}
 
 /// The message an expired code answers.
-const CODE_EXPIRED: &str =
-    "That code has expired. Generate a new code in Prism Agent, under Settings → Channels.";
+fn code_expired(agent_name: &str) -> String {
+    format!(
+        "That code has expired. Generate a new code for {agent_name} under Settings → Channels."
+    )
+}
+
+/// A user-group handle at the start of a message, which addresses an agent in
+/// routed mode.
+static LEADING_USER_GROUP: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^<!subteam\^[A-Z0-9]+(?:\|[^>]*)?>").unwrap());
+
+/// A user-group handle anywhere in a message, with its `@handle` label when
+/// Slack gives one.
+static USER_GROUP: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"<!subteam\^[A-Z0-9]+(?:\|([^>]*))?>").unwrap());
+
+/// The sender tag a stored channel message starts with (`build_sender_tagged_content`).
+static SENDER_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^<@[^>]+>: ").unwrap());
+
+/// The most messages read from a Slack thread the agent joins in routed mode.
+const JOINED_THREAD_READ_LIMIT: u32 = 200;
+
+/// A Slack event the router delivered, as the listeners see it. `route` says
+/// how the router addressed it to this agent. `hand_off` ends the event's
+/// record just before its message is stored, by `chat()` or as an unanswered
+/// thread reply, so a restart during the turn resumes the turn from the stored
+/// message and does not handle the event again. A crash between those two
+/// writes loses the event.
+pub(crate) struct RoutedEvent {
+    route: SlackRoute,
+    hand_off: HandOff,
+}
+
+/// A message of a Slack thread the agent joins in routed mode.
+#[derive(Debug, Clone, Default, Deserialize)]
+struct JoinedThreadMessage {
+    #[serde(default)]
+    ts: String,
+    user: Option<String>,
+    bot_id: Option<String>,
+    username: Option<String>,
+    text: Option<String>,
+}
+
+/// A routed message's text without the app's mentions. On a `mention` or `dm`
+/// the user-group handle at its start addressed it to this agent, so it goes
+/// too. Any other handle names an agent, so it stays as its plain `@handle`: a
+/// `thread_reply` reaches this agent because it takes part in the thread, and
+/// a handle at its start addresses the reply to another agent.
+fn without_address(text: &str, bot_user_id: &str, route: SlackRoute) -> String {
+    let without_mentions = js_trim(&text.replace(&format!("<@{bot_user_id}>"), "")).to_string();
+    let addressed = matches!(route, SlackRoute::Mention | SlackRoute::Dm);
+    let text = if addressed {
+        js_trim(&LEADING_USER_GROUP.replace(&without_mentions, "")).to_string()
+    } else {
+        without_mentions
+    };
+    USER_GROUP
+        .replace_all(&text, |captures: &regex::Captures<'_>| {
+            captures
+                .get(1)
+                .map_or(String::new(), |label| label.as_str().to_string())
+        })
+        .into_owned()
+}
+
+/// A read of a joined Slack thread that concurrent messages of the thread share.
+type JoinedThreadRead = Shared<BoxFuture<'static, Result<(), Arc<anyhow::Error>>>>;
+
+/// Whether a message tags somebody other than the bot, which addresses it to them.
+fn tags_somebody_else(text: &str, bot_user_id: &str) -> bool {
+    BARE_MENTION
+        .captures_iter(text)
+        .any(|captures| &captures[1] != bot_user_id)
+}
 
 // ============================================================================
 // Types
@@ -247,6 +331,8 @@ pub struct SlackApp {
     pub team_name: String,
     pub is_socket_mode: bool,
     pub bot_user_id: String,
+    /// The listeners' context the router's events are handed to, in routed mode.
+    routed: Option<Arc<ConnectionContext>>,
 }
 
 /// A connected workspace as the Channels page lists it.
@@ -674,6 +760,11 @@ pub struct SlackAdapterService {
     /// `users.info` answers by `<teamId>:<userId>`, with their expiry (epoch ms),
     /// so the thread gate names a thread's members without a call each time.
     user_info_cache: DashMap<String, (SlackUserInfo, i64)>,
+    /// A routed reconnect in progress, which concurrent callers share.
+    connecting: Mutex<Option<Shared<BoxFuture<'static, Result<(), Arc<anyhow::Error>>>>>>,
+    /// The reads of joined Slack threads in progress, by stored thread id
+    /// (routed mode).
+    joined_thread_reads: Mutex<HashMap<String, JoinedThreadRead>>,
 }
 
 impl SlackAdapterService {
@@ -689,6 +780,8 @@ impl SlackAdapterService {
             working_indicator: Mutex::new(None),
             user_connection_cache: DashMap::new(),
             user_info_cache: DashMap::new(),
+            connecting: Mutex::new(None),
+            joined_thread_reads: Mutex::new(HashMap::new()),
         }
     }
 
@@ -1224,18 +1317,66 @@ impl SlackAdapterService {
                 }),
             )
             .await?;
+        let ts = ts_of(&response).unwrap_or_else(|| "undefined".to_string());
         let history = match (&target.kind, thread, &target.dm_user_id) {
             (LinkedTargetKind::Dm, None, Some(user_id)) if !user_id.is_empty() => {
                 Some(PostedHistory {
                     user_id: user_id.clone(),
                     thread_key: target.conversation_id.clone(),
+                    ..PostedHistory::default()
                 })
+            }
+            _ if slack_mode() == SlackMode::Routed => {
+                self.routed_post_history(target, thread.unwrap_or(&ts), &ts)
+                    .await
             }
             _ => None,
         };
         Ok(PostedMessage {
-            message_id: ts_of(&response).unwrap_or_else(|| "undefined".to_string()),
+            message_id: ts,
             history,
+        })
+    }
+
+    /// The stored thread a routed post belongs to: the one the inbound path
+    /// opens for its root. The message is already posted, so a failed owner
+    /// lookup is logged and leaves the post unstored: an error would make the
+    /// agent send it again.
+    async fn routed_post_history(
+        &self,
+        target: &LinkedTarget,
+        thread_key: &str,
+        ts: &str,
+    ) -> Option<PostedHistory> {
+        let owner = if target.kind == LinkedTargetKind::Dm {
+            Ok(target.dm_user_id.clone())
+        } else {
+            let channel = target.conversation_id.clone();
+            crate::db::read(move |conn| {
+                Ok(m::slack_mappings
+                    .filter(m::slack_channel_id.eq(&channel))
+                    .select(m::lens_user_id)
+                    .first::<Option<String>>(conn)
+                    .optional()?
+                    .flatten())
+            })
+            .await
+        };
+        let user_id = match owner {
+            Ok(user_id) => user_id.filter(|id| !id.is_empty())?,
+            Err(error) => {
+                log_error!(
+                    json!({ "err": err_json(&error) }),
+                    "[Slack] posted, but the owner of the routed thread could not be read"
+                );
+                return None;
+            }
+        };
+        Some(PostedHistory {
+            user_id,
+            thread_key: thread_key.to_string(),
+            channel_id: Some(target.conversation_id.clone()),
+            external_message_id: Some(ts.to_string()),
         })
     }
 
@@ -1310,6 +1451,22 @@ impl SlackAdapterService {
         slack_app: &SlackApp,
         target: &LinkedTarget,
     ) -> anyhow::Result<HashSet<String>> {
+        // A DM's members are the bot and the person it is with. A routed proxy
+        // lists members of linked channels only.
+        if target.kind == LinkedTargetKind::Dm {
+            let channel = target.conversation_id.clone();
+            let person: Option<Option<String>> = crate::db::read(move |conn| {
+                Ok(m::slack_mappings
+                    .filter(m::dm_channel_id.eq(&channel))
+                    .select(m::slack_user_id)
+                    .first(conn)
+                    .optional()?)
+            })
+            .await?;
+            let mut members = HashSet::from([slack_app.bot_user_id.clone()]);
+            members.extend(person.flatten());
+            return Ok(members);
+        }
         let mut members = HashSet::new();
         let mut cursor: Option<String> = None;
         loop {
@@ -1330,7 +1487,7 @@ impl SlackAdapterService {
                     if slack_platform_error_code(&error).as_deref() == Some("missing_scope") {
                         return Err(SendRefusedError::new(
                             format!(
-                                "The Slack app cannot read who is in {}: it needs the channels:read scope, groups:read for a private channel, and im:read for a DM. Ask the operator to add the scope.",
+                                "The Slack app cannot read who is in {}: it needs the channels:read scope, and groups:read for a private channel. Ask the operator to add the scope.",
                                 describe_target(target)
                             ),
                             "missing_scope",
@@ -1538,8 +1695,8 @@ impl SlackAdapterService {
     /// broadcast, which can also post into the user's linked channels, so the
     /// user's DM channel is resolved to keep the continuation in the DM.
     ///
-    /// Only SLACK-sourced threads keep a real thread_ts in externalThreadId, so
-    /// only they get a `channel_thread_id`. With no channel id there is nowhere to
+    /// Only a Slack thread's conversation keeps a thread_ts in externalThreadId,
+    /// so only it gets a `channel_thread_id`. With no channel id there is nowhere to
     /// post: a warning is logged and the destination is empty.
     pub async fn thread_destination(
         &self,
@@ -1547,14 +1704,13 @@ impl SlackAdapterService {
         origin_channel_id: Option<&str>,
     ) -> anyhow::Result<ChannelDestination> {
         let id = thread_id.to_string();
-        type ThreadRow = (Option<String>, Option<String>, ThreadSource, String, String);
+        type ThreadRow = (Option<String>, Option<String>, String, String);
         let thread: Option<ThreadRow> = crate::db::read(move |conn| {
             Ok(ct::conversation_threads
                 .filter(ct::id.eq(&id))
                 .select((
                     ct::external_thread_id,
                     ct::external_channel_id,
-                    ct::thread_source,
                     ct::user_id,
                     ct::agent_id,
                 ))
@@ -1568,7 +1724,7 @@ impl SlackAdapterService {
             .or_else(|| thread.as_ref().and_then(|t| t.1.clone()))
             .filter(|id| !id.is_empty());
         if channel_id.is_none()
-            && let Some((_, _, _, user_id, agent_id)) = &thread
+            && let Some((_, _, user_id, agent_id)) = &thread
         {
             let (user, agent) = (user_id.clone(), agent_id.clone());
             let dm: Option<Option<String>> = crate::db::read(move |conn| {
@@ -1595,12 +1751,12 @@ impl SlackAdapterService {
         Ok(ChannelDestination {
             channel_label: channel_id.as_deref().map(slack_channel_label),
             channel_id,
-            // Only SLACK-sourced threads keep a real thread_ts in externalThreadId.
-            // A top-level DM thread is DATABASE-sourced and stores its `D…` channel
-            // id there, which is no thread_ts, so it resumes top-level in the DM.
+            // A Slack thread's conversation keeps its thread_ts in externalThreadId.
+            // A top-level DM's conversation stores its `D…` channel id there, which
+            // is no thread_ts, so it resumes top-level in the DM.
             channel_thread_id: thread
-                .filter(|t| t.2 == ThreadSource::Slack)
-                .and_then(|t| t.0),
+                .and_then(|t| t.0)
+                .filter(|external| SLACK_TS.is_match(external)),
         })
     }
 
@@ -1655,6 +1811,23 @@ impl SlackAdapterService {
         log_info!("Initializing Slack adapter...");
 
         let initialized: anyhow::Result<()> = async {
+            // In routed mode the router's listener opens first, so a `connected`
+            // envelope reaches an agent that is in no workspace.
+            if CONFIG
+                .slack_bot_token
+                .as_deref()
+                .is_some_and(|t| !t.is_empty())
+                && slack_mode() == SlackMode::Routed
+                && let Err(error) = SLACK_ROUTER_SERVICE
+                    .start(Arc::new(AdapterRouterHandlers))
+                    .await
+            {
+                log_error!(
+                    json!({ "err": err_json(&error), "port": CONFIG.slack_port }),
+                    "Could not open the Slack router listener"
+                );
+            }
+
             // Source of truth: env `SLACK_BOT_TOKEN` (validated by slack-config).
             // An empty list is the not-configured case.
             let connections = get_active_slack_connections().await?;
@@ -1717,6 +1890,8 @@ impl SlackAdapterService {
     /// every app. Emits `slack adapter shutdown`.
     pub async fn shutdown(&self) -> anyhow::Result<()> {
         log_info!("Shutting down Slack adapter...");
+
+        SLACK_ROUTER_SERVICE.stop().await;
 
         // Stop the Socket Mode apps first: a stopped client reports `disconnected`,
         // which re-arms a watch and fails a reconnect that waits for hello.
@@ -1790,8 +1965,8 @@ impl SlackAdapterService {
             .ok()
             .filter(|token| !token.is_empty());
 
-        // Determine if Socket Mode is available
-        let is_socket_mode = app_token.is_some();
+        let mode = slack_mode();
+        let is_socket_mode = mode == SlackMode::Socket;
 
         // The Web API client sends the token only in the `Authorization` header,
         // under the bounded request policy: a request deadline and a few
@@ -1896,6 +2071,11 @@ impl SlackAdapterService {
                 return Ok(());
             }
             log_info!("Slack Socket Mode connected: {}", connection.team_name);
+        } else if mode == SlackMode::Routed {
+            log_info!(
+                "Slack connection {} receives its events from the router",
+                connection.team_name
+            );
         } else {
             log_warn!(
                 "Slack connection {} - Socket Mode not available (no app token)",
@@ -1912,12 +2092,13 @@ impl SlackAdapterService {
                 team_name: connection.team_name.clone(),
                 is_socket_mode,
                 bot_user_id: connection.bot_user_id.clone(),
+                routed: (mode == SlackMode::Routed).then(|| context.clone()),
             }),
         );
 
         let mut props = agent_props();
         props.insert("slack.connection.id".to_string(), connection_id.to_string());
-        props.insert("slack.socket_mode".to_string(), is_socket_mode.to_string());
+        props.insert("slack.mode".to_string(), mode.as_str().to_string());
         track_event("slack connection added", None, Some(props));
         Ok(())
     }
@@ -1967,15 +2148,33 @@ impl SlackAdapterService {
         socket: Arc<SocketModeClient>,
         envelope: SocketEnvelope,
     ) {
-        let body = &envelope.body;
-        let listener_client = context.client.with_team_id(
-            str_field(body, "team_id")
-                .or_else(|| body.pointer("/team/id").and_then(Value::as_str))
-                .unwrap_or(&context.team_id),
-        );
+        let envelope_id = envelope.envelope_id.clone();
+        let ack = move || socket.ack(envelope_id.as_deref());
+        self.process_body(context, &envelope.body, &ack, None).await;
+    }
+
+    /// Route one body to its listener, as Bolt does: `ack` acknowledges it to
+    /// whoever delivered it. A routed body names no team, so its listeners use
+    /// the app's own client, whose calls carry no `team_id`.
+    async fn process_body(
+        &self,
+        context: Arc<ConnectionContext>,
+        body: &Value,
+        ack: &(dyn Fn() -> anyhow::Result<()> + Send + Sync),
+        routed: Option<&RoutedEvent>,
+    ) {
+        let listener_client = if routed.is_some() {
+            context.client.as_ref().clone()
+        } else {
+            context.client.with_team_id(
+                str_field(body, "team_id")
+                    .or_else(|| body.pointer("/team/id").and_then(Value::as_str))
+                    .unwrap_or(&context.team_id),
+            )
+        };
 
         if let Some(event) = body.get("event") {
-            if let Err(error) = socket.ack(envelope.envelope_id.as_deref()) {
+            if let Err(error) = ack() {
                 log_error!(
                     "An unhandled error occurred while Bolt processed (type: {}, error: {})",
                     body.get("type")
@@ -2008,12 +2207,17 @@ impl SlackAdapterService {
                             .unwrap_or("")
                             .to_string(),
                     };
-                    self.on_message(&context, event, &say).await;
+                    self.on_message(&context, event, &say, routed).await;
                     Ok(())
                 }
                 "member_joined_channel" => {
-                    self.on_member_joined_channel(&context, event, &listener_client)
-                        .await
+                    self.on_member_joined_channel(
+                        &context,
+                        event,
+                        &listener_client,
+                        routed.is_some(),
+                    )
+                    .await
                 }
                 "member_left_channel" => self.on_member_left_channel(&context, event).await,
                 _ => Ok(()),
@@ -2034,7 +2238,7 @@ impl SlackAdapterService {
                 FEEDBACK_ACTION_DOWN => FeedbackRating::Down,
                 _ => return,
             };
-            if let Err(error) = socket.ack(envelope.envelope_id.as_deref()) {
+            if let Err(error) = ack() {
                 log_error!("Slack app error for {}: {}", context.team_name, error);
                 return;
             }
@@ -2049,7 +2253,13 @@ impl SlackAdapterService {
 
     /// The message handler: skips edits, bot messages and empty messages, then
     /// routes a DM to the DM handler and anything else to the channel handler.
-    async fn on_message(&self, context: &ConnectionContext, message: &Value, say: &Say) {
+    async fn on_message(
+        &self,
+        context: &ConnectionContext,
+        message: &Value,
+        say: &Say,
+        routed: Option<&RoutedEvent>,
+    ) {
         let handled: anyhow::Result<()> = async {
             log_info!("RAW Slack message received");
 
@@ -2101,7 +2311,11 @@ impl SlackAdapterService {
                 }
             }
 
-            let message_text = js_trim(text.unwrap_or("")).to_string();
+            let raw_text = js_trim(text.unwrap_or("")).to_string();
+            let message_text = match routed {
+                Some(routed) => without_address(&raw_text, &context.bot_user_id, routed.route),
+                None => raw_text,
+            };
             let files = if has_files { files } else { Vec::new() };
 
             log_info!(
@@ -2116,8 +2330,12 @@ impl SlackAdapterService {
                 return Ok(());
             }
 
-            // Route based on channel type
-            if channel_type == Some("im") {
+            // Route based on channel type, or on the router's route
+            let is_dm = match routed {
+                Some(routed) => routed.route == SlackRoute::Dm,
+                None => channel_type == Some("im"),
+            };
+            if is_dm {
                 log_info!("Routing to DM handler");
                 self.handle_dm_message(
                     &context.connection_id,
@@ -2129,6 +2347,7 @@ impl SlackAdapterService {
                     Some(ts).filter(|ts| !ts.is_empty()),
                     thread_ts,
                     files,
+                    routed,
                 )
                 .await
             } else {
@@ -2144,6 +2363,7 @@ impl SlackAdapterService {
                     &context.bot_user_id,
                     &context.team_id,
                     files,
+                    routed,
                 )
                 .await
             }
@@ -2181,6 +2401,7 @@ impl SlackAdapterService {
         event_ts: Option<&str>,
         thread_ts: Option<&str>,
         files: Vec<SlackFileMeta>,
+        routed: Option<&RoutedEvent>,
     ) -> anyhow::Result<()> {
         log_info!("Slack DM from {}", slack_user_id);
 
@@ -2193,7 +2414,12 @@ impl SlackAdapterService {
                 .await?;
 
             let Some(mapping) = mapping else {
-                if let Some(code) = self.parse_link_code(message_text) {
+                // In routed mode the router links accounts, so no message is a code.
+                let code = routed
+                    .is_none()
+                    .then(|| self.parse_link_code(message_text))
+                    .flatten();
+                if let Some(code) = code {
                     // Verify directly (the runtime owns verification)
                     let result = self
                         .verify_dm_link_code(&code, slack_user_id, dm_channel_id)
@@ -2214,7 +2440,17 @@ impl SlackAdapterService {
                     slack_user_id,
                     connection_id
                 );
-                say.text("👋 Hi! I don't recognize you yet.\n\nTo link your Prism Agent account:\n1. Go to *Settings → Channels* in the web app\n2. Click *Link Account* under Slack\n3. Send me the 6-character code you receive").await?;
+                let agent_name = self.agent_name().await?;
+                let prompt = if routed.is_some() {
+                    format!(
+                        "👋 Hi! I don't recognize you yet. Link your Slack account to {agent_name}, then send your message again."
+                    )
+                } else {
+                    format!(
+                        "👋 Hi! I don't recognize you yet.\n\nTo link your Slack account to {agent_name}:\n1. Go to *Settings → Channels* in the web app\n2. Click *Link Account* under Slack\n3. Send me the 6-character code you receive"
+                    )
+                };
+                say.text(&prompt).await?;
                 return Ok(());
             };
             let mapping = mapping.mapping;
@@ -2287,19 +2523,41 @@ impl SlackAdapterService {
             //     all replies straight from Slack. Without this the parent lives on
             //     the top-level ConversationThread row and is invisible to the
             //     threaded turn's context builder.
+            //   In routed mode the thread's history is stored instead
+            //   (`stored_thread`).
             let thread_key = thread_ts.unwrap_or(dm_channel_id);
             let lens_user_id = mapping.lens_user_id.clone().unwrap_or_default();
-            let dm_thread = CONVERSATION_SERVICE
-                .get_or_create_thread_by_external_id(
-                    &lens_user_id,
-                    &mapping.agent_id,
-                    thread_key,
-                    thread_ts.map(|_| LiveThread {
-                        source: ThreadSource::Slack,
-                        channel_id: dm_channel_id.to_string(),
-                    }),
-                )
-                .await?;
+            let dm_thread = match (thread_ts, routed) {
+                (Some(thread_ts), Some(_)) => {
+                    self.stored_thread(
+                        &lens_user_id,
+                        &mapping.agent_id,
+                        dm_channel_id,
+                        thread_ts,
+                        event_ts.unwrap_or(thread_ts),
+                        team_id,
+                    )
+                    .await?
+                }
+                _ => {
+                    CONVERSATION_SERVICE
+                        .get_or_create_thread_by_external_id(
+                            &lens_user_id,
+                            &mapping.agent_id,
+                            thread_key,
+                            thread_ts.map(|_| LiveThread {
+                                source: ThreadSource::Slack,
+                                channel_id: dm_channel_id.to_string(),
+                            }),
+                        )
+                        .await?
+                }
+            };
+
+            // chat() stores the message next (see `RoutedEvent`).
+            if let Some(routed) = routed {
+                routed.hand_off.hand_off();
+            }
 
             // Route through the local conversation engine (direct call).
             // metadata.channel = slack scopes delivery to Slack only; channel_thread_id
@@ -2369,9 +2627,15 @@ impl SlackAdapterService {
         bot_user_id: &str,
         team_id: &str,
         files: Vec<SlackFileMeta>,
+        routed: Option<&RoutedEvent>,
     ) -> anyhow::Result<()> {
         let bot_mention = format!("<@{bot_user_id}>");
-        let is_mentioned = message_text.contains(&bot_mention);
+        // A router says whether it addressed the message to this agent, by a
+        // mention, a user group or the agent's name.
+        let is_mentioned = match routed {
+            Some(routed) => routed.route == SlackRoute::Mention,
+            None => message_text.contains(&bot_mention),
+        };
 
         // File-only messages reach the queue paths below with empty text — those
         // paths never download files, so describe them instead of enqueueing ''
@@ -2429,8 +2693,13 @@ impl SlackAdapterService {
         // Check if channel is linked to an agent
         let Some(mapping) = SLACK_MAPPING_SERVICE.find_by_channel_id(channel_id).await? else {
             // Only an unlinked channel takes a link code. Strip the bot mention first
-            // so "@Bot ABC123" is detected as a code.
-            if let Some(code) = self.parse_link_code(&message_text.replace(&bot_mention, "")) {
+            // so "@Bot ABC123" is detected as a code. In routed mode the router
+            // links channels, so no message is a code.
+            let code = routed
+                .is_none()
+                .then(|| self.parse_link_code(&message_text.replace(&bot_mention, "")))
+                .flatten();
+            if let Some(code) = code {
                 log_info!(
                     "Received potential verification code in channel {}",
                     channel_id
@@ -2466,8 +2735,9 @@ impl SlackAdapterService {
                 "Slack channel {} is not linked to an agent — message not handled",
                 channel_id
             );
-            // Channel not linked — if the bot was @mentioned, prompt the user to link
-            if is_mentioned {
+            // Channel not linked — if the bot was @mentioned, prompt the user to link.
+            // A routed agent may post only in its linked channels.
+            if is_mentioned && routed.is_none() {
                 say.text("I'm not activated in this channel yet.\n\nPlease enter a verification code from your agent settings to link me.").await?;
             }
             return Ok(());
@@ -2524,20 +2794,55 @@ impl SlackAdapterService {
         if let (Some(thread_ts), false) = (thread_ts, is_mentioned) {
             // `conversations.replies` is eventually consistent, so the gate is given
             // the message it must judge rather than relying on the read to hold it.
-            let (result, messages) = self
-                .is_bot_in_thread(
-                    channel_id,
-                    thread_ts,
-                    &mapping_team_id,
-                    GateMessage {
-                        user: Some(slack_user_id.to_string()),
-                        text: Some(message_text.to_string()),
-                        ts: Some(message_ts.to_string()),
-                        files: files.clone(),
-                        ..GateMessage::default()
-                    },
-                )
-                .await;
+            // In routed mode the gate reads the stored thread instead.
+            let arriving = GateMessage {
+                user: Some(slack_user_id.to_string()),
+                text: Some(message_text.to_string()),
+                ts: Some(message_ts.to_string()),
+                files: files.clone(),
+                ..GateMessage::default()
+            };
+            let stored = match routed {
+                Some(_) => Some(
+                    self.stored_thread(
+                        &user_id,
+                        &agent_id,
+                        channel_id,
+                        thread_ts,
+                        message_ts,
+                        &mapping_team_id,
+                    )
+                    .await?,
+                ),
+                None => None,
+            };
+            let (result, messages) = match &stored {
+                Some(stored) => {
+                    self.stored_thread_gate(&stored.id, arriving, bot_user_id)
+                        .await?
+                }
+                None => {
+                    self.is_bot_in_thread(channel_id, thread_ts, &mapping_team_id, arriving)
+                        .await
+                }
+            };
+            // A stored thread keeps a reply the agent does not answer, so the next
+            // turn and the next classification read it.
+            let keep_unanswered = || async {
+                match &stored {
+                    Some(stored) => {
+                        self.store_unanswered(
+                            &stored.id,
+                            slack_user_id,
+                            &queue_text,
+                            &mapping_team_id,
+                            routed,
+                        )
+                        .await
+                    }
+                    None => Ok(()),
+                }
+            };
 
             match result {
                 ThreadParticipation::Ignore => {
@@ -2551,6 +2856,7 @@ impl SlackAdapterService {
                 ThreadParticipation::React => {
                     self.add_reaction(channel_id, message_ts, &mapping_team_id, "eyes")
                         .await;
+                    keep_unanswered().await?;
                     log_info!(
                         "Channel message not answered: thread message addressed to another person, reacted (agent={}, channel={})",
                         agent_id,
@@ -2567,6 +2873,7 @@ impl SlackAdapterService {
                 .await?;
 
             if verdict == ThreadAction::Ignore {
+                keep_unanswered().await?;
                 log_info!(
                     "Channel message not answered: LLM classifier decided to ignore thread message (agent={}, channel={})",
                     agent_id,
@@ -2597,17 +2904,32 @@ impl SlackAdapterService {
             *indicator.lock() = Some(handle.clone());
 
             // Get or create thread bound to this Slack thread
-            let thread = CONVERSATION_SERVICE
-                .get_or_create_thread_by_external_id(
-                    &user_id,
-                    &agent_id,
-                    &slack_thread_id,
-                    Some(LiveThread {
-                        source: ThreadSource::Slack,
-                        channel_id: channel_id.to_string(),
-                    }),
-                )
-                .await?;
+            let thread = match routed {
+                Some(_) => {
+                    self.stored_thread(
+                        &user_id,
+                        &agent_id,
+                        channel_id,
+                        &slack_thread_id,
+                        message_ts,
+                        &mapping_team_id,
+                    )
+                    .await?
+                }
+                None => {
+                    CONVERSATION_SERVICE
+                        .get_or_create_thread_by_external_id(
+                            &user_id,
+                            &agent_id,
+                            &slack_thread_id,
+                            Some(LiveThread {
+                                source: ThreadSource::Slack,
+                                channel_id: channel_id.to_string(),
+                            }),
+                        )
+                        .await?
+                }
+            };
 
             // Add participant tracking
             let user_info = self.get_user_info(slack_user_id, &mapping_team_id).await;
@@ -2659,10 +2981,18 @@ impl SlackAdapterService {
             // on the user's turn rather than the bot's previous reply (which the
             // provider rejects: "the conversation must end with a user message").
             // Fails on timeout — surfaced to the user below — so we never respond
-            // to stale context.
-            self.slack_thread_provider
-                .wait_for_external_message(&thread.id, message_ts, PollUntilOptions::default())
-                .await?;
+            // to stale context. A routed thread's history is stored, so it waits
+            // for nothing.
+            if routed.is_none() {
+                self.slack_thread_provider
+                    .wait_for_external_message(&thread.id, message_ts, PollUntilOptions::default())
+                    .await?;
+            }
+
+            // chat() stores the message next (see `RoutedEvent`).
+            if let Some(routed) = routed {
+                routed.hand_off.hand_off();
+            }
 
             // Route through the local conversation engine (direct call)
             CONVERSATION_ENGINE_SERVICE
@@ -2872,12 +3202,14 @@ impl SlackAdapterService {
         context: &ConnectionContext,
         event: &Value,
         client: &SlackWebClient,
+        routed: bool,
     ) -> anyhow::Result<()> {
         let user = event.get("user").and_then(Value::as_str);
         let channel = event.get("channel").and_then(Value::as_str).unwrap_or("");
 
-        // Only handle when the bot itself joins
-        if user != Some(context.bot_user_id.as_str()) {
+        // Only handle when the bot itself joins. A routed bot is linked by the
+        // router, so it asks for no code.
+        if user != Some(context.bot_user_id.as_str()) || routed {
             return Ok(());
         }
 
@@ -2963,14 +3295,19 @@ impl SlackAdapterService {
     ) -> anyhow::Result<LinkResult> {
         Ok(
             match redeem_dm_code(code, slack_user_id, dm_channel_id).await? {
-                DmCodeOutcome::Invalid => LinkResult::refused(CODE_NOT_VALID),
-                DmCodeOutcome::Expired => LinkResult::refused(CODE_EXPIRED),
+                DmCodeOutcome::Invalid => {
+                    LinkResult::refused(&code_not_valid(&self.agent_name().await?))
+                }
+                DmCodeOutcome::Expired => {
+                    LinkResult::refused(&code_expired(&self.agent_name().await?))
+                }
                 DmCodeOutcome::LinkedToSameUser => LinkResult::refused(
                     "Your Slack account is already linked to another agent. Unlink it first from that agent's settings.",
                 ),
-                DmCodeOutcome::LinkedToOtherUser => LinkResult::refused(
-                    "This Slack account is already linked to another Prism Agent user.",
-                ),
+                DmCodeOutcome::LinkedToOtherUser => LinkResult::refused(&format!(
+                    "This Slack account is already linked to another user of {}.",
+                    self.agent_name().await?
+                )),
                 DmCodeOutcome::Linked(verification) => {
                     log_info!(
                         "Slack account linked via code: {} -> {}",
@@ -3055,8 +3392,12 @@ impl SlackAdapterService {
             .to_string();
         Ok(
             match redeem_channel_code(code, channel_id, Some(stored_name)).await? {
-                ChannelCodeOutcome::Invalid => LinkResult::refused(CODE_NOT_VALID),
-                ChannelCodeOutcome::Expired => LinkResult::refused(CODE_EXPIRED),
+                ChannelCodeOutcome::Invalid => {
+                    LinkResult::refused(&code_not_valid(&self.agent_name().await?))
+                }
+                ChannelCodeOutcome::Expired => {
+                    LinkResult::refused(&code_expired(&self.agent_name().await?))
+                }
                 ChannelCodeOutcome::AlreadyLinked => {
                     LinkResult::refused("This channel is already linked to an agent.")
                 }
@@ -3150,10 +3491,8 @@ impl SlackAdapterService {
         // addressed to that person. Only this message is read: a tag earlier in
         // the thread is addressed to somebody else and leaves a later message
         // aimed at the bot answerable.
-        for found in BARE_MENTION.captures_iter(&arriving_text) {
-            if found[1] != *slack_app.bot_user_id {
-                return (ThreadParticipation::React, messages);
-            }
+        if tags_somebody_else(&arriving_text, &slack_app.bot_user_id) {
+            return (ThreadParticipation::React, messages);
         }
 
         // Bot is participating and the message is not addressed elsewhere — pass to LLM
@@ -3421,6 +3760,20 @@ impl SlackAdapterService {
                     .await?
                 {
                     log_info!("[SlackAdapter] file {} already stored; skipping", file.id);
+                    return Ok(());
+                }
+
+                // The download carries the bot token, so it goes to Slack or the
+                // Slack API proxy only.
+                if !may_receive_slack_token(url) {
+                    log_warn!(
+                        json!({ "fileId": file.id }),
+                        "[SlackAdapter] file download URL is not on Slack or the Slack API proxy; not fetched"
+                    );
+                    result.failures.push(SlackFileFailure {
+                        filename: filename.clone(),
+                        reason: "its download address is not on Slack".to_string(),
+                    });
                     return Ok(());
                 }
 
@@ -3944,6 +4297,441 @@ impl SlackAdapterService {
     }
 }
 
+// ==========================================================================
+// Routed mode
+// ==========================================================================
+
+impl SlackAdapterService {
+    /// Validate the token through the proxy again, and start the app of the
+    /// workspace it is bound to in place of the app running. An app that
+    /// already runs for that workspace stays. Concurrent calls share one attempt.
+    async fn reconnect(&'static self) -> anyhow::Result<()> {
+        let attempt = self
+            .connecting
+            .lock()
+            .get_or_insert_with(|| {
+                async move {
+                    let result: anyhow::Result<()> = async {
+                        let connection = reload_slack_config().await?;
+                        let keep = connection.as_ref().map(|c| c.team_id.clone());
+                        self.apps
+                            .retain(|team_id, _| Some(team_id) == keep.as_ref());
+                        if let Some(connection) = connection
+                            && !self.apps.contains_key(&connection.team_id)
+                        {
+                            self.initialize_connection(&connection.id).await?;
+                        }
+                        Ok(())
+                    }
+                    .await;
+                    *self.connecting.lock() = None;
+                    result.map_err(Arc::new)
+                }
+                .boxed()
+                .shared()
+            })
+            .clone();
+        attempt.await.map_err(|err| anyhow::anyhow!("{:#}", err))
+    }
+
+    /// The router reported the agent removed from its workspace. Its links stay.
+    async fn disconnect_routed(&self) {
+        let connecting = self.connecting.lock().clone();
+        if let Some(connecting) = connecting {
+            let _ = connecting.await;
+        }
+        clear_slack_config();
+        let workspaces = self.apps.len();
+        self.apps.clear();
+        log_info!("Slack disconnected by the router; waiting for the agent to be added again");
+        let mut props = agent_props();
+        props.insert("slack.workspaces".to_string(), workspaces.to_string());
+        track_event("slack connection disconnected", None, Some(props));
+    }
+
+    /// A person's DM or a channel, linked to the agent or unlinked, as the
+    /// router reports it.
+    async fn apply_link(&self, team_id: &str, link: &RoutedLink) -> anyhow::Result<()> {
+        let agent = AGENT_WORKSPACE_SERVICE.get_agent().await?;
+        match link {
+            RoutedLink::Dm {
+                op: LinkOp::Add,
+                slack_user_id,
+                dm_channel_id,
+                person_id,
+            } => {
+                SLACK_MAPPING_SERVICE
+                    .upsert_user_mapping(
+                        team_id,
+                        &slack_user_id.0,
+                        &person_id.0,
+                        &agent.id,
+                        Some(&dm_channel_id.0),
+                    )
+                    .await?;
+            }
+            RoutedLink::Dm { slack_user_id, .. } => {
+                SLACK_MAPPING_SERVICE
+                    .remove_user_mapping(team_id, &slack_user_id.0)
+                    .await?;
+            }
+            RoutedLink::Channel {
+                op: LinkOp::Add,
+                channel_id,
+                person_id,
+            } => {
+                let channel_name = self
+                    .get_channel_name(&channel_id.0, team_id)
+                    .await
+                    .unwrap_or_else(|| channel_id.0.clone());
+                SLACK_MAPPING_SERVICE
+                    .upsert_channel_mapping(
+                        team_id,
+                        &channel_id.0,
+                        &agent.id,
+                        &channel_name,
+                        &person_id.0,
+                    )
+                    .await?;
+            }
+            RoutedLink::Channel { channel_id, .. } => {
+                SLACK_MAPPING_SERVICE
+                    .remove_channel_mapping(&channel_id.0)
+                    .await?;
+            }
+        }
+        self.rebuild_user_cache().await?;
+        let mut props = IndexMap::new();
+        props.insert("agent.id".to_string(), agent.id.clone());
+        props.insert("slack.link.type".to_string(), link.type_str().to_string());
+        props.insert("slack.link.op".to_string(), link.op().as_str().to_string());
+        track_event("slack link changed", Some(link.person_id()), Some(props));
+        Ok(())
+    }
+
+    /// Run a routed Slack event through the workspace app's listeners.
+    async fn handle_routed(&self, envelope: SlackEnvelope, hand_off: HandOff) {
+        let context = self
+            .app(&envelope.team_id)
+            .and_then(|app| app.routed.clone());
+        let Some(context) = context else {
+            log_warn!(
+                json!({ "eventId": envelope.event_id }),
+                "A routed Slack event arrived after its workspace was disconnected"
+            );
+            return;
+        };
+        let routed = RoutedEvent {
+            route: envelope.route,
+            hand_off,
+        };
+        let body = envelope.to_listener_body();
+        self.process_body(context, &body, &|| Ok(()), Some(&routed))
+            .await;
+    }
+
+    /// The stored thread of a routed message. The first time the agent is in a
+    /// Slack thread that already has messages, one `conversations.replies` call
+    /// stores them, so the agent reads what was said before it joined.
+    async fn stored_thread(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+        channel_id: &str,
+        thread_ts: &str,
+        message_ts: &str,
+        team_id: &str,
+    ) -> anyhow::Result<ConversationThread> {
+        let thread = CONVERSATION_SERVICE
+            .get_or_create_thread_by_external_id(
+                user_id,
+                agent_id,
+                thread_ts,
+                Some(LiveThread {
+                    source: ThreadSource::Database,
+                    channel_id: channel_id.to_string(),
+                }),
+            )
+            .await?;
+        if thread_ts == message_ts {
+            return Ok(thread);
+        }
+        // Two messages of a new thread can arrive together; the second waits
+        // for the first one's read.
+        let read = {
+            let mut reads = self.joined_thread_reads.lock();
+            reads
+                .entry(thread.id.clone())
+                .or_insert_with(|| {
+                    let (thread_id, channel_id, thread_ts, message_ts, team_id) = (
+                        thread.id.clone(),
+                        channel_id.to_string(),
+                        thread_ts.to_string(),
+                        message_ts.to_string(),
+                        team_id.to_string(),
+                    );
+                    async move {
+                        let read = SLACK_ADAPTER_SERVICE
+                            .read_joined_thread(
+                                &thread_id,
+                                &channel_id,
+                                &thread_ts,
+                                &message_ts,
+                                &team_id,
+                            )
+                            .await
+                            .map_err(Arc::new);
+                        SLACK_ADAPTER_SERVICE
+                            .joined_thread_reads
+                            .lock()
+                            .remove(&thread_id);
+                        read
+                    }
+                    .boxed()
+                    .shared()
+                })
+                .clone()
+        };
+        read.await.map_err(|err| anyhow::anyhow!("{:#}", err))?;
+        Ok(thread)
+    }
+
+    /// Store the messages of a Slack thread from before `message_ts`, once,
+    /// when the stored thread has nothing but the agent's own `send_message`
+    /// posts. The agent's own posts keep their stored text; another agent's post
+    /// is stored as a message from its sender. Posts already in the thread are
+    /// written again in their place among the others.
+    async fn read_joined_thread(
+        &self,
+        thread_id: &str,
+        channel_id: &str,
+        thread_ts: &str,
+        message_ts: &str,
+        team_id: &str,
+    ) -> anyhow::Result<()> {
+        // A `send_message` post is the only row stored with its ts before the
+        // thread is joined; anything else means the thread was read already.
+        let id = thread_id.to_string();
+        let joined: Option<String> = crate::db::read(move |conn| {
+            Ok(cm::conversation_messages
+                .filter(cm::thread_id.eq(&id))
+                .filter(
+                    cm::role
+                        .ne(MessageRole::Agent)
+                        .or(cm::external_message_id.is_null()),
+                )
+                .select(cm::id)
+                .first(conn)
+                .optional()?)
+        })
+        .await?;
+        if joined.is_some() {
+            return Ok(());
+        }
+        let Some(slack_app) = self.app(team_id) else {
+            return Ok(());
+        };
+
+        let reply = slack_app
+            .client
+            .api_call(
+                "conversations.replies",
+                json!({
+                    "channel": channel_id,
+                    "ts": thread_ts,
+                    "limit": JOINED_THREAD_READ_LIMIT,
+                }),
+            )
+            .await;
+        let reply = match reply {
+            Ok(reply) => reply,
+            Err(error) => {
+                log_warn!(
+                    json!({ "err": err_json(&error), "channel": channel_id, "threadTs": thread_ts }),
+                    "Could not read the Slack thread the agent joined; it starts without the earlier messages"
+                );
+                return Ok(());
+            }
+        };
+        let before: f64 = message_ts.parse().unwrap_or(f64::MAX);
+        let earlier: Vec<JoinedThreadMessage> = reply
+            .get("messages")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|m| serde_json::from_value::<JoinedThreadMessage>(m.clone()).ok())
+            .filter(|m| m.ts.parse::<f64>().is_ok_and(|ts| ts < before))
+            .collect();
+
+        let timestamps: Vec<String> = earlier.iter().map(|m| m.ts.clone()).collect();
+        let own: Vec<ConversationMessage> = crate::db::read(move |conn| {
+            Ok(cm::conversation_messages
+                .filter(cm::role.eq(MessageRole::Agent))
+                .filter(cm::external_message_id.eq_any(&timestamps))
+                .select(ConversationMessage::as_select())
+                .load(conn)?)
+        })
+        .await?;
+        let replacing: Vec<String> = own
+            .iter()
+            .filter(|m| m.thread_id == thread_id)
+            .map(|m| m.id.clone())
+            .collect();
+        // Every sender is looked up before anything is stored, and the messages
+        // are stored together, so a restart in between leaves none of them and
+        // the replayed event reads the thread again.
+        let mut messages = Vec::new();
+        for message in &earlier {
+            let mine = own
+                .iter()
+                .find(|m| m.external_message_id.as_deref() == Some(message.ts.as_str()));
+            if let Some(mine) = mine {
+                let mut input =
+                    MessageInput::new(mine.content.clone(), MessageRole::Agent, mine.triggered_by);
+                input.trigger_name = mine.trigger_name.clone().filter(|n| !n.is_empty());
+                if mine.thread_id == thread_id {
+                    input.external_message_id = Some(message.ts.clone());
+                }
+                messages.push(input);
+                continue;
+            }
+            let text = self
+                .resolve_mentions(message.text.as_deref().unwrap_or(""), team_id)
+                .await;
+            let sender = message.bot_id.clone().or_else(|| message.user.clone());
+            let Some(sender) = sender.filter(|_| !text.is_empty()) else {
+                continue;
+            };
+            let sender_name = if message.bot_id.is_some() {
+                message.username.clone()
+            } else {
+                self.get_user_info(&sender, team_id)
+                    .await
+                    .and_then(|info| info.display_name().map(str::to_string))
+            };
+            let mut input = MessageInput::new(
+                self.build_sender_tagged_content(&sender, sender_name.as_deref(), &text),
+                MessageRole::User,
+                MessageTrigger::UserInput,
+            );
+            input.sender_external_id = Some(sender);
+            input.sender_name = sender_name;
+            messages.push(input);
+        }
+        CONVERSATION_SERVICE
+            .add_messages(thread_id, messages, replacing)
+            .await
+    }
+
+    /// The participation verdict for a thread reply the router did not address
+    /// to the agent. The router sends such a reply only from a thread the agent
+    /// takes part in, so the verdict is `React` when the reply tags somebody
+    /// else, else `Respond`. The transcript is the stored thread.
+    async fn stored_thread_gate(
+        &self,
+        thread_id: &str,
+        arriving: GateMessage,
+        bot_user_id: &str,
+    ) -> anyhow::Result<(ThreadParticipation, Vec<GateMessage>)> {
+        let history = CONVERSATION_SERVICE
+            .get_recent_messages(thread_id, THREAD_TRANSCRIPT_LINES as i64 - 1, None)
+            .await?;
+        let mut messages: Vec<GateMessage> = history
+            .iter()
+            .map(|m| {
+                if m.role == MessageRole::Agent {
+                    GateMessage {
+                        user: Some(bot_user_id.to_string()),
+                        text: Some(m.content.clone()),
+                        ..GateMessage::default()
+                    }
+                } else {
+                    GateMessage {
+                        user: m.sender_external_id.clone(),
+                        username: m.sender_name.clone(),
+                        text: Some(SENDER_TAG.replace(&m.content, "").into_owned()),
+                        ..GateMessage::default()
+                    }
+                }
+            })
+            .collect();
+        let tags_other = tags_somebody_else(arriving.text.as_deref().unwrap_or(""), bot_user_id);
+        messages.push(arriving);
+        let action = if tags_other {
+            ThreadParticipation::React
+        } else {
+            ThreadParticipation::Respond
+        };
+        Ok((action, messages))
+    }
+
+    /// Store a routed thread reply the agent does not answer.
+    async fn store_unanswered(
+        &self,
+        thread_id: &str,
+        slack_user_id: &str,
+        text: &str,
+        team_id: &str,
+        routed: Option<&RoutedEvent>,
+    ) -> anyhow::Result<()> {
+        let sender = self.get_user_info(slack_user_id, team_id).await;
+        let sender_name = sender
+            .as_ref()
+            .and_then(SlackUserInfo::display_name)
+            .map(str::to_string);
+        let resolved = self.resolve_mentions(text, team_id).await;
+        let content =
+            self.build_sender_tagged_content(slack_user_id, sender_name.as_deref(), &resolved);
+        if let Some(routed) = routed {
+            routed.hand_off.hand_off();
+        }
+        let mut input = MessageInput::new(content, MessageRole::User, MessageTrigger::UserInput);
+        input.sender_external_id = Some(slack_user_id.to_string());
+        input.sender_name = sender_name;
+        CONVERSATION_SERVICE.add_message(thread_id, input).await?;
+        Ok(())
+    }
+
+    /// The agent's name, which Slack-facing text uses for the product.
+    async fn agent_name(&self) -> anyhow::Result<String> {
+        Ok(AGENT_WORKSPACE_SERVICE.get_agent().await?.name)
+    }
+}
+
+/// What the router service does with each kind of envelope, on the adapter.
+struct AdapterRouterHandlers;
+
+#[async_trait]
+impl SlackRouterHandlers for AdapterRouterHandlers {
+    async fn connect(&self, team_id: &str) -> anyhow::Result<bool> {
+        SLACK_ADAPTER_SERVICE.reconnect().await?;
+        Ok(SLACK_ADAPTER_SERVICE.apps.contains_key(team_id))
+    }
+
+    async fn disconnect(&self) -> anyhow::Result<()> {
+        SLACK_ADAPTER_SERVICE.disconnect_routed().await;
+        Ok(())
+    }
+
+    async fn link(&self, team_id: &str, link: &RoutedLink) -> anyhow::Result<()> {
+        SLACK_ADAPTER_SERVICE.apply_link(team_id, link).await
+    }
+
+    async fn ready(&self, team_id: &str) -> anyhow::Result<bool> {
+        if !SLACK_ADAPTER_SERVICE.apps.contains_key(team_id) {
+            SLACK_ADAPTER_SERVICE.reconnect().await?;
+        }
+        Ok(SLACK_ADAPTER_SERVICE.apps.contains_key(team_id))
+    }
+
+    async fn handle(&self, envelope: SlackEnvelope, hand_off: HandOff) -> anyhow::Result<()> {
+        SLACK_ADAPTER_SERVICE
+            .handle_routed(envelope, hand_off)
+            .await;
+        Ok(())
+    }
+}
+
 impl Default for SlackAdapterService {
     fn default() -> Self {
         Self::new()
@@ -4138,6 +4926,7 @@ pub(crate) mod testing {
                 team_name: "Team".to_string(),
                 is_socket_mode: false,
                 bot_user_id: "UBOT".to_string(),
+                routed: None,
             }),
         );
         AppGuard(team_id.to_string())
