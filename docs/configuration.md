@@ -546,7 +546,7 @@ defines**.
 | `BEDROCK_MANTLE_CLASSIFICATION_MODEL_ID` | **(Mantle)** Fast **bare** Bedrock ID for classification gates. Unversioned — mantle 404s the `…-20251001-v1:0` shape `bedrock-runtime` uses. | `anthropic.claude-haiku-4-5` |
 | `BEDROCK_MANTLE_EMBEDDING_MODEL_ID` | **(Mantle)** Embedding model, served by Titan on `bedrock-runtime` — mantle has none of its own. Set to `''` to skip embeddings entirely. | `amazon.titan-embed-text-v2:0` |
 | `AWS_REGION` | **(Mantle)** Region for both the mantle host and the Titan embedding leg | `us-east-1` |
-| `OPENAI_MODEL_ID` | **(OpenAI)** Main model (the agent's reasoning loop) | `gpt-5.6-sol` |
+| `OPENAI_MODEL_ID` | **(OpenAI)** Main model (the agent's reasoning loop) | `gpt-6.2-sol` |
 | `OPENAI_CLASSIFICATION_MODEL_ID` | **(OpenAI)** Fast model for classification gates. The gates pin it to `reasoningEffort: 'none'` (the SDK name for the API's `reasoning.effort`) and send no `temperature` — GPT-5.x models reject or strip an explicit temperature, and reasoning tokens would eat the gates' tiny output budgets. | `gpt-5.6-luna` |
 | `OPENAI_EMBEDDING_MODEL_ID` | **(OpenAI)** Embedding model (a `text-embedding-3` model; truncated to 1024 dims to match the memory index). Set to `''` to skip embeddings entirely. | `text-embedding-3-small` |
 | `OPENROUTER_MODEL_ID` | **(OpenRouter)** Main model, as `vendor/model` — OpenRouter addresses every model that way, so a bare `gpt-5.6-sol` is not one it can route. The default mirrors the OpenAI tier so the provider's GPT-5.x parameter handling stays valid; point it at another vendor (`google/gemini-3-pro`, `deepseek/deepseek-v3.2`, `anthropic/claude-sonnet-5`) and those assumptions may not hold. | `openai/gpt-5.6-sol` |
