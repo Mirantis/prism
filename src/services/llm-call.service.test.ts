@@ -280,13 +280,32 @@ describe('llmCallService.recordTokens', () => {
     expect(written()).toMatchObject({ costMicroUsd: 0, costSource: 'subscription', inputTokens: 1000 });
   });
 
-  it('takes the reported cost for a model the catalog has no price for, and the catalog price otherwise', async () => {
+  it('takes the reported cost over the catalog price, and the catalog price when none is reported', async () => {
     llmCallService.recordTokens({ purpose: 'coding-agent', model: 'new-model', tokens, reportedCostUsd: 0.0123456 });
     llmCallService.recordTokens({ purpose: 'coding-agent', model: 'claude-opus-5', tokens, reportedCostUsd: 0.5 });
+    llmCallService.recordTokens({ purpose: 'coding-agent', model: 'claude-opus-5', tokens });
     await settle();
 
     expect(written(0)).toMatchObject({ costMicroUsd: 12346, costSource: 'reported' });
-    expect(written(1)).toMatchObject({ costMicroUsd: 4475, costSource: 'catalog' });
+    expect(written(1)).toMatchObject({ costMicroUsd: 500000, costSource: 'reported' });
+    expect(written(2)).toMatchObject({ costMicroUsd: 4475, costSource: 'catalog' });
+  });
+
+  it('prices a multi-request coding-agent row at the base tier, not from its summed prompt', async () => {
+    // Ten requests of 30k prompt tokens each: no single prompt reaches the 100k
+    // tier, so the 300k sum must not price the row there.
+    prices.set('tiered', { input: 1, output: 2, tiers: [{ above: 100_000, input: 10, output: 20 }] } as never);
+    const summed = {
+      totalTokens: 310_000, inputTokens: 300_000, outputTokens: 10_000,
+      cacheReadTokens: 0, cacheWriteTokens: 0, noCacheTokens: 300_000,
+    };
+    llmCallService.recordTokens({ purpose: 'coding-agent', model: 'tiered', tokens: summed });
+    llmCallService.recordTokens({ purpose: 'chat', model: 'tiered', tokens: summed });
+    await settle();
+
+    expect(written(0)).toMatchObject({ costMicroUsd: 300_000 * 1 + 10_000 * 2, costSource: 'catalog' });
+    // One chat request with a 300k prompt is above the tier.
+    expect(written(1)).toMatchObject({ costMicroUsd: 300_000 * 10 + 10_000 * 20, costSource: 'catalog' });
   });
 
   it('prices the cache writes the caller marks as long at the one-hour lifetime', async () => {

@@ -298,9 +298,12 @@ export default defineConfig({
         TEAMS_APP_ID: process.env.TEAMS_E2E_APP_ID || '',
         TEAMS_APP_PASSWORD: process.env.TEAMS_E2E_APP_PASSWORD || '',
         TEAMS_APP_TENANT_ID: process.env.TEAMS_E2E_TENANT_ID || '',
-        // The context-window scenarios compute their expected percentage from the
-        // bundled catalog, so a fresher remote window would make them flaky by design.
-        MODELS_DEV_URL: 'off',
+        // Off by default, but pinned explicitly because this block inherits
+        // process.env: a developer who opts in via the repo-root .env would
+        // otherwise leak the refresh in here. The context-window scenarios compute
+        // their expected percentage from the bundled catalog, so a fresher remote
+        // window would make them flaky by design.
+        MODELS_DEV_URL: '',
         // A ChatGPT subscription run holds OpenAI keys the API refuses, so a Codex
         // task can succeed only on the saved login (`@codex-subscription`).
         ...(process.env.CODEX_SUBSCRIPTION === 'true'

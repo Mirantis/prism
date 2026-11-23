@@ -88,9 +88,10 @@ export async function setupRuntime(opts: SetupOptions = {}): Promise<RuntimeTest
     // AWS creds + region inherited from the surrounding shell / CI.
     // NEXUS_API_URL deliberately not set — createProvider falls back to
     // direct Bedrock when it's unset, which is what the TUI suite wants.
-    // Pin the model catalog to the bundled snapshot, so a fresher remote window
-    // cannot change what the suite expects.
-    MODELS_DEV_URL: 'off',
+    // Pin the model catalog to the bundled snapshot. Off by default, but this
+    // spreads process.env above, so a developer who opts in via .env would
+    // otherwise leak the refresh into the suite.
+    MODELS_DEV_URL: '',
     // Pinned, not derived: CI runners have a container engine, so the suite
     // would otherwise run the agent's commands in a container on CI and on the
     // host locally, which is two different tests under one name.

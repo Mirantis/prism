@@ -39,6 +39,7 @@
 
 import { logger } from '../../logger';
 import { config } from '../../config';
+import { withSpendContext } from '../../lib/spend-context';
 import { Downsampler, Upsampler, MEETING_SAMPLE_RATE, REALTIME_SAMPLE_RATE } from './resampler';
 import {
   RealtimeSession,
@@ -503,7 +504,13 @@ export class VoiceConversation {
   private declaredTools: PreparedTools['declarations'];
 
   private async runTool(callId: string, name: string, argumentsJson: string): Promise<void> {
-    const output = await this.options.tools.execute(name, argumentsJson);
+    // The session's spend context, so the model calls a tool makes (a coding-agent
+    // task, a subagent) are spent on this call rather than on no request.
+    const { spend } = this.options;
+    const output = await withSpendContext(
+      { requestId: spend.requestId, threadId: spend.threadId, source: { kind: spend.purpose } },
+      () => this.options.tools.execute(name, argumentsJson),
+    );
     if (this.stopped) return;
     // Declared before the result, so the response it asks for can call what loaded.
     const { declarations } = this.options.tools;

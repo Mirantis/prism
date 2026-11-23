@@ -37,6 +37,7 @@ to `costUsd`, so the total is a lower bound. A call has no price when:
 - it is a transcription billed by the minute;
 - its model is newer than the price list the runtime has.
 
-The runtime fetches models.dev when it starts and once a day, and prices the
-earlier calls of a model as soon as a price for it arrives. Set `MODELS_DEV_URL=off`
-to stop the fetch; the prices shipped with the release still apply.
+The prices shipped with the release apply by default. Set `MODELS_DEV_URL` (see
+[Context-window size](configuration.md#context-window-size)) to fetch models.dev at
+startup and once a day; the runtime then prices the earlier calls of a model as
+soon as a price for it arrives.

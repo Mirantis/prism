@@ -26,8 +26,12 @@ CREATE TABLE "new_llm_calls" (
     CONSTRAINT "llm_calls_agentId_fkey" FOREIGN KEY ("agentId") REFERENCES "agent_workspaces" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 -- The runtime stores a DateTime as epoch milliseconds, so a row's 15-minute bucket is
--- its createdAt rounded down to a multiple of 900000.
-INSERT INTO "new_llm_calls" ("agentId", "cacheReadTokens", "cacheWriteTokens", "createdAt", "id", "inputTokens", "model", "noCacheTokens", "outputTokens", "purpose", "subagentId", "threadId", "totalTokens", "bucket") SELECT "agentId", "cacheReadTokens", "cacheWriteTokens", "createdAt", "id", "inputTokens", "model", "noCacheTokens", "outputTokens", "purpose", "subagentId", "threadId", "totalTokens", CASE WHEN typeof("createdAt") = 'integer' THEN "createdAt" - ("createdAt" % 900000) ELSE "createdAt" END FROM "llm_calls";
+-- its createdAt rounded down to a multiple of 900000. A row that took the column's
+-- CURRENT_TIMESTAMP default holds text instead ('YYYY-MM-DD HH:MM:SS', UTC); it is
+-- converted to epoch milliseconds first, so range queries and buckets see every row.
+-- Text SQLite cannot read as a date becomes 0 (1970), outside any range, rather
+-- than failing the upgrade.
+INSERT INTO "new_llm_calls" ("agentId", "cacheReadTokens", "cacheWriteTokens", "createdAt", "id", "inputTokens", "model", "noCacheTokens", "outputTokens", "purpose", "subagentId", "threadId", "totalTokens", "bucket") SELECT "agentId", "cacheReadTokens", "cacheWriteTokens", "createdAtMs", "id", "inputTokens", "model", "noCacheTokens", "outputTokens", "purpose", "subagentId", "threadId", "totalTokens", "createdAtMs" - ("createdAtMs" % 900000) FROM (SELECT *, CASE WHEN typeof("createdAt") IN ('integer', 'real') THEN CAST("createdAt" AS INTEGER) ELSE COALESCE(CAST(ROUND((julianday("createdAt") - 2440587.5) * 86400000) AS INTEGER), 0) END AS "createdAtMs" FROM "llm_calls");
 DROP TABLE "llm_calls";
 ALTER TABLE "new_llm_calls" RENAME TO "llm_calls";
 CREATE INDEX "llm_calls_agentId_createdAt_idx" ON "llm_calls"("agentId", "createdAt");

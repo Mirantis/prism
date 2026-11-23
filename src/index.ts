@@ -406,8 +406,8 @@ const initialize = async () => {
     // minutes (see lib/usage-telemetry.ts). Nothing runs without an OTLP endpoint.
     usageTelemetryTimer = startUsageTelemetry(agent.id);
 
-    // Model windows and prices: the stored catalog now, models.dev in the background
-    // and then daily (see services/model-catalog-refresh.ts).
+    // Model windows and prices: with MODELS_DEV_URL set, the stored catalog now and
+    // the registry in the background and then daily (see services/model-catalog-refresh.ts).
     modelCatalogTimer = await startModelCatalogRefresh();
 
     // Embed the memory entries that have no vector yet. In-process and
