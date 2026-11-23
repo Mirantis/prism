@@ -424,6 +424,79 @@ impl SlackMappingService {
         .await
     }
 
+    /// Delete the user mapping of a Slack user, if there is one.
+    pub async fn remove_user_mapping(
+        &self,
+        connection_id: &str,
+        slack_user_id: &str,
+    ) -> anyhow::Result<()> {
+        let (connection_id, slack_user_id) = (connection_id.to_string(), slack_user_id.to_string());
+        crate::db::run(move |conn| {
+            diesel::delete(
+                m::slack_mappings
+                    .filter(m::connection_id.eq(&connection_id))
+                    .filter(m::slack_user_id.eq(&slack_user_id)),
+            )
+            .execute(conn)?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Create a channel mapping, or point an existing one at this agent and person.
+    pub async fn upsert_channel_mapping(
+        &self,
+        connection_id: &str,
+        channel_id: &str,
+        agent_id: &str,
+        channel_name: &str,
+        lens_user_id: &str,
+    ) -> anyhow::Result<SlackMapping> {
+        let mut row = NewSlackMapping::new(connection_id, agent_id);
+        row.slack_channel_id = Some(channel_id.to_string());
+        row.slack_channel_name = Some(channel_name.to_string());
+        row.lens_user_id = Some(lens_user_id.to_string());
+        row.slack_user_id = None;
+        row.dm_channel_id = None;
+        crate::db::run(move |conn| {
+            conn.transaction(|conn| {
+                let updated = diesel::update(
+                    m::slack_mappings.filter(m::slack_channel_id.eq(row.slack_channel_id.clone())),
+                )
+                .set(SlackMappingChangeset {
+                    connection_id: Some(row.connection_id.clone()),
+                    agent_id: Some(row.agent_id.clone()),
+                    slack_channel_name: Some(row.slack_channel_name.clone()),
+                    lens_user_id: Some(row.lens_user_id.clone()),
+                    updated_at: Some(DbDateTime::now()),
+                    ..Default::default()
+                })
+                .execute(conn)?;
+                if updated == 0 {
+                    diesel::insert_into(m::slack_mappings)
+                        .values(&row)
+                        .execute(conn)?;
+                }
+                Ok(m::slack_mappings
+                    .filter(m::slack_channel_id.eq(row.slack_channel_id.clone()))
+                    .select(SlackMapping::as_select())
+                    .first(conn)?)
+            })
+        })
+        .await
+    }
+
+    /// Delete a channel's mapping, if there is one.
+    pub async fn remove_channel_mapping(&self, channel_id: &str) -> anyhow::Result<()> {
+        let channel_id = channel_id.to_string();
+        crate::db::run(move |conn| {
+            diesel::delete(m::slack_mappings.filter(m::slack_channel_id.eq(&channel_id)))
+                .execute(conn)?;
+            Ok(())
+        })
+        .await
+    }
+
     /// Delete all mappings (user + channel) for a given connection.
     /// Used when a SlackConnection is removed — no FK cascade exists because
     /// SlackConnection lives outside this database.

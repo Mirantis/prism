@@ -51,6 +51,8 @@ pub enum PendingWorkKind {
     Heartbeat,
     #[serde(rename = "monitor")]
     Monitor,
+    #[serde(rename = "routed-event")]
+    RoutedEvent,
 }
 
 impl PendingWorkKind {
@@ -62,6 +64,7 @@ impl PendingWorkKind {
             PendingWorkKind::Cron => "cron",
             PendingWorkKind::Heartbeat => "heartbeat",
             PendingWorkKind::Monitor => "monitor",
+            PendingWorkKind::RoutedEvent => "routed-event",
         }
     }
 }
@@ -74,14 +77,16 @@ impl std::fmt::Display for PendingWorkKind {
 
 /// Each kind of work that survives a restart, in the order the boot gives it
 /// back: a resumed reply or run can poll a coding task, so the tasks come back
-/// first.
-pub const PENDING_WORK_KINDS: [PendingWorkKind; 6] = [
+/// first. A routed event comes back last, since it can start an exchange on a
+/// thread whose interrupted reply resumes before it.
+pub const PENDING_WORK_KINDS: [PendingWorkKind; 7] = [
     PendingWorkKind::CodingTask,
     PendingWorkKind::Chat,
     PendingWorkKind::Webhook,
     PendingWorkKind::Cron,
     PendingWorkKind::Heartbeat,
     PendingWorkKind::Monitor,
+    PendingWorkKind::RoutedEvent,
 ];
 
 /// Boots that may give one piece of work back. Work that stops its own process
@@ -260,6 +265,28 @@ impl PendingWorkService {
                         .execute(conn)?;
                     Ok(true)
                 })
+            })
+            .boxed()
+        })
+    }
+
+    /// `begin` for work its sender can deliver more than once: records it unless a
+    /// row for it is already there, and answers whether this call recorded it.
+    pub fn claim(
+        &self,
+        kind: PendingWorkKind,
+        key: &str,
+        payload: serde_json::Value,
+    ) -> BoxFuture<'static, anyhow::Result<bool>> {
+        let row = NewPendingWork::new(kind.as_str(), key, payload);
+        self.write(kind, key, move || {
+            crate::db::run(move |conn| {
+                let inserted = diesel::insert_into(pw::pending_work)
+                    .values(&row)
+                    .on_conflict((pw::kind, pw::key))
+                    .do_nothing()
+                    .execute(conn)?;
+                Ok(inserted == 1)
             })
             .boxed()
         })
@@ -761,6 +788,7 @@ mod tests {
                 (PendingWorkKind::Cron, vec![], vec![]),
                 (PendingWorkKind::Heartbeat, vec![], vec![]),
                 (PendingWorkKind::Monitor, vec![], vec![]),
+                (PendingWorkKind::RoutedEvent, vec![], vec![]),
             ]
         );
     }

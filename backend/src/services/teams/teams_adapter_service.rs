@@ -2504,6 +2504,7 @@ impl TeamsAdapterService {
                 .map(|user_id| PostedHistory {
                     user_id: user_id.clone(),
                     thread_key: target.conversation_id.clone(),
+                    ..PostedHistory::default()
                 });
         }
         let mapping = match TEAMS_MAPPING_SERVICE
@@ -2523,6 +2524,7 @@ impl TeamsAdapterService {
         Some(PostedHistory {
             user_id,
             thread_key: format!("{};messageid={root_message_id}", target.conversation_id),
+            ..PostedHistory::default()
         })
     }
 

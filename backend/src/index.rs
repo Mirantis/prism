@@ -398,6 +398,14 @@ fn resumers() -> HashMap<PendingWorkKind, PendingWorkResumer> {
         Arc::new(|items, given_up| HEARTBEAT_SERVICE.resume(items, given_up).boxed()),
     );
     resumers.insert(
+        PendingWorkKind::RoutedEvent,
+        Arc::new(|items, _given_up| {
+            crate::services::slack_router_service::SLACK_ROUTER_SERVICE
+                .resume(items)
+                .boxed()
+        }),
+    );
+    resumers.insert(
         PendingWorkKind::Monitor,
         Arc::new(|items, given_up| {
             async move {

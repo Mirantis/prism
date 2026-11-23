@@ -405,6 +405,49 @@ fn compacted(row: CompactedRow, position: i64) -> CompactedMessage {
     }
 }
 
+/// The row of a message `input` adds to `thread_id`.
+fn message_row(thread_id: &str, input: &MessageInput) -> NewConversationMessage {
+    let mut row = NewConversationMessage::new(
+        thread_id,
+        input.role,
+        input.content.clone(),
+        input.triggered_by,
+    );
+    if let Some(id) = input.id.clone().filter(|id| !id.is_empty()) {
+        row.id = id;
+    }
+    row.trigger_name = input.trigger_name.clone();
+    row.tool_calls = input.tool_calls.clone();
+    row.blocks = input.blocks.clone();
+    row.sender_external_id = input.sender_external_id.clone();
+    row.sender_name = input.sender_name.clone();
+    row.external_message_id = input.external_message_id.clone();
+    row.internal_step = input.internal_step.unwrap_or(false);
+    row
+}
+
+/// `message added` telemetry for a stored message.
+fn track_message_added(agent_id: &str, thread_id: &str, input: &MessageInput) {
+    let mut tracked = IndexMap::new();
+    if !agent_id.is_empty() {
+        tracked.insert("agent.id".to_string(), agent_id.to_string());
+    }
+    tracked.insert("thread.id".to_string(), thread_id.to_string());
+    tracked.insert("message.role".to_string(), input.role.as_str().to_string());
+    tracked.insert(
+        "message.triggered_by".to_string(),
+        input.triggered_by.as_str().to_string(),
+    );
+    // Internal rows are written by the runtime, not sent by anyone. Without this a
+    // recalling chat turn adds a second `role=USER` count and every message-volume
+    // metric steps at deploy for a reason that is not user behaviour.
+    tracked.insert(
+        "message.internal".to_string(),
+        input.internal_step.unwrap_or(false).to_string(),
+    );
+    track_event("message added", None, Some(tracked));
+}
+
 impl ConversationService {
     pub fn new() -> Self {
         Self {
@@ -1017,22 +1060,7 @@ impl ConversationService {
         input: MessageInput,
         with_message: impl FnOnce(&mut SqliteConnection) -> anyhow::Result<T> + Send + 'static,
     ) -> anyhow::Result<(AddedMessage, T)> {
-        let mut row = NewConversationMessage::new(
-            thread_id,
-            input.role,
-            input.content.clone(),
-            input.triggered_by,
-        );
-        if let Some(id) = input.id.clone().filter(|id| !id.is_empty()) {
-            row.id = id;
-        }
-        row.trigger_name = input.trigger_name.clone();
-        row.tool_calls = input.tool_calls.clone();
-        row.blocks = input.blocks.clone();
-        row.sender_external_id = input.sender_external_id.clone();
-        row.sender_name = input.sender_name.clone();
-        row.external_message_id = input.external_message_id.clone();
-        row.internal_step = input.internal_step.unwrap_or(false);
+        let row = message_row(thread_id, &input);
         let (message, written) = crate::db::run(move |conn| {
             conn.transaction(|conn| {
                 let created = diesel::insert_into(m::conversation_messages)
@@ -1056,32 +1084,97 @@ impl ConversationService {
         })
         .await?;
 
-        let mut tracked = IndexMap::new();
-        if !agent_id.is_empty() {
-            tracked.insert("agent.id".to_string(), agent_id.clone());
-        }
-        tracked.insert("thread.id".to_string(), thread_id.to_string());
-        tracked.insert("message.role".to_string(), input.role.as_str().to_string());
-        tracked.insert(
-            "message.triggered_by".to_string(),
-            input.triggered_by.as_str().to_string(),
-        );
-        // Internal rows are written by the runtime, not sent by anyone. Without this a
-        // recalling chat turn adds a second `role=USER` count and every message-volume
-        // metric steps at deploy for a reason that is not user behaviour.
-        tracked.insert(
-            "message.internal".to_string(),
-            input.internal_step.unwrap_or(false).to_string(),
-        );
-        track_event("message added", None, Some(tracked));
+        track_message_added(&agent_id, thread_id, &input);
         self.events.emit_message(&MessageStored {
             user_id,
             agent_id,
             thread_id: thread_id.to_string(),
             triggered_by: input.triggered_by,
         });
+        let title_set = self.title_from_first_message(thread_id, &input).await?;
+        Ok((AddedMessage { message, title_set }, written))
+    }
 
-        // Name the thread after the user's first message (first 3 words, capped).
+    /// Add several messages to a thread in one transaction, so either all of
+    /// them are stored or none is. The rows keep the given order: each is dated a
+    /// millisecond after the one before it, and the last a millisecond before
+    /// now. `replacing` names rows of the thread the inputs write again, which the
+    /// same transaction deletes.
+    pub async fn add_messages(
+        &self,
+        thread_id: &str,
+        inputs: Vec<MessageInput>,
+        replacing: Vec<String>,
+    ) -> anyhow::Result<()> {
+        let Some(last) = inputs.last() else {
+            return Ok(());
+        };
+        let now = Utc::now();
+        let count = inputs.len() as i64;
+        let rows: Vec<NewConversationMessage> = inputs
+            .iter()
+            .enumerate()
+            .map(|(index, input)| {
+                let mut row = message_row(thread_id, input);
+                row.created_at =
+                    (now - chrono::Duration::milliseconds(count - index as i64)).into();
+                row
+            })
+            .collect();
+        let id = thread_id.to_string();
+        let (agent_id, user_id) = crate::db::run(move |conn| {
+            conn.transaction(|conn| {
+                let owner = diesel::update(t::conversation_threads.filter(t::id.eq(&id)))
+                    .set(t::updated_at.eq(DbDateTime::from(now)))
+                    .returning((t::agent_id, t::user_id))
+                    .get_result::<(String, String)>(conn)
+                    .optional()?
+                    .ok_or_else(record_not_found)?;
+                if !replacing.is_empty() {
+                    diesel::delete(
+                        m::conversation_messages
+                            .filter(m::thread_id.eq(&id))
+                            .filter(m::id.eq_any(&replacing)),
+                    )
+                    .execute(conn)?;
+                }
+                for row in &rows {
+                    diesel::insert_into(m::conversation_messages)
+                        .values(row)
+                        .execute(conn)?;
+                }
+                Ok(owner)
+            })
+        })
+        .await?;
+        for input in &inputs {
+            track_message_added(&agent_id, thread_id, input);
+        }
+        // One event for the batch: listeners (compaction) look at the thread, not the row.
+        self.events.emit_message(&MessageStored {
+            user_id,
+            agent_id,
+            thread_id: thread_id.to_string(),
+            triggered_by: last.triggered_by,
+        });
+        let titled = inputs.iter().find(|input| {
+            input.role == MessageRole::User
+                && !input.internal_step.unwrap_or(false)
+                && !derive_thread_title(&input.content).is_empty()
+        });
+        if let Some(titled) = titled {
+            self.title_from_first_message(thread_id, titled).await?;
+        }
+        Ok(())
+    }
+
+    /// Name the thread after the user's first message (first 3 words, capped).
+    /// Returns the title when this message set it.
+    async fn title_from_first_message(
+        &self,
+        thread_id: &str,
+        input: &MessageInput,
+    ) -> anyhow::Result<Option<String>> {
         // `title IS NULL` makes this atomic and one-shot — it fires only for the very
         // first user message with text and is a no-op for every later message.
         // A changed row means this call actually set it, so callers can broadcast it.
@@ -1112,8 +1205,7 @@ impl ConversationService {
                 }
             }
         }
-
-        Ok((AddedMessage { message, title_set }, written))
+        Ok(title_set)
     }
 
     /// Store the external message ID on a persisted message: the id the channel
