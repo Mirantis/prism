@@ -12,6 +12,7 @@ pub mod activity;
 pub mod agent_guide;
 pub mod agent_messages;
 pub mod agent_state;
+pub mod chatgpt_auth;
 pub mod coding_agents;
 pub mod computer;
 pub mod computers;

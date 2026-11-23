@@ -8,6 +8,8 @@ pub mod edit;
 pub mod exec;
 pub mod files;
 pub mod format;
+pub mod monitor;
+pub mod monitor_manager;
 pub mod process_manager;
 pub mod spawn;
 pub mod workspace;
@@ -90,6 +92,8 @@ pub fn get_shell_tools(
     // Named in the tool description so the model knows what it is delegating
     // to. Fixed per process, so the description is byte-identical every turn.
     let available = coding_agent::available_agents();
+    // A monitor reports to a chat conversation, so only a chat turn has one.
+    let monitor_notify = task_notifications.clone();
     let tracking = Tracking {
         workspace: workspace.clone(),
         pending_writes,
@@ -300,6 +304,40 @@ pub fn get_shell_tools(
             ..Default::default()
         },
     );
+
+    if let Some(notify) = monitor_notify {
+        let monitor_workspace = workspace.clone();
+        add(
+            "monitor",
+            Tool {
+                description: Some(monitor::monitor_description()),
+                input_schema: zod_schema(monitor::monitor_input_schema()),
+                execute: Some(execute_fn(move |input, _| {
+                    let workspace = monitor_workspace.clone();
+                    let notify = notify.clone();
+                    async move {
+                        let input: monitor::MonitorInput = serde_json::from_value(input)?;
+                        Ok(serde_json::to_value(
+                            monitor::run_monitor(input, &workspace, notify).await?,
+                        )?)
+                    }
+                })),
+                ..Default::default()
+            },
+        );
+        add(
+            "monitor_stop",
+            Tool {
+                description: Some(monitor::MONITOR_STOP_DESCRIPTION.to_string()),
+                input_schema: zod_schema(monitor::monitor_stop_input_schema()),
+                execute: Some(execute_fn(|input, _| async move {
+                    let input: monitor::MonitorStopInput = serde_json::from_value(input)?;
+                    Ok(serde_json::to_value(monitor::run_monitor_stop(input))?)
+                })),
+                ..Default::default()
+            },
+        );
+    }
 
     tools
 }

@@ -38,7 +38,7 @@
 //! Messages format at `LITELLM_BASE_URL` or the `…/llm/litellm/anthropic/v1` mount.
 //! Model IDs are the operator's aliases.
 
-use crate::config::{CONFIG, Config, LlmProviderName};
+use crate::config::{CHATGPT_CHAT_ENDPOINT, CONFIG, Config, LlmProviderName};
 use crate::lib::llm_providers::anthropic::anthropic_provider::{
     create_anthropic_provider, missing_anthropic_settings,
 };
@@ -50,6 +50,9 @@ use crate::lib::llm_providers::bedrock::bedrock_provider::{
 };
 use crate::lib::llm_providers::bedrock_mantle::bedrock_mantle_provider::{
     create_bedrock_mantle_provider, missing_bedrock_mantle_settings,
+};
+use crate::lib::llm_providers::chatgpt::chatgpt_provider::{
+    create_chatgpt_provider, missing_chatgpt_settings,
 };
 use crate::lib::llm_providers::litellm::litellm_provider::{
     create_lite_llm_provider, missing_lite_llm_settings,
@@ -69,6 +72,7 @@ enum ProviderRoute<'a> {
     Azure(Option<&'a str>),
     BedrockMantle(&'a str),
     Openai(Option<&'a str>),
+    Chatgpt,
     Openrouter(&'a str),
     Anthropic,
     Litellm(Option<&'a str>),
@@ -81,6 +85,7 @@ fn route(config: &Config) -> ProviderRoute<'_> {
             ProviderRoute::BedrockMantle(&config.bedrock_mantle_chat_endpoint)
         }
         LlmProviderName::Openai => ProviderRoute::Openai(config.openai_endpoint.as_deref()),
+        LlmProviderName::Chatgpt => ProviderRoute::Chatgpt,
         LlmProviderName::Openrouter => ProviderRoute::Openrouter(&config.openrouter_endpoint),
         LlmProviderName::Anthropic => ProviderRoute::Anthropic,
         LlmProviderName::Litellm => ProviderRoute::Litellm(config.litellm_endpoint.as_deref()),
@@ -93,6 +98,7 @@ pub fn create_provider() -> LlmProvider {
         ProviderRoute::Azure(endpoint) => create_azure_provider(endpoint),
         ProviderRoute::BedrockMantle(endpoint) => create_bedrock_mantle_provider(endpoint),
         ProviderRoute::Openai(endpoint) => create_open_ai_provider(endpoint),
+        ProviderRoute::Chatgpt => create_chatgpt_provider(CHATGPT_CHAT_ENDPOINT),
         ProviderRoute::Openrouter(endpoint) => create_open_router_provider(endpoint),
         ProviderRoute::Anthropic => create_anthropic_provider(),
         ProviderRoute::Litellm(endpoint) => create_lite_llm_provider(endpoint),
@@ -109,6 +115,7 @@ pub async fn missing_provider_settings() -> Vec<String> {
         LlmProviderName::Azure => missing_azure_settings(),
         LlmProviderName::BedrockMantle => missing_bedrock_mantle_settings(),
         LlmProviderName::Openai => missing_open_ai_settings(),
+        LlmProviderName::Chatgpt => missing_chatgpt_settings(),
         LlmProviderName::Openrouter => missing_open_router_settings(),
         LlmProviderName::Anthropic => missing_anthropic_settings(),
         LlmProviderName::Litellm => missing_lite_llm_settings(),
@@ -212,6 +219,12 @@ mod tests {
             ("OPENAI_BASE_URL", override_url),
         ]);
         assert_eq!(route(&config), ProviderRoute::Openai(Some(override_url)));
+    }
+
+    #[test]
+    fn chatgpt_ignores_the_gateway_mounts() {
+        let config = test_config(&[("LLM_PROVIDER", "chatgpt"), GATEWAY]);
+        assert_eq!(route(&config), ProviderRoute::Chatgpt);
     }
 
     #[test]

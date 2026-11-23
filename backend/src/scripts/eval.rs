@@ -73,6 +73,7 @@ use crate::tools::ask_questions::ask_questions_result;
 use crate::tools::computer::{ALERT_THE_USER, get_computer_tools};
 use crate::tools::meeting::{MeetingToolsInput, get_meeting_tools};
 use crate::tools::shell::coding_agent::NOTIFIED_TASK_NEXT;
+use crate::tools::shell::monitor::MONITOR_NEXT;
 use crate::types::{
     AgentContext, AgentMessageOrigin, HeartbeatTrigger, InvokeMode, InvokeRequest, PromptSource,
     TaskLastSend,
@@ -254,6 +255,7 @@ fn info() -> Value {
             "defaultHeartbeatMd": get_default_workspace_files().heartbeat_md,
             "askQuestionsResult": ask_questions_result(),
             "notifiedTaskNext": NOTIFIED_TASK_NEXT,
+            "monitorNext": MONITOR_NEXT,
         },
     })
 }

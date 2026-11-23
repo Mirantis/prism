@@ -6,6 +6,7 @@ pub mod agent_status_service;
 pub mod agent_workspace_service;
 pub mod attachment_service;
 pub mod channel_adapter_interface;
+pub mod chatgpt_auth_service;
 pub mod coding_agent_sign_in;
 pub mod compaction_service;
 pub mod computer;

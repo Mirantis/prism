@@ -32,6 +32,7 @@ export const EVAL_USER_ID = 'eval-user';
 /** The agent every scenario runs as, set as `AGENT_ID`. */
 export const EVAL_AGENT_ID = '0e7a1000-0000-4000-8000-000000000001';
 export const SUBAGENT_NAME = 'investigator';
+const EVAL_THREAD_ID = '0e7a1000-0000-4000-8000-000000000004';
 
 /** Texts of the backend that the scenarios quote. */
 export interface BackendTexts {
@@ -42,6 +43,7 @@ export interface BackendTexts {
   askQuestionsResult: Record<string, unknown>;
   /** What `coding_agent` tells the agent to do after it starts a task in a chat conversation. */
   notifiedTaskNext: string;
+  monitorNext: string;
 }
 
 interface BackendInfo {
@@ -325,7 +327,8 @@ export async function runTurn(input: TurnInput): Promise<TurnTrace> {
       context: input.context ?? {},
       postingCeiling: input.postingCeiling,
       heartbeatTriggers: input.heartbeatTriggers,
-      threadId: input.threadId,
+      // A chat turn always has its conversation, which the chat-only tools report to.
+      threadId: input.threadId ?? (input.mode === 'chat' ? EVAL_THREAD_ID : undefined),
     },
     (tool, toolInput) => (stubs[tool] ?? DEFAULT_STUBS[tool] ?? (() => ({ success: true })))(toolInput),
   );

@@ -44,7 +44,39 @@ use crate::lib::log_redaction::err_json;
 use crate::lib::sqlite_bootstrap::load_sqlite_vec;
 use crate::lib::sqlite_path::resolve_prisma_sqlite_path;
 use crate::lib::telemetry::track_event;
+use crate::services::runtime_state_service::{
+    CHATGPT_AUTH_CLIENT_ID, CHATGPT_AUTH_HOST_ID, CHATGPT_AUTH_TOKENS,
+};
 use crate::{log_info, log_warn};
+
+/// Per-install ChatGPT OAuth rows that never leave the machine in a backup and are
+/// never restored onto another install: a shared refresh token makes token
+/// rotation conflict, and an archive would hold live credentials.
+const STRIPPED_RUNTIME_STATE_KEYS: [&str; 3] = [
+    CHATGPT_AUTH_TOKENS,
+    CHATGPT_AUTH_HOST_ID,
+    CHATGPT_AUTH_CLIENT_ID,
+];
+
+/// Delete the host-bound OAuth rows from the database file at `path`, zeroing the
+/// freed cells so the token bytes are not recoverable from the file.
+fn strip_host_auth_state(path: &str) -> anyhow::Result<()> {
+    let mut conn = crate::db::establish(path)?;
+    let has_table: Vec<MigrationName> = diesel::sql_query(
+        "SELECT name AS migration_name FROM sqlite_master WHERE type = 'table' AND name = 'runtime_state'",
+    )
+    .load(&mut conn)?;
+    if has_table.is_empty() {
+        return Ok(());
+    }
+    conn.batch_execute("PRAGMA secure_delete = ON")?;
+    diesel::sql_query("DELETE FROM runtime_state WHERE key IN (?, ?, ?)")
+        .bind::<Text, _>(STRIPPED_RUNTIME_STATE_KEYS[0])
+        .bind::<Text, _>(STRIPPED_RUNTIME_STATE_KEYS[1])
+        .bind::<Text, _>(STRIPPED_RUNTIME_STATE_KEYS[2])
+        .execute(&mut conn)?;
+    Ok(())
+}
 
 /// A user-facing rejection of an uploaded archive; the caller answers it with a 400.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -200,7 +232,10 @@ async fn export_from(src: &str, agent_name: &str) -> anyhow::Result<ExportedAgen
             diesel::sql_query("VACUUM INTO ?")
                 .bind::<Text, _>(&snapshot)
                 .execute(&mut handle)?;
-            Ok(())
+            drop(handle);
+            // A `.prism` backup never holds live ChatGPT refresh tokens or this
+            // install's host and client ids.
+            strip_host_auth_state(&snapshot)
         })
         .await??;
     }
@@ -297,7 +332,12 @@ async fn import_into(live_db: &str, buffer: &[u8]) -> anyhow::Result<()> {
     let validated = {
         let staging = staging_path.clone();
         let live_db = live_db.to_string();
-        tokio::task::spawn_blocking(move || validate(&staging, &live_db)).await?
+        tokio::task::spawn_blocking(move || {
+            validate(&staging, &live_db)?;
+            // An older backup can still hold another install's OAuth rows.
+            strip_host_auth_state(&staging)
+        })
+        .await?
     };
     if let Err(err) = validated {
         safe_unlink(&staging_path);
@@ -437,6 +477,54 @@ mod tests {
             })
             .count();
         assert_eq!(leftovers, 0);
+    }
+
+    #[derive(QueryableByName)]
+    struct StateKey {
+        #[diesel(sql_type = Text)]
+        key: String,
+    }
+
+    fn state_keys(path: &str) -> Vec<String> {
+        let mut conn = open_readonly(path).unwrap();
+        let rows: Vec<StateKey> = diesel::sql_query("SELECT key FROM runtime_state ORDER BY key")
+            .load(&mut conn)
+            .unwrap();
+        rows.into_iter().map(|row| row.key).collect()
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn keeps_the_chatgpt_sign_in_out_of_an_export_and_an_import() {
+        use crate::services::runtime_state_service::{RUNTIME_STATE_SERVICE, SINGLE_THREAD};
+        let db = test_db();
+        let live = db.path.to_string_lossy().into_owned();
+        for key in STRIPPED_RUNTIME_STATE_KEYS
+            .into_iter()
+            .chain([SINGLE_THREAD])
+        {
+            RUNTIME_STATE_SERVICE.set(key, "value").await.unwrap();
+        }
+        let bytes = export_bytes(&live).await;
+        import_into(&live, &bytes).await.unwrap();
+        assert_eq!(state_keys(&format!("{live}.next")), vec![SINGLE_THREAD]);
+
+        // An older backup that still holds the rows loses them on import.
+        let staged = format!("{live}.old");
+        {
+            let mut conn = crate::db::establish(&live).unwrap();
+            diesel::sql_query("VACUUM INTO ?")
+                .bind::<Text, _>(&staged)
+                .execute(&mut conn)
+                .unwrap();
+        }
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&std::fs::read(&staged).unwrap()).unwrap();
+        import_into(&live, &encoder.finish().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(state_keys(&format!("{live}.next")), vec![SINGLE_THREAD]);
+        let _ = std::fs::remove_file(&staged);
     }
 
     #[tokio::test]
