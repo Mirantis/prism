@@ -4,7 +4,7 @@
  *
  *   node scripts/build-sea.mjs prism
  *
- * The runtime, `prism-server`, is the Rust binary built from `runtime/`.
+ * The runtime, `prism-server`, is the Rust binary built from `backend/`.
  *
  * ink 7 + yoga use top-level await, which esbuild cannot
  * emit to CommonJS — and a SEA's `main` is run as CommonJS, not ESM. So we

@@ -5,7 +5,7 @@ what a router sends to an agent, and what the Slack API proxy has to answer. An
 agent set up as in [A shared Slack app](slack.md#a-shared-slack-app) uses this
 protocol.
 
-The schema in `src/services/slack-router-envelope.ts` is the authority.
+The parser in `backend/src/services/slack_router_envelope.rs` is the authority.
 
 ## Parts
 
