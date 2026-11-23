@@ -346,7 +346,7 @@ const bedrockMantleEmbeddingModelId =
 // embedding.service to fit the sqlite-vec index; `??` so
 // OPENAI_EMBEDDING_MODEL_ID='' disables them entirely, matching
 // AZURE_EMBEDDING_MODEL_ID.
-const openaiModelId = process.env.OPENAI_MODEL_ID || 'gpt-5.6-sol';
+const openaiModelId = process.env.OPENAI_MODEL_ID || 'gpt-6.2-sol';
 const openaiClassificationModelId = process.env.OPENAI_CLASSIFICATION_MODEL_ID || 'gpt-5.6-luna';
 const openaiEmbeddingModelId = process.env.OPENAI_EMBEDDING_MODEL_ID ?? 'text-embedding-3-small';
 // OpenRouter model IDs (used when LLM_PROVIDER=openrouter). Every id it routes is

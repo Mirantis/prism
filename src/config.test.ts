@@ -603,7 +603,7 @@ describe('config', () => {
       process.env.LLM_PROVIDER = 'OpenAI';
       const cfg = await loadConfig();
       expect(cfg.llmProvider).toBe('openai');
-      expect(cfg.chatModelId).toBe('gpt-5.6-sol');
+      expect(cfg.chatModelId).toBe('gpt-6.2-sol');
       expect(cfg.classificationModelId).toBe('gpt-5.6-luna');
       expect(cfg.embeddingModelId).toBe('text-embedding-3-small');
     });
@@ -634,7 +634,7 @@ describe('config', () => {
       process.env.LLM_PROVIDER = 'ChatGPT';
       const cfg = await loadConfig();
       expect(cfg.llmProvider).toBe('chatgpt');
-      expect(cfg.chatModelId).toBe('gpt-5.6-sol');
+      expect(cfg.chatModelId).toBe('gpt-6.2-sol');
       expect(cfg.classificationModelId).toBe('gpt-5.6-luna');
       expect(cfg.embeddingProvider).toBe('none');
       expect(cfg.embeddingModelId).toBe('');

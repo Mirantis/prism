@@ -18,7 +18,7 @@ import { contextWindowFor } from './context-window';
 // deployment — so assert them explicitly rather than trusting the generator.
 const BEDROCK_CHAT_DEFAULT = 'global.anthropic.claude-opus-5-5';
 const AZURE_CHAT_DEFAULT = 'claude-opus-5';
-const OPENAI_CHAT_DEFAULT = 'gpt-5.6-sol';
+const OPENAI_CHAT_DEFAULT = 'gpt-6.2-sol';
 const OPENAI_CLASSIFICATION_DEFAULT = 'gpt-5.6-luna';
 const ANTHROPIC_CHAT_DEFAULT = 'claude-opus-5';
 
