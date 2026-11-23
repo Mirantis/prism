@@ -29,6 +29,7 @@ use crate::constants::MAX_ATTACHMENTS_PER_MESSAGE;
 use crate::db::models::{ConversationMessage, MessageAttachment, NewMessageAttachment};
 use crate::db::schema::message_attachments::dsl as a;
 use crate::db::sql_types::DbDateTime;
+use crate::lib::inline_images::place_attachments;
 use crate::lib::log_redaction::err_json;
 use crate::lib::media_store::{
     list_media_files, read_media_file, remove_media_file, write_media_file,
@@ -85,6 +86,10 @@ pub struct AttachmentMeta {
     /// vanished out-of-band (lost volume, `.prism` import) are reconciled to
     /// `storagePath = null` at boot.
     pub expired: bool,
+    /// The message's text shows this image at its place (`place_attachments`); every
+    /// other file sits under the text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inline: Option<bool>,
 }
 
 /// Where an attachment came from: `web` or a chat platform for inbound user
@@ -170,17 +175,25 @@ impl<T> std::borrow::Borrow<T> for WithAttachments<T> {
 /// can be joined onto it.
 pub trait HasMessageId {
     fn message_id(&self) -> &str;
+    /// The message's text, which places its inline images.
+    fn message_content(&self) -> &str;
 }
 
 impl HasMessageId for ConversationMessage {
     fn message_id(&self) -> &str {
         &self.id
     }
+    fn message_content(&self) -> &str {
+        &self.content
+    }
 }
 
 impl<T: HasMessageId> HasMessageId for WithAttachments<T> {
     fn message_id(&self) -> &str {
         self.inner.message_id()
+    }
+    fn message_content(&self) -> &str {
+        self.inner.message_content()
     }
 }
 
@@ -438,6 +451,7 @@ pub struct MetaRow {
 
 fn to_meta(row: &MetaRow, blob_backed_ids: &HashSet<String>) -> AttachmentMeta {
     AttachmentMeta {
+        inline: None,
         id: row.id.clone(),
         filename: row.filename.clone(),
         media_type: row.media_type.clone(),
@@ -664,8 +678,9 @@ impl AttachmentService {
     }
 
     /// Join attachment metadata (no bytes) onto messages by message id — the
-    /// shared enrichment for thread-read endpoints, so the join shape lives in
-    /// one place. A message with no attachments gets none.
+    /// shared enrichment for every message a client or channel receives, so the
+    /// join shape and the inline placement live in one place. A message with no
+    /// attachments gets none.
     pub async fn attach_meta_to_messages<T: HasMessageId + Send>(
         &self,
         messages: Vec<T>,
@@ -687,7 +702,7 @@ impl AttachmentService {
                 let attachments = meta_map
                     .get(m.message_id())
                     .filter(|list| !list.is_empty())
-                    .cloned();
+                    .map(|list| place_attachments(m.message_content(), list.clone()));
                 WithAttachments {
                     inner: m,
                     attachments,

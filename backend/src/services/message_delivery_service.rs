@@ -18,6 +18,7 @@ use tokio::sync::broadcast;
 
 use crate::config::CONFIG;
 use crate::db::models::{ConversationMessage, MessageRole};
+use crate::lib::inline_images::place_attachments;
 use crate::services::attachment_service::ATTACHMENT_SERVICE;
 use crate::services::channel_adapter_interface::{
     ChannelAdapter, ChannelContext, ChannelDestination, ChannelName, ChatPlatform,
@@ -221,7 +222,7 @@ impl MessageDeliveryService {
                 .get_meta_by_message_ids(std::slice::from_ref(&message.id))
                 .await?;
             if let Some(attachments) = meta.shift_remove(&message.id).filter(|a| !a.is_empty()) {
-                deliverable.attachments = Some(attachments);
+                deliverable.attachments = Some(place_attachments(&message.content, attachments));
             }
         }
 
@@ -325,7 +326,9 @@ impl MessageDeliveryService {
             .unwrap_or_else(|| message.clone());
         let deliverable = DeliverableMessage {
             inner: shown,
-            attachments: attachments.filter(|attachments| !attachments.is_empty()),
+            attachments: attachments
+                .filter(|attachments| !attachments.is_empty())
+                .map(|attachments| place_attachments(&message.content, attachments)),
         };
         join_all(channels.iter().map(|adapter| {
             let deliverable = &deliverable;

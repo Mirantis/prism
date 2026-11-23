@@ -14,8 +14,10 @@
 //!   cached tools, live message array). Reusing them makes the summarize call a
 //!   "forked request": the provider's prompt cache already holds the
 //!   tools+system+history prefix, so the fork is mostly a cache read.
-//! - `compact_now()` — the manual `/compact` path (REST) — and the idle path
-//!   (`arm_idle`, `restore_idle`) share `compact_rebuilt`. It rebuilds the request from
+//! - `compact_now()` — the manual `/compact` path (REST) — the idle path
+//!   (`arm_idle`, `restore_idle`) and the stored-run path (`after_message_stored`, for
+//!   rows a run without a turn in the conversation stores) share `compact_rebuilt`.
+//!   It rebuilds the request from
 //!   stored rows with the tool list the next chat turn would declare, so it reads the
 //!   tools+system+history prefix a recent turn cached: nothing per-turn sits in the
 //!   system prompt (the date changes once a day, and a turn's recalled memories are a
@@ -59,10 +61,10 @@ use crate::ai::{
     ToolSet, UserContent, UserModelMessage,
 };
 use crate::constants::{
-    COMPACTION_TAIL_TOKENS, IDLE_COMPACTION_CACHE_SHARE, IDLE_COMPACTION_MIN_TOKENS,
-    MAX_OUTPUT_TOKENS,
+    COMPACTION_FALLBACK_WINDOW_TOKENS, COMPACTION_TAIL_TOKENS, IDLE_COMPACTION_CACHE_SHARE,
+    IDLE_COMPACTION_MIN_TOKENS, MAX_OUTPUT_TOKENS,
 };
-use crate::db::models::{ConversationThreadChangeset, ThreadSource};
+use crate::db::models::{ConversationThreadChangeset, MessageTrigger, ThreadSource};
 use crate::db::schema::conversation_messages::dsl as m;
 use crate::db::schema::conversation_threads::dsl as t;
 use crate::db::sql_types::DbDateTime;
@@ -76,7 +78,8 @@ use crate::lib::llm_providers::llm_provider::{
 use crate::lib::log_redaction::err_json;
 use crate::lib::model_call::{ModelCallMeta, apply_telemetry, call_model};
 use crate::lib::model_catalog::MIN_PLAUSIBLE_CONTEXT;
-use crate::lib::model_routing::compaction_model;
+use crate::lib::model_routing::{compaction_model, compaction_model_for};
+use crate::lib::model_selection::{StoredModelSelection, resolve_model_selection};
 use crate::lib::task_tool::{Invoker, Subagent};
 use crate::lib::telemetry::{langfuse_telemetry, track_event};
 use crate::lib::tool_collection::{CollectToolsInput, collect_tools, with_tools_cache_control};
@@ -96,7 +99,7 @@ use crate::services::context_service::{AgentContextOptions, CONTEXT_SERVICE};
 use crate::services::context_usage_service::{
     CONTEXT_USAGE_SERVICE, ContextUsageSnapshot, EstimateInput,
 };
-use crate::services::conversation_service::CONVERSATION_SERVICE;
+use crate::services::conversation_service::{CONVERSATION_SERVICE, MessageStored};
 use crate::services::llm_call_service::{LLM_CALL_SERVICE, LlmCallPurpose};
 use crate::services::message_delivery_service::MESSAGE_DELIVERY_SERVICE;
 use crate::services::thread_turn_service::THREAD_TURN_SERVICE;
@@ -104,7 +107,7 @@ use crate::services::tool_ledger_service::{
     DeclareInput, TOOL_LEDGER_SERVICE, summary_tool_options,
 };
 use crate::support::{iso, js, now_ms};
-use crate::{log_error, log_info};
+use crate::{log_error, log_info, log_warn};
 
 /// One row of the summarized context, as it stood when the request was built.
 /// The commit marks exactly these rows (minus the tail) — see the module doc.
@@ -320,6 +323,8 @@ struct FinishInput {
     messages_compacted: i64,
     /// The rows the commit kept verbatim.
     tail: Vec<ForkRow>,
+    /// Characters of the rows stored after the summarized context was read.
+    later_chars: i64,
 }
 
 /// Receives each `compaction` event.
@@ -370,6 +375,121 @@ struct StoredThread {
     context_tokens: Option<i64>,
     workspace_root: Option<String>,
     compacted_at: Option<DateTime<Utc>>,
+}
+
+/// A stored row's text, tool calls and blocks, for `stored_chars`.
+type StoredRowChars = (String, Option<serde_json::Value>, Option<serde_json::Value>);
+
+/// The characters stored rows add to a request: text, tool calls and blocks.
+fn stored_chars(rows: &[StoredRowChars]) -> i64 {
+    rows.iter()
+        .map(|(content, tool_calls, blocks)| {
+            let json = |value: &Option<serde_json::Value>| {
+                value
+                    .as_ref()
+                    .map_or(0, |value| js::len16(&js::stringify(value)))
+            };
+            (js::len16(content) + json(tool_calls) + json(blocks)) as i64
+        })
+        .sum()
+}
+
+/// A rough characters-per-token ratio for rows no provider has counted.
+const STORED_CHARS_PER_TOKEN: i64 = 4;
+
+/// A DATABASE thread's size as its last measurement plus the rows stored after it,
+/// at `STORED_CHARS_PER_TOKEN`, when that reaches the threshold: `Some` with the
+/// time of that measurement (`None` inside when no turn or compaction has measured
+/// it). `None` otherwise. The measurement is the newer of the thread's last turn and
+/// its last compaction. A thread no turn has measured is sized from all its
+/// uncompacted rows, against the window of the model its compaction would run on.
+async fn stored_growth(
+    agent_id: &str,
+    thread_id: &str,
+) -> anyhow::Result<Option<Option<DateTime<Utc>>>> {
+    let Some(threshold) = crate::config::CONFIG.compaction_threshold_percent else {
+        return Ok(None);
+    };
+    let id = thread_id.to_string();
+    let thread = crate::db::run(move |conn| {
+        Ok(t::conversation_threads
+            .filter(t::id.eq(id))
+            .select((
+                t::thread_source,
+                t::context_tokens,
+                t::context_model,
+                t::compacted_at,
+            ))
+            .first::<(
+                ThreadSource,
+                Option<i64>,
+                Option<String>,
+                Option<DateTime<Utc>>,
+            )>(conn)
+            .optional()?)
+    })
+    .await?;
+    let Some((thread_source, context_tokens, context_model, compacted_at)) = thread else {
+        return Ok(None);
+    };
+    if thread_source != ThreadSource::Database {
+        return Ok(None);
+    }
+    let last_turn = LLM_CALL_SERVICE
+        .newest_thread_call(thread_id, &THREAD_TURN_PURPOSES)
+        .await;
+    let measured_at = [last_turn.map(|call| call.created_at), compacted_at]
+        .into_iter()
+        .flatten()
+        .max();
+    let model_id = match context_model {
+        Some(model_id) => model_id,
+        None => unmeasured_compaction_model(agent_id, thread_id).await?,
+    };
+    let window_tokens = context_window_for(&model_id)
+        .map(|window| window.tokens)
+        .unwrap_or(COMPACTION_FALLBACK_WINDOW_TOKENS);
+    if window_tokens < MIN_PLAUSIBLE_CONTEXT {
+        return Ok(None);
+    }
+    let id = thread_id.to_string();
+    let rows = crate::db::run(move |conn| {
+        let mut query = m::conversation_messages
+            .filter(m::thread_id.eq(id))
+            .filter(m::is_compacted.eq(false))
+            .select((m::content, m::tool_calls, m::blocks))
+            .into_boxed();
+        if let Some(measured_at) = measured_at {
+            query = query.filter(m::created_at.gt(DbDateTime(measured_at)));
+        }
+        Ok(query.load::<StoredRowChars>(conn)?)
+    })
+    .await?;
+    let chars = stored_chars(&rows);
+    let measured = if measured_at.is_some() {
+        context_tokens.unwrap_or(0)
+    } else {
+        0
+    };
+    let used_tokens = measured + (chars + STORED_CHARS_PER_TOKEN - 1) / STORED_CHARS_PER_TOKEN;
+    let due = 100.0 * used_tokens as f64 / window_tokens as f64 >= threshold as f64;
+    Ok(due.then_some(measured_at))
+}
+
+/// The model a compaction of a thread no turn has measured would run on: the agent's
+/// model in Fixed mode, the largest tier in Auto mode.
+async fn unmeasured_compaction_model(agent_id: &str, thread_id: &str) -> anyhow::Result<String> {
+    let agent = AGENT_WORKSPACE_SERVICE.get_agent().await?;
+    if agent.id != agent_id {
+        anyhow::bail!("agent {agent_id} not found");
+    }
+    compaction_model_for(
+        agent.model.as_deref(),
+        &resolve_model_selection(&StoredModelSelection::from(&agent)),
+        thread_id,
+        &create_provider(),
+    )
+    .await
 }
 
 /// The thread's row, or `None` when it is gone.
@@ -453,6 +573,9 @@ pub struct CompactionService {
     /// One timer per idle chat conversation. `restore_idle` re-arms them at boot from
     /// stored data. A thread a session reset left behind still gets its one summary.
     idle_timers: Mutex<HashMap<String, tokio::task::AbortHandle>>,
+    /// The newest stored row of each thread that a stored run wrote while a compaction
+    /// of it was queued or running. `settle` sizes that thread again.
+    stored_during_compaction: Mutex<HashMap<String, MessageStored>>,
 }
 
 impl CompactionService {
@@ -461,6 +584,7 @@ impl CompactionService {
             events: CompactionEvents::default(),
             in_flight: Mutex::new(HashSet::new()),
             idle_timers: Mutex::new(HashMap::new()),
+            stored_during_compaction: Mutex::new(HashMap::new()),
         }
     }
 
@@ -470,9 +594,119 @@ impl CompactionService {
     }
 
     /// Ends a thread's queued or running compaction, and emits `settled`.
-    fn settle(&self, thread_id: &str) {
-        self.in_flight.lock().remove(thread_id);
+    fn settle(&'static self, thread_id: &str) {
+        let stored = {
+            // Under the `in_flight` lock, which `defer_while_compacting` holds while it
+            // records a row, so a row recorded for this compaction is never left behind.
+            let mut in_flight = self.in_flight.lock();
+            in_flight.remove(thread_id);
+            self.stored_during_compaction.lock().remove(thread_id)
+        };
         self.events.emit_settled(thread_id);
+        if let Some(stored) = stored {
+            self.after_message_stored(stored);
+        }
+    }
+
+    /// Stored-run path. A run without a turn in the conversation, such as a scheduled
+    /// task, a heartbeat or a webhook, stores rows there that no turn has measured, so
+    /// `maybe_auto_compact` never sees them. After such a row is stored, the
+    /// conversation is sized as its last measurement plus an estimate of the rows
+    /// stored since, and one at or over the threshold is compacted before the next turn
+    /// reads it. A chat turn's own rows are measured at its end. Synchronous, never
+    /// fails.
+    pub fn after_message_stored(&'static self, stored: MessageStored) {
+        if stored.triggered_by == MessageTrigger::UserInput {
+            return;
+        }
+        if crate::config::CONFIG.compaction_threshold_percent.is_none() {
+            return; // disabled by operator
+        }
+        if self.defer_while_compacting(&stored) {
+            return;
+        }
+        tokio::spawn(async move {
+            let thread_id = stored.thread_id.clone();
+            match stored_growth(&stored.agent_id, &thread_id).await {
+                Ok(Some(_)) => {}
+                Ok(None) => return,
+                Err(err) => {
+                    log_warn!(
+                        json!({ "err": err_json(&err), "threadId": thread_id }),
+                        "[Compaction] could not size a conversation after a stored run"
+                    );
+                    return;
+                }
+            }
+            if !self.begin_unless_compacting(&stored) {
+                return;
+            }
+            let input = IdleInput {
+                user_id: stored.user_id.clone(),
+                agent_id: stored.agent_id.clone(),
+                thread_id: thread_id.clone(),
+            };
+            let result = THREAD_TURN_SERVICE
+                .run(&thread_id, async {
+                    // A turn or compaction that held the thread first has measured or
+                    // compacted it.
+                    let Some(measured_at) = stored_growth(&input.agent_id, &thread_id).await?
+                    else {
+                        return Ok(());
+                    };
+                    self.cancel_idle(&thread_id);
+                    // A conversation no turn has measured has no warm cache to read.
+                    let last_call_at = measured_at.unwrap_or(DateTime::<Utc>::UNIX_EPOCH);
+                    self.compact_rebuilt(
+                        &input,
+                        CompactionTrigger::Auto,
+                        CompactionReason::Threshold,
+                        Some(last_call_at),
+                    )
+                    .await
+                })
+                .await;
+            if let Err(err) = result {
+                log_error!(
+                    json!({ "err": err_json(&err), "threadId": thread_id }),
+                    "[Compaction] stored-run compaction failed"
+                );
+                self.fail(
+                    &input.user_id,
+                    &input.agent_id,
+                    &thread_id,
+                    CompactionTrigger::Auto,
+                    &error_text(&err),
+                );
+            }
+            self.settle(&thread_id);
+        });
+    }
+
+    /// Keeps a row stored while the thread's compaction is queued or running for
+    /// `settle`, which sizes the thread again once that compaction has committed.
+    fn defer_while_compacting(&self, stored: &MessageStored) -> bool {
+        let in_flight = self.in_flight.lock();
+        if !in_flight.contains(&stored.thread_id) {
+            return false;
+        }
+        self.stored_during_compaction
+            .lock()
+            .insert(stored.thread_id.clone(), stored.clone());
+        true
+    }
+
+    /// `begin`, or, when the thread already has a compaction queued or running, keeps
+    /// the row for `settle` as `defer_while_compacting` does and answers false.
+    fn begin_unless_compacting(&self, stored: &MessageStored) -> bool {
+        let mut in_flight = self.in_flight.lock();
+        if in_flight.insert(stored.thread_id.clone()) {
+            return true;
+        }
+        self.stored_during_compaction
+            .lock()
+            .insert(stored.thread_id.clone(), stored.clone());
+        false
     }
 
     /// Marks `thread_id` as having a compaction queued or running; false when it
@@ -727,7 +961,7 @@ impl CompactionService {
     /// Manual path (`/compact` → REST): a compaction rebuilt from the stored thread
     /// under the thread mutex (see `compact_rebuilt`). A failure is reported as a
     /// `failed` event, never returned.
-    pub async fn compact_now(&self, input: IdleInput) {
+    pub async fn compact_now(&'static self, input: IdleInput) {
         // A queued idle compaction does what was asked, so it is left to run.
         if self.in_flight.lock().contains(&input.thread_id) {
             return; // one already queued/running is enough
@@ -1311,7 +1545,7 @@ impl CompactionService {
 
     /// Shared last step of every runner: commit the summary, report it.
     async fn complete(&self, input: CompleteInput) -> anyhow::Result<()> {
-        let (messages_compacted, tail) = self
+        let (messages_compacted, tail, later_chars) = self
             .commit(&input.thread_id, &input.summary, input.rows)
             .await?;
         self.finish(FinishInput {
@@ -1326,6 +1560,7 @@ impl CompactionService {
             summary: input.summary,
             messages_compacted,
             tail,
+            later_chars,
         })
         .await;
         Ok(())
@@ -1346,11 +1581,12 @@ impl CompactionService {
         thread_id: &str,
         summary: &str,
         rows: Vec<ForkRow>,
-    ) -> anyhow::Result<(i64, Vec<ForkRow>)> {
+    ) -> anyhow::Result<(i64, Vec<ForkRow>, i64)> {
         let TailSplit { compactable, tail } = split_tail(&rows);
         if compactable.is_empty() {
-            return Ok((0, tail));
+            return Ok((0, tail, 0));
         }
+        let mut later_chars = 0;
 
         let thread = read_thread(thread_id).await?;
         let id = thread_id.to_string();
@@ -1396,7 +1632,9 @@ impl CompactionService {
             .await?;
         } else {
             let ids: Vec<String> = compactable.iter().map(|row| row.id.clone()).collect();
-            crate::db::run(move |conn| {
+            let read_ids: Vec<String> = rows.iter().map(|row| row.id.clone()).collect();
+            let later_id = id.clone();
+            let compacted_at = crate::db::run(move |conn| {
                 let newest: Option<DateTime<Utc>> = m::conversation_messages
                     .filter(m::id.eq_any(&ids))
                     .order(m::created_at.desc())
@@ -1418,10 +1656,24 @@ impl CompactionService {
                     diesel::update(t::conversation_threads.filter(t::id.eq(&id)))
                         .set(&changes)
                         .execute(conn)?;
-                    Ok::<_, anyhow::Error>(())
+                    Ok::<_, anyhow::Error>(now)
                 })
             })
             .await?;
+            // A stored run can write rows after the summarized context was read. They
+            // stay verbatim, and the size this compaction stores counts them, because
+            // the stored-run sizing reads only the rows stored after `compactedAt`.
+            let later = crate::db::run(move |conn| {
+                Ok(m::conversation_messages
+                    .filter(m::thread_id.eq(later_id))
+                    .filter(m::is_compacted.eq(false))
+                    .filter(m::created_at.le(DbDateTime(compacted_at)))
+                    .filter(m::id.ne_all(read_ids))
+                    .select((m::content, m::tool_calls, m::blocks))
+                    .load::<StoredRowChars>(conn)?)
+            })
+            .await?;
+            later_chars = stored_chars(&later);
         }
 
         log_info!(
@@ -1430,16 +1682,18 @@ impl CompactionService {
             thread_id,
             js::len16(summary)
         );
-        Ok((compactable.len() as i64, tail))
+        Ok((compactable.len() as i64, tail, later_chars))
     }
 
     /// Shared completion: meter estimate, completed event, finished telemetry.
     async fn finish(&self, input: FinishInput) {
         let tail_chars: i64 = input.tail.iter().map(|row| row.content_chars).sum();
-        // ~4 chars/token over the rebuilt context (summary message + verbatim tail).
+        // ~4 chars/token over the rebuilt context (summary message, verbatim tail and
+        // the rows stored after the summarized context was read).
         // Undershoots — the system prompt and tools aren't counted — and
         // self-corrects on the next turn's provider-reported usage.
-        let estimated_tokens = (js::len16(&input.summary) as i64 + tail_chars + 3) / 4;
+        let estimated_tokens =
+            (js::len16(&input.summary) as i64 + tail_chars + input.later_chars + 3) / 4;
 
         let snapshot = CONTEXT_USAGE_SERVICE.apply_estimate(EstimateInput {
             user_id: input.user_id.clone(),

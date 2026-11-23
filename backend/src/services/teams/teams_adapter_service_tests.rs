@@ -1601,6 +1601,7 @@ fn links_each_shared_file_to_the_download_route() {
         size_bytes: 3,
         category: AttachmentCategory::Pdf,
         expired: false,
+        inline: None,
     }];
 
     let text = service.with_attachment_notice("Here it is", Some(&attachments));

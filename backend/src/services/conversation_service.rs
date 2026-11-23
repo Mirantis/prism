@@ -163,6 +163,15 @@ pub struct ThreadCreated {
     pub created_at: DateTime<Utc>,
 }
 
+/// A message was stored in a thread — emitted as `message` on `CONVERSATION_SERVICE.events`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessageStored {
+    pub user_id: String,
+    pub agent_id: String,
+    pub thread_id: String,
+    pub triggered_by: MessageTrigger,
+}
+
 /// A client's copy of a stored message names its sender as the chat socket's
 /// `message` event does, so history and live messages have one shape: a client
 /// that tells its own messages from others' by `senderId`, or labels another
@@ -192,6 +201,9 @@ impl<T> DerefMut for WithSender<T> {
 impl<T: HasMessageId> HasMessageId for WithSender<T> {
     fn message_id(&self) -> &str {
         self.inner.message_id()
+    }
+    fn message_content(&self) -> &str {
+        self.inner.message_content()
     }
 }
 
@@ -291,10 +303,15 @@ pub struct IdleCompactionCandidate {
 /// Receives each `thread` event.
 pub type ThreadCreatedListener = Arc<dyn Fn(&ThreadCreated) + Send + Sync>;
 
-/// The `thread` events: a web thread was created.
+/// Receives each `message` event.
+pub type MessageStoredListener = Arc<dyn Fn(&MessageStored) + Send + Sync>;
+
+/// The `thread` events (a web thread was created) and `message` events (a message
+/// was stored in a thread).
 #[derive(Default)]
 pub struct ConversationEvents {
     thread: RwLock<Vec<ThreadCreatedListener>>,
+    message: RwLock<Vec<MessageStoredListener>>,
 }
 
 impl ConversationEvents {
@@ -310,6 +327,19 @@ impl ConversationEvents {
             listener(event);
         }
     }
+
+    /// Call `listener` with every stored message from now on.
+    pub fn on_message(&self, listener: impl Fn(&MessageStored) + Send + Sync + 'static) {
+        self.message.write().push(Arc::new(listener));
+    }
+
+    /// Hand `event` to every listener, synchronously and in subscription order.
+    pub fn emit_message(&self, event: &MessageStored) {
+        let listeners = self.message.read().clone();
+        for listener in listeners {
+            listener(event);
+        }
+    }
 }
 
 // ============================================================================
@@ -317,7 +347,8 @@ impl ConversationEvents {
 // ============================================================================
 
 pub struct ConversationService {
-    /// Emits `thread` (`ThreadCreated`) when a web thread is created.
+    /// Emits `thread` (`ThreadCreated`) when a web thread is created, and `message`
+    /// (`MessageStored`) when a message is stored in a thread.
     pub events: ConversationEvents,
     database_provider: Arc<dyn ThreadMessageProvider>,
     live_providers: RwLock<HashMap<ThreadSource, Arc<dyn ThreadMessageProvider>>>,
@@ -1015,19 +1046,19 @@ impl ConversationService {
 
         // Update the thread's updatedAt.
         let id = thread_id.to_string();
-        let agent_id = crate::db::run(move |conn| {
-            let agent_id = diesel::update(t::conversation_threads.filter(t::id.eq(id)))
+        let (agent_id, user_id) = crate::db::run(move |conn| {
+            let owner = diesel::update(t::conversation_threads.filter(t::id.eq(id)))
                 .set(t::updated_at.eq(DbDateTime::now()))
-                .returning(t::agent_id)
-                .get_result::<String>(conn)
+                .returning((t::agent_id, t::user_id))
+                .get_result::<(String, String)>(conn)
                 .optional()?;
-            agent_id.ok_or_else(record_not_found)
+            owner.ok_or_else(record_not_found)
         })
         .await?;
 
         let mut tracked = IndexMap::new();
         if !agent_id.is_empty() {
-            tracked.insert("agent.id".to_string(), agent_id);
+            tracked.insert("agent.id".to_string(), agent_id.clone());
         }
         tracked.insert("thread.id".to_string(), thread_id.to_string());
         tracked.insert("message.role".to_string(), input.role.as_str().to_string());
@@ -1043,6 +1074,12 @@ impl ConversationService {
             input.internal_step.unwrap_or(false).to_string(),
         );
         track_event("message added", None, Some(tracked));
+        self.events.emit_message(&MessageStored {
+            user_id,
+            agent_id,
+            thread_id: thread_id.to_string(),
+            triggered_by: input.triggered_by,
+        });
 
         // Name the thread after the user's first message (first 3 words, capped).
         // `title IS NULL` makes this atomic and one-shot — it fires only for the very

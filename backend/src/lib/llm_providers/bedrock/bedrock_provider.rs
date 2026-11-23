@@ -30,11 +30,12 @@
 
 use std::sync::Arc;
 
+use super::aws_credential_source::has_aws_credential_source;
 use super::converse_tool_images::CONVERSE_TOOL_IMAGES;
 use crate::ai::providers::amazon_bedrock::anthropic::create_bedrock_anthropic;
 use crate::ai::providers::amazon_bedrock::{AmazonBedrockProviderSettings, create_amazon_bedrock};
 use crate::ai::{LanguageModel, WrapLanguageModelOptions, with_llm_cache, wrap_language_model};
-use crate::config::CONFIG;
+use crate::config::{CONFIG, Config};
 use crate::lib::llm_providers::bedrock_model_id::is_anthropic_model_id;
 use crate::lib::llm_providers::bedrock_shared::create_shared_bedrock_options;
 use crate::lib::llm_providers::deferred_tools::{
@@ -55,6 +56,25 @@ use serde_json::json;
 ///  - Anthropic chat model IDs route through the Anthropic-native provider.
 ///  - Anything else routes through the generic Converse-API provider.
 ///
+/// The settings Bedrock still needs: none through the gateway, with a bearer token
+/// or explicit keys, or when the AWS default chain has a source. The bearer token
+/// is the one the docs ask for.
+pub async fn missing_bedrock_settings() -> Vec<String> {
+    if !needs_credential_source(&CONFIG) || has_aws_credential_source().await {
+        return Vec::new();
+    }
+    vec!["AWS_BEARER_TOKEN_BEDROCK".to_string()]
+}
+
+/// False when the gateway, a bearer token or explicit keys supply the credential,
+/// so the AWS default chain is not asked.
+fn needs_credential_source(config: &Config) -> bool {
+    let set = |value: &Option<String>| value.as_deref().is_some_and(|v| !v.is_empty());
+    !(set(&config.nexus_llm_base_url)
+        || set(&config.bedrock_api_key)
+        || (set(&config.aws_access_key_id) && set(&config.aws_secret_access_key)))
+}
+
 /// `base_url` selects routing: unset → direct AWS (credentials via explicit keys or
 /// the default credential chain); set → the Mirantis Agent Platform gateway, which does its own
 /// signing (so no local credentials are attached).
@@ -169,6 +189,7 @@ fn prompt_cache_fragment(model_id: &str, ttl: Option<CacheTtl>) -> CachePointFra
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lib::llm_providers::llm_provider::test_config;
 
     fn provider() -> LlmProvider {
         bedrock_provider_from(AmazonBedrockProviderSettings {
@@ -334,5 +355,37 @@ mod tests {
         ] {
             assert!(deferred(id).is_none(), "{id}");
         }
+    }
+
+    #[test]
+    fn asks_the_aws_chain_only_when_nothing_else_supplies_a_credential() {
+        let base = [
+            ("LLM_PROVIDER", "bedrock"),
+            ("AWS_BEARER_TOKEN_BEDROCK", ""),
+            ("AWS_ACCESS_KEY_ID", ""),
+            ("AWS_SECRET_ACCESS_KEY", ""),
+        ];
+        assert!(needs_credential_source(&test_config(&base)));
+        for set in [
+            vec![("NEXUS_API_URL", "https://gateway.example.com")],
+            vec![("AWS_BEARER_TOKEN_BEDROCK", "example-token")],
+            vec![
+                ("AWS_ACCESS_KEY_ID", "AKIAEXAMPLE"),
+                ("AWS_SECRET_ACCESS_KEY", "example-secret"),
+            ],
+        ] {
+            let vars: Vec<(&str, &str)> = base
+                .iter()
+                .filter(|(k, _)| !set.iter().any(|(s, _)| s == k))
+                .copied()
+                .chain(set.iter().copied())
+                .collect();
+            assert!(!needs_credential_source(&test_config(&vars)), "{set:?}");
+        }
+        // One key of the pair is not a credential.
+        assert!(needs_credential_source(&test_config(&[
+            ("LLM_PROVIDER", "bedrock"),
+            ("AWS_ACCESS_KEY_ID", "AKIAEXAMPLE")
+        ])));
     }
 }
