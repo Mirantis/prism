@@ -1197,6 +1197,7 @@ impl WebSocketGatewayService {
                 }),
                 agent_message: None,
                 runtime_written: false,
+                task_notification: None,
             })
             .await;
         match accepted {

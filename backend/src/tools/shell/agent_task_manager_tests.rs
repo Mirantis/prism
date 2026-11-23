@@ -1019,3 +1019,358 @@ fn reports_a_drained_status_with_the_wire_names() {
         r#"{"agent":"claude-code","output":"","completed":true,"result":"r","turns":1,"stopReason":"refused","sessionId":"s"}"#
     );
 }
+
+// ---------------------------------------------------------------------------
+// A task started in a chat conversation
+// ---------------------------------------------------------------------------
+
+type Delivered = Arc<Mutex<Vec<(TaskNotificationTarget, String, String)>>>;
+
+struct Notified {
+    h: Harness,
+    delivered: Delivered,
+    /// Set to make every delivery fail, as a locked database would.
+    failing: Arc<AtomicBool>,
+}
+
+fn target() -> TaskNotificationTarget {
+    TaskNotificationTarget {
+        thread_id: "thread-1".to_string(),
+        agent_id: "agent-1".to_string(),
+        user_id: "user-1".to_string(),
+        origin_channel: Some("websocket".to_string()),
+        origin_channel_id: None,
+    }
+}
+
+fn notified_with(resolve: Option<ResolveAgent>) -> Notified {
+    let h = harness();
+    let delivered: Delivered = Arc::new(Mutex::new(Vec::new()));
+    let failing = Arc::new(AtomicBool::new(false));
+    let (record, fail) = (delivered.clone(), failing.clone());
+    let deliver: DeliverNotification = Arc::new(move |target, task_id, text| {
+        let (record, fail) = (record.clone(), fail.clone());
+        Box::pin(async move {
+            record.lock().push((target, task_id, text));
+            if fail.load(Ordering::SeqCst) {
+                anyhow::bail!("database is locked");
+            }
+            Ok(())
+        })
+    });
+    let resolve = resolve.unwrap_or_else(|| {
+        let agent = h.agent.clone();
+        Arc::new(move |_| {
+            let agent: Arc<dyn CodingAgent> = agent.clone();
+            Ok(agent)
+        })
+    });
+    let manager = Arc::new(AgentTaskManager::new(Some(resolve)).with_deliver(deliver));
+    Notified {
+        h: Harness { manager, ..h },
+        delivered,
+        failing,
+    }
+}
+
+fn notified() -> Notified {
+    notified_with(None)
+}
+
+fn notifying(prompt: &str) -> AgentTaskParams {
+    AgentTaskParams {
+        prompt: prompt.to_string(),
+        notify: Some(target()),
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn reports_how_a_notifying_task_ended_to_its_conversation() {
+    let n = notified();
+    let started =
+        n.h.manager
+            .start_task(notifying("upgrade React"))
+            .await
+            .unwrap();
+    n.h.run().session("session-9");
+    n.h.run().text("Upgraded; 0 type errors.");
+    n.h.run()
+        .finish(CodingAgentStopReason::EndTurn, 7, "ok", None);
+    settle().await;
+
+    let delivered = n.delivered.lock().clone();
+    assert_eq!(delivered.len(), 1);
+    let (to, task_id, text) = &delivered[0];
+    assert_eq!(to, &target());
+    assert_eq!(task_id, &started.task_id);
+    assert!(text.contains(&format!(
+        "<task-notification task-id=\"{}\" agent=\"claude-code\" stop-reason=\"end_turn\" turns=\"7\" session-id=\"session-9\">",
+        started.task_id
+    )));
+    assert!(text.contains("Upgraded; 0 type errors."));
+    // The stored report replaces the task: a restart keeps nothing, and a poll
+    // after it reads the same end.
+    assert_eq!(row(&started.task_id).await, None);
+    let status =
+        n.h.manager
+            .read_status(&started.task_id, None)
+            .await
+            .unwrap();
+    assert!(status.completed);
+    assert_eq!(status.stop_reason, Some(TaskStopReason::EndTurn));
+    assert_eq!(status.turns, Some(7));
+    assert_eq!(status.session_id.as_deref(), Some("session-9"));
+    assert_eq!(status.result.as_deref(), Some("Upgraded; 0 type errors."));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn reports_nothing_for_a_task_whose_result_a_poll_already_handed_out() {
+    let n = notified();
+    let started =
+        n.h.manager
+            .start_task(notifying("upgrade React"))
+            .await
+            .unwrap();
+    let manager = n.h.manager.clone();
+    let task_id = started.task_id.clone();
+    let poll = tokio::spawn(async move { manager.read_status(&task_id, Some(1_000)).await });
+    settle().await;
+    n.h.run().succeed();
+    assert!(poll.await.unwrap().unwrap().completed);
+    settle().await;
+    assert!(n.delivered.lock().is_empty());
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn reports_nothing_for_a_task_the_agent_stopped() {
+    let n = notified();
+    let started =
+        n.h.manager
+            .start_task(notifying("upgrade React"))
+            .await
+            .unwrap();
+    n.h.manager.stop_task(&started.task_id).await.unwrap();
+    settle().await;
+    assert!(n.delivered.lock().is_empty());
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn reports_nothing_for_a_task_stopped_after_its_run_ended_and_before_its_finalize() {
+    // The run has exited, so stop_task does not flag the stop and awaits the
+    // finalize, which must not report what the stop call is about to hand back.
+    let n = notified();
+    let started =
+        n.h.manager
+            .start_task(notifying("upgrade React"))
+            .await
+            .unwrap();
+    n.h.run().finish(
+        CodingAgentStopReason::EndTurn,
+        3,
+        "THE REAL FINAL RESULT",
+        None,
+    );
+    let status = n.h.manager.stop_task(&started.task_id).await.unwrap();
+    settle().await;
+    assert_eq!(status.result.as_deref(), Some("THE REAL FINAL RESULT"));
+    assert!(n.delivered.lock().is_empty());
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn keeps_a_task_for_the_next_boot_when_its_report_cannot_be_stored() {
+    let n = notified();
+    n.failing.store(true, Ordering::SeqCst);
+    let started =
+        n.h.manager
+            .start_task(notifying("upgrade React"))
+            .await
+            .unwrap();
+    n.h.run().succeed();
+    settle().await;
+
+    assert_eq!(n.delivered.lock().len(), 1);
+    let kept = row(&started.task_id).await.expect("the task is still owed");
+    assert_eq!(kept["params"]["notify"]["threadId"], "thread-1");
+    assert_eq!(kept["finished"]["stopReason"], "end_turn");
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn sends_the_report_a_restart_held_back() {
+    let n = notified();
+    n.h.manager
+        .resume(
+            vec![item(
+                "task-1",
+                json!({
+                    "params": { "prompt": "upgrade React", "agent": "claude-code", "notify": target() },
+                    "finished": { "stopReason": "end_turn", "turns": 2, "result": "Done." },
+                }),
+            )],
+            Vec::new(),
+        )
+        .await;
+    settle().await;
+
+    let delivered = n.delivered.lock().clone();
+    assert_eq!(delivered.len(), 1);
+    assert_eq!(delivered[0].1, "task-1");
+    assert!(delivered[0].2.contains("Done."));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn cuts_a_long_result_in_the_report_and_names_the_saved_copy() {
+    let n = notified();
+    let long = format!("{}THE END", "a".repeat(40_000));
+    let started =
+        n.h.manager
+            .start_task(notifying("write the report"))
+            .await
+            .unwrap();
+    n.h.run().text(&long);
+    n.h.run()
+        .finish(CodingAgentStopReason::EndTurn, 4, "ok", None);
+    for _ in 0..20 {
+        settle().await;
+        if !n.delivered.lock().is_empty() {
+            break;
+        }
+    }
+
+    let delivered = n.delivered.lock().clone();
+    assert_eq!(delivered[0].1, started.task_id);
+    let text = &delivered[0].2;
+    assert!(len16(text) < NOTIFICATION_RESULT_MAX_CHARS + 2_000);
+    assert!(text.contains("INCOMPLETE OUTPUT"));
+    assert!(
+        text.contains("The whole result is saved at ")
+            || text.contains("The whole result could not be saved."),
+        "{}",
+        &text[text.len().saturating_sub(800)..]
+    );
+    assert!(text.contains("THE END"));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn names_the_tasks_workdir_where_a_cut_result_is_saved() {
+    let workdir = tempfile::tempdir().unwrap();
+    let workdir = workdir.path().to_str().unwrap();
+    let text = notification_text(
+        CodingTaskOutcome {
+            task_id: "task-1".to_string(),
+            agent: "claude-code".to_string(),
+            stop_reason: "end_turn".to_string(),
+            result: format!("{}THE END", "a".repeat(40_000)),
+            ..Default::default()
+        },
+        Some(workdir),
+    )
+    .await;
+    if text.contains("The whole result is saved at ") {
+        // shell_exec picks its environment from its workdir, so the notice names
+        // the one that saved the copy.
+        assert!(text.contains(&format!(
+            "with shell_exec in workdir {}, using grep or sed.",
+            serde_json::to_string(workdir).unwrap()
+        )));
+    }
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn reports_a_task_the_boot_cannot_continue_as_failed_then_stops_owing_it() {
+    let n = notified_with(Some(Arc::new(|_| {
+        anyhow::bail!("Coding agent \"codex\" is unavailable.")
+    })));
+    n.h.manager
+        .resume(
+            vec![item(
+                "task-codex",
+                json!({ "params": { "prompt": "a", "agent": "codex", "notify": target() } }),
+            )],
+            Vec::new(),
+        )
+        .await;
+
+    let delivered = n.delivered.lock().clone();
+    assert_eq!(delivered.len(), 1);
+    assert_eq!(delivered[0].1, "task-codex");
+    assert!(delivered[0].2.contains("stop-reason=\"error\""));
+    assert!(
+        delivered[0]
+            .2
+            .contains("Coding agent \"codex\" is unavailable.")
+    );
+    assert_eq!(row("task-codex").await, None);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn reports_a_task_the_restarts_gave_up_as_failed() {
+    let n = notified();
+    n.h.manager
+        .resume(
+            Vec::new(),
+            vec![item(
+                "task-loop",
+                json!({ "params": { "prompt": "fix the build", "agent": "claude-code", "notify": target() } }),
+            )],
+        )
+        .await;
+
+    let delivered = n.delivered.lock().clone();
+    assert_eq!(delivered.len(), 1);
+    assert!(delivered[0].2.contains("stop-reason=\"error\""));
+    assert!(delivered[0].2.contains("given up"));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn reports_a_finished_task_the_restarts_gave_up_with_its_own_result() {
+    let n = notified();
+    n.h.manager
+        .resume(
+            Vec::new(),
+            vec![item(
+                "task-done",
+                json!({
+                    "params": { "prompt": "fix the build", "agent": "claude-code", "notify": target() },
+                    "sessionId": "session-3",
+                    "finished": { "stopReason": "end_turn", "turns": 5, "result": "Build fixed." },
+                }),
+            )],
+        )
+        .await;
+
+    let delivered = n.delivered.lock().clone();
+    let text = &delivered[0].2;
+    assert!(text.contains(
+        "<task-notification task-id=\"task-done\" agent=\"claude-code\" stop-reason=\"end_turn\" turns=\"5\" session-id=\"session-3\">"
+    ));
+    assert!(text.contains("Build fixed."));
+    assert!(!text.contains("given up"));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn leaves_a_task_without_a_conversation_to_its_polls() {
+    let n = notified();
+    let started = n.h.manager.start_task(sample()).await.unwrap();
+    n.h.run().succeed();
+    settle().await;
+    assert!(n.delivered.lock().is_empty());
+    let status =
+        n.h.manager
+            .read_status(&started.task_id, None)
+            .await
+            .unwrap();
+    assert_eq!(status.result.as_deref(), Some("ok"));
+}

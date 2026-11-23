@@ -51,6 +51,9 @@ use crate::prompts::context_builder::{
     ConversationMessage, PromptMode, build_conversation_history, build_system_prompt_parts,
 };
 use crate::prompts::scheduled_run_prompt::scheduled_run_prompt;
+use crate::prompts::task_notification_prompt::{
+    CodingTaskOutcome, render_coding_task_notification,
+};
 use crate::services::agent_workspace_service::{
     AGENT_WORKSPACE_SERVICE, CreateAgentInput, WriteWorkspaceDocInput, resolve_effective_model,
 };
@@ -69,8 +72,10 @@ use crate::templates::default_workspace::get_default_workspace_files;
 use crate::tools::ask_questions::ask_questions_result;
 use crate::tools::computer::{ALERT_THE_USER, get_computer_tools};
 use crate::tools::meeting::{MeetingToolsInput, get_meeting_tools};
+use crate::tools::shell::coding_agent::NOTIFIED_TASK_NEXT;
 use crate::types::{
-    AgentContext, AgentMessageOrigin, HeartbeatTrigger, InvokeMode, InvokeRequest, TaskLastSend,
+    AgentContext, AgentMessageOrigin, HeartbeatTrigger, InvokeMode, InvokeRequest, PromptSource,
+    TaskLastSend,
 };
 use crate::utils::slack_formatter::slack_channel_label;
 use crate::utils::teams_formatter::teams_channel_label;
@@ -248,6 +253,7 @@ fn info() -> Value {
             "alertTheUser": ALERT_THE_USER,
             "defaultHeartbeatMd": get_default_workspace_files().heartbeat_md,
             "askQuestionsResult": ask_questions_result(),
+            "notifiedTaskNext": NOTIFIED_TASK_NEXT,
         },
     })
 }
@@ -294,6 +300,18 @@ async fn setup() -> anyhow::Result<Value> {
     Ok(json!({ "subagentName": SUBAGENT_NAME }))
 }
 
+/// A coding task's outcome, as the scenarios name it.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EvalCodingTaskOutcome {
+    task_id: String,
+    agent: String,
+    stop_reason: String,
+    turns: Option<u64>,
+    session_id: Option<String>,
+    result: String,
+}
+
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum RenderParams {
@@ -308,6 +326,8 @@ enum RenderParams {
         origin: AgentMessageOrigin,
         text: String,
     },
+    /// The runtime's report that a coding task ended, as the engine stores it.
+    CodingTaskNotification { outcome: EvalCodingTaskOutcome },
     /// A heartbeat's run prompt, with the channel messages that started it.
     Heartbeat {
         triggers: Option<Vec<HeartbeatTrigger>>,
@@ -329,6 +349,16 @@ fn render(params: RenderParams) -> anyhow::Result<Value> {
             last_send,
         } => scheduled_run_prompt(&instruction, last_send.as_ref()),
         RenderParams::AgentMessage { origin, text } => render_agent_message(&origin, &text),
+        RenderParams::CodingTaskNotification { outcome } => {
+            render_coding_task_notification(&CodingTaskOutcome {
+                task_id: outcome.task_id,
+                agent: outcome.agent,
+                stop_reason: outcome.stop_reason,
+                turns: outcome.turns,
+                session_id: outcome.session_id,
+                result: outcome.result,
+            })
+        }
         RenderParams::Heartbeat { triggers: Some(t) } => {
             HEARTBEAT_SERVICE.build_triggered_heartbeat_prompt(&t)
         }
@@ -627,7 +657,10 @@ struct RiskGateParams {
     mode: InvokeMode,
     prompt: String,
     #[serde(default)]
-    prompt_from_agent: bool,
+    prompt_source: Option<PromptSource>,
+    /// The person's earlier messages in the thread, oldest first.
+    #[serde(default)]
+    earlier: Vec<String>,
     tool: String,
     input: Value,
 }
@@ -668,8 +701,13 @@ async fn risk_gate(params: RiskGateParams) -> anyhow::Result<Value> {
         input: params.input,
         invocation_mode: params.mode.as_str().to_string(),
         initial_prompt: params.prompt.clone(),
-        initial_prompt_from_agent: Some(params.prompt_from_agent),
-        messages: vec![ModelMessage::user(params.prompt)],
+        initial_prompt_source: params.prompt_source,
+        messages: params
+            .earlier
+            .into_iter()
+            .chain(std::iter::once(params.prompt))
+            .map(ModelMessage::user)
+            .collect(),
         agent_guide: Some(context.agent_md.clone()),
         user_id: EVAL_USER_ID.to_string(),
         agent_id: eval_agent,

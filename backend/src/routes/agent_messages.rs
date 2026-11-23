@@ -494,6 +494,7 @@ async fn store(agent_id: &str, body: &AgentMessageBody) -> anyhow::Result<AgentM
                 message_id: body.message_id.clone(),
             }),
             runtime_written: false,
+            task_notification: None,
         })
         .await?;
     acceptance.release_turn();

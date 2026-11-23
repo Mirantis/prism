@@ -9,7 +9,7 @@
 //! The available credentials select the coding agent
 //! (`lib::coding_agents`); the sub-agent inherits the runtime's environment.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::agent_task_manager::{
@@ -18,6 +18,7 @@ use super::agent_task_manager::{
 use super::workspace::resolve_path;
 use crate::config::{CODING_AGENTS, CONFIG, CodingAgentName};
 use crate::lib::coding_agents::coding_agent::{CodingAgentMode, Effort, ModelTier};
+use crate::services::task_notification_service::TaskNotificationTarget;
 
 /// The input of `coding_agent`.
 #[derive(Debug, Clone, Deserialize)]
@@ -190,10 +191,25 @@ pub fn coding_agent_stop_input_schema() -> Value {
 }
 
 /// Resolves `workdir` against the workspace and starts the task.
+/// What the agent does after starting a task whose result comes back as a task notification.
+pub const NOTIFIED_TASK_NEXT: &str = "End your turn now unless you have other work. The result arrives in this conversation as a task notification when the task ends.";
+
+/// What `coding_agent` returns: the started task, and in a chat conversation what
+/// the agent does next.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingAgentStarted {
+    #[serde(flatten)]
+    pub task: StartedTask,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<&'static str>,
+}
+
 pub async fn run_coding_agent(
     input: CodingAgentInput,
     workspace: &str,
-) -> anyhow::Result<StartedTask> {
+    notify: Option<TaskNotificationTarget>,
+) -> anyhow::Result<CodingAgentStarted> {
     let workdir = match input.workdir.as_deref().filter(|dir| !dir.is_empty()) {
         Some(dir) => resolve_path(workspace, dir),
         None => workspace.to_string(),
@@ -209,8 +225,13 @@ pub async fn run_coding_agent(
         max_turns: input.max_turns,
         session_id: input.session_id,
         debug: input.debug,
+        notify: notify.clone(),
     };
-    get_agent_task_manager().start_task(params).await
+    let task = get_agent_task_manager().start_task(params).await?;
+    Ok(CodingAgentStarted {
+        task,
+        next: notify.map(|_| NOTIFIED_TASK_NEXT),
+    })
 }
 
 pub async fn run_coding_agent_status(

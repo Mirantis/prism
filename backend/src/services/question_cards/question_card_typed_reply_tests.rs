@@ -18,7 +18,10 @@ use crate::services::conversation_engine_service::{
 };
 use crate::services::conversation_service::{CONVERSATION_SERVICE, MessageInput};
 use crate::services::inbound_message_service::{INBOUND_MESSAGE_SERVICE, InboundMessage};
-use crate::types::{AgentMessageOrigin, InvokeRequest, InvokeStep, ToolCallRecord};
+use crate::types::{
+    AgentMessageOrigin, InvokeRequest, InvokeStep, PromptSource, TaskNotificationOrigin,
+    ToolCallRecord,
+};
 
 fn person(message: &str) -> UserMessageInput {
     UserMessageInput {
@@ -155,6 +158,72 @@ async fn leaves_a_card_waiting_on_a_message_the_runtime_wrote() {
 
 #[tokio::test]
 #[serial_test::serial]
+async fn stores_a_task_notification_hidden_under_the_task_id_and_leaves_a_card_open() {
+    let _db = agent().await;
+    let card_row = seed(card(json!({})), THREAD).await;
+
+    Box::pin(CONVERSATION_ENGINE_SERVICE.accept_user_message(
+        &UserMessageInput {
+            task_notification: Some(TaskNotificationOrigin {
+                task_id: "task-1".into(),
+            }),
+            ..person("<task-notification task-id=\"task-1\">Done.</task-notification>")
+        },
+        THREAD,
+        Some("task-1"),
+    ))
+    .await
+    .unwrap();
+
+    assert_eq!(stored(&card_row).await["status"], json!("waiting"));
+    let row = rows(THREAD)
+        .await
+        .into_iter()
+        .find(|row| row.id == "task-1")
+        .expect("the notification is stored under the task id");
+    assert_eq!(row.triggered_by, MessageTrigger::TaskNotification);
+    assert!(row.internal_step);
+    // A restart before the insert stores it again as a notification, not as the person's words.
+    let work = chat_work().await;
+    let (_, payload) = work.iter().find(|(key, _)| key == "task-1").unwrap();
+    assert_eq!(
+        payload["message"]["taskNotification"],
+        json!({ "taskId": "task-1" })
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn answers_a_task_notification_in_a_turn_the_risk_gate_reads_as_the_tasks() {
+    let _db = agent().await;
+    let seen: Arc<parking_lot::Mutex<Vec<InvokeRequest>>> = Arc::default();
+    let record = seen.clone();
+    *crate::services::conversation_engine_service::testing::INVOKE.write() =
+        Some(Arc::new(move |request: InvokeRequest| {
+            record.lock().push(request);
+            futures::stream::iter(vec![Ok(step("The task finished.", Vec::new()))]).boxed()
+        }));
+
+    Box::pin(CONVERSATION_ENGINE_SERVICE.chat(ChatInput {
+        agent_id: agent_id(),
+        user_id: USER.into(),
+        message: "<task-notification task-id=\"task-1\">Done.</task-notification>".into(),
+        thread_id: Some(THREAD.into()),
+        task_notification: Some(TaskNotificationOrigin {
+            task_id: "task-1".into(),
+        }),
+        ..ChatInput::default()
+    }))
+    .await
+    .unwrap();
+
+    let seen = seen.lock();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].prompt_source, Some(PromptSource::Task));
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn leaves_a_card_waiting_on_another_agents_message() {
     let _db = agent().await;
     let card_row = seed(card(json!({})), THREAD).await;
@@ -191,6 +260,7 @@ async fn an_answer_message_that_the_next_boot_stores_leaves_a_newer_waiting_card
         sender: None,
         agent_message: None,
         runtime_written: true,
+        task_notification: None,
     });
     let message = work.message.clone().unwrap();
 
@@ -204,6 +274,7 @@ async fn an_answer_message_that_the_next_boot_stores_leaves_a_newer_waiting_card
             attachment_ids: message.attachment_ids,
             agent_message: message.agent_message,
             runtime_written: message.runtime_written,
+            task_notification: None,
         },
         &work.thread_id,
         Some("answer-1"),
