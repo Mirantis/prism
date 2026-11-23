@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { generateText, jsonSchema, tool } from 'ai';
+import { generateText, jsonSchema, stepCountIs, tool } from 'ai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../services/chatgpt-auth.service', () => ({
@@ -22,11 +22,16 @@ const add = tool({
   }),
 });
 
-function answerWith(body: string, status = 200) {
+// Two steps of one gpt-6.2-sol turn: reasoning and a tool call, then the answer.
+const REASONING_STEP = readFileSync(path.join(__dirname, 'fixtures/reasoning-tool-call-stream.sse'), 'utf8');
+const ANSWER_STEP = readFileSync(path.join(__dirname, 'fixtures/reasoning-answer-stream.sse'), 'utf8');
+
+function answerWith(...bodies: string[]) {
   const requests: Record<string, unknown>[] = [];
   globalThis.fetch = vi.fn(async (_input: unknown, init?: RequestInit) => {
     requests.push(JSON.parse(String(init?.body)));
-    return new Response(body, { status, headers: { 'content-type': 'text/event-stream' } });
+    const body = bodies[Math.min(requests.length, bodies.length) - 1];
+    return new Response(body, { headers: { 'content-type': 'text/event-stream' } });
   }) as typeof globalThis.fetch;
   return requests;
 }
@@ -58,5 +63,24 @@ describe('ChatGPT subscription requests', () => {
     expect(result.toolCalls.map((call) => [call.toolName, call.input])).toEqual([['add', { a: 2, b: 3 }]]);
     expect(result.finishReason).toBe('tool-calls');
     expect(result.usage.totalTokens).toBe(91);
+  });
+
+  // With store off, the API keeps no reasoning between steps: the next step
+  // sends it back encrypted, or the model reasons without it.
+  it("sends a step's encrypted reasoning back with the next step", async () => {
+    const requests = answerWith(REASONING_STEP, ANSWER_STEP);
+    const addAndRun = tool({ ...add, execute: async ({ a, b }: { a: number; b: number }) => String(a + b) });
+
+    await generateText({
+      model: createChatGptProvider()('gpt-6.2-sol'),
+      prompt: 'hi',
+      tools: { add: addAndRun },
+      stopWhen: stepCountIs(2),
+    });
+
+    expect(requests).toHaveLength(2);
+    expect(requests[1].input).toContainEqual(
+      expect.objectContaining({ type: 'reasoning', encrypted_content: 'encrypted-reasoning-example' }),
+    );
   });
 });

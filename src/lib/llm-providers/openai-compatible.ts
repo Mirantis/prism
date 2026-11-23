@@ -1,8 +1,8 @@
 /**
- * The OpenAI-shaped provider both `openai` and `openrouter` are built from.
+ * The OpenAI-shaped provider `openai`, `chatgpt` and `openrouter` are built from.
  *
- * Two vendors reach `@ai-sdk/openai`: the official API, and OpenRouter, whose
- * own API is OpenAI-compatible. What differs between them — the endpoint, the
+ * Two vendors reach `@ai-sdk/openai`: the official API, which `chatgpt` reaches
+ * on a subscription token, and OpenRouter, whose own API is OpenAI-compatible. What differs between them — the endpoint, the
  * credential, the model-id convention, the startup log line — stays in their
  * own factories; everything here is a property of the *SDK surface*:
  * `createOpenAI()(modelId)` dispatches to the Responses API, prompt caching is
@@ -40,7 +40,7 @@ export interface OpenAiCompatibleOptions {
   baseURL?: string;
   /** Optional custom fetch (e.g. for OAuth bearer injection and token refresh). */
   fetch?: typeof globalThis.fetch;
-  /** Applied to every model the provider returns, for every call it makes. */
+  /** For an endpoint that accepts only some request shapes, such as a subscription's. */
   middleware?: LanguageModelMiddleware | LanguageModelMiddleware[];
 }
 
