@@ -107,6 +107,7 @@
   },
   "overrides": {
     "deepmerge-ts": "^8.0.2",
+    "effect": "^3.22.1",
     "katex": "^0.18.2",
     "mysql2": "^3.24.5",
     "smol-toml": "^1.9.1",
