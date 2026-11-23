@@ -33,13 +33,12 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use crate::ai::{Tool, ToolSet, execute_fn, on_input_available_fn, tool, zod_schema};
-use crate::constants::{MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB};
-use crate::lib::execution_environments::execution_environment::FileStat;
 use crate::lib::execution_environments::get_execution_environment::{
     files_for, get_execution_environment,
 };
 use crate::lib::execution_environments::workspace::resolve_workspace;
 use crate::lib::pending_file_writes::{PendingFileWrites, PendingWaitOutcome, WaitForOptions};
+use crate::lib::read_settled_file::read_settled_file;
 use crate::services::attachment_service::{
     ATTACHMENT_SERVICE, AttachmentSource, CreateAttachmentInput, classify_media_type,
     detect_media_type,
@@ -48,7 +47,7 @@ use crate::tools::shell::workspace::{is_inside_workspace, resolve_path};
 use crate::{log_info, log_warn};
 
 pub const SHARE_FILE_TOOL_NAME: &str = "share_file";
-pub const SHARE_FILE_DESCRIPTION: &str = "Share a file from your workspace with the user as a downloadable attachment. Use this whenever the user asks for a file, report, export, document, image, or generated artifact — first create it on disk (e.g. with shell_write_file or shell_exec), then call share_file with its path. Announcing a file you have not shared yet leaves the user with nothing to open. The file is delivered as a download in the web/CLI chat and uploaded natively to Slack. Max 10 MB per file. Do not paste large file contents into your reply or invent download links — use this tool.";
+pub const SHARE_FILE_DESCRIPTION: &str = "Share a file from your workspace with the user as a downloadable attachment. Use this whenever the user asks for a file, report, export, document, or generated artifact — first create it on disk (e.g. with shell_write_file or shell_exec), then call share_file with its path. Announcing a file you have not shared yet leaves the user with nothing to open. The file is delivered as a download in the web/CLI chat and uploaded natively to Slack. Max 10 MB per file. Do not paste large file contents into your reply or invent download links — use this tool. To show an image (PNG, JPEG, GIF or WebP) inside your reply instead, write ![description](path) where it belongs: the path of an image file in your workspace, or attachment:<id> for an image in this conversation. That needs no share_file call. When your reply explains an image, such as a chart, show it inline; share it as a file when the user wants a file to keep.";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ShareFileInput {
@@ -125,13 +124,6 @@ pub struct ShareFileDeps {
     pub pending_write_timeout_ms: Option<u64>,
 }
 
-/// Whether the file changed across a read: either it no longer matches the bytes
-/// just read, or its mtime has moved on from the stat taken before that read.
-/// Both halves matter — an edit that keeps the length is still a different file.
-fn moved(before: &FileStat, after: &FileStat, data: &[u8]) -> bool {
-    after.size != data.len() as u64 || after.mtime_ms != before.mtime_ms
-}
-
 /// How long to wait for a sibling write before refusing to share. Covers the
 /// write itself plus the tool risk gate's own pre-execute model call, which can
 /// delay a write by up to `RISK_EVALUATION_TIMEOUT_MS` after this read begins. A
@@ -139,52 +131,9 @@ fn moved(before: &FileStat, after: &FileStat, data: &[u8]) -> bool {
 /// value, and the wait costs no wall-clock in the normal case.
 pub const PENDING_WRITE_TIMEOUT_MS: u64 = 20_000;
 
-/// `(bytes / MiB).toFixed(1)`: the exact value rounded half up to one decimal,
-/// as `Number.prototype.toFixed` rounds, where Rust rounds a tie to even.
-fn megabytes(bytes: u64) -> String {
-    // Tenths of a MiB, rounded half up: exact in integers.
-    let tenths = (bytes * 10 + 1024 * 1024 / 2) / (1024 * 1024);
-    format!("{}.{}", tenths / 10, tenths % 10)
-}
-
-/// The refusal for a file over the cap.
-fn too_large(bytes: u64) -> ShareFileFailure {
-    ShareFileFailure::new(format!(
-        "File too large ({} MB) — max {MAX_FILE_SIZE_MB} MB.",
-        megabytes(bytes)
-    ))
-}
-
 /// `path.basename(p)` of a normalized POSIX path.
 fn basename(p: &str) -> &str {
     p.trim_end_matches('/').rsplit('/').next().unwrap_or("")
-}
-
-/// The bytes of the file, read twice at most until a read matches the stats
-/// around it; a second change refuses the share.
-async fn read_settled(
-    full_path: &str,
-    shown_path: &str,
-    stat: FileStat,
-) -> anyhow::Result<Result<Vec<u8>, ShareFileFailure>> {
-    let files = files_for(full_path);
-    let mut before = stat;
-    let mut data = files.read_bytes(full_path).await?;
-    let mut after = files.stat(full_path).await?;
-    if moved(&before, &after, &data) {
-        before = after;
-        data = files.read_bytes(full_path).await?;
-        after = files.stat(full_path).await?;
-        // Compare against the stat taken just before the retry, and on mtime as
-        // well as size — a same-size edit is still a different revision, and size
-        // alone would let one through.
-        if moved(&before, &after, &data) {
-            return Ok(Err(ShareFileFailure::new(format!(
-                "Not shared: {shown_path} is changing while it is read, so the attachment would not match what you describe. Wait for the write to finish, then share it."
-            ))));
-        }
-    }
-    Ok(Ok(data))
 }
 
 /// Read a workspace file and persist it as an agent-sourced attachment.
@@ -218,51 +167,10 @@ pub async fn run_share_file(
         return fail(barrier);
     }
 
-    let Ok(stat) = files_for(&full_path).stat(&full_path).await else {
-        return fail(ShareFileFailure::new(format!(
-            "File not found: {}",
-            input.path
-        )));
+    let data = match read_settled_file(&full_path, &input.path).await {
+        Ok(data) => data,
+        Err(error) => return fail(ShareFileFailure::new(error)),
     };
-    if stat.is_directory {
-        return fail(ShareFileFailure::new(format!(
-            "{} is a directory — share a single file.",
-            input.path
-        )));
-    }
-    if stat.size == 0 {
-        return fail(ShareFileFailure::new(format!(
-            "File is empty: {}",
-            input.path
-        )));
-    }
-    if stat.size > MAX_FILE_SIZE_BYTES as u64 {
-        return fail(too_large(stat.size));
-    }
-
-    // Read, then confirm the file did not move under the read. The barrier covers
-    // the writes in this step; this catches the writers that outlive their call
-    // (`coding_agent`, `shell_spawn`) in the one window where they are observable
-    // at all. One retry: a second change means something is still writing, and
-    // guessing which revision the reply describes is exactly the mistake being fixed.
-    let data = match read_settled(&full_path, &input.path, stat).await {
-        Ok(Ok(data)) => data,
-        Ok(Err(changing)) => return fail(changing),
-        Err(err) => return fail(ShareFileFailure::new(err.to_string())),
-    };
-
-    // Re-check the guards against the bytes actually read. The stat above can be
-    // stale by now — a background writer may have grown the file past the cap or
-    // truncated it to nothing — and `data` is what goes into the media store.
-    if data.is_empty() {
-        return fail(ShareFileFailure::new(format!(
-            "File is empty: {}",
-            input.path
-        )));
-    }
-    if data.len() as u64 > MAX_FILE_SIZE_BYTES as u64 {
-        return fail(too_large(data.len() as u64));
-    }
 
     let display = input
         .filename
@@ -422,6 +330,7 @@ mod tests {
     use diesel::prelude::*;
 
     use super::*;
+    use crate::constants::MAX_FILE_SIZE_BYTES;
     use crate::db::models::MessageAttachment;
     use crate::db::schema::message_attachments;
     use crate::lib::media_store::tests::DataDirGuard;
@@ -512,14 +421,6 @@ mod tests {
     fn the_definition_matches_the_typescript_runtime() {
         let tools = get_share_file_tools(Some("/tmp"), None);
         crate::tools::schema_fixture::assert_matches_fixture("share-file", &tools);
-    }
-
-    #[test]
-    fn writes_megabytes_as_to_fixed_does() {
-        assert_eq!(megabytes(10 * 1024 * 1024 + 1), "10.0");
-        // 10.25 MiB is a tie, which toFixed rounds up.
-        assert_eq!(megabytes(10_747_904), "10.3");
-        assert_eq!(megabytes(11 * 1024 * 1024), "11.0");
     }
 
     #[tokio::test]

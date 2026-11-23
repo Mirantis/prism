@@ -43,7 +43,7 @@ use crate::lib::mcp_client::close_mcp_clients;
 use crate::lib::model_catalog::{cancel_model_catalog_refresh, refresh_model_catalog};
 use crate::lib::single_agent_bootstrap::resolve_or_bootstrap_single_agent;
 use crate::lib::startup_telemetry::{TrackAgentStartedOptions, track_agent_started};
-use crate::lib::telemetry::{init_telemetry, shutdown_telemetry};
+use crate::lib::telemetry::{init_telemetry, shutdown_telemetry, track_event};
 use crate::lib::tool_collection::init_meeting_tool_availability;
 use crate::lib::usage_telemetry::start_usage_telemetry;
 use crate::queues::slack_heartbeat_throttle_queue::get_slack_heartbeat_throttle_queue;
@@ -96,6 +96,7 @@ use crate::tools::shell::agent_task_manager::get_agent_task_manager;
 use crate::tools::shell::process_manager::get_process_manager;
 use crate::types::ResumedReply;
 use crate::{log_error, log_info, log_warn};
+use indexmap::IndexMap;
 
 /// The file janitor's hourly sweep, stopped by the shutdown.
 static FILE_JANITOR: LazyLock<Mutex<Option<JoinHandle<()>>>> = LazyLock::new(|| Mutex::new(None));
@@ -108,6 +109,8 @@ static USAGE_TELEMETRY: LazyLock<Mutex<Option<JoinHandle<()>>>> =
 /// until it shuts down.
 pub fn main() {
     LazyLock::force(&DOTENV_LOAD_INFO);
+    // After `.env`, which a blank value keeps from filling the variable in.
+    crate::lib::llm_providers::bedrock::aws_credential_source::drop_blank_chain_variables();
     LazyLock::force(&CONFIG);
     log_dotenv_load();
 
@@ -474,14 +477,31 @@ async fn initialize() -> anyhow::Result<()> {
     // has nothing to say, and no vendor is named here.
     let provider = create_provider();
     log_provider(&provider);
-    let missing_settings = missing_provider_settings();
-    if !missing_settings.is_empty() {
+    // Not awaited: a check that waits on the network must not hold up boot.
+    tokio::spawn(async {
+        let missing_settings = missing_provider_settings().await;
+        if missing_settings.is_empty() {
+            return;
+        }
         log_warn!(
             json!({ "provider": CONFIG.llm_provider.as_str(), "missingSettings": missing_settings }),
             "[Startup] the LLM provider is missing settings; chat answers with a notice until they are set"
         );
-    }
-    // Not awaited: a check that waits on the network must not hold up boot.
+        track_event(
+            "llm provider unconfigured",
+            Some(&CONFIG.owner_user_id()),
+            Some(IndexMap::from([
+                (
+                    "llm.provider".to_string(),
+                    CONFIG.llm_provider.as_str().to_string(),
+                ),
+                (
+                    "llm.missing_settings".to_string(),
+                    missing_settings.join(","),
+                ),
+            ])),
+        );
+    });
     if let Some(check) = provider.startup_check.clone() {
         tokio::spawn(check());
     }
@@ -620,6 +640,11 @@ async fn initialize() -> anyhow::Result<()> {
             );
         }
     });
+    // A scheduled task, heartbeat or webhook run stores rows in a conversation that no
+    // turn measures; the compaction service sizes the conversation after each.
+    CONVERSATION_SERVICE
+        .events
+        .on_message(|stored| COMPACTION_SERVICE.after_message_stored(stored.clone()));
 
     SESSION_MANAGER_SERVICE.initialize().await;
     log_info!("Session manager initialized");

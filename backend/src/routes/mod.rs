@@ -18,6 +18,7 @@ pub mod computers;
 pub mod cron_tasks;
 pub mod document_revisions;
 pub mod heartbeat_delivery;
+pub mod llm_provider;
 pub mod locked_in;
 pub mod management;
 pub mod messages;

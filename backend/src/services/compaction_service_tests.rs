@@ -592,6 +592,110 @@ async fn has_compactable_history_counts_the_uncompacted_rows_of_a_database_threa
     );
 }
 
+/// A thread on a model with no known window (so the 1M fallback) and one stored row
+/// of `chars` characters, compacted `compacted_after_row` or never.
+fn seed_stored_run(
+    test: &TestDb,
+    thread_id: &str,
+    source: ThreadSource,
+    chars: usize,
+    compacted_after_row: bool,
+) {
+    let thread_id = thread_id.to_string();
+    test.db
+        .run_sync(move |conn| {
+            let mut thread = NewConversationThread::new("test-agent-id", "user-1");
+            thread.id = thread_id.clone();
+            thread.thread_source = source;
+            thread.context_tokens = Some(12_345);
+            thread.context_model = Some("model-with-no-known-window".into());
+            if compacted_after_row {
+                thread.compacted_at = Some(Utc::now());
+            }
+            diesel::insert_into(conversation_threads::table)
+                .values(&thread)
+                .execute(conn)?;
+            let mut message = NewConversationMessage::new(
+                thread_id.clone(),
+                MessageRole::Agent,
+                "x".repeat(chars),
+                MessageTrigger::CronTask,
+            );
+            message.created_at = (Utc::now() - chrono::Duration::minutes(5)).into();
+            diesel::insert_into(conversation_messages::table)
+                .values(&message)
+                .execute(conn)?;
+            Ok(())
+        })
+        .unwrap();
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn sizes_a_stored_run_as_the_last_measurement_plus_the_rows_stored_since() {
+    let test = test_db();
+    // The agent the threads belong to.
+    seed(&test, "stored-agent", ThreadSource::Database, &[]);
+    // 90% of the 1M fallback window is 900k tokens, 3.6M characters.
+    seed_stored_run(
+        &test,
+        "stored-over",
+        ThreadSource::Database,
+        3_700_000,
+        false,
+    );
+    seed_stored_run(
+        &test,
+        "stored-under",
+        ThreadSource::Database,
+        3_500_000,
+        false,
+    );
+    seed_stored_run(
+        &test,
+        "stored-measured",
+        ThreadSource::Database,
+        3_700_000,
+        true,
+    );
+    seed_stored_run(&test, "stored-slack", ThreadSource::Slack, 3_700_000, false);
+    // No turn or compaction measured it: sized from all its rows.
+    assert_eq!(
+        stored_growth("test-agent-id", "stored-over").await.unwrap(),
+        Some(None)
+    );
+    assert_eq!(
+        stored_growth("test-agent-id", "stored-under")
+            .await
+            .unwrap(),
+        None
+    );
+    // The compaction after the row measured it, and nothing was stored since.
+    assert_eq!(
+        stored_growth("test-agent-id", "stored-measured")
+            .await
+            .unwrap(),
+        None
+    );
+    // A live-read thread's history is in the channel.
+    assert_eq!(
+        stored_growth("test-agent-id", "stored-slack")
+            .await
+            .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn counts_a_stored_rows_text_tool_calls_and_blocks() {
+    let rows = vec![
+        ("abcd".to_string(), Some(json!([{ "a": 1 }])), None),
+        ("é".to_string(), None, Some(json!({}))),
+    ];
+    // "abcd" + `[{"a":1}]` (9) + "é" (1) + `{}` (2)
+    assert_eq!(stored_chars(&rows), 16);
+}
+
 fn seed_thread_only(test: &TestDb, thread_id: &str, source: ThreadSource) {
     let thread_id = thread_id.to_string();
     test.db

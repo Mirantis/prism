@@ -53,6 +53,7 @@ use crate::services::conversation_service::CONVERSATION_SERVICE;
 use crate::services::conversation_thread_activity_service::{
     CONVERSATION_THREAD_ACTIVITY_SERVICE, ThreadMark,
 };
+use crate::services::inline_image_placement::place_reply_images;
 use crate::services::llm_call_service::LlmCallPurpose;
 use crate::services::message_delivery_service::{MESSAGE_DELIVERY_SERVICE, PublishOptions};
 use crate::services::outbound_message_service::{
@@ -992,15 +993,25 @@ impl GoalService {
         tool_calls: Option<Vec<ToolCallRecord>>,
         attachment_ids: Option<Vec<String>>,
     ) -> anyhow::Result<()> {
+        // A goal's reply places images as a chat reply does (see share_file's
+        // description). Its run gives `invoke` no workspace root, so placement reads
+        // the default workspace too.
+        let (content, attachment_ids) = place_reply_images(
+            &goal.thread_id,
+            content,
+            &attachment_ids.unwrap_or_default(),
+            None,
+        )
+        .await;
         MESSAGE_DELIVERY_SERVICE
             .publish(
                 &goal.user_id,
                 &goal.thread_id,
-                content,
+                &content,
                 MessageTrigger::Goal,
                 PublishOptions {
                     tool_calls: tool_calls.filter(|calls| !calls.is_empty()),
-                    attachment_ids: attachment_ids.filter(|ids| !ids.is_empty()),
+                    attachment_ids: Some(attachment_ids).filter(|ids| !ids.is_empty()),
                     channel_context: Some(ChannelContext {
                         channel: goal_channel(goal),
                         channel_id: goal.origin_channel_id.clone(),

@@ -714,6 +714,9 @@ pub struct AttachmentPayload {
     pub category: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expired: Option<bool>,
+    /// The message's text shows this image at its place, as `![alt](attachment:<id>)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inline: Option<bool>,
 }
 
 /// What a message from another agent is: a `message`, an `ask` that waits for an

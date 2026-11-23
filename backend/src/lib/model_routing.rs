@@ -19,7 +19,7 @@ use crate::lib::llm_providers::llm_provider::{LlmProvider, cache_ttl_for, cache_
 use crate::lib::log_redaction::err_json;
 use crate::lib::model_call::{ModelCallMeta, apply_telemetry, call_model};
 use crate::lib::model_selection::{
-    MODEL_TIERS, ModelSelectionMode, ModelTier, ModelTiers, missing_auto_tiers,
+    MODEL_TIERS, ModelSelection, ModelSelectionMode, ModelTier, ModelTiers, missing_auto_tiers,
 };
 use crate::lib::prompt_fence::escape_angles;
 use crate::lib::telemetry::{LangfuseTelemetryOptions, langfuse_telemetry};
@@ -211,11 +211,26 @@ pub async fn compaction_model(
     thread_id: &str,
     provider: &LlmProvider,
 ) -> anyhow::Result<String> {
-    let selection = &context.model_selection;
+    compaction_model_for(
+        context.model.as_deref(),
+        &context.model_selection,
+        thread_id,
+        provider,
+    )
+    .await
+}
+
+/// `compaction_model` from the agent's model and model selection alone.
+pub async fn compaction_model_for(
+    model: Option<&str>,
+    selection: &ModelSelection,
+    thread_id: &str,
+    provider: &LlmProvider,
+) -> anyhow::Result<String> {
     if selection.mode == ModelSelectionMode::Fixed
         || !missing_auto_tiers(&selection.tiers).is_empty()
     {
-        return Ok(resolve_effective_model(context.model.as_deref()));
+        return Ok(resolve_effective_model(model));
     }
     let held = held_tier(Some(thread_id), &selection.tiers, provider).await?;
     let tier = held.map(|held| held.tier).unwrap_or(ModelTier::Large);

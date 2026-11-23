@@ -37,6 +37,9 @@ use crate::services::attachment_service::ATTACHMENT_SERVICE;
 use crate::services::channel_adapter_interface::{ChannelContext, ChannelName};
 use crate::services::conversation_service::{AddedMessage, CONVERSATION_SERVICE, MessageInput};
 use crate::services::conversation_thread_activity_service::CONVERSATION_THREAD_ACTIVITY_SERVICE;
+use crate::services::inline_image_placement::{
+    PlacedImages, PlacementContext, place_inline_images,
+};
 use crate::services::llm_call_service::LlmCallPurpose;
 use crate::services::message_delivery_service::{MESSAGE_DELIVERY_SERVICE, PublishOptions};
 use crate::services::pending_work_service::{PENDING_WORK_SERVICE, PendingWorkKind};
@@ -84,6 +87,17 @@ struct StreamedTurn {
     error: Option<InvokeError>,
     /// The model's stream ended on its own, not by an abort, so the reply is the whole answer.
     completed: bool,
+    images: TurnImages,
+}
+
+/// How the images and files of a turn's replies were shown.
+#[derive(Debug, Clone, Copy, Default)]
+struct TurnImages {
+    inline: usize,
+    /// Image references that show no image.
+    missed: usize,
+    /// Files delivered under a reply rather than in its text.
+    attached: usize,
 }
 
 // ============================================================================
@@ -891,6 +905,7 @@ impl ConversationEngineService {
         let mut agent_message: Option<ConversationMessage> = None;
         let mut turn_error: Option<InvokeError> = None;
         let mut verbose = false;
+        let mut images = TurnImages::default();
         let mut title_set: Option<String> = None;
         let initially_owed = match &input.resumed {
             Some(resumed) => resumed.message_ids.clone(),
@@ -1123,6 +1138,9 @@ impl ConversationEngineService {
                         if !streamed.text.is_empty() {
                             response_texts.push(streamed.text);
                         }
+                        images.inline += streamed.images.inline;
+                        images.missed += streamed.images.missed;
+                        images.attached += streamed.images.attached;
                         all_tool_calls.extend(streamed.tool_calls);
                         all_blocks.extend(streamed.blocks);
                         if streamed.agent_message.is_some() {
@@ -1255,6 +1273,15 @@ impl ConversationEngineService {
             js::len16(&response).to_string(),
         );
         props.insert("chat.verbose".to_string(), verbose.to_string());
+        props.insert("chat.inline_images".to_string(), images.inline.to_string());
+        props.insert(
+            "chat.inline_image_misses".to_string(),
+            images.missed.to_string(),
+        );
+        props.insert(
+            "chat.attached_files".to_string(),
+            images.attached.to_string(),
+        );
         track_event("chat message handled", Some(&user_id), Some(props));
 
         Ok(ChatResponse {
@@ -1463,10 +1490,16 @@ impl ConversationEngineService {
         let mut response_texts: Vec<String> = Vec::new();
         let mut all_blocks: Vec<UIBlock> = Vec::new();
         let mut all_tool_calls: Vec<ToolCallRecord> = Vec::new();
-        // Files the agent shared (share_file) accrue across steps and ride out on
-        // the final delivered message, so they appear alongside the answer.
+        // Files the agent shared (share_file) accrue across steps. A delivered step
+        // takes the images its text places; the rest ride out on the final delivered
+        // message, so they appear alongside the answer.
         let mut all_attachment_ids: Vec<String> =
             params.unsent_attachment_ids.clone().unwrap_or_default();
+        let mut images = TurnImages::default();
+        // In verbose mode a step's images are read when the step arrives, not when
+        // the next text step flushes it, so a later step that rewrites or deletes
+        // the file does not change what this step's text describes.
+        let mut buffered_placed: Option<PlacedImages> = None;
         let mut error: Option<InvokeError> = None;
         // Whether the row holds calls or files that this turn's reply takes over.
         let mut owes = !all_attachment_ids.is_empty();
@@ -1513,15 +1546,29 @@ impl ConversationEngineService {
                 // no blocks, no feedback gate.
                 if let Some(buffered) = &buffered_step {
                     if params.verbose {
+                        let placed = match buffered_placed.take() {
+                            Some(placed) => placed,
+                            None => {
+                                place(
+                                    thread_id,
+                                    params.workspace_root.as_deref(),
+                                    &all_attachment_ids,
+                                    &buffered.text,
+                                )
+                                .await
+                            }
+                        };
+                        let placed = deliver(placed, &mut all_attachment_ids, &mut images);
                         agent_message = Some(
                             MESSAGE_DELIVERY_SERVICE
                                 .publish(
                                     user_id,
                                     thread_id,
-                                    &buffered.text,
+                                    &placed.content,
                                     MessageTrigger::UserInput,
                                     PublishOptions {
                                         tool_calls: non_empty(&buffered_tool_calls),
+                                        attachment_ids: non_empty(&placed.attachment_ids),
                                         channel_context: channel_context.clone().map(|context| {
                                             ChannelContext {
                                                 include_feedback: Some(false),
@@ -1556,6 +1603,19 @@ impl ConversationEngineService {
                 }
 
                 buffered_step = Some(step.clone());
+                buffered_placed = if params.verbose {
+                    Some(
+                        place(
+                            thread_id,
+                            params.workspace_root.as_deref(),
+                            &all_attachment_ids,
+                            &step.text,
+                        )
+                        .await,
+                    )
+                } else {
+                    None
+                };
                 buffered_tool_calls = std::mem::take(&mut pending_tool_calls);
             }
             if !step.tool_calls.is_empty() || !step.text.is_empty() {
@@ -1586,6 +1646,7 @@ impl ConversationEngineService {
                 agent_message,
                 error,
                 completed,
+                images,
             });
         }
 
@@ -1603,17 +1664,37 @@ impl ConversationEngineService {
                         params.abort_signal.as_ref(),
                     )
                     .await?;
+            let placed = match buffered_placed.take() {
+                Some(placed) => placed,
+                None => {
+                    place(
+                        thread_id,
+                        params.workspace_root.as_deref(),
+                        &all_attachment_ids,
+                        &buffered.text,
+                    )
+                    .await
+                }
+            };
+            let placed = deliver(placed, &mut all_attachment_ids, &mut images);
+            let attachment_ids: Vec<String> = placed
+                .attachment_ids
+                .iter()
+                .chain(all_attachment_ids.iter())
+                .cloned()
+                .collect();
+            images.attached += all_attachment_ids.len();
             agent_message = Some(
                 MESSAGE_DELIVERY_SERVICE
                     .publish(
                         user_id,
                         thread_id,
-                        &buffered.text,
+                        &placed.content,
                         MessageTrigger::UserInput,
                         PublishOptions {
                             tool_calls: non_empty(&buffered_tool_calls),
                             blocks: blocks_json(&all_blocks),
-                            attachment_ids: non_empty(&all_attachment_ids),
+                            attachment_ids: non_empty(&attachment_ids),
                             channel_context: channel_context.clone().map(|context| {
                                 ChannelContext {
                                     include_feedback: Some(include_feedback),
@@ -1663,6 +1744,7 @@ impl ConversationEngineService {
                 || !all_blocks.is_empty()
                 || !all_attachment_ids.is_empty())
         {
+            images.attached += all_attachment_ids.len();
             agent_message = Some(
                 MESSAGE_DELIVERY_SERVICE
                     .publish(
@@ -1693,8 +1775,36 @@ impl ConversationEngineService {
             agent_message,
             error,
             completed,
+            images,
         })
     }
+}
+
+/// The images `text` places, read from the run's workspace, with the files this
+/// turn shared that no message holds yet.
+async fn place(
+    thread_id: &str,
+    workspace_root: Option<&str>,
+    shared: &[String],
+    text: &str,
+) -> PlacedImages {
+    place_inline_images(
+        text,
+        &PlacementContext {
+            thread_id,
+            workspace_root,
+            shared,
+        },
+    )
+    .await
+}
+
+/// A delivered step takes the images it placed out of the files still owed.
+fn deliver(placed: PlacedImages, owed: &mut Vec<String>, images: &mut TurnImages) -> PlacedImages {
+    owed.retain(|id| !placed.attachment_ids.contains(id));
+    images.inline += placed.attachment_ids.len();
+    images.missed += placed.missed;
+    placed
 }
 
 impl Default for ConversationEngineService {
