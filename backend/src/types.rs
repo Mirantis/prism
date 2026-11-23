@@ -213,6 +213,11 @@ pub struct InvokeRequest {
     /// history renders it: a turn that was stopped may store its last reply after
     /// the next messages arrived, and history alone would then end on the assistant.
     pub prompt_message_id: Option<String>,
+    /// The request an `invoke()` run's model calls are spent on. `None`: a new id per
+    /// run. A subagent run spends on its parent's request.
+    pub request_id: Option<String>,
+    /// The scheduled task, webhook or goal an `invoke()` run serves, which its spending is listed under.
+    pub source_id: Option<String>,
     /// The run starts work that a restart may have stopped part-way. The model is
     /// told in a message after the prompt, so the cached prefix before it holds.
     pub after_restart: bool,

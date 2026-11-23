@@ -38,18 +38,22 @@ use crate::config::{CONFIG, CodingAgentName};
 use crate::lib::agent_mcp_servers::agent_mcp_servers;
 use crate::lib::coding_agents::coding_agent::{
     CodingAgent, CodingAgentEvent, CodingAgentMode, CodingAgentRefusal, CodingAgentRun,
-    CodingAgentStopReason, CodingAgentTask, Effort, ModelTier,
+    CodingAgentStopReason, CodingAgentTask, CodingAgentUsage, Effort, ModelTier,
 };
 use crate::lib::execution_environments::execution_environment::ProcessMark;
 use crate::lib::execution_environments::get_execution_environment::get_execution_environment_for;
 use crate::lib::execution_environments::leftover_process::stop_leftover_process;
 use crate::lib::log_redaction::err_json;
+use crate::lib::spend_context::{SpendContext, current_spend_context};
 use crate::lib::telemetry::track_event;
 use crate::lib::tool_output_limiter::truncate_head_tail;
 use crate::lib::tool_output_store::write_tool_output;
 use crate::prompts::resume_prompt::RESUMED_CODING_TASK_PROMPT;
 use crate::prompts::task_notification_prompt::{
     CodingTaskOutcome, render_coding_task_notification,
+};
+use crate::services::llm_call_service::{
+    CallTokens, LLM_CALL_SERVICE, LlmCallPurpose, RecordTokensInput,
 };
 use crate::services::pending_work_service::{
     PENDING_WORK_SERVICE, PendingWorkItem, PendingWorkKind,
@@ -100,6 +104,9 @@ pub struct AgentTaskParams {
     /// The conversation the task reports to when it ends. Absent: the agent polls for the result.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notify: Option<TaskNotificationTarget>,
+    /// The request and thread the task's tokens are spent on, which outlive the turn that started it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spend: Option<SpendContext>,
 }
 
 /// `refused`: the agent finished, but its permission checks refused part of the work.
@@ -334,9 +341,11 @@ impl AgentTaskManager {
         let name = params.agent.unwrap_or_else(|| CONFIG.coding_agent());
         let agent = (self.resolve_agent)(name)?;
         let task_id = uuid::Uuid::new_v4().to_string();
+        let spend = params.spend.clone().or_else(current_spend_context);
         let work = CodingTaskWork {
             params: AgentTaskParams {
                 agent: Some(name),
+                spend,
                 ..params
             },
             session_id: None,
@@ -905,6 +914,7 @@ impl AgentTaskManager {
                         texts.push(text);
                         Self::notify(entry);
                     }
+                    CodingAgentEvent::Usage { usage } => record_usage(&entry.params, &usage),
                     CodingAgentEvent::Session { session_id } => {
                         // Recorded as it arrives so a *stopped* task can be resumed —
                         // including when stop_task has to give up on this loop ever
@@ -1162,6 +1172,35 @@ pub fn get_agent_task_manager() -> Arc<AgentTaskManager> {
 /// Test-only: replace the singleton with a manager built on a stub agent.
 pub fn set_agent_task_manager_for_tests(manager: Option<Arc<AgentTaskManager>>) {
     *AGENT_TASK_MANAGER.write() = manager;
+}
+
+/// Record the tokens a run reported against the request and thread that started its task.
+fn record_usage(params: &AgentTaskParams, usage: &CodingAgentUsage) {
+    let prompt = usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens;
+    let spend = params.spend.as_ref();
+    LLM_CALL_SERVICE.record_tokens(RecordTokensInput {
+        purpose: LlmCallPurpose::CodingAgent,
+        model: usage.model.clone(),
+        tokens: Some(CallTokens {
+            total_tokens: prompt + usage.output_tokens,
+            input_tokens: prompt,
+            output_tokens: usage.output_tokens,
+            cache_read_tokens: usage.cache_read_tokens,
+            cache_write_tokens: usage.cache_write_tokens,
+            long_cache_write_tokens: Some(usage.long_cache_write_tokens),
+            no_cache_tokens: usage.input_tokens,
+            audio_input_tokens: None,
+            audio_output_tokens: None,
+        }),
+        thread_id: spend
+            .and_then(|s| s.thread_id.clone())
+            .or_else(|| params.notify.as_ref().map(|n| n.thread_id.clone())),
+        request_id: spend.map(|s| s.request_id.clone()),
+        source: spend.and_then(|s| s.source.clone()),
+        agent_id: None,
+        subscription: usage.subscription,
+        reported_cost_usd: usage.cost_usd,
+    });
 }
 
 #[cfg(test)]

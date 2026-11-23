@@ -80,6 +80,7 @@ use crate::lib::model_call::{ModelCallMeta, apply_telemetry, call_model};
 use crate::lib::model_catalog::MIN_PLAUSIBLE_CONTEXT;
 use crate::lib::model_routing::{compaction_model, compaction_model_for};
 use crate::lib::model_selection::{StoredModelSelection, resolve_model_selection};
+use crate::lib::spend_context::carried;
 use crate::lib::task_tool::{Invoker, Subagent};
 use crate::lib::telemetry::{langfuse_telemetry, track_event};
 use crate::lib::tool_collection::{CollectToolsInput, collect_tools, with_tools_cache_control};
@@ -625,7 +626,7 @@ impl CompactionService {
         if self.defer_while_compacting(&stored) {
             return;
         }
-        tokio::spawn(async move {
+        tokio::spawn(carried(async move {
             let thread_id = stored.thread_id.clone();
             match stored_growth(&stored.agent_id, &thread_id).await {
                 Ok(Some(_)) => {}
@@ -680,7 +681,7 @@ impl CompactionService {
                 );
             }
             self.settle(&thread_id);
-        });
+        }));
     }
 
     /// Keeps a row stored while the thread's compaction is queued or running for
@@ -769,7 +770,7 @@ impl CompactionService {
         let waker = futures::task::noop_waker();
         let mut cx = Context::from_waker(&waker);
         if job.as_mut().poll(&mut cx).is_pending() {
-            tokio::spawn(job);
+            tokio::spawn(carried(job));
         }
     }
 
@@ -868,10 +869,10 @@ impl CompactionService {
         }
         let thread_id = due.thread.thread_id.clone();
         let delay = std::time::Duration::from_millis(delay_ms.max(0) as u64);
-        let timer = tokio::spawn(async move {
+        let timer = tokio::spawn(carried(async move {
             tokio::time::sleep(delay).await;
             self.compact_idle(due);
-        });
+        }));
         timers.insert(thread_id, timer.abort_handle());
     }
 
@@ -882,7 +883,7 @@ impl CompactionService {
         if !self.begin(&due.thread.thread_id) {
             return;
         }
-        tokio::spawn(async move {
+        tokio::spawn(carried(async move {
             let thread_id = due.thread.thread_id.clone();
             let result = THREAD_TURN_SERVICE
                 .run(&thread_id, async {
@@ -933,7 +934,7 @@ impl CompactionService {
                 );
             }
             self.settle(&thread_id);
-        });
+        }));
     }
 
     /// Overflow recovery. Called by `invoke_stream`'s error path when a turn's
@@ -1264,6 +1265,8 @@ impl CompactionService {
                 purpose: LlmCallPurpose::Compaction,
                 thread_id: Some(thread_id.clone()),
                 agent_id: None,
+                request_id: None,
+                source: None,
             },
             params,
         )
@@ -1369,6 +1372,8 @@ impl CompactionService {
                     purpose: LlmCallPurpose::Compaction,
                     thread_id: Some(thread_id.clone()),
                     agent_id: None,
+                    request_id: None,
+                    source: None,
                 },
                 params,
             )
@@ -1467,6 +1472,8 @@ impl CompactionService {
                         purpose: LlmCallPurpose::Compaction,
                         thread_id: Some(thread_id.clone()),
                         agent_id: None,
+                        request_id: None,
+                        source: None,
                     },
                     params,
                 )

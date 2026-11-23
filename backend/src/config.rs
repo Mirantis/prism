@@ -698,8 +698,8 @@ pub struct Config {
     /// A non-numeric or non-positive value is ignored.
     pub context_window_tokens: Option<i64>,
 
-    /// Registry to refresh the model-window catalog from, once at startup.
-    /// Opt-in: `None` unless set.
+    /// Registry to refresh the model catalog (windows and prices) from, at startup
+    /// and once a day. Opt-in: `None` unless set.
     pub models_dev_url: Option<String>,
 
     /// Auto-compaction trigger, as a percent of the model's context window.
@@ -1356,9 +1356,11 @@ impl Config {
                 .filter(|v| *v > 0);
 
         // Opt-in: `None` unless the operator names a registry URL, so the runtime
-        // makes no outbound call of its own by default.
+        // makes no outbound call of its own by default. Whitespace collapses to `None`
+        // so a blank line in a .env file reads as "off" rather than as an unreachable
+        // URL that would warn on every boot, and `off` reads as off too.
         let models_dev_url = Some(e.get("MODELS_DEV_URL").unwrap_or("").trim())
-            .filter(|u| !u.is_empty())
+            .filter(|u| !u.is_empty() && u.to_lowercase() != "off")
             .map(str::to_string);
 
         // 0 explicitly disables auto-compaction; 1–100 is a valid percent;

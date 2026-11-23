@@ -841,6 +841,8 @@ pub async fn evaluate_tool_risk(
             purpose: LlmCallPurpose::RiskGate,
             thread_id: None,
             agent_id: Some(input.agent_id.clone()).filter(|id| !id.is_empty()),
+            request_id: None,
+            source: None,
         },
         params,
     )

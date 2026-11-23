@@ -1176,14 +1176,31 @@ pub struct LlmCall {
     pub purpose: String,
     pub model: String,
     pub thread_id: Option<String>,
+    /// The request the call served: the user message a chat turn answers, or the run's own id.
+    pub request_id: Option<String>,
+    /// What started the request: `chat`, `heartbeat`, `cron`, `webhook`, `goal`, `voice-chat`, `meeting` or `dictation`.
+    pub source_kind: Option<String>,
+    /// The scheduled task, webhook or goal that started it, where the kind has one.
+    pub source_id: Option<String>,
     pub total_tokens: i64,
     pub input_tokens: i64,
     pub output_tokens: i64,
     pub cache_read_tokens: i64,
     pub cache_write_tokens: i64,
     pub no_cache_tokens: i64,
+    /// The audio part of `no_cache_tokens`.
+    pub audio_input_tokens: i64,
+    /// The audio part of `output_tokens`.
+    pub audio_output_tokens: i64,
+    /// Estimated cost in millionths of a US dollar; `None` when no price is known for the model.
+    pub cost_micro_usd: Option<i64>,
+    /// Where the cost came from: `catalog`, `reported` or `subscription`.
+    pub cost_source: Option<String>,
     #[serde(with = "crate::support::serde_iso")]
     pub created_at: DateTime<Utc>,
+    /// `created_at` cut down to its 15-minute bucket, which period totals group by.
+    #[serde(with = "crate::support::serde_iso")]
+    pub bucket: DateTime<Utc>,
 }
 
 /// One `LlmCall` row to insert. [`Self::new`] takes the fields the schema requires
@@ -1197,13 +1214,21 @@ pub struct NewLlmCall {
     pub purpose: String,
     pub model: String,
     pub thread_id: Option<String>,
+    pub request_id: Option<String>,
+    pub source_kind: Option<String>,
+    pub source_id: Option<String>,
     pub total_tokens: i64,
     pub input_tokens: i64,
     pub output_tokens: i64,
     pub cache_read_tokens: i64,
     pub cache_write_tokens: i64,
     pub no_cache_tokens: i64,
+    pub audio_input_tokens: i64,
+    pub audio_output_tokens: i64,
+    pub cost_micro_usd: Option<i64>,
+    pub cost_source: Option<String>,
     pub created_at: DbDateTime,
+    pub bucket: DbDateTime,
 }
 
 impl NewLlmCall {
@@ -1220,15 +1245,30 @@ impl NewLlmCall {
             purpose: purpose.into(),
             model: model.into(),
             thread_id: None,
+            request_id: None,
+            source_kind: None,
+            source_id: None,
             total_tokens: 0,
             input_tokens: 0,
             output_tokens: 0,
             cache_read_tokens: 0,
             cache_write_tokens: 0,
             no_cache_tokens: 0,
+            audio_input_tokens: 0,
+            audio_output_tokens: 0,
+            cost_micro_usd: None,
+            cost_source: None,
             created_at: now.into(),
+            bucket: llm_call_bucket(now).into(),
         }
     }
+}
+
+/// The 15-minute bucket `llm_calls.bucket` stores for a call made at `at`.
+pub fn llm_call_bucket(at: DateTime<Utc>) -> DateTime<Utc> {
+    const BUCKET_MS: i64 = 15 * 60 * 1000;
+    let ms = at.timestamp_millis();
+    crate::support::from_ms(ms - ms.rem_euclid(BUCKET_MS))
 }
 
 /// A partial update of one `LlmCall` row: a `None` field is left as it is, and
@@ -1241,13 +1281,21 @@ pub struct LlmCallChangeset {
     pub purpose: Option<String>,
     pub model: Option<String>,
     pub thread_id: Option<Option<String>>,
+    pub request_id: Option<Option<String>>,
+    pub source_kind: Option<Option<String>>,
+    pub source_id: Option<Option<String>>,
     pub total_tokens: Option<i64>,
     pub input_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
     pub cache_read_tokens: Option<i64>,
     pub cache_write_tokens: Option<i64>,
     pub no_cache_tokens: Option<i64>,
+    pub audio_input_tokens: Option<i64>,
+    pub audio_output_tokens: Option<i64>,
+    pub cost_micro_usd: Option<Option<i64>>,
+    pub cost_source: Option<Option<String>>,
     pub created_at: Option<DbDateTime>,
+    pub bucket: Option<DbDateTime>,
 }
 
 // ---------------------------------------------------------------- MemoryEntry

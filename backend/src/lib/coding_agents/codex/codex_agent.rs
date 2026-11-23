@@ -18,7 +18,8 @@ use crate::lib::coding_agents::bedrock_credentials::bedrock_region;
 use crate::lib::coding_agents::cli_run::{CliRunSpec, ParseLine, run_cli};
 use crate::lib::coding_agents::coding_agent::{
     CodingAgent, CodingAgentEvent, CodingAgentEvents, CodingAgentHome, CodingAgentMode,
-    CodingAgentRun, CodingAgentStopReason, CodingAgentTask, PLAN_ONLY_INSTRUCTION,
+    CodingAgentRun, CodingAgentStopReason, CodingAgentTask, CodingAgentUsage,
+    PLAN_ONLY_INSTRUCTION,
 };
 use crate::lib::coding_agents::deferred_run::{aborted, deferred_run};
 use crate::lib::coding_agents::shared_skills_home::prepare_shared_skills_home;
@@ -130,7 +131,11 @@ impl CodingAgent for CodexAgent {
                         args: build_args(&task, auth_method, &models),
                         cwd: task.workdir.clone(),
                         env,
-                        parse_line: create_parser(),
+                        parse_line: create_parser(
+                            model_for(&task, auth_method, &models)
+                                .unwrap_or_else(|| UNNAMED_MODEL.to_string()),
+                            subscription,
+                        ),
                     },
                     Some(run_in),
                 )
@@ -326,7 +331,7 @@ fn build_args(
         args.push("model_provider=\"amazon-bedrock\"".to_string());
         if task.model_tier.is_none() {
             args.push("-c".to_string());
-            args.push("model=\"openai.gpt-5.6-terra\"".to_string());
+            args.push(format!("model=\"{BEDROCK_DEFAULT_MODEL}\""));
         }
         args.push("-c".to_string());
         args.push(format!(
@@ -352,14 +357,11 @@ fn build_args(
     // An omitted tier or effort must emit no selection flag here, preserving
     // deployment configuration and the existing Bedrock default above. Keep
     // both optional on resume too; a default tier would silently replace it.
-    if let Some(tier) = task.model_tier {
-        let model = models.get(tier.as_str()).expect("every tier has a model");
+    if task.model_tier.is_some()
+        && let Some(model) = model_for(task, auth_method, models)
+    {
         args.push("--model".to_string());
-        args.push(if use_bedrock {
-            model.bedrock.clone()
-        } else {
-            model.openai.clone()
-        });
+        args.push(model);
     }
     if let Some(effort) = task.effort {
         args.push("-c".to_string());
@@ -392,6 +394,32 @@ fn build_args(
     args
 }
 
+/// The model a Bedrock task runs on when it names no tier.
+const BEDROCK_DEFAULT_MODEL: &str = "openai.gpt-5.6-terra";
+
+/// The name a usage row gets when Codex runs the model its own configuration chooses.
+const UNNAMED_MODEL: &str = "codex";
+
+/// The model a task runs on, or `None` where Codex's own configuration chooses it.
+fn model_for(
+    task: &CodingAgentTask,
+    auth_method: Option<CodexAuthMethod>,
+    models: &TierSet<CodexTierModel>,
+) -> Option<String> {
+    let use_bedrock = auth_method == Some(CodexAuthMethod::Bedrock);
+    match task.model_tier {
+        Some(tier) => {
+            let model = models.get(tier.as_str()).expect("every tier has a model");
+            Some(if use_bedrock {
+                model.bedrock.clone()
+            } else {
+                model.openai.clone()
+            })
+        }
+        None => use_bedrock.then(|| BEDROCK_DEFAULT_MODEL.to_string()),
+    }
+}
+
 /// A field's text: a string as it is, any other value as `String(value)`.
 fn js_string(value: &Value) -> String {
     match value {
@@ -407,7 +435,7 @@ fn present<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
 
 /// Codex reports one turn for the whole exec task, including its tool calls.
 /// The parser keeps the last answer and the last error between lines.
-fn create_parser() -> ParseLine {
+fn create_parser(model: String, subscription: bool) -> ParseLine {
     let mut answer = String::new();
     let mut error = String::new();
     Box::new(move |line| {
@@ -462,12 +490,39 @@ fn create_parser() -> ParseLine {
             }]);
         }
         if event_type == Some("turn.completed") {
-            return Ok(vec![CodingAgentEvent::Result {
+            let mut events = Vec::new();
+            // `input_tokens` includes the cached and the cache-written ones.
+            if let Some(usage) = present(&event, "usage") {
+                let count = |key: &str| {
+                    present(usage, key)
+                        .and_then(Value::as_f64)
+                        .map_or(0, |count| count as i64)
+                };
+                let (input, cached, written) = (
+                    count("input_tokens"),
+                    count("cached_input_tokens"),
+                    count("cache_write_input_tokens"),
+                );
+                events.push(CodingAgentEvent::Usage {
+                    usage: CodingAgentUsage {
+                        model: model.clone(),
+                        input_tokens: (input - cached - written).max(0),
+                        cache_read_tokens: cached,
+                        cache_write_tokens: written,
+                        long_cache_write_tokens: 0,
+                        output_tokens: count("output_tokens"),
+                        cost_usd: None,
+                        subscription,
+                    },
+                });
+            }
+            events.push(CodingAgentEvent::Result {
                 stop_reason: CodingAgentStopReason::EndTurn,
                 turns: 1,
                 message: answer.clone(),
                 refusals: None,
-            }]);
+            });
+            return Ok(events);
         }
         Ok(vec![])
     })

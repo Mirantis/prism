@@ -42,6 +42,7 @@ use crate::services::meeting::meeting_provider_interface::{
     SpeakerDetails,
 };
 use crate::services::meeting::providers::google_meet::GOOGLE_MEET_PROVIDER;
+use crate::services::meeting::realtime_usage::{RealtimePurpose, RealtimeSpend};
 use crate::services::meeting::resampler::MEETING_SAMPLE_RATE;
 use crate::services::meeting::response_policy::{EffectiveMode, ResponseMode};
 use crate::services::meeting::tool_bridge::{MeetingToolBridgeInput, prepare_meeting_tools};
@@ -1106,6 +1107,7 @@ impl MeetingBotService {
             model: None,
             voice: Some(agent_voice.voice.clone()),
             endpoint_override: None,
+            spend: RealtimeSpend::new(RealtimePurpose::Meeting, None),
             on_session_lost: Some(Arc::new(move |reason| self.on_session_lost(epoch, reason))),
         })?;
         locals.conversation = Some(conversation.clone());

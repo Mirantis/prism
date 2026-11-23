@@ -212,11 +212,32 @@ pub struct CodingAgentRefusal {
     pub target: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The tokens one model spent on a task, as the agent reported them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingAgentUsage {
+    pub model: String,
+    /// The uncached part of the prompt.
+    pub input_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub cache_write_tokens: i64,
+    /// The part of `cache_write_tokens` written with the one-hour lifetime.
+    pub long_cache_write_tokens: i64,
+    pub output_tokens: i64,
+    /// The cost the agent reported for these tokens, in US dollars.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
+    /// The run is billed to a subscription, not per token.
+    pub subscription: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum CodingAgentEvent {
     /// Output for the caller, streamed as it is produced.
     Text { text: String },
+    /// Tokens spent, reported when the agent reports them: once a run, or once a turn.
+    Usage { usage: CodingAgentUsage },
     /// The id a later task passes as `session_id` to resume this one's context.
     Session {
         #[serde(rename = "sessionId")]

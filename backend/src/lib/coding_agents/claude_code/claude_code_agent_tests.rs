@@ -974,7 +974,81 @@ async fn reports_the_session_id_assistant_text_and_the_outcome_as_events() {
 }
 
 fn parse(line: Value) -> Vec<CodingAgentEvent> {
-    parse_line(&line.to_string(), &base_task(), &deployment()).unwrap()
+    parse_line(&line.to_string(), &base_task(), &deployment(), false).unwrap()
+}
+
+fn usage_events(events: Vec<CodingAgentEvent>) -> Vec<CodingAgentEvent> {
+    events
+        .into_iter()
+        .filter(|event| matches!(event, CodingAgentEvent::Usage { .. }))
+        .collect()
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn reports_the_usage_of_every_model_the_run_used_with_the_cost_the_cli_estimated() {
+    // The `modelUsage` of a result line captured from Claude Code, which writes its
+    // cache with the one-hour lifetime.
+    let events = events_for(
+        &[json!({
+            "type": "result", "subtype": "success", "result": "OK", "num_turns": 1,
+            "modelUsage": {
+                "claude-haiku-5-5": {
+                    "inputTokens": 2, "outputTokens": 4, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 143355,
+                    "webSearchRequests": 0, "costUSD": 0.14336600000000002, "contextWindow": 1000000, "maxOutputTokens": 128000,
+                    "thinkingTokens": 0, "cacheCreationEphemeral5mInputTokens": 0, "cacheCreationEphemeral1hInputTokens": 143355,
+                    "canonicalModel": "claude-haiku-5-5", "provider": "firstParty", "costBasis": "list",
+                },
+            },
+        })],
+        base_task(),
+    )
+    .await;
+    assert_eq!(
+        usage_events(events),
+        [CodingAgentEvent::Usage {
+            usage: CodingAgentUsage {
+                model: "claude-haiku-5-5".into(),
+                input_tokens: 2,
+                cache_read_tokens: 0,
+                cache_write_tokens: 143_355,
+                long_cache_write_tokens: 143_355,
+                output_tokens: 4,
+                cost_usd: Some(0.14336600000000002),
+                subscription: false,
+            },
+        }]
+    );
+}
+
+#[test]
+fn reports_the_usage_of_a_run_on_the_subscription_as_billed_to_it() {
+    let events = parse_line(
+        &json!({
+            "type": "result", "subtype": "success", "result": "ok", "num_turns": 1,
+            "modelUsage": { "claude-opus-5-5": { "inputTokens": 10, "outputTokens": 20, "costUSD": 0.01 } },
+        })
+        .to_string(),
+        &base_task(),
+        &deployment(),
+        true,
+    )
+    .unwrap();
+    assert_eq!(
+        usage_events(events),
+        [CodingAgentEvent::Usage {
+            usage: CodingAgentUsage {
+                model: "claude-opus-5-5".into(),
+                input_tokens: 10,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                long_cache_write_tokens: 0,
+                output_tokens: 20,
+                cost_usd: Some(0.01),
+                subscription: true,
+            },
+        }]
+    );
 }
 
 #[test]

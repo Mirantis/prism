@@ -12,6 +12,7 @@ pub mod meeting_provider_interface;
 pub mod openai_endpoint;
 pub mod providers;
 pub mod realtime_session;
+pub mod realtime_usage;
 pub mod resampler;
 pub mod response_policy;
 pub mod tool_bridge;

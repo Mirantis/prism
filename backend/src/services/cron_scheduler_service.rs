@@ -1516,6 +1516,7 @@ impl CronSchedulerService {
             user_id: task.user_id.clone(),
             agent_id: task.agent_id.clone(),
             mode: InvokeMode::Cron,
+            source_id: Some(task.id.clone()),
             prompt: if bound_thread_id.is_some() {
                 instruction.to_string()
             } else {

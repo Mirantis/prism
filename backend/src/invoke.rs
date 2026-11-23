@@ -42,6 +42,9 @@ use crate::lib::log_redaction::err_json;
 use crate::lib::model_call::{ModelCallMeta, apply_telemetry, call_model};
 use crate::lib::model_routing::{RoutedRequest, select_turn_model};
 use crate::lib::pending_file_writes::{PendingFileWrites, create_pending_file_writes};
+use crate::lib::spend_context::{
+    SpendContext, SpendSource, SpendSourceKind, carried, current_spend_context, with_spend_context,
+};
 use crate::lib::step_usage::{fold_step_usage, to_step_usage};
 use crate::lib::task_tool::{Invoker, Subagent};
 use crate::lib::telemetry::{LangfuseTelemetry, langfuse_telemetry, track_event};
@@ -1107,6 +1110,8 @@ impl Turn {
                 purpose: purpose_for(request.mode),
                 thread_id: request.thread_id.clone(),
                 agent_id: Some(request.agent_id.clone()),
+                request_id: None,
+                source: None,
             },
             params,
         )
@@ -1195,6 +1200,8 @@ impl Turn {
                     purpose: LlmCallPurpose::EarlyStopping,
                     thread_id: request.thread_id.clone(),
                     agent_id: Some(request.agent_id.clone()),
+                    request_id: None,
+                    source: None,
                 },
                 params,
             )
@@ -1593,7 +1600,8 @@ async fn run_invocation(
         refused_deferral: AtomicBool::new(false),
         was_canceled: AtomicBool::new(false),
     });
-    tokio::spawn(turn.clone().run());
+    // The turn's model calls are spent where the stream is read.
+    tokio::spawn(carried(turn.clone().run()));
 
     // Yield steps as they arrive. Errors from generation surface as a final friendly
     // step (with optional structured `error` metadata) via `build_error_step`.
@@ -1719,6 +1727,30 @@ fn step_tool_calls(step: &StepResult) -> Vec<ToolCallRecord> {
         .collect()
 }
 
+/// The spend context of an `invoke()` run: its own request, started by its mode. A
+/// subagent runs inside its parent's request.
+fn spend_context_for(request: &InvokeRequest) -> SpendContext {
+    let parent = current_spend_context();
+    let Some(kind) = SpendSourceKind::of_mode(request.mode) else {
+        return parent.unwrap_or_else(|| SpendContext {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            thread_id: request.thread_id.clone(),
+            source: None,
+        });
+    };
+    SpendContext {
+        request_id: request
+            .request_id
+            .clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+        thread_id: request.thread_id.clone(),
+        source: Some(SpendSource {
+            kind,
+            id: request.source_id.clone(),
+        }),
+    }
+}
+
 /// Aggregating wrapper: drains `invoke_stream` into a single response.
 ///
 /// All preflight, context fetch, and friendly error formatting live in
@@ -1738,14 +1770,21 @@ pub async fn invoke(request: InvokeRequest) -> anyhow::Result<InvokeResponse> {
     let mut steps: Vec<InvokeStep> = Vec::new();
     let mut error_meta: Option<InvokeError> = None;
 
-    let mut stream = invoke_stream(request);
-    while let Some(step) = stream.next().await {
-        let step = step?;
-        if let Some(error) = &step.error {
-            error_meta = Some(error.clone());
+    // A run's calls are its own request, so an autonomous run started from inside a
+    // chat turn is not spent on that turn's message.
+    let spend = spend_context_for(&request);
+    with_spend_context(spend, async {
+        let mut stream = invoke_stream(request);
+        while let Some(step) = stream.next().await {
+            let step = step?;
+            if let Some(error) = &step.error {
+                error_meta = Some(error.clone());
+            }
+            steps.push(step);
         }
-        steps.push(step);
-    }
+        anyhow::Ok(())
+    })
+    .await?;
 
     let all_tool_calls: Vec<_> = steps
         .iter()

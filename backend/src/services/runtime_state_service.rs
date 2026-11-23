@@ -24,6 +24,9 @@ pub const DEPLOYMENT_ID: &str = "deploymentId";
 /// How the agent's names were read for its voice: a JSON object of name to reading.
 pub const AGENT_VOICE_READINGS: &str = "agentVoiceReadings";
 
+/// The last model catalog overlay fetched from models.dev, as JSON, so a restart without network keeps it.
+pub const MODEL_CATALOG_OVERLAY: &str = "modelCatalogOverlay";
+
 /// The end of the last closed hour that `llm usage aggregated` reported, as an ISO time.
 pub const LLM_USAGE_REPORTED_THROUGH: &str = "llmUsageReportedThrough";
 

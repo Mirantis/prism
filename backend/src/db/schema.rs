@@ -302,6 +302,12 @@ diesel::table! {
         model -> Text,
         #[sql_name = "threadId"]
         thread_id -> Nullable<Text>,
+        #[sql_name = "requestId"]
+        request_id -> Nullable<Text>,
+        #[sql_name = "sourceKind"]
+        source_kind -> Nullable<Text>,
+        #[sql_name = "sourceId"]
+        source_id -> Nullable<Text>,
         #[sql_name = "totalTokens"]
         total_tokens -> BigInt,
         #[sql_name = "inputTokens"]
@@ -314,8 +320,17 @@ diesel::table! {
         cache_write_tokens -> BigInt,
         #[sql_name = "noCacheTokens"]
         no_cache_tokens -> BigInt,
+        #[sql_name = "audioInputTokens"]
+        audio_input_tokens -> BigInt,
+        #[sql_name = "audioOutputTokens"]
+        audio_output_tokens -> BigInt,
+        #[sql_name = "costMicroUsd"]
+        cost_micro_usd -> Nullable<BigInt>,
+        #[sql_name = "costSource"]
+        cost_source -> Nullable<Text>,
         #[sql_name = "createdAt"]
         created_at -> PrismaDateTime,
+        bucket -> PrismaDateTime,
     }
 }
 

@@ -509,6 +509,8 @@ async fn classify_once(
             purpose: LlmCallPurpose::ModelRouting,
             thread_id: request.thread_id.clone(),
             agent_id: Some(request.agent_id.clone()).filter(|id| !id.is_empty()),
+            request_id: None,
+            source: None,
         },
         params,
     )

@@ -178,6 +178,84 @@ fn keeps_referencing_rows_when_a_migration_rebuilds_a_table() {
     );
 }
 
+const SPEND_MIGRATION: &str = "20261121155112_llm_call_spend";
+
+#[derive(QueryableByName, Debug, PartialEq)]
+struct SpendRow {
+    #[diesel(sql_type = Text)]
+    id: String,
+    #[diesel(sql_type = BigInt)]
+    created_at: i64,
+    #[diesel(sql_type = Text)]
+    kind: String,
+    #[diesel(sql_type = BigInt)]
+    bucket: i64,
+}
+
+/// The runtime writes `createdAt` as epoch milliseconds, but a row that took the
+/// column's `CURRENT_TIMESTAMP` default holds text. Both must come out of the
+/// upgrade as epoch milliseconds with a matching 15-minute bucket, or range and
+/// period queries miss them.
+#[test]
+fn the_spend_migration_stores_text_and_integer_timestamps_as_epoch_milliseconds_with_their_bucket()
+{
+    let cut = MIGRATIONS
+        .iter()
+        .position(|m| m.name == SPEND_MIGRATION)
+        .unwrap();
+    assert!(cut > 0);
+    let mut conn = super::open_connection(":memory:").unwrap();
+    apply_migrations(&mut conn, &MIGRATIONS[..cut]).unwrap();
+    insert_legacy_agent(&mut conn, "agent-1");
+    let written = Utc
+        .with_ymd_and_hms(2026, 11, 20, 10, 7, 30)
+        .unwrap()
+        .timestamp_millis()
+        + 250;
+    diesel::sql_query(
+        r#"INSERT INTO "llm_calls" ("id", "agentId", "purpose", "model", "createdAt") VALUES ('integer', 'agent-1', 'chat', 'm', ?)"#,
+    )
+    .bind::<BigInt, _>(written)
+    .execute(&mut conn)
+    .unwrap();
+    // What SQLite's CURRENT_TIMESTAMP default writes.
+    conn.batch_execute(
+        r#"INSERT INTO "llm_calls" ("id", "agentId", "purpose", "model") VALUES ('default', 'agent-1', 'chat', 'm');
+           UPDATE "llm_calls" SET "createdAt" = '2026-11-20 10:22:05' WHERE "id" = 'default';"#,
+    )
+    .unwrap();
+
+    apply_migrations(&mut conn, MIGRATIONS).unwrap();
+
+    let rows: Vec<SpendRow> = diesel::sql_query(
+        r#"SELECT "id", "createdAt" AS "created_at", typeof("createdAt") AS "kind", "bucket" FROM "llm_calls" ORDER BY "id""#,
+    )
+    .load(&mut conn)
+    .unwrap();
+    let at = |h, m, s| {
+        Utc.with_ymd_and_hms(2026, 11, 20, h, m, s)
+            .unwrap()
+            .timestamp_millis()
+    };
+    assert_eq!(
+        rows,
+        vec![
+            SpendRow {
+                id: "default".into(),
+                created_at: at(10, 22, 5),
+                kind: "integer".into(),
+                bucket: at(10, 15, 0),
+            },
+            SpendRow {
+                id: "integer".into(),
+                created_at: written,
+                kind: "integer".into(),
+                bucket: at(10, 0, 0),
+            },
+        ]
+    );
+}
+
 const REVISIONS_MIGRATION: &str = "20260905120000_add_agent_workspace_revisions";
 const UPGRADE_REASON: &str = "Recorded on upgrade. Earlier revisions were not kept.";
 

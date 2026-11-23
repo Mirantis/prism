@@ -33,6 +33,9 @@ use crate::services::meeting::openai_endpoint::{
     RealtimeEndpoint, build_realtime_socket_options, connect_realtime_socket, handshake_status,
     resolve_realtime_endpoint, url_host,
 };
+use crate::services::meeting::realtime_usage::{
+    RealtimePurpose, RealtimeSpend, record_realtime_usage,
+};
 use crate::services::meeting::resampler::REALTIME_SAMPLE_RATE;
 use crate::services::voice::socket_audio::{is_audio_frame_usable, max_frame_bytes};
 
@@ -148,6 +151,7 @@ pub struct DictationSession {
     state: Mutex<DictationState>,
     /// Epoch ms.
     started_at: i64,
+    spend: RealtimeSpend,
     max_audio_ms: u64,
     max_audio_bytes: usize,
     max_frame: usize,
@@ -179,6 +183,7 @@ impl DictationSession {
                 ready: None,
             }),
             started_at: clock_ms(),
+            spend: RealtimeSpend::new(RealtimePurpose::Dictation, None),
             max_audio_ms,
             max_audio_bytes: max_audio_ms as usize * BYTES_PER_MS,
             max_frame: max_frame_bytes(REALTIME_SAMPLE_RATE),
@@ -437,6 +442,11 @@ impl DictationSession {
             }
 
             Some("conversation.item.input_audio_transcription.completed") => {
+                record_realtime_usage(
+                    &self.spend,
+                    &CONFIG.openai_transcription_model,
+                    event.get("usage"),
+                );
                 let text = match event.get("transcript").and_then(Value::as_str) {
                     Some(text) => text.to_string(),
                     None => self.state.lock().transcript.clone(),
