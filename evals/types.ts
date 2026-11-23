@@ -17,6 +17,22 @@ export interface AttachmentMeta {
 }
 
 /** Another agent of the project that sent a message, and how it sent it. */
+/**
+ * Who wrote a turn's prompt: the person, other agents of the project, or the
+ * runtime in a task notification.
+ */
+export type PromptSource = 'person' | 'agent' | 'task';
+
+/** The outcome of a coding task, as its task notification reports it. */
+export interface CodingTaskOutcome {
+  taskId: string;
+  agent: string;
+  stopReason: string;
+  turns?: number;
+  sessionId?: string;
+  result: string;
+}
+
 export interface AgentMessageOrigin {
   kind: 'message' | 'ask' | 'notice';
   senderId: string;

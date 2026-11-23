@@ -122,6 +122,9 @@ prisma_enum!(MessageTrigger {
     Goal = "GOAL",
     Webhook = "WEBHOOK",
     AgentMessage = "AGENT_MESSAGE",
+    // The runtime's report that background work the agent started in the
+    // conversation has ended. It is stored as a hidden USER row and is never the person's.
+    TaskNotification = "TASK_NOTIFICATION",
     System = "SYSTEM",
 });
 

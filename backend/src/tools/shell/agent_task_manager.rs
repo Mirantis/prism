@@ -15,6 +15,12 @@
 //! The boot relaunches a task a restart stopped, resuming its session when one
 //! was reported, and keeps the result of a task that ended unread. A relaunch
 //! first stops the process a crash left running, so two runs never share a session.
+//!
+//! A task started in a chat conversation reports how it ended to that
+//! conversation (`TASK_NOTIFICATION_SERVICE`), and the stored report is how the
+//! agent reads the result. A task the agent stopped, or whose result it already
+//! read with `coding_agent_status`, reports nothing. A task the boot drops reports
+//! that it failed.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -39,11 +45,19 @@ use crate::lib::execution_environments::get_execution_environment::get_execution
 use crate::lib::execution_environments::leftover_process::stop_leftover_process;
 use crate::lib::log_redaction::err_json;
 use crate::lib::telemetry::track_event;
+use crate::lib::tool_output_limiter::truncate_head_tail;
+use crate::lib::tool_output_store::write_tool_output;
 use crate::prompts::resume_prompt::RESUMED_CODING_TASK_PROMPT;
+use crate::prompts::task_notification_prompt::{
+    CodingTaskOutcome, render_coding_task_notification,
+};
 use crate::services::pending_work_service::{
     PENDING_WORK_SERVICE, PendingWorkItem, PendingWorkKind,
 };
 use crate::services::plugin_mcp_service::PLUGIN_MCP_SERVICE;
+use crate::services::task_notification_service::{
+    TASK_NOTIFICATION_SERVICE, TaskNotificationTarget,
+};
 use crate::support::js::{len16, slice16};
 use crate::{log_error, log_info, log_warn};
 
@@ -55,6 +69,10 @@ pub const MAX_BUFFER_SIZE: usize = 1024 * 1024;
 /// How long stop_task waits for a stopped run's stream to end before reporting
 /// the stop itself. Covers the adapter's graceful-then-forced termination.
 pub const STOP_WAIT_MS: u64 = 2_500;
+/// The most of a task's result a notification includes. The report is replayed in
+/// every later turn of its conversation, so a longer result is saved whole as a
+/// tool output file, which the notification names.
+pub const NOTIFICATION_RESULT_MAX_CHARS: usize = 30_000;
 
 /// What a task was started with. Kept in its `pending_work` row.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,6 +97,9 @@ pub struct AgentTaskParams {
     pub session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub debug: Option<bool>,
+    /// The conversation the task reports to when it ends. Absent: the agent polls for the result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notify: Option<TaskNotificationTarget>,
 }
 
 /// `refused`: the agent finished, but its permission checks refused part of the work.
@@ -197,6 +218,11 @@ pub struct TaskEntry {
     pub params: AgentTaskParams,
     /// Set by stop_task so drive()'s finalize reports `stopped`, not `error`.
     pub stopping: AtomicBool,
+    /// Set when a poll has handed out how the task ended, so no notification repeats it.
+    pub result_read: AtomicBool,
+    /// Set when coding_agent_stop is called, also on a run that had already exited:
+    /// the stop call answers with the result, so no notification repeats it.
+    pub stop_called: AtomicBool,
     /// True once drive() has finalized the state, and from the start for an
     /// entry with no run, so stop_task can await the final drain.
     pub driven: watch::Sender<bool>,
@@ -206,21 +232,41 @@ pub struct TaskEntry {
 pub type ResolveAgent =
     Arc<dyn Fn(CodingAgentName) -> anyhow::Result<Arc<dyn CodingAgent>> + Send + Sync>;
 
+/// Stores a task's notification in the conversation that started it;
+/// `TASK_NOTIFICATION_SERVICE.deliver` unless a test injects another.
+pub type DeliverNotification = Arc<
+    dyn Fn(
+            TaskNotificationTarget,
+            String,
+            String,
+        ) -> futures::future::BoxFuture<'static, anyhow::Result<()>>
+        + Send
+        + Sync,
+>;
+
 pub struct AgentTaskManager {
+    deliver: DeliverNotification,
     tasks: Mutex<HashMap<String, Arc<TaskEntry>>>,
-    /// Ids of reaped tasks, oldest first, so a later poll can say why one is gone.
-    reaped: Mutex<VecDeque<String>>,
+    /// Forgotten tasks, oldest first: the final status of one a notification
+    /// reported, which a poll after it gets again, or `None` for one a poll or a
+    /// stop handed out.
+    reaped: Mutex<VecDeque<(String, Option<AgentTaskStatus>)>>,
     /// Starts waiting for their pending-work row, which hold a slot already.
     starting: AtomicUsize,
     resolve_agent: ResolveAgent,
 }
 
-/// The id-or-reaped refusal of a task the manager does not hold.
-fn missing(reaped: &VecDeque<String>, task_id: &str) -> anyhow::Error {
-    if reaped.iter().any(|id| id == task_id) {
-        anyhow::anyhow!("Task {task_id} has already ended and been cleaned up")
-    } else {
-        anyhow::anyhow!("Unknown task: {task_id}")
+/// How a forgotten task ended, when a notification reported it; otherwise why the id is unknown.
+fn ended(
+    reaped: &VecDeque<(String, Option<AgentTaskStatus>)>,
+    task_id: &str,
+) -> anyhow::Result<AgentTaskStatus> {
+    match reaped.iter().find(|(id, _)| id == task_id) {
+        Some((_, Some(status))) => Ok(status.clone()),
+        Some((_, None)) => Err(anyhow::anyhow!(
+            "Task {task_id} has already ended and been cleaned up"
+        )),
+        None => Err(anyhow::anyhow!("Unknown task: {task_id}")),
     }
 }
 
@@ -233,12 +279,26 @@ impl AgentTaskManager {
             });
             resolve
         });
+        let deliver: DeliverNotification = Arc::new(|target, task_id, text| {
+            Box::pin(async move {
+                TASK_NOTIFICATION_SERVICE
+                    .deliver(&target, &task_id, &text)
+                    .await
+            })
+        });
         AgentTaskManager {
+            deliver,
             tasks: Mutex::new(HashMap::new()),
             reaped: Mutex::new(VecDeque::new()),
             starting: AtomicUsize::new(0),
             resolve_agent,
         }
+    }
+
+    /// Deliver task notifications with `deliver` instead of the conversation engine.
+    pub fn with_deliver(mut self, deliver: DeliverNotification) -> Self {
+        self.deliver = deliver;
+        self
     }
 
     /// Number of tasks that haven't completed yet.
@@ -307,6 +367,20 @@ impl AgentTaskManager {
             let Ok(work) = serde_json::from_value::<CodingTaskWork>(item.payload) else {
                 continue;
             };
+            // A task that finished keeps its result: only the report of it failed.
+            if let Some(finished) = &work.finished {
+                let outcome = ReportOutcome {
+                    stop_reason: finished
+                        .stop_reason
+                        .unwrap_or(TaskStopReason::Error)
+                        .as_str()
+                        .to_string(),
+                    turns: finished.turns,
+                    result: finished.result.clone().unwrap_or_default(),
+                };
+                self.send_report(&item.key, &work, outcome).await;
+                continue;
+            }
             if let Some(process) = work.process
                 && stop_leftover_process(process).await
             {
@@ -315,6 +389,12 @@ impl AgentTaskManager {
                     "[AgentTask] Stopped the run of a task the restarts gave up"
                 );
             }
+            self.report_failure(
+                &item.key,
+                &work,
+                "The runtime restarted too many times while this task ran, so the task was given up.",
+            )
+            .await;
         }
         // A relaunch gives the task the plugins' MCP servers, which no turn has
         // read yet at boot.
@@ -327,9 +407,10 @@ impl AgentTaskManager {
             PLUGIN_MCP_SERVICE.read_configs().await;
         }
         for item in items {
-            let continued = match serde_json::from_value::<CodingTaskWork>(item.payload) {
-                Ok(work) => self.resume_one(&item.key, work).await,
-                Err(err) => Err(err.into()),
+            let work = serde_json::from_value::<CodingTaskWork>(item.payload);
+            let continued = match &work {
+                Ok(work) => self.resume_one(&item.key, work.clone()).await,
+                Err(err) => Err(anyhow::anyhow!("{err}")),
             };
             if let Err(err) = continued {
                 // An agent whose credentials a restart removed cannot continue its task.
@@ -337,6 +418,14 @@ impl AgentTaskManager {
                     json!({ "err": err_json(&err), "taskId": item.key }),
                     "[AgentTask] Could not continue a task a restart stopped"
                 );
+                if let Ok(work) = &work {
+                    self.report_failure(
+                        &item.key,
+                        work,
+                        &format!("The task could not continue after the runtime restarted: {err}"),
+                    )
+                    .await;
+                }
                 PENDING_WORK_SERVICE.end(PendingWorkKind::CodingTask, &item.key);
             }
         }
@@ -368,9 +457,12 @@ impl AgentTaskManager {
                 run: None,
                 params: work.params,
                 stopping: AtomicBool::new(false),
+                result_read: AtomicBool::new(false),
+                stop_called: AtomicBool::new(false),
                 driven: watch::channel(true).0,
             });
             self.tasks.lock().insert(task_id.to_string(), entry);
+            self.report(task_id);
             return Ok(());
         }
         let agent = (self.resolve_agent)(name)?;
@@ -448,6 +540,8 @@ impl AgentTaskManager {
             run: Some(run.clone()),
             params: original,
             stopping: AtomicBool::new(false),
+            result_read: AtomicBool::new(false),
+            stop_called: AtomicBool::new(false),
             driven: watch::channel(false).0,
         });
         self.tasks.lock().insert(task_id.to_string(), entry.clone());
@@ -487,6 +581,7 @@ impl AgentTaskManager {
         tokio::spawn(async move {
             manager.drive(&task_id, &entry, &*agent, &*run).await;
             entry.driven.send_replace(true);
+            manager.report(&task_id);
         });
     }
 
@@ -502,7 +597,7 @@ impl AgentTaskManager {
     ) -> anyhow::Result<AgentTaskStatus> {
         let entry = self.tasks.lock().get(task_id).cloned();
         let Some(entry) = entry else {
-            return Err(missing(&self.reaped.lock(), task_id));
+            return ended(&self.reaped.lock(), task_id);
         };
         let pending_read = || anyhow::anyhow!("Task {task_id} already has a pending read");
         if entry.reading.load(Ordering::SeqCst) {
@@ -563,8 +658,9 @@ impl AgentTaskManager {
     pub async fn stop_task(&self, task_id: &str) -> anyhow::Result<AgentTaskStatus> {
         let entry = self.tasks.lock().get(task_id).cloned();
         let Some(entry) = entry else {
-            return Err(missing(&self.reaped.lock(), task_id));
+            return ended(&self.reaped.lock(), task_id);
         };
+        entry.stop_called.store(true, Ordering::SeqCst);
 
         if !entry.state.lock().completed {
             // A run that has already exited is mid-finalize, not running: its result
@@ -610,7 +706,7 @@ impl AgentTaskManager {
         }
 
         let status = drain_task(&mut entry.state.lock());
-        self.reap(task_id);
+        self.reap(task_id, None);
         log_info!(
             json!({ "taskId": task_id, "stopReason": status.stop_reason }),
             "[AgentTask] stopped"
@@ -641,25 +737,28 @@ impl AgentTaskManager {
         if !status.completed {
             return status;
         }
+        entry.result_read.store(true, Ordering::SeqCst);
         // A read that hands out output keeps the entry for the poll after it. The
         // agent has read how the task ended either way, so no restart keeps it.
         if status.output.is_empty() {
-            self.reap(task_id);
+            self.reap(task_id, None);
         } else {
             PENDING_WORK_SERVICE.end(PendingWorkKind::CodingTask, task_id);
         }
         status
     }
 
-    /// Forget a task, remembering the id so a later poll can say why it's gone.
+    /// Forget a task, remembering the id so a later poll can say why it's gone,
+    /// and the final status a notification reported, which that poll gets again.
     /// The reaped list keeps at most `MAX_CONCURRENT * 10` ids.
-    fn reap(&self, task_id: &str) {
+    fn reap(&self, task_id: &str, reported: Option<AgentTaskStatus>) {
         self.tasks.lock().remove(task_id);
         // The agent has read how the task ended, so no restart needs to keep it.
         PENDING_WORK_SERVICE.end(PendingWorkKind::CodingTask, task_id);
         let mut reaped = self.reaped.lock();
-        if !reaped.iter().any(|id| id == task_id) {
-            reaped.push_back(task_id.to_string());
+        match reaped.iter_mut().find(|(id, _)| id == task_id) {
+            Some(slot) => slot.1 = reported,
+            None => reaped.push_back((task_id.to_string(), reported)),
         }
         // Keep the reaped set from growing without bound.
         if reaped.len() > MAX_CONCURRENT * 10 {
@@ -700,6 +799,68 @@ impl AgentTaskManager {
         for waiter in waiters {
             let _ = waiter.send(());
         }
+    }
+
+    /// Send how an ended task went to the conversation that started it, then forget
+    /// the task: the stored report holds its result. Nothing goes out for a task
+    /// whose result a poll handed out or a waiting poll is about to, nor for one the
+    /// agent stopped, whose stop call answers with the result, nor while the process
+    /// shuts down, which leaves the task's row for the next boot to report.
+    /// A poll that reads the result while the report is being stored tells the
+    /// agent twice: a rare race, traded for polls that take no lock. A restart
+    /// after a stopped task's result is recorded and before its stop call returns
+    /// reports it at the next boot: that stop call never answered, so the report
+    /// is the agent's only word of how the task ended.
+    fn report(self: &Arc<Self>, task_id: &str) {
+        let Some(entry) = self.tasks.lock().get(task_id).cloned() else {
+            return;
+        };
+        let Some(target) = entry.params.notify.clone() else {
+            return;
+        };
+        if entry.result_read.load(Ordering::SeqCst)
+            || entry.reading.load(Ordering::SeqCst)
+            || entry.stop_called.load(Ordering::SeqCst)
+            || PENDING_WORK_SERVICE.shutdown_signal().is_cancelled()
+        {
+            return;
+        }
+        let outcome = {
+            let state = entry.state.lock();
+            CodingTaskOutcome {
+                task_id: task_id.to_string(),
+                agent: state.agent.as_str().to_string(),
+                stop_reason: state
+                    .stop_reason
+                    .unwrap_or(TaskStopReason::Error)
+                    .as_str()
+                    .to_string(),
+                turns: state.turns.and_then(|turns| u64::try_from(turns).ok()),
+                session_id: state.session_id.clone(),
+                result: state.result.clone().unwrap_or_default(),
+            }
+        };
+        let manager = self.clone();
+        let task_id = task_id.to_string();
+        tokio::spawn(async move {
+            let text = notification_text(outcome, entry.params.workdir.as_deref()).await;
+            match (manager.deliver)(target, task_id.clone(), text).await {
+                Ok(()) => {
+                    let current = manager.tasks.lock().get(&task_id).cloned();
+                    if current.is_some_and(|current| Arc::ptr_eq(&current, &entry)) {
+                        let status = drain_task(&mut entry.state.lock());
+                        manager.reap(&task_id, Some(status));
+                    }
+                }
+                Err(err) => {
+                    // The row keeps the result, so the next boot sends the report again.
+                    log_error!(
+                        json!({ "err": err_json(&err), "taskId": task_id }),
+                        "[AgentTask] Could not send the task notification"
+                    );
+                }
+            }
+        });
     }
 
     /// Read the run's events into the entry's state until the stream ends, then
@@ -821,6 +982,93 @@ impl AgentTaskManager {
             "[AgentTask] completed"
         );
     }
+}
+
+/// How a task the boot drops ended, for its report.
+struct ReportOutcome {
+    stop_reason: String,
+    turns: Option<i64>,
+    result: String,
+}
+
+impl AgentTaskManager {
+    /// Tell the conversation that started a task the boot drops that the task failed,
+    /// since the agent ended its turn and waits for the report.
+    async fn report_failure(&self, task_id: &str, work: &CodingTaskWork, reason: &str) {
+        self.send_report(
+            task_id,
+            work,
+            ReportOutcome {
+                stop_reason: TaskStopReason::Error.as_str().to_string(),
+                turns: None,
+                result: reason.to_string(),
+            },
+        )
+        .await;
+    }
+
+    /// Send the report of a task the boot drops to the conversation that started it.
+    /// A failed send is logged: the task's row ends either way.
+    async fn send_report(&self, task_id: &str, work: &CodingTaskWork, outcome: ReportOutcome) {
+        let Some(target) = work.params.notify.clone() else {
+            return;
+        };
+        let outcome = CodingTaskOutcome {
+            task_id: task_id.to_string(),
+            agent: work
+                .params
+                .agent
+                .unwrap_or_else(|| CONFIG.coding_agent())
+                .as_str()
+                .to_string(),
+            stop_reason: outcome.stop_reason,
+            turns: outcome.turns.and_then(|turns| u64::try_from(turns).ok()),
+            session_id: work.session_id.clone(),
+            result: outcome.result,
+        };
+        let text = notification_text(outcome, work.params.workdir.as_deref()).await;
+        if let Err(err) = (self.deliver)(target, task_id.to_string(), text).await {
+            log_error!(
+                json!({ "err": err_json(&err), "taskId": task_id }),
+                "[AgentTask] Could not send the notification of a task the boot dropped"
+            );
+        }
+    }
+}
+
+/// The notification of an ended task. A result over `NOTIFICATION_RESULT_MAX_CHARS`
+/// is cut, and saved whole beside the shell of the task's workdir, where the agent
+/// reads it after a restart too. The notice names that workdir: a task whose
+/// workdir the conversation's container cannot see runs on the host, so a
+/// `shell_exec` without it would look in the container and find no file.
+pub async fn notification_text(outcome: CodingTaskOutcome, workdir: Option<&str>) -> String {
+    if len16(&outcome.result) <= NOTIFICATION_RESULT_MAX_CHARS {
+        return render_coding_task_notification(&outcome);
+    }
+    let saved = match write_tool_output(&outcome.result, workdir).await {
+        Ok(spill) => {
+            let shell = match workdir {
+                Some(workdir) => format!(
+                    "shell_exec in workdir {}",
+                    serde_json::to_string(workdir).unwrap_or_default()
+                ),
+                None => "shell_exec".to_string(),
+            };
+            format!(
+                "The whole result is saved at {}. Read only what you need from it with {shell}, using grep or sed.",
+                spill.path
+            )
+        }
+        Err(err) => {
+            log_warn!(
+                json!({ "err": err_json(&err), "taskId": outcome.task_id }),
+                "[AgentTask] Could not save the whole result of a task"
+            );
+            "The whole result could not be saved.".to_string()
+        }
+    };
+    let result = truncate_head_tail(&outcome.result, NOTIFICATION_RESULT_MAX_CHARS, Some(&saved));
+    render_coding_task_notification(&CodingTaskOutcome { result, ..outcome })
 }
 
 /// A task's row as JSON.

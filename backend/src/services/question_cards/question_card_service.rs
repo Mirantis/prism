@@ -368,6 +368,7 @@ impl QuestionCardService {
             agent_message: None,
             // A later boot can store this message after the agent has posted a newer card.
             runtime_written: true,
+            task_notification: None,
         };
         let payload = serde_json::to_value(INBOUND_MESSAGE_SERVICE.pending_work_for(&message))?;
         let (row_id, written) = (row.id.clone(), answered.clone());

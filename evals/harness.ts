@@ -15,12 +15,14 @@ import type {
   AgentMessageOrigin,
   AttachmentMeta,
   ChatPlatform,
+  CodingTaskOutcome,
   GateAgent,
   HeartbeatTrigger,
   LinkedTarget,
   ModelTier,
   PostingCeiling,
   PromptSize,
+  PromptSource,
   TaskLastSend,
   ThreadLine,
   ToolDefinition,
@@ -38,6 +40,8 @@ export interface BackendTexts {
   defaultHeartbeatMd: string;
   /** What `ask_questions` answers once the card is posted. */
   askQuestionsResult: Record<string, unknown>;
+  /** What `coding_agent` tells the agent to do after it starts a task in a chat conversation. */
+  notifiedTaskNext: string;
 }
 
 interface BackendInfo {
@@ -136,6 +140,11 @@ export function renderAgentMessage(origin: AgentMessageOrigin, text: string): Pr
   return call<string>('render', { kind: 'agentMessage', origin, text });
 }
 
+/** The runtime's report that a coding task ended, as the engine stores it. */
+export function renderCodingTaskNotification(outcome: CodingTaskOutcome): Promise<string> {
+  return call<string>('render', { kind: 'codingTaskNotification', outcome });
+}
+
 /** A heartbeat's run prompt, with the channel messages that started it. */
 export function heartbeatRunPrompt(triggers?: HeartbeatTrigger[]): Promise<string> {
   return call<string>('render', { kind: 'heartbeat', triggers });
@@ -168,6 +177,8 @@ export type HistoryEntry =
   | { user: string; attachments?: AttachmentMeta[]; sender?: { id: string; name: string } }
   /** A message from another agent of the project. */
   | { fromAgent: AgentMessageOrigin; text: string }
+  /** The runtime's report that a coding task ended, as the engine stores it. */
+  | { taskNotification: string }
   | {
       agent: string;
       toolCalls?: { tool: string; input: unknown; output: unknown }[];
@@ -270,6 +281,9 @@ function toStoredMessage(entry: HistoryEntry, index: number): Record<string, unk
       externalMessageId: entry.fromAgent.messageId,
     };
   }
+  if ('taskNotification' in entry) {
+    return { id, role: 'USER', content: entry.taskNotification, triggeredBy: 'TASK_NOTIFICATION', internalStep: true };
+  }
   return {
     id,
     role: 'AGENT',
@@ -328,8 +342,10 @@ export async function runTurn(input: TurnInput): Promise<TurnTrace> {
 export async function toolRiskDecision(input: {
   mode: 'chat' | 'heartbeat';
   prompt: string;
-  /** The prompt is another agent's message, as a turn on one sends it. */
-  promptFromAgent?: boolean;
+  /** Who wrote the prompt, as a turn's engine sets it; absent is the person. */
+  promptSource?: PromptSource;
+  /** The person's earlier messages in the thread, oldest first. */
+  earlier?: string[];
   tool: string;
   input: Record<string, unknown>;
 }): Promise<'allow' | 'block'> {

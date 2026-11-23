@@ -146,10 +146,10 @@ pub struct InvokeRequest {
     pub agent_id: String,
     pub mode: InvokeMode,
     pub prompt: String,
-    /// `prompt` holds only messages from other agents of the project, nothing the
-    /// person wrote. The tool risk gate then reads it as theirs, which authorizes
-    /// nothing, instead of as the person's request.
-    pub prompt_from_agent: bool,
+    /// Who wrote `prompt`; `None` is the person. The tool risk gate reads a prompt
+    /// from other agents or a task notification as authorizing nothing, instead of
+    /// as the person's request.
+    pub prompt_source: Option<PromptSource>,
     pub thread_id: Option<String>,
     /// Override the agent's persisted verbose flag for this invocation.
     pub verbose: Option<bool>,
@@ -225,7 +225,7 @@ impl fmt::Debug for InvokeRequest {
             .field("agent_id", &self.agent_id)
             .field("mode", &self.mode)
             .field("thread_id", &self.thread_id)
-            .field("prompt_from_agent", &self.prompt_from_agent)
+            .field("prompt_source", &self.prompt_source)
             .field("append_prompt", &self.append_prompt)
             .field("after_restart", &self.after_restart)
             .finish_non_exhaustive()
@@ -296,6 +296,26 @@ pub struct TaskLastSend {
     /// The heartbeat's results of the runs since the oldest send in `messages`, newest first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reports: Option<Vec<TaskReport>>,
+}
+
+/// The runtime's report that background work the agent started in a conversation
+/// has ended. It is never the person's words.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskNotificationOrigin {
+    /// The background task's id, which is also the id of the stored notification.
+    pub task_id: String,
+}
+
+/// Who wrote a turn's prompt: the person, other agents of the project, or the
+/// runtime in a task notification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PromptSource {
+    #[default]
+    Person,
+    Agent,
+    Task,
 }
 
 /// Where a message from another agent of the project came from. It is a

@@ -136,6 +136,12 @@ impl ChannelAdapter for WebSocketAdapterService {
         Some(())
     }
 
+    /// A message the runtime stored waits its turn there too.
+    fn answer_stored(&self, message: &ConversationMessage) -> Option<()> {
+        INBOUND_MESSAGE_SERVICE.answer_stored(message);
+        Some(())
+    }
+
     async fn initialize(&self) -> anyhow::Result<()> {
         log_info!("WebSocket adapter ready");
         Ok(())
